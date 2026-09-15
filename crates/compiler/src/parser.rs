@@ -1043,6 +1043,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "negthickspace",
     "enspace",
     "enskip",
+    "xspace",
     "AA",
     "aa",
     "AE",
@@ -1336,6 +1337,62 @@ fn preceded_by_space(tokens: &[InputToken], index: usize) -> bool {
             tokens.get(index - 1).map(|input| &input.token.kind),
             Some(TokenKind::Space) | Some(TokenKind::ParBreak)
         )
+}
+
+/// Whether `\xspace` (xspace.sty) inserts its word space here: yes, unless
+/// the next token after its expansion point is `}`, another control
+/// sequence, or one of `, . ! ? ; : ' /`.
+///
+/// The expansion pass flattens every macro call before the parser runs, so
+/// `tokens[next..]` already starts with whatever follows the macro call
+/// site — even when `\xspace` itself sits at the end of a `\newcommand`
+/// body and the call is far away. There is no boundary left to look past;
+/// the macro-boundary provenance (`maps_to_invocation`) is irrelevant to
+/// the decision, which is purely about the next token's kind. Comments are
+/// invisible and skipped; end of input and a paragraph break have nothing
+/// to glue to. `\\`, `\verb`, `\]` and `\)` are control sequences, so they
+/// suppress like any other command; `$`, `\[`, `\(` and `{` take the space,
+/// exactly as if one had been typed.
+fn xspace_inserts_space(tokens: &[InputToken], mut index: usize) -> bool {
+    loop {
+        match tokens.get(index).map(|input| &input.token.kind) {
+            None | Some(TokenKind::ParBreak) => return false,
+            Some(TokenKind::Comment) => index += 1,
+            Some(TokenKind::Command(_))
+            | Some(TokenKind::RBrace)
+            | Some(TokenKind::LineBreak)
+            | Some(TokenKind::DisplayMathClose)
+            | Some(TokenKind::InlineMathClose)
+            | Some(TokenKind::Verb { .. }) => return false,
+            Some(TokenKind::Word(word)) => {
+                return !matches!(
+                    word.chars().next(),
+                    Some(',' | '.' | '!' | '?' | ';' | ':' | '\'' | '/')
+                );
+            }
+            Some(_) => return true,
+        }
+    }
+}
+
+/// Every `\xspace` in flat (already expanded) content resolved in place:
+/// a fired space becomes the `Space` token a typed space would have been,
+/// a suppressed one vanishes. Used by `P::inlines_from_tokens`, whose local
+/// token list needs no undo logging.
+fn resolve_xspace(tokens: &mut Vec<InputToken>) {
+    let mut index = 0;
+    while index < tokens.len() {
+        if !matches!(&tokens[index].token.kind, TokenKind::Command(name) if name == "xspace") {
+            index += 1;
+            continue;
+        }
+        if xspace_inserts_space(tokens, index + 1) {
+            tokens[index].token.kind = TokenKind::Space;
+            index += 1;
+        } else {
+            tokens.remove(index);
+        }
+    }
 }
 
 /// Splits a captured `\author{...}` argument on top-level `\and`: real
@@ -2802,6 +2859,9 @@ impl P<'_> {
             }
             // `\def\enskip{\hskip.5em\relax}` (latex.ltx 9434): glue, like `\quad`.
             "enskip" => para.push(Inline::TextGlue { em: 0.5, span }),
+            // `\xspace` (xspace.sty): a word space unless the token after
+            // the macro call is `}`, another command, or `, . ! ? ; : ' /`.
+            "xspace" => self.xspace(span),
             "rule" => self.text_rule(span, para),
             "frac" | "sqrt" => self.diags.push(Diagnostic::error(
                 format!("\\{} requires math mode", name),
@@ -2811,6 +2871,27 @@ impl P<'_> {
             .with_help(format!("wrap it in math mode: \\(\\{name}{{...}}\\)"))
             .with_label(span, "this command", true)),
             other => self.unsupported(other, span),
+        }
+    }
+
+    /// `\xspace` (xspace.sty) in running text: a word space unless the token
+    /// after the macro call is `}`, another command, or `, . ! ? ; : ' /`
+    /// (see [`xspace_inserts_space`]). The command token was just consumed
+    /// and sits exactly where a typed space would, so a fired space flips
+    /// it to `Space` in place — every later stage then treats it like
+    /// typed whitespace — while a suppressed one simply vanishes, having
+    /// produced no output. The in-place edit goes through [`P::token_mut`],
+    /// so a stream borrowed from the expansion cache is lent and undone as
+    /// usual.
+    fn xspace(&mut self, _span: Span) {
+        debug_assert!(self.i > 0);
+        if !xspace_inserts_space(&self.t, self.i) {
+            return;
+        }
+        if let Some(input) = self.token_mut(self.i - 1) {
+            if matches!(&input.token.kind, TokenKind::Command(name) if name == "xspace") {
+                input.token.kind = TokenKind::Space;
+            }
         }
     }
 
@@ -5894,7 +5975,11 @@ impl P<'_> {
         self.alignment_stack.push(self.declared_alignment);
     }
 
-    fn inlines_from_tokens(&mut self, tokens: Vec<InputToken>, base: TextStyle) -> Vec<Inline> {
+    fn inlines_from_tokens(&mut self, mut tokens: Vec<InputToken>, base: TextStyle) -> Vec<Inline> {
+        // `\xspace` from a macro body inside a heading, caption or style
+        // argument never reaches the main token loop, so its lookahead runs
+        // here on the same flattened token list instead.
+        resolve_xspace(&mut tokens);
         let outer_tokens = std::mem::replace(&mut self.t, std::rc::Rc::new(tokens));
         let outer_index = std::mem::replace(&mut self.i, 0);
         let mut expanded = Vec::new();
@@ -7350,6 +7435,9 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // and spacing, longtable page-breaking tables, multirow entries and
         // colortbl row/column/cell colours and rule colours.
         "booktabs" | "longtable" | "multirow" | "colortbl" => options.is_empty(),
+        // xspace.sty takes no options; its only widely used command,
+        // `\xspace`, is implemented above, so loading it is silent.
+        "xspace" => options.is_empty(),
         // amsmath/amssymb/amsfonts: implemented here, not merely recognised.
         // `crate::math` parses the constructs into their own nuclei and
         // `math::layout_nucleus` sets them — `GenFraction`
@@ -9216,6 +9304,169 @@ mod tests {
             .message
             .contains(r"\hspace requires a recognised dimension")));
         assert!(!malformed_items.iter().any(|i| i.text == "oops"));
+    }
+
+    /// `\xspace` (xspace.sty, issue #496): at the end of a macro body it
+    /// inserts a word space unless the token following the macro call is
+    /// `}`, another command, or `, . ! ? ; : ' /` — exactly as if a space
+    /// had been typed there. The expansion pass flattens macro calls before
+    /// the parser runs, so that "following token" is simply the next token
+    /// in the parser's own stream.
+    #[test]
+    fn xspace_before_a_word_inserts_exactly_one_space() {
+        let (parsed, spaced) = items("\\newcommand{\\foo}{Foo\\xspace}\n\\foo bar");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        // The `unknown_command` (did-you-mean `\hspace`) error is gone: no
+        // diagnostic at all, and specifically none coded `unknown_command`.
+        assert!(
+            !parsed.diagnostics.iter().any(|d| matches!(
+                d.code,
+                Some(crate::diagnostics::DiagnosticCode::UnknownCommand)
+            )),
+            "{:?}",
+            parsed.diagnostics
+        );
+        // Without `\xspace` the space after `\foo` is consumed with the
+        // control word, so the words are glued: the reference for "no space".
+        let (glued_parsed, glued) = items("\\newcommand{\\foo}{Foo}\n\\foo bar");
+        assert!(glued_parsed.diagnostics.is_empty(), "{:?}", glued_parsed.diagnostics);
+        let bar = spaced.iter().find(|i| i.text == "bar").unwrap();
+        let glued_bar = glued.iter().find(|i| i.text == "bar").unwrap();
+        let space = layout::word_space(layout::BODY_SIZE_PT, layout::Font::TimesRoman);
+        assert!(
+            (bar.x_pt - glued_bar.x_pt - space).abs() < 0.01,
+            "expected `\\foo bar` to sit exactly one word space right of glued `\\foo bar`: {} vs {}",
+            bar.x_pt,
+            glued_bar.x_pt
+        );
+    }
+
+    /// `\xspace` suppresses its space before `}`, another command, and the
+    /// `, . ! ? ; : ' /` punctuation — checked at the inline level, where a
+    /// wrongly inserted space would set `space_before` on the next word.
+    #[test]
+    fn xspace_before_group_end_command_or_punctuation_inserts_nothing() {
+        fn inlines(source: &str) -> Vec<Inline> {
+            let full = format!("\\newcommand{{\\foo}}{{Foo\\xspace}}\n{source}");
+            let parsed = parse(&full);
+            assert!(parsed.diagnostics.is_empty(), "{source}: {:?}", parsed.diagnostics);
+            let mut out = Vec::new();
+            for block in &parsed.blocks {
+                if let Block::Paragraph(content) = block {
+                    out.extend(content.iter().cloned());
+                }
+            }
+            out
+        }
+        fn texts(inlines: &[Inline]) -> Vec<(String, bool)> {
+            inlines
+                .iter()
+                .filter_map(|inline| match inline {
+                    Inline::Text { text, space_before, .. } => {
+                        Some((text.clone(), *space_before))
+                    }
+                    other => panic!("expected only text, got {other:?}"),
+                })
+                .collect()
+        }
+        // The paragraph's first word may carry leading whitespace's
+        // `space_before`; what `\xspace` controls is the flag on the word
+        // after it, so compare words exactly and flags only there.
+        fn check(got: &[(String, bool)], words: &[&str], flag: bool, case: &str) {
+            assert_eq!(
+                got.iter().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
+                words,
+                "case {case}"
+            );
+            assert_eq!(got.last().map(|(_, before)| *before), Some(flag), "case {case}");
+        }
+        // Punctuation glues directly: "Foo." not "Foo .". (A typed `'`
+        // ligates to U+2019, so the apostrophe case expects that.)
+        for mark in [",", ".", "!", "?", ";", ":", "'", "/"] {
+            let rendered = if mark == "'" { "’" } else { mark };
+            check(
+                &texts(&inlines(&format!("\\foo{mark}"))),
+                &["Foo", rendered],
+                false,
+                mark,
+            );
+        }
+        // End of group: no space, and none leaking past the `}` either.
+        check(&texts(&inlines("X{\\foo}Y")), &["X", "Foo", "Y"], false, "group");
+        // Another command handles its own spacing.
+        check(
+            &texts(&inlines("\\foo\\textbf{bar}")),
+            &["Foo", "bar"],
+            false,
+            "command",
+        );
+        // A following word does take the space.
+        check(&texts(&inlines("\\foo bar")), &["Foo", "bar"], true, "word");
+    }
+
+    /// Loading the `xspace` package is silent (it takes no options and its
+    /// command is implemented); the macro still gets its conditional space.
+    #[test]
+    fn xspace_package_loads_silently() {
+        let (parsed, items) = items(
+            "\\usepackage{xspace}\n\\newcommand{\\foo}{Foo\\xspace}\n\\foo bar\n",
+        );
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert!(items.iter().any(|i| i.text == "bar"));
+    }
+
+    /// `\xspace` inside `\section`/`\textbf` arguments travels the
+    /// `inlines_from_tokens` path rather than the main token loop; the
+    /// lookahead decision must apply there too.
+    #[test]
+    fn xspace_in_heading_and_style_arguments() {
+        let parsed = parse(
+            "\\newcommand{\\foo}{Foo\\xspace}\n\\section{\\foo bar}\n\\textbf{\\foo.} tail\n",
+        );
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let mut heading = None;
+        let mut paragraph = None;
+        for block in &parsed.blocks {
+            match block {
+                Block::Heading { content, .. } => heading = Some(content.clone()),
+                Block::Paragraph(content) => paragraph = Some(content.clone()),
+                _ => {}
+            }
+        }
+        let words = |content: &[Inline]| {
+            content
+                .iter()
+                .filter_map(|inline| match inline {
+                    Inline::Text { text, space_before, .. } => {
+                        Some((text.clone(), *space_before))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        // The heading's first word carries the flat path's index-zero
+        // `space_before`; what matters is the words and the inserted gap.
+        let head_words = words(&heading.expect("heading"));
+        assert_eq!(
+            head_words.iter().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
+            vec!["Foo", "bar"],
+            "{head_words:?}"
+        );
+        assert_eq!(head_words[1].1, true, "{head_words:?}");
+        // `\textbf{...}` enters a real group, so its first word follows
+        // `{` with no space; the suppressed period glues, and the typed
+        // space after the group separates `tail`.
+        let body = paragraph.expect("paragraph");
+        let body_words = words(&body);
+        assert_eq!(
+            body_words,
+            vec![
+                ("Foo".to_string(), false),
+                (".".to_string(), false),
+                ("tail".to_string(), true),
+            ],
+            "{body_words:?}"
+        );
     }
 
     #[test]
