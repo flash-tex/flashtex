@@ -6,7 +6,8 @@
 
 use crate::boxes::{BoxKind, Child, Flex, MathBox};
 use crate::mathlist::{Atom, AtomClass, BigSizing, Limits, MathList, Nucleus};
-use crate::metrics::{Extensible, Glyph, MathChar, MathFontMetrics, MathParams, OrdPair};
+use crate::metrics::{Extensible, Glyph, MathFontMetrics, MathParams};
+use crate::metrics::{MathChar, OrdPair};
 use crate::source::SourceTag;
 use crate::spacing::{Space, between};
 use crate::style::Style;
