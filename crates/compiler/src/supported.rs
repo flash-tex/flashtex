@@ -493,6 +493,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["mathllap", "mathrlap", "mathclap"],
+        "{x}",
+        "mathtools zero-width box: the argument is painted but advances nothing, hanging left, right, or centred (\\llap/\\rlap/\\clap); needs mathtools",
+        true,
+    ),
+    (
         &["xrightarrow", "xleftarrow", "xleftrightarrow"],
         "[below]{above}",
         "amsmath/mathtools extensible arrow stretched to its labels (\\ext@arrow)",
