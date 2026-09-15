@@ -125,11 +125,18 @@ pub fn placement_bits(placement: Option<&str>, starred: bool) -> Result<u32, Str
 }
 
 /// Finds every `figure`/`table` environment in the body of `text`.
+///
+/// Markup that only *spells* a float is skipped: a `%` comment, and the
+/// body of `verbatim`, `lstlisting`, `minted`, `comment`, `\verb|...|` or
+/// `\lstinline` (`adapter::opaque_regions`). pdflatex never reads those
+/// bytes as `\begin{figure}`, and `mask` must not blank them.
 pub fn scan(text: &str, document: DocumentId) -> Vec<FloatEnv> {
-    let body_start = find_uncommented(text, "\\begin{document}", 0).map_or(0, |p| p + "\\begin{document}".len());
+    let regions = crate::adapter::opaque_regions(text);
+    let find_uncommented = |needle: &str, from: usize| find_markup(text, needle, from, &regions);
+    let body_start = find_uncommented("\\begin{document}", 0).map_or(0, |p| p + "\\begin{document}".len());
     let mut out = Vec::new();
     let mut at = body_start;
-    while let Some(pos) = find_uncommented(text, "\\begin{", at) {
+    while let Some(pos) = find_uncommented("\\begin{", at) {
         let name_start = pos + "\\begin{".len();
         let Some(close) = text[name_start..].find('}') else { break };
         let name = &text[name_start..name_start + close];
@@ -143,7 +150,7 @@ pub fn scan(text: &str, document: DocumentId) -> Vec<FloatEnv> {
         };
         let mut cursor = name_start + close + 1;
         let end_tag = format!("\\end{{{name}}}");
-        let Some(end) = find_uncommented(text, &end_tag, cursor) else { break };
+        let Some(end) = find_uncommented(&end_tag, cursor) else { break };
         let mut placement = None;
         let rest = &text[cursor..end];
         let lead = rest.len() - rest.trim_start().len();
@@ -154,7 +161,17 @@ pub fn scan(text: &str, document: DocumentId) -> Vec<FloatEnv> {
             }
         }
         let before = &text[body_start..pos];
-        let hmode = !before.trim().is_empty() && !preceded_by_blank_line(before);
+        // A float right after another float (only spaces and one newline
+        // between) is in the same mode: the `\end{figure}` before it is no
+        // paragraph end, unlike a display environment's.
+        let after_float = out.last().filter(|p: &&FloatEnv| {
+            let gap = &text[p.span.end..pos];
+            gap.trim().is_empty() && gap.matches('\n').count() < 2
+        });
+        let hmode = match after_float {
+            Some(prev) => prev.hmode,
+            None => !before.trim().is_empty() && !preceded_by_blank_line(before),
+        };
         let pieces = pieces(text, cursor, end, document);
         out.push(FloatEnv {
             kind,
@@ -181,21 +198,33 @@ fn ends_with_env_end(s: &str) -> bool {
 
 /// `needle` at or after `from`, skipping `%` comments.
 fn find_uncommented(text: &str, needle: &str, from: usize) -> Option<usize> {
+    find_markup(text, needle, from, &[])
+}
+
+/// `needle` at or after `from` that TeX reads as markup: not in a `%`
+/// comment and not inside any of the sorted, disjoint `opaque` byte ranges
+/// (whose own `%` characters start no comment).
+fn find_markup(text: &str, needle: &str, from: usize, opaque: &[(usize, usize)]) -> Option<usize> {
+    let region = |i: usize| opaque.get(opaque.partition_point(|r| r.1 <= i)).filter(|r| r.0 <= i);
+    let inside = |i: usize| region(i).is_some();
     let mut at = from;
     while let Some(rel) = text.get(at..)?.find(needle) {
         let pos = at + rel;
+        if let Some(&(_, end)) = region(pos) {
+            at = end;
+            continue;
+        }
         let line_start = text[..pos].rfind('\n').map_or(0, |i| i + 1);
-        if !is_commented(&text[line_start..pos]) {
+        let b = text.as_bytes();
+        let commented = (line_start..pos).any(|i| {
+            b[i] == b'%' && !inside(i) && b[line_start..i].iter().rev().take_while(|&&c| c == b'\\').count() % 2 == 0
+        });
+        if !commented {
             return Some(pos);
         }
         at = pos + needle.len();
     }
     None
-}
-
-fn is_commented(line_prefix: &str) -> bool {
-    let b = line_prefix.as_bytes();
-    (0..b.len()).any(|i| b[i] == b'%' && (i == 0 || b[i - 1] != b'\\'))
 }
 
 /// The inner byte range of the balanced `{...}` group starting at `open`.
@@ -396,11 +425,30 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
 
 /// `text` with every float environment replaced by spaces (byte length and
 /// every other byte offset preserved).
+///
+/// A float alone on its line(s) would leave a line of spaces, which TeX
+/// reads as a blank line (`\par`). The float itself is no paragraph end: in
+/// `First.\n<figure>\nSecond.` pdflatex keeps one paragraph (the newline
+/// before the float is the space, `\@esphack` ignores the one after). So
+/// such a span starts with `%` instead, which comments out the rest of its
+/// line exactly as the float's own bytes left no blank line behind.
 pub fn mask(text: &str, floats: &[FloatEnv]) -> String {
     let mut bytes = text.as_bytes().to_vec();
     for f in floats {
-        for b in &mut bytes[f.span.start..f.span.end] {
+        let (start, end) = (f.span.start, f.span.end);
+        for b in &mut bytes[start..end] {
             *b = b' ';
+        }
+        let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
+        let line_end = text[end..].find('\n').map_or(text.len(), |i| end + i);
+        let blank = |s: &[u8]| s.iter().all(|b| b.is_ascii_whitespace());
+        let rest = &bytes[end..line_end];
+        let rest_is_empty = blank(rest) || rest.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'%');
+        // float.sty's `[H]` is no float: `\float@endH` ends the paragraph
+        // with `\par`, so its blank line stays.
+        let here_box = !f.starred && f.placement.as_deref() == Some("H");
+        if start < end && !here_box && blank(&bytes[line_start..start]) && rest_is_empty {
+            bytes[start] = b'%';
         }
     }
     String::from_utf8(bytes).expect("ASCII spaces keep UTF-8 valid")
@@ -947,5 +995,72 @@ mod tests {
     fn a_float_inside_a_paragraph_is_horizontal_mode() {
         let src = "Some text\n\\begin{figure}\\caption{x}\\end{figure} more.";
         assert!(scan(src, DocumentId(0))[0].hmode);
+    }
+
+    #[test]
+    fn a_float_on_its_own_lines_is_masked_without_a_blank_line() {
+        let fig = "\\begin{figure}[h]\n\\caption{x}\n\\end{figure}";
+        let masked = |src: &str| mask(src, &scan(src, DocumentId(0)));
+        // Inside a paragraph: a comment line, not a line of spaces.
+        let src = format!("\\begin{{document}}\nFirst.\n  {fig}  \nSecond.\n");
+        let m = masked(&src);
+        assert_eq!(m.len(), src.len());
+        assert_eq!(m, format!("\\begin{{document}}\nFirst.\n  %{}  \nSecond.\n", " ".repeat(fig.len() - 1)));
+        // Text before or after on the same line keeps the line non-blank,
+        // so nothing may be commented out.
+        for src in [format!("\\begin{{document}}\nFirst. {fig}\nSecond.\n"), format!("\\begin{{document}}\nFirst.\n{fig} Second.\n")] {
+            let m = masked(&src);
+            assert!(!m.contains('%') && m.contains("Second.") && m.contains("First."), "{m:?}");
+        }
+        // Blank lines around the float are the document's own: still there.
+        let src = format!("\\begin{{document}}\nFirst.\n\n{fig}\n\nSecond.\n");
+        assert!(masked(&src).contains("First.\n\n%"));
+        // float.sty's `[H]` ends the paragraph in pdflatex: no `%`.
+        let src = format!("\\begin{{document}}\nFirst.\n{}\nSecond.\n", fig.replace("[h]", "[H]"));
+        assert!(!masked(&src).contains('%'));
+        // Two floats in a row inside a paragraph are both horizontal mode;
+        // after a blank line, both vertical.
+        let two = scan(&format!("\\begin{{document}}\nFirst.\n{fig}\n{fig}\nSecond.\n"), DocumentId(0));
+        assert!(two[0].hmode && two[1].hmode);
+        let two = scan(&format!("\\begin{{document}}\nFirst.\n\n{fig}\n{fig}\nSecond.\n"), DocumentId(0));
+        assert!(!two[0].hmode && !two[1].hmode);
+        // `wrapfigure` is not a float here: its bytes reach the compiler.
+        let src = "\\begin{document}\nFirst.\n\\begin{wrapfigure}{r}{1in}\nx\n\\end{wrapfigure}\nSecond.\n";
+        assert!(scan(src, DocumentId(0)).is_empty());
+    }
+
+    #[test]
+    fn markup_that_only_spells_a_float_is_not_one() {
+        let fig = "\\begin{figure}[h]\n\\caption{x}\n\\end{figure}";
+        let lookalikes = [
+            format!("\\begin{{verbatim}}\n{fig}\n\\end{{verbatim}}"),
+            format!("\\begin{{verbatim*}}\n{fig}\n\\end{{verbatim*}}"),
+            format!("\\begin{{lstlisting}}[language=TeX]\n{fig}\n\\end{{lstlisting}}"),
+            format!("\\begin{{minted}}{{latex}}\n{fig}\n\\end{{minted}}"),
+            format!("\\begin{{comment}}\n{fig}\n\\end{{comment}}"),
+            "Write \\verb|\\begin{figure}| and \\verb+\\end{figure}+.".to_string(),
+            "Write \\lstinline!\\begin{figure}\\end{figure}! here.".to_string(),
+            "% \\begin{figure}\\caption{x}\\end{figure}".to_string(),
+            "Text. % \\begin{figure}\n% \\end{figure}".to_string(),
+        ];
+        for body in lookalikes {
+            let src = format!("\\begin{{document}}\nFirst.\n{body}\nSecond.\n");
+            assert!(scan(&src, DocumentId(0)).is_empty(), "{src:?}");
+        }
+        // A real float right after a verbatim block that holds a lookalike:
+        // found once, vertical mode (after `\end{verbatim}`), and the
+        // verbatim bytes survive `mask` untouched.
+        let verbatim = format!("\\begin{{verbatim}}\n{fig}\n\\end{{verbatim}}");
+        let src = format!("\\begin{{document}}\nFirst.\n{verbatim}\n{fig}\nSecond.\n");
+        let found = scan(&src, DocumentId(0));
+        assert_eq!(found.len(), 1);
+        let real = src.rfind("\\begin{figure}").unwrap();
+        assert_eq!((found[0].span.start, found[0].hmode), (real, false));
+        assert!(mask(&src, &found).contains(&verbatim));
+        // A `%` inside `\verb` starts no comment, and `\\%` is a comment.
+        let src = format!("\\begin{{document}}\nFirst \\verb|%| {fig}\nSecond.\n");
+        assert_eq!(scan(&src, DocumentId(0)).len(), 1);
+        let src = format!("\\begin{{document}}\nFirst \\\\% {fig}\nSecond.\n");
+        assert!(scan(&src, DocumentId(0)).is_empty());
     }
 }
