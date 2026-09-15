@@ -9946,6 +9946,46 @@ mod tests {
         assert_eq!(&source[span.start..span.end], "[caption={[Short]A long caption},nolol]");
     }
 
+    /// An escaped `\{` inside braced options is a control symbol, not a
+    /// group: it does not raise the brace depth, so the options still close
+    /// at the real `]`. pdflatex compiles this cleanly (caption "Open { only").
+    #[test]
+    fn lstlisting_options_skip_an_escaped_brace() {
+        let source = "\\begin{lstlisting}[caption={Open \\{ only}]\nx = 1\n\\end{lstlisting}\nAfter.";
+        let parsed = parse(source);
+        let Block::Verbatim { lines, .. } = &parsed.blocks[0] else {
+            panic!("expected a Block::Verbatim, got {:?}", parsed.blocks[0]);
+        };
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, ["x = 1"]);
+        let options = parsed.diagnostics.iter().find(|d| d.message.contains("lstlisting options")).expect("options diagnosed");
+        let span = options.span.expect("options span");
+        assert_eq!(&source[span.start..span.end], "[caption={Open \\{ only}]");
+        assert!(!parsed.diagnostics.iter().any(|d| d.message.contains("closing ']'") || d.message.contains("unterminated")), "{:?}", parsed.diagnostics);
+    }
+
+    /// `\]` outside braces is the display-math close control symbol, never a
+    /// literal bracket, so it does not end the options. pdflatex stops with
+    /// the fatal `LaTeX Error: Bad math environment delimiter` here (the
+    /// caption is typeset in text mode); the compiler does not model that
+    /// error, but it must not cascade: one options diagnostic, the listing
+    /// body intact, and the paragraph after it kept.
+    #[test]
+    fn lstlisting_options_skip_an_escaped_close_bracket() {
+        let source = "\\begin{lstlisting}[caption=Has a \\] mark]\nx = 1\n\\end{lstlisting}\nAfter.";
+        let parsed = parse(source);
+        let Block::Verbatim { lines, .. } = &parsed.blocks[0] else {
+            panic!("expected a Block::Verbatim, got {:?}", parsed.blocks[0]);
+        };
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, ["x = 1"]);
+        assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
+        let span = parsed.diagnostics[0].span.expect("options span");
+        assert!(parsed.diagnostics[0].message.contains("lstlisting options"));
+        assert_eq!(&source[span.start..span.end], "[caption=Has a \\] mark]");
+        assert_eq!(parsed.blocks.len(), 2, "{:?}", parsed.blocks);
+    }
+
     #[test]
     fn lstlisting_without_options_has_no_diagnostic() {
         let source = "\\begin{lstlisting}\nplain\n\\end{lstlisting}";

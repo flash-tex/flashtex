@@ -379,7 +379,9 @@ fn after_bracket_option(text: &str, from: usize) -> usize {
         return from;
     }
     // A `]` inside braces does not close the option
-    // (`[caption={[short]long}]`).
+    // (`[caption={[short]long}]`). A backslash takes the next byte with it,
+    // as TeX reads a control symbol: `\]` is display-math close, not a
+    // bracket, and `\{`/`\}` do not change the brace depth.
     let mut depth = 0usize;
     let mut k = j + 1;
     while k < bytes.len() {
@@ -1529,4 +1531,37 @@ fn include(
     }
     let id = engine.push_input(prepared[index].text.as_ref());
     conv.source_documents.insert(id, Some(index));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::after_bracket_option;
+
+    /// The byte index just past the options that `after_bracket_option`
+    /// finds in `text` (whose `[` follows `\begin{lstlisting}` at index 0).
+    fn options_of(text: &str) -> &str {
+        &text[..after_bracket_option(text, 0)]
+    }
+
+    #[test]
+    fn bracket_option_ends_at_the_first_unbraced_bracket() {
+        assert_eq!(options_of("[language=C]\nx]"), "[language=C]");
+        assert_eq!(options_of("[caption={[Short]Long}]\nx]"), "[caption={[Short]Long}]");
+    }
+
+    /// A backslash takes the next byte with it: `\]` does not close the
+    /// options, and `\{` / `\}` do not change the brace depth.
+    #[test]
+    fn bracket_option_skips_escaped_bytes() {
+        assert_eq!(options_of("[caption=Has a \\] mark]\nx]"), "[caption=Has a \\] mark]");
+        assert_eq!(options_of("[caption={Open \\{ only}]\nx]"), "[caption={Open \\{ only}]");
+        assert_eq!(options_of("[caption=Close \\} only]\nx]"), "[caption=Close \\} only]");
+        assert_eq!(options_of("[caption=Two \\\\]\nx]"), "[caption=Two \\\\]");
+    }
+
+    #[test]
+    fn bracket_option_without_a_close_leaves_the_body_start() {
+        assert_eq!(after_bracket_option("[caption={open]", 0), 0);
+        assert_eq!(after_bracket_option("\n\n[language=C]", 0), 0);
+    }
 }
