@@ -591,6 +591,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["Diamond"],
+        "",
+        "open diamond at lasy10's 0.7917em advance (U+25C7, not \\square's width)",
+        true,
+    ),
+    (
         &["iff", "implies", "impliedby"],
         "",
         "long double arrow between thick (5mu) spaces",

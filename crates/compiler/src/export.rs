@@ -280,6 +280,12 @@ mod tests {
                     // The only decided non-base-14 outcome: a glyph bound to
                     // the pinned Latin Modern Math resource, which is embedded.
                     Glyph::LatinModernMath => {}
+                    // The same decided outcome the amssymb loop below grants
+                    // symbols drawn from New Computer Modern Math (bundled by
+                    // the Mac producer, not embedded by the base-14 writer):
+                    // currently only `\Diamond`'s U+25C7 (issue #591), which
+                    // Latin Modern Math does not carry.
+                    Glyph::Unrepresentable { .. } if crate::newcm_math::advance(c).is_some() => {}
                     Glyph::Unrepresentable { reason } => {
                         panic!("\\{command} renders {c:?} which cannot be exported: {reason}");
                     }

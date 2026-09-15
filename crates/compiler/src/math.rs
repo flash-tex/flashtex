@@ -1736,6 +1736,22 @@ impl MathParser<'_> {
                     span,
                 )
             },
+            // `\Diamond` (issue #591) needs the same treatment as that arm:
+            // the glyph has no advance in the pinned Latin Modern Math
+            // resource (`tools/kernel-math-gap/fontprobe.py`: U+25C7 is
+            // absent there), so the atom forces the real lasy advance
+            // (`DIAMOND_LASY_EM`) while the ink comes from the one bundled
+            // face carrying U+25C7 (`crate::newcm_math`) — the TFM-width
+            // plus bundled-ink split the amssymb table already uses.
+            "Diamond" => MathAtom {
+                width_em: Some(DIAMOND_LASY_EM),
+                ..symbol(
+                    command_glyph(&name)
+                        .expect("\\Diamond has a kernel glyph row")
+                        .into(),
+                    span,
+                )
+            },
             // amsfonts `\dashrightarrow` = `\mathrel{\dabar@\dabar@\mathchar"0\hexnumber@
             // \symAMSa 4B}` (`\dasharrow` its alias) and `\dashleftarrow` with the
             // "4C head first (`amsfonts.sty` 87-95).
@@ -2721,6 +2737,17 @@ pub(crate) const KERNEL_ANGLE_EM: f64 = 0.637344;
 /// "7E, 0.540280em.
 pub(crate) const KERNEL_HBAR_EM: f64 = 0.576172;
 
+/// `\Diamond`'s advance in ems: latexsym's `\mathord` at lasy10 "33.
+/// `tools/kernel-math-gap` measured `\showthe\wd` of `$\Diamond$` as 7.91673pt
+/// at 10pt against the 9.57755pt `$ab$` control (see its README latexsym
+/// table and `fontprobe.py`'s `WANTED` row). With `amssymb`/`amsfonts` loaded
+/// (and `latexsym` not), `amsfonts.sty` 153 `\let`s `\Diamond` to `\lozenge`
+/// (AMSa "06, 0.666669em) instead; this compiler sets the lasy design
+/// unconditionally — the same standing choice #516 made for `\Box` — and
+/// reports the residual rather than hiding it. Deliberately not `\square`'s
+/// 0.777781em: the open diamond is a different, wider glyph.
+pub(crate) const DIAMOND_LASY_EM: f64 = 0.791673;
+
 /// The Unicode mathematical alphanumeric symbol that stands for `ch` in the
 /// math alphabet of `command`: `\mathsf` sans-serif (U+1D5A0, digits
 /// U+1D7E2), `\mathtt` monospace (U+1D670, digits U+1D7F6), `\mathit`
@@ -3115,6 +3142,16 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("square", "□"),
     ("blacksquare", "■"),
     ("lozenge", "◊"),
+    // `\diamond` and `\Diamond` are two genuinely distinct glyphs (issue
+    // #591), not synonyms the way `\Box`/`\square` are (#516): `\diamond` is
+    // the kernel cmsy `\mathbin` (U+22C4 ⋄, a small operator diamond) and
+    // `\Diamond` latexsym's `\mathord` (lasy "33, U+25C7 ◇, the larger open
+    // diamond). Their advances are their own real ones — U+22C4's pinned
+    // Latin Modern Math advance (`crate::lm_math`) and lasy's 7.91673pt
+    // @10pt (`DIAMOND_LASY_EM`) — never `\square`'s width. `\Diamond` stays
+    // `Ord` by `symbol_class`'s default, matching latexsym's `\mathord`.
+    ("diamond", "⋄"),
+    ("Diamond", "◇"),
     ("checkmark", "✓"),
     // HW2 follow-up (issue #62): the remaining long arrows, drawn from the
     // pinned Latin Modern Math resource like `\Longrightarrow` above.
@@ -3295,6 +3332,10 @@ fn symbol_class(glyph: &str) -> AtomClass {
         | "⊗" | "⊖" | "⊘" | "⊙" | "◯" | "∖" | "∓" | "∘"
         // fontmath.ltx 278-279: `\sqcap`/`\sqcup`, `\mathbin` at cmsy "75/"74.
         | "⊓" | "⊔"
+        // Issue #591: `\diamond` is the kernel cmsy `\mathbin` (U+22C4),
+        // so it takes medium space like `\bigcirc` above — not `Ord` like
+        // the look-alike `\Diamond` (U+25C7, latexsym `\mathord`).
+        | "⋄"
         // `\bigtriangledown`; `\bigtriangleup` shares `\triangle`'s glyph
         // (Ord by default here) and overrides its class to Bin instead.
         | "▽" => Bin,
@@ -5664,6 +5705,53 @@ mod spacing_tests {
             close(x(&b, glyph), width("a", SIZE) + 4.0);
             close(x(&b, "b"), x(&b, glyph) + width(glyph, SIZE) + 4.0);
         }
+    }
+
+    /// Issue #591 (`\diamond`/`\Diamond`, follow-up to #516's `\Box`): the
+    /// two are genuinely distinct glyphs, not synonyms — `\diamond` is the
+    /// kernel cmsy `\mathbin` (U+22C4 ⋄) and `\Diamond` latexsym's `\mathord`
+    /// (lasy "33, U+25C7 ◇). Both render with no diagnostics under the
+    /// kernel package set, each at its own real advance (U+22C4's pinned
+    /// Latin Modern Math 0.5em, lasy's 0.791673em) rather than `\square`'s;
+    /// and `\diamond` is a known command, so it is never misreported as an
+    /// unknown command with `\Diamond` as the typo fix.
+    #[test]
+    fn diamond_and_capital_diamond_are_distinct_diamonds() {
+        assert_eq!(command_glyph("diamond"), Some("⋄"));
+        assert_eq!(command_glyph("Diamond"), Some("◇"));
+        assert_eq!(command_glyph("square"), Some("□"));
+        assert!(crate::vocabulary::math_mode_help("diamond").is_none());
+        assert!(crate::vocabulary::math_mode_help("Diamond").is_none());
+        assert!(crate::vocabulary::closest_commands("diamond").is_empty());
+        assert!(crate::vocabulary::closest_commands("Diamond").is_empty());
+
+        let small = laid_out(r"\diamond", SIZE);
+        let big = laid_out(r"\Diamond", SIZE);
+        assert_eq!(small.items.len(), 1, "{:?}", small.items);
+        assert_eq!(big.items.len(), 1, "{:?}", big.items);
+        assert_eq!(small.items[0].text, "⋄");
+        assert_eq!(big.items[0].text, "◇");
+        close(small.width, 0.5 * SIZE);
+        close(big.width, DIAMOND_LASY_EM * SIZE);
+        // Metrically distinct from each other and from `\square` (msam
+        // 0.777781em under `amssymb`): three different real advances.
+        let square = laid_out_with(r"\square", SIZE, AMSSYMB);
+        assert_eq!(square.items[0].text, "□");
+        for (a, b) in [
+            (small.width, big.width),
+            (small.width, square.width),
+            (big.width, square.width),
+        ] {
+            assert!((a - b).abs() > 0.1, "{a} vs {b}");
+        }
+        // Class: `\diamond` takes Bin spacing like `\bigcirc`, `\Diamond`
+        // is Ord like `\square` — medium space versus none.
+        let b = laid_out(r"a\diamond b", SIZE);
+        close(x(&b, "⋄"), width("a", SIZE) + 4.0);
+        close(x(&b, "b"), x(&b, "⋄") + small.width + 4.0);
+        let b = laid_out(r"a\Diamond b", SIZE);
+        close(x(&b, "◇"), width("a", SIZE));
+        close(x(&b, "b"), x(&b, "◇") + big.width);
     }
 
     #[test]

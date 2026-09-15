@@ -115,7 +115,13 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{25A1}', 778),  // \square
     ('\u{25A0}', 778),  // \blacksquare
     ('\u{25CA}', 572),  // \lozenge
-    ('\u{2713}', 833),  // \checkmark
+    // `\diamond` (issue #591): the kernel cmsy `\mathbin` (U+22C4), a
+    // different glyph from `\Diamond` (U+25C7, which this program does not
+    // carry — see `DIAMOND_LASY_EM` in `crate::math`). Advance read from
+    // this font program like the rest of the table, not copied from
+    // `\square`: the small operator diamond is much narrower than the box.
+    ('\u{22C4}', 500), // \diamond
+    ('\u{2713}', 833), // \checkmark
     // HW2 coverage (issue #62 follow-up): long arrows, \triangle family, \bot,
     // and the amsthm QED mark, all drawn from the same pinned resource.
     ('\u{27FA}', 1534), // \Longleftrightarrow, and \iff (\;\Longleftrightarrow\;)
@@ -201,7 +207,8 @@ mod tests {
         assert_eq!(double_struck('A'), Some('\u{1D538}'));
         assert_eq!(double_struck('a'), None);
         assert_eq!(double_struck('1'), None);
-        assert_eq!(ADVANCES.len(), 84);
+        // Total entry count, bumped for `\diamond`'s U+22C4 (issue #591).
+        assert_eq!(ADVANCES.len(), 85);
     }
 
     #[test]

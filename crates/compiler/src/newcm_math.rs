@@ -1,4 +1,6 @@
-//! `\mathcal` capitals drawn from New Computer Modern Math, not the base-14 fonts.
+//! `\mathcal` capitals drawn from New Computer Modern Math, not the base-14 fonts,
+//! plus `\Diamond`'s U+25C7 (issue #591): Latin Modern Math has no such glyph,
+//! so this is the only bundled face that carries it.
 //!
 //! The Mac app bundles `apps/mac/Fonts/NewCMMath-Regular.otf` (New Computer
 //! Modern Math 7.1.1, copied byte-for-byte from TeX Live / MacTeX 2026 and
@@ -54,6 +56,14 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{1D4B3}', 870),  // \mathcal{X}
     ('\u{1D4B4}', 628),  // \mathcal{Y}
     ('\u{1D4B5}', 726),  // \mathcal{Z}
+    // `\Diamond` (issue #591): latexsym's `\mathord` (lasy "33, U+25C7), a
+    // different glyph from the kernel `\diamond` (U+22C4). Latin Modern Math
+    // carries no U+25C7 (`tools/kernel-math-gap/fontprobe.py`), so this is
+    // the only bundled face that can draw it; the advance here is this
+    // program's own (1025/1000 em), while `\Diamond` atoms lay out at the
+    // real lasy advance (`crate::math::DIAMOND_LASY_EM`) — the same
+    // TFM-width plus bundled-ink split the amssymb table uses.
+    ('\u{25C7}', 1025), // \Diamond
 ];
 
 /// The script code point for `\mathcal{letter}`: the Mathematical
@@ -122,7 +132,9 @@ mod tests {
         assert_eq!(script('P'), Some('\u{1D4AB}'));
         assert_eq!(script('B'), Some('ℬ'));
         assert_eq!(script('p'), None);
-        assert_eq!(ADVANCES.len(), 26);
+        // 26 script capitals plus `\Diamond`'s U+25C7 (issue #591), the one
+        // non-`\mathcal` entry: the only bundled face carrying that glyph.
+        assert_eq!(ADVANCES.len(), 27);
     }
 
     #[test]
