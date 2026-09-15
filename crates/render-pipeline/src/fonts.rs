@@ -509,6 +509,47 @@ pub fn ec_tfm_file(role: Role, size_pt: f64) -> Option<String> {
     Some(format!("{prefix}{suffix}.tfm"))
 }
 
+/// `CHARWD` of `tcrm<size>.tfm` (the TS1 `cmr` `m/n` font `ts1cmr.fd`
+/// loads, at the same declared sizes as [`EC_SIZES`]) for the TS1 symbols
+/// the default itemize labels use, in design-size units: `(\textbullet` and
+/// `\textasteriskcentered` (the same width), `\textperiodcentered)`. These
+/// are the `cmsy` designs: 0.5em and 0.2777em at 10 pt. Transcribed with
+/// `tftopl` from TeX Live 2026, because the bundled texmf ships no `tcrm`.
+const TCRM_SYMBOL_WIDTHS: [(f64, f64); 14] = [
+    (0.680389, 0.402679),
+    (0.610962, 0.351766),
+    (0.569305, 0.323334),
+    (0.53112, 0.295067),
+    (0.513763, 0.285424),
+    (0.499878, 0.27771),
+    (0.497164, 0.276356),
+    (0.489464, 0.271924),
+    (0.475939, 0.264197),
+    (0.469761, 0.260836),
+    (0.462573, 0.256799),
+    (0.456601, 0.253447),
+    (0.451612, 0.250645),
+    (0.447456, 0.248311),
+];
+
+/// The width in points at `size_pt` of a TS1 symbol set from `tcrm` (LaTeX's
+/// `\textbullet` `•`, `\textasteriskcentered` `∗` and `\textperiodcentered`
+/// `·` without `lmodern`), from the declared size nearest `size_pt`. `None`
+/// for any other character.
+pub fn tcrm_symbol_width(ch: char, size_pt: f64) -> Option<f64> {
+    let index = EC_SIZES
+        .iter()
+        .enumerate()
+        .min_by(|a, b| (a.1 .0 - size_pt).abs().total_cmp(&(b.1 .0 - size_pt).abs()))?
+        .0;
+    let (bullet, period) = TCRM_SYMBOL_WIDTHS[index];
+    match ch {
+        '•' | '∗' => Some(bullet * size_pt),
+        '·' | '⋅' => Some(period * size_pt),
+        _ => None,
+    }
+}
+
 /// Glyph extents in font units: `[x_min, y_min, x_max, y_max]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Bounds {
