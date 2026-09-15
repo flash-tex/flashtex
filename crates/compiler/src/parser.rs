@@ -35,6 +35,18 @@ pub use lists::{
 
 /// Maximum number of active nested `\input`/`\include` calls.
 pub const INCLUDE_DEPTH_LIMIT: usize = 64;
+/// How deeply the parser may re-enter itself on a nested token stream (a
+/// table cell, box, footnote or color argument inside another). Past it the
+/// inner content is skipped with a FlashTeX nesting-limit error instead of
+/// overflowing the stack. This is an implementation limit, not a TeX
+/// capacity: TeX allows 255 grouping levels, but a nested tabular costs
+/// ~7 KiB of stack a level in release and ~50 KiB in debug. Nesting 255
+/// tabulars, footnotes or rotateboxes overflowed a 512 KiB release thread
+/// (the default for a secondary thread on macOS) and a 2 MiB debug thread.
+/// Like [`crate::math::MAX_MATH_DEPTH`], the limit sits below both.
+/// `\include` nesting has its own limit ([`INCLUDE_DEPTH_LIMIT`]) and is not
+/// counted.
+pub const STREAM_DEPTH_LIMIT: usize = 32;
 
 /// Per-request inputs that are neither document text nor the entry path.
 ///
@@ -1703,6 +1715,7 @@ pub fn parse_project_with(
         undo: Vec::new(),
         i: 0,
         diags: Vec::new(),
+        reported_commands: HashMap::new(),
         brace_stack: Vec::new(),
         env_stack: Vec::new(),
         arraystretch: expanded.arraystretch,
@@ -1727,6 +1740,9 @@ pub fn parse_project_with(
             .map(|(index, document)| (document.path, index))
             .collect(),
         include_stack: vec![entry],
+        stream_depth: 0,
+        dropped_list_frames: 0,
+        stream_depth_reported: false,
         counters: crate::xref::Counters::article(),
         subequations: Vec::new(),
         table_rule_color: None,
@@ -1811,7 +1827,7 @@ pub fn parse_project_with(
     }
     Parsed {
         blocks,
-        diagnostics: p.diags,
+        diagnostics: crate::diagnostics::limit_repeats(p.diags),
         document_class: p.document_class,
         class_size_pt: p.class_size_pt,
         parskip_pt: p.parskip_pt,
@@ -1840,6 +1856,11 @@ fn gap_is_blank(documents: &[SourceDocument<'_>], a: Span, b: Span) -> bool {
 }
 
 struct P<'a> {
+    /// Nesting of [`P::parse_stream`] (see [`STREAM_DEPTH_LIMIT`]).
+    stream_depth: usize,
+    /// List levels past LaTeX's `\@toodeep` limit, not kept in `list_frames`.
+    dropped_list_frames: usize,
+    stream_depth_reported: bool,
     /// The expanded stream. Edits go through [`P::token_mut`]: when the
     /// expansion cache holds the stream, it is lent to the parser (no copy)
     /// and every edit is undone before it goes back.
@@ -1851,6 +1872,8 @@ struct P<'a> {
     undo: Vec<(usize, InputToken)>,
     i: usize,
     diags: Vec<Diagnostic>,
+    /// Commands `unsupported`/`unsupported_preamble` reported, by span.
+    reported_commands: HashMap<(Span, bool), Vec<String>>,
     brace_stack: Vec<Span>,
     env_stack: Vec<(String, Span)>,
     /// `Parsed::parameters`, in document order.
@@ -2129,6 +2152,25 @@ impl P<'_> {
     }
 
     fn parse_stream(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        if self.stream_depth >= STREAM_DEPTH_LIMIT {
+            if !self.stream_depth_reported {
+                self.stream_depth_reported = true;
+                let span = self.t.get(self.i).or_else(|| self.t.last()).map(|input| input.token.span);
+                self.diags.push(Diagnostic::error(
+                    format!("FlashTeX nesting limit ({STREAM_DEPTH_LIMIT}) exceeded"),
+                    span,
+                    Some("skipped the content nested past the limit".into()),
+                ));
+            }
+            self.i = self.t.len();
+            return;
+        }
+        self.stream_depth += 1;
+        self.parse_stream_body(blocks, para);
+        self.stream_depth -= 1;
+    }
+
+    fn parse_stream_body(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         while self.i < self.t.len() {
             let input = self.t[self.i].clone();
             let tok = input.token;
@@ -3453,7 +3495,7 @@ impl P<'_> {
         );
         let saved_index = std::mem::replace(&mut self.i, 0);
         self.include_stack.push(document_index);
-        self.parse_stream(blocks, para);
+        self.parse_stream_body(blocks, para);
         self.include_stack.pop();
         self.t = saved_tokens;
         self.i = saved_index;
@@ -5018,7 +5060,9 @@ impl P<'_> {
             self.document_ended = true;
         }
         if let Some(kind) = ListEnvironment::from_name(&environment) {
-            if self
+            if self.dropped_list_frames > 0 {
+                self.dropped_list_frames -= 1;
+            } else if self
                 .list_frames
                 .last()
                 .is_some_and(|frame| frame.environment == kind)
@@ -5465,7 +5509,7 @@ impl P<'_> {
             display: true,
             number: numbered.then_some(number.clone()),
             number_span: numbered.then_some(open),
-            span: Span::in_document(open.document, open.start, end),
+            span: self.span_through(open, end),
             // Always its own line (see `layout::LayoutCursor::display_math`),
             // so whether real source whitespace preceded it is moot.
             space_before: true,
@@ -5537,7 +5581,9 @@ impl P<'_> {
             if depth == 0 {
                 if let Some((after, end_span)) = environment_end_at(&self.t, self.i, name) {
                     self.i = after;
-                    end = end_span.end;
+                    if end_span.document == open.document {
+                        end = end_span.end.max(open.end);
+                    }
                     found_end = true;
                     break;
                 }
@@ -5686,6 +5732,9 @@ impl P<'_> {
                 .iter()
                 .flatten()
                 .map(|t| t.span)
+                // An `\input` inside the display brings tokens from another
+                // document; a row's span stays in the environment's own.
+                .filter(|span| span.document == open.document)
                 .reduce(Span::merge)
                 .unwrap_or(open);
             let number = (numbered && !unnumbered).then(|| {
@@ -5734,7 +5783,7 @@ impl P<'_> {
         para.push(Inline::MathRows {
             rows: math_rows,
             aligned,
-            span: Span::in_document(open.document, open.start, end),
+            span: self.span_through(open, end),
         });
         para.extend(labels);
         self.flush_paragraph(blocks, para);
@@ -5900,11 +5949,17 @@ impl P<'_> {
             &mut self.diags,
             !found,
         );
+        // The span covers the opener through the close (or the last content
+        // token). Expanded content can carry spans from before the opener or
+        // from another document; the span never inverts or crosses documents.
         let end = if found {
             close_end
         } else {
-            raw.last().map_or(open.end, |t| t.span.end)
-        };
+            raw.last()
+                .filter(|t| t.span.document == open.document)
+                .map_or(open.end, |t| t.span.end)
+        }
+        .max(open.end);
         match (found, unclosed) {
             (true, Some(group)) => self.diags.push(Diagnostic::error(
                 "math group is missing its closing brace",
@@ -5955,9 +6010,21 @@ impl P<'_> {
             display,
             number: None,
             number_span: None,
-            span: Span::in_document(open.document, open.start, end),
+            span: self.span_through(open, end),
             space_before,
         });
+    }
+
+    /// `open` through byte `end`. Expanded tokens (a macro body,
+    /// `\AtBeginDocument` content replayed after `\begin{document}`, an
+    /// `\input` file) carry offsets from elsewhere: before the opener, or in
+    /// another document. The span never inverts or runs past its document.
+    fn span_through(&self, open: Span, end: usize) -> Span {
+        let len = self
+            .documents
+            .get(open.document.0)
+            .map_or(usize::MAX, |document| document.text.len());
+        Span::in_document(open.document, open.start, end.min(len).max(open.end))
     }
 
     /// A non-`\long` argument: like TeX, it cannot run past the end of the
@@ -6010,7 +6077,7 @@ impl P<'_> {
                         end = token.span.end;
                         let content = self.t[start..self.i].to_vec();
                         self.i += 1;
-                        return (content, Span::in_document(open.document, open.start, end));
+                        return (content, self.span_through(open, end));
                     }
                 }
                 _ => {}
@@ -6034,7 +6101,7 @@ impl P<'_> {
         .with_help("add a closing '}'"));
         (
             self.t[start..stop].to_vec(),
-            Span::in_document(open.document, open.start, end),
+            self.span_through(open, end),
         )
     }
 
@@ -7670,7 +7737,7 @@ impl P<'_> {
                         }
                         self.i = index;
                     }
-                    return Some((tokens, Span::in_document(open.document, open.start, end)));
+                    return Some((tokens, self.span_through(open, end)));
                 }
                 _ => {}
             }
@@ -7813,13 +7880,41 @@ impl P<'_> {
         }
     }
 
-    fn push_list_frame(&mut self, environment: ListEnvironment, options: Vec<ListOption>, begin_span: Span) {
-        let kind_depth = self
+    /// The 1-based depth a new `environment` frame would have: among frames
+    /// of its own kind, and among all list frames. Saturates at `u8::MAX`
+    /// (LaTeX's `\@toodeep` fires long before; see [`Self::push_list_frame`]).
+    fn next_list_depths(&self, environment: ListEnvironment) -> (u8, u8) {
+        let depth = |n: usize| u8::try_from(n.saturating_add(1)).unwrap_or(u8::MAX);
+        let kind = self
             .list_frames
             .iter()
             .filter(|frame| frame.environment == environment)
-            .count() as u8
-            + 1;
+            .count();
+        (depth(kind), depth(self.list_frames.len()))
+    }
+
+    fn push_list_frame(&mut self, environment: ListEnvironment, options: Vec<ListOption>, begin_span: Span) {
+        let (kind_depth, list_depth) = self.next_list_depths(environment);
+        // latex.ltx `\list`: `\ifnum \@listdepth >5 \@toodeep`; `itemize` and
+        // `enumerate` check their own depth `>\thr@@` first. The list is still
+        // typeset here, at the deepest defined level.
+        let kind_limited = matches!(environment, ListEnvironment::Itemize | ListEnvironment::Enumerate);
+        let too_deep = list_depth > 6 || (kind_limited && kind_depth > 4);
+        if too_deep {
+            self.diags.push(Diagnostic::error(
+                "LaTeX Error: Too deeply nested.",
+                Some(begin_span),
+                Some("typeset the list at the deepest supported nesting level".into()),
+            ));
+        }
+        // Every block copies the enclosing frames, so frames past the limit
+        // are counted, not stored: 30k nested lists held 25 GB. Once one
+        // level is dropped, the levels inside it are too, so the `\end`s
+        // pop the dropped levels first.
+        if too_deep || self.dropped_list_frames > 0 {
+            self.dropped_list_frames += 1;
+            return;
+        }
         self.list_frames.push(ListFrame {
             environment,
             kind_depth,
@@ -7836,13 +7931,7 @@ impl P<'_> {
             return;
         };
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-        let kind_depth = self
-            .list_frames
-            .iter()
-            .filter(|frame| frame.environment == kind)
-            .count() as u8
-            + 1;
-        let list_depth = self.list_frames.len() as u8 + 1;
+        let (kind_depth, list_depth) = self.next_list_depths(kind);
         let mut effective: Vec<ListOption> = self
             .setlists
             .iter()
@@ -7855,7 +7944,7 @@ impl P<'_> {
             .unwrap_or_default();
         let start_of = |options: &[ListOption]| {
             options.iter().rev().find_map(|option| match option {
-                ListOption::Start(n) => Some(n - 1),
+                ListOption::Start(n) => Some(n.saturating_sub(1)),
                 _ => None,
             })
         };
@@ -8022,6 +8111,9 @@ impl P<'_> {
     }
 
     fn unsupported_preamble(&mut self, name: &str, span: Span) {
+        if !self.first_command_report(span, name, true) {
+            return;
+        }
         self.diags.push(Diagnostic::command_error(
             name,
             format!("\\{} is not supported in the document preamble", name),
@@ -8070,6 +8162,9 @@ impl P<'_> {
     fn unsupported(&mut self, name: &str, span: Span) {
         debug_assert!(!BUILT_INS.contains(&name));
         let skipped = self.skip_recoverable_argument(name);
+        if !self.first_command_report(span, name, false) {
+            return;
+        }
         self.diags.push(Diagnostic::command_error(
             name,
             // A text-mode command: math has its own reader and diagnostics,
@@ -8084,6 +8179,20 @@ impl P<'_> {
         )
         .with_optional_help(vocabulary::command_help(name))
         .with_label(span, "this command", true));
+    }
+
+    /// False when `\name` was already reported at `span` (in the preamble or
+    /// not, as `preamble` says). A macro that loops re-emits the same
+    /// command at its invocation span on every iteration; the repeat would
+    /// be dropped by `diagnostics::limit_repeats` anyway, so it is not built
+    /// (1.4 million of them took seconds and gigabytes).
+    fn first_command_report(&mut self, span: Span, name: &str, preamble: bool) -> bool {
+        let names = self.reported_commands.entry((span, preamble)).or_default();
+        if names.iter().any(|reported| reported == name) {
+            return false;
+        }
+        names.push(name.to_string());
+        true
     }
 
     /// Commands this compiler recognises by name as taking a fixed count of
@@ -9391,6 +9500,47 @@ mod tests {
     }
 
     #[test]
+    fn pagebreak_inside_a_paragraph_ends_the_page_after_its_line_not_the_paragraph() {
+        for command in [r"\pagebreak", r"\pagebreak[4]"] {
+            let (parsed, laid) = pages(&format!("First page{command} Second page"));
+            assert!(
+                parsed.diagnostics.is_empty(),
+                "{command}: {:?}",
+                parsed.diagnostics
+            );
+            assert_eq!(
+                laid.len(),
+                1,
+                "{command}: pdflatex sets one line on one page"
+            );
+            let first = laid[0]
+                .items
+                .iter()
+                .find(|item| item.text == "First")
+                .unwrap();
+            let second = laid[0]
+                .items
+                .iter()
+                .find(|item| item.text == "Second")
+                .unwrap();
+            assert_eq!(
+                first.baseline_y_pt, second.baseline_y_pt,
+                "{command} must not break the paragraph"
+            );
+            let para = paragraph_inlines(&parsed);
+            assert!(
+                para.iter()
+                    .any(|inline| matches!(inline, Inline::PagePenalty { value: -10000, .. })),
+                "{command}: {para:?}"
+            );
+            // ...and the next paragraph starts the next page.
+            let (_, next) = pages(&format!("First page{command} Second page\n\nThird"));
+            assert_eq!(next.len(), 2);
+            assert!(next[1].items.iter().any(|item| item.text == "Third"));
+        }
+    }
+
+    #[test]
     fn pagebreak_below_priority_four_is_a_no_op_hint() {
         let (parsed, pages) = pages(r"First page\pagebreak[1] Second page");
         assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
@@ -10059,7 +10209,10 @@ mod tests {
 
     #[test]
     fn self_referential_macro_hits_explicit_recursion_limit() {
-        let source = "\\newcommand{\\loop}{\\loop} \\loop";
+        // Not `\\loop`: the kernel defines it, so `\\newcommand` keeps the
+        // kernel's `\\loop#1\\repeat`, whose argument runs away to the end of
+        // the file and aborts the call, as in TeX.
+        let source = "\\newcommand{\\recurse}{\\recurse} \\recurse";
         let (parsed, _) = items(source);
         // The expansion pass bounds runaway expansion by its step limit.
         assert!(parsed.diagnostics.iter().any(|diagnostic| {
