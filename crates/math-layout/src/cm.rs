@@ -19,7 +19,7 @@
 
 use crate::cm_tfm::*;
 use crate::metrics::{Extensible, FontId, Glyph, MathFontMetrics, MathParams, SizeClass};
-use crate::metrics::{MathChar, OrdPair};
+use crate::metrics::{MathChar, OrdLigature, OrdPair};
 use crate::tfm::{LigKern, TfmChar, TfmFont, scale};
 
 /// Family 0: roman (`cmr`), 1: math italic (`cmmi`), 2: symbols (`cmsy`),
@@ -693,8 +693,7 @@ impl MathFontMetrics for CmMathMetrics {
     }
 
     fn text_glyph(&self, ch: char, size: SizeClass) -> Option<Glyph> {
-        let code = if ch.is_ascii() { ch as u8 } else { return None };
-        self.make_glyph(Family::Roman, code, ch, size)
+        self.make_glyph(Family::Roman, ot1_text_slot(ch)?, ch, size)
     }
 
     fn accent_sizes(&self, ch: char, size: SizeClass) -> Vec<Glyph> {
@@ -724,21 +723,76 @@ impl MathFontMetrics for CmMathMetrics {
     fn ord_pair(&self, left: MathChar, right: MathChar, size: SizeClass) -> Option<OrdPair> {
         let slot = |c: MathChar| match c {
             MathChar::Symbol(ch) => symbol_slot(ch),
-            MathChar::Text(ch) => ch.is_ascii().then_some((Family::Roman, ch as u8)),
+            MathChar::Text(ch) => Some((Family::Roman, ot1_text_slot(ch)?)),
         };
         let ((family, l), (right_family, r)) = (slot(left)?, slot(right)?);
         if family != right_family {
             return None;
         }
         let (font, _, at) = self.font(family, size);
-        let kern = match font.lig_kern(l, r) {
-            Some(LigKern::Kern(fixword)) => scale(fixword, at),
-            _ => 0.0,
+        let text_font = font.params.get(1).is_some_and(|&space| space != 0);
+        let (kern, ligature) = match font.lig_kern(l, r) {
+            Some(LigKern::Kern(fixword)) => (scale(fixword, at), None),
+            Some(LigKern::Ligature { op, rem }) => {
+                let ch = ot1_text_char(rem).and_then(|ch| match left {
+                    MathChar::Text(_) => Some(MathChar::Text(ch)),
+                    // A symbol-family ligature needs a character that
+                    // `symbol_slot` puts back at the same slot; CM's math
+                    // families have no ligatures, so this never misses in
+                    // practice and a miss forms nothing.
+                    MathChar::Symbol(_) => {
+                        (symbol_slot(ch) == Some((family, rem))).then_some(MathChar::Symbol(ch))
+                    }
+                });
+                (0.0, ch.map(|ch| OrdLigature { op, ch }))
+            }
+            None => (0.0, None),
         };
         Some(OrdPair {
             kern,
-            text_font: font.params.get(1).is_some_and(|&space| space != 0),
+            text_font,
+            ligature,
         })
+    }
+}
+
+/// The ligature characters of the OT1 text fonts (`cmr`, `cmti`, `cmbx`,
+/// `cmss`), as the Unicode characters that stand for them in a math list:
+/// the lig/kern programs produce these slots, and [`ot1_text_slot`] puts
+/// them back. `cmtt`'s two ligatures (`!``, `?``) go to slots 0o16/0o17 of
+/// its own layout and are not covered.
+const OT1_LIGATURES: [(u8, char); 11] = [
+    (0o13, '\u{FB00}'),  // ff
+    (0o14, '\u{FB01}'),  // fi
+    (0o15, '\u{FB02}'),  // fl
+    (0o16, '\u{FB03}'),  // ffi
+    (0o17, '\u{FB04}'),  // ffl
+    (0o42, '\u{201D}'),  // ''
+    (0o74, '\u{00A1}'),  // !`
+    (0o76, '\u{00BF}'),  // ?`
+    (0o134, '\u{201C}'), // ``
+    (0o173, '\u{2013}'), // --
+    (0o174, '\u{2014}'), // ---
+];
+
+/// The OT1 text-font slot of a text character: its ASCII code, or the slot
+/// of a ligature character ([`OT1_LIGATURES`]).
+pub fn ot1_text_slot(ch: char) -> Option<u8> {
+    if ch.is_ascii() {
+        return Some(ch as u8);
+    }
+    OT1_LIGATURES
+        .iter()
+        .find(|(_, c)| *c == ch)
+        .map(|(slot, _)| *slot)
+}
+
+/// The text character standing for OT1 slot `slot` of a ligature result:
+/// a ligature character, or the printable ASCII character at that code.
+pub fn ot1_text_char(slot: u8) -> Option<char> {
+    match OT1_LIGATURES.iter().find(|(s, _)| *s == slot) {
+        Some((_, ch)) => Some(*ch),
+        None => (slot.is_ascii_graphic()).then_some(slot as char),
     }
 }
 

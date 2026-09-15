@@ -6,11 +6,12 @@
 
 use crate::boxes::{BoxKind, Child, Flex, MathBox};
 use crate::mathlist::{Atom, AtomClass, BigSizing, Limits, MathList, Nucleus};
-use crate::metrics::{Extensible, Glyph, MathFontMetrics, MathParams};
-use crate::metrics::{MathChar, OrdPair};
+use crate::metrics::{Extensible, Glyph, MathFontMetrics, MathParams, SizeClass};
+use crate::metrics::{MathChar, OrdLigature, OrdPair};
 use crate::source::SourceTag;
 use crate::spacing::{Space, between};
 use crate::style::Style;
+use std::borrow::Cow;
 
 /// Something the engine could not do exactly; the layout still completes with
 /// an explicit fallback so the caller can report rather than guess.
@@ -144,6 +145,28 @@ fn nucleus_char(atom: &Atom) -> Option<MathChar> {
     }
 }
 
+/// A character nucleus for a ligature character.
+fn char_nucleus(ch: MathChar) -> Nucleus {
+    match ch {
+        MathChar::Symbol(ch) => Nucleus::Symbol(ch),
+        MathChar::Text(ch) => Nucleus::TextChar(ch),
+    }
+}
+
+/// Replaces an atom's character nucleus (after §1186 unpacking) by `ch`,
+/// keeping the unpacked atom's source tag.
+fn set_nucleus_char(atom: &mut Atom, ch: MathChar) {
+    let mut inner = unpacked(&atom.nucleus).1;
+    atom.nucleus = char_nucleus(ch);
+    if !inner.is_none() {
+        inner.inherit(atom.tag);
+        atom.tag = inner;
+    }
+}
+
+/// Most ligature steps one `make_ord` (or one text run) takes.
+const LIGATURE_LIMIT: usize = 256;
+
 impl Engine<'_> {
     fn params(&self, style: Style) -> MathParams {
         self.m.params(style.size_class())
@@ -151,11 +174,12 @@ impl Engine<'_> {
 
     /// `mlist_to_hlist`: box every atom, then insert spacing (Rule 20).
     fn list(&mut self, list: &MathList, style: Style) -> MathBox {
-        let classes = effective_classes(&list.atoms);
+        let (atoms, pairs) = self.make_ords(&list.atoms, style);
+        let classes = effective_classes(&atoms);
         let mu = self.params(style).mu();
-        let mut items: Vec<MathBox> = Vec::with_capacity(list.atoms.len() * 2);
+        let mut items: Vec<MathBox> = Vec::with_capacity(atoms.len() * 2);
         let mut prev: Option<AtomClass> = None;
-        for (i, (atom, &class)) in list.atoms.iter().zip(&classes).enumerate() {
+        for ((atom, &class), &pair) in atoms.iter().zip(&classes).zip(&pairs) {
             if is_glue(atom) {
                 if let Nucleus::Glue {
                     mu: g,
@@ -173,7 +197,6 @@ impl Engine<'_> {
                 }
                 continue;
             }
-            let pair = self.make_ord(list, i, prev, style);
             let mut b = self.atom(atom, class, style, pair.is_some_and(|p| p.text_font));
             // Leaves no inner atom claimed belong to this atom.
             b.inherit_tag(atom.tag);
@@ -201,36 +224,128 @@ impl Engine<'_> {
         MathBox::hlist(items)
     }
 
-    /// `make_ord` (tex.web §752): an Ord atom whose nucleus is a character
-    /// and which has no scripts, followed immediately (no glue between) by an
-    /// Ord..Punct atom whose nucleus is a character of the same family, gets
-    /// the kern the family's font program gives for the pair, and loses its
-    /// italic correction when that font is a text font (§755).
+    /// The first pass of `mlist_to_hlist` as far as `make_ord` (tex.web
+    /// §752) goes: the list after the ligatures its font programs form, and
+    /// for every atom of that list what `make_ord` found after it (`None`
+    /// for glue and for atoms `make_ord` leaves alone). The list is only
+    /// copied when a ligature is formed.
     ///
     /// TeX calls `make_ord` from its first pass only for noads that are Ord
     /// at that moment: an Ord, or a Bin that Rule 5 turns into an Ord because
-    /// of the noad before it (`prev`). A Bin that Rule 6 or the end of the
+    /// of the noad before it (`r_type`). A Bin that Rule 6 or the end of the
     /// list demotes later has already been passed, so it is not kerned.
-    /// Ligatures between math characters are not formed.
+    fn make_ords<'l>(
+        &self,
+        atoms: &'l [Atom],
+        style: Style,
+    ) -> (Cow<'l, [Atom]>, Vec<Option<OrdPair>>) {
+        use AtomClass::*;
+        let size = style.size_class();
+        let mut atoms = Cow::Borrowed(atoms);
+        let mut pairs = Vec::with_capacity(atoms.len());
+        // TeX's `r_type`: the class of the last noad after Rule 5 (glue is
+        // not a noad).
+        let mut r_type: Option<AtomClass> = None;
+        // A `|=:|>>` ligature's inserted character is a `math_text_char`:
+        // `make_ord` skips it, and it loses its italic correction in a text
+        // font like any character followed by one of its family.
+        let mut inserted: Option<OrdPair> = None;
+        let mut i = 0;
+        while i < atoms.len() {
+            if is_glue(&atoms[i]) {
+                pairs.push(None);
+                i += 1;
+                continue;
+            }
+            let class = atoms[i].class;
+            let ord = class == Ord
+                || (class == Bin && matches!(r_type, None | Some(Bin | Op | Rel | Open | Punct)));
+            let pair = match inserted.take() {
+                Some(pair) => Some(pair),
+                None if ord => {
+                    let (pair, no_combine) = self.make_ord(&mut atoms, i, size);
+                    inserted = no_combine.then(|| pair.expect("a ligature pair"));
+                    pair
+                }
+                None => None,
+            };
+            pairs.push(pair);
+            r_type = Some(if ord { Ord } else { class });
+            i += 1;
+        }
+        (atoms, pairs)
+    }
+
+    /// `make_ord` (tex.web §752-§753) for the Ord atom at `i`: when it has
+    /// no scripts, its nucleus is a character, and the next atom (no glue
+    /// between) is an Ord..Punct atom whose nucleus is a character of the
+    /// same family, the family font's program for the pair applies.
+    ///
+    /// * A kern is appended after the left character (the returned pair's
+    ///   `kern`), and the character loses its italic correction when the
+    ///   font is a text font (§755).
+    /// * A ligature rewrites the list: `=:` replaces both characters by the
+    ///   ligature, which takes over the right atom's scripts; `=:|` and
+    ///   `|=:` replace one of them; `|=:|` inserts the ligature character
+    ///   between them. The pair is then tried again from the left atom,
+    ///   unless the op is one of the `>` forms, which stop there. The second
+    ///   value is true when a `|=:|>>` inserted a character that must not
+    ///   combine further.
+    ///
+    /// With no instruction for the pair the kern is 0 and the italic
+    /// correction still goes in a text font.
     fn make_ord(
         &self,
-        list: &MathList,
+        atoms: &mut Cow<'_, [Atom]>,
         i: usize,
-        prev: Option<AtomClass>,
-        style: Style,
-    ) -> Option<OrdPair> {
-        use AtomClass::*;
-        let q = &list.atoms[i];
-        let ord_in_first_pass = q.class == Ord
-            || (q.class == Bin && matches!(prev, None | Some(Bin | Op | Rel | Open | Punct)));
-        if !ord_in_first_pass || q.superscript.is_some() || q.subscript.is_some() {
-            return None;
+        size: SizeClass,
+    ) -> (Option<OrdPair>, bool) {
+        // TeX loops on a cyclic ligature program until interrupted
+        // (`check_interrupt`); a malformed font must not hang the layout.
+        for _ in 0..LIGATURE_LIMIT {
+            let q = &atoms[i];
+            if q.superscript.is_some() || q.subscript.is_some() {
+                return (None, false);
+            }
+            // Glue between the two is not a noad, so it blocks the pair: its
+            // nucleus is no character.
+            let Some(p) = atoms.get(i + 1).filter(|p| p.class != AtomClass::Inner) else {
+                return (None, false);
+            };
+            let (Some(left), Some(right)) = (nucleus_char(q), nucleus_char(p)) else {
+                return (None, false);
+            };
+            let Some(pair) = self.m.ord_pair(left, right, size) else {
+                return (None, false);
+            };
+            let Some(OrdLigature { op, ch }) = pair.ligature else {
+                return (Some(pair), false);
+            };
+            let atoms = atoms.to_mut();
+            match op {
+                1 | 5 => set_nucleus_char(&mut atoms[i], ch),
+                2 | 6 => set_nucleus_char(&mut atoms[i + 1], ch),
+                3 | 7 | 11 => {
+                    let r = Atom::new(AtomClass::Ord, char_nucleus(ch)).with_tag(atoms[i].tag);
+                    atoms.insert(i + 1, r);
+                }
+                _ => {
+                    let p = atoms.remove(i + 1);
+                    set_nucleus_char(&mut atoms[i], ch);
+                    atoms[i].superscript = p.superscript;
+                    atoms[i].subscript = p.subscript;
+                }
+            }
+            if op > 3 {
+                let pair = OrdPair {
+                    kern: 0.0,
+                    ligature: None,
+                    ..pair
+                };
+                return (Some(pair), op == 11);
+            }
         }
-        // Glue between the two is not a noad, so it blocks the pair: its
-        // nucleus is no character.
-        let p = list.atoms.get(i + 1).filter(|p| p.class != Inner)?;
-        self.m
-            .ord_pair(nucleus_char(q)?, nucleus_char(p)?, style.size_class())
+        (None, false)
     }
 
     /// `clean_box`: a subformula as a single box.
@@ -452,16 +567,62 @@ impl Engine<'_> {
     /// the last one is a plain `math_char` and keeps it (pdfTeX \showbox:
     /// `\kern0.05731` after `lim` in cmr12).
     fn make_text(&mut self, text: &str, style: Style) -> MathBox {
+        let size = style.size_class();
+        let mut chars: Vec<char> = text.chars().collect();
         let mut items = Vec::new();
         let mut last_italic = 0.0;
-        for ch in text.chars() {
-            match self.m.text_glyph(ch, style.size_class()) {
+        let mut steps = 0;
+        // The run's characters are math characters of one family, so
+        // `make_ord` (tex.web §752) applies between every two of them: the
+        // font's kerns and ligatures. A `|=:|>>` character does not combine.
+        let mut no_combine = false;
+        let mut i = 0;
+        while i < chars.len() {
+            let mut kern = 0.0;
+            while !std::mem::take(&mut no_combine) {
+                let Some(&next) = chars.get(i + 1) else { break };
+                let Some(pair) =
+                    self.m
+                        .ord_pair(MathChar::Text(chars[i]), MathChar::Text(next), size)
+                else {
+                    break;
+                };
+                match pair.ligature {
+                    None => kern = pair.kern,
+                    Some(OrdLigature {
+                        op,
+                        ch: MathChar::Text(ch),
+                    }) if steps < LIGATURE_LIMIT => {
+                        steps += 1;
+                        match op {
+                            1 | 5 => chars[i] = ch,
+                            2 | 6 => chars[i + 1] = ch,
+                            3 | 7 | 11 => chars.insert(i + 1, ch),
+                            _ => {
+                                chars[i] = ch;
+                                chars.remove(i + 1);
+                            }
+                        }
+                        if op <= 3 {
+                            continue;
+                        }
+                        no_combine = op == 11;
+                    }
+                    Some(_) => {}
+                }
+                break;
+            }
+            match self.m.text_glyph(chars[i], size) {
                 Some(g) => {
                     last_italic = g.italic;
                     items.push(MathBox::glyph(&g));
+                    if kern != 0.0 {
+                        items.push(MathBox::kern(kern));
+                    }
                 }
-                None => self.limitations.push(Limitation::MissingGlyph(ch)),
+                None => self.limitations.push(Limitation::MissingGlyph(chars[i])),
             }
+            i += 1;
         }
         if last_italic != 0.0 {
             items.push(MathBox::kern(last_italic));
