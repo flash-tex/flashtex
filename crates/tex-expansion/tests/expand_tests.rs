@@ -592,3 +592,41 @@ fn a_long_environment_name_is_shortened_only_in_messages() {
     let r = expand_str(r"\begin{foo}\end{bar}");
     assert!(r.diagnostics.iter().any(|d| d.message == "LaTeX Error: \\begin{foo} ended by \\end{bar}."), "{:?}", r.diagnostics);
 }
+
+/// What happens past a nesting limit, as the compiler's recovery notes
+/// describe it: the extra `{` is dropped without opening a group, the extra
+/// conditional is dropped without evaluating its test (what follows is read
+/// as ordinary text), and expansion continues in both cases.
+#[test]
+fn past_a_nesting_limit_the_extra_group_or_conditional_is_ignored_and_expansion_continues() {
+    use flashtex_tex_expansion::{Engine, Limits, TokenKind};
+    let limits = Limits { max_group_depth: 1, max_conditional_depth: 1, ..Limits::default() };
+    let run = |src: &str| {
+        let mut e = Engine::with_limits(src, limits);
+        let text: String = e
+            .run()
+            .iter()
+            .map(|t| match &t.kind {
+                TokenKind::Char(c, _) => c.to_string(),
+                TokenKind::ControlSequence(cs) => format!("\\{cs}"),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        let messages: Vec<String> = e.take_diagnostics().into_iter().map(|d| d.message).collect();
+        (text, messages)
+    };
+
+    // The second `{` is dropped; its `}` closes the first group, and the last
+    // `}` is then unbalanced. `\def` after the limit still takes effect.
+    let (text, messages) = run(r"{{a}b}\def\m{M}\m");
+    assert_eq!(text, "{a}bM");
+    assert_eq!(messages, ["group nesting limit exceeded", "Too many }'s."]);
+
+    // Two conditionals may be open; the third, `\ifnum`, is dropped
+    // unevaluated: its test `1>2` is text, the `\else` belongs to the second
+    // `\iftrue`, and the last `\fi` is extra.
+    let (text, messages) = run(r"\iftrue\iftrue\ifnum1>2 X\else Y\fi\fi\fi Z");
+    assert_eq!(text, "1>2 XZ");
+    assert_eq!(messages[0], "conditional nesting limit exceeded");
+    assert!(messages[1..].iter().any(|m| m.starts_with("Extra ")), "{messages:?}");
+}

@@ -849,6 +849,11 @@ pub(crate) const GRID_ENVIRONMENTS: &[(&str, char, &str, &str)] = &[
     ("cases", 'l', "{", ""),
     // mathtools.sty `\newcases{dcases}`: `cases` with `\displaystyle` cells.
     ("dcases", 'l', "{", ""),
+    // mathtools.sty `\newcases{rcases}` (TeX Live 2026 lines 1029-1030):
+    // the same `\quad`-separated textstyle two-column preamble as `cases`
+    // (`\MT_start_cases:nnnn` runs for both), but a null left delimiter
+    // and `\rbrace` right — the mirror image of `cases`.
+    ("rcases", 'l', "", "}"),
     ("aligned", 'c', "", ""),
     ("alignedat", 'c', "", ""),
     ("split", 'c', "", ""),
@@ -5379,6 +5384,75 @@ mod parse_tests {
                 assert_eq!(columns, want, "{src}");
             }
         }
+    }
+
+    #[test]
+    fn rcases_parses_as_a_right_brace_mirror_of_cases() {
+        // mathtools.sty `\newcases{rcases}` (TeX Live 2026 lines
+        // 1029-1030): the same two-column textstyle preamble as `cases`
+        // (`\MT_start_cases:nnnn` runs for both), a null left delimiter
+        // and `\rbrace` right — the mirror image. `cases`/`dcases` pin
+        // the pre-existing arms unchanged.
+        for (src, want_left, want_right) in [
+            (r"\begin{cases} a & b \\ c & d \end{cases}", "{", ""),
+            (r"\begin{dcases} a & b \\ c & d \end{dcases}", "{", ""),
+            (r"\begin{rcases} a & b \\ c & d \end{rcases}", "", "}"),
+        ] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(src);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
+            let Nucleus::Matrix {
+                rows,
+                columns,
+                left,
+                right,
+            } = &list.atoms[0].nucleus
+            else {
+                panic!("{src}: not a grid: {:?}", list.atoms)
+            };
+            assert_eq!(rows.len(), 2, "{src}");
+            assert!(rows.iter().all(|row| row.len() == 2), "{src}");
+            assert_eq!(columns, "ll", "{src}");
+            assert_eq!(left, want_left, "{src}");
+            assert_eq!(right, want_right, "{src}");
+        }
+    }
+
+    #[test]
+    fn rcases_brace_lays_out_on_the_right_where_cases_lays_out_on_the_left() {
+        let laid = |src: &str| {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(src);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
+            layout(&list, 12.0, &mut diagnostics)
+        };
+        let cases = laid(r"\begin{cases} a & b \\ c & d \end{cases}");
+        let brace = cases
+            .items
+            .iter()
+            .find(|item| item.text == "{")
+            .expect("cases lays out a left brace");
+        assert_eq!(brace.x, 0.0, "cases brace starts the row");
+        assert!(
+            cases.items.iter().all(|item| item.x >= brace.x),
+            "cases brace is the leftmost ink"
+        );
+        let rcases = laid(r"\begin{rcases} a & b \\ c & d \end{rcases}");
+        let brace = rcases
+            .items
+            .iter()
+            .find(|item| item.text == "}")
+            .expect("rcases lays out a right brace");
+        assert!(
+            brace.x > 0.0,
+            "rcases brace sits past the grid, not at its start"
+        );
+        assert!(
+            rcases.items.iter().all(|item| item.x <= brace.x),
+            "rcases brace is the rightmost ink"
+        );
     }
 
     #[test]
