@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/corpus-sweep-2",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/issues/2#issuecomment-5679219304",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-15T10:54:18Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-CORPUS-SWEEP-2",
-  "updated_utc": "2026-09-15T10:55:12Z"
+  "updated_utc": "2026-09-15T11:11:28Z"
 }
