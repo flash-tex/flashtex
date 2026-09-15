@@ -147,6 +147,12 @@ pub enum Primitive {
     Fi,
     Newif,
     Unless,
+    /// The `ifthen` package's `\ifthenelse{test}{true}{false}`: evaluated
+    /// at expansion time, splicing the selected branch (no `\fi`).
+    Ifthenelse,
+    /// The `ifthen` package's `\newboolean{name}` / `\setboolean{name}`.
+    NewBoolean,
+    SetBoolean,
     Count,
     Dimen,
     Skip,
