@@ -39,7 +39,7 @@ fn float_fixtures_match_pdflatex_within_one_point() {
         .filter(|n| n.ends_with(".tex") && n.as_bytes()[0].is_ascii_digit())
         .collect();
     names.sort();
-    assert_eq!(names.len(), 10, "expected 10 float fixtures");
+    assert_eq!(names.len(), 12, "expected 12 float fixtures");
     let fonts = FontSet::with_default_dirs(&[]);
     let options = RenderOptions { project_root: Some(dir.into()), ..RenderOptions::default() };
     let mut failures = Vec::new();
@@ -190,4 +190,27 @@ fn image_items_are_only_serialised_when_negotiated() {
     let r = render(&[SourceDocument { path: "main.tex", text: &tex }], "main.tex", 1, "floats", &fonts, &RenderOptions::default());
     assert!(!r.v2.has_images());
     assert!(r.v2.diagnostics.iter().any(|d| d.code == "image_unavailable"));
+}
+
+#[test]
+fn placement_h_needs_the_float_package_and_vertical_mode() {
+    if !common::lm_available() {
+        return;
+    }
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/floats");
+    let fonts = FontSet::with_default_dirs(&[]);
+    let options = RenderOptions { project_root: Some(dir.into()), ..RenderOptions::default() };
+    let placement = |preamble: &str, body: &str| -> Vec<String> {
+        let tex = format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n{preamble}\\begin{{document}}\n{body}\n\\end{{document}}\n");
+        let r = render(&[SourceDocument { path: "main.tex", text: &tex }], "main.tex", 1, "floats", &fonts, &options);
+        r.v2.diagnostics.iter().filter(|d| d.code == "float_placement" || d.message.contains("packages float")).map(|d| d.message.clone()).collect()
+    };
+    let fig = "\\begin{figure}[H]\n\\centering\n\\includegraphics{images/red-72.png}\n\\caption{C.}\n\\end{figure}\n";
+    // With `float` and a blank line before it: set exactly there, silently.
+    assert_eq!(placement("\\usepackage{float}\n", &format!("Text.\n\n{fig}\nMore.")), Vec::<String>::new());
+    // Without the package it is LaTeX's `Unknown float option` error.
+    assert_eq!(placement("", &format!("Text.\n\n{fig}\nMore.")), vec!["placement H (float package) is not supported; using h".to_string()]);
+    // In the middle of a paragraph the text flow cannot end the paragraph there yet.
+    let hmode = placement("\\usepackage{float}\n", &format!("Text.\n{fig}\nMore."));
+    assert!(hmode.len() == 1 && hmode[0].contains("in the middle of a paragraph"), "{hmode:?}");
 }
