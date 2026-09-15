@@ -2712,9 +2712,6 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
             let anchor = label.as_ref().map(|(_, span)| *span).or(first);
             if let Some(at) = anchor {
                 let index = indexes.get(at.document.0);
-                // #623 memoised the per-source indexes but `list_style_nextline`
-                // still reads the raw source: keep the pre-refactor binding.
-                let src = texts.get(at.document.0).copied().unwrap_or("");
                 let stack = index.list_stack(at.start);
                 let (env, begin_keys) = stack.last().map_or(("enumerate", ""), |(env, keys)| (env, if *env == "thebibliography" { "" } else { keys }));
                 let seps = list_seps_from(&index.setlist, env, stack.len().max(1), size, style, begin_keys);
@@ -2788,7 +2785,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                     margins: list_margins(index, at.start, size, natbib_bib),
                     label: label.clone(),
                     description: env == "description",
-                    nextline: list_style_nextline(src, env, begin_keys),
+                    nextline: list_style_nextline(&index.setlist, env, begin_keys),
                     parsep: seps.parsep_skip,
                     // `\NAT@bibsetup`: `\itemindent-\leftmargin`, so the
                     // entry's first line is flush at the margin and the rest
@@ -4189,8 +4186,11 @@ fn list_seps_from(calls: &[(&str, &str)], env: &str, depth: usize, size: u32, st
 /// Read from the source rather than the compiler's `ListFrame` because this
 /// pipeline builds against a `vendor/compiler` pin that predates
 /// `ListOption::Style` (see [`ListGeom::nextline`]).
-fn list_style_nextline(source: &str, env: &str, begin_keys: &str) -> bool {
-    let calls = setlist_calls(source);
+/// Takes the index's precomputed `\setlist` calls rather than the source.
+/// Re-scanning here would undo #623: `setlist_calls` walks the whole document,
+/// and this runs once per list, which is exactly the quadratic shape that made
+/// a 450-section warm edit take 16 s.
+fn list_style_nextline(calls: &[(&str, &str)], env: &str, begin_keys: &str) -> bool {
     let all_keys = calls
         .iter()
         .filter(|(envs, _)| setlist_names(envs, env))
