@@ -11,7 +11,7 @@
 //! [`State`], which is `Clone` so the incremental expander
 //! (`incremental.rs`) can snapshot it at safe points.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::catcode::CatCode;
@@ -157,6 +157,12 @@ pub(crate) struct State {
     pub in_csname: u32,
     /// Host option, see `Engine::set_emit_unbalanced_close`.
     pub emit_unbalanced_close: bool,
+    /// "group nesting limit exceeded" was reported and no `{` has opened a
+    /// group since: one report per excursion past the limit, not one per
+    /// refused `{`.
+    pub group_limit_reported: bool,
+    /// The same for "conditional nesting limit exceeded".
+    pub conditional_limit_reported: bool,
 }
 
 impl State {
@@ -194,6 +200,8 @@ impl State {
             edef_depth,
             in_csname,
             emit_unbalanced_close,
+            group_limit_reported,
+            conditional_limit_reported,
         } = self;
         conditionals == &new.conditionals
             && *pending_global == new.pending_global
@@ -211,6 +219,8 @@ impl State {
             && *edef_depth == new.edef_depth
             && *in_csname == new.in_csname
             && *emit_unbalanced_close == new.emit_unbalanced_close
+            && *group_limit_reported == new.group_limit_reported
+            && *conditional_limit_reported == new.conditional_limit_reported
             && match (after_assignment, &new.after_assignment) {
                 (None, None) => true,
                 (Some(a), Some(b)) => crate::scopes::token_eq_mapped(a, b, f),
@@ -400,6 +410,9 @@ pub struct Engine {
     steps: u64,
     pub(crate) st: State,
     diagnostics: Vec<Diagnostic>,
+    /// Diagnostics reported since the engine was last at a safe point (see
+    /// [`Engine::report`]).
+    reported: HashSet<Diagnostic>,
     labels: Vec<LabelRecord>,
     metrics: Rc<dyn FontMetrics>,
     measurer: Rc<dyn BoxMeasurer>,
@@ -450,6 +463,7 @@ impl Engine {
             steps: 0,
             st,
             diagnostics: Vec::new(),
+            reported: HashSet::new(),
             labels: Vec::new(),
             metrics: Rc::new(DefaultFontMetrics),
             measurer: Rc::new(DefaultBoxMeasurer),
@@ -586,12 +600,51 @@ impl Engine {
 
     fn err(&mut self, msg: impl Into<String>, span: Span) {
         let span = self.reported_span(span);
-        self.diagnostics.push(Diagnostic::error(msg, span));
+        self.report(Diagnostic::error(msg, span));
     }
 
     fn warn(&mut self, msg: impl Into<String>, span: Span) {
         let span = self.reported_span(span);
-        self.diagnostics.push(Diagnostic::warning(msg, span));
+        self.report(Diagnostic::warning(msg, span));
+    }
+
+    /// Record `d` unless the identical diagnostic (severity, message, span)
+    /// was already recorded since the engine was last at a safe point. A
+    /// runaway loop never reaches one, so it reports each of its messages
+    /// once instead of once per iteration (a `\loop` of `\ifnum` with a
+    /// missing number reported "Missing number" 2.2 million times).
+    ///
+    /// The set is emptied whenever [`Engine::next_content_token`] returns
+    /// at a safe point, and safe points are where incremental checkpoints
+    /// are taken and where a re-run converges, so a restored engine (whose
+    /// set starts empty) makes exactly the decisions a from-scratch run
+    /// makes.
+    fn report(&mut self, d: Diagnostic) {
+        if self.reported.contains(&d) {
+            return;
+        }
+        self.reported.insert(d.clone());
+        self.diagnostics.push(d);
+    }
+
+    /// [`Engine::safe_point`] without pruning exhausted inputs.
+    fn at_safe_point(&self) -> bool {
+        let live = self.sources.iter().skip(1).any(|input| match input {
+            Input::Toks(toks, pos) => *pos < toks.len(),
+            Input::Text(l) => !l.at_end(),
+        });
+        if live || self.stopped || !self.emit_queue.is_empty() || self.base_lexer().state() != LexState::NewLine {
+            return false;
+        }
+        let st = &self.st;
+        !(st.pending_global
+            || st.pending_long
+            || st.pending_outer
+            || st.pending_protected
+            || st.after_assignment.is_some()
+            || st.scanner_status != ScannerStatus::Normal
+            || st.edef_depth != 0
+            || st.in_csname != 0)
     }
 
     /// Where a diagnostic at `span` is reported: a token of a prelude macro
@@ -895,6 +948,14 @@ impl Engine {
     /// and returns the next token meant for the typesetting layer (or
     /// `None` at end of input).
     pub fn next_content_token(&mut self) -> Option<Token> {
+        let token = self.next_content_token_unchecked();
+        if !self.reported.is_empty() && self.at_safe_point() {
+            self.reported.clear();
+        }
+        token
+    }
+
+    fn next_content_token_unchecked(&mut self) -> Option<Token> {
         loop {
             if !self.tick() {
                 return None;
@@ -1185,9 +1246,13 @@ impl Engine {
             match cat {
                 CatCode::BeginGroup => {
                     if self.st.scopes.depth() as u32 > self.limits.max_group_depth {
-                        self.err("group nesting limit exceeded", tok.span);
+                        if !self.st.group_limit_reported {
+                            self.st.group_limit_reported = true;
+                            self.err("group nesting limit exceeded", tok.span);
+                        }
                         return Some(Step::Continue);
                     }
+                    self.st.group_limit_reported = false;
                     self.st.scopes.push_group();
                     return Some(Step::Emit(tok.clone()));
                 }
@@ -2935,7 +3000,7 @@ impl Engine {
             // LaTeX: "Environment name undefined." -- we still open the
             // group and pass `\name` through, since many environments are
             // handled by the typesetting layer rather than by macros.
-            self.warn(format!("Environment {name} undefined (passed through to the typesetter)."), tok.span);
+            self.warn(format!("Environment {} undefined (passed through to the typesetter).", shown_name(&name)), tok.span);
         }
         self.st.scopes.push_group();
         let cur = Meaning::Macro(Rc::new(MacroDef::simple(chars_as_other(&name, Span::synthetic()))));
@@ -2953,23 +3018,23 @@ impl Engine {
             ]);
             return;
         }
-        // \@checkend: the current environment must be this one.
+        // \@checkend: the current environment must be this one. Compared
+        // part by part, so a runaway loop over a 100k-character name does
+        // not rebuild the name for every `\end`.
         let current = match self.st.scopes.meaning_ref("@currenvir") {
-            Some(Meaning::Macro(def)) => def
-                .body
-                .iter()
-                .map(|p| match p {
-                    BodyPart::Literal(t) => t.display_name(),
-                    BodyPart::Param(n) => format!("#{n}"),
-                })
-                .collect::<String>(),
-            _ => String::new(),
+            Some(Meaning::Macro(def)) => Some(def.clone()),
+            _ => None,
         };
-        if current != name {
-            self.err(format!("LaTeX Error: \\begin{{{current}}} ended by \\end{{{name}}}."), tok.span);
+        let body: &[BodyPart] = current.as_deref().map_or(&[], |def| &def.body);
+        if !body_spells(body, &name) {
+            let current = body_display(body, SHOWN_NAME_CHARS + 1);
+            self.err(
+                format!("LaTeX Error: \\begin{{{}}} ended by \\end{{{}}}.", shown_name(&current), shown_name(&name)),
+                tok.span,
+            );
         }
         if self.st.scopes.depth() <= 1 {
-            self.err(format!("LaTeX Error: \\end{{{name}}} without matching \\begin."), tok.span);
+            self.err(format!("LaTeX Error: \\end{{{}}} without matching \\begin.", shown_name(&name)), tok.span);
             self.push_tokens(vec![Token::new(TokenKind::ControlSequence(format!("end{name}")), tok.span)]);
             return;
         }
@@ -4042,9 +4107,13 @@ impl Engine {
     fn do_conditional(&mut self, prim: Primitive, unless: bool, if_tok: &Token) {
         use Primitive::*;
         if self.st.conditionals.depth() as u32 > self.limits.max_conditional_depth {
-            self.err("conditional nesting limit exceeded", if_tok.span);
+            if !self.st.conditional_limit_reported {
+                self.st.conditional_limit_reported = true;
+                self.err("conditional nesting limit exceeded", if_tok.span);
+            }
             return;
         }
+        self.st.conditional_limit_reported = false;
         let if_name = format!("{}{}", self.esc(), primitive_name(prim));
         let if_at = if_tok.span;
         let shape = if matches!(prim, Ifcase) { IfShape::Case } else { IfShape::TwoWay };
@@ -4950,6 +5019,59 @@ fn substitute_body(body: &[BodyPart], args: &HashMap<u8, Vec<Token>>) -> Vec<Tok
     expansion
 }
 
+/// Characters of an environment name shown in a diagnostic. TeX has no
+/// limit on names; only the message is shortened.
+const SHOWN_NAME_CHARS: usize = 100;
+
+/// `name`, cut to [`SHOWN_NAME_CHARS`] characters plus "..." when longer.
+fn shown_name(name: &str) -> std::borrow::Cow<'_, str> {
+    match name.char_indices().nth(SHOWN_NAME_CHARS) {
+        Some((cut, _)) => std::borrow::Cow::Owned(format!("{}...", &name[..cut])),
+        None => std::borrow::Cow::Borrowed(name),
+    }
+}
+
+/// Does `body`, printed token by token (`Token::display_name`, `#n` for a
+/// parameter), spell exactly `name`?
+fn body_spells(body: &[BodyPart], name: &str) -> bool {
+    let mut rest = name;
+    for part in body {
+        let next = match part {
+            BodyPart::Literal(t) => match &t.kind {
+                TokenKind::ControlSequence(cs) => rest.strip_prefix('\\').and_then(|r| r.strip_prefix(cs.as_str())),
+                TokenKind::ActiveChar(c) | TokenKind::Char(c, _) => rest.strip_prefix(*c),
+                TokenKind::Param(n) => rest.strip_prefix('#').and_then(|r| r.strip_prefix(n.to_string().as_str())),
+                TokenKind::Eof => Some(rest),
+            },
+            BodyPart::Param(n) => rest.strip_prefix('#').and_then(|r| r.strip_prefix(n.to_string().as_str())),
+        };
+        match next {
+            Some(r) => rest = r,
+            None => return false,
+        }
+    }
+    rest.is_empty()
+}
+
+/// `body` printed token by token, stopping once it has `max_chars`
+/// characters.
+fn body_display(body: &[BodyPart], max_chars: usize) -> String {
+    let mut out = String::new();
+    let mut chars = 0;
+    for part in body {
+        if chars >= max_chars {
+            break;
+        }
+        let piece = match part {
+            BodyPart::Literal(t) => t.display_name(),
+            BodyPart::Param(n) => format!("#{n}"),
+        };
+        chars += piece.chars().count();
+        out.push_str(&piece);
+    }
+    out
+}
+
 pub(crate) fn chars_as_other(s: &str, span: Span) -> Vec<Token> {
     s.chars()
         .map(|c| {
@@ -5228,6 +5350,8 @@ fn base_state(tex_only: bool) -> State {
         edef_depth: 0,
         in_csname: 0,
         emit_unbalanced_close: false,
+        group_limit_reported: false,
+        conditional_limit_reported: false,
     }
 }
 

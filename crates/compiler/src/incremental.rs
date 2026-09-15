@@ -12,7 +12,7 @@
 //! layout rebuild. Any future construct is unsafe until its complete state and
 //! side effects are represented in these cache checks. When in doubt, rebuild.
 
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{limit_repeats, Diagnostic};
 use crate::layout::{self, FlowState, LayoutCursor, Page, PlacedItem, TextItem};
 use crate::math::{MathAtom, MathList, Nucleus};
 use crate::parser::{self, Block, Inline, MacroDependency, MathRow, SourceDocument, VerbatimLine};
@@ -239,13 +239,13 @@ impl Session {
         };
 
         if parsed.document_global_state {
-            let (pages, mut layout_diagnostics) = layout::layout_converged_with_options(
+            let (pages, layout_diagnostics) = layout::layout_converged_with_options(
                 &parsed.blocks,
                 constraints,
                 &parsed.cleveref,
             );
             let mut diagnostics = parsed.diagnostics;
-            diagnostics.append(&mut layout_diagnostics);
+            diagnostics.append(&mut limit_repeats(layout_diagnostics));
             stats.full_recompile = true;
             stats.blocks_recomputed = parsed.blocks.len();
             let output = CompileOutput {
@@ -372,9 +372,9 @@ impl Session {
         }
         drop(previous);
 
-        let (pages, mut layout_diagnostics) = cursor.into_pages_and_diagnostics();
+        let (pages, layout_diagnostics) = cursor.into_pages_and_diagnostics();
         let mut diagnostics = parsed.diagnostics;
-        diagnostics.append(&mut layout_diagnostics);
+        diagnostics.append(&mut limit_repeats(layout_diagnostics));
         let output = CompileOutput {
             blocks: parsed.blocks,
             diagnostics,
@@ -423,13 +423,15 @@ pub fn compile_full_project_with(
 ) -> CompileOutput {
     let parsed = parser::parse_project_with(documents, entry_path, options);
     let constraints = parsed.preamble_constraints(constraints);
-    let (pages, mut layout_diagnostics) = layout::layout_converged_with_options(
+    let (pages, layout_diagnostics) = layout::layout_converged_with_options(
         &parsed.blocks,
         constraints,
         &parsed.cleveref,
     );
+    // Parser diagnostics are already bounded (`parse_project_with`); the
+    // layout's are bounded on their own, so a summary is never re-counted.
     let mut diagnostics = parsed.diagnostics;
-    diagnostics.append(&mut layout_diagnostics);
+    diagnostics.append(&mut limit_repeats(layout_diagnostics));
     CompileOutput {
         blocks: parsed.blocks,
         diagnostics,

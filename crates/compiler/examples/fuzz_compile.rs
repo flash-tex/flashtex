@@ -7,6 +7,7 @@
 //! cargo run --release --example fuzz_compile -- --check FILE.tex
 //! cargo run --release --example fuzz_compile -- --minimise FILE.tex
 //! cargo run --release --example fuzz_compile -- --diagnostics FILE.tex [--limit N]
+//! cargo run --release --example fuzz_compile -- --digest
 //! ```
 //!
 //! Panics are caught per case; hangs (per-case watchdog) and stack overflows
@@ -125,6 +126,18 @@ fn main() {
         {
             println!("  {}", d.message);
         }
+        // The most frequent messages, so a flood shows its source.
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for d in &out.diagnostics {
+            *counts.entry(d.message.as_str()).or_default() += 1;
+        }
+        let mut counts: Vec<_> = counts.into_iter().collect();
+        counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        println!("most frequent:");
+        for (message, count) in counts.iter().take(8) {
+            let short: String = message.chars().take(100).collect();
+            println!("  {count:>8}x {short}");
+        }
         return;
     }
 
@@ -170,6 +183,36 @@ fn main() {
     }
 
     let seeds = load_seeds(&repo_root());
+    if args.iter().any(|a| a == "--digest") {
+        // Compile every seed unmutated and print a digest of its pages and
+        // diagnostics, to diff two builds on normal documents.
+        use std::hash::{Hash, Hasher};
+        let digest = |value: String| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            value.hash(&mut hasher);
+            hasher.finish()
+        };
+        for seed in &seeds {
+            let documents = [flashtex_compiler::parser::SourceDocument {
+                path: ENTRY,
+                text: &seed.text,
+            }];
+            let out = flashtex_compiler::incremental::compile_full_project(
+                &documents,
+                ENTRY,
+                flashtex_compiler::layout::LayoutConstraints::default(),
+            );
+            println!(
+                "{}\t{} pages {:016x}\t{} diagnostics {:016x}",
+                seed.name,
+                out.pages.len(),
+                digest(format!("{:?}", out.pages)),
+                out.diagnostics.len(),
+                digest(format!("{:?}", out.diagnostics))
+            );
+        }
+        return;
+    }
     assert!(
         !seeds.is_empty(),
         "no .tex seeds found under {}",

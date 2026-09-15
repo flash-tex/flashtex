@@ -511,3 +511,67 @@ fn conditionals_in_a_runaway_loop_do_not_rescan_the_source() {
         r.diagnostics
     );
 }
+
+fn limited_diagnostics(src: &str, limits: flashtex_tex_expansion::Limits) -> Vec<String> {
+    let mut e = flashtex_tex_expansion::Engine::with_limits(src, limits);
+    e.run();
+    e.take_diagnostics().into_iter().map(|d| d.message).collect()
+}
+
+/// A `{` or `\if` past the nesting limit is dropped with an error. It used to
+/// be reported once per dropped token (a runaway `\def\a{{\a}` reported it
+/// until the step limit); now once per excursion past the limit.
+#[test]
+fn nesting_limits_are_reported_once_per_excursion() {
+    use flashtex_tex_expansion::Limits;
+    let limits = Limits { max_group_depth: 3, max_conditional_depth: 3, ..Limits::default() };
+    let count = |messages: &[String], what: &str| messages.iter().filter(|m| *m == what).count();
+
+    // Three `{` refused in a row, then (after a `}` and an accepted `{`) two more.
+    let groups = limited_diagnostics("{{{{{{}{{{", limits);
+    assert_eq!(count(&groups, "group nesting limit exceeded"), 2, "{groups:?}");
+
+    let conditionals = limited_diagnostics(r"\iftrue\iftrue\iftrue\iftrue\iftrue\iftrue\fi\iftrue\iftrue", limits);
+    assert_eq!(count(&conditionals, "conditional nesting limit exceeded"), 2, "{conditionals:?}");
+
+    let steps = Limits { max_expansion_steps: 50_000, ..limits };
+    let runaway = limited_diagnostics(r"\let\x={ \def\a{\x\a}\a", steps);
+    assert_eq!(count(&runaway, "group nesting limit exceeded"), 1, "{runaway:?}");
+    let runaway = limited_diagnostics(r"\def\b{\iftrue\b}\b", steps);
+    assert_eq!(count(&runaway, "conditional nesting limit exceeded"), 1, "{runaway:?}");
+}
+
+/// A runaway loop never returns to a safe point, so each of its errors is
+/// recorded once rather than once per iteration.
+#[test]
+fn a_runaway_loop_records_each_error_once() {
+    use flashtex_tex_expansion::Limits;
+    let limits = Limits { max_expansion_steps: 50_000, ..Limits::default() };
+    let messages = limited_diagnostics(r"\def\a{\ifnum\relax<1 \fi\a}\a", limits);
+    assert_eq!(
+        messages,
+        [
+            "Missing number, treated as zero.",
+            "Missing = inserted for \\ifnum.",
+            "expansion step limit exceeded (possible infinite macro loop)"
+        ],
+    );
+    // Separate lines are separate reports, even when identical.
+    let r = expand_str("\\count1=\\relax\n\\count1=\\relax\n");
+    assert_eq!(r.diagnostics.iter().filter(|d| d.message == "Missing number, treated as zero.").count(), 2, "{:?}", r.diagnostics);
+}
+
+#[test]
+fn a_long_environment_name_is_shortened_only_in_messages() {
+    let name = "x".repeat(100_000);
+    let r = expand_str(&format!("\\begin{{a}}\\end{{{name}}}"));
+    let mismatch = r.diagnostics.iter().find(|d| d.message.contains("ended by")).expect("mismatch reported");
+    assert_eq!(mismatch.message, format!("LaTeX Error: \\begin{{a}} ended by \\end{{{}...}}.", "x".repeat(100)));
+    // The comparison itself uses the whole name.
+    let r = expand_str(&format!("\\begin{{{name}}}\\end{{{name}}}"));
+    assert!(!r.diagnostics.iter().any(|d| d.message.contains("ended by")), "{:?}", r.diagnostics.len());
+    let r = expand_str(&format!("\\begin{{{name}}}\\end{{{name}y}}"));
+    assert!(r.diagnostics.iter().any(|d| d.message.contains("ended by")));
+    let r = expand_str(r"\begin{foo}\end{bar}");
+    assert!(r.diagnostics.iter().any(|d| d.message == "LaTeX Error: \\begin{foo} ended by \\end{bar}."), "{:?}", r.diagnostics);
+}

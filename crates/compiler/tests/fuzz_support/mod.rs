@@ -17,6 +17,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -498,6 +499,16 @@ pub fn install_quiet_panic_hook() {
     }));
 }
 
+/// Diagnostics reported by the last [`compile_case`].
+static LAST_DIAGNOSTICS: AtomicUsize = AtomicUsize::new(0);
+
+/// What a passing case cost.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CaseStats {
+    pub diagnostics: usize,
+    pub millis: u64,
+}
+
 pub fn compile_case(case: &Case) {
     let documents: Vec<SourceDocument<'_>> = case
         .documents
@@ -505,6 +516,7 @@ pub fn compile_case(case: &Case) {
         .map(|(path, text)| SourceDocument { path, text })
         .collect();
     let out = compile_full_project(&documents, ENTRY, LayoutConstraints::default());
+    LAST_DIAGNOSTICS.store(out.diagnostics.len(), Ordering::SeqCst);
     // Touch every span, as a consumer would.
     for page in &out.pages {
         for item in &page.items {
@@ -518,6 +530,12 @@ pub fn compile_case(case: &Case) {
 /// One case on a fresh thread with [`CASE_STACK`], under `catch_unwind`, with
 /// a watchdog. On `Hang` the thread is still running: the caller must exit.
 pub fn run_case(case: Case, timeout: Duration) -> Outcome {
+    run_case_with_stats(case, timeout).0
+}
+
+/// [`run_case`], plus the diagnostic count and wall time when it passes.
+pub fn run_case_with_stats(case: Case, timeout: Duration) -> (Outcome, CaseStats) {
+    let started = std::time::Instant::now();
     let slot = PANIC_SLOT.get_or_init(|| Mutex::new(None));
     *slot.lock().unwrap() = None;
     let (tx, rx) = mpsc::channel();
@@ -532,10 +550,16 @@ pub fn run_case(case: Case, timeout: Duration) -> Outcome {
             let _ = tx.send(result.is_ok());
         });
     if spawned.is_err() {
-        return Outcome::Crash("thread spawn failed".into());
+        return (Outcome::Crash("thread spawn failed".into()), CaseStats::default());
     }
-    match rx.recv_timeout(timeout) {
-        Ok(true) => Outcome::Ok,
+    let outcome = match rx.recv_timeout(timeout) {
+        Ok(true) => {
+            let stats = CaseStats {
+                diagnostics: LAST_DIAGNOSTICS.load(Ordering::SeqCst),
+                millis: started.elapsed().as_millis() as u64,
+            };
+            return (Outcome::Ok, stats);
+        }
         Ok(false) | Err(mpsc::RecvTimeoutError::Disconnected) => {
             let (loc, msg) = slot
                 .lock()
@@ -545,7 +569,8 @@ pub fn run_case(case: Case, timeout: Duration) -> Outcome {
             Outcome::Panic(loc, msg)
         }
         Err(mpsc::RecvTimeoutError::Timeout) => Outcome::Hang,
-    }
+    };
+    (outcome, CaseStats::default())
 }
 
 // ---------------------------------------------------------------- worker / supervisor
@@ -570,11 +595,11 @@ pub fn worker(seeds: &[Seed], rng_seed: u64, start: u64, end: u64, timeout: Dura
             let _ = writeln!(out, "START\t{index}");
             let _ = out.flush();
         }
-        let outcome = run_case(case, timeout);
+        let (outcome, stats) = run_case_with_stats(case, timeout);
         let mut out = stdout.lock();
         match &outcome {
             Outcome::Ok => {
-                let _ = writeln!(out, "OK\t{index}");
+                let _ = writeln!(out, "OK\t{index}\t{}\t{}", stats.diagnostics, stats.millis);
             }
             Outcome::Panic(loc, msg) => {
                 let _ = writeln!(out, "PANIC\t{index}\t{loc}\t{msg}");
@@ -601,6 +626,13 @@ pub struct Finding {
 pub struct Report {
     pub cases_run: u64,
     pub findings: BTreeMap<String, Finding>,
+    /// The most diagnostics one passing case reported, and that case.
+    pub max_diagnostics: (usize, u64),
+    /// Passing cases that reported more than 1000 diagnostics.
+    pub cases_over_1000_diagnostics: u64,
+    /// The slowest passing case (ms, case), and how many took a second or more.
+    pub slowest: (u64, u64),
+    pub cases_over_1s: u64,
 }
 
 /// Runs `config.cases` cases across `config.jobs` worker processes built by
@@ -615,6 +647,10 @@ pub fn supervise(
     let report = Arc::new(Mutex::new(Report {
         cases_run: 0,
         findings: BTreeMap::new(),
+        max_diagnostics: (0, 0),
+        cases_over_1000_diagnostics: 0,
+        slowest: (0, 0),
+        cases_over_1s: 0,
     }));
     let _ = std::fs::create_dir_all(&config.out_dir);
     std::thread::scope(|scope| {
@@ -665,7 +701,12 @@ pub fn supervise(
                                 open = Some(index);
                                 continue;
                             }
-                            "OK" => Outcome::Ok,
+                            "OK" => {
+                                let field = |at: usize| fields.get(at).and_then(|s| s.parse().ok()).unwrap_or(0);
+                                let stats = CaseStats { diagnostics: field(2) as usize, millis: field(3) };
+                                record_stats(&report, index, stats);
+                                Outcome::Ok
+                            }
                             "PANIC" => Outcome::Panic(
                                 fields.get(2).unwrap_or(&"?").to_string(),
                                 fields.get(3).unwrap_or(&"?").to_string(),
@@ -702,6 +743,22 @@ pub fn supervise(
         }
     });
     Arc::try_unwrap(report).ok().unwrap().into_inner().unwrap()
+}
+
+fn record_stats(report: &Mutex<Report>, index: u64, stats: CaseStats) {
+    let mut report = report.lock().unwrap();
+    if stats.diagnostics > report.max_diagnostics.0 {
+        report.max_diagnostics = (stats.diagnostics, index);
+    }
+    if stats.diagnostics > 1000 {
+        report.cases_over_1000_diagnostics += 1;
+    }
+    if stats.millis > report.slowest.0 {
+        report.slowest = (stats.millis, index);
+    }
+    if stats.millis >= 1000 {
+        report.cases_over_1s += 1;
+    }
 }
 
 fn record(report: &Mutex<Report>, seeds: &[Seed], config: &Config, index: u64, outcome: &Outcome) {
@@ -753,6 +810,14 @@ pub fn print_report(report: &Report) {
         "fuzz: {} cases, {} unique findings",
         report.cases_run,
         report.findings.len()
+    );
+    println!(
+        "  max diagnostics in one case: {} (case {}); cases with >1000: {}",
+        report.max_diagnostics.0, report.max_diagnostics.1, report.cases_over_1000_diagnostics
+    );
+    println!(
+        "  slowest passing case: {} ms (case {}); cases taking >=1 s: {}",
+        report.slowest.0, report.slowest.1, report.cases_over_1s
     );
     for finding in report.findings.values() {
         println!(
