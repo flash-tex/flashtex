@@ -462,7 +462,11 @@ final class WordCountModel {
     /// is not a documented Swift concurrency guarantee.
     @ObservationIgnored var onRecomputeSettled: (() -> Void)?
 
-    private func recompute(_ documents: [(path: String, text: String)], generation gen: Int) {
+    /// `internal`, not `private`: `@testable import` lets tests call this
+    /// directly with a stale `gen` to exercise the guard below without
+    /// going through `DispatchWorkItem`, whose `cancel()`/`perform()` would
+    /// otherwise make a superseded call a no-op before it ever gets here.
+    func recompute(_ documents: [(path: String, text: String)], generation gen: Int) {
         recomputeExecutor { [weak self] in
             let start = DispatchTime.now()
             let result = DocumentStatistics.analyze(documents: documents)
