@@ -1299,6 +1299,7 @@ pub fn adapt_cached(
     let mut toc_lists: Vec<(usize, crate::toc::ListKind, Span, bool)> = Vec::new();
     let mut toc_pending: Vec<String> = Vec::new();
     let mut chapter_starts: Vec<(usize, String)> = Vec::new();
+    let mut chapter_gaps: Vec<usize> = Vec::new();
     let mut after_heading = false;
     // The block that is, so far, the last one inside an open theorem-like
     // environment. `\endtrivlist`'s `\@endparenv` puts `\@topsepadd` after
@@ -1362,6 +1363,9 @@ pub fn adapt_cached(
                     }),
                     BodyKind::NoIndent => noindent_at = Some(cmd.end),
                     BodyKind::Chapter { starred, title } => {
+                        if !*starred {
+                            chapter_gaps.push(cmd.start);
+                        }
                         // `\@chapter`: `\refstepcounter{chapter}` only
                         // `\if@mainmatter` (book.cls line 356).
                         let number = (!*starred && mainmatter).then(|| {
@@ -1899,9 +1903,18 @@ pub fn adapt_cached(
             *env_close = true;
         }
     }
+    // A list after the last material (a document that is nothing but its
+    // lists, or `\listoffigures` at the very end) is set there too.
+    for cmd in &commands[next_command..] {
+        if let BodyKind::ContentsList(kind) = cmd.kind {
+            let before = source[..cmd.start].trim_end();
+            let eject = ["\\newpage", "\\clearpage", "\\cleardoublepage", "\\pagebreak"].iter().any(|c| before.ends_with(c));
+            toc_lists.push((blocks.len(), kind, Span::in_document(entry_doc, cmd.start, cmd.end), eject));
+        }
+    }
     // The contents lists, now that every record is known.
     for (at, kind, span, eject) in toc_lists.into_iter().rev() {
-        let list = crate::toc::list_blocks(kind, span, eject, &toc_settings, &toc_records, labels, &chapter_starts);
+        let list = crate::toc::list_blocks(kind, span, eject, &toc_settings, &toc_records, labels, &chapter_starts, &chapter_gaps);
         blocks.splice(at..at, list);
     }
     // `abstract`: the compiler sets its body as plain text, so the class's
@@ -1964,7 +1977,7 @@ pub fn adapt_cached(
     // paragraph under a `\parshape` — so the listing paragraph must keep
     // neither the opening nor the closing `\topsep`, and that pass would
     // otherwise put the closing one back.
-    let (listing_superseded, listing_limitations) = crate::listings::apply(texts, &mut blocks, &style, labels);
+    let (listing_superseded, listing_limitations) = crate::listings::apply(texts, &mut blocks, &style, labels, &chapter_starts);
     superseded.extend(listing_superseded);
     superseded.extend(crate::listings::lstset_spans(texts));
     limitations.extend(listing_limitations);
@@ -5607,7 +5620,8 @@ pub enum BodyKind {
     MakeTitle,
     /// book.cls `\frontmatter`/`\mainmatter`/`\backmatter`.
     Matter(Matter),
-    /// `\tableofcontents`, `\listoffigures`, `\listoftables`.
+    /// `\tableofcontents`, `\listoffigures`, `\listoftables`,
+    /// `\lstlistoflistings`.
     ContentsList(crate::toc::ListKind),
     /// `\addcontentsline{<ext>}{<level>}{<entry>}`: `text` is the entry
     /// argument's inner range.
@@ -5719,6 +5733,9 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
             "tableofcontents" => Some((BodyKind::ContentsList(crate::toc::ListKind::Toc), j)),
             "listoffigures" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lof), j)),
             "listoftables" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lot), j)),
+            // listings.sty: `\tableofcontents` with `\contentsname` as
+            // `\lstlistlistingname`, reading the `.lol`.
+            "lstlistoflistings" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lol), j)),
             "appendix" => Some((BodyKind::Appendix, j)),
             "addcontentsline" => group(j).and_then(|(s1, e1, a1)| {
                 let list = crate::toc::ListKind::from_ext(source[s1..e1].trim())?;
