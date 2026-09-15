@@ -39,15 +39,23 @@ enum CommandPaletteModel {
             let menu = r.entry.menu.lowercased()
             let keys = r.entry.shortcuts.joined(separator: " ").lowercased()
             let description = r.entry.description.lowercased()
-            var best = 3
+            // Rank by the WORST-placed term, not the best. Every term has to
+            // match somewhere (the `return nil` below), so taking the minimum
+            // let one incidental title hit mask the rest. Making Duplicate
+            // Line runnable exposed it: for "go to line" its title supplies
+            // "line" (0) while its description supplies "go" and "to" only
+            // because it says "⇧⌘D remains Go to Matching" (3). The minimum
+            // scored it 0 -- tying Go to Line, whose title holds all three --
+            // and the tie broke on declaration order, so Duplicate Line won.
+            var worst = 0
             for t in terms {
-                if title.contains(t) { best = min(best, 0) }
-                else if item.contains(t) { best = min(best, 1) }
-                else if menu.contains(t) || keys.contains(t) { best = min(best, 2) }
-                else if description.contains(t) { best = min(best, 3) }
+                if title.contains(t) { worst = max(worst, 0) }
+                else if item.contains(t) { worst = max(worst, 1) }
+                else if menu.contains(t) || keys.contains(t) { worst = max(worst, 2) }
+                else if description.contains(t) { worst = max(worst, 3) }
                 else { return nil }
             }
-            return best
+            return worst
         }
         let ranked = all.enumerated().compactMap { i, r in rank(r).map { (rank: $0, index: i, row: r) } }
         return ranked.sorted { ($0.rank, $0.index) < ($1.rank, $1.index) }.map(\.row)
