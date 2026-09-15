@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/xref-measure-step0",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-15T10:04:37Z",
+  "state": "claimed",
+  "task_id": "GH-XREF-MEASURE-STEP0",
+  "updated_utc": "2026-09-15T10:04:37Z"
+}
