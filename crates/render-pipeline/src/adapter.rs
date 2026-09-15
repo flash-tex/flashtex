@@ -1763,7 +1763,7 @@ pub fn adapt_cached(
                 if let Some(table) = lone_longtable(&mut parts) {
                     let src = texts.get(table.span.document.0).copied().unwrap_or("");
                     blocks.push(Block::LongTable {
-                        lengths: LongtableLengths::read(|name| setlength(src, name, size)),
+                        lengths: LongtableLengths::read(|name| length_at(src, name, size, table.span.start, 0.0)),
                         labels: Vec::new(),
                         table,
                         eject_before,
@@ -3551,7 +3551,12 @@ fn skip_macro_definition(source: &str, name: &str, mut i: usize) -> usize {
     i
 }
 
-fn setlength_args(source: &str, mut i: usize) -> Option<(String, String)> {
+fn setlength_args(source: &str, i: usize) -> Option<(String, String)> {
+    setlength_args_end(source, i).map(|(target, value, _)| (target, value))
+}
+
+/// [`setlength_args`] and the byte after the value's closing brace.
+fn setlength_args_end(source: &str, mut i: usize) -> Option<(String, String, usize)> {
     i = skip_ws(source, i);
     let b = source.as_bytes();
     let target = if b.get(i) == Some(&b'{') {
@@ -3570,7 +3575,7 @@ fn setlength_args(source: &str, mut i: usize) -> Option<(String, String)> {
         return None;
     };
     let value = read_group(source, &mut i)?;
-    Some((target, value))
+    Some((target, value, i))
 }
 
 fn usepackage_arg(source: &str, mut i: usize) -> Option<(String, String)> {
@@ -3594,7 +3599,12 @@ fn usepackage_arg(source: &str, mut i: usize) -> Option<(String, String)> {
     Some((opts, arg))
 }
 
-fn read_assignment_dimen(source: &str, mut i: usize) -> Option<String> {
+fn read_assignment_dimen(source: &str, i: usize) -> Option<String> {
+    read_assignment_dimen_end(source, i).map(|(raw, _)| raw)
+}
+
+/// [`read_assignment_dimen`] and the byte after the dimension.
+fn read_assignment_dimen_end(source: &str, mut i: usize) -> Option<(String, usize)> {
     i = skip_ws(source, i);
     let b = source.as_bytes();
     let start = i;
@@ -3611,7 +3621,7 @@ fn read_assignment_dimen(source: &str, mut i: usize) -> Option<String> {
             break;
         }
     }
-    Some(source[start..i].to_string())
+    Some((source[start..i].to_string(), i))
 }
 
 fn read_one_dimen(source: &str, mut i: usize) -> Option<usize> {
@@ -3897,6 +3907,101 @@ fn setlength_in(source: &str, name: &str, size: u32, em_ex: Option<(f64, f64)>) 
         from = abs + 1;
     }
     found
+}
+
+/// The length register `\<name>` as seen at byte `at`, when the source
+/// assigns it before then: `\setlength{\<name>}{v}`, `\setlength\<name>{v}`,
+/// `\addtolength` (added to `base`, the value before any assignment, or to
+/// the assignment before it) and TeX's `\<name>=v` / `\<name> v`. Every
+/// assignment is local, so one made inside `{...}`,
+/// `\begingroup...\endgroup` or an environment that has ended by `at` is
+/// undone -- a `\tabcolsep` set for one table does not reach the next.
+/// Assignments inside macro definitions are not read.
+fn length_at(source: &str, name: &str, size: u32, at: usize, base: f64) -> Option<f64> {
+    let at = at.min(source.len());
+    let mut value = None;
+    let mut scan = CmdScan::new(&source[..at]);
+    while let Some((cmd_at, cmd, _)) = scan.next() {
+        let after_name = cmd_at + 1 + cmd.len();
+        if matches!(cmd, "newcommand" | "renewcommand" | "providecommand" | "def" | "gdef" | "edef" | "xdef") {
+            scan.skip_to(skip_macro_definition(source, cmd, after_name));
+            continue;
+        }
+        let (raw, add, end) = if cmd == "setlength" || cmd == "addtolength" {
+            let Some((target, raw, end)) = setlength_args_end(source, after_name) else { continue };
+            if target != name {
+                continue;
+            }
+            (raw, cmd == "addtolength", end)
+        } else if cmd == name {
+            let Some((raw, end)) = read_assignment_dimen_end(source, after_name) else { continue };
+            (raw, false, end)
+        } else {
+            continue;
+        };
+        if end > at || !group_open_between(source, end, at) {
+            continue;
+        }
+        if let Some(v) = parse_dimen_in(raw.trim_start_matches('='), size, None) {
+            value = Some(if add { value.unwrap_or(base) + v } else { v });
+        }
+    }
+    value
+}
+
+/// Whether the group open at byte `from` is still open at `to`: no `}`,
+/// `\endgroup` or `\end` in between closes more than was opened after
+/// `from`. Comments and escaped braces are skipped.
+fn group_open_between(source: &str, from: usize, to: usize) -> bool {
+    let b = source.as_bytes();
+    let mut depth = 0i64;
+    let mut i = from;
+    while i < to {
+        match b[i] {
+            b'%' => {
+                while i < to && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'{' => depth += 1,
+            b'}' => depth -= 1,
+            b'\\' => {
+                let name_end = source[i + 1..to].find(|c: char| !c.is_ascii_alphabetic()).map_or(to, |n| i + 1 + n);
+                match &source[i + 1..name_end] {
+                    "begin" | "begingroup" => depth += 1,
+                    "end" | "endgroup" => depth -= 1,
+                    // `\{`, `\}`, `\%`, `\\`: one escaped character.
+                    "" => i += 1,
+                    _ => {}
+                }
+                i = name_end.max(i + 1);
+                if depth < 0 {
+                    return false;
+                }
+                continue;
+            }
+            _ => {}
+        }
+        if depth < 0 {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// `<n>` when the bytes of `span` are exactly `\hspace{<n>em}` or
+/// `\hspace*{<n>em}` (a rigid length in ems, no `plus`/`minus`).
+fn hspace_ems(source: &str, span: Span) -> Option<f64> {
+    let text = source.get(span.start..span.end)?;
+    let rest = text.strip_prefix("\\hspace")?.trim_start();
+    let rest = rest.strip_prefix('*').unwrap_or(rest).trim_start();
+    let arg = rest.strip_prefix('{')?.strip_suffix('}')?.trim();
+    let number = arg.strip_suffix("em")?.trim();
+    if number.is_empty() || !number.bytes().all(|c| c.is_ascii_digit() || matches!(c, b'.' | b'-' | b'+')) {
+        return None;
+    }
+    number.parse().ok()
 }
 
 /// The class size (`10`/`11`/`12`) whose `\normalsize` is `body_pt`.
@@ -6552,7 +6657,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
                 let src = text_of(span.document);
-                let lengths = crate::table::TableLengths::read(|name| setlength(src, name, size));
+                let lengths = crate::table::TableLengths::read(|name, base| length_at(src, name, size, span.start, base));
                 let mut items_of = |inlines: &[Inline], declared: bool| items_from_inlines_styled(texts, inlines, styles, labels, size, false, declared);
                 let table = crate::table::from_compiler(t, lengths, declared_size(t.style.size, size), &mut items_of);
                 items.push(Item::Table(Box::new(table)));
@@ -6647,7 +6752,14 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 // invocation's span, and the next token's gap must start
                 // after the word, not before it.
                 let (item, word) = match &**inline {
-                    Inline::HSpace { pt, .. } => (Item::HSpace { pt: *pt, stretch_pt: 0.0, shrink_pt: 0.0 }, "\\hspace"),
+                    // `em` is the current font's quad (`\fontdimen6`), which
+                    // the compiler's `pt` cannot know: it converts at a fixed
+                    // size. An `\hspace{<n>em}` read from the source is set
+                    // as `<n>` quads of the font in force, like `\quad`.
+                    Inline::HSpace { pt, span } => match hspace_ems(text_of(span.document), *span) {
+                        Some(em) => (Item::Quad { em }, "\\hspace"),
+                        None => (Item::HSpace { pt: *pt, stretch_pt: 0.0, shrink_pt: 0.0 }, "\\hspace"),
+                    },
                     Inline::TextGlue { em, .. } => (Item::Quad { em: *em }, if *em >= 2.0 { "\\qquad" } else { "\\quad" }),
                     // `\hrulefill` and `\dotfill` (compiler `FillLeader`, #320)
                     // are `\leavevmode\leaders<box>\hfill\kern\z@`: the glue is
@@ -7516,6 +7628,41 @@ mod tests {
                 .abs()
                 < 1e-6
         );
+    }
+
+    #[test]
+    fn table_lengths_are_read_with_their_group_scope() {
+        let src = "\\documentclass{article}\\setlength{\\tabcolsep}{3pt}\\begin{document}\
+                   {\\setlength{\\tabcolsep}{4pt}A}B\\begin{center}\\setlength{\\tabcolsep}{5pt}C\\end{center}D\
+                   \\begingroup\\setlength{\\tabcolsep}{7pt}\\{E\\endgroup F % \\setlength{\\tabcolsep}{9pt}\nG\\end{document}";
+        let at = |marker: &str| src.find(marker).unwrap();
+        let sep = |marker: &str| length_at(src, "tabcolsep", 10, at(marker), 6.0);
+        assert_eq!(sep("\\begin{document}"), Some(3.0));
+        assert_eq!(sep("A}"), Some(4.0));
+        assert_eq!(sep("B\\begin"), Some(3.0));
+        assert_eq!(sep("C\\end"), Some(5.0));
+        assert_eq!(sep("D\\begingroup"), Some(3.0));
+        // `\{` is an escaped brace, not a group.
+        assert_eq!(sep("E\\endgroup"), Some(7.0));
+        assert_eq!(sep("F %"), Some(3.0));
+        // A commented-out assignment is not one.
+        assert_eq!(sep("G\\end"), Some(3.0));
+        assert_eq!(length_at(src, "arrayrulewidth", 10, src.len(), 0.4), None);
+    }
+
+    #[test]
+    fn table_lengths_are_read_in_every_assignment_form() {
+        let src = "\\begin{document}\\setlength\\tabcolsep{2pt}A\\addtolength{\\tabcolsep}{3pt}B{\\tabcolsep=1pt C}{\\tabcolsep 1.5pt D}\\newcommand{\\tight}{\\setlength{\\tabcolsep}{0pt}}E\\end{document}";
+        let at = |marker: &str| src.find(marker).unwrap();
+        let sep = |marker: &str| length_at(src, "tabcolsep", 10, at(marker), 6.0);
+        assert_eq!(sep("A"), Some(2.0));
+        assert_eq!(sep("B"), Some(5.0));
+        assert_eq!(sep("C"), Some(1.0));
+        assert_eq!(sep("D"), Some(1.5));
+        // A definition's body is not an assignment until the macro is used.
+        assert_eq!(sep("E"), Some(5.0));
+        // `\addtolength` with nothing before it adds to the default.
+        assert_eq!(length_at("\\addtolength{\\tabcolsep}{3pt}X", "tabcolsep", 10, 30, 6.0), Some(9.0));
     }
 
     #[test]
