@@ -212,6 +212,11 @@ final class DocumentFileTests: XCTestCase {
         model.openTex(at: url)
         XCTAssertEqual(model.activeText, "Café naïve\n")
         XCTAssertEqual(model.documentURL, url)
+        // The project names the entry after the file (tab, sidebar, Problems,
+        // quit prompt say `paper.tex`, and the durable helper's project root
+        // is the file's directory), not a conventional `main.tex`.
+        XCTAssertEqual(model.activePath, "paper.tex")
+        XCTAssertEqual(model.documents.map(\.path), ["paper.tex"])
         XCTAssertNil(model.result, "opening a file clears the fixture preview")
         XCTAssertFalse(model.isDirty)
 

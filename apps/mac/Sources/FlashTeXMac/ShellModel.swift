@@ -616,7 +616,7 @@ final class ShellModel {
             // built compiler at launch when FLASHTEX_AUTOATTACH=1 (opt-in so tests
             // that construct ShellModel stay fixture-backed).
             if let seed = env["FLASHTEX_SEED_FILE"], let text = try? String(contentsOfFile: seed, encoding: .utf8) {
-                replaceProject(entryText: text)
+                replaceProject(entryText: text, entryPath: URL(fileURLWithPath: seed).lastPathComponent)
                 documentURL = URL(fileURLWithPath: seed)
                 savedText = text
             }
@@ -766,9 +766,14 @@ final class ShellModel {
     // MARK: editing
 
     /// Replaces the whole project with one entry document (File > Open).
-    func replaceProject(entryText text: String) {
-        documents = [.init(path: "main.tex", text: text)]
-        activePath = "main.tex"
+    /// `entryPath` is the opened file's own name (`HW1.tex`), so the tab,
+    /// sidebar, Problems panel and quit prompt name the real file and the
+    /// durable helper's project root is the file's directory
+    /// (ShellModel+Controller.swift keys that on the names agreeing); a
+    /// buffer with no file keeps the conventional `main.tex`.
+    func replaceProject(entryText text: String, entryPath: String = "main.tex") {
+        documents = [.init(path: entryPath, text: text)]
+        activePath = entryPath
         compiledDocuments = [:]
         result = nil
         resultID = nil

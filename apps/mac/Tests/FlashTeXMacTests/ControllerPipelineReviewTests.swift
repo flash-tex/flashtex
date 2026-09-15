@@ -104,6 +104,12 @@ final class ControllerPipelineReviewTests: XCTestCase {
     /// buffer clean, and the real file was never written. The file-routing
     /// predicate the reload/status paths use (`controllerRoutesFiles`) already
     /// refuses this case; the save path must use it too.
+    ///
+    /// Since the entry document took the opened file's own name
+    /// (`replaceProject(entryText:entryPath:)`), `paper.tex` is a rooted
+    /// project like `main.tex`; the guarantee under test is unchanged — the
+    /// file on disk holds the buffer after the save — now through the
+    /// helper's rooted export instead of the direct writer.
     func testSaveOfAFileNotNamedMainTexWritesThatFileNotTheHelpersSessionCopy() async throws {
         guard let helper = Self.helper, FileManager.default.isExecutableFile(atPath: helper.path),
               ShellModel.locateCompiler() != nil else {
@@ -121,12 +127,14 @@ final class ControllerPipelineReviewTests: XCTestCase {
         let model = ShellModel()
         model.autoCompile = true
         XCTAssertEqual(model.openTex(at: tex), .opened)
-        XCTAssertEqual(model.activePath, "main.tex", "the entry document keeps the fixed name")
+        XCTAssertEqual(model.activePath, "paper.tex", "the entry document is named after the file")
         model.attachController(at: helper)
         defer { model.detachController() }
-        let ready = await settles(15) { model.result?.revision == model.editorRevision && model.controllerState.durable["main.tex"] != nil && model.inFlightRevision == nil }
+        let ready = await settles(15) { model.result?.revision == model.editorRevision && model.controllerState.durable["paper.tex"] != nil && model.inFlightRevision == nil }
         XCTAssertTrue(ready, "initial preview never arrived: \(model.controllerStatus)")
-        XCTAssertFalse(model.controllerRoutesFiles, "a session project never routes the open file's saves through the helper")
+        // The entry and the file agree on the name, so the helper's project is
+        // rooted at the file's directory and the save is its rooted export.
+        XCTAssertTrue(model.controllerRoutesFiles, "a rooted project routes the open file's saves through the helper")
 
         let edited = "\\begin{document}\nA paper, edited.\n\\end{document}\n"
         model.updateActiveText(edited)
