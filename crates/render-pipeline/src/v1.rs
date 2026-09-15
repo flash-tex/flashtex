@@ -46,6 +46,19 @@ pub const CAP_DELTA: &str = crate::delta::CAP;
 /// and the echoed capabilities stay). Negotiated only next to
 /// `display-list-v2`; echoed only when the pages were actually elided.
 pub const CAP_V2_ONLY: &str = "display-list-v2-only";
+/// PROPOSAL (`protocol/proposals/display-list-v2-window.md`): the producer
+/// materialises only the requested window of pages; every other page is
+/// present with its frame and `"resident": false` and carries no `items`
+/// key. Negotiated only next to `display-list-v2`, and only meaningful with
+/// the request's `display_list_window`; echoed only on the replies that
+/// actually carry a window, exactly as `-only` is echoed only when the pages
+/// were actually elided.
+///
+/// Accepting it **declines** `display-list-v2-delta` (§7): a delta binds a
+/// digest for every page and a windowed producer has none for a page it did
+/// not materialise. The consumer reads `-delta`'s absence from the echo as
+/// the decline it is and does not send `display_list_base`.
+pub const CAP_WINDOW: &str = "display-list-v2-window";
 
 /// `display-list-v2` and every capability this producer only honours next
 /// to it. `-images` / `-device-color` / `-diagnostics` / `-delta` / `-only`
@@ -55,7 +68,7 @@ pub const CAP_V2_ONLY: &str = "display-list-v2-only";
 pub fn is_display_list_family(cap: &str) -> bool {
     matches!(
         cap,
-        CAP_DISPLAY_LIST | CAP_IMAGES | CAP_DEVICE_COLOR | CAP_DIAGNOSTICS | CAP_DELTA | CAP_V2_ONLY
+        CAP_DISPLAY_LIST | CAP_IMAGES | CAP_DEVICE_COLOR | CAP_DIAGNOSTICS | CAP_DELTA | CAP_V2_ONLY | CAP_WINDOW
     )
 }
 
@@ -70,6 +83,7 @@ pub struct Capabilities {
     pub diagnostics: bool,
     pub delta: bool,
     pub v2_only: bool,
+    pub window: bool,
 }
 
 impl Capabilities {
@@ -79,6 +93,11 @@ impl Capabilities {
     pub fn negotiate(requested: &[String]) -> (Capabilities, Vec<String>) {
         let mut caps = Capabilities::default();
         let mut accepted = Vec::new();
+        // `-window` and `-delta` are mutually exclusive for now and the window
+        // wins, so whether the window was asked for has to be known before
+        // the request-order walk reaches `-delta`.
+        let with_display_list = requested.iter().any(|c| c == CAP_DISPLAY_LIST);
+        let windowing = with_display_list && requested.iter().any(|c| c == CAP_WINDOW);
         for r in requested {
             match r.as_str() {
                 CAP_RULES if !caps.rules => {
@@ -101,12 +120,16 @@ impl Capabilities {
                     caps.images = true;
                     accepted.push(r.clone());
                 }
-                CAP_DIAGNOSTICS if !caps.diagnostics && requested.iter().any(|c| c == CAP_DISPLAY_LIST) => {
+                CAP_DIAGNOSTICS if !caps.diagnostics && with_display_list => {
                     caps.diagnostics = true;
                     accepted.push(r.clone());
                 }
-                CAP_DELTA if !caps.delta && requested.iter().any(|c| c == CAP_DISPLAY_LIST) => {
+                CAP_DELTA if !caps.delta && with_display_list && !windowing => {
                     caps.delta = true;
+                    accepted.push(r.clone());
+                }
+                CAP_WINDOW if !caps.window && with_display_list => {
+                    caps.window = true;
                     accepted.push(r.clone());
                 }
                 CAP_V2_ONLY if !caps.v2_only && requested.iter().any(|c| c == CAP_DISPLAY_LIST) => {
@@ -223,8 +246,19 @@ pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<Strin
     // One hint per font resource, shared by every run that uses it.
     let hints: Vec<Option<FontHint>> = v2.fonts.iter().map(|f| caps.font_hints.then(|| hint_for(f))).collect();
     for page in &v2.pages {
-        let mut items = Vec::with_capacity(page.items.len());
-        for item in &page.items {
+        // A v1 payload is the product preview of a whole document; there is no
+        // v1 shape for "this page was not built", so an elided page is skipped
+        // rather than sent as a blank one — a v1 consumer must never be handed a
+        // page-shaped object that says the page is empty when it was simply not
+        // built. A windowed list reaches here only because the consumer asked for
+        // a window, was told so in the echo, and can read the sibling's `window`
+        // object for the coverage; the pages that are here carry their real
+        // `number`, so the subset is unambiguous rather than a shorter document.
+        // A consumer that needs the v1 payload to stand for the whole document
+        // does not negotiate `display-list-v2-window`.
+        let Some(page_items) = page.items() else { continue };
+        let mut items = Vec::with_capacity(page_items.len());
+        for item in page_items {
             match item {
                 display::Item::GlyphRun(run) => {
                     let hint = v2.fonts.iter().position(|f| f.font_id == run.font_id).and_then(|i| hints[i].as_ref());
@@ -305,7 +339,12 @@ pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<Strin
             items,
         });
     }
-    let has_content = pages.iter().any(|p| !p.items.is_empty());
+    // `display-list-v2-window` §4.1: the window does not change `status`. The
+    // `pages` built above are a windowed list's resident ones only, so "did the
+    // compile produce anything paintable" is asked of the whole-document harvest
+    // assembly made over every block, not of the window.
+    let has_content = pages.iter().any(|p| !p.items.is_empty())
+        || (v2.window.is_some() && v2.document_features.is_some_and(|d| d.any_items));
     let has_error = v2.diagnostics.iter().any(|d| d.severity == Severity::Error);
     let status = if v2.diagnostics.is_empty() {
         "ok"

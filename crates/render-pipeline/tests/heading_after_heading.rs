@@ -67,7 +67,7 @@ fn positions(text: &str, words: &[&str]) -> Vec<(usize, f64)> {
                 .iter()
                 .enumerate()
                 .find_map(|(pi, page)| {
-                    page.items.iter().find_map(|item| match item {
+                    page.resident_items().iter().find_map(|item| match item {
                         Item::GlyphRun(run) if run.text.contains(w) => run.glyphs.first().map(|g| (pi + 1, g.baseline_y.to_bp())),
                         _ => None,
                     })

@@ -2830,9 +2830,9 @@ final class CompletingTextView: NSTextView {
             } else {
                 // A typed character arms the automatic open (`textChanged`);
                 // everything else (deletion, navigation, Return) does not.
-                // Vim normal/visual mode never arms it: a key `vim.handle`
-                // left unhandled (e.g. an unmapped letter) still reaches
-                // here, but it is a command key, not inserted text.
+                // Vim normal/visual mode never arms it: those modes consume
+                // every key `Key.init` accepts, so what still reaches here
+                // (arrows, ⌃-chords Vim declined) is never inserted text.
                 typingKey = Self.typesACharacter(event) && (!vimActive || vim.mode == .insert)
                 super.keyDown(with: event)
                 typingKey = false

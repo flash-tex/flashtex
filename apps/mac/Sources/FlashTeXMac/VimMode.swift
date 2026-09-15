@@ -8,6 +8,12 @@ import Observation
 /// what they were.
 ///
 /// Boundaries, on purpose:
+/// - Normal and visual mode own every key that reaches them: a key with no
+///   mapping is consumed doing nothing (as in Vim), never handed back to the
+///   editor — falling through would type the character into the document.
+///   Deliberate exceptions that never reach the state machine: ⌘- and
+///   ⌥-chords, arrows, Home/End and Page keys (`Key.init(event:)` declines
+///   them so menu shortcuts and plain navigation keep working).
 /// - Insert mode intercepts only Esc / ⌃[ (and only when no marked text
 ///   exists); every other key takes the editor's normal path, so input
 ///   methods, dead keys, completion, snippets and signature help are untouched.
@@ -68,7 +74,8 @@ final class VimMode {
             case 53: self = .esc; return
             case 36, 76: self = .enter; return
             case 51: self = .delete; return
-            case 123, 124, 125, 126, 115, 119, 116, 121, 48: return nil // arrows, Home/End, Page, Tab: the editor's own
+            case 123, 124, 125, 126, 115, 119, 116, 121: return nil // arrows, Home/End, Page: the editor's own
+            case 48: self.init(char: "\t"); return // Tab: a no-op key in normal/visual, the editor's own in insert
             default: break
             }
             if mods.contains(.control) {
@@ -77,7 +84,8 @@ final class VimMode {
                 self.init(char: Character(ch.lowercased()), control: true)
                 return
             }
-            guard let ch = event.characters?.first, !ch.isNewline else { return nil }
+            guard let ch = event.characters?.first else { return nil }
+            if ch.isNewline { self = .enter; return } // ⌃M and friends: Return by another key code
             self.init(char: ch)
         }
     }
@@ -423,7 +431,10 @@ final class VimMode {
     private func handleNormalKey(_ key: Key) -> Bool {
         if key.escape { resetPending(); message = nil; clampNormalCaret(); return true }
         if pending != .none { return handlePendingKey(key) }
-        guard let ch = key.char else { return false }
+        // Enter/Backspace are motions in Vim, not edits; until they move
+        // (Motions below) they are consumed no-ops. Falling through would
+        // insert a newline / delete a character in normal mode.
+        guard let ch = key.char else { resetPending(); return true }
 
         // Counts (a leading 0 is the motion).
         if !key.control, let d = ch.wholeNumberValue, ch.isASCII, d != 0 || count != nil {
@@ -441,7 +452,10 @@ final class VimMode {
             case "f": moveLines(by: pageLines() * (n ?? 1)); return true
             case "b": moveLines(by: -pageLines() * (n ?? 1)); return true
             case "r": textView?.undoManager?.redo(); clampNormalCaret(); return true
-            default: return false
+            // An unmapped ⌃-chord is a no-op: falling through would run the
+            // editor's Cocoa binding (⌃K kills the line, ⌃O opens one, ⌃T
+            // transposes, ⌃H deletes) and edit the buffer from normal mode.
+            default: resetPending(); return true
             }
         }
 
@@ -489,7 +503,10 @@ final class VimMode {
         case "N": searchAgain(reverse: true, count: n ?? 1)
         case "*": searchWordUnderCaret(count: n ?? 1)
         default:
-            guard let m = motion(for: ch, count: n) else { return false }
+            // Normal mode owns the keyboard: a key with no mapping (`q`, `_`,
+            // `[`, …) is consumed doing nothing, exactly like Vim. Returning
+            // false would hand it to the editor, which would *type* it.
+            guard let m = motion(for: ch, count: n) else { resetPending(); return true }
             move(m)
         }
         return true
@@ -825,7 +842,9 @@ final class VimMode {
             }
             return handlePendingKey(key)
         }
-        guard let ch = key.char else { return false }
+        // Enter/Backspace: consumed no-ops (as in normal mode); falling
+        // through would replace the selection with a newline / delete it.
+        guard let ch = key.char else { resetPending(); return true }
         if !key.control, let d = ch.wholeNumberValue, ch.isASCII, d != 0 || count != nil { count = (count ?? 0) * 10 + d; return true }
         let n = count
         count = nil
@@ -835,7 +854,7 @@ final class VimMode {
             case "u": moveLines(by: -(pageLines() / 2)); return true
             case "f": moveLines(by: pageLines()); return true
             case "b": moveLines(by: -pageLines()); return true
-            default: return false
+            default: resetPending(); return true // unmapped ⌃-chord: no-op, never the editor's Cocoa binding
             }
         }
         let sel = textView?.selectedRange() ?? NSRange(location: caret, length: 0)
@@ -872,7 +891,10 @@ final class VimMode {
         case "N": searchAgain(reverse: true, count: n ?? 1)
         case "*": searchWordUnderCaret(count: n ?? 1)
         default:
-            guard let m = motion(for: ch, count: n) else { return false }
+            // Visual mode owns the keyboard too: an unmapped key is consumed
+            // doing nothing. Returning false would hand it to the editor,
+            // which would replace the entire selection with that character.
+            guard let m = motion(for: ch, count: n) else { resetPending(); return true }
             move(m)
         }
         return true

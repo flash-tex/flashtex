@@ -114,7 +114,7 @@ fn math_ligatures_and_alphabet_kerns_place_glyphs_where_pdflatex_does() {
     let r = render(&docs, "main.tex", 1, "math-ligatures", &fonts, &RenderOptions::default());
     assert_eq!(r.v2.pages.len(), 1, "expected a one-page document");
     let mut glyphs: Vec<(f64, f64)> = Vec::new();
-    for item in &r.v2.pages[0].items {
+    for item in r.v2.pages[0].resident_items() {
         let Item::GlyphRun(run) = item else { continue };
         glyphs.extend(run.glyphs.iter().map(|g| (g.baseline_y.to_bp(), g.origin_x.to_bp())));
     }

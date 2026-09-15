@@ -49,7 +49,7 @@ fn lines(body: &str) -> Vec<Line> {
     let mut out: Vec<Line> = Vec::new();
     for page in &r.v2.pages {
         let mut rows: Vec<(f64, Vec<(f64, String)>)> = Vec::new();
-        for it in &page.items {
+        for it in page.resident_items() {
             match it {
                 Item::GlyphRun(run) => {
                     let Some(g) = run.glyphs.first() else { continue };
@@ -152,7 +152,7 @@ fn items(preamble: &str, body: &str, from: &str, to: &str) -> Vec<String> {
     let r = render(&docs, "main.tex", 1, "float-lookalike", &fonts, &RenderOptions::default());
     let mut out = Vec::new();
     for page in &r.v2.pages {
-        for it in &page.items {
+        for it in page.resident_items() {
             let mut it = it.clone();
             if let Item::GlyphRun(run) = &mut it {
                 run.text = run.text.replace(from, to);
