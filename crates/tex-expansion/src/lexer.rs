@@ -316,8 +316,8 @@ impl Lexer {
                 CatCode::Invalid => {
                     self.pos += raw_len;
                     // Real TeX raises "Text line contains an invalid
-                    // character"; we skip it rather than panicking, the
-                    // caller surfaces this as a diagnostic upstream.
+                    // character"; this recovery lexer skips it without
+                    // emitting a token or a diagnostic.
                     continue;
                 }
                 CatCode::Active => {
