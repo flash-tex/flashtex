@@ -48,8 +48,10 @@ use std::rc::Rc;
 use flashtex_tex_expansion::{self as tex, CatCode, Edit, Engine, IncrementalExpander, Limits, TokenKind as TexKind};
 
 use crate::diagnostics::Diagnostic;
-use crate::lexer::{tokenize_document, Token, TokenKind};
-use crate::parser::{path_is_safe, SourceDocument, BUILT_INS, INCLUDE_DEPTH_LIMIT};
+use crate::layout::{BODY_SIZE_PT, Font};
+use crate::lexer::{apply_text_ligatures, tokenize_document, Token, TokenKind};
+use crate::text_builtins::pt_to_sp;
+use crate::parser::{apply_style, path_is_safe, style_command, style_declaration, SourceDocument, TextStyle, BUILT_INS, INCLUDE_DEPTH_LIMIT};
 use crate::{DocumentId, Span};
 
 /// One parser input token with its expansion provenance.
@@ -632,10 +634,219 @@ fn limits_for(bytes: usize) -> Limits {
     }
 }
 
+/// Real [`tex::BoxMeasurer`] for the compiler, replacing the engine's
+/// zero-reporting [`tex::DefaultBoxMeasurer`] placeholder.
+///
+/// A `\setto...` argument is an hbox: restricted horizontal mode, so no line
+/// breaking, no floats, nothing the paragraph/page machinery computes. Each
+/// run of the content is therefore measured exactly as laid-out text would
+/// be — [`crate::layout::text_width`] at the run's own
+/// ([`crate::layout::style_font`], size) — and summed, with interword
+/// spaces/ties at [`crate::layout::word_space`]. `height`/`depth` take the
+/// maximum [`crate::layout::font_extents`] over the runs, as an hbox does.
+/// The [`flashtex_font_engine::Face`] API exposes no per-glyph ink bounding
+/// boxes, so TeX's exact behavior — the ink extent of only the glyphs
+/// actually present, e.g. zero depth for `Hi` — is unreachable without new
+/// font-engine plumbing; the face extents are the honest content-aware
+/// approximation this compiler can reach.
+struct CompilerBoxMeasurer;
+
+/// One shaped run of `\setto...` box content: characters carrying a single
+/// [`TextStyle`], as one [`crate::parser::Inline::Text`] would hold them.
+struct StyledRun {
+    text: String,
+    style: TextStyle,
+}
+
+/// Point size of a run, resolved exactly as [`crate::layout`] resolves laid-out
+/// text: a `\tiny`..`\Huge` declaration against the body size, else the body
+/// size itself (the measurer has no enclosing heading/math context to inherit).
+fn run_size_pt(style: TextStyle) -> f64 {
+    style.size.map_or(BODY_SIZE_PT, |level| {
+        crate::layout::size_declaration_pt(level, BODY_SIZE_PT)
+    })
+}
+
+/// Box content as the layout pass would see it: styled text runs plus the
+/// total width of the interword glue (spaces and ties) between them.
+///
+/// This mirrors the paragraph-body conversion
+/// (`Parser::inlines_from_tokens`) over the engine's token vocabulary instead
+/// of the parser's: the same [`style_command`]/[`style_declaration`] table
+/// drives the same [`apply_style`] transitions over the same group/pending
+/// discipline (an argument-taking `\textbf{...}` arms `pending` until its
+/// group opens; a declaration takes effect immediately), and run text goes
+/// through the same [`apply_text_ligatures`]. Each arm below names its
+/// paragraph-body counterpart:
+///
+/// - group characters structure the style stack and contribute no ink (a
+///   typeset brace always arrives as `\{`, a control sequence);
+/// - `~` is the tie: an interword space of the font in force with no legal
+///   breakpoint (`\nobreakspace`, latex.ltx). Only the *active* character is
+///   the tie — a catcode-other `~` (e.g. from `\string~`) shapes as a tilde
+///   glyph, exactly as TeX sets it. This matches the render pipeline's tie
+///   arm, which likewise recognises only a literal-source `~` and leaves
+///   `\textasciitilde` (a control sequence here) a tilde;
+/// - anything else the flat paragraph pass turns into a non-text inline
+///   (math, logos, kerns, rules, graphics, ...) or drops (`_ => {}`) has no
+///   compiler-crate width: it contributes nothing here either, rather than
+///   an invented guess. Such content measures short; measuring it needs
+///   layout/render machinery, which is out of scope for this hook.
+fn styled_runs(tokens: &[tex::Token]) -> (Vec<StyledRun>, f64) {
+    let mut runs = Vec::new();
+    let mut glue_pt = 0.0;
+    let mut buf = String::new();
+    let mut buf_style = TextStyle::default();
+    let mut style = TextStyle::default();
+    let mut saved = Vec::new();
+    let mut pending: Option<TextStyle> = None;
+    // A space token seen since the last ink: at most one interword space per
+    // maximal whitespace run, as the input tokenizer already collapses them.
+    let mut spaced = false;
+
+    // Shape the open run, if any, and start a fresh one under `next`.
+    // A free function (not a closure): the walk reads and writes `buf_style`
+    // between flushes, which a capturing closure would not allow.
+    fn flush(buf: &mut String, runs: &mut Vec<StyledRun>, current: TextStyle, next: TextStyle) -> TextStyle {
+        if !buf.is_empty() {
+            runs.push(StyledRun {
+                text: apply_text_ligatures(buf),
+                style: current,
+            });
+            buf.clear();
+        }
+        next
+    }
+
+    for token in tokens {
+        match &token.kind {
+            TexKind::Char(_, CatCode::BeginGroup) => {
+                buf_style = flush(&mut buf, &mut runs, buf_style, style);
+                saved.push(style);
+                if let Some(next) = pending.take() {
+                    style = next;
+                    buf_style = next;
+                }
+            }
+            TexKind::Char(_, CatCode::EndGroup) => {
+                flush(&mut buf, &mut runs, buf_style, style);
+                if let Some(previous) = saved.pop() {
+                    style = previous;
+                }
+                buf_style = style;
+            }
+            TexKind::Char(_, CatCode::Space) => {
+                buf_style = flush(&mut buf, &mut runs, buf_style, style);
+                spaced = true;
+            }
+            TexKind::ActiveChar('~') => {
+                buf_style = flush(&mut buf, &mut runs, buf_style, style);
+                if spaced {
+                    // `a ~b`: the space token is real glue and the tie is
+                    // more glue; TeX keeps both.
+                    glue_pt += crate::layout::word_space(run_size_pt(style), crate::layout::style_font(style));
+                    spaced = false;
+                }
+                glue_pt += crate::layout::word_space(run_size_pt(style), crate::layout::style_font(style));
+            }
+            TexKind::Char(c, _) | TexKind::ActiveChar(c) => {
+                if spaced {
+                    glue_pt += crate::layout::word_space(run_size_pt(style), crate::layout::style_font(style));
+                    spaced = false;
+                }
+                if buf_style != style {
+                    buf_style = flush(&mut buf, &mut runs, buf_style, style);
+                }
+                buf.push(*c);
+            }
+            TexKind::ControlSequence(name) if style_command(name) => {
+                buf_style = flush(&mut buf, &mut runs, buf_style, style);
+                pending = Some(apply_style(style, name));
+            }
+            TexKind::ControlSequence(name) if style_declaration(name) => {
+                let next = apply_style(style, name);
+                buf_style = flush(&mut buf, &mut runs, buf_style, next);
+                style = next;
+            }
+            TexKind::ControlSequence(_) => {
+                // No compiler-crate width (see the doc comment): break the
+                // run as the paragraph pass's non-text inline would, but add
+                // no glue and change no style.
+                buf_style = flush(&mut buf, &mut runs, buf_style, style);
+            }
+            TexKind::Param(n) => {
+                if spaced {
+                    glue_pt += crate::layout::word_space(run_size_pt(style), crate::layout::style_font(style));
+                    spaced = false;
+                }
+                if buf_style != style {
+                    buf_style = flush(&mut buf, &mut runs, buf_style, style);
+                }
+                // Unreachable in expanded output (valid only inside macro
+                // bodies); render literally, as `tokens_to_display_string`
+                // does, rather than dropping bytes.
+                buf.push('#');
+                buf.push(char::from(b'0' + (*n).min(9)));
+            }
+            TexKind::Eof => {}
+        }
+    }
+    flush(&mut buf, &mut runs, buf_style, style);
+    // A trailing space is real hbox glue (only line breaking discards edge
+    // glue, and an hbox never breaks).
+    if spaced {
+        glue_pt += crate::layout::word_space(run_size_pt(style), crate::layout::style_font(style));
+    }
+    (runs, glue_pt)
+}
+
+impl tex::BoxMeasurer for CompilerBoxMeasurer {
+    fn width(&self, tokens: &[tex::Token]) -> i64 {
+        let (runs, glue_pt) = styled_runs(tokens);
+        let mut pt = glue_pt;
+        for run in &runs {
+            let size = run_size_pt(run.style);
+            pt += crate::layout::text_width(&run.text, size, crate::layout::style_font(run.style));
+        }
+        i64::from(pt_to_sp(pt))
+    }
+
+    fn height(&self, tokens: &[tex::Token]) -> i64 {
+        let (runs, _) = styled_runs(tokens);
+        let mut tallest = None::<f64>;
+        for run in &runs {
+            let size = run_size_pt(run.style);
+            let (ascender, _) = crate::layout::font_extents(crate::layout::style_font(run.style), size);
+            tallest = Some(tallest.map_or(ascender, |t: f64| t.max(ascender)));
+        }
+        // No text runs (empty or glue-only content): the body baseline-face
+        // fallback, as before — the font API has no ink boxes to say better.
+        let pt = tallest.unwrap_or_else(|| {
+            crate::layout::font_extents(Font::TimesRoman, BODY_SIZE_PT).0
+        });
+        i64::from(pt_to_sp(pt))
+    }
+
+    fn depth(&self, tokens: &[tex::Token]) -> i64 {
+        let (runs, _) = styled_runs(tokens);
+        let mut deepest = None::<f64>;
+        for run in &runs {
+            let size = run_size_pt(run.style);
+            let (_, descender) = crate::layout::font_extents(crate::layout::style_font(run.style), size);
+            deepest = Some(deepest.map_or(descender, |d: f64| d.max(descender)));
+        }
+        let pt = deepest.unwrap_or_else(|| {
+            crate::layout::font_extents(Font::TimesRoman, BODY_SIZE_PT).1
+        });
+        i64::from(pt_to_sp(pt))
+    }
+}
+
 /// Host setup shared by the full and the incremental path. Everything it
 /// sets is part of the engine's checkpointed state.
 fn configure(engine: &mut Engine) {
     engine.run_host_prelude(HOST_PRELUDE);
+    engine.set_box_measurer(Rc::new(CompilerBoxMeasurer));
     engine.set_emit_unbalanced_close(true);
     for name in BUILT_INS {
         engine.declare_host_command(name);
