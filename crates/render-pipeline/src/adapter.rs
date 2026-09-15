@@ -1518,6 +1518,14 @@ pub fn adapt_cached(
                             } else {
                                 chapter_no.to_string()
                             };
+                            // `\thelstlisting` (#543): listings are still
+                            // numbered from the entry document's chapter
+                            // starts (`toc::chapter_numbers`); figures and
+                            // tables carry `floats::number`'s reading-order
+                            // numbers instead.
+                            if cmd_doc == entry_doc {
+                                chapter_starts.push((cmd.start, chapter_label.clone()));
+                            }
                             chapter_label.clone()
                         });
                         let span = Span::in_document(cmd_doc, cmd.start, cmd.end);
