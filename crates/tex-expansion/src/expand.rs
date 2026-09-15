@@ -348,6 +348,24 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
 /// Name of the private sentinel control sequence used to bound nested
 /// full expansions (`\settowidth`, `\label`).
 const SENTINEL: &str = "flashtex@sentinel";
+/// tex.web `infinity`: the largest integer TeX's scanner accepts (§445).
+const TEX_INFINITY: i64 = 0x7FFF_FFFF;
+/// tex.web `max_dimen` (§421): 16383.99998pt.
+const TEX_MAX_DIMEN: i64 = 0x3FFF_FFFF;
+
+/// A digit string as TeX's `scan_int` reads it: past `infinity` it is
+/// `infinity` (the caller reports "Number too big.").
+fn parse_clamped(digits: &str, radix: u32) -> (i64, bool) {
+    let mut value: i64 = 0;
+    for c in digits.chars() {
+        let d = c.to_digit(radix).unwrap_or(0) as i64;
+        value = value * radix as i64 + d;
+        if value > TEX_INFINITY {
+            return (TEX_INFINITY, true);
+        }
+    }
+    (value, false)
+}
 
 /// What one dispatch step produced.
 pub(crate) enum Step {
@@ -3263,24 +3281,35 @@ impl Engine {
             Primitive::Advance => match kind {
                 RegisterKind::Count => {
                     let d = self.scan_number();
-                    self.st.scopes.set_count(idx, self.st.scopes.count(idx) + d, global);
+                    match in_range(self.st.scopes.count(idx).checked_add(d), TEX_INFINITY) {
+                        Some(v) => self.st.scopes.set_count(idx, v, global),
+                        None => self.err("Arithmetic overflow.", tok.span),
+                    }
                 }
                 RegisterKind::Dimen => {
                     let d = self.scan_dimen();
-                    self.st.scopes.set_dimen(idx, self.st.scopes.dimen(idx) + d, global);
+                    match in_range(self.st.scopes.dimen(idx).checked_add(d), TEX_MAX_DIMEN) {
+                        Some(v) => self.st.scopes.set_dimen(idx, v, global),
+                        None => self.err("Arithmetic overflow.", tok.span),
+                    }
                 }
                 RegisterKind::Skip => {
                     let d = self.scan_glue();
                     let mut g = self.st.scopes.skip(idx);
-                    g.value += d.value;
+                    let Some(value) = in_range(g.value.checked_add(d.value), TEX_MAX_DIMEN) else {
+                        self.err("Arithmetic overflow.", tok.span);
+                        self.finish_assignment();
+                        return;
+                    };
+                    g.value = value;
                     if d.stretch_fil == g.stretch_fil {
-                        g.stretch += d.stretch;
+                        g.stretch = g.stretch.saturating_add(d.stretch);
                     } else if d.stretch_fil > g.stretch_fil {
                         g.stretch = d.stretch;
                         g.stretch_fil = d.stretch_fil;
                     }
                     if d.shrink_fil == g.shrink_fil {
-                        g.shrink += d.shrink;
+                        g.shrink = g.shrink.saturating_add(d.shrink);
                     } else if d.shrink_fil > g.shrink_fil {
                         g.shrink = d.shrink;
                         g.shrink_fil = d.shrink_fil;
@@ -3291,15 +3320,33 @@ impl Engine {
             },
             Primitive::Multiply => {
                 let d = self.scan_number();
+                // tex.web §1240: `mult_integers` / `nx_plus_y` against
+                // `infinity` / `max_dimen`; on overflow nothing is assigned.
                 match kind {
-                    RegisterKind::Count => self.st.scopes.set_count(idx, self.st.scopes.count(idx) * d, global),
-                    RegisterKind::Dimen => self.st.scopes.set_dimen(idx, self.st.scopes.dimen(idx) * d, global),
+                    RegisterKind::Count => match in_range(self.st.scopes.count(idx).checked_mul(d), TEX_INFINITY) {
+                        Some(v) => self.st.scopes.set_count(idx, v, global),
+                        None => self.err("Arithmetic overflow.", tok.span),
+                    },
+                    RegisterKind::Dimen => match in_range(self.st.scopes.dimen(idx).checked_mul(d), TEX_MAX_DIMEN) {
+                        Some(v) => self.st.scopes.set_dimen(idx, v, global),
+                        None => self.err("Arithmetic overflow.", tok.span),
+                    },
                     RegisterKind::Skip => {
                         let mut g = self.st.scopes.skip(idx);
-                        g.value *= d;
-                        g.stretch *= d;
-                        g.shrink *= d;
-                        self.st.scopes.set_skip(idx, g, global);
+                        let scaled = (
+                            in_range(g.value.checked_mul(d), TEX_MAX_DIMEN),
+                            in_range(g.stretch.checked_mul(d), TEX_MAX_DIMEN),
+                            in_range(g.shrink.checked_mul(d), TEX_MAX_DIMEN),
+                        );
+                        match scaled {
+                            (Some(value), Some(stretch), Some(shrink)) => {
+                                g.value = value;
+                                g.stretch = stretch;
+                                g.shrink = shrink;
+                                self.st.scopes.set_skip(idx, g, global);
+                            }
+                            _ => self.err("Arithmetic overflow.", tok.span),
+                        }
                     }
                     RegisterKind::Toks => {}
                 }
@@ -3485,10 +3532,14 @@ impl Engine {
 
     fn scan_decimal_digits(&mut self) -> i64 {
         let mut s = String::new();
+        let mut first = Span::synthetic();
         loop {
             match self.peek_one_expanding() {
                 Some(t) => match t.kind {
                     TokenKind::Char(c, CatCode::Other) if c.is_ascii_digit() => {
+                        if s.is_empty() {
+                            first = t.span;
+                        }
                         s.push(c);
                         self.next_raw_token();
                     }
@@ -3497,15 +3548,29 @@ impl Engine {
                 None => break,
             }
         }
-        s.parse().unwrap_or(i64::MAX)
+        self.clamped_number(&s, 10, first)
+    }
+
+    /// tex.web §445: a constant past `infinity` is "Number too big." and
+    /// becomes `infinity`.
+    fn clamped_number(&mut self, digits: &str, radix: u32, span: Span) -> i64 {
+        let (value, too_big) = parse_clamped(digits, radix);
+        if too_big {
+            self.err("Number too big.", span);
+        }
+        value
     }
 
     fn scan_radix_digits(&mut self, radix: u32) -> i64 {
         let mut s = String::new();
+        let mut first = Span::synthetic();
         loop {
             match self.peek_one_expanding() {
                 Some(t) => match t.kind {
                     TokenKind::Char(c, CatCode::Other) if c.is_digit(radix) => {
+                        if s.is_empty() {
+                            first = t.span;
+                        }
                         s.push(c);
                         self.next_raw_token();
                     }
@@ -3518,7 +3583,7 @@ impl Engine {
                 None => break,
             }
         }
-        i64::from_str_radix(&s, radix).unwrap_or(0)
+        self.clamped_number(&s, radix, first)
     }
 
     fn skip_one_optional_space(&mut self) {
@@ -3532,7 +3597,18 @@ impl Engine {
     /// Scan a `<dimen>` value in scaled points: `<number>` (possibly with a
     /// decimal point) followed by a unit. Font-relative `em`/`ex` use the
     /// engine's `FontMetrics`.
+    /// `<dimen>`, clamped like tex.web §448: a magnitude of 2^30sp or more is
+    /// "Dimension too large." and becomes `max_dimen`.
     pub fn scan_dimen(&mut self) -> i64 {
+        let v = self.scan_dimen_unclamped();
+        if v.abs() > TEX_MAX_DIMEN {
+            self.err("Dimension too large.", Span::synthetic());
+            return TEX_MAX_DIMEN * v.signum();
+        }
+        v
+    }
+
+    fn scan_dimen_unclamped(&mut self) -> i64 {
         self.skip_spaces();
         let mut neg = false;
         loop {
@@ -3659,7 +3735,7 @@ impl Engine {
                     _ => None,
                 };
                 if let Some(v) = v {
-                    let n: i64 = int_part.parse().unwrap_or(0);
+                    let n = self.clamped_number(&int_part, 10, t.span);
                     let f = round_decimals(&frac);
                     let r = n * v + xn_over_d(v, f, 65536);
                     return if neg { -r } else { r };
@@ -3667,7 +3743,7 @@ impl Engine {
             }
         }
         let unit = self.read_unit_name();
-        let int_val: i64 = int_part.parse().unwrap_or(0);
+        let int_val = self.clamped_number(&int_part, 10, Span::synthetic());
         let per = self.unit_sp(&unit);
         let sp = scale_decimal(int_val, &frac, per);
         self.skip_one_optional_space();
@@ -3793,16 +3869,21 @@ impl Engine {
         if self.maybe_consume_keyword("fil") {
             let mut fil = 1u8;
             while self.maybe_consume_keyword("l") {
-                fil += 1;
+                // tex.web §454: an order past filll is an error, not a new order.
+                if fil == 3 {
+                    self.err("Illegal unit of measure (replaced by filll).", Span::synthetic());
+                } else {
+                    fil += 1;
+                }
             }
-            let int_val: i64 = int_part.parse().unwrap_or(0);
+            let int_val = self.clamped_number(&int_part, 10, Span::synthetic());
             let v = scale_decimal(int_val, &frac, 65536.0);
             self.skip_one_optional_space();
             return (if neg { -v } else { v }, fil);
         }
         let unit = self.read_unit_name();
         let per = self.unit_sp(&unit);
-        let int_val: i64 = int_part.parse().unwrap_or(0);
+        let int_val = self.clamped_number(&int_part, 10, Span::synthetic());
         let v = scale_decimal(int_val, &frac, per);
         self.skip_one_optional_space();
         (if neg { -v } else { v }, 0)
@@ -3819,6 +3900,15 @@ impl Engine {
                 self.next_raw_token();
             }
         }
+        // e-TeX: an intermediate or final value past `infinity` (`max_dimen`
+        // for `\dimexpr`) is "Arithmetic overflow" and the expression is 0.
+        // The steps saturate, so any overflow surfaces as a final value
+        // out of range.
+        let limit = if is_dimen { TEX_MAX_DIMEN } else { TEX_INFINITY };
+        if v.abs() > limit {
+            self.err("Arithmetic overflow.", Span::synthetic());
+            return 0;
+        }
         v
     }
 
@@ -3829,11 +3919,11 @@ impl Engine {
             match self.peek_one_expanding() {
                 Some(t) if matches!(t.kind, TokenKind::Char('+', _)) => {
                     self.next_raw_token();
-                    acc += self.expr_prod(is_dimen);
+                    acc = acc.saturating_add(self.expr_prod(is_dimen));
                 }
                 Some(t) if matches!(t.kind, TokenKind::Char('-', _)) => {
                     self.next_raw_token();
-                    acc -= self.expr_prod(is_dimen);
+                    acc = acc.saturating_sub(self.expr_prod(is_dimen));
                 }
                 _ => break,
             }
@@ -4671,14 +4761,20 @@ fn xn_over_d(x: i64, n: i64, d: i64) -> i64 {
 
 /// e-TeX's `\numexpr`/`\dimexpr` division rounds to the nearest integer,
 /// ties away from zero (not truncating like `\divide`).
+/// `value` when it exists and its magnitude is at most `limit`.
+fn in_range(value: Option<i64>, limit: i64) -> Option<i64> {
+    value.filter(|v| v.abs() <= limit)
+}
+
 fn rounded_div(a: i64, d: i64) -> i64 {
     if d == 0 {
         return 0;
     }
-    let sign: i64 = if (a < 0) != (d < 0) { -1 } else { 1 };
-    let a_abs = a.unsigned_abs() as i64;
-    let d_abs = d.unsigned_abs() as i64;
-    sign * ((2 * a_abs + d_abs) / (2 * d_abs))
+    let sign: i128 = if (a < 0) != (d < 0) { -1 } else { 1 };
+    let a_abs = a.unsigned_abs() as i128;
+    let d_abs = d.unsigned_abs() as i128;
+    let q = sign * ((2 * a_abs + d_abs) / (2 * d_abs));
+    q.clamp(i64::MIN as i128, i64::MAX as i128) as i64
 }
 
 fn is_if_primitive(p: Primitive) -> bool {

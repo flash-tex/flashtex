@@ -382,3 +382,35 @@ fn trailing_spaces_are_stripped_before_endlinechar() {
 fn active_endlinechar_under_obeylines_style_catcode() {
     assert_eq!(run("\\catcode`\\^^M=13 \\def^^M{|}%\na\nb"), "a|b");
 }
+
+/// Fuzz findings: TeX's integer and dimension ranges (tex.web §445, §448,
+/// §1236-1240, e-TeX `\numexpr`). Out-of-range values are clamped or
+/// rejected with TeX's error, never an i64 overflow panic.
+#[test]
+fn numeric_ranges_follow_tex_instead_of_overflowing() {
+    let cases: &[(&str, &str, &str)] = &[
+        (r"\count1=99999999999999999999 \the\count1", "2147483647", "Number too big."),
+        (r#"\count1="FFFFFFFFFFFFFFFFFF \the\count1"#, "2147483647", "Number too big."),
+        (r"\count1=99999999999999999999 \advance\count1 by 1 \the\count1", "2147483647", "Arithmetic overflow."),
+        (r"\count1=2147483647 \advance\count1 by 1 \the\count1", "2147483647", "Arithmetic overflow."),
+        (
+            r"\count1=2147483647 \multiply\count1 by 2147483647 \multiply\count1 by 2147483647 \the\count1",
+            "2147483647",
+            "Arithmetic overflow.",
+        ),
+        (r"\dimen0=20000pt \the\dimen0", "16383.99998pt", "Dimension too large."),
+        (r"\dimen0=16383pt \advance\dimen0 by 16383pt \the\dimen0", "16383.0pt", "Arithmetic overflow."),
+        (r"\dimen0=99999999999999999999\dimen1 \the\dimen0", "0.0pt", "Number too big."),
+        (r"\the\numexpr 2147483647+1\relax", "0", "Arithmetic overflow."),
+        (r"\the\numexpr 2147483647*2147483647*2147483647*2147483647\relax", "0", "Arithmetic overflow."),
+    ];
+    for (src, value, message) in cases {
+        let r = expand_str(src);
+        assert_eq!(text(&r.tokens).trim(), *value, "{src}");
+        assert!(r.diagnostics.iter().any(|d| d.message == *message), "{src}: {:?}", r.diagnostics);
+    }
+    let fil = format!(r"\skip0=0pt plus 1fi{} \the\skip0", "l".repeat(300));
+    // 300 `l`s overflowed the u8 order counter.
+    let r = expand_str(&fil);
+    assert!(r.diagnostics.iter().any(|d| d.message == "Illegal unit of measure (replaced by filll)."));
+}
