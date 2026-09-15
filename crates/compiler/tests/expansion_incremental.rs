@@ -4,7 +4,7 @@
 //! parser tokens with the same spans and definition spans, the same
 //! diagnostics, and the same `\arraystretch` records, after every edit.
 use flashtex_compiler::expansion::{expand_project, expand_project_with_cache, ExpansionCache};
-use flashtex_compiler::parser::SourceDocument;
+use flashtex_compiler::parser::{self, Block, SourceDocument};
 
 struct Rng(u64);
 
@@ -155,4 +155,43 @@ fn typing_and_line_deletion_match_full_expansion() {
         text.insert_str(start, &line);
         check(&text, &mut cache, 101, "restore line");
     }
+}
+
+/// Itemize labels shown after each parse of one editing session.
+fn session_label_texts(path: &str, text: &str) -> Vec<String> {
+    let documents = [SourceDocument { path, text }];
+    parser::parse_project(&documents, path)
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::ListItem { item, .. } => item.as_ref().map(|item| item.text().to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn edited_labelitem_override_updates_the_itemize_label_in_the_same_session() {
+    // Live-typing repro: editing the captured `\labelitemi` body must change
+    // the itemize label on re-parse, not keep showing the stale text. The
+    // document is over the incremental threshold so the re-parse reuses the
+    // cached suffix, exactly like the editor does.
+    const PATH: &str = "labelitem-incremental-edit.tex";
+    let mut filler = String::new();
+    for i in 0..200 {
+        filler.push_str(&format!(
+            "Paragraph {i} with some ordinary text padding the document beyond the incremental threshold.\n\n"
+        ));
+    }
+    let head = "\\documentclass{article}\n\\begin{document}\n\\renewcommand{\\labelitemi}{X}\\begin{itemize}\\item A\\end{itemize}\n";
+    let tail = "\n\\end{document}\n";
+    let before = format!("{head}{filler}{tail}");
+    assert!(before.len() > 4 * 1024, "repro needs a document over 4 KiB");
+    assert_eq!(session_label_texts(PATH, &before), ["X"]);
+    let after = before.replacen("\\renewcommand{\\labelitemi}{X}", "\\renewcommand{\\labelitemi}{Y}", 1);
+    assert_eq!(
+        session_label_texts(PATH, &after),
+        ["Y"],
+        "editing the override body must update the label, not reuse the stale one"
+    );
 }
