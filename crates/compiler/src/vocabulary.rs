@@ -28,6 +28,7 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
     "SIrange", "ang", "sisetup",
     "underrightarrow", "underleftarrow", "underleftrightarrow", "Bbb", "bold", "dashrightarrow",
     "dasharrow", "dashleftarrow",
+    "mathllap", "mathrlap", "mathclap",
 ];
 
 /// Real LaTeX2e, amsmath/amssymb and widely used package commands this
@@ -72,7 +73,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "intertext", "shortintertext", "substack", "sideset", "xrightarrow", "xleftarrow", "overbrace",
     "underbrace", "overleftarrow", "overrightarrow", "mathcal", "mathfrak", "mathscr", "pmb",
     "limits", "nolimits", "displaylimits", "colon", "eqqcolon", "Coloneqq", "Eqqcolon",
-    "vcentcolon", "dblcolon", "mathllap", "mathrlap", "mathclap", "vdots", "ddots", "iff",
+    "vcentcolon", "dblcolon", "vdots", "ddots", "iff",
     "implies", "impliedby",
     "genfrac", "operatornamewithlimits", "dddot", "ddddot", "cancel", "bcancel", "xcancel",
     "cancelto", "numberwithin", "allowdisplaybreaks", "mathring", "lvert", "rvert", "lVert",
@@ -463,6 +464,20 @@ mod tests {
         );
         assert!(math_mode_help("bogusxyz").is_none());
         assert!(math_mode_help("alpha").is_none());
+        // Slice 2 (#549 follow-up): the lap family is implemented
+        // (`Nucleus::Lap`), so it must read as math vocabulary, not as
+        // unimplemented text commands — otherwise text-mode use gets no
+        // mode hint and math-mode help calls them text commands.
+        for name in ["mathllap", "mathrlap", "mathclap"] {
+            assert!(is_known_command(name), "{name}");
+            assert_eq!(
+                command_help(name),
+                Some(format!("wrap this in math mode: \\(\\{name}\\)")),
+                "{name}"
+            );
+            assert!(math_mode_help(name).is_none(), "{name}");
+            assert!(closest_commands(name).is_empty(), "{name}");
+        }
         assert!(environment_help("tabbing").is_none());
         assert_eq!(
             environment_help("tikzpicture").as_deref(),

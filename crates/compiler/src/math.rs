@@ -6922,6 +6922,20 @@ mod lap_tests {
                     format!("\\{command} requires \\usepackage{{mathtools}}"),
                     "{command}"
                 );
+                // Slice 2 (#549 follow-up): the family is implemented, so the
+                // gate reports a known-but-gated command — never an unknown
+                // command with a did-you-mean rewrite.
+                assert_eq!(
+                    diagnostics[0].code,
+                    Some(crate::diagnostics::DiagnosticCode::UnsupportedFeature),
+                    "{command}"
+                );
+                assert_eq!(
+                    diagnostics[0].help.as_ref().map(|h| h.message.as_str()),
+                    Some("add \\usepackage{mathtools} in the preamble"),
+                    "{command}"
+                );
+                assert_eq!(diagnostics[0].suggestion, None, "{command}");
             }
         }
     }
