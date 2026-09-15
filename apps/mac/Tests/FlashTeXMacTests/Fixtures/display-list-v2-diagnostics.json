@@ -1,0 +1,113 @@
+{
+  "protocol_version": 2,
+  "id": "v2-diag-1",
+  "type": "display_list",
+  "payload": {
+    "render_format": "display-list-v2",
+    "coordinate_unit": "bp_2pow20",
+    "color_space": "srgb",
+    "text_extraction": "cluster-actualtext",
+    "project_id": "p",
+    "revision": 1,
+    "required_features": ["glyph_run", "rule", "rgba-srgb", "cluster-actualtext"],
+    "documents": [
+      {
+        "path": "notes.tex",
+        "revision": 1,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "byte_length": 20
+      }
+    ],
+    "fonts": [
+      {
+        "font_id": "f",
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "byte_length": 10,
+        "format": "static-truetype",
+        "face_index": 0,
+        "units_per_em": 1000,
+        "glyph_count": 300,
+        "postscript_name": "Demo"
+      }
+    ],
+    "pages": [
+      {
+        "number": 1,
+        "width": 641728512,
+        "height": 830472192,
+        "items": [
+          {
+            "kind": "glyph_run",
+            "font_id": "f",
+            "font_size": 12582912,
+            "text": "fi",
+            "glyphs": [
+              {
+                "gid": 125,
+                "origin_x": 1048576,
+                "baseline_y": 2097152,
+                "advance_x": 5808301,
+                "advance_y": 0,
+                "cluster": 0
+              }
+            ],
+            "clusters": [
+              {
+                "text_start_byte": 0,
+                "text_end_byte": 2,
+                "hit_rects": [{"x": 1048576, "top": 0, "width": 5808301, "height": 2097152}],
+                "carets": [{"text_byte": 0, "x": 1048576, "top": 0, "height": 2097152}],
+                "sources": [{"path": "notes.tex", "start_byte": 0, "end_byte": 2}]
+              }
+            ],
+            "paint": {"r": 0, "g": 0, "b": 0, "a": 1}
+          },
+          {
+            "kind": "rule",
+            "x": 0,
+            "top": 3145728,
+            "width": 1048576,
+            "height": 524288,
+            "paint": {"r": 0, "g": 0, "b": 0, "a": 1},
+            "synthetic_reason": "fraction bar"
+          }
+        ]
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "unknown_command",
+        "message": "\\alpah is not supported by this compiler version",
+        "severity": "error",
+        "sources": [{"path": "notes.tex", "start_byte": 0, "end_byte": 6}]
+      },
+      {
+        "code": "unknown_command",
+        "help": {
+          "message": "did you mean \\alpha?",
+          "replacement": {
+            "source": {"path": "notes.tex", "start_byte": 0, "end_byte": 6},
+            "text": "\\alpha"
+          }
+        },
+        "labels": [
+          {
+            "source": {"path": "notes.tex", "start_byte": 0, "end_byte": 6},
+            "text": "this command",
+            "primary": true
+          },
+          {
+            "source": {"path": "notes.tex", "start_byte": 7, "end_byte": 12},
+            "text": "in this item",
+            "primary": false
+          }
+        ],
+        "message": "\\alpah is not supported by this compiler version",
+        "notes": ["\\alpah looks like a misspelling of \\alpha"],
+        "severity": "error",
+        "sources": [{"path": "notes.tex", "start_byte": 0, "end_byte": 6}],
+        "suggestion": "\\alpha"
+      }
+    ]
+  }
+}

@@ -1122,6 +1122,7 @@ extension EditorDiagnostics {
         return nil
     }
 
+
     /// `QuickFix.prepare` for the diagnostic's mechanical edit (same refusal
     /// cases as an explanation suggestion).
     static func prepareHelpReplacement(_ d: RuntimeV1.Diagnostic, path: String,
