@@ -693,10 +693,16 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
-        &["check", "breve", "dddot", "ddddot"],
+        &["check", "breve"],
         "{body}",
         "parsed, but no base-14 glyph exists: diagnosed and typeset without a mark",
         false,
+    ),
+    (
+        &["dddot", "ddddot"],
+        "{body}",
+        "amsmath mathop-limits shape: three/four text dots centred above the body",
+        true,
     ),
     (
         &[
