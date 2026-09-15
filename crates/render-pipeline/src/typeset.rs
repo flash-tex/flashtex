@@ -2909,6 +2909,19 @@ impl<'a> Context<'a> {
                         lead.push((pl::Item::Box(run), Some(rec)));
                     }
                     lead.push((pl::Item::kern(labelsep), None));
+                    // enumitem `style=nextline` (`\enit@postlabel@i`'s
+                    // `\newline`): the label takes a line of its own, so a
+                    // `\\` follows it and the body starts on the next line
+                    // at the hanging indent (`break_paragraph` indents every
+                    // line after the first by `hang_pt` on its own). Before
+                    // the protrusion kern, which belongs to the body text's
+                    // first character, not to the label's line.
+                    if geom.nextline {
+                        if !matches!(style, ParaStyle::Center | ParaStyle::FlushRight) {
+                            lead.push((pl::Item::Glue(pl::Glue::fil()), None));
+                        }
+                        lead.push((pl::Item::penalty(pl::FORCED_BREAK), None));
+                    }
                     if protrude != 0.0 {
                         lead.push((pl::Item::kern(-protrude), None));
                     }
