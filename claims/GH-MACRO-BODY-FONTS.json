@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/macro-body-fonts",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/556",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-15T07:12:08Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-MACRO-BODY-FONTS",
-  "updated_utc": "2026-09-15T07:12:08Z"
+  "updated_utc": "2026-09-15T07:26:45Z"
 }
