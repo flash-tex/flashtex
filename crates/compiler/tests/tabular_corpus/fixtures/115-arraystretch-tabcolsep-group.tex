@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+Text before the table.
+
+{\renewcommand{\arraystretch}{1.3}\setlength{\tabcolsep}{4pt}\begin{tabular}{|l|r|}\hline Stretch & 1.3\\\hline Sep & 4pt\\\hline\end{tabular}} \begin{tabular}{|l|r|}\hline Default & a\\\hline\end{tabular}
+
+Text after the table.
+\end{document}

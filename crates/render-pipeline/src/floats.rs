@@ -61,6 +61,12 @@ pub enum Piece {
     /// carried into every later run of the same float (its scope is the rest
     /// of the float box, which a `\caption` between them must not end).
     Align { span: Span, align: Align },
+    /// A size declaration (`\tiny` ... `\Huge`, `\normalsize`) at the body's
+    /// own level. Like [`Piece::Align`] its bytes stay in their run and are
+    /// carried into every later run: `\@caption` sets its box inside
+    /// `\begingroup ... \normalsize ... \endgroup` (latex.ltx), so a
+    /// `\small` before a `\caption` still sets the `tabular` after it.
+    Size { span: Span },
     /// `\includegraphics[options]{path}`; `span` covers the whole command.
     Graphic { span: Span, options: String, path: String },
     /// `\caption[...]{...}`: `span` covers the command, `arg` the argument's
@@ -309,6 +315,13 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
                             _ => Align::FlushRight,
                         };
                         out.push(Piece::Align { span: span(i, name_end), align });
+                        body!(i, name_end);
+                        i = name_end;
+                    }
+                    "tiny" | "scriptsize" | "footnotesize" | "small" | "normalsize" | "large" | "Large" | "LARGE" | "huge" | "Huge"
+                        if outer(braces, envs) =>
+                    {
+                        out.push(Piece::Size { span: span(i, name_end) });
                         body!(i, name_end);
                         i = name_end;
                     }
@@ -606,8 +619,8 @@ pub fn prepare(
             };
             let mut parts = Vec::new();
             let mut spec_labels = Vec::new();
-            // `\centering` and friends stay in force for the rest of the
-            // float box, so every later content run is parsed with them.
+            // `\centering`, `\small` and friends stay in force for the rest
+            // of the float box, so every later content run is parsed with them.
             let mut aligns: Vec<Span> = Vec::new();
             for piece in &f.pieces {
                 match piece {
@@ -615,6 +628,7 @@ pub fn prepare(
                         aligns.push(*span);
                         parts.push(FloatPart::Align(*align));
                     }
+                    Piece::Size { span } => aligns.push(*span),
                     Piece::ParBreak => parts.push(FloatPart::ParBreak),
                     Piece::Label { key, .. } => spec_labels.push(key.clone()),
                     Piece::Content { span } => {
@@ -872,6 +886,23 @@ mod tests {
         assert_eq!(runs[0], "\\centering");
         assert!(runs[1].starts_with("\\begin{tabular}") && runs[1].ends_with("And a note."));
         assert!(matches!(f[0].pieces[2], Piece::Caption { .. }));
+    }
+
+    #[test]
+    fn a_size_declaration_is_carried_past_the_caption() {
+        let src = "\\begin{document}\n\\begin{table}\n\\centering\\small\n\\caption{C}\n\\begin{tabular}{l}\na\n\\end{tabular}\n{\\large x}\n\\end{table}\n\\end{document}\n";
+        let f = scan(src, DocumentId(0));
+        let sizes: Vec<&str> = f[0]
+            .pieces
+            .iter()
+            .filter_map(|p| match p {
+                Piece::Size { span } => Some(&src[span.start..span.end]),
+                _ => None,
+            })
+            .collect();
+        // `\small` is float-level; the `\large` inside a group is not.
+        assert_eq!(sizes, ["\\small"]);
+        assert!(matches!(&f[0].pieces[2], Piece::Content { span } if &src[span.start..span.end] == "\\centering\\small"));
     }
 
     #[test]
