@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/pdf-exact-route",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/527",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-15T06:25:59Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-PDF-EXACT-ROUTE-BUILD",
-  "updated_utc": "2026-09-15T06:27:31Z"
+  "updated_utc": "2026-09-15T06:39:30Z"
 }
