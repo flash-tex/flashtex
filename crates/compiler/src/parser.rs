@@ -1852,6 +1852,37 @@ impl P<'_> {
 
     fn parse_stream(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         while self.i < self.t.len() {
+            // Issue #65: the commonest tokens are handled here, borrowed, before
+            // the owned copy below (a `String` clone per word). Each branch is
+            // exactly the matching arm of the `match` further down.
+            match &self.t[self.i].token.kind {
+                TokenKind::Space | TokenKind::Comment => {
+                    self.i += 1;
+                    continue;
+                }
+                TokenKind::Word(word)
+                    if control_symbol_kern(
+                        word,
+                        self.t[self.i].token.span,
+                        self.math_packages.amsmath,
+                    )
+                    .is_none() =>
+                {
+                    let span = self.t[self.i].token.span;
+                    let space_before = self.space_precedes(self.i);
+                    self.i += 1;
+                    if self.in_body && !self.document_ended {
+                        para.push(Inline::Text {
+                            text: apply_text_ligatures(word),
+                            span,
+                            style: self.style,
+                            space_before,
+                        });
+                    }
+                    continue;
+                }
+                _ => {}
+            }
             let input = self.t[self.i].clone();
             let tok = input.token;
             let render = self.in_body && !self.document_ended;

@@ -209,15 +209,19 @@ fn with_shaped<R>(font: Font, text: &str, read: impl FnOnce(&ShapeResult) -> R) 
     let slot = font as usize;
     SHAPE_MEMO.with(|memo| {
         let mut memo = memo.borrow_mut();
-        if !memo[slot].contains_key(text) {
-            if memo.iter().map(HashMap::len).sum::<usize>() >= SHAPE_MEMO_LIMIT {
-                memo.iter_mut().for_each(HashMap::clear);
-            }
-            let result = shape(face(font), text, &ShapeOptions::default())
-                .map(|shaped| ShapedSummary::new(text, &shaped));
-            memo[slot].insert(text.into(), result);
+        // A hit hashes `text` once (this used to be `contains_key` plus an
+        // index, two hashes per word).
+        if let Some(result) = memo[slot].get(text) {
+            return read(result);
         }
-        read(&memo[slot][text])
+        if memo.iter().map(HashMap::len).sum::<usize>() >= SHAPE_MEMO_LIMIT {
+            memo.iter_mut().for_each(HashMap::clear);
+        }
+        let result = shape(face(font), text, &ShapeOptions::default())
+            .map(|shaped| ShapedSummary::new(text, &shaped));
+        let output = read(&result);
+        memo[slot].insert(text.into(), result);
+        output
     })
 }
 
@@ -1557,6 +1561,27 @@ impl LayoutCursor {
     /// Lay out a block after `prepare_block`, returning its reusable fragment.
     pub fn render_prepared_block(&mut self, block: &Block) -> Vec<PlacedItem> {
         let starts: Vec<usize> = self.pages.iter().map(|page| page.items.len()).collect();
+        self.render_block(block);
+        let mut placed = Vec::new();
+        for (page_index, page) in self.pages.iter().enumerate() {
+            let start = starts.get(page_index).copied().unwrap_or(0);
+            placed.extend(
+                page.items[start..]
+                    .iter()
+                    .cloned()
+                    .map(|item| PlacedItem { page_index, item }),
+            );
+        }
+        placed
+    }
+
+    /// Lay out a block after `prepare_block` without collecting its fragment.
+    ///
+    /// Issue #65: a clean layout pass (and every cross-reference convergence
+    /// pass) never reuses fragments, and copying every placed item's text
+    /// only to drop it was ~9% of a large compile. The pages are the same as
+    /// after `render_prepared_block`.
+    fn render_block(&mut self, block: &Block) {
         let body_size = self.constraints.font_size_pt;
         match block {
             Block::Paragraph(inlines) => {
@@ -1742,7 +1767,7 @@ impl LayoutCursor {
             }
             Block::VSpace { .. } | Block::PageBreak | Block::VFill => {}
             Block::TableOfContents { span } => {
-                self.render_prepared_block(&Block::Heading {
+                self.render_block(&Block::Heading {
                     level: 1,
                     number: String::new(),
                     number_span: *span,
@@ -1858,17 +1883,6 @@ impl LayoutCursor {
         self.resolve_hfill();
         self.line_spaces.clear();
         self.justify = false;
-        let mut placed = Vec::new();
-        for (page_index, page) in self.pages.iter().enumerate() {
-            let start = starts.get(page_index).copied().unwrap_or(0);
-            placed.extend(
-                page.items[start..]
-                    .iter()
-                    .cloned()
-                    .map(|item| PlacedItem { page_index, item }),
-            );
-        }
-        placed
     }
 
     pub(crate) fn measure_pt(&self) -> f64 {
@@ -2203,7 +2217,7 @@ pub fn layout(blocks: &[Block]) -> Vec<Page> {
     let mut c = LayoutCursor::with_labels(LayoutConstraints::default(), BTreeMap::new(), false);
     for block in blocks {
         c.prepare_block(block);
-        c.render_prepared_block(block);
+        c.render_block(block);
     }
     c.into_pages()
 }
@@ -2212,7 +2226,7 @@ pub fn layout_with_constraints(blocks: &[Block], constraints: LayoutConstraints)
     let mut c = LayoutCursor::new(constraints);
     for block in blocks {
         c.prepare_block(block);
-        c.render_prepared_block(block);
+        c.render_block(block);
     }
     c.into_pages()
 }
@@ -2262,7 +2276,7 @@ pub fn layout_converged_with_options(
         cursor.collect_toc = collect_toc;
         for block in blocks {
             cursor.prepare_block(block);
-            cursor.render_prepared_block(block);
+            cursor.render_block(block);
         }
         let (pages, next, shape_diagnostics) = cursor.into_result();
         last_pages = pages;
