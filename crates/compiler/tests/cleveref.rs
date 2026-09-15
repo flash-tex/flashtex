@@ -50,6 +50,22 @@ fn cleveref_defaults_equations_to_abbreviated_parenthesised_numbers() {
 }
 
 #[test]
+fn cleveref_tagged_equation_uses_the_custom_tag() {
+    let source = concat!(
+        r"\documentclass{article}",
+        r"\usepackage{cleveref}",
+        r"\begin{document}",
+        r"\begin{equation}a=b\tag{A}\label{l}\end{equation}",
+        r"See \cref{l}.",
+        r"\end{document}",
+    );
+    let output = compile(source);
+    let rendered = text(&output);
+    assert!(rendered.contains("eq. (A)"), "{rendered}");
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+}
+
+#[test]
 fn cleveref_custom_names_and_undefined_labels_match_ref_diagnostics() {
     let source = concat!(
         r"\documentclass{article}",
