@@ -102,7 +102,7 @@ pub struct Expansion {
 /// its body's base to point diagnostics at the real `\renewcommand` site.
 /// `None` when the first captured token is synthesized (the parser then keeps
 /// the old byte-0-relative spans for that body: no worse than today).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabelItemOverride {
     pub texts: [String; 4],
     pub starts: [Option<Span>; 4],
