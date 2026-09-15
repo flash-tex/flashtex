@@ -295,12 +295,15 @@ with its `check()` result.
 - **mtime granularity.** A same-size rewrite within the filesystem's mtime
   resolution (nanoseconds on APFS, coarser elsewhere) is not rehashed by
   `Snapshot::diff`. Callers can force a rehash with a fresh `Snapshot::take`.
-- **Graph discovery probes existence through OS paths.** File contents are
-  read through the rooted reader, but the candidate existence check and the
-  Unicode-normalization directory-listing fallback still resolve path
-  strings. `Snapshot` stats and hashes every tracked file through the rooted
-  reader: a symlinked or non-regular tracked path is reported as absent and
-  never opened.
+- **Rename and unlink are checked, not compare-and-swap.** Graph discovery,
+  `Snapshot`, the save-path normalization fallback and the recovery journal
+  listing all stat and list through the pinned root descriptor, never a path
+  string. A save classifies its target with `fstatat(AT_SYMLINK_NOFOLLOW)`
+  immediately before `renameat` (an absent target is created with a
+  no-replace rename where the filesystem supports one), and `remove` does the
+  same before `unlinkat`. An existing entry swapped in between that check and
+  the call is still replaced or removed; neither call follows a symlink, so
+  only a directory entry of the pinned directory is affected.
 - **Special files are classified before they are opened, not atomically.**
   An entry is `fstatat(AT_SYMLINK_NOFOLLOW)`-classified on the pinned
   directory descriptor and opened only if it is a regular file. A swap in

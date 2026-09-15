@@ -23,9 +23,10 @@ use std::io;
 ))]
 mod imp {
     use std::ffi::CString;
+    use std::ffi::{CStr, c_void};
     use std::fs::File;
     use std::io;
-    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
     use std::os::raw::{c_char, c_int, c_uint};
 
     unsafe extern "C" {
@@ -46,6 +47,52 @@ mod imp {
             link_name = "fstatat$INODE64"
         )]
         fn fstatat(dirfd: c_int, path: *const c_char, buf: *mut u8, flags: c_int) -> c_int;
+        #[cfg_attr(
+            all(target_os = "macos", target_arch = "x86_64"),
+            link_name = "fdopendir$INODE64"
+        )]
+        fn fdopendir(fd: c_int) -> *mut c_void;
+        // Returns a `struct dirent`; only `d_name` (at `DIRENT_NAME_OFFSET`)
+        // is read.
+        #[cfg_attr(
+            all(target_os = "macos", target_arch = "x86_64"),
+            link_name = "readdir$INODE64"
+        )]
+        fn readdir(dirp: *mut c_void) -> *const u8;
+        fn closedir(dirp: *mut c_void) -> c_int;
+        #[cfg(target_os = "macos")]
+        fn __error() -> *mut c_int;
+        #[cfg(target_os = "linux")]
+        fn __errno_location() -> *mut c_int;
+        #[cfg(target_os = "macos")]
+        fn renameatx_np(
+            fromfd: c_int,
+            from: *const c_char,
+            tofd: c_int,
+            to: *const c_char,
+            flags: c_uint,
+        ) -> c_int;
+        #[cfg(target_os = "linux")]
+        fn renameat2(
+            olddirfd: c_int,
+            old: *const c_char,
+            newdirfd: c_int,
+            new: *const c_char,
+            flags: c_uint,
+        ) -> c_int;
+    }
+
+    /// The thread's `errno` lvalue.
+    fn errno_ptr() -> *mut c_int {
+        // SAFETY: both functions return the calling thread's errno location.
+        #[cfg(target_os = "macos")]
+        unsafe {
+            __error()
+        }
+        #[cfg(target_os = "linux")]
+        unsafe {
+            __errno_location()
+        }
     }
 
     pub const SUPPORTED: bool = true;
@@ -65,6 +112,13 @@ mod imp {
         pub const AT_SYMLINK_NOFOLLOW: c_int = 0x0020;
         pub const ELOOP: i32 = 62;
         pub const EWOULDBLOCK: i32 = 35;
+        pub const ENOSYS: i32 = 78;
+        pub const ENOTSUP: i32 = 45;
+        /// `renameatx_np`'s `RENAME_EXCL`.
+        pub(super) const RENAME_NOREPLACE: std::os::raw::c_uint = 0x0004;
+        /// `struct dirent`: `d_ino: u64`, `d_seekoff: u64`, `d_reclen: u16`,
+        /// `d_namlen: u16`, `d_type: u8`, then `d_name`.
+        pub(super) const DIRENT_NAME_OFFSET: usize = 21;
 
         /// `struct stat` (64-bit inode): `st_dev: i32` at 0, `st_mode: u16`
         /// at 4, `st_ino: u64` at 8.
@@ -88,6 +142,13 @@ mod imp {
         pub const AT_SYMLINK_NOFOLLOW: c_int = 0x100;
         pub const ELOOP: i32 = 40;
         pub const EWOULDBLOCK: i32 = 11;
+        pub const ENOSYS: i32 = 38;
+        pub const ENOTSUP: i32 = 95;
+        /// `renameat2`'s `RENAME_NOREPLACE`.
+        pub(super) const RENAME_NOREPLACE: std::os::raw::c_uint = 1;
+        /// `struct dirent`: `d_ino: u64`, `d_off: i64`, `d_reclen: u16`,
+        /// `d_type: u8`, then `d_name`.
+        pub(super) const DIRENT_NAME_OFFSET: usize = 19;
 
         /// `struct stat`: `st_dev: u64` at 0, `st_ino: u64` at 8,
         /// `st_nlink: u64` at 16, `st_mode: u32` at 24.
@@ -111,6 +172,13 @@ mod imp {
         pub const AT_SYMLINK_NOFOLLOW: c_int = 0x100;
         pub const ELOOP: i32 = 40;
         pub const EWOULDBLOCK: i32 = 11;
+        pub const ENOSYS: i32 = 38;
+        pub const ENOTSUP: i32 = 95;
+        /// `renameat2`'s `RENAME_NOREPLACE`.
+        pub(super) const RENAME_NOREPLACE: std::os::raw::c_uint = 1;
+        /// `struct dirent`: `d_ino: u64`, `d_off: i64`, `d_reclen: u16`,
+        /// `d_type: u8`, then `d_name`.
+        pub(super) const DIRENT_NAME_OFFSET: usize = 19;
 
         /// Generic `struct stat`: `st_dev: u64` at 0, `st_ino: u64` at 8,
         /// `st_mode: u32` at 16.
@@ -127,6 +195,7 @@ mod imp {
     pub const ENOENT: i32 = 2;
     pub const EEXIST: i32 = 17;
     pub const ENOTDIR: i32 = 20;
+    pub const EINVAL: i32 = 22;
     const LOCK_EX: c_int = 2;
     const LOCK_NB: c_int = 4;
     const LOCK_UN: c_int = 8;
@@ -178,6 +247,85 @@ mod imp {
         } else {
             Ok(())
         }
+    }
+
+    /// Renames `old` to `new` inside `dir` only if `new` does not exist
+    /// (`renameatx_np(RENAME_EXCL)` on macOS, `renameat2(RENAME_NOREPLACE)`
+    /// on Linux): an entry created at `new` after the caller checked is never
+    /// replaced, and the call fails with `EEXIST`. Filesystems or kernels
+    /// without the primitive fail with an error for which
+    /// [`noreplace_unsupported`] is true; nothing was renamed then.
+    pub fn rename_at_noreplace(dir: &File, old: &str, new: &str) -> io::Result<()> {
+        let (o, n) = (cstr(old)?, cstr(new)?);
+        let fd = dir.as_raw_fd();
+        // SAFETY: valid C strings and an open directory descriptor.
+        #[cfg(target_os = "macos")]
+        let rc = unsafe { renameatx_np(fd, o.as_ptr(), fd, n.as_ptr(), RENAME_NOREPLACE) };
+        // SAFETY: as above.
+        #[cfg(target_os = "linux")]
+        let rc = unsafe { renameat2(fd, o.as_ptr(), fd, n.as_ptr(), RENAME_NOREPLACE) };
+        if rc != 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Whether a [`rename_at_noreplace`] failure means the primitive is not
+    /// available here (rather than a real rename failure).
+    pub fn noreplace_unsupported(err: &io::Error) -> bool {
+        [EINVAL, ENOSYS, ENOTSUP]
+            .iter()
+            .any(|&c| err.raw_os_error() == Some(c))
+    }
+
+    /// Names of the entries of the open directory `dir`, excluding `.` and
+    /// `..`, as raw bytes.
+    ///
+    /// The directory is read with `fdopendir` on a fresh descriptor opened as
+    /// `openat(dir, ".")`: the same directory object `dir` refers to, with
+    /// its own read offset, never re-resolved from a path string. Entries
+    /// are only named, not followed or stat'ed.
+    pub fn list_dir(dir: &File) -> io::Result<Vec<Vec<u8>>> {
+        let fresh = open_at_bytes(dir, b".", O_RDONLY | O_DIRECTORY, 0)?;
+        let fd = fresh.into_raw_fd();
+        // SAFETY: `fd` is an open directory descriptor; on success the DIR
+        // stream owns it and `closedir` closes it.
+        let dirp = unsafe { fdopendir(fd) };
+        if dirp.is_null() {
+            let err = io::Error::last_os_error();
+            // SAFETY: fdopendir failed, so `fd` is still ours to close.
+            drop(unsafe { File::from_raw_fd(fd) });
+            return Err(err);
+        }
+        let mut names = Vec::new();
+        let result = loop {
+            // SAFETY: `errno_ptr` is the thread's errno; clearing it lets a
+            // NULL return be told apart as end-of-directory or error.
+            unsafe { *errno_ptr() = 0 };
+            // SAFETY: `dirp` is a live DIR stream.
+            let ent = unsafe { readdir(dirp) };
+            if ent.is_null() {
+                // SAFETY: as above.
+                let errno = unsafe { *errno_ptr() };
+                break if errno == 0 {
+                    Ok(())
+                } else {
+                    Err(io::Error::from_raw_os_error(errno))
+                };
+            }
+            // SAFETY: `ent` points at a `struct dirent` whose NUL-terminated
+            // `d_name` starts at `DIRENT_NAME_OFFSET`; it stays valid until
+            // the next `readdir` on this stream, and is copied before that.
+            let name = unsafe { CStr::from_ptr(ent.add(DIRENT_NAME_OFFSET).cast::<c_char>()) };
+            let name = name.to_bytes();
+            if name != b"." && name != b".." {
+                names.push(name.to_vec());
+            }
+        };
+        // SAFETY: `dirp` is a live DIR stream, closed exactly once.
+        unsafe { closedir(dirp) };
+        result.map(|()| names)
     }
 
     pub fn unlink_at(dir: &File, name: &str) -> io::Result<()> {
@@ -296,6 +444,15 @@ mod imp {
     pub fn rename_at(_: &File, _: &str, _: &str) -> io::Result<()> {
         Err(unsupported())
     }
+    pub fn rename_at_noreplace(_: &File, _: &str, _: &str) -> io::Result<()> {
+        Err(unsupported())
+    }
+    pub fn noreplace_unsupported(_: &io::Error) -> bool {
+        false
+    }
+    pub fn list_dir(_: &File) -> io::Result<Vec<Vec<u8>>> {
+        Err(unsupported())
+    }
     pub fn unlink_at(_: &File, _: &str) -> io::Result<()> {
         Err(unsupported())
     }
@@ -410,7 +567,7 @@ mod tests {
     /// The hand-decoded `struct stat` fields must agree with `std`'s own
     /// `lstat` for every file type this crate distinguishes.
     #[test]
-    fn stat_at_nofollow_matches_std_symlink_metadata() {
+    fn stat_list_and_noreplace_match_std() {
         if !SUPPORTED {
             return;
         }
@@ -442,6 +599,41 @@ mod tests {
         }
         let err = stat_at_nofollow(&handle, b"absent").unwrap_err();
         assert!(errno_is(&err, ENOENT), "{err:?}");
+
+        // `list_dir` agrees with `std::fs::read_dir`, and a second listing
+        // of the same handle is complete (its own read offset each time).
+        let mut expected: Vec<Vec<u8>> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| {
+                use std::os::unix::ffi::OsStrExt;
+                e.unwrap().file_name().as_bytes().to_vec()
+            })
+            .collect();
+        expected.sort();
+        for _ in 0..2 {
+            let mut names = list_dir(&handle).unwrap();
+            names.sort();
+            assert_eq!(names, expected);
+        }
+
+        // `rename_at_noreplace` never replaces an existing entry.
+        std::fs::write(dir.join("other"), "y").unwrap();
+        match rename_at_noreplace(&handle, "other", "file") {
+            Err(e) if noreplace_unsupported(&e) => {}
+            Err(e) => assert!(errno_is(&e, EEXIST), "{e:?}"),
+            Ok(()) => panic!("replaced an existing entry"),
+        }
+        assert_eq!(std::fs::read_to_string(dir.join("file")).unwrap(), "x");
+        rename_at_noreplace(&handle, "other", "fresh")
+            .or_else(|e| {
+                if noreplace_unsupported(&e) {
+                    rename_at(&handle, "other", "fresh")
+                } else {
+                    Err(e)
+                }
+            })
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("fresh")).unwrap(), "y");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

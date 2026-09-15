@@ -618,3 +618,79 @@ fn special_files_are_refused_before_they_are_opened() {
     );
     assert!(fs::symlink_metadata(&lock).unwrap().file_type().is_fifo());
 }
+
+/// Review finding 3: a FIFO at a referenced name is found by the rooted
+/// probe (without opening it) and reported as unreadable, not as missing.
+/// Deterministic counterpart of the swap test above.
+#[test]
+fn fifo_input_target_is_a_read_error_not_a_missing_file() {
+    let t = TempDir::new("fifo-input");
+    t.write("main.tex", "\\input{pipe}\n");
+    make_fifo(&t.root().join("pipe.tex"));
+    let root = t.root().to_path_buf();
+    let g = within(HANG_LIMIT, "ProjectGraph::discover", move || {
+        ProjectGraph::discover(&root, &pp("main.tex")).unwrap()
+    });
+    let kinds: Vec<_> = g.diagnostics().iter().map(|d| &d.kind).collect();
+    assert!(
+        matches!(kinds.as_slice(), [DiagnosticKind::ReadError { path, message }]
+            if path.as_str() == "pipe.tex" && message.contains("not a regular file")),
+        "{kinds:?}"
+    );
+}
+
+/// Review finding 5: `remove` classifies the entry on the pinned directory
+/// descriptor and refuses anything but a regular file, leaving it in place.
+#[test]
+fn remove_refuses_special_files_and_broken_symlinks() {
+    let t = TempDir::new("remove-special");
+    make_fifo(&t.root().join("pipe.tex"));
+    symlink(t.root().join("nowhere.tex"), t.root().join("broken.tex")).unwrap();
+    t.write("plain.tex", "x");
+    let root = ProjectRoot::open(t.root()).unwrap();
+
+    let err = root.remove(&pp("pipe.tex")).unwrap_err();
+    assert!(
+        matches!(&err, SaveError::Refused(Refused::NotARegularFile { component }) if component == "pipe.tex"),
+        "{err:?}"
+    );
+    assert!(
+        fs::symlink_metadata(t.root().join("pipe.tex"))
+            .unwrap()
+            .file_type()
+            .is_fifo()
+    );
+    let err = root.remove(&pp("broken.tex")).unwrap_err();
+    assert!(is_refused_symlink(&err, "broken.tex"), "{err:?}");
+    assert!(
+        fs::symlink_metadata(t.root().join("broken.tex"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(root.remove(&pp("plain.tex")).unwrap());
+    assert!(!root.remove(&pp("plain.tex")).unwrap());
+}
+
+/// The recovery journal directory is listed through the pinned root: a
+/// symlinked `.flashtex` is refused rather than enumerated.
+#[test]
+fn recovery_listing_refuses_a_symlinked_journal_directory() {
+    let outside = TempDir::new("journal-outside");
+    outside.write("recovery/0000.json", "{}");
+    let t = TempDir::new("journal-symlink");
+    symlink(outside.root(), t.root().join(".flashtex")).unwrap();
+    let root = ProjectRoot::open(t.root()).unwrap();
+    let err = flashtex_project_files::RecoveryJournal::new(&root)
+        .list()
+        .unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            flashtex_project_files::RecoveryError::Save(SaveError::Refused(
+                Refused::SymlinkComponent { component }
+            )) if component == ".flashtex"
+        ),
+        "{err:?}"
+    );
+}
