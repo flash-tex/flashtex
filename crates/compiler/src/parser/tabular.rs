@@ -1491,6 +1491,7 @@ impl P<'_> {
         let style_depth = self.style_stack.len();
         let brace_depth = self.brace_stack.len();
         let dependency_count = self.block_dependencies.len();
+        let par_leading_count = self.block_par_leading.len();
 
         let mut blocks = Vec::new();
         let mut para = Vec::new();
@@ -1509,6 +1510,9 @@ impl P<'_> {
         self.t = outer_tokens;
         self.i = outer_index;
 
+        // The entry's blocks are folded into its inlines below, so they get
+        // no `Parsed::block_par_leading` entries (one per top-level block).
+        self.block_par_leading.truncate(par_leading_count);
         if blocks.is_empty() {
             return para;
         }

@@ -232,11 +232,15 @@ impl P<'_> {
         let outer_style = self.style;
         let outer_label = self.pending_item_label.take();
         let outer_dependency_blocks = self.block_dependencies.len();
+        let outer_par_leading_blocks = self.block_par_leading.len();
         let mut blocks = Vec::new();
         let mut para = Vec::new();
         self.parse_stream(&mut blocks, &mut para);
         self.flush_paragraph(&mut blocks, &mut para);
+        // The blocks are folded into inlines: drop their per-block entries
+        // from both parallel vectors, as `argument_inlines` does.
         self.block_dependencies.truncate(outer_dependency_blocks);
+        self.block_par_leading.truncate(outer_par_leading_blocks);
         self.t = outer_tokens;
         self.i = outer_index;
         self.style = outer_style;
