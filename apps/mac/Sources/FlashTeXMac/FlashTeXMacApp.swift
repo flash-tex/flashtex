@@ -130,7 +130,8 @@ struct FlashTeXMacApp: App {
                     if let id = ProcessInfo.processInfo.environment["FLASHTEX_OPEN_WINDOW"], ["nearby", AccessibilityHelpView.windowID, EditHistoryPanel.windowID, ProjectSearch.windowID, CitationRename.windowID].contains(id) { openWindow(id: id) }
                 }
         }
-        .defaultSize(width: 1500, height: 950) // first launch; the saved frame wins afterwards
+        .defaultSize(width: 1440, height: 900) // VS Code's DEFAULT_WORKSPACE_WINDOW_SIZE (brief §4); the saved frame wins afterwards
+        .windowToolbarStyle(.unifiedCompact(showsTitle: false)) // the ~35pt IDE title bar; WindowChrome.swift makes it transparent
         // The menu bar is part of the App scene graph: any model property a
         // command reads re-evaluates the whole scene when it changes, and SwiftUI
         // then re-reads every window's root preferences (toolbar, title…) —

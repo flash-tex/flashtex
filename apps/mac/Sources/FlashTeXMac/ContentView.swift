@@ -14,70 +14,55 @@ import FlashTeXAccessibility
 /// command of the accessibility table (CommandPalette.swift).
 struct ContentView: View {
     @Environment(ShellModel.self) var model
+    @EnvironmentObject private var nearby: NearbyState
     @Environment(\.openWindow) private var openWindow
     /// Tool-window visibility (the rail toggles them). The Outline ships
     /// collapsed; the Project tree shows by default.
     @AppStorage("FlashTeX.workspace.projectVisible") private var projectVisible = true
     @AppStorage("FlashTeX.workspace.outlineVisible") private var outlineVisible = false
-    /// Width of the tool column; remembered across launches.
-    @AppStorage("FlashTeX.workspace.toolColumnWidth") private var toolColumnWidth: Double = Double(DS.Layout.sidebarIdealWidth)
-    /// Height of the Problems panel; remembered across launches.
-    @AppStorage("FlashTeX.workspace.problemsHeight") private var problemsHeight: Double = ProblemsPanel.idealHeight
 
     var body: some View {
         @Bindable var model = model
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 ToolRail(projectVisible: $projectVisible, outlineVisible: $outlineVisible)
-                Divider()
-                if projectVisible || outlineVisible {
-                    WorkspaceSidebar(projectVisible: projectVisible, outlineVisible: outlineVisible)
-                        .frame(width: toolColumnWidth)
-                    ColumnResizeHandle(width: $toolColumnWidth,
-                                       range: DS.Layout.sidebarMinWidth...DS.Layout.sidebarMaxWidth)
-                }
-                GeometryReader { geo in
-                    // Below the width where both columns fit, the preview
-                    // collapses to a toggle (tab bar / preview header) rather
-                    // than being crushed under its minimum.
-                    let narrow = geo.size.width < DS.Layout.editorMinWidth + DS.Layout.previewMinWidth + DS.Layout.resizeHandleHeight
-                    VStack(spacing: 0) {
-                        HSplitView {
-                            // maxHeight fills: with no compile result both
-                            // children are height-flexible and HSplitView
-                            // would otherwise collapse and centre them.
-                            if !(narrow && model.narrowPreviewShown) {
-                                EditorPane().frame(minWidth: DS.Layout.editorMinWidth, maxWidth: .infinity, maxHeight: .infinity)
-                            }
-                            if !narrow || model.narrowPreviewShown {
-                                PreviewPane().frame(minWidth: DS.Layout.previewMinWidth, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .onChange(of: narrow, initial: true) { _, now in
-                            if model.narrowLayout != now { model.narrowLayout = now }
-                        }
-                        if model.problemsVisible {
-                            // Drag the handle to give the diagnostics list more or less
-                            // room; the list scrolls within whatever height it has.
-                            // Never more than 40 % of the window: at 1000×640 the
-                            // editor keeps ~15 lines instead of 10 (daniel-fable-ui-qa #3).
-                            let panelCap = max(ProblemsPanel.minHeight, min(geo.size.height - DS.Layout.editorMinHeightAbovePanel, geo.size.height * DS.Layout.problemsMaxFraction))
-                            PanelResizeHandle(height: $problemsHeight, range: ProblemsPanel.minHeight...panelCap)
-                            ProblemsPanel().frame(height: min(problemsHeight, panelCap))
-                        }
-                    }
-                }
+                // The structural splits are AppKit (WorkspaceSplit.swift):
+                // sidebar | editor | preview over the Problems panel, with
+                // real minimums, drag, persistence and the narrow-layout
+                // collapse. Split state follows the workspace flags.
+                WorkspaceSplitPane(nearby: nearby,
+                                   projectVisible: projectVisible,
+                                   outlineVisible: outlineVisible,
+                                   problemsVisible: model.problemsVisible,
+                                   narrowPreviewShown: model.narrowPreviewShown)
             }
-            Divider()
+            // The status bar spans the full width, rail included (VS Code),
+            // with no separator above it (Islands: status bar border
+            // transparent — the chrome tone alone separates it).
             StatusBar()
         }
+        .background(WindowChromeConfigurator()) // transparent title bar, hidden title, compact toolbar (WindowChrome.swift)
+        .background(DS.Colors.surfaceSecondary.ignoresSafeArea()) // one chrome surface up into the title bar
+        .modifier(HideToolbarBackground())
         .inspector(isPresented: $model.captureInboxVisible) { // Captures (CaptureInbox.swift): View > Captures, ⌘⇧I
             CaptureInboxPanel(inbox: model.captureInbox).inspectorColumnWidth(min: DS.Layout.inspectorMinWidth, ideal: DS.Layout.inspectorIdealWidth, max: DS.Layout.inspectorMaxWidth)
         }
         .toolbar { WorkspaceToolbar(openWindow: openWindow) }
         .sheet(isPresented: $model.commandPaletteShown) { CommandPalette().environment(model) }
         .modifier(EditorNavigationSheets()) // Rename / Wrap / Change Environment… / Go to Symbol… / Go to Line (ShellModel+EditorNavigation.swift)
+    }
+}
+
+/// macOS 15's declarative half of the transparent title bar; the pre-15
+/// fallback is `NSWindow.titlebarAppearsTransparent` (WindowChrome.swift),
+/// which macOS 14 windows get from the same configurator.
+private struct HideToolbarBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        } else {
+            content
+        }
     }
 }
 
@@ -136,55 +121,6 @@ private struct RailButton: View {
     }
 }
 
-/// The vertical divider at the tool column's trailing edge, draggable left
-/// and right (the cursor shows the resize arrows on hover).
-private struct ColumnResizeHandle: View {
-    @Binding var width: Double
-    let range: ClosedRange<CGFloat>
-    @State private var startWidth: Double?
-
-    var body: some View {
-        Rectangle().fill(.clear)
-            .frame(width: DS.Layout.resizeHandleHeight)
-            .overlay(Divider(), alignment: .center)
-            .contentShape(Rectangle())
-            .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
-            .gesture(DragGesture(minimumDistance: 1)
-                .onChanged { value in
-                    let start = startWidth ?? width
-                    startWidth = start
-                    width = min(max(start + value.translation.width, range.lowerBound), range.upperBound)
-                }
-                .onEnded { _ in startWidth = nil })
-            .accessibilityHidden(true)
-    }
-}
-
-/// The divider above the Problems panel, draggable up and down (the cursor
-/// shows the resize arrows on hover). Keyboard users size it with the split
-/// of the window itself; the panel is never taller than the window allows.
-private struct PanelResizeHandle: View {
-    @Binding var height: Double
-    let range: ClosedRange<Double>
-    @State private var startHeight: Double?
-
-    var body: some View {
-        Rectangle().fill(.clear)
-            .frame(height: DS.Layout.resizeHandleHeight)
-            .overlay(Divider(), alignment: .center)
-            .contentShape(Rectangle())
-            .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
-            .gesture(DragGesture(minimumDistance: 1)
-                .onChanged { value in
-                    let start = startHeight ?? height
-                    startHeight = start
-                    height = min(max(start - value.translation.height, range.lowerBound), range.upperBound)
-                }
-                .onEnded { _ in startHeight = nil })
-            .accessibilityHidden(true)
-    }
-}
-
 // MARK: toolbar
 
 
@@ -199,8 +135,11 @@ private struct WorkspaceToolbar: ToolbarContent {
 
     var body: some ToolbarContent {
         @Bindable var model = model
-        ToolbarItemGroup(placement: .principal) {
-            // One chip: click compiles, the chevron holds the producer menu.
+        // One trailing group of flat 16pt icons on the chrome — the
+        // JetBrains right-side run group — instead of stock bezelled chips.
+        // Every action keeps its menu, shortcut and tooltip.
+        ToolbarItemGroup(placement: .primaryAction) {
+            // Click compiles; the chevron-free menu holds the producer list.
             Menu {
                 Button("Attach Built Compiler") { _ = model.attachDiscoveredWorker() }
                     .help("⌘⇧K")
@@ -213,31 +152,61 @@ private struct WorkspaceToolbar: ToolbarContent {
                 Button("Detach Worker") { model.detachWorker() }.disabled(!model.workerAttached)
                 if model.isFixture { Divider(); Button("Reload Fixture") { model.reloadFixture() } }
             } label: {
-                Label("Compile", systemImage: "hammer.fill")
+                ToolbarChipLabel(icon: "hammer.fill", label: "Compile")
             } primaryAction: {
                 if !model.outputBoundExplicitRetry() { model.compile() }
             }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             // `producerSummary`, not `workerStatus`: the toolbar must not re-evaluate per request (ShellModel toolbar mirrors).
             .help("Compile (File > Compile, ⌘B) — producer: " + (model.isFixture ? "fixture (not a real compile)" : model.producerSummary) + ". The menu attaches the built compiler (⌘⇧K), the Latin Modern render pipeline (⌘⇧R) or any executable (⌘K).")
-        }
-        ToolbarItemGroup(placement: .automatic) {
             Menu {
                 Button("Export PDF…") { model.exportPDF() }.disabled(!model.toolbarHasResult)
                 Button("Export PDF via Rust Writer…") { model.exportPDFViaRust() }.disabled(!model.toolbarHasResult)
                 Button("Export PDF (exact, v2)…") { model.exportPDFExact() }.disabled(!model.toolbarHasV2Frame)
-            } label: { Label("Export", systemImage: "square.and.arrow.up") }
-                .help("Export PDF… (⌘⇧E), via Rust writer (⌘⌥E), or exact from the v2 display list (File menu)")
-            Button { model.commandPaletteShown = true } label: { Label("Commands", systemImage: "command") }
-                .help("Command Palette… (View, ⌘⇧P): every command with its shortcut")
-                .accessibilityIdentifier("toolbar.command-palette")
+            } label: {
+                ToolbarChipLabel(icon: "square.and.arrow.up", label: "Export")
+            }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .help("Export PDF… (⌘⇧E), via Rust writer (⌘⌥E), or exact from the v2 display list (File menu)")
+            Button { model.commandPaletteShown = true } label: {
+                ToolbarChipLabel(icon: "command", label: "Commands")
+            }
+            .buttonStyle(.plain)
+            .help("Command Palette… (View, ⌘⇧P): every command with its shortcut")
+            .accessibilityIdentifier("toolbar.command-palette")
             Toggle(isOn: $model.captureInboxVisible) {
                 let n = model.captureInbox.items.count
-                Label(n > 0 ? "Captures \(n)" : "Captures", systemImage: n > 0 ? "tray.full" : "tray")
+                ToolbarChipLabel(icon: n > 0 ? "tray.full" : "tray",
+                                 label: n > 0 ? "Captures \(n)" : "Captures",
+                                 on: model.captureInboxVisible)
             }
-            .toggleStyle(.button)
+            .toggleStyle(.button).buttonStyle(.plain)
             .help("Show or hide the Captures inspector (View, ⌘⇧I): captures from the iPad, their proposals, Insert at caret")
             .accessibilityIdentifier("toolbar.captures")
         }
+    }
+}
+
+/// A flat toolbar icon in the IDE manner: quiet secondary glyph, hover wash,
+/// accent when its panel is open — no system bezel, no glass capsule.
+private struct ToolbarChipLabel: View {
+    let icon: String
+    let label: String
+    var on = false
+    @State private var hovering = false
+
+    var body: some View {
+        Image(systemName: icon)
+            .font(DS.Fonts.base)
+            .foregroundStyle(on ? DS.Colors.accentSelection : DS.Colors.textSecondary)
+            .frame(width: DS.Size.railButton - DS.Space.xs, height: DS.Size.railButton - DS.Space.xs)
+            .background(
+                on ? DS.Colors.accentSelection.opacity(DS.State.badgeFillOpacity)
+                   : hovering ? DS.Colors.hover : .clear,
+                in: RoundedRectangle(cornerRadius: DS.Radius.tab))
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .accessibilityLabel(label)
     }
 }
 
@@ -260,8 +229,9 @@ struct EditorPane: View {
             // Switching goes through ProjectDocuments so each document's
             // caret/selection is kept and a pending insertion is never
             // applied to the wrong buffer (ProjectDocuments.swift).
+            // No line under the strip: tab strip and editor share one
+            // surface (Islands); the active tab's underline marks the edge.
             DocumentTabBar()
-            Divider()
             SourceEditorView(
                 text: Binding(get: { model.activeText }, set: { model.updateActiveText($0) }),
                 selection: model.selection,
@@ -355,7 +325,7 @@ private struct CaptureBar: View {
             }
         }
         .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
-        .background(.bar)
+        .background(DS.Colors.surfaceSecondary)
         .accessibleCaptureBar(anchor: model.anchor.map { "\($0.id) at \($0.path) byte \($0.byteOffset), revision \($0.revision)" }, proposals: model.proposals.count) // FlashTeXAccessibility
         .sheet(item: Binding(get: { model.reviewing.map { ReviewItem(proposal: $0) } },
                              set: { model.reviewing = $0?.proposal })) { item in
@@ -389,7 +359,7 @@ private struct BridgeBar: View {
             }
         }
         .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xxs)
-        .background(.bar)
+        .background(DS.Colors.surfaceSecondary)
     }
 }
 
@@ -545,7 +515,7 @@ struct PreviewHeader: View {
             }
         }
         .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
-        .background(.bar)
+        .background(DS.Colors.surfaceSecondary)
         .help(chrome.previewSource == .fixture
               ? "Fixture\(chrome.fixtureName.map { ": " + $0 } ?? "") — not a real compile. Layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))"
               : model.producerSummary + " — layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))")
@@ -640,9 +610,9 @@ struct StatusBar: View {
         }
         .font(DS.Fonts.secondary)
         .monospacedDigit()
-        .padding(.horizontal, DS.Space.l).padding(.vertical, DS.Space.xs)
+        .padding(.horizontal, DS.Space.l)
         .frame(height: DS.Row.statusBar)
-        .background(.bar)
+        .background(DS.Colors.surfaceSecondary)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Status bar")
     }
@@ -823,7 +793,7 @@ struct VimStatusLine: View {
             .font(DS.Fonts.secondary)
             .monospacedDigit()
             .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xxs)
-            .background(.bar)
+            .background(DS.Colors.surfaceSecondary)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Vim status line")
         }
