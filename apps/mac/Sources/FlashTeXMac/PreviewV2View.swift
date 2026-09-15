@@ -262,11 +262,13 @@ extension ShellModel {
     /// whose change re-requests the current revision under auto-compile. The
     /// v1 pages of every result keep painting the product preview.
     func setLiveV2(_ on: Bool) {
-        // `display-list-v2-images` rides along (proposal §1: accepted only
-        // with `display-list-v2`); one assignment so a switch re-requests once.
+        // `display-list-v2-images` and `display-list-v2-links` ride along
+        // (each proposal §1: accepted only with `display-list-v2`); one
+        // assignment so a switch re-requests once. Compact (#257) is a
+        // per-request encoding, not a mode-set sibling — left untouched.
         var caps = requestedLayoutCapabilities
-        caps.removeAll { $0 == V2Live.capability || $0 == RenderingV2.imagesCapability }
-        if on { caps += [V2Live.capability, RenderingV2.imagesCapability] }
+        caps.removeAll { $0 == V2Live.capability || $0 == RenderingV2.imagesCapability || $0 == RenderingV2.linksCapability }
+        if on { caps += [V2Live.capability, RenderingV2.imagesCapability, RenderingV2.linksCapability] }
         if caps != requestedLayoutCapabilities { requestedLayoutCapabilities = caps }
     }
 
@@ -821,7 +823,7 @@ struct PreviewV2Pane: View {
     /// the v1 preview of the same revision, which stays the product preview.
     @ViewBuilder
     private func refusalActions(source: RuntimeV1.SourceRange?, v1Revision: Int?) -> some View {
-        VStack(spacing: 6) {
+        VStack(spacing: DS.Space.s) {
             if let source {
                 Button("Go to source (\(source.path) bytes \(source.startByte)..<\(source.endByte))") {
                     Task { @MainActor in await model.navigateOpeningIfNeeded(to: source) }
@@ -830,7 +832,7 @@ struct PreviewV2Pane: View {
             }
             if let v1Revision {
                 Text("The v1 preview of revision \(v1Revision) remains the product preview (fallback frame); its items navigate exactly.")
-                    .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary).multilineTextAlignment(.center)
                     .accessibilityIdentifier("v2-refusal-v1-fallback")
             }
         }
@@ -840,8 +842,11 @@ struct PreviewV2Pane: View {
         PreviewV2View(frame: frame, dark: model.darkPreview, stale: stale, caretPath: model.activePath, caretByte: model.caretByte,
                       zoom: model.previewZoom, onFitScale: { model.previewFitScale = $0 },
                       // "the pdf moves to where the changes are happening" (CaretFollow.swift)
-                      follow: model.caretFollow.request,
-                      onUserScroll: { model.caretFollow.userDidScrollPreview() }) { hit in
+                      follow: model.caretFollow.request, reveal: model.previewReveal,
+                      onUserScroll: { model.caretFollow.userDidScrollPreview() },
+                      navigation: DisplayListLinks.effective(frame.list.navigation, accepted: model.acceptedLayoutCapabilities,
+                                                            live: model.displayListV2?.source.isLive == true),
+                      onLink: { model.activatePreviewLink($0, in: frame.list) }) { hit in
             model.navigateV2(hit)
         }
     }
@@ -873,23 +878,23 @@ struct V2DiagnosticsList: View, Equatable {
     var body: some View {
         if !diagnostics.isEmpty {
             Divider()
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Display list diagnostics (\(diagnostics.count))").font(.caption.bold())
+            VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                Text("Display list diagnostics (\(diagnostics.count))").font(DS.Fonts.header)
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 2) {
+                    LazyVStack(alignment: .leading, spacing: DS.Space.xxs) {
                         ForEach(Array(diagnostics.enumerated()), id: \.offset) { _, d in
                             HStack(alignment: .top) {
                                 Image(systemName: d.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                                     .foregroundStyle(d.severity == .error ? .red : .orange)
-                                Text("[\(d.code)] \(d.message)").font(.caption)
+                                Text("[\(d.code)] \(d.message)").font(DS.Fonts.secondary)
                                 if let s = d.sources.first { Button("Go to source") { onNavigate(s) }.controlSize(.mini) }
                             }
                         }
                     }
                 }
-                .frame(maxHeight: 160)
+                .frame(maxHeight: DS.Layout.v2DiagnosticsMaxHeight)
             }
-            .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+            .padding(DS.Space.m).frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("v2-diagnostics")
         }
     }
@@ -901,15 +906,15 @@ private struct V2PaneHeader: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 8) {
-                Text("V2").font(.caption.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(Color.purple.opacity(0.25), in: Capsule())
+        VStack(alignment: .leading, spacing: DS.Space.xxs) {
+            HStack(spacing: DS.Space.m) {
+                Text("V2").font(DS.Fonts.header).padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xxs).background(DS.Colors.statusHistorical.opacity(DS.State.badgeFillOpacity), in: Capsule())
                 if model.previewDebugStatus {
-                Text("display-list-v2").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text("display-list-v2").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary).lineLimit(1)
                 if model.workerAttached {
                     Text(model.liveV2Accepted ? "LIVE" : "v1 only")
-                        .font(.caption.bold()).padding(.horizontal, 6).padding(.vertical, 2)
-                        .background((model.liveV2Accepted ? Color.green : Color.gray).opacity(0.25), in: Capsule())
+                        .font(DS.Fonts.header).padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xxs)
+                        .background((model.liveV2Accepted ? DS.Colors.severitySuccess : DS.Colors.textTertiary).opacity(DS.State.badgeFillOpacity), in: Capsule())
                         .help(model.liveV2Accepted ? "The applied compile_result accepted display-list-v2; frames arrive with each compile."
                                                    : "The applied compile_result did not accept display-list-v2 (producer without the capability, or declined for this request).")
                         .accessibilityIdentifier("v2-live")
@@ -917,7 +922,7 @@ private struct V2PaneHeader: View {
                 if let frame = model.displayListV2?.frame, model.displayListV2?.source.isLive == true,
                    let applied = model.result?.revision, applied != frame.list.revision {
                     Text("frame revision \(frame.list.revision) — applied result is revision \(applied) (no v2 frame for it)")
-                        .font(.caption.bold()).foregroundStyle(.orange).lineLimit(1)
+                        .font(DS.Fonts.header).foregroundStyle(DS.Colors.severityWarning).lineLimit(1)
                         .accessibilityIdentifier("v2-behind")
                 }
                 }
@@ -937,18 +942,18 @@ private struct V2PaneHeader: View {
                 // display-list-v2-images: refused image bytes (stale hash, symlink,
                 // unreadable). Non-modal; the frame stays, the item painted nothing.
                 Text(notices.joined(separator: " · "))
-                    .font(.caption).foregroundStyle(.orange).lineLimit(1).truncationMode(.middle)
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning).lineLimit(1).truncationMode(.middle)
                     .help(notices.joined(separator: "\n"))
                     .accessibilityIdentifier("v2-image-notice")
             }
             if model.previewDebugStatus, let frame = model.displayListV2?.frame {
                 let fonts = frame.fonts.values.map { "\($0.resource.postscriptName) \($0.resource.sha256.prefix(8))" }.sorted().joined(separator: ", ")
                 Text("\(model.displayListV2?.source.label ?? "") · id \(frame.id) · project \(frame.list.projectId) · revision \(frame.list.revision) · \(frame.list.pages.count) page(s) · fonts by hash: \(fonts)")
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary).lineLimit(1).truncationMode(.middle)
                     .help(frame.fonts.values.map { "\($0.resource.postscriptName): \($0.resource.sha256) → \($0.file.url.lastPathComponent)" }.sorted().joined(separator: "\n"))
             }
         }
-        .padding(.horizontal, 8).padding(.vertical, 4)
+        .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
         .background(.bar)
     }
 }
@@ -965,8 +970,13 @@ struct PreviewV2View: View {
     var onFitScale: ((CGFloat) -> Void)? = nil
     /// Latest caret-follow request (CaretFollow.swift); acted on once per token.
     var follow: CaretFollowController.Request? = nil
+    /// Internal-destination scroll (DisplayListLinks.swift); acted on once per token.
+    var reveal: CaretFollowController.Request? = nil
     /// Reported when the reader scrolls this pane by hand.
     var onUserScroll: (() -> Void)? = nil
+    /// Active `navigation` after capability gating (nil → no link behaviour).
+    var navigation: RenderingV2.Navigation? = nil
+    var onLink: ((RenderingV2.Navigation.Link) -> Void)? = nil
     let onSelect: (V2Geometry.Hit) -> Void
     @Environment(\.displayScale) private var displayScale
 
@@ -986,25 +996,25 @@ struct PreviewV2View: View {
             let _ = expectedDraws == 0 ? TypingBench.shared.willRender(revision: frame.list.revision, pages: 0) : ()
             let _ = TypingBench.isBenchActive ? FlashTeXLog.write("preview-v2: pass revision \(frame.list.revision) \(stale ? "stale" : "loaded") changed \(expectedDraws) at \(MonotonicClock.nowNs())") : ()
             ScrollView([.vertical, .horizontal]) {
-                LazyVStack(spacing: 24) {
+                LazyVStack(spacing: DS.Preview.pageSpacing) {
                     ForEach(Array(frame.prepared.enumerated()), id: \.element.number) { index, prepared in
                         if let page = frame.page(number: prepared.number) {
                             PageV2View(page: page, prepared: prepared, pageToken: frame.pageToken(at: index), frameRevision: frame.list.revision, expectedDraws: expectedDraws,
                                        dark: dark, stale: stale, scale: scale, displayScale: displayScale,
                                        // Only pages whose cluster sources can contain the caret walk their clusters.
                                        caretHighlights: caretByte.flatMap { prepared.mayContain(byte: $0, path: caretPath) ? V2Geometry.caretHighlights(containing: $0, path: caretPath, in: page) : nil } ?? [],
-                                       onSelect: onSelect)
+                                       navigation: navigation, onLink: onLink, onSelect: onSelect)
                                 .equatable()
                                 .id(page.number)
                         }
                     }
                 }
-                .padding(24)
-                .background(PreviewAnchorKeeper(layout: layout, follow: follow, onUserScroll: onUserScroll))
+                .padding(DS.Preview.pageSpacing)
+                .background(PreviewAnchorKeeper(layout: layout, follow: follow, reveal: reveal, onUserScroll: onUserScroll))
             }
             .onChange(of: fit, initial: true) { _, f in onFitScale?(f) }
         }
-        .background(dark ? Color(white: 0.12) : Color(nsColor: .windowBackgroundColor))
+        .background(dark ? DS.Preview.darkGround : DS.Colors.surfaceGround)
         .onAppear { V2PageRasterizer.shared.setCurrent(frame: frame) }
         .onChange(of: frame.pageTokens) { _, _ in V2PageRasterizer.shared.setCurrent(frame: frame) }
     }
@@ -1066,14 +1076,19 @@ private struct PageV2View: View, Equatable {
     /// Exact caret / whole cluster for text, the enclosing formula box for a
     /// caret inside math (MathCaretHighlight.swift).
     let caretHighlights: [V2Geometry.CaretHighlight]
+    var navigation: RenderingV2.Navigation? = nil
+    var onLink: ((RenderingV2.Navigation.Link) -> Void)? = nil
     let onSelect: (V2Geometry.Hit) -> Void
     @State private var hover: V2Geometry.Hit?
+    @State private var linkHover: RenderingV2.Navigation.Link?
+    @State private var linkCursorPushed = false
 
     // `stale` is not part of the equality: nothing drawn depends on it, and the
     // loaded -> stale -> loaded toggle of every keystroke re-evaluated every page.
     static func == (a: PageV2View, b: PageV2View) -> Bool {
         a.pageToken == b.pageToken && a.page.number == b.page.number
             && a.dark == b.dark && a.scale == b.scale && a.displayScale == b.displayScale && a.caretHighlights == b.caretHighlights
+            && a.navigation == b.navigation
     }
 
     var body: some View {
@@ -1083,16 +1098,16 @@ private struct PageV2View: View, Equatable {
         // A stale page keeps its label and colour: the previous frame stays on screen
         // unchanged while the next one is verified (typing must not flash the pages).
         let label = bitmap == nil ? "page \(page.number) · v2 · rasterizing…" : "page \(page.number) · v2"
-        let labelColor: Color = dark ? Color(white: 0.7) : Color(white: 0.35)
-        let pageBackground: Color = dark ? Color(white: 0.16) : .white
+        let labelColor: Color = dark ? DS.Preview.darkLabel : DS.Preview.lightLabel
+        let pageBackground: Color = dark ? DS.Preview.darkPage : .white
         // The bitmap is the contents of a CALayer (PageBitmapLayer): CoreAnimation
         // composites it on every later pass without any drawing on the main thread;
         // a new bitmap is one `layer.contents` assignment. Caret/hover marks are a
         // separate small overlay that exists only while there is something to mark.
         let canvas = PageBitmapLayer(bitmap: bitmap, pageToken: pageToken, pageNumber: page.number, frameRevision: frameRevision,
-                                     expectedDraws: expectedDraws, background: dark ? CGColor(gray: 0.16, alpha: 1) : CGColor(gray: 1, alpha: 1))
+                                     expectedDraws: expectedDraws, background: dark ? DS.Preview.darkPageCG : DS.Preview.lightPageCG)
             .frame(width: size.width, height: size.height)
-            .background(Rectangle().fill(pageBackground).shadow(radius: 4))
+            .background(Rectangle().fill(pageBackground).shadow(radius: DS.Preview.pageShadowRadius))
             .overlay {
                 if !caretHighlights.isEmpty || hover != nil {
                     PageV2Marks(scale: scale, caretHighlights: caretHighlights, hover: hover).equatable().allowsHitTesting(false)
@@ -1102,21 +1117,40 @@ private struct PageV2View: View, Equatable {
             .contentShape(Rectangle())
             .onContinuousHover { phase in
                 switch phase {
-                case .active(let p): hover = V2Geometry.hit(page: page, atPointX: p.x / scale, y: p.y / scale)
-                case .ended: hover = nil
+                case .active(let p):
+                    let pageX = p.x / scale, pageY = p.y / scale
+                    if let nav = navigation, let link = DisplayListLinks.hit(nav, page: page.number, viewX: pageX, viewY: pageY, scale: 1) {
+                        linkHover = link
+                        hover = nil
+                        if !linkCursorPushed { NSCursor.pointingHand.push(); linkCursorPushed = true }
+                    } else {
+                        linkHover = nil
+                        hover = V2Geometry.hit(page: page, atPointX: pageX, y: pageY)
+                        if linkCursorPushed { NSCursor.pop(); linkCursorPushed = false }
+                    }
+                case .ended:
+                    hover = nil
+                    linkHover = nil
+                    if linkCursorPushed { NSCursor.pop(); linkCursorPushed = false }
                 }
             }
             .onTapGesture { location in
-                if let hit = V2Geometry.hit(page: page, atPointX: location.x / scale, y: location.y / scale) { onSelect(hit) }
+                let pageX = location.x / scale, pageY = location.y / scale
+                if let nav = navigation, let link = DisplayListLinks.hit(nav, page: page.number, viewX: pageX, viewY: pageY, scale: 1) {
+                    onLink?(link)
+                    return
+                }
+                if let hit = V2Geometry.hit(page: page, atPointX: pageX, y: pageY) { onSelect(hit) }
             }
             .overlay(alignment: .bottomTrailing) {
                 // Colored for the PAGE background (white or dark), not the window appearance.
-                Text(label).font(.caption2).foregroundStyle(labelColor).padding(4)
+                Text(label).font(DS.Fonts.secondary).foregroundStyle(labelColor).padding(DS.Space.xs)
             }
             .help(helpText)
     }
 
     private var helpText: String {
+        if let link = linkHover { return DisplayListLinks.tooltip(for: link) }
         guard let h = hover else { return "" }
         let what = h.text.map { "“\($0)” → " } ?? "rule → "
         let target = h.syntheticReason.map { "generated: \($0)" } ?? h.sources.map { "\($0.path) \($0.startByte)..<\($0.endByte)" }.joined(separator: ", ")
@@ -1210,18 +1244,18 @@ private struct PageV2Marks: View, Equatable {
                     if let k = m.caret {
                         let bar = CGRect(x: RenderingV2.points(k.x) * scale - 0.75, y: RenderingV2.points(k.top) * scale, width: 1.5, height: RenderingV2.points(k.height) * scale)
                         context.fill(Path(bar), with: .color(Color.accentColor))
-                        for r in m.hitRects { context.fill(Path(viewRect(r)), with: .color(Color.accentColor.opacity(0.10))) }
+                        for r in m.hitRects { context.fill(Path(viewRect(r)), with: .color(DS.Colors.accentSelection.opacity(DS.Preview.hoverHighlightOpacity))) }
                     } else {
-                        for r in m.hitRects { context.fill(Path(viewRect(r)), with: .color(Color.accentColor.opacity(0.22))) }
+                        for r in m.hitRects { context.fill(Path(viewRect(r)), with: .color(DS.Colors.accentSelection.opacity(DS.Preview.caretHighlightOpacity))) }
                     }
                 case .formula(let box):
                     let outline = viewRect(box.bounds).insetBy(dx: -2, dy: -2)
-                    context.fill(Path(roundedRect: outline, cornerRadius: 2), with: .color(Color.accentColor.opacity(0.10)))
-                    context.stroke(Path(roundedRect: outline, cornerRadius: 2), with: .color(Color.accentColor.opacity(0.8)), lineWidth: 1)
-                    for r in box.rects { context.fill(Path(viewRect(r)), with: .color(Color.accentColor.opacity(0.12))) }
+                    context.fill(Path(roundedRect: outline, cornerRadius: DS.Space.xxs), with: .color(DS.Colors.accentSelection.opacity(DS.Preview.hoverHighlightOpacity)))
+                    context.stroke(Path(roundedRect: outline, cornerRadius: DS.Space.xxs), with: .color(DS.Colors.accentSelection.opacity(DS.Preview.linkBoxStrokeOpacity)), lineWidth: DS.Size.hairline)
+                    for r in box.rects { context.fill(Path(viewRect(r)), with: .color(DS.Colors.accentSelection.opacity(DS.Preview.linkBoxFillOpacity))) }
                 }
             }
-            if let hover { context.fill(Path(viewRect(hover.rect).insetBy(dx: -1, dy: -1)), with: .color(Color.accentColor.opacity(0.25))) }
+            if let hover { context.fill(Path(viewRect(hover.rect).insetBy(dx: -DS.Size.hairline, dy: -DS.Size.hairline)), with: .color(DS.Colors.accentSelection.opacity(DS.Preview.caretHighlightOpacity))) }
         }
     }
 }

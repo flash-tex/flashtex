@@ -392,7 +392,11 @@ pub fn raw_text<'a>(tokens: impl IntoIterator<Item = &'a Token>) -> String {
             TokenKind::MathShift => out.push('$'),
             TokenKind::Superscript => out.push('^'),
             TokenKind::Subscript => out.push('_'),
-            TokenKind::DisplayMathOpen | TokenKind::DisplayMathClose | TokenKind::Comment => {}
+            TokenKind::DisplayMathOpen
+            | TokenKind::DisplayMathClose
+            | TokenKind::InlineMathOpen
+            | TokenKind::InlineMathClose
+            | TokenKind::Comment => {}
             TokenKind::Verb { text, .. } => out.push_str(text),
         }
     }
@@ -1311,6 +1315,13 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
         | Nucleus::Space { .. }
         | Nucleus::Bold(_)
         | Nucleus::Rule(_) => {}
+        Nucleus::TextRun(pieces) => {
+            for piece in pieces {
+                if let crate::math::TextPiece::Math(list) = piece {
+                    respan_list(list, span);
+                }
+            }
+        }
         Nucleus::Fraction {
             numerator,
             denominator,
@@ -1328,6 +1339,7 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
         | Nucleus::Framed { body, .. }
         | Nucleus::Accent { body, .. }
         | Nucleus::Phantom { body, .. }
+        | Nucleus::Lap { body, .. }
         | Nucleus::Operator { body, .. } => respan_list(body, span),
         Nucleus::Stacked { base, over, under } => {
             respan_list(base, span);
@@ -1347,6 +1359,16 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
         Nucleus::SubArray { rows, .. } => {
             for row in rows {
                 respan_list(row, span);
+            }
+        }
+        Nucleus::SideSet {
+            operator,
+            left_superscript,
+            left_subscript,
+        } => {
+            respan_list(operator, span);
+            for list in [left_superscript, left_subscript].into_iter().flatten() {
+                respan_list(list, span);
             }
         }
     }

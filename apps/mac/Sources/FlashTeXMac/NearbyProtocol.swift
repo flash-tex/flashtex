@@ -40,13 +40,21 @@ enum NearbyV1 {
         var projectId: String
         var path: String
         var baseRevision: Int
+        /// What kind of place the caret is in — text, inline/display math, a
+        /// tabular cell, verbatim, a comment — and the wrapping a capture
+        /// landing there needs. Additive and optional: a Mac that predates it
+        /// omits the key and a companion that predates it ignores it.
+        /// See protocol/proposals/transfer-v1-caret-context.md.
+        var caretContext: CaretContext?
         enum CodingKeys: String, CodingKey {
             case destinationId = "destination_id", projectId = "project_id", path
-            case baseRevision = "base_revision"
+            case baseRevision = "base_revision", caretContext = "caret_context"
         }
-        init(destinationId: String, projectId: String, path: String, baseRevision: Int) {
+        init(destinationId: String, projectId: String, path: String, baseRevision: Int,
+             caretContext: CaretContext? = nil) {
             self.destinationId = destinationId; self.projectId = projectId
             self.path = path; self.baseRevision = baseRevision
+            self.caretContext = caretContext
         }
     }
 

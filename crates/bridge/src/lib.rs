@@ -1,4 +1,5 @@
 //! Durable capture receipt and reviewed source edits. No TeX engine is embedded.
+pub mod caret;
 pub mod context;
 pub mod features;
 pub mod grok;
@@ -325,6 +326,14 @@ pub struct Context {
     pub source_after: String,
     pub definitions: Vec<String>,
     pub supported_features: Vec<String>,
+    /// What kind of place the destination is: text, inline/display math, a
+    /// tabular cell, verbatim or a comment, plus the wrapping that makes an
+    /// insertion there legal. Derived from the pinned snapshot, sent to the
+    /// recogniser, and reused when the approved proposal becomes an edit, so
+    /// the prompt and the insertion cannot disagree.
+    /// See protocol/proposals/transfer-v1-caret-context.md.
+    #[serde(default)]
+    pub caret_context: caret::CaretContext,
     #[serde(default)]
     pub dependencies: Vec<ContextDependency>,
 }
@@ -677,6 +686,21 @@ impl Bridge {
             evidence,
         } = converter.convert_with_evidence(&record.capture, &context)?;
         proposal.validate()?;
+        // Make the proposal legal where it is going *before* review: the
+        // reviewer must approve the exact text that will be inserted, and a
+        // recogniser that ignored the caret context must not be able to produce
+        // `$a + $x^2$ + b$`. Refusals arrive as `UNSUPPORTED: ` ambiguities,
+        // which `blocks_direct_insertion` already turns into a review block.
+        let normalized = caret::normalize(&proposal.latex, &context.caret_context);
+        match normalized.text {
+            Some(latex) => proposal.latex = latex,
+            None => proposal.latex = String::new(),
+        }
+        for advisory in normalized.advisories {
+            if !proposal.ambiguities.contains(&advisory) {
+                proposal.ambiguities.push(advisory);
+            }
+        }
         // Hard violations already failed above; surface non-fatal but
         // reviewer-worthy findings (e.g. deep nesting, `\loop`/`\repeat`)
         // through the same `ambiguities` channel the review UI already
@@ -792,7 +816,12 @@ impl Bridge {
             start_byte: a.start_byte,
             end_byte: a.end_byte,
             removed_text: doc.text[a.start_byte..a.end_byte].into(),
-            replacement: proposal.latex.clone(),
+            replacement: caret::insertable(&proposal.latex, &record.context.as_ref().map(|c| c.caret_context.clone()).unwrap_or_default())
+                .ok_or_else(|| BridgeError::new(
+                    "unsupported_construct_requires_confirmation",
+                    "This proposal is not legal LaTeX at the pinned caret (it would nest or \
+                     unbalance math delimiters). Convert again, or have a human re-author it.",
+                ))?,
             document_before_sha256: digest(doc.text.as_bytes()),
         };
         record.prepared = Some(edit.clone());

@@ -333,6 +333,30 @@ fn invalid_display_transport_is_rejected_before_source_import() {
         assert!(!private.exists());
     }
 }
+/// The interpreter for the fake compilers (#207): `FLASHTEX_TEST_PYTHON`, else
+/// `/usr/bin/python3` when it exists (what CI has always used), else the first
+/// `python3` on `PATH` (NixOS has no `/usr/bin/python3`).
+fn python3() -> std::path::PathBuf {
+    if let Some(path) = std::env::var_os("FLASHTEX_TEST_PYTHON") {
+        return path.into();
+    }
+    let system = std::path::PathBuf::from("/usr/bin/python3");
+    if system.is_file() {
+        return system;
+    }
+    std::env::var_os("PATH")
+        .and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join("python3"))
+                .find(|candidate| candidate.is_file())
+        })
+        .unwrap_or(system)
+}
+
+/// A fake compiler script with a shebang for [`python3`].
+fn script(body: &str) -> String {
+    format!("#!{}\n{body}", python3().display())
+}
 fn bounded_diagnostics(path: &std::path::Path) -> String {
     use std::io::{Read, Seek, SeekFrom};
     let Ok(mut file) = std::fs::File::open(path) else {
@@ -972,15 +996,14 @@ fn negotiated_history_echoes_original_token_and_restart_requires_renegotiation()
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let compiler = dir.path().join("gated.py");
-    std::fs::write(&compiler, r#"#!/usr/bin/python3
-import json,sys,pathlib,time
+    std::fs::write(&compiler, script(r#"import json,sys,pathlib,time
 root=pathlib.Path(__file__).parent
 for line in sys.stdin:
  r=json.loads(line);p=r['payload'];revision=p['revision']
  (root/('started'+str(revision))).touch()
  while revision>1 and not (root/('release'+str(revision))).exists(): time.sleep(.001)
  print(json.dumps({'protocol_version':1,'type':'compile_result','id':r['id'],'payload':{'project_id':p['project_id'],'revision':revision,'status':'ok','pages':[],'diagnostics':[]}}),flush=True)
-"#).unwrap();
+"#)).unwrap();
     std::fs::set_permissions(&compiler, std::fs::Permissions::from_mode(0o700)).unwrap();
     let mut client = Client::with_compiler(dir.path(), Some(&compiler));
     loop {
@@ -1768,13 +1791,14 @@ fn producer_reply_limit_is_applied_on_startup_and_restart() {
     let compiler = dir.path().join("record-cap.py");
     std::fs::write(
         &compiler,
-        r#"#!/usr/bin/python3
-import os, pathlib, sys
+        script(
+            r#"import os, pathlib, sys
 with pathlib.Path(__file__).with_suffix('.log').open('a') as f:
     f.write(os.environ['FLASHTEX_MAX_REPLY_BYTES'] + '\n')
 for line in sys.stdin:
     pass
 "#,
+        ),
     )
     .unwrap();
     std::fs::set_permissions(&compiler, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -1831,12 +1855,11 @@ fn full_and_metadata_edit_admissions_match_wire_previews() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let compiler = dir.path().join("correlation.py");
-    std::fs::write(&compiler, r#"#!/usr/bin/python3
-import json,sys
+    std::fs::write(&compiler, script(r#"import json,sys
 for line in sys.stdin:
  r=json.loads(line);p=r['payload']
  print(json.dumps({'protocol_version':1,'type':'compile_result','id':r['id'],'payload':{'project_id':p['project_id'],'revision':p['revision'],'status':'ok','pages':[],'diagnostics':[]}}),flush=True)
-"#).unwrap();
+"#)).unwrap();
     std::fs::set_permissions(&compiler, std::fs::Permissions::from_mode(0o700)).unwrap();
     let mut client = Client::with_compiler(dir.path(), Some(&compiler));
     loop {
@@ -1878,14 +1901,13 @@ fn grouped_retry_retains_command_identity_but_admits_current_source_compile() {
     for mode in ["full", "metadata"] {
         let dir = tempfile::tempdir().unwrap();
         let compiler = dir.path().join("group-gated.py");
-        std::fs::write(&compiler, r#"#!/usr/bin/python3
-import json,sys,pathlib,time
+        std::fs::write(&compiler, script(r#"import json,sys,pathlib,time
 root=pathlib.Path(__file__).parent
 for line in sys.stdin:
  r=json.loads(line);p=r['payload'];(root/'started').touch()
  while not (root/'release').exists(): time.sleep(.001)
  print(json.dumps({'protocol_version':1,'type':'compile_result','id':r['id'],'payload':{'project_id':p['project_id'],'revision':p['revision'],'status':'ok','pages':[],'diagnostics':[]}}),flush=True)
-"#).unwrap();
+"#)).unwrap();
         std::fs::set_permissions(&compiler, std::fs::Permissions::from_mode(0o700)).unwrap();
         let mut client = Client::with_compiler(dir.path(), Some(&compiler));
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
@@ -1942,14 +1964,13 @@ for line in sys.stdin:
 fn root_recording_producer(dir: &std::path::Path) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let compiler = dir.join("root-recorder.py");
-    std::fs::write(&compiler, r#"#!/usr/bin/python3
-import json,sys,pathlib
+    std::fs::write(&compiler, script(r#"import json,sys,pathlib
 log=pathlib.Path(__file__).with_name('seen.jsonl')
 for line in sys.stdin:
  r=json.loads(line);p=r['payload']
  with open(log,'a') as f: f.write(json.dumps({'argv':sys.argv[1:],'project_root':p.get('project_root','<absent>')})+'\n')
  print(json.dumps({'protocol_version':1,'type':'compile_result','id':r['id'],'payload':{'project_id':p['project_id'],'revision':p['revision'],'status':'ok','pages':[],'diagnostics':[]}}),flush=True)
-"#).unwrap();
+"#)).unwrap();
     std::fs::set_permissions(&compiler, std::fs::Permissions::from_mode(0o700)).unwrap();
     compiler
 }

@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 import FlashTeXProtocol
+import HostedWindows
 @testable import FlashTeXMac
 
 /// Latency aggregation, bench configuration parsing, and the insertion path
@@ -147,8 +148,8 @@ final class TypingBenchTests: XCTestCase {
 
     private func makeWindow(_ model: ShellModel) -> NSWindow {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.titled],
-                              backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.titled],
+                                                backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: BenchHost(model: model))
         window.orderFrontRegardless() // never makeKey: the test must not steal focus
         return window

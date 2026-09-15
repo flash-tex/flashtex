@@ -140,7 +140,7 @@ fn fraction_bars_are_explicit_rules_in_v2_and_negotiated_in_v1() {
         .expect("typed rule");
     assert!((typed_rule.1 - rule.top.to_bp()).abs() < 1e-9);
     assert!((typed_rule.3 - rule.height.to_bp()).abs() < 1e-9);
-    assert_eq!(&*typed_rule.4.path, "main.tex");
+    assert_eq!(&*typed_rule.4.as_ref().expect("a fraction bar keeps its source").path, "main.tex");
     assert!(typed.pages[0].items.iter().all(|i| !matches!(i, V1Item::Text { text, .. } if text.contains('\u{2500}'))));
     // No font hints unless accepted.
     assert!(typed.pages[0].items.iter().all(|i| !matches!(i, V1Item::Text { font: Some(_), .. })));

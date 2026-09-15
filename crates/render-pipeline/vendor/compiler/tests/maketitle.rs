@@ -34,7 +34,8 @@ fn compiled(source: &str) -> flashtex_compiler::incremental::CompileOutput {
 }
 
 #[test]
-fn maketitle_without_title_or_author_is_an_honest_error_not_a_placeholder() {
+fn maketitle_without_a_title_is_an_honest_error_not_a_placeholder() {
+    // latex.ltx `\def\@title{\@latex@error{No \noexpand\title given}\@ehc}`.
     let no_title = parse(&doc("\\author{A}", "\\maketitle"));
     assert!(
         no_title
@@ -48,20 +49,48 @@ fn maketitle_without_title_or_author_is_an_honest_error_not_a_placeholder() {
         .blocks
         .iter()
         .any(|b| matches!(b, Block::TitleBlock { .. })));
+}
 
+fn title_block_authors(parsed: &flashtex_compiler::parser::Parsed) -> Option<usize> {
+    parsed.blocks.iter().find_map(|b| match b {
+        Block::TitleBlock { authors, .. } => Some(authors.len()),
+        _ => None,
+    })
+}
+
+/// latex.ltx `\def\@author{\@latex@warning@no@line{No \noexpand\author
+/// given}}`: without `\author` the title block is still set, with a warning.
+/// pdflatex 1.40.29 (TeX Live 2026) logs `LaTeX Warning: No \author given.`
+/// and `\the\pagetotal` after `\maketitle` is 116.86673pt, as with `\author{A}`.
+#[test]
+fn maketitle_without_an_author_warns_like_latex_and_sets_the_title() {
     let no_author = parse(&doc("\\title{T}", "\\maketitle"));
-    assert!(
-        no_author
-            .diagnostics
-            .iter()
-            .any(|d| d.message.contains("requires \\author")),
-        "{:?}",
-        no_author.diagnostics
-    );
-    assert!(!no_author
-        .blocks
+    let messages: Vec<&str> = no_author
+        .diagnostics
         .iter()
-        .any(|b| matches!(b, Block::TitleBlock { .. })));
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(messages, ["No \\author given"]);
+    assert!(no_author
+        .diagnostics
+        .iter()
+        .all(|d| d.severity == flashtex_compiler::diagnostics::Severity::Warning));
+    assert_eq!(title_block_authors(&no_author), Some(0));
+}
+
+/// `\author{}` is an author that is given but empty: pdflatex sets the empty
+/// author box with no warning at all (`\the\pagetotal` 115.33337pt).
+#[test]
+fn an_empty_author_is_silent_like_latex() {
+    for preamble in ["\\title{T}\\author{}", "\\title{T}\\author{ \\and }"] {
+        let parsed = parse(&doc(preamble, "\\maketitle"));
+        assert!(
+            parsed.diagnostics.is_empty(),
+            "{preamble}: {:?}",
+            parsed.diagnostics
+        );
+        assert_eq!(title_block_authors(&parsed), Some(0), "{preamble}");
+    }
 }
 
 /// latex.ltx 17225 is `\gdef\@date{\today}`, so a document with no `\date` at

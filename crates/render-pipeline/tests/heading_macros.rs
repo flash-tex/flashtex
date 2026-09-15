@@ -111,6 +111,35 @@ fn direct_heading_hfill_reaches_the_right_margin() {
     assert!(problem.x - (bonus.x + bonus.width) > bp(2.5));
 }
 
+/// HW1's `\subsection*{Bonus Problem \hfill \normalfont[1 bonus point]}`:
+/// the spaces after `\normalfont` are `ecrm1200`'s, not the head's
+/// `ecbx1200` ones, so `[1` sits 1.15bp further right than it did. pdfTeX
+/// (TeX Live 2026, 11pt, T1): `\hbox{\large\normalfont[1 bonus point]}` is
+/// 77.07414pt, `[1` is 9.13664pt, `bonus` 30.08568pt, and the interword
+/// space `\fontdimen2` is 3.91571pt (4.4989pt in `\bfseries`).
+#[test]
+fn direct_heading_spaces_after_normalfont_use_the_medium_font() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let src = "\\documentclass[11pt]{article}\\usepackage[T1]{fontenc}\\begin{document}\n\\subsection*{Bonus Problem \\hfill \\normalfont[1 bonus point]}\nBody.\n\\end{document}";
+    let words = layout(src);
+    let (text_x, text_w) = measure();
+    let (open, bonus, point) = (word(&words, "[1"), word(&words, "bonus"), word(&words, "point]"));
+    let right = text_x + text_w;
+    assert!((right - open.x - bp(77.07414)).abs() < 0.02, "[1 from the right margin: {} vs {}", right - open.x, bp(77.07414));
+    assert!((bonus.x - (open.x + open.width) - bp(3.91571)).abs() < 0.02, "space after [1: {}", bonus.x - (open.x + open.width));
+    assert!((point.x - (bonus.x + bonus.width) - bp(3.91571)).abs() < 0.02, "space after bonus: {}", point.x - (bonus.x + bonus.width));
+    // A space next to a bold word keeps the head font: `A {\normalfont B} C`.
+    let words = layout("\\documentclass[11pt]{article}\\usepackage[T1]{fontenc}\\begin{document}\n\\subsection*{A {\\normalfont B} C \\normalfont D E}\nBody.\n\\end{document}");
+    let gap = |l: &str, r: &str| word(&words, r).x - (word(&words, l).x + word(&words, l).width);
+    for (l, r) in [("A", "B"), ("B", "C"), ("C", "D")] {
+        assert!((gap(l, r) - bp(4.4989)).abs() < 0.02, "{l}-{r} is a bold space: {}", gap(l, r));
+    }
+    assert!((gap("D", "E") - bp(3.91571)).abs() < 0.02, "D-E is a medium space: {}", gap("D", "E"));
+}
+
 #[test]
 fn line_break_dimen_adds_vertical_space_after_the_line() {
     if !lm_available() {
@@ -139,4 +168,39 @@ fn line_break_dimen_adds_vertical_space_after_the_line() {
     let (pt, ps, pso) = (word(&plain, "Title"), word(&plain, "Sheet"), word(&plain, "Solutions"));
     assert!((pitch_a - (ps.baseline - pt.baseline) - bp(3.0)).abs() < 0.05, "3pt: {} vs {}", pitch_a, ps.baseline - pt.baseline);
     assert!((pitch_b - (pso.baseline - ps.baseline) - bp(7.0)).abs() < 0.05, "7pt: {} vs {}", pitch_b, pso.baseline - ps.baseline);
+}
+
+/// `\c@secnumdepth` is the class's own counter, not a flat default: article
+/// sets it to 3 (`article.cls` line 255), so `\subsubsection` is numbered
+/// `1.1.1`; report/book set 2, so the same heading carries no number. The
+/// pipeline used to assume 2 for every class, which dropped the number from
+/// every `article` `\subsubsection` — and left the contents list, which
+/// already derived the class default, writing a `\numberline` for a heading
+/// whose printed form had none.
+#[test]
+fn article_numbers_subsubsection_and_report_does_not() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let body = "\\section{One}\nBody.\n\\subsection{Two}\nBody.\n\\subsubsection{Three}\nTail.\n";
+    let art = layout(&format!("\\documentclass{{article}}\\begin{{document}}\n{body}\\end{{document}}"));
+    assert!(art.iter().any(|w| w.text == "1.1.1"), "article: no 1.1.1 in {art:?}");
+    // `\@seccntformat`: the number, a `\quad`, then the title, all flush left.
+    let (n, t) = (word(&art, "1.1.1"), word(&art, "Three"));
+    assert!((n.x - word(&art, "1").x).abs() < 0.05, "number flush with \\section's: {} vs {}", n.x, word(&art, "1").x);
+    assert!(t.x > n.x + n.width, "title after the number: {} vs {}", t.x, n.x + n.width);
+
+    // report/book stop at 2. `\thesubsection` there is
+    // `\thechapter.\arabic{section}.\arabic{subsection}`, so the *subsection*
+    // is `0.1.1` before any `\chapter`; the subsubsection would be `0.1.1.1`
+    // and must not appear at all.
+    let rep = layout(&format!("\\documentclass{{report}}\\begin{{document}}\n{body}\\end{{document}}"));
+    assert!(rep.iter().any(|w| w.text == "0.1.1"), "report still numbers \\subsection: {rep:?}");
+    assert!(!rep.iter().any(|w| w.text == "0.1.1.1"), "report secnumdepth is 2: {rep:?}");
+    assert!(rep.iter().any(|w| w.text == "Three"), "report still sets the title: {rep:?}");
+
+    // An explicit `\setcounter` still wins over the class default.
+    let off = layout(&format!("\\documentclass{{article}}\\setcounter{{secnumdepth}}{{2}}\\begin{{document}}\n{body}\\end{{document}}"));
+    assert!(!off.iter().any(|w| w.text == "1.1.1"), "\\setcounter{{secnumdepth}}{{2}}: {off:?}");
 }

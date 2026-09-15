@@ -56,8 +56,18 @@ pub fn proposal_schema() -> Value {
 }
 
 /// The data half of the request: instructions plus destination context (data, never instructions to the model).
+///
+/// `destination_context.caret_context` is the addition that lets a recogniser
+/// wrap its answer for where it will actually land. Alongside the machine
+/// fields it carries `instruction`, one plain sentence saying what kind of
+/// place the caret is in and what delimiters are legal there, because a model
+/// follows a sentence far more reliably than it infers a rule from an enum.
 pub fn user_text(capture: &CaptureSubmit, context: &Context) -> String {
-    json!({"instructions":capture.instructions,"destination_context":context}).to_string()
+    let mut destination = serde_json::to_value(context).unwrap_or_else(|_| json!({}));
+    if let Some(caret) = destination.get_mut("caret_context") {
+        caret["instruction"] = json!(context.caret_context.describe());
+    }
+    json!({"instructions":capture.instructions,"destination_context":destination}).to_string()
 }
 
 /// `data:` URL of the capture image.
@@ -999,6 +1009,7 @@ mod tests {
             instructions: "transcribe".into(),
         };
         let context = Context {
+            caret_context: Default::default(),
             project_id: "p".into(),
             path: "main.tex".into(),
             revision: 1,

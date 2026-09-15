@@ -134,6 +134,7 @@ to see what the engine implements today and what it reports as unsupported.
 | Captures and durable edit history | `~/Library/Application Support/FlashTeX/captures/` |
 | AI provider key | the login Keychain (never a file) |
 
-Problems or questions: <https://github.com/flash-tex/flashtex/issues>. When
+Problems or questions: the Discord <https://discord.gg/J4kHDJmTrD> for a quick answer,
+<https://github.com/flash-tex/flashtex/issues> for bugs. When
 reporting a compile problem, *Edit › Copy Diagnostics as Text* (⌘⌥C) copies
 the Problems list in `path:line: severity: message` form for pasting.

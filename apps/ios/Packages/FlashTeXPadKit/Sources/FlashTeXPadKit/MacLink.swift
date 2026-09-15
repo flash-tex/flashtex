@@ -15,8 +15,8 @@ import NearbyClient
 /// diagnostics, completions, proposals or insertion results. Those stay on the
 /// Mac; the app labels every such panel "not carried by transfer-v1".
 public final class MacLink: @unchecked Sendable {
-    public struct TranscriptLine: Identifiable, Equatable {
-        public enum Direction: String { case sent, received, note }
+    public struct TranscriptLine: Identifiable, Equatable, Sendable {
+        public enum Direction: String, Sendable { case sent, received, note }
         public let id = UUID()
         public let at: Date
         public let direction: Direction

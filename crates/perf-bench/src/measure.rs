@@ -591,34 +591,11 @@ fn decompose(docs: &[SourceDocument<'_>], case: &Case, fonts: &FontSet, options:
 
     let diagnostics = ctx.take_diagnostics();
     let t = Instant::now();
-    // `page_color`/`default_color` (added after the harness was written) are
-    // `None` here: the harness measures the default-colour path, which is what
-    // every committed baseline was recorded against.
-    let v2 = typeset::assemble(
-        "perfbench",
-        3,
-        docs,
-        &doc.style,
-        fonts,
-        laid,
-        diagnostics,
-        Some(&cache),
-        None,
-        None,
-    );
+    let v2 = typeset::assemble("perfbench", 3, docs, &doc.style, fonts, laid, diagnostics, Some(&cache), doc.page_color, doc.default_color);
     let assemble_ms = ms(t);
 
     let t = Instant::now();
-    let payload = v1::fallback(&v2, Capabilities {
-            rules: true,
-            font_hints: true,
-            display_list: false,
-            images: false,
-            // Capabilities gained fields after the harness was written. Spreading
-            // the default keeps new ones off, so the measured path stays the one
-            // the committed baselines were recorded against.
-            ..Default::default()
-        }, Some(vec![]));
+    let payload = v1::fallback(&v2, Capabilities { rules: true, font_hints: true, display_list: false, images: false, device_color: false, delta: false, v2_only: false }, Some(vec![]));
     let v1_ms = ms(t);
 
     let t = Instant::now();

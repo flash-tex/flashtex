@@ -3,6 +3,7 @@ import SwiftUI
 import XCTest
 import FlashTeXProtocol
 import FlashTeXAccessibility
+import HostedWindows
 @testable import FlashTeXMac
 
 /// Keyboard-only traversal of the secondary panels: the Settings scene
@@ -97,7 +98,7 @@ final class PanelAccessibilityTests: XCTestCase {
         let hostView = NSHostingView(rootView: view)
         hostView.frame = NSRect(origin: .zero, size: size)
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: hostView.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: hostView.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = title
         window.isReleasedWhenClosed = false
         window.contentView = hostView

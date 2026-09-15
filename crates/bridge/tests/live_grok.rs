@@ -104,6 +104,7 @@ fn live_grok_round_trip_produces_structurally_valid_proposal() {
         .expect("synthetic capture must satisfy the bridge's own bounds");
 
     let context = Context {
+            caret_context: Default::default(),
         project_id: "live-test-project".into(),
         path: "main.tex".into(),
         revision: 1,

@@ -42,7 +42,7 @@ fn array_rows_stack_on_the_strut_with_row_skips_and_columns_at_arraycolsep() {
         return;
     }
     // HW1's grid: two `l` columns, `\\[2pt]` after the first three rows.
-    let src = "\\documentclass[11pt]{article}\\begin{document}\n\\[\n\\begin{array}{ll}\n\\text{(a)} & \\forall m\\,\\exists n\\; D(m,n),\\\\[2pt]\n\\text{(b)} & \\exists n\\,\\forall m\\; D(m,n),\\\\[2pt]\n\\text{(c)} & \\forall n\\,\\exists m\\; D(m,n),\\\\[2pt]\n\\text{(d)} & \\exists m\\,\\forall n\\; D(m,n).\n\\end{array}\n\\]\n\\end{document}";
+    let src = "\\documentclass[11pt]{article}\\usepackage{amsmath}\\begin{document}\n\\[\n\\begin{array}{ll}\n\\text{(a)} & \\forall m\\,\\exists n\\; D(m,n),\\\\[2pt]\n\\text{(b)} & \\exists n\\,\\forall m\\; D(m,n),\\\\[2pt]\n\\text{(c)} & \\forall n\\,\\exists m\\; D(m,n),\\\\[2pt]\n\\text{(d)} & \\exists m\\,\\forall n\\; D(m,n).\n\\end{array}\n\\]\n\\end{document}";
     let (glyphs, diags) = math_glyphs(src);
     assert!(!diags.iter().any(|d| d.code == "math_limitation"), "no limitation left: {diags:?}");
     // Four rows: the `D` of each.
@@ -85,7 +85,7 @@ fn cases_is_fenced_with_a_brace_sized_to_the_rows_and_quad_between_columns() {
         eprintln!("skipping: Latin Modern not installed");
         return;
     }
-    let src = "\\documentclass[11pt]{article}\\begin{document}\n\\[ f(x) = \\begin{cases} x & x \\geq 0 \\\\ -x & x < 0 \\end{cases} \\]\n\\end{document}";
+    let src = "\\documentclass[11pt]{article}\\usepackage{amsmath}\\begin{document}\n\\[ f(x) = \\begin{cases} x & x \\geq 0 \\\\ -x & x < 0 \\end{cases} \\]\n\\end{document}";
     let (glyphs, diags) = math_glyphs(src);
     assert!(!diags.iter().any(|d| d.code == "math_limitation"), "{diags:?}");
     let braces: Vec<&(char, f64, f64)> = glyphs.iter().filter(|(c, ..)| *c == '{').collect();

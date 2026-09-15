@@ -988,7 +988,7 @@ struct ProjectSearchPanel: View {
                 }
             }
         }
-        .frame(minWidth: 520, minHeight: 320)
+        .frame(minWidth: DS.Layout.searchWindowMinWidth, minHeight: DS.Layout.searchWindowMinHeight)
         .onAppear { fieldFocused = true }
         .background {
             // Esc anywhere in the window closes it (the cancel action).
@@ -1004,7 +1004,7 @@ private struct ProjectSearchBody: View {
     var fieldFocused: FocusState<Bool>.Binding
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
             HStack {
                 TextField("Find in project (case-sensitive literal, no regex)", text: $client.query)
                     .textFieldStyle(.roundedBorder)
@@ -1023,7 +1023,7 @@ private struct ProjectSearchBody: View {
                     .disabled(client.results?.matches.isEmpty ?? true)
                     .help("Select the next match (wrapping) and go there (⌘G while this window is key)")
             }
-            HStack(spacing: 12) {
+            HStack(spacing: DS.Space.l) {
                 Text("Case-sensitive literal; the helper has no regex or normalization.").font(.caption).foregroundStyle(.secondary)
                 Picker("Scope", selection: $client.scope) {
                     ForEach(ProjectSearchClient.Scope.allCases) { Text($0.rawValue).tag($0) }
@@ -1037,18 +1037,18 @@ private struct ProjectSearchBody: View {
             }
             if !client.helperAvailable {
                 Label(ProjectSearch.noHelperMessage, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(DS.Colors.severityWarning)
                     .accessibilityLabel(ProjectSearch.noHelperMessage)
             }
             if let results = client.results {
-                HStack(spacing: 8) {
+                HStack(spacing: DS.Space.m) {
                     Text(results.summary).bold()
                     Text(results.termination.badge)
-                        .font(.caption).padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(results.termination.isExhaustive ? Color.green.opacity(0.2) : Color.orange.opacity(0.25), in: Capsule())
+                        .font(DS.Fonts.secondary).padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xxs)
+                        .background((results.termination.isExhaustive ? DS.Colors.severitySuccess : DS.Colors.severityWarning).opacity(DS.State.badgeFillOpacity), in: Capsule())
                         .help(results.termination.explanation(maxMatches: results.maxMatches, maxWork: results.maxWork))
                     if !results.termination.isExhaustive {
-                        Text("not exhaustive").font(.caption).foregroundStyle(.orange)
+                        Text("not exhaustive").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning)
                     }
                     Spacer()
                     Text("durable " + results.sourceVersions.keys.sorted().map { "\($0) r\(results.sourceVersions[$0]!)" }.joined(separator: ", "))
@@ -1057,7 +1057,7 @@ private struct ProjectSearchBody: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(results.summary + ". " + results.termination.explanation(maxMatches: results.maxMatches, maxWork: results.maxWork))
                 if let stale = client.knownStaleNote {
-                    Label(stale, systemImage: "clock.arrow.circlepath").font(.caption).foregroundStyle(.orange)
+                    Label(stale, systemImage: "clock.arrow.circlepath").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning)
                 }
                 List(selection: $client.selectedID) {
                     ForEach(Array(results.matches.enumerated()), id: \.element.id) { (index: Int, match: ProjectSearch.Match) in
@@ -1078,7 +1078,7 @@ private struct ProjectSearchBody: View {
                 .textSelection(.enabled)
                 .accessibilityLabel("Search status: \(client.status)")
         }
-        .padding(12)
+        .padding(DS.Space.l)
     }
 }
 
@@ -1094,7 +1094,7 @@ private struct ProjectSearchReplaceSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
             HStack {
                 TextField("Replace with (exact bytes)", text: $client.replacement)
                     .textFieldStyle(.roundedBorder)
@@ -1112,10 +1112,10 @@ private struct ProjectSearchReplaceSection: View {
             if !client.planPreviews.isEmpty {
                 List {
                     ForEach(Array(client.planPreviews.enumerated()), id: \.element.id) { (index: Int, preview: ProjectSearch.ReplacementPreview) in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
                             Text(preview.line > 0 ? "\(preview.edit.path):\(preview.line)" : preview.edit.path)
                                 .font(.caption.monospaced()).foregroundStyle(.secondary)
-                                .frame(width: 140, alignment: .leading).lineLimit(1)
+                                .frame(width: DS.Layout.searchPathColumnWidth, alignment: .leading).lineLimit(1)
                             if let b = preview.before, let a = preview.after {
                                 (Text(b.before) + Text(b.match).strikethrough().foregroundColor(.red) + Text(" → ") + Text(a.match).bold().foregroundColor(.accentColor) + Text(a.after))
                                     .font(.body.monospaced()).lineLimit(1)
@@ -1128,11 +1128,11 @@ private struct ProjectSearchReplaceSection: View {
                         .accessibilityLabel(ProjectSearch.accessibilityLabel(index: index, count: client.planPreviews.count, preview: preview))
                     }
                 }
-                .frame(minHeight: 60, maxHeight: 160)
+                .frame(minHeight: DS.Layout.searchPreviewMinHeight, maxHeight: DS.Layout.searchPreviewMaxHeight)
                 .accessibilityLabel("Replacement proposal, \(client.plan?.summary ?? "")")
             }
             ForEach(client.applyOutcomes) { outcome in
-                HStack(spacing: 6) {
+                HStack(spacing: DS.Space.s) {
                     Text(outcome.description).font(.caption)
                         .foregroundStyle({ () -> Color in if case .applied = outcome.state { return .secondary } else { return .orange } }())
                     if case .uncertain(_, let id) = outcome.state {
@@ -1158,10 +1158,10 @@ private struct ProjectSearchRow: View {
     var match: ProjectSearch.Match
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
             Text(match.line > 0 ? "\(match.path):\(match.line)" : match.path)
                 .font(.caption.monospaced()).foregroundStyle(.secondary)
-                .frame(width: 140, alignment: .leading).lineLimit(1)
+                .frame(width: DS.Layout.searchPathColumnWidth, alignment: .leading).lineLimit(1)
             if let s = match.snippet {
                 (Text(s.clippedBefore ? "…" : "") + Text(s.before) + Text(s.match).bold().foregroundColor(.accentColor) + Text(s.after) + Text(s.clippedAfter ? "…" : ""))
                     .font(.body.monospaced()).lineLimit(1)

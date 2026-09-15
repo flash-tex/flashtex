@@ -68,7 +68,13 @@ fn tikzpicture_becomes_paths_and_glyph_runs() {
 
     // No compiler complaints about \draw or the unknown environment.
     for d in &out.v2.diagnostics {
-        assert!(d.code != "compiler", "{d:?}");
+        assert!(
+            !matches!(
+                d.code.as_str(),
+                "compiler" | "unknown_command" | "unsupported_feature" | "syntax_error" | "export_limitation" | "fidelity_note" | "recovered_input"
+            ),
+            "{d:?}"
+        );
     }
     let features = out.v2.required_features();
     assert!(features.contains(&"path_stroke") && features.contains(&"path_fill") && features.contains(&"clip"), "{features:?}");
