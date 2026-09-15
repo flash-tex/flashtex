@@ -123,6 +123,7 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{27F5}', 1463), // \longleftarrow
     ('\u{27F8}', 1457), // \Longleftarrow, and \impliedby (\;\Longleftarrow\;)
     ('\u{27F7}', 1442), // \longleftrightarrow
+    ('\u{27FC}', 1443), // \longmapsto (kernel \mapstochar\longrightarrow)
     // \triangle (Ord) and \bigtriangleup (Bin) share this one real glyph;
     // \bigtriangleup gets a per-atom class override rather than a second glyph.
     ('\u{25B3}', 968), // \triangle, \bigtriangleup
@@ -201,7 +202,7 @@ mod tests {
         assert_eq!(double_struck('A'), Some('\u{1D538}'));
         assert_eq!(double_struck('a'), None);
         assert_eq!(double_struck('1'), None);
-        assert_eq!(ADVANCES.len(), 84);
+        assert_eq!(ADVANCES.len(), 85);
     }
 
     #[test]

@@ -3123,6 +3123,9 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("longleftarrow", "⟵"),
     ("Longleftarrow", "⟸"),
     ("longleftrightarrow", "⟷"),
+    // Kernel `\longmapsto` (`\mapstochar\longrightarrow`): a single U+27FC
+    // glyph from the same resource, like the other long arrows above.
+    ("longmapsto", "⟼"),
     // `\triangle`, also from the pinned Latin Modern Math resource.
     // `\bigtriangleup` shares this exact glyph with a forced Bin class (see
     // `command_atom`), so it is not a second row here.
@@ -3287,7 +3290,7 @@ fn symbol_class(glyph: &str) -> AtomClass {
         // HW2 follow-up: the remaining long arrows (issue #62), also from the
         // pinned Latin Modern Math resource. `⊥` above is `\perp`'s glyph;
         // `\bot` shares it but overrides the class to Ord (see `command_atom`).
-        | "⟺" | "⟶" | "⟵" | "⟸" | "⟷"
+        | "⟺" | "⟶" | "⟵" | "⟸" | "⟷" | "⟼"
         // fontmath.ltx 301-302: `\sqsubseteq`/`\sqsupseteq`, `\mathrel` at
         // cmsy "76/"77 (kernel, not amssymb).
         | "⊑" | "⊒" => Rel,
@@ -5973,12 +5976,25 @@ mod spacing_tests {
             "longleftarrow",
             "Longleftarrow",
             "longleftrightarrow",
+            "longmapsto",
         ] {
             let glyph = command_glyph(command).unwrap();
             let b = laid_out(&format!(r"a\{command} b"), SIZE);
             close(x(&b, glyph), width("a", SIZE) + 5.0);
             close(x(&b, "b"), x(&b, glyph) + width(glyph, SIZE) + 5.0);
         }
+    }
+
+    /// GH-LONGMAPSTO: `\longmapsto` (kernel `\mapstochar\longrightarrow`) is
+    /// the single U+27FC glyph from the pinned Latin Modern Math resource,
+    /// like the other long arrows: its laid-out width is exactly that glyph's
+    /// real advance (1443/1000 em), which `tests/lm_math_binding.rs`
+    /// re-reads from the font program itself.
+    #[test]
+    fn longmapsto_is_the_lm_math_arrow_from_bar() {
+        assert_eq!(command_glyph("longmapsto"), Some("⟼"));
+        assert_eq!(crate::lm_math::advance('⟼'), Some(1443));
+        close(width(r"\longmapsto", SIZE), 1443.0 / 1000.0 * SIZE);
     }
 
     /// `\iff`/`\implies`/`\impliedby` expand to a thick space, the long

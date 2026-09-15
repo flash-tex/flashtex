@@ -259,14 +259,14 @@ fn amssymb_symbols_are_emitted_with_the_latin_modern_math_hint() {
 fn hw2_math_follow_up_commands_render_with_no_diagnostics() {
     let reply = compile(
         r"$A \Longleftrightarrow B$ $A \longrightarrow B$ $A \longleftarrow B$
-          $A \Longleftarrow B$ $A \longleftrightarrow B$
+          $A \Longleftarrow B$ $A \longleftrightarrow B$ $A \longmapsto B$
           $A \iff B$ $A \implies B$ $A \impliedby B$
           $\triangle$ $A \bigtriangleup B$ $A \bigtriangledown B$
           $a \bot b$ $A \mathbin{\triangle} B$ $a \mathrel{+} b$
 ",
     );
     let items = items(&reply);
-    for glyph in ["⟺", "⟶", "⟵", "⟸", "⟷", "△", "▽"] {
+    for glyph in ["⟺", "⟶", "⟵", "⟸", "⟷", "⟼", "△", "▽"] {
         let (_, family) = items
             .iter()
             .find(|(text, _)| text == glyph)
@@ -284,6 +284,7 @@ fn hw2_math_follow_up_commands_render_with_no_diagnostics() {
         "longleftarrow",
         "Longleftarrow",
         "longleftrightarrow",
+        "longmapsto",
         "iff",
         "implies",
         "impliedby",
