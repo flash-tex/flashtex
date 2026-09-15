@@ -246,7 +246,7 @@ pub fn command_package(name: &str) -> Option<&'static str> {
         "tikz" | "usetikzlibrary" | "draw" | "node" | "fill" | "path" => Some("tikz"),
         "includegraphics" | "graphicspath" | "scalebox" | "resizebox" | "rotatebox"
         | "reflectbox" => Some("graphicx"),
-        "lstinline" | "lstlistoflistings" | "lstset" => Some("listings"),
+        "lstinline" | "lstlistoflistings" | "lstset" | "lstinputlisting" => Some("listings"),
         "mintinline" | "listoflistings" => Some("minted"),
         "citep" | "citet" | "citeauthor" => Some("natbib"),
         "addbibresource" | "printbibliography" => Some("biblatex"),
