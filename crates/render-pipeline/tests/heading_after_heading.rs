@@ -29,11 +29,11 @@
 //!
 //! ## Oracle
 //!
-//! pdfTeX 3.141592653-2.6-1.40.28 (TeX Live 2026), `\usepackage[T1]{fontenc}`,
+//! pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), `\usepackage[T1]{fontenc}`,
 //! `\usepackage[margin=1in]{geometry}`, `\pagestyle{empty}`. `\zsavepos`
 //! placed right *after* each anchor word (a marker before the first glyph of
 //! a line can attach to the wrong line), `posy` sp → bp as
-//! `/65536/1.00375`, compared baseline to baseline. 256 such pairs across
+//! `/65536/1.00375`, compared baseline to baseline. 262 such pairs across
 //! article 10/11/12pt and report 10/11pt — section/subsection/subsubsection
 //! pairs starred and unstarred, `\chapter` then `\section`, and the lists
 //! followed by every level — match to 0.003bp after the change; the ones
