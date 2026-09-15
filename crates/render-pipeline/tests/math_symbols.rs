@@ -152,6 +152,49 @@ fn odot_is_painted_as_a_binary_math_glyph() {
     );
 }
 
+/// Page 1's math glyph runs: their text concatenated, and the glyph count.
+fn math_run_text(body: &str) -> (String, usize) {
+    let r = render_one(&doc(body));
+    let mut text = String::new();
+    let mut glyphs = 0;
+    for item in &r.v2.pages[0].items {
+        if let Item::GlyphRun(run) = item {
+            if run.role == RunRole::Math {
+                text.push_str(&run.text);
+                glyphs += run.glyphs.len();
+            }
+        }
+    }
+    (text, glyphs)
+}
+
+#[test]
+fn long_arrows_extract_as_their_drawn_pieces() {
+    if !lm_available() {
+        return;
+    }
+    // pdfTeX sets `\Longrightarrow` as `\Relbar\joinrel\Rightarrow` (cmr `=`
+    // + cmsy `⇒`) and `\longrightarrow` as `\relbar\joinrel\rightarrow`
+    // (`−` + `→`), and its own PDF extracts those two pieces (`x =⇒y −→z`,
+    // measured with pdflatex + PyMuPDF). Each drawn piece extracts as itself.
+    //
+    // A single `⟹`/`⟶` for the two drawn glyphs would need PDF `/ActualText`
+    // marked content (a future crates/pdf change): the exact PDF route writes
+    // one ToUnicode entry per glyph id, so putting the arrow on a piece makes
+    // every later real `=`/`−` extract as the arrow. That is out of scope.
+    //
+    // The join drawing arrives with #536; until then the arrow is one Latin
+    // Modern Math glyph, which extracts as the single character.
+    for (body, single, pieces) in [(r"$\Longrightarrow$", "⟹", "=⇒"), (r"$\longrightarrow$", "⟶", "−→")] {
+        let (text, glyphs) = math_run_text(body);
+        match glyphs {
+            1 => assert_eq!(text, single, "{body} drawn as one glyph"),
+            2 => assert_eq!(text, pieces, "{body} drawn as a two-piece join"),
+            n => panic!("{body} drawn with {n} glyphs: {text:?}"),
+        }
+    }
+}
+
 #[test]
 fn common_math_glyph_runs_use_semantic_unicode() {
     if !lm_available() {
@@ -159,19 +202,12 @@ fn common_math_glyph_runs_use_semantic_unicode() {
     }
     // Semantic Unicode is the contract. pdfTeX's default cmex/cmsy maps can
     // expose font-slot artefacts (`\sum` -> `P`, `\mapsto` -> `7→`), so its
-    // extraction is not an oracle for copy-paste quality.
-    let r = render_one(&doc(
-        r"$- * \ast \circ \cdot \setminus \neq \notin \mapsto \Longrightarrow \longrightarrow \hookrightarrow \phi \varphi \mu \Delta \Omega \sum \prod \int \oint \cdots$",
-    ));
-    let text: String = r.v2.pages[0]
-        .items
-        .iter()
-        .filter_map(|item| match item {
-            Item::GlyphRun(run) if run.role == RunRole::Math => Some(run.text.as_str()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(text, "−∗∗∘⋅∖̸≠∈↦⟹⟶↪ϕφμΔΩ∑∏∫∮⋅⋅⋅");
+    // extraction is not an oracle for copy-paste quality. The long arrows
+    // are checked separately (`long_arrows_extract_as_their_drawn_pieces`).
+    let (text, _) = math_run_text(
+        r"$- * \ast \circ \cdot \setminus \neq \notin \mapsto \hookrightarrow \phi \varphi \mu \Delta \Omega \sum \prod \int \oint \cdots$",
+    );
+    assert_eq!(text, "−∗∗∘⋅∖̸≠∈↦↪ϕφμΔΩ∑∏∫∮⋅⋅⋅");
 }
 
 #[test]

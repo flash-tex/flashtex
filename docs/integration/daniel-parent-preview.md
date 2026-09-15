@@ -79,7 +79,8 @@ render-pipeline used `cargo test --release --locked --no-fail-fast`.
 2. **render-pipeline, `tests/math_symbols.rs::common_math_glyph_runs_use_semantic_unicode`.**
    - `left: "…↦=⇒−→↪…"`, `right: "…↦⟹⟶↪…"`.
    - #536 sets `\Longrightarrow`/`\longrightarrow` as pdfTeX joins (`=`+`⇒`, `−`+`→`), so the math runs' text is the pieces. #597 added this test expecting the semantic single characters `⟹` and `⟶`. Each PR is self-consistent; together their intents conflict.
-   - Not resolved here. The decision was to keep #536's two-piece drawing and give the join the semantic text. That is blocked as specified; see the comment on #536:
+   - **Resolved on #597** (`5bf6d57f`, merged here), option C: the long arrows moved into `long_arrows_extract_as_their_drawn_pieces`, which expects `=⇒` / `−→` for #536's two-glyph join (pdfTeX's own PDF extracts `x =⇒y −→z`) and the single `⟹` / `⟶` while main still draws one glyph. One `⟹` for two drawn glyphs needs PDF `/ActualText` (a future crates/pdf change). math_symbols here: `test result: ok. 17 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.41s`.
+   - The earlier decision (semantic text on the join) was blocked as specified; see the comment on #536:
      - A cluster with empty text is invalid display-list-v2: `crates/rendering-core` and the Mac decoder require non-empty clusters that partition the run text.
      - `\Longrightarrow`'s `=` is an LM Roman glyph and its `⇒` an LM Math glyph, so they are in different runs and cannot share one cluster.
      - The exact PDF route writes one ToUnicode entry per glyph id, first use wins. A prototype that put `⟹`/`⟶` on the join extracted `x ⟹⇒y ⟶⟶z and a ⟹b ⇒c ⟶d ⟶e` from `$x\Longrightarrow y \longrightarrow z$ and $a=b\Rightarrow c - d \to e$`, so every later real `=`, `−` and `→` extracted as the arrow.
