@@ -176,10 +176,19 @@ pub fn render_cached(
     );
     #[cfg(not(feature = "request-date"))]
     let parsed = flashtex_compiler::parser::parse_project(&parse_docs, entry_path);
-    let (float_numbers, float_label_values) = floats::number(&float_envs);
-    let mut image_cache = floats::ImageCache::default();
+    // report/book number floats within the chapter (`floats::number`).
+    let float_chapters = texts.get(documents.iter().position(|d| d.path == entry_path).unwrap_or(0)).and_then(|t| flashtex_class_geometry::DocumentSetup::from_preamble(t)).and_then(|s| match s.class {
+        flashtex_class_geometry::ClassKind::Report => Some(false),
+        flashtex_class_geometry::ClassKind::Book => Some(true),
+        _ => None,
+    });
     let paths: Vec<&str> = documents.iter().map(|d| d.path).collect();
     let entry_index = documents.iter().position(|d| d.path == entry_path).unwrap_or(0);
+    // Floats are numbered, and listed, in the order the `\input`/`\include`
+    // tree is read, not in `documents` order.
+    let reading_order = adapter::reading_order(&texts, &paths, entry_index);
+    let (float_numbers, float_label_values) = floats::number(&float_envs, &texts, &reading_order, float_chapters);
+    let mut image_cache = floats::ImageCache::default();
     // The compiler does not know `tikzpicture`: it reports the environment
     // and every TikZ command inside it, and the pipeline typesets the
     // picture itself (`adapter` / `tikz`). Those compiler diagnostics are
@@ -197,7 +206,11 @@ pub fn render_cached(
     let entry_text = texts.get(entry_index).copied().unwrap_or("");
     let has_lists = toc::has_lists(entry_text);
     let has_class = adapter::class_options(entry_text).is_some();
-    labels.floats = toc::float_entries(&float_envs, &documents.iter().map(|d| d.text).collect::<Vec<_>>());
+    labels.floats = toc::float_entries(&float_envs, &documents.iter().map(|d| d.text).collect::<Vec<_>>(), &float_numbers);
+    if has_lists && listings::present(&texts) {
+        labels.floats.extend(toc::listing_entries(&texts));
+    }
+    labels.reading_order = reading_order;
     // Entry titles from source bytes (`\addcontentsline`, `\chapter`,
     // `\part`, captions) are set as body text: one parse per document.
     // A `listings` caption may hold any body command
@@ -221,6 +234,9 @@ pub fn render_cached(
     let mut passes = 0;
     loop {
         passes += 1;
+        if let Some(c) = cache {
+            c.note_label_pass();
+        }
         let doc = adapter::adapt_cached(&texts, entry_index, &parsed, options, &labels, cache);
         let mut diagnostics: Vec<display::Diagnostic> = parsed
             .diagnostics
@@ -261,10 +277,10 @@ pub fn render_cached(
         } else {
             (Vec::new(), Vec::new())
         };
-        // `prepare` makes one spec per float, in `float_envs` order: the
+        // `prepare` makes one spec per float read, in `float_envs` order: the
         // caption's `\addcontentsline` lands on the float's page.
         if has_lists {
-            let keys = float_envs.iter().enumerate().flat_map(|(d, envs)| (0..envs.len()).map(move |i| toc::float_key(d, i)));
+            let keys = float_numbers.iter().enumerate().flat_map(|(d, nums)| nums.iter().enumerate().filter(|(_, n)| n.is_some()).map(move |(i, _)| toc::float_key(d, i)));
             for (spec, key) in float_specs.iter_mut().zip(keys) {
                 spec.labels.push(key);
             }
@@ -272,6 +288,7 @@ pub fn render_cached(
         diagnostics.extend(float_diagnostics);
         let mut ctx = typeset::Context::with_texts(fonts, &doc.style, &paths, &texts);
         ctx.set_math_colors(doc.math_colors.clone());
+        ctx.set_reading_order(labels.reading_order.clone());
         typeset::multicol::attach(&mut ctx, &multicol_scans);
         let laid = typeset::build_with_floats(&mut ctx, &doc, cache, &float_specs);
         diagnostics.extend(ctx.take_diagnostics());

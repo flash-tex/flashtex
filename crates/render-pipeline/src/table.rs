@@ -141,15 +141,17 @@ impl Default for TableLengths {
 }
 
 impl TableLengths {
-    /// Reads each length through `value` (a `\setlength` lookup), keeping
-    /// the kernel default when the document does not set it.
-    pub fn read(mut value: impl FnMut(&str) -> Option<f64>) -> TableLengths {
+    /// Reads each length through `value(name, default)` (a lookup of the
+    /// document's assignments, which an `\addtolength` makes relative to
+    /// the default), keeping the kernel default when the document does not
+    /// set it.
+    pub fn read(mut value: impl FnMut(&str, f64) -> Option<f64>) -> TableLengths {
         let d = TableLengths::default();
         TableLengths {
-            tabcolsep: value("tabcolsep").unwrap_or(d.tabcolsep),
-            arrayrulewidth: value("arrayrulewidth").unwrap_or(d.arrayrulewidth),
-            doublerulesep: value("doublerulesep").unwrap_or(d.doublerulesep),
-            extrarowheight: value("extrarowheight").unwrap_or(d.extrarowheight),
+            tabcolsep: value("tabcolsep", d.tabcolsep).unwrap_or(d.tabcolsep),
+            arrayrulewidth: value("arrayrulewidth", d.arrayrulewidth).unwrap_or(d.arrayrulewidth),
+            doublerulesep: value("doublerulesep", d.doublerulesep).unwrap_or(d.doublerulesep),
+            extrarowheight: value("extrarowheight", d.extrarowheight).unwrap_or(d.extrarowheight),
         }
     }
 

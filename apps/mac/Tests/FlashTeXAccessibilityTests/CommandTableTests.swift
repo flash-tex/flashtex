@@ -81,11 +81,11 @@ final class CommandTableTests: XCTestCase {
     }
 
     /// Files whose `Commands` bodies wire menu items: the app, `Navigation.swift`
-    /// (`CommandMenu("Navigate")`) and `ProjectSearchPanel.swift`
+    /// (`CommandMenu("Navigate")`), `EditorMenu.swift` (`CommandMenu("Editor")`) and `ProjectSearchPanel.swift`
     /// (`ProjectSearchCommands`, Edit = `after: .textEditing`). In the panel
     /// file only the text from its `Commands` type on is read, so the
     /// window's own buttons (Search, Next Match ⌘G) are not menu items.
-    static let commandFiles = ["FlashTeXMacApp.swift", "Navigation.swift", "ProjectSearchPanel.swift", "DiagnosticsPanel.swift", "CitationRename.swift", "EditorFind.swift", "EditorFolding.swift"]
+    static let commandFiles = ["FlashTeXMacApp.swift", "Navigation.swift", "ProjectSearchPanel.swift", "DiagnosticsPanel.swift", "CitationRename.swift", "EditorFind.swift", "EditorMenu.swift"]
 
     /// `Button("Title")` items with their `keyboardShortcut` and enclosing
     /// menu from `FlashTeXMacApp.swift` (File = `replacing: .newItem`,
@@ -127,20 +127,27 @@ final class CommandTableTests: XCTestCase {
     }
 
     /// `.keyboardShortcut("k", modifiers: [.command, .shift])` → "⌘⇧K"; `.keyboardShortcut("o")` → "⌘O";
-    /// `.keyboardShortcut(.leftArrow, modifiers: [.command, .option])` → "⌘⌥←".
+    /// `.keyboardShortcut(.upArrow, modifiers: [.command, .option])` → "⌘⌥↑"; `.leftArrow` → "⌘⌥←".
     static func spell(keyboardShortcutLine line: String) -> String? {
         let key: String
         let rest: Substring
         if let r = line.range(of: ".keyboardShortcut(\"") {
-            rest = line[r.upperBound...]
-            guard let q = rest.firstIndex(of: "\"") else { return nil }
-            key = String(rest[..<q]).uppercased()
+            let after = line[r.upperBound...]
+            guard let q = after.firstIndex(of: "\"") else { return nil }
+            key = String(after[..<q]).uppercased()
+            rest = after[q...]
+        } else if line.contains(".keyboardShortcut(.upArrow") {
+            key = "↑"
+            rest = line[...]
+        } else if line.contains(".keyboardShortcut(.downArrow") {
+            key = "↓"
+            rest = line[...]
         } else if line.contains(".keyboardShortcut(.leftArrow") {
-            rest = line[line.startIndex...]
             key = "←"
+            rest = line[...]
         } else if line.contains(".keyboardShortcut(.rightArrow") {
-            rest = line[line.startIndex...]
             key = "→"
+            rest = line[...]
         } else {
             return nil
         }
@@ -164,7 +171,7 @@ final class CommandTableTests: XCTestCase {
                 // Undo and Settings (⌘,) are system items; completion, toggle
                 // comment, signature help, the preview click and the search
                 // window's ⌘G are not menu items.
-                XCTAssertTrue([.undo, .completion, .completionList, .toggleComment, .duplicateLine, .signatureHelp, .selectPreviewItemSource, .editorPreferences, .nextSearchMatch].contains(e.command), "\(e.command) has no menu item")
+                XCTAssertTrue([.undo, .completion, .completionList, .toggleComment, .signatureHelp, .selectPreviewItemSource, .editorPreferences, .nextSearchMatch].contains(e.command), "\(e.command) has no menu item")
                 continue
             }
             let matches = wired.filter { $0.title == item }

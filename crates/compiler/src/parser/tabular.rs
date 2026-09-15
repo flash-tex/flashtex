@@ -192,11 +192,20 @@ fn block_inlines(block: Block) -> Vec<Inline> {
         | Block::Verbatim { .. }
         | Block::TableOfContents { .. }
         | Block::TitleBlock { .. }
-        | Block::VFill => Vec::new(),
+        | Block::VFill
+        | Block::Penalty { .. } => Vec::new(),
         // A `\opening`/`\closing` block inside a tabular cell cannot
         // happen: both flush the paragraph and push a block of their own,
         // and a cell only ever collects inline content.
         Block::LetterBlock { lines, .. } => lines.into_iter().flatten().collect(),
+        // Same for `tabbing`: it pushes a block of its own, so a cell
+        // never holds one; flatten live rows (a killed row's content is
+        // never output, so it contributes nothing here either).
+        Block::Tabbing { lines, .. } => lines
+            .into_iter()
+            .filter(|line| !line.killed)
+            .flat_map(|line| line.content)
+            .collect(),
     }
 }
 
@@ -714,7 +723,7 @@ impl P<'_> {
             arraystretch,
             style,
             array_package,
-            span: Span::in_document(open.document, open.start, end),
+            span: self.span_through(open, end),
             space_before,
             rule_color,
             double_rule_sep_color,
@@ -1491,10 +1500,14 @@ impl P<'_> {
         let style_depth = self.style_stack.len();
         let brace_depth = self.brace_stack.len();
         let dependency_count = self.block_dependencies.len();
+        let par_leading_count = self.block_par_leading.len();
 
         let mut blocks = Vec::new();
         let mut para = Vec::new();
         self.parse_stream(&mut blocks, &mut para);
+        // The entry's blocks are folded into the enclosing paragraph, so they
+        // must not leave leadings of their own behind.
+        self.block_par_leading.truncate(par_leading_count);
 
         while self.brace_stack.len() > brace_depth {
             let open = self.brace_stack.pop().expect("length checked");

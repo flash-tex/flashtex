@@ -239,3 +239,22 @@ fn quote_inside_an_item_is_styled_with_both_frames() {
         .collect();
     assert_eq!(kinds, [("item", 1), ("styled", 2), ("item", 1)]);
 }
+
+#[test]
+fn setlist_style_nextline_parses_into_style_reachable_via_frame() {
+    let source = format!(
+        "\\documentclass[10pt]{{article}}\n\\usepackage{{enumitem}}\n\\setlist[description]{{style=nextline}}\n\\begin{{document}}\n{}\n\\end{{document}}\n",
+        "\\begin{description}\\item[Bijection] A function.\\end{description}"
+    );
+    let parsed = parser::parse(&source);
+    let frame = parsed
+        .blocks
+        .iter()
+        .find_map(|b| match b {
+            Block::ListItem { lists, .. } => lists.last(),
+            _ => None,
+        })
+        .expect("one description item");
+    assert_eq!(frame.options, [ListOption::Style("nextline".into())]);
+    assert_eq!(frame.style(), Some("nextline"));
+}

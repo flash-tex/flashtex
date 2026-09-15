@@ -1,0 +1,141 @@
+{
+ "fixture": "109-lcrp-wrap-10pt.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 81.963
+   },
+   {
+    "text": "before",
+    "x": 95.2467,
+    "y_top": 81.963
+   },
+   {
+    "text": "the",
+    "x": 125.1634,
+    "y_top": 81.963
+   },
+   {
+    "text": "table.",
+    "x": 142.319,
+    "y_top": 81.963
+   },
+   {
+    "text": "Left",
+    "x": 77.978,
+    "y_top": 91.327
+   },
+   {
+    "text": "Centre",
+    "x": 107.5071,
+    "y_top": 91.327
+   },
+   {
+    "text": "Right",
+    "x": 148.5471,
+    "y_top": 91.327
+   },
+   {
+    "text": "A",
+    "x": 184.7153,
+    "y_top": 91.327
+   },
+   {
+    "text": "paragraph",
+    "x": 201.054,
+    "y_top": 91.327
+   },
+   {
+    "text": "col-",
+    "x": 254.2562,
+    "y_top": 91.327
+   },
+   {
+    "text": "umn",
+    "x": 184.716,
+    "y_top": 103.283
+   },
+   {
+    "text": "entry",
+    "x": 216.4319,
+    "y_top": 103.283
+   },
+   {
+    "text": "that",
+    "x": 251.4953,
+    "y_top": 103.283
+   },
+   {
+    "text": "wraps",
+    "x": 184.716,
+    "y_top": 115.238
+   },
+   {
+    "text": "over",
+    "x": 216.2875,
+    "y_top": 115.238
+   },
+   {
+    "text": "several",
+    "x": 240.3372,
+    "y_top": 115.238
+   },
+   {
+    "text": "lines",
+    "x": 184.716,
+    "y_top": 127.193
+   },
+   {
+    "text": "a",
+    "x": 77.978,
+    "y_top": 139.148
+   },
+   {
+    "text": "bbb",
+    "x": 113.7437,
+    "y_top": 139.148
+   },
+   {
+    "text": "7",
+    "x": 167.7789,
+    "y_top": 139.148
+   },
+   {
+    "text": "short",
+    "x": 184.7153,
+    "y_top": 139.148
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 150.594
+   },
+   {
+    "text": "after",
+    "x": 95.2467,
+    "y_top": 150.594
+   },
+   {
+    "text": "the",
+    "x": 118.7953,
+    "y_top": 150.594
+   },
+   {
+    "text": "table.",
+    "x": 135.9509,
+    "y_top": 150.594
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  []
+ ]
+}

@@ -134,3 +134,62 @@ fn minipage_footnotes_use_alph_mpfootnote_and_leave_the_footnote_counter() {
     let source = "\\documentclass{article}\\begin{document}a\\footnote{x}\\begin{minipage}{3cm}b\\footnote{y} c\\footnote{z} d\\footnotemark{} e\\footnotetext{t}\\end{minipage}\\begin{minipage}{3cm}f\\footnote[3]{u}g\\footnote{v}\\end{minipage} h\\footnote{w}\\end{document}";
     assert_eq!(numbers(source), ["1", "a", "b", "2", "b", "c", "a", "3"]);
 }
+
+fn note_bodies(source: &str) -> Vec<String> {
+    let parsed = parse(source);
+    let mut out = Vec::new();
+    for block in &parsed.blocks {
+        let inlines: &[Inline] = match block {
+            Block::Paragraph(i) | Block::Styled { content: i, .. } | Block::ListItem { content: i, .. } => i,
+            _ => continue,
+        };
+        for inline in inlines {
+            if let Inline::Footnote { text: Some(body), .. } = inline {
+                let mut text = String::new();
+                for inner in body {
+                    if let Inline::Text { text: piece, .. } = inner {
+                        text.push_str(piece);
+                    }
+                }
+                out.push(text);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn fnsymbol_of_footnote_renders_each_notes_own_mark() {
+    let source = "\\documentclass{article}\\begin{document}a\\footnote{first \\fnsymbol{footnote} mark}b\\footnote{second \\fnsymbol{footnote} mark}\\end{document}";
+    let parsed = parse(source);
+    assert!(
+        !parsed.diagnostics.iter().any(|d| d.message.contains("No counter")
+            || d.message.contains("too large")
+            || d.message.contains("nine symbols")),
+        "{:?}",
+        parsed.diagnostics
+    );
+    assert_eq!(numbers(source), ["1", "2"]);
+    assert_eq!(note_bodies(source), ["first∗mark", "second†mark"]);
+}
+
+#[test]
+fn fnsymbol_reports_unknown_counters_and_out_of_range_values() {
+    let source = "\\documentclass{article}\\begin{document}\\fnsymbol{nosuchcounter} \\fnsymbol{footnote}\\end{document}";
+    let parsed = parse(source);
+    let messages: Vec<&str> = parsed.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert!(
+        messages.iter().any(|m| m.contains("No counter 'nosuchcounter' defined")),
+        "{messages:?}"
+    );
+    // No footnote has stepped the counter yet, so its value is 0: an
+    // honest out-of-range error, not a "not defined" misdiagnosis.
+    assert!(
+        messages.iter().any(|m| m.contains("nine symbols")),
+        "{messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("No counter 'footnote'")),
+        "{messages:?}"
+    );
+}
