@@ -635,6 +635,7 @@
     {"name": "vdash", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⊢", "renders": true, "glyph": "⊢"},
     {"name": "dashv", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⊣", "renders": true, "glyph": "⊣"},
     {"name": "top", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⊤", "renders": true, "glyph": "⊤"},
+    {"name": "Box", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol □", "renders": true, "glyph": "□"},
     {"name": "Longleftrightarrow", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⟺", "renders": true, "glyph": "⟺"},
     {"name": "longrightarrow", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⟶", "renders": true, "glyph": "⟶"},
     {"name": "longleftarrow", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⟵", "renders": true, "glyph": "⟵"},
