@@ -7,6 +7,8 @@
 //! tables shipped in [`crate::cm`], or by the Times approximation in
 //! [`crate::times`].
 
+use crate::mathlist::TextStyle;
+
 /// Opaque font identity assigned by the metrics provider.
 ///
 /// The provider maps it to a concrete font (a TFM name for the Computer Modern
@@ -152,6 +154,22 @@ pub trait MathFontMetrics {
         self.glyph(ch, size)
     }
 
+    /// A literal text glyph with the face selected by a mixed text run.
+    /// Providers that only expose one upright text family can keep the default.
+    fn text_glyph_with_style(
+        &self,
+        ch: char,
+        size: SizeClass,
+        _style: TextStyle,
+    ) -> Option<Glyph> {
+        self.text_glyph(ch, size)
+    }
+
+    /// The inter-word space of the text font at this size.
+    fn text_space(&self, size: SizeClass) -> f64 {
+        self.text_glyph(' ', size).map_or(0.0, |glyph| glyph.width)
+    }
+
     /// Slot `code` of the math extension font (family 3, `largesymbols`) at
     /// size class `size`, for constructions that place its characters
     /// directly rather than through a symbol or delimiter (`fontmath.ltx`'s
@@ -170,6 +188,38 @@ pub trait MathFontMetrics {
     fn extension_glyph(&self, _code: u8, _ch: char, _size: SizeClass) -> Option<Glyph> {
         None
     }
+
+    /// TeX's `make_ord` (tex.web §752) for an ordinary character `left`
+    /// without scripts followed by the character `right` of an Ord..Punct
+    /// atom: `None` unless both are in the same math family; otherwise the
+    /// kern the family's font program puts between them at `size` and
+    /// whether that font is a text font. Providers without lig/kern data
+    /// keep the default, which never kerns.
+    fn ord_pair(&self, _left: MathChar, _right: MathChar, _size: SizeClass) -> Option<OrdPair> {
+        None
+    }
+}
+
+/// A character nucleus as `make_ord` sees it: a math symbol resolved through
+/// its `\mathcode` family ([`Nucleus::Symbol`](crate::Nucleus::Symbol)) or a
+/// character of the upright text family
+/// ([`Nucleus::TextChar`](crate::Nucleus::TextChar)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathChar {
+    Symbol(char),
+    Text(char),
+}
+
+/// What `make_ord` finds between two adjacent characters of one family.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OrdPair {
+    /// The font kern appended after the left character, in points; 0 when
+    /// the pair has no kern instruction (or a ligature, which is not formed).
+    pub kern: f64,
+    /// The family's font has a nonzero interword space (fontdimen 2), so
+    /// TeX drops the left character's italic correction (§755: "no italic
+    /// correction in mid-word of text font"). False for cmmi and cmsy.
+    pub text_font: bool,
 }
 
 /// The subset of OpenType `MathConstants` (font units) needed to derive TeX's
