@@ -86,6 +86,11 @@ pub struct Expansion {
     /// `\arraystretch`'s replacement text in effect at each
     /// `\begin{tabular}`/`tabular*`/`array`, keyed by that `\begin`'s span.
     pub arraystretch: HashMap<(usize, usize), String>,
+    /// `\@currentlabel`'s expansion just after each bare `\refstepcounter`
+    /// (which the engine runs with no output tokens, so the parser would
+    /// otherwise never hear about it), keyed by the pushed
+    /// `flashtexcurrentlabel` token's own span.
+    pub current_label_by_marker: HashMap<(usize, usize), String>,
 }
 
 /// Host definitions run before the document. `\DeclareMathOperator` is
@@ -93,7 +98,10 @@ pub struct Expansion {
 /// `\operatorname{text}` (`\operatorname*{text}` when starred).
 /// LaTeX's `\tabular`/`\array` read `\arraystretch` when the environment begins; here they emit a
 /// marker plus `\arraystretch`'s current expansion, which the converter
-/// turns back into `\begin{<env>}` and records for the parser.
+/// turns back into `\begin{<env>}` and records for the parser. Likewise
+/// `\refstepcounter` (which the engine runs with no output tokens) emits a
+/// marker plus `\@currentlabel`'s current expansion, recorded in
+/// [`Expansion::current_label_by_marker`].
 ///
 /// Kernel definitions that would intercept a command the parser typesets
 /// itself (`\\label`, `\\verb`, whose argument the pass has already hidden,
@@ -119,6 +127,10 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\tabular{\\flashtexbegintabular\\expandafter{\\arraystretch}}%
 \\expandafter\\def\\csname tabular*\\endcsname{\\flashtexbegintabularstar\\expandafter{\\arraystretch}}%
 \\def\\array{\\flashtexbeginarray\\expandafter{\\arraystretch}}%
+\\makeatletter
+\\let\\flashtexrealrefstepcounter\\refstepcounter
+\\def\\refstepcounter#1{\\flashtexrealrefstepcounter{#1}\\flashtexcurrentlabelmarker\\expandafter{\\@currentlabel}}%
+\\makeatother
 ";
 
 /// Engine diagnostics that duplicate the parser's own reports, or only note
@@ -408,13 +420,27 @@ struct Converter<'d> {
     /// Reading the `{<\arraystretch>}` group after a table marker: the key
     /// it is recorded under, brace depth, and the text so far.
     stretch: Option<((usize, usize), usize, String)>,
+    /// Reading the `{<\@currentlabel>}` group after a `\refstepcounter`
+    /// marker: the marker's span (re-keyed to the pushed
+    /// `flashtexcurrentlabel` token's own span when the capture completes),
+    /// brace depth, and the text so far.
+    current_label: Option<((usize, usize), usize, String)>,
+    /// `\@currentlabel`'s expansion just after each bare `\refstepcounter`,
+    /// keyed by the pushed `flashtexcurrentlabel` token's own span.
+    current_label_by_marker: HashMap<(usize, usize), String>,
     /// Engine token index being converted, and the index of the marker that
     /// opened the current `\arraystretch` capture.
     index: usize,
     stretch_index: usize,
+    /// Engine token index of the marker that opened the current
+    /// `\@currentlabel` capture.
+    current_label_index: usize,
     /// Every `\arraystretch` record in production order, with its marker's
     /// engine token index (what the incremental cache keeps and splices).
     stretch_log: Vec<(usize, (usize, usize), String)>,
+    /// Every `\@currentlabel` record in production order, with its marker's
+    /// engine token index (kept and spliced like `stretch_log`).
+    current_label_log: Vec<(usize, (usize, usize), String)>,
 }
 
 struct PendingWord {
@@ -678,16 +704,20 @@ impl<'d> Converter<'d> {
             word: None,
             last_span: Span::in_document(DocumentId(entry), 0, 0),
             stretch: None,
+            current_label: None,
+            current_label_by_marker: HashMap::new(),
             index: 0,
             stretch_index: 0,
+            current_label_index: 0,
             stretch_log: Vec::new(),
+            current_label_log: Vec::new(),
         }
     }
 
-    /// No partially built word or `\arraystretch` capture: the output so far
-    /// does not depend on tokens still to come.
+    /// No partially built word, `\arraystretch` capture or `\@currentlabel`
+    /// capture: the output so far does not depend on tokens still to come.
     fn clean(&self) -> bool {
-        self.word.is_none() && self.stretch.is_none()
+        self.word.is_none() && self.stretch.is_none() && self.current_label.is_none()
     }
 
     fn convert_token(&mut self, prepared: &[Prepared<'_>], token: &tex::Token, origin: Option<tex::Span>) -> Flow {
@@ -719,6 +749,43 @@ impl<'d> Converter<'d> {
                     conv.stretch = Some((key, depth, text));
                 }
                 _ => conv.stretch = Some((key, depth, text)),
+            }
+            return Flow::Next;
+        }
+        // `\@currentlabel` capture after a `\refstepcounter` marker, mirroring
+        // the `\arraystretch` capture above. Unlike a table marker there is
+        // no enclosing environment to key by: when the group closes, a
+        // literal `flashtexcurrentlabel` command token is pushed (exactly
+        // what the default arm below would have produced for that name) and
+        // the text is keyed by that pushed token's own span.
+        if let Some((key, depth, mut text)) = conv.current_label.take() {
+            match &token.kind {
+                TexKind::Char(_, CatCode::BeginGroup) => {
+                    if depth > 0 {
+                        text.push('{');
+                    }
+                    conv.current_label = Some((key, depth + 1, text));
+                }
+                TexKind::Char(_, CatCode::EndGroup) if depth <= 1 => {
+                    conv.push(TokenKind::Command("flashtexcurrentlabel".into()), at);
+                    let pushed = (conv.last_span.document.0, conv.last_span.start);
+                    conv.current_label_log.push((conv.current_label_index, pushed, text.clone()));
+                    conv.current_label_by_marker.insert(pushed, text);
+                }
+                TexKind::Char(_, CatCode::EndGroup) => {
+                    text.push('}');
+                    conv.current_label = Some((key, depth - 1, text));
+                }
+                TexKind::Char(c, _) | TexKind::ActiveChar(c) => {
+                    text.push(*c);
+                    conv.current_label = Some((key, depth, text));
+                }
+                TexKind::ControlSequence(cs) => {
+                    text.push('\\');
+                    text.push_str(cs);
+                    conv.current_label = Some((key, depth, text));
+                }
+                _ => conv.current_label = Some((key, depth, text)),
             }
             return Flow::Next;
         }
@@ -765,6 +832,16 @@ impl<'d> Converter<'d> {
                         conv.stretch_index = conv.index;
                         conv.stretch = Some(((begin.span.document.0, begin.span.start), 0, String::new()));
                         conv.push_environment("begin", env, begin);
+                    }
+                    // The `{<\@currentlabel>}` group after this marker is
+                    // captured above and re-emitted as a literal
+                    // `flashtexcurrentlabel` token carrying no output of its
+                    // own — exactly like the real `\refstepcounter`, which
+                    // the engine runs with no output tokens.
+                    "flashtexcurrentlabelmarker" => {
+                        conv.current_label_index = conv.index;
+                        conv.current_label =
+                            Some(((at.span.document.0, at.span.start), 0, String::new()));
                     }
                     "\\" => conv.push(TokenKind::LineBreak, at),
                     "[" => conv.push(TokenKind::DisplayMathOpen, at),
@@ -927,7 +1004,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     }
     let diagnostics = engine.diagnostics().to_vec();
     conv.map_diagnostics(&diagnostics);
-    Expansion { tokens: Rc::new(conv.out), diagnostics: conv.diagnostics, arraystretch: conv.arraystretch }
+    Expansion { tokens: Rc::new(conv.out), diagnostics: conv.diagnostics, arraystretch: conv.arraystretch, current_label_by_marker: conv.current_label_by_marker }
 }
 
 /// A converter state with nothing pending, recorded while converting: after
@@ -954,6 +1031,7 @@ pub struct ExpansionCache {
     out: Rc<Vec<ExpandedToken>>,
     marks: Vec<Mark>,
     stretch_log: Vec<(usize, (usize, usize), String)>,
+    current_label_log: Vec<(usize, (usize, usize), String)>,
     last_span: Span,
     /// Engine tokens the previous run produced.
     old_engine_tokens: usize,
@@ -1100,6 +1178,7 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         out: Rc::new(Vec::new()),
         marks,
         stretch_log: Vec::new(),
+        current_label_log: Vec::new(),
         last_span: conv.last_span,
         old_engine_tokens: 0,
         halted: false,
@@ -1209,6 +1288,8 @@ fn update_cache(
         conv.last_span = cache.last_span;
         conv.stretch_log = cache.stretch_log.clone();
         conv.arraystretch = stretch_map(&conv.stretch_log);
+        conv.current_label_log = cache.current_label_log.clone();
+        conv.current_label_by_marker = stretch_map(&conv.current_label_log);
         let tokens = cache.out.clone();
         let mut expansion = finish_diagnostics(cache, conv)?;
         expansion.tokens = tokens;
@@ -1232,6 +1313,7 @@ fn update_cache(
     let mut out = Rc::try_unwrap(std::mem::replace(&mut cache.out, Rc::new(Vec::new()))).unwrap_or_else(|shared| (*shared).clone());
     let mut old_tail = out.split_off(restart.out_len);
     let old_log = std::mem::take(&mut cache.stretch_log);
+    let old_label_log = std::mem::take(&mut cache.current_label_log);
     let edit_start = changes.old.start;
     let old_edit_end = changes.old.end;
     let document = DocumentId(entry);
@@ -1250,6 +1332,9 @@ fn update_cache(
     // ones are regenerated or come back with the spliced suffix.
     conv.stretch_log = old_log.iter().filter(|(index, _, _)| *index < restart.index).cloned().collect();
     conv.arraystretch = stretch_map(&conv.stretch_log);
+    conv.current_label_log =
+        old_label_log.iter().filter(|(index, _, _)| *index < restart.index).cloned().collect();
+    conv.current_label_by_marker = stretch_map(&conv.current_label_log);
     let _ = edit_start;
     let mut marks: Vec<Mark> = old_marks[..=restart_at].to_vec();
     let old_count = cache.engine_token_count(n_new, &stats);
@@ -1273,6 +1358,18 @@ fn update_cache(
                 };
                 conv.stretch_log.push(((index as isize + token_offset) as usize, key, text.clone()));
                 conv.arraystretch.insert(key, text);
+            }
+            for (index, key, text) in
+                old_label_log.into_iter().filter(|(index, _, _)| *index >= old_mark.index)
+            {
+                let key = if key.0 == entry && key.1 >= old_edit_end {
+                    (key.0, (key.1 as isize + delta) as usize)
+                } else {
+                    key
+                };
+                conv.current_label_log
+                    .push(((index as isize + token_offset) as usize, key, text.clone()));
+                conv.current_label_by_marker.insert(key, text);
             }
             conv.last_span = shift(cache.last_span);
         }
@@ -1299,6 +1396,7 @@ fn finish(cache: &mut ExpansionCache, conv: Converter<'_>) -> Option<Expansion> 
     let mut conv = conv;
     let out = std::mem::take(&mut conv.out);
     cache.stretch_log = conv.stretch_log.clone();
+    cache.current_label_log = conv.current_label_log.clone();
     cache.last_span = conv.last_span;
     cache.old_engine_tokens = cache.expander.tokens().len();
     let tokens = Rc::new(out);
@@ -1322,6 +1420,7 @@ fn finish_diagnostics(cache: &ExpansionCache, mut conv: Converter<'_>) -> Option
         tokens: Rc::new(Vec::new()),
         diagnostics: conv.diagnostics,
         arraystretch: conv.arraystretch,
+        current_label_by_marker: conv.current_label_by_marker,
     })
 }
 

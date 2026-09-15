@@ -1379,6 +1379,7 @@ pub fn parse_project_with(
             tokens: Rc::new(Vec::new()),
             diagnostics: Vec::new(),
             arraystretch: HashMap::new(),
+            current_label_by_marker: HashMap::new(),
         }
     } else {
         expansion::expand_project_cached(documents, entry)
@@ -1418,6 +1419,7 @@ pub fn parse_project_with(
         brace_stack: Vec::new(),
         env_stack: Vec::new(),
         arraystretch: expanded.arraystretch,
+        current_label_by_marker: expanded.current_label_by_marker,
         has_document,
         in_body: !has_document,
         document_ended: false,
@@ -1561,6 +1563,10 @@ struct P<'a> {
     env_stack: Vec<(String, Span)>,
     /// `\arraystretch` at each `\begin{tabular}`, from the expansion pass.
     arraystretch: HashMap<(usize, usize), String>,
+    /// `\@currentlabel` just after each bare `\refstepcounter`, from the
+    /// expansion pass, keyed by the `flashtexcurrentlabel` token's own span.
+    /// A following `\label` reads it through `current_counter` below.
+    current_label_by_marker: HashMap<(usize, usize), String>,
     has_document: bool,
     in_body: bool,
     document_ended: bool,
@@ -1991,6 +1997,23 @@ impl P<'_> {
 
     fn command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         if self.document_ended {
+            return;
+        }
+        // The expansion pass emits a `flashtexcurrentlabel` token just after
+        // each bare `\refstepcounter` (which the engine runs with no output
+        // tokens, so the parser would otherwise never hear about it),
+        // carrying `\@currentlabel`'s expansion in `current_label_by_marker`.
+        // It is an internal side channel, not a user command, so it is
+        // consumed here rather than as a match arm below (whose arms are
+        // scraped as the user-facing command inventory). It produces no
+        // output itself — exactly like a real `\refstepcounter` — and only
+        // tells the next `\label` what value to record.
+        if name == "flashtexcurrentlabel" {
+            if let Some(text) =
+                self.current_label_by_marker.get(&(span.document.0, span.start)).cloned()
+            {
+                self.current_counter = Some(text);
+            }
             return;
         }
 
