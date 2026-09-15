@@ -2,7 +2,7 @@
   "schema_version": 1,
   "commander_id": "orchestrator-jaysen-claude",
   "machine": "mac-m1max-a",
-  "authority_state": "active",
+  "authority_state": "active_handoff_pending",
   "claim_mode": "explicit_user_directed_takeover",
   "predecessor": "codex-kabir-commander-01a09717 (mac-m5pro-kabir)",
   "predecessor_main_writes_quiesced": null,
@@ -11,14 +11,15 @@
   "dispatch_service_pid_at_claim": null,
   "publication_rule": "Before each main/control write, fetch and reread this record; only commander_id may write unless a newer non-force claim is authoritative.",
   "revival_rule": "Require explicit quiesced handoff or positive exact process/session termination plus stopped publication jobs, or a direct user instruction naming the successor; silence, timeout, stale heartbeat, quota error, and network failure are insufficient.",
-  "updated_utc": "2026-09-13T04:25:37Z",
+  "updated_utc": "2026-09-14T01:25:00Z",
   "agent_session": "https://claude.ai/code/session_01Y1nAv4pEnmMYXgteBoadHn",
   "session_pid_at_claim": null,
   "session_started_utc": "2026-09-12T07:00:00Z",
   "model": "Claude Opus 5 (1M context)",
   "handoff_evidence": "The project owner (jay3332) instructed this session directly at ~04:35Z: 'it appears kabir's codex died maybe switch orchestration to me' after earlier setting the rule 'if kabir's is on make him the orchestrator, otherwise make this computer the orchestrator' and 'if you have not received any new tasks/updates/acks from the orchestrator in a while, it may have died and you should start taking over'. Observed from mac-m1max-a: predecessor claim at 04:07:00Z, its last main write 6d2f5628 at 04:16:52Z, no issue #2 comment or assignment from it since; its process state on mac-m5pro-kabir cannot be verified from this machine and no process death is claimed. This claim is non-force on top of 6d2f5628; if the predecessor resumes it must reread this record and stay quiesced unless the user hands command back.",
   "claim_commit_executor": "git via Claude Code (parent mac-claude-a), user-directed takeover",
-  "designated_successor": "codex-kabir-commander (mac-m5pro-kabir) when the user says it is back",
+  "designated_successor": "kabir-claude (Claude Code on linux-primary / mac-m5pro-kabir, Kabir's Claude Max 20x)",
   "quiesced_handoff_path": "coordination/COMMANDER-RESUME.md",
-  "staffing_rule": "assign to machines with a fresh live report on issue #2/#23: mac-m1max-a (mac-claude-a) and mac-m5pro-dq222 (daniel-parent, 20 lanes) now; mac-m5pro-kabir when it reports back"
+  "staffing_rule": "assign to machines with a fresh live report on issue #2/#23: mac-m1max-a (mac-claude-a) and mac-m5pro-dq222 (daniel-parent, 20 lanes) now; mac-m5pro-kabir when it reports back",
+  "handoff_trigger": "User instruction 2026-09-14 ~01:20Z: 'when weekly usage hits 99% begin transitioning orchestration to kabir's computer'. Transfer happens when (a) the current Commander posts 'HANDOFF NOW' on GH issue #2, or (b) the user says so on issue #2 or to the successor directly, or (c) no main write / issue-#2 comment from orchestrator-jaysen-claude for 30 minutes after this record lands on main (the Max weekly cap ends the session without a farewell). The successor then publishes its own non-force claim on top of current main; this record stays historical."
 }

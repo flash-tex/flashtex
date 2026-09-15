@@ -1,3 +1,69 @@
+# Handoff packet — 2026-09-14T01:25Z, orchestrator-jaysen-claude (mac-m1max-a) → kabir-claude (linux-primary)
+
+**Why:** the user said at ~01:20Z on 2026-09-14: "your weekly usage is almost out,
+when weekly usage hits 99% begin transitioning orchestration to kabir's computer."
+This machine's Claude Max weekly cap will end the session without warning, so the
+transfer is pre-staged here and triggers as `coordination/authority.json` says:
+"HANDOFF NOW" from me on GH issue #2, the user's word, or 30 minutes of silence
+from me after this lands on main. Successor: **kabir-claude** (Claude Code, Kabir's
+Max 20x, linux-primary / mac-m5pro-kabir) — already the integration lane.
+
+## State at handoff (main `eea975c3`, v0.1.3 tagged at `b613ff41`)
+
+- **Merge queue (each gated on the tip, in order):** #233 (remove web-authored docs
+  that describe another codebase) → #241 (pipeline-set packages no longer "not
+  implemented") → #236 → #237 → #238 → #245 (LSP lane) → #255 (entry document takes
+  the opened file's name, GH #75) → #257 (`display-list-v2-compact`, FT-071:
+  60 KB body first frame 16 MiB → 6.0 MB, warm keystroke 2.5 MB → 229 KB) → #230 →
+  #231 → #232 → #250/#251/#253 (table chain rebases) → #246 (board) → #254 (docs
+  sweep; overlaps #241 on `docs/user/compiler.md` + `render-pipeline/src/lib.rs`
+  doc comments — rebase whichever lands second).
+- **Blocked on their lanes:** #142 (removed `long_required_group`), #197 (own tests
+  fail on main), #153 → #154 → #192 (predates `crate::expansion`), #181 (rebase onto
+  #199), #201 (rebase onto #186), #194 → #195, #212 (after #230). 30 others conflict
+  on the regenerated inventory files; owners rebase, no integrator merges.
+- **Unclaimed compiler lanes:** #242 letter class, #243 `\c`/`\v` accents, #244
+  `\maketitle` without `\author` + `Parser::unsupported` message. These close the
+  last real-world corpus errors. #256: two pre-existing Mac test failures.
+- **Standing programs:** FT-070 (Kabir, compiler/memory; next: shared assembled
+  items, page-window API — coordinate with #257's reserved `page_window`),
+  FT-071 (Mac producer/IPC; next: per-page digest cache in the producer, `hv`
+  per-run table "compact-2", AppKit hosting-view layout on the Mac shell hot path).
+- **Mac app on mac-m1max-a:** running from main `eea975c3` (pid 33597), relaunch
+  after each main advance is the parent's habit, not a requirement.
+- **Rules the successor inherits (user, verbatim-critical):** Claude Max 20x only,
+  no purchases/overages; never commit secrets (xAI key lives only in the login
+  Keychain `tech.jay3332.flashtex.xai` / `tech.jay3332.flashtex.ai.<provider>`);
+  MacTeX/TeX Live is an oracle only; immutable fixtures `fixtures/real-world/hw1/HW1.tex`,
+  `HW1-reference.pdf`, `hw2/HW2.tex`, `HW2-reference.pdf`; never edit Daniel's crates
+  (font-engine, paragraph-layout, math-layout) without his lane; claim before
+  starting (`scripts/coord.py claim`), one-liners included; font gate = zero
+  font-*failure* diagnostics (`font_unavailable`, `required_metrics_unavailable`,
+  `ec_metrics_unavailable`, `font_outline_substituted`, `tfm_missing`,
+  `math_font_unavailable`); heavy models (Opus/Fable) reserved for compiler/producer
+  performance; the four priorities: (1) no AI slop beyond the iPad drawing→TeX
+  conversion behind a generic provider, (2) document coverage (HW2, packages, TikZ,
+  `\mathbb`), (3) the editor as a LaTeX IDE with fluid iPad integration, (4)
+  hyperoptimise the compiler. Then: engine on Linux/Windows/WASM; site keeps the
+  two install paths (engine+CLI vs engine+GUI).
+- **Owner-only decisions left open:** rewrite of the five mis-attributed main commits
+  (97a02a26..58aa1093); iPad on-device run (needs Xcode 26.4); 96 GB of stale
+  `.claude/worktrees` build artifacts on mac-m1max-a.
+
+## What the successor does first
+
+1. `git fetch`, reread `coordination/authority.json`; publish a non-force claim
+   (`commander_id: orchestrator-kabir-claude`, `claim_base_main: <sha>`, this file as
+   `quiesced_handoff_path`), push to main, post it on issue #2.
+2. Keep merging the queue above with the gate table per PR; the Mac app parent on
+   mac-m1max-a, if alive, only opens PRs from then on.
+3. Refresh `coordination/TASKS.md` from #246 once it lands.
+
+If `orchestrator-jaysen-claude` resumes later it rereads authority and stays quiesced
+unless the user hands command back.
+
+---
+
 # Commander takeover — 2026-09-13T03:16Z, orchestrator-jaysen-claude on mac-m1max-a
 
 Sole Commander is now `orchestrator-jaysen-claude`, a Claude Code subagent of
