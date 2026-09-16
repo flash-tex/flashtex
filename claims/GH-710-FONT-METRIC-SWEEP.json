@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/font-metric-sweep",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-16T06:56:22Z",
+  "state": "claimed",
+  "task_id": "GH-710-FONT-METRIC-SWEEP",
+  "updated_utc": "2026-09-16T06:56:22Z"
+}
