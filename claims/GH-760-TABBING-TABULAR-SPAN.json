@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/gh760-span",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-16T13:39:11Z",
+  "state": "claimed",
+  "task_id": "GH-760-TABBING-TABULAR-SPAN",
+  "updated_utc": "2026-09-16T13:39:11Z"
+}
