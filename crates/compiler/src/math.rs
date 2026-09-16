@@ -179,7 +179,9 @@ pub enum Nucleus {
     /// `\mathbf{...}`: literal text in the bold roman face.
     Bold(String),
     /// `\boxed`, `\overline`, `\underline` and (kernel, like `\underline`)
-    /// `\underbar`: a list with real rules.
+    /// `\underbar`: a list with real rules. `\cancel`, `\bcancel` and
+    /// `\xcancel` are the same shape with diagonal rule(s) instead of
+    /// horizontal ones (drawn by the render pipeline).
     Framed {
         body: MathList,
         frame: Frame,
@@ -844,6 +846,14 @@ pub enum Frame {
     UnderLeftArrow,
     /// amsmath `\underleftrightarrow` (1005-1006).
     UnderLeftRightArrow,
+    /// `cancel.sty` `\cancel`: one diagonal rule from the bottom-left to
+    /// the top-right corner of the argument's box.
+    Cancel,
+    /// `cancel.sty` `\bcancel`: the mirror diagonal, top-left to
+    /// bottom-right.
+    BCancel,
+    /// `cancel.sty` `\xcancel`: both diagonals (an X).
+    XCancel,
 }
 
 impl Frame {
@@ -2286,7 +2296,7 @@ impl MathParser<'_> {
             }
             "boxed" | "Aboxed" | "overline" | "underline" | "underbar" | "overbrace" | "underbrace"
             | "overrightarrow" | "overleftarrow" | "overleftrightarrow" | "underrightarrow"
-            | "underleftarrow" | "underleftrightarrow" => {
+            | "underleftarrow" | "underleftrightarrow" | "cancel" | "bcancel" | "xcancel" => {
                 let body = self.required_group(&name, span);
                 let frame = match name.as_str() {
                     // mathtools' `\Aboxed{<lhs> <rel> <rhs>}` boxes the whole
@@ -2303,6 +2313,9 @@ impl MathParser<'_> {
                     "underrightarrow" => Frame::UnderRightArrow,
                     "underleftarrow" => Frame::UnderLeftArrow,
                     "underleftrightarrow" => Frame::UnderLeftRightArrow,
+                    "cancel" => Frame::Cancel,
+                    "bcancel" => Frame::BCancel,
+                    "xcancel" => Frame::XCancel,
                     _ => Frame::Under,
                 };
                 MathAtom {
@@ -6740,6 +6753,30 @@ mod unbraced_argument_tests {
     }
 
     #[test]
+    fn cancel_bcancel_xcancel_parse_to_framed_nuclei() {
+        for (command, frame) in [
+            ("cancel", Frame::Cancel),
+            ("bcancel", Frame::BCancel),
+            ("xcancel", Frame::XCancel),
+        ] {
+            for source in [format!(r"\{command}{{x}}"), format!(r"\{command} xy")] {
+                let mut diagnostics = Vec::new();
+                let tokens = crate::lexer::tokenize(&source);
+                let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+                assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+                match &list.atoms[0].nucleus {
+                    Nucleus::Framed { body, frame: got } => {
+                        assert_eq!(*got, frame, "{source}");
+                        assert_eq!(body.atoms.len(), 1, "{source}: {:?}", body.atoms);
+                        assert_eq!(body.atoms[0].nucleus, Nucleus::Symbol("x".into()));
+                    }
+                    other => panic!("{source}: expected a framed nucleus, got {other:?}"),
+                }
+            }
+        }
+    }
+
+    #[test]
     fn unbraced_text_takes_one_character_leaving_the_rest_as_math() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\text nR");
@@ -7143,6 +7180,31 @@ mod accent_tests {
         assert!(under_rule.height > 0.0);
         // Drawn below the body: strictly positive (downward) y.
         assert!(under_rule.y > 0.0);
+    }
+
+    #[test]
+    fn cancel_draws_no_horizontal_rule_in_compiler_layout() {
+        // The diagonals are the render pipeline's job (it sees the `Frame`);
+        // the compiler's own layout keeps the `Framed` box model with no
+        // horizontal rule in it. The extents are deliberately NOT tied to
+        // `\overline`'s: real cancel.sty only overlaps the body and adds no
+        // overline-style headroom of its own (pdflatex sets `$xy+z$` and
+        // `$\cancel{xy+z}$` at the same width; the diagonal overshoot past a
+        // short body is the render pipeline's real geometry, not something
+        // the compiler's layout fakes).
+        let size = 10.0;
+        let (plain, d0) = laid_out("x", size);
+        assert!(d0.is_empty(), "{d0:?}");
+        for source in [r"\cancel{x}", r"\bcancel{x}", r"\xcancel{x}"] {
+            let (b, d) = laid_out(source, size);
+            assert!(d.is_empty(), "{source}: {d:?}");
+            assert!(b.items.iter().all(|i| i.rule.is_none()), "{source}: {b:?}");
+            // Only overlaps the body: the width is the body's own width.
+            assert_eq!(b.width, plain.width, "{source}");
+            // Keeps the `Framed` box model, never smaller than the body.
+            assert!(b.ascent >= plain.ascent, "{source}: {b:?}");
+            assert!(b.descent >= plain.descent, "{source}: {b:?}");
+        }
     }
 }
 

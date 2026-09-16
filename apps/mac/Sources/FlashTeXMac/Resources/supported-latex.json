@@ -452,6 +452,9 @@
     {"name": "underline", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body (underbar works in math like underline)", "renders": true},
     {"name": "underbar", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body (underbar works in math like underline)", "renders": true},
     {"name": "Aboxed", "mode": "math", "origin": "math_structure", "arguments": "{lhs rel rhs}", "description": "mathtools: real \\boxed rule around the whole row, keeping the relation as the shared alignment point", "renders": true},
+    {"name": "cancel", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "diagonal rule over the body: bottom-left to top-right, its mirror, or both", "renders": true},
+    {"name": "bcancel", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "diagonal rule over the body: bottom-left to top-right, its mirror, or both", "renders": true},
+    {"name": "xcancel", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "diagonal rule over the body: bottom-left to top-right, its mirror, or both", "renders": true},
     {"name": "overbrace", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "cmex brace pieces with rule fills over or under a display-style body; scripts are limits", "renders": true},
     {"name": "underbrace", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "cmex brace pieces with rule fills over or under a display-style body; scripts are limits", "renders": true},
     {"name": "overrightarrow", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "amsmath \\arrowfill@ as wide as the body, over or under it", "renders": true},
@@ -1016,6 +1019,7 @@
     {"name": "natbib", "silent_options": "numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak", "description": "\\citet/\\citep/\\citealt/\\citealp/\\citeauthor/\\citeyear/\\citeyearpar/\\citenum/\\citetext and the \\cite it redefines, with [Author(Year)] \\bibitem labels; sort, compress, super and openbib are diagnosed"},
     {"name": "biblatex", "silent_options": "style=numeric, sorting=none, backend=biber", "description": "basic project-relative .bib resources with numeric citations, textcite/parencite/autocite, citeauthor/citeyear, nocite and printbibliography; authoryear labels are minimal, alphabetic warns"},
     {"name": "ulem", "silent_options": "normalem", "description": "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined"},
+    {"name": "cancel", "silent_options": "", "description": "\\cancel, \\bcancel and \\xcancel draw diagonal strikes over the body (the diagonals are set by the render pipeline); the makeroom and thicklines options change the layout and keep warning"},
     {"name": "xspace", "silent_options": "", "description": "\\xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)"},
     {"name": "ifthen", "silent_options": "", "description": "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used"}
   ],
@@ -1047,8 +1051,8 @@
       {"set": "tikz", "kind": "command", "canonical": 43, "supported": 0, "percent": 0},
       {"set": "tikz", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
-      {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 18, "percent": 7.5}
+      {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 19, "percent": 7.9}
     ],
-    "total": {"canonical": 1314, "supported": 548, "percent": 41.7}
+    "total": {"canonical": 1314, "supported": 549, "percent": 41.8}
   }
 }
