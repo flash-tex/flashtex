@@ -3,9 +3,9 @@
   "branch": "agent/daniel-parent/unexplained-steps",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "diagnosed: both are page-glue-set amplification; twelvept trigger fixed by PR chain #712/#722/#728/#738, math-sheet trigger is compiler math.rs span-length-2 heuristic (frozen vendor, waits on #711). No PR.",
   "started_utc": "2026-09-16T12:41:47Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-UNEXPLAINED-STEPS",
-  "updated_utc": "2026-09-16T12:41:47Z"
+  "updated_utc": "2026-09-16T13:03:55Z"
 }
