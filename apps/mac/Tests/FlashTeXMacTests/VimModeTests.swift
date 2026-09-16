@@ -1069,4 +1069,52 @@ final class VimModeTests: XCTestCase {
         let bottom = try XCTUnwrap(tv.enclosingScrollView).documentVisibleRect
         XCTAssertEqual(bottom.maxY, rect.maxY + inset, accuracy: rect.height * 1.5, "zb puts the caret line at the bottom edge")
     }
+
+    // MARK: regex search and :s
+
+    func testSearchSupportsVimMagicCharacterClassesAndAnchors() {
+        load("abc 123 def 456")
+        type("/\\d\\d\\d<CR>")
+        XCTAssertEqual(caret, 4, "\\d\\d\\d finds the first run of three digits")
+        type("n")
+        XCTAssertEqual(caret, 12, "n repeats the same regex forward")
+        load("first\nsecond\nthird")
+        type("/^s<CR>")
+        XCTAssertEqual(caret, 6, "^ anchors to a line start")
+    }
+
+    func testSearchTreatsUnescapedParensAndBracesAsLiteralLikeVimsDefaultMagic() {
+        load("(hi) there")
+        type("/(hi)<CR>")
+        XCTAssertEqual(caret, 0, "unescaped ( ) are literal in Vim's default magic mode, not a capture group")
+    }
+
+    func testStarAnchorsToWholeWordsNotSubstrings() {
+        load("cat category cat")
+        type("*")
+        XCTAssertEqual(caret, 13, "* is whole-word: it skips over \"category\" to the next \"cat\"")
+    }
+
+    func testSubstituteExpandsCaptureGroupsAndAmpersand() {
+        load("ab")
+        type(":s/\\(a\\)\\(b\\)/\\2\\1/<CR>")
+        XCTAssertEqual(text, "ba", "\\2\\1 swaps the two captured groups")
+        load("hello")
+        type(":s/l\\+/[&]/<CR>")
+        XCTAssertEqual(text, "he[ll]o", "& is the whole match; \\+ is Vim's one-or-more, escaped")
+    }
+
+    func testSubstituteIAndCapitalIFlagsOverrideSmartcase() {
+        load("ABC")
+        type(":s/Abc/X/<CR>")
+        XCTAssertEqual(text, "ABC", "a mixed-case pattern is case-sensitive by smartcase: no match")
+        type(":s/Abc/X/i<CR>")
+        XCTAssertEqual(text, "X", "the i flag forces case-insensitive")
+
+        load("ABC")
+        type(":s/abc/X/I<CR>")
+        XCTAssertEqual(text, "ABC", "the I flag forces case-sensitive even though the pattern is all-lowercase")
+        type(":s/abc/X/<CR>")
+        XCTAssertEqual(text, "X", "without I, an all-lowercase pattern is smartcase-insensitive")
+    }
 }

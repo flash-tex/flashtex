@@ -1794,23 +1794,67 @@ final class VimMode {
     // MARK: search (`/ ? n N *`)
 
     private func search(_ pattern: String, from p: Int, forward: Bool, wrap: Bool = true) -> NSRange? {
-        guard !pattern.isEmpty else { return nil }
-        let opts: NSString.CompareOptions = forward ? [] : [.backwards]
-        let caseOpts: NSString.CompareOptions = pattern.lowercased() == pattern ? [.caseInsensitive] : [] // smartcase
+        guard !pattern.isEmpty, let re = compiledRegex(pattern) else { return nil }
+        let full = text as String
         if forward {
             let start = min(p + 1, length)
-            let r = text.range(of: pattern, options: opts.union(caseOpts), range: NSRange(location: start, length: length - start))
-            if r.location != NSNotFound { return r }
+            if let r = re.firstMatch(in: full, range: NSRange(location: start, length: length - start))?.range { return r }
             guard wrap else { return nil }
-            let w = text.range(of: pattern, options: opts.union(caseOpts), range: NSRange(location: 0, length: length))
-            return w.location == NSNotFound ? nil : w
+            return re.firstMatch(in: full, range: NSRange(location: 0, length: length))?.range
         } else {
-            let r = text.range(of: pattern, options: opts.union(caseOpts), range: NSRange(location: 0, length: max(0, min(p, length))))
-            if r.location != NSNotFound { return r }
+            if let r = lastMatch(re, in: full, range: NSRange(location: 0, length: max(0, min(p, length)))) { return r }
             guard wrap else { return nil }
-            let w = text.range(of: pattern, options: opts.union(caseOpts), range: NSRange(location: 0, length: length))
-            return w.location == NSNotFound ? nil : w
+            return lastMatch(re, in: full, range: NSRange(location: 0, length: length))
         }
+    }
+
+    /// Translates a Vim "magic"-mode pattern (the default: `. * [ ] ^ $` are
+    /// special unescaped; `( ) { } + ? |` are literal unless backslash-escaped,
+    /// mirroring Vim's own `( )` vs ICU's) into the ICU syntax
+    /// `NSRegularExpression` understands. `\d \D \w \W \s \S` and friends
+    /// already mean the same thing in both, so they pass straight through.
+    /// `\v`/`\V`/`\m`/`\M` (Vim's other magic-level switches) aren't
+    /// supported — every pattern is treated as default-magic.
+    private func translateVimMagicToICU(_ pattern: String) -> String {
+        let chars = Array(pattern)
+        var out = ""
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            if c == "\\", i + 1 < chars.count {
+                let n = chars[i + 1]
+                switch n {
+                case "(", ")", "{", "}", "+", "?", "|": out.append(n) // Vim: special only escaped -> ICU: special bare
+                case "=": out.append("?") // Vim's "0 or 1"
+                case "<", ">": out.append(contentsOf: "\\b") // word start/end -> boundary
+                default: out.append(c); out.append(n) // \d \w \s \. \\ … mean the same escaped in both
+                }
+                i += 2
+                continue
+            }
+            if "(){}+?|".contains(c) {
+                out.append("\\"); out.append(c) // Vim: literal unless escaped -> ICU: escape to keep it literal
+            } else {
+                out.append(c) // . * [ ] ^ $ already line up
+            }
+            i += 1
+        }
+        return out
+    }
+
+    /// Compiles `pattern` (Vim-magic) for ICU, with smartcase (an
+    /// all-lowercase pattern is case-insensitive) unless `forceCase`
+    /// overrides it (`:s` flags `i`/`I`). `nil` on an unparseable pattern.
+    private func compiledRegex(_ pattern: String, forceCase: Bool? = nil) -> NSRegularExpression? {
+        var opts: NSRegularExpression.Options = [.anchorsMatchLines] // Vim's ^/$ match every line, not just the buffer's ends
+        if forceCase ?? (pattern.lowercased() == pattern) { opts.insert(.caseInsensitive) }
+        return try? NSRegularExpression(pattern: translateVimMagicToICU(pattern), options: opts)
+    }
+
+    private func lastMatch(_ re: NSRegularExpression, in s: String, range: NSRange) -> NSRange? {
+        var result: NSRange?
+        re.enumerateMatches(in: s, range: range) { m, _, _ in if let m { result = m.range } }
+        return result
     }
 
     private func jumpToMatch(_ pattern: String, forward: Bool, count: Int) {
@@ -1832,9 +1876,12 @@ final class VimMode {
     private func searchWordUnderCaret(count: Int, forward: Bool) {
         guard let r = textObject("w", inner: true), r.length > 0, let c = char(at: r.location), isWordChar(c) else { return }
         let word = text.substring(with: r)
-        lastSearch = (word, forward)
+        // `*`/`#`: whole-word only, like Vim's own `\<word\>` — otherwise
+        // "cat" would also match inside "category".
+        let pattern = "\\<" + word + "\\>"
+        lastSearch = (pattern, forward)
         shareWithFindBar(word)
-        jumpToMatch(word, forward: forward, count: count)
+        jumpToMatch(pattern, forward: forward, count: count)
     }
 
     /// The search term also becomes the find bar's (⌘G / Edit ▸ Find ▸ Find Next continue it).
@@ -1933,15 +1980,18 @@ final class VimMode {
         message = nil
     }
 
-    /// `:[range]s/pattern/replacement/[g]` — literal text, one undo step, via
-    /// the editor's edit path. Default range: the caret's line.
+    /// `:[range]s/pattern/replacement/[g i I]` — Vim-magic regex, capture
+    /// groups (`\1`-`\9`, `&`/`\0` the whole match), one undo step, via the
+    /// editor's edit path. Default range: the caret's line. `c` (confirm
+    /// each match) isn't supported yet — every match in range is replaced.
     private func substitute(address: String, spec: String) {
         guard let sep = spec.first else { return }
         let fields = spec.dropFirst().split(separator: sep, maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
         guard fields.count >= 2, !fields[0].isEmpty else { message = "E486: Pattern not found"; return }
-        let pattern = fields[0], replacement = fields[1]
+        let pattern = fields[0], replacementTemplate = fields[1]
         let flags = fields.count > 2 ? fields[2] : ""
         let global = flags.contains("g")
+        let forceCase: Bool? = flags.contains("i") ? true : (flags.contains("I") ? false : nil)
         let range: NSRange
         switch address {
         case "%": range = NSRange(location: 0, length: length)
@@ -1956,25 +2006,62 @@ final class VimMode {
             let s = lineStart(ofLine: a - 1), e = lineEnd(lineStart(ofLine: b - 1))
             range = NSRange(location: s, length: max(0, e - s))
         }
-        let caseOpts: NSString.CompareOptions = pattern.lowercased() == pattern ? [.caseInsensitive] : []
-        var edits: [NSRange] = []
+        guard let re = compiledRegex(pattern, forceCase: forceCase) else { message = "E486: Pattern not found: \(pattern)"; return }
+        let full = text as String
+        var edits: [(range: NSRange, replacement: String)] = []
         var lastLineStart = -1
         var i = range.location
         while i < NSMaxRange(range) {
-            let r = text.range(of: pattern, options: caseOpts, range: NSRange(location: i, length: NSMaxRange(range) - i))
-            guard r.location != NSNotFound else { break }
+            guard let m = re.firstMatch(in: full, range: NSRange(location: i, length: NSMaxRange(range) - i)) else { break }
+            let r = m.range
             let ls = lineStart(r.location)
-            if global || ls != lastLineStart { edits.append(r); lastLineStart = ls }
+            if global || ls != lastLineStart {
+                edits.append((r, expandSubstituteReplacement(replacementTemplate, match: m, in: full)))
+                lastLineStart = ls
+            }
             i = NSMaxRange(r) == r.location ? r.location + 1 : NSMaxRange(r)
         }
         guard !edits.isEmpty, let tv = textView else { message = "E486: Pattern not found: \(pattern)"; return }
         tv.breakUndoCoalescing()
         tv.undoManager?.beginUndoGrouping()
-        for r in edits.reversed() { tv.insertText(replacement, replacementRange: r) }
+        for e in edits.reversed() { tv.insertText(e.replacement, replacementRange: e.range) }
         tv.undoManager?.setActionName("Substitute")
         tv.undoManager?.endUndoGrouping()
         tv.breakUndoCoalescing()
-        setCaret(firstNonBlank(fromLineStart: lineStart(min(edits.last!.location, length))))
+        setCaret(firstNonBlank(fromLineStart: lineStart(min(edits.last!.range.location, length))))
         message = edits.count > 1 ? "\(edits.count) substitutions" : nil
+    }
+
+    /// Vim's `:s` replacement syntax: `&`/`\0` the whole match, `\1`-`\9` a
+    /// capture group (empty if it didn't participate), `\&` a literal `&`,
+    /// `\\` a literal backslash; everything else is literal (unlike ICU's
+    /// own `$1`/`$&` templates, so this expands matches itself rather than
+    /// handing the template to `NSRegularExpression`).
+    private func expandSubstituteReplacement(_ template: String, match: NSTextCheckingResult, in full: String) -> String {
+        func group(_ n: Int) -> String {
+            guard n < match.numberOfRanges else { return "" }
+            let r = match.range(at: n)
+            guard r.location != NSNotFound else { return "" }
+            return (full as NSString).substring(with: r)
+        }
+        let chars = Array(template)
+        var out = ""
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            if c == "&" { out += group(0); i += 1; continue }
+            if c == "\\", i + 1 < chars.count {
+                let n = chars[i + 1]
+                if let d = n.wholeNumberValue, n.isNumber { out += group(d) }
+                else if n == "&" { out.append("&") }
+                else if n == "\\" { out.append("\\") }
+                else { out.append(n) }
+                i += 2
+                continue
+            }
+            out.append(c)
+            i += 1
+        }
+        return out
     }
 }
