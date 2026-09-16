@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/flaky-table-lengths",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/767",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T18:21:45Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-FLAKY-TABLE-LENGTHS-LINEAR",
-  "updated_utc": "2026-09-16T18:21:45Z"
+  "updated_utc": "2026-09-16T18:30:44Z"
 }
