@@ -55,7 +55,11 @@ pub fn write_pdf_exact(v2: &DisplayList, font_dirs: &[std::path::PathBuf], proje
     let envelope = v2.write_json_with("export", true);
     let options = flashtex_pdf::v2::V2Options { font_dirs: font_dirs.to_vec() };
     let (doc, report) = flashtex_pdf::v2::from_v2_rooted(&envelope, &options, project_root)?;
-    let rendered = flashtex_pdf::exact::render_exact(&doc).map_err(|e| e.to_string())?;
+    // `display-list-v2-links` §5: the link rectangles become real `/Link`
+    // annotations. Read off the display list rather than the envelope --
+    // `from_v2` does not carry `navigation`, and the list is right here.
+    let navigation = link_annotations(v2)?;
+    let rendered = flashtex_pdf::exact::render_exact_with(&doc, &navigation).map_err(|e| e.to_string())?;
     flashtex_pdf::verify::check_structure(&rendered.bytes).map_err(|e| format!("generated PDF failed self-check: {e}"))?;
     let mut notes = Vec::new();
     for f in &report.fonts {
@@ -78,4 +82,54 @@ pub fn write_pdf_exact(v2: &DisplayList, font_dirs: &[std::path::PathBuf], proje
         glyphs: report.glyphs,
         images: report.images,
     })
+}
+
+/// The `/Link` annotations of `v2`'s `navigation` (`display-list-v2-links`
+/// §5), by page index.
+///
+/// The display list is y **down** from each page's top-left in ticks; a PDF
+/// `/Rect` is `[llx lly urx ury]` y **up** from the page's bottom-left in
+/// points, so each rectangle is flipped against its own page's height. Ticks
+/// are 2^-20 of a point, so the conversion is exact in at most 20 fractional
+/// digits and never rounds.
+///
+/// `/Border [0 0 0]` and no `/C`: a link must not paint something the page
+/// does not already show. pdflatex under plain `hyperref` draws a coloured
+/// box (`/Border [0 0 1] /C [0 1 1]`), but under `colorlinks` or `hidelinks`
+/// -- what most documents use -- it draws nothing and colours the text
+/// instead, and this pipeline cannot see which, because hyperref's options
+/// are not exposed by the pinned compiler. Drawing nothing is the choice that
+/// cannot add ink the author did not ask for.
+fn link_annotations(v2: &DisplayList) -> Result<flashtex_pdf::navigation::Navigation, String> {
+    use flashtex_pdf::exact::Decimal;
+    use flashtex_pdf::navigation::{LinkAction, LinkAnnotation, Navigation};
+
+    let mut nav = Navigation::default();
+    let Some(links) = v2.navigation.as_ref() else { return Ok(nav) };
+    let tick = |t: crate::display::Tick| {
+        Decimal::from_ratio(i128::from(t.0), 1 << 20, 20)
+            .ok_or_else(|| format!("link coordinate {} is not an exact decimal", t.0))
+    };
+    nav.links = vec![Vec::new(); v2.pages.len()];
+    for link in &links.links {
+        let index = (link.page as usize).checked_sub(1).filter(|i| *i < v2.pages.len());
+        let Some(index) = index else {
+            return Err(format!("link on page {} but the document has {} pages", link.page, v2.pages.len()));
+        };
+        let height = v2.pages[index].height;
+        for r in &link.rects {
+            nav.links[index].push(LinkAnnotation {
+                rect: [
+                    tick(r.x0)?,
+                    tick(crate::display::Tick(height.0 - r.y1.0))?,
+                    tick(r.x1)?,
+                    tick(crate::display::Tick(height.0 - r.y0.0))?,
+                ],
+                border: vec![Decimal::from_i64(0), Decimal::from_i64(0), Decimal::from_i64(0)],
+                color: Vec::new(),
+                action: LinkAction::Uri(link.uri.clone()),
+            });
+        }
+    }
+    Ok(nav)
 }
