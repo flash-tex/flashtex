@@ -289,10 +289,15 @@ extension ShellModel {
             log("controller: " + text.trimmingCharacters(in: .whitespacesAndNewlines))
         case .exited(let code):
             let wasAttached = controller != nil // an explicit detach already cleared it: never relaunch
-            for (_, waiter) in controllerState.awaiting { waiter(.failure(.init(message: "helper exited (\(code))"))) }
-            controllerStatus = "helper exited (\(code))"
+            // Carry the helper's own last words. `helper exited (1)` alone is
+            // not diagnosable -- it is what CI reported for a real failure --
+            // and everything that branches on this message uses hasPrefix, so
+            // a trailing reason is safe to append.
+            let reason = Self.exitReason(code: code, stderr: controller?.recentStderr)
+            for (_, waiter) in controllerState.awaiting { waiter(.failure(.init(message: reason))) }
+            controllerStatus = reason
             workerStatus = "worker exited (\(code))"
-            log("controller exited with status \(code)")
+            log("controller exited with status \(code)" + (controller?.recentStderr.map { "; stderr: " + $0 } ?? "; no stderr"))
             self.controller = nil
             completionFetcher.discard() // its ids restart at pc-1 on the relaunched client
             controllerState = ControllerState()
@@ -301,6 +306,18 @@ extension ShellModel {
             displayCandidatesInvalidate(reason: "helper exited") // ShellModel+DisplayCandidates.swift
             if wasAttached { scheduleControllerRelaunch(afterExit: code) }
         }
+    }
+
+    /// `helper exited (1): thread 'main' panicked at ...` -- the status code
+    /// with the helper's own last stderr line, bounded so a status string
+    /// stays a status string. Callers match on the `helper exited` prefix.
+    static func exitReason(code: Int32, stderr: String?, limit: Int = 200) -> String {
+        let base = "helper exited (\(code))"
+        guard let last = stderr?.split(separator: "\n").last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else {
+            return base
+        }
+        let line = last.trimmingCharacters(in: .whitespaces)
+        return base + ": " + (line.count > limit ? String(line.prefix(limit)) + "…" : line)
     }
 
     /// An abnormal helper exit relaunches the same executable for the same
