@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/perf-digest-merge-tool",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/770",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T19:57:11Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-PERF-DIGEST-RERECORD",
-  "updated_utc": "2026-09-16T19:57:11Z"
+  "updated_utc": "2026-09-16T20:10:11Z"
 }
