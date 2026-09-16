@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/gh280-first-focus",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/723",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T06:29:45Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-280-FIRST-FOCUS-HIGHLIGHT",
-  "updated_utc": "2026-09-16T06:29:45Z"
+  "updated_utc": "2026-09-16T06:42:12Z"
 }
