@@ -42,6 +42,99 @@ pub fn path_is_safe(path: &str) -> bool {
     !path.split(['/', '\\']).any(|c| c == "..")
 }
 
+/// Most documents the closure adds to one request, and the largest one it
+/// reads. The same bounds the Mac client applies to its own scan
+/// (`ProjectDocuments.maxClosureDocuments`, `ProjectIncludes.maxDocumentBytes`),
+/// so a pathological project cannot turn one keystroke into an unbounded read.
+pub const MAX_CLOSURE_DOCUMENTS: usize = 256;
+pub const MAX_CLOSURE_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
+
+/// GH-75: completes the `\input`/`\include` closure of `entry` from
+/// `root`, returning the documents the request did **not** carry plus the
+/// diagnostics discovery raised about references it refused.
+///
+/// The request's own documents are overlaid on the walk, so an unsaved buffer
+/// is what gets scanned for further includes and is never replaced by the
+/// stale bytes on disk; and the walk itself is project-files' rooted,
+/// symlink-refusing discovery -- the same one `flashtex build` uses -- so an
+/// include resolving outside the root is refused here rather than re-checked
+/// with a second containment rule.
+///
+/// Nothing here is fatal: with no root, an unusable entry path, or a root that
+/// cannot be opened, the compile proceeds on exactly the documents the request
+/// sent, which is what it did before this existed.
+fn closure_from_disk(
+    root: Option<&std::path::Path>,
+    entry: &str,
+    supplied: &[(String, String)],
+) -> (Vec<(String, String)>, Vec<crate::display::Diagnostic>) {
+    use flashtex_project_files::graph::{DiagnosticKind, Overlay, ProjectGraph, Severity};
+    use flashtex_project_files::ProjectPath;
+
+    let none = (Vec::new(), Vec::new());
+    let Some(root) = root else { return none };
+    let Ok(entry_path) = ProjectPath::normalize(entry) else { return none };
+    let mut overlay = Overlay::new();
+    let mut have = std::collections::BTreeSet::new();
+    for (path, text) in supplied {
+        let Ok(normalized) = ProjectPath::normalize(path) else { continue };
+        have.insert(normalized.as_str().to_string());
+        overlay.insert(normalized, text.clone());
+    }
+    let Ok(graph) = ProjectGraph::discover_with(root, &entry_path, &overlay) else { return none };
+
+    let mut documents = Vec::new();
+    for document in graph.documents() {
+        if documents.len() >= MAX_CLOSURE_DOCUMENTS {
+            break;
+        }
+        // The overlaid documents come back out of the graph unchanged; only
+        // what the request did not send is new. `path_is_safe` is the same
+        // gate the request's own paths passed, applied again because these
+        // paths did not come from the request.
+        if have.contains(document.path.as_str()) || !path_is_safe(&document.path) {
+            continue;
+        }
+        if document.text.len() > MAX_CLOSURE_DOCUMENT_BYTES {
+            continue;
+        }
+        documents.push((document.path, document.text));
+    }
+
+    let diagnostics = graph
+        .diagnostics()
+        .iter()
+        .filter_map(|d| {
+            // A missing include and a macro-built path are the compiler's to
+            // report: it has the candidate list and the expander, and saying
+            // it twice in one compile helps nobody.
+            let code = match d.kind {
+                DiagnosticKind::MissingFile { .. } | DiagnosticKind::UnresolvableReference { .. } | DiagnosticKind::Cycle { .. } => return None,
+                DiagnosticKind::InvalidPath { .. } => "invalid_path",
+                DiagnosticKind::EscapesRootViaSymlink { .. } => "path_escapes_root",
+                DiagnosticKind::InvalidUtf8 { .. } => "not_utf8",
+                DiagnosticKind::ReadError { .. } => "read_error",
+                DiagnosticKind::DepthExceeded { .. } => "include_depth",
+            };
+            let sources = d
+                .span
+                .map(|s| {
+                    vec![crate::display::SourceRange {
+                        path: std::rc::Rc::from(d.path.as_str()),
+                        start_byte: s.start,
+                        end_byte: s.end,
+                    }]
+                })
+                .unwrap_or_default();
+            Some(match d.severity {
+                Severity::Error => crate::display::Diagnostic::error(code, d.message.clone(), sources),
+                Severity::Warning => crate::display::Diagnostic::warning(code, d.message.clone(), sources),
+            })
+        })
+        .collect();
+    (documents, diagnostics)
+}
+
 /// The request's `display_list_window` (`display-list-v2-window` §4), when it
 /// is one a producer can serve. `first_page` is 1-based; the effective window
 /// is decided by the render, which clamps against the page count layout
@@ -297,13 +390,6 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
     } else {
         project[0].0.clone()
     };
-    let sources: Vec<SourceDocument<'_>> = project
-        .iter()
-        .map(|(p, t)| SourceDocument {
-            path: p.as_str(),
-            text: t.as_str(),
-        })
-        .collect();
     // PROPOSAL (FT-063): an optional absolute `project_root` directory the
     // request's `\includegraphics` files are read from (rooted, no symlinks,
     // through project-files). A relative or empty value is ignored.
@@ -312,6 +398,25 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
         .and_then(|v| v.as_str())
         .map(std::path::PathBuf::from)
         .filter(|p| p.is_absolute());
+    // GH-75: the request carries the buffers the client has open, which for an
+    // IDE is "whatever the user happened to click on". An `\input` of a file
+    // that exists in the project but is not open used to compile as `included
+    // file not found`, and every `\ref` into it as `??` -- a plain
+    // `main.tex` + `sections/intro.tex` document was unusable until each file
+    // was opened by hand. When the request says where the project is, the
+    // rest of the include closure is read from disk through the same rooted,
+    // symlink-refusing discovery `flashtex build` uses, with the request's own
+    // documents overlaid so an unsaved buffer always wins over the file.
+    let closure_root = request_root.as_deref().or(options.project_root.as_deref());
+    let (from_disk, closure_diagnostics) = closure_from_disk(closure_root, &entry_path, &project);
+    project.extend(from_disk);
+    let sources: Vec<SourceDocument<'_>> = project
+        .iter()
+        .map(|(p, t)| SourceDocument {
+            path: p.as_str(),
+            text: t.as_str(),
+        })
+        .collect();
     // `payload.date` -- the civil date `\today` renders
     // (protocol/proposals/runtime-v1-request-date.md). This worker never reads
     // the clock: runtime-v1 requires byte-identical output for byte-identical
@@ -383,6 +488,13 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
         if narrowed.is_some_and(|n| n.page_count < served.page_count) {
             rendered = render_windowed(&sources, &entry_path, revision_u64, &project_id, fonts, options, cache, narrowed);
         }
+    }
+    // GH-75: discovery's own refusals (an include that resolves outside the
+    // root, an unreadable file). The compiler would otherwise report only
+    // "included file not found" for a file that is there but was refused,
+    // which says the wrong thing about why.
+    if !closure_diagnostics.is_empty() {
+        rendered.v2.diagnostics.extend(closure_diagnostics);
     }
     let mut v1 = crate::v1::fallback(&rendered.v2, caps, accepted.clone());
     // display-list-v2: the envelope is serialised first because declining it

@@ -16,6 +16,20 @@ array of `{path, text}`. Paths are project-relative; reject parent traversal and
 absolute paths. Unsaved text is supplied explicitly. UI must never block waiting
 for compilation and must not replace a newer preview with an older revision.
 
+Optional absolute `project_root` (FT-063, `display-list-v2-image.md` §2; the
+worker's `--project-root DIR` is the same directory, and the per-request value
+wins). It is where the producer reads the project from, so `documents` is the
+set of buffers the client has open rather than the whole project: the producer
+completes the `\input`/`\include` closure from the root through project-files'
+rooted, symlink-refusing discovery, with `documents` overlaid so an unsaved
+buffer always beats the file on disk and is what is scanned for further
+includes. Resolution is TeX's — every include path is relative to the job's
+root, never to the directory of the file naming it. A path escaping the root
+(`..`, or a symlink out) is refused with a `path_escapes_root` / `invalid_path`
+diagnostic and never read; a genuinely missing include keeps the compiler's
+`recovered_input` diagnostic. Without `project_root` the producer reads nothing
+from disk and `documents` is the entire project, exactly as before.
+
 `compile_result` payload: same `project_id` and `revision`; `status` is `ok`,
 `recovered`, or `failed`; `pages`, `diagnostics`, and optional `pdf_path` (null
 until a real artifact exists). `pages` contain `number` (1-based), `width_pt`,
