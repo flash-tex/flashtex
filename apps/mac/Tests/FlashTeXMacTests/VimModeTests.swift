@@ -1283,4 +1283,98 @@ final class VimModeTests: XCTestCase {
         type("dit")
         XCTAssertEqual(text, "<b>bold <i></i> more</b>")
     }
+    // MARK: visual block (C-v)
+
+    func testControlVEntersAndTogglesOutOfVisualBlock() {
+        load("abc\ndef", caret: 0)
+        key("v", flags: .control)
+        XCTAssertEqual(mode, .visualBlock)
+        key("v", flags: .control) // toggles back off, like v/V toggling themselves off
+        XCTAssertEqual(mode, .normal)
+        key("v", flags: .control)
+        type("<Esc>")
+        XCTAssertEqual(mode, .normal)
+        key("v", flags: .control)
+        type("v") // switches to charwise, keeping the anchor
+        XCTAssertEqual(mode, .visual)
+    }
+
+    func testVisualBlockDeleteRemovesARectangle() {
+        load("abcde\nfghij\nklmno", caret: 1)
+        key("v", flags: .control)
+        type("jjl")
+        type("d")
+        XCTAssertEqual(text, "ade\nfij\nkno")
+        XCTAssertEqual(caret, 1)
+        XCTAssertEqual(mode, .normal)
+    }
+
+    func testVisualBlockYankThenNormalModePastePastesColumnAligned() {
+        load("abcde\nfghij\nklmno", caret: 1)
+        key("v", flags: .control)
+        type("jjl")
+        type("y")
+        XCTAssertEqual(text, "abcde\nfghij\nklmno", "yank doesn't edit")
+        XCTAssertEqual(mode, .normal)
+        XCTAssertEqual(caret, 1, "y leaves the caret at the block's top-left")
+
+        load("11111\n22222\n33333", caret: 0)
+        type("p")
+        XCTAssertEqual(text, "1bc1111\n2gh2222\n3lm3333", "the blockwise register pastes column-aligned on every line")
+        XCTAssertEqual(caret, 1)
+    }
+
+    func testVisualBlockCapitalIInsertsOnEveryLineAtTheLeftColumn() {
+        load("one\ntwo\nthree", caret: 0)
+        key("v", flags: .control)
+        type("jj") // block spans all three lines at column 0
+        type("I")
+        XCTAssertEqual(mode, .insert)
+        type("X")
+        type("<Esc>")
+        XCTAssertEqual(text, "Xone\nXtwo\nXthree")
+        XCTAssertEqual(mode, .normal)
+    }
+
+    func testVisualBlockCapitalAAppendsPaddingShortLinesToReachTheColumn() {
+        load("aaa\na", caret: 2) // column 2 (the third 'a') of the first, longer line
+        key("v", flags: .control)
+        type("j") // the second line has only column 0; the block's right column still comes from the anchor
+        type("A")
+        XCTAssertEqual(mode, .insert)
+        type("X")
+        type("<Esc>")
+        XCTAssertEqual(text, "aaaX\na  X", "the short second line is padded with spaces to reach column 3 (rightCol + 1)")
+    }
+
+    func testVisualBlockDollarRaggedRightExtendsEveryLineToItsOwnEnd() {
+        load("a\nbbb\ncc", caret: 0)
+        key("v", flags: .control)
+        type("jj$")
+        type("d")
+        XCTAssertEqual(text, "\n\n", "$ deletes to each line's own end, not a fixed column")
+    }
+
+    /// Same "consumes every unmapped key" discipline as normal/visual mode
+    /// (see testNormalModeConsumesEveryUnmappedPrintableKey): block mode's
+    /// switch always falls through to moveBlockHead or resetPending, never
+    /// back to the editor, but nothing enforced that until now.
+    private static let visualBlockEditingKeys: Set<Character> = ["d", "x", "c", "s", "~", "u", "U"]
+    private static let visualBlockInsertEntryKeys: Set<Character> = ["I", "A", "c", "s"]
+
+    func testVisualBlockConsumesEveryUnmappedKeyInsteadOfEditingOrEscaping() {
+        let buffer = "alpha\nbeta\ngamma\n"
+        for v in UInt8(32)...UInt8(126) {
+            let ch = Character(UnicodeScalar(v))
+            if Self.visualBlockEditingKeys.contains(ch) { continue }
+            load(buffer, caret: 0)
+            key("v", flags: .control)
+            type("j") // a small (single-column, two-row) block
+            key(String(ch))
+            if Self.visualBlockInsertEntryKeys.contains(ch) { type("<Esc>") }
+            XCTAssertEqual(text, buffer, "visual-block '\(ch)' must not edit the buffer")
+            type("<Esc>")
+            XCTAssertEqual(mode, .normal)
+        }
+    }
 }

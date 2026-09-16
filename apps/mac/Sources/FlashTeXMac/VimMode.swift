@@ -35,7 +35,7 @@ import Observation
 @MainActor
 final class VimMode {
     enum Mode: Equatable {
-        case normal, insert, visual, visualLine
+        case normal, insert, visual, visualLine, visualBlock
 
         var indicator: String {
             switch self {
@@ -43,6 +43,7 @@ final class VimMode {
             case .insert: "-- INSERT --"
             case .visual: "-- VISUAL --"
             case .visualLine: "-- VISUAL LINE --"
+            case .visualBlock: "-- VISUAL BLOCK --"
             }
         }
     }
@@ -118,6 +119,15 @@ final class VimMode {
     struct Register: Equatable {
         var text: String
         var linewise: Bool
+        /// Non-nil for a `⌃V` block yank/delete: one string per touched
+        /// line, pasted back column-aligned rather than as a run of text.
+        var blockLines: [String]?
+
+        init(text: String, linewise: Bool, blockLines: [String]? = nil) {
+            self.text = text
+            self.linewise = linewise
+            self.blockLines = blockLines
+        }
     }
 
     /// What the editor pane's Vim status line shows (`VimStatusLine`, ContentView.swift).
@@ -223,6 +233,16 @@ final class VimMode {
     private var returnToInsertAfterOneCommand = false
     /// Set by ⌃R in insert mode: the next key names the register to insert.
     private var insertAwaitingRegister = false
+    /// Visual block's `$`: every row extends to its own end instead of the
+    /// block's right column, and keeps doing so as the block moves.
+    private var blockToLineEnd = false
+    /// Set while a block `I`/`A`/`c`/`s` insert session is open, so
+    /// `leaveInsert` knows to replicate what was typed on the first line to
+    /// every other line of the block.
+    private var blockInsertLines: ClosedRange<Int>?
+    private var blockInsertColumn = 0
+    private var blockInsertAppend = false
+    private var blockInsertRagged = false
     private var replayingDot = false
     private var recording: [Key] = []
     private var recordingChange = false
@@ -262,6 +282,7 @@ final class VimMode {
         case .insert: handled = handleInsertKey(key)
         case .normal: handled = handleNormalKey(key)
         case .visual, .visualLine: handled = handleVisualKey(key)
+        case .visualBlock: handled = handleVisualBlockKey(key)
         }
         // ⌃O ("insert normal mode"): once the one normal-mode command it
         // granted has fully run its course — not left awaiting an operator's
@@ -639,7 +660,13 @@ final class VimMode {
         insertStart = nil
         mode = .normal
         if recordingChange { finishRecording() }
+        // Captured *before* replicateBlockInsert: it edits later lines of
+        // the block, which moves the text view's live selection to
+        // wherever it last inserted — the session's own (first) line is
+        // never itself touched by that replication, so this stays valid.
         let c = caret
+        if blockInsertLines != nil { replicateBlockInsert() }
+        blockInsertLines = nil
         if c > lineStart(c) { setCaret(c - 1) }
         preferredColumn = nil
     }
@@ -716,6 +743,7 @@ final class VimMode {
             case "i": jumpForward(); return true
             case "a": beginRecording(key); incrementNumber(by: n ?? 1); finishRecording(); return true
             case "x": beginRecording(key); incrementNumber(by: -(n ?? 1)); finishRecording(); return true
+            case "v": mode = .visualBlock; visualAnchor = caret; blockToLineEnd = false; updateBlockSelection(); return true
             // An unmapped ⌃-chord is a no-op: falling through would run the
             // editor's Cocoa binding (⌃K kills the line, ⌃T transposes, ⌃H
             // deletes) and edit the buffer from normal mode.
@@ -1180,6 +1208,14 @@ final class VimMode {
     private func paste(after: Bool, count: Int) {
         defer { selectedRegister = nil } // `"ap` names a register for this paste only
         guard let reg = registerForPaste(), !reg.text.isEmpty else { return }
+        if let blockLines = reg.blockLines {
+            // A blockwise register pastes column-aligned starting on the
+            // caret's own line: `p` one column to the right (like charwise
+            // p), `P` at the caret's own column.
+            let col = (caret - lineStart(caret)) + (after && caret < lineEnd(caret) ? 1 : 0)
+            pasteBlockLines(blockLines, startLine: lineNumber(of: caret), column: col)
+            return
+        }
         let body = String(repeating: reg.text, count: count)
         if reg.linewise {
             var s = body
@@ -1281,6 +1317,7 @@ final class VimMode {
             case "u": moveLines(by: -(pageLines() / 2)); return true
             case "f": moveLines(by: pageLines()); return true
             case "b": moveLines(by: -pageLines()); return true
+            case "v": mode = .visualBlock; blockToLineEnd = false; updateBlockSelection(); return true
             default: resetPending(); return true // unmapped ⌃-chord: no-op, never the editor's Cocoa binding
             }
         }
@@ -1368,11 +1405,284 @@ final class VimMode {
     private func updateVisualSelection() { setCaretKeepingVisual(visualHead) }
 
     private func leaveVisual() {
+        if mode == .visualBlock {
+            // Block mode already tracks its head as `caret` directly (never
+            // derived from `textView.selectedRange()`, which only reports
+            // the first of the block's several row ranges) — nothing to
+            // recover before clamping back to a normal single-range caret.
+            mode = .normal
+            resetPending()
+            clampNormalCaret()
+            textView?.setSelectedRange(NSRange(location: caret, length: 0))
+            return
+        }
         let head = visualHead
         mode = .normal
         resetPending()
         setCaret(head)
         clampNormalCaret()
+    }
+
+    // MARK: visual block
+
+    private func handleVisualBlockKey(_ key: Key) -> Bool {
+        if key.escape { leaveVisual(); return true }
+        if pending != .none {
+            // Pending-key paths (f/F/t/T, marks, registers) resolve through
+            // the shared handlePendingKey, which moves the caret via move()
+            // rather than moveBlockHead() — refresh the rectangle after,
+            // rather than duplicating that whole dispatch here.
+            let handled = handlePendingKey(key)
+            if mode == .visualBlock { updateBlockSelection() }
+            return handled
+        }
+        guard let ch = key.char else { resetPending(); return true }
+        if !key.control, let d = ch.wholeNumberValue, ch.isASCII, d != 0 || count != nil { count = (count ?? 0) * 10 + d; return true }
+        let n = count
+        count = nil
+        if key.control {
+            switch ch {
+            case "v": leaveVisual(); return true
+            case "d": moveLines(by: pageLines() / 2); updateBlockSelection(); return true
+            case "u": moveLines(by: -(pageLines() / 2)); updateBlockSelection(); return true
+            case "f": moveLines(by: pageLines()); updateBlockSelection(); return true
+            case "b": moveLines(by: -pageLines()); updateBlockSelection(); return true
+            default: resetPending(); return true
+            }
+        }
+        switch ch {
+        case "v": mode = .visual; setCaretKeepingVisual(caret); return true
+        case "V": mode = .visualLine; setCaretKeepingVisual(caret); return true
+        case "$": blockToLineEnd = true; updateBlockSelection(); return true
+        case "d", "x":
+            beginRecording(key)
+            applyBlock(delete: true)
+            mode = .normal
+            finishRecording()
+        case "y":
+            applyBlock(delete: false) // also repositions the caret to the block's top-left
+            mode = .normal
+        case "~", "u", "U":
+            beginRecording(key)
+            applyBlockCase(ch == "~" ? .toggleCase : ch == "u" ? .lowercase : .uppercase) // also repositions the caret
+            mode = .normal
+            finishRecording()
+        case "I": beginRecording(key); enterBlockInsert(append: false)
+        case "A": beginRecording(key); enterBlockInsert(append: true)
+        case "c", "s": beginRecording(key); applyBlock(delete: true); enterBlockInsert(append: false)
+        case "p", "P": beginRecording(key); pasteBlock(); mode = .normal; finishRecording()
+        case "\"": pending = .register
+        case "m": pending = .mark
+        case "f", "F", "t", "T": pending = .find(forward: ch == "f" || ch == "t", till: ch == "t" || ch == "T"); count = n
+        default:
+            guard let m = motion(for: ch, count: n) else { resetPending(); return true }
+            moveBlockHead(m)
+        }
+        return true
+    }
+
+    /// The block's line/column bounds (anchor to the head, `caret`),
+    /// inclusive on both ends — used to render the rectangle and to
+    /// compute which characters each block command touches. Columns are
+    /// raw UTF-16 offsets from the line start (no tab expansion).
+    private func blockBounds() -> (firstLine: Int, lastLine: Int, leftCol: Int, rightCol: Int) {
+        let a = visualAnchor, h = caret
+        let aLine = lineNumber(of: a), hLine = lineNumber(of: h)
+        let aCol = a - lineStart(a), hCol = h - lineStart(h)
+        return (min(aLine, hLine), max(aLine, hLine), min(aCol, hCol), max(aCol, hCol))
+    }
+
+    /// Pushes the rectangular block selection — one `NSRange` per touched
+    /// line — to the text view. `$` mode (`blockToLineEnd`) extends every
+    /// line to its own end instead of the block's right column.
+    private func updateBlockSelection() {
+        let b = blockBounds()
+        var ranges: [NSValue] = []
+        for line in b.firstLine...b.lastLine {
+            let ls = lineStart(ofLine: line)
+            let le = lineEnd(ls)
+            let left = min(ls + b.leftCol, le)
+            let right = blockToLineEnd ? le : min(ls + b.rightCol + 1, le)
+            ranges.append(NSValue(range: NSRange(location: left, length: max(0, right - left))))
+        }
+        textView?.setSelectedRanges(ranges, affinity: .downstream, stillSelecting: false)
+        textView?.scrollRangeToVisible(NSRange(location: caret, length: 0))
+    }
+
+    private func moveBlockHead(_ m: Motion) {
+        guard let t = resolve(m) else { return }
+        // Same column-preservation rule as move(): j/k keep preferredColumn
+        // alive across repeats (cleared only by a non-vertical motion), so
+        // extending a block down through a short line and back out doesn't
+        // lose the column it started at.
+        switch m {
+        case .up, .down: preferredVisualColumn = nil
+        case .visualDown, .visualUp: preferredColumn = nil
+        default: preferredColumn = nil; preferredVisualColumn = nil
+        }
+        setCaret(t.position)
+        updateBlockSelection()
+    }
+
+    /// `d`/`x`/`y`/`c`/`s` in block mode: yank (always) and optionally
+    /// delete each touched line's `[leftCol, rightCol]` span (or to its own
+    /// end, in `$` mode) into a blockwise register.
+    private func applyBlock(delete: Bool) {
+        let b = blockBounds()
+        var lines: [String] = []
+        for line in b.firstLine...b.lastLine {
+            let ls = lineStart(ofLine: line)
+            let le = lineEnd(ls)
+            let left = min(ls + b.leftCol, le)
+            let right = blockToLineEnd ? le : min(ls + b.rightCol + 1, le)
+            lines.append(left < right ? text.substring(with: NSRange(location: left, length: right - left)) : "")
+        }
+        storeBlock(lines)
+        if delete {
+            for line in stride(from: b.lastLine, through: b.firstLine, by: -1) {
+                let ls = lineStart(ofLine: line)
+                let le = lineEnd(ls)
+                let left = min(ls + b.leftCol, le)
+                let right = blockToLineEnd ? le : min(ls + b.rightCol + 1, le)
+                if left < right { replace(NSRange(location: left, length: right - left), with: "", actionName: "Delete Block") }
+            }
+        }
+        // Both d and y leave the caret at the block's top-left corner, like Vim's.
+        setCaret(lineStart(ofLine: b.firstLine) + b.leftCol)
+    }
+
+    /// `gu`/`gU`/`g~`'s per-line equivalent for a block selection.
+    private func applyBlockCase(_ op: Operator) {
+        let b = blockBounds()
+        for line in stride(from: b.lastLine, through: b.firstLine, by: -1) {
+            let ls = lineStart(ofLine: line)
+            let le = lineEnd(ls)
+            let left = min(ls + b.leftCol, le)
+            let right = blockToLineEnd ? le : min(ls + b.rightCol + 1, le)
+            if left < right { changeCase(op, in: NSRange(location: left, length: right - left)) }
+        }
+        setCaret(lineStart(ofLine: b.firstLine) + b.leftCol)
+    }
+
+    /// Blockwise register write: unlike `store`, this doesn't participate
+    /// in the numbered-register delete chain (`"1`-`"9`/`"-`) — a
+    /// deliberately smaller slice than charwise/linewise registers get,
+    /// since a block delete/yank is already a distinct, less common shape.
+    private func storeBlock(_ lines: [String]) {
+        if selectedRegister == "_" { selectedRegister = nil; return }
+        let joined = lines.joined(separator: "\n")
+        let r = Register(text: joined, linewise: false, blockLines: lines)
+        register = r
+        if let reg = selectedRegister {
+            if reg == "+" || reg == "*" {
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString(joined, forType: .string)
+            } else if reg.isLetter, reg.isUppercase {
+                appendToRegister(Character(reg.lowercased()), text: joined, linewise: false)
+            } else {
+                namedRegisters[reg] = r
+            }
+        }
+        selectedRegister = nil
+    }
+
+    /// `p`/`P` in block mode: a blockwise register pastes column-aligned
+    /// at the block's own top-left corner. A non-blockwise register (a
+    /// plain yank) pastes as a new line above the block instead, like
+    /// linewise `p`. Simplification: unlike Vim's own visual-mode paste,
+    /// this doesn't replace the current selection first — it pastes
+    /// alongside it, leaving the selected text in place.
+    private func pasteBlock() {
+        defer { selectedRegister = nil }
+        guard let reg = registerForPaste(), !reg.text.isEmpty else { return }
+        guard let blockLines = reg.blockLines else {
+            let ls = lineStart(ofLine: blockBounds().firstLine)
+            let s = reg.text.hasSuffix("\n") ? reg.text : reg.text + "\n"
+            replace(NSRange(location: ls, length: 0), with: s, actionName: "Paste")
+            setCaret(firstNonBlank(fromLineStart: ls))
+            return
+        }
+        let b = blockBounds()
+        pasteBlockLines(blockLines, startLine: b.firstLine, column: b.leftCol)
+    }
+
+    /// Pastes `lines` one per buffer line starting at `startLine`, each at
+    /// `column` (padding a short line with spaces, adding a new line past
+    /// the end of the buffer as needed) — the shared core of blockwise
+    /// paste, used by both normal-mode `p`/`P` and block-mode `p`/`P`.
+    private func pasteBlockLines(_ lines: [String], startLine: Int, column: Int) {
+        for (i, lineText) in lines.enumerated() {
+            let targetLine = startLine + i
+            if targetLine >= lineCount { replace(NSRange(location: length, length: 0), with: "\n", actionName: "Paste") }
+            let ls = lineStart(ofLine: targetLine)
+            let le = lineEnd(ls)
+            let existing = le - ls
+            var at = ls + min(column, existing)
+            if existing < column {
+                replace(NSRange(location: le, length: 0), with: String(repeating: " ", count: column - existing), actionName: "Paste")
+                at = ls + column
+            }
+            replace(NSRange(location: at, length: 0), with: lineText, actionName: "Paste")
+        }
+        setCaret(lineStart(ofLine: startLine) + column)
+    }
+
+    /// `I`/`A` (and block `c`/`s`, via a delete first): opens an insert
+    /// session on the block's first line at its left column (`I`) or right
+    /// column + 1 (`A`, padding short lines with spaces first) — or, in `$`
+    /// mode, at each line's own end. `leaveInsert` replicates what was
+    /// typed to every other line of the block once the session closes.
+    private func enterBlockInsert(append: Bool) {
+        let b = blockBounds()
+        blockInsertLines = b.firstLine...b.lastLine
+        blockInsertAppend = append
+        blockInsertRagged = blockToLineEnd
+        blockInsertColumn = append ? b.rightCol + 1 : b.leftCol
+        let ls = lineStart(ofLine: b.firstLine)
+        let le = lineEnd(ls)
+        let existing = le - ls
+        var target = ls + min(blockInsertColumn, existing)
+        if append {
+            if blockToLineEnd {
+                target = le
+            } else if existing < blockInsertColumn {
+                replace(NSRange(location: le, length: 0), with: String(repeating: " ", count: blockInsertColumn - existing), actionName: "Block Insert")
+                target = ls + blockInsertColumn
+            } else {
+                target = ls + blockInsertColumn
+            }
+        }
+        enterInsert(at: target)
+    }
+
+    /// Replicates the text typed in a block `I`/`A`/`c`/`s` session (the
+    /// first line already has it) onto every other line of the block.
+    /// `I` skips a line too short to reach the column (nothing to insert
+    /// before); `A` pads it with spaces first, unless `$` mode is in
+    /// effect, in which case it always appends at that line's own end.
+    private func replicateBlockInsert() {
+        guard let lines = blockInsertLines, !lastInsertedText.isEmpty else { return }
+        for line in lines where line != lines.lowerBound {
+            let ls = lineStart(ofLine: line)
+            let le = lineEnd(ls)
+            let existing = le - ls
+            let target: Int
+            if blockInsertAppend {
+                if blockInsertRagged {
+                    target = le
+                } else {
+                    if existing < blockInsertColumn {
+                        replace(NSRange(location: le, length: 0), with: String(repeating: " ", count: blockInsertColumn - existing), actionName: "Block Insert")
+                    }
+                    target = ls + blockInsertColumn
+                }
+            } else {
+                guard existing >= blockInsertColumn else { continue }
+                target = ls + blockInsertColumn
+            }
+            replace(NSRange(location: target, length: 0), with: lastInsertedText, actionName: "Block Insert")
+        }
     }
 
     // MARK: motions
