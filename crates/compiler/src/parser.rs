@@ -3213,10 +3213,12 @@ impl P<'_> {
             "fnsymbol" => self.fnsymbol_command(span, para),
             "marginpar" => self.marginpar(span, para),
             "par" => self.flush_paragraph(blocks, para),
-            "bigskip" | "medskip" | "smallskip" | "vspace" | "hrule" | "newpage" | "clearpage"
-            | "cleardoublepage" | "pagebreak" | "nopagebreak" | "vfill" | "columnbreak" | "newcolumn"
-            | "raggedcolumns" | "flushcolumns" | "penalty" | "nobreak" | "allowbreak"
-            | "goodbreak" | "filbreak" => self.vertical_command(name, span, blocks, para),
+            "bigskip" | "medskip" | "smallskip" | "vspace" | "addvspace" | "hrule" | "newpage"
+            | "clearpage" | "cleardoublepage" | "pagebreak" | "nopagebreak" | "vfill"
+            | "columnbreak" | "newcolumn" | "raggedcolumns" | "flushcolumns" | "penalty"
+            | "nobreak" | "allowbreak" | "goodbreak" | "filbreak" => {
+                self.vertical_command(name, span, blocks, para)
+            }
             // Kernel text symbols (`text_builtins::TEXT_SYMBOLS`; the
             // `text_symbol_arms_match_the_builtin_table` test keeps them equal).
             "AA" | "aa" | "AE" | "ae" | "OE" | "oe" | "O" | "o" | "L" | "l" | "ss" | "SS"
@@ -11044,7 +11046,7 @@ mod tests {
             .blocks
             .iter()
             .filter_map(|block| match block {
-                Block::VSpace { pt } => Some(*pt),
+                Block::VSpace { pt, .. } => Some(*pt),
                 _ => None,
             })
             .collect();
@@ -11109,7 +11111,7 @@ mod tests {
             .blocks
             .iter()
             .filter_map(|block| match block {
-                Block::VSpace { pt } => Some(*pt),
+                Block::VSpace { pt, .. } => Some(*pt),
                 _ => None,
             })
             .collect();
