@@ -170,6 +170,11 @@ final class ShellModel {
     /// `result?.pages.count`, change-only, so File > Print… can refuse a failed
     /// or empty-page result without the App scene reading `result` per reply.
     private(set) var toolbarPageCount = 0
+    /// Page under the top of the preview viewport, reported by whichever pane
+    /// is on screen (`PreviewAnchorKeeper`). The page readout in the preview
+    /// HUD reads this; before it existed the readout was wired only to the v1
+    /// pane's callback and so showed nothing on the default v2 route.
+    var previewVisiblePage = 1
     /// `!documents.isEmpty`, change-only: File > Print Source… must not read
     /// `documents` from the App scene (a keystroke reassigns the array).
     private(set) var toolbarHasDocument = false
@@ -226,9 +231,14 @@ final class ShellModel {
     private func refreshToolbarMirrors() {
         let hasResult = result != nil
         if toolbarHasResult != hasResult { toolbarHasResult = hasResult }
-        let pages = result?.pages.count ?? 0
-        if toolbarPageCount != pages { toolbarPageCount = pages }
         let retained = displayListV2?.retained?.frame
+        // Pages the preview is SHOWING, which is not `result.pages`: the v2
+        // route asks for `display-list-v2-only`, so a live reply carries no v1
+        // pages at all and this read zero. A windowed frame still lists every
+        // page of the document (the non-resident ones carry no items), so the
+        // count is the document's real length either way.
+        let pages = retained.map { $0.list.pages.count } ?? (result?.pages.count ?? 0)
+        if toolbarPageCount != pages { toolbarPageCount = pages }
         let hasFrame = displayListV2?.frame != nil
         if toolbarHasV2Frame != hasFrame { toolbarHasV2Frame = hasFrame }
         // A windowed frame stays exportable: Export re-renders the whole

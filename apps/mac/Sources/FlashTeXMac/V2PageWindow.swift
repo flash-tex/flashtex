@@ -155,6 +155,8 @@ extension ShellModel {
     /// While a window is engaged and the viewer leaves the served window's
     /// interior, the same revision is re-requested anchored at the viewer.
     func v2WindowSawVisiblePage(_ page: Int) {
+        // The preview HUD's page readout, for both panes (ShellModel).
+        if previewVisiblePage != page { previewVisiblePage = page }
         let served = displayListV2?.frame?.list.window
         if v2Window.sawVisiblePage(page, served: served), workerAttached {
             compile()

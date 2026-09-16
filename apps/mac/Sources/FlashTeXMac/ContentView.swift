@@ -282,8 +282,6 @@ private struct BridgeBar: View {
 
 struct PreviewPane: View {
     @Environment(ShellModel.self) var model
-    /// Page under the viewport's top edge (PreviewAnchorProbe reports it).
-    @State private var currentPage = 1
     /// Pointer-over reveals the header's second control tier (§8).
     @State private var hovering = false
 
@@ -303,7 +301,7 @@ struct PreviewPane: View {
                             // "the pdf moves to where the changes are happening" (CaretFollow.swift)
                             follow: model.caretFollow.request,
                             onUserScroll: { model.caretFollow.userDidScrollPreview(); hudActivity &+= 1 },
-                            onVisiblePage: { currentPage = $0 },
+                            onVisiblePage: { model.previewVisiblePage = $0 },
                             onFitPageZoom: { model.previewFitPageZoom = $0 }) { source, text in
                     guard let source else { model.navigationNote = "This item has no source mapping."; return }
                     model.navigate(to: source, expectedText: text)
@@ -322,7 +320,7 @@ struct PreviewPane: View {
             // (compile spinner, FIXTURE/HISTORICAL, staleness) float over
             // the pages; nothing reserves a header row any more (#653).
             if model.previewV2 || model.chrome.hasResult {
-                PreviewHUD(currentPage: currentPage, hovering: hovering, activity: hudActivity)
+                PreviewHUD(hovering: hovering, activity: hudActivity)
             }
             // The narrow layout's way back to the editor floats top-leading
             // (it lived on the removed header row).
@@ -333,7 +331,7 @@ struct PreviewPane: View {
             }
         }
         .onChange(of: model.previewZoom) { _, _ in hudActivity &+= 1 }
-        .onChange(of: currentPage) { _, _ in hudActivity &+= 1 }
+        .onChange(of: model.previewVisiblePage) { _, _ in hudActivity &+= 1 }
         // Double-click to Fit Width (⌘9 does the same). Used to live on the
         // now-removed zoom readout; `simultaneousGesture` so it never blocks
         // the pages' own single-tap-to-navigate gesture underneath (owner
@@ -378,7 +376,6 @@ struct PreviewPane: View {
 /// shows no chrome at all over the pages (§8, Canvas treatment).
 private struct PreviewHUD: View {
     @Environment(ShellModel.self) var model
-    var currentPage = 1
     var hovering = false
     /// Bumped by the pane on scroll/page/zoom; each bump re-arms the fade.
     var activity = 0
@@ -419,11 +416,16 @@ private struct PreviewHUD: View {
             }
             // Capability notes moved to the status bar (owner feedback: no
             // floating warnings/percent over the page) — see StatusBar below.
-            if !model.previewV2, chrome.hasResult {
-                Text("\(currentPage) / \(max(model.toolbarPageCount, 1))")
+            // Both panes. This was gated on `!model.previewV2` while
+            // `previewV2` defaults true, so on the shipped default nobody ever
+            // saw a page number.
+            if model.toolbarPageCount > 0 {
+                let page = min(model.previewVisiblePage, model.toolbarPageCount)
+                Text("\(page) / \(model.toolbarPageCount)")
                     .font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textSecondary)
                     .help("Page under the top of the view")
-                    .accessibilityLabel("Page \(currentPage) of \(max(model.toolbarPageCount, 1))")
+                    .accessibilityLabel("Page \(page) of \(model.toolbarPageCount)")
+                    .accessibilityIdentifier("preview.page-readout")
             }
         }
         .padding(.horizontal, DS.Space.l).padding(.vertical, DS.Space.s)
