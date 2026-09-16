@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/gh762-inline-graphics",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/764",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T14:07:59Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-762-INLINE-GRAPHICS-HEIGHT",
-  "updated_utc": "2026-09-16T14:07:59Z"
+  "updated_utc": "2026-09-16T14:27:41Z"
 }
