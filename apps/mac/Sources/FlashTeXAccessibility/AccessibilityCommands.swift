@@ -537,6 +537,7 @@ public enum PanelFocusOrder {
                 Control(name: "Relative line numbers", sourceMarker: "Toggle(\"Relative line numbers\""),
                 Control(name: "Vim keybindings", sourceMarker: "Toggle(\"Vim keybindings\""),
                 Control(name: "Preview follows the caret", sourceMarker: "Toggle(\"Preview follows the caret\""),
+                Control(name: "Autosave", sourceMarker: "Toggle(\"Autosave\""),
                 Control(name: "Restore Defaults", sourceMarker: "Button(\"Restore Defaults\""),
               ],
               sourceFile: "EditorPreferences.swift"),
