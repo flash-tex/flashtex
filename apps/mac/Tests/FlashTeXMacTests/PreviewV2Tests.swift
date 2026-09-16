@@ -511,6 +511,41 @@ final class PreviewV2ShellTests: XCTestCase {
         XCTAssertEqual(rasterizer.retainedBytes, 0)
         XCTAssertTrue(rasterizer.images.isEmpty)
     }
+
+    /// The preview HUD's page readout, on the pane that is actually shipped.
+    ///
+    /// Regression: `toolbarPageCount` read `result?.pages.count`, and the v2
+    /// route asks for `display-list-v2-only`, so a live reply carries no v1
+    /// pages and the count was 0. The readout itself was additionally gated on
+    /// `!model.previewV2` while `previewV2` defaults true — so on the shipped
+    /// default there was no page number at all, from either half.
+    @MainActor
+    func testPageReadoutCountsTheDisplayListNotTheElidedV1Pages() throws {
+        let model = try model()
+        XCTAssertTrue(model.previewV2)
+        load(model, Self.fixtures.appendingPathComponent("display-list-v2-text.json"))
+        guard case .loaded(let frame, _) = model.displayListV2 else {
+            return XCTFail("expected a prepared frame: \(String(describing: model.displayListV2))")
+        }
+        // A live v2 reply: `display-list-v2-only` elides the v1 pages.
+        model.result = RuntimeV1.CompileResult(projectId: frame.list.projectId, revision: frame.list.revision,
+                                               status: .ok, pages: [], diagnostics: [], pdfPath: nil)
+        XCTAssertEqual(model.toolbarPageCount, frame.list.pages.count)
+        XCTAssertGreaterThan(model.toolbarPageCount, 0, "the readout must not vanish when v1 pages are elided")
+
+        // Either pane reports the page under the viewport through the model.
+        XCTAssertEqual(model.previewVisiblePage, 1)
+        model.v2WindowSawVisiblePage(2)
+        XCTAssertEqual(model.previewVisiblePage, 2)
+
+        // The readout is not gated on the pane any more.
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/FlashTeXMac/ContentView.swift"), encoding: .utf8)
+        XCTAssertFalse(source.contains("if !model.previewV2, chrome.hasResult"),
+                       "the page readout must not be v1-only")
+        XCTAssertTrue(source.contains("model.previewVisiblePage"))
+    }
 }
 
 /// The negotiated live route (docs/contracts/runtime-v1-display-list-v2.md):
@@ -793,40 +828,5 @@ final class PreviewV2ParityTests: XCTestCase {
         XCTAssertEqual(pages, frame.list.pages.count)
         XCTAssertTrue(report.identical)
         frame.preparedNonce = 0 // silence the unused-mutation warning; frame is a value
-    }
-
-    /// The preview HUD's page readout, on the pane that is actually shipped.
-    ///
-    /// Regression: `toolbarPageCount` read `result?.pages.count`, and the v2
-    /// route asks for `display-list-v2-only`, so a live reply carries no v1
-    /// pages and the count was 0. The readout itself was additionally gated on
-    /// `!model.previewV2` while `previewV2` defaults true — so on the shipped
-    /// default there was no page number at all, from either half.
-    @MainActor
-    func testPageReadoutCountsTheDisplayListNotTheElidedV1Pages() throws {
-        let model = try model()
-        XCTAssertTrue(model.previewV2)
-        load(model, Self.fixtures.appendingPathComponent("display-list-v2-text.json"))
-        guard case .loaded(let frame, _) = model.displayListV2 else {
-            return XCTFail("expected a prepared frame: \(String(describing: model.displayListV2))")
-        }
-        // A live v2 reply: `display-list-v2-only` elides the v1 pages.
-        model.result = RuntimeV1.CompileResult(projectId: frame.list.projectId, revision: frame.list.revision,
-                                               status: .ok, pages: [], diagnostics: [], pdfPath: nil)
-        XCTAssertEqual(model.toolbarPageCount, frame.list.pages.count)
-        XCTAssertGreaterThan(model.toolbarPageCount, 0, "the readout must not vanish when v1 pages are elided")
-
-        // Either pane reports the page under the viewport through the model.
-        XCTAssertEqual(model.previewVisiblePage, 1)
-        model.v2WindowSawVisiblePage(2)
-        XCTAssertEqual(model.previewVisiblePage, 2)
-
-        // The readout is not gated on the pane any more.
-        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Sources/FlashTeXMac/ContentView.swift"), encoding: .utf8)
-        XCTAssertFalse(source.contains("if !model.previewV2, chrome.hasResult"),
-                       "the page readout must not be v1-only")
-        XCTAssertTrue(source.contains("model.previewVisiblePage"))
     }
 }
