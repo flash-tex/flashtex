@@ -5,7 +5,7 @@
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T15:27:43Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "GH-FLOAT-LIST-END-SCAN",
-  "updated_utc": "2026-09-16T15:27:43Z"
+  "updated_utc": "2026-09-16T15:31:17Z"
 }
