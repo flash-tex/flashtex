@@ -89,11 +89,11 @@ final class PrintControllerTests: XCTestCase {
         let data = Self.twoPagePDF()
         let prepared = try XCTUnwrap(PrintController.prepareDocument(pdfData: data, jobTitle: "demo"))
         XCTAssertEqual(prepared.pageCount, 2)
-        XCTAssertEqual(prepared.paperSize.width, 595.276, accuracy: 0.01)
-        XCTAssertEqual(prepared.paperSize.height, 841.89, accuracy: 0.01)
+        XCTAssertEqual(prepared.paperSize.width, 612, accuracy: 0.01)
+        XCTAssertEqual(prepared.paperSize.height, 792, accuracy: 0.01)
         XCTAssertEqual(prepared.jobTitle, "demo")
         XCTAssertEqual(prepared.operation.jobTitle, "demo")
-        XCTAssertEqual(prepared.operation.printInfo.paperSize.width, 595.276, accuracy: 0.01)
+        XCTAssertEqual(prepared.operation.printInfo.paperSize.width, 612, accuracy: 0.01)
         XCTAssertEqual(try XCTUnwrap(PDFDocument(data: try XCTUnwrap(prepared.pdfData))).pageCount, 2)
         XCTAssertNil(prepared.text)
     }
@@ -224,12 +224,13 @@ final class PrintControllerTests: XCTestCase {
 
     // MARK: - helpers
 
-    /// A2 then a small page, drawn with CoreGraphics — bytes only, so this
-    /// test does not depend on any export route.
+    /// Letter then a small page, drawn with CoreGraphics — bytes only, so this
+    /// test does not depend on any export route. Integral sizes: PDFKit reports
+    /// a rounded media box for fractional ones.
     private static func twoPagePDF() -> Data {
         let data = NSMutableData()
         guard let consumer = CGDataConsumer(data: data), let ctx = CGContext(consumer: consumer, mediaBox: nil, nil) else { return Data() }
-        for size in [CGSize(width: 595.276, height: 841.89), CGSize(width: 400, height: 300)] {
+        for size in [CGSize(width: 612, height: 792), CGSize(width: 400, height: 300)] {
             var box = CGRect(origin: .zero, size: size)
             ctx.beginPDFPage([kCGPDFContextMediaBox as String: NSData(bytes: &box, length: MemoryLayout<CGRect>.size)] as CFDictionary)
             ctx.setFillColor(CGColor(gray: 0, alpha: 1))
