@@ -190,7 +190,7 @@ fn a_windowed_list_is_refused_where_completeness_is_required() {
     }
     let text = long_body(20);
     let windowed = render_win(&text, Some(PageWindow { first_page: 1, page_count: 2 }), None);
-    let err = match flashtex_render_pipeline::pdf::write_pdf(&windowed) {
+    let err = match flashtex_render_pipeline::pdf::write_pdf_exact(&windowed, &[], None) {
         Err(e) => e,
         Ok(_) => panic!("a windowed render must not export"),
     };
