@@ -137,13 +137,14 @@ extension ShellModel {
         guard let (frame, source) = displayListV2?.retained else {
             return .failure(.init(reason: "Nothing to export: no rendering-v2 display list."))
         }
-        guard frame.list.window != nil else {
+        // Unwindowed: the frame on screen is the whole document already.
+        guard let window = frame.list.window else {
             do { return .success(.init(url: try source.listFileURL(), temporary: false)) } catch {
                 return .failure(.init(reason: "PDF export: could not write the display list to a file: \(error.localizedDescription)"))
             }
         }
         guard let producer = wholeDocumentProducer else {
-            return .failure(.init(reason: "Cannot export: this document is too large to send in one reply, so the preview is showing a page window (pages \(frame.list.window!.firstPage)–\(frame.list.window!.firstPage + frame.list.window!.pageCount - 1) of \(frame.list.window!.documentPageCount)). Exporting it needs the render pipeline: attach it with ⌘⇧R, build crates/render-pipeline, or run `flashtex build` on the command line."))
+            return .failure(.init(reason: "Cannot export: this document is too large to send in one reply, so the preview is showing a page window (pages \(window.firstPage)–\(window.firstPage + window.pageCount - 1) of \(window.documentPageCount)). Exporting it needs the render pipeline: attach it with ⌘⇧R, build crates/render-pipeline, or run `flashtex build` on the command line."))
         }
         let requestLine: Data
         do { requestLine = try wholeDocumentRequestLine() } catch {
@@ -153,7 +154,7 @@ extension ShellModel {
             .appendingPathComponent("flashtex-whole-document-\(UUID().uuidString).json")
         let images = requestedLayoutCapabilities.contains(RenderingV2.imagesCapability)
         let environment = BundledMetrics.producerEnvironment()
-        captureNote = "Rendering all \(frame.list.window!.documentPageCount) pages for export…"
+        captureNote = "Rendering all \(window.documentPageCount) pages…"
         let outcome: WholeDocumentList.Outcome
         do {
             outcome = try await Task.detached(priority: .userInitiated) {
