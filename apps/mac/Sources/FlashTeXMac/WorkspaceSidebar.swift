@@ -200,8 +200,16 @@ private struct ProjectSection: View {
             return [.init(title: "New File…", action: { model.scaffold.presentNewFile() })]
         }
         var items: [SidebarTree.MenuItem] = [.init(title: "New File…", action: { model.scaffold.presentNewFile() })]
+        let path = doc.path
+        // Only for a row backed by a real file under the project root — never
+        // for an unsaved/virtual buffer (no root yet) or one that resolves
+        // outside it. `RevealInFinder.reveal` re-resolves at click time, so a
+        // file deleted or moved after the menu opened is a no-op, not a crash.
+        if RevealInFinder.target(path: path, root: model.project.projectRoot) != nil {
+            items.append(.divider)
+            items.append(.init(title: "View in Finder", action: { RevealInFinder.reveal(path: path, root: model.project.projectRoot) }))
+        }
         if doc.role != .entry {
-            let path = doc.path
             items.append(.divider)
             items.append(.init(title: "Rename…", action: { model.scaffold.presentRename(path) }))
             items.append(.init(title: "Delete…", action: { model.scaffold.presentDelete(path) }))
