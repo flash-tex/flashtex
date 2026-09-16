@@ -319,8 +319,8 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          menuItem: "Copy Diagnostics as Text")
         case .revealCaretInPreview:
             return Entry(command: self, title: "Reveal caret in preview", shortcuts: ["⌘⇧J"], menu: "Navigate",
-                         description: "Selects the source span of the preview item under the caret and names its page and item.",
-                         requires: "a compile result",
+                         description: "Selects the source span of the preview item under the caret and names its page: the enclosing formula for a caret inside math, the cluster otherwise.",
+                         requires: "a preview showing the document",
                          menuItem: "Reveal Caret in Preview")
         case .restoreDiscardedBuffer:
             return Entry(command: self, title: "Restore Discarded Buffer", shortcuts: ["Edit > Restore Discarded Buffer"], menu: "Edit",

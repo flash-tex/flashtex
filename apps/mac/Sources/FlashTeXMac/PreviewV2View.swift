@@ -542,6 +542,54 @@ extension ShellModel {
             navigationNote! += " (+\(hit.sources.count - 1) more source range(s) for this cluster)"
         }
     }
+
+    /// The v2 item under the editor caret, shaped as the same `Hit` a click on
+    /// the page produces, so ⌘⇧J and clicking the preview go through one
+    /// navigation path (digest attestation, rebase onto an edited buffer, the
+    /// multi-span note). Nil when the caret maps to nothing the producer laid
+    /// out — a comment, the preamble, a page outside a served window.
+    func caretV2Hit(frame: V2Frame, byte: Int) -> (page: Int, hit: V2Geometry.Hit)? {
+        for page in frame.list.pages where page.resident {
+            for highlight in V2Geometry.caretHighlights(containing: byte, path: activePath, in: page) {
+                switch highlight {
+                case .cluster(let match):
+                    guard case .glyphRun(let run) = page.items[match.itemIndex] else { continue }
+                    let cluster = run.clusters[match.clusterIndex]
+                    guard let rect = match.hitRects.first else { continue }
+                    return (page.number, V2Geometry.Hit(itemIndex: match.itemIndex, clusterIndex: match.clusterIndex,
+                                                        text: run.clusterText(match.clusterIndex),
+                                                        sources: cluster.sources ?? [],
+                                                        syntheticReason: cluster.syntheticReason, rect: rect))
+                case .formula(let box):
+                    // A formula's span is the whole `$…$` including delimiters
+                    // and no single cluster's text equals it, so there is no
+                    // expected text to verify — the span itself is the answer.
+                    guard let item = box.itemIndices.first else { continue }
+                    return (page.number, V2Geometry.Hit(itemIndex: item, clusterIndex: nil, text: nil,
+                                                        sources: [box.source], syntheticReason: nil, rect: box.bounds))
+                }
+            }
+        }
+        return nil
+    }
+
+    /// ⌘⇧J against the v2 pane. Returns false when there is no v2 frame, so
+    /// the caller can fall through to the runtime-v1 pane.
+    @discardableResult
+    func revealCaretInV2Preview(byte: Int) -> Bool {
+        guard previewV2, let frame = displayListV2?.frame else { return false }
+        guard let found = caretV2Hit(frame: frame, byte: byte) else {
+            let behind = result.map { $0.revision != frame.list.revision } ?? false
+            navigationNote = "Caret byte \(byte) is inside no preview item"
+                + (behind ? " (the display list is from an older revision)." : ".")
+            return true
+        }
+        navigateV2Now(found.hit)
+        if navigationNote?.hasPrefix("Selected") == true {
+            navigationNote! += " — page \(found.page)"
+        }
+        return true
+    }
 }
 
 /// Off-main page bitmaps for the pane, keyed by page content identity

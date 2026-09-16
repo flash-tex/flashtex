@@ -948,8 +948,15 @@ Navigation (`Navigation.swift`, `Navigate` menu):
   than selected on the wrong text; the others stay reachable. Diagnostics with
   null `source` are skipped and counted in the footer note.
 - **Reveal Caret in Preview** (⌘⇧J): selects the full source span of the preview
-  item under the caret (`CaretSync`) so the preview highlight and page scroll
-  follow, and names the page and item. It is also the manual override for
+  item under the caret so the preview highlight and page scroll follow, and names
+  the page. On the v2 pane (the default) it reads the display list through the
+  same `V2Geometry.caretHighlights` the pane draws with and the same
+  `navigateV2Now` a click on the page uses — the enclosing formula box for a
+  caret inside math, the cluster otherwise — so ⌘⇧J and clicking a page agree by
+  construction. It previously mapped only runtime-v1 page items (`CaretSync`),
+  which the v2 route asks the producer to elide (`display-list-v2-only`), so on
+  the shipped default it could only answer "inside no preview item"; the v1
+  branch now serves `FLASHTEX_PREVIEW_V2=0` only. It is also the manual override for
   automatic following (`CaretFollow.swift`): it scrolls at once — no debounce,
   and regardless of the "Preview follows the caret" preference, on or off —
   and re-arms following (once the preference is on) after a manual preview
