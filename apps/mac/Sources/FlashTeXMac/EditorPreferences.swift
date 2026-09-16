@@ -35,6 +35,7 @@ import SwiftUI
 /// | `spellCheck`            | nothing here; `LaTeXSpellChecker` observes the flag                      |
 /// | `followCaretInPreview`  | nothing in AppKit; `CaretFollow` reads the flag before each follow        |
 /// | `relativeLineNumbers`   | `LineNumberGutter.relativeLineNumbers` on the scroll view's ruler         |
+/// | `autosave`              | nothing here; `ShellModel.scheduleAutosave` reads the flag                |
 ///
 /// Reading a property inside `withObservationTracking` (or a SwiftUI body)
 /// registers for its changes; `generation` changes with every property.
@@ -91,6 +92,7 @@ final class EditorPreferences {
         var vimKeybindings: Bool
         var followCaretInPreview: Bool
         var relativeLineNumbers: Bool
+        var autosave: Bool
     }
 
     // MARK: defaults and ranges
@@ -107,7 +109,7 @@ final class EditorPreferences {
     static let defaultSnapshot = Snapshot(
         fontFamily: nil, fontSize: 13, lineWrapping: true, tabWidth: 4, indentStyle: .spaces,
         appearance: .system, autoCloseBraces: true, completionPopup: true, spellCheck: true,
-        vimKeybindings: false, followCaretInPreview: true, relativeLineNumbers: false)
+        vimKeybindings: false, followCaretInPreview: true, relativeLineNumbers: false, autosave: true)
 
     // MARK: storage keys (versioned)
 
@@ -120,7 +122,7 @@ final class EditorPreferences {
 
     enum Key: String, CaseIterable {
         case fontFamily, fontSize, lineWrapping, tabWidth, indentStyle, appearance, autoCloseBraces, completionPopup, spellCheck
-        case vimKeybindings, followCaretInPreview, relativeLineNumbers
+        case vimKeybindings, followCaretInPreview, relativeLineNumbers, autosave
         var storageKey: String { "FlashTeX.EditorPreferences.v\(EditorPreferences.schemaVersion).\(rawValue)" }
     }
 
@@ -232,13 +234,26 @@ final class EditorPreferences {
         set { update(\.relativeLineNumbers, \.relativeLineNumbers, newValue, key: .relativeLineNumbers) }
     }
 
+    /// Whether edits write themselves to disk after a quiet moment
+    /// (`ShellModel.scheduleAutosave`), rather than only on explicit ⌘S.
+    /// Default ON (owner: "autosave should be on by default"). This key did
+    /// not exist before this property was added, so there was no prior
+    /// explicit choice to preserve; going forward, `load()`'s
+    /// present-value-wins-over-default rule (same as every other property
+    /// here) means a user who turns this off keeps it off across launches
+    /// and future default changes never silently re-enable it for them.
+    var autosave: Bool {
+        get { access(keyPath: \.autosave); return storage.autosave }
+        set { update(\.autosave, \.autosave, newValue, key: .autosave) }
+    }
+
     /// All properties at once (registers for every property's changes).
     var snapshot: Snapshot {
         Snapshot(fontFamily: fontFamily, fontSize: fontSize, lineWrapping: lineWrapping, tabWidth: tabWidth,
                  indentStyle: indentStyle, appearance: appearance, autoCloseBraces: autoCloseBraces,
                  completionPopup: completionPopup, spellCheck: spellCheck,
                  vimKeybindings: vimKeybindings, followCaretInPreview: followCaretInPreview,
-                 relativeLineNumbers: relativeLineNumbers)
+                 relativeLineNumbers: relativeLineNumbers, autosave: autosave)
     }
 
     // MARK: derived values
@@ -374,6 +389,10 @@ final class EditorPreferences {
             s.followCaretInPreview = value
         } else { repairs.append(.followCaretInPreview) }
 
+        if let value = defaults.object(forKey: Key.autosave.storageKey) as? Bool {
+            s.autosave = value
+        } else { repairs.append(.autosave) } // absent: new key, no prior explicit choice to preserve — default ON
+
         withMutation(keyPath: \.generation) {
             storage = s
             generation += 1
@@ -389,7 +408,7 @@ final class EditorPreferences {
         indentStyle = d.indentStyle; appearance = d.appearance; autoCloseBraces = d.autoCloseBraces
         completionPopup = d.completionPopup; spellCheck = d.spellCheck
         vimKeybindings = d.vimKeybindings; followCaretInPreview = d.followCaretInPreview
-        relativeLineNumbers = d.relativeLineNumbers
+        relativeLineNumbers = d.relativeLineNumbers; autosave = d.autosave
     }
 
     /// Versioned migration. Absent stamp: nothing was ever stored (or only
@@ -431,6 +450,7 @@ final class EditorPreferences {
         case .vimKeybindings: defaults.set(storage.vimKeybindings, forKey: k)
         case .followCaretInPreview: defaults.set(storage.followCaretInPreview, forKey: k)
         case .relativeLineNumbers: defaults.set(storage.relativeLineNumbers, forKey: k)
+        case .autosave: defaults.set(storage.autosave, forKey: k)
         }
     }
 
@@ -676,6 +696,10 @@ struct EditorPreferencesView: View {
                 Toggle("Preview follows the caret", isOn: $prefs.followCaretInPreview)
                     .accessibilityHint("While you edit, the preview scrolls to what you are changing — only when it is off screen, and not while you scroll the preview yourself. Command-Shift-J reveals the caret at any time.")
                 ErrorLensPreferenceRows() // inline diagnostic text at line ends (ErrorLens.swift)
+            }
+            Section("Saving") {
+                Toggle("Autosave", isOn: $prefs.autosave)
+                    .accessibilityHint("Writes the open file to disk a couple of seconds after you stop typing, on top of Command-S. Only applies to a file that has already been saved once; a new, never-saved buffer still needs Command-S or Save As.")
             }
             if showConversion { ConversionPreferencesSection() } // provider picker, model, API key (Keychain) (ConversionPreferencesView.swift)
             Section {

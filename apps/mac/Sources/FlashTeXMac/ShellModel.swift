@@ -395,6 +395,25 @@ final class ShellModel {
         if let s = ProcessInfo.processInfo.environment["FLASHTEX_DEBOUNCE_MS"], let ms = Double(s) { return max(0, ms) / 1000 }
         return 0
     }()
+    @ObservationIgnored private var autosaveWork: DispatchWorkItem?
+    /// Quiet time after the last edit before autosave writes to disk
+    /// (`EditorPreferences.autosave`, owner: "autosave should be on by
+    /// default"). `FLASHTEX_AUTOSAVE_MS` overrides; 0 makes it synchronous.
+    static let autosaveInterval: TimeInterval = {
+        if let s = ProcessInfo.processInfo.environment["FLASHTEX_AUTOSAVE_MS"], let ms = Double(s) { return max(0, ms) / 1000 }
+        return 2
+    }()
+    /// True under XCTest with no explicit override: a live several-second
+    /// background timer could fire mid-test and write a file a *different*
+    /// test is asserting about (same reasoning as `PreviewHUD.lingerSuppressed`
+    /// and `ThinSplitViewController.autosaveEnabled`). `scheduleAutosave`
+    /// still records the pending save; a test exercises it deterministically
+    /// through `flushPendingAutosave()` instead of waiting out real time.
+    static let autosaveSuppressedUnderTest: Bool = {
+        guard ProcessInfo.processInfo.environment["FLASHTEX_AUTOSAVE_MS"] == nil else { return false }
+        return ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || ProcessInfo.processInfo.environment["XCTestSessionIdentifier"] != nil
+    }()
     /// Revision of the compile request currently in flight (nil if idle).
     var inFlightRevision: Int?
     /// Revision the editor buffer corresponds to. Bumps on every edit so the
@@ -805,6 +824,7 @@ final class ShellModel {
         editorRevision += 1
         TypingBench.shared.noteRevision(editorRevision) // keystroke -> paint instrumentation
         scheduleAutoCompile()
+        scheduleAutosave()
         caretFollow.note(.edit) // CaretFollow.swift: an edit also re-arms following after a manual scroll
         bridgeTextChanged(path: activePath, old: old, new: text, base: base, revision: editorRevision)
     }
@@ -817,6 +837,40 @@ final class ShellModel {
         let item = DispatchWorkItem { [weak self] in self?.compile() }
         debounce = item
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounceInterval, execute: item)
+    }
+
+    /// Writes the entry document to disk a quiet moment after the last edit
+    /// (`EditorPreferences.autosave`, default on — owner: "autosave should
+    /// be on by default"). Scoped to the entry document only: a non-entry
+    /// member's save goes through the async, conflict-panel-capable
+    /// `project.saveDocument` path (`saveTexInteractive`) that autosave
+    /// deliberately does not drive in the background. Never touches a
+    /// buffer with no file yet (`documentURL == nil`) — `saveTex()` would
+    /// otherwise fall back to `saveTexAs()` and pop a Save panel mid-typing.
+    private func scheduleAutosave() {
+        autosaveWork?.cancel()
+        autosaveWork = nil
+        guard EditorPreferences.shared.autosave, activePath == project.entryPath, documentURL != nil else { return }
+        guard !Self.autosaveSuppressedUnderTest else { return } // flushPendingAutosave() still performs it, on demand
+        if Self.autosaveInterval == 0 { performAutosave(); return }
+        let item = DispatchWorkItem { [weak self] in self?.performAutosave() }
+        autosaveWork = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.autosaveInterval, execute: item)
+    }
+
+    private func performAutosave() {
+        autosaveWork = nil
+        guard EditorPreferences.shared.autosave, activePath == project.entryPath, documentURL != nil, isDirty else { return }
+        _ = saveTex()
+    }
+
+    /// Performs a pending autosave immediately instead of waiting out
+    /// `autosaveInterval` (real time is suppressed under XCTest, see
+    /// `autosaveSuppressedUnderTest`, so tests exercise the write through
+    /// here rather than a live timer that could race the test).
+    func flushPendingAutosave() {
+        autosaveWork?.cancel()
+        performAutosave()
     }
 
     // MARK: navigation (preview -> source)
