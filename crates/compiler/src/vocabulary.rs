@@ -21,7 +21,7 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
     "dots", "ldots", "dotsc", "dotso", "cdots", "dotsb", "dotsm", "dotsi", "iint", "lbrace",
     "rbrace", "iiint", "bmod", "mod", "dfrac", "tfrac", "cfrac", "frac", "begin", "sqrt", "overset",
     "stackrel", "underset", "sideset", "binom", "dbinom", "tbinom", "mathbf", "textbf", "boxed", "overline",
-    "underline", "underbar", "tag", "pmod", "text", "bigl", "bigr", "quad", "qquad", "mathbb", "hat", "bar",
+    "underline", "underbar", "tag", "pmod", "text", "bigl", "bigr", "quad", "qquad", "mathbb", "mathcal", "mathfrak", "hat", "bar",
     "vec", "tilde", "dot", "ddot", "check", "breve", "acute", "grave", "widehat", "widetilde",
     "dddot", "ddddot", "mathring",
     "overbrace", "underbrace", "overrightarrow", "overleftarrow", "overleftrightarrow",
@@ -30,6 +30,17 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
     "underrightarrow", "underleftarrow", "underleftrightarrow", "Bbb", "bold", "dashrightarrow",
     "dasharrow", "dashleftarrow",
     "mathllap", "mathrlap", "mathclap",
+];
+
+/// Counter-printing commands the expansion pass executes itself
+/// (`tex-expansion` primitives `\arabic`, `\roman`/`\Roman`, `\alph`/`\Alph`).
+/// Chained into `implemented_commands()` below so `is_known_command` sees
+/// them as implemented while `closest_commands_uncached` keeps the
+/// `\alph`/`\Alph` case-only tie that stops `\lph` auto-fixing to the wrong
+/// command (each verified by a real compile, issue #715 follow-up).
+#[rustfmt::skip]
+const EXPANSION_COUNTER_COMMANDS: &[&str] = &[
+    "arabic", "roman", "Roman", "alph", "Alph",
 ];
 
 /// Real LaTeX2e, amsmath/amssymb and widely used package commands this
@@ -42,11 +53,13 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
 /// `\newlength`, `\AtBeginDocument`, `\makeatother`) are
 /// implemented and intentionally absent here — each verified by a real
 /// compile (issue #715). (`\settowidth` is expansion-executed too but is
-/// deliberately NOT in that set: see the entry below.) The one exception
-/// is `\Alph`, kept below: it is in
-/// no `implemented_commands()` table, so delisting it would make a working
-/// command read as `unknown_command`, and it is `\alph`'s case-only tie that
-/// keeps `\lph` from auto-fixing to the wrong command.
+/// deliberately NOT in that set: see the entry below.) The
+/// `\arabic`/`\roman`/`\Roman`/`\alph`/`\Alph` family and the
+/// `\mathcal`/`\mathfrak` math alphabets are likewise implemented and live
+/// in `implemented_commands()`' own tables (`EXPANSION_COUNTER_COMMANDS`,
+/// `MATH_COMMANDS`), so they are absent here too — each verified by a real
+/// compile (issue #715 follow-up). `\mathscr`/`\pmb` stay listed: they
+/// genuinely are not supported in math mode.
 #[rustfmt::skip]
 const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // LaTeX2e document structure and front matter.
@@ -79,7 +92,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // only allocates a register, no measurement involved.)
     "settowidth",
     "newtheorem",
-    "arabic", "roman", "Roman", "alph", "Alph", "the", "makeatletter",
+    "the", "makeatletter",
     "newif", "relax", "expandafter", "csname", "endcsname",
     "ensuremath", "protect",
     "verb", "geometry", "RequirePackage",
@@ -93,7 +106,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "subcaption", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
     "intertext", "shortintertext", "substack", "xrightarrow", "xleftarrow",
-    "mathcal", "mathfrak", "mathscr", "pmb",
+    "mathscr", "pmb",
     "limits", "nolimits", "displaylimits", "colon", "eqqcolon", "Coloneqq", "Eqqcolon",
     "vcentcolon", "dblcolon", "iff", "implies", "impliedby",
     "genfrac", "operatornamewithlimits", "cancel", "bcancel", "xcancel",
@@ -138,6 +151,7 @@ fn implemented_commands() -> impl Iterator<Item = &'static str> {
         .iter()
         .copied()
         .chain(MATH_COMMANDS.iter().copied())
+        .chain(EXPANSION_COUNTER_COMMANDS.iter().copied())
         .chain(COMMAND_GLYPHS.iter().map(|(name, _)| *name))
         .chain(crate::amssymb::command_names())
         .chain(OPERATOR_NAMES.iter().copied())
@@ -593,6 +607,72 @@ mod tests {
             .map(|item| item.text.as_str())
             .collect();
         assert_eq!(rendered, "0.0pt", "\\settowidth now measures a real width — this is expected once #492 lands a real BoxMeasurer: remove the KNOWN_UNIMPLEMENTED_COMMANDS entry for \"settowidth\" and delete this test in the same change");
+    }
+
+    /// Follow-up to issue #715: the counter-printing family
+    /// (`\arabic`/`\roman`/`\Roman`/`\alph`/`\Alph`, `tex-expansion`
+    /// primitives) and the `\mathcal`/`\mathfrak` math alphabets (real
+    /// `math.rs` dispatch, beside `\mathbb`) are implemented, so they belong
+    /// to `implemented_commands()`' tables, not `KNOWN_UNIMPLEMENTED_COMMANDS`.
+    /// Each moved name is confirmed by a real compile with zero
+    /// unsupported/unknown-command diagnostics. `\mathscr`/`\pmb` stay listed:
+    /// they genuinely are not supported in math mode. The `\alph`/`\Alph`
+    /// case-only tie must survive the move — both names stay visible to
+    /// `closest_commands_uncached` through `implemented_commands()` — so
+    /// `\lph` still offers no mechanical fix.
+    #[test]
+    fn moved_implemented_commands_are_known_and_compile_clean() {
+        use crate::diagnostics::DiagnosticCode;
+        for name in [
+            "arabic", "roman", "Roman", "alph", "Alph", "mathcal", "mathfrak",
+        ] {
+            assert!(
+                implemented_commands().any(|c| c == name),
+                "\\{name} is implemented but invisible to implemented_commands()"
+            );
+            assert!(
+                !KNOWN_UNIMPLEMENTED_COMMANDS.contains(&name),
+                "\\{name} is implemented and must not be listed as unimplemented"
+            );
+            assert!(is_known_command(name), "\\{name}");
+            assert!(closest_commands(name).is_empty(), "\\{name}");
+        }
+        for text in [
+            "\\newcounter{c}\\setcounter{c}{3}\\arabic{c}",
+            "\\newcounter{c}\\setcounter{c}{3}\\roman{c}",
+            "\\newcounter{c}\\setcounter{c}{3}\\Roman{c}",
+            "\\newcounter{c}\\setcounter{c}{3}\\alph{c}",
+            "\\newcounter{c}\\setcounter{c}{3}\\Alph{c}",
+            "Math $\\mathcal{A}$ here.",
+            "\\usepackage{amsfonts}\nMath $\\mathfrak{A}$ here.",
+        ] {
+            let output = crate::incremental::compile_full(text, Default::default());
+            let bad: Vec<_> = output
+                .diagnostics
+                .iter()
+                .filter(|d| {
+                    matches!(
+                        d.code,
+                        Some(DiagnosticCode::UnsupportedFeature)
+                            | Some(DiagnosticCode::UnknownCommand)
+                    )
+                })
+                .collect();
+            assert!(bad.is_empty(), "{text:?}: {bad:?}");
+        }
+        // The move must not dissolve the case-only tie: both names are still
+        // candidates, so neither is offered as a mechanical fix.
+        let tie = closest_commands("lph");
+        assert!(
+            tie.contains(&"alph") && tie.contains(&"Alph"),
+            "{tie:?}"
+        );
+        assert_eq!(unambiguous_command_fix("lph"), None);
+        // Genuinely unimplemented: these stay listed and unsupported.
+        for name in ["mathscr", "pmb"] {
+            assert!(KNOWN_UNIMPLEMENTED_COMMANDS.contains(&name), "{name}");
+            assert!(!implemented_commands().any(|c| c == name), "{name}");
+        }
     }
 
     /// Same disjointness invariant for environments (issue #715): the known
