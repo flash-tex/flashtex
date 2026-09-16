@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/f12-float-tabular",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/763",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T13:32:28Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-F12-FLOAT-TABULAR",
-  "updated_utc": "2026-09-16T13:32:28Z"
+  "updated_utc": "2026-09-16T14:06:13Z"
 }
