@@ -1,0 +1,120 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{siunitx}
+
+\title{Determination of Gravitational Acceleration via a Simple Pendulum}
+\author{J. Whitfield, R. Okafor, and S. Liang \\ Physics 101L, Section 4}
+\date{March 14, 2025}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We measured the local acceleration due to gravity, $g$, by timing the small-angle
+oscillations of a simple pendulum of variable length. Using a linear fit of period
+squared against length, we obtained $g = \SI{9.79}{\metre\per\second\squared}$, within
+\SI{0.2}{\percent} of the accepted value of $\SI{9.81}{\metre\per\second\squared}$. Sources
+of systematic error, including air resistance and finite string mass, are discussed in
+Section~\ref{sec:discussion}.
+\end{abstract}
+
+\section{Introduction}
+
+For small angular displacements $\theta_0 \leq \SI{10}{\degree}$, the period of a simple
+pendulum of length $L$ is well approximated by
+\begin{equation}
+  T = 2\pi \sqrt{\frac{L}{g}},
+  \label{eq:period}
+\end{equation}
+where $g$ is the local gravitational acceleration. Squaring Equation~\ref{eq:period} gives
+a linear relationship between $T^2$ and $L$,
+\[
+  T^2 = \frac{4\pi^2}{g}\, L,
+\]
+whose slope, once fit to data, yields $g$ directly.\footnote{This linearization avoids the
+bias introduced by fitting $T$ against $\sqrt{L}$ directly, since ordinary least squares
+assumes additive, not multiplicative, noise.}
+
+\section{Experimental Setup}
+
+A brass bob of mass \SI{50}{\gram} was suspended from a low-stretch nylon string, with
+length $L$ measured from the pivot to the bob's center using a meter stick (uncertainty
+\SI{1}{\milli\metre}). The pendulum was displaced by approximately \SI{8}{\degree} and
+released from rest; the time for 20 complete oscillations was recorded with a digital
+stopwatch (uncertainty \SI{0.2}{\second}) to reduce the relative error in a single period.
+
+We tested five string lengths, ranging from \SI{0.20}{\metre} to \SI{1.00}{\metre} in
+\SI{0.20}{\metre} increments. Figure~\ref{fig:setup} shows the fitted relationship between
+period squared and pendulum length.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[draft,width=0.8\linewidth]{plot.png}
+  \caption{Measured period squared, $T^2$, plotted against pendulum length $L$, with a
+    linear least-squares fit (dashed line) whose slope determines $g$ via
+    Equation~\ref{eq:period}.}
+  \label{fig:setup}
+\end{figure}
+
+\section{Results}
+
+The raw timing data and derived periods are summarized in Table~\ref{tab:data}. Each period
+$T$ was obtained by dividing the time for 20 oscillations by 20.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Pendulum length, oscillation timing, and derived period.}
+  \label{tab:data}
+  \begin{tabular}{S[table-format=1.2] S[table-format=2.2] S[table-format=1.3] S[table-format=1.3]}
+    \toprule
+    {$L$ (\si{\metre})} & {$t_{20}$ (\si{\second})} & {$T$ (\si{\second})} & {$T^2$ (\si{\second\squared})} \\
+    \midrule
+    0.20 & 17.92 & 0.896 & 0.803 \\
+    0.40 & 25.36 & 1.268 & 1.608 \\
+    0.60 & 31.05 & 1.553 & 2.410 \\
+    0.80 & 35.88 & 1.794 & 3.218 \\
+    1.00 & 40.11 & 2.006 & 4.024 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+A linear regression of $T^2$ against $L$ gives a slope of $\SI{4.031}{\second\squared\per\metre}$,
+from which
+\[
+  g = \frac{4\pi^2}{\text{slope}} = \frac{4\pi^2}{4.031} = \SI{9.79}{\metre\per\second\squared}.
+\]
+This compares favorably with the textbook value $\SI{9.81}{\metre\per\second\squared}$. For
+reference, the elementary charge used in unrelated calibration checks on the photogate
+electronics was taken as $\num{1.6e-19}\,\si{\coulomb}$, and the photogate's internal
+resistor was rated at $\SI{220}{\ohm}$, i.e.\ $220\,\si{\ohm}$.
+
+\section{Discussion}
+\label{sec:discussion}
+
+Several effects could account for the small \SI{0.2}{\percent} discrepancy between our
+measured and accepted values of $g$:
+
+\begin{itemize}
+  \item \textbf{Finite amplitude.} Even at $\theta_0 = \SI{8}{\degree}$, the small-angle
+    approximation introduces a fractional period error of order $\theta_0^2/16$.
+  \item \textbf{Air resistance.} Viscous drag on the bob slightly damps the oscillation and
+    can lengthen the effective period.
+  \item \textbf{String mass and stretch.} The nylon string is not perfectly massless or
+    inextensible, which was neglected in Equation~\ref{eq:period}.
+  \item \textbf{Timing reaction delay.} Human reaction time in starting and stopping the
+    stopwatch contributes a roughly constant offset that partially cancels when timing 20
+    oscillations rather than one.
+\end{itemize}
+
+\section{Conclusion}
+
+Using the period-squared-versus-length method, we determined $g = \SI{9.79}{\metre\per\second\squared}$,
+in close agreement with the accepted terrestrial value. Future work could repeat the
+measurement at larger amplitudes to quantify the finite-amplitude correction directly,
+or use a photogate timing system to reduce reaction-time uncertainty below the
+\SI{0.2}{\second} level achieved here with a handheld stopwatch.
+
+\end{document}

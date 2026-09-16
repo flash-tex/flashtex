@@ -58,7 +58,7 @@ struct WordCountPopover: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
             Text("Document Statistics").font(.headline)
             if let total = model.wordCount.total {
                 Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 2) {
@@ -69,27 +69,27 @@ struct WordCountPopover: View {
                     statRow("Inline math", "\(total.inlineMath)")
                     statRow("Display math", "\(total.displayMath)")
                 }
-                .font(.caption)
+                .font(DS.Fonts.secondary)
                 if model.wordCount.sections.isEmpty {
-                    Text("No sections in this document.").font(.caption).foregroundStyle(.secondary)
+                    Text("No sections in this document.").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
                 } else {
                     Divider()
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: DS.Space.xs) {
                             ForEach(Array(model.wordCount.sections.enumerated()), id: \.offset) { _, section in
                                 sectionRow(section)
                             }
                         }
                     }
-                    .frame(maxHeight: 240)
+                    .frame(maxHeight: DS.Layout.popoverListMaxHeight)
                 }
             } else {
                 ProgressView().controlSize(.small)
-                Text("Counting…").font(.caption).foregroundStyle(.secondary)
+                Text("Counting…").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
             }
         }
-        .padding(12)
-        .frame(minWidth: 260)
+        .padding(DS.Space.l)
+        .frame(minWidth: DS.Layout.popoverMinWidth)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Document statistics")
     }
@@ -104,16 +104,16 @@ struct WordCountPopover: View {
 
     @ViewBuilder
     private func sectionRow(_ section: DocumentStatistics.SectionBreakdown) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
             if let path = section.documentPath {
-                Text(path).font(.caption2.bold()).foregroundStyle(.secondary)
+                Text(path).font(DS.Fonts.header).foregroundStyle(DS.Colors.textSecondary)
             }
             Text(section.title)
                 .lineLimit(1)
-                .padding(.leading, CGFloat(max(0, section.level)) * 10)
+                .padding(.leading, CGFloat(max(0, section.level)) * DS.Space.m)
             Spacer(minLength: 8)
             Text("\(section.counts.totalWords)").monospacedDigit().foregroundStyle(.secondary)
         }
-        .font(.caption)
+        .font(DS.Fonts.secondary)
     }
 }

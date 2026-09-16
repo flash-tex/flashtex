@@ -708,18 +708,18 @@ struct EditHistoryPanel: View {
     @State private var client = EditHistoryClient()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
             header
             controls
             if let warning = client.capacityWarning {
                 Label(warning, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(.caption).foregroundStyle(DS.Colors.severityWarning)
                     .accessibilityLabel("Retention warning: \(warning)")
                     .accessibilityIdentifier("history.capacity")
             }
             retention
             if let note = client.note {
-                Text(note).font(.caption).foregroundStyle(client.lastFailure == nil ? Color.secondary : Color.orange)
+                Text(note).font(.caption).foregroundStyle(client.lastFailure == nil ? Color.secondary : DS.Colors.severityWarning)
                     .lineLimit(3).textSelection(.enabled)
                     .accessibilityLabel("History status: \(note)")
                     .accessibilityIdentifier("history.note")
@@ -727,8 +727,8 @@ struct EditHistoryPanel: View {
             Divider()
             stacks
         }
-        .padding(12)
-        .frame(minWidth: 360, minHeight: 320)
+        .padding(DS.Space.l)
+        .frame(minWidth: DS.Layout.historyWindowMinWidth, minHeight: DS.Layout.historyWindowMinHeight)
         .onAppear { client.bind(model); client.refresh() }
         .onChange(of: model.controllerAttached) { _, attached in client.controllerAttachmentChanged(attached) }
         .onChange(of: model.activePath) { _, _ in client.refresh() }
@@ -755,7 +755,7 @@ struct EditHistoryPanel: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DS.Space.m) {
             Button { client.undo() } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
                 .disabled(!client.canUndo)
                 .help(undoHelp)
@@ -780,7 +780,7 @@ struct EditHistoryPanel: View {
             }
             Spacer()
             if model.controllerAttached, !client.bufferIsDurable {
-                Text("buffer not durable yet").font(.caption).foregroundStyle(.orange)
+                Text("buffer not durable yet").font(.caption).foregroundStyle(DS.Colors.severityWarning)
                     .accessibilityLabel("The editor buffer is not durable yet; undo and redo wait for the helper's receipt")
             }
         }
@@ -793,7 +793,7 @@ struct EditHistoryPanel: View {
 
     @ViewBuilder private var retention: some View {
         if let s = client.status {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DS.Space.xxs) {
                 ProgressView(value: min(1, s.usage))
                     .tint(s.isFull ? .red : s.nearCapacity ? .orange : .accentColor)
                     .accessibilityLabel(String(format: "Retention usage %.0f percent", s.usage * 100))
@@ -831,9 +831,9 @@ private struct HistoryRowView: View {
     let direction: EditHistory.Direction
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: row.symbol).foregroundStyle(.secondary).frame(width: 16)
-            VStack(alignment: .leading, spacing: 1) {
+        HStack(spacing: DS.Space.m) {
+            Image(systemName: row.symbol).foregroundStyle(DS.Colors.textSecondary).frame(width: DS.Size.inlineIconButton)
+            VStack(alignment: .leading, spacing: DS.Size.hairline) {
                 Text(row.title).font(.body)
                 Text(row.detail).font(.caption).foregroundStyle(.secondary)
             }
@@ -842,7 +842,7 @@ private struct HistoryRowView: View {
                 Text("×\(row.steps)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             if row.distance == 0 {
-                Text("next").font(.caption2).padding(.horizontal, 4).background(.quaternary, in: Capsule())
+                Text("next").font(.caption2).padding(.horizontal, DS.Space.xs).background(.quaternary, in: Capsule())
             }
         }
         .accessibilityElement(children: .ignore)

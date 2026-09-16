@@ -1,0 +1,14 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{listings}
+\begin{document}
+Some ordinary body text that runs for a little while so that the paragraph fills a line of the page.
+\begin{lstlisting}[language=C,basicstyle=\ttfamily]
+int main(void) {
+    int x = 42; /* comment */
+    return x;
+}
+\end{lstlisting}
+Text right after the environment continues the paragraph without an indent.
+\end{document}

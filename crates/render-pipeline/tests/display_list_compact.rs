@@ -22,7 +22,7 @@ use common::lm_available;
 use flashtex_compiler::json::{self, Value};
 use flashtex_compiler::parser::SourceDocument;
 use flashtex_render_pipeline::delta::{self, DeltaState};
-use flashtex_render_pipeline::display::{self, Caret, Carets, Cluster, DisplayList, Glyph, GlyphRun, Item, Paint, Provenance, Rect, SourceRange, Tick, Wire};
+use flashtex_render_pipeline::display::{self, Cluster, DisplayList, Glyph, GlyphRun, Item, Paint, Provenance, Rect, SourceRange, Tick, Wire};
 use flashtex_render_pipeline::display_list_compact as compact;
 use flashtex_render_pipeline::protocol::{handle_line, handle_line_with};
 use flashtex_render_pipeline::{render, FontSet, RenderCache, RenderOptions};
@@ -170,26 +170,31 @@ fn compact_lines_read_back_to_the_identical_model_on_the_corpus() {
     assert!(total_clusters > 10_000, "the corpus exercised {total_clusters} clusters");
 }
 
-/// A run that defeats every default at once: a caret pair not on the hit
-/// rect, a cluster without a glyph, multi-range and synthetic provenance,
-/// another document's path, a non-contiguous text range, a second caret on a
-/// non-last cluster, a negative source delta and a zero-advance glyph.
+/// A run that defeats every default at once: a cluster without a glyph,
+/// multi-range and synthetic provenance, another document's path, a
+/// non-contiguous text range, a run-end caret whose `x` the hit rect alone
+/// cannot derive (PR #232's one non-derivable field, stored once per run as
+/// `GlyphRun::end_caret`), a negative source delta and a zero-advance glyph.
+/// Carets themselves are never overridden here: since #232 they are derived,
+/// never stored, so there is no field left to hand an off-derivation value
+/// to.
 fn adversarial_list() -> DisplayList {
     let src = |p: &str, a, b| SourceRange { path: std::rc::Rc::from(p), start_byte: a, end_byte: b };
     let rect = |x, top, w, h| Rect { x: Tick(x), top: Tick(top), width: Tick(w), height: Tick(h) };
-    let caret = |tb, x, top, h| Caret { text_byte: tb, x: Tick(x), top: Tick(top), height: Tick(h) };
     let glyph = |gid, ox, adv, cluster| Glyph { gid, origin_x: Tick(ox), baseline_y: Tick(700), advance_x: Tick(adv), advance_y: Tick(0), cluster };
-    let run = |text: &str, glyphs: Vec<Glyph>, clusters: Vec<Cluster>| {
-        Item::GlyphRun(GlyphRun { font_id: std::rc::Rc::from("f"), font_size: Tick(12 << 20), text: text.into(), glyphs, clusters, paint: Paint::BLACK, role: display::RunRole::Text })
+    let run = |text: &str, glyphs: Vec<Glyph>, clusters: Vec<Cluster>, end_caret: Option<display::EndCaret>| {
+        Item::GlyphRun(GlyphRun { font_id: std::rc::Rc::from("f"), font_size: Tick(12 << 20), text: text.into(), glyphs, clusters, paint: Paint::BLACK, role: display::RunRole::Text, end_caret })
     };
-    let plain = |tb_start, tb_end, x, w, prov| Cluster { text_start_byte: tb_start, text_end_byte: tb_end, hit_rect: rect(x, -10, w, 20), carets: Carets { first: caret(tb_start, x, -10, 20), last: None }, provenance: prov };
+    let plain = |tb_start, tb_end, x, w, prov| Cluster { text_start_byte: tb_start, text_end_byte: tb_end, hit_rect: rect(x, -10, w, 20), provenance: prov };
     let items = vec![
-        // Every default holds: `{}` clusters.
-        run("ab", vec![glyph(1, 0, 5, 0), glyph(2, 5, 6, 1)], vec![plain(0, 1, 0, 5, Provenance::Source(src("m", 10, 11))), {
-            let mut c = plain(1, 2, 5, 6, Provenance::Source(src("m", 11, 12)));
-            c.carets.last = Some(caret(2, 11, -10, 20));
-            c
-        }]),
+        // Every default holds: `{}` clusters, plus a run-end caret whose `x`
+        // happens to match the last cluster's own hit-rect-derived end (5 + 6).
+        run(
+            "ab",
+            vec![glyph(1, 0, 5, 0), glyph(2, 5, 6, 1)],
+            vec![plain(0, 1, 0, 5, Provenance::Source(src("m", 10, 11))), plain(1, 2, 5, 6, Provenance::Source(src("m", 11, 12)))],
+            Some(display::EndCaret { text_byte: 2, x: Tick(11) }),
+        ),
         // Ligature (3-byte scalar, 2 source bytes), accent (2 scalars in one
         // cluster), a gap in the source chain, a backwards source range.
         run(
@@ -200,34 +205,40 @@ fn adversarial_list() -> DisplayList {
                 plain(3, 6, 7, 5, Provenance::Source(src("m", 30, 33))),
                 plain(6, 7, 12, 4, Provenance::Source(src("m", 5, 6))),
             ],
+            None,
         ),
-        // Overrides: caret pair off the rect, no glyph, multi-range, synthetic,
-        // other path, non-contiguous text, second caret on a non-last cluster,
-        // hit rect x/width and top/height off the derivation.
+        // Overrides: no glyph, multi-range, synthetic, other path,
+        // non-contiguous text, hit rect x/width and top/height off the
+        // derivation, and a run-end caret `x` the hit rect cannot derive (the
+        // TikZ case PR #232 names: the hit rect's width is clamped to one
+        // tick, the caret is not).
         run(
             "pqrstu",
             vec![glyph(7, 0, 5, 0), glyph(8, 5, 5, 2), glyph(9, 10, 5, 3), glyph(10, 15, 5, 4), glyph(11, 20, 5, 5)],
             vec![
-                Cluster { text_start_byte: 0, text_end_byte: 1, hit_rect: rect(0, -10, 5, 20), carets: Carets { first: caret(0, 1, -11, 21), last: Some(caret(1, 4, -10, 20)) }, provenance: Provenance::Source(src("m", 40, 41)) },
+                plain(0, 1, 0, 5, Provenance::Source(src("m", 40, 41))),
                 plain(1, 2, 0, 0, Provenance::Sources(vec![src("m", 41, 42), src("m", 50, 51)])),
                 plain(2, 3, 5, 5, Provenance::Synthetic("heading number".into())),
                 plain(3, 4, 10, 5, Provenance::Source(src("other.tex", 0, 1))),
-                Cluster { text_start_byte: 4, text_end_byte: 5, hit_rect: rect(16, -12, 3, 24), carets: Carets { first: caret(4, 16, -12, 24), last: None }, provenance: Provenance::Source(src("m", 44, 45)) },
-                Cluster { text_start_byte: 5, text_end_byte: 6, hit_rect: rect(20, -30, 5, 40), carets: Carets { first: caret(5, 20, -30, 40), last: Some(caret(6, 25, -30, 40)) }, provenance: Provenance::Source(src("m", 45, 46)) },
+                Cluster { text_start_byte: 4, text_end_byte: 5, hit_rect: rect(16, -12, 3, 24), provenance: Provenance::Source(src("m", 44, 45)) },
+                Cluster { text_start_byte: 5, text_end_byte: 6, hit_rect: rect(20, -30, 5, 40), provenance: Provenance::Source(src("m", 45, 46)) },
             ],
+            Some(display::EndCaret { text_byte: 6, x: Tick(25) }),
         ),
         // No sources at all (all synthetic), and a run whose text range does
         // not start at 0.
-        run("§", vec![glyph(12, 0, 3, 0)], vec![plain(0, 2, 0, 3, Provenance::Synthetic("x".into()))]),
-        run("ab", vec![glyph(13, 0, 3, 0)], vec![plain(1, 2, 0, 3, Provenance::Source(src("m", 60, 61)))]),
+        run("§", vec![glyph(12, 0, 3, 0)], vec![plain(0, 2, 0, 3, Provenance::Synthetic("x".into()))], None),
+        run("ab", vec![glyph(13, 0, 3, 0)], vec![plain(1, 2, 0, 3, Provenance::Source(src("m", 60, 61)))], None),
     ];
     DisplayList {
         project_id: "adv".into(),
         revision: 1,
         documents: vec![display::DocumentResource { path: "m".into(), revision: 1, sha256: "00".into(), byte_length: 100 }],
         fonts: vec![display::FontResource { font_id: std::rc::Rc::from("f"), sha256: "ff".into(), byte_length: 10, format: "opentype-cff".into(), face_index: 0, units_per_em: 1000, glyph_count: 100, postscript_name: "F".into(), path: None }],
-        pages: vec![display::Page { number: 1, width: Tick(612 << 20), height: Tick(792 << 20), items }],
+        pages: vec![display::Page::resident(1, Tick(612 << 20), Tick(792 << 20), items)],
         diagnostics: Vec::new(),
+        window: None,
+        document_features: None,
     }
 }
 
@@ -238,7 +249,7 @@ fn every_override_round_trips_on_an_adversarial_run() {
     let read = compact::read_runs(&line).unwrap();
     assert!(read == compact::model_runs(&list), "{line}\n{read:#?}");
     let st = stats(&line);
-    assert!(st.c == 1 && st.h == 1 && st.hv == 1 && st.l == 1 && st.s == 4 && st.ts == 1 && st.e == 1 && st.explicit == 4 && st.end_carets == 2, "{st:?}\n{line}");
+    assert!(st.c == 0 && st.h == 1 && st.hv == 1 && st.l == 1 && st.s == 4 && st.ts == 1 && st.e == 1 && st.explicit == 4 && st.end_carets == 2, "{st:?}\n{line}");
     // The first run is the override-free shape.
     assert!(line.contains("\"clusters\":[{},{}],\"end_caret\":{\"text_byte\":2,\"x\":11}"), "{line}");
     // Today's encoding of the same list is unchanged by the module (value tree parity still holds).

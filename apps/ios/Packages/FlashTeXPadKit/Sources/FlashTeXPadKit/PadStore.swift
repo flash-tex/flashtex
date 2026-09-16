@@ -4,7 +4,7 @@ import Security
 
 /// Where the iPad keeps a pairing (`pair_psk` is a long-term key, so the
 /// Keychain — nearby-v1 §6 names the Keychain as the companion's store).
-public protocol PairingStore: AnyObject {
+public protocol PairingStore: AnyObject, Sendable {
     var pairs: [PairedMac] { get }
     func upsert(_ p: PairedMac) throws
     @discardableResult func remove(fingerprint: String) throws -> Bool

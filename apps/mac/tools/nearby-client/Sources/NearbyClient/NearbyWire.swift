@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Wire types of the nearby transport (apps/mac/docs/nearby-v1-proposal.md §4).
@@ -71,11 +72,56 @@ public enum NearbyWire {
         public var projectId: String
         public var path: String
         public var baseRevision: Int
+        /// What kind of place the caret is in — text, inline/display math, a
+        /// tabular cell, verbatim, a comment — and the wrapping a capture
+        /// landing there needs. Additive and optional: a Mac that predates it
+        /// omits the key and a companion that predates it ignores it.
+        /// See protocol/proposals/transfer-v1-caret-context.md.
+        public var caretContext: CaretContext?
         enum CodingKeys: String, CodingKey {
             case destinationId = "destination_id", projectId = "project_id", path, baseRevision = "base_revision"
+            case caretContext = "caret_context"
         }
-        public init(destinationId: String, projectId: String, path: String, baseRevision: Int) {
+        public init(destinationId: String, projectId: String, path: String, baseRevision: Int,
+                    caretContext: CaretContext? = nil) {
             self.destinationId = destinationId; self.projectId = projectId; self.path = path; self.baseRevision = baseRevision
+            self.caretContext = caretContext
+        }
+    }
+
+    /// What kind of place the Mac's caret is in, so the companion can say where
+    /// a capture will land and how it will be wrapped. The Mac derives it; the
+    /// companion only displays it. Mirrors `CaretContext` in `apps/mac` and
+    /// `crates/bridge/src/caret.rs`.
+    public struct CaretContext: Codable, Equatable {
+        public var mode: String
+        public var delimiter: String?
+        public var environment: String?
+        public var environments: [String]
+        public var amsmath: Bool
+        public var wrap: String
+        enum CodingKeys: String, CodingKey { case mode, delimiter, environment, environments, amsmath, wrap }
+        public init(mode: String, delimiter: String? = nil, environment: String? = nil,
+                    environments: [String] = [], amsmath: Bool = false, wrap: String) {
+            self.mode = mode; self.delimiter = delimiter; self.environment = environment
+            self.environments = environments; self.amsmath = amsmath; self.wrap = wrap
+        }
+
+        /// One short line for the companion's destination row.
+        public var label: String {
+            switch wrap {
+            case "display": return "text — formulas wrapped in \\[ … \\] or $ … $"
+            case "inline":
+                if let environment, !environment.isEmpty, mode == "text", environment.hasPrefix("tabular") || environment == "longtable" {
+                    return "\(environment) cell — inline math only"
+                }
+                return "text — inline math only"
+            case "already_math":
+                if let environment, mode == "display_math" { return "\(environment) — already math, no delimiters added" }
+                return "\(delimiter ?? "$") math — already math, no delimiters added"
+            case "literal": return mode == "verbatim" ? "verbatim — inserted literally" : "comment — inserted literally"
+            default: return wrap
+            }
         }
     }
 
@@ -118,7 +164,7 @@ public enum NearbyWire {
 
     /// transfer-v1 acknowledgement. `durable` is true only when the Mac's bridge
     /// journaled the capture; the in-memory inbox answers false.
-    public struct CaptureReceived: Codable, Equatable {
+    public struct CaptureReceived: Codable, Equatable, Sendable {
         public var captureId: String
         public var durable: Bool
         public var hasProposal: Bool
@@ -160,8 +206,56 @@ public enum NearbyWire {
         /// A state after which polling can stop.
         public var isFinal: Bool { ["inserted", "rejected", "failed"].contains(state) }
         public var hasProposal: Bool { latex != nil }
+        /// Normally decoded from the wire; constructed directly only to
+        /// converge a row on a `capture_insert_ack` without waiting for the
+        /// next poll (the synthesized memberwise init is internal to this
+        /// package, so a companion could not).
+        public init(captureId: String, state: String, durable: Bool, latex: String? = nil,
+                    note: String? = nil, newRevision: Int? = nil) {
+            self.captureId = captureId; self.state = state; self.durable = durable
+            self.latex = latex; self.note = note; self.newRevision = newRevision
+        }
     }
 
+    /// Additive `capture_insert` request: the companion approves the proposal
+    /// `capture_status_ack.latex` showed it and asks the Mac to apply it.
+    ///
+    /// `approvedLatexSha256` is `NearbyWire.proposalDigest` of exactly the text
+    /// that was displayed. It is the approval token, not a checksum: a Mac
+    /// whose proposal has changed since answers `proposal_changed` rather than
+    /// inserting something the person never read.
+    public struct CaptureInsertRequest: Codable, Equatable {
+        public var captureId: String
+        public var approvedLatexSha256: String
+        enum CodingKeys: String, CodingKey {
+            case captureId = "capture_id", approvedLatexSha256 = "approved_latex_sha256"
+        }
+        public init(captureId: String, approvedLatexSha256: String) {
+            self.captureId = captureId; self.approvedLatexSha256 = approvedLatexSha256
+        }
+    }
+
+    /// `capture_insert_ack`. `state` is a `CaptureStatus` state string —
+    /// `inserted` on success, otherwise what the capture actually is now.
+    public struct CaptureInsertAck: Codable, Equatable {
+        public var captureId: String
+        public var state: String
+        public var newRevision: Int?
+        public var note: String?
+        enum CodingKeys: String, CodingKey {
+            case captureId = "capture_id", state, newRevision = "new_revision", note
+        }
+        public init(captureId: String, state: String, newRevision: Int? = nil, note: String? = nil) {
+            self.captureId = captureId; self.state = state; self.newRevision = newRevision; self.note = note
+        }
+    }
+
+    /// Lowercase hex SHA-256 of a proposal's UTF-8 bytes. Mirrors
+    /// `NearbyV1.proposalDigest` on the Mac; both ends must agree exactly, so
+    /// `NearbyReferenceClientTests` pins them against each other.
+    public static func proposalDigest(_ latex: String) -> String {
+        SHA256.hash(data: Data(latex.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
 
     /// `error` envelope; `id` is `null` when the request could not be identified.
     public struct ErrorLine: Decodable {

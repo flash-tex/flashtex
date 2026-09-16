@@ -1,0 +1,81 @@
+{
+ "fixture": "66-multirow-negative.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "a",
+    "x": 77.978,
+    "y_top": 95.063
+   },
+   {
+    "text": "one",
+    "x": 105.2072,
+    "y_top": 95.063
+   },
+   {
+    "text": "two",
+    "x": 105.211,
+    "y_top": 109.509
+   },
+   {
+    "text": "Up",
+    "x": 77.978,
+    "y_top": 116.732
+   },
+   {
+    "text": "three",
+    "x": 105.211,
+    "y_top": 123.955
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 137.521
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 137.521
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 137.521
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 137.521
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  []
+ ]
+}

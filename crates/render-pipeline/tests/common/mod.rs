@@ -77,7 +77,7 @@ pub struct Word {
 pub fn words_of(r: &Rendered) -> Vec<Word> {
     let mut words = Vec::new();
     for page in &r.v2.pages {
-        for it in &page.items {
+        for it in page.resident_items() {
             if let flashtex_render_pipeline::display::Item::GlyphRun(run) = it {
                 let Some(first) = run.glyphs.first() else { continue };
                 let last = run.glyphs.last().expect("non-empty");
@@ -162,4 +162,88 @@ impl Drop for ControlDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+/// One painted rule as the oracles record it: `(x, top, width, height)` in
+/// bp, top-left origin.
+pub type Rule = (f64, f64, f64, f64);
+
+/// Every `Item::Rule` of a render, per page, in the oracle's `(x, top,
+/// width, height)` bp form.
+pub fn rules_of(r: &Rendered) -> Vec<Vec<Rule>> {
+    r.v2
+        .pages
+        .iter()
+        .map(|p| {
+            p.resident_items()
+                .iter()
+                .filter_map(|it| match it {
+                    flashtex_render_pipeline::display::Item::Rule(rule) => Some((rule.x.to_bp(), rule.top.to_bp(), rule.width.to_bp(), rule.height.to_bp())),
+                    _ => None,
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// The result of pairing one page's reference rules against ours.
+#[derive(Debug, Default)]
+pub struct RuleMatch {
+    /// Reference rules paired one-to-one with a rule of ours.
+    pub matched: usize,
+    /// Reference rules left without a partner: we under-paint.
+    pub missing: Vec<Rule>,
+    /// Our rules left without a partner: we over-paint.
+    pub extra: Vec<Rule>,
+}
+
+impl RuleMatch {
+    /// The denominator a caller should score `matched` against: the larger
+    /// side, so that a spurious extra rule can never be scored as clean.
+    pub fn total(&self) -> usize {
+        self.matched + self.missing.len().max(self.extra.len())
+    }
+}
+
+/// Pairs reference rules against ours **one-to-one**, so the comparison is
+/// symmetric in both directions.
+///
+/// A rule matches when all four of `(x, top, width, height)` agree within
+/// `tol_bp` -- the predicate and tolerance the callers already used. What is
+/// new is the bookkeeping: this is a bijection built by greedy
+/// match-and-consume, not two independent "does some match exist" sweeps.
+/// Each reference rule takes the *nearest* still-unused rule of ours (nearest
+/// by the largest of the four coordinate deviations, so the choice is
+/// deterministic and does not depend on emission order when several
+/// candidates sit inside the tolerance), and that rule is then consumed.
+///
+/// Consequently:
+/// * a reference rule we never paint lands in `missing` (the direction that
+///   already worked);
+/// * a rule we paint with no pdflatex counterpart lands in `extra` -- which
+///   an `any()` sweep over the reference side could not see at all;
+/// * two of our rules collapsing onto one reference rule is caught too: only
+///   one of them can consume it, the other is `extra`.
+pub fn match_rules(want: &[Rule], got: &[Rule], tol_bp: f64) -> RuleMatch {
+    let dist = |a: &Rule, b: &Rule| (a.0 - b.0).abs().max((a.1 - b.1).abs()).max((a.2 - b.2).abs()).max((a.3 - b.3).abs());
+    let mut used = vec![false; got.len()];
+    let mut out = RuleMatch::default();
+    for r in want {
+        let best = got
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !used[*i])
+            .map(|(i, q)| (i, dist(r, q)))
+            .filter(|(_, d)| *d <= tol_bp)
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        match best {
+            Some((i, _)) => {
+                used[i] = true;
+                out.matched += 1;
+            }
+            None => out.missing.push(*r),
+        }
+    }
+    out.extra = got.iter().zip(&used).filter(|(_, u)| !**u).map(|(q, _)| *q).collect();
+    out
 }

@@ -18,9 +18,24 @@ Development-time extraction only (no TeX at runtime). Sources, resolved with
 * `apps/mac/Fonts/latinmodern-math.otf` / `NewCMMath-Regular.otf`: which face
   carries every character (Latin Modern Math first) and its advance.
 
-Kernel commands `amsfonts` only redefines (`\angle`, `\hbar`, `\mho`,
-`\sqsubset`, `\sqsupset`, `\rightleftharpoons`) keep their kernel glyphs and
-are not listed.
+Nothing declared by those two files is skipped. An earlier revision dropped
+`\angle`, `\hbar`, `\mho`, `\sqsubset`, `\sqsupset` and `\rightleftharpoons`
+as "kernel commands amsfonts only redefines", which was wrong twice over,
+checked against pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025):
+
+* `\mho`, `\sqsubset` and `\sqsupset` are not kernel commands at all.
+  `latex.ltx` 14145/14150/14151 define them as `\not@base` stubs, so base
+  LaTeX2e answers `! LaTeX Error: Command \sqsubset not provided in base
+  LaTeX2e.`; `amsfonts.sty` 99-101 is what actually provides them.
+* `\angle`, `\hbar` and `\rightleftharpoons` are kernel commands
+  (`fontmath.ltx` 243, 241, 361), but they are kernel *composites* --
+  `\angle` an `\ialign` of rules, `\hbar` `\mathchar'26\mkern-9mu h`,
+  `\rightleftharpoons` a `\mathpalette` stack -- and amsfonts replaces each
+  with a single msam/msbm glyph of different metrics. Measured at 10pt,
+  base vs amssymb: `\angle` 6.37344pt vs 7.22223pt, `\hbar` 5.76172pt vs
+  5.40280pt, `\rightleftharpoons` the same 10.00002pt width but height
+  5.33438pt/depth 0.33437pt vs 5.22394pt/0.13539pt. So "keeps its kernel
+  glyph" was not a description of what pdfLaTeX does under amssymb.
 
 Usage: python3 scripts/gen_amssymb.py > src/amssymb.rs
 """
@@ -56,6 +71,9 @@ MANUAL = {
     "ntriangleleft": ["22EA"], "ntriangleright": ["22EB"], "eth": ["00F0"], "shortmid": ["2223"],
     "shortparallel": ["2225"], "smallsetminus": ["2216"], "thicksim": ["223C"], "thickapprox": ["2248"],
     "digamma": ["03DD"], "varkappa": ["03F0"], "backepsilon": ["03F6"],
+    # amsfonts.sty 98 puts `\hbar` on msbm "7E, the slot amssymb.sty also
+    # gives `\hslash`; unicode-math names that character only as `\hslash`.
+    "hbar": ["210F"],
 }
 EXTRA = [
     ("yen", "ord", "msam", 0x55, ["00A5"], "amsfonts.sty:64"),
@@ -72,7 +90,6 @@ EXTRA = [
     ("widehat@@", "ord", "msbm", 0x5C, ["0302"], "msbm10.tfm"),
     ("widetilde@@", "ord", "msbm", 0x5E, ["0303"], "msbm10.tfm"),
 ]
-SKIP = {"angle", "hbar", "mho", "sqsubset", "sqsupset", "rightleftharpoons"}
 ALIASES = [("restriction", "upharpoonright"), ("Doteq", "doteqdot"), ("doublecup", "Cup"),
            ("doublecap", "Cap"), ("llless", "lll"), ("gggtr", "ggg")]
 
@@ -118,9 +135,21 @@ def main():
     lm, nc = otf(os.path.join(FONTS, "latinmodern-math.otf")), otf(os.path.join(FONTS, "NewCMMath-Regular.otf"))
     tfm = {f: gen_cm_tfm.parse(kpse(f + ".tfm")) for f in ("msam10", "msbm10")}
 
+    # Which file declares each command decides which `\usepackage` has to be
+    # present for it to exist at all: `amsfonts.sty` is loadable on its own and
+    # declares a subset, `amssymb.sty` requires it and declares the rest.
+    # Collected over *every* declaration, before the dedup below drops the
+    # repeats, because a repeat in the other file is exactly what widens a
+    # command's availability (amsfonts.sty 141-147 re-declares `\square`,
+    # `\lozenge`, `\vartriangleright`, `\vartriangleleft`, `\trianglerighteq`,
+    # `\trianglelefteq` and `\rightsquigarrow`).
+    providers = {}
+    for name, _, _, _, where in rows:
+        providers.setdefault(name, set()).add(where.split(":")[0])
+
     seen, table = set(), []
     for name, cls, font, slot, where in rows:
-        if name in seen or "@" in name or name in SKIP:
+        if name in seen or "@" in name:
             continue
         # amsfonts.sty 141-160 repeat amssymb's `\square`..`\trianglelefteq`
         # (and `\lhd`..`\unrhd` under latexsym compatibility).
@@ -152,7 +181,16 @@ def main():
         if chosen is None:
             sys.exit(f"no face carries \\{name} {cands}")
         width = tfm[font + "10"]["chars"][slot]["w"] / 2 ** 20
-        out_rows.append((name, chosen[0], cls, font, slot, width, chosen[1], where))
+        # `EXTRA` rows are all `amsfonts.sty` declarations (the `\mathhexbox`
+        # symbols, the dashed-arrow pieces and the wide-accent pieces) plus the
+        # two msbm10 successors of amsfonts' wide accents.
+        declared = providers.get(name) or {where.split(":")[0]}
+        provider = (
+            "Amsfonts"
+            if "amsfonts.sty" in declared or where == "msbm10.tfm"
+            else "Amssymb"
+        )
+        out_rows.append((name, chosen[0], cls, font, slot, width, chosen[1], where, provider))
     for x in list(nc_adv):
         if x in lm_adv:
             del nc_adv[x]
@@ -179,6 +217,17 @@ def main():
     o.append("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]")
     o.append("pub enum SymbolClass {\n    Ord,\n    Bin,\n    Rel,\n    Open,\n    Close,\n}")
     o.append("")
+    o.append("/// Which `\\usepackage` a symbol needs to exist at all.")
+    o.append("///")
+    o.append("/// `amsfonts.sty` is loadable on its own and declares a subset;")
+    o.append("/// `amssymb.sty` requires `amsfonts` and declares the rest, so `Amsfonts`")
+    o.append("/// means \"either package\" and `Amssymb` means \"`amssymb` only\". Without the")
+    o.append("/// declaring file base LaTeX2e has no definition for the command and")
+    o.append("/// pdflatex answers \"Undefined control sequence\" (probed with `\\ifcsname`")
+    o.append("/// for every name, TeX Live 2025).")
+    o.append("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]")
+    o.append("pub enum Provider {\n    Amssymb,\n    Amsfonts,\n}")
+    o.append("")
     o.append("/// The face whose `cmap` carries every character of a symbol's `text`.")
     o.append("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]")
     o.append("pub enum Face {\n    LatinModernMath,\n    NewComputerModernMath,\n    /// An empty `text`: a piece that paints nothing of its own.\n    None,\n}")
@@ -197,15 +246,17 @@ def main():
     o.append("    /// Character width in ems of msam10/msbm10.")
     o.append("    pub width_em: f64,")
     o.append("    pub face: Face,")
+    o.append("    /// The package that has to be loaded for the command to exist.")
+    o.append("    pub provider: Provider,")
     o.append("    /// The declaring `file:line`.")
     o.append("    pub source: &'static str,")
     o.append("}")
     o.append("")
     o.append("pub const SYMBOLS: &[AmsSymbol] = &[")
-    for name, text, cls, font, slot, width, face, where in out_rows:
+    for name, text, cls, font, slot, width, face, where, provider in out_rows:
         o.append(f"    AmsSymbol {{ name: \"{name}\", text: \"{rs(text)}\", class: SymbolClass::{cls.capitalize()}, "
                  f"font: SymbolFont::{font.capitalize()}, slot: 0x{slot:02X}, width_em: {width:.6f}, "
-                 f"face: Face::{face}, source: \"{where}\" }},")
+                 f"face: Face::{face}, provider: Provider::{provider}, source: \"{where}\" }},")
     o.append("];")
     o.append("")
     o.append("/// `\\global\\let` aliases of `amssymb.sty` (68, 90, 145, 147, 157, 159).")

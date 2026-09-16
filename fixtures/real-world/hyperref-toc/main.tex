@@ -1,0 +1,178 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage[demo]{graphicx}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}
+
+\title{FlashTeX Rendering Pipeline: Architecture Reference}
+\author{FlashTeX Documentation Team}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document is an internal reference describing the stages of the
+FlashTeX rendering pipeline, from source parsing through final PDF
+emission. It is intended as a map of the codebase for new contributors and
+exercises the cross-referencing machinery --- table of contents, list of
+figures, list of tables, labels, and hyperlinks --- that the pipeline itself
+must reproduce faithfully when compared against \texttt{pdflatex}.
+\end{abstract}
+
+\tableofcontents
+\listoffigures
+\listoftables
+
+\section{Overview}
+\label{sec:overview}
+
+The pipeline is organized into four major stages, summarized in
+Table~\ref{tab:stages} on page~\pageref{tab:stages}. Each stage is described
+in its own section below, and Figure~\ref{fig:pipeline} on
+page~\pageref{fig:pipeline} shows the data flow between them.
+
+\begin{table}[ht]
+  \centering
+  \begin{tabular}{|l|l|l|}
+    \hline
+    Stage & Input & Output \\
+    \hline
+    Parsing & \texttt{.tex} source & Token stream \\
+    Layout & Token stream & Box tree \\
+    Shaping & Box tree & Glyph runs \\
+    Emission & Glyph runs & PDF bytes \\
+    \hline
+  \end{tabular}
+  \caption{The four pipeline stages}
+  \label{tab:stages}
+\end{table}
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[draft,width=0.6\textwidth]{pipeline-diagram}
+  \caption{High-level data flow through the rendering pipeline}
+  \label{fig:pipeline}
+\end{figure}
+
+See also Section~\ref{sec:appendix} for a glossary of terms used throughout
+this reference.\footnote{An expanded glossary, kept in sync with the
+codebase, is published at \url{https://example.org/flashtex/glossary}.}
+
+\section{Parsing}
+\label{sec:parsing}
+
+\subsection{Tokenization}
+\label{sec:tokenization}
+
+The tokenizer converts raw source bytes into a stream of control sequences,
+character tokens, and category-code annotations, mirroring the behavior
+described in \texttt{tex.web}. Section~\ref{sec:macro-expansion} discusses
+how these tokens are subsequently expanded.
+
+\subsubsection{Category Codes}
+
+Every input character is assigned one of sixteen category codes before any
+macro expansion takes place. This table is user-configurable via
+\texttt{\textbackslash catcode}, and the default assignment is summarized in
+Table~\ref{tab:catcodes}.
+
+\begin{table}[ht]
+  \centering
+  \begin{tabular}{|c|l|}
+    \hline
+    Code & Meaning \\
+    \hline
+    0 & Escape character \\
+    1 & Begin group \\
+    2 & End group \\
+    6 & Parameter \\
+    \hline
+  \end{tabular}
+  \caption{Selected default category codes}
+  \label{tab:catcodes}
+\end{table}
+
+\subsection{Macro Expansion}
+\label{sec:macro-expansion}
+
+Macro expansion proceeds left to right, repeatedly replacing expandable
+tokens until only primitive and unexpandable tokens remain, as summarized
+by equation~\eqref{eq:expansion}:
+
+\begin{equation}
+  \label{eq:expansion}
+  T_{n+1} = \operatorname{expand}(T_n), \qquad T_\infty = \lim_{n \to \infty} T_n.
+\end{equation}
+
+We revisit this fixed-point view again in Section~\ref{sec:layout} when
+discussing how expansion interacts with the layout stage.
+
+\section*{A Note on Compatibility}
+\addcontentsline{toc}{section}{A Note on Compatibility}
+
+This unnumbered section is nonetheless listed in the table of contents via
+an explicit \texttt{\textbackslash addcontentsline} call, which is a common
+pattern in reference documentation for marking important asides without
+disturbing the numbered section sequence.
+
+\section{Layout}
+\label{sec:layout}
+
+\subsection{Box and Glue Model}
+
+Layout consumes the expanded token stream and produces a tree of boxes
+connected by glue, following the classic TeX box-and-glue model. The
+badness of a line is computed from the total stretch or shrink required to
+reach the target width; see Table~\ref{tab:stages} for where this fits in
+the overall pipeline.
+
+\subsection{Page Breaking}
+
+Page breaking operates on the vertical list produced by paragraph
+breaking, choosing break points that minimize total badness across the
+document, consistent with the discussion in Section~\ref{sec:tokenization}.
+
+\section{Shaping}
+\label{sec:shaping}
+
+\subsection{Font Selection}
+
+Font selection resolves each glyph run to a concrete font file and glyph
+index, using the same NFSS conventions as \LaTeX{}, cross-referenced back
+to the category-code table in Table~\ref{tab:catcodes}.
+
+\subsection{Kerning and Ligatures}
+
+Kerning and ligature substitution are applied per shaping run before glyphs
+are positioned, a process that further refines the raw box widths computed
+in Section~\ref{sec:layout}.
+
+\section{Emission}
+\label{sec:emission}
+
+The final stage serializes the positioned glyph runs into PDF content
+streams. Further implementation notes are available at
+\url{https://example.org/flashtex/emission-notes}, and the full API
+reference is linked from \href{https://example.org/flashtex/api}{the API
+documentation}.
+
+\section{Appendix: Glossary}
+\label{sec:appendix}
+
+\begin{itemize}
+  \item \textbf{Badness}: a numeric measure of how far a line or page
+        deviates from its ideal width or height.
+  \item \textbf{Glue}: a flexible space with a natural size, stretch, and
+        shrink, as introduced in Section~\ref{sec:layout}.
+  \item \textbf{NFSS}: the New Font Selection Scheme used by \LaTeX{},
+        referenced in Section~\ref{sec:shaping}.
+\end{itemize}
+
+This concludes the architecture reference; refer back to
+Figure~\ref{fig:pipeline} and Table~\ref{tab:stages} for the high-level
+summary.
+
+\end{document}

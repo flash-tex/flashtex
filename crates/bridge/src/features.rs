@@ -36,13 +36,15 @@ mod tests {
     use flashtex_compiler::{
         diagnostics::Diagnostic,
         lexer::tokenize,
-        math::{parse_tokens, MathList},
+        math::{parse_tokens, MathList, MathPackages},
     };
 
     fn parse(source: &str) -> (MathList, Vec<Diagnostic>) {
         let tokens = tokenize(source);
         let mut diagnostics = Vec::new();
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        // These probes carry no document, so no package is loaded: the
+        // kernel's own math is what a feature check should see.
+        let list = parse_tokens(&tokens, MathPackages::default(), &mut diagnostics);
         (list, diagnostics)
     }
 

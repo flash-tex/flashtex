@@ -25,7 +25,7 @@ use std::rc::Rc;
 
 use flashtex_math_layout::{FontId as MathFontId, Glyph, MathFontMetrics, MathParams, OpenTypeMathConstants, SizeClass};
 
-use crate::cff::{u16_at, u32_at};
+use crate::cff::u16_at;
 use crate::fonts::LoadedFace;
 use crate::ids::GlyphId;
 
@@ -56,6 +56,34 @@ struct VertVariant {
     advance: u16,
 }
 
+/// One `GlyphPartRecord` of a `MathVariants` glyph assembly, font units.
+///
+/// `full_advance` is the part's own extent along the assembly axis (its ink
+/// height for a vertical part: every Latin Modern Math vertical part draws
+/// from its origin up to exactly `fullAdvance`). `start_connector` and
+/// `end_connector` are how much of the part may be overlapped by the
+/// neighbour before it and after it — the joint between two parts may
+/// overlap by at most `min(end of the lower, start of the upper)` and at
+/// least [`MathFonts::min_connector_overlap`]. `extender` is `partFlags`
+/// bit 0 (`fExtender`): the part may repeat to reach the wanted size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AssemblyPart {
+    pub gid: u16,
+    pub start_connector: u16,
+    pub end_connector: u16,
+    pub full_advance: u16,
+    pub extender: bool,
+}
+
+/// One `MathGlyphConstruction`: the variant records and the glyph assembly
+/// (empty when the construction has none).
+type Construction = (Vec<VertVariant>, Vec<AssemblyPart>);
+
+/// How often one extender may repeat in an assembly. A `\left(` around a
+/// page-tall box needs about 10 (Latin Modern Math's paren extender is
+/// 0.498 em); the cap only keeps a malformed font from looping.
+const MAX_ASSEMBLY_REPEATS: usize = 256;
+
 pub struct MathFonts {
     face: Rc<LoadedFace>,
     /// The double-struck face (New Computer Modern Math), when found.
@@ -68,11 +96,21 @@ pub struct MathFonts {
     sizes: MathSizes,
     constants: OpenTypeMathConstants,
     x_height_units: i16,
-    vert_variants: BTreeMap<u16, Vec<VertVariant>>,
+    /// Vertical constructions from `MathVariants`: each base glyph's
+    /// variants (advance heights, smallest first) and its assembly's parts,
+    /// bottom to top (larger delimiters and radicals, then the pieces a
+    /// delimiter taller than every variant is assembled from).
+    vert: BTreeMap<u16, Construction>,
     /// Horizontal constructions from `MathVariants`: each base glyph's
-    /// variants (advance widths) and its assembly's part glyph ids, in
-    /// left-to-right order (wide accents, `\overbrace` pieces).
-    horiz: BTreeMap<u16, (Vec<VertVariant>, Vec<u16>)>,
+    /// variants (advance widths) and its assembly's parts, left to right
+    /// (wide accents, `\overbrace` pieces).
+    horiz: BTreeMap<u16, Construction>,
+    /// `MathVariants.minConnectorOverlap`, font units: the least a part may
+    /// overlap its neighbour in an assembly (20 in Latin Modern Math).
+    min_connector_overlap: u16,
+    /// The first `ssty` (script-style) alternate of each glyph the face's
+    /// `GSUB` lists one for: Latin Modern Math's `minute` -> `minute.st`.
+    script_alternates: BTreeMap<u16, u16>,
     /// Characters with no glyph in the math font, recorded for diagnostics.
     missing: RefCell<Vec<char>>,
 }
@@ -190,15 +228,15 @@ impl MathFonts {
         };
         let vm = face.face().vertical_metrics();
         let x_height_units = if vm.x_height_declared { vm.x_height } else { 431 };
-        let vert_variants = face
+        let (min_connector_overlap, vert, horiz) = face
             .otf()
             .and_then(|f| f.table(b"MATH"))
-            .and_then(|t| parse_vertical_variants(t).ok())
+            .and_then(|t| parse_variants(t).ok())
             .unwrap_or_default();
-        let horiz = face
+        let script_alternates = face
             .otf()
-            .and_then(|f| f.table(b"MATH"))
-            .and_then(|t| parse_horizontal_constructions(t).ok())
+            .and_then(|f| f.table(b"GSUB"))
+            .and_then(|t| parse_script_alternates(t).ok())
             .unwrap_or_default();
         Some(MathFonts {
             face,
@@ -208,8 +246,10 @@ impl MathFonts {
             sizes,
             constants,
             x_height_units,
-            vert_variants,
+            vert,
             horiz,
+            min_connector_overlap,
+            script_alternates,
             missing: RefCell::new(Vec::new()),
         })
     }
@@ -262,7 +302,7 @@ impl MathFonts {
         if k == 0 {
             return Some(base);
         }
-        self.vert_variants.get(&base)?.iter().filter(|v| v.gid != base).nth(k - 1).map(|v| v.gid)
+        self.vert.get(&base)?.0.iter().filter(|v| v.gid != base).nth(k - 1).map(|v| v.gid)
     }
 
     /// The vertical variant of `ch` (drawn at `size_pt`) whose ink
@@ -278,8 +318,9 @@ impl MathFonts {
     pub fn variant_nearest(&self, ch: char, size_pt: f64, wanted: f64) -> Option<u16> {
         let base = self.base_gid(ch)?;
         let drawn = Self::math_char(ch);
-        self.vert_variants
+        self.vert
             .get(&base)?
+            .0
             .iter()
             .filter(|v| v.gid != base)
             .map(|v| (v.gid, (self.glyph_for(v.gid, drawn, size_pt).total_height() - wanted).abs()))
@@ -309,8 +350,116 @@ impl MathFonts {
             .face()
             .glyph_id(ch)
             .and_then(|g| self.horiz.get(&g.0))
-            .map(|(_, parts)| parts.clone())
+            .map(|(_, parts)| parts.iter().map(|p| p.gid).collect())
             .unwrap_or_default()
+    }
+
+    /// The parts of `ch`'s vertical glyph assembly, bottom to top (Latin
+    /// Modern Math's `(`: bottom hook, extender, top hook; `{`: bottom,
+    /// extender, middle, extender, top); empty when it has none.
+    pub fn vassembly_parts(&self, ch: char) -> &[AssemblyPart] {
+        self.face
+            .face()
+            .glyph_id(ch)
+            .and_then(|g| self.vert.get(&g.0))
+            .map(|(_, parts)| parts.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// The face's first `ssty` alternate of `gid`: the design for script
+    /// style. `None` when the face lists none.
+    pub fn script_alternate(&self, gid: u16) -> Option<u16> {
+        self.script_alternates.get(&gid).copied()
+    }
+
+    /// `MathVariants.minConnectorOverlap` in font units.
+    pub fn min_connector_overlap(&self) -> u16 {
+        self.min_connector_overlap
+    }
+
+    /// The face's units per em, for scaling assembly measurements.
+    pub fn units_per_em(&self) -> f64 {
+        f64::from(self.face.units_per_em)
+    }
+
+    /// Paints `ch`'s vertical glyph assembly to exactly `span` pt at
+    /// `size_pt`: `(glyph id, the height of its ink bottom above the bottom
+    /// of the assembly)`, bottom to top.
+    ///
+    /// The OpenType assembly algorithm: the non-extender parts appear once,
+    /// each extender repeats the same number of times, and consecutive parts
+    /// overlap. The overlap is the same at every joint (what LuaTeX and
+    /// HarfBuzz do), at least `minConnectorOverlap` and at most the joint's
+    /// own `min(endConnectorLength of the lower part, startConnectorLength
+    /// of the upper)`; the repeat count is the smallest that can cover
+    /// `span` without going below the minimum overlap. Every Latin Modern
+    /// Math vertical part draws from its origin up to exactly its
+    /// `fullAdvance`, so an assembly laid out this way has ink from 0 to
+    /// `span` and no seam. `None` when `ch` has no assembly.
+    pub fn vertical_assembly(&self, ch: char, span: f64, size_pt: f64) -> Option<Vec<(u16, f64)>> {
+        let parts = self.vassembly_parts(ch);
+        if parts.is_empty() || size_pt <= 0.0 {
+            return None;
+        }
+        let upem = self.units_per_em();
+        let want = span * upem / size_pt;
+        let min_overlap = f64::from(self.min_connector_overlap);
+        let fixed: f64 = parts.iter().filter(|p| !p.extender).map(|p| f64::from(p.full_advance)).sum();
+        let stretch: f64 = parts.iter().filter(|p| p.extender).map(|p| f64::from(p.full_advance)).sum();
+        let fixed_n = parts.iter().filter(|p| !p.extender).count();
+        let ext_n = parts.iter().filter(|p| p.extender).count();
+        // The smallest repeat count whose parts still cover `want` when they
+        // overlap by the least the font allows.
+        let mut repeats = 0usize;
+        loop {
+            let n = fixed_n + ext_n * repeats;
+            if n == 0 {
+                if ext_n == 0 {
+                    return None;
+                }
+                repeats += 1;
+                continue;
+            }
+            let longest = fixed + stretch * repeats as f64 - (n - 1) as f64 * min_overlap;
+            if longest >= want || repeats >= MAX_ASSEMBLY_REPEATS {
+                break;
+            }
+            repeats += 1;
+        }
+        let mut seq: Vec<&AssemblyPart> = Vec::new();
+        for p in parts {
+            if p.extender {
+                seq.extend(std::iter::repeat_n(p, repeats));
+            } else {
+                seq.push(p);
+            }
+        }
+        if seq.is_empty() {
+            return None;
+        }
+        let total: f64 = seq.iter().map(|p| f64::from(p.full_advance)).sum();
+        let joints = seq.len().saturating_sub(1);
+        // The uniform overlap that makes the assembly exactly `want` long,
+        // held inside the font's limits. It can only hit the upper clamp
+        // when even one fewer repeat would leave the parts below the minimum
+        // overlap, which no Latin Modern Math delimiter does.
+        let max_overlap = seq
+            .windows(2)
+            .map(|w| f64::from(w[0].end_connector.min(w[1].start_connector)))
+            .fold(f64::INFINITY, f64::min)
+            .max(min_overlap);
+        let overlap = if joints == 0 {
+            0.0
+        } else {
+            ((total - want) / joints as f64).clamp(min_overlap, max_overlap)
+        };
+        let mut out = Vec::with_capacity(seq.len());
+        let mut rise = 0.0;
+        for p in &seq {
+            out.push((p.gid, rise * size_pt / upem));
+            rise += f64::from(p.full_advance) - overlap;
+        }
+        Some(out)
     }
 
     /// The character actually drawn for a math symbol: letters and lower-case
@@ -334,6 +483,20 @@ impl MathFonts {
                 Some(ams) => ams.text.chars().next().unwrap_or(ch),
                 None => ch,
             },
+        }
+    }
+
+    /// Semantic Unicode corrections for math glyph text. This is separate
+    /// from [`math_char`], which selects the painted OpenType glyph. The
+    /// default pdfTeX cmex/cmsy maps are font-slot artefacts (for example,
+    /// `\sum` maps to `P`), so they are not the extraction oracle here.
+    pub fn extraction_text(ch: char) -> Option<&'static str> {
+        match ch {
+            '-' => Some("\u{2212}"),
+            '*' => Some("\u{2217}"),
+            '\u{03C6}' => Some("\u{03D5}"),
+            '\u{03D5}' => Some("\u{03C6}"),
+            _ => None,
         }
     }
 
@@ -395,7 +558,7 @@ impl MathFonts {
         let size_pt = self.sizes.at(size);
         let drawn = Self::math_char(ch);
         let mut out = vec![self.glyph_for(base, drawn, size_pt)];
-        if let Some(vs) = self.vert_variants.get(&base) {
+        if let Some((vs, _)) = self.vert.get(&base) {
             for v in vs {
                 if v.gid != base {
                     out.push(self.glyph_for(v.gid, drawn, size_pt));
@@ -458,78 +621,136 @@ impl MathFontMetrics for MathFonts {
     }
 }
 
-/// Reads `MathVariants.VertGlyphCoverage`/`VertGlyphConstruction` (glyph
-/// variant records only; glyph assemblies are not read).
-fn parse_vertical_variants(m: &[u8]) -> Result<BTreeMap<u16, Vec<VertVariant>>, flashtex_font_engine::Error> {
-    let mut out = BTreeMap::new();
-    let variants_off = usize::from(u16_at(m, 8)?);
-    if variants_off == 0 {
-        return Ok(out);
-    }
-    let v = variants_off;
-    let vert_cov = usize::from(u16_at(m, v + 2)?);
-    let vert_count = usize::from(u16_at(m, v + 6)?);
-    if vert_cov == 0 {
-        return Ok(out);
-    }
-    let gids = parse_coverage(m, v + vert_cov)?;
-    for (i, gid) in gids.iter().enumerate().take(vert_count) {
-        let cons = v + usize::from(u16_at(m, v + 10 + 2 * i)?);
-        let n = usize::from(u16_at(m, cons + 2)?);
-        let mut list = Vec::with_capacity(n);
-        for j in 0..n {
-            let rec = cons + 4 + 4 * j;
-            list.push(VertVariant {
-                gid: u16_at(m, rec)?,
-                advance: u16_at(m, rec + 2)?,
-            });
-        }
-        out.insert(*gid, list);
-    }
-    Ok(out)
-}
-
-/// `MathVariants` horizontal constructions: base glyph -> (variants with
-/// their advance widths, assembly part glyph ids left to right). OpenType
-/// `MathVariants`: `minConnectorOverlap`, `vertGlyphCoverage`,
+/// `MathVariants` in full: `minConnectorOverlap`, the vertical
+/// constructions and the horizontal ones.
+///
+/// OpenType `MathVariants` is `minConnectorOverlap`, `vertGlyphCoverage`,
 /// `horizGlyphCoverage`, `vertGlyphCount`, `horizGlyphCount`, then the
-/// vertical and horizontal construction offsets; a construction is
-/// `glyphAssemblyOffset`, `variantCount`, `(variantGlyph, advance)` records;
-/// an assembly is a 4-byte italics correction, `partCount` and 10-byte parts.
-fn parse_horizontal_constructions(m: &[u8]) -> Result<BTreeMap<u16, (Vec<VertVariant>, Vec<u16>)>, flashtex_font_engine::Error> {
-    let mut out = BTreeMap::new();
+/// vertical and horizontal construction offsets; a `MathGlyphConstruction`
+/// is `glyphAssemblyOffset`, `variantCount` and 4-byte `(variantGlyph,
+/// advanceMeasurement)` records; a `GlyphAssembly` is a 4-byte
+/// `italicsCorrection` `MathValueRecord`, `partCount` and 10-byte
+/// `GlyphPartRecord`s (`glyphID`, `startConnectorLength`,
+/// `endConnectorLength`, `fullAdvance`, `partFlags`).
+///
+/// Both axes read the assembly: a delimiter or brace taller than the
+/// largest variant is built from its vertical parts
+/// ([`MathFonts::vertical_assembly`]), a `\overbrace`/`\underbrace` from
+/// its horizontal ones.
+fn parse_variants(m: &[u8]) -> Result<(u16, BTreeMap<u16, Construction>, BTreeMap<u16, Construction>), flashtex_font_engine::Error> {
+    let (mut vert, mut horiz) = (BTreeMap::new(), BTreeMap::new());
     let v = usize::from(u16_at(m, 8)?);
     if v == 0 {
-        return Ok(out);
+        return Ok((0, vert, horiz));
     }
+    let min_overlap = u16_at(m, v)?;
+    let vert_cov = usize::from(u16_at(m, v + 2)?);
     let horiz_cov = usize::from(u16_at(m, v + 4)?);
     let vert_count = usize::from(u16_at(m, v + 6)?);
     let horiz_count = usize::from(u16_at(m, v + 8)?);
-    if horiz_cov == 0 {
-        return Ok(out);
+    // The construction offsets are one array of `vertGlyphCount` vertical
+    // entries followed by `horizGlyphCount` horizontal ones.
+    if vert_cov != 0 {
+        for (i, gid) in parse_coverage(m, v + vert_cov)?.iter().enumerate().take(vert_count) {
+            vert.insert(*gid, parse_construction(m, v + usize::from(u16_at(m, v + 10 + 2 * i)?))?);
+        }
     }
-    let gids = parse_coverage(m, v + horiz_cov)?;
-    for (i, gid) in gids.iter().enumerate().take(horiz_count) {
-        let cons = v + usize::from(u16_at(m, v + 10 + 2 * vert_count + 2 * i)?);
-        let assembly = usize::from(u16_at(m, cons)?);
-        let n = usize::from(u16_at(m, cons + 2)?);
-        let mut variants = Vec::with_capacity(n);
-        for j in 0..n {
-            let rec = cons + 4 + 4 * j;
-            variants.push(VertVariant {
-                gid: u16_at(m, rec)?,
-                advance: u16_at(m, rec + 2)?,
+    if horiz_cov != 0 {
+        for (i, gid) in parse_coverage(m, v + horiz_cov)?.iter().enumerate().take(horiz_count) {
+            let at = v + 10 + 2 * vert_count + 2 * i;
+            horiz.insert(*gid, parse_construction(m, v + usize::from(u16_at(m, at)?))?);
+        }
+    }
+    Ok((min_overlap, vert, horiz))
+}
+
+/// One `MathGlyphConstruction` at `cons`: its variant records and, when
+/// `glyphAssemblyOffset` is non-zero, its assembly parts in order.
+fn parse_construction(m: &[u8], cons: usize) -> Result<Construction, flashtex_font_engine::Error> {
+    let assembly = usize::from(u16_at(m, cons)?);
+    let n = usize::from(u16_at(m, cons + 2)?);
+    let mut variants = Vec::with_capacity(n);
+    for j in 0..n {
+        let rec = cons + 4 + 4 * j;
+        variants.push(VertVariant {
+            gid: u16_at(m, rec)?,
+            advance: u16_at(m, rec + 2)?,
+        });
+    }
+    let mut parts = Vec::new();
+    if assembly != 0 {
+        let a = cons + assembly;
+        let count = usize::from(u16_at(m, a + 4)?);
+        parts.reserve(count);
+        for k in 0..count {
+            let p = a + 6 + 10 * k;
+            parts.push(AssemblyPart {
+                gid: u16_at(m, p)?,
+                start_connector: u16_at(m, p + 2)?,
+                end_connector: u16_at(m, p + 4)?,
+                full_advance: u16_at(m, p + 6)?,
+                extender: u16_at(m, p + 8)? & 1 != 0,
             });
         }
-        let mut parts = Vec::new();
-        if assembly != 0 {
-            let a = cons + assembly;
-            let count = usize::from(u16_at(m, a + 4)?);
-            for k in 0..count {
-                parts.push(u16_at(m, a + 6 + 10 * k)?);
+    }
+    Ok((variants, parts))
+}
+
+/// `GSUB` `ssty` lookups -> each covered glyph's first substitute (the
+/// `ssty=1` form). Latin Modern Math's are AlternateSubst (type 3); single
+/// substitutions (type 1) and Extension wrappers (type 7) are read too, and
+/// any other lookup type is skipped. Script and language systems are not
+/// consulted: a math face's `ssty` is the same under all of them.
+fn parse_script_alternates(g: &[u8]) -> Result<BTreeMap<u16, u16>, flashtex_font_engine::Error> {
+    let malformed = |what: &str| flashtex_font_engine::Error::Malformed(format!("GSUB {what}"));
+    let mut out = BTreeMap::new();
+    let features = usize::from(u16_at(g, 6)?);
+    let lookups = usize::from(u16_at(g, 8)?);
+    let mut indices = Vec::new();
+    for i in 0..usize::from(u16_at(g, features)?) {
+        let rec = features + 2 + 6 * i;
+        if g.get(rec..rec + 4) != Some(b"ssty") {
+            continue;
+        }
+        let feature = features + usize::from(u16_at(g, rec + 4)?);
+        for j in 0..usize::from(u16_at(g, feature + 2)?) {
+            indices.push(u16_at(g, feature + 4 + 2 * j)?);
+        }
+    }
+    let lookup_count = u16_at(g, lookups)?;
+    for index in indices {
+        if index >= lookup_count {
+            return Err(malformed("lookup index"));
+        }
+        let lookup = lookups + usize::from(u16_at(g, lookups + 2 + 2 * usize::from(index))?);
+        let kind = u16_at(g, lookup)?;
+        for k in 0..usize::from(u16_at(g, lookup + 4)?) {
+            let mut sub = lookup + usize::from(u16_at(g, lookup + 6 + 2 * k)?);
+            let mut kind = kind;
+            if kind == 7 {
+                kind = u16_at(g, sub + 2)?;
+                let hi = u32::from(u16_at(g, sub + 4)?);
+                let lo = u32::from(u16_at(g, sub + 6)?);
+                sub += usize::try_from((hi << 16) | lo).map_err(|_| malformed("extension offset"))?;
+            }
+            let format = u16_at(g, sub)?;
+            let coverage = parse_coverage(g, sub + usize::from(u16_at(g, sub + 2)?))?;
+            for (c, gid) in coverage.into_iter().enumerate() {
+                let substitute = match (kind, format) {
+                    (1, 1) => gid.wrapping_add(u16_at(g, sub + 4)?),
+                    (1, 2) => u16_at(g, sub + 6 + 2 * c)?,
+                    (3, 1) => {
+                        let set = sub + usize::from(u16_at(g, sub + 6 + 2 * c)?);
+                        if u16_at(g, set)? == 0 {
+                            continue;
+                        }
+                        u16_at(g, set + 2)?
+                    }
+                    _ => break,
+                };
+                out.entry(gid).or_insert(substitute);
             }
         }
-        out.insert(*gid, (variants, parts));
     }
     Ok(out)
 }
@@ -561,7 +782,6 @@ fn parse_coverage(b: &[u8], at: usize) -> Result<Vec<u16>, flashtex_font_engine:
             return Err(flashtex_font_engine::Error::Unsupported(format!("coverage format {other}")));
         }
     }
-    let _ = u32_at; // keep the helper linked for future assembly parsing
     Ok(gids)
 }
 
@@ -600,6 +820,57 @@ mod tests {
     }
 
     #[test]
+    fn vertical_assemblies_are_read_from_math_variants() {
+        let Some(m) = lm_math() else { return };
+        assert_eq!(m.min_connector_overlap(), 20);
+        // Latin Modern Math's `(`: bottom hook, extender, top hook, bottom to
+        // top, the ends connecting over half the extender's length.
+        let paren = m.vassembly_parts('(');
+        assert_eq!(
+            paren,
+            [
+                AssemblyPart { gid: 2503, start_connector: 0, end_connector: 249, full_advance: 1495, extender: false },
+                AssemblyPart { gid: 2504, start_connector: 498, end_connector: 498, full_advance: 498, extender: true },
+                AssemblyPart { gid: 2505, start_connector: 249, end_connector: 0, full_advance: 1495, extender: false },
+            ]
+        );
+        // `{` has a middle part between two extenders; `\lceil` has no bottom
+        // and `\lfloor` no top, exactly as cmex's recipes do.
+        let brace = m.vassembly_parts('{');
+        assert_eq!(brace.len(), 5);
+        assert_eq!(brace.iter().filter(|p| p.extender).count(), 2);
+        assert_eq!(brace[2].full_advance, 1500);
+        assert!(m.vassembly_parts('\u{2308}')[0].extender, "\\lceil starts with its extender");
+        assert!(m.vassembly_parts('\u{230A}').last().expect("parts").extender, "\\lfloor ends with its extender");
+        // The extender of `|` is longer than cmex's 0.6 em repeat, which is
+        // why a piece cannot be painted on its own.
+        assert_eq!(m.vassembly_parts('|')[1].full_advance, 1202);
+        assert!(m.vassembly_parts('x').is_empty());
+    }
+
+    #[test]
+    fn an_assembly_is_built_to_the_wanted_span() {
+        let Some(m) = lm_math() else { return };
+        // pdfTeX stacks `\left[` around a six-row array to 72.00072 pt; the
+        // font needs its bottom, five extenders and its top for that.
+        let parts = m.vertical_assembly('[', 72.00072, 10.0).expect("assembly");
+        assert_eq!(parts.len(), 7);
+        assert_eq!(parts.first().expect("parts").1, 0.0, "the first part starts at the bottom");
+        let (top_gid, top_rise) = *parts.last().expect("parts");
+        let full = |gid: u16| {
+            f64::from(m.vassembly_parts('[').iter().find(|p| p.gid == gid).expect("part").full_advance) / 100.0
+        };
+        assert!((top_rise + full(top_gid) - 72.00072).abs() < 1e-6, "the last part ends at the top");
+        for pair in parts.windows(2) {
+            let overlap = full(pair[0].0) - (pair[1].1 - pair[0].1);
+            assert!((0.2..=5.0).contains(&overlap), "overlap {overlap} pt");
+        }
+        // A span the fixed parts alone already cover needs no extender pass.
+        let short = m.vertical_assembly('[', 30.0, 10.0).expect("assembly");
+        assert!(short.len() >= 2 && short.len() < 7, "{}", short.len());
+    }
+
+    #[test]
     fn letters_are_math_italic_and_operators_have_display_variants() {
         let Some(m) = lm_math() else { return };
         let x = m.glyph('x', SizeClass::Text).unwrap();
@@ -613,6 +884,42 @@ mod tests {
         assert!(parens.len() >= 3, "{} paren sizes", parens.len());
         assert!(parens.windows(2).all(|w| w[0].total_height() <= w[1].total_height()));
         assert!(m.radical_sizes(SizeClass::Text).len() >= 2);
+    }
+
+    #[test]
+    fn extraction_text_uses_semantic_math_unicode() {
+        let expected = [
+            ('-', "−"),
+            ('*', "∗"),
+            ('\u{03C6}', "ϕ"),
+            ('\u{03D5}', "φ"),
+        ];
+        for (ch, text) in expected {
+            assert_eq!(MathFonts::extraction_text(ch), Some(text), "{ch:?}");
+        }
+        // pdfTeX's default cmex/cmsy mappings make copy-paste worse by
+        // exposing font-slot artefacts such as `\sum` -> `P`; semantic
+        // Unicode, not that output, is the contract.
+        for ch in [
+            '\u{2217}',
+            '\u{2218}',
+            '\u{22C5}',
+            '\u{2216}',
+            '\u{0338}',
+            '\u{21A6}',
+            '\u{27F9}',
+            '\u{27F6}',
+            '\u{21AA}',
+            '\u{03BC}',
+            '\u{0394}',
+            '\u{03A9}',
+            '\u{2211}',
+            '\u{220F}',
+            '\u{222B}',
+            '\u{222E}',
+        ] {
+            assert_eq!(MathFonts::extraction_text(ch), None, "{ch:?}");
+        }
     }
 
     #[test]

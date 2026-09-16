@@ -39,10 +39,14 @@ python3 -m unittest discover -s tools/visual-oracle -p 'test_*.py' -v   # 8 pure
    every glyph's origin; glyphs become words at gaps wider than 0.16 em, a new
    baseline or a new text object. Text for alignment comes from
    `/Differences`, else the OT1/T1 ligature slots + ASCII (`?` otherwise).
-4. **Candidate geometry**: the rendering-v2 display list's `glyph_run` items
-   (one per word in the pinned producer; split on space clusters), origin of
-   the first glyph in bp (`bp_2pow20`), baseline from the page top, with the
-   cluster source spans (`path:start-end`) of the word.
+4. **Candidate geometry**: the rendering-v2 display list's glyphs, origin in
+   bp (`bp_2pow20`) and baseline from the page top, grouped into words by
+   **the same function as step 3** (`pdftext.words_from_glyphs`), with the
+   cluster source spans (`path:start-end`) of each word. A `glyph_run` is a
+   typesetting artefact, not a word — the pipeline starts a new run at every
+   face change — so grouping by run made one siunitx `S` cell three words
+   against the reference's one. There is one definition of a word in this
+   tool and both sides use it.
 5. **Alignment** per page: `difflib.SequenceMatcher` on normalised word text.
    For every aligned pair `dx`, `dy` (candidate − reference, bp; 1 bp =
    1.00375 TeX pt). Per page: aligned / unaligned counts, median shift, mean
@@ -85,8 +89,17 @@ python3 -m unittest discover -s tools/visual-oracle -p 'test_*.py' -v   # 8 pure
 
 ## Honest limits
 
-- Word alignment is by text only; math words in the reference are per-glyph
-  runs and rarely align. `?` glyph names are dropped from the alignment key.
+- Word alignment is by text only; `?` glyph names are dropped from the
+  alignment key. Math still aligns less often than prose, but not because
+  the two sides disagree about word boundaries: both group with
+  `pdftext.words_from_glyphs`, so a font change never ends a word on either
+  side.
+- Grouping is geometric, so it reports stray ink instead of hiding it: a run
+  whose glyphs jump backwards (more than half an em) is split, and the
+  fragment keeps its own origin. `fixtures/real-world/unicode-accents` has
+  one — five glyphs of `ellipsis\dots;` sit at x = -12321 bp — which
+  grouping by run concealed inside a word whose `x` came from its first
+  glyph.
 - The reference reader is not a general PDF parser: XObjects, inline images,
   Type 3 / CID fonts and non-Flate filters are reported in `notes`, not read.
 - Ghostscript anti-aliases; pixel counts are the secondary key only.

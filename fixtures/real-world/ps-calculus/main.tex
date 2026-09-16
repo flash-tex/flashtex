@@ -1,0 +1,159 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{enumitem}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\C}{\mathbb{C}}
+
+\title{Problem Set 4: Sequences, Series, and Integration}
+\author{M. Alvarez \\ Math 201, Section B}
+\date{October 3, 2025}
+
+\begin{document}
+\maketitle
+
+\noindent This problem set covers convergence tests for infinite series, techniques of
+integration, and an introduction to linear systems via matrix notation. Show all work;
+partial credit is awarded for correct setup even when the final numeric answer is wrong.
+
+\section*{Problem 1}
+
+Let $\{a_n\}_{n=1}^{\infty}$ be the sequence defined by $a_n = \dfrac{2n^2 + 3n - 1}{5n^2 + n}$.
+
+\begin{enumerate}[label=(\alph*)]
+  \item Compute $\displaystyle\lim_{n \to \infty} a_n$, showing your reasoning.
+  \item Determine whether the series $\displaystyle\sum_{n=1}^{\infty} (a_n - \tfrac{2}{5})$
+        converges or diverges, and justify your answer using an appropriate test.
+  \item Is the sequence $\{a_n\}$ monotonic for $n \geq 1$? Prove your claim.
+\end{enumerate}
+
+\paragraph{Solution.} For part (a), divide numerator and denominator by $n^2$:
+\begin{equation}
+  \label{eq:limit-an}
+  a_n = \frac{2 + 3/n - 1/n^2}{5 + 1/n} \longrightarrow \frac{2}{5} \quad \text{as } n \to \infty.
+\end{equation}
+By~\eqref{eq:limit-an}, $\lim_{n\to\infty} a_n = \tfrac{2}{5}$, so $a_n - \tfrac{2}{5} \to 0$,
+which is only a necessary (not sufficient) condition for convergence of the associated series.
+A more careful expansion gives
+\[
+  a_n - \frac{2}{5} = \frac{5(2n^2+3n-1) - 2(5n^2+n)}{5n(5n+1)} = \frac{13n - 5}{5n(5n+1)},
+\]
+which behaves like $\dfrac{13}{25n}$ for large $n$, so by the limit comparison test with the
+harmonic series $\sum 1/n$, the series in part (b) \emph{diverges}.
+
+\section*{Problem 2}
+
+Evaluate the following integrals.
+
+\begin{enumerate}[label=(\roman*)]
+  \item $\displaystyle\int_0^{\pi/2} \sin^3(x)\cos(x)\,dx$
+  \item $\displaystyle\int \sqrt{\bigl(4 - x^2\bigr)}\,dx$ using a trigonometric substitution
+  \item $\displaystyle\int_1^{\infty} \frac{1}{x^2 + 1}\,dx$, identifying it as an improper integral
+\end{enumerate}
+
+\paragraph{Solution.} For (i), let $u = \sin x$, so $du = \cos x\,dx$ and the bounds become
+$u=0$ to $u=1$:
+\begin{align}
+  \int_0^{\pi/2} \sin^3(x)\cos(x)\,dx
+    &= \int_0^1 u^3\,du \notag \\
+    &= \left[\frac{u^4}{4}\right]_0^1 \notag \\
+    &= \frac{1}{4}.
+\end{align}
+
+For (ii), substitute $x = 2\sin\theta$, $dx = 2\cos\theta\,d\theta$, so that
+$\sqrt{4-x^2} = 2\cos\theta$ and
+\[
+  \int \sqrt{4-x^2}\,dx = \int 4\cos^2\theta\,d\theta
+  = 2\theta + \sin(2\theta) + C
+  = 2\arcsin\!\Bigl(\frac{x}{2}\Bigr) + \frac{x\sqrt{4-x^2}}{2} + C.
+\]
+
+For (iii), we recognise the antiderivative $\arctan x$ and take a limit:
+\begin{align*}
+  \int_1^{\infty} \frac{1}{x^2+1}\,dx
+  &= \lim_{b \to \infty} \Bigl[\arctan x\Bigr]_1^{b} \\
+  &= \lim_{b \to \infty} \arctan b \;-\; \arctan 1 \\
+  &= \frac{\pi}{2} - \frac{\pi}{4} \\
+  &= \frac{\pi}{4}.
+\end{align*}
+This integral converges to $\pi/4$, since $\arctan b$ is bounded as $b \to \infty$.
+
+\section*{Problem 3}
+
+Consider the linear system
+\[
+  \begin{cases}
+    2x + y - z = 4 \\
+    x - 3y + 2z = -6 \\
+    3x + 2y + z = 5
+  \end{cases}
+\]
+which can be written in matrix form $A\mathbf{x} = \mathbf{b}$ with
+\[
+  A = \begin{pmatrix} 2 & 1 & -1 \\ 1 & -3 & 2 \\ 3 & 2 & 1 \end{pmatrix}, \qquad
+  \mathbf{x} = \begin{pmatrix} x \\ y \\ z \end{pmatrix}, \qquad
+  \mathbf{b} = \begin{pmatrix} 4 \\ -6 \\ 5 \end{pmatrix}.
+\]
+
+\begin{enumerate}[label=(\alph*)]
+  \item Compute $\det(A)$ and determine whether $A$ is invertible.
+  \item If $A$ is invertible, describe (without full computation) how Cramer's rule would
+        be used to solve for $z$.
+\end{enumerate}
+
+\paragraph{Solution.} Expanding along the first row,
+\[
+  \det(A) = 2\bigl[(-3)(1) - (2)(2)\bigr] - 1\bigl[(1)(1) - (2)(3)\bigr]
+             + (-1)\bigl[(1)(2) - (-3)(3)\bigr].
+\]
+Simplifying each bracket,
+\[
+  \det(A) = 2(-3-4) - 1(1-6) - 1(2+9) = 2(-7) - 1(-5) - 1(11) = -14 + 5 - 11 = -20.
+\]
+Since $\det(A) = -20 \neq 0$, the matrix $A$ is invertible, and the system has a unique
+solution $\mathbf{x} = A^{-1}\mathbf{b}$.
+
+For part (b), Cramer's rule states that
+\[
+  z = \frac{\det(A_z)}{\det(A)},
+\]
+where $A_z$ is formed by replacing the third column of $A$ with $\mathbf{b}$.
+
+\section*{Problem 4}
+
+Let $f : \R \to \R$ be given by $f(x) = x^3 - 3x + 1$.
+
+\begin{enumerate}[label=(\alph*)]
+  \item Find all critical points of $f$ and classify each as a local maximum, local minimum,
+        or neither.
+  \item Sketch the general shape of the graph, noting concavity changes.
+\end{enumerate}
+
+\paragraph{Solution.} We have $f'(x) = 3x^2 - 3 = 3(x-1)(x+1)$, so the critical points are
+$x = 1$ and $x = -1$. Since $f''(x) = 6x$, we get $f''(1) = 6 > 0$ (local minimum) and
+$f''(-1) = -6 < 0$ (local maximum). The inflection point occurs where $f''(x) = 0$, i.e.\
+at $x = 0$, where concavity switches from concave-down (for $x<0$) to concave-up
+(for $x>0$). A useful sanity check on the algebra above is the bound
+\[
+  \left|\, f(x) - f(1) \,\right| \;\le\; \bigl|\, x^3 - 3x \,\bigr| + 2 \qquad \text{for } x \in [-2,2],
+\]
+which follows directly from the triangle inequality applied term by term.
+
+It is also worth recording the values of $f$ and $f'$ at the critical points side by side,
+since this pair of columns is exactly what we will plot in the next section:
+\begin{align*}
+  f(-1) &= 3, & f'(-1) &= 0, \\
+  f(1)  &= -1, & f'(1)  &= 0.
+\end{align*}
+Finally, the closed-form expression for the local extrema in terms of a generic cubic
+$g(x) = x^3 + px + q$ can be written compactly as
+\[
+  x_{\pm} = \left( \pm\sqrt{\frac{-p}{3}} \right),
+\]
+which for $p = -3$ recovers $x_{\pm} = \pm 1$ as found above.
+
+\end{document}

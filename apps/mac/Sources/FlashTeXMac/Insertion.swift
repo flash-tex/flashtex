@@ -67,4 +67,27 @@ enum Insertion {
         let atLineEnd = idx == text.endIndex || text[idx] == "\n"
         return (atLineStart ? "" : "\n") + body + (atLineEnd ? "" : "\n")
     }
+
+    /// Text to insert for a *capture* proposal: the same layout, but only after
+    /// the proposal has been made legal for the caret it is landing on
+    /// (`CaretContext.normalize`). Returns nil when no safe insertion exists,
+    /// with the reason in `advisories`.
+    ///
+    /// Separate from `insertionText` on purpose: scaffolding inserts
+    /// (`\input{…}`) are the app's own text and are not recognised output, so
+    /// they are not second-guessed.
+    ///
+    /// Only a display-math insertion gets the surrounding newlines. Padding an
+    /// inline insertion would break a sentence across lines, and padding one
+    /// inside a `%` comment would push the text out of the comment entirely.
+    static func captureInsertion(_ latex: String, into text: String, atByte byte: Int)
+        -> (text: String?, advisories: [String], caret: CaretContext) {
+        let caret = CaretContext.derive(text, caretByte: byte)
+        let normalized = caret.normalize(latex)
+        guard let body = normalized.text else {
+            return (nil, normalized.advisories, caret)
+        }
+        let laidOut = caret.wrap == .display ? insertionText(body, into: text, atByte: byte) : body
+        return (laidOut, normalized.advisories, caret)
+    }
 }

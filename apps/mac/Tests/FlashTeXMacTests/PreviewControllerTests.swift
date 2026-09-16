@@ -11,6 +11,28 @@ final class PreviewControllerTests: XCTestCase {
         ProcessInfo.processInfo.environment["FLASHTEX_PREVIEW_CONTROLLER"].map { URL(fileURLWithPath: $0) }
     }
 
+    /// An exit carries the helper's own reason. CI run 35022802823 reported
+    /// `helper exited (1)` and nothing else, because the termination handler
+    /// cleared the stderr readability handler without draining the pipe: the
+    /// panic line the helper had just written was discarded. The status code
+    /// alone is not diagnosable, so the last stderr line rides along with it.
+    func testExitReasonCarriesTheHelpersLastStderrLine() {
+        XCTAssertEqual(ShellModel.exitReason(code: 1, stderr: nil), "helper exited (1)",
+                       "a silent helper still reports its status code, unchanged")
+        XCTAssertEqual(ShellModel.exitReason(code: 1, stderr: "   \n  \n"), "helper exited (1)",
+                       "whitespace is not a reason")
+        XCTAssertEqual(ShellModel.exitReason(code: 1, stderr: "opening ledger\nthread 'main' panicked at src/lib.rs:12\n"),
+                       "helper exited (1): thread 'main' panicked at src/lib.rs:12",
+                       "the LAST non-empty line is why it died; earlier chatter is not")
+        // Everything that branches on this message matches the prefix
+        // (ProjectSearchPanel, EditHistoryPanel, EditHistory.Failure.classify),
+        // so appending a reason cannot change any of their decisions.
+        XCTAssertTrue(ShellModel.exitReason(code: 9, stderr: "boom").hasPrefix("helper exited (9)"))
+        let long = ShellModel.exitReason(code: 1, stderr: String(repeating: "x", count: 5_000))
+        XCTAssertLessThan(long.count, 260, "a status string stays a status string")
+        XCTAssertTrue(long.hasSuffix("…"), long.suffix(20).description)
+    }
+
     func testEditsBecomeDurableAndPreviewsBindToEditorRevisions() async throws {
         guard let helper = Self.helper, FileManager.default.isExecutableFile(atPath: helper.path),
               ShellModel.locateCompiler() != nil else {

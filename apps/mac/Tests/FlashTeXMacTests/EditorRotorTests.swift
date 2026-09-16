@@ -1,6 +1,7 @@
 import AppKit
 import XCTest
 import FlashTeXAccessibility
+import HostedWindows
 @testable import FlashTeXMac
 
 /// VoiceOver rotor on the real editor text view (lane mac-editor-a11y-3):
@@ -37,8 +38,8 @@ final class EditorRotorTests: XCTestCase {
     /// few lines are visible; everything below is off-screen.
     private func hostedTextView(_ text: String, height: CGFloat = 60) -> (NSWindow, CompletingTextView) {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: height), styleMask: [.titled],
-                              backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 400, height: height), styleMask: [.titled],
+                                                backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView = scroll

@@ -84,6 +84,20 @@ final class ErrorLensPainter {
         refresh()
     }
 
+    /// What the caret-fix hint says, or nil when no fix is offered.
+    private(set) var caretFixText: String?
+    /// Evidence for tests: the hint actually drawn last pass.
+    private(set) var drawnCaretFix: String?
+
+    /// The fix offered at the caret (`ShellModel.caretFix`). The hint names the
+    /// key and the text it inserts, because that is exactly what Tab will do.
+    func update(caretFix: EditorDiagnostics.CaretFix?) {
+        let new = caretFix.map { "⇥ " + $0.replacement }
+        guard new != caretFixText else { return }
+        caretFixText = new
+        textView?.needsDisplay = true
+    }
+
     private func refresh() {
         guard let table = lineTable?() else { return }
         let new = ErrorLens.enabled
@@ -95,24 +109,35 @@ final class ErrorLensPainter {
         textView?.needsDisplay = true
     }
 
+    /// The rect of a line's last fragment, in text-view coordinates, or nil.
+    private func fragment(ofLine line: Int, lm: NSLayoutManager, container: NSTextContainer,
+                          table: SyntaxHighlighter) -> NSRect? {
+        guard line < table.lineCount else { return nil }
+        let range = table.lineRange(line)
+        let lineEnd = max(range.location, NSMaxRange(range) - (NSMaxRange(range) < table.length ? 1 : 0)) // before the newline
+        let glyphs = lm.glyphRange(forCharacterRange: NSRange(location: range.location, length: max(0, lineEnd - range.location)), actualCharacterRange: nil)
+        var fragment = lm.boundingRect(forGlyphRange: glyphs, in: container)
+        if glyphs.length == 0, glyphs.location < lm.numberOfGlyphs { fragment = lm.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil); fragment.size.width = 0 }
+        if glyphs.length == 0, glyphs.location >= lm.numberOfGlyphs { fragment = lm.extraLineFragmentRect; fragment.size.width = 0 }
+        // The last line fragment of a wrapped line: draw after its last glyph.
+        if glyphs.length > 0 {
+            fragment = lm.lineFragmentUsedRect(forGlyphAt: NSMaxRange(glyphs) - 1, effectiveRange: nil)
+        }
+        return fragment
+    }
+
     private func draw(in rect: NSRect) {
         drawn = [:]
-        guard !lines.isEmpty, let tv = textView, let lm = tv.layoutManager, let container = tv.textContainer,
+        drawnCaretFix = nil
+        guard let tv = textView, let lm = tv.layoutManager, let container = tv.textContainer,
               let table = lineTable?(), table.length == (tv.textStorage?.length ?? 0) else { return }
+        guard !lines.isEmpty || caretFixText != nil else { return }
         let font = NSFont.systemFont(ofSize: max(9, (tv.font?.pointSize ?? 13) - 2))
         let inset = tv.textContainerInset
-        for entry in lines where entry.line < table.lineCount {
-            let range = table.lineRange(entry.line)
-            let lineEnd = max(range.location, NSMaxRange(range) - (NSMaxRange(range) < table.length ? 1 : 0)) // before the newline
-            let glyphs = lm.glyphRange(forCharacterRange: NSRange(location: range.location, length: max(0, lineEnd - range.location)), actualCharacterRange: nil)
-            var fragment = lm.boundingRect(forGlyphRange: glyphs, in: container)
-            if glyphs.length == 0, glyphs.location < lm.numberOfGlyphs { fragment = lm.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil); fragment.size.width = 0 }
-            if glyphs.length == 0, glyphs.location >= lm.numberOfGlyphs { fragment = lm.extraLineFragmentRect; fragment.size.width = 0 }
-            // The last line fragment of a wrapped line: draw after its last glyph.
-            if glyphs.length > 0 {
-                let last = lm.lineFragmentUsedRect(forGlyphAt: NSMaxRange(glyphs) - 1, effectiveRange: nil)
-                fragment = last
-            }
+        /// Where each line's lens text ended, so the fix hint can sit after it.
+        var lensEndX: [Int: CGFloat] = [:]
+        for entry in lines {
+            guard let fragment = fragment(ofLine: entry.line, lm: lm, container: container, table: table) else { continue }
             var origin = NSPoint(x: fragment.maxX + inset.width + 24, y: fragment.minY + inset.height)
             let band = NSRect(x: origin.x, y: origin.y, width: tv.bounds.width - origin.x, height: fragment.height)
             guard band.intersects(rect) else { continue }
@@ -125,7 +150,37 @@ final class ErrorLensPainter {
             let clipped = clip(text, to: available, attrs: attrs)
             (clipped as NSString).draw(at: origin, withAttributes: attrs)
             drawn[entry.line] = clipped
+            lensEndX[entry.line] = origin.x + (clipped as NSString).size(withAttributes: attrs).width
         }
+        drawCaretFix(in: rect, tv: tv, lm: lm, container: container, table: table, font: font,
+                     inset: inset, lensEndX: lensEndX)
+    }
+
+    /// The caret's fix, after that line's text (and after its lens message when
+    /// one is showing). Drawn whatever `ErrorLens.enabled` says: Tab acts on
+    /// this hint, so it must not be something the author can switch off and
+    /// then be surprised by.
+    private func drawCaretFix(in rect: NSRect, tv: NSTextView, lm: NSLayoutManager,
+                              container: NSTextContainer, table: SyntaxHighlighter, font: NSFont,
+                              inset: NSSize, lensEndX: [Int: CGFloat]) {
+        guard let text = caretFixText else { return }
+        let caret = tv.selectedRange().location
+        guard caret >= 0, caret <= table.length else { return }
+        let line = table.line(at: caret)
+        guard let fragment = fragment(ofLine: line, lm: lm, container: container, table: table) else { return }
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font, .foregroundColor: NSColor.controlAccentColor.withAlphaComponent(0.95),
+        ]
+        let size = (text as NSString).size(withAttributes: attrs)
+        let after = lensEndX[line].map { $0 + 12 } ?? (fragment.maxX + inset.width + 24)
+        var origin = NSPoint(x: after, y: fragment.minY + inset.height)
+        let band = NSRect(x: origin.x, y: origin.y, width: tv.bounds.width - origin.x, height: fragment.height)
+        guard band.intersects(rect) else { return }
+        origin.y += (fragment.height - size.height) / 2
+        let available = max(0, tv.bounds.width - origin.x - 8)
+        let clipped = clip(text, to: available, attrs: attrs)
+        (clipped as NSString).draw(at: origin, withAttributes: attrs)
+        drawnCaretFix = clipped
     }
 
     private func clip(_ text: String, to width: CGFloat, attrs: [NSAttributedString.Key: Any]) -> String {

@@ -106,8 +106,11 @@ fn messages(reply: &Value) -> Vec<String> {
 
 #[test]
 fn real_glyphs_are_emitted_with_the_latin_modern_math_hint() {
+    // `\mathbb` is an `amsfonts.sty` alphabet (`amsfonts.sty` 108), undefined
+    // in base LaTeX2e, so the document has to load the package.
     let reply = compile(
-        "$\\mathbb{Z} \\subset \\mathbb{Q}$ and $\\mathbb{R}\\setminus\\mathbb{Q}$ \
+        "\\usepackage{amsfonts}\n\
+         $\\mathbb{Z} \\subset \\mathbb{Q}$ and $\\mathbb{R}\\setminus\\mathbb{Q}$ \
          $A \\Longrightarrow B$ $\\mathbb{N}$\n",
     );
     let items = items(&reply);
@@ -159,7 +162,8 @@ fn real_glyphs_are_emitted_with_the_latin_modern_math_hint() {
 #[test]
 fn amssymb_symbols_are_emitted_with_the_latin_modern_math_hint() {
     let reply = compile(
-        r"$a \mp b$ $a \ll b$ $a \gg b$ $a \simeq b$ $\vdots$ $\ddots$
+        r"\usepackage{amssymb}
+          $a \mp b$ $a \ll b$ $a \gg b$ $a \simeq b$ $\vdots$ $\ddots$
           $\lfloor x \rfloor$ $\lceil x \rceil$ $\oint_C f$ $a \mapsto b$
           $\ell$ $\hbar$ $a \circ b$ $a \parallel b$ $a \nmid b$
           $a \nleq b$ $a \ngeq b$ $a \subsetneq b$ $a \supsetneq b$
@@ -311,7 +315,7 @@ fn hw2_math_follow_up_commands_render_with_no_diagnostics() {
 
 #[test]
 fn mathbb_rejects_what_amsfonts_does_not_provide() {
-    let reply = compile("$\\mathbb{1}$ $\\mathbb{x}$\n");
+    let reply = compile("\\usepackage{amsfonts}\n$\\mathbb{1}$ $\\mathbb{x}$\n");
     let messages = messages(&reply);
     assert_eq!(
         messages

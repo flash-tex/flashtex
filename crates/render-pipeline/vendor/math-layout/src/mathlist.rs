@@ -98,6 +98,56 @@ pub enum Limits {
     NoLimits,
 }
 
+/// How a `\big`/`\Big`/`\bigg`/`\Bigg` delimiter is sized. The two
+/// definitions are genuinely different, not two spellings of one rule, and
+/// which is in force depends only on whether `amsmath` is loaded.
+///
+/// `\showbox` under pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025),
+/// `\Big[` in an `article`, as the delimiter glyph's own box (height+depth):
+///
+/// | body size | no `amsmath` | `amsmath` |
+/// |---|---|---|
+/// | 10pt | 18.00017 (`cmex` `h`) | 18.00017 (`cmex` `h`) |
+/// | 11pt | 18.00017 (`cmex` `h`) | 19.71019 (`cmex` `h`) |
+/// | 12pt | 18.00017 (`cmex` `h`) | 21.60020 (`cmex` `h`) |
+///
+/// The kernel column does not move with the body size because its target is
+/// an absolute number of points *and* family 3 is `sfixed*cmex10`; the
+/// amsmath column moves with both.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BigSizing {
+    /// The LaTeX kernel's definition (`fontmath.ltx` 513-520), in force
+    /// whenever `amsmath` is **not** loaded:
+    /// `\hbox{$\left<delim>\vbox to<pt>{}\right.\n@space$}` with `pt`
+    /// **8.5** (`\big`), **11.5** (`\Big`), **14.5** (`\bigg`), **17.5**
+    /// (`\Bigg`) — absolute lengths, independent of the body size, the math
+    /// size and the fonts.
+    ///
+    /// The box is a `\vbox`, so its height is `pt` and its depth is zero;
+    /// Rule 19's δ is therefore `max(pt − axis, axis)`, not `pt/2`.
+    Kernel { pt: f64 },
+    /// amsmath's redefinition (`amsmath.sty` 721-738 `\bBigg@`), in force
+    /// whenever `amsmath` is loaded:
+    /// `\hbox{$\nulldelimiterspace0pt \left<delim>\vcenter to<factor>\big@size{}\right.$}`
+    /// with `\big@size` = 1.2 × (height + depth) of `\Mathstrutbox@` (the
+    /// text-size roman `(`) and `factor` 1, 1.5, 2, 2.5.
+    ///
+    /// The box is a `\vcenter`, so it straddles the axis and Rule 19's δ is
+    /// exactly half the target.
+    Amsmath { factor: f64 },
+}
+
+impl BigSizing {
+    /// The kernel's `\big`…`\Bigg` for amsmath's 1 / 1.5 / 2 / 2.5, so a
+    /// caller that only knows which of the four commands it saw can ask for
+    /// either rule. 1 → 8.5pt, 1.5 → 11.5, 2 → 14.5, 2.5 → 17.5.
+    pub fn kernel_for_factor(factor: f64) -> BigSizing {
+        BigSizing::Kernel {
+            pt: 8.5 + 6.0 * (factor - 1.0),
+        }
+    }
+}
+
 /// What sits in the nucleus of an atom.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Nucleus {
@@ -117,11 +167,9 @@ pub enum Nucleus {
         left: Option<char>,
         right: Option<char>,
     },
-    /// amsmath's `\big`/`\Big`/`\bigg`/`\Bigg` (`amsmath.sty` `\bBigg@`):
-    /// `\hbox{$\nulldelimiterspace0pt \left<delim>\vcenter to <factor>\big@size{}\right.$}`
-    /// with `\big@size` = 1.2 × (height + depth) of the text-size roman `(`
-    /// (`\Mathstrutbox@`), `factor` 1, 1.5, 2, 2.5. `None` is `\big.`.
-    BigDelimiter { delim: Option<char>, factor: f64 },
+    /// `\big`/`\Big`/`\bigg`/`\Bigg`, sized by whichever of the two
+    /// definitions is in force ([`BigSizing`]). `None` is `\big.`.
+    BigDelimiter { delim: Option<char>, sizing: BigSizing },
     /// `\phantom`/`\hphantom`/`\vphantom` (`latex.ltx` `\ph@nt`/`\finph@nt`):
     /// an empty box with the width (`horizontal`) and/or height and depth
     /// (`vertical`) of `body` set in the current (uncramped) style.
@@ -356,8 +404,31 @@ impl Atom {
 
     /// amsmath `\big(` (`factor` 1), `\Big` 1.5, `\bigg` 2, `\Bigg` 2.5, as
     /// an ordinary atom; `\bigl`/`\bigr`/`\bigm` change `class`.
+    ///
+    /// This is the amsmath rule. A document that does not load `amsmath`
+    /// gets the kernel's fixed lengths instead — see
+    /// [`Atom::big_delimiter_kernel`] and [`BigSizing`].
     pub fn big_delimiter(class: AtomClass, delim: Option<char>, factor: f64) -> Atom {
-        Atom::new(class, Nucleus::BigDelimiter { delim, factor })
+        Atom::new(
+            class,
+            Nucleus::BigDelimiter {
+                delim,
+                sizing: BigSizing::Amsmath { factor },
+            },
+        )
+    }
+
+    /// The LaTeX kernel's `\big`…`\Bigg` (`fontmath.ltx`), for a document
+    /// that does not load `amsmath`: `pt` is the absolute `\vbox to` length,
+    /// 8.5 / 11.5 / 14.5 / 17.5.
+    pub fn big_delimiter_kernel(class: AtomClass, delim: Option<char>, pt: f64) -> Atom {
+        Atom::new(
+            class,
+            Nucleus::BigDelimiter {
+                delim,
+                sizing: BigSizing::Kernel { pt },
+            },
+        )
     }
 
     /// `\phantom{body}` (both), `\hphantom` (horizontal), `\vphantom` (vertical).
@@ -568,19 +639,31 @@ pub fn default_class(ch: char) -> (AtomClass, Limits) {
     let class = match ch {
         '+' | '-' | '\u{2212}' | '\u{22C5}' | '\u{00D7}' | '\u{00F7}' | '\u{00B1}' | '\u{2213}'
         | '\u{2217}' | '\u{2218}' | '\u{2229}' | '\u{222A}' | '\u{2228}' | '\u{2227}'
-        | '\u{2295}' | '\u{2297}' | '\u{2216}' => Bin,
+        | '\u{2295}' | '\u{2297}' | '\u{2216}'
+        // LaTeX kernel \DeclareMathSymbol{...}{\mathbin} rows (fontmath.ltx
+        // 264, 265, 276-284, 286, 287, 289, 294, 299).
+        | '\u{2A3F}' | '\u{2020}' | '\u{2021}' | '\u{2299}' | '\u{2296}' | '\u{2298}'
+        | '\u{2293}' | '\u{2294}' | '\u{228E}' | '\u{2240}' | '\u{22C6}' | '\u{25C1}'
+        | '\u{25B7}' | '\u{2219}' | '\u{22C4}' | '\u{25EF}' => Bin,
         '=' | '<' | '>' | ':' | '\u{2264}' | '\u{2265}' | '\u{2261}' | '\u{2248}' | '\u{2260}'
         | '\u{223C}' | '\u{2282}' | '\u{2283}' | '\u{2286}' | '\u{2287}' | '\u{2208}'
         | '\u{220B}' | '\u{2190}' | '\u{2192}' | '\u{2194}' | '\u{21D0}' | '\u{21D2}'
         | '\u{21D4}' | '\u{2225}' | '\u{22A5}' | '\u{2223}'
         // amsmath/plain long arrows (\Longrightarrow etc.) are \mathrel.
         | '\u{27F5}' | '\u{27F6}' | '\u{27F7}' | '\u{27F8}' | '\u{27F9}' | '\u{27FA}'
-        | '\u{27FC}' => Rel,
+        | '\u{27FC}'
+        // LaTeX kernel \DeclareMathSymbol{...}{\mathrel} rows (fontmath.ltx
+        // 301, 302, 307-310, 320, 321, 323, 324, 346-352).
+        | '\u{224D}' | '\u{2322}' | '\u{2323}' | '\u{21BC}' | '\u{21BD}' | '\u{21C0}'
+        | '\u{21C1}' | '\u{2197}' | '\u{2196}' | '\u{2198}' | '\u{2199}' | '\u{227A}'
+        | '\u{2AAF}' | '\u{227B}' | '\u{2AB0}' | '\u{2291}' | '\u{2292}' => Rel,
         '(' | '[' | '{' | '\u{27E8}' | '\u{2308}' | '\u{230A}' => Open,
         ')' | ']' | '}' | '\u{27E9}' | '\u{2309}' | '\u{230B}' => Close,
         ',' | ';' => Punct,
         '\u{2211}' | '\u{220F}' | '\u{2210}' | '\u{222B}' | '\u{222E}' | '\u{22C2}'
-        | '\u{22C3}' | '\u{2A01}' | '\u{2A02}' | '\u{2A00}' | '\u{22C1}' | '\u{22C0}' => Op,
+        | '\u{22C3}' | '\u{2A01}' | '\u{2A02}' | '\u{2A00}' | '\u{22C1}' | '\u{22C0}'
+        // \bigsqcup, \biguplus (fontmath.ltx 262, 250).
+        | '\u{2A06}' | '\u{2A04}' => Op,
         _ => Ord,
     };
     // plain.tex: \int and \oint are \intop\nolimits.

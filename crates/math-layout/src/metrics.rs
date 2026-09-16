@@ -7,6 +7,8 @@
 //! tables shipped in [`crate::cm`], or by the Times approximation in
 //! [`crate::times`].
 
+use crate::mathlist::TextStyle;
+
 /// Opaque font identity assigned by the metrics provider.
 ///
 /// The provider maps it to a concrete font (a TFM name for the Computer Modern
@@ -152,14 +154,91 @@ pub trait MathFontMetrics {
         self.glyph(ch, size)
     }
 
-    /// Slot `code` of the math extension font (family 3, `largesymbols`)
-    /// for constructions that place its characters directly rather than
-    /// through a symbol or delimiter (`fontmath.ltx`'s `\braceld`..`\braceru`
-    /// in `\downbracefill`/`\upbracefill`), tagged `ch` for the renderer.
-    /// `None` when the provider has no TFM-slotted extension font.
-    fn extension_glyph(&self, _code: u8, _ch: char) -> Option<Glyph> {
+    /// A literal text glyph with the face selected by a mixed text run.
+    /// Providers that only expose one upright text family can keep the default.
+    fn text_glyph_with_style(
+        &self,
+        ch: char,
+        size: SizeClass,
+        _style: TextStyle,
+    ) -> Option<Glyph> {
+        self.text_glyph(ch, size)
+    }
+
+    /// The inter-word space of the text font at this size.
+    fn text_space(&self, size: SizeClass) -> f64 {
+        self.text_glyph(' ', size).map_or(0.0, |glyph| glyph.width)
+    }
+
+    /// Slot `code` of the math extension font (family 3, `largesymbols`) at
+    /// size class `size`, for constructions that place its characters
+    /// directly rather than through a symbol or delimiter (`fontmath.ltx`'s
+    /// `\braceld`..`\braceru` in `\downbracefill`/`\upbracefill`), tagged
+    /// `ch` for the renderer. `None` when the provider has no TFM-slotted
+    /// extension font.
+    ///
+    /// `size` matters whenever family 3 is not one fixed font: amsmath and
+    /// amsfonts redeclare `OMX/cmex/m/n` without `sfixed`
+    /// ([`crate::cm::ExtensionSizing::Designs`]), so `\textfont3` and
+    /// `\scriptfont3` are different designs at different sizes (pdfTeX
+    /// `\fontname` in an 11 pt article loading amsmath: `cmex10 at 10.95pt`
+    /// and `cmex8`). Callers pass the size class the construction sets its
+    /// family-3 characters at, which is not always the current style's — see
+    /// [`MathFontMetrics::extension_glyph`]'s caller in `make_brace`.
+    fn extension_glyph(&self, _code: u8, _ch: char, _size: SizeClass) -> Option<Glyph> {
         None
     }
+
+    /// TeX's `make_ord` (tex.web §752) for an ordinary character `left`
+    /// without scripts followed by the character `right` of an Ord..Punct
+    /// atom: `None` unless both are in the same math family; otherwise the
+    /// kern or ligature the family's font program puts between them at
+    /// `size` and whether that font is a text font. The same question is
+    /// asked between the characters of a [`Nucleus::Text`](crate::Nucleus::Text)
+    /// run (`MathChar::Text` pairs). Providers without lig/kern data keep
+    /// the default, which never kerns or ligatures.
+    fn ord_pair(&self, _left: MathChar, _right: MathChar, _size: SizeClass) -> Option<OrdPair> {
+        None
+    }
+}
+
+/// A character nucleus as `make_ord` sees it: a math symbol resolved through
+/// its `\mathcode` family ([`Nucleus::Symbol`](crate::Nucleus::Symbol)) or a
+/// character of the upright text family
+/// ([`Nucleus::TextChar`](crate::Nucleus::TextChar)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathChar {
+    Symbol(char),
+    Text(char),
+}
+
+/// What `make_ord` finds between two adjacent characters of one family.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OrdPair {
+    /// The font kern appended after the left character, in points; 0 when
+    /// the pair has no kern instruction or a ligature instruction.
+    pub kern: f64,
+    /// The family's font has a nonzero interword space (fontdimen 2), so
+    /// TeX drops the left character's italic correction (§755: "no italic
+    /// correction in mid-word of text font"). False for cmmi and cmsy.
+    pub text_font: bool,
+    /// The pair's program instruction is a ligature (cmr `f` `i`); `kern`
+    /// is then 0. `None` for a kern or no instruction.
+    pub ligature: Option<OrdLigature>,
+}
+
+/// A ligature instruction of a font's lig/kern program, as `make_ord`
+/// applies it between two math characters (tex.web §752-§753).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OrdLigature {
+    /// The TFM op byte (tex.web §545): 0 `=:` replaces both characters, 1
+    /// `=:|` the left one, 2 `|=:` the right one, 3 `|=:|` inserts the
+    /// ligature between them; 5, 6, 7 and 11 are the `>` forms, after which
+    /// `make_ord` stops instead of retrying the new pair.
+    pub op: u8,
+    /// The ligature character, of the same kind (symbol or text character)
+    /// as the pair, so the provider's `glyph`/`text_glyph` boxes it.
+    pub ch: MathChar,
 }
 
 /// The subset of OpenType `MathConstants` (font units) needed to derive TeX's

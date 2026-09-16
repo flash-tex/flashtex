@@ -10,7 +10,9 @@ cmr/cmmi/cmsy at 10/7/5 pt (LaTeX 10pt), cmr/cmmi at 12/8/6 pt with cmsy8/6
 kernel `.fd` files load at `\DeclareMathSizes` sizes) and cmex7/8/9
 (amsmath/amsfonts), plus each character's next-larger
 successor, extensible recipe, and the kern against the font's skew character
-(plain.tex: \skewchar\tenmi='177, \skewchar\tensy='60).
+(plain.tex: \skewchar\tenmi='177, \skewchar\tensy='60), and each font's
+ligature/kern program and kern table, which TeX's `make_ord` (tex.web §752)
+reads between adjacent math characters of one family.
 
 Usage: python3 tools/gen_cm_tfm.py [kpsewhich-path] > src/cm_tfm.rs
 
@@ -67,7 +69,8 @@ def parse(path):
         ii = (w >> 10) & 63; tag = (w >> 8) & 3; rem = w & 255
         if wi == 0:
             continue
-        e = {"w": W[wi], "h": H[hi], "d": D[di], "i": I[ii], "next": None, "ext": None, "kern": {}}
+        e = {"w": W[wi], "h": H[hi], "d": D[di], "i": I[ii], "next": None, "ext": None, "kern": {},
+             "lig_start": None}
         if tag == 2:
             e["next"] = rem
         if tag == 3:
@@ -78,16 +81,18 @@ def parse(path):
             first = LK[j]
             if (first >> 24) > 128:
                 j = 256 * ((first >> 8) & 255) + (first & 255)
+            # The program's first instruction, after a far-away restart.
+            e["lig_start"] = j
             while True:
                 ins = LK[j]; skip = ins >> 24; nxt = (ins >> 16) & 255
                 op = (ins >> 8) & 255; r = ins & 255
                 if op >= 128:
-                    e["kern"][nxt] = K[256 * (op - 128) + r]
+                    e["kern"].setdefault(nxt, K[256 * (op - 128) + r])
                 if skip >= 128:
                     break
                 j += skip + 1
         chars[c] = e
-    return {"design": fix(header[1]), "params": P, "chars": chars}
+    return {"design": fix(header[1]), "params": P, "chars": chars, "lig_kern": LK, "kerns": K}
 
 
 def main():
@@ -123,6 +128,16 @@ def main():
         out.append(f"    skew_char: {skew if skew is not None else 'u8::MAX'},")
         params = ", ".join(str(p) for p in t["params"])
         out.append(f"    params: &[{params}],")
+        # `lig_kern_starts`: `(code << 16) | index` of each character's first
+        # lig/kern instruction, sorted by code. `lig_kern` is the raw
+        # instruction words (skip, next char, op, remainder: tex.web §545) and
+        # `kerns` the kern table, so `TfmFont::lig_kern` walks the program as
+        # TeX does.
+        starts = ", ".join(str((c << 16) | t["chars"][c]["lig_start"])
+                           for c in sorted(t["chars"]) if t["chars"][c]["lig_start"] is not None)
+        out.append(f"    lig_kern_starts: &[{starts}],")
+        out.append(f"    lig_kern: &[{', '.join(str(x) for x in t['lig_kern'])}],")
+        out.append(f"    kerns: &[{', '.join(str(x) for x in t['kerns'])}],")
         out.append("    chars: &[")
         for c in sorted(t["chars"]):
             e = t["chars"][c]

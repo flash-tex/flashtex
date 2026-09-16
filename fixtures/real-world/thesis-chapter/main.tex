@@ -1,0 +1,52 @@
+\documentclass[11pt,a4paper]{report}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage[round]{natbib}
+
+\begin{document}
+
+\chapter{Robust Estimation of Recurrence Intervals in Sparse Sensor Networks}
+\label{ch:robust}
+
+This chapter develops and evaluates a method for estimating the recurrence
+interval of infrequent events observed by a sparse network of low-power
+sensors. Section~\ref{sec:background} reviews the relevant background on
+point-process estimation and motivates the specific estimator used
+throughout the remainder of the thesis, and Section~\ref{sec:method}
+presents the method itself, together with its statistical properties and an
+empirical evaluation on synthetic and field-collected data.
+
+\input{sections/background}
+
+\input{sections/method}
+
+\begin{thebibliography}{99}
+\bibitem[Knuth(1984)]{knuth1984}
+D.~E. Knuth.
+\newblock \emph{The \TeX book}.
+\newblock Addison-Wesley, 1984.
+
+\bibitem[Cox and Lewis(1966)]{cox1966}
+D.~R. Cox and P.~A.~W. Lewis.
+\newblock \emph{The Statistical Analysis of Series of Events}.
+\newblock Methuen, 1966.
+
+\bibitem[Daley and Vere-Jones(2003)]{daley2003}
+D.~J. Daley and D.~Vere-Jones.
+\newblock \emph{An Introduction to the Theory of Point Processes}, volume~I.
+\newblock Springer, 2nd edition, 2003.
+
+\bibitem[Rasmussen(2013)]{rasmussen2013}
+J.~G. Rasmussen.
+\newblock Bayesian inference for {H}awkes processes.
+\newblock \emph{Methodology and Computing in Applied Probability}, 15(3), 2013.
+
+\bibitem[Fictional(2020)]{fictional2020}
+A.~Fictional.
+\newblock Sparse sensor placement for rare-event monitoring.
+\newblock \emph{Journal of Environmental Instrumentation}, 8(2), 2020.
+\end{thebibliography}
+
+\end{document}

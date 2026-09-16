@@ -1,0 +1,134 @@
+\documentclass{article}
+
+\title{On the Efficient Flow of Information in Small Offices}
+\author{A. Reyes}
+\date{August 2025}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent This short report examines how a small office can remain efficient as its staff
+grows, focusing on the flow of information between departments and the office of
+management itself.
+\end{abstract}
+
+\section{Introduction}
+
+Every growing office eventually confronts the same difficulty: informal communication that
+worked well among five people becomes an inefficient muddle among fifty. This report
+outlines a simple, low-cost approach to restoring efficient information flow, drawing on a
+handful of practical observations rather than any elaborate theory.
+
+The remainder of this report is organized as follows. Section~\ref{sec:diagnosis} diagnoses
+the typical failure modes. Section~\ref{sec:solutions} proposes three concrete fixes.
+Section~\ref{sec:costs} presents a short cost comparison. We conclude in
+Section~\ref{sec:conclusion}.
+
+\section{Diagnosis}
+\label{sec:diagnosis}
+
+\subsection{Symptoms of an inefficient office}
+
+The most common complaint we heard was simply: ``nobody knows what anybody else is doing.''
+This is not a trivial or trifling issue---it directly affects a company's bottom line. Three
+symptoms recurred across every office we studied:
+
+\begin{itemize}
+  \item Duplicate work, where two staff members independently solve the same problem.
+  \item Stale information, where a decision changes but the change never reaches everyone
+    affected by it.
+  \item Bottlenecks, where a single office --- often the front office --- becomes a chokepoint
+    for routine requests.
+\end{itemize}
+
+\subsubsection{A note on measurement}
+
+We measured office efficiency using a crude but effective proxy: the number of emails,
+$x$, required to resolve an average request, against the number of staff, $y$, in the
+office. Empirically the two were related by something close to $x^2 + y^2 = z^2$ for a
+roughly constant $z$ across the offices we visited, though we do not claim this relationship
+is causal.
+
+\subsection{Underlying causes}
+
+\begin{description}
+  \item[Tool sprawl.] Different teams often standardize on different, incompatible tools.
+  \item[Unclear ownership.] When no one person owns a decision, everyone waits for someone
+    else to make it.
+  \item[Office layout.] Physical distance between desks correlates surprisingly well with
+    communication frequency.
+\end{description}
+
+\section{Proposed Solutions}
+\label{sec:solutions}
+
+We propose three fixes, summarized in Table~\ref{tab:solutions}.
+
+\begin{quote}
+As one office manager told us, ``efficient offices are not the ones with the fewest
+meetings, but the ones where every meeting has an owner.''
+\end{quote}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+Problem & Proposed Fix \\
+\hline
+Duplicate work & A shared task register \\
+Stale information & A single decision log \\
+Bottlenecks & Rotating point-of-contact duty \\
+\hline
+\end{tabular}
+\caption{Summary of proposed fixes.}
+\label{tab:solutions}
+\end{table}
+
+The single most important change is the decision log, discussed further below in
+Section~\ref{sec:costs} and labeled as item~\ref{item:decision-log}.
+
+\begin{enumerate}
+  \item A shared task register, so duplicate work becomes visible immediately.
+  \item \label{item:decision-log} A single decision log, replacing scattered email threads.
+  \item Rotating point-of-contact duty, so the front office is never a permanent bottleneck.
+\end{enumerate}
+
+\section{Cost Comparison}
+\label{sec:costs}
+
+Implementing all three fixes costs relatively little in absolute terms, though the
+\emph{organizational} cost --- convincing staff to change habits --- is often larger than
+the \textbf{financial} cost. In our experience, a small script (for instance, a short
+snippet run from \emph{office.py}) is often enough to maintain the shared task register
+without purchasing new software.
+
+As a sanity check, if the expected time saved per employee is $\Delta t$ and there are $n$
+employees, the total time saved per week is
+\[
+  T_{\mathrm{saved}} = n \cdot \Delta t,
+\]
+which, even for modest $\Delta t$, tends to dominate the one-time setup cost within a few
+months.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+Offices do not need elaborate systems to become efficient; they need clear ownership, a
+single source of truth, and a willingness to change small habits. We hope this report,
+brief as it is, offers a useful starting point for offices seeking to streamline their own
+information flow.
+
+\begin{thebibliography}{9}
+\bibitem{drucker1967}
+P. Drucker, \emph{The Effective Executive}, Harper \& Row, 1967.
+
+\bibitem{taylor1911}
+F. W. Taylor, \emph{The Principles of Scientific Management}, Harper \& Brothers, 1911.
+\end{thebibliography}
+
+Two studies in particular informed our recommendations: the classic account of effective
+management practice \cite{drucker1967}, and the older but still influential treatment of
+workflow design \cite{taylor1911}.
+
+\end{document}

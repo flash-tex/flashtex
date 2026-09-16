@@ -14,12 +14,22 @@ Directives at the start of the entry text (test-only):
   %v2mismatch    the display_list payload claims revision + 1000 (correlation mismatch)
   %v2unsolicited emit the line WITHOUT echoing acceptance (protocol violation)
   %v2decline     decline per request: not echoed, warning diagnostic, no line
+  %v2window      simulate a document too long for an unwindowed reply
+                 (display-list-v2-window proposal): without a positioned
+                 window request the compile_result is the producer's
+                 over-the-reply-limit failure; with `display-list-v2-window`
+                 requested AND `display_list_window` present, the sibling is
+                 the template page replicated to 40 document pages, resident
+                 only inside the (clamped) window, with the `window` object
+                 and the echoed capability.
 """
 import hashlib
 import json
 import sys
 
 CAP = "display-list-v2"
+WINDOW_CAP = "display-list-v2-window"
+WINDOW_DOC_PAGES = 40
 template = json.load(open(sys.argv[1], encoding="utf-8"))
 
 for raw in sys.stdin:
@@ -48,8 +58,24 @@ for raw in sys.stdin:
         result["diagnostics"] = [{"severity": "error", "message": "requested failure", "source": None, "recovery": None}]
     if directive == "%v2decline" and CAP in requested:
         result["diagnostics"] = [{"severity": "warning", "message": "display-list-v2 declined: envelope would exceed the line limit (test)", "source": None, "recovery": None}]
+    window = None
+    if directive == "%v2window" and accept:
+        req_window = p.get("display_list_window")
+        if WINDOW_CAP in requested and req_window:
+            total = WINDOW_DOC_PAGES
+            count = min(req_window["page_count"], total)
+            first = max(1, min(req_window["first_page"], total - count + 1))
+            window = {"first_page": first, "page_count": count, "document_page_count": total}
+        else:
+            # The producer's actual over-limit refusal (protocol.rs failed()).
+            result["status"] = "failed"
+            result["pages"] = []
+            result["diagnostics"] = [{"severity": "error",
+                                      "message": "compile_result would be 20339674 bytes for %d pages, over the 16777216-byte reply limit; split the project or compile fewer pages" % WINDOW_DOC_PAGES,
+                                      "source": None, "recovery": None}]
+            status = "failed"
     if accept:
-        result["layout_capabilities"] = [CAP]
+        result["layout_capabilities"] = [CAP] + ([WINDOW_CAP] if window else [])
     print(json.dumps({"protocol_version": 1, "id": env["id"], "type": "compile_result", "payload": result}), flush=True)
     emit_line = (accept and status != "failed") or directive == "%v2unsolicited"
     if not emit_line:
@@ -65,4 +91,17 @@ for raw in sys.stdin:
             doc["revision"] = p["revision"]
             doc["sha256"] = hashlib.sha256(data).hexdigest()
             doc["byte_length"] = len(data)
+    if window:
+        model = payload["pages"][0]
+        pages = []
+        for number in range(1, window["document_page_count"] + 1):
+            if window["first_page"] <= number < window["first_page"] + window["page_count"]:
+                page = json.loads(json.dumps(model))
+                page["number"] = number
+                pages.append(page)
+            else:
+                pages.append({"number": number, "width": model["width"], "height": model["height"],
+                              "resident": False})
+        payload["pages"] = pages
+        payload["window"] = window
     print(json.dumps(v2, ensure_ascii=False), flush=True)

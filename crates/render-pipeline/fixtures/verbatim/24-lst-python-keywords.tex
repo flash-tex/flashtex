@@ -1,0 +1,14 @@
+\documentclass{article}
+\usepackage{listings}
+\begin{document}
+Some ordinary body text that runs for a little while so that the paragraph fills a line of the page.
+\begin{lstlisting}[language=Python,basicstyle=\ttfamily\small]
+def fib(n):
+    # comment with def and return
+    if n < 2:
+        return n
+    s = 'string with spaces'
+    return fib(n - 1) + fib(n - 2)
+\end{lstlisting}
+Text right after the environment continues the paragraph without an indent.
+\end{document}

@@ -170,8 +170,54 @@ final class MathCaretHighlightTests: XCTestCase {
         XCTAssertEqual(boxes.first.map { sourceText(tex, $0.box.source) }, "$a^2 + b_1 = \\frac{x}{y}$")
         model.caretUTF16 = (tex as NSString).range(of: "Inline").location + 2
         XCTAssertTrue(model.caretFormulaBoxes().isEmpty, "a caret in text is in no formula")
-        // ⌘⇧J on the v1 side is unchanged in contract: the v2 frame has no v1 result here.
+        // ⌘⇧J reads the display list, not the elided v1 pages: the caret inside
+        // the fraction selects the whole formula span the pane boxes — the same
+        // navigation a click on that formula performs. Before this was wired it
+        // answered "No compile result loaded", because the v2 route asks for
+        // `display-list-v2-only` and there are no v1 pages to map onto.
+        model.caretUTF16 = (tex as NSString).range(of: "\\frac{x}{y}").location + 6
         model.revealCaretInPreview()
-        XCTAssertEqual(model.navigationNote, "No compile result loaded; the caret maps to no preview item.")
+        XCTAssertEqual(model.selection.map { (model.activeText as NSString).substring(with: $0.nsRange) },
+                       "$a^2 + b_1 = \\frac{x}{y}$")
+        XCTAssertTrue(model.navigationNote?.hasPrefix("Selected") == true, model.navigationNote ?? "nil")
+        XCTAssertTrue(model.navigationNote?.hasSuffix("page 1") == true, model.navigationNote ?? "nil")
+    }
+
+    /// ⌘⇧J on ordinary text of a v2 frame, and the guard that it no longer
+    /// falls through to the runtime-v1 pages the v2 route asks to have elided.
+    ///
+    /// Regression: `display-list-v2-only` (default on) makes `compile_result.pages`
+    /// empty, so the v1 implementation could only ever answer "inside no preview
+    /// item" / "No compile result loaded" on the shipped default.
+    func testRevealCaretUsesTheDisplayListWhenTheV2PaneIsShowing() throws {
+        let (_, tex) = try page()
+        let model = ShellModel()
+        model.replaceProject(entryText: tex)
+        let done = expectation(description: "load")
+        model.loadDisplayListV2(url: Self.fixtures.appendingPathComponent("display-list-v2-math-nav.json")) { done.fulfill() }
+        wait(for: [done], timeout: 20)
+        guard case .loaded? = model.displayListV2 else { return XCTFail("expected a prepared frame") }
+        XCTAssertTrue(model.previewV2)
+        XCTAssertNil(model.result, "no v1 result at all: the v2 route is the only source here")
+
+        let ns = tex as NSString
+        model.caretUTF16 = ns.range(of: "Inline").location + 2
+        model.revealCaretInPreview()
+        let selected = try XCTUnwrap(model.selection.map { (model.activeText as NSString).substring(with: $0.nsRange) })
+        XCTAssertFalse(selected.isEmpty)
+        XCTAssertTrue(tex.contains(selected), "the selection is a span of the buffer")
+        let note = try XCTUnwrap(model.navigationNote)
+        XCTAssertTrue(note.hasPrefix("Selected"), note)
+        XCTAssertTrue(note.hasSuffix("page 1"), note)
+        XCTAssertFalse(note.contains("No compile result"), note)
+        XCTAssertFalse(note.contains("inside no preview item"), note)
+
+        // A byte the producer laid out nothing for still says so, without
+        // disturbing the selection.
+        let before = model.selection
+        model.caretUTF16 = 1 // inside \documentclass, in the preamble
+        model.revealCaretInPreview()
+        XCTAssertEqual(model.selection, before)
+        XCTAssertTrue(model.navigationNote?.contains("inside no preview item") == true, model.navigationNote ?? "nil")
     }
 }

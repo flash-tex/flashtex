@@ -119,8 +119,9 @@ Implemented and tested:
 - `\verb|...|` (any matching delimiter, `\verb*` shows interword spaces as a
   middle dot) and the `verbatim`/`verbatim*`/`lstlisting` environments: raw
   source text set in Courier at body size, one output line per source line,
-  tabs expanded, with `%`, `\`, `$`, `{`, and `}` never given their usual
-  meaning. `lstlisting`'s `[options]` are parsed and honestly discarded (no
+  each tab set as a single space (as LaTeX's active tab is, rather than as an
+  editor-style jump to a column stop), with `%`, `\`, `$`, `{`, and `}` never
+  given their usual meaning. `lstlisting`'s `[options]` are parsed and honestly discarded (no
   syntax highlighting); an unterminated `\verb` gets a source-located
   diagnostic and recovers at end of line.
 - `compile` → `compile_result`, and `error` envelopes for unknown protocol

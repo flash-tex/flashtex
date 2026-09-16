@@ -131,6 +131,73 @@ def fixtures():
         "",
         paras(31, 1) + " A mark\\footnotemark[3] here.\n\\footnotetext[3]{" + note(311, 14) + "}\n\n" + paras(32, 2),
     )
+    # Floats with footnotes. The float bodies are `\\includegraphics` with
+    # both width and height (the pipeline keeps that box when the image is
+    # not in the project); pdflatex finds the image through TEXINPUTS.
+    gfx = "\\usepackage{graphicx}\n"
+
+    def fig(pos, h="1in", cap="A figure."):
+        return "\\begin{figure}[" + pos + "]\n\\centering\n\\includegraphics[width=2in,height=" + h + "]{images/red-72.png}\n\\caption{" + cap + "}\n\\end{figure}\n"
+
+    f["25-float-top-note"] = doc("article", "", with_notes(33, 2, {1: [(20, note(331, 15))]}) + "\n\n" + fig("t") + "\n" + with_notes(34, 3, {0: [(30, note(332, 12))]}), gfx)
+    f["26-float-bottom-note"] = doc("article", "", with_notes(35, 2, {1: [(20, note(351, 15))]}) + "\n\n" + fig("b") + "\n" + with_notes(36, 3, {0: [(30, note(352, 12))]}), gfx)
+    f["27-float-top-bottom-notes"] = doc(
+        "article", "", with_notes(37, 1, {0: [(40, note(371, 20))]}) + "\n\n" + fig("t") + "\n" + fig("b", "0.8in", "Another figure.") + "\n" + with_notes(38, 3, {1: [(30, note(372, 14))]}), gfx
+    )
+    f["28-float-page-note"] = doc("article", "", with_notes(39, 4, {1: [(20, note(391, 18))]}) + "\n\n" + fig("p", "5in") + "\n" + with_notes(40, 6, {3: [(25, note(392, 16))]}), gfx)
+    f["29-float-here-note"] = doc("article", "", with_notes(41, 2, {0: [(30, note(411, 12))]}) + "\n\n" + fig("h") + "\n" + with_notes(42, 3, {0: [(20, note(412, 15))]}), gfx)
+    f["30-float-split-note"] = doc("article", "", with_notes(43, 1, {}) + "\n\n" + fig("t", "2in") + "\n" + with_notes(44, 8, {3: [(60, note(431, 500))]}), gfx)
+    f["31-float-deferred-notes"] = doc(
+        "article",
+        "",
+        with_notes(45, 1, {0: [(20, note(451, 10))]}) + "\n\n" + fig("t", "3in") + "\n" + fig("t", "3in", "Deferred figure.") + "\n" + with_notes(46, 9, {2: [(30, note(452, 20))], 7: [(40, note(453, 25))]}),
+        gfx,
+    )
+    f["32-thanks-authors"] = doc(
+        "article",
+        "",
+        "\\maketitle\n" + with_notes(47, 3, {1: [(30, note(471, 12))]}),
+        "\\title{On Notes\\thanks{Draft version.}}\n\\author{First Author\\thanks{First affiliation.} \\and Second Author\\thanks{Second affiliation, with a longer note that " + note(472, 20) + "}}\n\\date{4 July 2022\\thanks{Revised.}}\n",
+    )
+    f["33-thanks-body-notes"] = doc(
+        "article",
+        "11pt",
+        "\\maketitle\n" + with_notes(48, 4, {0: [(20, note(481, 10))], 2: [(40, note(482, 14))]}),
+        "\\title{Counting Again\\thanks{" + note(483, 15) + "}}\n\\author{Some One}\n\\date{5 July 2022}\n",
+    )
+    f["34-report-chapters"] = doc(
+        "report",
+        "",
+        "\\chapter{Alpha}\n"
+        + with_notes(49, 2, {0: [(20, note(491, 10))], 1: [(30, note(492, 12))]})
+        + "\n\n\\chapter*{Interlude}\n"
+        + with_notes(50, 1, {0: [(25, note(501, 10))]})
+        + "\n\n\\chapter{Beta}\n"
+        + with_notes(51, 2, {1: [(20, note(511, 14))]}),
+    )
+    f["35-book-chapters"] = doc(
+        "book",
+        "",
+        "\\chapter{One}\n" + with_notes(52, 2, {0: [(15, note(521, 12))], 1: [(35, note(522, 10))]}) + "\n\n\\chapter{Two}\n" + with_notes(53, 2, {0: [(30, note(531, 16))]}),
+    )
+    f["36-math-note-11pt"] = doc("article", "11pt", with_notes(54, 4, {1: [(20, "Here $a_i^2+b_{j}=c$ and " + note(541, 12))]}))
+    f["37-math-note-12pt"] = doc("article", "12pt", with_notes(55, 4, {1: [(20, "Here $x^{n}-y_{k}$ and " + note(551, 12))]}))
+    f["38-math-note-fraction"] = doc("article", "", with_notes(56, 4, {1: [(20, "Since $\\frac{a}{b}\\le\\sqrt{2}$ with $\\sum_{k=1}^{n} k$ " + note(561, 10))]}))
+    f["39-minipage-notes"] = doc(
+        "article",
+        "",
+        paras(57, 1)
+        + "\n\n\\noindent\\begin{minipage}{0.6\\textwidth}\n"
+        + sentences(5701, 30)
+        + "\\footnote{"
+        + note(571, 10)
+        + "} "
+        + sentences(5702, 20)
+        + "\\footnote{"
+        + note(572, 8)
+        + "}\n\\end{minipage}\n\n"
+        + paras(58, 1),
+    )
     return f
 
 
@@ -166,6 +233,8 @@ def main():
     ap.add_argument("names", nargs="*")
     args = ap.parse_args()
     os.makedirs(EXPECTED, exist_ok=True)
+    # The float fixtures' images live with the float fixtures.
+    os.environ["TEXINPUTS"] = os.path.join(CRATE, "fixtures", "floats") + ":"
     version = subprocess.run(["pdflatex", "--version"], capture_output=True, text=True).stdout.splitlines()[0]
     for name, src in fixtures().items():
         if args.names and name not in args.names:

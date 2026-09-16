@@ -1,0 +1,14 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+Text before the table.
+
+\begin{table}[h]\centering\begin{tabular}{lrr}\toprule & \multicolumn{2}{c}{Timing}\\\cmidrule(lr){2-3} Case & Cold & Warm\\\midrule Parse & 1.20 & 0.31\\Layout & 4.75 & 2.08\\\bottomrule\end{tabular}\caption{Timings in seconds}\end{table}
+
+Text after the table.
+\end{document}

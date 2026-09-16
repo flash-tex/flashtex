@@ -24,6 +24,8 @@ use flashtex_math_layout::cm_tfm;
 use flashtex_math_layout::metrics::Extensible;
 use flashtex_math_layout::tfm as mtfm;
 use flashtex_math_layout::{FontId as MathFontId, Glyph, MathFontMetrics, MathParams, SizeClass};
+#[cfg(feature = "math-font-kerns")]
+use flashtex_math_layout::{MathChar, OrdLigature, OrdPair};
 
 use crate::fonts::{FontSet, LoadedFace, Role, TfmStatus};
 use crate::mathfont::{MathFonts, MathSizes};
@@ -84,6 +86,42 @@ pub struct TexMathMetrics {
     alphabets: Vec<(crate::mathalpha::MathAlphabet, usize, Rc<LoadedFace>, Rc<Tfm>)>,
 }
 
+/// Where a piece sits in cmex's extensible recipe (`[top, mid, bot, rep]`,
+/// tex.web §713) and so which part of the OpenType vertical glyph assembly
+/// paints it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PiecePlace {
+    Top,
+    Middle,
+    Bottom,
+    /// cmex's `rep`: the piece TeX repeats to reach the wanted size.
+    Extender,
+}
+
+/// The cmex slot a character's `next_larger` size chain starts at: a
+/// delimiter's large variant, a symbol that lives in family 3 (`\sum`), or
+/// the radical sign.
+fn cmex_chain_start(ch: char) -> Option<u8> {
+    cm::delimiter_slot(ch)
+        .map(|(_, large)| large)
+        .or_else(|| cm::symbol_slot(ch).filter(|(f, _)| *f == Family::Extension).map(|(_, c)| c))
+        .or(if ch == '\u{221A}' { Some(0x70) } else { None })
+}
+
+/// The extensible recipe (`[top, mid, bot, rep]`, 0 where cmex has no such
+/// piece) at the end of `ch`'s cmex size chain, when it has one.
+fn cmex_recipe(ch: char) -> Option<[u8; 4]> {
+    let font = &cm_tfm::CMEX10;
+    let mut cur = font.char(cmex_chain_start(ch)?)?;
+    for _ in 0..9 {
+        if font.is_extensible(cur) {
+            return Some(cur.extensible);
+        }
+        cur = font.next_larger(cur)?;
+    }
+    None
+}
+
 /// Font ids of fraktur glyphs laid out from `eufm` at the three sizes: far
 /// below the `\text` run ids and above math-layout's embedded CM ids.
 pub const FRAKTUR_FONTS: [MathFontId; 3] = [MathFontId(0x100), MathFontId(0x101), MathFontId(0x102)];
@@ -95,9 +133,26 @@ impl TexMathMetrics {
     /// `sfixed` 10pt. `otf` supplies the glyph program; `fonts` supplies
     /// `rm-lmr<d>.tfm` (digest-bound for the 12 pt set).
     pub fn new(base: u32, cmex_designs: bool, otf: Rc<MathFonts>, fonts: &FontSet) -> TexMathMetrics {
-        let (cm, roman_names) = match base {
-            10 => (CmMathMetrics::latex_10pt(), ["rm-lmr10", "rm-lmr7", "rm-lmr5"]),
-            11 => (
+        let text = match base {
+            10 => 10.0,
+            11 => 10.95,
+            _ => 12.0,
+        };
+        Self::at_text_size(text, cmex_designs, otf, fonts).expect("the class sizes are embedded")
+    }
+
+    /// The metrics `\DeclareMathSizes` selects for text at `text_pt`: the
+    /// three class sizes (10, 10.95, 12) plus 8 pt, which is
+    /// `\footnotesize` of the 10pt class and 8/6/5 pt with cmr/cmmi/cmsy 8,
+    /// 6 and 5. `None` for a size whose TFMs math-layout does not embed --
+    /// 9 pt, the 11pt class's `\footnotesize`, needs cmr9/cmmi9/cmsy9.
+    /// `cmex_designs` is as in [`TexMathMetrics::new`].
+    pub fn at_text_size(text_pt: f64, cmex_designs: bool, otf: Rc<MathFonts>, fonts: &FontSet) -> Option<TexMathMetrics> {
+        let close = |at: f64| (text_pt - at).abs() < 0.01;
+        let (cm, roman_names) = if close(10.0) {
+            (CmMathMetrics::latex_10pt(), ["rm-lmr10", "rm-lmr7", "rm-lmr5"])
+        } else if close(10.95) {
+            (
                 // size11.clo: \DeclareMathSizes{\@xipt}{\@xipt}{8}{6} with the
                 // 10pt designs scaled to 10.95pt for text.
                 CmMathMetrics {
@@ -110,8 +165,25 @@ impl TexMathMetrics {
                     ],
                 },
                 ["rm-lmr10", "rm-lmr8", "rm-lmr6"],
-            ),
-            _ => (CmMathMetrics::latex_12pt(), ["rm-lmr12", "rm-lmr8", "rm-lmr6"]),
+            )
+        } else if close(12.0) {
+            (CmMathMetrics::latex_12pt(), ["rm-lmr12", "rm-lmr8", "rm-lmr6"])
+        } else if close(8.0) {
+            (
+                // fontmath.ltx: \DeclareMathSizes{\@viiipt}{\@viiipt}{\@vipt}{\@vpt}.
+                CmMathMetrics {
+                    sizes: [8.0, 6.0, 5.0],
+                    extension: cm::ExtensionSizing::Fixed,
+                    families: [
+                        [&cm_tfm::CMR8, &cm_tfm::CMR6, &cm_tfm::CMR5],
+                        [&cm_tfm::CMMI8, &cm_tfm::CMMI6, &cm_tfm::CMMI5],
+                        [&cm_tfm::CMSY8, &cm_tfm::CMSY6, &cm_tfm::CMSY5],
+                    ],
+                },
+                ["rm-lmr8", "rm-lmr6", "rm-lmr5"],
+            )
+        } else {
+            return None;
         };
         let cm = if cmex_designs { cm.with_extension(cm::ExtensionSizing::Designs) } else { cm };
         let sizes = MathSizes {
@@ -138,7 +210,7 @@ impl TexMathMetrics {
         };
         let roman_faces = [text_face(cm.sizes[0]), text_face(cm.sizes[1]), text_face(cm.sizes[2])];
         let fraktur = cm.sizes.map(|at| fonts.tfm(&format!("{}.tfm", crate::mathalpha::fraktur_tfm(at))).ok());
-        TexMathMetrics {
+        Some(TexMathMetrics {
             fraktur,
             alphabets: Vec::new(),
             cm,
@@ -149,7 +221,7 @@ impl TexMathMetrics {
             otf,
             unmapped: RefCell::new(Vec::new()),
             resources: RefCell::new(std::collections::BTreeMap::new()),
-        }
+        })
     }
 
     /// `(TFM font, face drawn, exact optical design)` for every TFM font a
@@ -458,6 +530,61 @@ impl TexMathMetrics {
         })
     }
 
+    /// Which piece of cmex's extensible recipe for `ch` slot `code` is, when
+    /// it is one: the pieces tex.web §713 stacks once no fixed size in the
+    /// `next_larger` chain is tall enough. TeX never sets the extensible
+    /// character itself as a delimiter (`var_delimiter` switches to the
+    /// recipe as soon as it reaches an `ext_tag` character), so a placed
+    /// glyph carrying one of these slots is always a stacked piece.
+    pub fn extensible_piece(&self, font: MathFontId, code: u8, ch: char) -> Option<PiecePlace> {
+        if !self.cm.font_name(font).starts_with("cmex") {
+            return None;
+        }
+        let [top, mid, bot, rep] = cmex_recipe(ch)?;
+        let is = |slot: u8| slot != 0 && slot != u8::MAX && slot == code;
+        if is(rep) {
+            Some(PiecePlace::Extender)
+        } else if is(bot) {
+            Some(PiecePlace::Bottom)
+        } else if is(mid) {
+            Some(PiecePlace::Middle)
+        } else if is(top) {
+            Some(PiecePlace::Top)
+        } else {
+            None
+        }
+    }
+
+    /// The Latin Modern Math assembly part that plays `place` in `ch`'s
+    /// vertical glyph assembly. The roles line up with cmex's recipe because
+    /// both describe the same delimiter: the assembly lists its parts bottom
+    /// to top with the repeatable ones flagged, so the extender is cmex's
+    /// `rep`, the outermost fixed parts are its `bot` and `top`, and the one
+    /// between two extenders is its `mid` (Latin Modern Math's `{`). A
+    /// delimiter cmex builds without an end piece has none there either
+    /// (`\lceil`: extender then top, `\lfloor`: bottom then extender).
+    fn assembly_part(&self, ch: char, place: PiecePlace) -> Option<u16> {
+        let parts = self.otf.vassembly_parts(ch);
+        match place {
+            PiecePlace::Extender => parts.iter().find(|p| p.extender).map(|p| p.gid),
+            PiecePlace::Bottom => parts.first().filter(|p| !p.extender).map(|p| p.gid),
+            PiecePlace::Top => parts.last().filter(|p| !p.extender).map(|p| p.gid),
+            PiecePlace::Middle => {
+                let fixed: Vec<u16> = parts.iter().filter(|p| !p.extender).map(|p| p.gid).collect();
+                (fixed.len() == 3).then(|| fixed[1])
+            }
+        }
+    }
+
+    /// The Latin Modern Math vertical assembly that paints a run of cmex
+    /// extensible pieces spanning `span` pt at `size` pt: `(glyph id, the
+    /// rise of its ink bottom above the bottom of the run)`, bottom to top.
+    /// The parts overlap by the font's own connector geometry, so the ink is
+    /// continuous and ends exactly where TeX's stacked boxes do.
+    pub fn vertical_assembly(&self, ch: char, span: f64, size: f64) -> Option<Vec<(u16, f64)>> {
+        self.otf.vertical_assembly(ch, span, size)
+    }
+
     /// The Latin Modern Math glyph id for a placed TFM glyph.
     pub fn otf_gid(&self, font: MathFontId, code: u8, ch: char) -> Option<u16> {
         let name = self.cm.font_name(font);
@@ -482,7 +609,18 @@ impl TexMathMetrics {
             } else {
                 c
             };
-            face.face().glyph_id(MathFonts::math_char(c)).or_else(|| face.face().glyph_id(c)).map(|g| g.0)
+            let gid = face.face().glyph_id(MathFonts::math_char(c)).or_else(|| face.face().glyph_id(c)).map(|g| g.0)?;
+            if name.starts_with("cmsy") && code == 0x30 {
+                // cmsy "30 `\prime` is the large *unraised* prime that `'`
+                // sets as a superscript (GH-278). Latin Modern Math's cmap
+                // glyph for U+2032 (`minute`, ink 430..748 per mille) is
+                // the pre-raised prime Unicode math sets without a script,
+                // so drawn at the superscript position it sits a second
+                // shift too high; the face's `ssty` form `minute.st` (ink
+                // 96..549) is cmsy's design (lmsy7: 41..559).
+                return Some(self.otf.script_alternate(gid).unwrap_or(gid));
+            }
+            Some(gid)
         };
         // `\widehat`/`\widetilde` (cmex "62-"64, "65-"67): the Latin Modern
         // Math horizontal variant nearest the TFM width. `\overbrace`/
@@ -524,13 +662,22 @@ impl TexMathMetrics {
                 }
             };
         }
+        // A piece of cmex's extensible recipe: the part with the same role in
+        // Latin Modern Math's vertical glyph assembly. `typeset::math_items`
+        // then lays the whole stacked run out with the font's connector
+        // geometry ([`TexMathMetrics::vertical_assembly`]); this mapping is
+        // what each piece paints on its own.
+        if let Some(place) = self.extensible_piece(font, code, ch) {
+            let gid = self.assembly_part(ch, place);
+            if gid.is_none() {
+                self.unmapped.borrow_mut().push((name, code, ch));
+            }
+            return gid;
+        }
         let result = if name.starts_with("cmex") {
             // Size chain in lmex: steps from the character's first cmex code
             // to `code` select the same-index vertical variant in MATH.
-            let start = cm::delimiter_slot(ch)
-                .map(|(_, large)| large)
-                .or_else(|| cm::symbol_slot(ch).filter(|(f, _)| *f == Family::Extension).map(|(_, c)| c))
-                .or(if ch == '\u{221A}' { Some(0x70) } else { None });
+            let start = cmex_chain_start(ch);
             match (start, base(ch)) {
                 (Some(start), Some(base_gid)) => {
                     // The `next_larger` chains and the extensible recipes are
@@ -685,8 +832,60 @@ impl MathFontMetrics for TexMathMetrics {
         self.cm.accent_sizes(ch, size)
     }
 
-    fn extension_glyph(&self, code: u8, ch: char) -> Option<Glyph> {
-        self.cm.extension_glyph(code, ch)
+    fn extension_glyph(&self, code: u8, ch: char, size: SizeClass) -> Option<Glyph> {
+        self.cm.extension_glyph(code, ch, size)
+    }
+
+    /// Families 1–3 answer from math-layout's embedded CM programs (the
+    /// `lmmi`/`lmsy`/`lmex` TFMs are metric-identical, see the module docs);
+    /// family 0 from the installed `rm-lmr` TFM [`Self::roman_glyph`] boxes
+    /// with, ligatures included (`\mathrm{f}\mathrm{i}` is one fi glyph); a
+    /// one-character math alphabet (`\mathbf{T}\mathbf{o}`) from its text
+    /// font's TFM [`Self::alphabet_glyph`] boxes with. Characters no CM slot
+    /// covers (AMS fonts, OpenType fallbacks) are in no family here and never
+    /// kern.
+    #[cfg(feature = "math-font-kerns")]
+    fn ord_pair(&self, left: MathChar, right: MathChar, size: SizeClass) -> Option<OrdPair> {
+        let i = Self::size_index(size);
+        let at = self.cm.sizes[i];
+        let text_font = |tfm: &Tfm| tfm.param(2).is_some_and(|space| space != 0);
+        // Math alphabets: each is a family of its own (`\DeclareMathAlphabet`
+        // allocates one), so both characters must be of the same alphabet.
+        let alphabet = |c: MathChar| match c {
+            MathChar::Symbol(ch) => crate::mathalpha::classify(ch).filter(|(a, _)| a.text_key().is_some()),
+            MathChar::Text(_) => None,
+        };
+        match (alphabet(left), alphabet(right)) {
+            (None, None) => {}
+            (Some((a, l)), Some((b, r))) if a == b => {
+                let (_, _, _, tfm) = self.alphabets.iter().find(|(al, j, ..)| *al == a && *j == i)?;
+                // The alphabet fonts are addressed by letter, with no
+                // character standing for a ligature slot: a ligature pair
+                // gets no kern and is not formed.
+                let kern = match tfm.pair_program(l as u8, r as u8) {
+                    Some(mtfm::LigKern::Kern(k)) => mtfm::scale(k, at),
+                    _ => 0.0,
+                };
+                return Some(OrdPair { kern, text_font: text_font(tfm), ligature: None });
+            }
+            _ => return None,
+        }
+        // `self.cm` settles the family (and kerns families 1–3); a family-0
+        // pair then takes the roman TFM's program instead of cmr's.
+        let pair = self.cm.ord_pair(left, right, size)?;
+        let roman_code = |c: MathChar| match c {
+            MathChar::Text(ch) => cm::ot1_text_slot(ch),
+            MathChar::Symbol(ch) => cm::symbol_slot(ch).filter(|&(f, _)| f == Family::Roman).map(|(_, code)| code),
+        };
+        let (Some(l), Some(r), Some(tfm)) = (roman_code(left), roman_code(right), &self.roman[i]) else {
+            return Some(pair);
+        };
+        let (kern, ligature) = match tfm.pair_program(l, r) {
+            Some(mtfm::LigKern::Kern(k)) => (mtfm::scale(k, at), None),
+            Some(mtfm::LigKern::Ligature { op, rem }) => (0.0, cm::ligature_char(left, Family::Roman, rem).map(|ch| OrdLigature { op, ch })),
+            None => (0.0, None),
+        };
+        Some(OrdPair { kern, text_font: text_font(tfm), ligature })
     }
 
     fn delimiter_extensible(&self, ch: char, size: SizeClass) -> Option<Extensible> {
@@ -699,10 +898,14 @@ impl MathFontMetrics for TexMathMetrics {
 
     fn text_glyph(&self, ch: char, size: SizeClass) -> Option<Glyph> {
         if ch.is_ascii() {
-            self.roman_glyph(ch as u8, ch, size)
-        } else {
-            self.cm.text_glyph(ch, size)
+            return self.roman_glyph(ch as u8, ch, size);
         }
+        // A ligature `make_ord` formed (`ﬁ`) is its OT1 slot of `rm-lmr`.
+        #[cfg(feature = "math-font-kerns")]
+        if let Some(code) = cm::ot1_text_slot(ch) {
+            return self.roman_glyph(code, ch, size);
+        }
+        self.cm.text_glyph(ch, size)
     }
 }
 

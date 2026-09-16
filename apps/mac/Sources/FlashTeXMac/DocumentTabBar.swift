@@ -18,34 +18,35 @@ struct DocumentTabBar: View {
     var body: some View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 2) {
+                HStack(spacing: 0) {
                     ForEach(model.chrome.listing) { doc in // throttled, change-only copy (ShellChrome.swift): `project.listing` reads `documents` per keystroke
                         DocumentTab(doc: doc, active: doc.path == model.activePath, kind: model.documentKinds.kind(of: doc.path))
                     }
                 }
-                .padding(.horizontal, 6)
+                .padding(.horizontal, DS.Space.s)
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Open documents")
             .accessibilityIdentifier(Self.identifier)
-            Spacer(minLength: 8)
+            Spacer(minLength: DS.Space.m)
+            if model.narrowLayout {
+                // The collapsed preview's way back (design-principles §4):
+                // the window is too narrow for both columns. Flat icon
+                // toggle in the title bar's JetBrains style, not a bezel.
+                NarrowPreviewToggle()
+            }
             ProjectMenu()
             DocumentKindIndicator() // DocumentKinds.swift: helper-reported bibliography kind, read-only
-            if let url = model.documentURL {
-                let dirty = model.project.isDirty(model.activePath)
-                Text(dirty ? "edited" : "saved")
-                    .font(.caption).foregroundStyle(dirty ? .orange : .secondary)
-                    .help(model.activePath == model.project.entryPath ? url.path : url.deletingLastPathComponent().appendingPathComponent(model.activePath).path)
+            if model.documentURL == nil {
+                // No file identity yet: the one state the modified dot cannot carry.
+                Text("unsaved buffer").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textTertiary)
+                    .padding(.trailing, DS.Space.m)
             } else {
-                Text("unsaved buffer").font(.caption).foregroundStyle(.secondary)
+                Spacer().frame(width: DS.Space.m)
             }
-            Text("\(model.chrome.activeTextBytes) B · \(model.chrome.activeTextUTF16) u16")
-                .font(.caption).foregroundStyle(.tertiary).monospacedDigit()
-                .help("\(model.chrome.activeTextBytes) UTF-8 bytes · \(model.chrome.activeTextUTF16) UTF-16 units")
-                .padding(.trailing, 8)
         }
-        .frame(height: 30)
-        .background(.bar)
+        .frame(height: DS.Row.tab)
+        .background(DS.Colors.surfacePrimary) // Islands: strip and editor share one surface
     }
 }
 
@@ -55,18 +56,19 @@ private struct DocumentTab: View {
     let active: Bool
     let kind: DocumentKind?
     @State private var hovering = false
+    @Environment(\.controlActiveState) private var activeState
 
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: kind == .bibliography ? "books.vertical" : (doc.role == .entry ? "doc.text.fill" : "doc.text"))
-                .font(.caption).foregroundStyle(active ? Color.accentColor : Color.secondary)
-            Text(doc.path).font(.callout).lineLimit(1)
-                .foregroundStyle(active ? Color.primary : Color.secondary)
-            if let r = doc.durableRevision {
-                Text("r\(r)").font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
-            }
+        let style = FileTypeStyle.of(path: doc.path, entry: doc.role == .entry, bibliography: kind == .bibliography)
+        Button { model.switchOrNote(doc.path) } label: {
+        HStack(spacing: DS.Space.xs) {
+            // Colour-coded file identity, same vocabulary as the tree (§6).
+            Image(systemName: style.systemImage)
+                .font(DS.Fonts.secondary).foregroundStyle(style.color)
+            Text(doc.path).font(DS.Fonts.base).lineLimit(1)
+                .foregroundStyle(active ? DS.Colors.textPrimary : DS.Colors.textSecondary)
             if doc.isDirty {
-                Circle().fill(.orange).frame(width: 6, height: 6).accessibilityHidden(true)
+                Circle().fill(DS.Colors.statusModified).frame(width: DS.Size.modifiedDot, height: DS.Size.modifiedDot).accessibilityHidden(true)
             }
             if doc.role != .entry {
                 Button {
@@ -77,25 +79,45 @@ private struct DocumentTab: View {
                         }
                     }
                 } label: {
-                    Image(systemName: "xmark").font(.caption2.bold())
-                        .foregroundStyle(.secondary)
-                        .frame(width: 14, height: 14)
-                        .background(hovering ? Color.primary.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 3))
+                    Image(systemName: "xmark").font(DS.Fonts.header)
+                        .foregroundStyle(DS.Colors.textSecondary)
+                        .frame(width: DS.Size.inlineIconButton, height: DS.Size.inlineIconButton)
+                        .background(hovering ? DS.Colors.hover : .clear, in: RoundedRectangle(cornerRadius: DS.Radius.control))
                 }
                 .buttonStyle(.plain)
-                .opacity(hovering || active ? 1 : 0.35)
+                // Close affordance on hover and on the active tab only (§5).
+                .opacity(hovering || active ? 1 : 0)
                 .help("Detach \(doc.path) for this session (" + ProjectDocuments.detachScopeNote + ")")
                 .accessibilityLabel("Detach \(doc.path)")
             }
         }
-        .padding(.horizontal, 10).padding(.vertical, 5)
-        .background(active ? Color.accentColor.opacity(0.14) : (hovering ? Color.primary.opacity(0.05) : .clear),
-                    in: RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, DS.Space.l)
+        .frame(maxHeight: .infinity)
+        // Islands treatment (context/PROMPT-appearance-overhaul.md §3/§4):
+        // the selected tab is a muted blue block on the shared strip surface
+        // with a 4pt rounded underline at the strip's bottom edge; inactive
+        // tabs carry no chrome beyond a hover wash. An unfocused window's
+        // selected tab fades to the chrome tone (§14).
+        .background {
+            if active {
+                UnevenRoundedRectangle(topLeadingRadius: DS.Radius.tab, topTrailingRadius: DS.Radius.tab)
+                    .fill(activeState == .inactive ? DS.Colors.tabSelectedInactive : DS.Colors.tabSelected)
+            } else if hovering {
+                UnevenRoundedRectangle(topLeadingRadius: DS.Radius.tab, topTrailingRadius: DS.Radius.tab)
+                    .fill(DS.Colors.hover)
+            }
+        }
         .overlay(alignment: .bottom) {
-            if active { Rectangle().fill(Color.accentColor).frame(height: 2).padding(.horizontal, 4) }
+            if active {
+                UnevenRoundedRectangle(topLeadingRadius: DS.Size.tabUnderline, topTrailingRadius: DS.Size.tabUnderline)
+                    .fill(DS.Colors.tabUnderline)
+                    .frame(height: DS.Size.tabUnderline)
+                    .padding(.horizontal, DS.Space.xs)
+            }
         }
         .contentShape(Rectangle())
-        .onTapGesture { model.switchOrNote(doc.path) }
+        }
+        .buttonStyle(PressableStyle())
         .onHover { hovering = $0 }
         .contextMenu {
             Button("Show \(doc.path)") { model.switchOrNote(doc.path) }.disabled(active)
@@ -121,6 +143,23 @@ private struct DocumentTab: View {
         if let r = doc.durableRevision { s += " · durable r\(r)" }
         if doc.isDirty { s += " · edited" }
         return s
+    }
+}
+
+/// Reopens the preview while the narrow layout collapses it: the same flat
+/// JetBrains icon treatment as the title bar row (IconButtonLabel).
+private struct NarrowPreviewToggle: View {
+    @Environment(ShellModel.self) var model
+    @State private var hovering = false
+
+    var body: some View {
+        Toggle(isOn: Binding(get: { model.narrowPreviewShown }, set: { model.narrowPreviewShown = $0 })) {
+            IconButtonLabel(icon: "doc.richtext", on: model.narrowPreviewShown, hovering: hovering)
+        }
+        .toggleStyle(.button).buttonStyle(PressableStyle())
+        .onHover { hovering = $0 }
+        .help("Show the preview (the window is too narrow for editor and preview side by side)")
+        .accessibilityLabel("Show preview")
     }
 }
 

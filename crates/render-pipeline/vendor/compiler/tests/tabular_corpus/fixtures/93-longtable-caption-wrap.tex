@@ -1,0 +1,21 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{longtable}
+\setlength{\parindent}{0pt}
+\begin{document}
+Text before the table.
+
+\begin{longtable}{lc}
+\caption{A caption long enough that it does not fit on a single line of the four inch \LTcapwidth\ parbox and is therefore set as an ordinary paragraph inside it, as \LT@makecaption does.}\\
+\hline Head & Col\\\hline
+\endfirsthead
+\hline
+\endlastfoot
+r1 & a\\
+r2 & b\\
+\end{longtable}
+
+Text after the table.
+\end{document}

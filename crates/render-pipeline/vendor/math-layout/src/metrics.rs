@@ -152,12 +152,22 @@ pub trait MathFontMetrics {
         self.glyph(ch, size)
     }
 
-    /// Slot `code` of the math extension font (family 3, `largesymbols`)
-    /// for constructions that place its characters directly rather than
-    /// through a symbol or delimiter (`fontmath.ltx`'s `\braceld`..`\braceru`
-    /// in `\downbracefill`/`\upbracefill`), tagged `ch` for the renderer.
-    /// `None` when the provider has no TFM-slotted extension font.
-    fn extension_glyph(&self, _code: u8, _ch: char) -> Option<Glyph> {
+    /// Slot `code` of the math extension font (family 3, `largesymbols`) at
+    /// size class `size`, for constructions that place its characters
+    /// directly rather than through a symbol or delimiter (`fontmath.ltx`'s
+    /// `\braceld`..`\braceru` in `\downbracefill`/`\upbracefill`), tagged
+    /// `ch` for the renderer. `None` when the provider has no TFM-slotted
+    /// extension font.
+    ///
+    /// `size` matters whenever family 3 is not one fixed font: amsmath and
+    /// amsfonts redeclare `OMX/cmex/m/n` without `sfixed`
+    /// ([`crate::cm::ExtensionSizing::Designs`]), so `\textfont3` and
+    /// `\scriptfont3` are different designs at different sizes (pdfTeX
+    /// `\fontname` in an 11 pt article loading amsmath: `cmex10 at 10.95pt`
+    /// and `cmex8`). Callers pass the size class the construction sets its
+    /// family-3 characters at, which is not always the current style's — see
+    /// [`MathFontMetrics::extension_glyph`]'s caller in `make_brace`.
+    fn extension_glyph(&self, _code: u8, _ch: char, _size: SizeClass) -> Option<Glyph> {
         None
     }
 }

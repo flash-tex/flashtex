@@ -10,7 +10,19 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # On main, every run gets a group of its own (`-<run_id>`), so a push can
+  # never supersede the run that is testing the previous commit. Everywhere
+  # else the key is the ref, so a branch's runs still collapse onto its
+  # newest push.
+  #
+  # `cancel-in-progress` is NOT what was cancelling main: it already
+  # evaluates to false for a push. The cancellations came from the group key
+  # itself -- a shared key holds at most one in-progress and one pending run,
+  # and every new push cancelled the pending one. With a mac job that queues
+  # for hours behind a merge cadence measured in minutes, that meant main's
+  # runs were cancelled before they could report. 37 of the last 40 runs on
+  # main ended `cancelled`; exactly one completed.
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -21,6 +33,21 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  # The Mac app's bundled command inventory must stay byte-identical to the
+  # compiler's. That gate lived only in `mac-app` below, on a macOS runner --
+  # and macOS runners queue for hours behind ~90 branches, so in practice a
+  # compiler PR could drift the inventory and nothing would say so until
+  # someone ran the Mac suite by hand. It is a sha256 comparison of two files;
+  # it does not need a Mac.
+  inventory:
+    name: bundled inventory matches the compiler
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Completion vocabulary is the compiler's inventory
+        run: apps/mac/scripts/sync-supported-latex.sh --check
+
   rust:
     name: rust ${{ matrix.crate }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -104,7 +131,12 @@ jobs:
           key: helpers
       - name: Build every bundled helper (release)
         # Prints FLASHTEX_<NAME>=<path> lines; the app and its tests read them.
-        run: scripts/ci/build-helpers.sh | tee -a "$GITHUB_ENV"
+        # Without pipefail a failed helper build is hidden by `tee`, and the
+        # missing FLASHTEX_* lines then make every integration test XCTSkip --
+        # a green run that tested none of the Rust/Swift boundary.
+        run: |
+          set -o pipefail
+          scripts/ci/build-helpers.sh | tee -a "$GITHUB_ENV"
       - name: Completion vocabulary is the compiler's inventory
         # apps/mac/Sources/FlashTeXMac/Resources/supported-latex.json must be
         # byte-identical to crates/compiler/supported/supported-latex.json.
@@ -116,7 +148,12 @@ jobs:
         working-directory: apps/mac
         # Serial, as rehearsed locally (877 tests in ~5 min on an M1 Max):
         # the Nearby tests bind loopback ports and share fixtures.
-        run: swift test 2>&1 | tee swift-test.log | grep -vE '^\s*$' | tail -n 400
+        # `pipefail` is what makes a failing test fail the step: the default
+        # shell is `bash -e`, and a pipeline's status is its LAST command's,
+        # so without it `tail` returned 0 over any number of test failures.
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee swift-test.log | grep -vE '^\s*$' | tail -n 400
       - name: Upload swift test log
         if: always()
         uses: actions/upload-artifact@v4

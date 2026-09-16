@@ -58,10 +58,17 @@ public struct CaptureRecord: Identifiable, Equatable {
     public var outcome: NearbyWire.CaptureStatus?
     /// Why the outcome cannot be shown (older Mac: `unknown_type`; `unknown_capture`; transport).
     public var outcomeProblem: String?
+    /// A `capture_insert` is in flight for this capture (the Insert button is
+    /// busy). Transient: never persisted, so a relaunch re-reads the real
+    /// state from the Mac rather than trusting a half-finished tap.
+    public var inserting = false
+    /// Why the last Insert tap did not insert (`proposal_changed`, no link, …).
+    public var insertProblem: String?
 
     public static func == (a: CaptureRecord, b: CaptureRecord) -> Bool {
         a.id == b.id && a.status == b.status && a.instructions == b.instructions && a.png == b.png
             && a.outcome == b.outcome && a.outcomeProblem == b.outcomeProblem
+            && a.inserting == b.inserting && a.insertProblem == b.insertProblem
     }
 
     public init(id: String = "cap-" + UUID().uuidString.lowercased(), source: Source, png: Data, instructions: String,
@@ -77,7 +84,7 @@ public struct CaptureRecord: Identifiable, Equatable {
         case "received": return "on the Mac (inbox, no bridge attached) — not converted yet"
         case "journaled": return "journaled by the Mac's bridge — waiting for Convert Capture on the Mac"
         case "converting": return "converting on the Mac…"
-        case "proposal_ready": return "proposal ready — review and approve it on the Mac"
+        case "proposal_ready": return "proposal ready — read it below and tap Insert (or approve it on the Mac)"
         case "inserted": return "inserted on the Mac" + (o.newRevision.map { " (revision \($0))" } ?? "")
         case "rejected": return "rejected on the Mac"
         case "failed": return "conversion failed on the Mac"
@@ -87,6 +94,14 @@ public struct CaptureRecord: Identifiable, Equatable {
     }
     /// Polling stops here.
     public var outcomeIsFinal: Bool { outcome?.isFinal ?? false }
+
+    /// The proposal this iPad is currently showing, when there is one to
+    /// approve. `Insert` sends exactly this text's digest, so the Mac can
+    /// prove the approval names the proposal that was read.
+    public var reviewableLatex: String? {
+        guard case .received = status, let o = outcome, o.state == "proposal_ready" else { return nil }
+        return o.latex
+    }
 }
 
 /// Sends captures through `MacLink` (transfer-v1 `capture_submit` over the
@@ -94,8 +109,15 @@ public struct CaptureRecord: Identifiable, Equatable {
 /// disconnect re-send the identical payload with the same id; the Mac
 /// de-duplicates (nearby-v1 §4). Every change is written to `store` when one
 /// is attached, so a relaunch shows the same list.
-public final class CaptureQueue {
-    public private(set) var records: [CaptureRecord] = []
+/// `@unchecked Sendable`: `_records`, `_lastStoreError` and `_redeliveries`
+/// are serialized by `lock`. `link` and `store` are already `@unchecked Sendable`.
+public final class CaptureQueue: @unchecked Sendable {
+    /// Snapshot of the list. Mutations go through `update`/`draft` under `lock`
+    /// because `refreshOutcome` resumes off the main actor after `await` and
+    /// PadModel copies this array into a `@Published` property.
+    public var records: [CaptureRecord] { lock.withLock { _records } }
+    private var _records: [CaptureRecord] = []
+    private let lock = NSLock()
     public let link: MacLink
     public let store: CaptureStore?
     public static let maxInstructionBytes = 4096
@@ -105,27 +127,32 @@ public final class CaptureQueue {
     public init(link: MacLink, store: CaptureStore? = nil) {
         self.link = link
         self.store = store
-        records = store?.load() ?? []
+        _records = store?.load() ?? []
     }
 
-    public func record(_ id: String) -> CaptureRecord? { records.first { $0.id == id } }
+    public func record(_ id: String) -> CaptureRecord? { lock.withLock { _records.first { $0.id == id } } }
 
     private func update(_ id: String, _ f: (inout CaptureRecord) -> Void) {
-        guard let i = records.firstIndex(where: { $0.id == id }) else { return }
-        f(&records[i])
-        persist()
+        lock.withLock {
+            guard let i = _records.firstIndex(where: { $0.id == id }) else { return }
+            f(&_records[i])
+            persistLocked()
+        }
     }
 
-    private func persist() {
+    /// Caller must hold `lock`. `store.save` runs under that lock so a concurrent
+    /// `records` read cannot observe a torn list; CaptureStore has its own lock too.
+    private func persistLocked() {
         guard let store else { return }
-        if records.count > Self.maxRecords {
-            var kept = records
+        if _records.count > Self.maxRecords {
+            var kept = _records
             for i in stride(from: kept.count - 1, through: 0, by: -1) where kept.count > Self.maxRecords && kept[i].status.isTerminal { kept.remove(at: i) }
-            records = kept
+            _records = kept
         }
-        do { try store.save(records) } catch { lastStoreError = "\(error)" }
+        do { try store.save(_records) } catch { _lastStoreError = "\(error)" }
     }
-    public private(set) var lastStoreError: String?
+    public var lastStoreError: String? { lock.withLock { _lastStoreError } }
+    private var _lastStoreError: String?
 
     /// Client-side checks the Mac would fail anyway (`NearbyWire.checkImage`,
     /// instruction bound), before anything is queued.
@@ -137,8 +164,10 @@ public final class CaptureQueue {
 
     @discardableResult
     public func draft(_ r: CaptureRecord) -> CaptureRecord {
-        records.insert(r, at: 0)
-        persist()
+        lock.withLock {
+            _records.insert(r, at: 0)
+            persistLocked()
+        }
         return r
     }
 
@@ -235,9 +264,69 @@ public final class CaptureQueue {
         }
     }
 
+    /// The Insert tap (nearby-v1 `capture_insert`, additive): approve the
+    /// proposal this iPad is *showing* and ask the Mac to apply it, instead of
+    /// walking to the Mac to click Insert in the review sheet.
+    ///
+    /// This is a review, not an automatic insertion. The text approved is
+    /// `reviewableLatex` — what the person just read on this screen — and only
+    /// its digest travels, so the Mac inserts its own journaled proposal and
+    /// refuses (`proposal_changed`) when that is no longer the text that was
+    /// read. Wrapping is the Mac's and the bridge's: a formula approved for a
+    /// caret in running text arrives wrapped by the destination's
+    /// `caret_context`, not by anything guessed here.
+    @discardableResult
+    public func insertCapture(_ id: String) async -> NearbyWire.CaptureInsertAck? {
+        guard let r = record(id), let latex = r.reviewableLatex, !r.inserting else { return nil }
+        guard let session = link.session, let pair = link.pair else {
+            update(id) { $0.insertProblem = "not connected to the Mac" }
+            return nil
+        }
+        guard r.pairId == pair.pairId else {
+            update(id) { $0.insertProblem = "sent to another Mac (pair \(r.pairId ?? "?")); the current link is \(pair.macName) — nothing was inserted" }
+            return nil
+        }
+        update(id) { $0.inserting = true; $0.insertProblem = nil }
+        defer { update(id) { $0.inserting = false } }
+        do {
+            let ack = try await session.captureInsert(captureId: id, approvedLatex: latex)
+            // Converge the row on what the Mac just said, so the list is right
+            // without waiting for the next poll. The proposal text is kept: an
+            // inserted row still shows what went into the document.
+            update(id) {
+                $0.outcome = NearbyWire.CaptureStatus(captureId: id, state: ack.state, durable: $0.outcome?.durable ?? true,
+                                                      latex: latex, note: ack.note, newRevision: ack.newRevision)
+                // An ack that is not `inserted` is still an answer, not an
+                // error — the Mac could not insert (the pin moved, say). Say so
+                // where the tap happened, so a button that did nothing visible
+                // never looks merely broken.
+                $0.insertProblem = ack.state == "inserted" ? nil : (ack.note ?? "the Mac reports “\(ack.state)”")
+            }
+            return ack
+        } catch let e as NearbyError {
+            let why: String
+            if case .remote(let code, let message) = e {
+                switch code {
+                case "unknown_type":
+                    why = "this Mac's FlashTeX predates capture_insert (unknown_type) — approve it on the Mac"
+                case "proposal_changed":
+                    why = "the Mac's proposal changed since this was shown — tap Refresh status, read it again, then Insert"
+                default:
+                    why = "\(code): \(message)"
+                }
+            } else { why = e.description }
+            update(id) { $0.insertProblem = why }
+            return nil
+        } catch {
+            update(id) { $0.insertProblem = "\(error)" }
+            return nil
+        }
+    }
+
     /// Re-sends a received capture byte-for-byte (saved destination and
     /// base_revision, not a fresh `destination_query`). Records the new receipt.
-    public private(set) var redeliveries: [String] = []
+    public var redeliveries: [String] { lock.withLock { _redeliveries } }
+    private var _redeliveries: [String] = []
     private func redeliver(_ r: CaptureRecord, session: NearbySession) async throws {
         guard let destinationId = r.destinationId, let baseRevision = r.baseRevision else {
             throw NearbyError.remote(code: "unknown_capture", message: "no saved destination to re-deliver with")
@@ -245,7 +334,7 @@ public final class CaptureQueue {
         let dest = NearbyWire.Destination(destinationId: destinationId, projectId: "", path: "", baseRevision: baseRevision)
         let submit = try session.makeCapture(captureId: r.id, image: r.png, mimeType: "image/png", instructions: r.instructions, destination: dest)
         let ack = try await session.submitCapture(submit)
-        redeliveries.append(r.id)
+        lock.withLock { _redeliveries.append(r.id) }
         update(r.id) { $0.status = .received(ack) }
     }
 

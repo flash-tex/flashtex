@@ -5,9 +5,9 @@
 //! is written in the compact cluster encoding — a run-level `sources` span,
 //! per-cluster byte offsets as deltas from the previous cluster, and no
 //! `carets`/`hit_rects` objects: both are derived from the cluster's glyphs
-//! and the run's `hit_top`/`hit_height`/`end_caret`, with per-cluster
-//! overrides wherever the derivation would not reproduce the model exactly.
-//! The payload announces it as `"cluster_encoding":"compact-1"`.
+//! and the run's `hit_top`/`hit_height`/`end_caret`, with a per-cluster `h`/
+//! `hv` override wherever the hit rect itself would not reproduce the
+//! model's exactly. The payload announces it as `"cluster_encoding":"compact-1"`.
 //!
 //! Nothing here changes the bytes of a line for a consumer that did not
 //! request the capability: `display::write_page` only calls into this module
@@ -15,19 +15,21 @@
 //!
 //! Correctness is by construction, not by invariant: the writer runs the
 //! decoder's derivation rules ([`predict`]) on the model it is about to
-//! write and emits an override for every field whose derived value differs
-//! from the model, so `read` ∘ `write` is the identity on any `GlyphRun`
-//! (`tests/display_list_compact.rs` proves it on the real-world corpus). The
-//! derivation rules themselves are the FT-070 invariants of PR #232
-//! (`carets.first` == `hit_rect` + `text_start_byte`, the end caret only on
-//! a run's last cluster with the last cluster's `top`/`height`), measured
-//! there over 1 991 552 corpus clusters with zero exceptions; on this corpus
-//! the overrides are therefore confined to the cases #232 also names (the
-//! TikZ end-caret `x`, math runs with per-glyph vertical extents).
+//! write and emits an `h`/`hv` override for a hit rect whose derived value
+//! differs from the model, so `read` ∘ `write` is the identity on any
+//! `GlyphRun` (`tests/display_list_compact.rs` proves it on the real-world
+//! corpus). Carets need no override of their own: since PR #232 (FT-070)
+//! they are derived, never stored (`GlyphRun::carets_of`, exactly
+//! `Cluster::first_caret` plus the run's single `end_caret` on its last
+//! cluster) — the same rule this module's decoder applies once the hit rect
+//! override, if any, has corrected the rect it derives from — so a cluster's
+//! real carets and the decoder's derived carets are the same value by
+//! construction, and there is no separate `carets` field left to diverge
+//! from it.
 
 use flashtex_compiler::json::{self, Value};
 
-use crate::display::{Caret, Carets, Cluster, DisplayList, GlyphRun, Item, Page, Provenance, Rect, SourceRange, Tick};
+use crate::display::{Cluster, DisplayList, GlyphRun, Item, Page, Provenance, Rect, SourceRange, Tick};
 
 pub const CAP: &str = "display-list-v2-compact";
 /// `payload.cluster_encoding` of a compact line.
@@ -90,10 +92,11 @@ pub fn hit_default(r: &GlyphRun) -> Option<(Tick, Tick)> {
     best.map(|(k, _)| k)
 }
 
-/// The run's end caret `(text_byte, x)`: the second caret of its last
-/// cluster, when there is one. Any other second caret is an override (`c`).
+/// The run's end caret `(text_byte, x)`, when it has one (`GlyphRun::end_caret`,
+/// the part of the last cluster's second caret the hit rect does not already
+/// say).
 pub fn end_caret(r: &GlyphRun) -> Option<(usize, Tick)> {
-    r.clusters.last().and_then(|c| c.carets.last).map(|k| (k.text_byte, k.x))
+    r.end_caret.map(|e| (e.text_byte, e.x))
 }
 
 /// The UTF-8 length of the scalar starting at byte `at` of `text` (0 when
@@ -102,12 +105,14 @@ pub fn scalar_len(text: &str, at: usize) -> usize {
     text.get(at..).and_then(|t| t.chars().next()).map_or(0, char::len_utf8)
 }
 
-/// The derived (default) values of cluster `i` of `r`: what a decoder
-/// reconstructs when the cluster object carries no override.
+/// The derived (default) hit rect of cluster `i` of `r`: what a decoder
+/// reconstructs when the cluster object carries no `h`/`hv` override. Its
+/// carets follow from this and the run's `end_caret` exactly as
+/// `GlyphRun::carets_of` computes them from the real hit rect, so once the
+/// hit rect matches, the carets do too.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Predicted {
     pub hit_rect: Rect,
-    pub carets: Carets,
 }
 
 /// The x/width part of the derived hit rect: the origin of the cluster's
@@ -124,13 +129,9 @@ pub fn predict_x_width(r: &GlyphRun, i: usize) -> (Tick, Tick) {
     (x.unwrap_or(Tick(0)), Tick(width))
 }
 
-pub fn predict(r: &GlyphRun, i: usize, hit_top: Tick, hit_height: Tick, end: Option<(usize, Tick)>) -> Predicted {
-    let c = &r.clusters[i];
+pub fn predict(r: &GlyphRun, i: usize, hit_top: Tick, hit_height: Tick) -> Predicted {
     let (x, width) = predict_x_width(r, i);
-    let hit_rect = Rect { x, top: hit_top, width, height: hit_height };
-    let first = Caret { text_byte: c.text_start_byte, x: hit_rect.x, top: hit_rect.top, height: hit_rect.height };
-    let last = end.filter(|_| i + 1 == r.clusters.len()).map(|(text_byte, ex)| Caret { text_byte, x: ex, top: hit_rect.top, height: hit_rect.height });
-    Predicted { hit_rect, carets: Carets { first, last } }
+    Predicted { hit_rect: Rect { x, top: hit_top, width, height: hit_height } }
 }
 
 // ---------------------------------------------------------------- writer
@@ -180,32 +181,11 @@ pub fn write_glyph_run(o: &mut String, r: &GlyphRun, write_paint: &dyn Fn(&mut S
         }
         o.push('{');
         let mut first = true;
-        let p = predict(r, i, hit_top, hit_height, end);
-        // c: explicit carets when the derived list is not the model's.
-        // The derived carets use the FINAL hit rect (after h/hv), so
-        // recompute the comparison against the actual rect.
-        let actual_first = Caret { text_byte: c.text_start_byte, x: c.hit_rect.x, top: c.hit_rect.top, height: c.hit_rect.height };
-        let derived_last = end.filter(|_| i + 1 == r.clusters.len()).map(|(tb, ex)| Caret { text_byte: tb, x: ex, top: c.hit_rect.top, height: c.hit_rect.height });
-        let derived = Carets { first: actual_first, last: derived_last };
-        if derived != c.carets {
-            sep(o, &mut first);
-            o.push_str("\"c\":[");
-            for (k, caret) in c.carets.iter().enumerate() {
-                if k > 0 {
-                    o.push(',');
-                }
-                o.push('[');
-                num(o, caret.text_byte as i64);
-                o.push(',');
-                num(o, caret.x.0);
-                o.push(',');
-                num(o, caret.top.0);
-                o.push(',');
-                num(o, caret.height.0);
-                o.push(']');
-            }
-            o.push(']');
-        }
+        let p = predict(r, i, hit_top, hit_height);
+        // Carets carry no override of their own: they are derived (never
+        // stored, PR #232) from exactly the hit rect the `h`/`hv` override
+        // below already corrects and the run's single `end_caret`, so once
+        // the hit rect matches the model's, so do the carets.
         let text_len = c.text_end_byte.saturating_sub(c.text_start_byte);
         let explicit = !span.as_ref().is_some_and(|(path, _, _)| implicit(c, path));
         // e: source length when it is not the text length (implicit only).
@@ -422,9 +402,9 @@ fn tick_list(v: &Value, n: usize, what: &str) -> Result<Vec<Tick>, ReadError> {
 }
 
 /// Reads the clusters of a compact glyph run (a parsed `glyph_run` item
-/// object whose `clusters` are compact). `glyphs` are the run's already-read
-/// glyphs, `text` its text.
-pub fn read_clusters(item: &Value, glyphs: &[crate::display::Glyph], text: &str) -> Result<Vec<Cluster>, ReadError> {
+/// object whose `clusters` are compact), and the run's `end_caret`.
+/// `glyphs` are the run's already-read glyphs, `text` its text.
+pub fn read_clusters(item: &Value, glyphs: &[crate::display::Glyph], text: &str) -> Result<(Vec<Cluster>, Option<crate::display::EndCaret>), ReadError> {
     let arr = item.get("clusters").and_then(Value::as_arr).ok_or_else(|| ReadError("clusters".into()))?;
     let hit_top = item.get("hit_top").map(|v| int(v, "hit_top").map(Tick)).transpose()?;
     let hit_height = item.get("hit_height").map(|v| int(v, "hit_height").map(Tick)).transpose()?;
@@ -487,24 +467,6 @@ pub fn read_clusters(item: &Value, glyphs: &[crate::display::Glyph], text: &str)
                 Rect { x: px, top, width: pw, height }
             }
         };
-        let carets = match c.get("c") {
-            Some(v) => {
-                let list = v.as_arr().ok_or_else(|| ReadError("c: not an array".into()))?;
-                let mut ks = Vec::with_capacity(list.len());
-                for k in list {
-                    let t = tick_list(k, 4, "c")?;
-                    ks.push(Caret { text_byte: usize::try_from(t[0].0).map_err(|_| ReadError("c: text_byte".into()))?, x: t[1], top: t[2], height: t[3] });
-                }
-                if ks.is_empty() || ks.len() > 2 {
-                    return err("c: one or two carets");
-                }
-                Carets { first: ks[0], last: ks.get(1).copied() }
-            }
-            None => Carets {
-                first: Caret { text_byte: ts, x: hit_rect.x, top: hit_rect.top, height: hit_rect.height },
-                last: end.filter(|_| i + 1 == n).map(|(tb, x)| Caret { text_byte: tb, x, top: hit_rect.top, height: hit_rect.height }),
-            },
-        };
         let provenance = if let Some(reason) = c.get("synthetic_reason") {
             Provenance::Synthetic(reason.as_str().ok_or_else(|| ReadError("synthetic_reason".into()))?.to_string())
         } else if let Some(v) = c.get("sources") {
@@ -525,9 +487,9 @@ pub fn read_clusters(item: &Value, glyphs: &[crate::display::Glyph], text: &str)
             prev_src_end = end_byte as usize;
             Provenance::Source(SourceRange { path: span.path.clone(), start_byte: start as usize, end_byte: end_byte as usize })
         };
-        out.push(Cluster { text_start_byte: ts, text_end_byte: te, hit_rect, carets, provenance });
+        out.push(Cluster { text_start_byte: ts, text_end_byte: te, hit_rect, provenance });
     }
-    Ok(out)
+    Ok((out, end.map(|(text_byte, x)| crate::display::EndCaret { x, text_byte })))
 }
 
 /// The cluster-independent part of a glyph-run object, shared by the full
@@ -592,18 +554,27 @@ pub fn read_runs(line: &str) -> Result<Vec<(u32, Vec<GlyphRun>)>, ReadError> {
                 continue;
             }
             let (font_id, font_size, text, glyphs, paint) = read_run_head(item)?;
-            let clusters = if compact { read_clusters(item, &glyphs, &text)? } else { read_full_clusters(item)? };
-            runs.push(GlyphRun { font_id, font_size, text, glyphs, clusters, paint, role: crate::display::RunRole::Text });
+            let (clusters, end_caret) = if compact { read_clusters(item, &glyphs, &text)? } else { read_full_clusters(item)? };
+            runs.push(GlyphRun { font_id, font_size, text, glyphs, clusters, paint, role: crate::display::RunRole::Text, end_caret });
         }
         out.push((number, runs));
     }
     Ok(out)
 }
 
-fn read_full_clusters(item: &Value) -> Result<Vec<Cluster>, ReadError> {
+/// `clusters` plus the run's `end_caret`: the full encoding has no separate
+/// `end_caret` key, since the run-end caret rides as the last cluster's
+/// second `carets` entry (`display::write_page`'s `r.carets_of(j)`); this
+/// pulls it back out, but no other field of `carets`/`hit_rects` beyond that
+/// one value, since `Cluster` no longer stores them (PR #232, FT-070).
+fn read_full_clusters(item: &Value) -> Result<(Vec<Cluster>, Option<crate::display::EndCaret>), ReadError> {
     let arr = item.get("clusters").and_then(Value::as_arr).ok_or_else(|| ReadError("clusters".into()))?;
-    arr.iter()
-        .map(|c| {
+    let n = arr.len();
+    let mut end_caret = None;
+    let clusters = arr
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
             let rects = c.get("hit_rects").and_then(Value::as_arr).ok_or_else(|| ReadError("hit_rects".into()))?;
             if rects.len() != 1 {
                 return err("hit_rects: exactly one");
@@ -612,11 +583,15 @@ fn read_full_clusters(item: &Value) -> Result<Vec<Cluster>, ReadError> {
             let f = |o: &Value, k: &str| int(o.get(k).ok_or_else(|| ReadError(k.to_string()))?, k);
             let hit_rect = Rect { x: Tick(f(r, "x")?), top: Tick(f(r, "top")?), width: Tick(f(r, "width")?), height: Tick(f(r, "height")?) };
             let ks = c.get("carets").and_then(Value::as_arr).ok_or_else(|| ReadError("carets".into()))?;
-            let caret = |k: &Value| Ok::<_, ReadError>(Caret { text_byte: uint(k.get("text_byte").ok_or_else(|| ReadError("text_byte".into()))?, "text_byte")?, x: Tick(f(k, "x")?), top: Tick(f(k, "top")?), height: Tick(f(k, "height")?) });
             if ks.is_empty() || ks.len() > 2 {
                 return err("carets: one or two");
             }
-            let carets = Carets { first: caret(&ks[0])?, last: ks.get(1).map(caret).transpose()? };
+            if i + 1 == n {
+                if let Some(second) = ks.get(1) {
+                    let text_byte = uint(second.get("text_byte").ok_or_else(|| ReadError("carets.text_byte".into()))?, "text_byte")?;
+                    end_caret = Some(crate::display::EndCaret { x: Tick(f(second, "x")?), text_byte });
+                }
+            }
             let provenance = if let Some(reason) = c.get("synthetic_reason") {
                 Provenance::Synthetic(reason.as_str().ok_or_else(|| ReadError("synthetic_reason".into()))?.to_string())
             } else {
@@ -631,11 +606,11 @@ fn read_full_clusters(item: &Value) -> Result<Vec<Cluster>, ReadError> {
                 text_start_byte: uint(c.get("text_start_byte").ok_or_else(|| ReadError("text_start_byte".into()))?, "text_start_byte")?,
                 text_end_byte: uint(c.get("text_end_byte").ok_or_else(|| ReadError("text_end_byte".into()))?, "text_end_byte")?,
                 hit_rect,
-                carets,
                 provenance,
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((clusters, end_caret))
 }
 
 /// The glyph runs of `list` in wire order, with provenance normalised the
@@ -646,8 +621,9 @@ pub fn model_runs(list: &DisplayList) -> Vec<(u32, Vec<GlyphRun>)> {
         .iter()
         .map(|p: &Page| {
             let runs = p
-                .items
-                .iter()
+                .items()
+                .into_iter()
+                .flatten()
                 .filter_map(|it| match it {
                     Item::GlyphRun(r) => Some(r),
                     _ => None,

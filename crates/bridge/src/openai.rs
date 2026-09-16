@@ -194,6 +194,7 @@ mod tests {
             instructions: "transcribe".into(),
         };
         let context = Context {
+            caret_context: Default::default(),
             project_id: "p".into(),
             path: "main.tex".into(),
             revision: 1,

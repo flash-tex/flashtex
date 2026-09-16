@@ -19,7 +19,8 @@
 
 use crate::cm_tfm::*;
 use crate::metrics::{Extensible, FontId, Glyph, MathFontMetrics, MathParams, SizeClass};
-use crate::tfm::{TfmChar, TfmFont, scale};
+use crate::metrics::{MathChar, OrdLigature, OrdPair};
+use crate::tfm::{LigKern, TfmChar, TfmFont, scale};
 
 /// Family 0: roman (`cmr`), 1: math italic (`cmmi`), 2: symbols (`cmsy`),
 /// 3: extension (`cmex`).
@@ -687,14 +688,17 @@ impl MathFontMetrics for CmMathMetrics {
         self.extension_recipe(0x70, '\u{221A}', size)
     }
 
-    /// `\operator@font` is the roman family (cmr) at the current size.
-    fn extension_glyph(&self, code: u8, ch: char) -> Option<Glyph> {
-        self.make_glyph(Family::Extension, code, ch, SizeClass::Text)
+    fn extension_glyph(&self, code: u8, ch: char, size: SizeClass) -> Option<Glyph> {
+        self.make_glyph(Family::Extension, code, ch, size)
     }
 
     fn text_glyph(&self, ch: char, size: SizeClass) -> Option<Glyph> {
-        let code = if ch.is_ascii() { ch as u8 } else { return None };
-        self.make_glyph(Family::Roman, code, ch, size)
+        self.make_glyph(Family::Roman, ot1_text_slot(ch)?, ch, size)
+    }
+
+    fn text_space(&self, size: SizeClass) -> f64 {
+        let (font, _, at) = self.font(Family::Roman, size);
+        font.fontdimen(2, at)
     }
 
     fn accent_sizes(&self, ch: char, size: SizeClass) -> Vec<Glyph> {
@@ -720,6 +724,88 @@ impl MathFontMetrics for CmMathMetrics {
         }
         out
     }
+
+    fn ord_pair(&self, left: MathChar, right: MathChar, size: SizeClass) -> Option<OrdPair> {
+        let slot = |c: MathChar| match c {
+            MathChar::Symbol(ch) => symbol_slot(ch),
+            MathChar::Text(ch) => Some((Family::Roman, ot1_text_slot(ch)?)),
+        };
+        let ((family, l), (right_family, r)) = (slot(left)?, slot(right)?);
+        if family != right_family {
+            return None;
+        }
+        let (font, _, at) = self.font(family, size);
+        let text_font = font.params.get(1).is_some_and(|&space| space != 0);
+        let (kern, ligature) = match font.lig_kern(l, r) {
+            Some(LigKern::Kern(fixword)) => (scale(fixword, at), None),
+            Some(LigKern::Ligature { op, rem }) => (
+                0.0,
+                ligature_char(left, family, rem).map(|ch| OrdLigature { op, ch }),
+            ),
+            None => (0.0, None),
+        };
+        Some(OrdPair {
+            kern,
+            text_font,
+            ligature,
+        })
+    }
+}
+
+/// The ligature characters of the OT1 text fonts (`cmr`, `cmti`, `cmbx`,
+/// `cmss`), as the Unicode characters that stand for them in a math list:
+/// the lig/kern programs produce these slots, and [`ot1_text_slot`] puts
+/// them back. `cmtt`'s two ligatures (`!``, `?``) go to slots 0o16/0o17 of
+/// its own layout and are not covered.
+const OT1_LIGATURES: [(u8, char); 11] = [
+    (0o13, '\u{FB00}'),  // ff
+    (0o14, '\u{FB01}'),  // fi
+    (0o15, '\u{FB02}'),  // fl
+    (0o16, '\u{FB03}'),  // ffi
+    (0o17, '\u{FB04}'),  // ffl
+    (0o42, '\u{201D}'),  // ''
+    (0o74, '\u{00A1}'),  // !`
+    (0o76, '\u{00BF}'),  // ?`
+    (0o134, '\u{201C}'), // ``
+    (0o173, '\u{2013}'), // --
+    (0o174, '\u{2014}'), // ---
+];
+
+/// The character a ligature instruction of `family`'s font produces at slot
+/// `rem`, of the same kind as the pair's `left` character: a text character
+/// ([`ot1_text_char`]), or a symbol that [`symbol_slot`] puts back at that
+/// slot. `None` when no character stands for the slot (CM's math families
+/// have no ligatures, so a symbol pair never misses in practice); the
+/// ligature is then not formed.
+pub fn ligature_char(left: MathChar, family: Family, rem: u8) -> Option<MathChar> {
+    let ch = ot1_text_char(rem)?;
+    match left {
+        MathChar::Text(_) => Some(MathChar::Text(ch)),
+        MathChar::Symbol(_) => {
+            (symbol_slot(ch) == Some((family, rem))).then_some(MathChar::Symbol(ch))
+        }
+    }
+}
+
+/// The OT1 text-font slot of a text character: its ASCII code, or the slot
+/// of a ligature character ([`OT1_LIGATURES`]).
+pub fn ot1_text_slot(ch: char) -> Option<u8> {
+    if ch.is_ascii() {
+        return Some(ch as u8);
+    }
+    OT1_LIGATURES
+        .iter()
+        .find(|(_, c)| *c == ch)
+        .map(|(slot, _)| *slot)
+}
+
+/// The text character standing for OT1 slot `slot` of a ligature result:
+/// a ligature character, or the printable ASCII character at that code.
+pub fn ot1_text_char(slot: u8) -> Option<char> {
+    match OT1_LIGATURES.iter().find(|(s, _)| *s == slot) {
+        Some((_, ch)) => Some(*ch),
+        None => (slot.is_ascii_graphic()).then_some(slot as char),
+    }
 }
 
 /// Size in pt of a size class under these metrics (for tests and reports).
@@ -730,6 +816,48 @@ pub fn size_pt(m: &CmMathMetrics, size: SizeClass) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `\overbrace`/`\underbrace` set `\braceld`..`\braceru` inside
+    /// `\downbracefill`/`\upbracefill`'s own `$...$`, so the pieces always
+    /// come from `\textfont3` — never `\scriptfont3`, however deeply the
+    /// brace sits in scripts.
+    ///
+    /// The two differ only when family 3 is not one fixed font, which is
+    /// what amsmath's redeclaration does ([`ExtensionSizing::Designs`]). In
+    /// an 11 pt article loading amsmath, pdfTeX 3.141592653 (TeX Live 2025)
+    /// reports `\fontname\textfont3` = `cmex10 at 10.95pt` and
+    /// `\fontname\scriptfont3` = `cmex8`, and `\showbox` of `\overbrace{a+b}`,
+    /// `x^{\overbrace{a+b}}`, `x^{y^{\overbrace{a+b}}}` and an `\underbrace`
+    /// in a fraction numerator all place the same `\hbox(1.31396+0.0)` piece
+    /// from cmex10 at 10.95 pt.
+    #[test]
+    fn brace_pieces_come_from_textfont3_even_inside_scripts() {
+        use crate::mathlist::{Atom, MathList};
+        let m = CmMathMetrics::for_text_size(10.95).with_extension(ExtensionSizing::Designs);
+        assert_eq!(m.sizes, [10.95, 8.0, 6.0]);
+        let brace = || Atom::brace(MathList::new(vec![Atom::ord('a')]), false);
+        let bare = MathList::new(vec![brace()]);
+        let mut x = Atom::ord('x');
+        x.superscript = Some(MathList::new(vec![brace()]));
+        let mut y = Atom::ord('y');
+        y.superscript = Some(MathList::new(vec![x.clone()]));
+        for list in [bare, MathList::new(vec![x]), MathList::new(vec![y])] {
+            let root = crate::layout(&list, crate::Style::DISPLAY, &m);
+            let pieces: Vec<_> = crate::positioned_runs(&root, (0.0, 0.0))
+                .glyphs
+                .into_iter()
+                .filter(|g| g.ch == '\u{23DE}')
+                .collect();
+            assert_eq!(pieces.len(), 4, "four `\\downbracefill` pieces");
+            for p in pieces {
+                assert_eq!(p.font_id, font_id_of(&CMEX10), "cmex10, not cmex8");
+                assert_eq!(format!("{:.5}", p.size), "10.95000");
+                // cmex10 "7A height 0.119997 em: pdfTeX's 1.31396 pt piece.
+                let g = m.extension_glyph(0x7A, '\u{23DE}', SizeClass::Text).expect("piece");
+                assert_eq!(format!("{:.5}", g.height), "1.31396");
+            }
+        }
+    }
 
     /// `fontmath.ltx` 278-279 and 301-302 put the square relations in the
     /// `symbols` (cmsy) family, so they box from the cmsy TFM exactly as

@@ -19,6 +19,7 @@ use std::collections::HashMap;
 
 use crate::diagnostics::Diagnostic;
 use crate::lexer::{Token, TokenKind};
+use crate::natbib;
 use crate::parser::{Inline, TextStyle};
 use crate::Span;
 
@@ -28,6 +29,16 @@ use crate::Span;
 #[derive(Debug, Clone)]
 struct BibItem {
     label: String,
+    /// The `\bibcite` record natbib's `\@lbibitem` writes for this entry
+    /// (`{num}{date}{{name}}{{all names}}`), when natbib is loaded. `None`
+    /// for a label natbib would call non-compliant — which is also what makes
+    /// [`Bibliography::force_numbers`] true.
+    entry: Option<natbib::Entry>,
+    /// The printed marker of the entry in `thebibliography`, already
+    /// bracketed: `[1]` normally, `[Knuth 1984]` for an overridden label, and
+    /// **empty** under natbib's author-year mode, whose `\@biblabel` is
+    /// `\hfill` (natbib.sty line 622).
+    marker: String,
 }
 
 /// Every `\bibitem` found by [`prescan`], in document order, plus a
@@ -36,12 +47,45 @@ struct BibItem {
 pub struct Bibliography {
     items: Vec<BibItem>,
     keys: HashMap<String, usize>,
+    /// `\usepackage[...]{natbib}`'s resolved options, when the document
+    /// loads it.
+    natbib: Option<natbib::Options>,
+    /// natbib's `\NAT@stdbst`: an entry whose label carries no author-year
+    /// data. `\NAT@force@numbers` (natbib.sty line 974) then makes the whole
+    /// document numeric on the next run, which is the steady state a
+    /// two-pass pdfLaTeX run reaches.
+    force_numbers: bool,
 }
 
 impl Bibliography {
-    fn push(&mut self, key: String, label: String, span: Span, diags: &mut Vec<Diagnostic>) {
+    /// natbib's resolved options, once `\usepackage{natbib}` has been seen,
+    /// with `\NAT@force@numbers` already applied. `None` when the document
+    /// does not load natbib, and `\cite` keeps its kernel meaning.
+    pub fn natbib(&self) -> Option<&natbib::Options> {
+        self.natbib.as_ref()
+    }
+
+    /// natbib refused the bibliography's labels and fell back to numeric
+    /// citations (natbib.sty line 974). Reported once by the parser.
+    pub fn natbib_forced_numbers(&self) -> bool {
+        self.force_numbers
+    }
+
+    fn push(
+        &mut self,
+        key: String,
+        label: String,
+        entry: Option<natbib::Entry>,
+        marker: String,
+        span: Span,
+        diags: &mut Vec<Diagnostic>,
+    ) {
         let index = self.items.len();
-        self.items.push(BibItem { label });
+        self.items.push(BibItem {
+            label,
+            entry,
+            marker,
+        });
         if key.is_empty() {
             return;
         }
@@ -61,12 +105,35 @@ impl Bibliography {
         self.items.get(index).map(|item| item.label.as_str())
     }
 
+    /// The printed marker of the `index`th entry, already bracketed. Empty
+    /// under natbib author-year, whose `\@biblabel` is `\hfill`.
+    pub fn marker_at(&self, index: usize) -> Option<&str> {
+        self.items.get(index).map(|item| item.marker.as_str())
+    }
+
     fn resolve(&self, key: &str) -> Option<&str> {
         self.keys
             .get(key)
             .and_then(|&index| self.items.get(index))
             .map(|item| item.label.as_str())
     }
+
+    /// The `\bibcite` record for a key, for `natbib::cite_inlines`.
+    pub fn entry(&self, key: &str) -> Option<natbib::Entry> {
+        self.keys
+            .get(key)
+            .and_then(|&index| self.items.get(index))
+            .and_then(|item| item.entry.clone())
+    }
+}
+
+/// One `\bibitem` as the pre-scan read it, before the labels are assigned:
+/// natbib's `\NAT@force@numbers` can only be decided once every entry has
+/// been seen, and it changes what every marker prints.
+struct RawItem {
+    key: String,
+    label: Option<String>,
+    span: Span,
 }
 
 /// Scans a token stream for every `\bibitem` inside a `thebibliography`
@@ -76,10 +143,17 @@ impl Bibliography {
 /// `\@lbibitem`). The parser passes the same expanded stream it walks, so
 /// `P::bib_cursor` meets exactly these `\bibitem`s (including one a macro
 /// produced, and never one under `\iffalse`).
+///
+/// Under `\usepackage{natbib}` the rules are natbib's `\@lbibitem` instead
+/// (natbib.sty line 827): **every** entry advances `\c@NAT@ctr`, labelled or
+/// not, the optional argument is parsed into a `\bibcite` author-year record,
+/// and the printed marker comes from natbib's own `\@biblabel` — nothing at
+/// all in author-year mode.
 pub fn prescan<T: Borrow<Token>>(tokens: &[T], diags: &mut Vec<Diagnostic>) -> Bibliography {
     let mut bibliography = Bibliography::default();
+    bibliography.natbib = natbib_options(tokens);
+    let mut raw: Vec<RawItem> = Vec::new();
     let mut in_bibliography = false;
-    let mut next_number: u32 = 1;
     let mut i = 0;
     while i < tokens.len() {
         match &tokens[i].borrow().kind {
@@ -98,26 +172,120 @@ pub fn prescan<T: Borrow<Token>>(tokens: &[T], diags: &mut Vec<Diagnostic>) -> B
             TokenKind::Command(name) if name == "bibitem" && in_bibliography => {
                 let span = tokens[i].borrow().span;
                 let mut cursor = i + 1;
-                let mut label_override = None;
+                let mut label = None;
                 if let Some((text, after)) = optional_bracket_text(tokens, cursor) {
-                    label_override = Some(text);
+                    label = Some(text);
                     cursor = after;
                 }
                 if let Some((key, after)) = group_text(tokens, cursor) {
                     cursor = after;
-                    let label = label_override.unwrap_or_else(|| {
-                        let n = next_number;
-                        next_number += 1;
-                        n.to_string()
+                    raw.push(RawItem {
+                        key: key.trim().to_string(),
+                        label,
+                        span,
                     });
-                    bibliography.push(key.trim().to_string(), label, span, diags);
                 }
                 i = cursor;
             }
             _ => i += 1,
         }
     }
+    match bibliography.natbib.clone() {
+        Some(options) => fill_natbib(&mut bibliography, options, raw, diags),
+        None => fill_kernel(&mut bibliography, raw, diags),
+    }
     bibliography
+}
+
+/// The LaTeX kernel's `\@lbibitem`: an optional label is used verbatim and
+/// does not consume a number.
+fn fill_kernel(bibliography: &mut Bibliography, raw: Vec<RawItem>, diags: &mut Vec<Diagnostic>) {
+    let mut next_number: u32 = 1;
+    for item in raw {
+        let label = item.label.unwrap_or_else(|| {
+            let n = next_number;
+            next_number += 1;
+            n.to_string()
+        });
+        let marker = label_bracket(&label);
+        bibliography.push(item.key, label, None, marker, item.span, diags);
+    }
+}
+
+/// natbib's `\@lbibitem` plus the end-of-document `\NAT@force@numbers`.
+fn fill_natbib(
+    bibliography: &mut Bibliography,
+    options: natbib::Options,
+    raw: Vec<RawItem>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let parsed: Vec<natbib::Label> = raw
+        .iter()
+        .enumerate()
+        .map(|(index, item)| natbib::parse_label(item.label.as_deref(), index + 1))
+        .collect();
+    // `\NAT@stdbst`: any entry with no author-year data at all.
+    bibliography.force_numbers = parsed
+        .iter()
+        .any(|label| matches!(label, natbib::Label::Standard { .. }));
+    let numbers = options.numbers || bibliography.force_numbers;
+    if let Some(natbib) = bibliography.natbib.as_mut() {
+        natbib.numbers = numbers;
+    }
+    for (item, label) in raw.into_iter().zip(parsed) {
+        let entry = match &label {
+            natbib::Label::AuthorYear(entry) | natbib::Label::Apalike(entry) => Some(entry.clone()),
+            natbib::Label::Standard { num } => Some(natbib::Entry {
+                num: num.clone(),
+                ..natbib::Entry::default()
+            }),
+        };
+        let number = entry.as_ref().map(|e| e.num.clone()).unwrap_or_default();
+        // `\@biblabel` is `\hfill` in author-year mode (line 622) and
+        // `\bibnumfmt` = `[#1]` under `numbers` (line 623).
+        let marker = if numbers {
+            label_bracket(&number)
+        } else {
+            String::new()
+        };
+        bibliography.push(item.key, number, entry, marker, item.span, diags);
+    }
+}
+
+/// `\usepackage[options]{natbib}` anywhere in the token stream, as the
+/// options natbib resolves them to. The package list is comma-separated, so
+/// `\usepackage{amsmath,natbib}` counts (with no options).
+fn natbib_options<T: Borrow<Token>>(tokens: &[T]) -> Option<natbib::Options> {
+    let mut i = 0;
+    while i < tokens.len() {
+        let TokenKind::Command(name) = &tokens[i].borrow().kind else {
+            i += 1;
+            continue;
+        };
+        if name != "usepackage" && name != "RequirePackage" {
+            i += 1;
+            continue;
+        }
+        let mut cursor = i + 1;
+        let mut options = String::new();
+        if let Some((text, after)) = optional_bracket_text(tokens, cursor) {
+            options = text;
+            cursor = after;
+        }
+        if let Some((packages, after)) = group_text(tokens, cursor) {
+            if packages
+                .split(',')
+                .map(str::trim)
+                .any(|package| package == "natbib")
+            {
+                return Some(natbib::Options::from_option_list(&options));
+            }
+            i = after;
+            continue;
+        }
+        i = cursor;
+    }
+    None
 }
 
 /// The text inside the next `{...}` group starting at (after skipping

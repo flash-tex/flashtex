@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 import FlashTeXProtocol
+import HostedWindows
 @testable import FlashTeXMac
 
 /// Error lens (lane mac-editor-dx-3, ErrorLens.swift): one message per line
@@ -56,7 +57,7 @@ final class ErrorLensTests: XCTestCase {
         let marks = [SourceEditorViewTests.mark(NSRange(location: 30, length: 1), .error, "Unterminated math"),
                      SourceEditorViewTests.mark(NSRange(location: 33, length: 2), .warning, "Overfull box")]
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Host(model: model, marks: marks))
         window.orderFrontRegardless()
         var found: NSTextView?
