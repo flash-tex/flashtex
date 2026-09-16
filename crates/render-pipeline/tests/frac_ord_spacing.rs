@@ -40,6 +40,7 @@ fn a_to_as(body: &str) -> f64 {
 }
 
 #[test]
+#[cfg_attr(not(feature = "amsmath-inline"), ignore = "requires the amsmath-inline feature")]
 fn a_frac_is_ordinary_before_text_and_spaces() {
     if !lm_available() {
         return;

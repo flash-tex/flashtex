@@ -404,6 +404,7 @@ fn check_colon_oracle(fonts: &flashtex_render_pipeline::FontSet, (name, body, te
 /// is raised onto the axis, every `=` and the operands stay on the baseline,
 /// and the `mathtools.sty` kerns (-.9mu, -1.2mu) survive the conversion.
 #[test]
+#[cfg_attr(not(feature = "math-class-override"), ignore = "requires the math-class-override feature")]
 fn mathtools_composed_colons_match_pdflatex() {
     if !lm_available() {
         return;
@@ -425,6 +426,7 @@ fn mathtools_composed_colons_match_pdflatex() {
 /// `Symbol`) and `\colon` all keep the colon on the baseline, with mathtools
 /// loaded.
 #[test]
+#[cfg_attr(not(feature = "math-class-override"), ignore = "requires the math-class-override feature")]
 fn unraised_colons_match_pdflatex() {
     if !lm_available() {
         return;
@@ -465,6 +467,7 @@ fn coloneqq_decomposes_like_mathtools() {
 /// colons match pdfLaTeX's -0.415bp, and kernel/amsmath `\colon` without
 /// mathtools stay on the baseline.
 #[test]
+#[cfg_attr(not(feature = "math-class-override"), ignore = "requires the math-class-override feature")]
 fn mathtools_colons_match_pdflatex_vertical_oracle_without_spacing_changes() {
     if !lm_available() {
         return;

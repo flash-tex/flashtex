@@ -111,6 +111,7 @@ fn reference_rules(page: &Value) -> Vec<Rule> {
 }
 
 #[test]
+#[cfg_attr(not(feature = "par-leading"), ignore = "requires the par-leading feature")]
 fn tabular_fixtures_match_pdflatex() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../compiler/tests/tabular_corpus");
     if !std::path::Path::new(dir).is_dir() {
