@@ -971,6 +971,7 @@
     {"name": "tabular*", "mode": "text", "description": "table of a given width"},
     {"name": "verbatim", "mode": "text", "description": "literal monospaced lines"},
     {"name": "verbatim*", "mode": "text", "description": "literal monospaced lines with visible spaces"},
+    {"name": "alltt", "mode": "text", "description": "monospaced lines with significant spaces and line breaks; commands and groups remain active"},
     {"name": "lstlisting", "mode": "text", "description": "literal monospaced lines (basic listings)"},
     {"name": "comment", "mode": "text", "description": "body discarded unread, even invalid commands inside (comment package)"},
     {"name": "proof", "mode": "text", "description": "amsthm proof with a closing square"},
@@ -994,6 +995,7 @@
     {"name": "gathered", "mode": "math", "description": "math grid, centred cells"}
   ],
   "packages": [
+    {"name": "alltt", "silent_options": "", "description": "typewriter lines preserve spaces and line breaks while commands and groups remain active"},
     {"name": "inputenc", "silent_options": "utf8", "description": "source text is already decoded as UTF-8"},
     {"name": "fontenc", "silent_options": "T1", "description": "text glyphs are mapped from Unicode"},
     {"name": "hyperref", "silent_options": "colorlinks, hidelinks, bookmarks, bookmarksopen, bookmarksnumbered, linktoc, breaklinks, unicode, pageanchor, hyperfootnotes, pdfstartview, pdfpagemode", "description": "loading hyperref moves no glyph (measured against pdflatex, TeX Live 2025: the same document with and without it is 1062 words on 4 pages, 0 moved), and the link-colour, border, outline, viewer and pdf* metadata keys are accepted with it; \\url, \\href and \\nolinkurl are typeset, while the PDF links, bookmarks and link colours still missing are reported once by their own diagnostic; backref and pagebackref add bibliography text and keep warning"},

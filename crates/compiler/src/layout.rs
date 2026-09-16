@@ -704,6 +704,8 @@ pub struct LayoutCursor {
     /// `\vadjust{\penalty-\@M}`) was set on the current line: the page ends
     /// after that line, when the next one starts.
     eject_after_line: bool,
+    /// `alltt` source lines are unbreakable, like `verbatim` lines.
+    no_wrap: bool,
 }
 
 impl LayoutCursor {
@@ -767,6 +769,7 @@ impl LayoutCursor {
             footnotes: footnotes::FootnoteState::default(),
             closed_line_skip: None,
             eject_after_line: false,
+            no_wrap: false,
         }
     }
 
@@ -998,7 +1001,7 @@ impl LayoutCursor {
             self.x = self.content_end;
         }
         let (w, span) = shaped_width(&text, size, font, span, &mut self.diagnostics);
-        if self.x > self.left_edge() && self.x + w > self.right_edge() {
+        if !self.no_wrap && self.x > self.left_edge() && self.x + w > self.right_edge() {
             self.wrap_line(size);
         }
         self.note_space();
@@ -1041,7 +1044,7 @@ impl LayoutCursor {
         let metrics = Core14LogoMetrics { font, size };
         let built = tb::layout_logo(logo, &metrics);
         let width = tb::sp_to_pt(built.width);
-        if self.x > self.left_edge() && self.x + width > self.right_edge() {
+        if !self.no_wrap && self.x > self.left_edge() && self.x + width > self.right_edge() {
             self.wrap_line(size);
         }
         self.note_space();
@@ -1109,7 +1112,7 @@ impl LayoutCursor {
         };
         let b = rule.resolve(&cx);
         let width = tb::sp_to_pt(b.width);
-        if self.x > self.left_edge() && self.x + width > self.right_edge() {
+        if !self.no_wrap && self.x > self.left_edge() && self.x + width > self.right_edge() {
             self.wrap_line(size);
         }
         self.note_space();
@@ -1146,7 +1149,7 @@ impl LayoutCursor {
     /// carried onto the new line.
     fn text_glue(&mut self, em: f64, size: f64) {
         let width = em * size;
-        if self.x > self.left_edge() && self.x + width > self.right_edge() {
+        if !self.no_wrap && self.x > self.left_edge() && self.x + width > self.right_edge() {
             self.wrap_line(size);
             return;
         }
@@ -1173,7 +1176,7 @@ impl LayoutCursor {
         if !space_before {
             self.x = self.content_end;
         }
-        if self.x > self.left_edge() && self.x + b.width > self.right_edge() {
+        if !self.no_wrap && self.x > self.left_edge() && self.x + b.width > self.right_edge() {
             self.wrap_line(size);
         }
         self.note_space();
@@ -1636,6 +1639,22 @@ impl LayoutCursor {
                     );
                 }
             }
+            Block::Alltt { vmode, .. } => {
+                let topsep = alltt_topsep_pt(body_size);
+                let opening = topsep
+                    + if *vmode {
+                        alltt_partopsep_pt(body_size)
+                    } else {
+                        0.0
+                    }
+                    + self.constraints.parskip_pt.unwrap_or(0.0);
+                if let Some(skip) = closed {
+                    self.vertical_gap((opening - skip).max(0.0));
+                } else if !self.first_block {
+                    self.newline(body_size);
+                    self.vertical_gap(opening);
+                }
+            }
             Block::TitleBlock { .. } => {
                 // `\@maketitle` opens with `\newpage \null \vskip 2em`. Like
                 // `Block::PageBreak`, the page break is unconditional once
@@ -2059,6 +2078,22 @@ impl LayoutCursor {
                     }
                 }
             }
+            Block::Alltt { lines, .. } => {
+                self.x = self.left_edge();
+                self.content_end = self.x;
+                self.no_wrap = true;
+                for (index, line) in lines.iter().enumerate() {
+                    emit(self, line, body_size, Font::Courier);
+                    if index + 1 < lines.len() {
+                        self.newline(body_size);
+                    }
+                }
+                self.no_wrap = false;
+                self.newline(body_size);
+                let topsep = alltt_topsep_pt(body_size);
+                self.vertical_gap(topsep);
+                self.closed_line_skip = Some(topsep);
+            }
         }
         // A block is the incremental cache unit. Resolve its final line before
         // collecting the placed fragment so a reused block never depends on
@@ -2283,6 +2318,22 @@ fn list_parsep_pt(body_size: f64) -> f64 {
     } else {
         5.0
     }
+}
+
+/// `size1x.clo`'s article `\topsep` and `\partopsep` values used by
+/// `alltt`'s underlying `\trivlist`.
+fn alltt_topsep_pt(body_size: f64) -> f64 {
+    if body_size <= 10.5 {
+        8.0
+    } else if body_size <= 11.5 {
+        9.0
+    } else {
+        10.0
+    }
+}
+
+fn alltt_partopsep_pt(body_size: f64) -> f64 {
+    if body_size <= 10.5 { 2.0 } else { 3.0 }
 }
 
 /// One `ex` of the body font (cmr10's x-height is 0.4306em), the unit
@@ -2551,6 +2602,11 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
             Block::Tabbing { lines, .. } => {
                 for line in lines {
                     visit_inline_references(&line.content, visitor);
+                }
+            }
+            Block::Alltt { lines, .. } => {
+                for line in lines {
+                    visit_inline_references(line, visitor);
                 }
             }
             Block::VSpace { .. }

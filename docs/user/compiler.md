@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 353 text-mode and 566 math-mode command entries, 67 environments and 24 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 353 text-mode and 566 math-mode command entries, 68 environments and 25 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -930,6 +930,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `tabular*` | text | table of a given width |
 | `verbatim` | text | literal monospaced lines |
 | `verbatim*` | text | literal monospaced lines with visible spaces |
+| `alltt` | text | monospaced lines with significant spaces and line breaks; commands and groups remain active |
 | `lstlisting` | text | literal monospaced lines (basic listings) |
 | `comment` | text | body discarded unread, even invalid commands inside (comment package) |
 | `proof` | text | amsthm proof with a closing square |
@@ -956,6 +957,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 
 | Package | Options | Why it is silent |
 | --- | --- | --- |
+| `alltt` | `` | typewriter lines preserve spaces and line breaks while commands and groups remain active |
 | `inputenc` | `utf8` | source text is already decoded as UTF-8 |
 | `fontenc` | `T1` | text glyphs are mapped from Unicode |
 | `hyperref` | `colorlinks, hidelinks, bookmarks, bookmarksopen, bookmarksnumbered, linktoc, breaklinks, unicode, pageanchor, hyperfootnotes, pdfstartview, pdfpagemode` | loading hyperref moves no glyph (measured against pdflatex, TeX Live 2025: the same document with and without it is 1062 words on 4 pages, 0 moved), and the link-colour, border, outline, viewer and pdf* metadata keys are accepted with it; \url, \href and \nolinkurl are typeset, while the PDF links, bookmarks and link colours still missing are reported once by their own diagnostic; backref and pagebackref add bibliography text and keep warning |

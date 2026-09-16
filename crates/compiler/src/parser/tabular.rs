@@ -190,6 +190,7 @@ fn block_inlines(block: Block) -> Vec<Inline> {
         | Block::Rule { .. }
         | Block::PageBreak
         | Block::Verbatim { .. }
+        | Block::Alltt { .. }
         | Block::TableOfContents { .. }
         | Block::TitleBlock { .. }
         | Block::VFill

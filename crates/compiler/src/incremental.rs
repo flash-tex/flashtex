@@ -532,6 +532,12 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             }
             map_span(span, changes, deltas)
         }
+        Block::Alltt { lines, span, .. } => {
+            for line in lines.iter_mut() {
+                shift_inlines(line, changes, deltas)?;
+            }
+            map_span(span, changes, deltas)
+        }
         Block::TableOfContents { span } => map_span(span, changes, deltas),
         Block::TitleBlock {
             title,
@@ -909,6 +915,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Block::Tabbing { lines, .. } => lines
             .first()
             .map_or(&[][..], |line| &line.content[..]),
+        Block::Alltt { lines, .. } => lines.first().map_or(&[][..], |line| &line[..]),
         // Signature only, not identity (see the doc comment above): using
         // just `title` here (never `authors`/`date`) can only widen the
         // candidate set on an author/date-only edit, never produce a wrong
