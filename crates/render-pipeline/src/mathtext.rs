@@ -612,6 +612,17 @@ impl MathFontMetrics for TextRunMetrics<'_> {
         self.inner.extension_glyph(code, ch, size)
     }
 
+    /// A `\text` handle is a box, not a font character: it never kerns.
+    #[cfg(feature = "math-font-kerns")]
+    fn ord_pair(&self, left: flashtex_math_layout::MathChar, right: flashtex_math_layout::MathChar, size: SizeClass) -> Option<flashtex_math_layout::OrdPair> {
+        use flashtex_math_layout::MathChar::{Symbol, Text};
+        let is_handle = |c: flashtex_math_layout::MathChar| matches!(c, Symbol(ch) | Text(ch) if handle_index(ch).is_some());
+        if is_handle(left) || is_handle(right) {
+            return None;
+        }
+        self.inner.ord_pair(left, right, size)
+    }
+
     fn text_glyph(&self, ch: char, size: SizeClass) -> Option<Glyph> {
         let Some(text_index) = handle_index(ch) else {
             return self.inner.text_glyph(ch, size);

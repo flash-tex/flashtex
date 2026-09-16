@@ -1,0 +1,68 @@
+{
+ "fixture": "12-h-passes-deferred.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 3,
+ "images": [
+  {
+   "page": 1,
+   "x": 234.0,
+   "top": 245.682,
+   "width": 144.0,
+   "height": 72.0
+  },
+  {
+   "page": 1,
+   "x": 234.0,
+   "top": 462.306,
+   "width": 144.0,
+   "height": 72.003
+  },
+  {
+   "page": 3,
+   "x": 246.0,
+   "top": 122.634,
+   "width": 120.0,
+   "height": 519.999
+  }
+ ],
+ "captions": [
+  {
+   "page": 1,
+   "label": "Figure 2",
+   "x": 200.811,
+   "baseline": 342.09
+  },
+  {
+   "page": 1,
+   "label": "Figure 3",
+   "x": 257.797,
+   "baseline": 558.718
+  },
+  {
+   "page": 3,
+   "label": "Figure 1",
+   "x": 228.612,
+   "baseline": 667.041
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 83.955,
+   "source_byte": 215
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 372.808,
+   "source_byte": 1382
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 589.436,
+   "source_byte": 2004
+  }
+ ]
+}

@@ -134,6 +134,11 @@ final class PreviewControllerClient {
     private let stateLock = NSLock()
     private var violated = false
     private var nextID = 1
+    /// The tail of what the helper wrote to stderr, so an exit can be reported
+    /// with its reason instead of a bare status code. Bounded: a helper that
+    /// logs steadily for an hour must not grow this without limit.
+    private var stderrTail = ""
+    private static let maxStderrTailBytes = 4 * 1024
 
     init(executable: URL, config: Config, handler: @escaping (Event) -> Void) throws {
         self.executable = executable
@@ -163,6 +168,7 @@ final class PreviewControllerClient {
             let d = fh.availableData
             guard let self, !d.isEmpty else { return }
             let s = String(decoding: d, as: UTF8.self)
+            self.noteStderr(s)
             self.deliver { self.handler(.stderr(s)) }
         }
         process.terminationHandler = { [weak self] p in
@@ -170,6 +176,18 @@ final class PreviewControllerClient {
             self.stdout.fileHandleForReading.readabilityHandler = nil
             self.stderr.fileHandleForReading.readabilityHandler = nil
             self.consume(self.stdout.fileHandleForReading.readDataToEndOfFile())
+            // Drain stderr too, exactly as stdout is drained above. Clearing
+            // the readability handler stops delivery, so without this the last
+            // burst -- which is where a helper says WHY it is exiting (a Rust
+            // panic, "no such file") -- was dropped, and an exit arrived with
+            // no reason attached. That cost a CI investigation: run
+            // 35022802823 reported only `helper exited (1)`.
+            let trailing = self.stderr.fileHandleForReading.readDataToEndOfFile()
+            if !trailing.isEmpty {
+                let s = String(decoding: trailing, as: UTF8.self)
+                self.noteStderr(s)
+                self.deliver { self.handler(.stderr(s)) }
+            }
             let pending = self.stateLock.withLock { self.splitter.pendingBytes }
             if pending > 0 {
                 self.deliver { self.handler(.protocolViolation("helper exited with \(pending) unterminated trailing bytes")) }
@@ -276,6 +294,26 @@ final class PreviewControllerClient {
         stateLock.withLock { violated = true; splitter = LineSplitter() }
         deliver { self.handler(.protocolViolation(message)) }
         terminate()
+    }
+
+    /// The last `maxStderrTailBytes` of the helper's stderr, trimmed, or nil
+    /// when it said nothing. Evidence only — no control flow reads this.
+    var recentStderr: String? {
+        let tail = stateLock.withLock { stderrTail }.trimmingCharacters(in: .whitespacesAndNewlines)
+        return tail.isEmpty ? nil : tail
+    }
+
+    private func noteStderr(_ s: String) {
+        stateLock.withLock {
+            stderrTail += s
+            if stderrTail.utf8.count > Self.maxStderrTailBytes {
+                // Trim on UTF-8, not Characters: `suffix(n)` counts grapheme
+                // clusters, so a tail of multi-byte scalars would hold several
+                // times the stated bound. Decoding repairs a scalar split at
+                // the new start, which is fine for an evidence tail.
+                stderrTail = String(decoding: Array(stderrTail.utf8.suffix(Self.maxStderrTailBytes)), as: UTF8.self)
+            }
+        }
     }
 
     /// Main run-loop delivery with an explicit wake-up (see `WorkerClient.deliver`).

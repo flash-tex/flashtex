@@ -101,6 +101,13 @@ fn tag_everything(list: &mut MathList, next: &mut usize) {
             | Nucleus::Glue { .. }
             | Nucleus::Text(_)
             | Nucleus::Empty => {}
+            Nucleus::TextRun(pieces) => {
+                for piece in pieces {
+                    if let flashtex_math_layout::TextPiece::Math(list) = piece {
+                        tag_everything(list, next);
+                    }
+                }
+            }
         }
     }
 }

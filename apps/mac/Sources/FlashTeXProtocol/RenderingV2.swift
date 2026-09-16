@@ -99,6 +99,16 @@ public enum RenderingV2 {
     /// Accepted only alongside `display-list-v2`. `required_features` is not
     /// extended: a consumer that ignores `navigation` still paints the page.
     public static let linksCapability = "display-list-v2-links"
+    /// `protocol/proposals/display-list-v2-window.md` §4: a bounded resident
+    /// page window. Accepted only alongside `display-list-v2` and honoured
+    /// only when the request also says where the viewer is
+    /// (`display_list_window`). When honoured, the sibling's `pages[]` still
+    /// has one entry per document page, but entries outside the echoed
+    /// `window` carry only `number`/`width`/`height` and `"resident": false`
+    /// — no `items` key at all — and the top-level `window` object names the
+    /// resident range. A windowed reply is an incomplete view (§4.1): it is
+    /// never a delta base and never the source of a PDF export.
+    public static let windowCapability = "display-list-v2-window"
     /// Image formats the consumer can paint (proposal §3).
     public static let imageFormats: Set<String> = ["png", "jpeg", "pdf"]
     /// Upper bound on an image resource's byte length (bytes are read from
@@ -410,9 +420,63 @@ public enum RenderingV2 {
         public var width: Int64
         public var height: Int64
         public var items: [Item]
-        public init(number: Int, width: Int64, height: Int64, items: [Item]) { self.number = number; self.width = width; self.height = height; self.items = items }
+        /// Window proposal §4: an entry outside the `window` carries
+        /// `"resident": false` and no `items` key at all. A page object
+        /// without the flag is resident — the asymmetry keeps every
+        /// unwindowed line byte-for-byte unchanged.
+        public var resident: Bool
+        public init(number: Int, width: Int64, height: Int64, items: [Item], resident: Bool = true) {
+            self.number = number; self.width = width; self.height = height; self.items = items; self.resident = resident
+        }
         public var widthPt: Double { RenderingV2.points(width) }
         public var heightPt: Double { RenderingV2.points(height) }
+
+        enum CodingKeys: String, CodingKey { case number, width, height, items, resident }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            number = try c.decode(Int.self, forKey: .number)
+            width = try c.decode(Int64.self, forKey: .width)
+            height = try c.decode(Int64.self, forKey: .height)
+            resident = try c.decodeIfPresent(Bool.self, forKey: .resident) ?? true
+            if resident {
+                items = try c.decode([Item].self, forKey: .items)
+            } else {
+                guard !c.contains(.items) else {
+                    throw ValidationError(code: "invalid_display_list", message: "page \(number) is marked resident: false but carries an items key (window proposal §4: elided pages have no items key at all)")
+                }
+                items = []
+            }
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(number, forKey: .number)
+            try c.encode(width, forKey: .width)
+            try c.encode(height, forKey: .height)
+            if resident {
+                try c.encode(items, forKey: .items)
+            } else {
+                try c.encode(false, forKey: .resident)
+            }
+        }
+    }
+
+    /// Top-level `window` object of a windowed reply (window proposal §4):
+    /// the resident range and the whole document's page count. Present when
+    /// and only when the producer honoured `display-list-v2-window`.
+    public struct Window: Codable, Equatable {
+        public var firstPage: Int
+        public var pageCount: Int
+        public var documentPageCount: Int
+        enum CodingKeys: String, CodingKey {
+            case firstPage = "first_page", pageCount = "page_count", documentPageCount = "document_page_count"
+        }
+        public init(firstPage: Int, pageCount: Int, documentPageCount: Int) {
+            self.firstPage = firstPage; self.pageCount = pageCount; self.documentPageCount = documentPageCount
+        }
+        /// 1-based resident page numbers.
+        public var pageRange: ClosedRange<Int> { firstPage...(firstPage + pageCount - 1) }
     }
 
     public struct FontResource: Codable, Equatable {
@@ -618,17 +682,24 @@ public enum RenderingV2 {
         /// Present only when a producer that accepted `linksCapability` emits it.
         /// Decode is tolerant of absence; painting does not depend on it.
         public var navigation: Navigation?
+        /// Present when and only when the producer honoured
+        /// `display-list-v2-window` (window proposal §4). The echoed
+        /// capabilities are the negotiation signal; this object is the
+        /// authority on what range was actually served.
+        public var window: Window?
         enum CodingKeys: String, CodingKey {
             case renderFormat = "render_format", coordinateUnit = "coordinate_unit", colorSpace = "color_space", textExtraction = "text_extraction"
-            case projectId = "project_id", revision, requiredFeatures = "required_features", documents, fonts, pages, diagnostics, navigation
+            case projectId = "project_id", revision, requiredFeatures = "required_features", documents, fonts, pages, diagnostics, navigation, window
         }
         public init(renderFormat: String = RenderingV2.renderFormat, coordinateUnit: String = RenderingV2.coordinateUnit,
                     colorSpace: String = RenderingV2.colorSpace, textExtraction: String = RenderingV2.textExtraction,
                     projectId: String, revision: Int, requiredFeatures: [String], documents: [DocumentResource],
-                    fonts: [FontResource], pages: [Page], diagnostics: [Diagnostic], navigation: Navigation? = nil) {
+                    fonts: [FontResource], pages: [Page], diagnostics: [Diagnostic], navigation: Navigation? = nil,
+                    window: Window? = nil) {
             self.renderFormat = renderFormat; self.coordinateUnit = coordinateUnit; self.colorSpace = colorSpace; self.textExtraction = textExtraction
             self.projectId = projectId; self.revision = revision; self.requiredFeatures = requiredFeatures; self.documents = documents
             self.fonts = fonts; self.pages = pages; self.diagnostics = diagnostics; self.navigation = navigation
+            self.window = window
         }
         public func font(id: String) -> FontResource? { fonts.first { $0.fontId == id } }
     }
@@ -783,12 +854,31 @@ public enum RenderingV2 {
         // "undeclared rendering feature"). `static-truetype` is deliberately not
         // derived from glyph runs: the pipeline declares it only for TrueType
         // resources and paints Latin Modern as `opentype-cff` (documented deviation).
+        // display-list-v2-window (§4): the window object must describe a range
+        // within the document, and residency must match it exactly — a page
+        // inside the window is resident, a page outside carries no items. A
+        // non-resident page without a window object is refused (fail closed).
+        if let w = list.window {
+            guard w.firstPage >= 1, w.pageCount >= 1, w.documentPageCount == list.pages.count,
+                  w.firstPage - 1 <= w.documentPageCount - w.pageCount else {
+                throw fail("invalid_display_list", "window {first_page \(w.firstPage), page_count \(w.pageCount), document_page_count \(w.documentPageCount)} does not describe a range within the \(list.pages.count) pages")
+            }
+        }
         var usedFeatures: Set<String> = ["rgba-srgb", "cluster-actualtext"]
         var lastPage = 0
         for page in list.pages {
             guard page.number == lastPage + 1 else { throw fail("invalid_display_list", "page numbers must be contiguous from 1 (found \(page.number) after \(lastPage))") }
             lastPage = page.number
             guard isPositiveTick(page.width), isPositiveTick(page.height) else { throw fail("invalid_display_list", "page \(page.number) must have positive exact width and height") }
+            let inWindow = list.window.map { $0.pageRange.contains(page.number) } ?? true
+            guard page.resident == inWindow else {
+                throw fail("invalid_display_list", list.window == nil
+                    ? "page \(page.number) is marked resident: false but the list carries no window object"
+                    : "page \(page.number) residency (\(page.resident)) does not match the window \(list.window!.pageRange)")
+            }
+            guard page.resident || page.items.isEmpty else {
+                throw fail("invalid_display_list", "page \(page.number) is not resident but carries \(page.items.count) items")
+            }
             guard Bounds.pageItems.contains(page.items.count) else { throw fail("invalid_display_list", "page \(page.number) has \(page.items.count) items (limit \(Bounds.pageItems.upperBound))") }
             for (index, item) in page.items.enumerated() {
                 let at = "page \(page.number) item \(index)"

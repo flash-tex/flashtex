@@ -75,6 +75,10 @@ pub const TEXT_SYMBOLS: &[(&str, &str)] = &[
     ("textgreater", "\\textgreater"),
     ("textbraceleft", "\\textbraceleft"),
     ("textbraceright", "\\textbraceright"),
+    ("textbullet", "\\textbullet"),
+    ("textperiodcentered", "\\textperiodcentered"),
+    ("textregistered", "\\textregistered"),
+    ("texttrademark", "\\texttrademark"),
 ];
 
 /// Text symbols for printable ASCII characters. The `*.dfu` tables declare
@@ -761,6 +765,16 @@ mod tests {
         assert_eq!(t1("pounds"), Some(SymbolOutcome::Char('\u{00A3}')));
         assert_eq!(t1("textbackslash"), Some(SymbolOutcome::Char('\\')));
         assert_eq!(t1("textless"), Some(SymbolOutcome::Char('<')));
+        assert_eq!(t1("textbullet"), Some(SymbolOutcome::Char('\u{2022}')));
+        assert_eq!(
+            t1("textperiodcentered"),
+            Some(SymbolOutcome::Char('\u{00B7}'))
+        );
+        assert_eq!(
+            t1("textregistered"),
+            Some(SymbolOutcome::Char('\u{00AE}'))
+        );
+        assert_eq!(t1("texttrademark"), Some(SymbolOutcome::Char('\u{2122}')));
         for name in [
             "textbackslash",
             "textless",
@@ -774,6 +788,32 @@ mod tests {
                     Some(SymbolOutcome::Char(_))
                 ),
                 "\\{name} must be available in OT1 through its kernel default"
+            );
+        }
+    }
+
+    #[test]
+    fn text_symbol_family_resolves_in_ot1_and_t1() {
+        // GH-TEXT-SYMBOLS-1: each new symbol typesets its dfu code point
+        // under both encodings (OT1 reaches it through the kernel default:
+        // OMS for `\textbullet`/`\textperiodcentered`, the `\textcircled`
+        // construction for `\textregistered`, `\textsuperscript{TM}` for
+        // `\texttrademark`), exactly like the already-working `\textcopyright`.
+        for (name, want) in [
+            ("textbullet", '\u{2022}'),
+            ("textperiodcentered", '\u{00B7}'),
+            ("textregistered", '\u{00AE}'),
+            ("texttrademark", '\u{2122}'),
+        ] {
+            assert_eq!(
+                text_symbol(name, Encoding::T1),
+                Some(SymbolOutcome::Char(want)),
+                "\\{name} in T1"
+            );
+            assert_eq!(
+                text_symbol(name, Encoding::OT1),
+                Some(SymbolOutcome::Char(want)),
+                "\\{name} in OT1"
             );
         }
     }

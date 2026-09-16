@@ -224,6 +224,55 @@ fn display_list_v2_is_a_sibling_line_only_when_negotiated() {
     assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("recovered"));
 }
 
+/// The `compile_result` oversize refusal (`protocol::handle_line`): when the
+/// envelope cannot fit the reply limit it is refused *without being
+/// serialised*, and the refusal still names the exact byte count the line
+/// would have had -- the count a permissive run actually produces.
+#[test]
+fn oversize_compile_result_refusal_names_the_exact_line_length() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let mut text = String::from("\\begin{document}\n");
+    for i in 0..40 {
+        text.push_str(&format!("Paragraph number {i} with enough ordinary words to produce several items on the page.\n\n"));
+    }
+    text.push_str("\\end{document}\n");
+
+    // The permissive run: the exact line the tiny-limit run must refuse.
+    let raw = {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-render"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn flashtex-render");
+        child.stdin.take().unwrap().write_all(compile_line("big", &text, None).as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let line = raw.lines().next().expect("one compile_result line");
+    let ok = json::parse(line).unwrap();
+    let pages = ok.get("payload").unwrap().get("pages").and_then(|v| v.as_arr()).map(Vec::len).unwrap();
+    assert!(pages > 0, "the permissive run renders pages");
+    let full_len = line.len();
+    let limit = 2000;
+    assert!(full_len > limit, "the document must overflow the tiny limit (got {full_len} bytes)");
+
+    let (replies, _) = run_env(&[], &compile_line("big", &text, None), &[("FLASHTEX_MAX_REPLY_BYTES", "2000")]);
+    assert_eq!(replies.len(), 1);
+    let p = replies[0].get("payload").unwrap();
+    assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("failed"));
+    let diags = p.get("diagnostics").and_then(|v| v.as_arr()).unwrap();
+    let expected = format!("compile_result would be {full_len} bytes for {pages} pages, over the {limit}-byte reply limit; split the project or compile fewer pages");
+    assert!(
+        diags.iter().any(|d| d.get("message").and_then(|v| v.as_str()) == Some(expected.as_str())),
+        "expected {expected:?} in {diags:?}"
+    );
+}
+
 /// `--tex FILE` convenience mode: no JSON on either side. The file's basename
 /// is the project path, `--pdf`/`--v2` are written, diagnostics reach stderr
 /// as `severity[code] message (line:col)`, and the exit code follows the
@@ -284,4 +333,210 @@ fn tex_file_mode_renders_without_json_and_reports_readably() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("cannot read"));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The product bug `display-list-v2-window` exists for: a document too big for
+/// the reply limit gets **no reply at all**, and a window gives it one.
+///
+/// The real case is the 500 KB corpus document -- 385 pages, a 20 339 674-byte
+/// `compile_result` and a 152 MB `display_list` against the 16 MiB limit, so
+/// both lines are refused and the request ends `failed`. Laying out 385 pages
+/// in a debug build would cost minutes, and the failure is a *ratio* between
+/// the reply and the limit rather than an absolute size, so this puts a much
+/// smaller document into the same ratio through `FLASHTEX_MAX_REPLY_BYTES` --
+/// the knob that exists for exactly this. Same code path, same refusals.
+///
+/// Nothing here is hard-coded to a page size: the limit is derived from a
+/// measured window, and the whole-document size is read back out of the
+/// producer's own refusal, so the test keeps testing the relation it is about
+/// when page sizes drift.
+#[test]
+fn a_document_over_the_reply_limit_has_a_reply_when_a_window_is_negotiated() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    const WINDOW: i64 = 2;
+    let mut text = String::from("\\begin{document}\n");
+    for i in 0..280 {
+        text.push_str(&format!(
+            "\\section{{Part {i}}}\nSome prose for part {i}, with enough words in it that the \
+             paragraph breaks over several lines of the measure and the page fills up rather \
+             than holding one short line. More words follow, and then more again.\n\n"
+        ));
+    }
+    text.push_str("\\end{document}\n");
+    let plain = &["rules-v1", "display-list-v2"];
+    let with_window = &["rules-v1", "display-list-v2", "display-list-v2-only", "display-list-v2-window"];
+
+    // (0) Measure one window, with the real limit in place: this document is
+    // already past the point where the whole thing fits, which is the
+    // condition under test, so the window is the only way to see a page of it.
+    let line = with_window_field(&compile_line("measure", &text, Some(with_window)), 1, WINDOW);
+    let (replies, _) = run_env(&[], &line, &[]);
+    assert_eq!(replies.len(), 2, "a window of this document fits the real limit");
+    let measured = json::write(&replies[1]).len();
+    let total_pages = replies[1].get("payload").unwrap().get("pages").and_then(|v| v.as_arr()).unwrap().len();
+
+    // A limit a little over one window: enough to carry it, nowhere near
+    // enough to carry the document.
+    let limit_bytes = measured + measured / (2 * WINDOW as usize);
+    let limit = [("FLASHTEX_MAX_REPLY_BYTES", limit_bytes.to_string())];
+    let limit: Vec<(&str, &str)> = limit.iter().map(|(k, v)| (*k, v.as_str())).collect();
+
+    // (a) Today's consumer: the v2 sibling is over the limit so it is declined
+    // without being serialised, and the v1 `compile_result` that would have
+    // carried the pages instead is over the limit too. The request ends
+    // `failed`. Not slow -- failed.
+    let (replies, _) = run_env(&[], &compile_line("today", &text, Some(plain)), &limit);
+    assert_eq!(replies.len(), 1, "the declined sibling is not sent");
+    let p = replies[0].get("payload").unwrap();
+    assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("failed"), "the bug: no reply for a long document");
+    assert_eq!(p.get("pages").and_then(|v| v.as_arr()).map(Vec::len), Some(0), "a failed reply carries no pages");
+    // The producer's refusal states the size it could not send; read it back,
+    // so "the document does not fit" is a checked fact and not an assumption
+    // about how big a page is.
+    let message = p
+        .get("diagnostics")
+        .and_then(|v| v.as_arr())
+        .and_then(|d| d.first())
+        .and_then(|d| d.get("message"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let whole_bytes: usize = message
+        .split_whitespace()
+        .find_map(|w| w.parse::<usize>().ok())
+        .unwrap_or_else(|| panic!("expected a sized refusal, got {message:?}"));
+    assert!(
+        whole_bytes > limit_bytes,
+        "this document no longer reproduces the 500 KB case's ratio ({whole_bytes} B over \
+         {total_pages} pages against a {limit_bytes} B limit) -- lengthen it"
+    );
+
+    // (b) The same document, the same limit, a consumer that also negotiates
+    // `-only` and `-window`: a reply, carrying the window it asked for.
+    let line = with_window_field(&compile_line("win", &text, Some(with_window)), 1, WINDOW);
+    let (replies, _) = run_env(&[], &line, &limit);
+    assert_eq!(replies.len(), 2, "a compile_result and its display_list sibling");
+    let p = replies[0].get("payload").unwrap();
+    assert_ne!(p.get("status").and_then(|v| v.as_str()), Some("failed"), "the window is the fix");
+    let echoed: Vec<&str> = p.get("layout_capabilities").and_then(|v| v.as_arr()).unwrap().iter().filter_map(|v| v.as_str()).collect();
+    assert!(echoed.contains(&"display-list-v2-window"), "the window is echoed when served: {echoed:?}");
+    assert!(echoed.contains(&"display-list-v2-only"), "{echoed:?}");
+    assert_eq!(p.get("pages").and_then(|v| v.as_arr()).map(Vec::len), Some(0), "-only elided the v1 pages");
+
+    let dl = replies[1].get("payload").unwrap();
+    assert_eq!(replies[1].get("type").and_then(|v| v.as_str()), Some("display_list"));
+    let pages = dl.get("pages").and_then(|v| v.as_arr()).unwrap();
+    assert_eq!(pages.len(), total_pages, "every page of the document is still present");
+    let resident: Vec<&json::Value> = pages.iter().filter(|p| p.get("items").is_some()).collect();
+    assert_eq!(resident.len(), WINDOW as usize, "exactly the window's pages carry items");
+    assert!(!resident[0].get("items").and_then(|v| v.as_arr()).unwrap().is_empty(), "a resident page is painted");
+    let win = dl.get("window").expect("the sibling states its own coverage");
+    assert_eq!(win.get("first_page").and_then(|v| v.as_i64()), Some(1));
+    assert_eq!(win.get("page_count").and_then(|v| v.as_i64()), Some(WINDOW));
+    assert_eq!(win.get("document_page_count").and_then(|v| v.as_i64()), Some(total_pages as i64));
+    for page in pages.iter().filter(|p| p.get("items").is_none()) {
+        assert_eq!(json::write(page.get("resident").expect("resident flag")), "false");
+        assert!(page.get("number").is_some() && page.get("width").is_some() && page.get("height").is_some());
+    }
+
+    // (c) A window the limit still cannot carry is narrowed to what fits and
+    // served, rather than declined into the `failed` of (a).
+    let wide = with_window_field(&compile_line("wide", &text, Some(with_window)), 1, 64);
+    let (replies, _) = run_env(&[], &wide, &limit);
+    assert_eq!(replies.len(), 2, "narrowed, not declined");
+    let served = replies[1].get("payload").unwrap().get("window").expect("window");
+    let count = served.get("page_count").and_then(|v| v.as_i64()).unwrap();
+    assert!(count < 64, "the window should have been narrowed to what fits, not served at 64");
+    assert!(json::write(&replies[1]).len() <= limit_bytes, "the narrowed line is within the limit");
+
+    // (d) The capability listed with no window field is an unwindowed reply
+    // (proposal §4) -- the consumer has to say where the viewer is -- so the
+    // long document still fails, and the name is absent from the echo.
+    let (replies, _) = run_env(&[], &compile_line("nofield", &text, Some(with_window)), &limit);
+    assert_eq!(replies.len(), 1);
+    let p = replies[0].get("payload").unwrap();
+    assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("failed"));
+    let echoed: Vec<&str> = p.get("layout_capabilities").and_then(|v| v.as_arr()).unwrap().iter().filter_map(|v| v.as_str()).collect();
+    assert!(!echoed.contains(&"display-list-v2-window"), "not echoed when no window was served: {echoed:?}");
+}
+
+/// `display-list-v2-window` and `display-list-v2-delta` are mutually exclusive
+/// in r1 (§7): a request listing both is answered with the window, and the echo
+/// says so, because a delta binds a digest for every page and a windowed
+/// producer has none for a page it never materialised.
+#[test]
+fn a_window_declines_a_delta_and_needs_the_display_list() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let text = "\\begin{document}\nA short document.\n\\end{document}\n";
+
+    // Both requested: the window is accepted, `-delta` is not echoed.
+    let both = &["display-list-v2", "display-list-v2-delta", "display-list-v2-window"];
+    let line = with_window_field(&compile_line("both", text, Some(both)), 1, 1);
+    let (replies, _) = run_env(&[], &line, &[]);
+    let echoed: Vec<&str> = replies[0]
+        .get("payload")
+        .unwrap()
+        .get("layout_capabilities")
+        .and_then(|v| v.as_arr())
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(echoed.contains(&"display-list-v2-window"), "{echoed:?}");
+    assert!(!echoed.contains(&"display-list-v2-delta"), "the window wins in r1: {echoed:?}");
+    assert_eq!(replies[1].get("type").and_then(|v| v.as_str()), Some("display_list"), "a full line, never a delta");
+
+    // Without `display-list-v2` the name means nothing and is not accepted.
+    let alone = &["rules-v1", "display-list-v2-window"];
+    let line = with_window_field(&compile_line("alone", text, Some(alone)), 1, 1);
+    let (replies, _) = run_env(&[], &line, &[]);
+    assert_eq!(replies.len(), 1, "no sibling without display-list-v2");
+    let echoed: Vec<&str> = replies[0]
+        .get("payload")
+        .unwrap()
+        .get("layout_capabilities")
+        .and_then(|v| v.as_arr())
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert_eq!(echoed, vec!["rules-v1"], "{echoed:?}");
+
+    // A degenerate window is not an error: the reply is unwindowed and the
+    // name is absent from the echo, which is the consumer's only signal (§8).
+    let caps = &["display-list-v2", "display-list-v2-window"];
+    for (first, count) in [(0, 4), (1, 0)] {
+        let line = with_window_field(&compile_line("bad", text, Some(caps)), first, count);
+        let (replies, _) = run_env(&[], &line, &[]);
+        assert_eq!(replies.len(), 2, "still a reply");
+        assert!(replies[1].get("payload").unwrap().get("window").is_none(), "{first}:{count} is not a window");
+        let echoed: Vec<&str> = replies[0]
+            .get("payload")
+            .unwrap()
+            .get("layout_capabilities")
+            .and_then(|v| v.as_arr())
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(echoed, vec!["display-list-v2"], "{first}:{count} should not echo the window");
+    }
+}
+
+/// Inserts `display_list_window` into a request line built by `compile_line`.
+fn with_window_field(line: &str, first_page: i64, page_count: i64) -> String {
+    let mut v = json::parse(line.trim()).expect("request is JSON");
+    let mut payload = v.get("payload").expect("payload").clone();
+    let mut w = json::Value::obj();
+    w.set("first_page", json::num(first_page as f64));
+    w.set("page_count", json::num(page_count as f64));
+    payload.set("display_list_window", w);
+    v.set("payload", payload);
+    json::write(&v) + "\n"
 }

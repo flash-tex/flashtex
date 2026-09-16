@@ -31,7 +31,7 @@ fn doc(body: &str) -> String {
 fn glyphs(body: &str) -> Vec<(f64, String)> {
     let r = render_one(&doc(body));
     let mut out = Vec::new();
-    for item in &r.v2.pages[0].items {
+    for item in r.v2.pages[0].resident_items() {
         if let Item::GlyphRun(run) = item {
             if run.role != RunRole::Text {
                 continue;

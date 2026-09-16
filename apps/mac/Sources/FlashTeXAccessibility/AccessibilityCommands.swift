@@ -8,7 +8,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case editorPreferences
     case openLaTeXFile, newProject, newFile, save, saveAs, openFixture, reloadFixture
     case attachBuiltCompiler, attachRenderPipeline, attachWorker, compile
-    case exportPDF, exportPDFViaRust, exportPDFExact, printDocument, printSource
+    case exportPDF, printDocument, printSource
     case pinInsertionPoint, openCaptureProposal, submitSampleCapture, convertCapture, nearbyCompanion
     case restoreDiscardedBuffer
     case undo
@@ -17,7 +17,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case completion, completionList, toggleComment, duplicateLine, duplicateLineUp, moveLineUp, moveLineDown, deleteLine, joinLines, sortLinesAscending, sortLinesDescending, trimTrailingWhitespace, reindentLines, reindentDocument, signatureHelp, toggleVimKeybindings
     case fold, unfold, foldAll, unfoldAll
     case goToMatching, nextDiagnostic, previousDiagnostic, nextOccurrence, previousOccurrence, copyDiagnosticsAsText, revealCaretInPreview
-    case goToDefinition, goToSymbol, goToLine, selectEnvironment, wrapInEnvironment, renameSymbol
+    case goToDefinition, goToSymbol, goToLine, selectEnvironment, wrapInEnvironment, changeEnvironment, renameSymbol
     case selectPreviewItemSource
     case accessibilityHelp
     case durableHistory, findInProject, nextSearchMatch, renameCitation
@@ -101,23 +101,13 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          menuItem: "Compile")
         case .exportPDF:
             return Entry(command: self, title: "Export PDF", shortcuts: ["⌘⇧E"], menu: "File",
-                         description: "Writes the current preview as a PDF with CoreGraphics (always white).",
-                         requires: "a compile result",
+                         description: "Hands the loaded v2 display list to flashtex-pdf-exact from-v2: glyphs by original GID, embedded font programs, typed rules, images and device colour; refuses what it cannot express exactly instead of approximating it.",
+                         requires: "a complete v2 display list and a built flashtex-pdf-exact",
                          menuItem: "Export PDF…")
-        case .exportPDFViaRust:
-            return Entry(command: self, title: "Export PDF via Rust writer", shortcuts: ["⌘⌥E"], menu: "File",
-                         description: "Pipes the compile result to flashtex-pdf --verify (always white).",
-                         requires: "a compile result",
-                         menuItem: "Export PDF via Rust Writer…")
-        case .exportPDFExact:
-            return Entry(command: self, title: "Export PDF (exact, v2)", shortcuts: ["File > Export PDF (exact, v2)…"], menu: "File",
-                         description: "Hands the loaded v2 display list to flashtex-pdf-exact from-v2: glyphs by original GID, embedded font programs, typed rules; refuses what it cannot express exactly.",
-                         requires: "a loaded v2 display list and a built flashtex-pdf-exact",
-                         menuItem: "Export PDF (exact, v2)…")
         case .printDocument:
             return Entry(command: self, title: "Print", shortcuts: ["⌘P"], menu: "File",
-                         description: "Prints the compiled document PDF (the same CoreGraphics bytes as Export PDF…) through the system print panel; page size follows the PDF.",
-                         requires: "a compile result",
+                         description: "Prints the compiled document PDF — the same exact bytes Export PDF… writes — through the system print panel; page size follows the PDF.",
+                         requires: "a complete v2 display list and a built flashtex-pdf-exact",
                          menuItem: "Print…")
         case .printSource:
             return Entry(command: self, title: "Print Source", shortcuts: ["File > Print Source…"], menu: "File",
@@ -294,6 +284,10 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Wrap selection in environment", shortcuts: ["⌘⇧W"], menu: "Navigate",
                          description: "Asks for an environment name (suggestions: common ones, then those the document uses) and wraps the selection in \\begin{X}…\\end{X} — whole lines as an indented block, otherwise inline — as one undoable edit with the caret at the body.",
                          menuItem: "Wrap Selection in Environment…")
+        case .changeEnvironment:
+            return Entry(command: self, title: "Change environment", shortcuts: ["⌃⌘E"], menu: "Editor",
+                         description: "Opens a field prefilled with the innermost environment name around the caret; Return rewrites both the \\begin{name} and matching \\end{name} as one undoable edit, preserving a trailing star, optional arguments and any following arguments. Typing inside either name updates the partner live. Refused (beep and VoiceOver) in a verbatim body or when the pair is unbalanced.",
+                         menuItem: "Change Environment…")
         case .renameSymbol:
             return Entry(command: self, title: "Rename symbol", shortcuts: ["⌥⇧R"], menu: "Navigate",
                          description: "Renames the \\label key (every \\ref/\\eqref/\\pageref/\\autoref/\\cref use) or the user command (every \\foo, word-boundary aware, comments and verbatim skipped) under the caret across the open documents: Plan shows the per-file counts, Apply is one undoable edit per document (one guarded apply_group per file when the durable helper is attached).",
@@ -325,8 +319,8 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          menuItem: "Copy Diagnostics as Text")
         case .revealCaretInPreview:
             return Entry(command: self, title: "Reveal caret in preview", shortcuts: ["⌘⇧J"], menu: "Navigate",
-                         description: "Selects the source span of the preview item under the caret and names its page and item.",
-                         requires: "a compile result",
+                         description: "Selects the source span of the preview item under the caret and names its page: the enclosing formula for a caret inside math, the cluster otherwise.",
+                         requires: "a preview showing the document",
                          menuItem: "Reveal Caret in Preview")
         case .restoreDiscardedBuffer:
             return Entry(command: self, title: "Restore Discarded Buffer", shortcuts: ["Edit > Restore Discarded Buffer"], menu: "Edit",
@@ -533,6 +527,7 @@ public enum PanelFocusOrder {
                 Control(name: "Relative line numbers", sourceMarker: "Toggle(\"Relative line numbers\""),
                 Control(name: "Vim keybindings", sourceMarker: "Toggle(\"Vim keybindings\""),
                 Control(name: "Preview follows the caret", sourceMarker: "Toggle(\"Preview follows the caret\""),
+                Control(name: "Autosave", sourceMarker: "Toggle(\"Autosave\""),
                 Control(name: "Restore Defaults", sourceMarker: "Button(\"Restore Defaults\""),
               ],
               sourceFile: "EditorPreferences.swift"),
@@ -558,7 +553,7 @@ public enum PanelFocusOrder {
                 Control(name: "Next Match", sourceMarker: "Button(\"Next Match\")", when: "matches"),
                 Control(name: "Search scope", sourceMarker: "Picker(\"Scope\""),
                 Control(name: "Max matches", sourceMarker: "Stepper(\"Max matches"),
-                Control(name: "Search results, n matches (list)", sourceMarker: "List(selection: $client.selectedID)", when: "after a search"),
+                Control(name: "Search results, n matches (table)", sourceMarker: "SearchResultsTable(matches: results.matches", when: "after a search"),
                 Control(name: "Replacement text", sourceMarker: "TextField(\"Replace with"),
                 Control(name: "Plan Replacement", sourceMarker: "Button(\"Plan Replacement\")", when: "complete search with matches"),
                 Control(name: "Apply n replacements", sourceMarker: "Button(\"Apply \\(plan.summary)\")", when: "a planned proposal"),

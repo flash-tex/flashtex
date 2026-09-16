@@ -77,12 +77,30 @@ struct PreviewMagnify: ViewModifier {
 /// highlighter read the font, so they follow). Installed as a local event
 /// monitor because the editor's scroll view is created by `CompletingTextView`.
 enum EditorFontMagnifier {
+    /// True when `event` is actually over `scroll` right now, by AppKit's own
+    /// hit-test — not a `scroll.bounds.contains(scroll.convert(...))` frame
+    /// snapshot. This runs from a *local event monitor* (see `install`), so
+    /// it sees every pinch in the window before normal dispatch; getting this
+    /// wrong for a point over the preview means silently swallowing a pinch
+    /// meant for it (`install` then returns `nil` and nothing else ever sees
+    /// the event). Since the editor and preview moved to separate
+    /// `NSHostingController`s under one `NSSplitViewController`
+    /// (WorkspaceSplit.swift, the appearance overhaul, #653/#666), a
+    /// hand-rolled geometry check is one more place that can disagree with
+    /// reality during or just after a split-view layout pass; `hitTest` asks
+    /// AppKit directly which live view is under the pointer right now, so it
+    /// can't go stale the way a captured frame/bounds snapshot can.
+    @MainActor
+    static func targets(_ scroll: NSScrollView, _ event: NSEvent) -> Bool {
+        guard let window = scroll.window, event.window === window,
+              let hit = window.contentView?.hitTest(event.locationInWindow) else { return false }
+        return hit.isDescendant(of: scroll)
+    }
+
     @MainActor
     static func install(on scroll: NSScrollView) -> Any? {
         NSEvent.addLocalMonitorForEvents(matching: .magnify) { [weak scroll] event in
-            guard let scroll, event.window === scroll.window else { return event }
-            let p = scroll.convert(event.locationInWindow, from: nil)
-            guard scroll.bounds.contains(p) else { return event }
+            guard let scroll, targets(scroll, event) else { return event }
             let prefs = EditorPreferences.shared
             prefs.fontSize = prefs.fontSize * (1 + Double(event.magnification))
             return nil

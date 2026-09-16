@@ -171,6 +171,7 @@ fn sample_document() -> ExactDocument {
     ]);
     ExactDocument {
         images: Default::default(),
+        patterns: Default::default(),
         pages: vec![
             ExactPage {
                 width: d("612"),
@@ -331,6 +332,11 @@ fn validation_rejects_unbalanced_state_unknown_fonts_and_foreign_operators() {
         ("Q without matching q", b"Q".to_vec()),
         ("unmatched q", b"q q Q".to_vec()),
         ("unterminated text object", b"BT".to_vec()),
+        (
+            "unterminated marked-content sequence",
+            b"/Span <</ActualText <FEFF27F9>>> BDC".to_vec(),
+        ),
+        ("EMC without matching BDC", b"EMC".to_vec()),
         ("Tj outside BT/ET", b"(\\000\\001) Tj".to_vec()),
         ("without a path", b"f".to_vec()),
         ("path segment without a current point", b"1 2 l".to_vec()),
@@ -427,6 +433,7 @@ fn pdftex_style_simple_type1_font_round_trips_through_reader_and_reemit() {
     let content = b"BT\n/F44 11.9552 Tf 72 708.045 Td [(\\002\\003)-250(\\005)10(\\004)]TJ\nET\nq\n1 0 0 1 135.015 711.034 cm\n[]0 d 0 J 0.398 w 0 0 m 4.498 0 l S\nQ\n".to_vec();
     let doc = ExactDocument {
         images: Default::default(),
+        patterns: Default::default(),
         pages: vec![ExactPage {
             width: d("612"),
             height: d("792"),
@@ -633,6 +640,7 @@ fn latin_modern_cff_subset_preserves_gids_and_renders_in_coregraphics() {
     };
     let doc = ExactDocument {
         images: Default::default(),
+        patterns: Default::default(),
         pages: vec![ExactPage {
             width: d("612"),
             height: d("792"),
