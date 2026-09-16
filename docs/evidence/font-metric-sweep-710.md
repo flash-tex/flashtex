@@ -17,12 +17,12 @@ This sweep compares the actual 10pt Latin Modern faces loaded by FlashTeX with t
 Scope: CMR rows are the math family-0 inventory. OT1 text-only slots and ligature programs are not included because this engine's normal text path uses T1 Latin Modern metrics, not cmr10.
 
 The OTF faces, advances, CFF bounds, and MATH italic corrections are loaded through the existing `render-pipeline` `FontSet`, `LoadedFace`, and `TexMathMetrics::otf_glyph` path. The CM metric numbers are parsed by the existing `render-pipeline::tfm::Tfm` wrapper, which delegates to the shared `font-resources` TFM reader. `fontmath.ltx` supplies TeX's family/slot declarations, including `\ell`; it is not used to obtain metric numbers.
-Font directory supplied to `FontSet`: `/Users/dqi26/flashtex-wt/metric-sweep/crates/render-pipeline/../../apps/mac/Fonts`.
+Font directory supplied to `FontSet`: `apps/mac/Fonts`.
 
 | side | source | SHA-256 | notes |
 | --- | --- | --- | --- |
-| Latin Modern CMR path | `/Users/dqi26/flashtex-wt/metric-sweep/crates/render-pipeline/../../apps/mac/Fonts/lmroman10-regular.otf` | `1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852` | `lmroman10-regular.otf`, used for cmr10 math-family rows |
-| Latin Modern math | `/Users/dqi26/flashtex-wt/metric-sweep/crates/render-pipeline/../../apps/mac/Fonts/latinmodern-math.otf` | `6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f` | `latinmodern-math.otf`, used for cmmi10/cmsy10/cmex10 rows |
+| Latin Modern CMR path | `apps/mac/Fonts/lmroman10-regular.otf` | `1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852` | `lmroman10-regular.otf`, used for cmr10 math-family rows |
+| Latin Modern math | `apps/mac/Fonts/latinmodern-math.otf` | `6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f` | `latinmodern-math.otf`, used for cmmi10/cmsy10/cmex10 rows |
 | Computer Modern | `/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm/cmr10.tfm` | `87f2d8981927644cbecaf3d639e96e348ea4e7be49d8804468bd8ba9ff3f5244` | `cmr10.tfm, design size 10.00000 pt; TFM bytes are read through the shared parser |
 | Computer Modern | `/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm/cmmi10.tfm` | `e442c5487f84df70218ff37f775c87060856f5b6e04c011b6cadbbadfcf46645` | `cmmi10.tfm, design size 10.00000 pt; TFM bytes are read through the shared parser |
 | Computer Modern | `/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm/cmsy10.tfm` | `0ca13d421ac7133271aed7c935099ecf3d1d08ac9e15f81acb34a16564ab8a46` | `cmsy10.tfm, design size 10.00000 pt; TFM bytes are read through the shared parser |

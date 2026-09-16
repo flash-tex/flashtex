@@ -798,7 +798,7 @@ fn render_report(
     writeln!(
         report,
         "Font directory supplied to `FontSet`: `{}`.",
-        args.font_dir.display()
+        relative_to_repo(&args.font_dir)
     )
     .unwrap();
     writeln!(report, "").unwrap();
@@ -1124,10 +1124,23 @@ fn format_fraction(value: Option<f64>) -> String {
 }
 
 fn path_for_report(path: Option<&Path>) -> String {
-    path.map_or_else(
-        || "unavailable".to_string(),
-        |path| path.display().to_string(),
-    )
+    path.map_or_else(|| "unavailable".to_string(), relative_to_repo)
+}
+
+/// Render `path` relative to the repository root when it lives inside this
+/// checkout, so the report is reproducible from any checkout location rather
+/// than baking in this machine's absolute worktree path. Paths outside the
+/// repo (e.g. a system TeX Live install) fall back to the absolute path,
+/// since there is no repo-relative form for them; the report already pairs
+/// every path with a SHA-256 of the file's contents for identity.
+fn relative_to_repo(path: &Path) -> String {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    if let (Ok(root), Ok(target)) = (repo_root.canonicalize(), path.canonicalize()) {
+        if let Ok(rel) = target.strip_prefix(&root) {
+            return rel.display().to_string();
+        }
+    }
+    path.display().to_string()
 }
 
 fn hex(bytes: &[u8; 32]) -> String {
