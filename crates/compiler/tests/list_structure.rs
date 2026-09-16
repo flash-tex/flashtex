@@ -85,6 +85,20 @@ fn explicit_labels_are_content_and_do_not_step_the_counter() {
 }
 
 #[test]
+fn text_glued_after_explicit_item_label_is_kept() {
+    // `\item[<label>]` never reaches `optional_bracket_argument`: `\item`
+    // dispatch calls `item_label_argument`, which has its own tail-rewrite
+    // for `[x]TEXT`-style glued text. This pins that behavior next to the
+    // other explicit-label coverage.
+    let source = doc("\\begin{itemize}\\item[x]TEXT\\end{itemize}");
+    let all = items(&source);
+    assert_eq!(all.len(), 1, "{:?}", all);
+    assert!(matches!(&all[0].1, Some(ItemLabel::Explicit { .. })));
+    assert_eq!(label_texts(&source), ["x"]);
+    assert_eq!(all[0].2, "TEXT", "text glued after `]` is still typeset");
+}
+
+#[test]
 fn description_terms_are_bold_explicit_labels() {
     let source =
         doc("\\begin{description}\\item[Second label] Body text.\\item Bare\\end{description}");
@@ -238,4 +252,23 @@ fn quote_inside_an_item_is_styled_with_both_frames() {
         })
         .collect();
     assert_eq!(kinds, [("item", 1), ("styled", 2), ("item", 1)]);
+}
+
+#[test]
+fn setlist_style_nextline_parses_into_style_reachable_via_frame() {
+    let source = format!(
+        "\\documentclass[10pt]{{article}}\n\\usepackage{{enumitem}}\n\\setlist[description]{{style=nextline}}\n\\begin{{document}}\n{}\n\\end{{document}}\n",
+        "\\begin{description}\\item[Bijection] A function.\\end{description}"
+    );
+    let parsed = parser::parse(&source);
+    let frame = parsed
+        .blocks
+        .iter()
+        .find_map(|b| match b {
+            Block::ListItem { lists, .. } => lists.last(),
+            _ => None,
+        })
+        .expect("one description item");
+    assert_eq!(frame.options, [ListOption::Style("nextline".into())]);
+    assert_eq!(frame.style(), Some("nextline"));
 }

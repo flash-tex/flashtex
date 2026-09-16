@@ -473,4 +473,25 @@ public final class NearbyConnection: @unchecked Sendable { // all mutable state 
         }
         return r.payload
     }
+
+    /// nearby-v1 `capture_insert` (additive): approve the proposal this
+    /// companion was shown and ask the Mac to apply it.
+    ///
+    /// `approvedLatex` must be the exact text the person read — normally
+    /// `capture_status.latex` as it was rendered on screen. It is hashed, not
+    /// sent: the Mac inserts *its* proposal, and only when its proposal is
+    /// still the one that hash names. A Mac that predates the message answers
+    /// `unknown_type`; one whose proposal moved on answers `proposal_changed`.
+    public func captureInsert(captureId: String, approvedLatex: String,
+                              requestID: String? = nil, timeout: TimeInterval = 60) async throws -> NearbyWire.CaptureInsertAck {
+        guard NearbyWire.isValidID(captureId) else { throw NearbyError.invalidInput("capture_id must be 1–128 ASCII [A-Za-z0-9_-]") }
+        let request = NearbyWire.CaptureInsertRequest(captureId: captureId,
+                                                      approvedLatexSha256: NearbyWire.proposalDigest(approvedLatex))
+        let r: NearbyWire.Envelope<NearbyWire.CaptureInsertAck> =
+            try await self.request(type: "capture_insert", request, expecting: "capture_insert_ack", id: requestID, timeout: timeout)
+        guard r.payload.captureId == captureId else {
+            throw NearbyError.protocolViolation("capture_insert_ack for \(captureId) names capture \(r.payload.captureId)")
+        }
+        return r.payload
+    }
 }

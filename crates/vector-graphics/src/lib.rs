@@ -39,5 +39,5 @@ pub use clip::{Clip, ClipStack};
 pub use color::{Color, Paint};
 pub use display_list::{DeviceItem, DeviceList, DeviceShape, DisplayList, ValidationError};
 pub use geom::{Point, Rect, Size, Transform};
-pub use item::{Group, Image, Item, ItemId, PathFill, PathStroke, Rule, SourceRange};
+pub use item::{Group, Image, Item, ItemId, PathFill, PathStroke, Pattern, Rule, SourceRange};
 pub use path::{Dash, FillRule, LineCap, LineJoin, Path, PathCommand, Polyline, StrokeStyle};

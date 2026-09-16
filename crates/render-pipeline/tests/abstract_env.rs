@@ -29,7 +29,7 @@ fn layout(text: &str) -> (Vec<String>, Vec<Word>) {
     assert_ne!(v1.status, "failed", "{:?}", v1.diagnostics);
     let mut words = Vec::new();
     for page in &r.v2.pages {
-        for it in &page.items {
+        for it in page.resident_items() {
             if let flashtex_render_pipeline::display::Item::GlyphRun(run) = it {
                 let Some(first) = run.glyphs.first() else { continue };
                 words.push(Word {

@@ -1059,13 +1059,13 @@ private struct ProjectSearchBody: View {
                 if let stale = client.knownStaleNote {
                     Label(stale, systemImage: "clock.arrow.circlepath").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning)
                 }
-                List(selection: $client.selectedID) {
-                    ForEach(Array(results.matches.enumerated()), id: \.element.id) { (index: Int, match: ProjectSearch.Match) in
-                        ProjectSearchRow(index: index, count: results.matches.count, match: match)
-                            .tag(match.id)
-                    }
-                }
-                .onKeyPress(.return) { client.submit(); return .handled }
+                // A real NSTableView (brief §1: search results are an
+                // IDE-critical surface): dense monospaced rows, the muted
+                // selection band, Return submits, exactly the old semantics.
+                SearchResultsTable(matches: results.matches,
+                                   selectedID: client.selectedID,
+                                   onSelect: { client.selectedID = $0 },
+                                   onSubmit: { client.submit() })
                 .accessibilityLabel("Search results, \(results.summary)")
             } else {
                 Spacer()
@@ -1152,25 +1152,169 @@ private struct ProjectSearchReplaceSection: View {
     }
 }
 
-private struct ProjectSearchRow: View {
-    var index: Int
-    var count: Int
-    var match: ProjectSearch.Match
+/// The results table: `NSTableView` rows of `path:line` + snippet with the
+/// matched span emphasised, 24pt, full-width muted selection band. Return
+/// (or double-click) submits the selection to the editor.
+private struct SearchResultsTable: NSViewRepresentable {
+    var matches: [ProjectSearch.Match]
+    var selectedID: ProjectSearch.Match.ID?
+    var onSelect: (ProjectSearch.Match.ID?) -> Void
+    var onSubmit: () -> Void
 
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
-            Text(match.line > 0 ? "\(match.path):\(match.line)" : match.path)
-                .font(.caption.monospaced()).foregroundStyle(.secondary)
-                .frame(width: DS.Layout.searchPathColumnWidth, alignment: .leading).lineLimit(1)
-            if let s = match.snippet {
-                (Text(s.clippedBefore ? "…" : "") + Text(s.before) + Text(s.match).bold().foregroundColor(.accentColor) + Text(s.after) + Text(s.clippedAfter ? "…" : ""))
-                    .font(.body.monospaced()).lineLimit(1)
-            } else {
-                Text("bytes \(match.location.start)..<\(match.location.end) (text unavailable)").font(.caption).foregroundStyle(.secondary)
+    func makeNSView(context: Context) -> NSScrollView {
+        let table = SubmittingTableView()
+        table.onSubmit = { context.coordinator.parent.onSubmit() }
+        table.headerView = nil
+        table.rowHeight = DS.Row.problem
+        table.style = .plain
+        table.allowsEmptySelection = true
+        table.allowsMultipleSelection = false
+        table.intercellSpacing = .zero
+        table.backgroundColor = .clear
+        table.focusRingType = .none
+        table.setAccessibilityLabel("Search results")
+        let column = NSTableColumn(identifier: .init("main"))
+        column.resizingMask = .autoresizingMask
+        table.addTableColumn(column)
+        table.delegate = context.coordinator
+        table.dataSource = context.coordinator
+        table.target = context.coordinator
+        table.doubleAction = #selector(Coordinator.rowDoubleClicked(_:))
+        context.coordinator.table = table
+        let scroll = NSScrollView()
+        scroll.documentView = table
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        let co = context.coordinator
+        co.parent = self
+        guard let table = co.table else { return }
+        if co.matches != matches {
+            co.matches = matches
+            table.reloadData()
+        }
+        co.syncSelection(to: selectedID)
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    /// Return submits the selected match, like the old List's onKeyPress.
+    final class SubmittingTableView: NSTableView {
+        var onSubmit: (() -> Void)?
+        override func keyDown(with event: NSEvent) {
+            if event.keyCode == 36 /* Return */ { onSubmit?(); return }
+            super.keyDown(with: event)
+        }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+        var parent: SearchResultsTable
+        var matches: [ProjectSearch.Match] = []
+        weak var table: NSTableView?
+        private var suppressSelectionCallback = false
+
+        init(_ parent: SearchResultsTable) { self.parent = parent }
+
+        func numberOfRows(in tableView: NSTableView) -> Int { matches.count }
+
+        func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+            let view = (tableView.makeView(withIdentifier: TreeRowView.reuseID, owner: nil) as? TreeRowView) ?? TreeRowView()
+            view.identifier = TreeRowView.reuseID
+            return view
+        }
+
+        func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+            guard matches.indices.contains(row) else { return nil }
+            let cell = (tableView.makeView(withIdentifier: SearchResultCellView.reuseID, owner: nil) as? SearchResultCellView) ?? SearchResultCellView()
+            cell.configure(with: matches[row], index: row, count: matches.count)
+            return cell
+        }
+
+        @objc func rowDoubleClicked(_ sender: Any?) {
+            guard let table, table.clickedRow >= 0, matches.indices.contains(table.clickedRow) else { return }
+            parent.onSelect(matches[table.clickedRow].id)
+            parent.onSubmit()
+        }
+
+        func tableViewSelectionDidChange(_ notification: Notification) {
+            guard !suppressSelectionCallback, let table else { return }
+            let id = table.selectedRow >= 0 && matches.indices.contains(table.selectedRow) ? matches[table.selectedRow].id : nil
+            if id != parent.selectedID { parent.onSelect(id) }
+        }
+
+        func syncSelection(to id: ProjectSearch.Match.ID?) {
+            guard let table else { return }
+            let index = matches.firstIndex { $0.id == id }
+            suppressSelectionCallback = true
+            defer { suppressSelectionCallback = false }
+            if let index {
+                if table.selectedRow != index {
+                    table.selectRowIndexes([index], byExtendingSelection: false)
+                    table.scrollRowToVisible(index)
+                }
+            } else if table.selectedRow >= 0 {
+                table.deselectAll(nil)
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(ProjectSearch.accessibilityLabel(index: index, count: count, match: match))
+    }
+}
+
+/// `path:line` in the dimmed mono column, then the snippet with the match
+/// span emphasised in the focus blue.
+private final class SearchResultCellView: NSTableCellView {
+    static let reuseID = NSUserInterfaceItemIdentifier("SearchResultCellView")
+    private let pathField = NSTextField(labelWithString: "")
+    private let snippetField = NSTextField(labelWithString: "")
+
+    init() {
+        super.init(frame: .zero)
+        identifier = Self.reuseID
+        for v in [pathField, snippetField] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            v.lineBreakMode = .byTruncatingTail
+            addSubview(v)
+        }
+        pathField.font = DS.NSFonts.secondaryMono
+        pathField.textColor = DS.Palette.textSecondary
+        snippetField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        NSLayoutConstraint.activate([
+            pathField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: DS.Space.m),
+            pathField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            pathField.widthAnchor.constraint(equalToConstant: DS.Layout.searchPathColumnWidth),
+            snippetField.leadingAnchor.constraint(equalTo: pathField.trailingAnchor, constant: DS.Space.m),
+            snippetField.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -DS.Space.m),
+            snippetField.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    func configure(with match: ProjectSearch.Match, index: Int, count: Int) {
+        pathField.stringValue = match.line > 0 ? "\(match.path):\(match.line)" : match.path
+        let mono = EditorPreferences.defaultEditorFont(size: 12)
+        let monoBold = NSFontManager.shared.convert(mono, toHaveTrait: .boldFontMask)
+        let out = NSMutableAttributedString()
+        if let s = match.snippet {
+            func plain(_ t: String) -> NSAttributedString {
+                NSAttributedString(string: t, attributes: [.font: mono, .foregroundColor: DS.Palette.textPrimary])
+            }
+            if s.clippedBefore { out.append(plain("…")) }
+            out.append(plain(s.before))
+            out.append(NSAttributedString(string: s.match, attributes: [.font: monoBold, .foregroundColor: DS.Palette.focus]))
+            out.append(plain(s.after))
+            if s.clippedAfter { out.append(plain("…")) }
+        } else {
+            out.append(NSAttributedString(string: "bytes \(match.location.start)..<\(match.location.end) (text unavailable)",
+                                          attributes: [.font: DS.NSFonts.secondary, .foregroundColor: DS.Palette.textSecondary]))
+        }
+        snippetField.attributedStringValue = out
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel(ProjectSearch.accessibilityLabel(index: index, count: count, match: match))
     }
 }
 

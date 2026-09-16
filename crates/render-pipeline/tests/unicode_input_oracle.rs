@@ -57,7 +57,7 @@ fn doc(preamble: &str, body: &str) -> String {
 /// Text glyph origins (bp) on page 1, in order, without the page number.
 fn glyph_xs(r: &flashtex_render_pipeline::Rendered, n: usize) -> Vec<f64> {
     let mut xs = Vec::new();
-    for item in &r.v2.pages[0].items {
+    for item in r.v2.pages[0].items().into_iter().flatten() {
         if let Item::GlyphRun(run) = item {
             if run.role == RunRole::Text {
                 xs.extend(run.glyphs.iter().map(|g| g.origin_x.to_bp()));

@@ -430,7 +430,7 @@ enum EditorIntelligence {
             "geometry", "onehalfspacing", "doublespacing",
         ]
         static let environmentsBeyondCompiler: Set<String> = [
-            "table", "abstract", "minted", "theorem", "tikzpicture", "minipage", "frame", "comment",
+            "table", "abstract", "minted", "theorem", "tikzpicture", "minipage",
         ]
 
         static func environmentDocumentation(for name: String) -> String? {
@@ -469,7 +469,7 @@ enum EditorIntelligence {
             "aligned": "Aligned block usable inside another math environment.",
             "subequations": "Numbers the equations inside as 1a, 1b, ….",
             "minipage": "A box of the given width in which paragraphs are typeset.",
-            "frame": "One Beamer slide.",
+            "frame": "Rule-bordered box around its body: \\fboxrule rule, \\fboxsep padding, in the current colour.",
             "comment": "Everything inside is skipped (comment package).",
         ]
 
@@ -618,6 +618,11 @@ final class LineNumberGutter: NSRulerView {
         super.init(scrollView: scrollView, orientation: .verticalRuler)
         clientView = scrollView.documentView
         ruleThickness = 40
+        // macOS 14+ defaults `clipsToBounds` to false, and the ruler's
+        // full-bounds background/hairline fill can paint outside the scroll
+        // view during layout passes — observed as the gutter separator
+        // bleeding up through the document tab strip (owner report).
+        clipsToBounds = true
     }
 
     @available(*, unavailable) required init(coder: NSCoder) { fatalError() }
