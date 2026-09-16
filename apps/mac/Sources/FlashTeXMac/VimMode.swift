@@ -209,6 +209,12 @@ final class VimMode {
     /// mixing `j` and `gj` must not make either drift.
     private var preferredVisualColumn: Int?
     private var insertStart: Int?
+    /// Set by ⌃O: after the next *complete* normal-mode command (not left
+    /// mid-operator or mid-pending-key), `handle` flips back to insert
+    /// without disturbing the ongoing insert session's bookkeeping.
+    private var returnToInsertAfterOneCommand = false
+    /// Set by ⌃R in insert mode: the next key names the register to insert.
+    private var insertAwaitingRegister = false
     private var replayingDot = false
     private var recording: [Key] = []
     private var recordingChange = false
@@ -243,10 +249,28 @@ final class VimMode {
         defer { applying -= 1 }
         if commandLine != nil { handleCommandLineKey(key); publish(); return true }
         let handled: Bool
+        let dispatchedAsNormalCommand = mode == .normal
         switch mode {
         case .insert: handled = handleInsertKey(key)
         case .normal: handled = handleNormalKey(key)
         case .visual, .visualLine: handled = handleVisualKey(key)
+        }
+        // ⌃O ("insert normal mode"): once the one normal-mode command it
+        // granted has fully run its course — not left awaiting an operator's
+        // motion or another pending key — drop back into insert exactly
+        // where that command left the caret. Guarded to the key that was
+        // itself dispatched as a normal-mode command, so ⌃O's own keystroke
+        // (which sets `mode = .normal` from inside insert) never immediately
+        // flips back on the same call.
+        if dispatchedAsNormalCommand, returnToInsertAfterOneCommand {
+            if mode == .normal, pendingOperator == nil, pending == .none, commandLine == nil {
+                returnToInsertAfterOneCommand = false
+                mode = .insert
+            } else if mode != .normal {
+                // The one-shot command switched modes itself (`i`, `v`, …):
+                // nothing left to restore.
+                returnToInsertAfterOneCommand = false
+            }
         }
         if handled { publish() }
         return handled
@@ -481,9 +505,72 @@ final class VimMode {
     // MARK: insert mode
 
     private func handleInsertKey(_ key: Key) -> Bool {
-        guard key.escape else { return false }
-        leaveInsert()
+        if key.escape { leaveInsert(); return true }
+        if insertAwaitingRegister {
+            insertAwaitingRegister = false
+            guard let ch = key.char, !key.control else { return true }
+            selectedRegister = ch
+            let reg = registerForPaste()
+            selectedRegister = nil // `"a` (here, ⌃Ra) names a register for one use only
+            if let reg, !reg.text.isEmpty {
+                let at = caret
+                replace(NSRange(location: at, length: 0), with: reg.text, actionName: "Insert Register")
+                setCaret(at + (reg.text as NSString).length)
+            }
+            return true
+        }
+        guard key.control, let ch = key.char else { return false }
+        switch ch {
+        case "w": deleteWordBeforeCaretInInsert()
+        case "u": deleteToInsertStartOrLineStartInInsert()
+        case "r": insertAwaitingRegister = true
+        case "t": indentCurrentLineFromInsert()
+        case "o": returnToInsertAfterOneCommand = true; mode = .normal; resetPending()
+        default: return false // every other ⌃-chord is the editor's own (autocomplete, etc.)
+        }
         return true
+    }
+
+    /// ⌃W: delete back to the start of the word before the caret (Vim allows
+    /// this past where insert began, unlike a plain Backspace in some apps).
+    private func deleteWordBeforeCaretInInsert() {
+        let c = caret
+        guard c > lineStart(c) else { return }
+        let start = max(lineStart(c), previousWordStart(from: c, big: false))
+        guard start < c else { return }
+        replace(NSRange(location: start, length: c - start), with: "", actionName: "Delete Word")
+        setCaret(start)
+    }
+
+    /// ⌃U: delete what you've typed this insert session back to where it
+    /// began; with nothing left from this session, delete to the line's
+    /// first non-blank instead.
+    private func deleteToInsertStartOrLineStartInInsert() {
+        let c = caret
+        let ls = lineStart(c)
+        let sessionStart = insertStart.map { max($0, ls) } ?? ls
+        let target = sessionStart < c ? sessionStart : firstNonBlank(fromLineStart: ls)
+        guard target < c else { return }
+        replace(NSRange(location: target, length: c - target), with: "", actionName: "Delete To Insert Start")
+        setCaret(target)
+    }
+
+    /// ⌃T: shift the current line right by one indent unit, keeping typing
+    /// from that point (the caret moves by whatever the indent added).
+    private func indentCurrentLineFromInsert() {
+        guard let tv = textView else { return }
+        let c = caret
+        let unit = EditorPreferences.shared.indentString
+        guard let (edits, _) = EditorKeyHandling.indentEdits(in: tv.string, range: NSRange(location: c, length: 0), unit: unit), !edits.isEmpty else { return }
+        tv.breakUndoCoalescing()
+        var delta = 0
+        for e in edits.sorted(by: { $0.range.location > $1.range.location }) {
+            tv.insertText(e.replacement, replacementRange: e.range)
+            if e.range.location <= c { delta += (e.replacement as NSString).length - e.range.length }
+        }
+        tv.undoManager?.setActionName("Indent")
+        tv.breakUndoCoalescing()
+        setCaret(c + delta)
     }
 
     private func enterInsert(at p: Int? = nil) {

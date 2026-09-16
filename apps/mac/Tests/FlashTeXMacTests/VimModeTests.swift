@@ -1069,4 +1069,91 @@ final class VimModeTests: XCTestCase {
         let bottom = try XCTUnwrap(tv.enclosingScrollView).documentVisibleRect
         XCTAssertEqual(bottom.maxY, rect.maxY + inset, accuracy: rect.height * 1.5, "zb puts the caret line at the bottom edge")
     }
+
+    // MARK: insert-mode chords ⌃W ⌃U ⌃R ⌃T ⌃O
+
+    func testControlWDeletesTheWordBeforeTheCaret() {
+        load("")
+        type("i")
+        type("hello world")
+        type("<C-w>")
+        XCTAssertEqual(text, "hello ")
+        XCTAssertEqual(caret, 6)
+        XCTAssertEqual(mode, .insert)
+        type("<C-w>") // a trailing space alone still counts as "before the word"
+        XCTAssertEqual(text, "")
+    }
+
+    func testControlUDeletesToInsertSessionStartOrFirstNonBlank() {
+        load("")
+        type("i")
+        type("indent text")
+        type("<C-u>")
+        XCTAssertEqual(text, "", "deletes everything typed this session")
+        XCTAssertEqual(caret, 0)
+        type("<Esc>") // back to normal mode: the next `i` must start a fresh session, not type a literal "i"
+
+        load("    abcdef", caret: 10)
+        type("i") // nothing typed yet this session
+        type("<C-u>")
+        XCTAssertEqual(text, "    ", "with nothing typed, ⌃U falls back to the line's first non-blank")
+        XCTAssertEqual(caret, 4)
+    }
+
+    func testControlTIndentsTheCurrentLineFromInsertMode() {
+        let unit = EditorPreferences.shared.indentString
+        load("abc", caret: 1)
+        type("i")
+        type("<C-t>")
+        XCTAssertEqual(text, unit + "abc")
+        XCTAssertEqual(caret, 1 + (unit as NSString).length)
+        XCTAssertEqual(mode, .insert)
+    }
+
+    func testControlRInsertsARegistersContentsAndKeepsTyping() {
+        load("word")
+        type("\"ayiw")
+        load("X")
+        type("i")
+        type("<C-r>a")
+        XCTAssertEqual(text, "wordX")
+        XCTAssertEqual(caret, 4)
+        XCTAssertEqual(mode, .insert)
+        type("!")
+        XCTAssertEqual(text, "word!X")
+    }
+
+    func testControlOEntersOneShotNormalModeThenReturnsToInsert() {
+        load("hello", caret: 5)
+        type("i")
+        type("<C-o>0")
+        XCTAssertEqual(mode, .insert, "a complete one-key motion returns to insert")
+        XCTAssertEqual(caret, 0)
+        type("X")
+        XCTAssertEqual(text, "Xhello")
+    }
+
+    func testControlOStaysInNormalModeMidOperatorThenReturnsAfterTheMotion() {
+        load("keep drop here", caret: 0)
+        type("A") // caret at end of line, insert mode
+        type("<C-o>")
+        XCTAssertEqual(mode, .normal)
+        type("b") // a complete one-key motion returns to insert immediately
+        XCTAssertEqual(mode, .insert)
+        XCTAssertEqual(caret, 10)
+        type("<C-o>")
+        XCTAssertEqual(mode, .normal)
+        type("d")
+        XCTAssertEqual(mode, .normal, "mid-operator: must not return to insert before its motion")
+        type("w")
+        XCTAssertEqual(text, "keep drop ", "dw deleted \"here\" as the one-shot command")
+        XCTAssertEqual(mode, .insert, "the operator+motion pair completed, so ⌃O returns to insert")
+        // Known simplification: real Vim remembers that the caret was past
+        // the last character (end of line) before the one-shot command and
+        // restores that on return; this implementation applies the ordinary
+        // normal-mode clamp (caret sits ON the last character, not after
+        // it), so the caret lands one column short of true end-of-line here.
+        type("!")
+        XCTAssertEqual(text, "keep drop! ")
+    }
 }
