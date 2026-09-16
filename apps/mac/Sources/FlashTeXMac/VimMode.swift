@@ -198,6 +198,11 @@ final class VimMode {
     private var namedRegisters: [Character: Register] = [:]
     private var selectedRegister: Character?
     private var marks: [Character: Int] = [:]
+    /// `C-o`/`C-i`: positions before a "big" jump (`G`, `gg`, `%`, a mark
+    /// jump, or a search), oldest first. `jumpIndex == jumps.count` means
+    /// "at the newest position, nothing to redo".
+    private var jumps: [Int] = []
+    private var jumpIndex = 0
     private var lastFind: (char: Character, forward: Bool, till: Bool)?
     private(set) var lastSearch: (pattern: String, forward: Bool)?
     private var visualAnchor = 0
@@ -424,10 +429,48 @@ final class VimMode {
 
     private func replace(_ range: NSRange, with s: String, actionName: String) {
         guard let tv = textView else { return }
+        adjustPositions(afterReplacing: range, withLength: (s as NSString).length)
         tv.breakUndoCoalescing()
         tv.insertText(s, replacementRange: range)
         tv.undoManager?.setActionName(actionName)
         tv.breakUndoCoalescing()
+    }
+
+    /// Called from every Vim-driven edit site (`replace`, `shiftLines`,
+    /// `substitute`) so marks and the jumplist track the buffer shifting
+    /// under them: a position entirely before the edit is untouched, one
+    /// entirely after it shifts by the length delta, and one inside the
+    /// replaced range collapses to the edit's start (Vim invalidates marks
+    /// on the deleted text outright; this is a simpler approximation of the
+    /// same idea).
+    ///
+    /// KNOWN GAP (flashtex#678): this only fires for edits that originate
+    /// *inside* VimMode. Plain insert-mode typing never calls it — `i`/`a`/
+    /// `o` and everything typed before `<Esc>` goes straight through
+    /// NSTextView's own AppKit path (`handleInsertKey` returns `false` for
+    /// ordinary characters, by design; see this file's top doc comment), so
+    /// a mark on a line the user is actively typing into silently drifts
+    /// out from under them. It looks like a working feature because every
+    /// Vim-driven edit (the common demo/test path) does adjust correctly —
+    /// that's what makes this worth flagging explicitly rather than letting
+    /// it get rediscovered later as an unreproducible "mark is just wrong
+    /// sometimes" report. The real fix is to observe *every* edit here, not
+    /// just Vim's own — an NSTextStorage delegate callback on the editor's
+    /// storage (or whatever the edit-ledger path already uses to see every
+    /// insertText, if it sits above the individual call sites) would let
+    /// this function become the single, edit-source-agnostic place that
+    /// happens, instead of something every future Vim edit path has to
+    /// remember to call.
+    private func adjustPositions(afterReplacing range: NSRange, withLength newLength: Int) {
+        let delta = newLength - range.length
+        guard delta != 0 || range.length > 0 else { return }
+        func adjust(_ p: Int) -> Int {
+            if p < range.location { return p }
+            if p >= NSMaxRange(range) { return p + delta }
+            return range.location
+        }
+        for (k, v) in marks { marks[k] = adjust(v) }
+        jumps = jumps.map(adjust)
     }
 
     /// Whether text handed to `store` was yanked (`y`) or removed (`d`/`c`/`x`/…):
@@ -665,9 +708,13 @@ final class VimMode {
             case "f": moveLines(by: pageLines() * (n ?? 1)); return true
             case "b": moveLines(by: -pageLines() * (n ?? 1)); return true
             case "r": textView?.undoManager?.redo(); clampNormalCaret(); return true
+            case "o": jumpBack(); return true
+            case "i": jumpForward(); return true
+            case "a": beginRecording(key); incrementNumber(by: n ?? 1); finishRecording(); return true
+            case "x": beginRecording(key); incrementNumber(by: -(n ?? 1)); finishRecording(); return true
             // An unmapped ⌃-chord is a no-op: falling through would run the
-            // editor's Cocoa binding (⌃K kills the line, ⌃O opens one, ⌃T
-            // transposes, ⌃H deletes) and edit the buffer from normal mode.
+            // editor's Cocoa binding (⌃K kills the line, ⌃T transposes, ⌃H
+            // deletes) and edit the buffer from normal mode.
             default: resetPending(); return true
             }
         }
@@ -993,6 +1040,7 @@ final class VimMode {
         tv.breakUndoCoalescing()
         tv.undoManager?.beginUndoGrouping()
         for e in edits.sorted(by: { $0.range.location > $1.range.location }) {
+            adjustPositions(afterReplacing: e.range, withLength: (e.replacement as NSString).length)
             tv.insertText(e.replacement, replacementRange: e.range)
         }
         tv.undoManager?.setActionName(outdent ? "Outdent" : "Indent")
@@ -1324,6 +1372,10 @@ final class VimMode {
     private func move(_ m: Motion) {
         guard let t = resolve(m) else { return }
         switch m {
+        case .line, .lastLine, .matchPair, .absolute: recordJump(from: caret)
+        default: break
+        }
+        switch m {
         case .up, .down: preferredVisualColumn = nil
         case .visualDown, .visualUp: preferredColumn = nil
         default: preferredColumn = nil; preferredVisualColumn = nil
@@ -1334,6 +1386,67 @@ final class VimMode {
             setCaret(t.position)
             clampNormalCaret()
         }
+    }
+
+    /// Records `p` (the position *before* a "big" jump) on the jumplist and
+    /// as the `` ` ``/`'` last-jump marks — `` ` `` the exact position,
+    /// `'` its line (Vim's own distinction between the two).
+    private func recordJump(from p: Int) {
+        jumps.removeAll { $0 == p }
+        jumps.append(p)
+        if jumps.count > 100 { jumps.removeFirst() }
+        jumpIndex = jumps.count
+        marks["`"] = p
+        marks["'"] = lineStart(p)
+    }
+
+    /// `C-o`: back one step in the jumplist, remembering the position being
+    /// left (once) so `C-i` can return to it.
+    private func jumpBack() {
+        guard jumpIndex > 0 else { return }
+        if jumpIndex == jumps.count { jumps.append(caret) }
+        jumpIndex -= 1
+        setCaret(min(jumps[jumpIndex], length))
+        clampNormalCaret()
+    }
+
+    /// `C-i`: forward one step in the jumplist.
+    private func jumpForward() {
+        guard jumpIndex + 1 < jumps.count else { return }
+        jumpIndex += 1
+        setCaret(min(jumps[jumpIndex], length))
+        clampNormalCaret()
+    }
+
+    /// `C-a`/`C-x`: the number at or after the caret on the current line
+    /// (decimal only, an optional leading `-`), incremented by `delta`;
+    /// the caret lands on its last digit. A no-op if the line has none.
+    private func incrementNumber(by delta: Int) {
+        let ls = lineStart(caret), le = lineEnd(caret)
+        guard le > ls else { return }
+        let lineNS = text.substring(with: NSRange(location: ls, length: le - ls)) as NSString
+        let col = caret - ls
+        func isDigit(_ i: Int) -> Bool { i < lineNS.length && lineNS.character(at: i) >= 0x30 && lineNS.character(at: i) <= 0x39 }
+        var i = 0
+        var found: (start: Int, end: Int)?
+        while i < lineNS.length {
+            if isDigit(i) {
+                var j = i
+                while isDigit(j) { j += 1 }
+                if j > col {
+                    let s = (i > 0 && lineNS.character(at: i - 1) == 0x2D) ? i - 1 : i
+                    found = (s, j)
+                    break
+                }
+                i = j
+            } else {
+                i += 1
+            }
+        }
+        guard let (s, e) = found, let value = Int(lineNS.substring(with: NSRange(location: s, length: e - s))) else { return }
+        let newText = String(value + delta)
+        replace(NSRange(location: ls + s, length: e - s), with: newText, actionName: "Increment")
+        setCaret(ls + s + (newText as NSString).length - 1)
     }
 
     private func moveLines(by delta: Int) {
@@ -1901,13 +2014,15 @@ final class VimMode {
     }
 
     private func jumpToMatch(_ pattern: String, forward: Bool, count: Int) {
-        var p = mode == .visual || mode == .visualLine ? visualHead : caret
+        let origin = mode == .visual || mode == .visualLine ? visualHead : caret
+        var p = origin
         var found: NSRange?
         for _ in 0..<count {
             guard let r = search(pattern, from: p, forward: forward) else { break }
             found = r; p = r.location
         }
         guard let r = found else { message = "E486: Pattern not found: \(pattern)"; return }
+        recordJump(from: origin) // /, ?, n, N, *, # are all "big" jumps
         if mode == .visual || mode == .visualLine { setCaretKeepingVisual(r.location) } else { setCaret(r.location) }
     }
 
@@ -2057,7 +2172,10 @@ final class VimMode {
         guard !edits.isEmpty, let tv = textView else { message = "E486: Pattern not found: \(pattern)"; return }
         tv.breakUndoCoalescing()
         tv.undoManager?.beginUndoGrouping()
-        for r in edits.reversed() { tv.insertText(replacement, replacementRange: r) }
+        for r in edits.reversed() {
+            adjustPositions(afterReplacing: r, withLength: (replacement as NSString).length)
+            tv.insertText(replacement, replacementRange: r)
+        }
         tv.undoManager?.setActionName("Substitute")
         tv.undoManager?.endUndoGrouping()
         tv.breakUndoCoalescing()

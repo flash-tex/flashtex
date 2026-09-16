@@ -1156,4 +1156,56 @@ final class VimModeTests: XCTestCase {
         type("!")
         XCTAssertEqual(text, "keep drop! ")
     }
+
+    // MARK: marks adjust with edits, jumplist, `` / '', C-a / C-x
+
+    func testMarksShiftWithEditsBeforeThem() {
+        load("one\ntwo\nthree", caret: 4)
+        type("ma")
+        type("gg")
+        type("dd")
+        XCTAssertEqual(text, "two\nthree")
+        type("G`a")
+        XCTAssertEqual(caret, 0, "the mark followed \"two\" after the line before it was deleted")
+    }
+
+    func testJumplistControlOAndControlIRoundTripThroughABigJump() {
+        load((0..<20).map { "line \($0)" }.joined(separator: "\n"))
+        XCTAssertEqual(caret, 0)
+        type("G")
+        let afterG = caret
+        XCTAssertGreaterThan(afterG, 0)
+        key("o", flags: .control)
+        XCTAssertEqual(caret, 0, "C-o returns to before the jump")
+        key("i", flags: .control)
+        XCTAssertEqual(caret, afterG, "C-i goes forward again")
+    }
+
+    func testBacktickAndQuoteReturnToTheLastJump() {
+        load("aaaa\nbbbb\ncccc\ndddd\neeee", caret: 7) // the third 'b' of "bbbb"
+        type("G")
+        type("``")
+        XCTAssertEqual(caret, 7, "`` returns to the exact position before the last jump")
+        type("G")
+        type("''")
+        XCTAssertEqual(caret, 5, "'' goes to the *line start* of the last jump")
+    }
+
+    func testControlAAndControlXIncrementAndDecrementTheNextNumber() {
+        load("count: 41 done", caret: 0)
+        key("a", flags: .control)
+        XCTAssertEqual(text, "count: 42 done")
+        key("x", flags: .control)
+        key("x", flags: .control)
+        XCTAssertEqual(text, "count: 40 done")
+
+        load("x = -5", caret: 0)
+        key("a", flags: .control)
+        XCTAssertEqual(text, "x = -4", "the leading - is part of the number")
+
+        load("v1 to v9", caret: 0)
+        type("3")
+        key("a", flags: .control)
+        XCTAssertEqual(text, "v4 to v9", "a count multiplies the increment")
+    }
 }
