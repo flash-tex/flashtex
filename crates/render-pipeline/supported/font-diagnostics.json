@@ -55,6 +55,7 @@
   "not_font_diagnostics": [
     "display_list_declined",
     "float_content_unsupported",
+    "float_footnote_unplaced",
     "float_placement",
     "float_too_large",
     "graphics_option",
@@ -71,6 +72,7 @@
     "overfull_hbox",
     "overfull_vbox",
     "paragraph_layout_error",
+    "table_limitation",
     "tfm_run_error",
     "tikz_display_list_only",
     "tikz_error",

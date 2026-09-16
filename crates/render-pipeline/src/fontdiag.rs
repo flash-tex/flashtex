@@ -118,9 +118,10 @@ pub const FONT_DIAGNOSTICS: [FontDiagnostic; 8] = [
 /// calls. They are font-related but they are *coverage and read* failures of a
 /// face that was found, not a failure to find the face or its metrics, so the
 /// discovery gates do not count them. Revisit that if a gate needs them.
-pub const NON_FONT_DIAGNOSTICS: [&str; 25] = [
+pub const NON_FONT_DIAGNOSTICS: [&str; 27] = [
     "display_list_declined",
     "float_content_unsupported",
+    "float_footnote_unplaced",
     "float_placement",
     "float_too_large",
     "graphics_option",
@@ -137,6 +138,7 @@ pub const NON_FONT_DIAGNOSTICS: [&str; 25] = [
     "overfull_hbox",
     "overfull_vbox",
     "paragraph_layout_error",
+    "table_limitation",
     "tfm_run_error",
     "tikz_display_list_only",
     "tikz_error",
