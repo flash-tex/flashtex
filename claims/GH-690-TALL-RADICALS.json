@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/tall-radicals",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/709",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T05:21:37Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-690-TALL-RADICALS",
-  "updated_utc": "2026-09-16T05:44:49Z"
+  "updated_utc": "2026-09-16T05:56:15Z"
 }
