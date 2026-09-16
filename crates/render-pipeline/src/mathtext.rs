@@ -24,13 +24,16 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use flashtex_math_layout as ml;
+use flashtex_math_layout::cm_tfm;
 use flashtex_math_layout::metrics::Extensible;
+use flashtex_math_layout::tfm as mtfm;
 use flashtex_math_layout::{FontId as MathFontId, Glyph, MathFontMetrics, MathParams, SizeClass};
 
 use crate::adapter::space_factor;
 use crate::fonts::{Family, FontSet, LoadedFace, Role};
-use crate::ids::GlyphId;
-use crate::shape::Shaper;
+use crate::ids::{Encoding, EncodingCode, GlyphId};
+use crate::shape::{Shaped, Shaper};
+use crate::tfm::Tfm;
 
 /// First `FontId` value of a text-run *slot*. A placed glyph box addresses
 /// a run glyph by `(font_id, gid)`: `font_id - RUN_FONT_BASE` is the slot,
@@ -387,6 +390,10 @@ pub struct TextRunMetrics<'a> {
     fonts: &'a FontSet,
     shaper: &'a Shaper,
     family: Family,
+    /// Whether math family 0 (`operators`) is Latin Modern's `rm-lmr*`
+    /// rather than the kernel's `cmr*` ([`crate::style::math_roman_lm`]):
+    /// operator-name runs are laid out from that family, not the text font.
+    roman_lm: bool,
     texts: &'a [String],
     keys: &'a [Option<crate::nfss::FontKey>],
     /// Parallels `texts` ([`TextSink::italics`]): whether each run keeps the
@@ -405,12 +412,16 @@ pub struct TextRunMetrics<'a> {
 impl<'a> TextRunMetrics<'a> {
     /// `keys` and `italics` parallel `texts` ([`TextSink::keys`],
     /// [`TextSink::italics`]); a missing entry is a `\text` run, which has
-    /// the document's text font and no italic correction.
+    /// the document's text font and no italic correction. `roman_lm` is
+    /// [`crate::style::math_roman_lm`]: operator-name runs (no font key,
+    /// the run's own italic correction) are laid out from math family 0 —
+    /// the `cmr` designs, or the installed `rm-lmr*` TFM with `lmodern`.
     pub fn new(
         inner: &'a dyn MathFontMetrics,
         fonts: &'a FontSet,
         shaper: &'a Shaper,
         family: Family,
+        roman_lm: bool,
         texts: &'a [String],
         keys: &'a [Option<crate::nfss::FontKey>],
         italics: &'a [bool],
@@ -420,6 +431,7 @@ impl<'a> TextRunMetrics<'a> {
             fonts,
             shaper,
             family,
+            roman_lm,
             texts,
             keys,
             italics,
@@ -562,7 +574,18 @@ impl<'a> TextRunMetrics<'a> {
             let runs = self.runs.borrow();
             (runs.len(), runs.last().map_or(0, |r| r.first_slot + r.slots()))
         };
-        let run = shape_run(self.fonts, self.shaper, self.family, key, corrected, text, size, first_slot, &mut self.notices.borrow_mut())?;
+        let run = shape_run(
+            self.fonts,
+            self.shaper,
+            self.family,
+            self.roman_lm,
+            key,
+            corrected,
+            text,
+            size,
+            first_slot,
+            &mut self.notices.borrow_mut(),
+        )?;
         self.runs.borrow_mut().push(run);
         Some(index)
     }
@@ -797,16 +820,231 @@ fn space_dimens(fonts: &FontSet, family: Family, face: &LoadedFace, size: f64) -
     (p.space, p.extra_space)
 }
 
+/// Math family 0 (`operators`) as a metrics source for an operator-name
+/// run: the same two fonts `TexMathMetrics::roman_glyph` boxes individual
+/// family-0 glyphs from, chosen by the same [`crate::style::math_roman_lm`]
+/// boolean.
+///
+/// `fontmath.ltx` declares `\DeclareSymbolFont{operators}{OT1}{cmr}{m}{n}`
+/// and only `lmodern` rebinds it to `lmr`, so without `lmodern` an operator
+/// name (`\sin`, `\mathrm{lim}`) is laid out from the `cmr` designs and with
+/// it from the installed `rm-lmr*` TFM — never from the document's *text*
+/// TFM (`ec-lmr*`, or `ecrm*` under `[T1]{fontenc}` without `lmodern`). The
+/// designs are not the same metrics: `cmr10`'s `i` is 0.667859 em tall
+/// against `ec-lmr10`'s 0.629725, so `\sin` set from the text TFM is
+/// 0.38 bp short at 10 pt (GH-DISPLAY-BOX-HEIGHT, #750 F2, text-run route).
+enum RomanSource {
+    /// The installed `rm-lmr<d>.tfm` ([`FontSet::tfm`]): the document loaded
+    /// `lmodern`.
+    Installed(Rc<Tfm>),
+    /// The embedded `cmr` design: the kernel's `operators` font.
+    Embedded(&'static mtfm::TfmFont),
+}
+
+/// Selects the family-0 source for a run shaped at `size` (pt), or `None`
+/// when the size is not a laid-out math size or the installed TFM is
+/// unavailable: the run then keeps the document's text TFM, which is
+/// today's behavior.
+fn roman_source(fonts: &FontSet, roman_lm: bool, size: f64) -> Option<RomanSource> {
+    let close = |at: f64| (size - at).abs() < 0.01;
+    // The optical design, mirroring `TexMathMetrics::at_text_size`'s size
+    // classes (11 pt scales the 10 pt design to 10.95 pt).
+    let design = if close(12.0) {
+        12
+    } else if close(10.0) || close(10.95) {
+        10
+    } else if close(8.0) {
+        8
+    } else if close(7.0) {
+        7
+    } else if close(6.0) {
+        6
+    } else if close(5.0) {
+        5
+    } else {
+        return None;
+    };
+    if roman_lm {
+        return fonts
+            .tfm(&format!("rm-lmr{design}.tfm"))
+            .ok()
+            .map(RomanSource::Installed);
+    }
+    let font = match design {
+        5 => &cm_tfm::CMR5,
+        6 => &cm_tfm::CMR6,
+        7 => &cm_tfm::CMR7,
+        8 => &cm_tfm::CMR8,
+        10 => &cm_tfm::CMR10,
+        12 => &cm_tfm::CMR12,
+        _ => return None,
+    };
+    Some(RomanSource::Embedded(font))
+}
+
+/// Family-0 metrics for one shaped word: per-glyph advances in pt parallel
+/// to the shaped glyphs, the word's height and depth, and its last
+/// character's italic correction.
+struct Transplanted {
+    advances: Vec<f64>,
+    height: f64,
+    depth: f64,
+    italic: f64,
+}
+
+impl RomanSource {
+    /// `\fontdimen2`/`\fontdimen7` at `size`: the interword glue of a run
+    /// set in this font (the run is family 0, so its spaces are family 0's,
+    /// not the text face's).
+    fn space_dimens(&self, size: f64) -> (f64, f64) {
+        match self {
+            RomanSource::Installed(tfm) => {
+                let dim = |n: usize| tfm.param(n).map_or(0.0, |v| Tfm::pt(v, size));
+                (dim(2), dim(7))
+            }
+            RomanSource::Embedded(font) => (font.fontdimen(2, size), font.fontdimen(7, size)),
+        }
+    }
+
+    /// Replaces the shaped word's advances, height, depth and last italic
+    /// with this font's, or `None` when the word is not transplantable and
+    /// keeps the shaped (text-font) metrics: a non-ASCII character, a
+    /// ligature either program forms (the shaped and family-0 glyph
+    /// sequences then have different lengths and cannot be aligned), or
+    /// missing metrics. Painting is untouched either way: the glyph ids
+    /// stay the text face's, so the same outlines draw at corrected
+    /// positions — a width/height/depth-only fix.
+    fn transplant(
+        &self,
+        word: &str,
+        shaped: &Shaped,
+        face: &Rc<LoadedFace>,
+        size: f64,
+    ) -> Option<Transplanted> {
+        let n = word.chars().count();
+        // One shaped glyph per character: a ligature on either side merges
+        // glyphs (`ffi` is one T1 glyph, `fi` one OT1 glyph) and the two
+        // sequences can no longer be aligned.
+        if shaped.clusters.len() != n
+            || shaped
+                .clusters
+                .iter()
+                .any(|c| c.glyphs.len() != 1 || c.text.chars().count() != 1)
+        {
+            return None;
+        }
+        // OT1 letters, digits and punctuation stand at their ASCII codes;
+        // anything else keeps the shaped metrics.
+        let codes: Vec<u8> = word
+            .chars()
+            .map(|ch| ch.is_ascii().then_some(ch as u8))
+            .collect::<Option<_>>()?;
+        match self {
+            RomanSource::Installed(tfm) => {
+                // The TFM's own program, as `shape_tfm` runs it for text: a
+                // math run takes no boundary program (and none of the roman
+                // TFMs carries one), so a leading kern refuses the word.
+                let run = tfm.ligkern(&codes).ok()?;
+                if run.leading_kern != 0 || run.glyphs.len() != n {
+                    return None;
+                }
+                let mut advances = Vec::with_capacity(n);
+                let (mut height, mut depth) = (0i32, 0i32);
+                for g in &run.glyphs {
+                    if g.input.1 - g.input.0 != 1 {
+                        return None;
+                    }
+                    let m = tfm.metrics(g.code)?;
+                    advances.push(Tfm::pt(m.width.saturating_add(g.kern_after), size));
+                    height = height.max(m.height);
+                    depth = depth.max(m.depth);
+                }
+                let italic = tfm
+                    .metrics(run.glyphs.last()?.code)
+                    .map(|m| Tfm::pt(m.italic, size))
+                    .unwrap_or(0.0);
+                Some(Transplanted {
+                    advances,
+                    height: Tfm::pt(height, size),
+                    depth: Tfm::pt(depth, size),
+                    italic,
+                })
+            }
+            RomanSource::Embedded(font) => {
+                // `{-` is an OT1-only ligature (`cmr10.tftopl`: `{-`
+                // merges, T1 leaves the two characters separate), so a word
+                // holding braces cannot be aligned word by word.
+                if word.chars().any(|c| c == '{' || c == '}') {
+                    return None;
+                }
+                let chars: Vec<&mtfm::TfmChar> =
+                    codes.iter().map(|&c| font.char(c)).collect::<Option<_>>()?;
+                // The embedded designs carry no lig/kern program in this
+                // build, so kerns stay the shaped run's: the text font's
+                // program is Latin Modern's own, whose kerns are `rm-lmr`'s
+                // to the fixword. A ligature on the shaped side has already
+                // refused the word above; an OT1-only one cannot form for
+                // the pairs that reach here (see the braces guard).
+                let kerns: Vec<i32> = if shaped.tfm_metrics {
+                    match &face.tfm {
+                        Some(text_tfm) => shaped
+                            .clusters
+                            .iter()
+                            .zip(word.chars())
+                            .map(|(c, ch)| {
+                                let adv = c.glyphs.first().map(|g| g.advance).unwrap_or(0);
+                                let w = EncodingCode::for_char(ch, Encoding::T1)
+                                    .and_then(|code| text_tfm.metrics(code.0))
+                                    .map(|m| m.width)
+                                    .unwrap_or(adv);
+                                adv - w
+                            })
+                            .collect(),
+                        None => vec![0; n],
+                    }
+                } else {
+                    vec![0; n]
+                };
+                let mut advances = Vec::with_capacity(n);
+                let (mut height, mut depth) = (0i32, 0i32);
+                for (c, &k) in chars.iter().zip(kerns.iter()) {
+                    advances.push(mtfm::scale(c.width.saturating_add(k), size));
+                    height = height.max(c.height);
+                    depth = depth.max(c.depth);
+                }
+                let italic = chars
+                    .last()
+                    .map(|c| mtfm::scale(c.italic, size))
+                    .unwrap_or(0.0);
+                Some(Transplanted {
+                    advances,
+                    height: mtfm::scale(height, size),
+                    depth: mtfm::scale(depth, size),
+                    italic,
+                })
+            }
+        }
+    }
+}
+
 /// Shapes `text` as an hbox at `size`: words through the face's shaper
 /// (TFM ligatures/kerns), one glue per space at natural width with TeX's
 /// space factor (1000 at the start of the box, §1034 per character).
 /// `None` when the run cannot be addressed (more than `MAX_SLOTS` chunks of
 /// entries from `first_slot`): a `TooLarge` notice is recorded instead.
+///
+/// An operator-name run (`\sin`, `\lim`, `\mathrm{lim}`: no font key and
+/// the run's own italic correction, see `TextSink::atom_corrected`) is laid
+/// out from math family 0 — the `cmr` designs, or the installed `rm-lmr*`
+/// TFM when `roman_lm` ([`crate::style::math_roman_lm`]) — rather than the
+/// document's text font. Only the metrics move: the run keeps the text
+/// face's glyph ids, so painting is unchanged.
 #[allow(clippy::too_many_arguments)]
 fn shape_run(
     fonts: &FontSet,
     shaper: &Shaper,
     family: Family,
+    roman_lm: bool,
     key: Option<crate::nfss::FontKey>,
     corrected: bool,
     text: &str,
@@ -830,7 +1068,18 @@ fn shape_run(
     };
     notices.push(Notice::FaceUsed { size });
     let mut last_italic = 0.0;
-    let (space, extra) = space_dimens(fonts, family, &face, size);
+    // An operator-name run is set in math family 0, not the text font
+    // (`TextSink::atom_corrected`: no font key, the run's own correction —
+    // `\text` hboxes and math alphabets keep the resolved face).
+    let roman = if key.is_none() && corrected {
+        roman_source(fonts, roman_lm, size)
+    } else {
+        None
+    };
+    let (space, extra) = match &roman {
+        Some(r) => r.space_dimens(size),
+        None => space_dimens(fonts, family, &face, size),
+    };
     let mut glyphs: Vec<RunGlyph> = Vec::new();
     let mut boxes: Vec<ml::MathBox> = Vec::new();
     let mut factor = 1000u32;
@@ -876,8 +1125,19 @@ fn shape_run(
         for (ch, _) in &shaped.missing {
             notices.push(Notice::MissingGlyph { ch: *ch, face: face.name.clone() });
         }
-        let height = shaped.height_pt(size);
-        let depth = shaped.depth_pt(size);
+        // Family-0 advances, height, depth and last italic for an
+        // operator-name word; `None` keeps the shaped text-font metrics.
+        let transplant = roman
+            .as_ref()
+            .and_then(|r| r.transplant(word, &shaped, &face, size));
+        let height = transplant
+            .as_ref()
+            .map_or_else(|| shaped.height_pt(size), |t| t.height);
+        let depth = transplant
+            .as_ref()
+            .map_or_else(|| shaped.depth_pt(size), |t| t.depth);
+        let mut gi = 0usize;
+        let mut word_ink = false;
         for c in &shaped.clusters {
             let ch = c.text.chars().next().unwrap_or('\u{FFFD}');
             for (k, g) in c.glyphs.iter().enumerate() {
@@ -885,8 +1145,14 @@ fn shape_run(
                 // A cluster with several glyphs attributes its text to the first.
                 let text = if k == 0 { c.text.clone() } else { String::new() };
                 glyphs.push(RunGlyph { gid: g.gid, ch, text });
-                let width = g.advance as f64 * size / shaped.units_per_em as f64;
+                let shaped_width = g.advance as f64 * size / shaped.units_per_em as f64;
+                let width = transplant
+                    .as_ref()
+                    .and_then(|t| t.advances.get(gi).copied())
+                    .unwrap_or(shaped_width);
+                gi += 1;
                 if !g.empty {
+                    word_ink = true;
                     last_italic = if shaped.tfm_metrics { crate::tfm::Tfm::pt(g.italic, size) } else { 0.0 };
                 }
                 boxes.push(ml::MathBox {
@@ -896,6 +1162,13 @@ fn shape_run(
                     depth: if g.empty { 0.0 } else { depth },
                     ..ml::MathBox::empty()
                 });
+            }
+        }
+        // The transplanted last character's correction wins over the
+        // text face's: an operator name keeps family 0's italic (§752).
+        if word_ink {
+            if let Some(t) = &transplant {
+                last_italic = t.italic;
             }
         }
         for ch in word.chars() {

@@ -1250,7 +1250,7 @@ impl<'a> Context<'a> {
             })
             .collect();
         let frames = sink.frames.clone();
-        let text_metrics = crate::mathtext::TextRunMetrics::new(fonts.metrics(), self.fonts, self.shaper, self.style.family, &sink.texts, &sink.keys, &sink.italics)
+        let text_metrics = crate::mathtext::TextRunMetrics::new(fonts.metrics(), self.fonts, self.shaper, self.style.family, self.style.math_roman_lm, &sink.texts, &sink.keys, &sink.italics)
             .with_grids(&nested)
             .with_frames(&frames);
         let mut laid = if has_grid {
