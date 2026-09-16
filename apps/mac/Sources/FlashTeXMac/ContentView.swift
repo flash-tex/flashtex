@@ -8,76 +8,67 @@ import FlashTeXAccessibility
 /// collapsed), the document tabs + editor and the preview side by side, the
 /// Problems panel underneath (ProblemsPanel.swift), and a full-width status
 /// bar. Regions are separated by hairlines and a slight tonal shift, never
-/// by distinct region backgrounds; the title bar carries at most three
-/// interactive chips at rest (style-guide chrome budget). Every action here
-/// is an existing model operation; View > Command Palette… (⌘⇧P) lists every
-/// command of the accessibility table (CommandPalette.swift).
+/// by distinct region backgrounds. The single title bar carries every
+/// resting control as pinned icon-only items — Compile and the palette
+/// leading, the preview controls and Export trailing (IDEToolbar.swift;
+/// owner direction on #653 supersedes the old three-chip budget). Every
+/// action here is an existing model operation; View > Command Palette…
+/// (⌘⇧P) lists every command of the accessibility table
+/// (CommandPalette.swift).
 struct ContentView: View {
     @Environment(ShellModel.self) var model
-    @Environment(\.openWindow) private var openWindow
+    @EnvironmentObject private var nearby: NearbyState
     /// Tool-window visibility (the rail toggles them). The Outline ships
     /// collapsed; the Project tree shows by default.
     @AppStorage("FlashTeX.workspace.projectVisible") private var projectVisible = true
     @AppStorage("FlashTeX.workspace.outlineVisible") private var outlineVisible = false
-    /// Width of the tool column; remembered across launches.
-    @AppStorage("FlashTeX.workspace.toolColumnWidth") private var toolColumnWidth: Double = Double(DS.Layout.sidebarIdealWidth)
-    /// Height of the Problems panel; remembered across launches.
-    @AppStorage("FlashTeX.workspace.problemsHeight") private var problemsHeight: Double = ProblemsPanel.idealHeight
 
     var body: some View {
         @Bindable var model = model
         VStack(spacing: 0) {
+            // The single title-bar control row, in the traffic lights' own
+            // region (TitleBar.swift; the safe-area ignore below lets it
+            // occupy the transparent title bar).
+            TitleBarRow()
             HStack(spacing: 0) {
                 ToolRail(projectVisible: $projectVisible, outlineVisible: $outlineVisible)
-                Divider()
-                if projectVisible || outlineVisible {
-                    WorkspaceSidebar(projectVisible: projectVisible, outlineVisible: outlineVisible)
-                        .frame(width: toolColumnWidth)
-                    ColumnResizeHandle(width: $toolColumnWidth,
-                                       range: DS.Layout.sidebarMinWidth...DS.Layout.sidebarMaxWidth)
-                }
-                GeometryReader { geo in
-                    // Below the width where both columns fit, the preview
-                    // collapses to a toggle (tab bar / preview header) rather
-                    // than being crushed under its minimum.
-                    let narrow = geo.size.width < DS.Layout.editorMinWidth + DS.Layout.previewMinWidth + DS.Layout.resizeHandleHeight
-                    VStack(spacing: 0) {
-                        HSplitView {
-                            // maxHeight fills: with no compile result both
-                            // children are height-flexible and HSplitView
-                            // would otherwise collapse and centre them.
-                            if !(narrow && model.narrowPreviewShown) {
-                                EditorPane().frame(minWidth: DS.Layout.editorMinWidth, maxWidth: .infinity, maxHeight: .infinity)
-                            }
-                            if !narrow || model.narrowPreviewShown {
-                                PreviewPane().frame(minWidth: DS.Layout.previewMinWidth, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .onChange(of: narrow, initial: true) { _, now in
-                            if model.narrowLayout != now { model.narrowLayout = now }
-                        }
-                        if model.problemsVisible {
-                            // Drag the handle to give the diagnostics list more or less
-                            // room; the list scrolls within whatever height it has.
-                            // Never more than 40 % of the window: at 1000×640 the
-                            // editor keeps ~15 lines instead of 10 (daniel-fable-ui-qa #3).
-                            let panelCap = max(ProblemsPanel.minHeight, min(geo.size.height - DS.Layout.editorMinHeightAbovePanel, geo.size.height * DS.Layout.problemsMaxFraction))
-                            PanelResizeHandle(height: $problemsHeight, range: ProblemsPanel.minHeight...panelCap)
-                            ProblemsPanel().frame(height: min(problemsHeight, panelCap))
-                        }
-                    }
-                }
+                // The structural splits are AppKit (WorkspaceSplit.swift):
+                // sidebar | editor | preview over the Problems panel, with
+                // real minimums, drag, persistence and the narrow-layout
+                // collapse. Split state follows the workspace flags.
+                WorkspaceSplitPane(nearby: nearby,
+                                   projectVisible: projectVisible,
+                                   outlineVisible: outlineVisible,
+                                   problemsVisible: model.problemsVisible,
+                                   narrowPreviewShown: model.narrowPreviewShown)
             }
-            Divider()
+            // The status bar spans the full width, rail included (VS Code),
+            // with no separator above it (Islands: status bar border
+            // transparent — the chrome tone alone separates it).
             StatusBar()
         }
+        .ignoresSafeArea(.container, edges: .top) // the title-bar row occupies the transparent title bar region
+        .background(WindowChromeConfigurator()) // transparent title bar, hidden title, height-only toolbar (WindowChrome.swift)
+        .background(DS.Colors.surfaceSecondary.ignoresSafeArea()) // one chrome surface up into the title bar
+        .modifier(HideToolbarBackground())
         .inspector(isPresented: $model.captureInboxVisible) { // Captures (CaptureInbox.swift): View > Captures, ⌘⇧I
             CaptureInboxPanel(inbox: model.captureInbox).inspectorColumnWidth(min: DS.Layout.inspectorMinWidth, ideal: DS.Layout.inspectorIdealWidth, max: DS.Layout.inspectorMaxWidth)
         }
-        .toolbar { WorkspaceToolbar(openWindow: openWindow) }
         .sheet(isPresented: $model.commandPaletteShown) { CommandPalette().environment(model) }
         .modifier(EditorNavigationSheets()) // Rename / Wrap / Change Environment… / Go to Symbol… / Go to Line (ShellModel+EditorNavigation.swift)
+    }
+}
+
+/// macOS 15's declarative half of the transparent title bar; the pre-15
+/// fallback is `NSWindow.titlebarAppearsTransparent` (WindowChrome.swift),
+/// which macOS 14 windows get from the same configurator.
+private struct HideToolbarBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        } else {
+            content
+        }
     }
 }
 
@@ -120,7 +111,7 @@ private struct RailButton: View {
     var body: some View {
         Button { isOn.toggle() } label: {
             Image(systemName: icon)
-                .font(DS.Fonts.base)
+                .font(DS.Fonts.railIcon)
                 .foregroundStyle(isOn ? DS.Colors.accentSelection : DS.Colors.textSecondary)
                 .frame(width: DS.Size.railButton, height: DS.Size.railButton)
                 .background(
@@ -133,111 +124,6 @@ private struct RailButton: View {
         .help(help)
         .accessibilityLabel(label)
         .accessibilityAddTraits(isOn ? .isSelected : [])
-    }
-}
-
-/// The vertical divider at the tool column's trailing edge, draggable left
-/// and right (the cursor shows the resize arrows on hover).
-private struct ColumnResizeHandle: View {
-    @Binding var width: Double
-    let range: ClosedRange<CGFloat>
-    @State private var startWidth: Double?
-
-    var body: some View {
-        Rectangle().fill(.clear)
-            .frame(width: DS.Layout.resizeHandleHeight)
-            .overlay(Divider(), alignment: .center)
-            .contentShape(Rectangle())
-            .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
-            .gesture(DragGesture(minimumDistance: 1)
-                .onChanged { value in
-                    let start = startWidth ?? width
-                    startWidth = start
-                    width = min(max(start + value.translation.width, range.lowerBound), range.upperBound)
-                }
-                .onEnded { _ in startWidth = nil })
-            .accessibilityHidden(true)
-    }
-}
-
-/// The divider above the Problems panel, draggable up and down (the cursor
-/// shows the resize arrows on hover). Keyboard users size it with the split
-/// of the window itself; the panel is never taller than the window allows.
-private struct PanelResizeHandle: View {
-    @Binding var height: Double
-    let range: ClosedRange<Double>
-    @State private var startHeight: Double?
-
-    var body: some View {
-        Rectangle().fill(.clear)
-            .frame(height: DS.Layout.resizeHandleHeight)
-            .overlay(Divider(), alignment: .center)
-            .contentShape(Rectangle())
-            .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
-            .gesture(DragGesture(minimumDistance: 1)
-                .onChanged { value in
-                    let start = startHeight ?? height
-                    startHeight = start
-                    height = min(max(start - value.translation.height, range.lowerBound), range.upperBound)
-                }
-                .onEnded { _ in startHeight = nil })
-            .accessibilityHidden(true)
-    }
-}
-
-// MARK: toolbar
-
-
-/// The chrome budget (style-guide): at most three interactive chips at rest
-/// — Compile (with the producer menu behind its chevron), Export, and the
-/// command palette — plus the right-side panel toggles. Everything that used
-/// to be a toolbar button here is reachable from its menu, its shortcut and
-/// the palette; tooltips still name the shortcuts.
-private struct WorkspaceToolbar: ToolbarContent {
-    @Environment(ShellModel.self) var model
-    let openWindow: OpenWindowAction
-
-    var body: some ToolbarContent {
-        @Bindable var model = model
-        ToolbarItemGroup(placement: .principal) {
-            // One chip: click compiles, the chevron holds the producer menu.
-            Menu {
-                Button("Attach Built Compiler") { _ = model.attachDiscoveredWorker() }
-                    .help("⌘⇧K")
-                Button("Attach Render Pipeline (Latin Modern)") { _ = model.attachDiscoveredRenderPipeline() }
-                    .help("⌘⇧R")
-                Button("Attach Worker Executable…") { model.attachWorkerPanel() }
-                    .help("⌘K")
-                Divider()
-                Toggle("Auto-compile after edits", isOn: $model.autoCompile).disabled(!model.workerAttached)
-                Button("Detach Worker") { model.detachWorker() }.disabled(!model.workerAttached)
-                if model.isFixture { Divider(); Button("Reload Fixture") { model.reloadFixture() } }
-            } label: {
-                Label("Compile", systemImage: "hammer.fill")
-            } primaryAction: {
-                if !model.outputBoundExplicitRetry() { model.compile() }
-            }
-            // `producerSummary`, not `workerStatus`: the toolbar must not re-evaluate per request (ShellModel toolbar mirrors).
-            .help("Compile (File > Compile, ⌘B) — producer: " + (model.isFixture ? "fixture (not a real compile)" : model.producerSummary) + ". The menu attaches the built compiler (⌘⇧K), the Latin Modern render pipeline (⌘⇧R) or any executable (⌘K).")
-        }
-        ToolbarItemGroup(placement: .automatic) {
-            Menu {
-                Button("Export PDF…") { model.exportPDF() }.disabled(!model.toolbarHasResult)
-                Button("Export PDF via Rust Writer…") { model.exportPDFViaRust() }.disabled(!model.toolbarHasResult)
-                Button("Export PDF (exact, v2)…") { model.exportPDFExact() }.disabled(!model.toolbarHasV2Frame)
-            } label: { Label("Export", systemImage: "square.and.arrow.up") }
-                .help("Export PDF… (⌘⇧E), via Rust writer (⌘⌥E), or exact from the v2 display list (File menu)")
-            Button { model.commandPaletteShown = true } label: { Label("Commands", systemImage: "command") }
-                .help("Command Palette… (View, ⌘⇧P): every command with its shortcut")
-                .accessibilityIdentifier("toolbar.command-palette")
-            Toggle(isOn: $model.captureInboxVisible) {
-                let n = model.captureInbox.items.count
-                Label(n > 0 ? "Captures \(n)" : "Captures", systemImage: n > 0 ? "tray.full" : "tray")
-            }
-            .toggleStyle(.button)
-            .help("Show or hide the Captures inspector (View, ⌘⇧I): captures from the iPad, their proposals, Insert at caret")
-            .accessibilityIdentifier("toolbar.captures")
-        }
     }
 }
 
@@ -260,8 +146,9 @@ struct EditorPane: View {
             // Switching goes through ProjectDocuments so each document's
             // caret/selection is kept and a pending insertion is never
             // applied to the wrong buffer (ProjectDocuments.swift).
+            // No line under the strip: tab strip and editor share one
+            // surface (Islands); the active tab's underline marks the edge.
             DocumentTabBar()
-            Divider()
             SourceEditorView(
                 text: Binding(get: { model.activeText }, set: { model.updateActiveText($0) }),
                 selection: model.selection,
@@ -338,7 +225,7 @@ private struct CaptureBar: View {
     var body: some View {
         HStack(spacing: DS.Space.m) {
             Button("Pin insertion point") { model.pinAnchorAtCaret() }
-                .controlSize(.small)
+                .ideSecondary()
                 .help("Use the caret as the destination for capture proposals (⌘⌥P)")
             if let a = model.anchor {
                 Text("anchor \(a.id) · \(a.path) byte \(a.byteOffset) @ rev \(a.revision)")
@@ -351,11 +238,11 @@ private struct CaptureBar: View {
                 Button("Review \(model.proposals.count) proposal\(model.proposals.count == 1 ? "" : "s")") {
                     model.reviewing = model.proposals.first
                 }
-                .controlSize(.small)
+                .ideDefault()
             }
         }
         .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
-        .background(.bar)
+        .background(DS.Colors.surfaceSecondary)
         .accessibleCaptureBar(anchor: model.anchor.map { "\($0.id) at \($0.path) byte \($0.byteOffset), revision \($0.revision)" }, proposals: model.proposals.count) // FlashTeXAccessibility
         .sheet(item: Binding(get: { model.reviewing.map { ReviewItem(proposal: $0) } },
                              set: { model.reviewing = $0?.proposal })) { item in
@@ -384,26 +271,27 @@ private struct BridgeBar: View {
                     .help(c.note)
             }
             if model.latestConvertibleCapture?.state == .received {
-                Button("Convert") { model.convertLatestCapture() }.controlSize(.small)
+                Button("Convert") { model.convertLatestCapture() }.ideSecondary()
                     .help("capture_convert for the latest received capture (Edit > Convert Capture)")
             }
         }
         .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xxs)
-        .background(.bar)
+        .background(DS.Colors.surfaceSecondary)
     }
 }
 
 struct PreviewPane: View {
     @Environment(ShellModel.self) var model
-    /// Page under the viewport's top edge (PreviewAnchorProbe reports it).
-    @State private var currentPage = 1
     /// Pointer-over reveals the header's second control tier (§8).
     @State private var hovering = false
 
+    /// Bumped by scroll, page and zoom changes; each bump shows the HUD
+    /// briefly (design change from #653 review: page/zoom moved off the
+    /// removed header row into a transient overlay).
+    @State private var hudActivity = 0
+
     var body: some View {
-        VStack(spacing: 0) {
-            PreviewHeader(currentPage: currentPage, hovering: hovering)
-            Divider()
+        ZStack(alignment: .topTrailing) {
             if model.previewV2 {
                 PreviewV2Pane() // experimental v2 path (PreviewV2View.swift); v1 below stays the default
                     .modifier(PreviewMagnify()) // pinch to zoom (PreviewZoom.swift)
@@ -412,8 +300,8 @@ struct PreviewPane: View {
                             zoom: model.previewZoom, onFitScale: { model.previewFitScale = $0 },
                             // "the pdf moves to where the changes are happening" (CaretFollow.swift)
                             follow: model.caretFollow.request,
-                            onUserScroll: { model.caretFollow.userDidScrollPreview() },
-                            onVisiblePage: { currentPage = $0 },
+                            onUserScroll: { model.caretFollow.userDidScrollPreview(); hudActivity &+= 1 },
+                            onVisiblePage: { model.previewVisiblePage = $0 },
                             onFitPageZoom: { model.previewFitPageZoom = $0 }) { source, text in
                     guard let source else { model.navigationNote = "This item has no source mapping."; return }
                     model.navigate(to: source, expectedText: text)
@@ -423,12 +311,32 @@ struct PreviewPane: View {
                 ContentUnavailableView {
                     Label("No preview yet", systemImage: "doc.richtext")
                 } description: {
-                    Text("Attach a producer from the Compile chip's menu (⌘⇧K builds, ⌘⇧R Latin Modern) and compile (⌘B), or File > Open Compile Result Fixture… (⌘⇧O).")
+                    Text("Attach a producer (File > Attach Built Compiler ⌘⇧K, or ⌘⇧R for Latin Modern) and compile (⌘B), or File > Open Compile Result Fixture… (⌘⇧O).")
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(DS.Colors.surfaceGround)
             }
+            // The transient page/zoom HUD and the quiet state cluster
+            // (compile spinner, FIXTURE/HISTORICAL, staleness) float over
+            // the pages; nothing reserves a header row any more (#653).
+            if model.previewV2 || model.chrome.hasResult {
+                PreviewHUD(hovering: hovering, activity: hudActivity)
+            }
+            // The narrow layout's way back to the editor floats top-leading
+            // (it lived on the removed header row).
+            if model.narrowLayout && model.narrowPreviewShown {
+                NarrowBackButton()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(DS.Space.l)
+            }
         }
+        .onChange(of: model.previewZoom) { _, _ in hudActivity &+= 1 }
+        .onChange(of: model.previewVisiblePage) { _, _ in hudActivity &+= 1 }
+        // Double-click to Fit Width (⌘9 does the same). Used to live on the
+        // now-removed zoom readout; `simultaneousGesture` so it never blocks
+        // the pages' own single-tap-to-navigate gesture underneath (owner
+        // feedback: no floating zoom % over the page).
+        .simultaneousGesture(TapGesture(count: 2).onEnded { model.previewFitWidth() })
         .sheet(isPresented: Binding(get: { model.quickFix != nil }, set: { if !$0 { model.quickFix = nil } })) {
             if let p = model.quickFix {
                 VStack(alignment: .leading, spacing: DS.Space.m) {
@@ -442,8 +350,8 @@ struct PreviewPane: View {
                         .font(.caption2).foregroundStyle(.tertiary)
                     HStack {
                         Spacer()
-                        Button("Cancel") { model.quickFix = nil }.keyboardShortcut(.cancelAction)
-                        Button("Apply") { model.applyQuickFix() }.keyboardShortcut(.defaultAction)
+                        Button("Cancel") { model.quickFix = nil }.keyboardShortcut(.cancelAction).ideSecondary()
+                        Button("Apply") { model.applyQuickFix() }.keyboardShortcut(.defaultAction).ideDefault()
                     }
                 }
                 .padding(DS.Space.xl).frame(minWidth: DS.Layout.sheetMinWidth)
@@ -454,36 +362,45 @@ struct PreviewPane: View {
     }
 }
 
-/// The preview column's header, in the two control tiers of
-/// design-principles §8. Always visible and dimmed: the page indicator and
-/// zoom percentage, plus quiet *state* — a mini spinner while compiling, a
-/// FIXTURE/HISTORICAL badge when the pages are not the worker's current
-/// result, staleness text, and capability warnings. On pointer-over the
-/// second tier fades in without moving anything: zoom −/+, fit width, fit
-/// page, and the preview-scoped v2/dark switches. Producer and capability
-/// detail live in tooltips, not the header line.
-struct PreviewHeader: View {
+/// The floating preview HUD (owner feedback on #653: no header row over
+/// the pages; further pared down after owner feedback that a "⚠ ⚠ 87 %"
+/// pill sat on top of the document — the zoom percentage readout and the
+/// capability-warning icons were removed from here entirely; capability
+/// notes now live in the status bar, and the zoom commands (⌘9/⌘0/pinch,
+/// plus double-click on the page) are unaffected). What is left: the
+/// always-quiet state — a mini spinner while compiling, FIXTURE/HISTORICAL
+/// when the pages are not the worker's current result, staleness and load
+/// errors — pins the chip visible; the page readout shows transiently on
+/// pointer-over and for a beat after scroll or page changes, then fades.
+/// Fading never reflows anything (§14); a healthy live preview at rest
+/// shows no chrome at all over the pages (§8, Canvas treatment).
+private struct PreviewHUD: View {
     @Environment(ShellModel.self) var model
-    var currentPage = 1
     var hovering = false
+    /// Bumped by the pane on scroll/page/zoom; each bump re-arms the fade.
+    var activity = 0
+    @State private var activityVisible = false
 
     var body: some View {
-        @Bindable var model = model
-        // Reads the throttled chrome mirror (ShellChrome.swift), not `result`,
-        // `editorRevision` or `inFlightRevision`: this header re-evaluated on
-        // every keystroke and every reply (FT-071 main-thread sample).
+        // Reads the throttled chrome mirror (ShellChrome.swift), not
+        // `result` / `inFlightRevision`: the old header re-evaluated on
+        // every keystroke and reply (FT-071 main-thread sample).
         let chrome = model.chrome
+        let badge = Self.stateBadge(chrome)
+        let pinned = chrome.compiling || badge != nil || chrome.staleHighlighted
+            || chrome.loadError != nil
+            || (model.previewDebugStatus && chrome.resultStatus != nil)
+        let visible = hovering || pinned || activityVisible
         HStack(spacing: DS.Space.m) {
-            if model.narrowLayout && model.narrowPreviewShown {
-                Button { model.narrowPreviewShown = false } label: { Image(systemName: "chevron.left") }
-                    .buttonStyle(.accessoryBar).controlSize(.small)
-                    .help("Back to the editor (the window is too narrow for editor and preview side by side)")
-                    .accessibilityLabel("Back to editor")
-            }
-            // Fixed-size slot: the compile indicator never reflows the header.
+            // Fixed-size slot: the compile indicator never reflows the chip.
             Color.clear.frame(width: DS.Size.inlineStatusSlot, height: DS.Size.inlineStatusSlot)
                 .overlay { if chrome.compiling { ProgressView().controlSize(.mini).accessibilityLabel("Compiling") } }
-            stateBadge(chrome)
+            if let badge {
+                Text(badge.text)
+                    .font(DS.Fonts.header)
+                    .padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xxs)
+                    .background(badge.color.opacity(DS.State.badgeFillOpacity), in: Capsule())
+            }
             if model.previewDebugStatus, let status = chrome.resultStatus {
                 Text(status.rawValue).font(DS.Fonts.header).foregroundStyle(statusColor(status))
             }
@@ -497,81 +414,89 @@ struct PreviewHeader: View {
             if let err = chrome.loadError {
                 Text(err).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityError).lineLimit(1).help(err)
             }
-            ForEach(chrome.capabilityNotes, id: \.self) { note in
-                Image(systemName: "exclamationmark.circle").foregroundStyle(DS.Colors.severityWarning).help(note)
-                    .accessibilityLabel(note)
-            }
-            Spacer()
-            // The hover tier: fades in place, never reflows (§14).
-            HStack(spacing: DS.Space.xs) {
-                Toggle(isOn: $model.previewV2) { Image(systemName: "rectangle.on.rectangle") }
-                    .toggleStyle(.button).buttonStyle(.accessoryBar).controlSize(.small)
-                    .help("Experimental display-list-v2 preview (File > Open Display List (v2)…)")
-                    .accessibilityLabel("v2 preview pane")
-                Toggle(isOn: $model.darkPreview) { Image(systemName: "moon") }
-                    .toggleStyle(.button).buttonStyle(.accessoryBar).controlSize(.small)
-                    .help("Draw the preview pages dark (page and text colors only)")
-                    .accessibilityLabel("Dark preview")
-                Button { model.previewFitWidth() } label: { Image(systemName: "arrow.left.and.right.square") }
-                    .buttonStyle(.accessoryBar).controlSize(.small)
-                    .help("Fit Width (⌘9)").accessibilityLabel("Fit width")
-                Button { model.previewFitPage() } label: { Image(systemName: "arrow.up.and.down.square") }
-                    .buttonStyle(.accessoryBar).controlSize(.small)
-                    .help("Fit Page (⌘⇧9)").accessibilityLabel("Fit page")
-                Button { model.previewZoomOut() } label: { Image(systemName: "minus.magnifyingglass") }
-                    .buttonStyle(.accessoryBar).controlSize(.small)
-                    .help("Zoom Out (⌘-)").accessibilityLabel("Zoom out preview")
-                Button { model.previewZoomIn() } label: { Image(systemName: "plus.magnifyingglass") }
-                    .buttonStyle(.accessoryBar).controlSize(.small)
-                    .help("Zoom In (⌘=)").accessibilityLabel("Zoom in preview")
-            }
-            .opacity(hovering ? 1 : 0)
-            .allowsHitTesting(hovering)
-            .animation(DS.Motion.quick, value: hovering)
-            .accessibilityHidden(!hovering)
-            // The rest tier: page and zoom, always visible, dimmed (§8) —
-            // meaningful only once there is a result at all.
-            if chrome.hasResult {
-            Text("\(currentPage) / \(max(model.toolbarPageCount, 1))")
-                .font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textSecondary)
-                .help("Page under the top of the view")
-                .accessibilityLabel("Page \(currentPage) of \(max(model.toolbarPageCount, 1))")
-            Text("\(PreviewZoom.percent(fit: model.previewFitScale, zoom: model.previewZoom)) %")
-                .font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textSecondary)
-                .frame(minWidth: DS.Size.zoomReadoutMinWidth)
-                .help("Preview zoom; double-click for Fit Width (⌘9), ⌘0 actual size, or pinch on the preview")
-                .accessibilityLabel("Preview zoom \(PreviewZoom.percent(fit: model.previewFitScale, zoom: model.previewZoom)) percent")
-                .onTapGesture(count: 2) { model.previewFitWidth() }
+            // Capability notes moved to the status bar (owner feedback: no
+            // floating warnings/percent over the page) — see StatusBar below.
+            // Both panes. This was gated on `!model.previewV2` while
+            // `previewV2` defaults true, so on the shipped default nobody ever
+            // saw a page number.
+            if model.toolbarPageCount > 0 {
+                let page = min(model.previewVisiblePage, model.toolbarPageCount)
+                Text("\(page) / \(model.toolbarPageCount)")
+                    .font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textSecondary)
+                    .help("Page under the top of the view")
+                    .accessibilityLabel("Page \(page) of \(model.toolbarPageCount)")
+                    .accessibilityIdentifier("preview.page-readout")
             }
         }
-        .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
-        .background(.bar)
+        .padding(.horizontal, DS.Space.l).padding(.vertical, DS.Space.s)
+        .background(DS.Colors.surfaceRaised, in: RoundedRectangle(cornerRadius: DS.Radius.panel))
+        .overlay(RoundedRectangle(cornerRadius: DS.Radius.panel).strokeBorder(DS.Colors.componentBorder, lineWidth: DS.Size.hairline))
+        .shadow(color: .black.opacity(DS.Preview.hudShadowOpacity), radius: DS.Preview.pageShadowRadius)
+        .padding(DS.Space.l)
+        .opacity(visible ? 1 : 0)
+        .allowsHitTesting(visible)
+        .animation(DS.Motion.quick, value: visible)
+        .accessibilityHidden(!visible)
         .help(chrome.previewSource == .fixture
               ? "Fixture\(chrome.fixtureName.map { ": " + $0 } ?? "") — not a real compile. Layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))"
               : model.producerSummary + " — layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))")
+        // The linger timer is a real pending Task for as long as it runs;
+        // under XCTest that outlives the surface being captured and makes
+        // both this shot and the next one depend on when it fires, so
+        // snapshots see the hover tier only (same reasoning as
+        // ThinSplitViewController.autosaveEnabled).
+        .task(id: activity) {
+            guard activity > 0, !PreviewHUD.lingerSuppressed else { return }
+            activityVisible = true
+            try? await Task.sleep(for: .seconds(DS.Motion.hudLinger))
+            guard !Task.isCancelled else { return }
+            activityVisible = false
+        }
     }
+
+    /// True under XCTest: the linger timer never runs, so a captured
+    /// surface does not depend on when it happens to fire.
+    static let lingerSuppressed = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        || ProcessInfo.processInfo.environment["XCTestSessionIdentifier"] != nil
 
     /// Quiet state badge: shown only when the pages are *not* the worker's
     /// current result — FIXTURE (not a real compile) or HISTORICAL (an older
     /// snapshot while the newer revision compiles). A healthy live preview
     /// shows nothing here.
-    @ViewBuilder
-    private func stateBadge(_ chrome: ShellChrome) -> some View {
-        let label: (text: String, color: Color)? = switch chrome.previewSource {
+    static func stateBadge(_ chrome: ShellChrome) -> (text: String, color: Color)? {
+        switch chrome.previewSource {
         case .none: nil
         case .fixture: ("FIXTURE", DS.Colors.severityWarning)
         case .worker: chrome.historicalLabel != nil ? ("HISTORICAL", DS.Colors.statusHistorical) : nil
-        }
-        if let label {
-            Text(label.text)
-                .font(DS.Fonts.header)
-                .padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xxs)
-                .background(label.color.opacity(DS.State.badgeFillOpacity), in: Capsule())
         }
     }
 
     private func statusColor(_ s: RuntimeV1.Status) -> Color {
         switch s { case .ok: DS.Colors.severitySuccess; case .recovered: DS.Colors.severityWarning; case .failed: DS.Colors.severityError }
+    }
+}
+
+/// Back to the editor while the window is too narrow for both columns
+/// (design-principles §4); floats where the removed header row carried it.
+private struct NarrowBackButton: View {
+    @Environment(ShellModel.self) var model
+    @State private var hovering = false
+
+    var body: some View {
+        Button { model.narrowPreviewShown = false } label: {
+            Image(systemName: "chevron.left")
+                .font(DS.Fonts.toolbarIcon)
+                .foregroundStyle(DS.Colors.textSecondary)
+                .frame(width: DS.Size.toolbarButton, height: DS.Size.toolbarButton)
+                .background(DS.Colors.surfaceRaised, in: RoundedRectangle(cornerRadius: DS.Radius.tab))
+                .overlay(RoundedRectangle(cornerRadius: DS.Radius.tab).strokeBorder(DS.Colors.componentBorder, lineWidth: DS.Size.hairline))
+                .background(hovering ? DS.Colors.hover : .clear)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+        .onHover { hovering = $0 }
+        .help("Back to the editor (the window is too narrow for editor and preview side by side)")
+        .accessibilityLabel("Back to editor")
     }
 }
 
@@ -604,11 +529,26 @@ struct StatusBar: View {
             }
             Label(route(chrome), systemImage: routeIcon(chrome))
                 .help(chrome.routeHelp)
-            Label("r\(chrome.editorRevision)", systemImage: "pencil.line")
-                .help("Editor revision (increments on every edit)")
-            if let durable = chrome.durableRevision {
-                Label("durable r\(durable)", systemImage: "internaldrive")
-                    .help("Durable revision of \(model.activePath) in the helper's edit ledger")
+            // Capability warnings (moved off the preview HUD, owner feedback:
+            // a "⚠ ⚠ 87 %" pill was floating over the page). Still real
+            // diagnostics, just anchored in the status bar instead of
+            // overlapping the document.
+            if !chrome.capabilityNotes.isEmpty {
+                Label("\(chrome.capabilityNotes.count)", systemImage: "exclamationmark.circle")
+                    .foregroundStyle(DS.Colors.severityWarning)
+                    .help(chrome.capabilityNotes.joined(separator: "\n"))
+                    .accessibilityLabel("\(chrome.capabilityNotes.count) capability warning\(chrome.capabilityNotes.count == 1 ? "" : "s")")
+                    .accessibilityValue(chrome.capabilityNotes.joined(separator: "; "))
+            }
+            // Revision counters are diagnostics, not writing state (owner,
+            // #653): shown only with View > Show Preview Debug Status.
+            if model.previewDebugStatus {
+                Label("r\(chrome.editorRevision)", systemImage: "pencil.line")
+                    .help("Editor revision (increments on every edit)")
+                if let durable = chrome.durableRevision {
+                    Label("durable r\(durable)", systemImage: "internaldrive")
+                        .help("Durable revision of \(model.activePath) in the helper's edit ledger")
+                }
             }
             // The Vim mode indicator is NOT here: it is `VimStatusLine`, at the
             // bottom of the editor pane where vim puts a window's status line.
@@ -631,7 +571,7 @@ struct StatusBar: View {
                 Text("Exporting exact PDF (flashtex-pdf-exact pid \(pid))…")
                     .foregroundStyle(.secondary).lineLimit(1)
                 Button("Cancel") { model.cancelExactExport() }
-                    .controlSize(.small)
+                    .ideSecondary()
                     .help("Terminate flashtex-pdf-exact; nothing is written to the destination")
                     .accessibilityIdentifier("export.cancel")
             } else if let note = chrome.captureNote {
@@ -640,9 +580,9 @@ struct StatusBar: View {
         }
         .font(DS.Fonts.secondary)
         .monospacedDigit()
-        .padding(.horizontal, DS.Space.l).padding(.vertical, DS.Space.xs)
+        .padding(.horizontal, DS.Space.l)
         .frame(height: DS.Row.statusBar)
-        .background(.bar)
+        .background(DS.Colors.surfaceSecondary)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Status bar")
     }
@@ -676,6 +616,13 @@ private struct StatusBreadcrumb: View {
 
     var body: some View {
         HStack(spacing: DS.Space.xs) {
+            // The same colour-coded identity as the tree and the tabs (§6)
+            // leads the breadcrumb — one of the deliberate small accents
+            // (owner: the editor feels bland).
+            let style = FileTypeStyle.of(path: model.activePath, entry: model.activePath == model.chrome.entryPath)
+            Image(systemName: style.systemImage)
+                .font(DS.Fonts.secondary).foregroundStyle(style.color)
+                .accessibilityHidden(true)
             Text(model.activePath).lineLimit(1)
                 .foregroundStyle(DS.Colors.textSecondary)
             ForEach(chain) { item in
@@ -765,11 +712,13 @@ private struct ProposalReviewSheet: View {
             }
             HStack {
                 Button("Reject", role: .destructive) { model.rejectProposal(proposal); dismiss() }
+                    .ideSecondary(destructive: true)
                 // Non-destructive exit: the sheet blocks the whole window, so
                 // without this the Captures inspector's Insert is unreachable
                 // for exactly the proposals it could act on.
                 Button("Close") { model.dismissReviewWithoutDeciding() }
                     .keyboardShortcut(.cancelAction)
+                    .ideSecondary()
                     .accessibilityIdentifier("review.close")
                 Spacer()
                 ProposalApproveWarning(preview: preview)
@@ -784,6 +733,7 @@ private struct ProposalReviewSheet: View {
                     else { failure = model.captureNote ?? "The insertion was refused." }
                 }
                 .keyboardShortcut(.defaultAction)
+                .ideDefault()
                 .disabled((model.anchor == nil && !model.isBridgeCapture(proposal.captureId)) || latex.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
@@ -823,7 +773,7 @@ struct VimStatusLine: View {
             .font(DS.Fonts.secondary)
             .monospacedDigit()
             .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xxs)
-            .background(.bar)
+            .background(DS.Colors.surfaceSecondary)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Vim status line")
         }

@@ -1339,6 +1339,7 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
         | Nucleus::Framed { body, .. }
         | Nucleus::Accent { body, .. }
         | Nucleus::Phantom { body, .. }
+        | Nucleus::Lap { body, .. }
         | Nucleus::Operator { body, .. } => respan_list(body, span),
         Nucleus::Stacked { base, over, under } => {
             respan_list(base, span);
@@ -1358,6 +1359,16 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
         Nucleus::SubArray { rows, .. } => {
             for row in rows {
                 respan_list(row, span);
+            }
+        }
+        Nucleus::SideSet {
+            operator,
+            left_superscript,
+            left_subscript,
+        } => {
+            respan_list(operator, span);
+            for list in [left_superscript, left_subscript].into_iter().flatten() {
+                respan_list(list, span);
             }
         }
     }

@@ -195,6 +195,10 @@ enum V2Loader {
     static func preraster(_ frame: V2Frame, pixelsPerPoint: Double, dark: Bool, skipping cached: Set<String> = []) -> Prerastered {
         var images: [(token: String, image: CGImage)] = []
         for (index, page) in frame.prepared.enumerated() {
+            // display-list-v2-window: an elided page has no items and paints a
+            // placeholder, never a bitmap (a 1000-page window would otherwise
+            // rasterize 1000 blanks).
+            if index < frame.list.pages.count, !frame.list.pages[index].resident { continue }
             let token = frame.pageToken(at: index)
             if cached.contains(token) { continue }
             if let image = GlyphRunRenderer.rasterize(page, scale: pixelsPerPoint, dark: dark) { images.append((token, image)) }
@@ -430,7 +434,8 @@ extension ShellModel {
             // Installation (proposal r5 §6.1): only a published live frame is a base.
             if source.isLive { deltaInstalled = frame.installedBase } else { deltaInstalled = nil }
             if TypingBench.isBenchActive { FlashTeXLog.write("preview-v2: published \(source.label) revision \(frame.list.revision) at \(MonotonicClock.nowNs())") }
-            captureNote = "\(source.isLive ? "Live display list" : "Loaded display list") \(source.label): \(frame.list.pages.count) page(s), \(frame.fonts.count) font(s) resolved by content hash, \(frame.prepared.reduce(0) { $0 + $1.glyphCount }) glyphs prepared"
+            let windowNote = frame.list.window.map { " — window: pages \($0.firstPage)–\($0.firstPage + $0.pageCount - 1) resident, \($0.documentPageCount - $0.pageCount) elided" } ?? ""
+            captureNote = "\(source.isLive ? "Live display list" : "Loaded display list") \(source.label): \(frame.list.pages.count) page(s)\(windowNote), \(frame.fonts.count) font(s) resolved by content hash, \(frame.prepared.reduce(0) { $0 + $1.glyphCount }) glyphs prepared"
             V2ParityEvidence.runIfRequested(frame: frame, source: source)
         case .failed(let error):
             if source.isLive { deltaInstalled = nil } // full resync on the next request
@@ -538,23 +543,52 @@ extension ShellModel {
         }
     }
 
-    /// `Export PDF (v2)…` from the v2 pane: the same draw routine as the preview.
-    func exportPDFV2() {
-        guard case .loaded(let frame, _)? = displayListV2 else {
-            captureNote = displayListV2?.isLoading == true ? "Nothing to export yet: a display list is still loading." : "Nothing to export: no display list loaded."
-            return
+    /// The v2 item under the editor caret, shaped as the same `Hit` a click on
+    /// the page produces, so ⌘⇧J and clicking the preview go through one
+    /// navigation path (digest attestation, rebase onto an edited buffer, the
+    /// multi-span note). Nil when the caret maps to nothing the producer laid
+    /// out — a comment, the preamble, a page outside a served window.
+    func caretV2Hit(frame: V2Frame, byte: Int) -> (page: Int, hit: V2Geometry.Hit)? {
+        for page in frame.list.pages where page.resident {
+            for highlight in V2Geometry.caretHighlights(containing: byte, path: activePath, in: page) {
+                switch highlight {
+                case .cluster(let match):
+                    guard case .glyphRun(let run) = page.items[match.itemIndex] else { continue }
+                    let cluster = run.clusters[match.clusterIndex]
+                    guard let rect = match.hitRects.first else { continue }
+                    return (page.number, V2Geometry.Hit(itemIndex: match.itemIndex, clusterIndex: match.clusterIndex,
+                                                        text: run.clusterText(match.clusterIndex),
+                                                        sources: cluster.sources ?? [],
+                                                        syntheticReason: cluster.syntheticReason, rect: rect))
+                case .formula(let box):
+                    // A formula's span is the whole `$…$` including delimiters
+                    // and no single cluster's text equals it, so there is no
+                    // expected text to verify — the span itself is the answer.
+                    guard let item = box.itemIndices.first else { continue }
+                    return (page.number, V2Geometry.Hit(itemIndex: item, clusterIndex: nil, text: nil,
+                                                        sources: [box.source], syntheticReason: nil, rect: box.bounds))
+                }
+            }
         }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.pdf]
-        panel.nameFieldStringValue = "\(frame.list.projectId)-r\(frame.list.revision)-v2.pdf"
-        panel.message = "Export the v2 display list as PDF through the preview's draw routine (experimental)"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            try GlyphRunRenderer.pdfData(frame: frame).write(to: url, options: .atomic)
-            captureNote = "Exported \(frame.list.pages.count) page(s) (v2) to \(url.path)"
-        } catch {
-            captureNote = "PDF export (v2) failed: \(error.localizedDescription)"
+        return nil
+    }
+
+    /// ⌘⇧J against the v2 pane. Returns false when there is no v2 frame, so
+    /// the caller can fall through to the runtime-v1 pane.
+    @discardableResult
+    func revealCaretInV2Preview(byte: Int) -> Bool {
+        guard previewV2, let frame = displayListV2?.frame else { return false }
+        guard let found = caretV2Hit(frame: frame, byte: byte) else {
+            let behind = result.map { $0.revision != frame.list.revision } ?? false
+            navigationNote = "Caret byte \(byte) is inside no preview item"
+                + (behind ? " (the display list is from an older revision)." : ".")
+            return true
         }
+        navigateV2Now(found.hit)
+        if navigationNote?.hasPrefix("Selected") == true {
+            navigationNote! += " — page \(found.page)"
+        }
+        return true
     }
 }
 
@@ -711,6 +745,12 @@ final class V2PageRasterizer {
 enum V2ParityEvidence {
     static func runIfRequested(frame: V2Frame, source: V2Source) {
         guard let dir = ProcessInfo.processInfo.environment["FLASHTEX_V2_PARITY_OUT"], !dir.isEmpty else { return }
+        if let window = frame.list.window {
+            // A windowed frame is an incomplete view (window proposal §4.1):
+            // exporting/comparing it would write blank pages as evidence.
+            FlashTeXLog.write("preview-v2: parity skipped for \(source.label) — windowed frame (\(window.pageCount) of \(window.documentPageCount) pages resident)")
+            return
+        }
         let scale = Double(ProcessInfo.processInfo.environment["FLASHTEX_V2_PARITY_SCALE"] ?? "") ?? 2
         V2Loader.queue.async {
             var out = URL(fileURLWithPath: dir)
@@ -746,8 +786,15 @@ struct PreviewV2Pane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            // Debug-only strip (View > Show Preview Debug Status): identity,
+            // LIVE/behind badges, font manifest. At rest the pane starts at
+            // the pages — Open… and Export moved to the title bar
+            // (TitleBar.swift), the V2/loading state to the floating HUD
+            // (#653: no header rows over the preview).
+            if model.previewDebugStatus {
+                header
+                Divider()
+            }
             // The pages sit at ONE structural position whether the frame is the
             // loaded one or the previous one shown stale while a load is in
             // flight. Under typing the state toggles loaded -> stale -> loaded
@@ -797,6 +844,21 @@ struct PreviewV2Pane: View {
                 }
             }
         }
+        .overlay(alignment: .bottomLeading) {
+            // display-list-v2-images: refused image bytes (stale hash, symlink,
+            // unreadable). Non-modal; the frame stays, the item painted nothing.
+            // Floats quietly over the ground now that the header row is gone.
+            if let notices = model.displayListV2?.frame?.imageNotices, !notices.isEmpty {
+                Text(notices.joined(separator: " · "))
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning).lineLimit(1).truncationMode(.middle)
+                    .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
+                    .background(DS.Colors.surfaceRaised, in: RoundedRectangle(cornerRadius: DS.Radius.control))
+                    .overlay(RoundedRectangle(cornerRadius: DS.Radius.control).strokeBorder(DS.Colors.componentBorder, lineWidth: DS.Size.hairline))
+                    .padding(DS.Space.l)
+                    .help(notices.joined(separator: "\n"))
+                    .accessibilityIdentifier("v2-image-notice")
+            }
+        }
         .onAppear {
             // While visible, the pane asks the producer for the live route.
             model.setLiveV2(true)
@@ -844,6 +906,7 @@ struct PreviewV2Pane: View {
                       // "the pdf moves to where the changes are happening" (CaretFollow.swift)
                       follow: model.caretFollow.request, reveal: model.previewReveal,
                       onUserScroll: { model.caretFollow.userDidScrollPreview() },
+                      onVisiblePage: { model.v2WindowSawVisiblePage($0) },
                       navigation: DisplayListLinks.effective(frame.list.navigation, accepted: model.acceptedLayoutCapabilities,
                                                             live: model.displayListV2?.source.isLive == true),
                       onLink: { model.activatePreviewLink($0, in: frame.list) }) { hit in
@@ -909,7 +972,6 @@ private struct V2PaneHeader: View {
         VStack(alignment: .leading, spacing: DS.Space.xxs) {
             HStack(spacing: DS.Space.m) {
                 Text("V2").font(DS.Fonts.header).padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xxs).background(DS.Colors.statusHistorical.opacity(DS.State.badgeFillOpacity), in: Capsule())
-                if model.previewDebugStatus {
                 Text("display-list-v2").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary).lineLimit(1)
                 if model.workerAttached {
                     Text(model.liveV2Accepted ? "LIVE" : "v1 only")
@@ -925,7 +987,6 @@ private struct V2PaneHeader: View {
                         .font(DS.Fonts.header).foregroundStyle(DS.Colors.severityWarning).lineLimit(1)
                         .accessibilityIdentifier("v2-behind")
                 }
-                }
                 if case .loading(let source, _, let previous, _, _) = model.displayListV2 {
                     // Quiet progress indicator: the previous frame stays on screen; no flashing text.
                     ProgressView().controlSize(.mini)
@@ -934,27 +995,17 @@ private struct V2PaneHeader: View {
                         .accessibilityIdentifier("v2-stale")
                 }
                 Spacer()
-                Button("Open…") { model.openDisplayListV2Panel() }.controlSize(.small).fixedSize()
-                Button("Export PDF (v2)…") { model.exportPDFV2() }.controlSize(.small).fixedSize()
-                    .disabled({ if case .loaded = model.displayListV2 { false } else { true } }())
-            }
-            if let notices = model.displayListV2?.frame?.imageNotices, !notices.isEmpty {
-                // display-list-v2-images: refused image bytes (stale hash, symlink,
-                // unreadable). Non-modal; the frame stays, the item painted nothing.
-                Text(notices.joined(separator: " · "))
-                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning).lineLimit(1).truncationMode(.middle)
-                    .help(notices.joined(separator: "\n"))
-                    .accessibilityIdentifier("v2-image-notice")
             }
             if model.previewDebugStatus, let frame = model.displayListV2?.frame {
                 let fonts = frame.fonts.values.map { "\($0.resource.postscriptName) \($0.resource.sha256.prefix(8))" }.sorted().joined(separator: ", ")
-                Text("\(model.displayListV2?.source.label ?? "") · id \(frame.id) · project \(frame.list.projectId) · revision \(frame.list.revision) · \(frame.list.pages.count) page(s) · fonts by hash: \(fonts)")
+                let windowNote = frame.list.window.map { " · window \($0.firstPage)–\($0.firstPage + $0.pageCount - 1) of \($0.documentPageCount)" } ?? ""
+                Text("\(model.displayListV2?.source.label ?? "") · id \(frame.id) · project \(frame.list.projectId) · revision \(frame.list.revision) · \(frame.list.pages.count) page(s)\(windowNote) · fonts by hash: \(fonts)")
                     .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary).lineLimit(1).truncationMode(.middle)
                     .help(frame.fonts.values.map { "\($0.resource.postscriptName): \($0.resource.sha256) → \($0.file.url.lastPathComponent)" }.sorted().joined(separator: "\n"))
             }
         }
         .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
-        .background(.bar)
+        .background(DS.Colors.surfaceSecondary)
     }
 }
 
@@ -974,6 +1025,9 @@ struct PreviewV2View: View {
     var reveal: CaretFollowController.Request? = nil
     /// Reported when the reader scrolls this pane by hand.
     var onUserScroll: (() -> Void)? = nil
+    /// Page under the viewport's top edge (PreviewAnchorProbe); drives the
+    /// header's page indicator and the display-list-v2-window consumer.
+    var onVisiblePage: ((Int) -> Void)? = nil
     /// Active `navigation` after capability gating (nil → no link behaviour).
     var navigation: RenderingV2.Navigation? = nil
     var onLink: ((RenderingV2.Navigation.Link) -> Void)? = nil
@@ -1010,7 +1064,7 @@ struct PreviewV2View: View {
                     }
                 }
                 .padding(DS.Preview.pageSpacing)
-                .background(PreviewAnchorKeeper(layout: layout, follow: follow, reveal: reveal, onUserScroll: onUserScroll))
+                .background(PreviewAnchorKeeper(layout: layout, follow: follow, reveal: reveal, onUserScroll: onUserScroll, onVisiblePage: onVisiblePage))
             }
             .onChange(of: fit, initial: true) { _, f in onFitScale?(f) }
         }
@@ -1092,6 +1146,28 @@ private struct PageV2View: View, Equatable {
     }
 
     var body: some View {
+        if page.resident { resident } else { placeholder }
+    }
+
+    /// Elided page of a windowed frame (window proposal §4): geometry only.
+    /// It keeps the document's scroll extent — scrolling toward it moves the
+    /// anchor, which re-requests the window (V2PageWindow.swift) — with no
+    /// bitmap machinery, no hover/tap geometry and no navigation (§4.1: a
+    /// windowed reply never authorises a source action outside its coverage).
+    private var placeholder: some View {
+        let size = CGSize(width: page.widthPt * scale, height: page.heightPt * scale)
+        let labelColor: Color = dark ? DS.Preview.darkLabel : DS.Preview.lightLabel
+        let pageBackground: Color = dark ? DS.Preview.darkPage : .white
+        return Rectangle().fill(pageBackground)
+            .frame(width: size.width, height: size.height)
+            .shadow(radius: DS.Preview.pageShadowRadius)
+            .overlay(alignment: .bottomTrailing) {
+                Text("page \(page.number) · not loaded").font(DS.Fonts.secondary).foregroundStyle(labelColor).padding(DS.Space.xs)
+            }
+            .accessibilityIdentifier("v2-page-elided")
+    }
+
+    @ViewBuilder private var resident: some View {
         let size = CGSize(width: page.widthPt * scale, height: page.heightPt * scale)
         // Reading the slot through `image(for:)` subscribes this page to its bitmap's arrival.
         let bitmap = V2PageRasterizer.shared.image(for: prepared, pageToken: pageToken, pixelsPerPoint: Double(scale * displayScale), dark: dark)

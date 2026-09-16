@@ -1818,8 +1818,10 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         func refresh() {
             guard let view, let layer = view.layer else { return }
             view.effectiveAppearance.performAsCurrentDrawingAppearance {
-                layer.backgroundColor = NSColor.windowBackgroundColor.cgColor
-                layer.borderColor = NSColor.separatorColor.cgColor
+                // The raised floating surface of the Islands palette, not
+                // the stock window ground (DS.Palette).
+                layer.backgroundColor = DS.NSColors.raised.cgColor
+                layer.borderColor = DS.NSColors.componentBorder.cgColor
             }
         }
     }
@@ -1919,6 +1921,14 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
 
     func numberOfRows(in tableView: NSTableView) -> Int { items.count }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        // The muted JetBrains selection band (SidebarTree.swift), not the
+        // stock accent band.
+        let view = (tableView.makeView(withIdentifier: TreeRowView.reuseID, owner: nil) as? TreeRowView) ?? TreeRowView()
+        view.identifier = TreeRowView.reuseID
+        return view
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let id = NSUserInterfaceItemIdentifier("row")
         let view = (tableView.makeView(withIdentifier: id, owner: nil) as? CompletionRowView) ?? {
@@ -1982,14 +1992,14 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
             out.append(NSAttributedString(string: " "))
         }
         out.append(NSAttributedString(string: s.label, attributes: [
-            .font: DS.NSFonts.monoCandidate, .foregroundColor: NSColor.labelColor,
+            .font: DS.NSFonts.monoCandidate, .foregroundColor: DS.Palette.textPrimary,
         ]))
         out.append(NSAttributedString(string: "  \(s.kind.badge) · \(s.detail)", attributes: [
-            .font: DS.NSFonts.secondary, .foregroundColor: NSColor.secondaryLabelColor,
+            .font: DS.NSFonts.secondary, .foregroundColor: DS.Palette.textSecondary,
         ]))
         if let doc = documentation(for: s) {
             out.append(NSAttributedString(string: " — \(doc)", attributes: [
-                .font: DS.NSFonts.secondary, .foregroundColor: NSColor.tertiaryLabelColor,
+                .font: DS.NSFonts.secondary, .foregroundColor: DS.Palette.textTertiary,
             ]))
         }
         return out
@@ -2830,9 +2840,9 @@ final class CompletingTextView: NSTextView {
             } else {
                 // A typed character arms the automatic open (`textChanged`);
                 // everything else (deletion, navigation, Return) does not.
-                // Vim normal/visual mode never arms it: a key `vim.handle`
-                // left unhandled (e.g. an unmapped letter) still reaches
-                // here, but it is a command key, not inserted text.
+                // Vim normal/visual mode never arms it: those modes consume
+                // every key `Key.init` accepts, so what still reaches here
+                // (arrows, ⌃-chords Vim declined) is never inserted text.
                 typingKey = Self.typesACharacter(event) && (!vimActive || vim.mode == .insert)
                 super.keyDown(with: event)
                 typingKey = false

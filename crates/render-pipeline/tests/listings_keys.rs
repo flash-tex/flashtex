@@ -57,7 +57,7 @@ fn runs(text: &str) -> (Vec<String>, Vec<Run>) {
     let r = render(&docs, "main.tex", 1, "p", &fonts, &RenderOptions::default());
     let mut out = Vec::new();
     for page in &r.v2.pages {
-        for it in &page.items {
+        for it in page.resident_items() {
             if let flashtex_render_pipeline::display::Item::GlyphRun(run) = it {
                 let Some(first) = run.glyphs.first() else { continue };
                 let last = run.glyphs.last().expect("a run with a first glyph has a last");

@@ -46,11 +46,14 @@ final class EditorPreferencesTests: XCTestCase {
         XCTAssertEqual(p.appearance, .system)
         XCTAssertTrue(p.autoCloseBraces)
         XCTAssertTrue(p.completionPopup)
+        XCTAssertTrue(p.autosave, "owner: autosave should be on by default")
         XCTAssertEqual(p.indentString, "    ")
-        // The system monospaced face at the default size.
+        // The default editor face at the default size: bundled JetBrains Mono
+        // (context/PROMPT-appearance-overhaul.md §5), or the system monospaced
+        // face when the bundle is unavailable.
         XCTAssertTrue(p.font.isFixedPitch)
         XCTAssertEqual(p.font.pointSize, 13)
-        XCTAssertEqual(p.font, .monospacedSystemFont(ofSize: 13, weight: .regular))
+        XCTAssertEqual(p.font, EditorPreferences.defaultEditorFont(size: 13))
         // Migration stamped the schema version and the absent keys were written as defaults.
         XCTAssertEqual(defaults.integer(forKey: EditorPreferences.schemaVersionKey), EditorPreferences.schemaVersion)
         XCTAssertEqual(Set(p.lastLoadRepairs), Set(EditorPreferences.Key.allCases).subtracting([.fontFamily]))
@@ -100,7 +103,7 @@ final class EditorPreferencesTests: XCTestCase {
         p.fontFamily = proportionalFamily
         XCTAssertNil(p.fontFamily, "a proportional family falls back to the system face")
         XCTAssertNil(defaults.object(forKey: key(.fontFamily)))
-        XCTAssertEqual(p.font, .monospacedSystemFont(ofSize: 13, weight: .regular))
+        XCTAssertEqual(p.font, EditorPreferences.defaultEditorFont(size: 13))
 
         p.fontFamily = "No Such Font Family 9f3a"
         XCTAssertNil(p.fontFamily, "an uninstalled family falls back to the system face")
@@ -115,7 +118,8 @@ final class EditorPreferencesTests: XCTestCase {
 
     func testResolveFontFallsBackForUnavailableFamilyAtClampedSize() {
         let f = EditorPreferences.resolveFont(family: "No Such Font Family 9f3a", size: 100)
-        XCTAssertEqual(f, .monospacedSystemFont(ofSize: 36, weight: .regular))
+        XCTAssertEqual(f, EditorPreferences.defaultEditorFont(size: 36))
+        XCTAssertEqual(f.pointSize, 36)
         let m = EditorPreferences.resolveFont(family: monoFamily, size: 20)
         XCTAssertEqual(m.familyName, monoFamily)
         XCTAssertEqual(m.pointSize, 20)
@@ -160,6 +164,28 @@ final class EditorPreferencesTests: XCTestCase {
         XCTAssertEqual(b.appearance, .dark)
         XCTAssertFalse(b.autoCloseBraces)
         XCTAssertFalse(b.completionPopup)
+    }
+
+    /// Owner: "autosave should be on by default" — but a default change must
+    /// never silently re-enable it for someone who deliberately turned it
+    /// off. `load()`'s present-value-wins rule (identical to every other
+    /// boolean here) is what guarantees that: an explicit `false` survives
+    /// a simulated relaunch exactly like an explicit `true` does.
+    func testAutosaveDefaultsOnAndAnExplicitChoiceSurvivesARelaunch() {
+        XCTAssertTrue(EditorPreferences.defaultSnapshot.autosave)
+
+        let off = EditorPreferences(defaults: defaults)
+        off.autosave = false
+        XCTAssertEqual(defaults.object(forKey: key(.autosave)) as? Bool, false)
+        let reloadedOff = EditorPreferences(defaults: UserDefaults(suiteName: suiteName)!)
+        XCTAssertFalse(reloadedOff.autosave, "an explicit off must not be overwritten back to the new default")
+        XCTAssertFalse(reloadedOff.lastLoadRepairs.contains(.autosave))
+
+        let on = EditorPreferences(defaults: UserDefaults(suiteName: suiteName)!)
+        on.autosave = true
+        let reloadedOn = EditorPreferences(defaults: UserDefaults(suiteName: suiteName)!)
+        XCTAssertTrue(reloadedOn.autosave)
+        XCTAssertFalse(reloadedOn.lastLoadRepairs.contains(.autosave))
     }
 
     func testInvalidStoredValuesAreRepairedAndWrittenBack() {

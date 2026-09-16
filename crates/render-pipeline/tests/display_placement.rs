@@ -10,11 +10,11 @@
 //! `oracle.py check`). Too-wide formulas are squeezed by their math glue
 //! with the number beside them or on a line of its own (09, 10, 33; needs
 //! math-layout `MathBox::pack_to`), and `\numberwithin`/`subequations`
-//! numbers come from the compiler (18; 17's numbers are right, its `\eqref`
-//! misses LaTeX's `\sw@slant` italic correction before the space). Fixtures
-//! not listed here do not pass yet: 17, nested list labels (20), and 15,
-//! whose `\tag{$*$}` is placed exactly but extracts as `*` where pdfTeX's
-//! cmsy glyph reads `∗`.
+//! numbers come from the compiler (17, 18; 17's `\eqref` takes `\textup`'s
+//! `\check@icl` italic correction before its space). Display 20 sits in a
+//! nested list, whose closing `\topsep` is its own level's. The fixture not
+//! listed here does not pass yet: 15, whose `\tag{$*$}` is placed exactly
+//! but extracts as `*` where pdfTeX's cmsy glyph reads `∗`.
 //!
 //! With feature `compiler-text-run` (#441; vendor/ re-pinned past #470)
 //! rich tags join the list: `\tag{hi $x^2$}`, `\tag*{...}` and `leqno`
@@ -48,8 +48,10 @@ const PASSING: &[&str] = &[
     "13-dollars-leqno",
     "14-equation-star",
     "16-gather-numbers",
+    "17-numberwithin-section",
     "18-subequations",
     "19-itemize-display",
+    "20-enumerate-nested-display",
     "21-after-heading",
     "22-page-bottom",
     "23-page-top",
@@ -118,7 +120,7 @@ fn display_placement_matches_pdflatex() {
         for (page, words) in r.v2.pages.iter().zip(pages) {
             // (first char, x bp, baseline y bp) of every glyph on the page.
             let mut glyphs = Vec::new();
-            for item in &page.items {
+            for item in page.resident_items() {
                 if let Item::GlyphRun(run) = item {
                     let mut chars = run.clusters.iter().map(|c| run.text[c.text_start_byte as usize..c.text_end_byte as usize].chars().next());
                     for g in &run.glyphs {
