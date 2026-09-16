@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "ci/snapshot-env-gate-fable",
-  "gh_ref": null,
+  "gh_ref": "660",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T18:19:33Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-660-SNAPSHOT-ENV-GATE",
-  "updated_utc": "2026-09-16T18:19:33Z"
+  "updated_utc": "2026-09-16T18:28:56Z"
 }
