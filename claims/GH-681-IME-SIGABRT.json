@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/fix681-ime-sigabrt",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-16T19:35:35Z",
+  "state": "claimed",
+  "task_id": "GH-681-IME-SIGABRT",
+  "updated_utc": "2026-09-16T19:35:35Z"
+}
