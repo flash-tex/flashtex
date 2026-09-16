@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/mac-render-pipeline/perf-4-compact",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-16T20:01:12Z",
+  "state": "claimed",
+  "task_id": "GH-257-CONFLICT",
+  "updated_utc": "2026-09-16T20:01:12Z"
+}
