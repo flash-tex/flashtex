@@ -126,6 +126,10 @@ pub struct Stylesheet {
     pub emergency_stretch_pt: f64,
     /// `\columnseprule` (the class default, or a preamble `\setlength`).
     pub columnseprule_pt: f64,
+    /// `\marginparwidth` / `\marginparsep` (the class frame): the width
+    /// of a `\marginpar` note and its gap from the text block.
+    pub marginparwidth_pt: f64,
+    pub marginparsep_pt: f64,
     /// `\topsep`, `\partopsep` and `\leftmargini` of a level-1 list
     /// (`\` of size1x.clo): the glue around and the margins of
     /// `center`/`quote`-style environments.
@@ -166,6 +170,7 @@ impl Stylesheet {
             ds = ds.with_geometry(g);
         }
         let page = ds.page_layout();
+        let margin = flashtex_document_style::article_page_params(ClassOptions { paper: Paper::Letter, size: base });
         let body = ds.resolve(&[Block::Document, Block::Paragraph]);
         let body_size = body.font_size.0;
         // `ex` of the body font of the *selected family* (pdflatex evaluates
@@ -241,6 +246,8 @@ impl Stylesheet {
             raggedbottom: true,
             emergency_stretch_pt: 0.0,
             columnseprule_pt: 0.0,
+            marginparwidth_pt: margin.marginparwidth.0,
+            marginparsep_pt: margin.marginparsep.0,
             topsep: Skip::new(list.topsep.pt, list.topsep.plus, list.topsep.minus),
             partopsep: Skip::new(list.partopsep.pt, list.partopsep.plus, list.partopsep.minus),
             leftmargini_pt: list.leftmargin.0,
@@ -308,6 +315,8 @@ impl Stylesheet {
         s.raggedbottom = doc.options.kind == flashtex_class_geometry::ClassKind::Letter
             || !(doc.flags.twoside || doc.flags.twocolumn);
         s.columnseprule_pt = frame_pt(frame.columnseprule);
+        s.marginparwidth_pt = frame_pt(p.marginparwidth);
+        s.marginparsep_pt = frame_pt(p.marginparsep);
         if doc.flags.twocolumn {
             s.tolerance = 9999.0;
             s.emergency_stretch_pt = 3.0 * s.body_size_pt;

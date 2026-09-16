@@ -452,6 +452,11 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                     hash_items(t, base, h);
                 }
             }
+            Item::Marginpar { span, text } => {
+                (span.start.wrapping_sub(base)).hash(h);
+                (span.end.wrapping_sub(base)).hash(h);
+                hash_items(text, base, h);
+            }
             Item::ColorBox(b) => {
                 format!("{b:?}").hash(h);
             }
@@ -820,6 +825,10 @@ pub fn relocate_items(items: &[Item], delta: isize) -> Vec<Item> {
                 if let Some(t) = text {
                     *t = relocate_items(t, delta);
                 }
+            }
+            Item::Marginpar { span, text } => {
+                shift_span(span, delta);
+                *text = relocate_items(text, delta);
             }
             _ => {}
         }

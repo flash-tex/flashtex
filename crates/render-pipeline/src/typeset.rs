@@ -413,6 +413,7 @@ fn position_run(run: &pl::GlyphRun, x: f64, baseline_y: f64) -> pl::PositionedRu
 
 pub mod floatpage;
 pub mod footnotes;
+pub mod marginpar;
 mod toc;
 pub mod multicol;
 
@@ -488,6 +489,11 @@ pub struct Context<'a> {
     /// `\footnotetext`): see [`footnotes`].
     notes: Vec<footnotes::NoteSrc>,
     note_anchors: Vec<(usize, usize)>,
+    /// Margin-note texts met while building horizontal lists, and for each
+    /// the box record its note follows (the box before `\marginpar`, which
+    /// sets no mark of its own): see [`marginpar`].
+    marginpars: Vec<marginpar::MarginparSrc>,
+    marginpar_anchors: Vec<(usize, usize)>,
     /// The body in reading order (`adapter::reading_order`): where a float
     /// of an `\include`d file stands among the other documents' blocks.
     reading_order: Vec<Span>,
@@ -549,6 +555,8 @@ impl<'a> Context<'a> {
             label_recs: BTreeSet::new(),
             notes: Vec::new(),
             note_anchors: Vec::new(),
+            marginpars: Vec::new(),
+            marginpar_anchors: Vec::new(),
             reading_order: Vec::new(),
             parbox: false,
             multicol: multicol::State::default(),
@@ -1949,6 +1957,10 @@ impl<'a> Context<'a> {
         };
         // Notes of this list: (item index, mark record, note).
         let mut notes: Vec<(usize, Option<usize>, usize)> = Vec::new();
+        // Margin notes of this list, same shape (`\marginpar` never has a
+        // mark, so the record is always `None` here and resolves to the
+        // box before the call below).
+        let mut margins: Vec<(usize, Option<usize>, usize)> = Vec::new();
         for (idx, item) in items.iter().enumerate() {
             match item {
                 AItem::Footnote { number, mark, span, text } => {
@@ -1972,6 +1984,14 @@ impl<'a> Context<'a> {
                     if let Some(n) = note {
                         notes.push((out.len(), anchor, n));
                     }
+                }
+                AItem::Marginpar { text, span } => {
+                    // No mark is set; the note follows the line of the box
+                    // before the call (resolved with the footnotes below).
+                    // The interword gap around the command is already in
+                    // the list (see `adapter::items_from_inlines_styled`).
+                    self.marginpars.push(marginpar::MarginparSrc { span: *span, items: text.clone() });
+                    margins.push((out.len(), None, self.marginpars.len() - 1));
                 }
                 AItem::Word(w) => {
                     // TeX hyphenates a word only when it directly follows
@@ -2237,6 +2257,12 @@ impl<'a> Context<'a> {
             let rec = anchor.or_else(|| recs[..at.min(recs.len())].iter().rev().find_map(|r| *r)).or_else(|| recs.iter().find_map(|r| *r));
             if let Some(rec) = rec {
                 self.note_anchors.push((rec, n));
+            }
+        }
+        for (at, anchor, m) in margins {
+            let rec = anchor.or_else(|| recs[..at.min(recs.len())].iter().rev().find_map(|r| *r)).or_else(|| recs.iter().find_map(|r| *r));
+            if let Some(rec) = rec {
+                self.marginpar_anchors.push((rec, m));
             }
         }
         (out, recs, labels, skips)
@@ -3424,6 +3450,7 @@ impl<'a> Context<'a> {
         // `\footnote` inside a float box: `footnotes::prepare` has already
         // run, so a note raised here would set its mark and never be placed.
         let (notes, anchors) = (self.notes.len(), self.note_anchors.len());
+        let (mnotes, manchors) = (self.marginpars.len(), self.marginpar_anchors.len());
         let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None };
         let outer = std::mem::replace(&mut self.parbox, true);
         // `\@floatboxreset` runs `\@setminipage`, and `\addvspace` does
@@ -3508,6 +3535,16 @@ impl<'a> Context<'a> {
             self.diagnostics.push(Diagnostic::warning(
                 "float_footnote_unplaced",
                 "a \\footnote inside a float body is not placed yet (LaTeX needs \\footnotemark here and \\footnotetext outside the float); the mark is set and the note text is omitted",
+                source,
+            ));
+        }
+        if self.marginpars.len() > mnotes {
+            let source = vec![self.source(float)];
+            self.marginpars.truncate(mnotes);
+            self.marginpar_anchors.truncate(manchors);
+            self.diagnostics.push(Diagnostic::warning(
+                "float_marginpar_unplaced",
+                "a \\marginpar inside a float body is not placed (LaTeX forbids marginpars there); the note text is omitted",
                 source,
             ));
         }
@@ -4165,12 +4202,16 @@ impl<'a> Context<'a> {
         // `\footnotetext`s of `\thanks`) after `\@maketitle` in vertical
         // mode: the notes' inserts follow the title's last line.
         let before = self.note_anchors.len();
+        let mbefore = self.marginpar_anchors.len();
         self.rlap_marks = true;
         let out = self.title_blocks_set(title, authors, date, g, form, columns);
         self.rlap_marks = false;
         let last = out.iter().rev().find_map(|b| b.block.lines.lines.last().and_then(|l| b.recs.get(l.items.clone()).and_then(|r| r.iter().rev().find_map(|r| *r))));
         if let Some(rec) = last {
             for anchor in &mut self.note_anchors[before..] {
+                anchor.0 = rec;
+            }
+            for anchor in &mut self.marginpar_anchors[mbefore..] {
                 anchor.0 = rec;
             }
         }
@@ -7612,7 +7653,7 @@ fn block_key(cache: Option<&RenderCache>, style_fp: u64, tag: u8, items: &[AItem
         return (None, None);
     }
     // A footnote's record indices and note table are per build.
-    if items.iter().any(|i| matches!(i, AItem::Footnote { .. })) {
+    if items.iter().any(|i| matches!(i, AItem::Footnote { .. } | AItem::Marginpar { .. })) {
         return (None, None);
     }
     let Some((document, base)) = incremental::block_origin(items) else {
@@ -8365,6 +8406,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     if let Some(g) = geo {
         page_chrome(ctx, g, &mut blocks, &mut pages, &mut line_dx, &events, &counters);
     }
+    // Margin notes ride the calling line's page: placed after page breaking
+    // (and the chrome above) so each note lands on the page its line
+    // shipped on, clipped to the text area.
+    marginpar::place(ctx, &mut blocks, &mut pages, &mut line_dx);
     // Float image items and labels are numbered by page-builder column
     // (before `\cleardoublepage`'s empty pages): map them to their page and
     // give them the page's margin and column offset (an even twoside page's
