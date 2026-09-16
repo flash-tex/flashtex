@@ -185,6 +185,15 @@ pub enum Item {
     /// `tabular`/`tabular*` (compiler `Inline::Tabular`): one box in the
     /// paragraph, laid out by `table.rs`.
     Table(Box<crate::table::TableItem>),
+    /// `\includegraphics` in running text (compiler `Inline::Graphic`):
+    /// `\leavevmode\hbox{...}`, one box of the graphicx width, height and
+    /// depth in the horizontal list.
+    ///
+    /// The item carries only what the source says, never a measurement:
+    /// the file is read and the box sized in `typeset::Context::graphic_box`,
+    /// which is where the project root is, so the adapted-block cache keys
+    /// this item on its bytes like every other one.
+    Graphic(Box<GraphicItem>),
     /// `\TeX`/`\LaTeX`/`\LaTeXe` (compiler `Inline::Logo`): latex.ltx's
     /// construction, set by `typeset` from the face's TFM metrics.
     Logo { logo: TextLogo, style: TextStyle, span: Span },
@@ -228,6 +237,20 @@ pub enum Item {
     /// pdflatex shows it: `\showbox` of `\verb*"a b-c"` opens with
     /// `.\hbox(0.0+0.0)x0.0`.
     LeaveVmode,
+}
+
+/// An `\includegraphics` in running text, exactly as the source writes it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GraphicItem {
+    /// `\includegraphics*`: graphics.sty's clip form.
+    pub starred: bool,
+    /// The graphicx key list as written (the two-bracket form already
+    /// recorded as `viewport=...` by the compiler).
+    pub options: String,
+    /// The file argument as written (no extension search applied).
+    pub path: String,
+    /// The command through its file argument.
+    pub span: Span,
 }
 
 /// A `\colorbox`/`\fcolorbox`: `items` set as an `\hbox` on a `fill`
@@ -8037,19 +8060,25 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 factor = 1000;
                 after_control_word = false;
             }
-            // #169's Inline::Graphic/Transform have no pipeline conversion
-            // arm yet (#170 is not in this integration: its own diff
-            // depends on a wire-protocol capability refactor -- a new
-            // Wire { transforms } field threaded through display.rs's JSON
-            // writers -- that collides with #158's already-merged
-            // Wire { device_color } and needs real reconciliation, not a
-            // mechanical merge). Degrade like the compiler's own Core 14
-            // layout does: an image leaves no space for now, and a
-            // transform box keeps its content set untransformed, so
-            // nothing is silently dropped.
+            // `\includegraphics` in running text: `\leavevmode\hbox{...}`,
+            // one box with the space before it read like a tabular's.
+            // `typeset` measures it; #170's transform boxes still keep
+            // their content set untransformed, so nothing is dropped.
             Inline::Graphic(g) => {
-                prev_end = Some(g.span.end);
-                prev_span = Some(g.span);
+                let span = g.span;
+                let gap = space_between(prev_end, prev_span, span, None, after_control_word);
+                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                push_gap(&mut items, gap, gap_style, factor);
+                items.push(Item::Graphic(Box::new(GraphicItem {
+                    starred: g.starred,
+                    options: g.options.clone(),
+                    path: g.path.clone(),
+                    span,
+                })));
+                prev_end = Some(span.end);
+                prev_span = Some(span);
+                factor = 1000;
                 after_control_word = false;
             }
             Inline::Transform(t) => {

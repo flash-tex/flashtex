@@ -125,6 +125,26 @@ pub enum BoxRec {
     ColorBox(Rc<ColorBoxRec>),
     /// ulem `\uline` (`Context::underline_box`).
     Underline(Rc<UnderlineRec>),
+    /// `\includegraphics` in running text (`Context::graphic_box`): the
+    /// graphicx box sits on the line's baseline, exactly as the same
+    /// graphic does inside a float (`floatpage::FloatBuilder::emit`).
+    Image(Rc<ImageRec>),
+}
+
+/// A measured inline `\includegraphics`: the graphicx box, the file to
+/// paint (`None` under `draft`/`demo`, or when the file could not be read
+/// but its requested size is known), and the rules to paint instead.
+pub struct ImageRec {
+    pub gbox: crate::graphics::GraphicBox,
+    pub resource: Option<Rc<crate::display::ImageResource>>,
+    pub placeholder: Option<floatpage::Placeholder>,
+    pub span: Span,
+}
+
+impl std::fmt::Debug for ImageRec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImageRec").field("gbox", &self.gbox).field("span", &self.span).finish()
+    }
 }
 
 /// A laid-out `\colorbox`/`\fcolorbox`: the content as one line whose
@@ -504,6 +524,24 @@ pub struct Context<'a> {
     /// (`\tolerance 9999`, `\emergencystretch 3em`), so a paragraph inside
     /// the box breaks the way LaTeX breaks it there.
     parbox: bool,
+    /// What an `\includegraphics` in running text needs to be measured:
+    /// the request's project root, the document's graphicx `draft`/`demo`
+    /// mode, and the per-request image cache the float path reads through,
+    /// so a file used by a float and by running text is read once.
+    ///
+    /// `None` in a `Context` built without it (the unit tests' bare
+    /// `Context::new`): then an inline graphic reports that no project root
+    /// was supplied, exactly as a float's does.
+    graphics: Option<GraphicsEnv<'a>>,
+}
+
+/// The image-loading environment of a [`Context`], shared with its
+/// sub-contexts (a float body, a `multicols` column).
+#[derive(Clone)]
+pub struct GraphicsEnv<'a> {
+    options: &'a crate::RenderOptions,
+    mode: crate::graphics::GraphicsMode,
+    images: Rc<std::cell::RefCell<crate::floats::ImageCache>>,
 }
 
 impl<'a> Context<'a> {
@@ -554,7 +592,28 @@ impl<'a> Context<'a> {
             multicol: multicol::State::default(),
             rlap_marks: false,
             math_fonts_sized: BTreeMap::new(),
+            graphics: None,
         }
+    }
+
+    /// Gives this context what it needs to set `\includegraphics` in
+    /// running text (`crate::render`); a sub-context inherits it.
+    pub fn set_graphics(&mut self, env: GraphicsEnv<'a>) {
+        self.graphics = Some(env);
+    }
+
+    /// The environment [`Context::set_graphics`] takes.
+    pub fn graphics_env(
+        options: &'a crate::RenderOptions,
+        entry_text: &str,
+        images: Rc<std::cell::RefCell<crate::floats::ImageCache>>,
+    ) -> GraphicsEnv<'a> {
+        GraphicsEnv { options, mode: crate::graphics::mode(entry_text), images }
+    }
+
+    /// This context's image environment, for a sub-context.
+    pub fn graphics(&self) -> Option<GraphicsEnv<'a>> {
+        self.graphics.clone()
     }
 
     /// Emits a diagnostic; with a key, only the first one per key is kept.
@@ -937,6 +996,122 @@ impl<'a> Context<'a> {
             depth: sp_to_pt(b.depth),
             source: span.start..span.end,
         };
+        (run, self.recs.len() - 1)
+    }
+
+    /// `\includegraphics` in running text: `\leavevmode\hbox{...}`, one box
+    /// of the graphicx width, height and depth in the horizontal list.
+    ///
+    /// Sized exactly as the same graphic is inside a float
+    /// (`floats::prepare`): the keys are read with the paragraph's own
+    /// lengths, the file is probed for its natural size, `graphics::size_box`
+    /// applies `\Gin@req@sizes`, and `draft`/`demo` reserve the space
+    /// pdfTeX reserves without embedding the file. `None` when nothing can
+    /// be reserved (the file is missing and no size was asked for), which
+    /// is the one case pdfTeX also refuses to typeset.
+    ///
+    /// Returning a box is what puts the height on the line: the line
+    /// breaker takes `height`/`depth` from every `pl::Item::Box` of the
+    /// line, and the page builder's `\baselineskip`/`\lineskip` choice
+    /// follows from that.
+    fn graphic_box(&mut self, g: &crate::adapter::GraphicItem, size: f64) -> Option<(pl::GlyphRun, usize)> {
+        use crate::graphics::{self, GKey};
+        let span = g.span;
+        let env = self.graphics.clone()?;
+        // `em`/`ex` of the running font at the graphic, and the paragraph's
+        // own `\linewidth` (a float body's sub-context carries the float's
+        // narrower stylesheet, so `0.5\linewidth` means what it means there).
+        let params = self.text_params(TextStyle::default(), size);
+        let lengths = graphics::LengthEnv {
+            text_width: self.style.text_width_pt,
+            line_width: self.style.text_width_pt,
+            text_height: self.style.text_height_pt,
+            paper_width: self.style.page_width_pt,
+            paper_height: self.style.page_height_pt,
+            em: params.quad,
+            ex: params.x_height,
+        };
+        let (keys, problems) = graphics::parse_keys(&g.options, &lengths);
+        for p in problems {
+            let src = vec![self.source(span)];
+            self.emit(None, Diagnostic::warning("graphics_option", p, src));
+        }
+        for k in &keys {
+            if let GKey::Unsupported(name) = k {
+                let src = vec![self.source(span)];
+                self.emit(None, Diagnostic::warning("graphics_option", format!("\\includegraphics key '{name}' is not honoured yet"), src));
+            }
+        }
+        let page = keys.iter().find_map(|k| if let GKey::Page(p) = k { Some(*p) } else { None }).unwrap_or(1);
+        // `demo` replaced `\Ginclude@graphics` with a rule, so no file is
+        // looked up and the per-image `draft` key never reaches
+        // `\Gin@setfile`'s draft branch.
+        if env.mode.demo {
+            return Some(self.push_image_rec(graphics::demo_box(&keys), None, Some(floatpage::Placeholder::DemoRule), span, size));
+        }
+        let draft = keys.iter().rev().find_map(|k| if let GKey::Draft(v) = k { Some(*v) } else { None }).unwrap_or(env.mode.draft);
+        let loaded = env.images.borrow_mut().load(env.options, &g.path, page);
+        match loaded {
+            Ok((resource, info)) => {
+                let gbox = graphics::size_box(info.width_bp / graphics::BP_PER_PT, info.height_bp / graphics::BP_PER_PT, &keys);
+                // Under `draft` the box is sized from the file and the file
+                // is not embedded: the space is the same and the ink is the
+                // frame `\Gin@setfile` draws instead.
+                let (resource, placeholder) = if draft { (None, Some(floatpage::Placeholder::DraftFrame)) } else { (Some(resource), None) };
+                Some(self.push_image_rec(gbox, resource, placeholder, span, size))
+            }
+            // `pdftex.def`'s `\Gread@pdftex` leaves a file it cannot find at
+            // the bounding box `0 0 72 72` and, under `draft`, warns instead
+            // of raising its package error -- so the graphic still takes one
+            // inch square of space, scaled by whatever the keys ask for.
+            Err(msg) if draft => {
+                let nat = graphics::MISSING_NATURAL_BP / graphics::BP_PER_PT;
+                let gbox = graphics::size_box(nat, nat, &keys);
+                let src = vec![self.source(span)];
+                self.emit(
+                    None,
+                    Diagnostic::warning("image_unavailable", format!("{msg}; the `draft` option keeps its 1 in natural size, as pdfTeX does"), src),
+                );
+                Some(self.push_image_rec(gbox, None, Some(floatpage::Placeholder::DraftFrame), span, size))
+            }
+            Err(msg) => {
+                let w = keys.iter().rev().find_map(|k| if let GKey::Width(v) = k { Some(*v) } else { None });
+                let h = keys.iter().rev().find_map(|k| if let GKey::Height(v) | GKey::TotalHeight(v) = k { Some(*v) } else { None });
+                let src = vec![self.source(span)];
+                match (w, h) {
+                    (Some(w), Some(h)) => {
+                        self.emit(None, Diagnostic::error("image_unavailable", format!("{msg} (its requested size is kept empty)"), src));
+                        let gbox = graphics::GraphicBox { width: w, height: h, depth: 0.0, matrix: [w, 0.0, 0.0, h, 0.0, 0.0] };
+                        Some(self.push_image_rec(gbox, None, None, span, size))
+                    }
+                    _ => {
+                        self.emit(None, Diagnostic::error("image_unavailable", msg, src));
+                        None
+                    }
+                }
+            }
+        }
+    }
+
+    /// The box record and horizontal-list box of a measured inline graphic.
+    fn push_image_rec(
+        &mut self,
+        gbox: crate::graphics::GraphicBox,
+        resource: Option<Rc<crate::display::ImageResource>>,
+        placeholder: Option<floatpage::Placeholder>,
+        span: Span,
+        size: f64,
+    ) -> (pl::GlyphRun, usize) {
+        let run = pl::GlyphRun {
+            font: MATH_SENTINEL,
+            size,
+            glyphs: Vec::new(),
+            width: gbox.width,
+            height: gbox.height,
+            depth: gbox.depth,
+            source: span.start..span.end,
+        };
+        self.recs.push(BoxRec::Image(Rc::new(ImageRec { gbox, resource, placeholder, span })));
         (run, self.recs.len() - 1)
     }
 
@@ -2173,6 +2348,11 @@ impl<'a> Context<'a> {
                 }
                 AItem::Table(table) => {
                     if let Some((run, rec)) = self.table_box(table, size) {
+                        push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
+                    }
+                }
+                AItem::Graphic(g) => {
+                    if let Some((run, rec)) = self.graphic_box(g, size) {
                         push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                     }
                 }
@@ -5769,6 +5949,7 @@ impl<'a> Context<'a> {
                     BoxRec::Math(m) => Some(self.maths[*m].span),
                     BoxRec::Rule { span, .. } => Some(*span),
                     BoxRec::Picture(p) => Some(p.span),
+                    BoxRec::Image(g) => Some(g.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
                     BoxRec::Leader { .. } => None,
@@ -8403,6 +8584,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 BoxRec::Math(m) => Some(ctx.maths[*m].span),
                 BoxRec::Rule { span, .. } => Some(*span),
                 BoxRec::Picture(p) => Some(p.span),
+                BoxRec::Image(g) => Some(g.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
                     BoxRec::Leader { .. } => None,
@@ -8938,6 +9120,7 @@ pub fn assemble_windowed(
                     BoxRec::Math(mi) => Some(laid.maths[*mi].span),
                     BoxRec::Rule { span, .. } => Some(*span),
                     BoxRec::Picture(p) => Some(p.span),
+                    BoxRec::Image(g) => Some(g.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
                     BoxRec::Leader { .. } => None,
@@ -9169,6 +9352,7 @@ fn assemble_block(
                     }
                 }
                 BoxRec::Picture(p) => picture_items(&local, p, source_of, &mut items, &mut used),
+                BoxRec::Image(g) => image_items(&local, g, source_of, &mut items),
                 BoxRec::Table(t) => {
                     // `device: None`: `crate::tablecolor` has already flattened the
                     // colortbl colour to sRGB, so the operands pdfTeX would write
@@ -9469,6 +9653,57 @@ fn dots_item(x: f64, glue_width: f64, box_width: f64, face: &Rc<LoadedFace>, dot
         role: display::RunRole::Text,
         end_caret,
     }))
+}
+
+/// An inline `\includegraphics` in line-local coordinates: the graphicx box
+/// sits on the baseline (`run.baseline_y` is 0 here and the caller adds the
+/// line's own offset), so its top edge is `-gbox.height`.
+///
+/// The y-up -> y-down arithmetic is `floatpage::FloatBuilder::emit`'s, with
+/// the float's absolute `base` replaced by the line-local baseline.
+fn image_items(run: &pl::PositionedRun, g: &ImageRec, source_of: &dyn Fn(Span) -> SourceRange, items: &mut Vec<display::Item>) {
+    let left = run.x;
+    let base = run.baseline_y;
+    let provenance = Provenance::Source(source_of(g.span));
+    // `draft`/`demo` never read a file; what they paint is rules. Both are
+    // laid out in the box's own axes, so a rotated box is left as reserved
+    // space only.
+    if let Some(kind) = &g.placeholder {
+        let m = g.gbox.matrix;
+        if m[1] == 0.0 && m[2] == 0.0 && m[0] > 0.0 && m[3] > 0.0 {
+            let (t, w, h) = (base - g.gbox.height, g.gbox.width, g.gbox.height + g.gbox.depth);
+            let r = floatpage::RULE_PT;
+            let bars: &[(f64, f64, f64, f64)] = match kind {
+                floatpage::Placeholder::DemoRule => &[(left, t, w, h)],
+                // `\hrule`s across the top and bottom, `\vrule`s up the
+                // sides, which the two `\hss`es pull inside the width.
+                floatpage::Placeholder::DraftFrame => &[(left, t, w, r), (left, t + h - r, w, r), (left, t, r, h), (left + w - r, t, r, h)],
+            };
+            for (x, y, w, h) in bars.iter().copied().filter(|(_, _, w, h)| *w > 0.0 && *h > 0.0) {
+                items.push(display::Item::Rule(Rule {
+                    x: Tick::from_tex_pt(x),
+                    top: Tick::from_tex_pt(y),
+                    width: Tick::from_tex_pt(w),
+                    height: Tick::from_tex_pt(h),
+                    paint: Paint::BLACK,
+                    provenance: provenance.clone(),
+                }));
+            }
+        }
+        return;
+    }
+    let Some(resource) = &g.resource else { return };
+    let m = g.gbox.matrix;
+    let k = crate::graphics::BP_PER_PT;
+    items.push(display::Item::Image(display::Image {
+        x: Tick::from_tex_pt(left),
+        top: Tick::from_tex_pt(base - g.gbox.height),
+        width: Tick::from_tex_pt(g.gbox.width),
+        height: Tick::from_tex_pt(g.gbox.height + g.gbox.depth),
+        transform: [m[0] * k, -m[1] * k, m[2] * k, -m[3] * k, (left + m[4]) * k, (base - m[5]) * k],
+        resource: resource.clone(),
+        provenance,
+    }));
 }
 
 /// A picture's paths and node text in line-local coordinates: the picture's

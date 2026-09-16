@@ -622,7 +622,7 @@ pub struct ImageCache {
 }
 
 impl ImageCache {
-    fn load(&mut self, options: &RenderOptions, raw: &str, page: u32) -> Loaded {
+    pub(crate) fn load(&mut self, options: &RenderOptions, raw: &str, page: u32) -> Loaded {
         if let Some(hit) = self.entries.get(&(raw.to_string(), page)) {
             return hit.clone();
         }

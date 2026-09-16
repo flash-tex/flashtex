@@ -327,6 +327,17 @@ pub fn block_origin(items: &[Item]) -> Option<(DocumentId, usize)> {
                     return None;
                 }
             }
+            // The graphic's bytes decide its box, so they must be inside
+            // the cached block's window like a formula's.
+            Item::Graphic(g) => {
+                if !note(&CharSrc {
+                    document: g.span.document,
+                    start: g.span.start,
+                    end: g.span.end,
+                }) {
+                    return None;
+                }
+            }
             _ => {}
         }
     }
@@ -441,6 +452,13 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
             }
             Item::Table(t) => {
                 format!("{t:?}").hash(h);
+            }
+            Item::Graphic(g) => {
+                g.starred.hash(h);
+                g.options.hash(h);
+                g.path.hash(h);
+                (g.span.start.wrapping_sub(base)).hash(h);
+                (g.span.end.wrapping_sub(base)).hash(h);
             }
             Item::Footnote { number, mark, span, text } => {
                 number.hash(h);
@@ -815,6 +833,7 @@ pub fn relocate_items(items: &[Item], delta: isize) -> Vec<Item> {
                 shift_math(list, delta);
             }
             Item::Logo { span, .. } | Item::Rule { span, .. } => shift_span(span, delta),
+            Item::Graphic(g) => shift_span(&mut g.span, delta),
             Item::Footnote { span, text, .. } => {
                 shift_span(span, delta);
                 if let Some(t) = text {

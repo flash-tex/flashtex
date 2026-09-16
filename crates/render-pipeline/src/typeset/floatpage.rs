@@ -125,7 +125,7 @@ pub enum Placeholder {
 }
 
 /// TeX's default `\vrule`/`\hrule` thickness (`\p@` / 2.5), in TeX points.
-const RULE_PT: f64 = 0.4;
+pub(crate) const RULE_PT: f64 = 0.4;
 
 #[derive(Clone, Copy)]
 struct Skip {
@@ -294,6 +294,9 @@ fn build_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, 
 /// already takes for a column's own `\hsize` (`multicol::adopt`).
 fn build_wide_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, fp: &FloatParams, p: &PageParams, wide: &crate::style::Stylesheet) -> FloatBox {
     let mut sub = Context::with_texts(ctx.fonts, wide, ctx.paths, ctx.texts);
+    if let Some(g) = ctx.graphics() {
+        sub.set_graphics(g);
+    }
     let mut sub_blocks: Vec<BuiltBlock> = Vec::new();
     let mut fb = build_box(&mut sub, &mut sub_blocks, spec, fp, p);
     let (rec_off, math_off, block_off) = (ctx.recs.len(), ctx.maths.len(), blocks.len());
@@ -876,6 +879,7 @@ fn block_source(ctx: &Context, b: &BuiltBlock, items: impl Iterator<Item = usize
             BoxRec::Math(m) => Some(ctx.maths[*m].span),
             BoxRec::Rule { span, .. } => Some(*span),
             BoxRec::Picture(p) => Some(p.span),
+            BoxRec::Image(g) => Some(g.span),
             BoxRec::Table(t) => Some(t.span),
             BoxRec::ColorBox(c) => Some(c.span),
             BoxRec::Leader { .. } => None,

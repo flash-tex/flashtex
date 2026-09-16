@@ -1820,6 +1820,7 @@ fn rec_span(ctx: &Context, r: usize) -> Option<Span> {
         BoxRec::Math(m) => ctx.maths.get(*m).map(|m| m.span),
         BoxRec::Rule { span, .. } => Some(*span),
         BoxRec::Picture(p) => Some(p.span),
+        BoxRec::Image(g) => Some(g.span),
         BoxRec::Table(t) => Some(t.span),
         BoxRec::ColorBox(b) => Some(b.span),
         BoxRec::Leader { .. } => None,
@@ -1981,6 +1982,9 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
         };
         let laid = {
             let mut sub = Context::with_texts(ctx.fonts, &col_style, ctx.paths, ctx.texts);
+            if let Some(g) = ctx.graphics() {
+                sub.set_graphics(g);
+            }
             let laid = super::build_with_floats(&mut sub, &sub_doc, None, &[]);
             let diags = sub.take_diagnostics();
             for d in diags {
