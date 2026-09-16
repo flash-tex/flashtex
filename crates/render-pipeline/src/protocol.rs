@@ -44,10 +44,190 @@ pub fn path_is_safe(path: &str) -> bool {
 
 /// Most documents the closure adds to one request, and the largest one it
 /// reads. The same bounds the Mac client applies to its own scan
-/// (`ProjectDocuments.maxClosureDocuments`, `ProjectIncludes.maxDocumentBytes`),
-/// so a pathological project cannot turn one keystroke into an unbounded read.
+/// (`ProjectDocuments.maxClosureDocuments`, `ProjectIncludes.maxDocumentBytes`).
+///
+/// GH-735: these are enforced **at discovery** (`closure_read_budget`), not
+/// only on the way out, because this runs on the compile path a keystroke
+/// drives. Bounding only what is forwarded would leave the read itself
+/// unbounded: a 62 MiB include was read and then dropped, at 179 ms against a
+/// 3 ms baseline, and 2000 includes were all read to forward 256.
 pub const MAX_CLOSURE_DOCUMENTS: usize = 256;
 pub const MAX_CLOSURE_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
+
+/// Total bytes one request's closure may read off disk, across every file
+/// discovery opens -- `.tex`, `.bib` and the `\includegraphics` targets it
+/// reads and discards. `MAX_CLOSURE_DOCUMENTS * MAX_CLOSURE_DOCUMENT_BYTES` is
+/// 2 GiB, which is not a bound worth having on a per-keystroke path; 32 MiB is
+/// four times the largest single document and far above any real LaTeX source
+/// closure, so the projects that reach it are the ones whose author wants to
+/// be told rather than to typeset at 200 ms a keystroke.
+pub const MAX_CLOSURE_READ_BYTES: u64 = 32 * 1024 * 1024;
+
+/// What one request's closure would cost to read, and why it was refused.
+struct ReadBudget {
+    /// Files charged so far -- only the ones actually read off disk; an
+    /// overlaid buffer costs nothing, which is why the client's normal case
+    /// (every document sent) never approaches the limit.
+    documents: usize,
+    bytes: u64,
+    /// Set once, by the first charge that did not fit. Discovery is then not
+    /// run at all.
+    exceeded: Option<String>,
+}
+
+impl ReadBudget {
+    /// Charges `len` bytes for `path`. Returns false once the budget is spent,
+    /// after which the walk stops.
+    fn charge(&mut self, path: &str, len: u64) -> bool {
+        if self.exceeded.is_some() {
+            return false;
+        }
+        let limit = MAX_CLOSURE_DOCUMENT_BYTES as u64;
+        if len > limit {
+            self.exceeded = Some(format!(
+                "{path} is {len} bytes, larger than the {limit}-byte limit on one included document"
+            ));
+            return false;
+        }
+        self.documents += 1;
+        if self.documents > MAX_CLOSURE_DOCUMENTS {
+            self.exceeded = Some(format!(
+                "the include closure reads more than {MAX_CLOSURE_DOCUMENTS} files off disk (reached at {path})"
+            ));
+            return false;
+        }
+        self.bytes += len;
+        if self.bytes > MAX_CLOSURE_READ_BYTES {
+            self.exceeded = Some(format!(
+                "the include closure reads more than {MAX_CLOSURE_READ_BYTES} bytes off disk (reached at {path})"
+            ));
+            return false;
+        }
+        true
+    }
+}
+
+/// GH-735: how much disk `ProjectGraph::discover_with` would read for this
+/// request, decided **before** it runs.
+///
+/// The walk this mirrors -- same candidate order, same `exists` test, same
+/// containment check, same cycle/diamond/depth rules -- is
+/// `vendor/project-files`'s `Discovery`, which has no budget of its own and
+/// which this lane may not edit. So the closure is costed first, out of
+/// `metadata()` (a `stat`, not a read) for every file and a read only of the
+/// `.tex` files whose references have to be followed, and the walk proper runs
+/// only when the whole thing fits.
+///
+/// The probe never widens what is read: a path it declines to read is a path
+/// discovery also declines (it applies `is_file()` and the same
+/// `canonicalize`-inside-root test before charging anything), and the bytes it
+/// reads are never forwarded -- discovery re-reads, from warm page cache, the
+/// files it is allowed to forward. A bug here can therefore cost a false
+/// refusal or an unbounded read; it cannot carry out-of-root bytes anywhere.
+/// Feeding the probe's own bytes to discovery through the overlay would save
+/// that second read, and would also make this the thing that decides what is
+/// in root -- which is the one job it is deliberately not given. The second
+/// read is what that costs: nothing measurable on a real project
+/// (`fixtures/real-world/thesis-chapter`, 11.30 -> 11.16 ms a compile), and
+/// 8.8 -> 12.2 ms on a synthetic 200-file on-disk closure.
+fn closure_read_budget(
+    root: &std::path::Path,
+    entry: &flashtex_project_files::ProjectPath,
+    overlay: &flashtex_project_files::graph::Overlay,
+) -> Option<String> {
+    use flashtex_project_files::graph::{candidates, FileKind, Overlay, MAX_DEPTH};
+    use flashtex_project_files::{scan_references, ProjectPath};
+
+    let Ok(canonical_root) = std::fs::canonicalize(root) else { return None };
+
+    struct Walk<'a> {
+        root: &'a std::path::Path,
+        canonical_root: std::path::PathBuf,
+        overlay: &'a Overlay,
+        seen: std::collections::BTreeSet<ProjectPath>,
+        ancestors: Vec<ProjectPath>,
+        budget: ReadBudget,
+    }
+
+    impl Walk<'_> {
+        /// `Discovery::exists`.
+        fn exists(&self, path: &ProjectPath) -> bool {
+            self.overlay.get(path).is_some() || path.to_os_path(self.root).is_file()
+        }
+
+        /// `Discovery::escapes_via_symlink`.
+        fn escapes(&self, path: &ProjectPath) -> bool {
+            if self.overlay.get(path).is_some() {
+                return false;
+            }
+            match std::fs::canonicalize(path.to_os_path(self.root)) {
+                Ok(canon) => !canon.starts_with(&self.canonical_root),
+                Err(_) => false,
+            }
+        }
+
+        /// Charges `path` and, for a `.tex` file, returns the text whose
+        /// references still have to be followed. `None` means "walk no
+        /// further here" -- either the file costs nothing more to look at
+        /// (a `.bib`, a graphic) or the budget is spent.
+        fn charge(&mut self, path: &ProjectPath, kind: FileKind) -> Option<String> {
+            if kind != FileKind::Graphic {
+                if let Some(text) = self.overlay.get(path) {
+                    // Served from memory by discovery too: no disk, no charge.
+                    return Some(text.to_string());
+                }
+            }
+            let os = path.to_os_path(self.root);
+            // Missing or unreadable: discovery diagnoses it and reads nothing.
+            let len = std::fs::metadata(&os).ok()?.len();
+            if !self.budget.charge(path.as_str(), len) {
+                return None;
+            }
+            if kind != FileKind::Tex {
+                // Discovery reads it, and never descends into it.
+                return None;
+            }
+            std::fs::read_to_string(&os).ok()
+        }
+
+        fn visit(&mut self, path: &ProjectPath, kind: FileKind) {
+            let Some(text) = self.charge(path, kind) else { return };
+            self.seen.insert(path.clone());
+            self.ancestors.push(path.clone());
+            for r in scan_references(&text) {
+                if self.budget.exceeded.is_some() {
+                    break;
+                }
+                if !r.literal {
+                    continue;
+                }
+                let Ok(base) = ProjectPath::normalize(&r.argument) else { continue };
+                let (kind, cands) = candidates(r.kind, &base);
+                let Some(target) = cands.iter().find(|c| self.exists(c)).cloned() else { continue };
+                if self.escapes(&target)
+                    || self.ancestors.contains(&target)
+                    || self.seen.contains(&target)
+                    || (kind == FileKind::Tex && self.ancestors.len() >= MAX_DEPTH)
+                {
+                    continue;
+                }
+                self.visit(&target, kind);
+            }
+            self.ancestors.pop();
+        }
+    }
+
+    let mut walk = Walk {
+        root,
+        canonical_root,
+        overlay,
+        seen: std::collections::BTreeSet::new(),
+        ancestors: Vec::new(),
+        budget: ReadBudget { documents: 0, bytes: 0, exceeded: None },
+    };
+    walk.visit(entry, FileKind::Tex);
+    walk.budget.exceeded
+}
 
 /// GH-75: completes the `\input`/`\include` closure of `entry` from
 /// `root`, returning the documents the request did **not** carry plus the
@@ -80,6 +260,22 @@ fn closure_from_disk(
         let Ok(normalized) = ProjectPath::normalize(path) else { continue };
         have.insert(normalized.as_str().to_string());
         overlay.insert(normalized, text.clone());
+    }
+    // GH-735: cost the closure before reading it. Over budget, nothing is
+    // discovered at all -- the compile falls back to exactly the documents the
+    // request sent, which is what it did before the closure existed -- and the
+    // reason is an error diagnostic. Never half a closure: a document that
+    // quietly typesets with some of its includes missing is worse than one
+    // that says why they are.
+    if let Some(reason) = closure_read_budget(root, &entry_path, &overlay) {
+        return (
+            Vec::new(),
+            vec![crate::display::Diagnostic::error(
+                "closure_budget_exceeded",
+                format!("{reason}; compiling only the documents the request sent"),
+                Vec::new(),
+            )],
+        );
     }
     let Ok(graph) = ProjectGraph::discover_with(root, &entry_path, &overlay) else { return none };
 

@@ -356,3 +356,123 @@ fn an_unusable_project_root_falls_back_to_the_sent_documents() {
     let text = page_text(&reply(Some(&missing), &[("main.tex", &main_tex(body))]));
     assert!(text.iter().any(|t| t == "Only"), "the sent documents still compile: {text:?}");
 }
+
+// -- GH-735: the read is bounded, and says so when it is not ---------------
+
+/// An include larger than `MAX_CLOSURE_DOCUMENT_BYTES` is not read at all.
+///
+/// The cap used to be applied to `graph.documents()` — after the walk had
+/// already pulled the whole file into memory — so a 62 MiB include cost 179 ms
+/// on a request the baseline compiles in 3 ms, on every keystroke, and was
+/// then dropped anyway. The size now decides before the `open`.
+#[test]
+fn an_include_over_the_document_byte_limit_is_refused_before_it_is_read() {
+    let project = Project::new("oversize-include");
+    let body = "\\input{huge}\\input{sections/intro}";
+    project.write("main.tex", &main_tex(body)).write("sections/intro.tex", "INTROCONTENT");
+    let over = flashtex_render_pipeline::protocol::MAX_CLOSURE_DOCUMENT_BYTES + 1;
+    // A file of comment lines: valid TeX, so nothing but the budget stops it.
+    let mut huge = String::with_capacity(over + 80);
+    while huge.len() < over {
+        huge.push_str("%padding padding padding padding padding padding padding padding\n");
+    }
+    project.write("huge.tex", &huge);
+
+    let reply = reply(Some(project.path()), &[("main.tex", &main_tex(body))]);
+    assert!(
+        reply.contains("closure_budget_exceeded") && reply.contains("larger than the"),
+        "an oversized include must be refused with its own diagnostic: {reply}"
+    );
+    assert!(
+        !page_text(&reply).iter().any(|t| t == "INTROCONTENT"),
+        "and the closure is refused whole, not truncated to the part that fit: {reply}"
+    );
+}
+
+/// More files than `MAX_CLOSURE_DOCUMENTS` is refused whole.
+///
+/// The count cap used to truncate `graph.documents()` at 256, so a project
+/// with more includes than that compiled *silently* with the rest missing —
+/// every file still read. Now the walk stops, and the reply says why.
+#[test]
+fn a_closure_of_more_files_than_the_document_limit_is_refused_whole() {
+    let project = Project::new("fan-out");
+    let count = flashtex_render_pipeline::protocol::MAX_CLOSURE_DOCUMENTS + 8;
+    let mut body = String::new();
+    for i in 0..count {
+        body.push_str(&format!("\\input{{inc/f{i}}}"));
+        project.write(&format!("inc/f{i}.tex", ), &format!("FANOUT{i} "));
+    }
+    project.write("main.tex", &main_tex(&body));
+
+    let reply = reply(Some(project.path()), &[("main.tex", &main_tex(&body))]);
+    assert!(
+        reply.contains("closure_budget_exceeded") && reply.contains("more than 256 files"),
+        "a closure over the document limit must be refused with its own diagnostic: {reply}"
+    );
+    let text = page_text(&reply);
+    assert!(
+        !text.iter().any(|t| t.starts_with("FANOUT")),
+        "and none of it is forwarded — a document that quietly typesets with half \
+         its includes is the failure this refuses: {text:?}"
+    );
+}
+
+/// The budget probe walks the same closure the discovery does, so it must
+/// refuse the same paths: an oversized file reachable only through a symlink
+/// out of the root is refused as an escape, and never opened to be weighed.
+#[cfg(unix)]
+#[test]
+fn the_budget_never_reads_what_containment_refuses() {
+    let outer = Project::new("budget-symlink-outer");
+    outer.write("secret.tex", "SECRETCONTENT");
+    let root = outer.path().join("proj");
+    std::fs::create_dir_all(root.join("sections")).expect("stage the project root");
+    std::os::unix::fs::symlink(outer.path().join("secret.tex"), root.join("sections/secret.tex"))
+        .expect("stage the escaping symlink");
+    let body = "\\input{sections/secret}\\input{sections/intro}";
+    std::fs::write(root.join("sections/intro.tex"), "INTROCONTENT").expect("write the include");
+    std::fs::write(root.join("main.tex"), main_tex(body)).expect("write the entry");
+
+    let reply = reply(Some(&root), &[("main.tex", &main_tex(body))]);
+    assert!(!page_text(&reply).iter().any(|t| t == "SECRETCONTENT"), "never read: {reply}");
+    assert!(reply.contains("symlink outside the project root"), "refused as an escape: {reply}");
+    assert!(
+        !reply.contains("closure_budget_exceeded"),
+        "an escaping path costs the budget nothing — it is refused, not weighed: {reply}"
+    );
+    assert!(
+        page_text(&reply).iter().any(|t| t == "INTROCONTENT"),
+        "and the rest of the closure still compiles: {reply}"
+    );
+}
+
+/// The client's normal case — every document sent — is never refused, however
+/// many there are: an overlaid buffer is served from memory by the walk, so
+/// it costs no disk and is charged nothing.
+#[test]
+fn documents_the_request_sent_are_not_charged_to_the_read_budget() {
+    let project = Project::new("all-overlaid");
+    let count = flashtex_render_pipeline::protocol::MAX_CLOSURE_DOCUMENTS + 8;
+    let mut body = String::new();
+    let mut includes = Vec::new();
+    for i in 0..count {
+        body.push_str(&format!("\\input{{inc/f{i}}}"));
+        includes.push((format!("inc/f{i}.tex"), format!("OVERLAID{i} ")));
+        // On disk as well, so only the overlay can be what stops the charge.
+        project.write(&format!("inc/f{i}.tex"), &format!("ONDISK{i} "));
+    }
+    let entry = main_tex(&body);
+    project.write("main.tex", &entry);
+    let mut documents: Vec<(&str, &str)> = vec![("main.tex", entry.as_str())];
+    documents.extend(includes.iter().map(|(p, t)| (p.as_str(), t.as_str())));
+
+    let reply = reply(Some(project.path()), &documents);
+    assert!(
+        !reply.contains("closure_budget_exceeded"),
+        "a request that carries its own closure reads nothing, so it is charged nothing: {reply}"
+    );
+    let text = page_text(&reply);
+    assert!(text.iter().any(|t| t == "OVERLAID0"), "and the sent buffers win: {text:?}");
+    assert!(!text.iter().any(|t| t.starts_with("ONDISK")), "never the file on disk: {text:?}");
+}
