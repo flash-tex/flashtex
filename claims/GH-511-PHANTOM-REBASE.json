@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": null,
-  "gh_ref": null,
+  "gh_ref": "511",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T05:27:51Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-511-PHANTOM-REBASE",
-  "updated_utc": "2026-09-16T05:55:37Z"
+  "updated_utc": "2026-09-16T05:55:56Z"
 }
