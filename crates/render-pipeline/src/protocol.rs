@@ -46,32 +46,36 @@ pub fn path_is_safe(path: &str) -> bool {
 /// reads. The same bounds the Mac client applies to its own scan
 /// (`ProjectDocuments.maxClosureDocuments`, `ProjectIncludes.maxDocumentBytes`).
 ///
-/// GH-735: these are enforced **at discovery** (`closure_read_budget`), not
-/// only on the way out, because this runs on the compile path a keystroke
-/// drives. Bounding only what is forwarded would leave the read itself
-/// unbounded: a 62 MiB include was read and then dropped, at 179 ms against a
-/// 3 ms baseline, and 2000 includes were all read to forward 256.
+/// GH-735: these are enforced **at discovery** (`discover_closure`), not only
+/// on the way out, because this runs on the compile path a keystroke drives.
+/// Bounding only what is forwarded would leave the read itself unbounded: a
+/// 62 MiB include was read and then dropped, at 179 ms against a 3 ms
+/// baseline, and 2000 includes were all read to forward 256.
 pub const MAX_CLOSURE_DOCUMENTS: usize = 256;
 pub const MAX_CLOSURE_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
 
-/// Total bytes one request's closure may read off disk, across every file
-/// discovery opens -- `.tex`, `.bib` and the `\includegraphics` targets it
-/// reads and discards. `MAX_CLOSURE_DOCUMENTS * MAX_CLOSURE_DOCUMENT_BYTES` is
-/// 2 GiB, which is not a bound worth having on a per-keystroke path; 32 MiB is
-/// four times the largest single document and far above any real LaTeX source
-/// closure, so the projects that reach it are the ones whose author wants to
-/// be told rather than to typeset at 200 ms a keystroke.
+/// Total bytes one request's closure may read off disk, across every `.tex`
+/// and `.bib` file discovery opens. A `\includegraphics` target is charged
+/// its `stat` size here too (so a fan-out of huge images still hits a
+/// bound), but never its bytes -- GH-INCLUDEGRAPHICS-READ: nothing this walk
+/// returns needs them (see `Walk::load`'s doc comment).
+/// `MAX_CLOSURE_DOCUMENTS * MAX_CLOSURE_DOCUMENT_BYTES` is 2 GiB, which is not
+/// a bound worth having on a per-keystroke path; 32 MiB is four times the
+/// largest single document and far above any real LaTeX source closure, so
+/// the projects that reach it are the ones whose author wants to be told
+/// rather than to typeset at 200 ms a keystroke.
 pub const MAX_CLOSURE_READ_BYTES: u64 = 32 * 1024 * 1024;
 
 /// What one request's closure would cost to read, and why it was refused.
 struct ReadBudget {
-    /// Files charged so far -- only the ones actually read off disk; an
+    /// Files charged so far -- only the ones actually opened off disk; an
     /// overlaid buffer costs nothing, which is why the client's normal case
     /// (every document sent) never approaches the limit.
     documents: usize,
     bytes: u64,
-    /// Set once, by the first charge that did not fit. Discovery is then not
-    /// run at all.
+    /// Set once, by the first charge that did not fit. The walk stops
+    /// descending further once this is set, and the whole closure is then
+    /// discarded -- never half of it.
     exceeded: Option<String>,
 }
 
@@ -107,38 +111,82 @@ impl ReadBudget {
     }
 }
 
-/// GH-735: how much disk `ProjectGraph::discover_with` would read for this
-/// request, decided **before** it runs.
+/// What [`Walk::load`] (inside [`discover_closure`]) found for one candidate.
+enum Load {
+    /// Text served from the request's own overlay -- no disk touched, no
+    /// charge. Never returned for a `Graphic` target (matches
+    /// `Discovery::load`: an overlay holds edited text buffers, and nothing
+    /// here ever needs a graphic's bytes anyway).
+    Overlay(String),
+    /// A `Tex` or `Bibliography` file's text, read off disk and charged.
+    Disk(String),
+    /// A `Graphic` target: [`Walk::exists`]/[`Walk::escapes`] already proved
+    /// it is there and inside the root, and its `stat` size is charged, but
+    /// its bytes are never opened. See [`discover_closure`]'s doc comment for
+    /// what actually still needs them.
+    DiskGraphic,
+    /// `stat`/`read` raced with an external deletion between `exists()` and
+    /// here. A genuine miss is the compiler's own "not found" to raise, not
+    /// this walk's (matches `MissingFile`, dropped in [`closure_from_disk`]).
+    Missing,
+    /// Read, but not valid UTF-8.
+    NotUtf8,
+    /// `stat`/`read` failed for another reason (permissions, and so on).
+    Error(String),
+    /// The read budget is spent; `Walk::budget.exceeded` is already set.
+    BudgetExceeded,
+}
+
+/// Discovers `entry`'s `\input`/`\include`/`\bibliography`/`\addbibresource`/
+/// `\includegraphics` closure from `root` in one pass that both costs and
+/// performs the walk -- there is no separate probe. `overlay` is served ahead
+/// of disk for every path it holds (an unsaved buffer always wins), and is
+/// what gets scanned for further references. `Ok` carries the documents the
+/// request did not already supply, plus the diagnostics raised about
+/// references refused along the way; `Err` is the reason the whole closure
+/// was refused (GH-735's budget), in which case nothing here is kept.
 ///
-/// The walk this mirrors -- same candidate order, same `exists` test, same
-/// containment check, same cycle/diamond/depth rules -- is
-/// `vendor/project-files`'s `Discovery`, which has no budget of its own and
-/// which this lane may not edit. So the closure is costed first, out of
-/// `metadata()` (a `stat`, not a read) for every file and a read only of the
-/// `.tex` files whose references have to be followed, and the walk proper runs
-/// only when the whole thing fits.
+/// This mirrors `vendor/project-files`'s `Discovery` (`ProjectGraph::
+/// discover_with`) exactly for what render-pipeline needs -- same candidate
+/// order (`candidates`), same `exists`/symlink-escape tests, same
+/// cycle/diamond/depth rules -- built from that crate's own public path, scan
+/// and graph-kind primitives, rather than calling `discover_with` itself,
+/// because `discover_with` cannot be asked to stop at a `Graphic` target's
+/// `stat`: its `Discovery::load` always does `fs::read` of the whole file
+/// before noticing the kind it just loaded has no use for the bytes
+/// (GH-INCLUDEGRAPHICS-READ). `vendor/project-files` is pinned and read-only
+/// to this lane, so the walk moves here instead of the fix moving there --
+/// and, as a consequence, a `.tex` file is now read only once (discovery used
+/// to cost it here, then `discover_with` reread it from warm page cache to
+/// forward it; there is only one read now, by the same walk that costs it).
 ///
-/// The probe never widens what is read: a path it declines to read is a path
-/// discovery also declines (it applies `is_file()` and the same
-/// `canonicalize`-inside-root test before charging anything), and the bytes it
-/// reads are never forwarded -- discovery re-reads, from warm page cache, the
-/// files it is allowed to forward. A bug here can therefore cost a false
-/// refusal or an unbounded read; it cannot carry out-of-root bytes anywhere.
-/// Feeding the probe's own bytes to discovery through the overlay would save
-/// that second read, and would also make this the thing that decides what is
-/// in root -- which is the one job it is deliberately not given. The second
-/// read is what that costs: nothing measurable on a real project
-/// (`fixtures/real-world/thesis-chapter`, 11.30 -> 11.16 ms a compile), and
-/// 8.8 -> 12.2 ms on a synthetic 200-file on-disk closure.
-fn closure_read_budget(
+/// A `.tex`/`.bib` candidate is still read in full: its content decides what
+/// to visit next (`.tex`) or whether it is valid UTF-8 (`.bib`), and `.tex`
+/// text is what gets forwarded as a document. A `\includegraphics` target
+/// only ever needs to answer "does this exist, and is it inside the root"
+/// here -- nothing this function returns carries a graphic's bytes, size or
+/// dimensions. Those are the compiler's own job, read once through the same
+/// rooted primitive (`ImageCache::load` in `floats.rs`, capped at
+/// `MAX_IMAGE_BYTES`) when a page that actually contains the image is laid
+/// out, and cached per path across the render. Discovery visiting
+/// `\includegraphics` targets at all does not change what that step reads;
+/// discovery was just also, redundantly, reading the same bytes and
+/// throwing them away.
+///
+/// Containment is enforced here directly (`exists`/`escapes`), not
+/// re-verified afterward by a second, vendor-owned walk: this **is** the
+/// walk now, built from the same public path-normalization and
+/// symlink-refusing primitives `Discovery` itself is built from. GH-735's
+/// adversarial tests (an escaping `..`, an escaping symlink, an oversized or
+/// over-fanned-out closure) exercise this end to end, through
+/// [`handle_line`], and must keep passing.
+fn discover_closure(
     root: &std::path::Path,
     entry: &flashtex_project_files::ProjectPath,
     overlay: &flashtex_project_files::graph::Overlay,
-) -> Option<String> {
-    use flashtex_project_files::graph::{candidates, FileKind, Overlay, MAX_DEPTH};
-    use flashtex_project_files::{scan_references, ProjectPath};
-
-    let Ok(canonical_root) = std::fs::canonicalize(root) else { return None };
+) -> Result<(Vec<(String, String)>, Vec<crate::display::Diagnostic>), String> {
+    use flashtex_project_files::graph::{candidates, FileKind, MAX_DEPTH};
+    use flashtex_project_files::{scan_references, Overlay, ProjectPath, Reference};
 
     struct Walk<'a> {
         root: &'a std::path::Path,
@@ -147,6 +195,8 @@ fn closure_read_budget(
         seen: std::collections::BTreeSet<ProjectPath>,
         ancestors: Vec<ProjectPath>,
         budget: ReadBudget,
+        documents: Vec<(String, String)>,
+        diagnostics: Vec<crate::display::Diagnostic>,
     }
 
     impl Walk<'_> {
@@ -166,57 +216,142 @@ fn closure_read_budget(
             }
         }
 
-        /// Charges `path` and, for a `.tex` file, returns the text whose
-        /// references still have to be followed. `None` means "walk no
-        /// further here" -- either the file costs nothing more to look at
-        /// (a `.bib`, a graphic) or the budget is spent.
-        fn charge(&mut self, path: &ProjectPath, kind: FileKind) -> Option<String> {
+        /// Charges and loads `path` of `kind`. A `Graphic` target stops at
+        /// `metadata()` -- a `stat`, never an `open` -- once its size has
+        /// been charged; every other kind is read in full, exactly as
+        /// discovery has always done for a `.tex`/`.bib` candidate, because
+        /// their content decides what happens next.
+        fn load(&mut self, path: &ProjectPath, kind: FileKind) -> Load {
             if kind != FileKind::Graphic {
                 if let Some(text) = self.overlay.get(path) {
-                    // Served from memory by discovery too: no disk, no charge.
-                    return Some(text.to_string());
+                    return Load::Overlay(text.to_string());
                 }
             }
             let os = path.to_os_path(self.root);
-            // Missing or unreadable: discovery diagnoses it and reads nothing.
-            let len = std::fs::metadata(&os).ok()?.len();
+            let len = match std::fs::metadata(&os) {
+                Ok(m) => m.len(),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Load::Missing,
+                Err(e) => return Load::Error(e.to_string()),
+            };
             if !self.budget.charge(path.as_str(), len) {
-                return None;
+                return Load::BudgetExceeded;
             }
-            if kind != FileKind::Tex {
-                // Discovery reads it, and never descends into it.
-                return None;
+            if kind == FileKind::Graphic {
+                return Load::DiskGraphic;
             }
-            std::fs::read_to_string(&os).ok()
+            match std::fs::read_to_string(&os) {
+                Ok(text) => Load::Disk(text),
+                Err(e) if e.kind() == std::io::ErrorKind::InvalidData => Load::NotUtf8,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Load::Missing,
+                Err(e) => Load::Error(e.to_string()),
+            }
         }
 
-        fn visit(&mut self, path: &ProjectPath, kind: FileKind) {
-            let Some(text) = self.charge(path, kind) else { return };
-            self.seen.insert(path.clone());
+        fn diag(&mut self, from: &ProjectPath, r: &Reference, is_error: bool, message: String, code: &str) {
+            let sources = vec![crate::display::SourceRange {
+                path: std::rc::Rc::from(from.as_str()),
+                start_byte: r.span.start,
+                end_byte: r.span.end,
+            }];
+            self.diagnostics.push(if is_error {
+                crate::display::Diagnostic::error(code, message, sources)
+            } else {
+                crate::display::Diagnostic::warning(code, message, sources)
+            });
+        }
+
+        /// A file whose content is in hand: a disk-read `.tex` file is
+        /// forwarded as a document (an overlaid one is not -- the request
+        /// already has it); `.tex` text of either source is scanned for
+        /// further references; a `.bib` file is neither.
+        fn visit_loaded(&mut self, path: &ProjectPath, kind: FileKind, text: String, from_disk: bool) {
+            if !self.seen.insert(path.clone()) {
+                return;
+            }
+            if from_disk && kind == FileKind::Tex {
+                self.documents.push((path.as_str().to_string(), text.clone()));
+            }
+            if kind != FileKind::Tex {
+                return;
+            }
             self.ancestors.push(path.clone());
             for r in scan_references(&text) {
                 if self.budget.exceeded.is_some() {
                     break;
                 }
-                if !r.literal {
-                    continue;
-                }
-                let Ok(base) = ProjectPath::normalize(&r.argument) else { continue };
-                let (kind, cands) = candidates(r.kind, &base);
-                let Some(target) = cands.iter().find(|c| self.exists(c)).cloned() else { continue };
-                if self.escapes(&target)
-                    || self.ancestors.contains(&target)
-                    || self.seen.contains(&target)
-                    || (kind == FileKind::Tex && self.ancestors.len() >= MAX_DEPTH)
-                {
-                    continue;
-                }
-                self.visit(&target, kind);
+                self.follow(path, &r);
             }
             self.ancestors.pop();
         }
+
+        /// Resolves and visits one reference found in `from`'s text.
+        fn follow(&mut self, from: &ProjectPath, r: &Reference) {
+            if !r.literal {
+                return; // needs macro expansion; the compiler's to raise.
+            }
+            let base = match ProjectPath::normalize(&r.argument) {
+                Ok(p) => p,
+                Err(e) => {
+                    self.diag(from, r, true, format!("\\{}{{{}}}: {e}", r.kind.command(), r.argument), "invalid_path");
+                    return;
+                }
+            };
+            let (kind, cands) = candidates(r.kind, &base);
+            let Some(target) = cands.iter().find(|c| self.exists(c)).cloned() else {
+                return; // no candidate exists; the compiler's "not found" to raise.
+            };
+            if self.escapes(&target) {
+                self.diag(
+                    from,
+                    r,
+                    true,
+                    format!("\\{}{{{}}}: {target} is a symlink outside the project root", r.kind.command(), r.argument),
+                    "path_escapes_root",
+                );
+                return;
+            }
+            if self.ancestors.contains(&target) {
+                return; // include cycle; the compiler owns this diagnostic.
+            }
+            if self.seen.contains(&target) {
+                return; // diamond: already discovered.
+            }
+            if kind == FileKind::Tex && self.ancestors.len() >= MAX_DEPTH {
+                self.diag(
+                    from,
+                    r,
+                    true,
+                    format!("\\{}{{{}}}: nesting deeper than {MAX_DEPTH} files", r.kind.command(), r.argument),
+                    "include_depth",
+                );
+                return;
+            }
+            match self.load(&target, kind) {
+                Load::Overlay(text) => self.visit_loaded(&target, kind, text, false),
+                Load::Disk(text) => self.visit_loaded(&target, kind, text, true),
+                Load::DiskGraphic => {
+                    self.seen.insert(target);
+                }
+                Load::Missing | Load::BudgetExceeded => {}
+                Load::NotUtf8 => {
+                    self.seen.insert(target.clone());
+                    let is_error = kind != FileKind::Bibliography;
+                    self.diag(from, r, is_error, format!("{target} is not valid UTF-8"), "not_utf8");
+                }
+                Load::Error(message) => {
+                    self.seen.insert(target.clone());
+                    self.diag(from, r, true, format!("{target} could not be read: {message}"), "read_error");
+                }
+            }
+        }
     }
 
+    if !root.is_dir() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let Ok(canonical_root) = std::fs::canonicalize(root) else {
+        return Ok((Vec::new(), Vec::new()));
+    };
     let mut walk = Walk {
         root,
         canonical_root,
@@ -224,21 +359,32 @@ fn closure_read_budget(
         seen: std::collections::BTreeSet::new(),
         ancestors: Vec::new(),
         budget: ReadBudget { documents: 0, bytes: 0, exceeded: None },
+        documents: Vec::new(),
+        diagnostics: Vec::new(),
     };
-    walk.visit(entry, FileKind::Tex);
-    walk.budget.exceeded
+    match walk.load(entry, FileKind::Tex) {
+        Load::Overlay(text) => walk.visit_loaded(entry, FileKind::Tex, text, false),
+        Load::Disk(text) => walk.visit_loaded(entry, FileKind::Tex, text, true),
+        // `handle_line_inner` guarantees the entry is always one of the
+        // request's own documents, so this always loads from the overlay in
+        // practice; a disk fallback that fails simply finds nothing further.
+        Load::DiskGraphic | Load::Missing | Load::NotUtf8 | Load::Error(_) | Load::BudgetExceeded => {}
+    }
+    match walk.budget.exceeded {
+        Some(reason) => Err(reason),
+        None => Ok((walk.documents, walk.diagnostics)),
+    }
 }
 
 /// GH-75: completes the `\input`/`\include` closure of `entry` from
 /// `root`, returning the documents the request did **not** carry plus the
 /// diagnostics discovery raised about references it refused.
 ///
-/// The request's own documents are overlaid on the walk, so an unsaved buffer
-/// is what gets scanned for further includes and is never replaced by the
-/// stale bytes on disk; and the walk itself is project-files' rooted,
-/// symlink-refusing discovery -- the same one `flashtex build` uses -- so an
-/// include resolving outside the root is refused here rather than re-checked
-/// with a second containment rule.
+/// The request's own documents are overlaid on the walk ([`discover_closure`]),
+/// so an unsaved buffer is what gets scanned for further includes and is
+/// never replaced by the stale bytes on disk; and the walk enforces the
+/// project's rooted, symlink-refusing containment rule directly, rather than
+/// a second copy of it.
 ///
 /// Nothing here is fatal: with no root, an unusable entry path, or a root that
 /// cannot be opened, the compile proceeds on exactly the documents the request
@@ -248,87 +394,43 @@ fn closure_from_disk(
     entry: &str,
     supplied: &[(String, String)],
 ) -> (Vec<(String, String)>, Vec<crate::display::Diagnostic>) {
-    use flashtex_project_files::graph::{DiagnosticKind, Overlay, ProjectGraph, Severity};
+    use flashtex_project_files::graph::Overlay;
     use flashtex_project_files::ProjectPath;
 
     let none = (Vec::new(), Vec::new());
     let Some(root) = root else { return none };
     let Ok(entry_path) = ProjectPath::normalize(entry) else { return none };
     let mut overlay = Overlay::new();
-    let mut have = std::collections::BTreeSet::new();
     for (path, text) in supplied {
         let Ok(normalized) = ProjectPath::normalize(path) else { continue };
-        have.insert(normalized.as_str().to_string());
         overlay.insert(normalized, text.clone());
     }
-    // GH-735: cost the closure before reading it. Over budget, nothing is
-    // discovered at all -- the compile falls back to exactly the documents the
-    // request sent, which is what it did before the closure existed -- and the
-    // reason is an error diagnostic. Never half a closure: a document that
-    // quietly typesets with some of its includes missing is worse than one
-    // that says why they are.
-    if let Some(reason) = closure_read_budget(root, &entry_path, &overlay) {
-        return (
+    // GH-735: cost the closure while walking it. Over budget, nothing from the
+    // walk is kept at all -- the compile falls back to exactly the documents
+    // the request sent -- and the reason is an error diagnostic. Never half a
+    // closure: a document that quietly typesets with some of its includes
+    // missing is worse than one that says why they are.
+    match discover_closure(root, &entry_path, &overlay) {
+        Ok((documents, diagnostics)) => (
+            // `path_is_safe` and the byte cap are the same gates the request's
+            // own paths and sizes already passed at discovery time; applied
+            // again here as a defensive backstop, since these did not come
+            // from the request.
+            documents
+                .into_iter()
+                .filter(|(path, text)| path_is_safe(path) && text.len() <= MAX_CLOSURE_DOCUMENT_BYTES)
+                .collect(),
+            diagnostics,
+        ),
+        Err(reason) => (
             Vec::new(),
             vec![crate::display::Diagnostic::error(
                 "closure_budget_exceeded",
                 format!("{reason}; compiling only the documents the request sent"),
                 Vec::new(),
             )],
-        );
+        ),
     }
-    let Ok(graph) = ProjectGraph::discover_with(root, &entry_path, &overlay) else { return none };
-
-    let mut documents = Vec::new();
-    for document in graph.documents() {
-        if documents.len() >= MAX_CLOSURE_DOCUMENTS {
-            break;
-        }
-        // The overlaid documents come back out of the graph unchanged; only
-        // what the request did not send is new. `path_is_safe` is the same
-        // gate the request's own paths passed, applied again because these
-        // paths did not come from the request.
-        if have.contains(document.path.as_str()) || !path_is_safe(&document.path) {
-            continue;
-        }
-        if document.text.len() > MAX_CLOSURE_DOCUMENT_BYTES {
-            continue;
-        }
-        documents.push((document.path, document.text));
-    }
-
-    let diagnostics = graph
-        .diagnostics()
-        .iter()
-        .filter_map(|d| {
-            // A missing include and a macro-built path are the compiler's to
-            // report: it has the candidate list and the expander, and saying
-            // it twice in one compile helps nobody.
-            let code = match d.kind {
-                DiagnosticKind::MissingFile { .. } | DiagnosticKind::UnresolvableReference { .. } | DiagnosticKind::Cycle { .. } => return None,
-                DiagnosticKind::InvalidPath { .. } => "invalid_path",
-                DiagnosticKind::EscapesRootViaSymlink { .. } => "path_escapes_root",
-                DiagnosticKind::InvalidUtf8 { .. } => "not_utf8",
-                DiagnosticKind::ReadError { .. } => "read_error",
-                DiagnosticKind::DepthExceeded { .. } => "include_depth",
-            };
-            let sources = d
-                .span
-                .map(|s| {
-                    vec![crate::display::SourceRange {
-                        path: std::rc::Rc::from(d.path.as_str()),
-                        start_byte: s.start,
-                        end_byte: s.end,
-                    }]
-                })
-                .unwrap_or_default();
-            Some(match d.severity {
-                Severity::Error => crate::display::Diagnostic::error(code, d.message.clone(), sources),
-                Severity::Warning => crate::display::Diagnostic::warning(code, d.message.clone(), sources),
-            })
-        })
-        .collect();
-    (documents, diagnostics)
 }
 
 /// The request's `display_list_window` (`display-list-v2-window` §4), when it
@@ -822,5 +924,114 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
         extra_lines,
         rendered: Some(rendered),
         id,
+    }
+}
+
+#[cfg(all(test, unix))]
+mod includegraphics_read_tests {
+    //! GH-INCLUDEGRAPHICS-READ: `discover_closure` must resolve a
+    //! `\includegraphics` target -- exists, inside the root -- without ever
+    //! opening it for its bytes.
+    //!
+    //! A regression test cannot time this reliably (a shared machine makes a
+    //! timing threshold a flake generator), so it proves "never opened" a
+    //! different way: a file with no read permission. `stat` -- what
+    //! `Walk::exists`/`Walk::load`'s size check use -- needs no read
+    //! permission on the file itself, only search permission on its
+    //! directories, but `fs::read`/`read_to_string` -- what a reintroduced
+    //! full read would call -- fails on it with `EACCES`. So a clean result
+    //! is possible only if the content was never opened; a regression that
+    //! reads it again surfaces as a `read_error` diagnostic, the same one
+    //! `vendor/project-files`' `Discovery` raises for a real read failure.
+    //!
+    //! This calls `closure_from_disk` directly (not the full `handle_line`
+    //! reply) so the assertion is about discovery alone: the compiler's own,
+    //! separate, legitimate image read (`ImageCache::load` in `floats.rs`,
+    //! when a page containing the image is actually laid out) is not on this
+    //! path and cannot confound the result either way.
+
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A project staged in a per-test temp directory, removed on drop.
+    struct Project(std::path::PathBuf);
+
+    impl Project {
+        fn new(tag: &str) -> Project {
+            let dir = std::env::temp_dir().join(format!("flashtex-gh-includegraphics-read-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("stage a project directory");
+            Project(std::fs::canonicalize(&dir).expect("canonicalize the project directory"))
+        }
+
+        fn write(&self, path: &str, bytes: &[u8]) -> &Project {
+            let full = self.0.join(path);
+            if let Some(parent) = full.parent() {
+                std::fs::create_dir_all(parent).expect("stage a subdirectory");
+            }
+            std::fs::write(&full, bytes).expect("write a project file");
+            self
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Project {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn includegraphics_target_is_stat_only_never_opened() {
+        let project = Project::new("stat-only");
+        let entry = "\\includegraphics{figures/plot}".to_string();
+        project.write("main.tex", entry.as_bytes());
+        project.write("figures/plot.png", b"not a real png; its bytes must never be opened by discovery");
+        let image = project.path().join("figures/plot.png");
+        std::fs::set_permissions(&image, std::fs::Permissions::from_mode(0o200)).expect("make the image write-only (unreadable)");
+        // A `stat` needs no read permission on the file itself -- confirm the
+        // fixture actually tests what it claims to, independent of this fix.
+        assert!(std::fs::metadata(&image).is_ok(), "stat must still work on an unreadable file");
+        assert!(std::fs::read(&image).is_err(), "and a real read of it must fail, or this test proves nothing");
+
+        let supplied = vec![("main.tex".to_string(), entry.clone())];
+        let (documents, diagnostics) = closure_from_disk(Some(project.path()), "main.tex", &supplied);
+
+        assert!(documents.is_empty(), "no further .tex documents to discover here: {documents:?}");
+        assert!(
+            diagnostics.iter().all(|d| d.code != "read_error"),
+            "discovery must never try to open the graphic's content: {diagnostics:?}"
+        );
+    }
+
+    /// The same fixture, but the image is reachable only through an on-disk
+    /// `\input`, so discovery must actually read a `.tex` file from disk and
+    /// scan it (not just walk the overlaid entry) before reaching the
+    /// `\includegraphics` reference -- the shape described in the bug report
+    /// (a `sections/intro.tex` on disk whose figures are large).
+    #[test]
+    fn includegraphics_target_reached_through_an_on_disk_include_is_stat_only() {
+        let project = Project::new("stat-only-nested");
+        let main = "\\input{sections/intro}".to_string();
+        let intro = "\\includegraphics{figures/plot}Body.".to_string();
+        project.write("main.tex", main.as_bytes()).write("sections/intro.tex", intro.as_bytes());
+        project.write("figures/plot.png", b"not a real png; its bytes must never be opened by discovery");
+        let image = project.path().join("figures/plot.png");
+        std::fs::set_permissions(&image, std::fs::Permissions::from_mode(0o200)).expect("make the image write-only (unreadable)");
+
+        let supplied = vec![("main.tex".to_string(), main.clone())];
+        let (documents, diagnostics) = closure_from_disk(Some(project.path()), "main.tex", &supplied);
+
+        assert!(
+            documents.iter().any(|(p, t)| p == "sections/intro.tex" && t == &intro),
+            "the on-disk include is still discovered and forwarded: {documents:?}"
+        );
+        assert!(
+            diagnostics.iter().all(|d| d.code != "read_error"),
+            "discovery must never try to open the graphic's content: {diagnostics:?}"
+        );
     }
 }
