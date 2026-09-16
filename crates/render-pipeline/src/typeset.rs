@@ -940,6 +940,60 @@ impl<'a> Context<'a> {
         (run, self.recs.len() - 1)
     }
 
+    /// One rule of an [`Context::qed_items`] box: an hbox `width` wide whose
+    /// painted rectangle is `height` tall and sits `bottom` above the
+    /// baseline.
+    fn qed_rule(&mut self, size: f64, span: Span, width: f64, height: f64, bottom: f64) -> (pl::Item, Option<usize>) {
+        self.recs.push(BoxRec::Rule { width, height, bottom, span });
+        let run = pl::GlyphRun {
+            font: MATH_SENTINEL,
+            size,
+            glyphs: Vec::new(),
+            width,
+            height: bottom + height,
+            depth: 0.0,
+            source: span.start..span.end,
+        };
+        (pl::Item::Box(run), Some(self.recs.len() - 1))
+    }
+
+    /// amsthm's `\qedsymbol` (adapter `Item::QedBox`, GH#443), which is
+    /// `\openbox`:
+    ///
+    /// ```text
+    /// \hbox to.77778em{\hfil\vrule\vbox to.675em{\hrule width.6em\vfil\hrule}\vrule\hfil}
+    /// ```
+    ///
+    /// Four rules, not a character: an open square `.6em` wide and `.675em`
+    /// tall, sitting on the baseline, drawn with `\vrule`/`\hrule` at TeX's
+    /// default 0.4 pt thickness (absolute — it does not scale with the font),
+    /// centred by the two `\hfil` in an hbox `.77778em` wide. `em` is the
+    /// current font's quad, so the box grows with `\large` exactly as the
+    /// pdflatex oracle does (`tests/qed_box.rs`).
+    ///
+    /// The two horizontal rules share the vbox's width, so the second is
+    /// pulled back over the first with a kern; kerns between boxes are not
+    /// legal break points, so the whole mark stays on one line.
+    fn qed_items(&mut self, style: TextStyle, size: f64, span: Span) -> Vec<(pl::Item, Option<usize>)> {
+        /// `\vrule`/`\hrule` with no `width`/`height`: `\z@` plus TeX's
+        /// default rule thickness, 0.4 pt (tex.web §463).
+        const RULE_PT: f64 = 0.4;
+        let quad = self.text_params(style, size).quad;
+        let width = 0.6 * quad;
+        let height = 0.675 * quad;
+        // Each `\hfil` of the `\hbox to.77778em`.
+        let pad = (0.77778 * quad - (width + 2.0 * RULE_PT)) / 2.0;
+        let mut out = Vec::with_capacity(7);
+        out.push((pl::Item::kern(pad), None));
+        out.push(self.qed_rule(size, span, RULE_PT, height, 0.0));
+        out.push(self.qed_rule(size, span, width, RULE_PT, height - RULE_PT));
+        out.push((pl::Item::kern(-width), None));
+        out.push(self.qed_rule(size, span, width, RULE_PT, 0.0));
+        out.push(self.qed_rule(size, span, RULE_PT, height, 0.0));
+        out.push((pl::Item::kern(pad), None));
+        out
+    }
+
     /// `\TeX`/`\LaTeX`/`\LaTeXe` (compiler `Inline::Logo`): one box per glyph
     /// at the x `text_builtins::layout_logo` computes from this face's TFM
     /// metrics, joined by kerns (not break points: no glue follows them),
@@ -2200,6 +2254,12 @@ impl<'a> Context<'a> {
                 AItem::Logo { logo, style, span } => {
                     let style = merge_base(*style, base);
                     for (item, rec) in self.logo_items(*logo, style, style.size_or(size), *span) {
+                        push(&mut out, &mut recs, item, rec);
+                    }
+                }
+                AItem::QedBox { style, span } => {
+                    let style = merge_base(*style, base);
+                    for (item, rec) in self.qed_items(style, style.size_or(size), *span) {
                         push(&mut out, &mut recs, item, rec);
                     }
                 }
@@ -6874,6 +6934,53 @@ pub fn convert_math_classed(
                 let atom_class = if left.is_empty() && right.is_empty() { ml::AtomClass::Ord } else { ml::AtomClass::Inner };
                 vec![sink.grid_atom(atom_class, cells, columns, left, right, a.span)]
             }
+            // `\text{..}` with nested math (`TextRun`) replaces the old pin's
+            // flat `Nucleus::Text` for the same input, so this arm must set
+            // *something* for every piece or the re-pin would silently drop
+            // the words. It is the old `Text` handling, piece by piece, with
+            // the nested formulas spliced in place; what it does not yet do
+            // is honour a piece's own `TextStyle` (PR #585).
+            #[cfg(feature = "compiler-node-surface")]
+            N::TextRun(pieces) => {
+                let mut parts: Vec<ml::Atom> = Vec::new();
+                for p in pieces {
+                    match p {
+                        flashtex_compiler::math::TextPiece::Text { text, .. } => parts.push(sink.atom(text)),
+                        flashtex_compiler::math::TextPiece::Math(inner) => parts.extend(sub(inner, sink).atoms),
+                    }
+                }
+                vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(ml::MathList::new(parts)))]
+            }
+            // `\sideset{_a^b}{_c^d}\sum`: the left pair hangs off an empty
+            // box before the operator, which is what math-layout's
+            // `Atom::left_scripts` sets exactly -- PR #582's job. Until then
+            // the left scripts are set on an empty Ord atom in front of the
+            // operator, so every sub-formula is still painted, just without
+            // the display-style measuring the real construction needs.
+            #[cfg(feature = "compiler-node-surface")]
+            N::SideSet { operator, left_superscript, left_subscript } => {
+                let mut out = Vec::new();
+                if left_superscript.is_some() || left_subscript.is_some() {
+                    let mut lead = ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(ml::MathList::new(Vec::new())));
+                    if let Some(l) = left_superscript {
+                        lead = lead.with_sup(sub(l, sink));
+                    }
+                    if let Some(l) = left_subscript {
+                        lead = lead.with_sub(sub(l, sink));
+                    }
+                    out.push(lead);
+                }
+                out.extend(sub(operator, sink).atoms);
+                out
+            }
+            // mathtools `\mathllap`/`\mathrlap`/`\mathclap`: a zero-advance
+            // box whose ink is still painted. math-layout has no lap atom, so
+            // the body is set as an ordinary group -- its ink is right, its
+            // advance is not yet zero.
+            #[cfg(feature = "compiler-node-surface")]
+            N::Lap { body, .. } => vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(sub(body, sink)))],
+            #[cfg(not(feature = "amsmath-inline"))]
+            _ => continue,
         };
         // Every atom this compiler atom produced maps to its bytes unless a
         // more precise span was already given (a `\left...\right` pair).
@@ -7328,6 +7435,27 @@ fn math_grids(list: &flashtex_compiler::math::MathList, out: &mut Vec<(usize, us
                 math_grids(above, out);
                 math_grids(below, out);
             }
+            // Nuclei only a re-pinned compiler emits: a grid can hide inside
+            // any of their nested lists, so all of them are walked.
+            #[cfg(feature = "compiler-node-surface")]
+            N::TextRun(pieces) => {
+                for p in pieces {
+                    if let flashtex_compiler::math::TextPiece::Math(inner) = p {
+                        math_grids(inner, out);
+                    }
+                }
+            }
+            #[cfg(feature = "compiler-node-surface")]
+            N::SideSet { operator, left_superscript, left_subscript } => {
+                math_grids(operator, out);
+                for l in [left_superscript, left_subscript].into_iter().flatten() {
+                    math_grids(l, out);
+                }
+            }
+            #[cfg(feature = "compiler-node-surface")]
+            N::Lap { body, .. } => math_grids(body, out),
+            #[cfg(not(feature = "amsmath-inline"))]
+            _ => {}
         }
         if let Some(s) = &a.superscript {
             math_grids(s, out);
@@ -7373,6 +7501,24 @@ fn math_glue_em(list: &flashtex_compiler::math::MathList) -> f64 {
                 N::SubArray { rows, .. } => rows.iter().map(math_glue_em).sum(),
                 #[cfg(feature = "amsmath-inline")]
                 N::ExtArrow { above, below, .. } => math_glue_em(above) + math_glue_em(below),
+                // Nuclei only a re-pinned compiler emits: explicit glue can
+                // sit inside any of their nested lists.
+                #[cfg(feature = "compiler-node-surface")]
+                N::TextRun(pieces) => pieces
+                    .iter()
+                    .map(|p| match p {
+                        flashtex_compiler::math::TextPiece::Math(inner) => math_glue_em(inner),
+                        flashtex_compiler::math::TextPiece::Text { .. } => 0.0,
+                    })
+                    .sum(),
+                #[cfg(feature = "compiler-node-surface")]
+                N::SideSet { operator, left_superscript, left_subscript } => {
+                    math_glue_em(operator) + [left_superscript, left_subscript].into_iter().flatten().map(math_glue_em).sum::<f64>()
+                }
+                #[cfg(feature = "compiler-node-surface")]
+                N::Lap { body, .. } => math_glue_em(body),
+                #[cfg(not(feature = "amsmath-inline"))]
+                _ => 0.0,
             };
             own + a.superscript.as_ref().map_or(0.0, math_glue_em) + a.subscript.as_ref().map_or(0.0, math_glue_em)
         })
@@ -7402,6 +7548,11 @@ fn accent_char(a: flashtex_compiler::math::Accent) -> char {
         A::Breve => '\u{02D8}',
         A::Acute => '\u{00B4}',
         A::Grave => '`',
+        // `\mathring` (`\mathaccent"017` in the LaTeX kernel, the ring of
+        // `\r`): U+02DA RING ABOVE, the spacing modifier this table uses for
+        // every non-wide accent. Only a re-pinned compiler can produce it.
+        #[cfg(feature = "compiler-node-surface")]
+        A::Mathring => '\u{02DA}',
     }
 }
 
@@ -7484,6 +7635,34 @@ fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<S
                 math_approximations(above, out);
                 math_approximations(below, out);
             }
+            // Nuclei only a re-pinned compiler emits. The two that this
+            // crate does not set exactly yet say so here, so the
+            // approximation reaches the document's limitations instead of
+            // being invisible; the stacked PRs delete these two lines when
+            // they set the real construction.
+            #[cfg(feature = "compiler-node-surface")]
+            N::TextRun(pieces) => {
+                for p in pieces {
+                    if let flashtex_compiler::math::TextPiece::Math(inner) = p {
+                        math_approximations(inner, out);
+                    }
+                }
+            }
+            #[cfg(feature = "compiler-node-surface")]
+            N::SideSet { operator, left_superscript, left_subscript } => {
+                out.push("\\sideset left scripts set on an empty box before the operator, not measured in display style".to_string());
+                math_approximations(operator, out);
+                for l in [left_superscript, left_subscript].into_iter().flatten() {
+                    math_approximations(l, out);
+                }
+            }
+            #[cfg(feature = "compiler-node-surface")]
+            N::Lap { body, .. } => {
+                out.push("\\mathllap/\\mathrlap/\\mathclap set as an ordinary group: math-layout has no zero-advance lap box".to_string());
+                math_approximations(body, out);
+            }
+            #[cfg(not(feature = "amsmath-inline"))]
+            _ => {}
         }
         for part in [&a.superscript, &a.subscript].into_iter().flatten() {
             math_approximations(part, out);

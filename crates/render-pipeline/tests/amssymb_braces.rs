@@ -53,6 +53,7 @@ fn problems(r: &Rendered) -> Vec<String> {
 }
 
 #[test]
+#[cfg_attr(not(feature = "amsmath-inline"), ignore = "requires the amsmath-inline feature")]
 fn amssymb_relations_advance_by_their_msam_msbm_widths() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");
