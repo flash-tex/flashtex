@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": null,
-  "gh_ref": null,
+  "gh_ref": "747",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T10:17:43Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-40-MEMBERSHIP-TEST",
-  "updated_utc": "2026-09-16T10:17:43Z"
+  "updated_utc": "2026-09-16T10:40:01Z"
 }
