@@ -1,0 +1,206 @@
+== run metadata ==
+  build_debug        false
+  build_lto          false (cargo stock release; codegen-units=16)
+  build_opt_level    3
+  build_profile      release
+  build_rustflags    
+  build_target       x86_64-unknown-linux-gnu
+  calibration_drift_pct -1.267418
+  calibration_ns     5926140
+  caps               v1+v2
+  cpu                AMD Ryzen 7 7800X3D 8-Core Processor
+  cpu_boost          1
+  cpu_governor       powersave
+  export_max_pages   500
+  finished_utc       2026-09-13T19:51:18Z
+  font_config        source=repository default (apps/mac/Fonts) font_dirs=/home/kubar/code/flashtex/.claude/worktrees/agent-ab2112cc6b92bf1b9/apps/mac/Fonts tfm_dirs=/home/kubar/code/flashtex/.claude/worktrees/agent-ab2112cc6b92bf1b9/apps/mac/Fonts/texmf/fonts/tfm/public/lm:/home/kubar/code/flashtex/.claude/worktrees/agent-ab2112cc6b92bf1b9/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:/home/kubar/code/flashtex/.claude/worktrees/agent-ab2112cc6b92bf1b9/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols search_digest=52d57587b5662533 required_metrics=loaded
+  fonts_font_dirs    /home/kubar/code/flashtex/.claude/worktrees/agent-ab2112cc6b92bf1b9/apps/mac/Fonts
+  fonts_required_metrics loaded
+  fonts_search_digest 52d57587b5662533
+  fonts_source       repository default (apps/mac/Fonts)
+  fonts_tfm_dirs     /home/kubar/code/flashtex/.claude/worktrees/agent-ab2112cc6b92bf1b9/apps/mac/Fonts/texmf/fonts/tfm/public/lm:/home/kubar/code/flashtex/.claude/worktrees/agent-ab2112cc6b92bf1b9/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:/home/kubar/code/flashtex/.claude/worktrees/agent-ab2112cc6b92bf1b9/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols
+  harness            flashtex-perf-bench
+  host               nixos
+  host_fingerprint   linux/x86_64/AMD Ryzen 7 7800X3D 8-Core Processor/16cpu
+  isolation          one child process per repetition
+  load1_max          6.38
+  load1_start        4.49
+  logical_cpus       16
+  mem_total_kb       31979320
+  os                 linux x86_64
+  pinned_cpu         -
+  repo_commit        8465bbd047f0308f87a1cb26ee3f10405b3bca6e
+  repo_dirty         true
+  run_utc            2026-09-13T19:21:26Z
+  runs               5
+  runs_scaling       requested runs, capped at 4 above 300 KB and 2 above 1 MB; above 1 MB also v2 only and two scenarios. Each metric carries its own n
+  steps              auto: 20 / 10 at >300 KB / 5 at >1 MB
+  warmup_runs        1
+
+== headline (median over repetitions; warm = slowest scenario) ==
+case                     bytes    pg   n   first ms    cold ms    nocache export ms   warm p50  warm p95  peakRSS  steady   ±IQR  load
+cv                        2586     1   5      27.94       2.00       1.72     17.44      1.648     1.684      26     26   5.1   4.5
+hw1                       5126     3   5      53.95       6.63       5.66     55.86      3.006     4.472      40     38  39.3   5.4
+hw2                       5035     3   5      34.18       3.79       3.41     33.82      2.853     3.132      37     36   2.1   5.4
+inline-math               5574     2   5      30.83       4.79       4.16     40.86      3.511     3.919      41     41   5.2   5.2
+lecture-notes             4131     2   5      47.96       7.02       7.48     51.18      4.326     5.479      34     33   3.8   6.3
+letter                    1704     1   5       9.03       4.00       3.46     12.39      3.558     3.694      20     20  42.3   6.3
+math-sheet                3214     2   5      27.23       2.29       2.07     25.08      1.761     1.818      27     24   4.2   6.4
+unicode-accents           1771     1   5       9.34       1.68       1.31     12.04      1.252     1.302      20     20   2.2   6.4
+synthetic-500kb         500056   385   4    3433.80    3253.88    3168.02   2949.18    306.058   346.884    2653   2625   1.6   5.5
+synthetic-2mb          2000085  1507   2   45143.32   44572.18   44295.38         -   1319.653  1364.914    5506   4931   1.1   3.3
+math-heavy              150251    71   5     183.94     120.37      91.79    659.06     60.669    63.734     619    584   1.4   1.4
+tikz-heavy              120118    57   5     156.59     128.27     111.26         -     99.599   105.025     317    166   1.5   1.3
+  n = repetitions behind the cold columns (capped by size; every warm row carries its own n below).
+  first ms = first render in a fresh process (cold caches AND cold font faces); cold ms = empty RenderCache, faces loaded.
+  nocache = the same render with no RenderCache attached: the gap is what populating the reuse cache costs on the first compile.
+  export ms includes the one-time font-program read and subset (export.pdf_warm_ms in the JSON is a second export).
+  peakRSS/steady in MiB. ±IQR is (p75-p25)/median of cold.render_ms, in percent: the run's own noise estimate for that case.
+  load is the highest 1-minute load average seen around that case. Rows measured at very different loads are not comparable with each other.
+
+== cold phase split, median ms (decomposition at the public seams) ==
+case                    expand     parse     adapt   typeset typeset_notexts  assemble        v1   json_v1   json_v2   cover
+cv                        0.26      0.38      0.41      1.01            0.79      0.25      0.02      0.03      0.41    1.03
+hw1                       0.40      0.22      0.74      2.57            2.34      0.70      0.05      0.11      0.90    0.65
+hw2                       0.37      0.22      0.81      2.23            1.93      0.57      0.05      0.11      0.80    1.03
+inline-math               0.43      0.42      0.62      2.52            2.22      0.98      0.08      0.23      1.05    0.96
+lecture-notes             0.54      0.35      0.88      2.67            2.36      0.83      0.07      0.19      1.07    0.68
+letter                    0.20      1.85      0.27      1.28            1.10      0.30      0.02      0.04      0.56    0.93
+math-sheet                0.26      0.58      0.33      1.03            0.81      0.43      0.04      0.10      0.36    1.05
+unicode-accents           0.15      0.38      0.23      0.71            0.58      0.18      0.02      0.03      0.34    0.91
+synthetic-500kb          30.17     23.76     68.72   2923.65          173.79    130.87     13.22     13.32    133.58    0.97
+synthetic-2mb           125.67    134.02    304.15  42704.31         1043.33    554.99     68.88     61.92    662.63    0.98
+math-heavy                9.42      7.92     15.67     42.93           41.81     25.49      2.20      4.31     26.14    0.78
+tikz-heavy                7.56      4.67      9.18     92.75               -     11.75      0.95      1.21     15.60    0.93
+  parse = parser::parse_project (lex + expand + parse). expand is that same expansion measured alone, so it overlaps parse and is NOT summed.
+  typeset_notexts is a control: the same typesetting with Context::new (no document sources), which is what examples/stages.rs times. Not summed.
+  json_v1 and json_v2 are alternatives; only one is on any request path, so neither is summed either.
+  cover = sum(parse..v1) / cold.render_ms. Below 0.85: the product path does work the decomposition does not replay (float scan, TikZ scan, extra label passes).
+
+== warm keystroke, ms per edit (pooled over every step of every repetition) ==
+case                 scenario                caps      n       p50       p75       p95       max  digest
+cv                   delete-restore-line       v1    100     1.102     1.133     1.722     1.753  5063d47f95b99e3c
+cv                   delete-restore-line       v2    100     1.515     1.539     2.271     2.499  871d055fe8c1c17e
+cv                   type-display-eq           v1    100     1.217     1.226     1.252     1.291  129017bc03b1ae30
+cv                   type-display-eq           v2    100     1.641     1.663     2.631     2.716  8e791fd244e4bd7c
+cv                   type-inline-math          v1    100     1.230     1.290     1.855     1.920  1e4d037cf4610607
+cv                   type-inline-math          v2    100     1.648     1.658     1.684     1.891  1b57d601a431ed6d
+cv                   type-paragraph            v1    100     1.212     1.224     1.295     1.489  89de07a632e3e671
+cv                   type-paragraph            v2    100     1.626     1.662     1.858     2.582  d6e42874c27f2db2
+hw1                  delete-restore-line       v1    100     1.667     1.760     2.569     2.630  0d623ec83f490cc2
+hw1                  delete-restore-line       v2    100     2.711     3.973     4.370     4.439  a405530deceb6a9a
+hw1                  type-display-eq           v1    100     1.770     1.912     2.693     2.770  0ab28900edcb3de2
+hw1                  type-display-eq           v2    100     2.778     2.961     4.754     4.987  c4caa8d89ccaf44a
+hw1                  type-inline-math          v1    100     1.783     2.649     2.693     2.721  be6e9a654a7893cf
+hw1                  type-inline-math          v2    100     3.006     4.265     4.472     4.614  788a9048ba0e1099
+hw1                  type-paragraph            v1    100     1.782     2.722     2.749     2.769  6f000d661938822f
+hw1                  type-paragraph            v2    100     2.808     4.323     4.585     4.855  0275be36bba6ccc6
+hw2                  delete-restore-line       v1    100     1.710     1.740     1.760     1.788  038e013d203a37d4
+hw2                  delete-restore-line       v2    100     2.549     2.586     2.652     2.815  4fc870412a8920da
+hw2                  type-display-eq           v1    100     1.800     1.817     1.881     1.904  08b93052e324f02d
+hw2                  type-display-eq           v2    100     2.611     2.653     2.760     3.473  b98f378da9423681
+hw2                  type-inline-math          v1    100     2.022     2.050     2.130     2.263  cf4e5cd1e3296ce8
+hw2                  type-inline-math          v2    100     2.853     2.911     3.132     3.208  2657e2678571bca8
+hw2                  type-paragraph            v1    100     1.840     1.861     1.949     2.853  4c25ff12a8f91f7c
+hw2                  type-paragraph            v2    100     2.653     2.678     2.798     2.915  0dfbd0491f482c6e
+inline-math          type-inline-math          v1    100     2.228     2.246     2.590     3.396  259769a8b34047a7
+inline-math          type-inline-math          v2    100     3.511     3.643     3.919     5.175  4932cc955d49e144
+lecture-notes        delete-restore-line       v1    100     3.011     3.640     4.147     4.557  a7921d342b228b7e
+lecture-notes        delete-restore-line       v2    100     4.326     5.094     5.479     5.741  06bf8f20cdce18ea
+lecture-notes        type-display-eq           v1    100     2.533     3.085     3.814     4.017  dad4e30c29429a1c
+lecture-notes        type-display-eq           v2    100     3.433     4.220     5.564     5.962  3c7f7f4458802b65
+lecture-notes        type-inline-math          v1    100     2.629     2.710     3.981     4.232  307dfac920b40351
+lecture-notes        type-inline-math          v2    100     3.610     4.776     5.424     5.798  ed26fed13117c01c
+lecture-notes        type-paragraph            v1    100     2.808     3.886     4.031     4.138  45212b66bcd5ea4d
+lecture-notes        type-paragraph            v2    100     3.598     4.446     5.744     6.122  05b622392abf5d43
+letter               delete-restore-line       v1    100     2.571     2.731     2.799     2.856  e8e2d48c97d11615
+letter               delete-restore-line       v2    100     3.234     3.348     3.419     3.484  538038adf721a62f
+letter               type-paragraph            v1    100     2.670     2.950     2.995     3.080  b1eeade3be78ea06
+letter               type-paragraph            v2    100     3.558     3.615     3.694     3.763  052cf56442da44d9
+math-sheet           type-display-eq           v1    100     1.374     1.386     1.414     1.424  a5aa492959784db6
+math-sheet           type-display-eq           v2    100     1.761     1.774     1.818     2.341  f1d22b12f47d6224
+math-sheet           type-inline-math          v1    100     1.354     1.373     1.780     1.964  aa90d4b05a0be1f6
+math-sheet           type-inline-math          v2    100     1.735     1.750     1.785     1.842  972339ba294939be
+unicode-accents      delete-restore-line       v1    100     0.805     0.814     0.856     0.889  df9283936c5d6b00
+unicode-accents      delete-restore-line       v2    100     1.146     1.160     1.173     1.185  dd91c19901abb7da
+unicode-accents      type-paragraph            v1    100     0.902     0.909     0.926     0.948  a9f56b6d737d16e7
+unicode-accents      type-paragraph            v2    100     1.252     1.266     1.302     1.909  ae399ba1aadd6f72
+synthetic-500kb      delete-restore-line       v1     40   285.651   312.492   318.725   330.033  9f901e2fd3c7396c
+synthetic-500kb      delete-restore-line       v2     40   283.888   301.393   342.306   344.043  e30f9742f09e576b
+synthetic-500kb      type-display-eq           v1     40   290.966   307.578   328.308   342.778  62735b362b24f0ce
+synthetic-500kb      type-display-eq           v2     40   289.872   314.406   327.050   331.250  40affa69417a36ca
+synthetic-500kb      type-inline-math          v1     40   301.186   311.401   321.184   325.697  ede96df5a13e43cc
+synthetic-500kb      type-inline-math          v2     40   302.948   321.885   345.980   368.637  1d54a84c4fb0f42e
+synthetic-500kb      type-paragraph            v1     40   306.058   320.634   346.884   410.990  52e578285201e70c
+synthetic-500kb      type-paragraph            v2     40   290.746   307.333   330.386   331.566  1c97a30571fb1e03
+synthetic-2mb        type-display-eq           v2     10  1316.114  1327.410  1350.955  1350.955  117c4a7a53bddeb8
+synthetic-2mb        type-paragraph            v2     10  1319.653  1337.640  1364.914  1364.914  b31fc062f052513d
+math-heavy           delete-restore-line       v1    100    59.562    61.102    63.526    69.483  fe38a70dc1695b70
+math-heavy           delete-restore-line       v2    100    60.014    61.211    64.148    67.209  4b5ed97bd080fa18
+math-heavy           type-display-eq           v1    100    60.483    61.419    63.982    75.470  594fca91e458cb8a
+math-heavy           type-display-eq           v2    100    60.669    61.635    63.734    66.587  a98160e8a99cc05b
+math-heavy           type-inline-math          v1    100    60.038    60.895    63.638    64.871  6b37c64cd0e8c6b5
+math-heavy           type-inline-math          v2    100    60.574    61.637    64.173    67.732  5881dd8fe8a1a511
+math-heavy           type-paragraph            v1    100    60.184    61.140    63.152    65.219  e8ce6ae26cbbe3bb
+math-heavy           type-paragraph            v2    100    59.949    61.288    62.580    67.593  bedc8df7f047625d
+tikz-heavy           delete-restore-line       v1    100    99.599   101.115   105.025   107.701  01cfb62901018121
+tikz-heavy           delete-restore-line       v2    100    99.530   100.895   103.346   107.491  39bc43b70627867c
+tikz-heavy           type-paragraph            v1    100    99.377   100.340   105.820   112.489  4c24854b884e9c57
+tikz-heavy           type-paragraph            v2    100    99.363   100.230   102.703   109.252  d6ed9d87305ff0d3
+
+== targets ==
+id           target                                            budget    measured x budget  met    from
+warm-500kb   warm keystroke < 2 ms at 500 KB                   2.0 ms     306.058   153.0x  no     warm.type-paragraph.v1_ms (slowest)
+warm-2mb     warm keystroke < 10 ms at 2 MB                   10.0 ms    1319.653   132.0x  no     warm.type-paragraph.v2_ms (slowest)
+cold-hw1     cold HW1 full compile < 10 ms                    10.0 ms       6.625     0.7x  YES    cold.render_ms
+export-hw1   PDF export for HW1 < 10 ms                       10.0 ms      55.863     5.6x  no     export.pdf_ms
+mem-2mb      steady-state memory < 100 MB at 2 MB         102400.0 KiB 5049680.000    49.3x  no     mem.steady_rss_kb
+
+== not measured (no valid measurement was possible; no timing is reported) ==
+  article-twocolumn: font diagnostics in a benchmarked render: |   font_outline_substituted [warning]: lmmono12-regular.otf: not found in 1 search directory: /home/kubar/code/flashtex/.claude/worktrees/agent-ab2112cc6b92bf1b9/apps/mac/Fonts; add a directory holding it with --font-dir or FLASHTEX_FONT_DIRS; outlines drawn from lmroman12-regular.otf with the ectt1200.tfm metrics |   ec_metrics_unavailable [warning]: lmroman12-regular+ectt1200: ectt1200.tfm (T1 cmtt metrics) not found; ec-lmr12.tfm used, so line breaks can differ from pdfLaTeX |   font_outline_substituted [warning]: lmmono10-regular.otf: not found in 1 search directory: /home/kubar/code/flashtex/.claude/worktrees/agent-ab2112cc6b92bf1b9/apps/mac/Fonts; add a directory holding it with --font-dir or FLASHTEX_FONT_DIRS; outlines drawn from lmroman10-regular.otf with the ectt1000.tfm metrics |   ec_metrics_unavailable [warning]: lmroman10-regular+ectt1000: ectt1000.tfm (T1 cmtt metrics) not found; ec-lmr10.tfm used, so line breaks can differ from pdfLaTeX
+  input-bibliography: font diagnostics in a benchmarked render: |   font_outline_substituted [warning]: lmmono12-regular.otf: not found in 1 search directory: /home/kubar/code/flashtex/.claude/worktrees/agent-ab2112cc6b92bf1b9/apps/mac/Fonts; add a directory holding it with --font-dir or FLASHTEX_FONT_DIRS; outlines drawn from lmroman12-regular.otf with the ectt1200.tfm metrics |   ec_metrics_unavailable [warning]: lmroman12-regular+ectt1200: ectt1200.tfm (T1 cmtt metrics) not found; ec-lmr12.tfm used, so line breaks can differ from pdfLaTeX
+
+== notes ==
+  cv: unsupported: compiler: \pagestyle is not supported in the document preamble
+  inline-math: type-paragraph: no anchor in this document
+  inline-math: type-display-eq: no anchor in this document
+  inline-math: delete-restore-line: no anchor in this document
+  lecture-notes: content: missing_glyph: U+220E '∎' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  letter: unsupported: compiler: \signature is not supported in the document preamble
+  letter: unsupported: compiler: \address is not supported in the document preamble
+  letter: unsupported: compiler: \opening is not supported by this compiler version; unrestricted TeX math mode is not implemented
+  letter: unsupported: compiler: \closing is not supported by this compiler version; unrestricted TeX math mode is not implemented
+  letter: unsupported: compiler: \encl is not supported by this compiler version; unrestricted TeX math mode is not implemented
+  letter: unsupported: compiler: \cc is not supported by this compiler version; unrestricted TeX math mode is not implemented
+  letter: unsupported: compiler: \ps is not supported by this compiler version; unrestricted TeX math mode is not implemented
+  letter: type-inline-math: no anchor in this document
+  letter: type-display-eq: no anchor in this document
+  math-sheet: unsupported: compiler: \maketitle requires \author to name at least one author
+  math-sheet: type-paragraph: no anchor in this document
+  math-sheet: delete-restore-line: no anchor in this document
+  unicode-accents: unsupported: compiler: \c is not supported by this compiler version; unrestricted TeX math mode is not implemented
+  unicode-accents: unsupported: compiler: \v is not supported by this compiler version; unrestricted TeX math mode is not implemented
+  unicode-accents: content: missing_glyph: U+6771 '東' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+4EAC '京' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+306F 'は' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+65E5 '日' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+672C '本' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+306E 'の' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+9996 '首' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+90FD '都' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+3067 'で' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+3059 'す' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+3002 '。' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+6392 '排' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+7248 '版' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+662F '是' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+4E00 '一' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+95E8 '门' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+827A '艺' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: content: missing_glyph: U+672F '术' has no glyph in lmroman10-regular+ecrm1095; nothing drawn for it
+  unicode-accents: type-inline-math: no anchor in this document
+  unicode-accents: type-display-eq: no anchor in this document
+  synthetic-2mb: export skipped: 1507 pages is over --export-max-pages 500
+  tikz-heavy: export failed: payload.pages[0].items[0]: item kind "path_stroke" is not supported by the exact route (glyph_run, rule and image only)
+  tikz-heavy: type-inline-math: no anchor in this document
+  tikz-heavy: type-display-eq: no anchor in this document

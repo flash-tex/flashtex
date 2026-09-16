@@ -35,7 +35,7 @@ fn baselines(body: &str) -> Vec<f64> {
     let v1 = v1_of(&r, Capabilities { rules: true, font_hints: true, ..Capabilities::default() });
     assert_ne!(v1.status, "failed", "{:?}", v1.diagnostics);
     let mut ys: Vec<f64> = Vec::new();
-    for it in &r.v2.pages[0].items {
+    for it in r.v2.pages[0].resident_items() {
         if let flashtex_render_pipeline::display::Item::GlyphRun(run) = it {
             if let Some(g) = run.glyphs.first() {
                 ys.push((g.baseline_y.to_bp() * 1000.0).round() / 1000.0);

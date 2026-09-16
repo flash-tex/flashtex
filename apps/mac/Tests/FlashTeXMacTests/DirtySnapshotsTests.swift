@@ -95,14 +95,14 @@ final class DirtySnapshotsTests: XCTestCase {
         let helper = try requireRealHelper()
         let dir = try tempDir("entry")
         let store = privateStore(dir)
-        let url = dir.appendingPathComponent("paper.tex") // not main.tex: the entry path stays main.tex in the model
+        let url = dir.appendingPathComponent("paper.tex") // not main.tex: the entry document keeps its real name
         try "v1\n".write(to: url, atomically: true, encoding: .utf8)
 
         let model = ShellModel()
         model.detachWorker()
         model.files.policy = .executable(helper, arguments: [])
         XCTAssertEqual(model.openTex(at: url), .opened)
-        XCTAssertEqual(model.activePath, "main.tex")
+        XCTAssertEqual(model.activePath, "paper.tex")
         XCTAssertEqual(model.files.offeredSnapshots, [], "nothing kept yet")
         XCTAssertEqual(model.dirtySnapshots.directory.path, store.path)
         model.updateActiveText("v1 edited\n")
@@ -332,13 +332,15 @@ private extension DirtySnapshotStore {
     }
 }
 
-/// The Fable-found case: a file not named `main.tex` is a *session* project
-/// for the preview controller (its ledger holds a copy, `controllerRoutesFiles`
-/// is false), so dirty preservation must not rely on that ledger: the reload
-/// goes the direct way and the discarded text is kept in the store; a
-/// detach/reattach of the helper with a dirty buffer makes the text durable
-/// again on the new helper. Skipped unless `FLASHTEX_PREVIEW_CONTROLLER` and
-/// `FLASHTEX_COMPILER` point at built binaries.
+/// The Fable-found case, updated for the entry-name fix: a file not named
+/// `main.tex` now keeps its real name, so the preview controller is rooted
+/// at the file's own directory (`controllerRoutesFiles` is true) and its
+/// ledger IS the durable home of the text: the reviewed reload imports
+/// through the helper, discarded text lives in undo history (never the
+/// snapshot store), and a detach/reattach of the helper with a dirty buffer
+/// makes the text durable again on the new helper. Skipped unless
+/// `FLASHTEX_PREVIEW_CONTROLLER` and `FLASHTEX_COMPILER` point at built
+/// binaries.
 @MainActor
 final class DirtySnapshotsControllerTests: XCTestCase {
     static var helper: URL? {
@@ -353,7 +355,7 @@ final class DirtySnapshotsControllerTests: XCTestCase {
         }
     }
 
-    func testFileNotNamedMainTexKeepsDirtyTextAcrossReloadDetachAndReattach() async throws {
+    func testFileNotNamedMainTexIsLedgerRoutedAndKeepsDirtyTextAcrossReloadDetachAndReattach() async throws {
         guard let helper = Self.helper, FileManager.default.isExecutableFile(atPath: helper.path),
               ShellModel.locateCompiler() != nil else {
             throw XCTSkip("set FLASHTEX_PREVIEW_CONTROLLER and FLASHTEX_COMPILER to built binaries")
@@ -373,43 +375,44 @@ final class DirtySnapshotsControllerTests: XCTestCase {
         model.autoCompile = true
         XCTAssertEqual(model.openTex(at: tex), .opened)
         model.attachController(at: helper)
-        try await waitUntil("initial preview") { model.result?.revision == model.editorRevision && model.controllerState.durable["main.tex"] != nil && model.inFlightRevision == nil }
-        XCTAssertFalse(model.controllerRoutesFiles, "paper.tex is a session project for the helper")
+        try await waitUntil("initial preview") { model.result?.revision == model.editorRevision && model.controllerState.durable["paper.tex"] != nil && model.inFlightRevision == nil }
+        XCTAssertTrue(model.controllerRoutesFiles, "the entry keeps its real name, so the helper is rooted at the file's directory")
 
-        // Dirty edit (durable in the session copy, not on disk), then an
-        // external change: the conflict comes from the file layer, and the
-        // buffer is kept durably because the ledger is not this file's home.
+        // Dirty edit (durable in the helper's ledger), then an external
+        // change: the conflict comes from the helper's file_status, and no
+        // dirty snapshot is written because the ledger IS this file's
+        // durable home (the text is recoverable through undo history).
         let edited = "\\begin{document}\nA paper, edited.\n\\end{document}\n"
         model.updateActiveText(edited)
-        try await waitUntil("edit durable") { model.inFlightRevision == nil && model.controllerState.textByDurable["main.tex"]?.values.contains { $0 == edited } == true }
+        try await waitUntil("edit durable") { model.inFlightRevision == nil && model.controllerState.textByDurable["paper.tex"]?.values.contains { $0 == edited } == true }
         let v2 = "\\begin{document}\nChanged outside.\n\\end{document}\n"
         try v2.write(to: tex, atomically: true, encoding: .utf8)
         do { let got = await model.refreshDiskStatus(); XCTAssertEqual(got, .modified) }
         XCTAssertEqual(model.files.conflict?.kind, .modifiedExternally)
-        XCTAssertEqual(model.dirtySnapshots.read(for: tex)?.text, edited)
+        XCTAssertEqual(model.files.conflict?.viaHelper, true)
+        XCTAssertNil(model.dirtySnapshots.read(for: tex), "the ledger route keeps the dirty text in the ledger, not the snapshot store")
         XCTAssertEqual(model.activeText, edited)
 
-        // Reviewed reload goes the direct way (no ledger import for a session
-        // copy); the discarded text stays recoverable in memory and on disk,
+        // Reviewed reload goes through the helper's ledger import; the
+        // discarded text stays recoverable in memory (and in undo history),
         // and the helper compiles the reloaded text as a new durable revision.
         let review = try XCTUnwrap(model.prepareReload())
-        XCTAssertFalse(review.viaController)
+        XCTAssertTrue(review.viaController)
         XCTAssertEqual(review.diskText, v2)
         do { let got = await model.confirmReload(review); XCTAssertEqual(got, .blockedByUnsavedEdits) }
         do { let got = await model.confirmReload(review, dirty: .discard); XCTAssertEqual(got, .opened) }
         XCTAssertEqual(model.activeText, v2)
         XCTAssertFalse(model.isDirty)
         XCTAssertEqual(model.recoverableBuffer, .init(url: tex, text: edited))
-        XCTAssertEqual(model.dirtySnapshots.read(for: tex)?.reason, "discarded by a reload from disk")
-        XCTAssertEqual(model.dirtySnapshots.read(for: tex)?.text, edited)
-        try await waitUntil("preview of the reloaded text") { model.controllerAttached && model.compiledDocuments["main.tex"]?.sameBytes(as: v2) == true && model.inFlightRevision == nil }
+        XCTAssertNil(model.dirtySnapshots.read(for: tex), "a ledger-routed reload keeps the prior text in undo history, not the snapshot store")
+        try await waitUntil("preview of the reloaded text") { model.controllerAttached && model.compiledDocuments["paper.tex"]?.sameBytes(as: v2) == true && model.inFlightRevision == nil }
         XCTAssertEqual(try String(contentsOf: tex, encoding: .utf8), v2, "reload never writes")
 
         // Detach the helper with a dirty buffer, reattach: the text survives in
         // the editor and becomes durable again on the new helper.
         let dirty = "\\begin{document}\nChanged outside, then typed.\n\\end{document}\n"
         model.updateActiveText(dirty)
-        try await waitUntil("typed text durable") { model.inFlightRevision == nil && model.controllerState.textByDurable["main.tex"]?.values.contains { $0 == dirty } == true }
+        try await waitUntil("typed text durable") { model.inFlightRevision == nil && model.controllerState.textByDurable["paper.tex"]?.values.contains { $0 == dirty } == true }
         model.detachController()
         XCTAssertFalse(model.controllerAttached)
         XCTAssertEqual(model.activeText, dirty)
@@ -418,17 +421,17 @@ final class DirtySnapshotsControllerTests: XCTestCase {
         defer { model.detachController() }
         try await waitUntil("reattached and durable") {
             model.controllerState.ready && model.inFlightRevision == nil
-                && model.controllerState.durable["main.tex"].map { model.controllerState.textByDurable["main.tex"]?[$0.revision]?.sameBytes(as: dirty) == true } == true
+                && model.controllerState.durable["paper.tex"].map { model.controllerState.textByDurable["paper.tex"]?[$0.revision]?.sameBytes(as: dirty) == true } == true
         }
         XCTAssertEqual(model.activeText, dirty)
         XCTAssertTrue(model.isDirty, "durable on the helper is not saved to the file")
         XCTAssertEqual(try String(contentsOf: tex, encoding: .utf8), v2)
-        try await waitUntil("preview of the dirty text") { model.compiledDocuments["main.tex"]?.sameBytes(as: dirty) == true }
+        try await waitUntil("preview of the dirty text") { model.compiledDocuments["paper.tex"]?.sameBytes(as: dirty) == true }
         // The real file is what a save writes (Fable finding), and that
         // consumes nothing but the snapshot of exactly the saved text.
         model.saveTexInteractive()
         try await waitUntil("save") { !model.isDirty || model.captureNote?.contains("failed") == true }
         XCTAssertEqual(try String(contentsOf: tex, encoding: .utf8), dirty, model.captureNote ?? "-")
-        XCTAssertEqual(model.dirtySnapshots.read(for: tex)?.text, edited, "the earlier discarded text is still offered next time")
+        XCTAssertNil(model.dirtySnapshots.read(for: tex), "nothing was ever snapshotted on the ledger route; discarded text lives in undo history")
     }
 }

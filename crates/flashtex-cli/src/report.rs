@@ -1,8 +1,10 @@
 //! The full (rustc-style) form of a diagnostic on stderr: a header, the
 //! source lines it points at under a line-number gutter, carets under the
-//! span, and `= recovery:` lines. `--diagnostics=short` keeps the one-line
-//! `Diagnostic::line_text` form, which is also the default when stderr is not
-//! a terminal, so piped output and scripts see exactly what they always did.
+//! span, `= recovery:` lines, and when a suggestion is present a `= help:`
+//! block with a `+` gutter over the replacement. `--diagnostics=short` keeps
+//! the one-line `Diagnostic::line_text` form, which is also the default when
+//! stderr is not a terminal, so piped output and scripts see exactly what
+//! they always did.
 //!
 //! ```text
 //! error[compiler]: \tilde is not supported by this compiler version
@@ -93,6 +95,38 @@ pub fn render_full(d: &Diagnostic, source: Option<&str>, color: bool) -> String 
         let indent = gutter + " = recovery: ".len();
         out.push_str(&wrap_text(&label, indent, r));
     }
+    if let (Some(suggestion), Some(start)) = (&d.suggestion, d.start_byte) {
+        if d.recovery.is_none() && !excerpt.is_empty() {
+            out.push_str(&format!("{pad} {bar}\n"));
+        }
+        let help = format!("did you mean `{suggestion}`?");
+        let label = format!("{pad} {} help: ", p.wrap(blue, "="));
+        let indent = gutter + " = help: ".len();
+        out.push_str(&wrap_text(&label, indent, &help));
+        if let Some(text) = source {
+            let end = d.end_byte.unwrap_or(start);
+            let plus = suggestion_excerpt(text, start, end, suggestion);
+            let gutter = plus.iter().filter_map(|l| l.number).max().map_or(gutter, |n| gutter.max(digits(n)));
+            let pad = " ".repeat(gutter);
+            out.push_str(&format!("{pad} {bar}\n"));
+            let green = "1;32";
+            for line in &plus {
+                match line.number {
+                    Some(n) => {
+                        let num = p.wrap(blue, &format!("{n:>gutter$}"));
+                        out.push_str(format!("{num} {bar} {}", line.text).trim_end());
+                        out.push('\n');
+                        let (lead, width) = line.caret;
+                        if width > 0 {
+                            let marks = p.wrap(green, &"+".repeat(width));
+                            out.push_str(&format!("{pad} {bar} {}{marks}\n", " ".repeat(lead)));
+                        }
+                    }
+                    None => out.push_str(&format!("{}\n", p.wrap(blue, &format!("{:>gutter$}", "...")))),
+                }
+            }
+        }
+    }
     out
 }
 
@@ -120,7 +154,7 @@ pub fn collapse_repeats(diags: &[Diagnostic]) -> Vec<Diagnostic> {
         };
         let found = folds.iter_mut().find(|(i, m, _)| {
             let o = &out[*i];
-            *m == masked && o.path == d.path && o.code == d.code && o.error == d.error && o.recovery == d.recovery
+            *m == masked && o.path == d.path && o.code == d.code && o.error == d.error && o.recovery == d.recovery && o.suggestion == d.suggestion
         });
         match found {
             Some((i, m, names)) => {
@@ -135,6 +169,18 @@ pub fn collapse_repeats(diags: &[Diagnostic]) -> Vec<Diagnostic> {
         }
     }
     out
+}
+
+/// The source line(s) with `start..end` replaced by `suggestion`, carets
+/// sized to the replacement so the renderer can draw a `+` gutter.
+fn suggestion_excerpt(text: &str, start: usize, end: usize, suggestion: &str) -> Vec<ExcerptLine> {
+    let start = floor_boundary(text, start.min(text.len()));
+    let end = floor_boundary(text, end.clamp(start, text.len()));
+    let mut replaced = String::with_capacity(text.len() - (end - start) + suggestion.len());
+    replaced.push_str(&text[..start]);
+    replaced.push_str(suggestion);
+    replaced.push_str(&text[end..]);
+    excerpt_lines(&replaced, start, start + suggestion.len())
 }
 
 struct ExcerptLine {
@@ -190,7 +236,51 @@ fn floor_boundary(text: &str, mut b: usize) -> usize {
 }
 
 fn display_width(s: &str) -> usize {
-    s.chars().map(|c| if c == '\t' { TAB.len() } else { 1 }).sum()
+    s.chars().map(char_width).sum()
+}
+
+/// Terminal columns one character occupies: tabs expand to `TAB` (matching
+/// the printed source row), East Asian Wide/Fullwidth characters take two
+/// columns, combining marks and other zero-width formatting characters take
+/// none, and everything else takes one.
+///
+/// An inline approximation of `unicode-width`, kept local so the CLI gains
+/// no new dependency: it covers the wide and zero-width ranges terminals
+/// agree on, and falls back to 1 for rarer complex-script combining marks,
+/// where terminal rendering varies anyway.
+fn char_width(c: char) -> usize {
+    if c == '\t' {
+        return TAB.len();
+    }
+    match c as u32 {
+        // C0/C1 controls never advance the terminal column.
+        0x00..=0x1F | 0x7F..=0x9F => 0,
+        // Combining marks and zero-width formatting characters.
+        0x0300..=0x036F | 0x0483..=0x0489 | 0x0591..=0x05BD | 0x05BF | 0x05C1..=0x05C2
+        | 0x05C4..=0x05C5 | 0x05C7 | 0x0610..=0x061A | 0x061C | 0x064B..=0x065F | 0x0670
+        | 0x06D6..=0x06DC | 0x06DF..=0x06E4 | 0x06E7..=0x06E8 | 0x06EA..=0x06ED
+        | 0x0E31 | 0x0E34..=0x0E3A | 0x0E47..=0x0E4E | 0x0EB1 | 0x0EB4..=0x0EB9
+        | 0x0EC8..=0x0ECD | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF
+        | 0xFE20..=0xFE2F | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x206F
+        | 0xFE00..=0xFE0F | 0xFEFF | 0xE0100..=0xE01EF => 0,
+        // East Asian Wide/Fullwidth: Hangul Jamo, CJK radicals through
+        // compatibility ideographs, fullwidth ASCII/punctuation, and the
+        // emoji blocks terminals render double-width.
+        0x1100..=0x115F | 0x231A..=0x231B | 0x2329..=0x232A | 0x23E9..=0x23EC | 0x23F0
+        | 0x23F3 | 0x25FD..=0x25FE | 0x2614..=0x2615 | 0x2648..=0x2653 | 0x267F | 0x2693
+        | 0x26A1 | 0x26AA..=0x26AB | 0x26BD..=0x26BE | 0x26C4..=0x26C5 | 0x26CE | 0x26D4
+        | 0x26EA | 0x26F2..=0x26F3 | 0x26F5 | 0x26FA | 0x26FD | 0x2705 | 0x270A..=0x270B
+        | 0x2728 | 0x274C | 0x274E | 0x2753..=0x2755 | 0x2757 | 0x2795..=0x2797 | 0x27B0
+        | 0x27BF | 0x2B1B..=0x2B1C | 0x2B50 | 0x2B55 | 0x2E80..=0x2E99 | 0x2E9B..=0x2EF3
+        | 0x2F00..=0x2FD5 | 0x2FF0..=0x2FFB | 0x3000..=0x3029 | 0x302E..=0x303E
+        | 0x3041..=0x3096 | 0x3099..=0x30FF | 0x3105..=0x312D | 0x3131..=0x318E
+        | 0x3190..=0x31BA | 0x31C0..=0x31E3 | 0x31F0..=0x321E | 0x3220..=0x3247
+        | 0x3250..=0x32FE | 0x3300..=0x4DBF | 0x4E00..=0xA48C | 0xA490..=0xA4C6
+        | 0xA960..=0xA97C | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF | 0xFE10..=0xFE19
+        | 0xFE30..=0xFE52 | 0xFE54..=0xFE66 | 0xFE68..=0xFE6B | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6 | 0x1F300..=0x1FAFF | 0x20000..=0x2FFFD | 0x30000..=0x3FFFD => 2,
+        _ => 1,
+    }
 }
 
 fn digits(n: usize) -> usize {
@@ -238,6 +328,7 @@ mod tests {
             code: "compiler".into(),
             message: "\\tilde is not supported by this compiler version".into(),
             recovery: recovery.map(str::to_string),
+            suggestion: None,
         }
     }
 
@@ -252,6 +343,7 @@ mod tests {
             code: "math_resource_profile".into(),
             message: format!("{name}: {rest}"),
             recovery: None,
+            suggestion: None,
         }
     }
 
@@ -325,6 +417,22 @@ mod tests {
     }
 
     #[test]
+    fn cjk_prefix_counts_display_width_not_char_count() {
+        // `中文测试` is 4 chars but 8 terminal columns, so the carets lead
+        // with 11 spaces (8 + space + `\(`), not 7.
+        let text = "\\documentclass{article}\n\\begin{document}\n中文测试 \\(\\tilde{c}\\) y\n\\end{document}\n";
+        let d = diag(text, "\\tilde", 6, None);
+        let out = render_full(&d, Some(text), false);
+        assert!(out.contains("3 | 中文测试 \\(\\tilde{c}\\) y\n  |            ^^^^^^\n"), "{out}");
+        // A combining mark adds no terminal column: `e` + U+0301 is one
+        // column, so the span after it leads with 1 space, not 2.
+        let text = "é \\x\n";
+        let d = diag(text, "\\x", 2, None);
+        let out = render_full(&d, Some(text), false);
+        assert!(out.contains("1 | é \\x\n  |   ^^\n"), "{out}");
+    }
+
+    #[test]
     fn long_multi_line_span_is_elided() {
         let text = "a\n\\begin{x}\n1\n2\n3\n4\n\\end{x}\nz\n";
         let start = text.find("\\begin").unwrap();
@@ -364,5 +472,41 @@ mod tests {
         let colored = render_full(&d, Some(text), true);
         assert!(colored.starts_with("\x1b[1;31merror[compiler]\x1b[0m"), "{colored:?}");
         assert!(colored.contains("\x1b[1;31m^\x1b[0m"), "{colored:?}");
+    }
+
+    #[test]
+    fn suggestion_prints_help_and_plus_gutter() {
+        let text = "\\documentclass{article}\n\\begin{document}\nHello $\\alpah$ world.\n\\end{document}\n";
+        let start = text.find("\\alpah").unwrap();
+        let mut d = diag(text, "\\alpah", 6, Some("typeset the command literally and continued"));
+        d.code = "unknown_command".into();
+        d.message = "\\alpah is not supported in math mode".into();
+        d.suggestion = Some("\\alpha".into());
+        assert_eq!(d.start_byte, Some(start));
+        let out = render_full(&d, Some(text), false);
+        assert!(out.contains("= help: did you mean `\\alpha`?\n"), "{out}");
+        assert!(out.contains("3 | Hello $\\alpah$ world.\n  |        ^^^^^^\n"), "{out}");
+        assert!(out.contains("3 | Hello $\\alpha$ world.\n  |        ++++++\n"), "{out}");
+        let short = d.line_text();
+        assert!(short.contains("(did you mean \\alpha?)"), "{short}");
+        let colored = render_full(&d, Some(text), true);
+        assert!(colored.contains("\x1b[1;32m++++++\x1b[0m"), "{colored:?}");
+    }
+
+    #[test]
+    fn no_suggestion_keeps_the_existing_recovery_snapshot() {
+        let text = "\\documentclass{article}\n\\begin{document}\nx \\(\\tilde{c}\\) y\n\\end{document}\n";
+        let d = diag(text, "\\tilde", 6, Some("skipped the command"));
+        assert_eq!(
+            render_full(&d, Some(text), false),
+            "error[compiler]: \\tilde is not supported by this compiler version\n \
+             --> notes.tex:3:5\n  \
+             |\n\
+             3 | x \\(\\tilde{c}\\) y\n  \
+             |     ^^^^^^\n  \
+             |\n  \
+             = recovery: skipped the command\n"
+        );
+        assert!(!d.line_text().contains("did you mean"), "{}", d.line_text());
     }
 }

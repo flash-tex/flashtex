@@ -29,7 +29,7 @@ Text \sout{{struck}} here.
 }
 
 fn page_summary(page: &flashtex_render_pipeline::display::Page) -> Vec<String> {
-    page.items
+    page.resident_items()
         .iter()
         .map(|item| match item {
             Item::GlyphRun(run) => format!("text:{:?}", run.text),
@@ -50,7 +50,7 @@ fn assert_text_and_rule(source: &str, needle: &str, want_height_pt: f64, want_to
     let page = &rendered.v2.pages[0];
     let summary = page_summary(page);
     let words: Vec<_> = page
-        .items
+        .resident_items()
         .iter()
         .filter_map(|item| match item {
             Item::GlyphRun(run) if run.text.contains(needle) => Some(run),
@@ -72,7 +72,7 @@ fn assert_text_and_rule(source: &str, needle: &str, want_height_pt: f64, want_to
     let want_h = Tick::from_tex_pt(want_height_pt).to_bp();
     let want_top = Tick::from_tex_pt(want_top_pt).to_bp();
     let rules: Vec<_> = page
-        .items
+        .resident_items()
         .iter()
         .filter_map(|item| match item {
             Item::Rule(rule) => Some(rule),

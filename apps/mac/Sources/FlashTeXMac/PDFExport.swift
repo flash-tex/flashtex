@@ -5,6 +5,10 @@ import FlashTeXProtocol
 
 /// Renders a runtime-v1 `compile_result` to PDF with CoreGraphics.
 ///
+/// No longer a user-facing export route: `File > Export PDF…` and `File > Print…`
+/// both go through `flashtex-pdf-exact` (`ExactPDFExport.swift`). What is left
+/// here paints the capture-proposal preview page (`ProposalPreview.swift`).
+///
 /// This draws exactly the positioned items the compiler reported — one PDF page
 /// per `pages` entry at `width_pt` × `height_pt`, each text item in a serif font
 /// at `font_size_pt` with its baseline at `baseline_y_pt` from the top of the
@@ -71,39 +75,6 @@ enum PDFExport {
             let line = CTLineCreateWithAttributedString(attributed)
             ctx.textPosition = CGPoint(x: t.xPt, y: page.heightPt - t.baselineYPt)
             CTLineDraw(line, ctx)
-        }
-    }
-}
-
-extension ShellModel {
-    /// Why `File > Export PDF…` would refuse right now, or nil if it would open
-    /// the save panel. Print… shares this predicate (`PrintController.exportWouldProceed`)
-    /// so the two commands do not copy the historical / no-result / v1-elided guards.
-    func exportPDFRefusal() -> String? {
-        if let why = historicalRefusal(of: "export") { return why }
-        guard let result else { return "Nothing to export: no compile result loaded." }
-        if result.pages.isEmpty, v1PagesElided {
-            return "The v1 layout pages were elided for the v2 pane (display-list-v2-only); use Export Exact PDF, or switch the v2 pane off and recompile."
-        }
-        return nil
-    }
-
-    /// `File > Export PDF…`: writes the current preview via `PDFExport.render`.
-    /// Reports the saved path (or failure) in `captureNote`.
-    func exportPDF() {
-        if let why = exportPDFRefusal() { captureNote = why; return }
-        guard let result else { return }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.pdf]
-        panel.nameFieldStringValue = "\(result.projectId)-r\(result.revision).pdf"
-        panel.message = "Export the preview's reported layout as PDF (not a TeX-engine PDF)"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            // Dark preview is a viewing mode only; the exported document is always white.
-            try PDFExport.render(result, dark: false).write(to: url, options: .atomic)
-            captureNote = "Exported \(result.pages.count) page\(result.pages.count == 1 ? "" : "s") to \(url.path)"
-        } catch {
-            captureNote = "PDF export failed: \(error.localizedDescription)"
         }
     }
 }

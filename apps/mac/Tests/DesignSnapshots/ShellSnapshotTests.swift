@@ -22,6 +22,16 @@ final class ShellSnapshotTests: XCTestCase {
                                            size: CGSize(width: 1440, height: 900))
     }
 
+    /// A healthy live preview at rest: the pages carry no chrome at all —
+    /// the page/zoom HUD is transient (hover, scroll, zoom) and the state
+    /// badge appears only when the pages are not the worker's current
+    /// result. The fixture shot above is the pinned-HUD counterpart.
+    func testMainWindowLivePreview() {
+        let model = DesignFixtures.liveProject()
+        assertWindowSurfaceBothAppearances(ContentView().environment(model).environmentObject(DesignFixtures.nearby()), named: "shell-live",
+                                           size: CGSize(width: 1440, height: 900))
+    }
+
     /// The minimum supported width: three columns must still be usable.
     func testMainWindowNarrow() {
         let model = DesignFixtures.project()
@@ -40,7 +50,7 @@ final class ShellSnapshotTests: XCTestCase {
     func testTabBar() {
         let model = DesignFixtures.project()
         assertSurfaceBothAppearances(DocumentTabBar().environment(model), named: "tabbar",
-                                     size: CGSize(width: 900, height: 30))
+                                     size: CGSize(width: 900, height: DS.Row.tab))
     }
 
     func testSidebar() {
@@ -61,7 +71,7 @@ final class ShellSnapshotTests: XCTestCase {
         let model = DesignFixtures.projectWithProblems()
         // Longer settle: the word count and breadcrumb are debounced.
         assertSurfaceBothAppearances(StatusBar().environment(model), named: "statusbar",
-                                     size: CGSize(width: 1440, height: 24), settle: 0.8)
+                                     size: CGSize(width: 1440, height: DS.Row.statusBar), settle: 0.8)
     }
 
     func testSettings() {

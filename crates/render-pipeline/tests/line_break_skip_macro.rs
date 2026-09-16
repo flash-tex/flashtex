@@ -107,7 +107,7 @@ fn baseline_of(text: &str, word: &str) -> f64 {
     let docs = [SourceDocument { path: "main.tex", text }];
     let r = render(&docs, "main.tex", 1, "line-break-skip", &fonts, &RenderOptions::default());
     assert_eq!(r.v2.pages.len(), 1, "expected a one-page document");
-    for item in &r.v2.pages[0].items {
+    for item in r.v2.pages[0].resident_items() {
         let Item::GlyphRun(run) = item else { continue };
         if run.text.trim_start().starts_with(word) {
             if let Some(g) = run.glyphs.first() {

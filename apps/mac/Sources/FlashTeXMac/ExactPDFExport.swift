@@ -1,15 +1,17 @@
 import AppKit
 import Foundation
 
-/// `File > Export PDF (exact, v2)…`: the loaded rendering-v2 display list is
-/// handed to `flashtex-pdf-exact from-v2` (crates/pdf), which embeds the
+/// `File > Export PDF…` (⌘⇧E) — the app's only PDF export route, and the bytes
+/// `File > Print…` sends to the printer. The loaded rendering-v2 display list
+/// is handed to `flashtex-pdf-exact from-v2` (crates/pdf), which embeds the
 /// exact font programs (GID-preserving CFF subsets), places every glyph by
 /// original GID at its exact tick position, writes typed rules and ToUnicode,
-/// and refuses anything it cannot express (alpha, images, missing fonts,
-/// non-integer ticks) naming the item — never a silent approximation.
+/// and refuses anything it cannot express (alpha, missing fonts, non-integer
+/// ticks) naming the item — never a silent approximation. `flashtex build`
+/// (the CLI) standardised on this same route.
 ///
-/// Runs off the main thread with the same drained pipes and timeout as the
-/// runtime-v1 export; the result is reported in `captureNote`.
+/// Runs off the main thread with drained pipes and a timeout; the result is
+/// reported in `captureNote`.
 @MainActor
 enum ExactPDFExport {
     /// $FLASHTEX_PDF_EXACT, the app bundle, then crates/pdf/target/{release,debug}.
@@ -42,7 +44,7 @@ enum ExactPDFExport {
         return dirs.filter { FileManager.default.fileExists(atPath: $0) }
     }
 
-    struct Outcome: Equatable {
+    struct Outcome: Equatable, Sendable {
         var exitCode: Int32
         var stdout: String
         var stderr: String
@@ -80,30 +82,65 @@ enum ExactPDFExport {
 }
 
 extension ShellModel {
-    /// Export the loaded v2 display list through the exact route. The list's
-    /// source JSON (already verified by the pane) is handed to the tool as is.
-    func exportPDFExact() {
-        guard case .loaded(let frame, let source)? = displayListV2 else {
-            captureNote = displayListV2?.isLoading == true ? "Nothing to export yet: a display list is still loading." : "Nothing to export: no v2 display list loaded (File > Open Display List (v2)…)."
-            return
+    /// Why `File > Export PDF…` would refuse right now, or nil if it would open
+    /// the save panel. `File > Print…` shares this predicate
+    /// (`PrintController.exportWouldProceed`) so the two commands cannot drift:
+    /// they print and write the same bytes from the same display list.
+    func exportPDFRefusal() -> String? {
+        if let why = historicalRefusal(of: "export") { return why }
+        guard let frame = displayListV2?.retained?.frame else {
+            return displayListV2?.isLoading == true
+                ? "Nothing to export yet: a display list is still loading."
+                : "Nothing to export: no rendering-v2 display list. Attach the render pipeline (⌘⇧R) and compile, or open a list with File > Open Display List (v2)…."
         }
-        let listURL: URL
-        do { listURL = try source.listFileURL() } catch { // a live frame's line is written to a temporary file (V2Source)
-            captureNote = "Exact export: could not write the live display list to a file: \(error.localizedDescription)"
-            return
+        if frame.list.pages.isEmpty {
+            return "Nothing to export: this compile produced no pages."
         }
-        guard let tool = ExactPDFExport.locateTool() else {
-            captureNote = "No flashtex-pdf-exact found (build crates/pdf or set FLASHTEX_PDF_EXACT); exact export unavailable."
-            return
+        if frame.list.window != nil, wholeDocumentProducer == nil {
+            // display-list-v2-window §4.1: a windowed reply is an incomplete
+            // view and never the source of a PDF export or a print job. With
+            // the render pipeline available the whole document is re-rendered
+            // instead (WholeDocumentList.swift); without it, say so.
+            let window = frame.list.window!
+            return "Cannot export: this document is too large to send in one reply, so the preview is showing a page window (pages \(window.firstPage)–\(window.firstPage + window.pageCount - 1) of \(window.documentPageCount)). Exporting it needs the render pipeline: attach it with ⌘⇧R, build crates/render-pipeline, or run `flashtex build` on the command line."
         }
+        if ExactPDFExport.locateTool() == nil {
+            return "No flashtex-pdf-exact found (build crates/pdf, or set FLASHTEX_PDF_EXACT); PDF export is unavailable."
+        }
+        return nil
+    }
+
+    /// `File > Export PDF…`: the loaded v2 display list through the exact
+    /// route. The list's source JSON (already verified by the pane) is handed
+    /// to the tool as is.
+    func exportPDF() {
+        if let why = exportPDFRefusal() { captureNote = why; return }
+        // `retained`, not `.loaded`: while a newer list is being verified the
+        // pane keeps showing the last verified frame, and Export writes exactly
+        // what the pane is showing.
+        guard let (frame, _) = displayListV2?.retained, let tool = ExactPDFExport.locateTool() else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
-        panel.nameFieldStringValue = "\(frame.list.projectId)-r\(frame.list.revision)-exact.pdf"
-        panel.message = "Export the v2 display list through flashtex-pdf-exact from-v2 (exact glyphs by original GID, embedded font programs)"
+        panel.nameFieldStringValue = "\(frame.list.projectId)-r\(frame.list.revision).pdf"
+        panel.message = "Export the document through flashtex-pdf-exact (exact glyphs by original GID, embedded font programs)"
+        // The destination is chosen before any long re-render, so the user is
+        // never left waiting on a panel that has not appeared yet.
         guard panel.runModal() == .OK, let out = panel.url else { return }
         // The panel already asked about overwriting: whatever is on disk now is
         // what the user approved. Any later change is refused (ExportSession).
-        exportPDFExact(listURL: listURL, tool: tool, destination: .recordingCurrentDisk(out))
+        let destination = ExportSession.Destination.recordingCurrentDisk(out)
+        Task { @MainActor in
+            // A windowed frame re-renders the whole document first
+            // (WholeDocumentList.swift); an unwindowed one is used as is.
+            switch await exportListURL() {
+            case .failure(let why):
+                captureNote = why.reason
+            case .success(let list):
+                exportPDFExact(listURL: list.url, tool: tool, destination: destination) { _ in
+                    if list.temporary { try? FileManager.default.removeItem(at: list.url) }
+                }
+            }
+        }
     }
 
     /// Non-interactive core (tests, automation) in the pre-session shape:
