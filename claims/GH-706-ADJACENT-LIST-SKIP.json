@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/adjacent-list-skip",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/712",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T05:49:06Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-706-ADJACENT-LIST-SKIP",
-  "updated_utc": "2026-09-16T05:49:06Z"
+  "updated_utc": "2026-09-16T06:17:55Z"
 }
