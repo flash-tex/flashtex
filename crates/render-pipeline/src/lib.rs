@@ -25,6 +25,7 @@ pub mod incremental;
 pub mod listings;
 pub mod longtable;
 pub mod mathalpha;
+pub mod memsize;
 pub mod mathfont;
 pub mod mathgrid;
 pub mod mathtex;
@@ -45,7 +46,7 @@ pub mod toc;
 pub mod typeset;
 pub mod v1;
 
-pub use display::DisplayList;
+pub use display::{DisplayList, PageWindow};
 pub use fonts::FontSet;
 pub use incremental::RenderCache;
 pub use style::Stylesheet;
@@ -57,6 +58,10 @@ use flashtex_compiler::parser::SourceDocument;
 pub struct Rendered {
     /// Display list v2 (the authoritative geometry).
     pub v2: DisplayList,
+    /// The effective page window, when this render was windowed
+    /// (`protocol/proposals/display-list-v2-window.md`). `None` is a complete
+    /// compile: every page's items were built.
+    pub window: Option<PageWindow>,
     /// Wall-clock milliseconds spent in `render` (parse + layout + output).
     pub elapsed_ms: f64,
     /// Layout passes run (1 unless `\pageref` needed page numbers).
@@ -143,6 +148,32 @@ pub fn render_cached(
     options: &RenderOptions,
     cache: Option<&RenderCache>,
 ) -> Rendered {
+    render_windowed(documents, entry_path, revision, project_id, fonts, options, cache, None)
+}
+
+/// [`render_cached`] materialising only `window`'s pages.
+///
+/// Layout still runs over the whole document — page breaking, `\pageref`,
+/// floats and contents lists are global and a window over them would change
+/// the output. Only assembly is windowed: pages outside it are present, laid
+/// out and measured, with [`display::PageContent::Elided`] instead of items.
+/// `window == None` is [`render_cached`], byte for byte.
+///
+/// A windowed result is an incomplete view, not a complete compile: it must
+/// not be exported to PDF, used as a delta base, or used to authorise a source
+/// action on a page it did not materialise
+/// (`protocol/proposals/display-list-v2-window.md` §4.1).
+#[allow(clippy::too_many_arguments)]
+pub fn render_windowed(
+    documents: &[SourceDocument<'_>],
+    entry_path: &str,
+    revision: u64,
+    project_id: &str,
+    fonts: &FontSet,
+    options: &RenderOptions,
+    cache: Option<&RenderCache>,
+    window: Option<PageWindow>,
+) -> Rendered {
     let started = std::time::Instant::now();
     // FT-063: float environments are blanked (same byte length) before the
     // compiler parses the document and are laid out by `typeset::floatpage`.
@@ -176,10 +207,19 @@ pub fn render_cached(
     );
     #[cfg(not(feature = "request-date"))]
     let parsed = flashtex_compiler::parser::parse_project(&parse_docs, entry_path);
-    let (float_numbers, float_label_values) = floats::number(&float_envs);
-    let mut image_cache = floats::ImageCache::default();
+    // report/book number floats within the chapter (`floats::number`).
+    let float_chapters = texts.get(documents.iter().position(|d| d.path == entry_path).unwrap_or(0)).and_then(|t| flashtex_class_geometry::DocumentSetup::from_preamble(t)).and_then(|s| match s.class {
+        flashtex_class_geometry::ClassKind::Report => Some(false),
+        flashtex_class_geometry::ClassKind::Book => Some(true),
+        _ => None,
+    });
     let paths: Vec<&str> = documents.iter().map(|d| d.path).collect();
     let entry_index = documents.iter().position(|d| d.path == entry_path).unwrap_or(0);
+    // Floats are numbered, and listed, in the order the `\input`/`\include`
+    // tree is read, not in `documents` order.
+    let reading_order = adapter::reading_order(&texts, &paths, entry_index);
+    let (float_numbers, float_label_values) = floats::number(&float_envs, &texts, &reading_order, float_chapters);
+    let mut image_cache = floats::ImageCache::default();
     // The compiler does not know `tikzpicture`: it reports the environment
     // and every TikZ command inside it, and the pipeline typesets the
     // picture itself (`adapter` / `tikz`). Those compiler diagnostics are
@@ -197,7 +237,11 @@ pub fn render_cached(
     let entry_text = texts.get(entry_index).copied().unwrap_or("");
     let has_lists = toc::has_lists(entry_text);
     let has_class = adapter::class_options(entry_text).is_some();
-    labels.floats = toc::float_entries(&float_envs, &documents.iter().map(|d| d.text).collect::<Vec<_>>());
+    labels.floats = toc::float_entries(&float_envs, &documents.iter().map(|d| d.text).collect::<Vec<_>>(), &float_numbers);
+    if has_lists && listings::present(&texts) {
+        labels.floats.extend(toc::listing_entries(&texts));
+    }
+    labels.reading_order = reading_order;
     // Entry titles from source bytes (`\addcontentsline`, `\chapter`,
     // `\part`, captions) are set as body text: one parse per document.
     // A `listings` caption may hold any body command
@@ -218,9 +262,26 @@ pub fn render_cached(
     let superseded = toc::superseded_commands(entry_text);
     let is_superseded = |s: &flashtex_compiler::Span| s.document.0 == entry_index && superseded.binary_search(&s.start).is_ok();
     let max_passes = if adapter::Labels::needs_pages(&parsed) || has_lists { MAX_LABEL_PASSES } else { 1 };
+    // The previous request's converged page tables seed the first pass --
+    // the role LaTeX's `.aux` file plays between runs. A keystroke that
+    // moves no page number then converges on pass 1 and the page-number
+    // relayout is saved; convergence is verified against the seed exactly
+    // as it is verified against a pass's own output below, so an edit that
+    // does move a page relays out with fresh tables as before.
+    if max_passes > 1 {
+        if let Some(c) = cache {
+            if let Some((pages, toc_pages)) = c.label_seed(project_id) {
+                labels.pages = pages;
+                labels.toc_pages = toc_pages;
+            }
+        }
+    }
     let mut passes = 0;
     loop {
         passes += 1;
+        if let Some(c) = cache {
+            c.note_label_pass();
+        }
         let doc = adapter::adapt_cached(&texts, entry_index, &parsed, options, &labels, cache);
         let mut diagnostics: Vec<display::Diagnostic> = parsed
             .diagnostics
@@ -261,10 +322,10 @@ pub fn render_cached(
         } else {
             (Vec::new(), Vec::new())
         };
-        // `prepare` makes one spec per float, in `float_envs` order: the
+        // `prepare` makes one spec per float read, in `float_envs` order: the
         // caption's `\addcontentsline` lands on the float's page.
         if has_lists {
-            let keys = float_envs.iter().enumerate().flat_map(|(d, envs)| (0..envs.len()).map(move |i| toc::float_key(d, i)));
+            let keys = float_numbers.iter().enumerate().flat_map(|(d, nums)| nums.iter().enumerate().filter(|(_, n)| n.is_some()).map(move |(i, _)| toc::float_key(d, i)));
             for (spec, key) in float_specs.iter_mut().zip(keys) {
                 spec.labels.push(key);
             }
@@ -272,6 +333,7 @@ pub fn render_cached(
         diagnostics.extend(float_diagnostics);
         let mut ctx = typeset::Context::with_texts(fonts, &doc.style, &paths, &texts);
         ctx.set_math_colors(doc.math_colors.clone());
+        ctx.set_reading_order(labels.reading_order.clone());
         typeset::multicol::attach(&mut ctx, &multicol_scans);
         let laid = typeset::build_with_floats(&mut ctx, &doc, cache, &float_specs);
         diagnostics.extend(ctx.take_diagnostics());
@@ -281,6 +343,9 @@ pub fn render_cached(
             pages.retain(|key, _| !toc::is_key(key));
             if pages == labels.pages && toc_pages == labels.toc_pages {
                 // Converged: the numbers shown are the pages they sit on.
+                if let Some(c) = cache {
+                    c.store_label_seed(project_id, &pages, &toc_pages);
+                }
             } else if passes < max_passes {
                 labels.pages = pages;
                 labels.toc_pages = toc_pages;
@@ -295,8 +360,9 @@ pub fn render_cached(
                 ));
             }
         }
-        let v2 = typeset::assemble(project_id, revision, documents, &doc.style, fonts, laid, diagnostics, cache, doc.page_color, doc.default_color);
+        let v2 = typeset::assemble_windowed(project_id, revision, documents, &doc.style, fonts, laid, diagnostics, cache, doc.page_color, doc.default_color, window);
         return Rendered {
+            window: v2.window,
             v2,
             elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
             passes,

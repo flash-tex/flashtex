@@ -1,0 +1,291 @@
+{
+ "fixture": "127-size-env-paragraphs.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Before.",
+    "x": 72.0,
+    "y_top": 81.963
+   },
+   {
+    "text": "One",
+    "x": 72.0,
+    "y_top": 92.922
+   },
+   {
+    "text": "two",
+    "x": 92.2784,
+    "y_top": 92.922
+   },
+   {
+    "text": "three",
+    "x": 110.5152,
+    "y_top": 92.922
+   },
+   {
+    "text": "four",
+    "x": 134.9136,
+    "y_top": 92.922
+   },
+   {
+    "text": "five",
+    "x": 154.9616,
+    "y_top": 92.922
+   },
+   {
+    "text": "six",
+    "x": 172.6846,
+    "y_top": 92.922
+   },
+   {
+    "text": "seven",
+    "x": 187.6343,
+    "y_top": 92.922
+   },
+   {
+    "text": "eight",
+    "x": 213.0917,
+    "y_top": 92.922
+   },
+   {
+    "text": "nine",
+    "x": 236.7029,
+    "y_top": 92.922
+   },
+   {
+    "text": "ten",
+    "x": 257.4933,
+    "y_top": 92.922
+   },
+   {
+    "text": "eleven",
+    "x": 274.1968,
+    "y_top": 92.922
+   },
+   {
+    "text": "twelve",
+    "x": 302.6786,
+    "y_top": 92.922
+   },
+   {
+    "text": "thirteen",
+    "x": 331.6696,
+    "y_top": 92.922
+   },
+   {
+    "text": "fourteen",
+    "x": 367.3317,
+    "y_top": 92.922
+   },
+   {
+    "text": "fifteen",
+    "x": 404.2733,
+    "y_top": 92.922
+   },
+   {
+    "text": "sixteen",
+    "x": 433.0115,
+    "y_top": 92.922
+   },
+   {
+    "text": "seventeen",
+    "x": 464.8637,
+    "y_top": 92.922
+   },
+   {
+    "text": "eighteen",
+    "x": 506.9726,
+    "y_top": 92.922
+   },
+   {
+    "text": "nineteen",
+    "x": 72.0,
+    "y_top": 103.88
+   },
+   {
+    "text": "twenty",
+    "x": 108.868,
+    "y_top": 103.88
+   },
+   {
+    "text": "twentyone",
+    "x": 138.8275,
+    "y_top": 103.88
+   },
+   {
+    "text": "twentytwo",
+    "x": 182.345,
+    "y_top": 103.88
+   },
+   {
+    "text": "twentythree.",
+    "x": 226.6408,
+    "y_top": 103.88
+   },
+   {
+    "text": "Second",
+    "x": 72.0,
+    "y_top": 115.836
+   },
+   {
+    "text": "paragraph",
+    "x": 103.238,
+    "y_top": 115.836
+   },
+   {
+    "text": "in",
+    "x": 147.3043,
+    "y_top": 115.836
+   },
+   {
+    "text": "small.",
+    "x": 158.0595,
+    "y_top": 115.836
+   },
+   {
+    "text": "After",
+    "x": 72.0,
+    "y_top": 127.791
+   },
+   {
+    "text": "text.",
+    "x": 98.0392,
+    "y_top": 127.791
+   },
+   {
+    "text": "Group",
+    "x": 72.0,
+    "y_top": 138.75
+   },
+   {
+    "text": "one",
+    "x": 100.0774,
+    "y_top": 138.75
+   },
+   {
+    "text": "two",
+    "x": 116.2985,
+    "y_top": 138.75
+   },
+   {
+    "text": "three",
+    "x": 133.0289,
+    "y_top": 138.75
+   },
+   {
+    "text": "four",
+    "x": 155.93,
+    "y_top": 138.75
+   },
+   {
+    "text": "five",
+    "x": 174.4716,
+    "y_top": 138.75
+   },
+   {
+    "text": "six",
+    "x": 190.6972,
+    "y_top": 138.75
+   },
+   {
+    "text": "seven",
+    "x": 204.1495,
+    "y_top": 138.75
+   },
+   {
+    "text": "eight",
+    "x": 228.1005,
+    "y_top": 138.75
+   },
+   {
+    "text": "nine",
+    "x": 250.2144,
+    "y_top": 138.75
+   },
+   {
+    "text": "ten",
+    "x": 269.5074,
+    "y_top": 138.75
+   },
+   {
+    "text": "eleven",
+    "x": 284.7045,
+    "y_top": 138.75
+   },
+   {
+    "text": "twelve",
+    "x": 311.6799,
+    "y_top": 138.75
+   },
+   {
+    "text": "thirteen",
+    "x": 339.1736,
+    "y_top": 138.75
+   },
+   {
+    "text": "fourteen",
+    "x": 373.3383,
+    "y_top": 138.75
+   },
+   {
+    "text": "fifteen",
+    "x": 408.7825,
+    "y_top": 138.75
+   },
+   {
+    "text": "sixteen",
+    "x": 436.0143,
+    "y_top": 138.75
+   },
+   {
+    "text": "seventeen",
+    "x": 466.3692,
+    "y_top": 138.75
+   },
+   {
+    "text": "eighteen",
+    "x": 506.9717,
+    "y_top": 138.75
+   },
+   {
+    "text": "nineteen",
+    "x": 72.0,
+    "y_top": 149.709
+   },
+   {
+    "text": "twenty",
+    "x": 108.868,
+    "y_top": 149.709
+   },
+   {
+    "text": "twentyone",
+    "x": 138.8275,
+    "y_top": 149.709
+   },
+   {
+    "text": "twentytwo",
+    "x": 182.345,
+    "y_top": 149.709
+   },
+   {
+    "text": "twentythree.",
+    "x": 226.6408,
+    "y_top": 149.709
+   },
+   {
+    "text": "Last.",
+    "x": 72.0,
+    "y_top": 161.664
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  []
+ ]
+}

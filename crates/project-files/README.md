@@ -1,7 +1,8 @@
 # flashtex-project-files
 
-Original Rust project file layer for FlashTeX. Zero external crates, edition
-2024. Owner: `mac-project-files` (Claude Code subagent, parent `mac-claude-a`).
+Original Rust project file layer for FlashTeX. Edition 2024; its only
+dependencies are `unicode-normalization` and `libc` (the rooted file
+operations' C bindings). Owner: `mac-project-files` (Claude Code subagent, parent `mac-claude-a`).
 
 It answers four questions the single-file Mac shell cannot today: *which files
 make up this project*, *what exactly is in them* (content identity), *how do I
@@ -126,21 +127,29 @@ pub const DEFAULT_READ_LIMIT: u64 = 64 MiB;
 ```
 
 **Path binding.** `ProjectRoot::open` opens the root directory itself with
-`O_DIRECTORY|O_NOFOLLOW` (a symlinked root is refused; components *above*
-the root are the caller's choice and not inspected). Every read, save and
+`O_DIRECTORY|O_NOFOLLOW`, so a root whose final component is a symlink is
+refused. **Symlinks among the root's ancestors are followed, by design:**
+the parent of the root is opened by path with ordinary resolution, so for
+`/Users/me/link/project` with `link -> /Volumes/work` the pinned root is
+`/Volumes/work/project`. The caller chose that path, and symlinked home
+directories, checkouts and mounts are common. The refuse-all-symlinks policy
+applies *inside* the root, from the pinned descriptor onward; changing an
+ancestor later does not move a root that is already open. Every read, save and
 remove then walks the normalized `ProjectPath` one component at a time with
 `openat(dirfd, component, O_DIRECTORY|O_NOFOLLOW)` from that handle, and
 opens the final file with `openat(dirfd, name, O_NOFOLLOW)`. Any symlink —
 parent directory or the file — is `Refused::SymlinkComponent`, with `force`
 or without. Each walked directory's `..` is opened and its device/inode
 compared with the handle it was reached from (`Refused::EscapesRoot` on
-mismatch). Because `std` has no `openat` family, `sys.rs` declares
-`openat`/`renameat`/`unlinkat`/`mkdirat`/`flock` directly against the C
-library `std` already links (no external crate). Flag values are known for
-macOS and Linux x86_64/aarch64; other targets get `Refused::Unsupported`
-before anything is attempted. On macOS a symlink-to-directory opened this way
-reports `ENOTDIR`; `sys::open_dir_at_nofollow` probes once more without
-`O_DIRECTORY` so the refusal is classified as a symlink on both platforms.
+mismatch). Because `std` has no `openat` family, `sys.rs` calls
+`openat`/`fstatat`/`renameat`/`unlinkat`/`mkdirat`/`flock` through the
+`libc` crate, which supplies every symbol, flag, errno value and struct
+layout per target; nothing is declared by hand. Rooted operations are enabled
+on macOS and on Linux (glibc or musl); other targets get
+`Refused::Unsupported` before anything is attempted. On macOS a symlink-to-directory opened this way
+reports `ENOTDIR`; `sys::open_dir_at_nofollow` then classifies the entry with
+`fstatat(AT_SYMLINK_NOFOLLOW)` (never a second open) so the refusal is
+classified as a symlink on both platforms.
 
 **Reads** are bounded: `read(path, limit)` refuses files larger than `limit`
 (`Refused::TooLarge`) and non-regular files, and returns the bytes, hash,
@@ -154,15 +163,51 @@ mtime, identity and mode from the same open descriptor.
    Unless `force`, compare with `expected` → `ModifiedExternally`,
    `DeletedExternally` or `AlreadyExists`, nothing written.
 3. `openat(O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW)` a temp file
-   `.<name>.flashtex-tmp-<pid>-<n>` in the same directory, write, `fsync`,
-   `fchmod` to the existing mode.
+   `.<name>.flashtex-tmp-<32 hex digits>` in the same directory — 128 bits
+   from the OS random source (`arc4random_buf` on macOS, the `getrandom`
+   system call or `/dev/urandom` on Linux), so the name cannot be predicted
+   or pre-planted — then write, `fsync`, `fchmod` to the existing mode. Its
+   device/inode is taken from the descriptor, which stays open. Cleanup on
+   any failure unlinks the temp name only while it still names that file.
 4. Re-observe the target. If it is now a symlink → `Refused` (temp removed).
    If, unless `force`, anything changed since step 2 (a file appeared,
    disappeared, or its identity/size/mtime/hash moved) →
    `Conflict{ModifiedDuringSave, ours: hash we wrote, theirs: observed}`,
    temp removed, target untouched. This is where `Expected::NewFile` refuses
    to clobber a target created meanwhile.
-5. `renameat` temp over target, then `fsync` the directory. A directory
+5. Classify the target once more with `fstatat(AT_SYMLINK_NOFOLLOW)`: a
+   symlink or special file is refused (with `force` or without), and unless
+   `force` a different file than step 4 saw is `ModifiedDuringSave`.
+   Immediately before every name-based install call, `fstatat` the temp name:
+   it must still name the file from step 3 (same device/inode), otherwise the
+   save is refused and nothing is installed. Immediately after the install,
+   the target must name that file, otherwise `ModifiedDuringSave` (never
+   success).
+   - **Absent target (fail-closed no-clobber):** install the temp file with
+     `renameat2(RENAME_NOREPLACE)` (Linux) / `renameatx_np(RENAME_EXCL)`
+     (macOS). Where the filesystem does not support that, hard-link it —
+     `linkat` also fails with `EEXIST` atomically. On Linux the link is bound
+     to the open descriptor (`linkat(fd, "", AT_EMPTY_PATH)`, else
+     `/proc/self/fd/N` with `AT_SYMLINK_FOLLOW`), so a swap of the temp name
+     cannot redirect it; otherwise, and on macOS, `linkat` of the re-checked
+     temp name. Then `unlinkat(temp)`, only while the temp name still names
+     the saved file, retried once; if it still fails the save returns an
+     error naming the leftover link (the file is installed and verified, but
+     success is not reported). An entry that appeared after the check is never
+     replaced: it is refused if it is a symlink or special file, otherwise
+     `ModifiedDuringSave` unless `force`. If neither primitive is supported,
+     a non-forced save fails with an `Unsupported` I/O error and writes
+     nothing; only `force` falls back to a plain `renameat`.
+   - **Existing target:** `renameat` temp over target.
+
+   Residual of the temp check: `renameat` (and the name-based `linkat`) binds
+   a name, so a process that can write the directory, has listed the random
+   temp name, and swaps it between the check and the call gets its entry
+   moved or linked to the target — as a directory entry, never followed —
+   and the save reports a conflict; that process could have replaced the
+   target entry directly anyway.
+
+   Then `fsync` the directory. A directory
    fsync failure is `SaveError::DirectorySync` — a hard error; the rename has
    already happened and durability is unknown, so re-read before trusting.
 6. Re-open the target with `O_NOFOLLOW`; its device/inode must equal the temp
@@ -219,6 +264,7 @@ passes it around.
 let snap = Snapshot::take(root, graph.text_paths())?;   // hashes every path
 let diff = snap.diff()?;                                  // rehash only if mtime/size moved
 diff.changes  // ExternalChange { path, kind: Created|Modified|Deleted, before, after }
+diff.root_replaced  // the root path no longer names the directory `take` pinned
 diff.conflicts(&dirty_paths)  // Conflict { path, kind, local_dirty, before, after }
 snap.record_own_write(&receipt.path, receipt.bytes, receipt.mtime, receipt.sha256);
 ```
@@ -230,7 +276,19 @@ the three-way case). Creations are changes but not conflicts. A file rewritten
 with identical bytes is not reported. Missing paths (e.g. a not-yet-created
 include) are tracked so their creation is reported.
 
-`Poller` wraps a snapshot: `poll()` returns changes and advances;
+**Pinned root.** `Snapshot::take` opens the root once and keeps that
+descriptor (clones and the snapshot a `Diff` carries forward share it).
+`track` and `diff` read through it and never re-resolve the root path, so a
+directory renamed into the root's place is never stat'ed or hashed. `diff`
+compares the pinned descriptor's device/inode with whatever the path names
+now; if the root was renamed, removed or replaced (by a directory or a
+symlink) it sets `root_replaced`, while `changes` keep describing the pinned
+directory. A root that did not exist at `take` is opened and pinned the
+first time it exists.
+
+`Poller` wraps a snapshot: `poll()` returns changes and advances (a replaced
+root is an `io::Error` wrapping `RootReplaced`, and the poll does not
+advance);
 `run(interval, deadline, |result| keep_going)` loops on the calling thread.
 There is deliberately no FSEvents dependency: the native app can call
 `Snapshot::diff` from an FSEvents callback later and keep the same conflict
@@ -295,10 +353,50 @@ with its `check()` result.
 - **mtime granularity.** A same-size rewrite within the filesystem's mtime
   resolution (nanoseconds on APFS, coarser elsewhere) is not rehashed by
   `Snapshot::diff`. Callers can force a rehash with a fresh `Snapshot::take`.
-- **Graph discovery and `Snapshot` read through OS paths.** They are
-  read-only and diagnose symlink escapes via canonicalization, but they are
-  not the rooted reader; use `ProjectRoot::read` when the bytes will be
-  trusted for a save decision.
+- **Rename over, and unlink of, an existing entry are checked, not
+  compare-and-swap.** Graph discovery, `Snapshot`, the save-path
+  normalization fallback and the recovery journal listing all stat and list
+  through the pinned root descriptor, never a path string. A save classifies
+  an existing target with `fstatat(AT_SYMLINK_NOFOLLOW)` immediately before
+  `renameat`, and `remove` does the same before `unlinkat`. POSIX has no
+  "rename over / unlink only if this is still that inode", so an entry
+  swapped in between the check and the call, by a process that can write the
+  project directory, is still replaced or removed. That is the whole
+  residual: the effect is limited to replacing or removing that one
+  directory entry inside the pinned directory. Neither call follows a
+  symlink (the link itself is replaced or removed; its target is never
+  opened, written or deleted), neither can replace or remove a directory,
+  and nothing outside the pinned directory is affected. A save's
+  post-rename verification still confirms the saved file is what sits at
+  the name. Creating an absent target has no such window (see step 5). An
+  exchange-then-verify rename (`RENAME_EXCHANGE`/`RENAME_SWAP` plus a swap
+  back) was considered and not adopted: removing the displaced entry has the
+  same check-then-unlink window, so it moves the residual instead of closing
+  it.
+- **Symlinks above the root are followed.** Only the root's own final
+  component and everything inside it are refused as symlinks (see *Path
+  binding*). Choosing a path through a symlinked ancestor chooses the
+  directory it leads to.
+- **Special files are classified before they are opened, not atomically.**
+  An entry is `fstatat(AT_SYMLINK_NOFOLLOW)`-classified on the pinned
+  directory descriptor and opened only if it is a regular file. POSIX cannot
+  make the classification and the open one step, so the entry can be swapped
+  in between. A symlink swapped in is still refused by `O_NOFOLLOW` and never
+  followed. A FIFO swapped in does not block the open, because of
+  `O_NONBLOCK`, and the `fstat` of the opened descriptor refuses it. A
+  device node swapped in is opened non-blocking and then refused by that
+  `fstat`, and nothing is read from it. Not hanging and not triggering a
+  driver's open side effect are **best-effort** for devices: they rest on
+  `O_NONBLOCK`, the pre-open `fstatat` and the post-open `fstat`, and
+  whether the driver honours `O_NONBLOCK` is up to the driver.
+- **Race tests.** Each check-then-use window in `save.rs` calls a
+  thread-local test hook (`save::race_hook`, not API). The tests swap the
+  entry from inside the hook, so the worst interleaving is exercised
+  deterministically on every run. The hook module and every firing point
+  are compiled only under `cfg(test)` or the non-default `race-hook` cargo
+  feature, which the crate's own integration tests enable through a self
+  dev-dependency; normal and release builds contain no hook code. The older
+  timing-based stress tests are kept as extra coverage.
 - **Not the compiler.** The scanner does no macro expansion, no catcode
   changes, no `\import`/`\subfile`/`\InputIfFileExists`, and does not follow
   references inside `\newcommand` bodies or conditionals. Arguments containing
@@ -310,7 +408,7 @@ with its `check()` result.
 - `.flashtex/` (lock file and journal) lives inside the project root and is
   not hidden from other tools; the native app should add it to VCS ignore
   rules if desired.
-- Targets other than macOS and Linux x86_64/aarch64 have no rooted file
+- Targets other than macOS and Linux (glibc or musl) have no rooted file
   operations (`Refused::Unsupported`); the crate itself is Unix-only.
 
 ### JSON Lines helper (`src/bin/flashtex-project-files.rs`)

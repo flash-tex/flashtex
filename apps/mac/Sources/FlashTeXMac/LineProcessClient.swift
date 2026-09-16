@@ -113,6 +113,15 @@ final class LineProcessClient {
             self.stdout.fileHandleForReading.readabilityHandler = nil
             self.stderr.fileHandleForReading.readabilityHandler = nil
             self.consume(self.stdout.fileHandleForReading.readDataToEndOfFile())
+            // Drain stderr as well as stdout: clearing the readability handler
+            // stops delivery, so the final burst -- the one that says why the
+            // process is exiting -- was being dropped (same fix as
+            // PreviewControllerClient).
+            let trailing = self.stderr.fileHandleForReading.readDataToEndOfFile()
+            if !trailing.isEmpty {
+                let s = String(decoding: trailing, as: UTF8.self)
+                self.queue.async { self.events(.stderr(s)) }
+            }
             let pendingBytes = self.stateLock.withLock { self.splitter.pendingBytes }
             if pendingBytes > 0 {
                 self.queue.async { self.events(.protocolViolation("\(self.label) exited with \(pendingBytes) unterminated trailing bytes")) }
