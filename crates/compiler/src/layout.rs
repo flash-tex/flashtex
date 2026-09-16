@@ -2324,6 +2324,9 @@ fn heading_size(level: u8, body_size: f64) -> f64 {
 /// identically to before this existed, even for the 11pt class, where this
 /// compiler's own body size is a literal 11pt rather than real LaTeX's
 /// 10.95pt normalsize (`class_size_pt`'s documented approximation).
+///
+/// Shared with the `\settowidth` box measurer (`crate::expansion`), which
+/// resolves a run's size the same way `emit` does for laid-out text.
 pub(crate) fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f64 {
     // tiny, scriptsize, footnotesize, small, large, Large, LARGE, huge, Huge
     // (normalsize is handled by the caller before reaching here).
@@ -2354,7 +2357,10 @@ pub(crate) fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f6
 /// Height above and depth below the baseline of `font` at `size`, from the
 /// face's declared ascender/descender. Symbol declares none (its AFM bounding
 /// box is far taller than its glyphs), so it uses Times-Roman's.
-fn font_extents(font: Font, size: f64) -> (f64, f64) {
+///
+/// Shared with the `\settoheight`/`\settodepth` box measurer
+/// (`crate::expansion`): an hbox's height/depth is the maximum over its runs.
+pub(crate) fn font_extents(font: Font, size: f64) -> (f64, f64) {
     use flashtex_font_engine::Face as _;
     let font = if font == Font::Symbol {
         Font::TimesRoman
