@@ -272,23 +272,29 @@ pub fn adjust_shortfall(
     if shortfall == 0 {
         return 0;
     }
-    let st = font_stretch + margin_stretch;
-    let sh = font_shrink + margin_shrink;
-    if shortfall > 0 && st > 0 {
+    // In i64: a caller that clamps an out-of-range line to `i32::MIN` must
+    // not overflow `-shortfall` or the stretch sums. In-range values give
+    // exactly the i32 results.
+    let shortfall = i64::from(shortfall);
+    let st = i64::from(font_stretch) + i64::from(margin_stretch);
+    let sh = i64::from(font_shrink) + i64::from(margin_shrink);
+    let ratio = |max: i32| i64::from(max / par.step.max(1)).max(1);
+    let adjusted = if shortfall > 0 && st > 0 {
         if st > shortfall {
-            (st / (par.max_stretch / par.step)) / 2
+            (st / ratio(par.max_stretch)) / 2
         } else {
             shortfall - st
         }
     } else if shortfall < 0 && sh > 0 {
         if sh > -shortfall {
-            -((sh / (par.max_shrink / par.step)) / 2)
+            -((sh / ratio(par.max_shrink)) / 2)
         } else {
             shortfall + sh
         }
     } else {
         shortfall
-    }
+    };
+    adjusted.clamp(i64::from(Scaled::MIN), i64::from(Scaled::MAX)) as Scaled
 }
 
 /// `hpack(p, w, cal_expand_ratio)`: the line's `font_expand_ratio`
@@ -314,6 +320,24 @@ pub fn line_expand_ratio(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adjust_shortfall_is_total_at_the_scaled_limits() {
+        // Fuzz finding (render-pipeline fuzz_render, `pdftex.rs:284 attempt
+        // to negate with overflow`): paragraph-layout clamps an overfull
+        // line's shortfall to `i32::MIN` before calling this.
+        let par = ParagraphExpansion { max_stretch: 20, max_shrink: 20, step: 1 };
+        assert_eq!(adjust_shortfall(i32::MIN, 0, 1, 0, 0, par), i32::MIN + 1);
+        assert_eq!(adjust_shortfall(i32::MIN, 0, i32::MAX, 0, i32::MAX, par), -107_374_182);
+        assert_eq!(adjust_shortfall(i32::MAX, i32::MAX, 0, i32::MAX, 0, par), 107_374_182);
+        // A ratio of zero (max below the step) no longer divides by zero.
+        let odd = ParagraphExpansion { max_stretch: 1, max_shrink: 1, step: 5 };
+        assert_eq!(adjust_shortfall(10, 100, 0, 0, 0, odd), 50);
+        // In range, unchanged: pdfTeX's `divide(font_stretch, ratio)`.
+        assert_eq!(adjust_shortfall(1000, 400, 0, 0, 0, par), 600);
+        assert_eq!(adjust_shortfall(100, 400, 0, 0, 0, par), 10);
+        assert_eq!(adjust_shortfall(-100, 0, 400, 0, 0, par), -10);
+    }
 
     fn font() -> FontParams {
         let mut f = FontParams::plain(655_200);
