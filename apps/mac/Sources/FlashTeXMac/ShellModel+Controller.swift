@@ -293,11 +293,14 @@ extension ShellModel {
             // not diagnosable -- it is what CI reported for a real failure --
             // and everything that branches on this message uses hasPrefix, so
             // a trailing reason is safe to append.
-            let reason = Self.exitReason(code: code, stderr: controller?.recentStderr)
+            // `controller` here is the non-optional binding from the
+            // `guard let controller` at the top of this function, not the
+            // optional property — hence no optional chaining.
+            let reason = Self.exitReason(code: code, stderr: controller.recentStderr)
             for (_, waiter) in controllerState.awaiting { waiter(.failure(.init(message: reason))) }
             controllerStatus = reason
             workerStatus = "worker exited (\(code))"
-            log("controller exited with status \(code)" + (controller?.recentStderr.map { "; stderr: " + $0 } ?? "; no stderr"))
+            log("controller exited with status \(code)" + (controller.recentStderr.map { "; stderr: " + $0 } ?? "; no stderr"))
             self.controller = nil
             completionFetcher.discard() // its ids restart at pc-1 on the relaunched client
             controllerState = ControllerState()
