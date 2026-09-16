@@ -55,7 +55,7 @@ fn check(case: &str, word: &str) {
     let mut runs = 0;
     for page in &r.v2.pages {
         let width = page.width.to_bp();
-        for it in &page.items {
+        for it in page.resident_items() {
             let Item::GlyphRun(run) = it else { continue };
             runs += 1;
             for (i, g) in run.glyphs.iter().enumerate() {

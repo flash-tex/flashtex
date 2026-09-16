@@ -110,6 +110,21 @@ impl Tfm {
         })
     }
 
+    /// The first instruction of `left`'s lig/kern program for `right`
+    /// (tex.web §545) as math's `make_ord` reads it (§752): no boundary
+    /// characters, no run. `None` without an instruction, or when either
+    /// character is missing or the program is malformed.
+    #[cfg(feature = "math-font-kerns")]
+    pub fn pair_program(&self, left: u8, right: u8) -> Option<flashtex_math_layout::tfm::LigKern> {
+        use flashtex_font_resources::tfm::PairAction;
+        Some(match self.inner.pair_action(left, right).ok()?? {
+            PairAction::Kern(k) => flashtex_math_layout::tfm::LigKern::Kern(k.0),
+            PairAction::Ligature { replacement, retain_left, retain_right, advance } => {
+                flashtex_math_layout::tfm::LigKern::Ligature { op: advance * 4 + (u8::from(retain_left) << 1) + u8::from(retain_right), rem: replacement }
+            }
+        })
+    }
+
     /// `\fontdimen n` (1-based) in fixwords.
     pub fn param(&self, n: usize) -> Option<i32> {
         self.inner.parameter(n).map(|v| v.0)

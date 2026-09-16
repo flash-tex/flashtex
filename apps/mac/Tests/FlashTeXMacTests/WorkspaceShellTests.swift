@@ -107,7 +107,7 @@ final class WorkspaceShellTests: XCTestCase {
         XCTAssertEqual(CommandPaletteModel.rows(matching: "⌘⇧P").map(\.id), [.commandPalette])
         XCTAssertEqual(CommandPaletteModel.rows(matching: "⌘⌥P").map(\.id), [.pinInsertionPoint])
         // Multi-term: every term must match; case-insensitive.
-        XCTAssertEqual(CommandPaletteModel.rows(matching: "EXPORT rust").map(\.id), [.exportPDFViaRust])
+        XCTAssertEqual(CommandPaletteModel.rows(matching: "EXPORT GID").map(\.id), [.exportPDF])
         XCTAssertEqual(CommandPaletteModel.rows(matching: "zzz-nothing"), [])
         // A menu name lists that menu's commands; title matches rank first.
         let navigate = CommandPaletteModel.rows(matching: "navigate").map(\.id)

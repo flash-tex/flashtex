@@ -72,7 +72,9 @@ fn parskip_replaces_the_paragraph_gap_with_em_relative_to_the_class_size() {
     let parskip_src = doc("\\setlength{\\parskip}{0.65em}");
     assert_no_diagnostics(&parskip_src);
     let parskip_gap = baseline_gap(&parskip_src);
-    let expected = 0.65 * 11.0 - PARAGRAPH_GAP_PT;
+    // pdflatex `\showthe\parskip`: 0.65em of cmr10 at 10.95pt (its quad is
+    // 10.95003pt, not the 11pt class option).
+    let expected = 7.11745 - PARAGRAPH_GAP_PT;
     assert!(
         (parskip_gap - default_gap - expected).abs() < 0.02,
         "gap grew by {} not {expected}",
@@ -225,11 +227,26 @@ fn hw1_keeps_its_three_reference_pages_with_parskip_applied() {
     let hw1 = include_str!("../../../fixtures/real-world/hw1/HW1.tex");
     let parsed = parse(hw1);
     assert_eq!(parsed.class_size_pt, Some(11.0));
-    assert_eq!(parsed.parskip_pt, Some(0.65 * 11.0));
+    // HW1 loads `fontenc` T1 first, so pdflatex's `\showthe\parskip` is
+    // 0.65em of ecrm1095 (quad 10.88788pt): 7.07704pt, i.e. 463801sp.
+    assert_eq!(parsed.parskip_pt, Some(463_801.0 / 65536.0));
     let (pages, messages) = compile(hw1);
     assert_eq!(pages.len(), 3, "HW1-reference.pdf has 3 pages");
     assert!(
         !messages.iter().any(|m| m.contains("setlength")),
         "{messages:?}"
     );
+}
+
+#[test]
+fn table_lengths_are_accepted_in_every_assignment_form() {
+    let src = "\\documentclass{article}\\usepackage{array}\\setlength{\\tabcolsep}{4pt}\
+         \\begin{document}{\\setlength\\tabcolsep{2pt}\\addtolength{\\arrayrulewidth}{.2pt}\
+         \\setlength{\\doublerulesep}{1pt}\\setlength{\\extrarowheight}{2pt}\
+         \\begin{tabular}{|l|}a\\end{tabular}}\
+         {\\tabcolsep=1pt \\begin{tabular}{l}b\\end{tabular}}\\end{document}";
+    assert_no_diagnostics(src);
+    let (pages, _) = compile(src);
+    let text: String = format!("{pages:?}");
+    assert!(!text.contains("1pt"), "the assignment's value is not text");
 }

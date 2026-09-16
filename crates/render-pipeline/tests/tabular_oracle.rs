@@ -141,7 +141,7 @@ fn tabular_fixtures_match_pdflatex() {
             let at = format!("{name} p{}", page_no + 1);
             let mut glyphs = Vec::new();
             let mut rules: Vec<Rule> = Vec::new();
-            for item in &page.items {
+            for item in page.resident_items() {
                 match item {
                     Item::GlyphRun(run) => {
                         glyphs.extend(run.glyphs.iter().map(|g| (g.origin_x.to_bp(), g.baseline_y.to_bp())))

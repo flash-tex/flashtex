@@ -29,7 +29,7 @@ use flashtex_paragraph_layout::Hyphenator as _;
 
 use crate::adapter::{self, Block, Doc, Item as AItem, ListGeom, ListMargin, ParaPart, ParaStyle, TextStyle};
 use crate::display::{
-    self, Caret, Cluster, Diagnostic, DisplayList, DocumentResource, FontResource, Glyph, GlyphRun, Paint, Provenance,
+    self, Cluster, Diagnostic, DisplayList, DocumentResource, FontResource, Glyph, GlyphRun, Paint, Provenance,
     Rect, Rule, SourceRange, Tick,
 };
 use crate::fonts::{Family, FontSet, LoadedFace, Role};
@@ -488,6 +488,9 @@ pub struct Context<'a> {
     /// `\footnotetext`): see [`footnotes`].
     notes: Vec<footnotes::NoteSrc>,
     note_anchors: Vec<(usize, usize)>,
+    /// The body in reading order (`adapter::reading_order`): where a float
+    /// of an `\include`d file stands among the other documents' blocks.
+    reading_order: Vec<Span>,
     /// `multicols` environments of the project (`multicol::attach`).
     multicol: multicol::State,
     /// Footnote marks are `\rlap`ped (article/report/book `\maketitle`).
@@ -505,6 +508,11 @@ pub struct Context<'a> {
 
 impl<'a> Context<'a> {
     /// Formula colours (`adapter::Doc::math_colors`).
+    /// `adapter::Labels::reading_order`, for placing floats.
+    pub fn set_reading_order(&mut self, order: Vec<Span>) {
+        self.reading_order = order;
+    }
+
     pub fn set_math_colors(&mut self, colors: std::collections::HashMap<(usize, usize, usize), flashtex_compiler::color::DeviceColor>) {
         self.math_colors = colors;
     }
@@ -541,6 +549,7 @@ impl<'a> Context<'a> {
             label_recs: BTreeSet::new(),
             notes: Vec::new(),
             note_anchors: Vec::new(),
+            reading_order: Vec::new(),
             parbox: false,
             multicol: multicol::State::default(),
             rlap_marks: false,
@@ -1012,6 +1021,12 @@ impl<'a> Context<'a> {
     fn text_box(&mut self, seg: &adapter::Segment, size: f64) -> Option<(pl::GlyphRun, usize)> {
         let span = seg_span(seg)?;
         let face = self.face(seg.style, size, span);
+        self.text_box_in(seg, size, face)
+    }
+
+    /// [`Self::text_box`] shaped in `face` instead of the style's face.
+    fn text_box_in(&mut self, seg: &adapter::Segment, size: f64, face: Rc<LoadedFace>) -> Option<(pl::GlyphRun, usize)> {
+        let span = seg_span(seg)?;
         // Verbatim runs the font's ligature/kern program not at all
         // (`\@noligs`); every other run runs it as TeX does.
         let shaped = if seg.style.literal {
@@ -2080,11 +2095,15 @@ impl<'a> Context<'a> {
                     }
                     push(&mut out, &mut recs, pl::Item::penalty(pl::FORCED_BREAK), None);
                 }
-                AItem::Quad { em } => {
-                    let quad = self.text_params(base, size).quad;
+                AItem::Quad { em, style } => {
+                    // `em` is `\fontdimen6` of the font current where the
+                    // glue is read: `{\Large a\hspace{2em}b}` is two quads
+                    // of the `\Large` face, `{\bfseries a\quad b}` of the bold.
+                    let style = merge_base(*style, base);
+                    let quad = self.text_params(style, style.size_or(size)).quad;
                     push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fixed(em * quad)), None);
                 }
-                AItem::HFill { fill, leader } => {
+                AItem::HFill { fill, leader, style } => {
                     // `\hfill` is second-order glue: it beats the line's
                     // `\parfillskip` (`\hfil`), as in a `\section` title
                     // set as `Problem 1 \hfill [4 points]`.
@@ -2094,7 +2113,15 @@ impl<'a> Context<'a> {
                     }
                     let (box_width, dot) = match leader {
                         FillLeader::Dots => {
-                            let face = self.face(base, size, Span::new(0, 0));
+                            // TeX sets the leader box (`.44em`) and its dot
+                            // in the font in force at the fill, not the
+                            // paragraph's: `{\Large A\dotfill B}` dots at
+                            // `\Large`. The other leaders read no style (a
+                            // rule leader is a fixed 0.4pt rule, plain
+                            // `\hfill` paints nothing).
+                            let dot_style = merge_base(*style, base);
+                            let dot_size = dot_style.size_or(size);
+                            let face = self.face(dot_style, dot_size, Span::new(0, 0));
                             let shaped = self.shaper.shape(&face, ".");
                             let glyphs = shaped
                                 .clusters
@@ -2107,14 +2134,14 @@ impl<'a> Context<'a> {
                                 .collect::<Vec<_>>();
                             let run = pl::GlyphRun::from_shaped(
                                 face.layout_id(),
-                                size,
+                                dot_size,
                                 shaped.units_per_em as f64,
                                 f64::from(shaped.height_units),
                                 -f64::from(shaped.depth_units),
                                 &glyphs,
                                 0..1,
                             );
-                            (0.44 * self.text_params(base, size).quad, Some((face, run)))
+                            (0.44 * self.text_params(dot_style, dot_size).quad, Some((face, run)))
                         }
                         _ => (0.0, None),
                     };
@@ -2744,7 +2771,12 @@ impl<'a> Context<'a> {
                 TableMaterial::Rule(span) => MPiece::Rule(*span),
                 TableMaterial::VLine(span, width) => MPiece::VLine(*span, *width),
                 TableMaterial::DoubleRuleGap(width) => MPiece::DoubleRuleGap(*width),
-                TableMaterial::Text(items) => match self.table_hbox(items, size) {
+                // `@{...}` material is set in the template as it stands, with
+                // no `\ignorespaces`/`\unskip` around it, so glue at either
+                // end is kept (`@{\hspace{1em}}`, `@{\quad--\quad}`). The
+                // empty boxes `\leavevmode` would put there keep `hlist`'s
+                // paragraph end from dropping it.
+                TableMaterial::Text(items) => match self.table_hbox(&anchored(items), size) {
                     Some((block, dims)) => {
                         blocks.insert((key.0, key.1, if before { Slot::Before(i) } else { Slot::After(i) }), block);
                         MPiece::Text(dims)
@@ -2879,9 +2911,10 @@ impl<'a> Context<'a> {
         }
         let trailing_skip = drop_trailing_break(&mut list, &mut recs, &mut skips, style);
         // `\item`: the label box `\hskip-\labelwidth \hskip-\labelsep
-        // \hbox to\labelwidth{\hfil <label>} \hskip\labelsep` opens the
-        // first line (`\@item`'s `\everypar`); a label wider than
-        // `\labelwidth` keeps its own width and pushes the text right.
+        // \hbox to\labelwidth{\hss <label>} \hskip\labelsep` opens the
+        // first line (`\@item`'s `\everypar`). itemize/enumerate
+        // additionally use `\llap`, so a wide label extends left
+        // without moving the item text.
         let mut hang_pt = 0.0;
         let mut inner_margin_pt = 0.0;
         if let Some(geom) = list_geom {
@@ -2889,10 +2922,11 @@ impl<'a> Context<'a> {
             hang_pt = hang;
             inner_margin_pt = inner;
             if let Some((text, span)) = geom.label.as_ref().filter(|_| starts_paragraph) {
-                if let Some(nb) = self.label_box(text, *span, size, geom.description) {
-                    let labelsep = self.style.labelsep_pt;
+                if let Some(nb) = self.label_box(text, *span, size, geom.description || geom.label_bold, geom.label_symbol) {
+                    let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
                     let protrude = self.item_left_protrusion(&list, &recs);
-                    let mut lead = vec![(pl::Item::kern(-(labelsep + nb.width.min(labelwidth))), None)];
+                    let box_width = if geom.llap { nb.width } else { nb.width.min(labelwidth) };
+                    let mut lead = vec![(pl::Item::kern(-(labelsep + box_width)), None)];
                     // `\descriptionlabel`: `\hspace\labelsep \normalfont
                     // \bfseries #1` — the label box itself opens with
                     // `\labelsep`, so the bold text starts at the margin the
@@ -2909,6 +2943,19 @@ impl<'a> Context<'a> {
                         lead.push((pl::Item::Box(run), Some(rec)));
                     }
                     lead.push((pl::Item::kern(labelsep), None));
+                    // enumitem `style=nextline` (`\enit@postlabel@i`'s
+                    // `\newline`): the label takes a line of its own, so a
+                    // `\\` follows it and the body starts on the next line
+                    // at the hanging indent (`break_paragraph` indents every
+                    // line after the first by `hang_pt` on its own). Before
+                    // the protrusion kern, which belongs to the body text's
+                    // first character, not to the label's line.
+                    if geom.nextline {
+                        if !matches!(style, ParaStyle::Center | ParaStyle::FlushRight) {
+                            lead.push((pl::Item::Glue(pl::Glue::fil()), None));
+                        }
+                        lead.push((pl::Item::penalty(pl::FORCED_BREAK), None));
+                    }
                     if protrude != 0.0 {
                         lead.push((pl::Item::kern(-protrude), None));
                     }
@@ -2933,8 +2980,8 @@ impl<'a> Context<'a> {
         // `\hskip\itemindent`, so that line alone starts `\leftmargin +
         // \itemindent` in. Only natbib's author-year bibliography sets it
         // (to `-\bibhang`), and only the line the `\item` starts.
-        if let Some(geom) = list_geom.filter(|g| g.itemindent_em != 0.0 && starts_paragraph) {
-            params.parindent += geom.itemindent_em * self.text_params(TextStyle::default(), size).quad;
+        if let Some(geom) = list_geom.filter(|g| (g.itemindent_em != 0.0 || g.itemindent_pt != 0.0) && starts_paragraph) {
+            params.parindent += geom.itemindent_em * self.text_params(TextStyle::default(), size).quad + geom.itemindent_pt;
         }
         // `description`: `\itemindent-\leftmargin`, so the item's first line
         // is flush at the text margin and only its continuation lines hang
@@ -3128,6 +3175,12 @@ impl<'a> Context<'a> {
                         ListMargin::Fixed(pt) => pt.to_bits().hash(&mut h),
                         ListMargin::Widest(text) => text.hash(&mut h),
                         ListMargin::Em(em) => em.to_bits().hash(&mut h),
+                        ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
+                            label.hash(&mut h);
+                            labelsep_pt.map(f64::to_bits).hash(&mut h);
+                            itemindent_pt.to_bits().hash(&mut h);
+                        }
+                        ListMargin::TextWidth(text) => text.hash(&mut h),
                     }
                 }
                 if let Some((text, span)) = &g.label {
@@ -3135,6 +3188,8 @@ impl<'a> Context<'a> {
                     (span.end - span.start).hash(&mut h);
                 }
                 g.parsep.natural.to_bits().hash(&mut h);
+                g.labelsep_pt.map(f64::to_bits).hash(&mut h);
+                g.itemindent_pt.to_bits().hash(&mut h);
                 h.finish()
             });
             for part in parts {
@@ -3430,6 +3485,7 @@ impl<'a> Context<'a> {
                         Block::Part { .. } => "\\part",
                         Block::Title { .. } => "\\maketitle",
                         Block::ClearPage { .. } => "\\clearpage",
+                        Block::NoBreakFalse { .. } => "a contents list",
                         Block::Chrome { .. } => "a page-style command",
                         Block::TocEntry(_) => "a contents list",
                         Block::LongTable { .. } => "longtable",
@@ -3490,8 +3546,16 @@ impl<'a> Context<'a> {
                 // to measure (`\@biblabel` is `\hfill`).
                 ListMargin::Em(em) => (em * quad, 0.0),
                 ListMargin::Widest(text) => {
-                    let w = self.text_width(text, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
+                    let w = self.widest_label_width(text, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
                     (w + labelsep, w)
+                }
+                ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
+                    let w = self.widest_label_width(label, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
+                    (w + labelsep_pt.unwrap_or(labelsep) - itemindent_pt, w)
+                }
+                ListMargin::TextWidth(text) => {
+                    let w = self.text_width(text, size, Span::new(0, 0));
+                    (w, (w - labelsep).max(0.0))
                 }
             };
             hang += m;
@@ -3506,9 +3570,83 @@ impl<'a> Context<'a> {
 
     /// Width of `text` shaped in the body font at `size`, in points.
     fn text_width(&mut self, text: &str, size: f64, span: Span) -> f64 {
-        let face = self.face(TextStyle::default(), size, span);
+        self.text_width_in(TextStyle::default(), text, size, span)
+    }
+
+    fn text_width_in(&mut self, style: TextStyle, text: &str, size: f64, span: Span) -> f64 {
+        let face = self.face(style, size, span);
         let shaped = self.shaper.shape(&face, text);
         shaped.width_units as f64 * size / shaped.units_per_em as f64
+    }
+
+    /// Width of an enumitem `leftmargin=*` widest label
+    /// ([`ListMargin::Widest`]): the class's itemize labels, which the
+    /// adapter names `\labelitemi`..`\labelitemiv`, as those commands set
+    /// them (article.cls: `\textbullet`, `\normalfont\bfseries\textendash`,
+    /// `\textasteriskcentered`, `\textperiodcentered`); any other label in
+    /// the body font.
+    fn widest_label_width(&mut self, text: &str, size: f64, span: Span) -> f64 {
+        let (symbol, bold) = match text {
+            "\\labelitemi" => ("•", false),
+            "\\labelitemii" => ("–", true),
+            "\\labelitemiii" => ("∗", false),
+            "\\labelitemiv" => ("·", false),
+            _ => return self.text_width(text, size, span),
+        };
+        self.tcrm_symbol_width(symbol, size)
+            .unwrap_or_else(|| self.text_width_in(TextStyle { bold, ..TextStyle::default() }, symbol, size, span))
+    }
+
+    /// The width of a TS1 text symbol `text` (`•`, `∗`, `·`) when the
+    /// document sets it from `tcrm`: LaTeX declares `\textbullet`,
+    /// `\textasteriskcentered` and `\textperiodcentered` TS1 by default, and
+    /// without `lmodern` (`ts1cmr.fd`, OT1 or T1 body text alike) that is the
+    /// EC font `tcrm`, whose bullet is 0.5em rather than `ts1-lmr`'s 0.7778em.
+    /// `None` under `lmodern`, for Times, and for any other text.
+    fn tcrm_symbol_width(&self, text: &str, size: f64) -> Option<f64> {
+        if self.style.family == Family::Times || !matches!(self.style.nfss, crate::nfss::Scheme::CmOt1 | crate::nfss::Scheme::CmT1) {
+            return None;
+        }
+        let mut chars = text.chars();
+        let ch = chars.next()?;
+        chars.next().is_none().then(|| crate::fonts::tcrm_symbol_width(ch, size)).flatten()
+    }
+
+    /// A `tcrm` symbol label ([`Self::tcrm_symbol_width`]) set `width` wide.
+    /// `tcrm`'s bullet and centred period are `cmsy`'s designs, which Latin
+    /// Modern Math draws exactly (U+2022, U+00B7: ink 0.055-0.445em and
+    /// 0.086-0.192em, as pdflatex's `SFRM1000` draws them); Latin Modern
+    /// Roman's are smaller glyphs in a 0.7778em advance. Its centred
+    /// asterisk is `tcrm`'s glyph already. The glyph is centred in `width`,
+    /// which differs from its own advance by at most a few hundredths of a
+    /// point (`tcrm1200`'s bullet is 0.4895em).
+    fn tcrm_symbol_box(&mut self, text: &str, span: Span, size: f64, width: f64) -> Option<NumberBox> {
+        let seg = adapter::Segment {
+            text: text.to_string(),
+            chars: text
+                .chars()
+                .map(|_| adapter::CharSrc { document: span.document, start: span.start, end: span.end })
+                .collect(),
+            style: TextStyle::default(),
+        };
+        let math = matches!(text, "•" | "·")
+            .then(|| self.fonts.resolve(self.style.family, Role::Math, size))
+            .filter(|r| r.substituted.is_none())
+            .map(|r| r.face);
+        let (mut run, rec) = match math {
+            Some(face) => self.text_box_in(&seg, size, face)?,
+            None => self.text_box(&seg, size)?,
+        };
+        if let ([glyph], BoxRec::Text { face, glyphs, .. }) = (run.glyphs.as_mut_slice(), &mut self.recs[rec]) {
+            let [g] = glyphs.as_mut_slice() else { unreachable!("one glyph, one record") };
+            let shift = (width - glyph.advance) / 2.0;
+            g.x_offset_units += (shift * f64::from(face.units_per_em) / size).round() as i32;
+            glyph.advance = width;
+            glyph.kern = 0.0;
+            run.width = width;
+        }
+        let (height, depth) = (run.height, run.depth);
+        Some(NumberBox { width: run.width, height, depth, pieces: vec![(run, rec, 0.0)] })
     }
 
     /// microtype's `\leftprotrusion`, which it appends to `\@item`'s
@@ -3536,8 +3674,12 @@ impl<'a> Context<'a> {
     /// the `\item` command's bytes: the words of `text` in the
     /// list's label style (`\descriptionlabel`'s `\bfseries` for a
     /// `description`), separated by interword glue at natural width.
-    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool) -> Option<NumberBox> {
-        let boxed = self.word_box(text, span, size, TextStyle { bold, ..TextStyle::default() });
+    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool, symbol: bool) -> Option<NumberBox> {
+        let text = if symbol && text == "⋅" { "·" } else { text };
+        let boxed = match self.tcrm_symbol_width(text, size).filter(|_| symbol) {
+            Some(width) => self.tcrm_symbol_box(text, span, size, width),
+            None => self.word_box(text, span, size, TextStyle { bold, ..TextStyle::default() }),
+        };
         if let Some(nb) = &boxed {
             for (_, rec, _) in &nb.pieces {
                 self.label_recs.insert(*rec);
@@ -3624,8 +3766,8 @@ impl<'a> Context<'a> {
         let description = list_geom.is_some_and(|g| g.description);
         let linewidth = s.text_width_pt - hang;
         let label = list_geom
-            .and_then(|g| g.label.as_ref().map(|l| (l, g.description)))
-            .and_then(|((text, span), bold)| self.label_box(text, *span, size, bold));
+            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol)))
+            .and_then(|((text, span), bold, symbol)| self.label_box(text, *span, size, bold, symbol));
         let mut width = hang + if bracket { 0.6 * linewidth } else { 0.0 };
         let (mut runs, mut items, mut recs) = (Vec::new(), Vec::new(), Vec::new());
         let (mut height, mut depth) = (0.0, 0.0);
@@ -3646,7 +3788,13 @@ impl<'a> Context<'a> {
                     // list's `\leftmargin`, so this is `hang + \itemindent`.
                     hang - inner
                 } else {
-                    hang - s.labelsep_pt - nb.width.min(labelwidth)
+                    hang + list_geom.map_or(0.0, |g| g.itemindent_pt)
+                        - list_geom.and_then(|g| g.labelsep_pt).unwrap_or(s.labelsep_pt)
+                        - if list_geom.is_some_and(|g| g.llap) {
+                            nb.width
+                        } else {
+                            nb.width.min(labelwidth)
+                        }
                 };
                 height = nb.height;
                 depth = nb.depth;
@@ -5668,6 +5816,16 @@ fn skip_tuple(s: crate::style::Skip) -> (f64, f64, f64) {
     (s.natural, s.stretch, s.shrink)
 }
 
+/// `items` between two empty `\hbox`es ([`AItem::LeaveVmode`]), so glue at
+/// either end of an `\hbox`'s material is not taken for a paragraph's.
+fn anchored(items: &[AItem]) -> Vec<AItem> {
+    let mut out = Vec::with_capacity(items.len() + 2);
+    out.push(AItem::LeaveVmode);
+    out.extend(items.iter().cloned());
+    out.push(AItem::LeaveVmode);
+    out
+}
+
 /// A table entry's lines as a block assembled like a paragraph's.
 fn table_cell_block(lines: pl::Lines, items: Vec<pl::Item>, recs: Vec<Option<usize>>, labels: Vec<(String, usize)>) -> BuiltBlock {
     let vertical = VBlock {
@@ -6331,6 +6489,22 @@ pub fn convert_math_classed(
             // (`math_text_keeps_italic`), and it decides the italic
             // correction of the run's last character: `$\lim$` and
             // `$\mathrm{lim}$` are 16.3773 pt, `$\text{lim}$` 16.31999 pt.
+            // `\mathrm{K}`: a group holding one ordinary character is that
+            // math character of family 0 (TeX §1186), so `make_ord` joins it
+            // to a neighbouring one (`\mathrm{f}\mathrm{i}` is the fi
+            // ligature, `\mathrm{A}\mathrm{V}` kerned) and its scripts sit
+            // as on a character; the provider boxes it from the roman TFM.
+            // Only letters and digits: they are the variable-family math
+            // codes `\mathrm` moves to family 0.
+            #[cfg(feature = "math-font-kerns")]
+            N::Text(text)
+                if text_italic(&a.span)
+                    && op_limits(&a.span).is_none()
+                    && text_split(&a.span).is_none()
+                    && matches!(text.as_bytes(), [c] if c.is_ascii_alphanumeric()) =>
+            {
+                vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::TextChar(char::from(text.as_bytes()[0])))]
+            }
             N::Text(text) => {
                 // `\limsup`/`\liminf` are `lim\,sup` and `lim\,inf`: one
                 // operator whose nucleus is a list of two math-character runs
@@ -6556,7 +6730,29 @@ pub fn convert_math_classed(
                         Some(Some(c)) => match class(a) {
                             // `\bot` (Ord, same glyph as `\perp`) and
                             // `\bigtriangleup` (Bin, same glyph as `\triangle`).
-                            Some(forced) => vec![ml::Atom::new(forced, ml::Nucleus::Symbol(c))],
+                            Some(forced) => {
+                                // mathtools defines `\vcentcolon` as
+                                // `\mathrel{\mathop\ordinarycolon}`. The
+                                // compiler marks exactly that atom as a
+                                // `Symbol(":")` with a forced `Rel` class;
+                                // kernel/amsmath `\colon` and a literal `:`
+                                // do not carry this override. Keep the outer
+                                // atom Rel for its spacing, and use the
+                                // existing math-layout Op path for the
+                                // glyph's real-bounds axis centring.
+                                #[cfg(feature = "math-class-override")]
+                                let vcentcolon = c == ':'
+                                    && a.class_override
+                                        == Some(flashtex_compiler::math::AtomClass::Rel);
+                                #[cfg(not(feature = "math-class-override"))]
+                                let vcentcolon = false;
+                                let nucleus = if vcentcolon {
+                                    ml::Nucleus::List(ml::MathList::new(vec![ml::Atom::op(c)]))
+                                } else {
+                                    ml::Nucleus::Symbol(c)
+                                };
+                                vec![ml::Atom::new(forced, nucleus)]
+                            }
                             None => symbol_atoms(c, a.width_em),
                         },
                         Some(None) => vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Empty)],
@@ -6568,7 +6764,18 @@ pub fn convert_math_classed(
                     },
                 }
             }
-            N::Fraction { numerator, denominator } => vec![ml::Atom::frac(sub(numerator, sink), sub(denominator, sink))],
+            // `\frac` is `{\begingroup#1\endgroup\over#2}` (latex.ltx 15742,
+            // amsmath.sty 233): the braces make the fraction an Ord atom, not
+            // the Inner atom of a bare `\over` (math-layout's `Atom::frac`).
+            // As Inner it took a thin space (3mu) before a following Ord, e.g.
+            // `\frac{2}{5} \quad \text{as }` was 1.82 bp wide at 11 pt. A bare
+            // `\over` fills its whole group, so it has no neighbours to space
+            // against and Ord is right for it too.
+            N::Fraction { numerator, denominator } => {
+                let mut frac = ml::Atom::frac(sub(numerator, sink), sub(denominator, sink));
+                frac.class = ml::AtomClass::Ord;
+                vec![frac]
+            }
             N::Radical(r) => vec![ml::Atom::sqrt(sub(r, sink))],
             // `\mathbf{...}` (fontmath.ltx OT1/cmr/bx/n): a run in the bold
             // roman text font; spaces in math take no part.
@@ -7301,13 +7508,75 @@ fn symbol_atoms(c: char, width_em: Option<f64>) -> Vec<ml::Atom> {
         '\u{00B7}' => vec![ml::Atom::symbol('\u{22C5}')],
         '\u{2260}' => vec![ml::Atom::rel(crate::mathtex::NOT_SLASH), ml::Atom::symbol('=')],
         '\u{2209}' => vec![ml::Atom::rel(crate::mathtex::NOT_SLASH), ml::Atom::symbol('\u{2208}')],
+        // A bare `\not` (compiler `COMMAND_GLYPHS` row `("not", "\u{0338}")`,
+        // `fontmath.ltx` 432). It is the same zero-width cmsy `"36` atom the
+        // two composites above expand to, and math-layout's `default_class`
+        // would otherwise make the combining character Ord, which would open
+        // a thick space between `\not` and the relation it negates.
+        crate::mathtex::NOT_SLASH => vec![ml::Atom::rel(crate::mathtex::NOT_SLASH)],
         // `\varnothing`: same U+2205 as `\emptyset`, but forced to msbm10's
         // width. A sentinel keeps the two apart for the metrics providers
         // (`TexMathMetrics`/`MathFonts`), which paint both from cmsy10's
         // `\emptyset` slot but only force this one's advance and outline.
         '\u{2205}' if width_em.is_some() => vec![ml::Atom::symbol(crate::mathfont::VARNOTHING_SENTINEL)],
-        _ => vec![ml::Atom::symbol(c)],
+        _ => match long_arrow_pieces(c) {
+            Some(pieces) => vec![long_arrow(pieces)],
+            None => vec![ml::Atom::symbol(c)],
+        },
     }
+}
+
+/// The pieces a LaTeX long arrow joins, each with the kern (in mu) before it
+/// (`latex.ltx`: `\longrightarrow` = `\relbar\joinrel\rightarrow`,
+/// `\Longrightarrow` = `\Relbar\joinrel\Rightarrow`, ...; `\longmapsto` =
+/// `\mapstochar\longrightarrow`, whose flag is backed up by its own
+/// advance). `\relbar` is cmsy's minus and `\Relbar` cmr's `=`; the arrows
+/// are cmsy "20/"21/"24/"28/"29/"2C.
+fn long_arrow_pieces(c: char) -> Option<&'static [(char, f64)]> {
+    Some(match c {
+        '\u{27F5}' => &[('\u{2190}', 0.0), ('\u{2212}', -3.0)], // \longleftarrow
+        '\u{27F6}' => &[('\u{2212}', 0.0), ('\u{2192}', -3.0)], // \longrightarrow
+        '\u{27F7}' => &[('\u{2190}', 0.0), ('\u{2192}', -3.0)], // \longleftrightarrow
+        '\u{27F8}' => &[('\u{21D0}', 0.0), ('=', -3.0)],        // \Longleftarrow
+        '\u{27F9}' => &[('=', 0.0), ('\u{21D2}', -3.0)],        // \Longrightarrow
+        '\u{27FA}' => &[('\u{21D0}', 0.0), ('\u{21D2}', -3.0)], // \Longleftrightarrow
+        // \longmapsto is \mapstochar\longrightarrow (amsmath.sty): the flag
+        // is U+2223, this compiler's \mid glyph, backed up by its own
+        // advance (cmsy10 slot "6A is 0.277779em = 5.00002mu, so -5mu nets
+        // +0.00002mu ≈ 1e-5pt) so it contributes zero width like pdfTeX's
+        // zero-advance \mapstochar, then the usual relbar + \joinrel join.
+        '\u{27FC}' => &[('\u{2223}', 0.0), ('\u{2212}', -5.0), ('\u{2192}', -3.0)], // \longmapsto
+        _ => return None,
+    })
+}
+
+/// A long arrow as TeX builds it: the pieces with `\joinrel`
+/// (`\mathrel{\mkern-3mu}`) between them. Adjacent relations get no
+/// inter-atom space and no break between them, so the pieces are one
+/// relation whose nucleus is each glyph preceded by its kern. `\longmapsto`
+/// carries a third leading piece, `\mapstochar`'s flag, backed up by its
+/// own advance so it nets zero width. Latin Modern
+/// Math's single U+27F9 glyph is 1.457em wide where pdfTeX's `=`+`⇒` join
+/// is 0.777781 + 1.000003 - 3/18 = 1.611em, which moved every glyph after
+/// `\Longrightarrow` in a centred display by half the 1.69bp difference at
+/// 11pt (HW1 Problem 4(b)).
+///
+/// Not modelled: `\relbar` is `\smash`ed (amsmath `\mathsm@sh`), so pdfTeX's
+/// `\longrightarrow` box is only as tall as the arrow; here the minus keeps
+/// its 0.583em height and 0.083em depth.
+fn long_arrow(pieces: &[(char, f64)]) -> ml::Atom {
+    let piece = |ch| ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Symbol(ch));
+    let mut atoms = Vec::with_capacity(2 * pieces.len() - 1);
+    for (i, &(ch, kern_mu)) in pieces.iter().enumerate() {
+        if i > 0 {
+            atoms.push(ml::Atom::glue(kern_mu, 0.0));
+        }
+        atoms.push(piece(ch));
+    }
+    ml::Atom::new(
+        ml::AtomClass::Rel,
+        ml::Nucleus::List(ml::MathList::new(atoms)),
+    )
 }
 
 /// Adds `\addvspace` glue (a list environment's `\topsep`) to the block's
@@ -7568,8 +7837,14 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     // only the excess over the skip the previous block left
                     // (`\lastskip`: a display's `\belowdisplayskip`, an
                     // environment's closing `\topsep`), that skip removed.
+                    // `\addpenalty\@secpenalty` belongs to the same branch:
+                    // under `\@nobreak` there is no breakpoint between the
+                    // two heads at all.
                     if after_heading {
                         b.vertical.space_before = None;
+                        if !*eject_before {
+                            b.vertical.penalty_before = None;
+                        }
                     } else if let (Some(before), Some(prev)) = (b.vertical.space_before, blocks.last_mut()) {
                         if let Some(last) = prev.vertical.space_after {
                             if last.0 < before.0 {
@@ -7600,6 +7875,19 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     // after the list's heading).
                     if after_heading {
                         b.vertical.penalty_before = None;
+                    }
+                    // report/book `\@chapter`'s `\addvspace{10\p@}` ahead of
+                    // the entry's own `\vskip`: `\vskip-\lastskip \vskip
+                    // 10pt` unless the previous skip is already as large.
+                    if entry.addvspace_pt > 0.0 {
+                        let prev_after = blocks.last().and_then(|p| p.vertical.space_after).map_or(0.0, |k| k.0);
+                        if prev_after < entry.addvspace_pt {
+                            if let Some(prev) = blocks.last_mut() {
+                                prev.vertical.space_after = None;
+                            }
+                            let own = b.vertical.space_before.unwrap_or((0.0, 0.0, 0.0));
+                            b.vertical.space_before = Some((own.0 + entry.addvspace_pt, own.1, own.2));
+                        }
                     }
                     // `\addvspace`: only the excess over the previous skip.
                     if entry.style.addvspace {
@@ -7697,6 +7985,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 blocks.extend(built);
                 after_heading = true;
             }
+            // `\@starttoc`'s `\@nobreakfalse`: a heading next takes its
+            // `\addvspace` again (only the excess over the list heading's
+            // after-skip), and a paragraph next its normal `\clubpenalty`.
+            Block::NoBreakFalse { .. } => after_heading = false,
             Block::ClearPage { double, .. } => {
                 clears.push(blocks.len());
                 if *double {
@@ -8271,6 +8563,26 @@ fn align_columns(built: &mut Vec<pagebuild::BuiltPage>, columns: usize, page_sta
     inserted
 }
 
+/// Span of typesetter-made page furniture (page numbers, header/footer
+/// marks, the column separator rule): the sentinel document id marks
+/// content with no source of its own, so [`provenance_of`] turns it into
+/// [`Provenance::Synthetic`] instead of a real (and wrong) source range.
+const NO_SOURCE_SPAN: Span = Span {
+    document: DocumentId(usize::MAX),
+    start: 0,
+    end: 0,
+};
+
+/// Provenance of `span`: synthetic page chrome when it carries the
+/// no-source sentinel document, the exact source range otherwise.
+fn provenance_of(span: Span, source_of: &dyn Fn(Span) -> SourceRange) -> Provenance {
+    if span.document == NO_SOURCE_SPAN.document {
+        Provenance::Synthetic(display::PAGE_CHROME.into())
+    } else {
+        Provenance::Source(source_of(span))
+    }
+}
+
 /// Header, footer and `\columnseprule` of every page (`\@outputpage`,
 /// `\@outputdblcol`): the page style in force when the page ships
 /// (`\pagestyle` changes before its last material count; `\thispagestyle`
@@ -8298,8 +8610,10 @@ fn page_chrome(ctx: &mut Context, g: &flashtex_class_geometry::ResolvedDocument,
     for (b, e, _) in events {
         by_page[page_of(*b)].push(e);
     }
-    // Page numbers and rules have no source of their own.
-    let span = Span::in_document(DocumentId(0), 0, 0);
+    // Page numbers and rules have no source of their own: the sentinel
+    // document becomes synthetic provenance (`source: null` in runtime-v1)
+    // instead of claiming document 0, byte 0.
+    let span = NO_SOURCE_SPAN;
     let frame = &g.frame;
     let width = frame_pt(frame.text_width);
     let text_x = ctx.style.text_x_pt;
@@ -8476,10 +8790,41 @@ pub fn assemble(
     style: &Stylesheet,
     _fonts: &FontSet,
     laid: Laid,
+    diagnostics: Vec<Diagnostic>,
+    cache: Option<&RenderCache>,
+    page_color: Option<flashtex_compiler::color::DeviceColor>,
+    default_color: Option<flashtex_compiler::color::DeviceColor>,
+) -> DisplayList {
+    assemble_windowed(project_id, revision, documents, style, _fonts, laid, diagnostics, cache, page_color, default_color, None)
+}
+
+/// [`assemble`] materialising only `window`'s pages
+/// (`protocol/proposals/display-list-v2-window.md`).
+///
+/// Every page is still laid out, numbered and measured; pages outside the
+/// window get [`display::PageContent::Elided`] and their glyph items are never
+/// built. Every block is still *visited*, in the same order, because the font
+/// closure and the `math_resource_profile` / `math_glyph_unmapped` diagnostics
+/// are derived from assembly over the whole document — a window that assembled
+/// only its own blocks would emit a quietly smaller closure and fewer
+/// diagnostics. What the window changes is retention, not the traversal: an
+/// assembled block reaching no windowed page is dropped as soon as it has been
+/// harvested, and is not put in the cache.
+///
+/// With `window == None` this is `assemble`, byte for byte.
+#[allow(clippy::too_many_arguments)]
+pub fn assemble_windowed(
+    project_id: &str,
+    revision: u64,
+    documents: &[SourceDocument<'_>],
+    style: &Stylesheet,
+    _fonts: &FontSet,
+    laid: Laid,
     mut diagnostics: Vec<Diagnostic>,
     cache: Option<&RenderCache>,
     page_color: Option<flashtex_compiler::color::DeviceColor>,
     default_color: Option<flashtex_compiler::color::DeviceColor>,
+    window: Option<display::PageWindow>,
 ) -> DisplayList {
     let paths: Vec<Rc<str>> = documents.iter().map(|d| Rc::from(d.path)).collect();
     let empty: Rc<str> = Rc::from("");
@@ -8493,18 +8838,82 @@ pub fn assemble(
     // (cached across requests by the block's key), then placed per page by
     // integer tick/byte moves.
     let text_x = style.text_x_pt;
-    let mut assembled: Vec<Option<Rc<incremental::AssembledBlock>>> = Vec::with_capacity(laid.blocks.len());
-    for block in &laid.blocks {
+    // The effective window, clamped against the page count layout produced.
+    let window = window.and_then(|w| w.clamped(laid.pages.pages.len() as u32));
+    let resident = |number: u32| window.is_none_or(|w| w.contains(number));
+
+    // Where each block's lines land on a RESIDENT page: block index ->
+    // [(page index, line index)]. Built from `Laid`, which already holds every
+    // placement; it costs one pair per placed resident line and it is what lets
+    // the block loop below emit into pages directly instead of keeping every
+    // `AssembledBlock` alive until the page loop.
+    let mut lands: Vec<Vec<(u32, u32)>> = vec![Vec::new(); laid.blocks.len()];
+    for (pi, page) in laid.pages.pages.iter().enumerate() {
+        if !resident(page.number) {
+            continue;
+        }
+        for (li, placed) in page.lines.iter().enumerate() {
+            if let Some(slot) = lands.get_mut(placed.paragraph) {
+                slot.push((pi as u32, li as u32));
+            }
+        }
+    }
+
+    // Resident pages collect their items per line index, so that streaming by
+    // block still emits each page's items in line order — the order the page
+    // loop produced them in before.
+    let mut per_line: Vec<Option<Vec<Vec<display::Item>>>> = laid
+        .pages
+        .pages
+        .iter()
+        .map(|p| if resident(p.number) { Some(vec![Vec::new(); p.lines.len()]) } else { None })
+        .collect();
+
+    // Harvested in block order and emitted after the loop, so that the
+    // diagnostics vector keeps today's shape: every `math_resource_profile`
+    // first, then every `math_glyph_unmapped`.
+    let mut profiles: BTreeMap<String, String> = BTreeMap::new();
+    let mut unmapped_seen = BTreeSet::new();
+    let mut unmapped_diags: Vec<Diagnostic> = Vec::new();
+    let mut keep_assembled: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    // `required_features` is the third closure that must stay whole-document
+    // (§3), beside the font set and the diagnostics, and it is derived from
+    // item kinds and paints. So it is harvested here, in the same pass, from
+    // every block — including the blocks whose only pages are elided and
+    // whose items are about to be dropped.
+    //
+    // The harvest walks every block, and a block placed on no page at all
+    // would contribute a feature no page paints. That direction is the safe
+    // one — a consumer told to support `rule` when nothing draws one loses
+    // nothing, while a consumer *not* told is the failure this exists to
+    // prevent — and §9's equality gate pins the two together for every
+    // document it covers, so an over-announcement would show up as a windowed
+    // reply differing from the unwindowed one rather than passing silently.
+    let mut doc_features = display::DocumentFeatures::default();
+    // `default_color` writes a device colour into every glyph run and rule
+    // that carries none, after placement; whether the document has one to
+    // write into is therefore part of the harvest.
+    let mut any_painted_item = false;
+
+    for (bi, block) in laid.blocks.iter().enumerate() {
         let hit = block
             .cache_key
             .and_then(|(k, _, _)| cache.and_then(|c| c.assembled(k)))
             .filter(|a| block.cache_key.is_some_and(|(_, d, _)| *a.path == *paths.get(d.0).map_or("", |p| &**p)));
+        // Unwindowed, every block is wanted whether or not a page placed it,
+        // so the cache behaves exactly as it did before this change. Windowed,
+        // a block reaching no resident page is harvested and dropped.
+        let wanted = window.is_none() || !lands[bi].is_empty();
         let a = match hit {
             Some(a) => a,
             None => {
                 let built = assemble_block(block, &laid.recs, &laid.maths, text_x, &source_of, &paths, &empty);
                 match (cache, block.cache_key) {
-                    (Some(c), Some((k, _, _))) => c.insert_assembled(k, built),
+                    // A block no resident page uses is harvested and dropped;
+                    // caching it is exactly the retention the window exists to
+                    // remove. Unwindowed, `wanted` is true for every placed
+                    // block, so this is today's behaviour.
+                    (Some(c), Some((k, _, _))) if wanted => c.insert_assembled(k, built),
                     _ => Rc::new(built),
                 }
             }
@@ -8512,25 +8921,92 @@ pub fn assemble(
         for f in &a.faces {
             used.entry(f.font_id.clone()).or_insert_with(|| f.clone());
         }
-        assembled.push(Some(a));
-    }
-    let mut pages = Vec::new();
-    for (pi, page) in laid.pages.pages.iter().enumerate() {
-        let mut items: Vec<display::Item> = Vec::new();
-        for (li, placed) in page.lines.iter().enumerate() {
-            let block = &laid.blocks[placed.paragraph];
-            let Some(a) = assembled[placed.paragraph].as_ref() else { continue };
+        for it in a.lines.iter().flatten() {
+            doc_features.note(it);
+            any_painted_item |= matches!(it, display::Item::GlyphRun(_) | display::Item::Rule(_));
+        }
+        for (tfm, face, exact) in &a.resources {
+            if !exact {
+                profiles.entry(tfm.clone()).or_insert(face.clone());
+            }
+        }
+        // Glyphs TeX's metrics placed that the OpenType face cannot draw
+        // (extensible assemblies, unknown chains): reported, not faked.
+        for (font, code, ch) in &a.unmapped {
+            if unmapped_seen.insert((font.clone(), *code)) {
+                let span = block.recs.iter().flatten().find_map(|r| match &laid.recs[*r] {
+                    BoxRec::Math(mi) => Some(laid.maths[*mi].span),
+                    BoxRec::Rule { span, .. } => Some(*span),
+                    BoxRec::Picture(p) => Some(p.span),
+                    BoxRec::Table(t) => Some(t.span),
+                    BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Leader { .. } => None,
+                    BoxRec::Underline(u) => Some(u.span),
+                    BoxRec::Text { .. } => None,
+                });
+                unmapped_diags.push(Diagnostic::warning(
+                    "math_glyph_unmapped",
+                    format!("{font} code {code:#04x} ('{ch}') has no Latin Modern Math glyph mapping; nothing drawn for it"),
+                    span.map(|s| vec![source_of(s)]).unwrap_or_default(),
+                ));
+            }
+        }
+        let delta = block.cache_key.map_or(0, |(_, _, b)| b as isize - a.base as isize);
+        for &(pi, li) in &lands[bi] {
+            let page = &laid.pages.pages[pi as usize];
+            let placed = &page.lines[li as usize];
             let Some(line_items) = a.lines.get(placed.line) else { continue };
             let dy = Tick::from_tex_pt(placed.baseline_y);
-            let dx = laid.line_dx.get(pi).and_then(|d| d.get(li)).map_or(Tick(0), |d| Tick::from_tex_pt(*d));
-            let delta = block.cache_key.map_or(0, |(_, _, b)| b as isize - a.base as isize);
+            let dx = laid.line_dx.get(pi as usize).and_then(|d| d.get(li as usize)).map_or(Tick(0), |d| Tick::from_tex_pt(*d));
+            let slot = &mut per_line[pi as usize].as_mut().expect("a landing page is resident")[li as usize];
             for it in line_items {
                 let mut item = incremental::place_item(it, dy, &a.path, delta);
                 if dx.0 != 0 {
                     display::shift_x(&mut item, dx);
                 }
-                items.push(item);
+                slot.push(item);
             }
+        }
+        if wanted {
+            if let Some((k, _, _)) = block.cache_key {
+                keep_assembled.insert(k);
+            }
+        }
+        // `a` drops here unless the assembled cache or another `Rc` holds it.
+    }
+    // The page-level items the loop above never saw: float images belong to a
+    // page rather than to a block, and `\pagecolor` paints a rule under every
+    // page. Both are document-wide facts even when the page carrying them is
+    // elided.
+    for (_, it) in &laid.images {
+        doc_features.note(it);
+    }
+    if page_color.is_some() && !laid.pages.pages.is_empty() {
+        doc_features.rule = true;
+        doc_features.device_color = true;
+    }
+    if default_color.is_some() && any_painted_item {
+        doc_features.device_color = true;
+    }
+
+    // The assembled cache is scoped to the window: a scroll through a long
+    // document must not accumulate every page it passed (§5.4). `blocks` and
+    // `adapted` are untouched -- they are what keeps the next window cheap.
+    if window.is_some() {
+        if let Some(c) = cache {
+            c.retain_assembled(&keep_assembled);
+        }
+    }
+
+    let mut pages = Vec::new();
+    for (pi, page) in laid.pages.pages.iter().enumerate() {
+        let Some(lines) = per_line[pi].take() else {
+            pages.push(display::Page::elided(page.number, Tick::from_tex_pt(page.width), Tick::from_tex_pt(page.height)));
+            continue;
+        };
+        let mut items: Vec<display::Item> = Vec::with_capacity(lines.iter().map(Vec::len).sum());
+        for line in lines {
+            items.extend(line);
         }
         items.extend(laid.images.iter().filter(|(n, _)| *n == page.number).map(|(_, it)| it.clone()));
         if let Some(color) = default_color {
@@ -8560,12 +9036,7 @@ pub fn assemble(
                 }),
             );
         }
-        pages.push(display::Page {
-            number: page.number,
-            width: Tick::from_tex_pt(page.width),
-            height: Tick::from_tex_pt(page.height),
-            items,
-        });
+        pages.push(display::Page::resident(page.number, Tick::from_tex_pt(page.width), Tick::from_tex_pt(page.height), items));
     }
     // Resource selection provenance: which outline resource drew each TFM
     // font's glyphs. The roman family has exact optical siblings
@@ -8575,14 +9046,6 @@ pub fn assemble(
     // Collected over every provider (cached blocks keep the provider that
     // built them), then emitted in TFM-name order without a source so the
     // report does not depend on which block was built first.
-    let mut profiles: BTreeMap<String, String> = BTreeMap::new();
-    for a in assembled.iter().flatten() {
-        for (tfm, face, exact) in &a.resources {
-            if !exact {
-                profiles.entry(tfm.clone()).or_insert(face.clone());
-            }
-        }
-    }
     for (tfm, face) in profiles {
         diagnostics.push(Diagnostic::warning(
             "math_resource_profile",
@@ -8590,31 +9053,9 @@ pub fn assemble(
             Vec::new(),
         ));
     }
-    // Glyphs TeX's metrics placed that the OpenType face cannot draw
-    // (extensible assemblies, unknown chains): reported, not faked.
-    let mut reported = BTreeSet::new();
-    for (block, a) in laid.blocks.iter().zip(assembled.iter()) {
-        let Some(a) = a else { continue };
-        for (font, code, ch) in &a.unmapped {
-            if reported.insert((font.clone(), *code)) {
-                let span = block.recs.iter().flatten().find_map(|r| match &laid.recs[*r] {
-                    BoxRec::Math(mi) => Some(laid.maths[*mi].span),
-                    BoxRec::Rule { span, .. } => Some(*span),
-                    BoxRec::Picture(p) => Some(p.span),
-                    BoxRec::Table(t) => Some(t.span),
-                    BoxRec::ColorBox(c) => Some(c.span),
-                    BoxRec::Leader { .. } => None,
-                    BoxRec::Underline(u) => Some(u.span),
-                    BoxRec::Text { .. } => None,
-                });
-                diagnostics.push(Diagnostic::warning(
-                    "math_glyph_unmapped",
-                    format!("{font} code {code:#04x} ('{ch}') has no Latin Modern Math glyph mapping; nothing drawn for it"),
-                    span.map(|s| vec![source_of(s)]).unwrap_or_default(),
-                ));
-            }
-        }
-    }
+    // Harvested in the block loop above, in the same block order, so this
+    // vector is what it has always been.
+    diagnostics.extend(unmapped_diags);
     let fonts = used
         .values()
         .map(|f| FontResource {
@@ -8646,6 +9087,8 @@ pub fn assemble(
         fonts,
         pages,
         diagnostics,
+        window,
+        document_features: Some(doc_features),
     }
 }
 
@@ -8861,7 +9304,7 @@ fn assemble_block(
                         width: Tick::from_tex_pt(*width).max(Tick(1)),
                         height: Tick::from_tex_pt(*height).max(Tick(1)),
                         paint: Paint::BLACK,
-                        provenance: Provenance::Source(source_of(*span)),
+                        provenance: provenance_of(*span, source_of),
                     }));
                 }
             }
@@ -8987,6 +9430,7 @@ fn dots_item(x: f64, glue_width: f64, box_width: f64, face: &Rc<LoadedFace>, dot
     let mut glyphs = Vec::with_capacity(count * dot.glyphs.len());
     let mut clusters = Vec::with_capacity(count);
     let mut text = String::with_capacity(count);
+    let mut end_caret = None;
     for i in 0..count {
         let dot_x = x + leftover / 2.0 + i as f64 * box_width + (box_width - dot.width) / 2.0;
         let cluster = i as u32;
@@ -9005,14 +9449,13 @@ fn dots_item(x: f64, glue_width: f64, box_width: f64, face: &Rc<LoadedFace>, dot
         }
         let x0 = Tick::from_tex_pt(dot_x);
         let x1 = Tick::from_tex_pt(dot_x + dot.width);
+        if i + 1 == count {
+            end_caret = Some(display::EndCaret { x: x1, text_byte: i + 1 });
+        }
         clusters.push(Cluster {
             text_start_byte: i,
             text_end_byte: i + 1,
             hit_rect: Rect { x: x0, top, width: Tick(x1.0 - x0.0), height },
-            carets: display::Carets {
-                first: Caret { text_byte: i, x: x0, top, height },
-                last: (i + 1 == count).then(|| Caret { text_byte: i + 1, x: x1, top, height }),
-            },
             provenance: Provenance::Synthetic("\\dotfill".into()),
         });
     }
@@ -9024,6 +9467,7 @@ fn dots_item(x: f64, glue_width: f64, box_width: f64, face: &Rc<LoadedFace>, dot
         clusters,
         paint: Paint::BLACK,
         role: display::RunRole::Text,
+        end_caret,
     }))
 }
 
@@ -9108,11 +9552,24 @@ fn picture_items(
             ),
             _ => return None,
         };
+        #[cfg(feature = "tikz-patterns")]
+        let pattern = match item {
+            vg::Item::PathFill(f) => f.pattern.as_ref().map(|p| display::PathPattern {
+                name: p.name.clone(),
+                color: {
+                    let (r, g, b) = p.color.to_rgb();
+                    [r, g, b]
+                },
+            }),
+            _ => None,
+        };
         Some(display::Item::Path(display::PathItem {
             op,
             commands: conv(path),
             clips: clips.to_vec(),
             paint: paint(pnt),
+            #[cfg(feature = "tikz-patterns")]
+            pattern,
             provenance: Provenance::Source(source.clone()),
         }))
     };
@@ -9166,6 +9623,7 @@ fn picture_items(
         let n = g.glyphs.len();
         let mut glyphs = Vec::with_capacity(n);
         let mut clusters = Vec::with_capacity(n);
+        let mut end_caret = None;
         for (ci, sg) in g.glyphs.iter().enumerate() {
             let ox = tx(bx + sg.x_pt / PT_PER_BP);
             let adv = Tick::from_tex_pt(sg.advance_pt);
@@ -9180,12 +9638,9 @@ fn picture_items(
             // Clusters partition the text: spaces belong to the glyph before.
             let start = if ci == 0 { 0 } else { sg.text_range.start };
             let end = g.glyphs.get(ci + 1).map_or(t.text.len(), |next| next.text_range.start).max(start);
-            let last = (ci + 1 == n).then(|| display::Caret {
-                text_byte: t.text.len(),
-                x: Tick(ox.0 + adv.0),
-                top,
-                height: box_h,
-            });
+            if ci + 1 == n {
+                end_caret = Some(display::EndCaret { x: Tick(ox.0 + adv.0), text_byte: t.text.len() });
+            }
             clusters.push(display::Cluster {
                 text_start_byte: start,
                 text_end_byte: end,
@@ -9194,15 +9649,6 @@ fn picture_items(
                     top,
                     width: adv.max(Tick(1)),
                     height: box_h,
-                },
-                carets: display::Carets {
-                    first: display::Caret {
-                        text_byte: start,
-                        x: ox,
-                        top,
-                        height: box_h,
-                    },
-                    last,
                 },
                 provenance: Provenance::Source(node_source.clone()),
             });
@@ -9215,6 +9661,7 @@ fn picture_items(
             clusters,
             paint: paint(&t.paint),
             role: display::RunRole::Text,
+            end_caret,
         }));
     };
     let mut ti = 0;
@@ -9239,24 +9686,25 @@ fn picture_items(
 fn join_runs(prev: &mut GlyphRun, next: GlyphRun) {
     let offset = prev.text.len();
     let base = prev.clusters.len() as u32;
-    if let Some(last) = prev.clusters.last_mut() {
-        last.carets.last = None;
-    }
+    // The joined run ends where `next` ends. Holding the end caret on the
+    // run rather than on a cluster makes "only the last cluster carries the
+    // trailing caret" true by construction instead of by maintenance.
+    prev.end_caret = next.end_caret.map(|mut e| {
+        e.text_byte += offset;
+        e
+    });
     prev.text.push_str(&next.text);
     prev.glyphs.extend(next.glyphs.into_iter().map(|mut g| {
         g.cluster += base;
         g
     }));
     prev.clusters.extend(next.clusters.into_iter().map(|mut c| {
+        // Cluster text bytes index the joined run text; the carets derive
+        // from these, so re-basing them re-bases the carets too. (A caret
+        // outside its cluster is refused by rendering-core and the Mac
+        // consumer, which then shows no frame at all.)
         c.text_start_byte += offset;
         c.text_end_byte += offset;
-        // Carets are byte offsets into the same run text: re-base them too
-        // (a caret outside its cluster is refused by rendering-core and the
-        // Mac consumer, which then shows no frame at all).
-        c.carets.first.text_byte += offset;
-        if let Some(last) = c.carets.last.as_mut() {
-            last.text_byte += offset;
-        }
         c
     }));
 }
@@ -9310,6 +9758,7 @@ fn text_item(
         return None;
     }
     let last_index = clusters.len().saturating_sub(1);
+    let mut end_caret = None;
     let out_clusters = clusters
         .iter()
         .enumerate()
@@ -9318,20 +9767,9 @@ fn text_item(
                 (Some(a), Some(b)) => (a.0, b.0 + b.1),
                 _ => (run.x, run.x),
             };
-            let carets = display::Carets {
-                first: Caret {
-                    text_byte: c.text_range.start,
-                    x: Tick::from_tex_pt(x0),
-                    top,
-                    height: box_height,
-                },
-                last: (ci == last_index).then(|| Caret {
-                    text_byte: c.text_range.end,
-                    x: Tick::from_tex_pt(x1),
-                    top,
-                    height: box_height,
-                }),
-            };
+            if ci == last_index {
+                end_caret = Some(display::EndCaret { x: Tick::from_tex_pt(x1), text_byte: c.text_range.end });
+            }
             Cluster {
                 text_start_byte: c.text_range.start,
                 text_end_byte: c.text_range.end,
@@ -9341,8 +9779,7 @@ fn text_item(
                     width: Tick::from_tex_pt(x1 - x0),
                     height: box_height,
                 },
-                carets,
-                provenance: Provenance::Source(source_of(c.span)),
+                provenance: provenance_of(c.span, source_of),
             }
         })
         .collect();
@@ -9354,6 +9791,7 @@ fn text_item(
         clusters: out_clusters,
         paint,
         role: display::RunRole::Text,
+        end_caret,
     }))
 }
 
@@ -9412,6 +9850,41 @@ fn vertical_assemblies(glyphs: &[ml::PositionedGlyph], m: &MathRec) -> (BTreeMap
         i = j;
     }
     (runs, swallowed)
+}
+
+/// The centre of a glyph's painted ink, in pt from its own origin.
+fn ink_centre(face: &LoadedFace, b: &crate::fonts::Bounds, size: f64) -> f64 {
+    face.pt(i64::from(b.x_min) + i64::from(b.x_max), size) / 2.0
+}
+
+/// Where to paint the zero-width `\not` slash so it strikes the relation it
+/// negates instead of the thick space in front of it: the following glyph's
+/// painted ink centre, less the slash's own. `None` when there is nothing to
+/// negate or either glyph has no ink, and the caller then keeps TeX's origin.
+///
+/// This moves no box. The slash's advance stays zero and the relation keeps
+/// its TFM width, so `\neq` still measures exactly `=` and `a \ne b` exactly
+/// `a = b`, which is what pdflatex sets.
+fn not_overlay_x(
+    m: &MathRec,
+    slash_face: &LoadedFace,
+    slash: &crate::fonts::Bounds,
+    slash_glyph: &ml::PositionedGlyph,
+    negated: Option<&ml::PositionedGlyph>,
+) -> Option<f64> {
+    let negated = negated?;
+    if slash.empty {
+        return None;
+    }
+    let (face, gid) = m.otf_glyph(negated)?;
+    if gid == 0 {
+        return None;
+    }
+    let b = face.bounds(crate::ids::GlyphId(gid), Some(negated.ch));
+    if b.empty {
+        return None;
+    }
+    Some(negated.x + ink_centre(&face, &b, negated.size) - ink_centre(slash_face, slash, slash_glyph.size))
 }
 
 fn math_items(
@@ -9493,6 +9966,7 @@ fn math_items(
             clusters: Vec::new(),
             paint,
             role: display::RunRole::Math,
+            end_caret: None,
         });
         // A stacked extensible delimiter: one cluster holding the whole
         // Latin Modern Math assembly. Each part draws from its own origin up
@@ -9525,15 +9999,10 @@ fn math_items(
                     width: Tick::from_tex_pt(g.width),
                     height: hh,
                 },
-                carets: display::Carets {
-                    first: Caret {
-                        text_byte: start,
-                        x: Tick::from_tex_pt(g.x),
-                        top,
-                        height: hh,
-                    },
-                    last: None,
-                },
+                // The carets are derived from `text_start_byte` and
+                // `hit_rect` (`Cluster::first_caret`), and the run's
+                // `end_caret` is `None`, so this cluster's carets are what
+                // the explicit `first`/`last: None` used to spell out.
                 provenance: Provenance::Source(glyph_src),
             });
             continue;
@@ -9572,6 +10041,27 @@ fn math_items(
             ('\u{23DE}', 0x7B) | ('\u{23DF}', 0x7D) => (g.x + g.width - face_adv, face_adv),
             ('\u{23DE}' | '\u{23DF}', _) => (g.x, face_adv),
             _ if ams.is_some_and(|a| a.name == "dashrightarrow@") => (g.x + g.width - face_adv, adv),
+            // `\not` (`fontmath.ltx` 432: `\mathchar"3236`, cmsy `"36`) is a
+            // zero-width overlay. TeX boxes it empty and the slash strikes
+            // the relation that *follows* it, which is why `\neq` is exactly
+            // as wide as `=` (pdflatex TL2025: both 7.77780 pt at 10 pt).
+            //
+            // The painting face draws that slash at U+0338, and U+0338 is a
+            // Unicode *combining* mark: it composes with the character
+            // *before* it, so its ink lies entirely to the LEFT of its own
+            // origin -- Latin Modern Math puts it at x in [-4.58, -0.69] pt
+            // at 10 pt. Painted at the TeX box's origin it therefore lands
+            // in the thick space in front of the relation, 1.25 pt of clear
+            // air short of the `=`, and never touches it.
+            //
+            // So kern it onto the following relation's painted ink centre.
+            // That is the rule the amssymb negated sentinels below already
+            // use, and it is what this face's own precomposed negations do:
+            // Latin Modern Math's U+2260/U+2209/U+2270 ink boxes are exactly
+            // their base relation's, the slash drawn inside them.
+            _ if g.ch == crate::mathtex::NOT_SLASH => {
+                (not_overlay_x(m, &face, &b, g, flat.glyphs.get(gi + 1)).unwrap_or(g.x), adv)
+            }
             _ => (g.x, adv),
         };
         let start = r.text.len();
@@ -9584,7 +10074,10 @@ fn math_items(
             None if g.ch == crate::mathfont::VARNOTHING_SENTINEL => r.text.push('\u{2205}'),
             // An amssymb sentinel stands for its table text.
             None if ams.is_some() => r.text.push_str(ams.expect("checked").text),
-            None => r.text.push(g.ch),
+            None => match crate::mathfont::MathFonts::extraction_text(g.ch) {
+                Some(text) => r.text.push_str(text),
+                None => r.text.push(g.ch),
+            },
         }
         let ci = r.clusters.len() as u32;
         let top = Tick::from_tex_pt(baseline_y - h);
@@ -9606,10 +10099,11 @@ fn math_items(
         {
             let sb = face.bounds(slash, Some('\u{0338}'));
             if !b.empty && !sb.empty {
-                let centre = |x0: i32, x1: i32| face.pt(i64::from(x0) + i64::from(x1), g.size) / 2.0;
                 r.glyphs.push(Glyph {
                     gid: slash.0,
-                    origin_x: Tick::from_tex_pt(paint_x + centre(b.x_min, b.x_max) - centre(sb.x_min, sb.x_max)),
+                    origin_x: Tick::from_tex_pt(
+                        paint_x + ink_centre(&face, &b, g.size) - ink_centre(&face, &sb, g.size),
+                    ),
                     baseline_y: Tick::from_tex_pt(baseline_y),
                     advance_x: Tick(0),
                     advance_y: Tick(0),
@@ -9625,15 +10119,6 @@ fn math_items(
                 top,
                 width: Tick::from_tex_pt(adv),
                 height: hh,
-            },
-            carets: display::Carets {
-                first: Caret {
-                    text_byte: start,
-                    x: Tick::from_tex_pt(g.x),
-                    top,
-                    height: hh,
-                },
-                last: None,
             },
             provenance: Provenance::Source(glyph_src),
         });
@@ -9674,7 +10159,7 @@ impl Tick {
 pub fn documents_referenced(list: &DisplayList) -> BTreeSet<DocumentId> {
     let mut out = BTreeSet::new();
     for p in &list.pages {
-        for it in &p.items {
+        for it in p.items().into_iter().flatten() {
             if let display::Item::GlyphRun(r) = it {
                 for c in &r.clusters {
                     for s in c.provenance.sources() {

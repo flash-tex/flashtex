@@ -109,7 +109,7 @@ fn equals_baselines(text: &str) -> Vec<f64> {
     let r = render(&docs, "main.tex", 1, "align-after-heading", &fonts, &RenderOptions::default());
     assert_eq!(r.v2.pages.len(), 1, "expected a one-page document");
     let mut ys = Vec::new();
-    for item in &r.v2.pages[0].items {
+    for item in r.v2.pages[0].resident_items() {
         let Item::GlyphRun(run) = item else { continue };
         let mut chars = run.clusters.iter().map(|c| {
             run.text[c.text_start_byte as usize..c.text_end_byte as usize].chars().next()
@@ -129,7 +129,7 @@ fn baseline_of(text: &str, word: &str) -> f64 {
     let fonts = FontSet::with_default_dirs(&[]);
     let docs = [SourceDocument { path: "main.tex", text }];
     let r = render(&docs, "main.tex", 1, "align-after-heading", &fonts, &RenderOptions::default());
-    for item in &r.v2.pages[0].items {
+    for item in r.v2.pages[0].resident_items() {
         let Item::GlyphRun(run) = item else { continue };
         if run.text.trim_start().starts_with(word) {
             if let Some(g) = run.glyphs.first() {

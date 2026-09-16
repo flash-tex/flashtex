@@ -29,6 +29,11 @@ final class FakeMac {
     /// the message); `statusEchoWrongId` → an ack naming another capture.
     var answersStatus = true
     var statusEchoWrongId = false
+    /// `capture_insert` requests this instance received, newest last.
+    private var _insertRequests: [NearbyWire.CaptureInsertRequest] = []
+    /// `answersInsert == false` → `unknown_type` (a Mac that predates
+    /// `capture_insert`), which the companion must report rather than retry.
+    var answersInsert = true
     private var _hellos: [NearbyWire.Hello] = []
     private var listener: NWListener!
     private let queue = DispatchQueue(label: "fake.mac")
@@ -117,6 +122,7 @@ final class FakeMac {
     }
     var captures: [NearbyWire.CaptureSubmit] { queue.sync { _captures } }
     var statusRequests: [String] { queue.sync { _statusRequests } }
+    var insertRequests: [NearbyWire.CaptureInsertRequest] { queue.sync { _insertRequests } }
     func setStatus(_ captureId: String, state: String, durable: Bool = true, latex: String? = nil, note: String? = nil, newRevision: Int? = nil) {
         var j: [String: Any] = ["capture_id": captureId, "state": state, "durable": durable]
         if let latex { j["latex"] = latex }
@@ -172,6 +178,28 @@ final class FakeMac {
                             var j = self._status[req.captureId] ?? ["capture_id": req.captureId, "state": "received", "durable": false, "note": "FakeMac inbox"]
                             if self.statusEchoWrongId { j["capture_id"] = "someone-else" }
                             reply("capture_status_ack", FakeMac.wire(j) as NearbyWire.CaptureStatus)
+                        case "capture_insert" where self.answersInsert:
+                            guard let req = try? NearbyWire.decode(line, as: NearbyWire.CaptureInsertRequest.self).payload else { fail("bad_request", "undecodable capture_insert"); continue }
+                            self._insertRequests.append(req)
+                            guard self._captures.contains(where: { $0.captureId == req.captureId }) else {
+                                fail("unknown_capture", "capture \(req.captureId) was not accepted on this pairing"); continue
+                            }
+                            // The real Mac inserts its own journaled proposal and
+                            // only when the approved digest names it. Model exactly
+                            // that: the scripted `latex` is the proposal, and an
+                            // approval of anything else is refused.
+                            let scripted = self._status[req.captureId]?["latex"] as? String
+                            guard let proposal = scripted else {
+                                fail("no_proposal", "capture \(req.captureId) has no proposal awaiting review"); continue
+                            }
+                            guard NearbyWire.proposalDigest(proposal) == req.approvedLatexSha256 else {
+                                fail("proposal_changed", "the Mac's proposal is not the text this companion approved"); continue
+                            }
+                            var inserted: [String: Any] = ["capture_id": req.captureId, "state": "inserted", "durable": true, "latex": proposal]
+                            inserted["new_revision"] = 9
+                            self._status[req.captureId] = inserted
+                            reply("capture_insert_ack", FakeMac.wire(["capture_id": req.captureId, "state": "inserted",
+                                                                     "new_revision": 9, "note": "inserted on the Mac"]) as NearbyWire.CaptureInsertAck)
                         default:
                             fail("unknown_type", "unknown message type \(header.type)")
                         }

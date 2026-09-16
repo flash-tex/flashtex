@@ -240,7 +240,7 @@ page on the wire. Domain-separated prefixes:
   - glyph run: `0x01 ‖ font_id ‖ font_size ‖ text ‖ glyph_count ‖ (gid, origin_x, baseline_y, advance_x, advance_y, cluster)… ‖ cluster_count ‖ per cluster (text_start_byte, text_end_byte, hit_rect_count, (x, top, width, height)…, caret_count, (text_byte, x, top, height)…, provenance) ‖ paint(r, g, b, a)`
   - rule: `0x02 ‖ x ‖ top ‖ width ‖ height ‖ paint ‖ provenance`
   - provenance: sources → `0x10 ‖ count ‖ (path, start_byte, end_byte)…`; synthetic → `0x11 ‖ reason`
-- `header_digest(list) = SHA256("flashtex:dl2:header:1\0" ‖ render_format ‖ coordinate_unit ‖ color_space ‖ text_extraction ‖ project_id ‖ revision ‖ features(count ‖ str…) ‖ documents(count ‖ (path, revision, sha256, byte_length)…) ‖ fonts(count ‖ (font_id, sha256, byte_length, format, face_index, units_per_em, glyph_count, postscript_name)…) ‖ diagnostics(count ‖ (code, message, severity, sources(count ‖ (path, start_byte, end_byte)…))…))`
+- `header_digest(list) = SHA256("flashtex:dl2:header:1\0" ‖ render_format ‖ coordinate_unit ‖ color_space ‖ text_extraction ‖ project_id ‖ revision ‖ features(count ‖ str…) ‖ documents(count ‖ (path, revision, sha256, byte_length)…) ‖ fonts(count ‖ (font_id, sha256, byte_length, format, face_index, units_per_em, glyph_count, postscript_name)…) ‖ diagnostics(count ‖ (code, message, severity, sources(count ‖ (path, start_byte, end_byte)…) ‖ [suggestion iff `display-list-v2-diagnostics` is negotiated and the value is a non-empty string])…))`
 - `list_digest(list) = SHA256("flashtex:dl2:list:1\0" ‖ header_digest (32 raw bytes) ‖ page_count ‖ page_digest[1] ‖ … ‖ page_digest[N] (32 raw bytes each))`
 
 Every field of the wire model is covered (glyph runs, rules, clusters, hit
@@ -258,6 +258,11 @@ never by digest agreement. The reference implementation is Appendix A;
 its test vectors are the worked example's digests (Appendix B). Both producer
 (Rust) and consumer (Swift) implementations must reproduce those vectors; a
 scheme change is a new name (`dl2-canon-2`), never a silent change.
+Optional negotiated fields are not a scheme rename: `page_digest` already
+includes image items iff `display-list-v2-images` is on the wire, and
+`header_digest` includes `suggestion` iff `display-list-v2-diagnostics` is
+on the wire and the value is a non-empty string. Diagnostics-off bytes and
+digests stay the Appendix B `dl2-canon-1` vectors.
 
 ### 5.2 Relocation (what "unchanged page" means)
 
@@ -787,7 +792,15 @@ def header_digest(pl):
     for f in pl['fonts']:
         h.update(s(f['font_id']) + s(f['sha256']) + i64(f['byte_length']) + s(f['format']) + i64(f['face_index']) + i64(f['units_per_em']) + i64(f['glyph_count']) + s(f['postscript_name']))
     h.update(i64(len(pl['diagnostics'])))
-    for d in pl['diagnostics']: h.update(s(d['code']) + s(d['message']) + s(d['severity']) + ranges(d['sources']))
+    for d in pl['diagnostics']:
+        h.update(s(d['code']) + s(d['message']) + s(d['severity']) + ranges(d['sources']))
+        # After sources, same position as delta.rs: hash suggestion iff it is on
+        # the wire. The producer serialises it only when display-list-v2-diagnostics
+        # is negotiated and the value is a non-empty string (Diagnostic.wire_suggestion);
+        # unset, empty, and capability-off omit the key and do not hash it.
+        sug = d.get('suggestion')
+        if sug:
+            h.update(s(sug))
     return h.hexdigest()
 def list_digest(pl, page_digests):
     h = hashlib.sha256(b'flashtex:dl2:list:1\0')
