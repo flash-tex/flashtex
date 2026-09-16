@@ -134,7 +134,7 @@ extension ShellModel {
             // (WholeDocumentList.swift); an unwindowed one is used as is.
             switch await exportListURL() {
             case .failure(let why):
-                captureNote = why
+                captureNote = why.reason
             case .success(let list):
                 exportPDFExact(listURL: list.url, tool: tool, destination: destination) { _ in
                     if list.temporary { try? FileManager.default.removeItem(at: list.url) }

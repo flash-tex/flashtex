@@ -34,6 +34,16 @@ enum WholeDocumentList {
 
     struct Failure: Error, CustomStringConvertible { let description: String }
 
+    /// Where the list to export came from. `temporary` files are this run's
+    /// own and the caller deletes them.
+    struct Resolved: Equatable, Sendable { var url: URL; var temporary: Bool }
+
+    /// A refusal, in the words `captureNote` should show.
+    struct Refusal: Error, Equatable, CustomStringConvertible {
+        let reason: String
+        var description: String { reason }
+    }
+
     /// Runs `producer --v2 <out> [--images]` with `requestLine` on stdin,
     /// draining both output pipes, and returns once it has exited (or been
     /// terminated at `timeout`). Never touches the main actor.
@@ -123,21 +133,21 @@ extension ShellModel {
     /// incomplete view (window proposal §4.1) and is never exported: the whole
     /// document is re-rendered to a private file first. The returned URL is the
     /// caller's to delete when `temporary` is true.
-    func exportListURL() async -> Result<(url: URL, temporary: Bool), String> {
+    func exportListURL() async -> Result<WholeDocumentList.Resolved, WholeDocumentList.Refusal> {
         guard let (frame, source) = displayListV2?.retained else {
-            return .failure("Nothing to export: no rendering-v2 display list.")
+            return .failure(.init(reason: "Nothing to export: no rendering-v2 display list."))
         }
         guard frame.list.window != nil else {
-            do { return .success((try source.listFileURL(), false)) } catch {
-                return .failure("PDF export: could not write the display list to a file: \(error.localizedDescription)")
+            do { return .success(.init(url: try source.listFileURL(), temporary: false)) } catch {
+                return .failure(.init(reason: "PDF export: could not write the display list to a file: \(error.localizedDescription)"))
             }
         }
         guard let producer = wholeDocumentProducer else {
-            return .failure("Cannot export: this document is too large to send in one reply, so the preview is showing a page window (pages \(frame.list.window!.firstPage)–\(frame.list.window!.firstPage + frame.list.window!.pageCount - 1) of \(frame.list.window!.documentPageCount)). Exporting it needs the render pipeline: attach it with ⌘⇧R, build crates/render-pipeline, or run `flashtex build` on the command line.")
+            return .failure(.init(reason: "Cannot export: this document is too large to send in one reply, so the preview is showing a page window (pages \(frame.list.window!.firstPage)–\(frame.list.window!.firstPage + frame.list.window!.pageCount - 1) of \(frame.list.window!.documentPageCount)). Exporting it needs the render pipeline: attach it with ⌘⇧R, build crates/render-pipeline, or run `flashtex build` on the command line."))
         }
         let requestLine: Data
         do { requestLine = try wholeDocumentRequestLine() } catch {
-            return .failure("PDF export: could not encode the document for the render pipeline: \(error.localizedDescription)")
+            return .failure(.init(reason: "PDF export: could not encode the document for the render pipeline: \(error.localizedDescription)"))
         }
         let out = FileManager.default.temporaryDirectory
             .appendingPathComponent("flashtex-whole-document-\(UUID().uuidString).json")
@@ -152,13 +162,13 @@ extension ShellModel {
             }.value
         } catch {
             try? FileManager.default.removeItem(at: out)
-            return .failure("Export failed: \(producer.lastPathComponent) could not render the whole document: \(error). `flashtex build` on the command line writes the same PDF.")
+            return .failure(.init(reason: "Export failed: \(producer.lastPathComponent) could not render the whole document: \(error). `flashtex build` on the command line writes the same PDF."))
         }
         guard outcome.succeeded else {
             try? FileManager.default.removeItem(at: out)
             let why = outcome.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            return .failure("Export failed: \(producer.lastPathComponent) produced no display list for this document (exit \(outcome.exitCode))\(why.isEmpty ? "" : ": \(why.prefix(500))"). `flashtex build` on the command line writes the same PDF.")
+            return .failure(.init(reason: "Export failed: \(producer.lastPathComponent) produced no display list for this document (exit \(outcome.exitCode))\(why.isEmpty ? "" : ": \(why.prefix(500))"). `flashtex build` on the command line writes the same PDF."))
         }
-        return .success((out, true))
+        return .success(.init(url: out, temporary: true))
     }
 }

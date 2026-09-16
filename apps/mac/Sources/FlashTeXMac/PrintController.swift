@@ -82,9 +82,9 @@ enum PrintController {
         }
         // A windowed frame re-renders the whole document first; an unwindowed
         // one is used as is (WholeDocumentList.swift).
-        let list: (url: URL, temporary: Bool)
+        let list: WholeDocumentList.Resolved
         switch await model.exportListURL() {
-        case .failure(let why): return .refused(why)
+        case .failure(let why): return .refused(why.reason)
         case .success(let resolved): list = resolved
         }
         let listURL = list.url

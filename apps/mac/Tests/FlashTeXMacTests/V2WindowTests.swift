@@ -290,7 +290,7 @@ final class V2WindowLiveTests: XCTestCase {
             XCTAssertTrue(list.temporary, "a windowed frame must never be exported as it stands")
             try? FileManager.default.removeItem(at: list.url)
         } else if case .failure(let why) = resolved {
-            XCTAssertTrue(why.contains("render pipeline") || why.contains("flashtex-render"), why)
+            XCTAssertTrue(why.reason.contains("render pipeline") || why.reason.contains("flashtex-render"), why.reason)
         }
 
         // Scrolling inside the comfortable interior refetches nothing.
