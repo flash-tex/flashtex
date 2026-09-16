@@ -85,6 +85,20 @@ fn explicit_labels_are_content_and_do_not_step_the_counter() {
 }
 
 #[test]
+fn text_glued_after_explicit_item_label_is_kept() {
+    // `\item[<label>]` never reaches `optional_bracket_argument`: `\item`
+    // dispatch calls `item_label_argument`, which has its own tail-rewrite
+    // for `[x]TEXT`-style glued text. This pins that behavior next to the
+    // other explicit-label coverage.
+    let source = doc("\\begin{itemize}\\item[x]TEXT\\end{itemize}");
+    let all = items(&source);
+    assert_eq!(all.len(), 1, "{:?}", all);
+    assert!(matches!(&all[0].1, Some(ItemLabel::Explicit { .. })));
+    assert_eq!(label_texts(&source), ["x"]);
+    assert_eq!(all[0].2, "TEXT", "text glued after `]` is still typeset");
+}
+
+#[test]
 fn description_terms_are_bold_explicit_labels() {
     let source =
         doc("\\begin{description}\\item[Second label] Body text.\\item Bare\\end{description}");

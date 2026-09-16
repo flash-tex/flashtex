@@ -255,7 +255,7 @@ search order and the helper binaries are documented in
 2. **Type.** Auto-compile is on (⌘B compiles on demand); zoom the preview with
    ⌘= / ⌘-, click any word to jump to its source, open **Problems** (⌘⇧M) to
    see and fix diagnostics.
-3. **Export** with *File › Export PDF (exact, v2)…*; **pair an iPad** with
+3. **Export** with *File › Export PDF…* (⌘⇧E); **pair an iPad** with
    *Edit › Nearby Companion…* (⌘⇧N) → Advertise → Show Pairing Code, then scan
    the code from FlashTeXPad.
 

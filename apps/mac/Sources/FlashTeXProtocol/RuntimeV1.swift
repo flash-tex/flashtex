@@ -39,6 +39,12 @@ public enum RuntimeV1 {
         /// (`display_list_base`; proposal r5 §3). Isolated feature: sent only
         /// when the delta capability is requested; omitted from the wire when nil.
         public var displayListBase: DisplayListBase?
+        /// `display-list-v2-window` viewer position (`display_list_window`;
+        /// protocol/proposals/display-list-v2-window.md §4). Sent only next to
+        /// the window capability; omitted from the wire when nil. The
+        /// capability without a position is a legal request and means an
+        /// unwindowed reply (§4), so the field is optional independently.
+        public var displayListWindow: DisplayListWindow?
         /// Absolute directory `\includegraphics` files are read from by the
         /// producer (`project_root`, display-list-v2-images proposal §2).
         /// Optional; omitted from the wire when nil. Old producers ignore it.
@@ -69,20 +75,37 @@ public enum RuntimeV1 {
             }
         }
 
+        /// `display_list_window` (window proposal §4): where the viewer is.
+        /// `firstPage` is 1-based; a window running past the last page is
+        /// clamped by the producer, never refused.
+        public struct DisplayListWindow: Codable, Equatable {
+            public var firstPage: Int
+            public var pageCount: Int
+            enum CodingKeys: String, CodingKey {
+                case firstPage = "first_page", pageCount = "page_count"
+            }
+            public init(firstPage: Int, pageCount: Int) {
+                self.firstPage = firstPage; self.pageCount = pageCount
+            }
+        }
+
         enum CodingKeys: String, CodingKey {
             case projectId = "project_id", revision, entryPath = "entry_path", documents
             case layoutCapabilities = "layout_capabilities"
             case displayListBase = "display_list_base"
+            case displayListWindow = "display_list_window"
             case projectRoot = "project_root"
             case date
         }
         public init(projectId: String, revision: Int, entryPath: String, documents: [Document],
-                    layoutCapabilities: [String]? = nil, displayListBase: DisplayListBase? = nil, projectRoot: String? = nil,
+                    layoutCapabilities: [String]? = nil, displayListBase: DisplayListBase? = nil,
+                    displayListWindow: DisplayListWindow? = nil, projectRoot: String? = nil,
                     date: String? = nil) {
             self.projectId = projectId; self.revision = revision
             self.entryPath = entryPath; self.documents = documents
             self.layoutCapabilities = layoutCapabilities
             self.displayListBase = displayListBase
+            self.displayListWindow = displayListWindow
             self.projectRoot = projectRoot
             self.date = date
         }
@@ -96,6 +119,7 @@ public enum RuntimeV1 {
             layoutCapabilities = try c.decodeIfPresent([String].self, forKey: .layoutCapabilities)
             if let caps = layoutCapabilities { try LayoutCapabilities.validate(caps) }
             displayListBase = try c.decodeIfPresent(DisplayListBase.self, forKey: .displayListBase)
+            displayListWindow = try c.decodeIfPresent(DisplayListWindow.self, forKey: .displayListWindow)
             projectRoot = try c.decodeIfPresent(String.self, forKey: .projectRoot)
             date = try c.decodeIfPresent(String.self, forKey: .date)
             if let date { try RuntimeV1.validateDate(date) }
@@ -112,6 +136,7 @@ public enum RuntimeV1 {
                 try c.encode(caps, forKey: .layoutCapabilities)
             }
             if let base = displayListBase { try c.encode(base, forKey: .displayListBase) }
+            if let window = displayListWindow { try c.encode(window, forKey: .displayListWindow) }
             if let root = projectRoot { try c.encode(root, forKey: .projectRoot) }
             if let date {
                 try RuntimeV1.validateDate(date)

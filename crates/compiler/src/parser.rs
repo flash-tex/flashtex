@@ -1178,6 +1178,11 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "end",
     "par",
     "documentclass",
+    "NeedsTeXFormat",
+    "ProvidesClass",
+    "ProvidesPackage",
+    "ProvidesFile",
+    "DocumentMetadata",
     "setlength",
     "addtolength",
     "usepackage",
@@ -1316,6 +1321,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "RaggedRight",
     "raggedleft",
     "RaggedLeft",
+    "obeylines",
     "noindent",
     "indent",
     "tiny",
@@ -2004,6 +2010,7 @@ pub fn parse_project_with(
         in_body: !has_document,
         document_ended: false,
         document_class: None,
+        seen_documentclass: false,
         class_size_pt: None,
         parskip_pt: None,
         packages: Vec::new(),
@@ -2052,6 +2059,9 @@ pub fn parse_project_with(
         declared_alignment: None,
         alignment_stack: Vec::new(),
         env_alignments: Vec::new(),
+        obeylines: false,
+        obeylines_stack: Vec::new(),
+        env_obeylines: Vec::new(),
         list_spacing: HashMap::new(),
         theorems: HashMap::new(),
         theorem_style: TheoremStyle::default(),
@@ -2187,6 +2197,11 @@ struct P<'a> {
     in_body: bool,
     document_ended: bool,
     document_class: Option<String>,
+    /// Whether `\documentclass` has been seen at all — even with an empty
+    /// argument that records no class name. `\DocumentMetadata` must come
+    /// before `\documentclass` regardless, so that position check reads
+    /// this flag, not whether a class name is known.
+    seen_documentclass: bool,
     class_size_pt: Option<f64>,
     parskip_pt: Option<f64>,
     packages: Vec<String>,
@@ -2312,6 +2327,13 @@ struct P<'a> {
     declared_alignment: Option<ParagraphStyle>,
     alignment_stack: Vec<Option<ParagraphStyle>>,
     env_alignments: Vec<Option<ParagraphStyle>>,
+    /// `\\obeylines` in force: every source newline ends the current line.
+    /// Like TeX's paragraph parameters it is read when a newline is met,
+    /// and it is saved on `{`/`\\begin` and restored on the matching
+    /// `}`/`\\end` — the same scoping template as `declared_alignment`.
+    obeylines: bool,
+    obeylines_stack: Vec<bool>,
+    env_obeylines: Vec<bool>,
     /// `\setlist` overrides, keyed by environment name ("itemize" /
     /// "enumerate"). A list resolves its spacing from here when `\begin`
     /// runs, so a later `\setlist` does not retroactively change an
@@ -2465,6 +2487,16 @@ impl P<'_> {
         preceded_by_space(&self.t, index)
     }
 
+    /// Whether the source bytes behind `span` hold a newline. The lexer folds
+    /// a lone newline into `TokenKind::Space`, so under `\\obeylines` this is
+    /// how a line-ending gap is told apart from an ordinary space.
+    fn source_has_newline(&self, span: Span) -> bool {
+        self.documents
+            .get(span.document.0)
+            .and_then(|doc| doc.text.get(span.start..span.end))
+            .is_some_and(|text| text.contains('\n'))
+    }
+
     fn document(&mut self) -> Vec<Block> {
         let mut blocks = Vec::new();
         let mut para = Vec::new();
@@ -2495,6 +2527,51 @@ impl P<'_> {
 
     fn parse_stream_body(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         while self.i < self.t.len() {
+            // Issue #65: the commonest tokens are handled here, borrowed, before
+            // the owned copy below (a `String` clone per word). Each branch is
+            // exactly the matching arm of the `match` further down.
+            match &self.t[self.i].token.kind {
+                // `\obeylines` turns a source newline folded into a `Space`
+                // into a line break (the arm below), so under it a space is
+                // not the trivial token this borrowed path assumes. A comment
+                // is always just skipped.
+                TokenKind::Comment => {
+                    self.i += 1;
+                    continue;
+                }
+                TokenKind::Space if !self.obeylines => {
+                    self.i += 1;
+                    continue;
+                }
+                TokenKind::Word(word)
+                    if !(self.in_body
+                        && !self.document_ended
+                        && self.tabbing_active()
+                        && is_tabbing_control(word, self.t[self.i].token.span))
+                        && control_symbol_kern(
+                            word,
+                            self.t[self.i].maps_to_invocation,
+                            self.t[self.i].definition,
+                            self.t[self.i].token.span,
+                            self.math_packages.amsmath,
+                        )
+                        .is_none() =>
+                {
+                    let span = self.t[self.i].token.span;
+                    let space_before = self.space_precedes(self.i);
+                    self.i += 1;
+                    if self.in_body && !self.document_ended {
+                        para.push(Inline::Text {
+                            text: apply_text_ligatures(word),
+                            span,
+                            style: self.style,
+                            space_before,
+                        });
+                    }
+                    continue;
+                }
+                _ => {}
+            }
             let input = self.t[self.i].clone();
             let tok = input.token;
             let render = self.in_body && !self.document_ended;
@@ -2510,7 +2587,35 @@ impl P<'_> {
                         }
                     }
                 }
-                TokenKind::Space | TokenKind::Comment => self.i += 1,
+                TokenKind::Space => {
+                    self.i += 1;
+                    // `\\obeylines`: a source newline ends the line, exactly
+                    // like `\\\\` (an `Inline::LineBreak` with no skip). The
+                    // lexer folds a lone newline into `Space`, so the newline
+                    // is recovered from the token's own source bytes; a blank
+                    // line is already a `ParBreak` and still ends the
+                    // paragraph, and the spaces around the newline vanish
+                    // with the break (keeping them is `\\obeyspaces`' job,
+                    // out of scope here). Replacement-text spaces
+                    // (`maps_to_invocation`) were tokenised before
+                    // `\\obeylines` could apply, so they stay spaces — as in
+                    // TeX, where only newly scanned `^^M`s obey. An empty
+                    // paragraph takes no break: with nothing open the break
+                    // is a no-op, and after `\\item` it would orphan a
+                    // break-only block away from its label.
+                    if render
+                        && self.obeylines
+                        && !para.is_empty()
+                        && !input.maps_to_invocation
+                        && self.source_has_newline(tok.span)
+                    {
+                        para.push(Inline::LineBreak {
+                            span: tok.span,
+                            skip_pt: None,
+                        });
+                    }
+                }
+                TokenKind::Comment => self.i += 1,
                 TokenKind::Word(word)
                     if render
                         && self.tabbing_active()
@@ -2632,6 +2737,9 @@ impl P<'_> {
                             self.declared_alignment = alignment;
                         }
                         self.restore_length_scope();
+                        if let Some(obeylines) = self.obeylines_stack.pop() {
+                            self.obeylines = obeylines;
+                        }
                     }
                 }
                 TokenKind::MathShift if render => self.dollar_math(tok.span, para),
@@ -2823,6 +2931,14 @@ impl P<'_> {
             "raggedleft" | "RaggedLeft" => {
                 self.declared_alignment = Some(ParagraphStyle::FlushRight)
             }
+            // `\\obeylines` (LaTeX2e kernel): every source newline ends the
+            // line, like `\\\\`, for the rest of the group. Handled before
+            // the preamble guard like the alignment declarations above: a
+            // preamble-level assignment is ordinary LaTeX and stays in
+            // force for the body.
+            "obeylines" => {
+                self.obeylines = true;
+            }
             // `\title`/`\author`/`\date` are ordinarily preamble commands but
             // real LaTeX also accepts them in the body before `\maketitle`;
             // this arm runs in either place, unlike the preamble catch-all
@@ -2908,6 +3024,20 @@ impl P<'_> {
             // real documents put it, and in the body, where LaTeX also
             // allows it.
             "hypersetup" => self.hypersetup(span),
+            // `\NeedsTeXFormat{format}[date]`, `\ProvidesClass{name}[info]`,
+            // `\ProvidesPackage{name}[info]` and `\ProvidesFile{name}[info]`
+            // are `.cls`/`.sty` declarations (or inert metadata) with no
+            // visible output, so they are accepted silently. Real LaTeX
+            // carries the optional `[date]`/`[info]` after the required
+            // group, so the group is consumed first and the bracket (when
+            // present) with it; nothing is typeset either way.
+            "NeedsTeXFormat" | "ProvidesClass" | "ProvidesPackage" | "ProvidesFile" => {
+                let _ = self.required_group(name, span);
+                let _ = self.optional_bracket_argument();
+            }
+            // `\DocumentMetadata{key=value,...}` (LaTeX2e 2022+) must precede
+            // `\documentclass`; see `document_metadata` below.
+            "DocumentMetadata" => self.document_metadata(span),
             // `\lstset{key=value,...}` (listings): the package's own
             // defaults, settable anywhere and global from that point on.
             // The command typesets nothing itself -- `\lst@Init` reads the
@@ -4198,6 +4328,10 @@ impl P<'_> {
     }
 
     fn document_class(&mut self, span: Span) {
+        // Any invocation counts as "seen" for `\DocumentMetadata` ordering —
+        // even `\documentclass{}` with an empty argument, which warns below
+        // and records no class name.
+        self.seen_documentclass = true;
         let options = self.optional_bracket_argument();
         let option_list: Vec<&str> = options
             .as_ref()
@@ -4252,6 +4386,122 @@ impl P<'_> {
     /// so rather than quietly accepting them.
     fn is_letter_class(&self) -> bool {
         self.document_class.as_deref() == Some("letter")
+    }
+
+    /// `\DocumentMetadata{key=value,...}` (LaTeX2e 2022+): real LaTeX
+    /// requires it before `\documentclass` and raises an error after it.
+    /// Its keys (PDF tagging, PDF/A conformance, the document language)
+    /// feed PDF-generation machinery this compiler does not implement, so
+    /// before `\documentclass` they are accepted with a warning naming
+    /// them. `seen_documentclass` records whether `\documentclass` has
+    /// already been invoked (even with an empty argument), which is what
+    /// the position check reads.
+    fn document_metadata(&mut self, span: Span) {
+        let (tokens, argument_span) = self.required_group("DocumentMetadata", span);
+        let full_span = span.merge(argument_span);
+        if self.seen_documentclass {
+            self.diags.push(Diagnostic::error(
+                "\\DocumentMetadata must come before \\documentclass",
+                Some(full_span),
+                Some("ignored the metadata and continued".into()),
+            ));
+            return;
+        }
+        // `token_text` drops braces, so rebuild a brace-faithful rendering
+        // first: `testphase={phase-III,math,table}` is ONE key whose braced
+        // value happens to contain commas, not three keys. (Command names
+        // cannot contain `{`, `}` or `,`, so rendering a command as its bare
+        // name cannot disturb the depth tracking.)
+        //
+        // A control symbol such as `\,` lexes as a standalone one-character
+        // `Word` (see the lexer) — exactly like a real separator comma that
+        // happens to stand alone (`foo=bar , lang=en`). The two are told
+        // apart the same way [`P::optional_bracket_argument`] does: an
+        // escaped symbol's source span covers the backslash too, so it is
+        // longer than its one-character text, while an ordinary word token
+        // is accumulated character-by-character and its span length always
+        // equals its text length. Only the genuinely escaped literals hide
+        // behind placeholders while splitting (a literal `\{` must not open
+        // a brace group either) and are restored in each split-out part
+        // afterwards; every plain top-level comma splits, whatever
+        // whitespace surrounds it.
+        const ESCAPED_COMMA: char = '\u{E000}';
+        const ESCAPED_OPEN: char = '\u{E001}';
+        const ESCAPED_CLOSE: char = '\u{E002}';
+        let mut rich = String::new();
+        for input in &tokens {
+            match &input.token.kind {
+                TokenKind::Word(text) if text == "," || text == "{" || text == "}" => {
+                    // Accepted limitation: a comma/brace produced by expanding
+                    // a user macro (e.g. `\newcommand{\comma}{,}`) carries the
+                    // macro invocation's span, not a literal source span, so
+                    // this span-length check cannot tell it apart from a real
+                    // separator — it splits like one. Vanishingly rare in real
+                    // `\DocumentMetadata`, so documented, not fixed.
+                    let literal = input.token.span.end - input.token.span.start == text.len();
+                    if literal {
+                        rich.push_str(text);
+                    } else {
+                        rich.push(match text.as_str() {
+                            "," => ESCAPED_COMMA,
+                            "{" => ESCAPED_OPEN,
+                            _ => ESCAPED_CLOSE,
+                        });
+                    }
+                }
+                TokenKind::Word(text) | TokenKind::Command(text) => rich.push_str(text),
+                TokenKind::Space | TokenKind::ParBreak => rich.push(' '),
+                TokenKind::LBrace => rich.push('{'),
+                TokenKind::RBrace => rich.push('}'),
+                _ => {}
+            }
+        }
+        // Split on top-level commas only: track brace depth character by
+        // character and only split when no `{...}` value is open.
+        let mut parts: Vec<String> = Vec::new();
+        let mut current = String::new();
+        let mut depth = 0usize;
+        for ch in rich.chars() {
+            match ch {
+                '{' => {
+                    depth += 1;
+                    current.push(ch);
+                }
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    current.push(ch);
+                }
+                ',' if depth == 0 => {
+                    parts.push(std::mem::take(&mut current));
+                }
+                _ => current.push(ch),
+            }
+        }
+        parts.push(current);
+        let mut keys: Vec<String> = parts
+            .iter()
+            .map(|part| {
+                let part = part.trim();
+                let part = part
+                    .replace(ESCAPED_COMMA, ",")
+                    .replace(ESCAPED_OPEN, "{")
+                    .replace(ESCAPED_CLOSE, "}");
+                part.split_once('=')
+                    .map_or(part.clone(), |(key, _)| key.trim().to_string())
+            })
+            .filter(|key| !key.is_empty())
+            .collect();
+        if keys.is_empty() {
+            keys.push("(none)".to_string());
+        }
+        self.diags.push(Diagnostic::warning(
+            format!(
+                "\\DocumentMetadata keys have no effect in this compiler: {}",
+                keys.join(", ")
+            ),
+            Some(full_span),
+            Some("ignored the keys and continued".into()),
+        ));
     }
 
     /// `\setlength{\parskip}{..}` and `\setlength{\parindent}{..}` in the
@@ -5709,6 +5959,7 @@ impl P<'_> {
                     | "Huge"
             );
         self.env_alignments.push(self.declared_alignment);
+        self.env_obeylines.push(self.obeylines);
         self.parameter_scopes.push(Vec::new());
         if environment == "document" && self.has_document {
             self.in_body = true;
@@ -6033,6 +6284,9 @@ impl P<'_> {
                 } else {
                     self.close_parameter_scope(span);
                 }
+            }
+            if let Some(obeylines) = self.env_obeylines.pop() {
+                self.obeylines = obeylines;
             }
             if let Some(style) = self.env_styles.pop() {
                 self.style = style;
@@ -7416,20 +7670,51 @@ impl P<'_> {
         let start = first.span.start;
         let document = first.span.document;
         let mut end = first.span.end;
-        // The byte of `raw` holding the closing `]`.
-        let mut close = first_word.find(']');
-        let mut raw = first_word.clone();
+        // `{`/`}` lex as their own tokens (`is_special`), so a `]` inside a
+        // `{...}` group only closes the bracket at depth 0. `index` walks
+        // ahead of `self.i` so the word holding the closing `]` can keep
+        // its tail: `[2024]VISIBLE` lexes as one `Word`, and consuming the
+        // whole token would silently drop `VISIBLE` — instead the tail is
+        // rewritten back into the stream (as `trim_word_prefix` does).
+        let mut raw = String::new();
         let mut depth = 0usize;
-        self.i += 1;
-        while close.is_none() && self.i < self.t.len() {
-            let token = &self.t[self.i].token;
+        let mut found = false;
+        let mut index = self.i;
+        while index < self.t.len() {
+            let token = self.t[index].token.clone();
             end = token.span.end;
             match &token.kind {
                 TokenKind::Word(word) => {
+                    // The `[` opens the argument, so the first word's first
+                    // byte is skipped; every later word starts at byte 0.
+                    let from = usize::from(index == self.i).min(word.len());
+                    let body = &word[from..];
                     if depth == 0 {
-                        close = word.find(']').map(|k| raw.len() + k);
+                        if let Some(close) = body.find(']') {
+                            raw.push_str(&body[..close]);
+                            let tail = body[close + 1..].to_string();
+                            let span = token.span;
+                            let literal = span.end - span.start == word.len();
+                            if literal && !tail.is_empty() {
+                                end = span.start + from + close + 1;
+                            }
+                            if tail.is_empty() {
+                                self.i = index + 1;
+                            } else {
+                                if let Some(slot) = self.token_mut(index) {
+                                    if literal {
+                                        slot.token.span =
+                                            Span::in_document(span.document, end, span.end);
+                                    }
+                                    slot.token.kind = TokenKind::Word(tail);
+                                }
+                                self.i = index;
+                            }
+                            found = true;
+                            break;
+                        }
                     }
-                    raw.push_str(word);
+                    raw.push_str(body);
                 }
                 TokenKind::Space | TokenKind::ParBreak => raw.push(' '),
                 TokenKind::Command(name) => {
@@ -7440,12 +7725,13 @@ impl P<'_> {
                 TokenKind::RBrace => depth = depth.saturating_sub(1),
                 _ => {}
             }
-            self.i += 1;
+            index += 1;
         }
-        let found = close.is_some();
+        if !found {
+            self.i = index;
+        }
         let span = Span::in_document(document, start, end);
-        let inside = close.map_or(raw.as_str(), |k| &raw[..k]);
-        let content = inside.strip_prefix('[').unwrap_or(inside).to_string();
+        let content = raw;
         if !found {
             self.diags.push(Diagnostic::error(
                 "optional argument is missing its closing ']'",
@@ -7968,6 +8254,7 @@ impl P<'_> {
         self.style_stack.push(self.style);
         self.alignment_stack.push(self.declared_alignment);
         self.length_scopes.push(self.length_state());
+        self.obeylines_stack.push(self.obeylines);
     }
 
     /// The NFSS inputs `em`/`ex` depend on (see [`crate::font_units`]).

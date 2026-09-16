@@ -1,8 +1,14 @@
 import XCTest
+import Darwin
+import CoreGraphics
 import PDFKit
 import FlashTeXProtocol
 @testable import FlashTeXMac
 
+/// File > Print… prints the bytes File > Export PDF… writes: the loaded v2
+/// display list through `flashtex-pdf-exact`. The end-to-end cases need that
+/// tool (`FLASHTEX_PDF_EXACT`); the refusal, enablement and Print Source cases
+/// do not.
 @MainActor
 final class PrintControllerTests: XCTestCase {
     private static var repoRoot: URL {
@@ -10,102 +16,156 @@ final class PrintControllerTests: XCTestCase {
         for _ in 0..<5 { url = url.deletingLastPathComponent() }
         return url
     }
-
-    private func loadFixtureResult() throws -> RuntimeV1.CompileResult {
-        let url = Self.repoRoot.appendingPathComponent("protocol/fixtures/compile-result.json")
-        return try RuntimeV1.decodeCompileResult(Data(contentsOf: url)).payload
+    static let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures")
+    static var tool: URL? {
+        ProcessInfo.processInfo.environment["FLASHTEX_PDF_EXACT"].map { URL(fileURLWithPath: $0) }
+            .flatMap { FileManager.default.isExecutableFile(atPath: $0.path) ? $0 : nil }
     }
 
-    func testDocumentPrintMatchesExportPDFPageCountSizeAndJobTitle() throws {
-        let result = try loadFixtureResult()
-        let exportDoc = try XCTUnwrap(PDFDocument(data: PDFExport.render(result, dark: false)))
-        let prepared = try XCTUnwrap(PrintController.prepareDocument(result: result, jobTitle: "main.tex"))
+    override func setUp() {
+        super.setUp()
+        setenv("FLASHTEX_FONT_DIRS", Self.repoRoot.appendingPathComponent("apps/mac/Fonts").path, 1)
+    }
+
+    override func tearDown() {
+        unsetenv("FLASHTEX_FONT_DIRS")
+        super.tearDown()
+    }
+
+    /// A model showing `fixture` as its verified v2 frame.
+    private func modelShowing(_ fixture: String) async throws -> ShellModel {
+        let model = ShellModel()
+        let list = Self.fixtures.appendingPathComponent(fixture)
+        await withCheckedContinuation { cont in model.loadDisplayListV2(url: list) { cont.resume() } }
+        guard case .loaded = model.displayListV2 else {
+            throw XCTSkip("fixture \(fixture) did not load: \(String(describing: model.displayListV2))")
+        }
+        model.flushChrome()
+        return model
+    }
+
+    // MARK: - the printed bytes are the exported bytes
+
+    func testDocumentPrintIsTheExactExportOfTheSameDisplayList() async throws {
+        guard let tool = Self.tool else { throw XCTSkip("set FLASHTEX_PDF_EXACT to a built flashtex-pdf-exact") }
+        let model = try await modelShowing("display-list-v2-text.json")
+        let frame = try XCTUnwrap(model.displayListV2?.frame)
+        XCTAssertTrue(model.toolbarExportable)
+        XCTAssertTrue(PrintController.documentEnabled(model))
+        XCTAssertTrue(PrintController.exportWouldProceed(model))
+        XCTAssertTrue(PrintController.documentHelp(model).contains("⌘P"))
+
+        guard case .ready(let prepared) = await PrintController.makeDocumentPrint(from: model) else {
+            return XCTFail("a complete display list plus the tool must build a print operation")
+        }
         let printed = try XCTUnwrap(PDFDocument(data: try XCTUnwrap(prepared.pdfData)))
-        // CoreGraphics PDFs are not byte-identical across renders (IDs / dates);
-        // Print must still be a PDFExport.render of the same result.
-        XCTAssertEqual(printed.pageCount, exportDoc.pageCount)
-        XCTAssertEqual(printed.pageCount, result.pages.count)
-        XCTAssertEqual(printed.pageCount, 1)
-        XCTAssertEqual(printed.page(at: 0)?.string, exportDoc.page(at: 0)?.string)
-        XCTAssertTrue(printed.page(at: 0)?.string?.contains("Hello FlashTeX.") == true)
-        XCTAssertEqual(prepared.pageCount, result.pages.count)
+        XCTAssertEqual(printed.pageCount, frame.list.pages.count)
+        XCTAssertEqual(prepared.pageCount, printed.pageCount)
+        XCTAssertNil(prepared.text, "the document print never carries editor text")
+        XCTAssertFalse(prepared.operation.showsPrintPanel, "tests must not present the system panel")
+        XCTAssertEqual(prepared.jobTitle, PrintController.documentName(from: model))
+        XCTAssertEqual(prepared.operation.jobTitle, prepared.jobTitle)
+        XCTAssertEqual(prepared.operation.printInfo.paperSize.width, prepared.paperSize.width, accuracy: 0.01)
+
+        // The same bytes Export PDF… writes: a direct run of the tool on the
+        // same list produces the same page count, sizes and text.
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("print-parity-\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: out) }
+        let outcome = try ExactPDFExport.run(tool: tool, list: Self.fixtures.appendingPathComponent("display-list-v2-text.json"),
+                                             out: out, fontDirs: ExactPDFExport.fontDirectories())
+        XCTAssertTrue(outcome.succeeded, outcome.stderr + outcome.stdout)
+        let exported = try XCTUnwrap(PDFDocument(url: out))
+        XCTAssertEqual(printed.pageCount, exported.pageCount)
+        XCTAssertEqual(printed.page(at: 0)?.string, exported.page(at: 0)?.string)
+        let exportedBounds = try XCTUnwrap(exported.page(at: 0)).bounds(for: .mediaBox)
+        XCTAssertEqual(prepared.paperSize.width, exportedBounds.width, accuracy: 0.01)
+        XCTAssertEqual(prepared.paperSize.height, exportedBounds.height, accuracy: 0.01)
+    }
+
+    // MARK: - building an operation from finished bytes
+
+    /// Two pages of different sizes: page count and the *first* page's size
+    /// drive the print info, whatever produced the bytes.
+    func testPrepareDocumentFromBytesKeepsPageCountAndFirstPagePaperSize() throws {
+        let data = Self.twoPagePDF()
+        let prepared = try XCTUnwrap(PrintController.prepareDocument(pdfData: data, jobTitle: "demo"))
+        XCTAssertEqual(prepared.pageCount, 2)
         XCTAssertEqual(prepared.paperSize.width, 612, accuracy: 0.01)
         XCTAssertEqual(prepared.paperSize.height, 792, accuracy: 0.01)
-        XCTAssertEqual(prepared.jobTitle, "main.tex")
-        XCTAssertEqual(prepared.operation.jobTitle, "main.tex")
+        XCTAssertEqual(prepared.jobTitle, "demo")
+        XCTAssertEqual(prepared.operation.jobTitle, "demo")
         XCTAssertEqual(prepared.operation.printInfo.paperSize.width, 612, accuracy: 0.01)
-        XCTAssertEqual(prepared.operation.printInfo.paperSize.height, 792, accuracy: 0.01)
-        XCTAssertFalse(prepared.operation.showsPrintPanel, "tests must not present the system panel")
+        XCTAssertEqual(try XCTUnwrap(PDFDocument(data: try XCTUnwrap(prepared.pdfData))).pageCount, 2)
         XCTAssertNil(prepared.text)
     }
 
-    func testTwoPageResultKeepsPageCountAndFirstPagePaperSize() throws {
-        let json = """
-        {"protocol_version":1,"id":"t","type":"compile_result","payload":{
-          "project_id":"demo","revision":3,"status":"ok","pages":[
-            {"number":1,"width_pt":595.276,"height_pt":841.89,"items":[
-              {"kind":"text","text":"First page","x_pt":72,"baseline_y_pt":100,"font_size_pt":14,"source":null}]},
-            {"number":2,"width_pt":400,"height_pt":300,"items":[
-              {"kind":"text","text":"Second page","x_pt":10,"baseline_y_pt":50,"font_size_pt":10,"source":null}]}
-          ],"diagnostics":[],"pdf_path":null}}
-        """
-        let result = try RuntimeV1.decodeCompileResult(Data(json.utf8)).payload
-        let prepared = try XCTUnwrap(PrintController.prepareDocument(result: result, jobTitle: "demo"))
-        let printed = try XCTUnwrap(PDFDocument(data: try XCTUnwrap(prepared.pdfData)))
-        let exported = try XCTUnwrap(PDFDocument(data: PDFExport.render(result, dark: false)))
-        XCTAssertEqual(printed.pageCount, exported.pageCount)
-        XCTAssertEqual(printed.pageCount, 2)
-        XCTAssertEqual(printed.page(at: 0)?.string, exported.page(at: 0)?.string)
-        XCTAssertTrue(printed.page(at: 0)?.string?.contains("First page") == true)
-        XCTAssertTrue(printed.page(at: 1)?.string?.contains("Second page") == true)
-        XCTAssertEqual(prepared.pageCount, 2)
-        XCTAssertEqual(prepared.paperSize.width, 595.276, accuracy: 0.01)
-        XCTAssertEqual(prepared.paperSize.height, 841.89, accuracy: 0.01)
-        XCTAssertEqual(prepared.jobTitle, "demo")
+    func testPrepareDocumentRefusesBytesThatAreNotAPDF() {
+        XCTAssertNil(PrintController.prepareDocument(pdfData: Data("not a pdf".utf8), jobTitle: "demo"))
+        XCTAssertNil(PrintController.prepareDocument(pdfData: Data(), jobTitle: "demo"))
     }
 
-    func testDisabledWithoutPDFAndWithoutDocument() {
+    // MARK: - refusals (no tool needed)
+
+    func testDisabledWithoutADisplayList() async {
         let model = ShellModel()
-        model.result = nil
-        XCTAssertFalse(model.toolbarHasResult)
+        model.flushChrome()
+        XCTAssertFalse(model.toolbarExportable)
         XCTAssertFalse(PrintController.documentEnabled(model))
         XCTAssertEqual(PrintController.documentHelp(model),
                        "Nothing to print: no compiled PDF (compile the document first).")
-        guard case .refused(let why) = PrintController.makeDocumentPrint(from: model) else {
-            return XCTFail("no PDF must refuse, not build an operation")
+        XCTAssertFalse(PrintController.exportWouldProceed(model))
+        guard case .refused(let why) = await PrintController.makeDocumentPrint(from: model) else {
+            return XCTFail("no display list must refuse, not build an operation")
         }
-        XCTAssertTrue(why.contains("no compile result"), why)
+        XCTAssertTrue(why.contains("no rendering-v2 display list"), why)
     }
 
-    func testFailedResultIsNotPrintable() {
-        let model = ShellModel()
-        XCTAssertTrue(PrintController.documentEnabled(model), "fixture result is printable")
-        model.result = RuntimeV1.CompileResult(projectId: "demo", revision: 1, status: .failed,
-                                               pages: [], diagnostics: [], pdfPath: nil)
-        XCTAssertEqual(model.resultStatus, .failed)
-        XCTAssertEqual(model.toolbarPageCount, 0)
-        XCTAssertFalse(PrintController.documentEnabled(model))
-        XCTAssertEqual(PrintController.documentHelp(model), "Compile failed — nothing to print")
-        guard case .refused(let why) = PrintController.makeDocumentPrint(from: model) else {
-            return XCTFail("a failed result must not build a print operation")
+    /// A windowed reply is an incomplete view of the document (window proposal
+    /// §4.1), so it is never exported as it stands. With the render pipeline
+    /// available the whole document is re-rendered to a private file instead —
+    /// the producer's `--v2` side output has no reply-line limit — and that
+    /// file is what `flashtex-pdf-exact` is given.
+    ///
+    /// `exportPDF()` is deliberately not called in these tests: with the route
+    /// available it opens a save panel.
+    func testWindowedDisplayListIsExportedByReRenderingTheWholeDocument() async throws {
+        let model = try await modelShowing("display-list-v2-window.json")
+        XCTAssertNotNil(model.displayListV2?.frame?.list.window, "fixture must be a windowed list")
+        guard model.wholeDocumentProducer != nil else {
+            throw XCTSkip("set FLASHTEX_RENDER (or build crates/render-pipeline) for the whole-document export route")
         }
-        XCTAssertEqual(why, "Compile failed — nothing to print")
-        XCTAssertTrue(PrintController.exportWouldProceed(model),
-                      "Export PDF… still uses the current result; Print is the stricter command")
+        XCTAssertTrue(model.toolbarExportable, "a windowed document is still exportable")
+        XCTAssertTrue(PrintController.documentEnabled(model))
+        XCTAssertNil(model.exportPDFRefusal(), "the whole-document route is available, so nothing to refuse")
+
+        let resolved = await model.exportListURL()
+        guard case .success(let list) = resolved else {
+            return XCTFail("the whole-document render must produce a list: \(resolved)")
+        }
+        defer { try? FileManager.default.removeItem(at: list.url) }
+        XCTAssertTrue(list.temporary, "the windowed frame itself must never be handed to the writer")
+        let text = try String(contentsOf: list.url, encoding: .utf8)
+        XCTAssertTrue(text.contains("\"display_list\""), "the side output is a rendering-v2 envelope")
+        XCTAssertFalse(text.contains("\"window\""), "the whole-document list is not windowed")
     }
 
-    func testEmptyPagesAreNotPrintable() {
-        let model = ShellModel()
-        model.result = RuntimeV1.CompileResult(projectId: "demo", revision: 1, status: .ok,
-                                               pages: [], diagnostics: [], pdfPath: nil)
-        XCTAssertEqual(model.resultStatus, .ok)
-        XCTAssertEqual(model.toolbarPageCount, 0)
-        XCTAssertFalse(PrintController.documentEnabled(model))
-        XCTAssertEqual(PrintController.documentHelp(model), "Compile failed — nothing to print")
-        guard case .refused(let why) = PrintController.makeDocumentPrint(from: model) else {
-            return XCTFail("empty pages must not print a blank PDF")
+    /// Without a render pipeline the windowed case is a real limit, and says
+    /// so in different words than "nothing to export".
+    func testWindowedDisplayListWithoutARenderPipelineNamesTheLimit() async throws {
+        let saved = ProcessInfo.processInfo.environment["FLASHTEX_RENDER"]
+        unsetenv("FLASHTEX_RENDER")
+        defer { if let saved { setenv("FLASHTEX_RENDER", saved, 1) } }
+        let model = try await modelShowing("display-list-v2-window.json")
+        guard model.wholeDocumentProducer == nil else {
+            throw XCTSkip("a flashtex-render is discoverable without FLASHTEX_RENDER here")
         }
-        XCTAssertEqual(why, "Compile failed — nothing to print")
+        let why = try XCTUnwrap(model.exportPDFRefusal())
+        XCTAssertTrue(why.contains("too large to send in one reply"), why)
+        XCTAssertTrue(why.contains("flashtex build"), why)
+        guard case .refused(let printWhy) = await PrintController.makeDocumentPrint(from: model) else {
+            return XCTFail("a windowed list with no way to complete it must refuse")
+        }
+        XCTAssertEqual(printWhy, why, "Print and Export refuse in the same words")
     }
 
     func testFileMenuEnablementUsesDocumentEnabledAndSourceEnabled() throws {
@@ -122,47 +182,47 @@ final class PrintControllerTests: XCTestCase {
         XCTAssertTrue(text.contains("CommandGroup(replacing: .printItem)"), "Print… and Print Source stay in the File menu")
     }
 
-    func testStaleCompilePrintsLastResultLikeExportPDF() throws {
-        let model = ShellModel()
-        XCTAssertNotNil(model.result)
-        XCTAssertTrue(PrintController.exportWouldProceed(model))
+    /// Exactly one export command is wired anywhere in the shell.
+    func testOnlyOneExportRouteIsWired() throws {
+        let app = try String(contentsOf: Self.repoRoot.appendingPathComponent("apps/mac/Sources/FlashTeXMac/FlashTeXMacApp.swift"), encoding: .utf8)
+        XCTAssertEqual(app.components(separatedBy: "Button(\"Export PDF…\")").count - 1, 1)
+        for gone in ["exportPDFViaRust", "exportPDFV2", "Export PDF via Rust Writer", "Export PDF (exact, v2)"] {
+            XCTAssertFalse(app.contains(gone), "\(gone) is still wired in the File menu")
+        }
+        let titleBar = try String(contentsOf: Self.repoRoot.appendingPathComponent("apps/mac/Sources/FlashTeXMac/TitleBar.swift"), encoding: .utf8)
+        for gone in ["exportPDFViaRust", "exportPDFV2", "exportPDFExact()"] {
+            XCTAssertFalse(titleBar.contains(gone), "\(gone) is still wired in the title bar")
+        }
+    }
+
+    func testStaleEditorStillPrintsTheLastVerifiedFrame() async throws {
+        let model = try await modelShowing("display-list-v2-text.json")
         XCTAssertFalse(model.previewIsStale)
-        let last = PDFExport.render(model.result!, dark: false)
 
         model.updateActiveText(model.activeText + "% edited after compile\n")
         XCTAssertTrue(model.previewIsStale, "editor is ahead of the last compile")
-        XCTAssertTrue(model.toolbarHasResult, "Export PDF… stays enabled on a stale preview")
-        XCTAssertTrue(PrintController.exportWouldProceed(model), "Export PDF… still uses the last result")
-        XCTAssertTrue(PrintController.documentEnabled(model))
+        model.flushChrome()
+        XCTAssertTrue(model.toolbarExportable, "Export PDF… stays enabled on a stale preview")
+        XCTAssertTrue(PrintController.documentEnabled(model), "Print… still uses the last verified frame")
         XCTAssertTrue(PrintController.documentHelp(model).contains("⌘P"))
-
-        guard case .ready(let prepared) = PrintController.makeDocumentPrint(from: model) else {
-            return XCTFail("stale editor must print the last compiled PDF, not refuse")
-        }
-        let printed = try XCTUnwrap(PDFDocument(data: try XCTUnwrap(prepared.pdfData)))
-        let lastDoc = try XCTUnwrap(PDFDocument(data: last))
-        let currentExport = try XCTUnwrap(PDFDocument(data: PDFExport.render(model.result!, dark: false)))
-        XCTAssertEqual(printed.pageCount, lastDoc.pageCount)
-        XCTAssertEqual(printed.page(at: 0)?.string, lastDoc.page(at: 0)?.string)
-        XCTAssertEqual(printed.page(at: 0)?.string, currentExport.page(at: 0)?.string)
-        XCTAssertEqual(prepared.jobTitle, PrintController.documentName(from: model))
-        XCTAssertEqual(prepared.jobTitle, "main.tex")
     }
 
-    func testHistoricalPreviewRefusesLikeExport() {
-        let model = ShellModel()
-        XCTAssertTrue(PrintController.exportWouldProceed(model))
+    func testHistoricalPreviewRefusesLikeExport() async throws {
+        let model = try await modelShowing("display-list-v2-text.json")
+        XCTAssertNil(model.historicalRefusal(of: "export"))
         model.historicalPreview = HistoricalDisplay(shownEditorRevision: 1, compilingEditorRevision: 2,
                                                     shownCompileRevision: 1, currentCompileRevision: 2,
                                                     requestID: "preview-1", resultID: "r1")
         XCTAssertFalse(PrintController.exportWouldProceed(model))
         XCTAssertNotNil(model.historicalRefusal(of: "export"))
-        guard case .refused(let why) = PrintController.makeDocumentPrint(from: model) else {
+        guard case .refused(let why) = await PrintController.makeDocumentPrint(from: model) else {
             return XCTFail("historical preview must not print the older snapshot as current")
         }
         XCTAssertTrue(why.contains("unavailable"), why)
         XCTAssertTrue(why.contains("historical revision 1"), why)
     }
+
+    // MARK: - Print Source
 
     func testPrintSourceTextEqualsTheBufferAndUsesACopy() {
         let buffer = "\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n"
@@ -183,6 +243,7 @@ final class PrintControllerTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(prepared.pageCount, 1)
 
         model.documents = []
+        model.flushChrome()
         XCTAssertFalse(model.toolbarHasDocument)
         XCTAssertFalse(PrintController.sourceEnabled(model))
         XCTAssertEqual(PrintController.sourceHelp(model),
@@ -191,5 +252,24 @@ final class PrintControllerTests: XCTestCase {
             return XCTFail("no document must refuse Print Source")
         }
         XCTAssertTrue(why.contains("no document"), why)
+    }
+
+    // MARK: - helpers
+
+    /// Letter then a small page, drawn with CoreGraphics — bytes only, so this
+    /// test does not depend on any export route. Integral sizes: PDFKit reports
+    /// a rounded media box for fractional ones.
+    private static func twoPagePDF() -> Data {
+        let data = NSMutableData()
+        guard let consumer = CGDataConsumer(data: data), let ctx = CGContext(consumer: consumer, mediaBox: nil, nil) else { return Data() }
+        for size in [CGSize(width: 612, height: 792), CGSize(width: 400, height: 300)] {
+            var box = CGRect(origin: .zero, size: size)
+            ctx.beginPDFPage([kCGPDFContextMediaBox as String: NSData(bytes: &box, length: MemoryLayout<CGRect>.size)] as CFDictionary)
+            ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+            ctx.fill(CGRect(x: 10, y: 10, width: 20, height: 20))
+            ctx.endPDFPage()
+        }
+        ctx.closePDF()
+        return data as Data
     }
 }

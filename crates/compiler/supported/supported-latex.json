@@ -41,6 +41,11 @@
     {"name": "end", "mode": "text", "origin": "text_dispatch", "arguments": "{env}", "description": "closes the innermost open environment", "renders": true},
     {"name": "par", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "ends the paragraph", "renders": true},
     {"name": "documentclass", "mode": "text", "origin": "text_dispatch", "arguments": "[options]{class}", "description": "records the class and its 10pt/11pt/12pt size option; only the document body is typeset", "renders": true},
+    {"name": "NeedsTeXFormat", "mode": "text", "origin": "text_dispatch", "arguments": "{format}[date]", "description": "accepted no-op; the format requirement is metadata with no visible output", "renders": true},
+    {"name": "ProvidesClass", "mode": "text", "origin": "text_dispatch", "arguments": "{name}[release]", "description": "accepted no-op; a .cls declaration with no visible output", "renders": true},
+    {"name": "ProvidesPackage", "mode": "text", "origin": "text_dispatch", "arguments": "{name}[release]", "description": "accepted no-op; a .sty declaration with no visible output", "renders": true},
+    {"name": "ProvidesFile", "mode": "text", "origin": "text_dispatch", "arguments": "{name}[release]", "description": "accepted no-op; a file declaration with no visible output", "renders": true},
+    {"name": "DocumentMetadata", "mode": "text", "origin": "text_dispatch", "arguments": "{keys}", "description": "diagnosed: PDF metadata keys have no effect here; an error after \\documentclass", "renders": true},
     {"name": "setlength", "mode": "text", "origin": "text_dispatch", "arguments": "{\\length}{dimension}", "description": "preamble page geometry and \\parskip; \\parindent of 0pt; other lengths warn", "renders": true},
     {"name": "addtolength", "mode": "text", "origin": "text_dispatch", "arguments": "{\\length}{dimension}", "description": "preamble page geometry and \\parskip; accumulates onto the current value", "renders": true},
     {"name": "usepackage", "mode": "text", "origin": "text_dispatch", "arguments": "[options]{a,b,c}", "description": "records packages; layout-neutral ones are silent, every other package warns that it is not implemented", "renders": true},
@@ -179,6 +184,7 @@
     {"name": "RaggedRight", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "left-aligned following paragraphs (ragged2e form)", "renders": true},
     {"name": "raggedleft", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "right-aligned following paragraphs", "renders": true},
     {"name": "RaggedLeft", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "right-aligned following paragraphs (ragged2e form)", "renders": true},
+    {"name": "obeylines", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "every source newline ends the line, like \\\\, for the rest of the group", "renders": true},
     {"name": "noindent", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "accepted no-op; paragraphs are never indented", "renders": true},
     {"name": "indent", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "accepted; the first-line indent is diagnosed, not drawn", "renders": true},
     {"name": "tiny", "mode": "text", "origin": "text_size", "arguments": "", "description": "size declaration from the class size table", "renders": true},
@@ -602,7 +608,6 @@
     {"name": "Leftrightarrow", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⇔", "renders": true, "glyph": "⇔"},
     {"name": "Uparrow", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⇑", "renders": true, "glyph": "⇑"},
     {"name": "Downarrow", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⇓", "renders": true, "glyph": "⇓"},
-    {"name": "angle", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ∠", "renders": true, "glyph": "∠"},
     {"name": "aleph", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ℵ", "renders": true, "glyph": "ℵ"},
     {"name": "Re", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ℜ", "renders": true, "glyph": "ℜ"},
     {"name": "Im", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ℑ", "renders": true, "glyph": "ℑ"},
@@ -646,7 +651,6 @@
     {"name": "oint", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ∮", "renders": true, "glyph": "∮"},
     {"name": "mapsto", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ↦", "renders": true, "glyph": "↦"},
     {"name": "ell", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ℓ", "renders": true, "glyph": "ℓ"},
-    {"name": "hbar", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ℏ", "renders": true, "glyph": "ℏ"},
     {"name": "circ", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ∘", "renders": true, "glyph": "∘"},
     {"name": "parallel", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ∥", "renders": true, "glyph": "∥"},
     {"name": "coloneqq", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ≔", "renders": true, "glyph": "≔"},
@@ -870,6 +874,12 @@
     {"name": "urcorner", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⌝ (\\mathclose, msam \"71; needs amsfonts)", "renders": true, "glyph": "⌝"},
     {"name": "llcorner", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⌞ (\\mathopen, msam \"78; needs amsfonts)", "renders": true, "glyph": "⌞"},
     {"name": "lrcorner", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⌟ (\\mathclose, msam \"79; needs amsfonts)", "renders": true, "glyph": "⌟"},
+    {"name": "rightleftharpoons", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⇌ (\\mathrel, msam \"0A; needs amsfonts)", "renders": true, "glyph": "⇌"},
+    {"name": "angle", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ∠ (\\mathord, msam \"5C; needs amsfonts)", "renders": true, "glyph": "∠"},
+    {"name": "hbar", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ℏ (\\mathord, msbm \"7E; needs amsfonts)", "renders": true, "glyph": "ℏ"},
+    {"name": "sqsubset", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⊏ (\\mathrel, msam \"40; needs amsfonts)", "renders": true, "glyph": "⊏"},
+    {"name": "sqsupset", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⊐ (\\mathrel, msam \"41; needs amsfonts)", "renders": true, "glyph": "⊐"},
+    {"name": "mho", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ℧ (\\mathord, msbm \"66; needs amsfonts)", "renders": true, "glyph": "℧"},
     {"name": "yen", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ¥ (\\mathord, msam \"55; needs amsfonts)", "renders": true, "glyph": "¥"},
     {"name": "checkmark", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ✓ (\\mathord, msam \"58; needs amsfonts)", "renders": true, "glyph": "✓"},
     {"name": "circledR", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ® (\\mathord, msam \"72; needs amsfonts)", "renders": true, "glyph": "®"},
@@ -1024,7 +1034,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 194, "percent": 47.3},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 199, "percent": 48.5},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 20, "percent": 66.7},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 45, "percent": 44.1},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -1039,6 +1049,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 18, "percent": 7.5}
     ],
-    "total": {"canonical": 1314, "supported": 543, "percent": 41.3}
+    "total": {"canonical": 1314, "supported": 548, "percent": 41.7}
   }
 }

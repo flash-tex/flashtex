@@ -163,6 +163,11 @@ const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
 /// renders, plus the lexer's `\\`.
 const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("documentclass", "[options]{class}", "records the class and its 10pt/11pt/12pt size option; only the document body is typeset"),
+    ("NeedsTeXFormat", "{format}[date]", "accepted no-op; the format requirement is metadata with no visible output"),
+    ("ProvidesClass", "{name}[release]", "accepted no-op; a .cls declaration with no visible output"),
+    ("ProvidesPackage", "{name}[release]", "accepted no-op; a .sty declaration with no visible output"),
+    ("ProvidesFile", "{name}[release]", "accepted no-op; a file declaration with no visible output"),
+    ("DocumentMetadata", "{keys}", "diagnosed: PDF metadata keys have no effect here; an error after \\documentclass"),
     ("usepackage", "[options]{a,b,c}", "records packages; layout-neutral ones are silent, every other package warns that it is not implemented"),
     ("definecolor", "[class]{name}{model}{spec}", "colour definition in rgb, cmy, cmyk, gray, RGB, HTML or Gray (model lists pick the target model)"),
     ("providecolor", "[class]{name}{model}{spec}", "\\definecolor unless the colour is already defined"),
@@ -335,6 +340,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("nopagebreak", "[n]", "page-break penalty \\@getpen{n}; in a paragraph, after the line it is set on"),
     ("linebreak", "[n]", "line-break penalty -\\@getpen{n} (4: a forced break, the line stays justified)"),
     ("nolinebreak", "[n]", "line-break penalty \\@getpen{n}, the space before it moved after it"),
+    ("obeylines", "", "every source newline ends the line, like \\\\, for the rest of the group"),
     ("penalty", "<number>", "penalty node: in a paragraph a line-break penalty, between paragraphs a page-break penalty"),
     ("nobreak", "", "\\penalty10000"),
     ("allowbreak", "", "\\penalty0"),

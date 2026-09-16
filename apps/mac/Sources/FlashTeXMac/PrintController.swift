@@ -3,10 +3,11 @@ import PDFKit
 import FlashTeXProtocol
 
 /// Builds print operations for File > Print… (compiled PDF) and File > Print Source…
-/// (editor text). PDF bytes come from `PDFExport.render` — the same path as
-/// Export PDF… — so what prints is exactly what would be exported. Operations
-/// are constructed without running them; tests assert page count, paper size
-/// and job title. The live editor is never the printed view.
+/// (editor text). PDF bytes come from `flashtex-pdf-exact` (`ExactPDFExport`) —
+/// the one export route the app has — so what prints is byte-for-byte what
+/// `File > Export PDF…` would write. Operations are constructed without running
+/// them; tests assert page count, paper size and job title. The live editor is
+/// never the printed view.
 @MainActor
 enum PrintController {
     /// A built `NSPrintOperation` plus the values tests can assert without
@@ -18,7 +19,7 @@ enum PrintController {
         var jobTitle: String
         /// Editor buffer used for Print Source; nil for document PDF print.
         var text: String?
-        /// Bytes `PDFExport.render` produced; nil for Print Source.
+        /// Bytes `flashtex-pdf-exact` produced; nil for Print Source.
         var pdfData: Data?
         /// Keeps the PDF document or off-screen text view alive with the operation.
         fileprivate var keepAlive: AnyObject
@@ -36,34 +37,22 @@ enum PrintController {
     }
 
     /// Menu enablement for File > Print… (the function the File menu calls).
-    /// Reads only change-only mirrors — do not read `result` from the App scene.
-    /// A `.failed` result or an empty `pages` array is not printable:
-    /// `PDFExport.render` would emit a blank letter page. Export PDF… still
-    /// uses `toolbarHasResult`; Print is stricter. `retainedMarks` is the
-    /// diagnostics last-good snapshot and is not a print source (Export does
-    /// not fall back to it either).
-    static func documentEnabled(_ model: ShellModel) -> Bool {
-        documentEnabled(hasResult: model.toolbarHasResult, status: model.resultStatus, pageCount: model.toolbarPageCount)
-    }
-
-    /// Shared by the File-menu function and `printableResult` (same file).
-    fileprivate static func documentEnabled(hasResult: Bool, status: RuntimeV1.Status?, pageCount: Int) -> Bool {
-        hasResult && status != .failed && pageCount > 0
-    }
+    /// Reads only the change-only mirror — do not read `displayListV2` from the
+    /// App scene, which would re-evaluate the File menu on every frame. Print
+    /// and Export PDF… need exactly the same thing (a complete display list
+    /// with pages), so they share the mirror; the strict refusal, including
+    /// the historical-preview and missing-tool cases, is `printableDocument`.
+    static func documentEnabled(_ model: ShellModel) -> Bool { model.toolbarExportable }
 
     /// Tooltip for File > Print…; names why the item is disabled.
     static func documentHelp(_ model: ShellModel) -> String {
-        documentHelp(hasResult: model.toolbarHasResult, status: model.resultStatus, pageCount: model.toolbarPageCount)
+        documentHelp(exportable: model.toolbarExportable, hasFrame: model.toolbarHasV2Frame)
     }
 
-    fileprivate static func documentHelp(hasResult: Bool, status: RuntimeV1.Status?, pageCount: Int) -> String {
-        if !hasResult {
-            return "Nothing to print: no compiled PDF (compile the document first)."
-        }
-        if status == .failed || pageCount == 0 {
-            return "Compile failed — nothing to print"
-        }
-        return "Print the compiled document PDF (⌘P); same bytes as Export PDF…"
+    fileprivate static func documentHelp(exportable: Bool, hasFrame: Bool) -> String {
+        if exportable { return "Print the compiled document PDF (⌘P); same bytes as Export PDF…" }
+        if hasFrame { return "Nothing to print: this compile has no complete page list (it failed, or a page window is engaged for an over-limit document)." }
+        return "Nothing to print: no compiled PDF (compile the document first)."
     }
 
     /// Menu enablement for File > Print Source… (the function the File menu calls).
@@ -76,24 +65,51 @@ enum PrintController {
             : "Nothing to print: no document is open."
     }
 
-    /// The same refusal Export PDF… would store in `captureNote`, or the result
-    /// it would render. Print uses this so a stale editor still prints the last
-    /// applied compile (never an in-flight partial) and a historical preview
-    /// refuses instead of silently printing the older snapshot as current.
-    /// Failed / empty-page results are refused here too (not only in the menu).
-    static func printableResult(from model: ShellModel) -> Outcome {
-        if let why = model.historicalRefusal(of: "print") { return .refused(why) }
-        guard let result = model.result else {
-            return .refused("Nothing to print: no compile result loaded.")
+    /// The same refusal Export PDF… would store in `captureNote`, or the print
+    /// operation built from the bytes it would write. Print shares
+    /// `ShellModel.exportPDFRefusal()` so a stale editor still prints the last
+    /// verified frame (never an in-flight partial), a historical preview
+    /// refuses instead of silently printing the older snapshot as current, and
+    /// a windowed display list is re-rendered in full rather than printed
+    /// blank (`WholeDocumentList.swift`).
+    ///
+    /// Async because the bytes come from running `flashtex-pdf-exact`; the tool
+    /// runs off the main actor and its output is read back once.
+    static func printableDocument(from model: ShellModel) async -> Outcome {
+        if let why = model.exportPDFRefusal() { return .refused(why) }
+        guard let tool = ExactPDFExport.locateTool() else {
+            return .refused("No flashtex-pdf-exact found (build crates/pdf, or set FLASHTEX_PDF_EXACT); printing is unavailable.")
         }
-        if result.pages.isEmpty, model.v1PagesElided {
-            return .refused("The v1 layout pages were elided for the v2 pane (display-list-v2-only); use Export Exact PDF, or switch the v2 pane off and recompile.")
+        // A windowed frame re-renders the whole document first; an unwindowed
+        // one is used as is (WholeDocumentList.swift).
+        let list: WholeDocumentList.Resolved
+        switch await model.exportListURL() {
+        case .failure(let why): return .refused(why.reason)
+        case .success(let resolved): list = resolved
         }
-        if !documentEnabled(hasResult: true, status: result.status, pageCount: result.pages.count) {
-            return .refused("Compile failed — nothing to print")
+        let listURL = list.url
+        defer { if list.temporary { try? FileManager.default.removeItem(at: listURL) } }
+        let jobTitle = documentName(from: model)
+        let out = FileManager.default.temporaryDirectory
+            .appendingPathComponent("flashtex-print-\(UUID().uuidString).pdf")
+        let fontDirs = ExactPDFExport.fontDirectories()
+        let outcome: ExactPDFExport.Outcome
+        do {
+            outcome = try await Task.detached(priority: .userInitiated) {
+                try ExactPDFExport.run(tool: tool, list: listURL, out: out, fontDirs: fontDirs)
+            }.value
+        } catch {
+            try? FileManager.default.removeItem(at: out)
+            return .refused("PDF print failed: could not run \(tool.lastPathComponent): \(error.localizedDescription)")
         }
-        guard let prepared = prepareDocument(result: result, jobTitle: documentName(from: model)) else {
-            return .refused("PDF print failed: the compiled result did not produce a printable document.")
+        let data = try? Data(contentsOf: out)
+        try? FileManager.default.removeItem(at: out)
+        guard outcome.succeeded, let data, !data.isEmpty else {
+            let why = (outcome.stderr + outcome.stdout).trimmingCharacters(in: .whitespacesAndNewlines)
+            return .refused("PDF print refused (exit \(outcome.exitCode)): \(why.isEmpty ? "no message" : why)")
+        }
+        guard let prepared = prepareDocument(pdfData: data, jobTitle: jobTitle) else {
+            return .refused("PDF print failed: the exported PDF did not produce a printable document.")
         }
         return .ready(prepared)
     }
@@ -103,8 +119,8 @@ enum PrintController {
         model.exportPDFRefusal() == nil
     }
 
-    static func makeDocumentPrint(from model: ShellModel, showsPrintPanel: Bool = false) -> Outcome {
-        switch printableResult(from: model) {
+    static func makeDocumentPrint(from model: ShellModel, showsPrintPanel: Bool = false) async -> Outcome {
+        switch await printableDocument(from: model) {
         case .refused(let why): return .refused(why)
         case .ready(let prepared):
             prepared.operation.showsPrintPanel = showsPrintPanel
@@ -121,10 +137,9 @@ enum PrintController {
                                     showsPrintPanel: showsPrintPanel))
     }
 
-    /// Builds a PDFKit print operation from the compiled result. Does not run it.
-    static func prepareDocument(result: RuntimeV1.CompileResult, jobTitle: String,
+    /// Builds a PDFKit print operation from finished PDF bytes. Does not run it.
+    static func prepareDocument(pdfData data: Data, jobTitle: String,
                                 showsPrintPanel: Bool = false) -> Prepared? {
-        let data = PDFExport.render(result, dark: false)
         guard let pdf = PDFDocument(data: data), pdf.pageCount > 0 else { return nil }
         let paper: NSSize
         if let page = pdf.page(at: 0) {
@@ -175,12 +190,20 @@ enum PrintController {
 }
 
 extension ShellModel {
-    /// `File > Print…` (⌘P): the compiled document PDF, same bytes as Export PDF….
+    /// `File > Print…` (⌘P): the compiled document PDF, the same bytes
+    /// Export PDF… writes. Producing them runs `flashtex-pdf-exact`, so the
+    /// panel opens once the tool has finished.
     func printDocument() {
-        switch PrintController.makeDocumentPrint(from: self, showsPrintPanel: true) {
-        case .refused(let why): captureNote = why
-        case .ready(let prepared):
-            _ = prepared.operation.run()
+        // The refusal Export PDF… would give, named before the tool is launched.
+        if let why = exportPDFRefusal() { captureNote = why; return }
+        captureNote = "Preparing the PDF to print…"
+        Task { @MainActor in
+            switch await PrintController.makeDocumentPrint(from: self, showsPrintPanel: true) {
+            case .refused(let why): captureNote = why
+            case .ready(let prepared):
+                captureNote = nil
+                _ = prepared.operation.run()
+            }
         }
     }
 

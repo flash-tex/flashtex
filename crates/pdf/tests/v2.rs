@@ -8,7 +8,7 @@
 //! loudly when the font is not installed.
 
 use flashtex_pdf::exact::{self, Op, SubsetOutcome};
-use flashtex_pdf::reader::PdfFile;
+use flashtex_pdf::reader::{Obj, PdfFile};
 use flashtex_pdf::sha256;
 use flashtex_pdf::truetype::TrueTypeFont;
 use flashtex_pdf::v2::{self, HashForm, V2Options};
@@ -67,6 +67,11 @@ fn real_pipeline_envelope_exports_glyphs_by_original_gid_at_exact_positions() {
 
     let out = exact::render_exact(&doc).unwrap();
     verify::check_structure(&out.bytes).unwrap();
+    assert_eq!(
+        sha256::hex(&out.bytes),
+        "bedc30983b6ccd486e861b64bf9562d6d5066bb72692cf88603934f1ceefc1db",
+        "the ungrouped v2 fixture must stay byte-identical"
+    );
     let content = ops_text(&out.bytes, 5);
     // 12 TeX pt = 12535902 ticks: the exact decimal, not pdfTeX's 11.9552.
     assert!(
@@ -655,6 +660,94 @@ fn tikz_path_items_are_stroked_and_filled_with_pdftex_operators() {
     assert_eq!(exact::render_exact(&doc).unwrap().bytes, out.bytes, "deterministic");
 }
 
+#[test]
+fn tikz_patterns_write_tiling_resources_and_pattern_color() {
+    let t = |bp: i64| bp << 20;
+    let path = format!(
+        r#"[["m",{x0},{y0}],["l",{x1},{y0}],["l",{x1},{y1}],["l",{x0},{y1}],["z"]]"#,
+        x0 = t(10),
+        y0 = t(10),
+        x1 = t(35),
+        y1 = t(35)
+    );
+    let names = [
+        "north east lines",
+        "north west lines",
+        "horizontal lines",
+        "vertical lines",
+        "grid",
+        "crosshatch",
+        "dots",
+        "crosshatch dots",
+    ];
+    let mut items = names
+        .iter()
+        .map(|name| {
+            format!(
+                r#"{{"fill_rule":"nonzero","kind":"path_fill","paint":{{"a":1,"b":0,"g":0,"r":1}},"pattern":{{"color":{{"b":0,"g":0,"r":1}},"name":"{name}"}},"path":{path}}}"#
+            )
+        })
+        .collect::<Vec<_>>();
+    items.push(format!(
+        r#"{{"fill_rule":"evenodd","kind":"path_fill","paint":{{"a":1,"b":1,"g":0,"r":0}},"pattern":{{"color":{{"b":1,"g":0,"r":0}},"name":"dots","paint_type":2}},"path":{path}}}"#
+    ));
+    let envelope = format!(
+        r#"{{"protocol_version":2,"id":"patterns","type":"display_list","payload":{{"render_format":"display-list-v2","coordinate_unit":"bp_2pow20","color_space":"srgb","fonts":[],"pages":[{{"number":1,"width":{w},"height":{h},"items":[{items}]}}],"diagnostics":[]}}}}"#,
+        w = t(100),
+        h = t(100),
+        items = items.join(",")
+    );
+    let (doc, report) = v2::from_v2(&envelope, &V2Options::default()).unwrap();
+    assert_eq!(report.paths, 9);
+    let content = exact::serialize(page_ops(&doc));
+    let text = String::from_utf8(content.clone()).unwrap();
+    assert_eq!(text.matches("/Pattern cs\n").count(), 8, "{text}");
+    assert_eq!(
+        text.matches("[/Pattern /DeviceRGB] cs\n").count(),
+        1,
+        "{text}"
+    );
+    assert!(text.contains("/Pattern cs\n/P0 scn\n"), "{text}");
+    assert!(text.contains("[/Pattern /DeviceRGB] cs\n0 0 1 /P8 scn\n"), "{text}");
+    assert_eq!(exact::parse(&content).unwrap(), page_ops(&doc));
+
+    let out = exact::render_exact(&doc).unwrap();
+    verify::check_structure(&out.bytes).unwrap();
+    assert_eq!(exact::render_exact(&doc).unwrap().bytes, out.bytes, "deterministic");
+    let file = PdfFile::parse(&out.bytes).unwrap();
+    let page = file.pages().unwrap().remove(0);
+    let resources = file
+        .resolve(file.page_attr(page, "Resources").unwrap())
+        .as_dict()
+        .unwrap();
+    let patterns = file.resolve(&resources["Pattern"]).as_dict().unwrap();
+    assert_eq!(patterns.len(), 9);
+    let expected_names = (0..9).map(|i| format!("P{i}")).collect::<Vec<_>>();
+    assert_eq!(patterns.keys().cloned().collect::<Vec<_>>(), expected_names);
+    for (i, (name, reference)) in patterns.iter().enumerate() {
+        assert_eq!(name, &format!("P{i}"));
+        let object = file.resolve(reference);
+        let Obj::Stream { dict, .. } = object else {
+            panic!("/{name} is not a pattern stream: {object:?}");
+        };
+        assert_eq!(dict["Type"].as_name(), Some("Pattern"));
+        assert_eq!(dict["PatternType"].as_number(), Some("1"));
+        assert_eq!(dict["PaintType"].as_number(), Some(if i == 8 { "2" } else { "1" }));
+        assert_eq!(dict["TilingType"].as_number(), Some("1"));
+        assert!(dict["BBox"].as_array().is_some(), "/{name}: {dict:?}");
+        assert!(dict["XStep"].as_number().unwrap().parse::<f64>().unwrap() > 0.0);
+        assert!(dict["YStep"].as_number().unwrap().parse::<f64>().unwrap() > 0.0);
+        assert_eq!(dict["Matrix"].as_array().unwrap().len(), 6);
+        assert!(dict["Resources"].as_dict().is_some());
+        let cell = String::from_utf8(file.decode_stream(object).unwrap()).unwrap();
+        if i == 8 {
+            assert!(!cell.contains(" rg"), "{name}: {cell}");
+        } else {
+            assert!(cell.contains("1 0 0"), "{name}: {cell}");
+        }
+    }
+}
+
 fn alpha_envelope(items: &str, pw: i64, ph: i64) -> String {
     format!(
         r#"{{"protocol_version":2,"id":"t","type":"display_list","payload":{{"render_format":"display-list-v2","coordinate_unit":"bp_2pow20","color_space":"srgb","fonts":[],"pages":[{{"number":1,"width":{pw},"height":{ph},"items":[{items}]}}],"diagnostics":[]}}}}"#
@@ -872,5 +965,130 @@ fn ellipsis_periods_keep_the_period_in_to_unicode() {
     let tu = exact::parse_to_unicode(cid.to_unicode_verbatim.as_deref().unwrap()).unwrap();
     assert_eq!(tu.get(&gid_dot).map(String::as_str), Some("."), "{tu:?}");
     assert_eq!(tu.get(&gid_a).map(String::as_str), Some("a"), "{tu:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn actual_text_groups_adjacent_cross_font_runs_without_changing_tounicode() {
+    let font_dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/mac/Fonts"));
+    let roman_path = font_dir.join("lmroman10-regular.otf");
+    let math_path = font_dir.join("latinmodern-math.otf");
+    if !roman_path.is_file() || !math_path.is_file() {
+        eprintln!("skipped: bundled Latin Modern fonts are not present");
+        return;
+    }
+    let roman_bytes = std::fs::read(&roman_path).unwrap();
+    let math_bytes = std::fs::read(&math_path).unwrap();
+    let roman = TrueTypeFont::load(&roman_path).unwrap();
+    let math = TrueTypeFont::load(&math_path).unwrap();
+    let roman_id = sha256::hex(&roman_bytes);
+    let math_id = sha256::hex(&math_bytes);
+    let eq = roman.glyph_id('=').unwrap();
+    let implies = math.glyph_id('⇒').unwrap();
+    let arrow = math.glyph_id('→').unwrap();
+    let size = 12i64 << 20;
+    let baseline = 100i64 << 20;
+    let x0 = 72i64 << 20;
+    let x1 = x0 + i64::from(roman.advance(eq)) * size / i64::from(roman.units_per_em);
+    let x2 = x1 + i64::from(math.advance(implies)) * size / i64::from(math.units_per_em);
+    let x3 = x2 + i64::from(math.advance(arrow)) * size / i64::from(math.units_per_em);
+    let run = |font_id: &str, text: &str, gid: u16, x: i64, actual: bool| {
+        let actual = if actual {
+            r#","actual_text":"⟹""#
+        } else {
+            ""
+        };
+        format!(
+            r#"{{"kind":"glyph_run","font_id":"{font_id}","font_size":{size},"text":"{text}"{actual},"paint":{{"r":0,"g":0,"b":0,"a":1}},"glyphs":[{{"gid":{gid},"origin_x":{x},"baseline_y":{baseline},"advance_x":0,"advance_y":0,"cluster":0}}],"clusters":[{{"text_start_byte":0,"text_end_byte":{text_len}}}]}}"#,
+            text_len = text.len(),
+        )
+    };
+    let font = |id: &str, bytes: &[u8], f: &TrueTypeFont| {
+        format!(
+            r#"{{"font_id":"{id}","sha256":"{id}","byte_length":{},"format":"opentype-cff","face_index":0,"units_per_em":{},"glyph_count":{},"postscript_name":"{}"}}"#,
+            bytes.len(),
+            f.units_per_em,
+            f.num_glyphs(),
+            f.postscript_name
+        )
+    };
+    let envelope = format!(
+        r#"{{"protocol_version":2,"id":"actual","type":"display_list","payload":{{"render_format":"display-list-v2","coordinate_unit":"bp_2pow20","color_space":"srgb","text_extraction":"cluster-actualtext","project_id":"actual","revision":1,"required_features":["glyph_run","cluster-actualtext"],"documents":[],"fonts":[{roman_font},{math_font}],"pages":[{{"number":1,"width":{page_width},"height":{page_height},"items":[{items}]}}],"diagnostics":[]}}}}"#,
+        roman_font = font(&roman_id, &roman_bytes, &roman),
+        math_font = font(&math_id, &math_bytes, &math),
+        items = [
+            run(&roman_id, "=", eq, x0, true),
+            run(&math_id, "⇒", implies, x1, true),
+            run(&roman_id, "=", eq, x2, false),
+            run(&math_id, "→", arrow, x3, false),
+        ]
+        .join(","),
+        page_width = 612i64 << 20,
+        page_height = 792i64 << 20,
+    );
+    let (doc, _) = v2::from_v2(
+        &envelope,
+        &V2Options {
+            font_dirs: vec![font_dir],
+        },
+    )
+    .unwrap();
+    let out = exact::render_exact(&doc).unwrap();
+    let exact::ExactFont::CidCff(roman_font) = &doc.fonts["F1"] else {
+        panic!("expected a CFF font for the roman run")
+    };
+    let exact::ExactFont::CidCff(math_font) = &doc.fonts["F2"] else {
+        panic!("expected a CFF font for the math run")
+    };
+    assert_eq!(
+        roman_font.to_unicode.get(&eq).map(String::as_str),
+        Some("=")
+    );
+    assert_eq!(
+        math_font.to_unicode.get(&implies).map(String::as_str),
+        Some("⇒")
+    );
+    assert_eq!(
+        math_font.to_unicode.get(&arrow).map(String::as_str),
+        Some("→")
+    );
+    let content = ops_text(&out.bytes, 5);
+    assert_eq!(content.matches(" BDC\n").count(), 1, "{content}");
+    assert_eq!(content.matches("EMC\n").count(), 1, "{content}");
+    assert!(content.contains("<FEFF27F9>"), "{content}");
+    assert_eq!(
+        exact::parse(content.as_bytes()).unwrap(),
+        match &doc.pages[0].content {
+            exact::Content::Ops(ops) => ops.clone(),
+            exact::Content::Verbatim(_) => unreachable!(),
+        }
+    );
+
+    let dir = std::env::temp_dir().join(format!("flashtex-pdf-actualtext-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pdf = dir.join("actual-text.pdf");
+    std::fs::write(&pdf, &out.bytes).unwrap();
+    let output = std::process::Command::new("python3")
+        .args([
+            "-c",
+            "import contextlib, io, sys\nwith contextlib.redirect_stdout(io.StringIO()):\n import fitz\nprint(''.join(page.get_text() for page in fitz.open(sys.argv[1])), end='')",
+            pdf.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    if !output.status.success()
+        && String::from_utf8_lossy(&output.stderr).contains("No module named")
+    {
+        eprintln!("skipped: PyMuPDF is not installed");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let extracted = String::from_utf8_lossy(&output.stdout).replace(['\r', '\n'], "");
+    assert_eq!(extracted, "⟹=→");
     let _ = std::fs::remove_dir_all(&dir);
 }

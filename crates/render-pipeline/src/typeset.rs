@@ -1021,6 +1021,12 @@ impl<'a> Context<'a> {
     fn text_box(&mut self, seg: &adapter::Segment, size: f64) -> Option<(pl::GlyphRun, usize)> {
         let span = seg_span(seg)?;
         let face = self.face(seg.style, size, span);
+        self.text_box_in(seg, size, face)
+    }
+
+    /// [`Self::text_box`] shaped in `face` instead of the style's face.
+    fn text_box_in(&mut self, seg: &adapter::Segment, size: f64, face: Rc<LoadedFace>) -> Option<(pl::GlyphRun, usize)> {
+        let span = seg_span(seg)?;
         // Verbatim runs the font's ligature/kern program not at all
         // (`\@noligs`); every other run runs it as TeX does.
         let shaped = if seg.style.literal {
@@ -2905,9 +2911,10 @@ impl<'a> Context<'a> {
         }
         let trailing_skip = drop_trailing_break(&mut list, &mut recs, &mut skips, style);
         // `\item`: the label box `\hskip-\labelwidth \hskip-\labelsep
-        // \hbox to\labelwidth{\hfil <label>} \hskip\labelsep` opens the
-        // first line (`\@item`'s `\everypar`); a label wider than
-        // `\labelwidth` keeps its own width and pushes the text right.
+        // \hbox to\labelwidth{\hss <label>} \hskip\labelsep` opens the
+        // first line (`\@item`'s `\everypar`). itemize/enumerate
+        // additionally use `\llap`, so a wide label extends left
+        // without moving the item text.
         let mut hang_pt = 0.0;
         let mut inner_margin_pt = 0.0;
         if let Some(geom) = list_geom {
@@ -2915,10 +2922,11 @@ impl<'a> Context<'a> {
             hang_pt = hang;
             inner_margin_pt = inner;
             if let Some((text, span)) = geom.label.as_ref().filter(|_| starts_paragraph) {
-                if let Some(nb) = self.label_box(text, *span, size, geom.description) {
-                    let labelsep = self.style.labelsep_pt;
+                if let Some(nb) = self.label_box(text, *span, size, geom.description || geom.label_bold, geom.label_symbol) {
+                    let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
                     let protrude = self.item_left_protrusion(&list, &recs);
-                    let mut lead = vec![(pl::Item::kern(-(labelsep + nb.width.min(labelwidth))), None)];
+                    let box_width = if geom.llap { nb.width } else { nb.width.min(labelwidth) };
+                    let mut lead = vec![(pl::Item::kern(-(labelsep + box_width)), None)];
                     // `\descriptionlabel`: `\hspace\labelsep \normalfont
                     // \bfseries #1` — the label box itself opens with
                     // `\labelsep`, so the bold text starts at the margin the
@@ -2972,8 +2980,8 @@ impl<'a> Context<'a> {
         // `\hskip\itemindent`, so that line alone starts `\leftmargin +
         // \itemindent` in. Only natbib's author-year bibliography sets it
         // (to `-\bibhang`), and only the line the `\item` starts.
-        if let Some(geom) = list_geom.filter(|g| g.itemindent_em != 0.0 && starts_paragraph) {
-            params.parindent += geom.itemindent_em * self.text_params(TextStyle::default(), size).quad;
+        if let Some(geom) = list_geom.filter(|g| (g.itemindent_em != 0.0 || g.itemindent_pt != 0.0) && starts_paragraph) {
+            params.parindent += geom.itemindent_em * self.text_params(TextStyle::default(), size).quad + geom.itemindent_pt;
         }
         // `description`: `\itemindent-\leftmargin`, so the item's first line
         // is flush at the text margin and only its continuation lines hang
@@ -3167,6 +3175,12 @@ impl<'a> Context<'a> {
                         ListMargin::Fixed(pt) => pt.to_bits().hash(&mut h),
                         ListMargin::Widest(text) => text.hash(&mut h),
                         ListMargin::Em(em) => em.to_bits().hash(&mut h),
+                        ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
+                            label.hash(&mut h);
+                            labelsep_pt.map(f64::to_bits).hash(&mut h);
+                            itemindent_pt.to_bits().hash(&mut h);
+                        }
+                        ListMargin::TextWidth(text) => text.hash(&mut h),
                     }
                 }
                 if let Some((text, span)) = &g.label {
@@ -3174,6 +3188,8 @@ impl<'a> Context<'a> {
                     (span.end - span.start).hash(&mut h);
                 }
                 g.parsep.natural.to_bits().hash(&mut h);
+                g.labelsep_pt.map(f64::to_bits).hash(&mut h);
+                g.itemindent_pt.to_bits().hash(&mut h);
                 h.finish()
             });
             for part in parts {
@@ -3530,8 +3546,16 @@ impl<'a> Context<'a> {
                 // to measure (`\@biblabel` is `\hfill`).
                 ListMargin::Em(em) => (em * quad, 0.0),
                 ListMargin::Widest(text) => {
-                    let w = self.text_width(text, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
+                    let w = self.widest_label_width(text, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
                     (w + labelsep, w)
+                }
+                ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
+                    let w = self.widest_label_width(label, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
+                    (w + labelsep_pt.unwrap_or(labelsep) - itemindent_pt, w)
+                }
+                ListMargin::TextWidth(text) => {
+                    let w = self.text_width(text, size, Span::new(0, 0));
+                    (w, (w - labelsep).max(0.0))
                 }
             };
             hang += m;
@@ -3546,9 +3570,83 @@ impl<'a> Context<'a> {
 
     /// Width of `text` shaped in the body font at `size`, in points.
     fn text_width(&mut self, text: &str, size: f64, span: Span) -> f64 {
-        let face = self.face(TextStyle::default(), size, span);
+        self.text_width_in(TextStyle::default(), text, size, span)
+    }
+
+    fn text_width_in(&mut self, style: TextStyle, text: &str, size: f64, span: Span) -> f64 {
+        let face = self.face(style, size, span);
         let shaped = self.shaper.shape(&face, text);
         shaped.width_units as f64 * size / shaped.units_per_em as f64
+    }
+
+    /// Width of an enumitem `leftmargin=*` widest label
+    /// ([`ListMargin::Widest`]): the class's itemize labels, which the
+    /// adapter names `\labelitemi`..`\labelitemiv`, as those commands set
+    /// them (article.cls: `\textbullet`, `\normalfont\bfseries\textendash`,
+    /// `\textasteriskcentered`, `\textperiodcentered`); any other label in
+    /// the body font.
+    fn widest_label_width(&mut self, text: &str, size: f64, span: Span) -> f64 {
+        let (symbol, bold) = match text {
+            "\\labelitemi" => ("•", false),
+            "\\labelitemii" => ("–", true),
+            "\\labelitemiii" => ("∗", false),
+            "\\labelitemiv" => ("·", false),
+            _ => return self.text_width(text, size, span),
+        };
+        self.tcrm_symbol_width(symbol, size)
+            .unwrap_or_else(|| self.text_width_in(TextStyle { bold, ..TextStyle::default() }, symbol, size, span))
+    }
+
+    /// The width of a TS1 text symbol `text` (`•`, `∗`, `·`) when the
+    /// document sets it from `tcrm`: LaTeX declares `\textbullet`,
+    /// `\textasteriskcentered` and `\textperiodcentered` TS1 by default, and
+    /// without `lmodern` (`ts1cmr.fd`, OT1 or T1 body text alike) that is the
+    /// EC font `tcrm`, whose bullet is 0.5em rather than `ts1-lmr`'s 0.7778em.
+    /// `None` under `lmodern`, for Times, and for any other text.
+    fn tcrm_symbol_width(&self, text: &str, size: f64) -> Option<f64> {
+        if self.style.family == Family::Times || !matches!(self.style.nfss, crate::nfss::Scheme::CmOt1 | crate::nfss::Scheme::CmT1) {
+            return None;
+        }
+        let mut chars = text.chars();
+        let ch = chars.next()?;
+        chars.next().is_none().then(|| crate::fonts::tcrm_symbol_width(ch, size)).flatten()
+    }
+
+    /// A `tcrm` symbol label ([`Self::tcrm_symbol_width`]) set `width` wide.
+    /// `tcrm`'s bullet and centred period are `cmsy`'s designs, which Latin
+    /// Modern Math draws exactly (U+2022, U+00B7: ink 0.055-0.445em and
+    /// 0.086-0.192em, as pdflatex's `SFRM1000` draws them); Latin Modern
+    /// Roman's are smaller glyphs in a 0.7778em advance. Its centred
+    /// asterisk is `tcrm`'s glyph already. The glyph is centred in `width`,
+    /// which differs from its own advance by at most a few hundredths of a
+    /// point (`tcrm1200`'s bullet is 0.4895em).
+    fn tcrm_symbol_box(&mut self, text: &str, span: Span, size: f64, width: f64) -> Option<NumberBox> {
+        let seg = adapter::Segment {
+            text: text.to_string(),
+            chars: text
+                .chars()
+                .map(|_| adapter::CharSrc { document: span.document, start: span.start, end: span.end })
+                .collect(),
+            style: TextStyle::default(),
+        };
+        let math = matches!(text, "•" | "·")
+            .then(|| self.fonts.resolve(self.style.family, Role::Math, size))
+            .filter(|r| r.substituted.is_none())
+            .map(|r| r.face);
+        let (mut run, rec) = match math {
+            Some(face) => self.text_box_in(&seg, size, face)?,
+            None => self.text_box(&seg, size)?,
+        };
+        if let ([glyph], BoxRec::Text { face, glyphs, .. }) = (run.glyphs.as_mut_slice(), &mut self.recs[rec]) {
+            let [g] = glyphs.as_mut_slice() else { unreachable!("one glyph, one record") };
+            let shift = (width - glyph.advance) / 2.0;
+            g.x_offset_units += (shift * f64::from(face.units_per_em) / size).round() as i32;
+            glyph.advance = width;
+            glyph.kern = 0.0;
+            run.width = width;
+        }
+        let (height, depth) = (run.height, run.depth);
+        Some(NumberBox { width: run.width, height, depth, pieces: vec![(run, rec, 0.0)] })
     }
 
     /// microtype's `\leftprotrusion`, which it appends to `\@item`'s
@@ -3576,8 +3674,12 @@ impl<'a> Context<'a> {
     /// the `\item` command's bytes: the words of `text` in the
     /// list's label style (`\descriptionlabel`'s `\bfseries` for a
     /// `description`), separated by interword glue at natural width.
-    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool) -> Option<NumberBox> {
-        let boxed = self.word_box(text, span, size, TextStyle { bold, ..TextStyle::default() });
+    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool, symbol: bool) -> Option<NumberBox> {
+        let text = if symbol && text == "⋅" { "·" } else { text };
+        let boxed = match self.tcrm_symbol_width(text, size).filter(|_| symbol) {
+            Some(width) => self.tcrm_symbol_box(text, span, size, width),
+            None => self.word_box(text, span, size, TextStyle { bold, ..TextStyle::default() }),
+        };
         if let Some(nb) = &boxed {
             for (_, rec, _) in &nb.pieces {
                 self.label_recs.insert(*rec);
@@ -3664,8 +3766,8 @@ impl<'a> Context<'a> {
         let description = list_geom.is_some_and(|g| g.description);
         let linewidth = s.text_width_pt - hang;
         let label = list_geom
-            .and_then(|g| g.label.as_ref().map(|l| (l, g.description)))
-            .and_then(|((text, span), bold)| self.label_box(text, *span, size, bold));
+            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol)))
+            .and_then(|((text, span), bold, symbol)| self.label_box(text, *span, size, bold, symbol));
         let mut width = hang + if bracket { 0.6 * linewidth } else { 0.0 };
         let (mut runs, mut items, mut recs) = (Vec::new(), Vec::new(), Vec::new());
         let (mut height, mut depth) = (0.0, 0.0);
@@ -3686,7 +3788,13 @@ impl<'a> Context<'a> {
                     // list's `\leftmargin`, so this is `hang + \itemindent`.
                     hang - inner
                 } else {
-                    hang - s.labelsep_pt - nb.width.min(labelwidth)
+                    hang + list_geom.map_or(0.0, |g| g.itemindent_pt)
+                        - list_geom.and_then(|g| g.labelsep_pt).unwrap_or(s.labelsep_pt)
+                        - if list_geom.is_some_and(|g| g.llap) {
+                            nb.width
+                        } else {
+                            nb.width.min(labelwidth)
+                        }
                 };
                 height = nb.height;
                 depth = nb.depth;
@@ -7412,32 +7520,42 @@ fn symbol_atoms(c: char, width_em: Option<f64>) -> Vec<ml::Atom> {
         // `\emptyset` slot but only force this one's advance and outline.
         '\u{2205}' if width_em.is_some() => vec![ml::Atom::symbol(crate::mathfont::VARNOTHING_SENTINEL)],
         _ => match long_arrow_pieces(c) {
-            Some((left, right)) => vec![long_arrow(left, right)],
+            Some(pieces) => vec![long_arrow(pieces)],
             None => vec![ml::Atom::symbol(c)],
         },
     }
 }
 
-/// The two relations a LaTeX long arrow joins (`latex.ltx`:
-/// `\longrightarrow` = `\relbar\joinrel\rightarrow`, `\Longrightarrow` =
-/// `\Relbar\joinrel\Rightarrow`, ...). `\relbar` is cmsy's minus and
-/// `\Relbar` cmr's `=`; the arrows are cmsy "20/"21/"24/"28/"29/"2C.
-fn long_arrow_pieces(c: char) -> Option<(char, char)> {
+/// The pieces a LaTeX long arrow joins, each with the kern (in mu) before it
+/// (`latex.ltx`: `\longrightarrow` = `\relbar\joinrel\rightarrow`,
+/// `\Longrightarrow` = `\Relbar\joinrel\Rightarrow`, ...; `\longmapsto` =
+/// `\mapstochar\longrightarrow`, whose flag is backed up by its own
+/// advance). `\relbar` is cmsy's minus and `\Relbar` cmr's `=`; the arrows
+/// are cmsy "20/"21/"24/"28/"29/"2C.
+fn long_arrow_pieces(c: char) -> Option<&'static [(char, f64)]> {
     Some(match c {
-        '\u{27F5}' => ('\u{2190}', '\u{2212}'), // \longleftarrow
-        '\u{27F6}' => ('\u{2212}', '\u{2192}'), // \longrightarrow
-        '\u{27F7}' => ('\u{2190}', '\u{2192}'), // \longleftrightarrow
-        '\u{27F8}' => ('\u{21D0}', '='),        // \Longleftarrow
-        '\u{27F9}' => ('=', '\u{21D2}'),        // \Longrightarrow
-        '\u{27FA}' => ('\u{21D0}', '\u{21D2}'), // \Longleftrightarrow
+        '\u{27F5}' => &[('\u{2190}', 0.0), ('\u{2212}', -3.0)], // \longleftarrow
+        '\u{27F6}' => &[('\u{2212}', 0.0), ('\u{2192}', -3.0)], // \longrightarrow
+        '\u{27F7}' => &[('\u{2190}', 0.0), ('\u{2192}', -3.0)], // \longleftrightarrow
+        '\u{27F8}' => &[('\u{21D0}', 0.0), ('=', -3.0)],        // \Longleftarrow
+        '\u{27F9}' => &[('=', 0.0), ('\u{21D2}', -3.0)],        // \Longrightarrow
+        '\u{27FA}' => &[('\u{21D0}', 0.0), ('\u{21D2}', -3.0)], // \Longleftrightarrow
+        // \longmapsto is \mapstochar\longrightarrow (amsmath.sty): the flag
+        // is U+2223, this compiler's \mid glyph, backed up by its own
+        // advance (cmsy10 slot "6A is 0.277779em = 5.00002mu, so -5mu nets
+        // +0.00002mu ≈ 1e-5pt) so it contributes zero width like pdfTeX's
+        // zero-advance \mapstochar, then the usual relbar + \joinrel join.
+        '\u{27FC}' => &[('\u{2223}', 0.0), ('\u{2212}', -5.0), ('\u{2192}', -3.0)], // \longmapsto
         _ => return None,
     })
 }
 
-/// A long arrow as TeX builds it: the two relations with `\joinrel`
+/// A long arrow as TeX builds it: the pieces with `\joinrel`
 /// (`\mathrel{\mkern-3mu}`) between them. Adjacent relations get no
-/// inter-atom space and no break between them, so the three are one
-/// relation whose nucleus is `left`, a -3mu kern and `right`. Latin Modern
+/// inter-atom space and no break between them, so the pieces are one
+/// relation whose nucleus is each glyph preceded by its kern. `\longmapsto`
+/// carries a third leading piece, `\mapstochar`'s flag, backed up by its
+/// own advance so it nets zero width. Latin Modern
 /// Math's single U+27F9 glyph is 1.457em wide where pdfTeX's `=`+`⇒` join
 /// is 0.777781 + 1.000003 - 3/18 = 1.611em, which moved every glyph after
 /// `\Longrightarrow` in a centred display by half the 1.69bp difference at
@@ -7446,9 +7564,19 @@ fn long_arrow_pieces(c: char) -> Option<(char, char)> {
 /// Not modelled: `\relbar` is `\smash`ed (amsmath `\mathsm@sh`), so pdfTeX's
 /// `\longrightarrow` box is only as tall as the arrow; here the minus keeps
 /// its 0.583em height and 0.083em depth.
-fn long_arrow(left: char, right: char) -> ml::Atom {
+fn long_arrow(pieces: &[(char, f64)]) -> ml::Atom {
     let piece = |ch| ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Symbol(ch));
-    ml::Atom::new(ml::AtomClass::Rel, ml::Nucleus::List(ml::MathList::new(vec![piece(left), ml::Atom::glue(-3.0, 0.0), piece(right)])))
+    let mut atoms = Vec::with_capacity(2 * pieces.len() - 1);
+    for (i, &(ch, kern_mu)) in pieces.iter().enumerate() {
+        if i > 0 {
+            atoms.push(ml::Atom::glue(kern_mu, 0.0));
+        }
+        atoms.push(piece(ch));
+    }
+    ml::Atom::new(
+        ml::AtomClass::Rel,
+        ml::Nucleus::List(ml::MathList::new(atoms)),
+    )
 }
 
 /// Adds `\addvspace` glue (a list environment's `\topsep`) to the block's

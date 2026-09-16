@@ -35,6 +35,11 @@ use flashtex_render_pipeline::{protocol, FontSet, RenderOptions, Rendered};
 struct Outputs {
     v2: Option<PathBuf>,
     pdf: Option<PathBuf>,
+    /// Resolved font directories and project root for `--pdf`: the exact
+    /// route resolves fonts by content hash and reads `\includegraphics`
+    /// files, so it needs both. Filled in after argument parsing.
+    font_dirs: Vec<PathBuf>,
+    project_root: Option<PathBuf>,
     timing: bool,
     /// `--device-color`: `--v2` paints carry `device_color` (proposal).
     device_color: bool,
@@ -59,10 +64,14 @@ impl Outputs {
             }
         }
         if let Some(p) = &self.pdf {
-            match flashtex_render_pipeline::pdf::write_pdf(&r.v2) {
+            // The exact route — the same bytes `flashtex-pdf-exact from-v2`
+            // and `flashtex build` write. It refuses what it cannot express
+            // exactly (naming the item) rather than approximating it, and
+            // refuses a windowed render outright (§5.6).
+            match flashtex_render_pipeline::pdf::write_pdf_exact(&r.v2, &self.font_dirs, self.project_root.as_deref()) {
                 Ok(pdf) => {
-                    for w in &pdf.warnings {
-                        eprintln!("flashtex-render: pdf: {w}");
+                    for note in &pdf.notes {
+                        eprintln!("flashtex-render: pdf: {note}");
                     }
                     if let Err(e) = std::fs::write(p, &pdf.bytes) {
                         eprintln!("flashtex-render: cannot write {}: {e}", p.display());
@@ -80,6 +89,8 @@ fn main() {
     let mut outputs = Outputs {
         v2: None,
         pdf: None,
+        font_dirs: Vec::new(),
+        project_root: None,
         timing: false,
         device_color: false,
         images: false,
@@ -145,6 +156,9 @@ fn main() {
         }
     }
     let fonts = FontSet::with_default_dirs(&dirs);
+    // `--pdf` goes through the exact route, which resolves fonts itself.
+    outputs.font_dirs = fonts.dirs().to_vec();
+    outputs.project_root = options.project_root.clone();
     if let Some(path) = tex_in {
         std::process::exit(run_tex_file(&path, &fonts, &options, &outputs));
     }

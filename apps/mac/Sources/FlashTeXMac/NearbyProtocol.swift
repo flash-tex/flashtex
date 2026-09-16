@@ -145,6 +145,54 @@ enum NearbyV1 {
         }
     }
 
+    /// Additive `capture_insert` (nearby-v1; proposal
+    /// `protocol/proposals/nearby-v1-companion-insert.md`): the companion
+    /// approves the proposal **it was shown** by `capture_status_ack.latex`
+    /// and asks the Mac to apply it.
+    ///
+    /// `approved_latex_sha256` is the lowercase hex SHA-256 of the UTF-8
+    /// bytes of exactly that text. It is not a transport checksum: it is what
+    /// makes this an approval of a *displayed* proposal rather than a blank
+    /// cheque. The Mac refuses (`proposal_changed`) when its current proposal
+    /// hashes differently, so a proposal that was re-converted between the
+    /// companion reading it and tapping Insert is never inserted unreviewed.
+    /// transfer-v1 "Never inserted automatically" is preserved: a human still
+    /// reads the LaTeX and approves it; only the *surface* moved to the iPad.
+    struct CaptureInsertRequest: Codable, Equatable {
+        var captureId: String
+        var approvedLatexSha256: String
+        enum CodingKeys: String, CodingKey {
+            case captureId = "capture_id", approvedLatexSha256 = "approved_latex_sha256"
+        }
+        init(captureId: String, approvedLatexSha256: String) {
+            self.captureId = captureId; self.approvedLatexSha256 = approvedLatexSha256
+        }
+    }
+
+    /// `capture_insert_ack`. `state` is a `CaptureStatusState` — `inserted`
+    /// on success, otherwise whatever the capture actually is now, so the
+    /// companion's row converges without a second round trip. `note` is the
+    /// Mac's plain-text detail; `new_revision` the revision after the edit.
+    struct CaptureInsertAck: Codable, Equatable {
+        var captureId: String
+        var state: String
+        var newRevision: Int?
+        var note: String?
+        enum CodingKeys: String, CodingKey {
+            case captureId = "capture_id", state, newRevision = "new_revision", note
+        }
+        init(captureId: String, state: CaptureStatusState, newRevision: Int? = nil, note: String? = nil) {
+            self.captureId = captureId; self.state = state.rawValue
+            self.newRevision = newRevision; self.note = note
+        }
+    }
+
+    /// Lowercase hex SHA-256 of a proposal's UTF-8 bytes. Both ends derive the
+    /// approval token the same way; see `CaptureInsertRequest`.
+    static func proposalDigest(_ latex: String) -> String {
+        SHA256.hash(data: Data(latex.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
     enum CaptureStatusState: String {
         /// In the Mac's in-memory inbox (no bridge attached): nothing converts it yet.
         case received
@@ -210,11 +258,21 @@ protocol CaptureSink: AnyObject {
     /// session has already checked that this pairing submitted `capture_id`
     /// and that its receipt was sent.
     func captureStatus(_ envelope: RuntimeV1.Envelope<NearbyV1.CaptureStatusRequest>, reply: @escaping (Data) -> Void)
+    /// nearby-v1 `capture_insert` (additive). `reply` gets one encoded line:
+    /// `capture_insert_ack` or an `error` carrying the request's id. As for
+    /// `captureStatus`, the session has already checked this pairing owns
+    /// `capture_id`; the sink still checks that the approved digest matches
+    /// the proposal it holds before anything reaches the document.
+    func captureInsert(_ envelope: RuntimeV1.Envelope<NearbyV1.CaptureInsertRequest>, reply: @escaping (Data) -> Void)
 }
 
 extension CaptureSink {
     func captureStatus(_ envelope: RuntimeV1.Envelope<NearbyV1.CaptureStatusRequest>, reply: @escaping (Data) -> Void) {
         reply(NearbyV1.errorLine(id: envelope.id, code: "unavailable", message: "capture_status is not answered by this sink"))
+    }
+
+    func captureInsert(_ envelope: RuntimeV1.Envelope<NearbyV1.CaptureInsertRequest>, reply: @escaping (Data) -> Void) {
+        reply(NearbyV1.errorLine(id: envelope.id, code: "unavailable", message: "capture_insert is not answered by this sink"))
     }
 }
 
@@ -950,6 +1008,9 @@ final class NearbySession {
         case "capture_status":
             handleStatus(line: line, id: id, emit: emit)
             return .keepOpen
+        case "capture_insert":
+            handleInsert(line: line, id: id, emit: emit)
+            return .keepOpen
         default:
             emit(NearbyV1.errorLine(id: id, code: "unknown_type", message: "unknown message type \(header.type)"))
             return .keepOpen
@@ -991,6 +1052,46 @@ final class NearbySession {
             return
         }
         sink.captureStatus(env, reply: emit)
+    }
+
+    // MARK: capture_insert (additive)
+
+    /// The companion approves the proposal it was shown and asks for it to be
+    /// applied. Ownership is the same rule as `capture_status`: only a
+    /// capture this pairing submitted, and only once its receipt was sent —
+    /// a pairing cannot reach into another pairing's captures, and cannot
+    /// approve something the Mac has not acknowledged receiving. Everything
+    /// past that (is there a proposal, is it still the one you read, is the
+    /// document still where it was) is the sink's to check.
+    private func handleInsert(line: Data, id: String, emit: @escaping (Data) -> Void) {
+        let env: RuntimeV1.Envelope<NearbyV1.CaptureInsertRequest>
+        do { env = try JSONDecoder().decode(RuntimeV1.Envelope<NearbyV1.CaptureInsertRequest>.self, from: line) } catch {
+            emit(NearbyV1.errorLine(id: id, code: "bad_request", message: "undecodable capture_insert: \(error)"))
+            return
+        }
+        let captureId = env.payload.captureId
+        guard NearbyV1.isValidID(captureId) else {
+            emit(NearbyV1.errorLine(id: id, code: "bad_request", message: "capture_id must be 1–128 ASCII [A-Za-z0-9_-]"))
+            return
+        }
+        let digest = env.payload.approvedLatexSha256
+        guard digest.utf8.count == 64, digest.allSatisfy({ $0.isHexDigit && !$0.isUppercase }) else {
+            emit(NearbyV1.errorLine(id: id, code: "bad_request", message: "approved_latex_sha256 must be 64 lowercase hex digits"))
+            return
+        }
+        guard let pairId, let remembered = memory.lookup(pairId: pairId, captureId: captureId) else {
+            emit(NearbyV1.errorLine(id: id, code: "unknown_capture", message: "capture \(captureId) was not accepted on this pairing"))
+            return
+        }
+        guard remembered.ack != nil else {
+            emit(NearbyV1.errorLine(id: id, code: "not_ready", message: "delivery to the Mac is still pending; capture_received not yet sent"))
+            return
+        }
+        guard let sink else {
+            emit(NearbyV1.errorLine(id: id, code: "unavailable", message: "no capture sink attached"))
+            return
+        }
+        sink.captureInsert(env, reply: emit)
     }
 
     // MARK: capture path

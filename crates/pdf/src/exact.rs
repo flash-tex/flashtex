@@ -30,8 +30,10 @@
 //! [`Op::FillAlpha`]: `/pgf@CA<a> gs` / `/pgf@ca<a> gs`, the ExtGState
 //! names and one-key dictionaries pgf's pdfTeX driver writes; a page
 //! declares exactly the states it selects, once each, inline in its
-//! `/Resources`. Any other ExtGState, shading and inline images are outside
-//! the bounded operator set and are reported as errors, never dropped.
+//! `/Resources`. Tiling patterns are [`PatternResource`] entries selected by
+//! [`Op::PatternColorSpace`] and [`Op::Pattern`], or by the typed uncolored
+//! [`Op::PatternRgb`] form. Any other ExtGState, shading and inline images
+//! outside the bounded operator set are reported as errors, never dropped.
 //!
 //! Output is deterministic: the same [`ExactDocument`] serialises to the
 //! same bytes (no timestamps, no `/ID`), which the tests check.
@@ -238,6 +240,10 @@ pub enum Op {
     ClipEvenOdd,
     BeginText,
     EndText,
+    /// `/Span <</ActualText <UTF-16BE hex>>> BDC`.
+    BeginActualText(String),
+    /// `EMC`, closing the nearest marked-content sequence.
+    EndMarkedContent,
     /// `/Name size Tf`; the name is the resource key without the slash.
     Font(String, Decimal),
     TextMove(Decimal, Decimal),
@@ -246,6 +252,15 @@ pub enum Op {
     ShowTextArray(Vec<TjElement>),
     /// `/Name Do`: paint an image or form XObject of the document.
     Do(String),
+    /// `/Pattern cs`: select a colored tiling pattern color space.
+    PatternColorSpace,
+    /// `[/Pattern /DeviceRGB] cs`: select an uncolored RGB tiling pattern
+    /// color space.
+    PatternRgbColorSpace,
+    /// `/Name scn`: select a colored tiling pattern.
+    Pattern(String),
+    /// `r g b /Name scn`: select an uncolored RGB tiling pattern.
+    PatternRgb([Decimal; 3], String),
     /// `/pgf@CA<alpha> gs`: constant stroking alpha in `[0, 1]`, through the
     /// ExtGState `<< /CA <alpha> >>` (pgf's pdfTeX driver's name and
     /// dictionary, measured with pdflatex 1.40 for `draw opacity`).
@@ -301,12 +316,16 @@ impl Op {
             Op::ClipEvenOdd => "W*",
             Op::BeginText => "BT",
             Op::EndText => "ET",
+            Op::BeginActualText(_) => "BDC",
+            Op::EndMarkedContent => "EMC",
             Op::Font(..) => "Tf",
             Op::TextMove(..) => "Td",
             Op::TextMatrix(_) => "Tm",
             Op::ShowText(_) => "Tj",
             Op::ShowTextArray(_) => "TJ",
             Op::Do(_) => "Do",
+            Op::PatternColorSpace | Op::PatternRgbColorSpace => "cs",
+            Op::Pattern(_) | Op::PatternRgb(..) => "scn",
             Op::StrokeAlpha(_) | Op::FillAlpha(_) => "gs",
         }
     }
@@ -332,7 +351,15 @@ impl Op {
             | Op::ClipNonZero
             | Op::ClipEvenOdd
             | Op::BeginText
-            | Op::EndText => {}
+            | Op::EndText
+            | Op::EndMarkedContent => {}
+            Op::BeginActualText(text) => {
+                out.extend_from_slice(b"/Span <</ActualText <FEFF");
+                for unit in text.encode_utf16() {
+                    let _ = write!(out_string(out), "{unit:04X}");
+                }
+                out.extend_from_slice(b">>> ");
+            }
             Op::Concat(v) | Op::Cubic(v) | Op::TextMatrix(v) => nums(out, v),
             Op::LineWidth(d) | Op::MiterLimit(d) | Op::FillGray(d) | Op::StrokeGray(d) => {
                 nums(out, std::slice::from_ref(d))
@@ -365,6 +392,19 @@ impl Op {
                 nums(out, std::slice::from_ref(size));
             }
             Op::Do(name) => {
+                out.push(b'/');
+                out.extend_from_slice(name.as_bytes());
+                out.push(b' ');
+            }
+            Op::PatternColorSpace => out.extend_from_slice(b"/Pattern "),
+            Op::PatternRgbColorSpace => out.extend_from_slice(b"[/Pattern /DeviceRGB] "),
+            Op::Pattern(name) => {
+                out.push(b'/');
+                out.extend_from_slice(name.as_bytes());
+                out.push(b' ');
+            }
+            Op::PatternRgb(color, name) => {
+                nums(out, color);
                 out.push(b'/');
                 out.extend_from_slice(name.as_bytes());
                 out.push(b' ');
@@ -442,6 +482,7 @@ enum Operand {
     Number(String),
     Name(String),
     String(Vec<u8>),
+    Dictionary(Vec<(String, Operand)>),
     Array(Vec<Operand>),
 }
 
@@ -531,28 +572,14 @@ fn tokenize(content: &[u8]) -> Result<Vec<Token>, String> {
             }
             b'<' => {
                 if content.get(i + 1) == Some(&b'<') {
-                    return Err(format!("dictionary at byte {i} is not a content operand"));
+                    let (entries, next) = read_dictionary(content, i)?;
+                    tokens.push(Token::Operand(Operand::Dictionary(entries)));
+                    i = next;
+                    continue;
                 }
-                let end = content[i..]
-                    .iter()
-                    .position(|&c| c == b'>')
-                    .ok_or_else(|| format!("unterminated hex string at byte {i}"))?;
-                let hex: Vec<u8> = content[i + 1..i + end]
-                    .iter()
-                    .copied()
-                    .filter(|c| !is_whitespace(*c))
-                    .collect();
-                let mut bytes = Vec::with_capacity(hex.len() / 2 + 1);
-                for pair in hex.chunks(2) {
-                    let hi = hex_digit(pair[0]);
-                    let lo = pair.get(1).map_or(Some(0), |&c| hex_digit(c));
-                    match (hi, lo) {
-                        (Some(h), Some(l)) => bytes.push(h * 16 + l),
-                        _ => return Err(format!("bad hex string at byte {i}")),
-                    }
-                }
+                let (bytes, next) = read_hex_string(content, i)?;
                 tokens.push(Token::Operand(Operand::String(bytes)));
-                i += end + 1;
+                i = next;
             }
             b')' | b'>' | b'{' | b'}' => {
                 return Err(format!("unexpected delimiter {:?} at byte {i}", b as char));
@@ -575,6 +602,62 @@ fn tokenize(content: &[u8]) -> Result<Vec<Token>, String> {
         }
     }
     Ok(tokens)
+}
+
+fn read_hex_string(content: &[u8], start: usize) -> Result<(Vec<u8>, usize), String> {
+    let end = content[start..]
+        .iter()
+        .position(|&c| c == b'>')
+        .ok_or_else(|| format!("unterminated hex string at byte {start}"))?;
+    let hex: Vec<u8> = content[start + 1..start + end]
+        .iter()
+        .copied()
+        .filter(|c| !is_whitespace(*c))
+        .collect();
+    let mut bytes = Vec::with_capacity(hex.len() / 2 + 1);
+    for pair in hex.chunks(2) {
+        let hi = hex_digit(pair[0]);
+        let lo = pair.get(1).map_or(Some(0), |&c| hex_digit(c));
+        match (hi, lo) {
+            (Some(h), Some(l)) => bytes.push(h * 16 + l),
+            _ => return Err(format!("bad hex string at byte {start}")),
+        }
+    }
+    Ok((bytes, start + end + 1))
+}
+
+fn read_dictionary(
+    content: &[u8],
+    start: usize,
+) -> Result<(Vec<(String, Operand)>, usize), String> {
+    let mut i = start + 2;
+    let mut entries = Vec::new();
+    loop {
+        while content.get(i).is_some_and(|b| is_whitespace(*b)) {
+            i += 1;
+        }
+        if content.get(i) == Some(&b'>') && content.get(i + 1) == Some(&b'>') {
+            return Ok((entries, i + 2));
+        }
+        if content.get(i) != Some(&b'/') {
+            return Err(format!("dictionary at byte {start} needs a name key"));
+        }
+        let key_start = i + 1;
+        i = key_start;
+        while i < content.len() && !is_whitespace(content[i]) && !is_delimiter(content[i]) {
+            i += 1;
+        }
+        let key = decode_name(&content[key_start..i])?;
+        while content.get(i).is_some_and(|b| is_whitespace(*b)) {
+            i += 1;
+        }
+        if content.get(i) != Some(&b'<') || content.get(i + 1) == Some(&b'<') {
+            return Err(format!("dictionary value for /{key} is not a hex string"));
+        }
+        let (value, next) = read_hex_string(content, i)?;
+        entries.push((key, Operand::String(value)));
+        i = next;
+    }
 }
 
 fn read_literal(content: &[u8], start: usize) -> Result<(Vec<u8>, usize), String> {
@@ -703,6 +786,17 @@ fn decimal(t: &Operand) -> Result<Decimal, String> {
     }
 }
 
+fn decode_actual_text(bytes: &[u8]) -> Result<String, String> {
+    if bytes.len() < 2 || bytes[..2] != [0xFE, 0xFF] || !(bytes.len() - 2).is_multiple_of(2) {
+        return Err("ActualText must be UTF-16BE with a BOM".into());
+    }
+    let units: Vec<u16> = bytes[2..]
+        .chunks_exact(2)
+        .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+        .collect();
+    String::from_utf16(&units).map_err(|_| "ActualText is not valid UTF-16".into())
+}
+
 fn decimals<const N: usize>(operands: &[Operand], name: &str) -> Result<[Decimal; N], String> {
     if operands.len() != N {
         return Err(format!(
@@ -779,6 +873,19 @@ fn build_op(name: &str, operands: &[Operand]) -> Result<Op, String> {
         "W*" => none(Op::ClipEvenOdd)?,
         "BT" => none(Op::BeginText)?,
         "ET" => none(Op::EndText)?,
+        "BDC" => match operands {
+            [Operand::Name(tag), Operand::Dictionary(entries)] if tag == "Span" => {
+                if entries.len() != 1 || entries[0].0 != "ActualText" {
+                    return Err("BDC Span needs only an /ActualText property".into());
+                }
+                let Operand::String(bytes) = &entries[0].1 else {
+                    return Err("BDC /ActualText needs a string".into());
+                };
+                Op::BeginActualText(decode_actual_text(bytes)?)
+            }
+            _ => return Err("BDC takes /Span and an /ActualText dictionary".into()),
+        },
+        "EMC" => none(Op::EndMarkedContent)?,
         "Tf" => match operands {
             [Operand::Name(n), size] => Op::Font(n.clone(), decimal(size)?),
             _ => return Err("Tf takes a name and a size".into()),
@@ -811,6 +918,23 @@ fn build_op(name: &str, operands: &[Operand]) -> Result<Op, String> {
         "Do" => match operands {
             [Operand::Name(n)] => Op::Do(n.clone()),
             _ => return Err("Do takes one name".into()),
+        },
+        "cs" => match operands {
+            [Operand::Name(n)] if n == "Pattern" => Op::PatternColorSpace,
+            [Operand::Array(names)]
+                if names.as_slice()
+                    == [Operand::Name("Pattern".into()), Operand::Name("DeviceRGB".into())] =>
+            {
+                Op::PatternRgbColorSpace
+            }
+            _ => return Err("cs takes /Pattern or [/Pattern /DeviceRGB]".into()),
+        },
+        "scn" => match operands {
+            [Operand::Name(n)] => Op::Pattern(n.clone()),
+            [_, _, _, Operand::Name(n)] => {
+                Op::PatternRgb(decimals::<3>(&operands[..3], name)?, n.clone())
+            }
+            _ => return Err("scn takes /Name or three components and /Name".into()),
         },
         "gs" => match operands {
             [Operand::Name(n)] => {
@@ -1324,6 +1448,22 @@ pub struct ExactPage {
     pub fonts: Option<Vec<String>>,
 }
 
+/// A PDF PatternType 1 tiling-pattern stream.
+///
+/// `paint_type` is 1 for a colored pattern whose cell paints its own color,
+/// or 2 for an uncolored pattern selected with a color from its underlying
+/// color space. The exact writer supplies the fixed PatternType/TilingType
+/// entries and writes these fields deterministically.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatternResource {
+    pub paint_type: u8,
+    pub bbox: [Decimal; 4],
+    pub x_step: Decimal,
+    pub y_step: Decimal,
+    pub matrix: [Decimal; 6],
+    pub content: Vec<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExactDocument {
     pub pages: Vec<ExactPage>,
@@ -1332,6 +1472,9 @@ pub struct ExactDocument {
     /// Image and form XObjects by name (the `Do` operand without the
     /// slash). A page declares exactly the ones its content paints.
     pub images: BTreeMap<String, crate::images::ImageXObject>,
+    /// Tiling patterns by resource name (the `scn` operand without the
+    /// slash). A page declares exactly the patterns its content selects.
+    pub patterns: BTreeMap<String, PatternResource>,
 }
 
 /// One glyph in a [`GlyphRun`].
@@ -1431,6 +1574,7 @@ fn validate(
     fonts: &BTreeMap<String, ExactFont>,
     page_fonts: Option<&[String]>,
     images: &BTreeMap<String, crate::images::ImageXObject>,
+    patterns: &BTreeMap<String, PatternResource>,
 ) -> Result<(), ExactError> {
     let err = |op: usize, m: String| ExactError::Content {
         page: page_index + 1,
@@ -1439,9 +1583,11 @@ fn validate(
     };
     let mut depth = 0i32;
     let mut in_text = false;
+    let mut marked_content = 0usize;
     let mut font: Option<&ExactFont> = None;
     let mut has_path = false;
     let mut has_point = false;
+    let mut pattern_space = None;
     let check_string =
         |i: usize, bytes: &[u8], font: Option<&ExactFont>| -> Result<(), ExactError> {
             let f = font.ok_or_else(|| err(i, "text shown before Tf".into()))?;
@@ -1505,6 +1651,13 @@ fn validate(
                 }
                 in_text = false;
             }
+            Op::BeginActualText(_) => marked_content += 1,
+            Op::EndMarkedContent => {
+                if marked_content == 0 {
+                    return Err(err(i, "EMC without matching BDC".into()));
+                }
+                marked_content -= 1;
+            }
             Op::Font(name, size) => {
                 let f = fonts
                     .get(name)
@@ -1550,6 +1703,45 @@ fn validate(
                 }
                 if !images.contains_key(name) {
                     return Err(err(i, format!("XObject resource /{name} is not declared")));
+                }
+            }
+            Op::PatternColorSpace => pattern_space = Some(1),
+            Op::PatternRgbColorSpace => pattern_space = Some(2),
+            Op::Pattern(name) => {
+                if pattern_space != Some(1) {
+                    return Err(err(i, "colored pattern selected outside /Pattern cs".into()));
+                }
+                let resource = patterns
+                    .get(name)
+                    .ok_or_else(|| err(i, format!("pattern resource /{name} is not declared")))?;
+                if resource.paint_type != 1 {
+                    return Err(err(
+                        i,
+                        format!("pattern /{name} has PaintType {}, needs 1", resource.paint_type),
+                    ));
+                }
+            }
+            Op::PatternRgb(color, name) => {
+                if pattern_space != Some(2) {
+                    return Err(err(
+                        i,
+                        "uncolored pattern selected outside [/Pattern /DeviceRGB] cs".into(),
+                    ));
+                }
+                for component in color {
+                    let value = component.approx();
+                    if !(0.0..=1.0).contains(&value) {
+                        return Err(err(i, format!("pattern color {component} is not in [0, 1]")));
+                    }
+                }
+                let resource = patterns
+                    .get(name)
+                    .ok_or_else(|| err(i, format!("pattern resource /{name} is not declared")))?;
+                if resource.paint_type != 2 {
+                    return Err(err(
+                        i,
+                        format!("pattern /{name} has PaintType {}, needs 2", resource.paint_type),
+                    ));
                 }
             }
             Op::Move(..) => {
@@ -1602,7 +1794,9 @@ fn validate(
             | Op::FillRgb(_)
             | Op::FillCmyk(_)
             | Op::StrokeCmyk(_)
-            | Op::StrokeRgb(_) => {}
+            | Op::StrokeRgb(_) => {
+                pattern_space = None;
+            }
         }
         if in_text
             && matches!(
@@ -1618,6 +1812,12 @@ fn validate(
     }
     if in_text {
         return Err(err(ops.len(), "unterminated text object".into()));
+    }
+    if marked_content != 0 {
+        return Err(err(
+            ops.len(),
+            "unterminated marked-content sequence".into(),
+        ));
     }
     if has_path {
         return Err(err(ops.len(), "page ends with an unpainted path".into()));
@@ -1693,8 +1893,51 @@ pub fn render_exact_with(
         }
     }
 
+    let valid_resource_name = |name: &str| {
+        !name.is_empty()
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.')
+    };
+    for (name, pattern) in &doc.patterns {
+        if !valid_resource_name(name) {
+            return Err(ExactError::Invalid(format!(
+                "pattern /{name}: resource names must be non-empty ASCII alphanumerics, '_', '-' or '.'"
+            )));
+        }
+        if !matches!(pattern.paint_type, 1 | 2) {
+            return Err(ExactError::Invalid(format!(
+                "pattern /{name}: PaintType {} is not 1 or 2",
+                pattern.paint_type
+            )));
+        }
+        for (label, value) in pattern
+            .bbox
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (format!("BBox[{i}]"), v))
+            .chain(std::iter::once(("XStep".into(), &pattern.x_step)))
+            .chain(std::iter::once(("YStep".into(), &pattern.y_step)))
+            .chain(pattern.matrix.iter().enumerate().map(|(i, v)| (format!("Matrix[{i}]"), v)))
+        {
+            if !value.approx().is_finite() {
+                return Err(ExactError::Invalid(format!(
+                    "pattern /{name}: {label} {value} is not finite"
+                )));
+            }
+        }
+        if pattern.x_step.approx() <= 0.0 || pattern.y_step.approx() <= 0.0 {
+            return Err(ExactError::Invalid(format!(
+                "pattern /{name}: XStep and YStep must be positive"
+            )));
+        }
+        if pattern.content.len() > MAX_CONTENT_BYTES {
+            return Err(ExactError::Limit("pattern content bytes"));
+        }
+    }
+
     // Object numbering: 1 catalog, 2 pages, 3 info, then page/content pairs,
-    // then fonts in resource-name order.
+    // fonts, images and patterns, each in resource-name order.
     let page_count = doc.pages.len();
     let first_page = 4;
     let mut next = first_page + 2 * page_count;
@@ -1706,10 +1949,7 @@ pub fn render_exact_with(
     // Image XObjects follow the fonts, in resource-name order.
     let mut image_objects: BTreeMap<&str, usize> = BTreeMap::new();
     for (name, img) in &doc.images {
-        let valid = !name.is_empty()
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.');
+        let valid = valid_resource_name(name);
         if !valid || img.objects.is_empty() {
             return Err(ExactError::Invalid(format!(
                 "XObject /{name}: resource names must be non-empty ASCII alphanumerics, '_', '-' or '.', and the resource needs at least one object"
@@ -1718,7 +1958,12 @@ pub fn render_exact_with(
         image_objects.insert(name, next);
         next += img.objects.len();
     }
-    // Annotations, destinations, name tree and outlines follow the images.
+    let mut pattern_objects: BTreeMap<&str, usize> = BTreeMap::new();
+    for name in doc.patterns.keys() {
+        pattern_objects.insert(name, next);
+        next += 1;
+    }
+    // Annotations, destinations, name tree and outlines follow the patterns.
     let nav = crate::navigation::plan(navigation, page_count, |i| first_page + 2 * i, &mut next)?;
     let mut page_resources: Vec<String> = Vec::with_capacity(page_count);
     for (i, page) in doc.pages.iter().enumerate() {
@@ -1764,14 +2009,34 @@ pub fn render_exact_with(
     let used_ext_gstates = |ops: &[Op]| -> BTreeMap<String, String> {
         ops.iter().filter_map(ext_gstate).collect()
     };
+    let used_patterns = |ops: &[Op]| -> BTreeSet<String> {
+        ops.iter()
+            .filter_map(|op| match op {
+                Op::Pattern(name) | Op::PatternRgb(_, name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
+    };
     for (i, page) in doc.pages.iter().enumerate() {
-        let (bytes, xobjects, ext_gstates) = match &page.content {
+        let (bytes, xobjects, ext_gstates, patterns) = match &page.content {
             Content::Ops(ops) => {
                 if ops.len() > MAX_OPERATORS {
                     return Err(ExactError::Limit("operators per page"));
                 }
-                validate(i, ops, &doc.fonts, page.fonts.as_deref(), &doc.images)?;
-                (serialize(ops), used_xobjects(ops), used_ext_gstates(ops))
+                validate(
+                    i,
+                    ops,
+                    &doc.fonts,
+                    page.fonts.as_deref(),
+                    &doc.images,
+                    &doc.patterns,
+                )?;
+                (
+                    serialize(ops),
+                    used_xobjects(ops),
+                    used_ext_gstates(ops),
+                    used_patterns(ops),
+                )
             }
             Content::Verbatim(bytes) => {
                 let ops = parse(bytes).map_err(|e| match e {
@@ -1782,14 +2047,34 @@ pub fn render_exact_with(
                     },
                     other => other,
                 })?;
-                validate(i, &ops, &doc.fonts, page.fonts.as_deref(), &doc.images)?;
-                (bytes.clone(), used_xobjects(&ops), used_ext_gstates(&ops))
+                validate(
+                    i,
+                    &ops,
+                    &doc.fonts,
+                    page.fonts.as_deref(),
+                    &doc.images,
+                    &doc.patterns,
+                )?;
+                (
+                    bytes.clone(),
+                    used_xobjects(&ops),
+                    used_ext_gstates(&ops),
+                    used_patterns(&ops),
+                )
             }
         };
         if !ext_gstates.is_empty() {
             let mut s = String::from(" /ExtGState <<");
             for (name, dict) in &ext_gstates {
                 let _ = write!(s, " /{name} {dict}");
+            }
+            s.push_str(" >>");
+            page_resources[i].push_str(&s);
+        }
+        if !patterns.is_empty() {
+            let mut s = String::from(" /Pattern <<");
+            for name in &patterns {
+                let _ = write!(s, " /{name} {} 0 R", pattern_objects[name.as_str()]);
             }
             s.push_str(" >>");
             page_resources[i].push_str(&s);
@@ -1858,6 +2143,15 @@ pub fn render_exact_with(
                 None => d.object(base + k, dict.as_bytes()),
             }
         }
+    }
+    for (name, pattern) in &doc.patterns {
+        let [b0, b1, b2, b3] = &pattern.bbox;
+        let [m0, m1, m2, m3, m4, m5] = &pattern.matrix;
+        let dict = format!(
+            "/Type /Pattern /PatternType 1 /PaintType {} /TilingType 1 /BBox [ {b0} {b1} {b2} {b3} ] /XStep {} /YStep {} /Matrix [ {m0} {m1} {m2} {m3} {m4} {m5} ] /Resources <</Pattern<<>>>>",
+            pattern.paint_type, pattern.x_step, pattern.y_step
+        );
+        d.stream_with(pattern_objects[name.as_str()], &dict, &pattern.content);
     }
     for (number, body) in &nav.objects {
         d.object(*number, body.as_bytes());
@@ -2534,6 +2828,26 @@ mod tests {
                 .contains("not a PDF number")
         );
         assert!(parse(b"BI /W 1 ID x EI").is_err());
+    }
+
+    #[test]
+    fn actual_text_uses_utf16be_hex_and_round_trips() {
+        let ops = vec![
+            Op::BeginText,
+            Op::Font("F1".into(), Decimal::from_i64(12)),
+            Op::BeginActualText("⟹".into()),
+            Op::ShowText(vec![0, 1]),
+            Op::EndMarkedContent,
+            Op::EndText,
+        ];
+        let bytes = serialize(&ops);
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(
+            text.contains("/Span <</ActualText <FEFF27F9>>> BDC\n"),
+            "{text}"
+        );
+        assert!(text.contains("EMC\n"), "{text}");
+        assert_eq!(parse(&bytes).unwrap(), ops);
     }
 
     #[test]

@@ -38,7 +38,11 @@ on:
         default: false
 
 concurrency:
-  group: perf-${{ github.workflow }}-${{ github.ref }}
+  # Same rule as ci.yml: a run on main is never superseded by the next push,
+  # so a perf result always exists for main. perf is cheaper and faster than
+  # the mac suite, so it was losing fewer runs (2 of the last 15) -- but
+  # losing them the same way.
+  group: perf-${{ github.workflow }}-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:

@@ -618,6 +618,11 @@ final class LineNumberGutter: NSRulerView {
         super.init(scrollView: scrollView, orientation: .verticalRuler)
         clientView = scrollView.documentView
         ruleThickness = 40
+        // macOS 14+ defaults `clipsToBounds` to false, and the ruler's
+        // full-bounds background/hairline fill can paint outside the scroll
+        // view during layout passes — observed as the gutter separator
+        // bleeding up through the document tab strip (owner report).
+        clipsToBounds = true
     }
 
     @available(*, unavailable) required init(coder: NSCoder) { fatalError() }

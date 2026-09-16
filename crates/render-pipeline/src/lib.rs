@@ -262,6 +262,20 @@ pub fn render_windowed(
     let superseded = toc::superseded_commands(entry_text);
     let is_superseded = |s: &flashtex_compiler::Span| s.document.0 == entry_index && superseded.binary_search(&s.start).is_ok();
     let max_passes = if adapter::Labels::needs_pages(&parsed) || has_lists { MAX_LABEL_PASSES } else { 1 };
+    // The previous request's converged page tables seed the first pass --
+    // the role LaTeX's `.aux` file plays between runs. A keystroke that
+    // moves no page number then converges on pass 1 and the page-number
+    // relayout is saved; convergence is verified against the seed exactly
+    // as it is verified against a pass's own output below, so an edit that
+    // does move a page relays out with fresh tables as before.
+    if max_passes > 1 {
+        if let Some(c) = cache {
+            if let Some((pages, toc_pages)) = c.label_seed(project_id) {
+                labels.pages = pages;
+                labels.toc_pages = toc_pages;
+            }
+        }
+    }
     let mut passes = 0;
     loop {
         passes += 1;
@@ -329,6 +343,9 @@ pub fn render_windowed(
             pages.retain(|key, _| !toc::is_key(key));
             if pages == labels.pages && toc_pages == labels.toc_pages {
                 // Converged: the numbers shown are the pages they sit on.
+                if let Some(c) = cache {
+                    c.store_label_seed(project_id, &pages, &toc_pages);
+                }
             } else if passes < max_passes {
                 labels.pages = pages;
                 labels.toc_pages = toc_pages;

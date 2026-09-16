@@ -230,11 +230,17 @@ final class NavigationMultiFileV2Tests: XCTestCase {
         XCTAssertNil(inside[0].caret)
         let atStart = V2Geometry.clusters(containing: ffl.source.startByte, path: "chapter.tex", in: ffl.page)
         XCTAssertEqual(atStart[0].caret?.textByte, 3, "the run's caret at the ligature's first logical byte")
-        // The v1 sibling agrees: the caret inside the ligature is in the "shuffle" item.
+        // ⌘⇧J selects what the pane highlights: the cluster, i.e. the whole
+        // ligature. It reads the display list (the assertions just above), so
+        // it agrees with clicking that ligature — both go through
+        // `navigateV2Now`. It used to map runtime-v1 page items instead and
+        // answer "shuffle", the whole word, disagreeing with the pane's own
+        // click on the very same caret.
         model.activePath = "chapter.tex"
         model.caretUTF16 = (chapter as NSString).range(of: "shuffle").location + 4
         model.revealCaretInPreview()
-        XCTAssertEqual((model.activeText as NSString).substring(with: try XCTUnwrap(model.selection).nsRange), "shuffle")
+        XCTAssertEqual((model.activeText as NSString).substring(with: try XCTUnwrap(model.selection).nsRange), "ffl")
+        XCTAssertTrue(model.navigationNote?.hasSuffix("page \(ffl.page.number)") == true, model.navigationNote ?? "nil")
     }
 
     // MARK: - (a) edits before/after the target and (c) revision changes

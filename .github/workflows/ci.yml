@@ -10,7 +10,19 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # On main, every run gets a group of its own (`-<run_id>`), so a push can
+  # never supersede the run that is testing the previous commit. Everywhere
+  # else the key is the ref, so a branch's runs still collapse onto its
+  # newest push.
+  #
+  # `cancel-in-progress` is NOT what was cancelling main: it already
+  # evaluates to false for a push. The cancellations came from the group key
+  # itself -- a shared key holds at most one in-progress and one pending run,
+  # and every new push cancelled the pending one. With a mac job that queues
+  # for hours behind a merge cadence measured in minutes, that meant main's
+  # runs were cancelled before they could report. 37 of the last 40 runs on
+  # main ended `cancelled`; exactly one completed.
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:

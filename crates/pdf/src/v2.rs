@@ -46,6 +46,11 @@
 //!   coordinates are exact tick decimals like every other coordinate here;
 //!   `M` is written only when the limit differs from PDF's default 10, `J`
 //!   and `j` only when not butt/miter, `d` only for a dashed line.
+//! - A `path_fill` may carry the optional pattern extension
+//!   `pattern: {"name": "...", "color": {"r": ..., "g": ..., "b": ...}}`
+//!   (or a sibling `pattern_color`). The eight pgf line/grid/dot names are
+//!   emitted as deterministic PatternType 1 resources; `paint_type: 2`
+//!   selects the typed uncolored RGB form.
 //! - A paint alpha below 1 selects pgf's ExtGState right after the colour,
 //!   inside the item's `q … Q` (measured, pdflatex 1.40 with pgf: `\fill[red,
 //!   fill opacity=.3]` is `q 1 0 0 rg 1 0 0 RG /pgf@ca0.3 gs … f Q`, the page
@@ -57,8 +62,9 @@
 //!   would not change a pixel. The value is rounded like a colour component.
 //! - Cluster ActualText is reduced to a per-glyph ToUnicode entry (the
 //!   cluster's text); a glyph seen with two different texts keeps the first
-//!   and the report says so. Marked-content `/ActualText` is outside the
-//!   bounded operator set. Only a cluster of *one* glyph names that glyph's
+//!   and the report says so. An optional `actual_text` string on a
+//!   glyph run instead groups consecutive runs with the same value into
+//!   marked content, leaving the ToUnicode maps unchanged. Only a cluster of *one* glyph names that glyph's
 //!   text: the three periods of an ellipsis share the cluster `…`, and
 //!   mapping the period glyph to `…` would make every period of the document
 //!   extract as `…` (and the ellipsis as `………`). A glyph seen only in
@@ -76,13 +82,14 @@
 
 use crate::exact::{
     Content, Decimal, ExactDocument, ExactFont, ExactPage, GlyphRun, Op, PlacedGlyph, Ratio,
-    SubsetOutcome,
+    PatternResource, SubsetOutcome,
 };
 use crate::images::{self, Geometry};
 use crate::json::{self, Value};
 use crate::sha256;
 use crate::truetype::TrueTypeFont;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 pub const TICKS_PER_BP: i128 = 1 << 20;
@@ -367,6 +374,279 @@ fn paint(v: Option<&Value>, what: &str) -> Result<Paint, String> {
     })
 }
 
+const SUPPORTED_PATTERNS: [&str; 8] = [
+    "north east lines",
+    "north west lines",
+    "horizontal lines",
+    "vertical lines",
+    "grid",
+    "crosshatch",
+    "dots",
+    "crosshatch dots",
+];
+
+fn pattern_rgb(v: &Value, what: &str) -> Result<[Decimal; 3], String> {
+    let r = f(v.get("r"), &format!("{what}.r"))?;
+    let g = f(v.get("g"), &format!("{what}.g"))?;
+    let b = f(v.get("b"), &format!("{what}.b"))?;
+    Ok([
+        unit_component(r, &format!("{what}.r"))?,
+        unit_component(g, &format!("{what}.g"))?,
+        unit_component(b, &format!("{what}.b"))?,
+    ])
+}
+
+fn paint_rgb(paint: &Paint) -> Option<[Decimal; 3]> {
+    paint.ops.as_ref()?.iter().find_map(|op| match op {
+        Op::FillRgb(c) => Some(c.clone()),
+        _ => None,
+    })
+}
+
+fn pattern_paint_type(v: Option<&Value>, what: &str) -> Result<u8, String> {
+    let Some(v) = v else {
+        return Ok(1);
+    };
+    let n = f(Some(v), &format!("{what}.paint_type"))?;
+    if n.fract() != 0.0 || !(1.0..=2.0).contains(&n) {
+        return Err(format!("{what}.paint_type: {n} is not 1 or 2"));
+    }
+    Ok(n as u8)
+}
+
+/// Registers the PDF resource for the optional v2 path-fill pattern extension.
+/// The key includes color because PaintType 1 cells carry their color.
+fn register_pattern(
+    item: &Value,
+    paint: &Paint,
+    what: &str,
+    names: &mut BTreeMap<String, String>,
+    resources: &mut BTreeMap<String, PatternResource>,
+) -> Result<Option<(u8, [Decimal; 3], String)>, String> {
+    let Some(pattern) = item.get("pattern") else {
+        if item.get("pattern_color").is_some() {
+            return Err(format!("{what}: pattern_color requires pattern"));
+        }
+        return Ok(None);
+    };
+    let (name, embedded_color, embedded_type) = match pattern {
+        Value::String(name) => (name.as_str(), None, None),
+        Value::Object(_) => (
+            s(pattern.get("name"), &format!("{what}.pattern.name"))?,
+            pattern.get("color"),
+            pattern.get("paint_type"),
+        ),
+        _ => return Err(format!("{what}.pattern: expected a string or object")),
+    };
+    if !SUPPORTED_PATTERNS.contains(&name) {
+        return Err(format!(
+            "{what}.pattern.name: {name:?} is not one of the supported pgf patterns"
+        ));
+    }
+    let paint_type = pattern_paint_type(embedded_type, &format!("{what}.pattern"))?;
+    let color = match embedded_color.or_else(|| item.get("pattern_color")) {
+        Some(v) => pattern_rgb(v, &format!("{what}.pattern_color"))?,
+        None => paint_rgb(paint).unwrap_or_else(|| {
+            [
+                Decimal::from_i64(0),
+                Decimal::from_i64(0),
+                Decimal::from_i64(0),
+            ]
+        }),
+    };
+    let key = format!(
+        "{name}\0{paint_type}\0{}\0{}\0{}",
+        color[0], color[1], color[2]
+    );
+    let resource_name = if let Some(existing) = names.get(&key) {
+        existing.clone()
+    } else {
+        let resource_name = format!("P{}", resources.len());
+        let resource = pgf_pattern(name, &color, paint_type)?;
+        resources.insert(resource_name.clone(), resource);
+        names.insert(key, resource_name.clone());
+        resource_name
+    };
+    Ok(Some((paint_type, color, resource_name)))
+}
+
+fn pgf_dim(pt: f64) -> Result<Decimal, String> {
+    // TeX stores dimensions in scaled points and pgf's pdfTeX driver applies
+    // its 0.99627 bp correction as the fixed-point ratio 65292/65536.
+    let sp = (pt * 65536.0).round();
+    pdf_number(sp * 65292.0 / (65536.0 * 65536.0), PDF_DECIMAL_DIGITS)
+}
+
+fn pgf_circle(body: &mut String, x: f64, y: f64, radius: f64) -> Result<(), String> {
+    let k = 0.55228475 * radius;
+    let n = |v| pgf_dim(v);
+    writeln!(
+        body,
+        "{} {} m\n{} {} {} {} {} {} c\n{} {} {} {} {} {} c\n{} {} {} {} {} {} c\n{} {} {} {} {} {} c\nh",
+        n(x + radius)?,
+        n(y)?,
+        n(x + radius)?,
+        n(y + k)?,
+        n(x + k)?,
+        n(y + radius)?,
+        n(x)?,
+        n(y + radius)?,
+        n(x - k)?,
+        n(y + radius)?,
+        n(x - radius)?,
+        n(y + k)?,
+        n(x - radius)?,
+        n(y)?,
+        n(x - radius)?,
+        n(y - k)?,
+        n(x - k)?,
+        n(y - radius)?,
+        n(x)?,
+        n(y - radius)?,
+        n(x + k)?,
+        n(y - radius)?,
+        n(x + radius)?,
+        n(y - k)?,
+        n(x + radius)?,
+        n(y)?
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn pgf_pattern(
+    name: &str,
+    color: &[Decimal; 3],
+    paint_type: u8,
+) -> Result<PatternResource, String> {
+    let (bbox, x_step, y_step) = match name {
+        "horizontal lines" => ([0.0, 0.0, 100.0, 1.0], 100.0, 3.0),
+        "vertical lines" => ([0.0, 0.0, 1.0, 100.0], 3.0, 100.0),
+        "north east lines"
+        | "north west lines"
+        | "grid"
+        | "crosshatch" => ([-1.0, -1.0, 4.0, 4.0], 3.0, 3.0),
+        "dots" => ([-1.0, -1.0, 1.0, 1.0], 3.0, 3.0),
+        "crosshatch dots" => ([-1.0, -1.0, 2.5, 2.5], 3.0, 3.0),
+        _ => return Err(format!("unsupported pgf pattern {name:?}")),
+    };
+    let bbox = bbox
+        .into_iter()
+        .map(pgf_dim)
+        .collect::<Result<Vec<_>, _>>()?
+        .try_into()
+        .expect("pattern bbox has four values");
+    let x_step = pgf_dim(x_step)?;
+    let y_step = pgf_dim(y_step)?;
+    let mut content = String::new();
+    content.push_str("q\n");
+    let mut color_op = |operator: &str| -> Result<(), String> {
+        writeln!(
+            content,
+            "{} {} {} {operator}",
+            color[0], color[1], color[2]
+        )
+        .map_err(|e| e.to_string())
+    };
+    let stroke = |content: &mut String, x1: f64, y1: f64, x2: f64, y2: f64| {
+        writeln!(
+            content,
+            "{} {} m\n{} {} l",
+            pgf_dim(x1)?,
+            pgf_dim(y1)?,
+            pgf_dim(x2)?,
+            pgf_dim(y2)?
+        )
+        .map_err(|e: std::fmt::Error| e.to_string())
+    };
+    match name {
+        "horizontal lines" => {
+            if paint_type == 1 {
+                color_op("RG")?;
+            }
+            writeln!(content, "{} w", pgf_dim(0.4)?).map_err(|e| e.to_string())?;
+            stroke(&mut content, 0.0, 0.5, 100.0, 0.5)?;
+            content.push_str("S\n");
+        }
+        "vertical lines" => {
+            if paint_type == 1 {
+                color_op("RG")?;
+            }
+            writeln!(content, "{} w", pgf_dim(0.4)?).map_err(|e| e.to_string())?;
+            stroke(&mut content, 0.5, 0.0, 0.5, 100.0)?;
+            content.push_str("S\n");
+        }
+        "north east lines" => {
+            if paint_type == 1 {
+                color_op("RG")?;
+            }
+            writeln!(content, "{} w", pgf_dim(0.4)?).map_err(|e| e.to_string())?;
+            stroke(&mut content, 0.0, 0.0, 3.1, 3.1)?;
+            content.push_str("S\n");
+        }
+        "north west lines" => {
+            if paint_type == 1 {
+                color_op("RG")?;
+            }
+            writeln!(content, "{} w", pgf_dim(0.4)?).map_err(|e| e.to_string())?;
+            stroke(&mut content, 0.0, 3.0, 3.1, -0.1)?;
+            content.push_str("S\n");
+        }
+        "grid" => {
+            if paint_type == 1 {
+                color_op("RG")?;
+            }
+            writeln!(content, "{} w", pgf_dim(0.4)?).map_err(|e| e.to_string())?;
+            stroke(&mut content, 0.0, 0.0, 0.0, 3.1)?;
+            content.push('\n');
+            stroke(&mut content, 0.0, 0.0, 3.1, 0.0)?;
+            content.push_str("S\n");
+        }
+        "crosshatch" => {
+            if paint_type == 1 {
+                color_op("RG")?;
+            }
+            writeln!(content, "{} w", pgf_dim(0.4)?).map_err(|e| e.to_string())?;
+            stroke(&mut content, 3.1, 0.0, 0.0, 3.1)?;
+            content.push('\n');
+            stroke(&mut content, 0.0, 0.0, 3.1, 3.1)?;
+            content.push_str("S\n");
+        }
+        "dots" => {
+            if paint_type == 1 {
+                color_op("rg")?;
+            }
+            pgf_circle(&mut content, 0.0, 0.0, 0.5)?;
+            content.push_str("\nf\n");
+        }
+        "crosshatch dots" => {
+            if paint_type == 1 {
+                color_op("rg")?;
+            }
+            pgf_circle(&mut content, 0.0, 0.0, 0.5)?;
+            content.push('\n');
+            pgf_circle(&mut content, 1.5, 1.5, 0.5)?;
+            content.push_str("\nf\n");
+        }
+        _ => unreachable!(),
+    }
+    content.push_str("Q\n");
+    Ok(PatternResource {
+        paint_type,
+        bbox,
+        x_step,
+        y_step,
+        matrix: [
+            Decimal::new("1.0").unwrap(),
+            Decimal::new("0.0").unwrap(),
+            Decimal::new("0.0").unwrap(),
+            Decimal::new("1.0").unwrap(),
+            Decimal::new("0.0").unwrap(),
+            Decimal::new("0.0").unwrap(),
+        ],
+        content: content.into_bytes(),
+    })
+}
+
 struct FontEntry {
     font_id: String,
     sha256: String,
@@ -559,6 +839,7 @@ pub fn from_v2_rooted(
             size_ticks: i128,
             color: Option<Vec<Op>>,
             alpha: Option<Decimal>,
+            actual_text: Option<String>,
             glyphs: Vec<Glyph>,
         },
         Ops(Vec<Op>),
@@ -570,6 +851,8 @@ pub fn from_v2_rooted(
     }
     let mut image_requests: Vec<ImageRequest> = Vec::new();
     let mut image_index: BTreeMap<(String, u32), usize> = BTreeMap::new();
+    let mut exact_patterns: BTreeMap<String, PatternResource> = BTreeMap::new();
+    let mut pattern_names: BTreeMap<String, String> = BTreeMap::new();
     let mut pages_ops: Vec<(Decimal, Decimal, Vec<Pending>, BTreeSet<String>)> = Vec::new();
     for (pi, pv) in arr(p.get("pages"), "payload.pages")?.iter().enumerate() {
         let what = format!("payload.pages[{pi}]");
@@ -606,6 +889,11 @@ pub fn from_v2_rooted(
                         return Err(format!("{iw}: font_size {size} ticks is not positive"));
                     }
                     let text = s(iv.get("text"), &format!("{iw}.text"))?;
+                    let actual_text = iv
+                        .get("actual_text")
+                        .map(|v| s(Some(v), &format!("{iw}.actual_text")))
+                        .transpose()?
+                        .map(str::to_owned);
                     let clusters = arr(iv.get("clusters"), &format!("{iw}.clusters"))?;
                     let u = used.entry(font_id.to_string()).or_insert_with(|| Used {
                         gids: BTreeSet::new(),
@@ -696,6 +984,7 @@ pub fn from_v2_rooted(
                         size_ticks: size,
                         color: pt.ops.clone(),
                         alpha: pt.alpha.clone(),
+                        actual_text,
                         glyphs,
                     });
                 }
@@ -728,7 +1017,31 @@ pub fn from_v2_rooted(
                         continue;
                     }
                     let mut ops = vec![Op::Save];
-                    if let Some(color) = &pt.ops {
+                    let pattern = if kind == "path_fill" {
+                        register_pattern(
+                            iv,
+                            &pt,
+                            &iw,
+                            &mut pattern_names,
+                            &mut exact_patterns,
+                        )?
+                    } else {
+                        if iv.get("pattern").is_some() || iv.get("pattern_color").is_some() {
+                            return Err(format!(
+                                "{iw}: pattern fills are supported for path_fill, not path_stroke"
+                            ));
+                        }
+                        None
+                    };
+                    if let Some((paint_type, color, name)) = pattern {
+                        if paint_type == 1 {
+                            ops.push(Op::PatternColorSpace);
+                            ops.push(Op::Pattern(name));
+                        } else {
+                            ops.push(Op::PatternRgbColorSpace);
+                            ops.push(Op::PatternRgb(color, name));
+                        }
+                    } else if let Some(color) = &pt.ops {
                         ops.extend(fill_and_stroke(color));
                     }
                     if let Some(a) = &pt.alpha {
@@ -1064,7 +1377,21 @@ pub fn from_v2_rooted(
         // baseline, size and text: gaps across run boundaries are the word
         // boundaries an extractor reads from geometry.
         let mut last: Option<(i128, i128, i128, String)> = None;
+        let mut open_actual_text: Option<String> = None;
         for item in items {
+            let item_actual_text = match &item {
+                Pending::Run { actual_text, .. } => actual_text.as_deref(),
+                Pending::Ops(_) | Pending::Image { .. } => None,
+            };
+            if open_actual_text.as_deref() != item_actual_text {
+                if open_actual_text.is_some() {
+                    ops.push(Op::EndMarkedContent);
+                }
+                if let Some(text) = item_actual_text {
+                    ops.push(Op::BeginActualText(text.to_owned()));
+                }
+                open_actual_text = item_actual_text.map(str::to_owned);
+            }
             let (resource, size_ticks, color, alpha, glyphs) = match item {
                 Pending::Ops(o) => {
                     ops.extend(o);
@@ -1086,6 +1413,7 @@ pub fn from_v2_rooted(
                     size_ticks,
                     color,
                     alpha,
+                    actual_text: _,
                     glyphs,
                 } => (resource, size_ticks, color, alpha, glyphs),
             };
@@ -1171,6 +1499,9 @@ pub fn from_v2_rooted(
                 ops.extend(run_ops);
             }
         }
+        if open_actual_text.is_some() {
+            ops.push(Op::EndMarkedContent);
+        }
         pages.push(ExactPage {
             width,
             height,
@@ -1186,6 +1517,7 @@ pub fn from_v2_rooted(
             pages,
             fonts: exact_fonts,
             images: exact_images,
+            patterns: exact_patterns,
         },
         report,
     ))

@@ -2189,6 +2189,8 @@ mod tests {
             fonts: Vec::new(),
             pages: Vec::new(),
             diagnostics: vec![d],
+            window: None,
+            document_features: None,
         }
     }
 
