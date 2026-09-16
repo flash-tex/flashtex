@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/pdf-text-spacing",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/731",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T07:16:06Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-48-PDF-TEXT-SPACING",
-  "updated_utc": "2026-09-16T07:16:06Z"
+  "updated_utc": "2026-09-16T07:26:20Z"
 }
