@@ -34,68 +34,69 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
 
 /// Real LaTeX2e, amsmath/amssymb and widely used package commands this
 /// compiler does not implement.
+///
+/// Counter and definition commands the expansion pass executes itself
+/// (`supported.rs` `EXPANSION_COMMANDS`: `\providecommand`,
+/// `\newenvironment`/`\renewenvironment`, `\newcounter`, `\setcounter`,
+/// `\addtocounter`, `\stepcounter`, `\refstepcounter`, `\value`,
+/// `\newlength`, `\settowidth`, `\AtBeginDocument`, `\makeatother`) are
+/// implemented and intentionally absent here — each verified by a real
+/// compile (issue #715). The one exception is `\Alph`, kept below: it is in
+/// no `implemented_commands()` table, so delisting it would make a working
+/// command read as `unknown_command`, and it is `\alph`'s case-only tie that
+/// keeps `\lph` from auto-fixing to the wrong command.
 #[rustfmt::skip]
 const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // LaTeX2e document structure and front matter.
-    "part", "chapter", "subsubsection", "appendix", "maketitle",
-    "title", "author", "date", "thanks", "and", "today", "tableofcontents", "listoffigures",
-    "listoftables", "abstractname", "footnote", "footnotemark", "footnotetext", "marginpar",
-    "index", "glossary", "bibliography", "bibliographystyle", "bibitem", "cite", "nocite",
+    "part", "chapter", "appendix",
+    "listoffigures",
+    "listoftables", "abstractname",
     // Boxes, spacing, breaking and page control.
-    "centering", "raggedright", "raggedleft", "linespread", "vfill", "hss", "vss", "vbox",
-    "makebox", "fbox", "framebox", "parbox", "raisebox", "rule", "newline",
-    "clearpage", "cleardoublepage", "thispagestyle",
-    "indent", "phantom", "hphantom", "vphantom", "smash", "strut", "addvspace",
-    "vskip", "kern", "enspace", "thinspace", "negthinspace", "hline", "cline",
+    "linespread", "hss", "vss", "vbox",
+    "makebox", "fbox", "framebox", "parbox", "raisebox", "newline",
+    "phantom", "hphantom", "vphantom", "smash", "strut", "addvspace",
+    "vskip", "kern", "hline", "cline",
     "multicolumn", "tabularnewline", "arraystretch",
     // Fonts and text symbols.
-    "textsuperscript", "textsubscript", "LaTeX",
-    "LaTeXe", "TeX", "dag", "ddag", "S", "P", "copyright", "pounds", "textbackslash",
-    "textasciitilde", "textasciicircum", "textbar", "textless", "textgreater", "textendash",
+    "textsuperscript", "textsubscript",
+    "textendash",
     "textemdash", "textquoteleft", "textquoteright",
-    "textquotedblleft", "textquotedblright", "ldots", "slash", "selectfont", "fontsize",
+    "textquotedblleft", "textquotedblright", "slash", "selectfont", "fontsize",
     "fontfamily", "usefont",
     // Definitions, counters and programming.
-    "def", "edef", "gdef", "let", "providecommand", "newenvironment", "renewenvironment",
-    "newtheorem", "newcounter", "setcounter", "addtocounter", "stepcounter", "refstepcounter",
-    "value", "arabic", "roman", "Roman", "alph", "Alph", "fnsymbol", "the", "makeatletter",
-    "makeatother", "newif", "relax", "expandafter", "csname", "endcsname",
-    "newlength", "settowidth", "DeclareMathOperator", "ensuremath", "protect",
-    "verb", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "lstset", "RequirePackage",
-    "PassOptionsToPackage", "AtBeginDocument",
+    "def", "edef", "gdef", "let",
+    "newtheorem",
+    "arabic", "roman", "Roman", "alph", "Alph", "the", "makeatletter",
+    "newif", "relax", "expandafter", "csname", "endcsname",
+    "ensuremath", "protect",
+    "verb", "geometry", "RequirePackage",
+    "PassOptionsToPackage",
     // Cross-references and links.
-    "eqref", "autoref", "nameref", "url", "href", "hyperref", "hyperlink",
-    "hypertarget", "cite", "parencite", "textcite", "autocite", "citep", "citet", "citeauthor", "citeyear", "nocite", "addbibresource", "printbibliography",
+    "autoref", "nameref", "hyperref", "hyperlink",
+    "hypertarget",
     // Colour and graphics packages.
     "tikz",
-    "usetikzlibrary", "draw", "node", "fill", "path", "scalebox", "resizebox", "rotatebox",
+    "usetikzlibrary", "draw", "node", "fill", "path",
     "subcaption", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
-    "intertext", "shortintertext", "substack", "xrightarrow", "xleftarrow", "overbrace",
-    "underbrace", "overleftarrow", "overrightarrow", "mathcal", "mathfrak", "mathscr", "pmb",
+    "intertext", "shortintertext", "substack", "xrightarrow", "xleftarrow",
+    "mathcal", "mathfrak", "mathscr", "pmb",
     "limits", "nolimits", "displaylimits", "colon", "eqqcolon", "Coloneqq", "Eqqcolon",
-    "vcentcolon", "dblcolon", "vdots", "ddots", "iff", "implies", "impliedby",
+    "vcentcolon", "dblcolon", "iff", "implies", "impliedby",
     "genfrac", "operatornamewithlimits", "cancel", "bcancel", "xcancel",
-    "cancelto", "numberwithin", "allowdisplaybreaks", "lvert", "rvert", "lVert",
-    "rVert", "varepsilon", "vartheta", "varphi", "varrho", "varsigma", "varpi", "digamma",
-    "varkappa", "hbar", "hslash", "ell", "wp", "Re", "Im", "aleph", "beth", "gimel", "emptyset",
-    "varnothing", "nabla", "partial", "infty", "forall", "exists", "nexists", "neg", "lnot", "top",
-    "bot", "angle", "measuredangle", "triangle", "square", "blacksquare", "Diamond",
-    "clubsuit", "diamondsuit", "heartsuit", "spadesuit", "flat", "natural", "sharp", "prime",
-    "backprime", "surd", "mathstrut", "not", "neq", "ne", "leq", "le", "geq", "ge", "ll", "gg",
-    "leqslant", "geqslant", "approx", "cong", "equiv", "sim", "simeq", "propto", "subset", "supset",
-    "subseteq", "supseteq", "subsetneq", "supsetneq", "in", "ni", "notin", "cup", "cap", "bigcup",
-    "bigcap", "setminus", "wedge", "vee", "bigwedge", "bigvee", "oplus", "otimes", "bigoplus",
-    "bigotimes", "ominus", "oslash", "odot", "bigcirc", "times", "div", "cdot", "circ", "bullet", "star", "ast", "pm", "mp", "sum",
-    "prod", "coprod", "int", "oint", "to", "gets", "mapsto", "rightarrow", "leftarrow",
-    "leftrightarrow", "Rightarrow", "Leftarrow", "Leftrightarrow", "longrightarrow",
-    "longleftarrow", "Longrightarrow", "Longleftarrow", "longmapsto", "hookrightarrow",
-    "hookleftarrow", "uparrow", "downarrow", "nearrow", "searrow", "mid", "nmid", "parallel",
-    "perp", "vdash", "dashv", "models", "langle", "rangle", "lceil", "rceil", "lfloor", "rfloor",
-    "backslash", "vert", "Vert", "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta",
-    "theta", "iota", "kappa", "lambda", "mu", "nu", "xi", "pi", "rho", "sigma", "tau", "upsilon",
-    "phi", "chi", "psi", "omega", "Gamma", "Delta", "Theta", "Lambda", "Xi", "Pi", "Sigma",
-    "Upsilon", "Phi", "Psi", "Omega",
+    "cancelto",
+    "varrho",
+    "neg", "lnot",
+    "bot",
+    "clubsuit", "diamondsuit", "heartsuit", "spadesuit", "flat", "natural", "sharp",
+    "surd", "mathstrut",
+    "bigcup",
+    "bigcap", "bigwedge", "bigvee", "bigoplus",
+    "bigotimes", "bullet", "star",
+    "coprod",
+    "longmapsto",
+    "hookleftarrow", "nearrow", "searrow",
+    "backslash", "vert", "Vert",
 ];
 
 /// Environments this compiler implements outside math mode.
@@ -114,7 +115,7 @@ const IMPLEMENTED_ENVIRONMENTS: &[&str] = &[
 const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "description", "table", "table*", "figure*", "tabular", "tabular*", "tabularx", "longtable",
     "verbatim", "verbatim*", "verse", "abstract", "minipage", "titlepage", "thebibliography",
-    "list", "trivlist", "picture", "math", "gathered", "multlined",
+    "list", "trivlist", "picture", "math", "multlined",
     "subequations", "proof", "tikzpicture", "lstlisting", "minted",
     "wrapfigure", "subfigure", "comment", "landscape", "filecontents",
 ];
@@ -516,6 +517,68 @@ mod tests {
         assert_eq!(
             environment_help("tikzpicture").as_deref(),
             Some("environment 'tikzpicture' needs the tikz package, which this compiler does not implement")
+        );
+    }
+
+    /// The "known unimplemented" tables must stay disjoint from what the
+    /// compiler implements (issue #715): a working command listed as
+    /// unimplemented makes the diagnostic tell users it is unsupported.
+    /// `implemented_commands()` is the same union `is_known_command` uses,
+    /// so this fails loudly — naming every offender — instead of silently
+    /// re-accumulating stale entries. (`\addvspace` is genuinely still
+    /// unimplemented and must stay listed; this test pins that too.)
+    #[test]
+    fn known_unimplemented_commands_are_not_implemented() {
+        let mut overlap: Vec<&str> = Vec::new();
+        {
+            let mut implemented = std::collections::HashSet::new();
+            for name in implemented_commands() {
+                implemented.insert(name);
+            }
+            for name in KNOWN_UNIMPLEMENTED_COMMANDS {
+                if implemented.contains(name) {
+                    overlap.push(name);
+                }
+            }
+        }
+        overlap.sort_unstable();
+        overlap.dedup();
+        assert!(
+            overlap.is_empty(),
+            "stale KNOWN_UNIMPLEMENTED_COMMANDS entries (implemented, so the \
+             unsupported diagnostic misfires): {overlap:?}"
+        );
+        assert!(
+            KNOWN_UNIMPLEMENTED_COMMANDS.contains(&"addvspace"),
+            "\\addvspace is still unimplemented and must stay listed"
+        );
+    }
+
+    /// Same disjointness invariant for environments (issue #715): the known
+    /// unimplemented list must not name anything the compiler handles, whether
+    /// as a top-level environment (`IMPLEMENTED_ENVIRONMENTS`) or as a math
+    /// grid (`GRID_ENVIRONMENTS`, e.g. `gathered`).
+    #[test]
+    fn known_unimplemented_environments_are_not_implemented() {
+        let mut implemented = std::collections::HashSet::new();
+        for name in IMPLEMENTED_ENVIRONMENTS.iter().copied() {
+            implemented.insert(name);
+        }
+        for (name, ..) in GRID_ENVIRONMENTS.iter() {
+            implemented.insert(*name);
+        }
+        let mut overlap: Vec<&str> = Vec::new();
+        for name in KNOWN_UNIMPLEMENTED_ENVIRONMENTS {
+            if implemented.contains(name) {
+                overlap.push(name);
+            }
+        }
+        overlap.sort_unstable();
+        overlap.dedup();
+        assert!(
+            overlap.is_empty(),
+            "stale KNOWN_UNIMPLEMENTED_ENVIRONMENTS entries (implemented, so \
+             the unsupported diagnostic misfires): {overlap:?}"
         );
     }
 
