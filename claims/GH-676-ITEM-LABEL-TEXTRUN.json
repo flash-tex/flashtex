@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/item-label-textrun",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/702",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T05:19:00Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-676-ITEM-LABEL-TEXTRUN",
-  "updated_utc": "2026-09-16T05:42:09Z"
+  "updated_utc": "2026-09-16T05:47:08Z"
 }
