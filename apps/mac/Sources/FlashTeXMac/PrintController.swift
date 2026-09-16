@@ -70,20 +70,25 @@ enum PrintController {
     /// `ShellModel.exportPDFRefusal()` so a stale editor still prints the last
     /// verified frame (never an in-flight partial), a historical preview
     /// refuses instead of silently printing the older snapshot as current, and
-    /// a windowed display list refuses instead of printing blank pages.
+    /// a windowed display list is re-rendered in full rather than printed
+    /// blank (`WholeDocumentList.swift`).
     ///
     /// Async because the bytes come from running `flashtex-pdf-exact`; the tool
     /// runs off the main actor and its output is read back once.
     static func printableDocument(from model: ShellModel) async -> Outcome {
         if let why = model.exportPDFRefusal() { return .refused(why) }
-        guard let (frame, source) = model.displayListV2?.retained, let tool = ExactPDFExport.locateTool() else {
-            return .refused("Nothing to print: no display list loaded.")
+        guard let tool = ExactPDFExport.locateTool() else {
+            return .refused("No flashtex-pdf-exact found (build crates/pdf, or set FLASHTEX_PDF_EXACT); printing is unavailable.")
         }
-        guard !frame.list.pages.isEmpty else { return .refused("Compile failed — nothing to print") }
-        let listURL: URL
-        do { listURL = try source.listFileURL() } catch {
-            return .refused("PDF print failed: could not write the display list to a file: \(error.localizedDescription)")
+        // A windowed frame re-renders the whole document first; an unwindowed
+        // one is used as is (WholeDocumentList.swift).
+        let list: (url: URL, temporary: Bool)
+        switch await model.exportListURL() {
+        case .failure(let why): return .refused(why)
+        case .success(let resolved): list = resolved
         }
+        let listURL = list.url
+        defer { if list.temporary { try? FileManager.default.removeItem(at: listURL) } }
         let jobTitle = documentName(from: model)
         let out = FileManager.default.temporaryDirectory
             .appendingPathComponent("flashtex-print-\(UUID().uuidString).pdf")

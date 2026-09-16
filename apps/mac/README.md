@@ -248,12 +248,27 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
   cannot express exactly, naming the item, instead of approximating it. The dark
   preview toggle is a viewing mode only; the exported document is always white.
   `File > Print…` (⌘P) prints exactly those bytes through PDFKit's system print
-  panel (`PrintController.swift`). Both are disabled without a complete display
-  list — no frame yet, or a page window engaged for an over-limit document
-  (`ShellModel.toolbarExportable`) — and both refuse a historical preview rather
-  than writing the older snapshot as current. `File > Print Source…` prints the
-  editor buffer with line numbers from a copy and is disabled when no document
-  is open.
+  panel (`PrintController.swift`). Both are disabled without a display list that
+  has pages (`ShellModel.toolbarExportable`) and both refuse a historical
+  preview rather than writing the older snapshot as current. `File > Print
+  Source…` prints the editor buffer with line numbers from a copy and is
+  disabled when no document is open.
+- A **windowed** frame is an incomplete view (window proposal §4.1) and is never
+  handed to the writer, but it does not block the export either
+  (`WholeDocumentList.swift`). The window engages only after the producer has
+  refused the unwindowed reply as over-limit, so re-asking for one would be
+  refused again — the 16 MiB ceiling belongs to the JSON Lines transport, not to
+  the document. The producer's own `--v2 FILE` side output has no such limit and
+  is written even when the reply it sent *was* the over-limit refusal
+  (`Outputs::write` runs off `Reply.rendered`, which that refusal still
+  carries). So Export runs the same producer binary one-shot in worker mode,
+  feeds it the current buffers on stdin, ignores the reply, and takes the
+  complete list from the file — exactly what `flashtex build --v2` does. The
+  list comes from the request the app just sent, so it matches the editor by
+  construction; the file is private to that run and read only after the process
+  exited, so there is no freshness check and no torn read. With no
+  `flashtex-render` discoverable the refusal names that instead, and is worded
+  differently from "nothing to export" because it is a different situation.
 - Removed with #669: the CoreGraphics `PDFExport` command (v1 items, Times
   fallback faces, no images, monochrome), `Export PDF via Rust Writer…` (⌘⌥E,
   `flashtex-pdf`, a self-described SHIM that re-encoded by character) and the v2

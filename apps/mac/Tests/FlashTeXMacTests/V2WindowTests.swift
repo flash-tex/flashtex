@@ -282,11 +282,16 @@ final class V2WindowLiveTests: XCTestCase {
         XCTAssertNil(model.deltaInstalled, "a windowed frame is never a delta base")
         XCTAssertTrue(model.captureNote?.contains("window") == true, model.captureNote ?? "")
 
-        // A windowed frame is never an export source (§4.1).
-        model.exportPDF()
-        XCTAssertTrue(model.captureNote?.contains("page window") == true, model.captureNote ?? "")
-        model.flushChrome()
-        XCTAssertFalse(model.toolbarExportable, "Export PDF… is disabled while a window is engaged")
+        // A windowed frame is never itself an export source (§4.1): Export
+        // resolves the whole document instead of writing the resident pages.
+        // (`exportPDF()` is not called here — it opens a save panel.)
+        let resolved = await model.exportListURL()
+        if case .success(let list) = resolved {
+            XCTAssertTrue(list.temporary, "a windowed frame must never be exported as it stands")
+            try? FileManager.default.removeItem(at: list.url)
+        } else if case .failure(let why) = resolved {
+            XCTAssertTrue(why.contains("render pipeline") || why.contains("flashtex-render"), why)
+        }
 
         // Scrolling inside the comfortable interior refetches nothing.
         let requestsBefore = model.latestRequestID

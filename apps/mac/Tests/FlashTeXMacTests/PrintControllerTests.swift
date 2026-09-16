@@ -1,4 +1,5 @@
 import XCTest
+import Darwin
 import CoreGraphics
 import PDFKit
 import FlashTeXProtocol
@@ -119,21 +120,52 @@ final class PrintControllerTests: XCTestCase {
         XCTAssertTrue(why.contains("no rendering-v2 display list"), why)
     }
 
-    /// A windowed reply is an incomplete view of the document: printing it
-    /// would emit blank pages for everything outside the window.
-    func testWindowedDisplayListIsNotPrintableOrExportable() async throws {
+    /// A windowed reply is an incomplete view of the document (window proposal
+    /// §4.1), so it is never exported as it stands. With the render pipeline
+    /// available the whole document is re-rendered to a private file instead —
+    /// the producer's `--v2` side output has no reply-line limit — and that
+    /// file is what `flashtex-pdf-exact` is given.
+    ///
+    /// `exportPDF()` is deliberately not called in these tests: with the route
+    /// available it opens a save panel.
+    func testWindowedDisplayListIsExportedByReRenderingTheWholeDocument() async throws {
         let model = try await modelShowing("display-list-v2-window.json")
         XCTAssertNotNil(model.displayListV2?.frame?.list.window, "fixture must be a windowed list")
-        XCTAssertFalse(model.toolbarExportable)
-        XCTAssertFalse(PrintController.documentEnabled(model))
-        XCTAssertFalse(PrintController.exportWouldProceed(model))
-        guard case .refused(let why) = await PrintController.makeDocumentPrint(from: model) else {
-            return XCTFail("a windowed list must not print blank pages")
+        guard model.wholeDocumentProducer != nil else {
+            throw XCTSkip("set FLASHTEX_RENDER (or build crates/render-pipeline) for the whole-document export route")
         }
-        XCTAssertTrue(why.contains("page window"), why)
-        // Export refuses with the same words, through the same predicate.
-        model.exportPDF()
-        XCTAssertEqual(model.captureNote, why)
+        XCTAssertTrue(model.toolbarExportable, "a windowed document is still exportable")
+        XCTAssertTrue(PrintController.documentEnabled(model))
+        XCTAssertNil(model.exportPDFRefusal(), "the whole-document route is available, so nothing to refuse")
+
+        let resolved = await model.exportListURL()
+        guard case .success(let list) = resolved else {
+            return XCTFail("the whole-document render must produce a list: \(resolved)")
+        }
+        defer { try? FileManager.default.removeItem(at: list.url) }
+        XCTAssertTrue(list.temporary, "the windowed frame itself must never be handed to the writer")
+        let text = try String(contentsOf: list.url, encoding: .utf8)
+        XCTAssertTrue(text.contains("\"display_list\""), "the side output is a rendering-v2 envelope")
+        XCTAssertFalse(text.contains("\"window\""), "the whole-document list is not windowed")
+    }
+
+    /// Without a render pipeline the windowed case is a real limit, and says
+    /// so in different words than "nothing to export".
+    func testWindowedDisplayListWithoutARenderPipelineNamesTheLimit() async throws {
+        let saved = ProcessInfo.processInfo.environment["FLASHTEX_RENDER"]
+        unsetenv("FLASHTEX_RENDER")
+        defer { if let saved { setenv("FLASHTEX_RENDER", saved, 1) } }
+        let model = try await modelShowing("display-list-v2-window.json")
+        guard model.wholeDocumentProducer == nil else {
+            throw XCTSkip("a flashtex-render is discoverable without FLASHTEX_RENDER here")
+        }
+        let why = try XCTUnwrap(model.exportPDFRefusal())
+        XCTAssertTrue(why.contains("too large to send in one reply"), why)
+        XCTAssertTrue(why.contains("flashtex build"), why)
+        guard case .refused(let printWhy) = await PrintController.makeDocumentPrint(from: model) else {
+            return XCTFail("a windowed list with no way to complete it must refuse")
+        }
+        XCTAssertEqual(printWhy, why, "Print and Export refuse in the same words")
     }
 
     func testFileMenuEnablementUsesDocumentEnabledAndSourceEnabled() throws {

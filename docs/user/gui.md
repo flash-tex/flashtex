@@ -388,8 +388,14 @@ same bytes.
 The export is black on white regardless of the dark-preview switch. It is not a
 pdfTeX PDF: only what the engine laid out is written (no hyperlinks, no
 metadata). Anything the writer cannot express exactly is refused by name rather
-than approximated. A document large enough that the preview falls back to a
-page window cannot be exported from the app — use `flashtex build` for it.
+than approximated.
+
+A long document is previewed through a **page window** — the engine cannot send
+its whole display list in one reply — but it still exports in full: Export and
+Print re-render the complete document through the render pipeline first, which
+takes a few seconds and is reported in the status bar. That needs the render
+pipeline attached (⌘⇧R); without it, Export says so and points you at
+`flashtex build`.
 
 ## Capture conversion (the only model-backed feature)
 

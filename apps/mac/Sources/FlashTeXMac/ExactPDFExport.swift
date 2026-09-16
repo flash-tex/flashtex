@@ -93,10 +93,16 @@ extension ShellModel {
                 ? "Nothing to export yet: a display list is still loading."
                 : "Nothing to export: no rendering-v2 display list. Attach the render pipeline (⌘⇧R) and compile, or open a list with File > Open Display List (v2)…."
         }
-        if let window = frame.list.window {
+        if frame.list.pages.isEmpty {
+            return "Nothing to export: this compile produced no pages."
+        }
+        if frame.list.window != nil, wholeDocumentProducer == nil {
             // display-list-v2-window §4.1: a windowed reply is an incomplete
-            // view and never the source of a PDF export or a print job.
-            return "Cannot export: this document is being previewed through a page window (pages \(window.firstPage)–\(window.firstPage + window.pageCount - 1) of \(window.documentPageCount)) because its full display list exceeds the reply limit. Export the whole document with `flashtex build` on the command line."
+            // view and never the source of a PDF export or a print job. With
+            // the render pipeline available the whole document is re-rendered
+            // instead (WholeDocumentList.swift); without it, say so.
+            let window = frame.list.window!
+            return "Cannot export: this document is too large to send in one reply, so the preview is showing a page window (pages \(window.firstPage)–\(window.firstPage + window.pageCount - 1) of \(window.documentPageCount)). Exporting it needs the render pipeline: attach it with ⌘⇧R, build crates/render-pipeline, or run `flashtex build` on the command line."
         }
         if ExactPDFExport.locateTool() == nil {
             return "No flashtex-pdf-exact found (build crates/pdf, or set FLASHTEX_PDF_EXACT); PDF export is unavailable."
@@ -112,20 +118,29 @@ extension ShellModel {
         // `retained`, not `.loaded`: while a newer list is being verified the
         // pane keeps showing the last verified frame, and Export writes exactly
         // what the pane is showing.
-        guard let (frame, source) = displayListV2?.retained, let tool = ExactPDFExport.locateTool() else { return }
-        let listURL: URL
-        do { listURL = try source.listFileURL() } catch { // a live frame's line is written to a temporary file (V2Source)
-            captureNote = "PDF export: could not write the live display list to a file: \(error.localizedDescription)"
-            return
-        }
+        guard let (frame, _) = displayListV2?.retained, let tool = ExactPDFExport.locateTool() else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = "\(frame.list.projectId)-r\(frame.list.revision).pdf"
         panel.message = "Export the document through flashtex-pdf-exact (exact glyphs by original GID, embedded font programs)"
+        // The destination is chosen before any long re-render, so the user is
+        // never left waiting on a panel that has not appeared yet.
         guard panel.runModal() == .OK, let out = panel.url else { return }
         // The panel already asked about overwriting: whatever is on disk now is
         // what the user approved. Any later change is refused (ExportSession).
-        exportPDFExact(listURL: listURL, tool: tool, destination: .recordingCurrentDisk(out))
+        let destination = ExportSession.Destination.recordingCurrentDisk(out)
+        Task { @MainActor in
+            // A windowed frame re-renders the whole document first
+            // (WholeDocumentList.swift); an unwindowed one is used as is.
+            switch await exportListURL() {
+            case .failure(let why):
+                captureNote = why
+            case .success(let list):
+                exportPDFExact(listURL: list.url, tool: tool, destination: destination) { _ in
+                    if list.temporary { try? FileManager.default.removeItem(at: list.url) }
+                }
+            }
+        }
     }
 
     /// Non-interactive core (tests, automation) in the pre-session shape:
