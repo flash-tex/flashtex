@@ -160,6 +160,12 @@ final class ShellModel {
     // fires for the toolbar exactly when something it shows changes.
     private(set) var toolbarHasResult = false
     private(set) var toolbarHasV2Frame = false
+    /// A complete (non-windowed) v2 display list with at least one page: what
+    /// `File > Export PDF…` and `File > Print…` both need, change-only so the
+    /// File menu and the toolbar do not re-evaluate on every frame. The strict
+    /// refusal (historical preview, missing `flashtex-pdf-exact`) is
+    /// `exportPDFRefusal()`; this only decides whether the item is enabled.
+    private(set) var toolbarExportable = false
     private(set) var toolbarProblemCount = 0
     /// `result?.pages.count`, change-only, so File > Print… can refuse a failed
     /// or empty-page result without the App scene reading `result` per reply.
@@ -222,8 +228,11 @@ final class ShellModel {
         if toolbarHasResult != hasResult { toolbarHasResult = hasResult }
         let pages = result?.pages.count ?? 0
         if toolbarPageCount != pages { toolbarPageCount = pages }
+        let retained = displayListV2?.retained?.frame
         let hasFrame = displayListV2?.frame != nil
         if toolbarHasV2Frame != hasFrame { toolbarHasV2Frame = hasFrame }
+        let exportable = retained.map { $0.list.window == nil && !$0.list.pages.isEmpty } ?? false
+        if toolbarExportable != exportable { toolbarExportable = exportable }
         let diagnostics = displayedDiagnostics
         if toolbarProblemCount != diagnostics.count { toolbarProblemCount = diagnostics.count }
         if problemsList != diagnostics { problemsList = diagnostics }

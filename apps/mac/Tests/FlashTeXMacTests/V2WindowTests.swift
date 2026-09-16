@@ -283,8 +283,10 @@ final class V2WindowLiveTests: XCTestCase {
         XCTAssertTrue(model.captureNote?.contains("window") == true, model.captureNote ?? "")
 
         // A windowed frame is never an export source (§4.1).
-        model.exportPDFV2()
+        model.exportPDF()
         XCTAssertTrue(model.captureNote?.contains("page window") == true, model.captureNote ?? "")
+        model.flushChrome()
+        XCTAssertFalse(model.toolbarExportable, "Export PDF… is disabled while a window is engaged")
 
         // Scrolling inside the comfortable interior refetches nothing.
         let requestsBefore = model.latestRequestID

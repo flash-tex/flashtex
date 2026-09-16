@@ -239,19 +239,28 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
   insert twice. If the buffer changed since pinning, the anchor is rebased by its
   context or, when the destination was deleted/ambiguous, reselection is required.
   See `Samples/capture-proposal.json`. No network or provider call is involved here.
-- PDF export: `File > Export PDF…` (⌘⇧E) writes the current preview with
-  CoreGraphics/CoreText (`PDFExport.swift`): one PDF page per `pages` entry at
-  `width_pt` × `height_pt`, each text item in its resolved face at `font_size_pt`
-  with its baseline exactly `baseline_y_pt` from the top (flipped to PDF's
-  bottom-left origin), and each typed `rule` item as a filled rectangle
-  (`RuleGeometry.pdfRect`). It exports the layout the Rust compiler reported,
-  not a TeX-engine PDF: no fonts beyond Latin Modern/Times, no images, no links
-  or metadata. The dark toggle only changes page/text colors. Disabled when no
-  result is loaded. `File > Print…` (⌘P) prints those same bytes through
-  PDFKit's system print panel (`PrintController.swift`); it is also disabled
-  when the compile failed or produced no pages (a blank PDF is not printed).
-  `File > Print Source…` prints the editor buffer with line numbers from a copy
-  and is disabled when no document is open.
+- PDF export: `File > Export PDF…` (⌘⇧E) hands the loaded v2 display list to
+  `flashtex-pdf-exact from-v2` (`ExactPDFExport.swift`, `ExportSession.swift`).
+  This is the app's only export route and the same one `flashtex build` uses:
+  every glyph by its original GID at its exact tick position, the font programs
+  embedded as GID-preserving CFF subsets, typed rules, `path_fill`/`path_stroke`
+  (TikZ), image XObjects, device colour and ToUnicode. It refuses anything it
+  cannot express exactly, naming the item, instead of approximating it. The dark
+  preview toggle is a viewing mode only; the exported document is always white.
+  `File > Print…` (⌘P) prints exactly those bytes through PDFKit's system print
+  panel (`PrintController.swift`). Both are disabled without a complete display
+  list — no frame yet, or a page window engaged for an over-limit document
+  (`ShellModel.toolbarExportable`) — and both refuse a historical preview rather
+  than writing the older snapshot as current. `File > Print Source…` prints the
+  editor buffer with line numbers from a copy and is disabled when no document
+  is open.
+- Removed with #669: the CoreGraphics `PDFExport` command (v1 items, Times
+  fallback faces, no images, monochrome), `Export PDF via Rust Writer…` (⌘⌥E,
+  `flashtex-pdf`, a self-described SHIM that re-encoded by character) and the v2
+  pane's own `Export PDF (v2)…` (the preview draw routine). They were three
+  lower-fidelity duplicates of one command. `PDFExport.render` survives only as
+  the capture-proposal preview painter (`ProposalPreview.swift`), and
+  `GlyphRunRenderer.pdfData` only as the export side of the parity harness.
 
 ## Capture bridge (transfer-v1)
 
@@ -407,14 +416,17 @@ diagnostics checks beyond the one-line contract fixture.
   LaTeX (lmroman5/7/8/9/10/12/17).
 - Opening another file while the buffer is dirty asks Save / Discard / Cancel;
   a discarded buffer stays recoverable for the session (Edit > Restore
-  Discarded Buffer). The Rust-writer export runs off the main actor with both
-  child pipes drained concurrently (bounded capture, 30 s timeout), so a chatty
-  or stuck writer can neither deadlock nor freeze the UI (issue #19).
-- Export is always white: dark preview is a viewing mode only. `File > Export
-  PDF…` (⌘⇧E) uses CoreGraphics; `File > Export PDF via Rust Writer…` (⌘⌥E) pipes
-  the current `compile_result` envelope to the FT-009 `flashtex-pdf --verify`
-  binary (`$FLASHTEX_PDF` or `crates/pdf/target/{release,debug}/flashtex-pdf`).
-  `RustPDFExportTests` runs only when `FLASHTEX_PDF` is set.
+  Discarded Buffer).
+- Export is always white: dark preview is a viewing mode only. There is exactly
+  one export route — `File > Export PDF…` (⌘⇧E) → `flashtex-pdf-exact from-v2`
+  (`$FLASHTEX_PDF_EXACT`, the bundle, or `crates/pdf/target/{release,debug}`),
+  the same route `flashtex build` uses. It runs off the main actor through
+  `ExportSession` (sibling temp file, atomic replace, Cancel and timeout by
+  pid), so a chatty or stuck writer can neither deadlock nor freeze the UI
+  (issue #19). `File > Print…` (⌘P) prints those same bytes. The CoreGraphics
+  export (v1 items, Times fallback faces, no images), the `flashtex-pdf`
+  re-encoding route (⌘⌥E) and the v2 pane's own draw-routine export were
+  removed: three lower-fidelity duplicates of one command.
 - Diagnostics panel under the preview is never hidden when diagnostics exist; each
   entry shows severity, message, recovery note (or "no provisional rendering"),
   and source bytes; the banner shows error/warning counts and a `recovered` note.
@@ -759,10 +771,7 @@ for the preview currently on screen, never for the request in flight.
   silently, as before.
 - Not covered: the accessibility overlay (`FlashTeXAccessibility`, owner
   mac-accessibility) still reads only text items and the legacy U+2500 bars;
-  typed rules and font hints are not yet exposed to VoiceOver. The Rust writer
-  export (⌘⌥E) forwards the result envelope unchanged, including `rule` items
-  and `layout_capabilities`; whether `flashtex-pdf` on main understands them is
-  its owner's call and is not verified here.
+  typed rules and font hints are not yet exposed to VoiceOver.
 - Tests: `LayoutCapabilityTests` (protocol: field round trip and limits, rule
   and font-hint validation, negotiation checks), `RuleGeometryTests`,
   `FontHintResolutionTests` (bundled LM, Core-14 aliases, substitution),
@@ -950,13 +959,11 @@ explain that nothing is loaded.
 | ⌘⇧O | Open compile result fixture… (sibling `-request.json` seeds the editor) |
 | File > Reload Fixture | Reload Fixture (developer-only, no shortcut — confirms before replacing a real/unsaved document) |
 | ⌘⇧K | Attach built compiler (`$FLASHTEX_COMPILER` or `crates/compiler/target/…`) |
-| File > Export PDF (exact, v2)… | Exact route: the loaded v2 display list through `flashtex-pdf-exact from-v2` (`$FLASHTEX_PDF_EXACT`, bundle, or `crates/pdf/target/…`): original GIDs, embedded font programs, typed rules; refusals name the item |
 | ⌘⇧R | Attach render pipeline (`$FLASHTEX_RENDER`, the app bundle, or `crates/render-pipeline/target/…`): the Latin Modern-metric producer, so the preview shows Computer Modern-style text |
 | ⌘K | Attach worker executable… |
 | ⌘B | Compile now (auto-compile also runs 250 ms after edits) |
-| ⌘⇧E | Export PDF… (CoreGraphics, always white) |
-| ⌘⌥E | Export PDF via Rust writer… (`flashtex-pdf --verify`, always white) |
-| ⌘P | Print… (compiled document PDF, same CoreGraphics bytes as Export PDF…; system print panel; page size follows the PDF) |
+| ⌘⇧E | Export PDF… — the app's one export route: the loaded v2 display list through `flashtex-pdf-exact from-v2` (`$FLASHTEX_PDF_EXACT`, the bundle, or `crates/pdf/target/…`): original GIDs, embedded font programs, typed rules, images; refusals name the item. Progress and Cancel in the status bar; the file is written atomically |
+| ⌘P | Print… (the same bytes Export PDF… writes; system print panel; page size follows the PDF) |
 | File > Print Source… | Print Source… (editor text with line numbers, monospaced, from a copy so the live editor is untouched) |
 | ⌘⌥P | Pin insertion point at caret (capture destination anchor) |
 | Edit > Open Capture Proposal… | Open capture proposal… file (review sheet; ⏎ approves, inserts one undoable edit; no shortcut since ⌘⇧I moved to the Captures inspector) |
@@ -1098,7 +1105,7 @@ do not follow edits; `H`/`M`/`L` use the visible rect without `scrolloff`.
   destination, captures, edit ledger, reconciliation), `ShellModel+Bridge`.
 - `FlashTeXMac` also holds `LineProcessClient` (shared bounded JSON Lines
   process transport) and `EditLedgerClient` (edit-ledger helper protocol).
-- Tests (136 across all targets, of which `RealCompilerTests`, `RustPDFExportTests`,
+- Tests (136 across all targets, of which `RealCompilerTests`,
   `RealBridgeTests` and `RealEditLedgerTests` are gated on `FLASHTEX_COMPILER`,
   `FLASHTEX_PDF`, `FLASHTEX_BRIDGE` and `FLASHTEX_EDIT_LEDGER`): completion
   (prefix/trigger rules, unclosed `\end{}`, unsupported marks, non-ASCII and
@@ -1136,8 +1143,7 @@ do not follow edits; `H`/`M`/`L` use the visible rect without `scrolloff`.
   flow, plaintext peer refused without parsing while TLS peers keep working,
   nearby capture forwarded through the fake bridge (durable ack, error
   pass-through, inbox fallback after detach); plus the earlier: oversized complete line, trailing bytes at EOF, unsolicited/mismatched result correlation; inline diagnostic marks (byte→UTF-16, rebase/drop, path filter,
-  sample slice, temporary-attribute-only); Rust-writer export (gated on
-  `FLASHTEX_PDF`), missing-binary error; source mapping (shift/refuse/multi-byte/expected-text), stale
+  sample slice, temporary-attribute-only); source mapping (shift/refuse/multi-byte/expected-text), stale
   navigation refusal and rebase, auto-compile debounce/coalescing, latency; PDF export (fixture → 612×792 page containing the item text,
   two-page synthetic sizes, unknown-kind skipping, page-less result); anchor/rebase/reselection logic, review flow with duplicate
   suppression, capture fixture decoding; caret sync (multi-page sample slices
@@ -1190,12 +1196,13 @@ not replace, negotiate, or change the v1 path.
   PNG/JPEG paint through `CGImage`, PDF pages through `CGPDFDocument` with the producer's
   `pdf_box`/`pdf_rotate` mapped onto the unit square (`V2PreparedImage.pageToUnit`), all
   clipped to the tick box and placed by the item's transform (`[a, −b, c, −d, e, H − f]`
-  in PDF space), in the preview bitmap and in the CoreGraphics `Export PDF (v2)…` alike.
+  in PDF space), in the preview bitmap and in the parity export
+  (`GlyphRunRenderer.pdfData`) alike.
   A click on the box navigates to the `\includegraphics` command; selection ignores
   images. `V2PageCache` keys on the image root too, so a page prepared under another root
-  (or with no root) is never reused. Gap: `flashtex-pdf-exact from-v2` (crates/pdf,
-  Commander-owned) still refuses image items ("glyph_run and rule only"), so the exact
-  export of a frame with images fails naming the item; use `Export PDF (v2)…` for those.
+  (or with no root) is never reused. `flashtex-pdf-exact from-v2` places image items as
+  `q … cm /ImN Do Q` XObjects, so `File > Export PDF…` carries them (the earlier
+  "glyph_run and rule only" refusal was lifted in crates/pdf).
   Tests: `V2ImageTests` (generated PNG/JPEG/PDF fixtures, stale-hash and symlink
   refusals, rotated PDF box, cache keying, request wiring, and a `FLASHTEX_RENDER`-gated
   round trip through the real producer with `project_root`).
@@ -1224,10 +1231,9 @@ not replace, negotiate, or change the v1 path.
   outline at least 2 pt wide, and inside every clip) and a click navigates to the
   picture's source span; `DisplayListDelta.pageDigest` covers commands, op, clips, paint
   and provenance and relocation moves path sources; `V2PageCache` keys on page bytes so
-  paths are covered by construction. Gap: `flashtex-pdf-exact from-v2` (crates/pdf
-  `v2.rs`, Commander-owned) refuses `path_fill`/`path_stroke` ("glyph_run, rule and image
-  only"), so the exact export of a frame with a `tikzpicture` fails naming the item; use
-  `Export PDF (v2)…` for those. Tests: `V2PathTests` (both readers agree and round-trip,
+  paths are covered by construction. `flashtex-pdf-exact from-v2` (crates/pdf `v2.rs`)
+  paints `path_fill`/`path_stroke`, so a `tikzpicture` survives `File > Export PDF…`
+  (the earlier "glyph_run, rule and image only" refusal was lifted). Tests: `V2PathTests` (both readers agree and round-trip,
   malformed shapes refused, a triangle / Bézier circle / dashed line with arrowhead /
   clipped fill painted offscreen with pixel assertions in preview and export, hit tests,
   dark inversion, digest and relocation, and a `FLASHTEX_RENDER`-gated live compile of
@@ -1288,8 +1294,8 @@ not replace, negotiate, or change the v1 path.
 - Drawing: one CoreGraphics routine (`GlyphRunRenderer.draw`) in PDF space (y up,
   1 unit = 1 pt) paints a prepared page's items in list order — rules as path fills,
   glyph runs with `CTFontDrawGlyphs` by ORIGINAL glyph ID at the absolute origins
-  (advances are never re-added, no reshaping/kerning). `Export PDF (v2)…` calls it on
-  a PDF context with one glyph per call (`glyphByGlyph`): CG's PDF writer otherwise
+  (advances are never re-added, no reshaping/kerning). The parity export
+  (`GlyphRunRenderer.pdfData`) calls it on a PDF context with one glyph per call (`glyphByGlyph`): CG's PDF writer otherwise
   merges glyphs into `Tj` strings positioned by the font's advances plus integer
   1/1000 em `TJ` adjustments, which drifted up to a pixel at line ends once the producer
   laid text out with TeX/TFM metrics (444 differing pixels per frame, now 0); the pane does not draw glyphs on the main thread at all: `V2PageRasterizer`

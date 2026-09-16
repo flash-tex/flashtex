@@ -542,31 +542,6 @@ extension ShellModel {
             navigationNote! += " (+\(hit.sources.count - 1) more source range(s) for this cluster)"
         }
     }
-
-    /// `Export PDF (v2)…` from the v2 pane: the same draw routine as the preview.
-    func exportPDFV2() {
-        guard case .loaded(let frame, _)? = displayListV2 else {
-            captureNote = displayListV2?.isLoading == true ? "Nothing to export yet: a display list is still loading." : "Nothing to export: no display list loaded."
-            return
-        }
-        if let window = frame.list.window {
-            // Window proposal §4.1: a windowed reply is never the source of a
-            // PDF export — only \(window.pageCount) of its pages exist.
-            captureNote = "Cannot export: the loaded display list is a page window (pages \(window.firstPage)–\(window.firstPage + window.pageCount - 1) of \(window.documentPageCount)); export needs a complete list."
-            return
-        }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.pdf]
-        panel.nameFieldStringValue = "\(frame.list.projectId)-r\(frame.list.revision)-v2.pdf"
-        panel.message = "Export the v2 display list as PDF through the preview's draw routine (experimental)"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            try GlyphRunRenderer.pdfData(frame: frame).write(to: url, options: .atomic)
-            captureNote = "Exported \(frame.list.pages.count) page(s) (v2) to \(url.path)"
-        } catch {
-            captureNote = "PDF export (v2) failed: \(error.localizedDescription)"
-        }
-    }
 }
 
 /// Off-main page bitmaps for the pane, keyed by page content identity

@@ -41,7 +41,7 @@ struct TitleBarRow: View {
             Spacer(minLength: DS.Space.m).frame(maxWidth: DS.Space.xxl)
             TitleBarButton(icon: "folder", label: "Open display list",
                            help: "Open Display List (v2)… (File menu): a flashtex-render --v2 JSON file for the v2 preview pane") { $0.openDisplayListV2Panel() }
-            ExportTitleBarMenu()
+            ExportTitleBarButton()
             CapturesTitleBarToggle()
         }
         .padding(.leading, DS.Layout.trafficLightClearance)
@@ -150,33 +150,23 @@ private struct DarkPreviewTitleBarToggle: View {
     }
 }
 
-/// Every export route in one menu — a plain menu that opens on a single
-/// normal click (never a press-and-hold `primaryAction:` pattern).
-private struct ExportTitleBarMenu: View {
+/// Export PDF… — one route, so one plain button rather than a menu of
+/// near-duplicates (the CoreGraphics, Rust-writer and in-pane v2 exports were
+/// removed; `flashtex-pdf-exact` is the only writer the app uses).
+private struct ExportTitleBarButton: View {
     @Environment(ShellModel.self) var model
     @State private var hovering = false
 
     var body: some View {
-        // The glyph is drawn by `IconButtonLabel` and the menu opens from an
-        // invisible label above it: `.borderlessButton` menus paint their
-        // label in the primary label colour, which broke the quiet secondary
-        // tint every sibling icon carries.
-        IconButtonLabel(icon: "square.and.arrow.up", hovering: hovering)
-            .overlay {
-                Menu {
-                    Button("Export PDF…") { model.exportPDF() }.disabled(!model.toolbarHasResult)
-                    Button("Export PDF via Rust Writer…") { model.exportPDFViaRust() }.disabled(!model.toolbarHasResult)
-                    Button("Export PDF (exact, v2)…") { model.exportPDFExact() }.disabled(!model.toolbarHasV2Frame)
-                    Button("Export PDF (v2)…") { model.exportPDFV2() }.disabled(!model.toolbarHasV2Frame)
-                } label: {
-                    Color.clear.frame(width: DS.Size.toolbarButton, height: DS.Size.toolbarButton)
-                        .contentShape(Rectangle())
-                }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            }
-            .onHover { hovering = $0 }
-        .help("Export PDF… (⌘⇧E), via Rust writer (⌘⌥E), exact from the v2 display list, or the v2 pane's own writer")
+        Button { model.exportPDF() } label: {
+            IconButtonLabel(icon: "square.and.arrow.up", hovering: hovering)
+        }
+        .buttonStyle(PressableStyle())
+        .disabled(!model.toolbarExportable)
+        .onHover { hovering = $0 }
+        .help("Export PDF… (⌘⇧E): the display list through flashtex-pdf-exact — exact glyphs, embedded font programs, typed rules")
         .accessibilityLabel("Export PDF")
+        .accessibilityIdentifier("toolbar.export-pdf")
     }
 }
 

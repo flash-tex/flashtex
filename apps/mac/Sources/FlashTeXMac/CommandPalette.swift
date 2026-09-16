@@ -97,8 +97,6 @@ enum CommandPaletteModel {
         case .attachWorker: model.attachWorkerPanel()
         case .compile: if !model.outputBoundExplicitRetry() { model.compile() }
         case .exportPDF: model.exportPDF()
-        case .exportPDFViaRust: model.exportPDFViaRust()
-        case .exportPDFExact: model.exportPDFExact()
         case .printDocument: model.printDocument()
         case .printSource: model.printSource()
         case .pinInsertionPoint: model.pinAnchorAtCaret()

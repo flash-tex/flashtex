@@ -246,14 +246,11 @@ struct FlashTeXMacApp: App {
                 // document before replacing it with fixture content (#72).
                 Button("Reload Fixture") { model.reloadFixture() }
                 Button("Open Display List (v2)…") { model.openDisplayListV2Panel() } // experimental, PreviewV2View.swift
+                // The app's one export route (ExactPDFExport.swift); File > Print…
+                // prints exactly these bytes.
                 Button("Export PDF…") { model.exportPDF() }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
-                    .disabled(!model.toolbarHasResult)
-                Button("Export PDF via Rust Writer…") { model.exportPDFViaRust() }
-                    .keyboardShortcut("e", modifiers: [.command, .option])
-                    .disabled(!model.toolbarHasResult) // change-only mirror (see .commands)
-                Button("Export PDF (exact, v2)…") { model.exportPDFExact() } // ExactPDFExport.swift
-                    .disabled(!model.toolbarHasV2Frame) // change-only mirror (see .commands)
+                    .disabled(!model.toolbarExportable) // change-only mirror (see .commands)
                 Divider()
                 Button("Attach Built Compiler") { model.attachDiscoveredWorker() }
                     .keyboardShortcut("k", modifiers: [.command, .shift])

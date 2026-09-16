@@ -261,7 +261,7 @@ directories, so the embedded program is exactly the file the layout used.
 |---|---|
 | `flashtex-render` | The engine as a bare runtime-v1 worker (`flashtex worker` is the same loop). `--tex FILE --pdf out.pdf` is its older one-shot mode: single file, no include resolution, the v1 text-item PDF route. `--v2 out.json` writes the display list. |
 | `flashtex-compiler` | The original FT-002 worker with Core-14 (Times) metrics and a smaller LaTeX subset; same wire protocol, no flags. `--supported [json|markdown|coverage]` prints the inventory (`flashtex supported` is the same data). *File › Attach Built Compiler* (⌘⇧K) attaches it. |
-| `flashtex-pdf` | `flashtex-pdf [INPUT.json] --out OUTPUT.pdf [--verify] [--embed-font PATH|auto] [--default-face embedded|lm|times]` — a PDF from a runtime-v1 `compile_result` (text items and rules); characters outside WinAnsi/Symbol/the embedded face become `?`. The *Export PDF via Rust Writer…* route. |
+| `flashtex-pdf` | `flashtex-pdf [INPUT.json] --out OUTPUT.pdf [--verify] [--embed-font PATH|auto] [--default-face embedded|lm|times]` — a PDF from a runtime-v1 `compile_result` (text items and rules); characters outside WinAnsi/Symbol/the embedded face become `?`. No longer reachable from the Mac app: the app's one export route is `flashtex-pdf-exact`. |
 | `flashtex-pdf-exact` | `from-v2 LIST.json --out OUT.pdf [--font-dir DIR]... [--project-root DIR]` is the exact route as a separate step (what `flashtex build` runs in-process); `reemit`, `classify` and `dump` are PDF-comparison utilities used by the fidelity tests. |
 
 ## Building from source

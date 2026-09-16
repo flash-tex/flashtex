@@ -8,7 +8,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case editorPreferences
     case openLaTeXFile, newProject, newFile, save, saveAs, openFixture, reloadFixture
     case attachBuiltCompiler, attachRenderPipeline, attachWorker, compile
-    case exportPDF, exportPDFViaRust, exportPDFExact, printDocument, printSource
+    case exportPDF, printDocument, printSource
     case pinInsertionPoint, openCaptureProposal, submitSampleCapture, convertCapture, nearbyCompanion
     case restoreDiscardedBuffer
     case undo
@@ -101,23 +101,13 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          menuItem: "Compile")
         case .exportPDF:
             return Entry(command: self, title: "Export PDF", shortcuts: ["⌘⇧E"], menu: "File",
-                         description: "Writes the current preview as a PDF with CoreGraphics (always white).",
-                         requires: "a compile result",
+                         description: "Hands the loaded v2 display list to flashtex-pdf-exact from-v2: glyphs by original GID, embedded font programs, typed rules, images and device colour; refuses what it cannot express exactly instead of approximating it.",
+                         requires: "a complete v2 display list and a built flashtex-pdf-exact",
                          menuItem: "Export PDF…")
-        case .exportPDFViaRust:
-            return Entry(command: self, title: "Export PDF via Rust writer", shortcuts: ["⌘⌥E"], menu: "File",
-                         description: "Pipes the compile result to flashtex-pdf --verify (always white).",
-                         requires: "a compile result",
-                         menuItem: "Export PDF via Rust Writer…")
-        case .exportPDFExact:
-            return Entry(command: self, title: "Export PDF (exact, v2)", shortcuts: ["File > Export PDF (exact, v2)…"], menu: "File",
-                         description: "Hands the loaded v2 display list to flashtex-pdf-exact from-v2: glyphs by original GID, embedded font programs, typed rules; refuses what it cannot express exactly.",
-                         requires: "a loaded v2 display list and a built flashtex-pdf-exact",
-                         menuItem: "Export PDF (exact, v2)…")
         case .printDocument:
             return Entry(command: self, title: "Print", shortcuts: ["⌘P"], menu: "File",
-                         description: "Prints the compiled document PDF (the same CoreGraphics bytes as Export PDF…) through the system print panel; page size follows the PDF.",
-                         requires: "a compile result",
+                         description: "Prints the compiled document PDF — the same exact bytes Export PDF… writes — through the system print panel; page size follows the PDF.",
+                         requires: "a complete v2 display list and a built flashtex-pdf-exact",
                          menuItem: "Print…")
         case .printSource:
             return Entry(command: self, title: "Print Source", shortcuts: ["File > Print Source…"], menu: "File",
