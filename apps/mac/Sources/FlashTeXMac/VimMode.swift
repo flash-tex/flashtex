@@ -100,7 +100,7 @@ final class VimMode {
         case setNumber(Bool)
     }
 
-    enum Operator: Equatable { case delete, change, yank, indent, outdent, lowercase, uppercase, toggleCase }
+    enum Operator: Equatable { case delete, change, yank, indent, outdent, lowercase, uppercase, toggleCase, format }
 
     private enum Pending: Equatable {
         case none
@@ -112,6 +112,7 @@ final class VimMode {
         case textObject(inner: Bool)
         case register
         case z
+        case capitalZ
     }
 
     struct Register: Equatable {
@@ -203,6 +204,8 @@ final class VimMode {
     /// "at the newest position, nothing to redo".
     private var jumps: [Int] = []
     private var jumpIndex = 0
+    /// `:set textwidth=N` (`gq`'s wrap column); Vim's own default.
+    private var textWidth = 79
     private var lastFind: (char: Character, forward: Bool, till: Bool)?
     private(set) var lastSearch: (pattern: String, forward: Bool)?
     private var visualAnchor = 0
@@ -341,6 +344,7 @@ final class VimMode {
             case .lowercase: s += " gu"
             case .uppercase: s += " gU"
             case .toggleCase: s += " g~"
+            case .format: s += " gq"
             }
         }
         return s
@@ -756,6 +760,7 @@ final class VimMode {
         case "\"": pending = .register
         case "g": pending = .g; count = n
         case "z": pending = .z
+        case "Z": pending = .capitalZ
         case "f", "F", "t", "T": pending = .find(forward: ch == "f" || ch == "t", till: ch == "t" || ch == "T"); count = n
         case ":": commandLine = (":", "", caret)
         case "/", "?": commandLine = (ch, "", caret)
@@ -856,6 +861,25 @@ final class VimMode {
                 } else {
                     resetPending()
                 }
+            case "q":
+                if mode == .visual || mode == .visualLine {
+                    let sel = textView?.selectedRange() ?? NSRange(location: caret, length: 0)
+                    beginRecording(.c("g")); record(key)
+                    mode = .normal
+                    formatLines(in: sel)
+                    finishRecording()
+                } else if pendingOperator == nil {
+                    // `gq` arms an operator awaiting its motion (gqap, gqq…).
+                    beginRecording(.c("g")); record(key)
+                    pendingOperator = .format
+                    operatorCount = n
+                } else if pendingOperator == .format {
+                    // `gqgq`: the doubled form, whole lines.
+                    record(key)
+                    operateOnLines(.format, count: (operatorCount ?? 1) * (n ?? 1))
+                } else {
+                    resetPending()
+                }
             default: resetPending()
             }
         case .replaceChar:
@@ -900,6 +924,12 @@ final class VimMode {
                 if ch == "-" { setCaret(firstNonBlank(fromLineStart: lineStart(caret))) }
             default: break
             }
+        case .capitalZ:
+            switch ch {
+            case "Z": message = dispatch(.writeQuit) // save and quit, like `:x`
+            case "Q": message = dispatch(.quit(force: true)) // quit without saving, like `:q!`
+            default: break
+            }
         }
         return true
     }
@@ -910,7 +940,7 @@ final class VimMode {
         let total = (operatorCount ?? 1) * (n ?? 1)
         let doubled: Character = switch op {
         case .delete: "d"; case .change: "c"; case .yank: "y"; case .indent: ">"; case .outdent: "<"
-        case .lowercase: "u"; case .uppercase: "U"; case .toggleCase: "~"
+        case .lowercase: "u"; case .uppercase: "U"; case .toggleCase: "~"; case .format: "q"
         }
         if ch == doubled {
             operateOnLines(op, count: total)
@@ -956,6 +986,9 @@ final class VimMode {
         case .lowercase, .uppercase, .toggleCase:
             changeCase(op, in: NSRange(location: start, length: max(0, end - start - (end < length ? 1 : 0))))
             finishRecording()
+        case .format:
+            formatLines(in: NSRange(location: start, length: max(0, end - start - (end < length ? 1 : 0))))
+            finishRecording()
         }
         pendingOperator = nil
         operatorCount = nil
@@ -978,7 +1011,7 @@ final class VimMode {
                 if hi < length { hi += 1 }
             case .change:
                 lo = firstNonBlank(fromLineStart: lo)
-            case .indent, .outdent, .lowercase, .uppercase, .toggleCase: break
+            case .indent, .outdent, .lowercase, .uppercase, .toggleCase, .format: break
             }
         } else if target.inclusive, hi < length {
             hi += 1
@@ -1012,6 +1045,8 @@ final class VimMode {
             shiftLines(range, outdent: op == .outdent)
         case .lowercase, .uppercase, .toggleCase:
             changeCase(op, in: range)
+        case .format:
+            formatLines(in: range)
         }
     }
 
@@ -1028,6 +1063,49 @@ final class VimMode {
         replace(range, with: mapped, actionName: "Change Case")
         setCaret(range.location)
         clampNormalCaret()
+    }
+
+    /// `gq{motion}`/`gqq`: reflow the lines `range` touches to `textWidth`
+    /// columns, one paragraph (a run of non-blank lines) at a time — blank
+    /// lines pass through untouched and each paragraph keeps its first
+    /// line's leading indent. `gq` is always line-based regardless of the
+    /// motion, so this expands `range` to the whole lines it touches, like
+    /// `shiftLines`. Case operators' rule applies here too: no register.
+    private func formatLines(in range: NSRange) {
+        guard length > 0 else { return }
+        let s = lineStart(range.location)
+        var e = lineEnd(max(range.location, NSMaxRange(range) - 1))
+        if e < length { e += 1 } // the paragraph's own trailing newline
+        guard e > s else { return }
+        let width = max(1, textWidth)
+        var rawLines = text.substring(with: NSRange(location: s, length: e - s)).components(separatedBy: "\n")
+        if rawLines.last == "" { rawLines.removeLast() } // the split artifact from the final \n
+        var out: [String] = []
+        var i = 0
+        while i < rawLines.count {
+            guard !rawLines[i].trimmingCharacters(in: .whitespaces).isEmpty else { out.append(rawLines[i]); i += 1; continue }
+            let indent = String(rawLines[i].prefix { $0 == " " || $0 == "\t" })
+            var words: [String] = []
+            while i < rawLines.count, !rawLines[i].trimmingCharacters(in: .whitespaces).isEmpty {
+                words.append(contentsOf: rawLines[i].split(separator: " ").map(String.init))
+                i += 1
+            }
+            var wrapped: [String] = []
+            var current = indent
+            for word in words {
+                let candidate = current == indent ? current + word : current + " " + word
+                if (candidate as NSString).length > width, current != indent {
+                    wrapped.append(current)
+                    current = indent + word
+                } else {
+                    current = candidate
+                }
+            }
+            wrapped.append(current)
+            out.append(contentsOf: wrapped)
+        }
+        replace(NSRange(location: s, length: e - s), with: out.joined(separator: "\n") + "\n", actionName: "Format")
+        setCaret(firstNonBlank(fromLineStart: lineStart(min(s, length))))
     }
 
     private func shiftLines(_ range: NSRange, outdent: Bool) {
@@ -2115,11 +2193,12 @@ final class VimMode {
         case "e", "edit": message = arg.isEmpty ? "E32: No file name" : dispatch(.edit(arg))
         case "noh", "nohlsearch": clearFindHighlight()
         case "set", "se":
-            switch arg {
-            case "nu", "number": message = dispatch(.setNumber(true))
-            case "nonu", "nonumber": message = dispatch(.setNumber(false))
-            default: message = "E518: Unknown option: \(arg)"
-            }
+            if arg == "nu" || arg == "number" { message = dispatch(.setNumber(true)) }
+            else if arg == "nonu" || arg == "nonumber" { message = dispatch(.setNumber(false)) }
+            else if arg.hasPrefix("textwidth=") || arg.hasPrefix("tw=") {
+                let v = arg[arg.index(after: arg.firstIndex(of: "=")!)...]
+                if let n = Int(v), n > 0 { textWidth = n } else { message = "E521: Number required after =: \(arg)" }
+            } else { message = "E518: Unknown option: \(arg)" }
         default:
             message = "E492: Not an editor command: \(line)"
         }

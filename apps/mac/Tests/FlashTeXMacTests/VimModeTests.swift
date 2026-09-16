@@ -1208,4 +1208,45 @@ final class VimModeTests: XCTestCase {
         key("a", flags: .control)
         XCTAssertEqual(text, "v4 to v9", "a count multiplies the increment")
     }
+
+    // MARK: ZZ / ZQ
+
+    func testCapitalZZAndZQRouteToTheHandlerLikeWqAndQForce() {
+        var received: [VimMode.ExCommand] = []
+        tv.vim.exCommandHandler = { received.append($0); return nil }
+        load("text")
+        type("ZZ")
+        type("ZQ")
+        XCTAssertEqual(received, [.writeQuit, .quit(force: true)])
+    }
+
+    // MARK: gq / gqq / gqap reformat
+
+    func testGqqReformatsOnlyItsOwnLineNotTheRestOfTheParagraph() {
+        load("aaaa bbbb cccc\ndddd eeee ffff")
+        type(":set textwidth=9<CR>")
+        type("gqq")
+        XCTAssertEqual(text, "aaaa bbbb\ncccc\ndddd eeee ffff", "gqq wraps only the line it started on")
+    }
+
+    func testGqapReformatsTheWholeParagraphAcrossLines() {
+        load("aaaa bbbb cccc\ndddd eeee ffff")
+        type(":set textwidth=9<CR>")
+        type("gqap")
+        XCTAssertEqual(text, "aaaa bbbb\ncccc dddd\neeee ffff\n", "gqap rejoins and rewraps every line of the paragraph")
+    }
+
+    func testGqWithAMotionAndDoubledFormAndDefaultTextwidth() {
+        load("one two three four five six seven eight nine ten")
+        type(":set textwidth=10<CR>")
+        type("gqq")
+        XCTAssertEqual(text, "one two\nthree four\nfive six\nseven\neight nine\nten\n")
+        load("keep this\nwrap this line because it is much longer than the width allows for sure")
+        type(":set tw=20<CR>")
+        type("j0gqq")
+        XCTAssertTrue(text.hasPrefix("keep this\n"), "the first line, outside the motion, is untouched")
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            XCTAssertLessThanOrEqual((String(line) as NSString).length, 20, "\"\(line)\" exceeds textwidth")
+        }
+    }
 }
