@@ -40,7 +40,7 @@ fn rules(source: &str) -> Vec<(f64, f64, f64, f64)> {
         r.v2.diagnostics.iter().filter(|d| d.severity == Severity::Error).map(|d| &d.message).collect::<Vec<_>>()
     );
     let mut out: Vec<(f64, f64, f64, f64)> = r.v2.pages[0]
-        .items
+        .resident_items()
         .iter()
         .filter_map(|i| match i {
             Item::Rule(Rule { x, top, width, height, .. }) => Some((x.to_bp(), top.to_bp(), width.to_bp(), height.to_bp())),

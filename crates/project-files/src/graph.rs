@@ -82,7 +82,9 @@ pub enum DiagnosticKind {
     },
     /// The referenced name is not a valid project-relative path.
     InvalidPath { target: String, error: PathError },
-    /// The referenced name is a symlink resolving outside the root.
+    /// The referenced name is, or lies under, a symbolic link (refused
+    /// wherever the link points: project files are read without following
+    /// symlinks), or a walked directory no longer leads back to the root.
     EscapesRootViaSymlink { target: ProjectPath },
     /// The reference closes a cycle; `chain` runs from the first repeated
     /// file to the referencing file, and the target is `chain[0]`.
@@ -194,9 +196,6 @@ impl ProjectGraph {
         entry: &ProjectPath,
         overlay: &Overlay,
     ) -> Result<ProjectGraph, DiscoverError> {
-        if !root.is_dir() {
-            return Err(DiscoverError::RootNotDirectory(root.to_path_buf()));
-        }
         // Opens the root once as a directory handle; every subsequent read
         // walks from this handle with `openat(O_NOFOLLOW)` at each
         // component (see `sys.rs`/`save.rs`), so containment is enforced on
@@ -205,7 +204,6 @@ impl ProjectGraph {
         let project_root = ProjectRoot::open(root)
             .map_err(|_| DiscoverError::RootNotDirectory(root.to_path_buf()))?;
         let mut d = Discovery {
-            root: root.to_path_buf(),
             project_root,
             overlay,
             graph: ProjectGraph {
@@ -232,10 +230,10 @@ impl ProjectGraph {
             Resolution::Other(Loaded::Error(e)) => {
                 return Err(DiscoverError::EntryUnreadable(entry.clone(), e));
             }
-            Resolution::Escapes => {
+            Resolution::Escapes(escape) => {
                 return Err(DiscoverError::EntryUnreadable(
                     entry.clone(),
-                    io::Error::other("entry file is a symlink; refusing to follow it"),
+                    io::Error::other(escape.describe(entry)),
                 ));
             }
         }
@@ -357,7 +355,32 @@ enum Resolution {
     /// The rooted walk refused a symlink component (the file itself or an
     /// ancestor directory) or detected a walked directory's `..` no longer
     /// matching the handle it was opened from.
-    Escapes,
+    Escapes(Escape),
+}
+
+/// Why a rooted access was refused as an escape. Neither case follows the
+/// link, so where a symlink points (inside or outside the root) is unknown.
+enum Escape {
+    /// `component` (the file itself or an ancestor directory) is a symlink.
+    Symlink(String),
+    /// Directory `component`'s `..` is not the directory it was reached from.
+    LeavesRoot(String),
+}
+
+impl Escape {
+    fn describe(&self, target: &ProjectPath) -> String {
+        match self {
+            Escape::Symlink(c) if c == target.as_str() => format!(
+                "{target} is a symbolic link; project files are read without following symlinks"
+            ),
+            Escape::Symlink(c) => format!(
+                "{target}: `{c}` is a symbolic link; project files are read without following symlinks"
+            ),
+            Escape::LeavesRoot(c) => format!(
+                "{target}: directory `{c}` does not lead back to the project root; refusing to read through it"
+            ),
+        }
+    }
 }
 
 /// Maps a rooted-access refusal to how discovery should treat it. Only a
@@ -366,7 +389,8 @@ enum Resolution {
 /// silently ignored).
 fn classify_refusal(refused: Refused) -> Resolution {
     match refused {
-        Refused::SymlinkComponent { .. } | Refused::EscapesRoot { .. } => Resolution::Escapes,
+        Refused::SymlinkComponent { component } => Resolution::Escapes(Escape::Symlink(component)),
+        Refused::EscapesRoot { component } => Resolution::Escapes(Escape::LeavesRoot(component)),
         // A directory component turned out not to be a directory: treat
         // like "the candidate doesn't actually exist", matching how a
         // plain ENOENT is handled.
@@ -387,7 +411,6 @@ fn classify_refusal(refused: Refused) -> Resolution {
 }
 
 struct Discovery<'a> {
-    root: PathBuf,
     project_root: ProjectRoot,
     overlay: &'a Overlay,
     graph: ProjectGraph,
@@ -415,59 +438,53 @@ impl Discovery<'_> {
     /// graph entry no matter how many differently-normalized spellings
     /// reference it (issue #45 finding 3), and the subsequent rooted read in
     /// [`Discovery::load`] is against bytes that actually exist on disk.
+    ///
+    /// Existence is probed through the pinned root, never a path string:
+    /// the walk refuses symlinked ancestors and the candidate itself is
+    /// classified with `fstatat(AT_SYMLINK_NOFOLLOW)`, so nothing outside the
+    /// root is stat'ed or listed. Any existing entry other than a directory
+    /// counts as found — including a symlink (wherever it points, even
+    /// nowhere) and a FIFO, socket or device — so that [`Discovery::load`]
+    /// refuses it with the matching diagnostic instead of it being reported
+    /// as a missing file. A symlinked or escaping ancestor likewise resolves
+    /// to the candidate so `load` names the refused component.
     fn resolve_existing(&self, path: &ProjectPath) -> Option<ProjectPath> {
         if self.overlay.get(path).is_some() {
             return Some(path.clone());
         }
-        if path.to_os_path(&self.root).is_file() {
-            return Some(path.clone());
+        match self.project_root.stat_entry(path) {
+            Ok(Some(st)) if st.is_dir() => None,
+            Ok(Some(_)) => Some(path.clone()),
+            Ok(None) => self.resolve_via_directory_listing(path),
+            Err(SaveError::Refused(Refused::NotADirectory { .. })) => None,
+            Err(SaveError::Io(e)) if e.kind() == io::ErrorKind::NotFound => None,
+            // A refused ancestor or any other failure: `load` reports it.
+            Err(_) => Some(path.clone()),
         }
-        self.resolve_via_directory_listing(path)
     }
 
-    /// Lists `path`'s parent directory (a plain, non-fd-rooted read — the
-    /// same trust level `resolve_existing`'s literal `is_file()` check
-    /// already has) looking for an entry whose name is the *same*
-    /// [`ProjectPath`] identity as `path` (NFC-normalized comparison, so any
-    /// differently-normalized spelling of the same name matches). This never
+    /// Lists `path`'s pinned parent directory descriptor (never its path
+    /// string) looking for an entry whose name is the *same* [`ProjectPath`]
+    /// identity as `path` (NFC-normalized comparison, so any
+    /// differently-normalized spelling of the same name matches), and keeps
+    /// it under the same rules as [`Discovery::resolve_existing`]. This never
     /// grants extra trust: whatever name is found here still has to pass
     /// through the fd-rooted, symlink-refusing [`Discovery::load`] before its
     /// content is read, exactly like a literal candidate would.
     fn resolve_via_directory_listing(&self, path: &ProjectPath) -> Option<ProjectPath> {
+        let name = self.project_root.resolve_leaf_spelling(path)?;
         let parent_dir = path.parent_dir();
-        let mut dir_os_path = self.root.clone();
-        if !parent_dir.is_empty() {
-            for seg in parent_dir.split('/') {
-                dir_os_path.push(seg);
-            }
+        let on_disk = ProjectPath::normalize(&if parent_dir.is_empty() {
+            name
+        } else {
+            format!("{parent_dir}/{name}")
+        })
+        .ok()?;
+        match self.project_root.stat_entry(&on_disk) {
+            Ok(Some(st)) if st.is_dir() => None,
+            Ok(Some(_)) => Some(on_disk),
+            _ => None,
         }
-        let entries = std::fs::read_dir(&dir_os_path).ok()?;
-        for entry in entries.flatten() {
-            let Ok(file_type) = entry.file_type() else {
-                continue;
-            };
-            // A symlink entry is filtered here too (its own file type, not
-            // the target's), but this is belt-and-suspenders: `load` refuses
-            // to follow it either way.
-            if !file_type.is_file() {
-                continue;
-            }
-            let Some(name) = entry.file_name().into_string().ok() else {
-                continue; // not valid UTF-8; cannot match a ProjectPath
-            };
-            let candidate_str = if parent_dir.is_empty() {
-                name
-            } else {
-                format!("{parent_dir}/{name}")
-            };
-            let Ok(on_disk) = ProjectPath::normalize(&candidate_str) else {
-                continue;
-            };
-            if &on_disk == path {
-                return Some(on_disk);
-            }
-        }
-        None
     }
 
     /// Loads `path` through the rooted, symlink-refusing primitive that
@@ -635,15 +652,16 @@ impl Discovery<'_> {
         // (issue #45 finding 1). The result is reused below rather than
         // touching disk a second time.
         let loaded = match self.load(&target, kind) {
-            Resolution::Escapes => {
+            Resolution::Escapes(escape) => {
                 self.diag(
                     from,
                     r,
                     Severity::Error,
                     format!(
-                        "\\{}{{{}}}: {target} is a symlink outside the project root",
+                        "\\{}{{{}}}: {}",
                         r.kind.command(),
-                        r.argument
+                        r.argument,
+                        escape.describe(&target)
                     ),
                     DiagnosticKind::EscapesRootViaSymlink { target },
                 );
@@ -836,7 +854,6 @@ mod tests {
         let overlay = Overlay::default();
         let project_root = ProjectRoot::open(&dir).unwrap();
         let discovery = Discovery {
-            root: dir.clone(),
             project_root,
             overlay: &overlay,
             graph: ProjectGraph {
@@ -853,7 +870,9 @@ mod tests {
         let nfd_candidate = ProjectPath::normalize(&format!("{nfd_stem}.tex")).unwrap();
         let resolved = discovery
             .resolve_via_directory_listing(&nfd_candidate)
-            .expect("directory listing must find the on-disk NFC file for an NFD-spelled candidate");
+            .expect(
+                "directory listing must find the on-disk NFC file for an NFD-spelled candidate",
+            );
         assert_eq!(
             resolved.as_str(),
             format!("{nfc_stem}.tex"),

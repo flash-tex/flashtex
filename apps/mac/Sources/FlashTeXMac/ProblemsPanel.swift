@@ -13,8 +13,8 @@ struct ProblemsPanel: View {
 
     static let identifier = "problems.panel"
     /// Split-pane bounds: the header plus two rows at least; the ideal shows ~5 grouped rows.
-    static let minHeight: CGFloat = 120
-    static let idealHeight: CGFloat = 260
+    static let minHeight: CGFloat = DS.Layout.problemsMinHeight
+    static let idealHeight: CGFloat = DS.Layout.problemsIdealHeight
 
     var body: some View {
         @Bindable var model = model
@@ -24,49 +24,48 @@ struct ProblemsPanel: View {
         let diags = model.problemsList
         let (errors, warnings, gaps) = EditorDiagnostics.counts(diags)
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Label("Problems", systemImage: "exclamationmark.triangle").font(.caption.bold())
-                if errors > 0 { Label("\(errors)", systemImage: "xmark.octagon.fill").foregroundStyle(.red).font(.caption) }
-                if warnings > 0 { Label("\(warnings)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.caption) }
+            HStack(spacing: DS.Space.m) {
+                Text("Problems").font(DS.Fonts.base.weight(.semibold)).foregroundStyle(DS.Colors.textPrimary)
+                if errors > 0 { Label("\(errors)", systemImage: "xmark.octagon.fill").foregroundStyle(DS.Colors.severityError).font(DS.Fonts.secondary) }
+                if warnings > 0 { Label("\(warnings)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(DS.Colors.severityWarning).font(DS.Fonts.secondary) }
                 if gaps > 0 {
-                    Label("\(gaps) not implemented", systemImage: "puzzlepiece.extension").foregroundStyle(.secondary).font(.caption)
+                    Label("\(gaps) not implemented", systemImage: "puzzlepiece.extension").foregroundStyle(DS.Colors.textSecondary).font(DS.Fonts.secondary)
                         .help("Commands, packages or environments FlashTeX does not implement yet — not mistakes in the source")
                 }
-                if diags.isEmpty { Text("none").font(.caption).foregroundStyle(.secondary) }
+                if diags.isEmpty { Text("none").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary) }
                 if let status = model.resultStatus, status != .ok {
                     Text(status == .recovered ? "recovered: preview shown with provisional rendering" : "compile failed: the previous preview is kept")
-                        .font(.caption).foregroundStyle(.orange).lineLimit(1)
+                        .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning).lineLimit(1)
                 }
                 Spacer()
-                Picker("Show", selection: $model.problemsSeverityFilter) {
-                    Text("All").tag(RuntimeV1.Severity?.none)
-                    Text("Errors").tag(RuntimeV1.Severity?.some(.error))
-                    Text("Warnings").tag(RuntimeV1.Severity?.some(.warning))
+                // JetBrains-style quiet filter chips, not a stock segmented
+                // control (custom-style rule, brief §10).
+                HStack(spacing: DS.Space.xxs) {
+                    FilterChip(title: "All", selected: model.problemsSeverityFilter == nil) { model.problemsSeverityFilter = nil }
+                    FilterChip(title: "Errors", selected: model.problemsSeverityFilter == .error) { model.problemsSeverityFilter = .error }
+                    FilterChip(title: "Warnings", selected: model.problemsSeverityFilter == .warning) { model.problemsSeverityFilter = .warning }
                 }
-                .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
                 .help("Filter the list by severity; counts above are for every diagnostic")
+                .accessibilityElement(children: .contain)
                 .accessibilityLabel("Problems severity filter")
-                Button {
-                    model.problemsVisible = false
-                } label: { Image(systemName: "xmark").font(.caption.bold()) }
-                    .buttonStyle(.borderless)
-                    .help("Hide the Problems panel (⌘⇧M shows it again)")
-                    .accessibilityLabel("Hide Problems")
+                PanelCloseButton(help: "Hide the Problems panel (⌘⇧M shows it again)",
+                                 label: "Hide Problems") { model.problemsVisible = false }
             }
-            .padding(.horizontal, 10).padding(.vertical, 4)
-            .background(.bar)
-            Divider()
+            .padding(.horizontal, DS.Space.l)
+            .frame(height: DS.Row.toolWindowHeader)
+            .background(DS.Colors.surfacePrimary)
             if diags.isEmpty {
                 ContentUnavailableView {
                     Label("No problems", systemImage: "checkmark.circle")
                 } description: {
                     Text(model.resultStatus == nil ? "Compile results list their diagnostics here; the preview is never hidden by them." : "The last compile reported no diagnostics.")
                 }
-                .frame(maxWidth: .infinity, minHeight: 80, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, minHeight: DS.Layout.diagnosticsListMinHeight, maxHeight: .infinity)
             } else {
                 problemsList(diags)
             }
         }
+        .background(DS.Colors.surfacePrimary)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Problems")
         .accessibilityIdentifier(Self.identifier)

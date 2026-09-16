@@ -1,4 +1,5 @@
 import AppKit
+import HostedWindows
 import SwiftUI
 import XCTest
 @testable import FlashTeXMac
@@ -37,8 +38,8 @@ final class EditorFirstFocusTests: XCTestCase {
 
     private func host(_ model: ShellModel) async throws -> CompletingTextView {
         HostedWindowSupport.prepare()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-                              backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                                                backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Host(model: model))
         window.orderFrontRegardless()
         self.window = window
@@ -104,8 +105,8 @@ final class EditorFirstFocusTests: XCTestCase {
     /// The whole window, as `FlashTeXMacApp` builds it.
     private func hostContentView(_ model: ShellModel) async throws -> CompletingTextView {
         HostedWindowSupport.prepare()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 640), styleMask: [.titled],
-                              backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 640), styleMask: [.titled],
+                                                backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: ContentView().environment(model).environmentObject(NearbyState()))
         window.orderFrontRegardless()
         self.window = window
@@ -162,6 +163,34 @@ final class EditorFirstFocusTests: XCTestCase {
         XCTAssertEqual(shifted(16, 2, 0), r, "deleting just after the end leaves it")
         XCTAssertEqual(shifted(8, 2, 0), NSRange(location: 8, length: 6), "deleting just before the start moves it")
         XCTAssertEqual(shifted(14, 2, 0), NSRange(location: 10, length: 4), "deleting inside shrinks it")
+    }
+
+    /// Owner repro: "open a file, cmd+a, delete, then type -> highlighting
+    /// is gone. Switching to another file and back fixes it." A whole-buffer
+    /// delete shrinks `SyntaxPainter.painted` to a length-0 range that
+    /// `merged` drops, and only `reset()` (a document switch) used to
+    /// repopulate it — typing alone never did, so every edit after the
+    /// delete stayed uncoloured. Highlighting must now recover on its own.
+    func testHighlightingRecoversAfterSelectAllDeleteThenType() async throws {
+        let model = ShellModel()
+        let tv = try await hostContentView(model)
+        try await turn()
+        model.replaceProject(entryText: Self.document)
+        try await waitUntil("opened text reaches the view") { tv.string == Self.document }
+        try await turn()
+        XCTAssertGreaterThan(colourRuns(tv), 0, "the opened document starts coloured")
+        XCTAssertTrue(window!.makeFirstResponder(tv))
+
+        tv.selectAll(nil)
+        tv.deleteBackward(nil)
+        try await turn()
+        XCTAssertEqual((tv.string as NSString).length, 0, "the buffer is empty after cmd+a, delete")
+        XCTAssertEqual(colourRuns(tv), 0, "nothing to colour in an empty buffer")
+
+        type(tv, "\\section{Reborn} $x^2$")
+        try await turn()
+        XCTAssertGreaterThan(colourRuns(tv), 0, "highlighting resumes without switching documents away and back")
+        tv.close(.escape)
     }
 
     /// Local-only (it takes keyboard focus): the owner's launch, a window that

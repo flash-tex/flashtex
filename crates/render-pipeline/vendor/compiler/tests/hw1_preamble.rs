@@ -58,6 +58,11 @@ fn packages_matching_the_fixed_layout_do_not_warn() {
         "\\usepackage[utf8]{inputenc}",
         "\\usepackage[T1]{fontenc}",
         "\\usepackage[shortlabels]{enumitem}",
+        // The AMS math packages are set by this crate, not merely recognised
+        // (crate::math's nuclei, `layout_nucleus`, `MathPackages::provides`).
+        "\\usepackage{amsmath,amssymb}",
+        "\\usepackage{amsfonts}",
+        "\\usepackage[centertags,sumlimits,nointlimits,namelimits,reqno]{amsmath}",
     ] {
         assert!(preamble(line).is_empty(), "{line}: {:?}", preamble(line));
     }
@@ -66,6 +71,13 @@ fn packages_matching_the_fixed_layout_do_not_warn() {
         "\\usepackage{geometry}",
         "\\usepackage[a4paper,margin=1in]{geometry}",
         "\\usepackage{microtype}",
+        // amsmath options that move real output are not read here.
+        "\\usepackage[leqno]{amsmath}",
+        "\\usepackage[fleqn]{amsmath}",
+        "\\usepackage[tbtags]{amsmath}",
+        "\\usepackage[nosumlimits]{amsmath}",
+        "\\usepackage[intlimits]{amsmath}",
+        "\\usepackage[nonamelimits]{amsmath}",
     ] {
         assert!(
             preamble(line)
@@ -90,4 +102,91 @@ fn packages_matching_the_fixed_layout_do_not_warn() {
     assert!(preamble("\\setlist[enumerate]{parsep=1em}")
         .iter()
         .any(|m| m.contains("\\setlist") && m.contains("parsep")));
+}
+
+/// The claim `\usepackage{amsmath}` no longer makes has to still be made, by
+/// the construct that earns it. Loading the package is silent; an amsmath
+/// construct this crate does not set names itself at its own span, so
+/// narrowing the package warning trades no false positive for a false
+/// negative.
+#[test]
+fn unimplemented_amsmath_constructs_still_report_themselves() {
+    let doc = |body: &str| {
+        messages(&format!(
+            "\\documentclass{{article}}\\usepackage{{amsmath,amssymb}}\\begin{{document}}{body}\\end{{document}}"
+        ))
+    };
+    // Loading the packages says nothing on its own.
+    assert!(doc("x").is_empty(), "{:?}", doc("x"));
+
+    // A construct that is set draws nothing either.
+    for body in [
+        "$\\dfrac{1}{2}$",
+        "$\\binom{n}{k}$",
+        "$\\sum_{\\substack{i<j}} x$",
+        "$\\operatorname{foo}(x)$",
+        "$\\boxed{x}$",
+        "$\\mathbb{R} \\nleq \\square$",
+        "$\\lim_{x\\to 0} f$",
+        "\\begin{align} a &= b \\end{align}",
+        "\\begin{gather} a = b \\end{gather}",
+        "$\\begin{dcases} a & b \\end{dcases}$",
+        "$\\xrightarrow{f}$",
+    ] {
+        assert!(doc(body).is_empty(), "{body}: {:?}", doc(body));
+    }
+
+    // A construct that is not still names itself, at its own span.
+    for (body, command) in [
+        ("$\\smash{x}$", "\\smash"),
+        ("$a\\mspace{3mu}b$", "\\mspace"),
+        ("$\\varinjlim x$", "\\varinjlim"),
+        ("$\\sideset{_a^b}{_c^d}\\sum$", "\\sideset"),
+        ("$\\begin{pmatrix}\\hdotsfor{2}\\end{pmatrix}$", "\\hdotsfor"),
+        (
+            "\\begin{multline} \\shoveleft{a} \\\\ b \\end{multline}",
+            "\\shoveleft",
+        ),
+    ] {
+        let found = doc(body);
+        assert!(
+            found
+                .iter()
+                .any(|m| m.contains(command) && m.contains("not supported")),
+            "{body} must still report {command}: {found:?}"
+        );
+        // ...and never as a blanket claim about the package.
+        assert!(
+            !found
+                .iter()
+                .any(|m| m.contains("packages") && m.contains("recognised but not implemented")),
+            "{body} must not blame the package: {found:?}"
+        );
+    }
+}
+
+/// The owner's own homework: neither file may be told that the math it is
+/// full of was not typeset. `microtype` is a separate, still-true line --
+/// this crate really does not protrude or expand -- and the render pipeline
+/// supersedes that one for its own consumers.
+#[test]
+fn homework_is_not_told_its_math_is_unimplemented() {
+    const HW2: &str = include_str!("../../../fixtures/real-world/hw2/HW2.tex");
+    for (name, source) in [("HW1", HW1), ("HW2", HW2)] {
+        let package_warnings: Vec<String> = messages(source)
+            .into_iter()
+            .filter(|m| m.contains("recognised but not implemented"))
+            .collect();
+        assert!(
+            !package_warnings.iter().any(|m| m.contains("amsmath")
+                || m.contains("amssymb")
+                || m.contains("amsfonts")),
+            "{name} is told its AMS math is unimplemented: {package_warnings:?}"
+        );
+        assert_eq!(
+            package_warnings,
+            vec!["packages microtype are recognised but not implemented".to_string()],
+            "{name}"
+        );
+    }
 }

@@ -226,7 +226,7 @@ impl P<'_> {
 
     /// A box argument parsed with the ordinary dispatch as one group in the
     /// current style (`\hbox`: restricted horizontal mode ignores `\par`).
-    fn box_inlines(&mut self, tokens: Vec<InputToken>) -> Vec<Inline> {
+    pub(super) fn box_inlines(&mut self, tokens: Vec<InputToken>) -> Vec<Inline> {
         let outer_tokens = std::mem::replace(&mut self.t, std::rc::Rc::new(tokens));
         let outer_index = std::mem::replace(&mut self.i, 0);
         let outer_style = self.style;

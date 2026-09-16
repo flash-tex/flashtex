@@ -132,10 +132,13 @@ struct PreviewAnchorKeeper: NSViewRepresentable {
     var follow: CaretFollowController.Request? = nil
     var reveal: CaretFollowController.Request? = nil
     var onUserScroll: (() -> Void)? = nil
+    /// Reports the page under the viewport's top edge (the header's "N / M").
+    var onVisiblePage: ((Int) -> Void)? = nil
 
     func makeNSView(context: Context) -> PreviewAnchorProbe { PreviewAnchorProbe() }
     func updateNSView(_ view: PreviewAnchorProbe, context: Context) {
         view.onUserScroll = onUserScroll
+        view.onVisiblePage = onVisiblePage
         view.layoutDidChange(to: layout)
         view.follow(follow)
         view.reveal(reveal)
@@ -167,6 +170,9 @@ final class PreviewAnchorProbe: NSView {
     /// Caret following (`CaretFollow.swift`): reported live scrolls, the token
     /// of the last request acted on, and every decision made (evidence/tests).
     var onUserScroll: (() -> Void)?
+    /// Header page indicator: called only when the anchored page changes.
+    var onVisiblePage: ((Int) -> Void)?
+    private var reportedPage: Int?
     private(set) var followedToken: Int?
     private(set) var revealedToken: Int?
     private(set) var followDecisions: [(token: Int, decision: CaretFollow.Decision)] = []
@@ -227,6 +233,10 @@ final class PreviewAnchorProbe: NSView {
     private func capture() {
         guard pending == nil, let layout, let visible = documentVisibleRectTopDown else { return }
         anchor = PreviewAnchor.capture(visible: visible, layout: layout)
+        if let page = anchor?.page, page != reportedPage {
+            reportedPage = page
+            onVisiblePage?(page)
+        }
     }
 
     private func clipBoundsDidChange() {

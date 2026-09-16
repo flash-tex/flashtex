@@ -57,6 +57,9 @@ pub enum IntParam {
     Newlinechar,
     /// e-TeX `\eTeXversion` (read-only in TeX; 2).
     ETeXVersion,
+    /// Internal: the host's font selector (`FontSwitch`), scoped like
+    /// TeX's current font. Not reachable from TeX source.
+    Font,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +67,10 @@ pub enum Primitive {
     /// A host-typeset command (`Engine::declare_host_command`): defined, but
     /// emitted unchanged.
     Host,
+    /// A host command that performs an assignment
+    /// (`Engine::declare_host_assignment`): like `Host`, but `\global`
+    /// is passed through ahead of it instead of being an error.
+    HostAssignment,
     Relax,
     Par,
     Def,
@@ -147,6 +154,12 @@ pub enum Primitive {
     Fi,
     Newif,
     Unless,
+    /// The `ifthen` package's `\ifthenelse{test}{true}{false}`: evaluated
+    /// at expansion time, splicing the selected branch (no `\fi`).
+    Ifthenelse,
+    /// The `ifthen` package's `\newboolean{name}` / `\setboolean{name}`.
+    NewBoolean,
+    SetBoolean,
     Count,
     Dimen,
     Skip,
@@ -196,6 +209,16 @@ pub enum Primitive {
     SetToDepth,
     DefineKey,
     SetKeys,
+    /// Host pass-through for enumitem's `\setlist` (and `\setlist*`):
+    /// absorbs the star, the optional `[<names>]`, and the `{<options>}`
+    /// the way `\expanded` absorbs its body (expandable tokens expanded
+    /// once, nothing executed), splices length-register references to
+    /// their current `\the` text, and pushes the reconstructed command
+    /// back for the main loop, so a bare `\newlength` register in a value
+    /// never reaches the stomach as a register assignment (real enumitem
+    /// stores the keyval text unexecuted and assigns it later, where a
+    /// bare register is a complete `<internal dimen>` that takes no unit).
+    FlashtexSetlist,
     /// `\verb` (reads raw characters from the source).
     Verb,
     /// Internal: stop reading all input (`\end{document}`).
@@ -524,7 +547,7 @@ impl Frames {
     }
 }
 
-const INT_PARAMS: usize = 4;
+const INT_PARAMS: usize = 5;
 
 fn int_param_index(p: IntParam) -> usize {
     match p {
@@ -532,6 +555,7 @@ fn int_param_index(p: IntParam) -> usize {
         IntParam::Endlinechar => 1,
         IntParam::Newlinechar => 2,
         IntParam::ETeXVersion => 3,
+        IntParam::Font => 4,
     }
 }
 

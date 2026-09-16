@@ -183,6 +183,12 @@ pub fn mark_rules(kind: ClassKind, style: PageStyle, class_twoside: bool) -> Vec
     if style != PageStyle::Headings {
         return Vec::new();
     }
+    // letter.cls's own `\ps@headings` (lines 120-133) builds its running
+    // head from `\toname`/`\@date`/`\thepage` and issues no marks at all —
+    // and the class has no sectioning commands to issue them from.
+    if !kind.has_sections() {
+        return Vec::new();
+    }
     let r = |command, target, uppercase, number, above, mm| MarkRule {
         command,
         target,

@@ -291,7 +291,22 @@ impl Stylesheet {
         s.topskip_pt = frame_pt(p.topskip);
         s.maxdepth_pt = frame_pt(p.maxdepth);
         s.parindent_pt = frame_pt(p.parindent);
-        s.raggedbottom = !(doc.flags.twoside || doc.flags.twocolumn);
+        // `\parskip` is a *class* length, not a shared default: article and
+        // friends set `0pt plus 1pt`, letter.cls line 91 sets `0.7em`
+        // (7.66498pt rigid at 11pt), and reading it from the resolved class
+        // instead of `Stylesheet::article`'s is what puts a letter's
+        // paragraphs where pdflatex puts them. Before this the whole page
+        // rode 7.6 bp per paragraph too high.
+        s.parskip = Skip::new(
+            frame_pt(p.parskip.natural),
+            frame_pt(p.parskip.stretch),
+            frame_pt(p.parskip.shrink),
+        );
+        // article/report/book guard it (`\if@twoside\else\raggedbottom\fi`);
+        // letter.cls line 404 is a plain `\raggedbottom` with no guard at
+        // all, so a `[twoside]` letter is ragged-bottom too.
+        s.raggedbottom = doc.options.kind == flashtex_class_geometry::ClassKind::Letter
+            || !(doc.flags.twoside || doc.flags.twocolumn);
         s.columnseprule_pt = frame_pt(frame.columnseprule);
         if doc.flags.twocolumn {
             s.tolerance = 9999.0;

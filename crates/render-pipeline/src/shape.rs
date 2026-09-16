@@ -19,6 +19,10 @@ use crate::fonts::LoadedFace;
 use crate::ids::{Encoding, EncodingCode, GlyphId};
 use crate::tfm::{Tfm, FIX};
 
+/// U+2026, which `\dots`, `\ldots` and `\textellipsis` all reach the
+/// pipeline as, and which `utf8.def` also declares for a literal `…`.
+const ELLIPSIS: char = '\u{2026}';
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SGlyph {
     pub gid: GlyphId,
@@ -170,14 +174,48 @@ fn shape_uncached(face: &Rc<LoadedFace>, text: &str, literal: bool) -> Shaped {
 fn shape_tfm(face: &Rc<LoadedFace>, tfm: &Tfm, text: &str, literal: bool) -> Result<Option<Shaped>, crate::tfm::TfmError> {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let mut codes = Vec::with_capacity(chars.len());
-    for (_, c) in &chars {
+    // Which input character each code came from, so a character that sets
+    // more than one (the ellipsis below) keeps one cluster and one source
+    // byte range.
+    let mut of_char = Vec::with_capacity(chars.len());
+    // `\fontdimen3` after this code, overriding whatever the ligature/kern
+    // program would have put there (an *explicit* kern, which no font kern
+    // or ligature reaches across).
+    let mut explicit_kern: Vec<bool> = Vec::with_capacity(chars.len());
+    for (i, (_, c)) in chars.iter().enumerate() {
+        // `\textellipsis`, which is what the kernel's `\dots`/`\ldots` and
+        // (through `utf8.def`) a literal U+2026 both are in text mode. T1
+        // declares no ellipsis, so the encoding-independent default applies
+        // (`latex.ltx` 10071): `.\kern\fontdimen3\font` three times. The
+        // single U+2026 glyph this used to set is 7.70 bp wide at 12 pt
+        // against pdflatex's 15.60 bp -- and, having no T1 slot, it also
+        // dropped the whole surrounding word out of TFM shaping.
+        if *c == ELLIPSIS && !literal {
+            for _ in 0..3 {
+                codes.push(b'.');
+                of_char.push(i);
+                explicit_kern.push(true);
+            }
+            continue;
+        }
         let Some(code) = EncodingCode::for_char(*c, Encoding::T1) else {
             return Ok(None);
         };
         codes.push(code.0);
+        of_char.push(i);
+        explicit_kern.push(false);
     }
-    let end_of = |i: usize| -> usize { chars.get(i).map_or(text.len(), |(b, _)| *b) };
+    let ellipsis_kern = tfm.param(3).unwrap_or(0);
+    // Byte offset of the character a *code* position belongs to.
+    let end_of = |i: usize| -> usize {
+        match of_char.get(i) {
+            Some(&c) => chars.get(c).map_or(text.len(), |(b, _)| *b),
+            None => text.len(),
+        }
+    };
     let mut clusters = Vec::new();
+    // The input character each cluster came from, parallel to `clusters`.
+    let mut cluster_char: Vec<Option<usize>> = Vec::new();
     let mut missing = Vec::new();
     let mut y_max = 0i32;
     let mut y_min = 0i32;
@@ -205,11 +243,17 @@ fn shape_tfm(face: &Rc<LoadedFace>, tfm: &Tfm, text: &str, literal: bool) -> Res
             text_range: 0..0,
             text: String::new(),
         });
+        cluster_char.push(None);
     }
     for g in run.glyphs {
         let Some(m) = tfm.metrics(g.code) else {
             return Err(crate::tfm::TfmError(format!("code {:#04x} has no metrics", g.code)));
         };
+        // The explicit `\kern\fontdimen3\font` replaces the font kern: in
+        // TeX the periods of `\textellipsis` are separated by explicit
+        // kerns, which the ligature/kern program never reaches across.
+        let explicit = explicit_kern.get(g.input.0).copied().unwrap_or(false);
+        let kern_after = if explicit { ellipsis_kern } else { g.kern_after };
         let range = end_of(g.input.0)..end_of(g.input.1);
         let ctext = text[range.clone()].to_string();
         let Some(ch) = EncodingCode(g.code).to_char(Encoding::T1) else {
@@ -229,23 +273,36 @@ fn shape_tfm(face: &Rc<LoadedFace>, tfm: &Tfm, text: &str, literal: bool) -> Res
         }
         height = height.max(m.height);
         depth = depth.max(m.depth);
-        clusters.push(SCluster {
-            glyphs: vec![SGlyph {
-                gid,
-                advance: m.width + g.kern_after,
-                italic: m.italic,
-                x_offset: 0,
-                y_offset: 0,
-                y_max: if b.empty { 0 } else { b.y_max },
-                y_min: if b.empty { 0 } else { b.y_min },
-                x_max: if b.empty { 0 } else { b.x_max },
-                empty: b.empty || gid.0 == 0,
-                tfm_code: Some(g.code),
-                tfm_kern: g.kern_after,
-            }],
-            text_range: range,
-            text: ctext,
-        });
+        let glyph = SGlyph {
+            gid,
+            advance: m.width + kern_after,
+            italic: m.italic,
+            x_offset: 0,
+            y_offset: 0,
+            y_max: if b.empty { 0 } else { b.y_max },
+            y_min: if b.empty { 0 } else { b.y_min },
+            x_max: if b.empty { 0 } else { b.x_max },
+            empty: b.empty || gid.0 == 0,
+            tfm_code: Some(g.code),
+            tfm_kern: kern_after,
+        };
+        // One source character, one cluster: the ellipsis' three periods
+        // stay a single cluster whose text is the `…` that was written, so
+        // text extraction and the source spans round-trip the way the `ffi`
+        // ligature's do in the other direction.
+        let char_i = of_char.get(g.input.0).copied();
+        let same_char = char_i.is_some() && cluster_char.last().copied().flatten() == char_i;
+        match clusters.last_mut() {
+            Some(last) if same_char => {
+                last.glyphs.push(glyph);
+                last.text_range.end = range.end;
+                last.text = text[last.text_range.clone()].to_string();
+            }
+            _ => {
+                clusters.push(SCluster { glyphs: vec![glyph], text_range: range, text: ctext });
+                cluster_char.push(char_i);
+            }
+        }
     }
     let _ = (y_max, y_min);
     let width_units: i64 = clusters.iter().map(SCluster::advance_units).sum();

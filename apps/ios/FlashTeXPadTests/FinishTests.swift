@@ -57,7 +57,9 @@ final class FinishTests: XCTestCase {
         mac.setStatus(r.id, state: "proposal_ready", latex: "\\begin{tikzpicture}\\draw (0,0)--(1,0)--(0.5,1)--cycle;\\end{tikzpicture}", note: "awaiting review")
         await waitUntil { model.captures.first?.outcome?.state == "proposal_ready" }
         XCTAssertEqual(model.captures.first?.outcome?.latex, "\\begin{tikzpicture}\\draw (0,0)--(1,0)--(0.5,1)--cycle;\\end{tikzpicture}")
-        XCTAssertEqual(model.captures.first?.outcomeLabel, "proposal ready — review and approve it on the Mac")
+        XCTAssertEqual(model.captures.first?.outcomeLabel, "proposal ready — read it below and tap Insert (or approve it on the Mac)")
+        XCTAssertEqual(model.captures.first?.reviewableLatex, "\\begin{tikzpicture}\\draw (0,0)--(1,0)--(0.5,1)--cycle;\\end{tikzpicture}",
+                       "a proposal the iPad is showing is one it can approve")
         mac.setStatus(r.id, state: "inserted", latex: "\\begin{tikzpicture}\\end{tikzpicture}", newRevision: 5)
         await waitUntil { model.captures.first?.outcome?.state == "inserted" }
         XCTAssertEqual(model.captures.first?.outcome?.newRevision, 5)
