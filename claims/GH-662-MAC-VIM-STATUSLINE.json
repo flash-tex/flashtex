@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/gh-662-vim-statusline",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/issues/662#issuecomment-5692526492",
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "Already fixed by PR #657 (merged after issue was filed); verified locally, no code change needed. Closed #662, filed new #695 for an unrelated compile-break found while verifying.",
   "started_utc": "2026-09-16T05:26:05Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-662-MAC-VIM-STATUSLINE",
-  "updated_utc": "2026-09-16T05:26:05Z"
+  "updated_utc": "2026-09-16T05:31:16Z"
 }
