@@ -724,6 +724,19 @@ final class SyntaxPainter {
         let dirty = highlighter.edit(range: range, replacementLength: replacementLength, text: text)
         lastEditLinesLexed = highlighter.lastEditLinesLexed
         shiftPainted(edit: range, replacementLength: replacementLength)
+        // `flush()` only repaints the overlap of `painted` and the dirty
+        // range, on the assumption that an edit's dirty range already sits
+        // inside the painted window (true for ordinary typing). A
+        // whole-buffer replace (select all, delete) shifts every painted
+        // range to length 0, which `merged` drops — `painted` becomes `[]`
+        // and, since nothing but `reset()` (switching documents away and
+        // back) ever repopulates it, stays empty forever after, so no edit
+        // is ever coloured again. Re-registering the dirty range (clipped to
+        // the visible window, so a large off-screen paste still cannot force
+        // painting outside it) as painted is a no-op union in the ordinary
+        // case and self-heals this one.
+        let visibleDirty = NSIntersectionRange(dirty, Self.window(for: tv))
+        if visibleDirty.length > 0 { painted = Self.merged(painted + [visibleDirty]) }
         pendingDirty = pendingDirty.map { NSUnionRange(Self.shifted($0, edit: range, replacementLength: replacementLength), dirty) } ?? dirty
         lastEditCpuNs = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - t0
         // Painting waits until the layout manager has processed this edit
