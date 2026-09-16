@@ -1,19 +1,86 @@
 {
  "meta": {
-  "stamp": "2026-09-16T115456Z",
+  "stamp": "2026-09-16T131757Z",
   "host": "DN0a1f24ee.SUNet",
   "platform": "Darwin 25.6.0 arm64",
   "render": "/Users/dqi26/flashtex/target-cumcorr/release/flashtex-render",
   "render_sha256": "1db2e9c051f9f300bda2fbe610fb443327f2b683e79075b9169eb85868f34e37",
   "pdf_exact": "/Users/dqi26/flashtex/target-cumcorr/release/flashtex-pdf-exact",
   "pdf_exact_sha256": "5c0a28a0b76e96b3e3dccc1413b37b5f6e32e9f4c218d4fbaab4e79d38547317",
-  "font_dirs": "/Users/dqi26/flashtex-wt/cumulative-correction/apps/mac/Fonts",
-  "tfm_dirs": "/Users/dqi26/flashtex-wt/cumulative-correction/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:/Users/dqi26/flashtex-wt/cumulative-correction/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols:/Users/dqi26/flashtex-wt/cumulative-correction/apps/mac/Fonts/texmf/fonts/tfm/public/lm",
+  "font_dirs": "/Users/dqi26/flashtex-wt/glue-set-attribution/apps/mac/Fonts",
+  "tfm_dirs": "/Users/dqi26/flashtex-wt/glue-set-attribution/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:/Users/dqi26/flashtex-wt/glue-set-attribution/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols:/Users/dqi26/flashtex-wt/glue-set-attribution/apps/mac/Fonts/texmf/fonts/tfm/public/lm",
   "step_gate": 0.05,
   "glyph_gate": 0.5,
+  "texbin": "/Library/TeX/texbin",
   "reference_mode": "pinned files in `fixtures/real-world/*/`"
  },
  "causes": [
+  {
+   "cause": "paragraph-break",
+   "kind": "cumulative",
+   "fixtures": [
+    "cv",
+    "twelvept-plain"
+   ],
+   "fixture_count": 2,
+   "occurrences": 4,
+   "lines_affected": 73,
+   "lines_not_localised": 36,
+   "not_localised_occurrences": 1,
+   "not_localised_fixtures": [
+    "twelvept-plain"
+   ],
+   "only_on_set_glue_pages": false,
+   "attributable_fixture_count": 1,
+   "median_step_bp": 5.9779,
+   "max_step_bp": 5.978,
+   "median_attributable_step_bp": 5.978,
+   "max_attributable_step_bp": 5.978,
+   "crosses_glyph_gate": true,
+   "crosses_rule_gate": true,
+   "examples": [
+    {
+     "fixture": "cv",
+     "page": 1,
+     "ref_y": 149.58,
+     "step_bp": 5.978,
+     "kind": "cumulative",
+     "lines_affected": 31,
+     "cause_not_localised": false,
+     "after_text": "Example University Pittsburgh, PA"
+    },
+    {
+     "fixture": "cv",
+     "page": 1,
+     "ref_y": 244.823,
+     "step_bp": 5.978,
+     "kind": "cumulative",
+     "lines_affected": 26,
+     "cause_not_localised": false,
+     "after_text": "Software Engineering Intern Summer 2027"
+    },
+    {
+     "fixture": "cv",
+     "page": 1,
+     "ref_y": 413.758,
+     "step_bp": 5.9778,
+     "kind": "cumulative",
+     "lines_affected": 16,
+     "cause_not_localised": false,
+     "after_text": "A"
+    },
+    {
+     "fixture": "twelvept-plain",
+     "page": 3,
+     "ref_y": 281.495,
+     "step_bp": -0.1189,
+     "kind": "cumulative",
+     "lines_affected": 36,
+     "cause_not_localised": true,
+     "after_text": "3 Series and closing remarks"
+    }
+   ]
+  },
   {
    "cause": "line-break-within-paragraph",
    "kind": "cumulative",
@@ -26,9 +93,21 @@
    ],
    "fixture_count": 5,
    "occurrences": 9,
-   "lines_affected": 203,
+   "lines_affected": 63,
+   "lines_not_localised": 140,
+   "not_localised_occurrences": 6,
+   "not_localised_fixtures": [
+    "enumitem-worksheet",
+    "math-sheet",
+    "ps-calculus",
+    "twelvept-plain"
+   ],
+   "only_on_set_glue_pages": false,
+   "attributable_fixture_count": 1,
    "median_step_bp": 0.1344,
    "max_step_bp": 0.8754,
+   "median_attributable_step_bp": 0.0611,
+   "max_attributable_step_bp": 0.0879,
    "crosses_glyph_gate": true,
    "crosses_rule_gate": true,
    "examples": [
@@ -39,6 +118,7 @@
      "step_bp": 0.0798,
      "kind": "local",
      "lines_affected": 1,
+     "cause_not_localised": true,
      "after_text": "January 1, 1970"
     },
     {
@@ -48,6 +128,7 @@
      "step_bp": 0.8754,
      "kind": "cumulative",
      "lines_affected": 10,
+     "cause_not_localised": true,
      "after_text": "d"
     },
     {
@@ -57,6 +138,7 @@
      "step_bp": -0.0611,
      "kind": "cumulative",
      "lines_affected": 5,
+     "cause_not_localised": false,
      "after_text": "clamped to an implementation-defined maximum repre"
     },
     {
@@ -66,207 +148,8 @@
      "step_bp": 0.1344,
      "kind": "cumulative",
      "lines_affected": 49,
+     "cause_not_localised": true,
      "after_text": "October 3, 2025"
-    }
-   ]
-  },
-  {
-   "cause": "paragraph-break",
-   "kind": "cumulative",
-   "fixtures": [
-    "cv",
-    "twelvept-plain"
-   ],
-   "fixture_count": 2,
-   "occurrences": 4,
-   "lines_affected": 109,
-   "median_step_bp": 5.9779,
-   "max_step_bp": 5.978,
-   "crosses_glyph_gate": true,
-   "crosses_rule_gate": true,
-   "examples": [
-    {
-     "fixture": "cv",
-     "page": 1,
-     "ref_y": 149.58,
-     "step_bp": 5.978,
-     "kind": "cumulative",
-     "lines_affected": 31,
-     "after_text": "Example University Pittsburgh, PA"
-    },
-    {
-     "fixture": "cv",
-     "page": 1,
-     "ref_y": 244.823,
-     "step_bp": 5.978,
-     "kind": "cumulative",
-     "lines_affected": 26,
-     "after_text": "Software Engineering Intern Summer 2027"
-    },
-    {
-     "fixture": "cv",
-     "page": 1,
-     "ref_y": 413.758,
-     "step_bp": 5.9778,
-     "kind": "cumulative",
-     "lines_affected": 16,
-     "after_text": "A"
-    },
-    {
-     "fixture": "twelvept-plain",
-     "page": 3,
-     "ref_y": 281.495,
-     "step_bp": -0.1189,
-     "kind": "cumulative",
-     "lines_affected": 36,
-     "after_text": "3 Series and closing remarks"
-    }
-   ]
-  },
-  {
-   "cause": "display-math boundary (no environment)",
-   "kind": "cumulative",
-   "fixtures": [
-    "math-sheet",
-    "twelvept-plain"
-   ],
-   "fixture_count": 2,
-   "occurrences": 3,
-   "lines_affected": 97,
-   "median_step_bp": 2.7784,
-   "max_step_bp": 2.7786,
-   "crosses_glyph_gate": true,
-   "crosses_rule_gate": true,
-   "examples": [
-    {
-     "fixture": "math-sheet",
-     "page": 2,
-     "ref_y": 217.485,
-     "step_bp": 2.7786,
-     "kind": "cumulative",
-     "lines_affected": 27,
-     "after_text": "m m m"
-    },
-    {
-     "fixture": "math-sheet",
-     "page": 2,
-     "ref_y": 250.14,
-     "step_bp": -2.7784,
-     "kind": "cumulative",
-     "lines_affected": 22,
-     "after_text": "m m m"
-    },
-    {
-     "fixture": "twelvept-plain",
-     "page": 3,
-     "ref_y": 157.236,
-     "step_bp": -0.8586,
-     "kind": "cumulative",
-     "lines_affected": 48,
-     "after_text": "sin x"
-    }
-   ]
-  },
-  {
-   "cause": "before \\begin{document}",
-   "kind": "cumulative",
-   "fixtures": [
-    "lecture-notes",
-    "math-sheet"
-   ],
-   "fixture_count": 2,
-   "occurrences": 2,
-   "lines_affected": 90,
-   "median_step_bp": 0.3444,
-   "max_step_bp": 0.5133,
-   "crosses_glyph_gate": true,
-   "crosses_rule_gate": true,
-   "examples": [
-    {
-     "fixture": "lecture-notes",
-     "page": 1,
-     "ref_y": 225.426,
-     "step_bp": 0.1755,
-     "kind": "cumulative",
-     "lines_affected": 27,
-     "after_text": "Contents"
-    },
-    {
-     "fixture": "math-sheet",
-     "page": 1,
-     "ref_y": 197.992,
-     "step_bp": -0.5133,
-     "kind": "cumulative",
-     "lines_affected": 63,
-     "after_text": "Series and sums"
-    }
-   ]
-  },
-  {
-   "cause": "\\section",
-   "kind": "cumulative",
-   "fixtures": [
-    "math-sheet"
-   ],
-   "fixture_count": 1,
-   "occurrences": 3,
-   "lines_affected": 80,
-   "median_step_bp": 0.0666,
-   "max_step_bp": 0.0667,
-   "crosses_glyph_gate": false,
-   "crosses_rule_gate": false,
-   "examples": [
-    {
-     "fixture": "math-sheet",
-     "page": 1,
-     "ref_y": 336.208,
-     "step_bp": -0.0666,
-     "kind": "cumulative",
-     "lines_affected": 43,
-     "after_text": "Integrals"
-    },
-    {
-     "fixture": "math-sheet",
-     "page": 1,
-     "ref_y": 534.637,
-     "step_bp": -0.0667,
-     "kind": "cumulative",
-     "lines_affected": 22,
-     "after_text": "Piecewise definitions"
-    },
-    {
-     "fixture": "math-sheet",
-     "page": 1,
-     "ref_y": 621.847,
-     "step_bp": -0.0661,
-     "kind": "cumulative",
-     "lines_affected": 15,
-     "after_text": "Limits and derivatives"
-    }
-   ]
-  },
-  {
-   "cause": "before \\begin{align}",
-   "kind": "cumulative",
-   "fixtures": [
-    "math-sheet"
-   ],
-   "fixture_count": 1,
-   "occurrences": 1,
-   "lines_affected": 62,
-   "median_step_bp": 0.4437,
-   "max_step_bp": 0.4437,
-   "crosses_glyph_gate": false,
-   "crosses_rule_gate": true,
-   "examples": [
-    {
-     "fixture": "math-sheet",
-     "page": 1,
-     "ref_y": 220.844,
-     "step_bp": -0.4437,
-     "kind": "cumulative",
-     "lines_affected": 62,
-     "after_text": "n n"
     }
    ]
   },
@@ -286,9 +169,18 @@
    ],
    "fixture_count": 9,
    "occurrences": 13,
-   "lines_affected": 60,
+   "lines_affected": 53,
+   "lines_not_localised": 7,
+   "not_localised_occurrences": 1,
+   "not_localised_fixtures": [
+    "twelvept-plain"
+   ],
+   "only_on_set_glue_pages": false,
+   "attributable_fixture_count": 8,
    "median_step_bp": 0.0997,
    "max_step_bp": 5.5445,
+   "median_attributable_step_bp": 0.0919,
+   "max_attributable_step_bp": 5.5445,
    "crosses_glyph_gate": true,
    "crosses_rule_gate": true,
    "examples": [
@@ -299,6 +191,7 @@
      "step_bp": 0.0688,
      "kind": "local",
      "lines_affected": 1,
+     "cause_not_localised": false,
      "after_text": "4"
     },
     {
@@ -308,6 +201,7 @@
      "step_bp": -1.155,
      "kind": "local",
      "lines_affected": 1,
+     "cause_not_localised": false,
      "after_text": "4"
     },
     {
@@ -317,6 +211,7 @@
      "step_bp": -2.7778,
      "kind": "cumulative",
      "lines_affected": 28,
+     "cause_not_localised": false,
      "after_text": "1 0 0"
     },
     {
@@ -326,49 +221,63 @@
      "step_bp": -2.7773,
      "kind": "cumulative",
      "lines_affected": 25,
+     "cause_not_localised": false,
      "after_text": "0 1 0 I = M ="
     }
    ]
   },
   {
-   "cause": "\\item",
+   "cause": "display-math boundary (no environment)",
    "kind": "cumulative",
    "fixtures": [
+    "math-sheet",
     "twelvept-plain"
    ],
-   "fixture_count": 1,
+   "fixture_count": 2,
    "occurrences": 3,
-   "lines_affected": 60,
-   "median_step_bp": 0.2446,
-   "max_step_bp": 0.2454,
-   "crosses_glyph_gate": false,
+   "lines_affected": 49,
+   "lines_not_localised": 48,
+   "not_localised_occurrences": 1,
+   "not_localised_fixtures": [
+    "twelvept-plain"
+   ],
+   "only_on_set_glue_pages": false,
+   "attributable_fixture_count": 1,
+   "median_step_bp": 2.7784,
+   "max_step_bp": 2.7786,
+   "median_attributable_step_bp": 2.7785,
+   "max_attributable_step_bp": 2.7786,
+   "crosses_glyph_gate": true,
    "crosses_rule_gate": true,
    "examples": [
     {
-     "fixture": "twelvept-plain",
-     "page": 3,
-     "ref_y": 415.341,
-     "step_bp": -0.2444,
+     "fixture": "math-sheet",
+     "page": 2,
+     "ref_y": 217.485,
+     "step_bp": 2.7786,
      "kind": "cumulative",
-     "lines_affected": 23,
-     "after_text": "Growable delimiters are a kernel feature—you do no"
+     "lines_affected": 27,
+     "cause_not_localised": false,
+     "after_text": "m m m"
+    },
+    {
+     "fixture": "math-sheet",
+     "page": 2,
+     "ref_y": 250.14,
+     "step_bp": -2.7784,
+     "kind": "cumulative",
+     "lines_affected": 22,
+     "cause_not_localised": false,
+     "after_text": "m m m"
     },
     {
      "fixture": "twelvept-plain",
      "page": 3,
-     "ref_y": 453.131,
-     "step_bp": -0.2454,
+     "ref_y": 157.236,
+     "step_bp": -0.8586,
      "kind": "cumulative",
-     "lines_affected": 21,
-     "after_text": "Nested fractions are the easiest way to stress-tes"
-    },
-    {
-     "fixture": "twelvept-plain",
-     "page": 3,
-     "ref_y": 547.139,
-     "step_bp": -0.2446,
-     "kind": "cumulative",
-     "lines_affected": 16,
+     "lines_affected": 48,
+     "cause_not_localised": true,
      "after_text": "sin x"
     }
    ]
@@ -382,8 +291,15 @@
    "fixture_count": 1,
    "occurrences": 1,
    "lines_affected": 38,
+   "lines_not_localised": 0,
+   "not_localised_occurrences": 0,
+   "not_localised_fixtures": [],
+   "only_on_set_glue_pages": false,
+   "attributable_fixture_count": 1,
    "median_step_bp": 0.1612,
    "max_step_bp": 0.1612,
+   "median_attributable_step_bp": 0.1612,
+   "max_attributable_step_bp": 0.1612,
    "crosses_glyph_gate": false,
    "crosses_rule_gate": true,
    "examples": [
@@ -394,211 +310,8 @@
      "step_bp": -0.1612,
      "kind": "cumulative",
      "lines_affected": 38,
+     "cause_not_localised": false,
      "after_text": "1"
-    }
-   ]
-  },
-  {
-   "cause": "before \\begin{itemize}",
-   "kind": "cumulative",
-   "fixtures": [
-    "cv",
-    "hyperref-toc",
-    "twelvept-plain"
-   ],
-   "fixture_count": 3,
-   "occurrences": 3,
-   "lines_affected": 34,
-   "median_step_bp": 1.1554,
-   "max_step_bp": 5.977,
-   "crosses_glyph_gate": true,
-   "crosses_rule_gate": true,
-   "examples": [
-    {
-     "fixture": "cv",
-     "page": 1,
-     "ref_y": 598.977,
-     "step_bp": 5.977,
-     "kind": "cumulative",
-     "lines_affected": 2,
-     "after_text": "Putnam Competition, top 500 (2026)."
-    },
-    {
-     "fixture": "hyperref-toc",
-     "page": 4,
-     "ref_y": 107.308,
-     "step_bp": 1.1554,
-     "kind": "cumulative",
-     "lines_affected": 8,
-     "after_text": "Badness: a numeric measure of how far a line or pa"
-    },
-    {
-     "fixture": "twelvept-plain",
-     "page": 3,
-     "ref_y": 391.998,
-     "step_bp": -0.979,
-     "kind": "cumulative",
-     "lines_affected": 24,
-     "after_text": "Always check the domain of validity before taking "
-    }
-   ]
-  },
-  {
-   "cause": "after \\end{lemma}",
-   "kind": "cumulative",
-   "fixtures": [
-    "lecture-notes"
-   ],
-   "fixture_count": 1,
-   "occurrences": 2,
-   "lines_affected": 31,
-   "median_step_bp": 0.1239,
-   "max_step_bp": 0.1239,
-   "crosses_glyph_gate": false,
-   "crosses_rule_gate": true,
-   "examples": [
-    {
-     "fixture": "lecture-notes",
-     "page": 1,
-     "ref_y": 447.193,
-     "step_bp": 0.1239,
-     "kind": "cumulative",
-     "lines_affected": 17,
-     "after_text": "Proof. Write b = ka and c = for some k, Then c = ="
-    },
-    {
-     "fixture": "lecture-notes",
-     "page": 1,
-     "ref_y": 503.973,
-     "step_bp": 0.1239,
-     "kind": "cumulative",
-     "lines_affected": 14,
-     "after_text": "Proof. Write b = ka and c = Then mb + nc = mka + ="
-    }
-   ]
-  },
-  {
-   "cause": "after \\end{align*}",
-   "kind": "cumulative",
-   "fixtures": [
-    "math-sheet"
-   ],
-   "fixture_count": 1,
-   "occurrences": 1,
-   "lines_affected": 23,
-   "median_step_bp": 0.4465,
-   "max_step_bp": 0.4465,
-   "crosses_glyph_gate": false,
-   "crosses_rule_gate": true,
-   "examples": [
-    {
-     "fixture": "math-sheet",
-     "page": 1,
-     "ref_y": 498.606,
-     "step_bp": -0.4465,
-     "kind": "cumulative",
-     "lines_affected": 23,
-     "after_text": "Integration by parts: u, dv = uv v, du."
-    }
-   ]
-  },
-  {
-   "cause": "after \\end{definition}",
-   "kind": "cumulative",
-   "fixtures": [
-    "lecture-notes"
-   ],
-   "fixture_count": 1,
-   "occurrences": 1,
-   "lines_affected": 20,
-   "median_step_bp": 0.1239,
-   "max_step_bp": 0.1239,
-   "crosses_glyph_gate": false,
-   "crosses_rule_gate": true,
-   "examples": [
-    {
-     "fixture": "lecture-notes",
-     "page": 1,
-     "ref_y": 391.614,
-     "step_bp": 0.1239,
-     "kind": "cumulative",
-     "lines_affected": 20,
-     "after_text": "Example 1.2. 3 12 since 12 = 4 3, but 5 12. Every "
-    }
-   ]
-  },
-  {
-   "cause": "\\end{itemize} -> \\begin{enumerate}",
-   "kind": "cumulative",
-   "fixtures": [
-    "twelvept-plain"
-   ],
-   "fixture_count": 1,
-   "occurrences": 1,
-   "lines_affected": 19,
-   "median_step_bp": 6.7324,
-   "max_step_bp": 6.7324,
-   "crosses_glyph_gate": true,
-   "crosses_rule_gate": true,
-   "examples": [
-    {
-     "fixture": "twelvept-plain",
-     "page": 3,
-     "ref_y": 490.713,
-     "step_bp": 6.7324,
-     "kind": "cumulative",
-     "lines_affected": 19,
-     "after_text": "1. Redo the continued-fraction example above with "
-    }
-   ]
-  },
-  {
-   "cause": "after \\end{example}",
-   "kind": "cumulative",
-   "fixtures": [
-    "lecture-notes"
-   ],
-   "fixture_count": 1,
-   "occurrences": 1,
-   "lines_affected": 18,
-   "median_step_bp": 0.1239,
-   "max_step_bp": 0.1239,
-   "crosses_glyph_gate": false,
-   "crosses_rule_gate": true,
-   "examples": [
-    {
-     "fixture": "lecture-notes",
-     "page": 1,
-     "ref_y": 426.178,
-     "step_bp": 0.1239,
-     "kind": "cumulative",
-     "lines_affected": 18,
-     "after_text": "Lemma 1.3. If a b and b c then a c."
-    }
-   ]
-  },
-  {
-   "cause": "row pitch inside {enumerate}",
-   "kind": "cumulative",
-   "fixtures": [
-    "twelvept-plain"
-   ],
-   "fixture_count": 1,
-   "occurrences": 1,
-   "lines_affected": 17,
-   "median_step_bp": 0.2454,
-   "max_step_bp": 0.2454,
-   "crosses_glyph_gate": false,
-   "crosses_rule_gate": true,
-   "examples": [
-    {
-     "fixture": "twelvept-plain",
-     "page": 3,
-     "ref_y": 528.503,
-     "step_bp": -0.2454,
-     "kind": "cumulative",
-     "lines_affected": 17,
-     "after_text": "2. Show that is differentiable wherever ⃗r(t) is, "
     }
    ]
   },
@@ -612,8 +325,15 @@
    "fixture_count": 2,
    "occurrences": 2,
    "lines_affected": 16,
+   "lines_not_localised": 0,
+   "not_localised_occurrences": 0,
+   "not_localised_fixtures": [],
+   "only_on_set_glue_pages": false,
+   "attributable_fixture_count": 2,
    "median_step_bp": 0.0659,
    "max_step_bp": 0.069,
+   "median_attributable_step_bp": 0.0659,
+   "max_attributable_step_bp": 0.069,
    "crosses_glyph_gate": false,
    "crosses_rule_gate": false,
    "examples": [
@@ -624,6 +344,7 @@
      "step_bp": -0.069,
      "kind": "page-origin",
      "lines_affected": 3,
+     "cause_not_localised": false,
      "after_text": "Figure 1: Tail latency (p99) across three producti"
     },
     {
@@ -633,32 +354,65 @@
      "step_bp": -0.0628,
      "kind": "page-origin",
      "lines_affected": 13,
+     "cause_not_localised": false,
      "after_text": "2"
     }
    ]
   },
   {
-   "cause": "after \\end{enumerate}",
+   "cause": "before \\begin{itemize}",
    "kind": "cumulative",
    "fixtures": [
+    "cv",
+    "hyperref-toc",
     "twelvept-plain"
    ],
-   "fixture_count": 1,
-   "occurrences": 1,
-   "lines_affected": 12,
-   "median_step_bp": 0.9767,
-   "max_step_bp": 0.9767,
+   "fixture_count": 3,
+   "occurrences": 3,
+   "lines_affected": 10,
+   "lines_not_localised": 24,
+   "not_localised_occurrences": 1,
+   "not_localised_fixtures": [
+    "twelvept-plain"
+   ],
+   "only_on_set_glue_pages": false,
+   "attributable_fixture_count": 2,
+   "median_step_bp": 1.1554,
+   "max_step_bp": 5.977,
+   "median_attributable_step_bp": 3.5662,
+   "max_attributable_step_bp": 5.977,
    "crosses_glyph_gate": true,
    "crosses_rule_gate": true,
    "examples": [
     {
+     "fixture": "cv",
+     "page": 1,
+     "ref_y": 598.977,
+     "step_bp": 5.977,
+     "kind": "cumulative",
+     "lines_affected": 2,
+     "cause_not_localised": false,
+     "after_text": "Putnam Competition, top 500 (2026)."
+    },
+    {
+     "fixture": "hyperref-toc",
+     "page": 4,
+     "ref_y": 107.308,
+     "step_bp": 1.1554,
+     "kind": "cumulative",
+     "lines_affected": 8,
+     "cause_not_localised": false,
+     "after_text": "Badness: a numeric measure of how far a line or pa"
+    },
+    {
      "fixture": "twelvept-plain",
      "page": 3,
-     "ref_y": 570.645,
-     "step_bp": -0.9767,
+     "ref_y": 391.998,
+     "step_bp": -0.979,
      "kind": "cumulative",
-     "lines_affected": 12,
-     "after_text": "1"
+     "lines_affected": 24,
+     "cause_not_localised": true,
+     "after_text": "Always check the domain of validity before taking "
     }
    ]
   },
@@ -671,8 +425,15 @@
    "fixture_count": 1,
    "occurrences": 1,
    "lines_affected": 9,
+   "lines_not_localised": 0,
+   "not_localised_occurrences": 0,
+   "not_localised_fixtures": [],
+   "only_on_set_glue_pages": false,
+   "attributable_fixture_count": 1,
    "median_step_bp": 0.0861,
    "max_step_bp": 0.0861,
+   "median_attributable_step_bp": 0.0861,
+   "max_attributable_step_bp": 0.0861,
    "crosses_glyph_gate": false,
    "crosses_rule_gate": false,
    "examples": [
@@ -683,6 +444,7 @@
      "step_bp": -0.0861,
      "kind": "cumulative",
      "lines_affected": 9,
+     "cause_not_localised": false,
      "after_text": "Figure 1.1: Representative sparse sensor deploymen"
     }
    ]
@@ -696,8 +458,15 @@
    "fixture_count": 1,
    "occurrences": 1,
    "lines_affected": 8,
+   "lines_not_localised": 0,
+   "not_localised_occurrences": 0,
+   "not_localised_fixtures": [],
+   "only_on_set_glue_pages": false,
+   "attributable_fixture_count": 1,
    "median_step_bp": 5.9775,
    "max_step_bp": 5.9775,
+   "median_attributable_step_bp": 5.9775,
+   "max_attributable_step_bp": 5.9775,
    "crosses_glyph_gate": true,
    "crosses_rule_gate": true,
    "examples": [
@@ -708,32 +477,8 @@
      "step_bp": 5.9775,
      "kind": "cumulative",
      "lines_affected": 8,
+     "cause_not_localised": false,
      "after_text": "Languages Rust, Swift, Python, C, Standard ML"
-    }
-   ]
-  },
-  {
-   "cause": "row pitch inside {theorem}",
-   "kind": "cumulative",
-   "fixtures": [
-    "lecture-notes"
-   ],
-   "fixture_count": 1,
-   "occurrences": 1,
-   "lines_affected": 8,
-   "median_step_bp": 0.1487,
-   "max_step_bp": 0.1487,
-   "crosses_glyph_gate": false,
-   "crosses_rule_gate": true,
-   "examples": [
-    {
-     "fixture": "lecture-notes",
-     "page": 1,
-     "ref_y": 620.88,
-     "step_bp": 0.1487,
-     "kind": "cumulative",
-     "lines_affected": 8,
-     "after_text": "a = qb + r and 0 r < b."
     }
    ]
   },
@@ -746,8 +491,15 @@
    "fixture_count": 1,
    "occurrences": 1,
    "lines_affected": 8,
+   "lines_not_localised": 0,
+   "not_localised_occurrences": 0,
+   "not_localised_fixtures": [],
+   "only_on_set_glue_pages": false,
+   "attributable_fixture_count": 1,
    "median_step_bp": 0.056,
    "max_step_bp": 0.056,
+   "median_attributable_step_bp": 0.056,
+   "max_attributable_step_bp": 0.056,
    "crosses_glyph_gate": false,
    "crosses_rule_gate": false,
    "examples": [
@@ -758,7 +510,490 @@
      "step_bp": -0.056,
      "kind": "cumulative",
      "lines_affected": 8,
+     "cause_not_localised": false,
      "after_text": "Table 1: Summary of proposed fixes."
+    }
+   ]
+  },
+  {
+   "cause": "before \\begin{document}",
+   "kind": "cumulative",
+   "fixtures": [
+    "lecture-notes",
+    "math-sheet"
+   ],
+   "fixture_count": 2,
+   "occurrences": 2,
+   "lines_affected": 0,
+   "lines_not_localised": 90,
+   "not_localised_occurrences": 2,
+   "not_localised_fixtures": [
+    "lecture-notes",
+    "math-sheet"
+   ],
+   "only_on_set_glue_pages": true,
+   "attributable_fixture_count": 0,
+   "median_step_bp": 0.3444,
+   "max_step_bp": 0.5133,
+   "median_attributable_step_bp": null,
+   "max_attributable_step_bp": null,
+   "crosses_glyph_gate": true,
+   "crosses_rule_gate": true,
+   "examples": [
+    {
+     "fixture": "lecture-notes",
+     "page": 1,
+     "ref_y": 225.426,
+     "step_bp": 0.1755,
+     "kind": "cumulative",
+     "lines_affected": 27,
+     "cause_not_localised": true,
+     "after_text": "Contents"
+    },
+    {
+     "fixture": "math-sheet",
+     "page": 1,
+     "ref_y": 197.992,
+     "step_bp": -0.5133,
+     "kind": "cumulative",
+     "lines_affected": 63,
+     "cause_not_localised": true,
+     "after_text": "Series and sums"
+    }
+   ]
+  },
+  {
+   "cause": "\\section",
+   "kind": "cumulative",
+   "fixtures": [
+    "math-sheet"
+   ],
+   "fixture_count": 1,
+   "occurrences": 3,
+   "lines_affected": 0,
+   "lines_not_localised": 80,
+   "not_localised_occurrences": 3,
+   "not_localised_fixtures": [
+    "math-sheet"
+   ],
+   "only_on_set_glue_pages": true,
+   "attributable_fixture_count": 0,
+   "median_step_bp": 0.0666,
+   "max_step_bp": 0.0667,
+   "median_attributable_step_bp": null,
+   "max_attributable_step_bp": null,
+   "crosses_glyph_gate": false,
+   "crosses_rule_gate": false,
+   "examples": [
+    {
+     "fixture": "math-sheet",
+     "page": 1,
+     "ref_y": 336.208,
+     "step_bp": -0.0666,
+     "kind": "cumulative",
+     "lines_affected": 43,
+     "cause_not_localised": true,
+     "after_text": "Integrals"
+    },
+    {
+     "fixture": "math-sheet",
+     "page": 1,
+     "ref_y": 534.637,
+     "step_bp": -0.0667,
+     "kind": "cumulative",
+     "lines_affected": 22,
+     "cause_not_localised": true,
+     "after_text": "Piecewise definitions"
+    },
+    {
+     "fixture": "math-sheet",
+     "page": 1,
+     "ref_y": 621.847,
+     "step_bp": -0.0661,
+     "kind": "cumulative",
+     "lines_affected": 15,
+     "cause_not_localised": true,
+     "after_text": "Limits and derivatives"
+    }
+   ]
+  },
+  {
+   "cause": "before \\begin{align}",
+   "kind": "cumulative",
+   "fixtures": [
+    "math-sheet"
+   ],
+   "fixture_count": 1,
+   "occurrences": 1,
+   "lines_affected": 0,
+   "lines_not_localised": 62,
+   "not_localised_occurrences": 1,
+   "not_localised_fixtures": [
+    "math-sheet"
+   ],
+   "only_on_set_glue_pages": true,
+   "attributable_fixture_count": 0,
+   "median_step_bp": 0.4437,
+   "max_step_bp": 0.4437,
+   "median_attributable_step_bp": null,
+   "max_attributable_step_bp": null,
+   "crosses_glyph_gate": false,
+   "crosses_rule_gate": true,
+   "examples": [
+    {
+     "fixture": "math-sheet",
+     "page": 1,
+     "ref_y": 220.844,
+     "step_bp": -0.4437,
+     "kind": "cumulative",
+     "lines_affected": 62,
+     "cause_not_localised": true,
+     "after_text": "n n"
+    }
+   ]
+  },
+  {
+   "cause": "\\item",
+   "kind": "cumulative",
+   "fixtures": [
+    "twelvept-plain"
+   ],
+   "fixture_count": 1,
+   "occurrences": 3,
+   "lines_affected": 0,
+   "lines_not_localised": 60,
+   "not_localised_occurrences": 3,
+   "not_localised_fixtures": [
+    "twelvept-plain"
+   ],
+   "only_on_set_glue_pages": true,
+   "attributable_fixture_count": 0,
+   "median_step_bp": 0.2446,
+   "max_step_bp": 0.2454,
+   "median_attributable_step_bp": null,
+   "max_attributable_step_bp": null,
+   "crosses_glyph_gate": false,
+   "crosses_rule_gate": true,
+   "examples": [
+    {
+     "fixture": "twelvept-plain",
+     "page": 3,
+     "ref_y": 415.341,
+     "step_bp": -0.2444,
+     "kind": "cumulative",
+     "lines_affected": 23,
+     "cause_not_localised": true,
+     "after_text": "Growable delimiters are a kernel feature—you do no"
+    },
+    {
+     "fixture": "twelvept-plain",
+     "page": 3,
+     "ref_y": 453.131,
+     "step_bp": -0.2454,
+     "kind": "cumulative",
+     "lines_affected": 21,
+     "cause_not_localised": true,
+     "after_text": "Nested fractions are the easiest way to stress-tes"
+    },
+    {
+     "fixture": "twelvept-plain",
+     "page": 3,
+     "ref_y": 547.139,
+     "step_bp": -0.2446,
+     "kind": "cumulative",
+     "lines_affected": 16,
+     "cause_not_localised": true,
+     "after_text": "sin x"
+    }
+   ]
+  },
+  {
+   "cause": "after \\end{lemma}",
+   "kind": "cumulative",
+   "fixtures": [
+    "lecture-notes"
+   ],
+   "fixture_count": 1,
+   "occurrences": 2,
+   "lines_affected": 0,
+   "lines_not_localised": 31,
+   "not_localised_occurrences": 2,
+   "not_localised_fixtures": [
+    "lecture-notes"
+   ],
+   "only_on_set_glue_pages": true,
+   "attributable_fixture_count": 0,
+   "median_step_bp": 0.1239,
+   "max_step_bp": 0.1239,
+   "median_attributable_step_bp": null,
+   "max_attributable_step_bp": null,
+   "crosses_glyph_gate": false,
+   "crosses_rule_gate": true,
+   "examples": [
+    {
+     "fixture": "lecture-notes",
+     "page": 1,
+     "ref_y": 447.193,
+     "step_bp": 0.1239,
+     "kind": "cumulative",
+     "lines_affected": 17,
+     "cause_not_localised": true,
+     "after_text": "Proof. Write b = ka and c = for some k, Then c = ="
+    },
+    {
+     "fixture": "lecture-notes",
+     "page": 1,
+     "ref_y": 503.973,
+     "step_bp": 0.1239,
+     "kind": "cumulative",
+     "lines_affected": 14,
+     "cause_not_localised": true,
+     "after_text": "Proof. Write b = ka and c = Then mb + nc = mka + ="
+    }
+   ]
+  },
+  {
+   "cause": "after \\end{align*}",
+   "kind": "cumulative",
+   "fixtures": [
+    "math-sheet"
+   ],
+   "fixture_count": 1,
+   "occurrences": 1,
+   "lines_affected": 0,
+   "lines_not_localised": 23,
+   "not_localised_occurrences": 1,
+   "not_localised_fixtures": [
+    "math-sheet"
+   ],
+   "only_on_set_glue_pages": true,
+   "attributable_fixture_count": 0,
+   "median_step_bp": 0.4465,
+   "max_step_bp": 0.4465,
+   "median_attributable_step_bp": null,
+   "max_attributable_step_bp": null,
+   "crosses_glyph_gate": false,
+   "crosses_rule_gate": true,
+   "examples": [
+    {
+     "fixture": "math-sheet",
+     "page": 1,
+     "ref_y": 498.606,
+     "step_bp": -0.4465,
+     "kind": "cumulative",
+     "lines_affected": 23,
+     "cause_not_localised": true,
+     "after_text": "Integration by parts: u, dv = uv v, du."
+    }
+   ]
+  },
+  {
+   "cause": "after \\end{definition}",
+   "kind": "cumulative",
+   "fixtures": [
+    "lecture-notes"
+   ],
+   "fixture_count": 1,
+   "occurrences": 1,
+   "lines_affected": 0,
+   "lines_not_localised": 20,
+   "not_localised_occurrences": 1,
+   "not_localised_fixtures": [
+    "lecture-notes"
+   ],
+   "only_on_set_glue_pages": true,
+   "attributable_fixture_count": 0,
+   "median_step_bp": 0.1239,
+   "max_step_bp": 0.1239,
+   "median_attributable_step_bp": null,
+   "max_attributable_step_bp": null,
+   "crosses_glyph_gate": false,
+   "crosses_rule_gate": true,
+   "examples": [
+    {
+     "fixture": "lecture-notes",
+     "page": 1,
+     "ref_y": 391.614,
+     "step_bp": 0.1239,
+     "kind": "cumulative",
+     "lines_affected": 20,
+     "cause_not_localised": true,
+     "after_text": "Example 1.2. 3 12 since 12 = 4 3, but 5 12. Every "
+    }
+   ]
+  },
+  {
+   "cause": "\\end{itemize} -> \\begin{enumerate}",
+   "kind": "cumulative",
+   "fixtures": [
+    "twelvept-plain"
+   ],
+   "fixture_count": 1,
+   "occurrences": 1,
+   "lines_affected": 0,
+   "lines_not_localised": 19,
+   "not_localised_occurrences": 1,
+   "not_localised_fixtures": [
+    "twelvept-plain"
+   ],
+   "only_on_set_glue_pages": true,
+   "attributable_fixture_count": 0,
+   "median_step_bp": 6.7324,
+   "max_step_bp": 6.7324,
+   "median_attributable_step_bp": null,
+   "max_attributable_step_bp": null,
+   "crosses_glyph_gate": true,
+   "crosses_rule_gate": true,
+   "examples": [
+    {
+     "fixture": "twelvept-plain",
+     "page": 3,
+     "ref_y": 490.713,
+     "step_bp": 6.7324,
+     "kind": "cumulative",
+     "lines_affected": 19,
+     "cause_not_localised": true,
+     "after_text": "1. Redo the continued-fraction example above with "
+    }
+   ]
+  },
+  {
+   "cause": "after \\end{example}",
+   "kind": "cumulative",
+   "fixtures": [
+    "lecture-notes"
+   ],
+   "fixture_count": 1,
+   "occurrences": 1,
+   "lines_affected": 0,
+   "lines_not_localised": 18,
+   "not_localised_occurrences": 1,
+   "not_localised_fixtures": [
+    "lecture-notes"
+   ],
+   "only_on_set_glue_pages": true,
+   "attributable_fixture_count": 0,
+   "median_step_bp": 0.1239,
+   "max_step_bp": 0.1239,
+   "median_attributable_step_bp": null,
+   "max_attributable_step_bp": null,
+   "crosses_glyph_gate": false,
+   "crosses_rule_gate": true,
+   "examples": [
+    {
+     "fixture": "lecture-notes",
+     "page": 1,
+     "ref_y": 426.178,
+     "step_bp": 0.1239,
+     "kind": "cumulative",
+     "lines_affected": 18,
+     "cause_not_localised": true,
+     "after_text": "Lemma 1.3. If a b and b c then a c."
+    }
+   ]
+  },
+  {
+   "cause": "row pitch inside {enumerate}",
+   "kind": "cumulative",
+   "fixtures": [
+    "twelvept-plain"
+   ],
+   "fixture_count": 1,
+   "occurrences": 1,
+   "lines_affected": 0,
+   "lines_not_localised": 17,
+   "not_localised_occurrences": 1,
+   "not_localised_fixtures": [
+    "twelvept-plain"
+   ],
+   "only_on_set_glue_pages": true,
+   "attributable_fixture_count": 0,
+   "median_step_bp": 0.2454,
+   "max_step_bp": 0.2454,
+   "median_attributable_step_bp": null,
+   "max_attributable_step_bp": null,
+   "crosses_glyph_gate": false,
+   "crosses_rule_gate": true,
+   "examples": [
+    {
+     "fixture": "twelvept-plain",
+     "page": 3,
+     "ref_y": 528.503,
+     "step_bp": -0.2454,
+     "kind": "cumulative",
+     "lines_affected": 17,
+     "cause_not_localised": true,
+     "after_text": "2. Show that is differentiable wherever ⃗r(t) is, "
+    }
+   ]
+  },
+  {
+   "cause": "after \\end{enumerate}",
+   "kind": "cumulative",
+   "fixtures": [
+    "twelvept-plain"
+   ],
+   "fixture_count": 1,
+   "occurrences": 1,
+   "lines_affected": 0,
+   "lines_not_localised": 12,
+   "not_localised_occurrences": 1,
+   "not_localised_fixtures": [
+    "twelvept-plain"
+   ],
+   "only_on_set_glue_pages": true,
+   "attributable_fixture_count": 0,
+   "median_step_bp": 0.9767,
+   "max_step_bp": 0.9767,
+   "median_attributable_step_bp": null,
+   "max_attributable_step_bp": null,
+   "crosses_glyph_gate": true,
+   "crosses_rule_gate": true,
+   "examples": [
+    {
+     "fixture": "twelvept-plain",
+     "page": 3,
+     "ref_y": 570.645,
+     "step_bp": -0.9767,
+     "kind": "cumulative",
+     "lines_affected": 12,
+     "cause_not_localised": true,
+     "after_text": "1"
+    }
+   ]
+  },
+  {
+   "cause": "row pitch inside {theorem}",
+   "kind": "cumulative",
+   "fixtures": [
+    "lecture-notes"
+   ],
+   "fixture_count": 1,
+   "occurrences": 1,
+   "lines_affected": 0,
+   "lines_not_localised": 8,
+   "not_localised_occurrences": 1,
+   "not_localised_fixtures": [
+    "lecture-notes"
+   ],
+   "only_on_set_glue_pages": true,
+   "attributable_fixture_count": 0,
+   "median_step_bp": 0.1487,
+   "max_step_bp": 0.1487,
+   "median_attributable_step_bp": null,
+   "max_attributable_step_bp": null,
+   "crosses_glyph_gate": false,
+   "crosses_rule_gate": true,
+   "examples": [
+    {
+     "fixture": "lecture-notes",
+     "page": 1,
+     "ref_y": 620.88,
+     "step_bp": 0.1487,
+     "kind": "cumulative",
+     "lines_affected": 8,
+     "cause_not_localised": true,
+     "after_text": "a = qb + r and 0 r < b."
     }
    ]
   },
@@ -770,9 +1005,18 @@
    ],
    "fixture_count": 1,
    "occurrences": 1,
-   "lines_affected": 7,
+   "lines_affected": 0,
+   "lines_not_localised": 7,
+   "not_localised_occurrences": 1,
+   "not_localised_fixtures": [
+    "lecture-notes"
+   ],
+   "only_on_set_glue_pages": true,
+   "attributable_fixture_count": 0,
    "median_step_bp": 0.1481,
    "max_step_bp": 0.1481,
+   "median_attributable_step_bp": null,
+   "max_attributable_step_bp": null,
    "crosses_glyph_gate": false,
    "crosses_rule_gate": true,
    "examples": [
@@ -783,6 +1027,7 @@
      "step_bp": 0.1481,
      "kind": "cumulative",
      "lines_affected": 7,
+     "cause_not_localised": true,
      "after_text": "Proof. Existence. Consider the set S = a kb : k a "
     }
    ]
@@ -795,9 +1040,18 @@
    ],
    "fixture_count": 1,
    "occurrences": 1,
-   "lines_affected": 2,
+   "lines_affected": 0,
+   "lines_not_localised": 2,
+   "not_localised_occurrences": 1,
+   "not_localised_fixtures": [
+    "lecture-notes"
+   ],
+   "only_on_set_glue_pages": true,
+   "attributable_fixture_count": 0,
    "median_step_bp": 1.0761,
    "max_step_bp": 1.0761,
+   "median_attributable_step_bp": null,
+   "max_attributable_step_bp": null,
    "crosses_glyph_gate": true,
    "crosses_rule_gate": true,
    "examples": [
@@ -808,6 +1062,7 @@
      "step_bp": -1.0761,
      "kind": "cumulative",
      "lines_affected": 2,
+     "cause_not_localised": true,
      "after_text": "Corollary 2.2. Every integer is either even or odd"
     }
    ]
@@ -1059,6 +1314,19 @@
      "reference_words": 527,
      "candidate_words": 526,
      "reference_unaligned": 21,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 686.56499
+     },
+     "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 2,
      "lines": 70,
      "note": "2 reflowed word(s): the two sides break lines differently, so the dy profile is not a spacing measurement",
@@ -1781,6 +2049,19 @@
      "reference_words": 131,
      "candidate_words": 128,
      "reference_unaligned": 6,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 686.56499
+     },
+     "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 21,
      "steps": [],
@@ -2062,6 +2343,8 @@
    ],
    "status": "recovered",
    "diagnostics": 5,
+   "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+   "glue_set_error": null,
    "reference_pages": 2,
    "candidate_pages": 2
   },
@@ -2074,6 +2357,19 @@
      "reference_words": 652,
      "candidate_words": 650,
      "reference_unaligned": 9,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 698.4975
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 2,
      "lines": 79,
      "note": "2 reflowed word(s): the two sides break lines differently, so the dy profile is not a spacing measurement",
@@ -2744,6 +3040,19 @@
      "reference_words": 663,
      "candidate_words": 663,
      "reference_unaligned": 11,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 698.4975
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 96,
      "steps": [],
@@ -2855,6 +3164,19 @@
      "reference_words": 27,
      "candidate_words": 27,
      "reference_unaligned": 0,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 698.4975
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 6,
      "steps": [],
@@ -2876,6 +3198,19 @@
      "reference_words": 25,
      "candidate_words": 24,
      "reference_unaligned": 1,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 698.4975
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 3,
      "steps": [
@@ -2895,7 +3230,9 @@
        "before_text": "",
        "after_text": "Figure 1: Tail latency (p99) across three production traces for consis",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -2913,7 +3250,9 @@
        "before_text": "and our adaptive spectral approach. Lower is better.",
        "after_text": "4",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       }
      ],
      "line_shifts": [],
@@ -2928,6 +3267,8 @@
    ],
    "status": "recovered",
    "diagnostics": 7,
+   "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+   "glue_set_error": null,
    "reference_pages": 4,
    "candidate_pages": 4
   },
@@ -2940,6 +3281,19 @@
      "reference_words": 234,
      "candidate_words": 234,
      "reference_unaligned": 14,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 694.88379
+     },
+     "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 34,
      "steps": [
@@ -2961,7 +3315,9 @@
        "before_text": "Education",
        "after_text": "Example University Pittsburgh, PA",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -2981,7 +3337,9 @@
        "before_text": "Experience",
        "after_text": "Software Engineering Intern Summer 2027",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -3001,7 +3359,9 @@
        "before_text": "Projects",
        "after_text": "A",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -3022,7 +3382,9 @@
        "before_text": "Skills",
        "after_text": "Languages Rust, Swift, Python, C, Standard ML",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -3044,7 +3406,9 @@
        "before_text": "Awards",
        "after_text": "Putnam Competition, top 500 (2026).",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       }
      ],
      "line_shifts": [
@@ -3144,6 +3508,8 @@
    ],
    "status": "recovered",
    "diagnostics": 2,
+   "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+   "glue_set_error": null,
    "reference_pages": 1,
    "candidate_pages": 1
   },
@@ -3156,6 +3522,19 @@
      "reference_words": 117,
      "candidate_words": 117,
      "reference_unaligned": 7,
+     "reference_glue_set": -0.20364,
+     "reference_glue_order": "fin",
+     "reference_glue_raw": "- 0.20364",
+     "reference_glue_box": {
+      "set_box_height": 650.43001,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": true,
+     "cause_not_localised_why": "pdfTeX set this page's glue by - 0.20364: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it",
      "reflowed_words": 0,
      "lines": 23,
      "steps": [
@@ -3175,7 +3554,9 @@
        "before_text": "FlashTeX Course Staff",
        "after_text": "January 1, 1970",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.20364: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       }
      ],
      "line_shifts": [],
@@ -3213,6 +3594,19 @@
      "reference_words": 199,
      "candidate_words": 199,
      "reference_unaligned": 10,
+     "reference_glue_set": -0.16081,
+     "reference_glue_order": "fin",
+     "reference_glue_raw": "- 0.16081",
+     "reference_glue_box": {
+      "set_box_height": 650.43001,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": true,
+     "cause_not_localised_why": "pdfTeX set this page's glue by - 0.16081: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it",
      "reflowed_words": 0,
      "lines": 29,
      "steps": [],
@@ -3257,6 +3651,19 @@
      "reference_words": 79,
      "candidate_words": 79,
      "reference_unaligned": 4,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 10,
      "steps": [],
@@ -3279,6 +3686,8 @@
    ],
    "status": "recovered",
    "diagnostics": 5,
+   "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+   "glue_set_error": null,
    "reference_pages": 3,
    "candidate_pages": 3
   },
@@ -3291,6 +3700,19 @@
      "reference_words": 261,
      "candidate_words": 261,
      "reference_unaligned": 20,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 34,
      "steps": [],
@@ -3371,6 +3793,19 @@
      "reference_words": 272,
      "candidate_words": 259,
      "reference_unaligned": 49,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 29,
      "steps": [],
@@ -3491,6 +3926,19 @@
      "reference_words": 153,
      "candidate_words": 153,
      "reference_unaligned": 0,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 14,
      "steps": [],
@@ -3517,6 +3965,8 @@
    ],
    "status": "recovered",
    "diagnostics": 4,
+   "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+   "glue_set_error": null,
    "reference_pages": 3,
    "candidate_pages": 3
   },
@@ -3529,6 +3979,19 @@
      "reference_words": 244,
      "candidate_words": 240,
      "reference_unaligned": 40,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 35,
      "steps": [],
@@ -3625,6 +4088,19 @@
      "reference_words": 347,
      "candidate_words": 340,
      "reference_unaligned": 56,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 35,
      "steps": [],
@@ -3706,6 +4182,19 @@
      "reference_words": 133,
      "candidate_words": 133,
      "reference_unaligned": 22,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 12,
      "steps": [],
@@ -3730,6 +4219,8 @@
    ],
    "status": "recovered",
    "diagnostics": 7,
+   "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+   "glue_set_error": null,
    "reference_pages": 3,
    "candidate_pages": 3
   },
@@ -3742,6 +4233,19 @@
      "reference_words": 505,
      "candidate_words": 505,
      "reference_unaligned": 12,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 1,
      "lines": 30,
      "note": "1 reflowed word(s): the two sides break lines differently, so the dy profile is not a spacing measurement",
@@ -3803,6 +4307,19 @@
      "reference_words": 194,
      "candidate_words": 194,
      "reference_unaligned": 0,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 30,
      "steps": [],
@@ -3848,6 +4365,19 @@
      "reference_words": 288,
      "candidate_words": 288,
      "reference_unaligned": 4,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 34,
      "steps": [],
@@ -3897,6 +4427,19 @@
      "reference_words": 75,
      "candidate_words": 75,
      "reference_unaligned": 3,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 9,
      "steps": [
@@ -3920,7 +4463,9 @@
        "before_text": "6 Appendix: Glossary",
        "after_text": "Badness: a numeric measure of how far a line or page deviates from its",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -3938,7 +4483,9 @@
        "before_text": "summary.",
        "after_text": "4",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       }
      ],
      "line_shifts": [],
@@ -3959,6 +4506,8 @@
    ],
    "status": "recovered",
    "diagnostics": 5,
+   "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+   "glue_set_error": null,
    "reference_pages": 4,
    "candidate_pages": 4
   },
@@ -3971,6 +4520,19 @@
      "reference_words": 855,
      "candidate_words": 861,
      "reference_unaligned": 128,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 2,
      "lines": 95,
      "note": "2 reflowed word(s): the two sides break lines differently, so the dy profile is not a spacing measurement",
@@ -4704,6 +5266,19 @@
      "reference_words": 358,
      "candidate_words": 354,
      "reference_unaligned": 51,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 1,
      "lines": 37,
      "note": "1 reflowed word(s): the two sides break lines differently, so the dy profile is not a spacing measurement",
@@ -5248,6 +5823,8 @@
    ],
    "status": "recovered",
    "diagnostics": 6,
+   "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+   "glue_set_error": null,
    "reference_pages": 2,
    "candidate_pages": 2
   },
@@ -5260,6 +5837,19 @@
      "reference_words": 280,
      "candidate_words": 279,
      "reference_unaligned": 10,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 38,
      "steps": [],
@@ -5313,6 +5903,19 @@
      "reference_words": 235,
      "candidate_words": 235,
      "reference_unaligned": 2,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 1,
      "lines": 27,
      "note": "1 reflowed word(s): the two sides break lines differently, so the dy profile is not a spacing measurement",
@@ -5816,6 +6419,8 @@
    ],
    "status": "recovered",
    "diagnostics": 4,
+   "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+   "glue_set_error": null,
    "reference_pages": 2,
    "candidate_pages": 2
   },
@@ -5828,6 +6433,19 @@
      "reference_words": 311,
      "candidate_words": 310,
      "reference_unaligned": 10,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 3,
      "lines": 40,
      "note": "3 reflowed word(s): the two sides break lines differently, so the dy profile is not a spacing measurement",
@@ -6527,6 +7145,19 @@
      "reference_words": 71,
      "candidate_words": 70,
      "reference_unaligned": 1,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 13,
      "steps": [
@@ -6546,7 +7177,9 @@
        "before_text": "",
        "after_text": "2",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       }
      ],
      "line_shifts": [],
@@ -6574,6 +7207,19 @@
      "reference_words": 253,
      "candidate_words": 253,
      "reference_unaligned": 13,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 33,
      "steps": [],
@@ -6673,6 +7319,8 @@
    ],
    "status": "recovered",
    "diagnostics": 6,
+   "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+   "glue_set_error": null,
    "reference_pages": 3,
    "candidate_pages": 3
   },
@@ -6685,6 +7333,19 @@
      "reference_words": 387,
      "candidate_words": 387,
      "reference_unaligned": 69,
+     "reference_glue_set": -0.30122,
+     "reference_glue_order": "fin",
+     "reference_glue_raw": "- 0.30122",
+     "reference_glue_box": {
+      "set_box_height": 650.43001,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": true,
+     "cause_not_localised_why": "pdfTeX set this page's glue by - 0.30122: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it",
      "reflowed_words": 0,
      "lines": 30,
      "steps": [
@@ -6708,7 +7369,9 @@
        "before_text": "Week 2",
        "after_text": "Contents",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.30122: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -6729,7 +7392,9 @@
        "before_text": "such that b = ka. If no such k exists we write a b.",
        "after_text": "Example 1.2. 3 12 since 12 = 4 3, but 5 12. Every integer divides 0, a",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.30122: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -6750,7 +7415,9 @@
        "before_text": "integer.",
        "after_text": "Lemma 1.3. If a b and b c then a c.",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.30122: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -6771,7 +7438,9 @@
        "before_text": "Lemma 1.3. If a b and b c then a c.",
        "after_text": "Proof. Write b = ka and c = for some k, Then c = = = and so",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.30122: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -6792,7 +7461,9 @@
        "before_text": "Lemma 1.4. If a b and a c then a (mb + nc) for all m, n",
        "after_text": "Proof. Write b = ka and c = Then mb + nc = mka + = (mk +",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.30122: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -6810,7 +7481,9 @@
        "before_text": ">0",
        "after_text": "a = qb + r and 0 r < b.",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.30122: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -6831,7 +7504,9 @@
        "before_text": "a = qb + r and 0 r < b.",
        "after_text": "Proof. Existence. Consider the set S = a kb : k a kb 0 The set is non-",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.30122: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -6852,7 +7527,9 @@
        "before_text": "< b, so b (r r) forces r r = 0, and therefore q = q .",
        "after_text": "Corollary 2.2. Every integer is either even or odd, and not both.",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.30122: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       }
      ],
      "line_shifts": [
@@ -7340,6 +8017,19 @@
      "reference_words": 248,
      "candidate_words": 248,
      "reference_unaligned": 24,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 24,
      "steps": [],
@@ -7675,6 +8365,8 @@
    ],
    "status": "recovered",
    "diagnostics": 7,
+   "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+   "glue_set_error": null,
    "reference_pages": 2,
    "candidate_pages": 2
   },
@@ -7687,6 +8379,19 @@
      "reference_words": 232,
      "candidate_words": 231,
      "reference_unaligned": 5,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 732.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 3,
      "lines": 26,
      "note": "3 reflowed word(s): the two sides break lines differently, so the dy profile is not a spacing measurement",
@@ -7768,6 +8473,8 @@
    ],
    "status": "recovered",
    "diagnostics": 2,
+   "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+   "glue_set_error": null,
    "reference_pages": 1,
    "candidate_pages": 1
   },
@@ -7780,6 +8487,19 @@
      "reference_words": 326,
      "candidate_words": 320,
      "reference_unaligned": 10,
+     "reference_glue_set": -0.65112,
+     "reference_glue_order": "fin",
+     "reference_glue_raw": "- 0.65112 []",
+     "reference_glue_box": {
+      "set_box_height": 650.43001,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": true,
+     "cause_not_localised_why": "pdfTeX set this page's glue by - 0.65112 []: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it",
      "reflowed_words": 0,
      "lines": 39,
      "steps": [],
@@ -8262,6 +8982,19 @@
      "reference_words": 278,
      "candidate_words": 278,
      "reference_unaligned": 7,
+     "reference_glue_set": -0.3748,
+     "reference_glue_order": "fin",
+     "reference_glue_raw": "- 0.3748 []",
+     "reference_glue_box": {
+      "set_box_height": 650.43001,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": true,
+     "cause_not_localised_why": "pdfTeX set this page's glue by - 0.3748 []: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it",
      "reflowed_words": 12,
      "lines": 44,
      "note": "12 reflowed word(s): the two sides break lines differently, so the dy profile is not a spacing measurement",
@@ -8674,6 +9407,19 @@
      "reference_words": 236,
      "candidate_words": 232,
      "reference_unaligned": 9,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 52,
      "lines": 26,
      "note": "52 reflowed word(s): the two sides break lines differently, so the dy profile is not a spacing measurement",
@@ -9391,6 +10137,8 @@
    ],
    "status": "recovered",
    "diagnostics": 8,
+   "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+   "glue_set_error": null,
    "reference_pages": 3,
    "candidate_pages": 3
   },
@@ -9403,6 +10151,19 @@
      "reference_words": 440,
      "candidate_words": 440,
      "reference_unaligned": 8,
+     "reference_glue_set": -0.26439,
+     "reference_glue_order": "fin",
+     "reference_glue_raw": "- 0.26439",
+     "reference_glue_box": {
+      "set_box_height": 650.43001,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": true,
+     "cause_not_localised_why": "pdfTeX set this page's glue by - 0.26439: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it",
      "reflowed_words": 0,
      "lines": 32,
      "steps": [],
@@ -9450,6 +10211,19 @@
      "reference_words": 319,
      "candidate_words": 319,
      "reference_unaligned": 5,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 34,
      "steps": [],
@@ -9499,6 +10273,19 @@
      "reference_words": 403,
      "candidate_words": 401,
      "reference_unaligned": 10,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 37,
      "steps": [],
@@ -9551,6 +10338,19 @@
      "reference_words": 172,
      "candidate_words": 172,
      "reference_unaligned": 0,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 19,
      "steps": [],
@@ -9582,6 +10382,8 @@
    ],
    "status": "recovered",
    "diagnostics": 3,
+   "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+   "glue_set_error": null,
    "reference_pages": 4,
    "candidate_pages": 4
   },
@@ -9594,6 +10396,19 @@
      "reference_words": 252,
      "candidate_words": 257,
      "reference_unaligned": 57,
+     "reference_glue_set": -0.74042,
+     "reference_glue_order": "fin",
+     "reference_glue_raw": "- 0.74042",
+     "reference_glue_box": {
+      "set_box_height": 650.43001,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": true,
+     "cause_not_localised_why": "pdfTeX set this page's glue by - 0.74042: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it",
      "reflowed_words": 0,
      "lines": 64,
      "steps": [
@@ -9619,7 +10434,9 @@
        "before_text": "Formula Sheet: Calculus and Linear Algebra",
        "after_text": "Series and sums",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.74042: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -9639,7 +10456,9 @@
        "before_text": "Series and sums",
        "after_text": "n n",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.74042: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "low",
@@ -9659,7 +10478,9 @@
        "before_text": "k=0",
        "after_text": "n",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.74042: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -9680,7 +10501,9 @@
        "before_text": "k",
        "after_text": "Integrals",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.74042: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "low",
@@ -9700,7 +10523,9 @@
        "before_text": "Integrals",
        "after_text": "b",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.74042: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "low",
@@ -9718,7 +10543,9 @@
        "before_text": "a",
        "after_text": "dx",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.74042: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -9738,7 +10565,9 @@
        "before_text": "0 0",
        "after_text": "Integration by parts: u, dv = uv v, du.",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.74042: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -9759,7 +10588,9 @@
        "before_text": "Integration by parts: u, dv = uv v, du.",
        "after_text": "Piecewise definitions",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.74042: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -9780,7 +10611,9 @@
        "before_text": "−1 x < 0.",
        "after_text": "Limits and derivatives",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.74042: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -9798,7 +10631,9 @@
        "before_text": "h dx",
        "after_text": "d",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.74042: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "low",
@@ -9816,7 +10651,9 @@
        "before_text": "dx",
        "after_text": "n",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.74042: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       }
      ],
      "line_shifts": [
@@ -10307,6 +11144,19 @@
      "reference_words": 260,
      "candidate_words": 250,
      "reference_unaligned": 122,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 41,
      "steps": [
@@ -10326,7 +11176,9 @@
        "before_text": "11 12 1n",
        "after_text": "1 0 0",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -10344,7 +11196,9 @@
        "before_text": "1 0 0",
        "after_text": "m m m",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -10362,7 +11216,9 @@
        "before_text": "21 22 2n",
        "after_text": "0 1 0 I = M =",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -10380,7 +11236,9 @@
        "before_text": "0 0 1",
        "after_text": "m m m",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -10398,7 +11256,9 @@
        "before_text": "Operators and relations:",
        "after_text": "2",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       }
      ],
      "line_shifts": [
@@ -10613,6 +11473,8 @@
    ],
    "status": "recovered",
    "diagnostics": 5,
+   "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+   "glue_set_error": null,
    "reference_pages": 2,
    "candidate_pages": 2
   },
@@ -10625,6 +11487,19 @@
      "reference_words": 374,
      "candidate_words": 374,
      "reference_unaligned": 6,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 37,
      "steps": [
@@ -10644,7 +11519,9 @@
        "before_text": "y",
        "after_text": "clamped to an implementation-defined maximum representing an effective",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -10662,7 +11539,9 @@
        "before_text": "similar adjacent line lengths (see Knuth and Plass, 1981, p. 14).",
        "after_text": "1",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       }
      ],
      "line_shifts": [],
@@ -10714,6 +11593,19 @@
      "reference_words": 425,
      "candidate_words": 425,
      "reference_unaligned": 0,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 41,
      "steps": [],
@@ -10794,6 +11686,19 @@
      "reference_words": 75,
      "candidate_words": 75,
      "reference_unaligned": 0,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 10,
      "steps": [],
@@ -10982,6 +11887,8 @@
    ],
    "status": "recovered",
    "diagnostics": 17,
+   "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+   "glue_set_error": null,
    "reference_pages": 3,
    "candidate_pages": 3
   },
@@ -10994,6 +11901,19 @@
      "reference_words": 220,
      "candidate_words": 220,
      "reference_unaligned": 7,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 550.0
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0010 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 2,
      "lines": 29,
      "note": "2 reflowed word(s): the two sides break lines differently, so the dy profile is not a spacing measurement",
@@ -11555,6 +12475,19 @@
      "reference_words": 227,
      "candidate_words": 227,
      "reference_unaligned": 0,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 550.0
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0010 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 30,
      "steps": [
@@ -11577,7 +12510,9 @@
        "before_text": "Bottlenecks Rotating point-of-contact duty",
        "after_text": "Table 1: Summary of proposed fixes.",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -11595,7 +12530,9 @@
        "before_text": "bottleneck.",
        "after_text": "2",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       }
      ],
      "line_shifts": [],
@@ -11640,6 +12577,19 @@
      "reference_words": 206,
      "candidate_words": 206,
      "reference_unaligned": 6,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 550.0
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0010 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 25,
      "steps": [],
@@ -11677,6 +12627,8 @@
    ],
    "status": "recovered",
    "diagnostics": 4,
+   "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0010 bp",
+   "glue_set_error": null,
    "reference_pages": 3,
    "candidate_pages": 3
   },
@@ -11689,6 +12641,19 @@
      "reference_words": 272,
      "candidate_words": 272,
      "reference_unaligned": 26,
+     "reference_glue_set": -0.02837,
+     "reference_glue_order": "fin",
+     "reference_glue_raw": "- 0.02837",
+     "reference_glue_box": {
+      "set_box_height": 650.43001,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": true,
+     "cause_not_localised_why": "pdfTeX set this page's glue by - 0.02837: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it",
      "reflowed_words": 0,
      "lines": 52,
      "steps": [
@@ -11708,7 +12673,9 @@
        "before_text": "Math 201, Section B",
        "after_text": "October 3, 2025",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.02837: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -11726,7 +12693,9 @@
        "before_text": "5 5n(5n + 1) 5n(5n + 1)",
        "after_text": "13",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.02837: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       }
      ],
      "line_shifts": [
@@ -11913,6 +12882,19 @@
      "reference_words": 316,
      "candidate_words": 324,
      "reference_unaligned": 72,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 56,
      "steps": [
@@ -11932,7 +12914,9 @@
        "before_text": "0",
        "after_text": "1",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -11950,7 +12934,9 @@
        "before_text": "solve for z.",
        "after_text": "2",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       }
      ],
      "line_shifts": [
@@ -12043,6 +13029,19 @@
      "reference_words": 384,
      "candidate_words": 375,
      "reference_unaligned": 59,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 39,
      "steps": [
@@ -12062,7 +13061,9 @@
        "before_text": "det(A)",
        "after_text": "where A is formed by replacing the third column of A with",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -12080,7 +13081,9 @@
        "before_text": "which for p = −3 recovers x = ±1 as found above.",
        "after_text": "3",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       }
      ],
      "line_shifts": [],
@@ -12147,6 +13150,8 @@
    ],
    "status": "recovered",
    "diagnostics": 6,
+   "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+   "glue_set_error": null,
    "reference_pages": 3,
    "candidate_pages": 3
   },
@@ -12159,6 +13164,19 @@
      "reference_words": 353,
      "candidate_words": 353,
      "reference_unaligned": 8,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 39,
      "steps": [
@@ -12178,7 +13196,9 @@
        "before_text": "Table 1 summarizes the measured thermal conductivity for each batch at",
        "after_text": "−1 −1",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "low",
@@ -12196,7 +13216,9 @@
        "before_text": "−1 −1",
        "after_text": "given as 25 C, 75 C, and 125 C. Values are reported in W m K , with sa",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "low",
@@ -12219,7 +13241,9 @@
        "before_text": "standard deviations given alongside each mean.",
        "after_text": "−1 −1",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "low",
@@ -12237,7 +13261,9 @@
        "before_text": "−1 −1",
        "after_text": "Table 1: Thermal conductivity (W m K ) by batch and temperature.",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "low",
@@ -12255,7 +13281,9 @@
        "before_text": "with the higher filler fraction used in the B-series formulation. The ",
        "after_text": "−1 −1",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "low",
@@ -12273,7 +13301,9 @@
        "before_text": "−1 −1",
        "after_text": "1.034 W m K for batch B1 at 125 C, remains well within the manufacture",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "low",
@@ -12291,7 +13321,9 @@
        "before_text": "1.034 W m K for batch B1 at 125 C, remains well within the manufacture",
        "after_text": "−1 −1",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "low",
@@ -12309,7 +13341,9 @@
        "before_text": "−1 −1",
        "after_text": "envelope of 1.2 W m K .",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -12327,7 +13361,9 @@
        "before_text": "be interpreted accordingly.",
        "after_text": "1",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       }
      ],
      "line_shifts": [],
@@ -12381,6 +13417,19 @@
      "reference_words": 275,
      "candidate_words": 275,
      "reference_unaligned": 3,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 30,
      "steps": [],
@@ -12439,6 +13488,8 @@
    ],
    "status": "recovered",
    "diagnostics": 5,
+   "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+   "glue_set_error": null,
    "reference_pages": 2,
    "candidate_pages": 2
   },
@@ -12451,6 +13502,19 @@
      "reference_words": 384,
      "candidate_words": 384,
      "reference_unaligned": 3,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 767.50687
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 36,
      "steps": [],
@@ -12502,6 +13566,19 @@
      "reference_words": 252,
      "candidate_words": 251,
      "reference_unaligned": 1,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 767.50687
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 22,
      "steps": [
@@ -12525,7 +13602,9 @@
        "before_text": "ridor.",
        "after_text": "Figure 1.1: Representative sparse sensor deployment topology used in t",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -12543,7 +13622,9 @@
        "before_text": "by Fictional (2020).",
        "after_text": "2",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       }
      ],
      "line_shifts": [],
@@ -12580,6 +13661,19 @@
      "reference_words": 526,
      "candidate_words": 526,
      "reference_unaligned": 26,
+     "reference_glue_set": -0.07123,
+     "reference_glue_order": "fin",
+     "reference_glue_raw": "- 0.07123",
+     "reference_glue_box": {
+      "set_box_height": 700.50687,
+      "page_box_height": 767.50687
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": true,
+     "cause_not_localised_why": "pdfTeX set this page's glue by - 0.07123: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it",
      "reflowed_words": 0,
      "lines": 53,
      "steps": [],
@@ -12648,6 +13742,19 @@
      "reference_words": 151,
      "candidate_words": 151,
      "reference_unaligned": 0,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 767.50687
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 14,
      "steps": [],
@@ -12677,6 +13784,19 @@
      "reference_words": 78,
      "candidate_words": 78,
      "reference_unaligned": 0,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 767.50687
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 11,
      "steps": [],
@@ -12700,6 +13820,8 @@
    ],
    "status": "recovered",
    "diagnostics": 18,
+   "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0000 bp",
+   "glue_set_error": null,
    "reference_pages": 5,
    "candidate_pages": 5
   },
@@ -12712,6 +13834,19 @@
      "reference_words": 178,
      "candidate_words": 178,
      "reference_unaligned": 15,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 548.5
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0010 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 34,
      "steps": [],
@@ -12761,6 +13896,19 @@
      "reference_words": 294,
      "candidate_words": 298,
      "reference_unaligned": 33,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 548.5
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0010 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 39,
      "steps": [
@@ -12780,7 +13928,9 @@
        "before_text": "1+x",
        "after_text": "is a continued fraction that appears, for instance, when approximating",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "low",
@@ -12798,7 +13948,9 @@
        "before_text": "Riemann sum,",
        "after_text": "n→∞",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "low",
@@ -12816,7 +13968,9 @@
        "before_text": "n→∞",
        "after_text": "b",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       },
       {
        "confidence": "ok",
@@ -12834,7 +13988,9 @@
        "before_text": "exist”—a qualifier students often forget to check.",
        "after_text": "2",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": false
+       "crosses_rule_gate": false,
+       "cause_not_localised": false,
+       "cause_not_localised_why": null
       }
      ],
      "line_shifts": [
@@ -12896,6 +14052,19 @@
      "reference_words": 266,
      "candidate_words": 267,
      "reference_unaligned": 14,
+     "reference_glue_set": -0.53453,
+     "reference_glue_order": "fin",
+     "reference_glue_raw": "- 0.53453",
+     "reference_glue_box": {
+      "set_box_height": 548.5,
+      "page_box_height": 548.5
+     },
+     "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0010 bp",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": true,
+     "cause_not_localised_why": "pdfTeX set this page's glue by - 0.53453: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it",
      "reflowed_words": 0,
      "lines": 49,
      "steps": [
@@ -12915,7 +14084,9 @@
        "before_text": "As an example, evaluate",
        "after_text": "sin x",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.53453: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -12933,7 +14104,9 @@
        "before_text": "x",
        "after_text": "a fact that can be proved geometrically by squeezing sin x between x c",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.53453: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -12953,7 +14126,9 @@
        "before_text": "x + 1",
        "after_text": "3 Series and closing remarks",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.53453: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "low",
@@ -12971,7 +14146,9 @@
        "before_text": "Finally, we record the geometric series formula,",
        "after_text": "n",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.53453: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -12989,7 +14166,9 @@
        "before_text": "i=0",
        "after_text": "1",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.53453: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -13011,7 +14190,9 @@
        "before_text": "1−r",
        "after_text": "Always check the domain of validity before taking a limit term by term",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.53453: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -13031,7 +14212,9 @@
        "before_text": "Always check the domain of validity before taking a limit term by term",
        "after_text": "Growable delimiters are a kernel feature—you do not need amsmath",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.53453: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -13051,7 +14234,9 @@
        "before_text": "just to make parentheses bigger.",
        "after_text": "Nested fractions are the easiest way to stress-test delimiter sizing b",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.53453: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -13073,7 +14258,9 @@
        "before_text": "hand.",
        "after_text": "1. Redo the continued-fraction example above with one more level of ne",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.53453: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -13091,7 +14278,9 @@
        "before_text": "ing.",
        "after_text": "2. Show that is differentiable wherever ⃗r(t) is, away from the origin",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.53453: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -13111,7 +14300,9 @@
        "before_text": "2. Show that is differentiable wherever ⃗r(t) is, away from the origin",
        "after_text": "sin x",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.53453: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -13132,7 +14323,9 @@
        "before_text": "x",
        "after_text": "1",
        "crosses_glyph_gate": true,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.53453: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       },
       {
        "confidence": "ok",
@@ -13150,7 +14343,9 @@
        "before_text": "kernel macros described above.",
        "after_text": "1",
        "crosses_glyph_gate": false,
-       "crosses_rule_gate": true
+       "crosses_rule_gate": true,
+       "cause_not_localised": true,
+       "cause_not_localised_why": "pdfTeX set this page's glue by - 0.53453: the ratio is page-global, so a step here is the difference of two shrink ratios wherever the two sides' natural page heights diverge — above this line as readily as at it"
       }
      ],
      "line_shifts": [],
@@ -13211,6 +14406,8 @@
    ],
    "status": "recovered",
    "diagnostics": 6,
+   "glue_set_source": "re-run under \\tracingoutput; bytes differ from the pinned reference (another TeX Live), every baseline within 0.0010 bp",
+   "glue_set_error": null,
    "reference_pages": 3,
    "candidate_pages": 3
   },
@@ -13223,6 +14420,19 @@
      "reference_words": 198,
      "candidate_words": 195,
      "reference_unaligned": 38,
+     "reference_glue_set": 0.0,
+     "reference_glue_order": "fil",
+     "reference_glue_raw": null,
+     "reference_glue_box": {
+      "set_box_height": null,
+      "page_box_height": 717.43001
+     },
+     "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+     "candidate_glue_set": null,
+     "candidate_glue_set_note": "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page ratio and discards it once baselines are placed, and the v2 display list carries only the fixed page size",
+     "candidate_overfull": [],
+     "cause_not_localised": false,
+     "cause_not_localised_why": null,
      "reflowed_words": 0,
      "lines": 24,
      "steps": [],
@@ -13522,6 +14732,8 @@
    ],
    "status": "recovered",
    "diagnostics": 22,
+   "glue_set_source": "re-run under \\tracingoutput, byte-identical to the pinned reference PDF",
+   "glue_set_error": null,
    "reference_pages": 1,
    "candidate_pages": 1
   }

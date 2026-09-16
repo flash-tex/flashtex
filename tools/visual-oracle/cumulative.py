@@ -54,6 +54,48 @@ Horizontal deltas are reported per line against the line's own median `dx`, so
 a whole line shifted right (a wrong indent) is one finding and a single glyph
 advance error inside it is another.
 
+## A step on a page with set glue does not localise its cause
+
+This is the single most important thing to read before using the ranked table.
+
+TeX fits a page by **setting its vertical glue**: every stretchable or
+shrinkable skip on the page is scaled by one page-global ratio so the material
+comes to exactly `\textheight`. `\tracingoutput` prints that ratio as
+`glue set`. A baseline's position on such a page is therefore
+
+    natural position  -  ratio x (shrinkability accumulated above it)
+
+and if the two producers' *natural* page heights differ at all — for any reason,
+anywhere on the page, including below the line being looked at — their ratios
+differ, and every baseline separates by an amount proportional to the
+shrinkability above it. Shrinkable glue is `\abovedisplayskip`, `\topsep`,
+`\itemsep`, `\parskip`, the `\@startsection` skips: **exactly the constructs
+this tool names its causes after.** So on such a page a step appears at a
+`\section`, is proportional to `\section`'s own shrink component, and has
+nothing to do with `\section`.
+
+The 2026-09-16 sweep lost a whole finding to this. `\maketitle` was ranked with
+90 displaced lines on two fixtures with steps of opposite sign; #755 then
+measured the block exact to 0.0009 bp and found both pages shrunk
+(`- 0.74042` and `- 0.30122`), each "step" being the difference of two shrink
+ratios. Truncating each page so it no longer overflowed collapsed the steps from
+-0.5132 bp to +0.0037 and from +0.1755 to +0.0041.
+
+So every page is measured for its glue set and every step on a page with a
+**finite-order** set is flagged `cause_not_localised`, ranked separately, and
+kept out of the `lines affected` column. A `fil`-order set (a short page whose
+`\vfil` absorbs the slack) leaves every finite glue at its natural size and is
+*not* flagged — nothing is displaced.
+
+The reference's ratio is pdfTeX's own, read from `\tracingoutput` on a re-run
+that is first verified to be the same typesetting as the pinned reference PDF.
+**The candidate's ratio is not reported, because the engine does not expose it**
+— `render-pipeline`'s `pagebuild::glue_set` computes it and drops it once the
+baselines are placed, and the v2 display list carries only the fixed page size.
+What the candidate side does expose is its `overfull_vbox` diagnostic, which is
+reported instead; a page that overflows on either side is a page whose glue is
+being set. Nothing here invents a candidate ratio.
+
 ## Honest limits
 
 * Every delta here is measured at `rank.pair_points`: an aligned pair's first
@@ -84,15 +126,29 @@ advance error inside it is another.
 * `dy` is measured from the page top, so a page whose whole body is displaced
   shows one step at its first line. That first-line step is reported as
   `page-origin` and is the drift the previous page handed over.
+* The glue set is read from a **re-run** of the fixture under `\tracingoutput`,
+  not from the pinned reference PDF, which carries no such record. The re-run is
+  accepted only when it reproduces the pinned PDF byte for byte, or when every
+  extracted word sits on the same baseline (`glue_set_source` says which). Where
+  `pdflatex` is missing, the fixture fails to build, or the re-run typesets
+  differently, the page's glue set is reported `unknown` and its steps are
+  flagged conservatively — an unknown glue set is not evidence of a zero one.
+* `\showboxdepth` is 3, which reaches the page body box under every class in
+  this corpus (depth 2 plainly, depth 3 under `cv`'s `geometry` wrapper). A
+  document nesting the body deeper would report its glue set as 0; the box
+  heights are printed in `cumulative.json` so that is auditable.
 """
 
 import argparse
 import datetime as _dt
+import hashlib
 import json
 import os
 import platform
 import re
+import shutil
 import statistics
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -109,6 +165,190 @@ GLYPH_GATE = 0.5  # project gate: glyph positions, bp
 RULE_GATE = 0.1   # project gate: rules, bp
 STEP_GATE = 0.05  # detection floor for a change in a line's dy
 SAME_LINE = 0.05  # reference baselines within this are one line
+TEXBIN = "/Library/TeX/texbin"
+
+
+# ----------------------------------------------------------------------------
+# page glue set
+#
+# See the module docstring: a step on a page whose glue is set does not localise
+# its cause, so the ratio decides whether a step may be ranked at all.
+
+
+# `..\vbox(650.43001+0.0)x469.75502, glue set - 0.74042`
+BOX_RE = re.compile(r"^(\.*)\\(vbox|hbox)\(([-\d.]+)\+([-\d.]+)\)x([-\d.]+)(?:, glue set ([^\n]*))?$")
+TRACE_FIRST_LINE = (r"\tracingoutput=1 \showboxbreadth=5 \showboxdepth=3 \tracingonline=0 \input{%s}")
+
+
+def parse_glue_set(val):
+    r"""`- 0.74042` / `215.83968fil` / `>20000.0fil` / `- 0.65112 []` -> ratio, order.
+
+    pdfTeX writes a shrinking set as `- r` and a stretching one as `r`, with the
+    order appended for infinite glue. Only a **finite** set moves the page's
+    ordinary skips: when the order is `fil` the `\vfil` at the foot of a short
+    page absorbs the whole excess and every finite glue keeps its natural size.
+
+    The trailing ` []` is pdfTeX saying the box's contents were cut off by
+    `\showboxdepth`, so it appears on exactly the deepest boxes shown — which
+    for a class that nests the body one level further down (`listings-manual`,
+    `cv`) is the page body box itself. Rejecting those lines reports those pages
+    as unset, which is the wrong answer in the one direction that matters.
+    """
+    v = re.sub(r"\s*\[\]\s*$", "", val.strip())
+    sign = -1.0 if v.startswith("- ") else 1.0
+    if sign < 0:
+        v = v[2:].strip()
+    m = re.match(r"^>?([-\d.]+)(fil+|)$", v)
+    if not m:
+        return None
+    return {"ratio": sign * float(m.group(1)), "order": m.group(2) or "fin", "raw": val.strip()}
+
+
+def glue_sets_from_log(log):
+    r"""Per shipped page, the ratio of the tallest `\vbox` with a finite set.
+
+    The page body box is `\vbox to \textheight`; the other box beside it is the
+    12 pt head/foot line, whose own `12.0fil` set places the folio and moves no
+    body baseline. Which nesting depth the body sits at depends on the class and
+    on `geometry` (2 plainly, 3 under `cv`'s wrapper), so it is selected by
+    height, not by depth — and among *finitely* set boxes only, because a
+    fil-order set displaces nothing.
+    """
+    pages, cur = [], None
+    for line in log.splitlines():
+        if line.startswith("Completed box being shipped out"):
+            cur = []
+            pages.append(cur)
+            continue
+        if cur is None:
+            continue
+        m = BOX_RE.match(line.rstrip())
+        if m:
+            cur.append({"depth": len(m.group(1)), "kind": m.group(2), "height": float(m.group(3)),
+                        "width": float(m.group(5)),
+                        "glue": parse_glue_set(m.group(6)) if m.group(6) else None})
+    out = []
+    for boxes in pages:
+        vb = [b for b in boxes if b["kind"] == "vbox" and b["depth"] >= 1]
+        fin = [b for b in vb if b["glue"] and b["glue"]["order"] == "fin" and b["glue"]["ratio"]]
+        pick = max(fin, key=lambda b: b["height"]) if fin else None
+        tallest = max(vb, key=lambda b: b["height"]) if vb else None
+        out.append({
+            "glue_set": round(pick["glue"]["ratio"], 6) if pick else 0.0,
+            "glue_order": pick["glue"]["order"] if pick else ("fil" if any(
+                b["glue"] and b["glue"]["order"] != "fin" for b in vb) else "none"),
+            "glue_raw": pick["glue"]["raw"] if pick else None,
+            "set_box_height": pick["height"] if pick else None,
+            "page_box_height": tallest["height"] if tallest else None,
+        })
+    return out
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(1 << 16), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def _same_typesetting(a, b):
+    """Every extracted word on the same baseline, or a reason it is not.
+
+    A pinned reference generated by another TeX Live than the one installed here
+    differs in bytes (`/Producer`, object order) without differing in layout.
+    That is fine for a *vertical* measurement, so the check is on positions.
+    """
+    try:
+        pa, pb = pdftext.page_words(a), pdftext.page_words(b)
+    except Exception as exc:  # noqa: BLE001 - any reader failure is a refusal
+        return None, f"pdftext could not read both PDFs: {exc}"
+    if len(pa) != len(pb):
+        return None, f"page count differs: pinned {len(pa)}, re-run {len(pb)}"
+    worst_y = 0.0
+    for x, y in zip(pa, pb):
+        if len(x["words"]) != len(y["words"]):
+            return None, "word count differs on a page"
+        for u, v in zip(x["words"], y["words"]):
+            if u["text"] != v["text"]:
+                return None, f"text differs ({u['text']!r} vs {v['text']!r})"
+            worst_y = max(worst_y, abs(u["y_top"] - v["y_top"]))
+    if worst_y > SAME_LINE:
+        return None, f"baselines differ by up to {worst_y:.4f} bp"
+    return worst_y, None
+
+
+def reference_glue_sets(fx, texbin, work, log):
+    r"""pdfTeX's own `glue set` per page for `fx`'s pinned reference.
+
+    The pinned PDF records no glue set, so the fixture is re-run under
+    `\tracingoutput` and the log is read — but only after the re-run is shown to
+    be the *same typesetting* as the pinned PDF. Returns
+    `(pages, source, error)`; `pages` is None whenever anything at all was off,
+    because an unknown glue set must not read as a zero one.
+    """
+    pdflatex = os.path.join(texbin, "pdflatex")
+    if not os.path.isfile(pdflatex):
+        return None, None, f"no pdflatex at {pdflatex}"
+    if not fx.get("reference"):
+        return None, None, "no reference PDF"
+    wd = os.path.join(work, "glueset", fx["id"])
+    if os.path.isdir(wd):
+        shutil.rmtree(wd)
+    shutil.copytree(fx["dir"], wd)
+    pinned = os.path.join(work, "glueset", fx["id"] + "-pinned.pdf")
+    shutil.copy(fx["reference"], pinned)
+    for name in os.listdir(wd):
+        if name.endswith(".pdf"):
+            os.remove(os.path.join(wd, name))
+    stem = fx["entry"][:-4] if fx["entry"].endswith(".tex") else fx["entry"]
+    env = dict(os.environ, SOURCE_DATE_EPOCH="0", FORCE_SOURCE_DATE="1")
+    argv = [pdflatex, "-interaction=nonstopmode", "-file-line-error", "-jobname=" + stem,
+            TRACE_FIRST_LINE % fx["entry"]]
+    code = None
+    for _ in range(3):  # \tableofcontents and \label need the aux to settle
+        try:
+            pr = subprocess.run(argv, cwd=wd, env=env, capture_output=True, timeout=300)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return None, None, f"pdflatex failed to run: {exc}"
+        code = pr.returncode
+    logp, pdfp = os.path.join(wd, stem + ".log"), os.path.join(wd, stem + ".pdf")
+    if not os.path.isfile(logp) or not os.path.isfile(pdfp):
+        return None, None, f"pdflatex produced no log or PDF (exit {code})"
+    with open(logp, encoding="utf-8", errors="replace") as f:
+        pages = glue_sets_from_log(f.read())
+    if not pages:
+        return None, None, "the log records no shipped page"
+    if _sha256(pinned) == _sha256(pdfp):
+        return pages, "re-run under \\tracingoutput, byte-identical to the pinned reference PDF", None
+    worst, why = _same_typesetting(pinned, pdfp)
+    if why:
+        return None, None, "the re-run is not the pinned typesetting: " + why
+    log(f"  glue set {fx['id']}: re-run differs in bytes, every baseline within {worst:.4f} bp")
+    return pages, (f"re-run under \\tracingoutput; bytes differ from the pinned reference "
+                   f"(another TeX Live), every baseline within {worst:.4f} bp"), None
+
+
+OVERFULL_PAGE_RE = re.compile(r"page (\d+):")
+
+
+def candidate_overfull_pages(diagnostics):
+    """`{page: [message]}` from the engine's own `overfull_vbox` diagnostics.
+
+    The engine computes a page's glue set (`render-pipeline`
+    `pagebuild::glue_set`) and discards it; the display list carries only the
+    fixed page size, so there is no candidate ratio to report. This is the one
+    signal it does publish that a page's material did not fit, and it covers the
+    overfull direction only — there is no `underfull_vbox`.
+    """
+    out = {}
+    for d in diagnostics or []:
+        if d.get("code") != "overfull_vbox":
+            continue
+        m = OVERFULL_PAGE_RE.search(d.get("message") or "")
+        if m:
+            out.setdefault(int(m.group(1)), []).append(d.get("message"))
+    return out
 
 
 # ----------------------------------------------------------------------------
@@ -294,8 +534,25 @@ def cause_key(gap):
 # steps
 
 
-def steps_for_page(fx, lines, step_gate):
+def localisation(glue):
+    r"""Whether a step on this page may be attributed to its own position.
+
+    `glue` is the page's measured glue-set record, or None when it could not be
+    measured. Returns `(not_localised, why)`.
+    """
+    if glue is None:
+        return True, ("the page's glue set could not be measured, so it is not known "
+                      "whether the page's baselines were displaced page-globally")
+    if glue.get("glue_order") == "fin" and glue.get("glue_set"):
+        return True, (f"pdfTeX set this page's glue by {glue['glue_raw']}: the ratio is page-global, "
+                      "so a step here is the difference of two shrink ratios wherever the two sides' "
+                      "natural page heights diverge — above this line as readily as at it")
+    return False, None
+
+
+def steps_for_page(fx, lines, step_gate, glue=None):
     """Classify every change in the line dy profile as local or cumulative."""
+    not_localised, why = localisation(glue)
     steps = []
     n = len(lines)
     for i in range(n):
@@ -347,6 +604,12 @@ def steps_for_page(fx, lines, step_gate):
             "after_text": lines[i]["text"],
             "crosses_glyph_gate": abs(step) > GLYPH_GATE,
             "crosses_rule_gate": abs(step) > RULE_GATE,
+            # The cause label above names the construct standing at this
+            # position. On a page whose glue is set, position does not imply
+            # cause — see the module docstring — so the label is kept (it is
+            # still where the step surfaced) and disclaimed here.
+            "cause_not_localised": not_localised,
+            "cause_not_localised_why": why,
         })
     return steps
 
@@ -373,31 +636,53 @@ def horizontal_findings(lines, gate):
 
 
 def aggregate(documents):
-    """One row per probable cause, over the whole corpus."""
+    """One row per probable cause, over the whole corpus.
+
+    `lines_affected` counts only steps whose cause **is** localised. A step on a
+    page with set glue displaces just as many baselines, but it does not say
+    which construct displaced them, so counting it here would credit the
+    construct standing at its position with a defect that may sit anywhere on
+    the page — which is exactly how the 2026-09-16 sweep ranked `\\maketitle`
+    fifth with 90 lines that belonged to two other findings. Those lines are
+    kept, separately, in `lines_not_localised`.
+    """
     causes = {}
     for doc in documents:
         for page in doc.get("pages", []):
             for s in page.get("steps", []):
                 if s.get("confidence") == "low":
                     continue
+                flagged = bool(s.get("cause_not_localised"))
                 c = causes.setdefault(s["cause"], {
                     "cause": s["cause"], "kind": set(), "fixtures": set(), "occurrences": 0,
-                    "steps": [], "lines_affected": 0, "examples": [],
+                    "steps": [], "clean_steps": [], "lines_affected": 0,
+                    "lines_not_localised": 0, "not_localised_occurrences": 0,
+                    "not_localised_fixtures": set(), "examples": [],
                 })
                 c["kind"].add(s["kind"])
                 c["fixtures"].add(doc["id"])
                 c["occurrences"] += 1
                 c["steps"].append(s["step_bp"])
+                if flagged:
+                    c["not_localised_occurrences"] += 1
+                    c["not_localised_fixtures"].add(doc["id"])
+                else:
+                    c["clean_steps"].append(s["step_bp"])
                 if s["kind"] != "local":
-                    c["lines_affected"] += s["lines_affected"]
+                    if flagged:
+                        c["lines_not_localised"] += s["lines_affected"]
+                    else:
+                        c["lines_affected"] += s["lines_affected"]
                 if len(c["examples"]) < 4:
                     c["examples"].append({"fixture": doc["id"], "page": page["page"], "ref_y": s["ref_y"],
                                           "step_bp": s["step_bp"], "kind": s["kind"],
                                           "lines_affected": s["lines_affected"],
+                                          "cause_not_localised": flagged,
                                           "after_text": s["after_text"][:50]})
     rows = []
     for c in causes.values():
         mags = [abs(v) for v in c["steps"]]
+        clean = [abs(v) for v in c["clean_steps"]]
         rows.append({
             "cause": c["cause"],
             "kind": "cumulative" if "cumulative" in c["kind"] else ("page-origin" if "page-origin" in c["kind"] else "local"),
@@ -405,16 +690,28 @@ def aggregate(documents):
             "fixture_count": len(c["fixtures"]),
             "occurrences": c["occurrences"],
             "lines_affected": c["lines_affected"],
+            "lines_not_localised": c["lines_not_localised"],
+            "not_localised_occurrences": c["not_localised_occurrences"],
+            "not_localised_fixtures": sorted(c["not_localised_fixtures"]),
+            # A cause every one of whose witnesses is on a page with set glue is
+            # not evidence about that cause at all.
+            "only_on_set_glue_pages": c["not_localised_occurrences"] == c["occurrences"],
+            "attributable_fixture_count": len(c["fixtures"] - c["not_localised_fixtures"]),
             "median_step_bp": round(statistics.median(mags), 4),
             "max_step_bp": round(max(mags), 4),
+            "median_attributable_step_bp": round(statistics.median(clean), 4) if clean else None,
+            "max_attributable_step_bp": round(max(clean), 4) if clean else None,
             "crosses_glyph_gate": max(mags) > GLYPH_GATE,
             "crosses_rule_gate": max(mags) > RULE_GATE,
             "examples": c["examples"],
         })
-    # Impact first: total baselines moved, then how many documents show it,
-    # then the size. A cause that only ever moves one line ranks under one that
-    # moves a hundred, whatever the bp.
-    rows.sort(key=lambda r: (-r["lines_affected"], -r["fixture_count"], -r["max_step_bp"]))
+    # Impact first: baselines moved *by this cause*, then how many documents
+    # show it there, then the size. A cause that only ever moves one line ranks
+    # under one that moves a hundred, whatever the bp — and a cause whose every
+    # witness sits on a page with set glue has moved no baseline it can be
+    # shown to own, so it ranks at the bottom whatever its raw numbers.
+    rows.sort(key=lambda r: (-r["lines_affected"], -r["attributable_fixture_count"],
+                             -(r["max_attributable_step_bp"] or 0.0), -r["lines_not_localised"]))
     return rows
 
 
@@ -435,27 +732,88 @@ def write_report(out_dir, meta, documents, causes, hgroups):
     A(f"- producer: `{meta['render']}` (`{meta['render_sha256'][:16]}…`) -> `{os.path.basename(meta['pdf_exact'])}`")
     A(f"- references: {meta['reference_mode']}")
     A(f"- gates: glyph positions {GLYPH_GATE} bp, rules {RULE_GATE} bp; step detection floor {meta['step_gate']} bp")
+    A(f"- page glue set: read from `{meta['texbin']}/pdflatex` under `\\tracingoutput` "
+      "on a re-run verified against the pinned reference")
     A(f"- host: {meta['platform']}")
+    A("")
+    A("## Page glue set, and what it does to attribution")
+    A("")
+    A("TeX fits a page by scaling every stretchable or shrinkable skip on it by one")
+    A("**page-global** ratio. On a page with a finite-order set, a baseline sits at")
+    A("its natural position minus `ratio x (shrinkability above it)`, so if the two")
+    A("producers' natural page heights differ *anywhere*, every baseline separates in")
+    A("proportion to the shrinkable glue above it — and shrinkable glue is")
+    A("`\\abovedisplayskip`, `\\topsep`, `\\itemsep`, `\\parskip`, the `\\@startsection`")
+    A("skips, which is precisely what this tool names its causes after.")
+    A("")
+    A("**A step on such a page therefore does not localise its cause.** Those steps")
+    A("are listed separately below and excluded from `lines affected`; they are real")
+    A("displacements, but the construct at their position is not shown to have caused")
+    A("them. A `fil`-order set (a short page whose `\\vfil` absorbs the slack) leaves")
+    A("every finite glue at natural size and is **not** flagged.")
+    A("")
+    A("The reference ratio is pdfTeX's own `\\tracingoutput` figure. **The candidate's")
+    A("is not reported: the engine does not expose it** — `render-pipeline`'s")
+    A("`pagebuild::glue_set` computes the ratio and drops it once baselines are placed,")
+    A("and the v2 display list carries only the fixed page size. The engine's own")
+    A("`overfull_vbox` diagnostic is reported in its place. No candidate ratio is")
+    A("invented here.")
+    A("")
+    A("| fixture | page | reference glue set | order | displaces baselines? | candidate overfull | source |")
+    A("|---|---|---|---|---|---|---|")
+    for d in documents:
+        for p in d.get("pages", []):
+            if "reference_glue_set" not in p:
+                continue
+            g = p["reference_glue_set"]
+            A(f"| {d['id']} | {p['page']} | {p['reference_glue_raw'] or (g if g is not None else 'unknown')} | "
+              f"{p['reference_glue_order'] or '—'} | {'YES' if p.get('cause_not_localised') else 'no'} | "
+              f"{len(p.get('candidate_overfull') or []) or '—'} | {rank.md((p.get('glue_set_source') or '')[:60])} |")
     A("")
     A("## Ranked causes (vertical)")
     A("")
-    A("`lines affected` is the number of reference baselines the step displaces —")
-    A("the whole rest of the page for a cumulative step, one line for a local one.")
+    A("`lines affected` is the number of reference baselines displaced by steps whose")
+    A("cause **is** localised — the whole rest of the page for a cumulative step, one")
+    A("line for a local one. `lines not localised` is the same count for steps on a")
+    A("page with set glue: displaced, but not by anything this row names.")
     A("")
-    A("| rank | probable cause | kind | median step (bp) | max step (bp) | fixtures | occurrences | lines affected | > 0.5 bp gate |")
-    A("|---|---|---|---|---|---|---|---|---|")
+    A("| rank | probable cause | kind | median step (bp) | max step (bp) | fixtures | occurrences | lines affected | lines not localised | > 0.5 bp gate |")
+    A("|---|---|---|---|---|---|---|---|---|---|")
     for i, r in enumerate(causes, 1):
-        A(f"| {i} | `{rank.md(r['cause'])}` | {r['kind']} | {r['median_step_bp']} | {r['max_step_bp']} | "
-          f"{r['fixture_count']} | {r['occurrences']} | {r['lines_affected']} | {'yes' if r['crosses_glyph_gate'] else 'no'} |")
+        flag = " **(every witness on a page with set glue)**" if r["only_on_set_glue_pages"] else ""
+        A(f"| {i} | `{rank.md(r['cause'])}`{flag} | {r['kind']} | {r['median_step_bp']} | {r['max_step_bp']} | "
+          f"{r['fixture_count']} | {r['occurrences']} | {r['lines_affected']} | {r['lines_not_localised']} | "
+          f"{'yes' if r['crosses_glyph_gate'] else 'no'} |")
     A("")
     A("### Witnesses")
     A("")
     for i, r in enumerate(causes, 1):
         A(f"**{i}. `{rank.md(r['cause'])}`** — {', '.join(r['fixtures'])}")
+        if r["only_on_set_glue_pages"]:
+            A("  - **cause not localised:** every occurrence is on a page whose glue pdfTeX set, so "
+              "this row is not evidence that this construct is where the defect is.")
         for e in r["examples"]:
             A(f"  - `{e['fixture']}` p{e['page']} y={e['ref_y']}: {e['step_bp']:+} bp, {e['kind']}, "
-              f"{e['lines_affected']} line(s) after — “{rank.md(e['after_text'])}”")
+              f"{e['lines_affected']} line(s) after{' — CAUSE NOT LOCALISED' if e['cause_not_localised'] else ''}"
+              f" — “{rank.md(e['after_text'])}”")
         A("")
+    A("## Steps whose cause is not localised (excluded from the ranking above)")
+    A("")
+    A("Each of these displaces the baselines it says it does. What it does **not** do")
+    A("is name the construct responsible: the page's glue set is global, so the step")
+    A("surfaces where the two sides' ratios diverge, not where the underlying error")
+    A("is. Re-measure any of these on a page that does not overflow before filing it.")
+    A("")
+    A("| fixture | page | glue set | step (bp) | kind | lines | cause as labelled | line text |")
+    A("|---|---|---|---|---|---|---|---|")
+    for d in documents:
+        for p in d.get("pages", []):
+            for s in p.get("steps", []):
+                if not s.get("cause_not_localised") or s.get("confidence") == "low":
+                    continue
+                A(f"| {d['id']} | {p['page']} | {p.get('reference_glue_raw') or 'unknown'} | {s['step_bp']:+} | "
+                  f"{s['kind']} | {s['lines_affected']} | `{rank.md(s['cause'])}` | {rank.md(s['after_text'][:40])} |")
+    A("")
     A("## Horizontal findings")
     A("")
     A("| rank | probable cause | fixtures | occurrences | median |dx| (bp) | max |dx| (bp) | kind |")
@@ -494,17 +852,19 @@ def write_report(out_dir, meta, documents, causes, hgroups):
     A("")
     A("## Per document")
     A("")
-    A("| fixture | pages ref/cand | status | reflowed pages | cumulative steps | local steps | worst cumulative (bp) |")
-    A("|---|---|---|---|---|---|---|")
+    A("| fixture | pages ref/cand | status | reflowed pages | pages with set glue | cumulative steps | of those, not localised | local steps | worst localised cumulative (bp) |")
+    A("|---|---|---|---|---|---|---|---|---|")
     for d in documents:
         cum = [s for p in d.get("pages", []) for s in p.get("steps", [])
                if s["kind"] == "cumulative" and s.get("confidence") != "low"]
         loc = [s for p in d.get("pages", []) for s in p.get("steps", [])
                if s["kind"] == "local" and s.get("confidence") != "low"]
+        nl = [s for s in cum if s.get("cause_not_localised")]
         refl = sum(1 for p in d.get("pages", []) if p.get("reflowed_words", 0))
-        worst = max((abs(s["step_bp"]) for s in cum), default=0.0)
+        setg = sum(1 for p in d.get("pages", []) if p.get("cause_not_localised"))
+        worst = max((abs(s["step_bp"]) for s in cum if not s.get("cause_not_localised")), default=0.0)
         A(f"| {d['id']} | {d.get('reference_pages', '—')}/{d.get('candidate_pages', '—')} | "
-          f"{d.get('status', '—')} | {refl} | {len(cum)} | {len(loc)} | {round(worst, 3)} |")
+          f"{d.get('status', '—')} | {refl} | {setg} | {len(cum)} | {len(nl)} | {len(loc)} | {round(worst, 3)} |")
     A("")
     with open(os.path.join(out_dir, "cumulative.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(L) + "\n")
@@ -552,6 +912,11 @@ def main(argv=None):
     ap.add_argument("--work", default=None)
     ap.add_argument("--step-gate", type=float, default=STEP_GATE)
     ap.add_argument("--glyph-gate", type=float, default=GLYPH_GATE)
+    ap.add_argument("--texbin", default=os.environ.get("FLASHTEX_TEXBIN", TEXBIN),
+                    help="directory holding the pdflatex that reads back each page's glue set")
+    ap.add_argument("--no-glue-set", action="store_true",
+                    help="skip the glue-set re-runs; every step is then flagged as not localised, "
+                         "because an unmeasured glue set is not a zero one")
     args = ap.parse_args(argv)
 
     args.font_dirs, args.tfm_dirs = fontenv.resolve_dirs(
@@ -572,7 +937,7 @@ def main(argv=None):
         "render": args.render, "render_sha256": corpus.sha256_file(args.render),
         "pdf_exact": args.pdf_exact, "pdf_exact_sha256": corpus.sha256_file(args.pdf_exact),
         "font_dirs": args.font_dirs, "tfm_dirs": args.tfm_dirs,
-        "step_gate": args.step_gate, "glyph_gate": args.glyph_gate,
+        "step_gate": args.step_gate, "glyph_gate": args.glyph_gate, "texbin": args.texbin,
         "reference_mode": f"pinned files in `{os.path.relpath(args.fixtures, REPO)}/*/`",
     }
 
@@ -590,6 +955,13 @@ def main(argv=None):
             d["note"] = "no reference PDF"
             documents.append(d)
             continue
+        if args.no_glue_set:
+            glue_pages, glue_source, glue_error = None, None, "--no-glue-set"
+        else:
+            glue_pages, glue_source, glue_error = reference_glue_sets(fx, args.texbin, work, log)
+        d["glue_set_source"] = glue_source
+        d["glue_set_error"] = glue_error
+        overfull = candidate_overfull_pages(pr["diagnostics"])
         ref_pages = pdftext.page_words(fx["reference"])
         cand_pages = []
         if pr["v2"]:
@@ -602,6 +974,24 @@ def main(argv=None):
             pairs, ref_un, cand_un = rank.align_words(rw, cw)
             page = {"page": i + 1, "aligned": len(pairs), "reference_words": len(rw),
                     "candidate_words": len(cw), "reference_unaligned": ref_un}
+            glue = glue_pages[i] if glue_pages and i < len(glue_pages) else None
+            page["reference_glue_set"] = glue["glue_set"] if glue else None
+            page["reference_glue_order"] = glue["glue_order"] if glue else None
+            page["reference_glue_raw"] = glue["glue_raw"] if glue else None
+            page["reference_glue_box"] = ({"set_box_height": glue["set_box_height"],
+                                           "page_box_height": glue["page_box_height"]} if glue else None)
+            page["glue_set_source"] = glue_source or ("unavailable: " + str(glue_error))
+            # No candidate ratio exists to report: `pagebuild::glue_set`
+            # computes one and drops it, and the v2 display list carries only
+            # the fixed page size. Reporting the reference's and the engine's
+            # own overflow record is the honest substitute for inventing one.
+            page["candidate_glue_set"] = None
+            page["candidate_glue_set_note"] = (
+                "not exposed by the engine: render-pipeline `pagebuild::glue_set` computes the page "
+                "ratio and discards it once baselines are placed, and the v2 display list carries "
+                "only the fixed page size")
+            page["candidate_overfull"] = overfull.get(i + 1, [])
+            page["cause_not_localised"], page["cause_not_localised_why"] = localisation(glue)
             if not pairs:
                 page["note"] = "no word aligns; the producer typeset different text"
                 d["pages"].append(page)
@@ -617,7 +1007,7 @@ def main(argv=None):
                 page["note"] = (f"{reflowed} reflowed word(s): the two sides break lines differently, so the "
                                 "dy profile is not a spacing measurement")
             else:
-                page["steps"] = steps_for_page(fx, lines, args.step_gate)
+                page["steps"] = steps_for_page(fx, lines, args.step_gate, glue)
             ls, wo = horizontal_findings(lines, args.glyph_gate)
             page["line_shifts"] = ls
             page["word_outliers"] = wo[:40]

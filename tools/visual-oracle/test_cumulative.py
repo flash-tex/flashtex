@@ -241,5 +241,140 @@ class AnchoredMeasurement(unittest.TestCase):
                              if abs(cp[0] - rp[0]) > rank.REFLOW_DX), 0)
 
 
+MATH_SHEET_P1 = r"""Completed box being shipped out [1]
+\vbox(680.43001+0.0)x469.75502
+.\glue -37.0
+.\vbox(717.43001+0.0)x469.75502
+..\vbox(12.0+0.0)x469.75502, glue set 12.0fil
+...\glue 0.0 plus 1.0fil
+...\hbox(0.0+0.0)x469.75502 []
+..\glue 25.0
+..\vbox(650.43001+0.0)x469.75502, glue set - 0.74042
+...\glue(\topskip) 11.0
+Completed box being shipped out [2]
+\vbox(680.43001+0.0)x469.75502
+.\vbox(717.43001+0.0)x469.75502
+..\vbox(12.0+0.0)x469.75502, glue set 12.0fil
+..\vbox(650.43001+0.0)x469.75502, glue set 215.83968fil
+...\glue(\topskip) 1.06242
+"""
+
+# `cv` puts the body one level deeper: `geometry` wraps the whole page.
+CV_P1 = r"""Completed box being shipped out [1]
+\vbox(694.88379+0.0)x484.2088
+.\vbox(0.0+0.0)x0.0, glue set 52.45752fil
+.\vbox(694.88379+0.0)x484.2088
+..\vbox(746.33757+0.0)x498.66258, shifted -14.45378
+...\vbox(12.0+0.0)x498.66258, glue set 12.0fil []
+...\vbox(679.33757+0.0)x498.66258, glue set 119.58136fil []
+"""
+
+
+class GlueSet(unittest.TestCase):
+    def test_reads_the_body_box_not_the_folio_box(self):
+        """The 12 pt box beside the body carries `12.0fil` for the page number.
+
+        Picking the first or the shallowest set box reads that one and reports
+        every page as stretched to infinity.
+        """
+        pages = cu.glue_sets_from_log(MATH_SHEET_P1)
+        self.assertEqual(len(pages), 2)
+        self.assertEqual(pages[0]["glue_set"], -0.74042)
+        self.assertEqual(pages[0]["glue_order"], "fin")
+        self.assertEqual(pages[0]["set_box_height"], 650.43001)
+
+    def test_a_fil_set_does_not_displace_and_is_not_flagged(self):
+        r"""Page 2's `215.83968fil` is the `\vfil` of a short last page.
+
+        An infinite-order set leaves every finite glue at its natural size, so
+        the baselines are where the material put them and a step there does
+        localise. Flagging it would throw away good measurements — `cv` page 1,
+        the corpus's largest cumulative defect, is such a page.
+        """
+        p2 = cu.glue_sets_from_log(MATH_SHEET_P1)[1]
+        self.assertEqual(p2["glue_set"], 0.0)
+        self.assertEqual(p2["glue_order"], "fil")
+        self.assertFalse(cu.localisation(p2)[0])
+        cv = cu.glue_sets_from_log(CV_P1)[0]
+        self.assertEqual(cv["glue_set"], 0.0)
+        self.assertFalse(cu.localisation(cv)[0])
+
+    def test_a_finite_set_flags_every_step_on_the_page(self):
+        lines = [line(0.0, y=0.0), line(0.0, y=12.0), line(-0.5, y=24.0),
+                 line(-0.5, y=36.0), line(-0.5, y=48.0)]
+        glue = cu.glue_sets_from_log(MATH_SHEET_P1)[0]
+        steps = cu.steps_for_page({"documents": []}, lines, cu.STEP_GATE, glue)
+        self.assertEqual(len(steps), 1)
+        self.assertTrue(steps[0]["cause_not_localised"])
+        self.assertIn("0.74042", steps[0]["cause_not_localised_why"])
+        # Same profile on a page whose glue was not set: attributable.
+        clean = cu.steps_for_page({"documents": []}, lines, cu.STEP_GATE,
+                                  cu.glue_sets_from_log(MATH_SHEET_P1)[1])
+        self.assertFalse(clean[0]["cause_not_localised"])
+
+    def test_a_truncated_box_line_still_reports_its_set(self):
+        r"""`\showboxdepth` appends ` []` to the deepest boxes it prints.
+
+        That is exactly the page body box under a class that nests one level
+        deeper (`listings-manual`, `cv`), so a parser that requires the ratio to
+        end the line reports those pages as unset — silently, and in the one
+        direction that lets an unattributable step back into the ranking.
+        """
+        log = ("Completed box being shipped out [1]\n"
+               r"\vbox(680.43001+0.0)x469.75502" "\n"
+               r".\vbox(0.0+0.0)x0.0, glue set 38.00374fil" "\n"
+               r"..\vbox(717.43001+0.0)x469.75502" "\n"
+               r"...\vbox(12.0+0.0)x469.75502, glue set 12.0fil []" "\n"
+               r"...\vbox(650.43001+0.0)x469.75502, glue set - 0.65112 []" "\n")
+        page = cu.glue_sets_from_log(log)[0]
+        self.assertEqual(page["glue_set"], -0.65112)
+        self.assertEqual(page["glue_order"], "fin")
+        self.assertTrue(cu.localisation(page)[0])
+
+    def test_an_unmeasured_glue_set_is_not_a_zero_one(self):
+        """`None` means "not known", and must flag, or a missing pdflatex
+        silently turns every step back into an attributed finding."""
+        flagged, why = cu.localisation(None)
+        self.assertTrue(flagged)
+        self.assertIn("could not be measured", why)
+
+    def test_flagged_lines_leave_the_ranking_but_are_still_reported(self):
+        def doc(fid, flagged):
+            return {"id": fid, "pages": [{"page": 1, "steps": [
+                {"cause": r"\section", "kind": "cumulative", "lines_affected": 40,
+                 "step_bp": -0.07, "ref_y": 100.0, "after_text": "x",
+                 "cause_not_localised": flagged}]}]}
+        rows = cu.aggregate([doc("shrunk", True), doc("clean", False)])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["lines_affected"], 40)
+        self.assertEqual(rows[0]["lines_not_localised"], 40)
+        self.assertFalse(rows[0]["only_on_set_glue_pages"])
+        self.assertEqual(rows[0]["attributable_fixture_count"], 1)
+        only = cu.aggregate([doc("shrunk", True)])
+        self.assertEqual(only[0]["lines_affected"], 0)
+        self.assertEqual(only[0]["lines_not_localised"], 40)
+        self.assertTrue(only[0]["only_on_set_glue_pages"])
+        self.assertIsNone(only[0]["max_attributable_step_bp"])
+
+    def test_a_cause_with_no_attributable_witness_ranks_below_one_that_has(self):
+        """The ordering that would have kept `\\maketitle` out of fifth place."""
+        rows = cu.aggregate([
+            {"id": "a", "pages": [{"page": 1, "steps": [
+                {"cause": "big-but-unlocalised", "kind": "cumulative", "lines_affected": 900,
+                 "step_bp": -0.5, "ref_y": 1.0, "after_text": "x", "cause_not_localised": True}]}]},
+            {"id": "b", "pages": [{"page": 1, "steps": [
+                {"cause": "small-but-real", "kind": "cumulative", "lines_affected": 3,
+                 "step_bp": -0.5, "ref_y": 1.0, "after_text": "x", "cause_not_localised": False}]}]},
+        ])
+        self.assertEqual([r["cause"] for r in rows], ["small-but-real", "big-but-unlocalised"])
+
+    def test_candidate_overfull_pages_are_read_from_the_engines_diagnostics(self):
+        diags = [{"code": "overfull_vbox", "message": "page 3: a line extends 4.20pt past the text area"},
+                 {"code": "overfull_hbox", "message": "page 3: something else"},
+                 {"code": "overfull_vbox", "message": "page 3: a line extends 1.00pt past the text area"}]
+        self.assertEqual(sorted(cu.candidate_overfull_pages(diags)), [3])
+        self.assertEqual(len(cu.candidate_overfull_pages(diags)[3]), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

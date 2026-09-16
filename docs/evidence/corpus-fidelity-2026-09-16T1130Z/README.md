@@ -4,7 +4,19 @@
 `mac-m5pro-dq222`. Read-only audit: **no rendering behaviour is changed by this
 evidence directory or by the PR that carries it.**
 
-> ## Correction — 2026-09-16, supersedes the original numbers
+> ## Correction 2 — 2026-09-16, supersedes #750's *and* #753's ranking
+>
+> **Every cumulative step on a page whose glue pdfTeX set has been withdrawn from
+> the ranking.** 704 of the sweep's 1031 displaced baselines — 68% — sat on ten
+> such pages and were credited to the construct standing at their position. They
+> are not that construct's. Two more findings are withdrawn (**F3**, **F11**) and
+> a third (**F5**) drops to a single witness. Read
+> [Why a step on a shrunk page proves nothing about its position](#why-a-step-on-a-shrunk-page-proves-nothing-about-its-position)
+> before using any number below. The measurement itself did not move: every
+> page's `dy_profile` and every `step_bp` in `cumulative.json` is byte-identical
+> to #753's. Only the attribution changed.
+>
+> ## Correction 1 — 2026-09-16, supersedes the original numbers
 >
 > One of the twelve findings below, **F7**, was an artefact of the oracle and is
 > **withdrawn**. `pdftext` splits a word at a new baseline, so pdfTeX's cmex10
@@ -81,28 +93,40 @@ cargo build --release --manifest-path crates/pdf/Cargo.toml --bin flashtex-pdf-e
 export FLASHTEX_RENDER=.../flashtex-render FLASHTEX_PDF_EXACT=.../flashtex-pdf-exact
 python3 tools/visual-oracle/cumulative.py --out <evidence-dir>
 python3 tools/visual-oracle/cumulative.py --fixtures <evidence-dir>/probes --out <evidence-dir>/probes-report
-python3 -m unittest discover -s tools/visual-oracle -p 'test_*.py'   # 34 pure-python tests
+python3 -m unittest discover -s tools/visual-oracle -p 'test_*.py'   # 53 pure-python tests
 ```
+
+The glue-set pass re-runs each fixture through `/Library/TeX/texbin/pdflatex`
+under `\tracingoutput` (`--texbin` to point elsewhere, `--no-glue-set` to skip
+it — which flags *every* step, because an unmeasured glue set is not a zero
+one). The re-run is only believed after it is shown to be the pinned
+reference's typesetting; `glue_set_source` on each page records which check
+passed.
 
 ## Where the corpus stands
 
 **Accumulated vertical drift, worst displacement reached on each page** (the 12
 pages that reach anything; the other 36 measurable pages are under 0.08 bp):
 
-| fixture | page | worst `dy` | recovered by the page foot? |
-|---|---|---|---|
-| cv | 1 | **29.888 bp** | no — the page ends 29.888 bp low |
-| twelvept-plain | 2 | 18.850 bp | yes — **and it is an artefact, not a defect**: see below |
-| math-sheet | 2 | 5.554 bp | at the folio only |
-| twelvept-plain | 3 | 5.019 bp | at the folio only |
-| math-sheet | 1 | 2.552 bp | at the folio only |
-| hyperref-toc | 4 | 1.155 bp | at the folio only |
-| lecture-notes | 1 | 1.077 bp | at the folio only |
-| siunitx-tables | 1 | 0.413 bp | at the folio only |
-| ps-calculus | 2 | 0.158 bp | at the folio only |
-| ps-calculus | 1 | 0.151 bp | at the folio only |
-| thesis-chapter | 2 | 0.085 bp | at the folio only |
-| enumitem-worksheet | 1 | 0.080 bp | at the folio only |
+| fixture | page | worst `dy` | pdfTeX's glue set | recovered by the page foot? |
+|---|---|---|---|---|
+| cv | 1 | **29.888 bp** | 0 (fil) | no — the page ends 29.888 bp low |
+| twelvept-plain | 2 | 18.850 bp | 0 (fil) | yes — **and it is an artefact, not a defect**: see below |
+| math-sheet | 2 | 5.554 bp | 0 (fil) | at the folio only |
+| twelvept-plain | 3 | 5.019 bp | **− 0.53453** | at the folio only |
+| math-sheet | 1 | 2.552 bp | **− 0.74042** | at the folio only |
+| hyperref-toc | 4 | 1.155 bp | 0 (fil) | at the folio only |
+| lecture-notes | 1 | 1.077 bp | **− 0.30122** | at the folio only |
+| siunitx-tables | 1 | 0.413 bp | 0 (fil) | at the folio only |
+| ps-calculus | 2 | 0.158 bp | 0 (fil) | at the folio only |
+| ps-calculus | 1 | 0.151 bp | **− 0.02837** | at the folio only |
+| thesis-chapter | 2 | 0.085 bp | 0 (fil) | at the folio only |
+| enumitem-worksheet | 1 | 0.080 bp | **− 0.20364** | at the folio only |
+
+The displacement on the four **bold** pages is real — those baselines are where
+the table says — but on those pages it is *not* localised to the construct the
+step sits at. The three largest numbers in this table are all on unshrunk pages,
+so `cv` p1, `twelvept-plain` p2 and `math-sheet` p2 are unaffected.
 
 "At the folio only" means the page number is placed correctly by the page
 builder while the text block above it has drifted — so the drift is real body
@@ -139,25 +163,156 @@ for that display is **−0.066 bp** (F2).
   below is a *box height*, an *environment boundary* or a *macro expansion*
   defect — not a wrong skip.
 
-## Ranked findings
+## Why a step on a shrunk page proves nothing about its position
 
-`lines` = reference baselines displaced, summed over every cumulative
-occurrence. `fx` = fixtures out of 22 that show it.
+TeX fits a page by **setting its vertical glue**: every stretchable or shrinkable
+skip on the page is scaled by one page-global ratio, which `\tracingoutput`
+prints as `glue set`. A baseline on such a page therefore sits at
 
-| # | finding | size | local / cumulative | fx | lines | > 0.5 bp gate | status |
+```
+natural position  -  ratio x (shrinkability accumulated above it)
+```
+
+If the two producers' *natural* page heights differ at all — for any reason,
+anywhere on the page, **including below the line being looked at** — their ratios
+differ and every baseline separates by an amount proportional to the shrinkable
+glue above it. Shrinkable glue is `\abovedisplayskip`, `\topsep`, `\itemsep`,
+`\parskip` and the `\@startsection` skips: exactly the constructs `cumulative.py`
+names its causes after. So a shrunk page manufactures a step at every list, every
+display and every heading, each sized by that construct's own shrink component
+and none of them caused by it.
+
+**This is how 90 lines got double-counted.** #755 measured `\maketitle` exact to
+0.0009 bp, found both F3 pages shrunk (`- 0.74042`, `- 0.30122`), and collapsed
+the steps to +0.0037 and +0.0041 bp by truncating each page so it no longer
+overflowed. `cumulative.py` now measures the glue set of every page and flags
+every step on a finitely-set one as **cause not localised**.
+
+### The corpus's ten set-glue pages
+
+Read from pdfTeX's own `\tracingoutput` on a re-run of each fixture that is first
+verified to be the pinned reference's typesetting (8 of 22 re-runs are
+byte-identical to the pinned PDF; the other 14 were pinned under TeX Live 2025
+and differ in bytes with **every baseline within 0.001 bp**).
+
+| fixture | page | glue set | ranked steps on it | lines they carried |
+|---|---|---|---|---|
+| math-sheet | 1 | **− 0.74042** | 11 | 238 |
+| twelvept-plain | 3 | **− 0.53453** | 13 | 294 |
+| lecture-notes | 1 | **− 0.30122** | 8 | 113 |
+| ps-calculus | 1 | **− 0.02837** | 2 | 59 |
+| listings-manual | 1 | − 0.65112 | 0 (page reflowed) | 0 |
+| listings-manual | 2 | − 0.37480 | 0 (page reflowed) | 0 |
+| lmodern-report | 1 | − 0.26439 | 0 | 0 |
+| enumitem-worksheet | 1 | − 0.20364 | 1, local | 0 |
+| enumitem-worksheet | 2 | − 0.16081 | 0 | 0 |
+| thesis-chapter | 3 | − 0.07123 | 0 | 0 |
+
+Every other compared page has a **fil**-order set or none: a short page whose
+`\vfil` absorbs the slack leaves every finite glue at its natural size and
+displaces nothing, so it is not flagged. That is why `cv` page 1 — the corpus's
+largest cumulative defect — is untouched by this correction. **All 20 probes are
+unshrunk too**, so every probe number in this document stands.
+
+### One ratio explains a whole page
+
+Not asserted — fitted. For each shrunk page, take each step and divide it by the
+shrink component of the glue standing at its boundary, read from that page's own
+`\showboxbreadth=500` dump. If the mechanism is right, every step returns the
+same ratio difference `Δr`.
+
+**`math-sheet` page 1** (`\abovedisplayskip`/`\belowdisplayskip` = `11.0 plus 3.0
+minus 6.0`, the `\@startsection` skip `16.49693 plus 4.71341 minus 0.94266`,
+`\@topsepadd` `12.0 plus 4.0 minus 6.0`):
+
+| step, as labelled | bp | shrink at that boundary | implied `Δr` |
+|---|---|---|---|
+| `before \begin{document}` (F3) | −0.5133 | 6.9167 bp (`\@topsepadd` + section) | 0.0742 |
+| `before \begin{align}` (F2) | −0.4437 | 5.9776 bp | 0.0742 |
+| `after \end{align*}` (F2) | −0.4465 | 5.9776 bp | 0.0747 |
+| `\section` x3 (F11) | −0.0666 / −0.0667 / −0.0661 | 0.9391 bp | 0.0709 / 0.0710 / 0.0704 |
+
+#755 derived the implied candidate ratio 0.81514 against pdfTeX's 0.74042 —
+`Δr` = **0.07472** — from the page builder alone. The display boundaries return
+0.0742–0.0747 independently.
+
+**`twelvept-plain` page 3** (`\abovedisplayskip` `12.0 plus 3.0 minus 7.0`,
+`\topsep`+`\partopsep` `13.0 plus 6.0 minus 8.0`, `\itemsep`+`\parsep` 2 pt):
+
+| step, as labelled | bp | shrink | implied `Δr` |
+|---|---|---|---|
+| `line-break-within-paragraph` x2, `display-math boundary` (F2) | −0.8575 / −0.8577 / −0.8586 | 6.9738 bp | 0.1230 / 0.1230 / 0.1231 |
+| `before \begin{itemize}`, `after \end{enumerate}` (F4) | −0.9790 / −0.9767 | 7.9701 bp | 0.1228 / 0.1226 |
+| `\item` x3, `row pitch inside {enumerate}` (F4) | −0.2444 / −0.2454 / −0.2446 / −0.2454 | 1.9925 bp | 0.1227 / 0.1232 / 0.1228 / 0.1232 |
+| `paragraph-break` (F11) | −0.1189 | 0.9963 bp (`\parskip`) | 0.1193 |
+| **`\end{itemize}` -> `\begin{enumerate}` (F4)** | **+6.7324** | would need **54.8 bp**, and the sign is wrong | **not the artefact** |
+
+Nine steps, three different constructs, `Δr` = **0.1229 ± 0.0003**.
+
+**`lecture-notes` page 1** (amsthm `\topsep` `9.0 plus 3.0 minus 5.0`,
+`\abovedisplayskip` `11.0 plus 3.0 minus 6.0`):
+
+| step, as labelled | bp | shrink | implied `Δr` |
+|---|---|---|---|
+| `after \end{lemma}` x2, `\end{definition}`, `\end{example}` (F5) | +0.1239 x4 | 4.9813 bp | 0.02487 |
+| `row pitch inside {theorem}`, `after \end{theorem}` (F5) | +0.1487 / +0.1481 | 5.9776 bp | 0.02488 / 0.02478 |
+| `before \begin{document}` (F3) | +0.1755 | ~7.06 bp | 0.02485 |
+| **`after \end{proof}` (F5)** | **−1.0761** | would need **43 bp**, and the sign is wrong | **not the artefact** |
+
+`Δr` = **0.02485 ± 0.00005**. #755's independently implied ratio was 0.27638
+against 0.30122 — `Δr` = **0.02484**. Four significant figures, from two
+unrelated derivations.
+
+`ps-calculus` page 1's two steps are +0.1344 and −0.1587, **opposite signs**, so
+at most one of them can be this page's artefact and the ratio cannot be fitted.
+Both stay flagged; neither is resolved.
+
+## Ranked findings — re-attributed
+
+`lines` = reference baselines displaced by steps whose cause **is** localised.
+`double-counted` = baselines displaced on a set-glue page, which belong to
+whatever made that page's natural height differ, not to the construct named.
+`fx` = fixtures out of 22 that show it.
+
+Two rows here are more generous than the tool. `cumulative.md`'s machine count
+is **327** attributable lines: it flags *every* step on a set-glue page, with no
+exception. This table restores 21 of them — F4's +6.732 bp (19 lines) and F5's
+−1.076 bp (2) — because both have the wrong sign for their page's artefact and
+are an order of magnitude larger than any shrink available on it, so the flag is
+conservative there and the evidence is not. **351 attributable, 680 withdrawn.**
+Nothing else is restored by hand.
+
+| # | finding | size | fx | lines | double-counted | > 0.5 bp gate | status |
 |---|---|---|---|---|---|---|---|
-| F1 | `\\[<len>]` inside a `\newcommand` body drops its skip | **6.00 pt** (5.978 bp) each, 5x on one page | cumulative | 1 | 83 | yes (12x) | **already fixed; behind `linebreak-skip`, invisible until the re-pin (#711)** |
-| F2 | display-math **box height** whenever the display holds a `\frac`, `\sqrt` or an operator with limits | 0.05 – 0.88 bp per display | cumulative | 5 | 374 | 1 of 15 | open, unfiled |
-| F4 | list boundaries: `\end{itemize}` -> `\begin{enumerate}`, entering/leaving a list, `\item` -> `\item` | +6.73 / −0.98 / +1.16 / −0.245 bp | cumulative | 2 | 140 | 4 of 8 | **#706 + open PR stack #712 -> #722 -> #728 -> #738 -> #741** |
-| F11 | section-heading skip (`\section*` at 11 pt, `\section` at 12 pt) | −0.067 bp x3, −0.119 bp | cumulative | 2 | 116 | no (under both gates) | open, unfiled |
-| F6 | two matrices in one display fall out of register | ±2.778 bp, 4x (−5.55 bp net) | cumulative | 1 | 102 | yes (5x) | open, unfiled |
-| F3 | `\maketitle` title-block height | −0.513 bp / +0.176 bp | cumulative | 2 | 90 | 1 of 2 | open, unfiled |
-| F5 | amsthm environment closing skip (`\end{definition}`, `\end{example}`, `\end{lemma}`, `\end{theorem}`, `\end{proof}`) | +0.124 / +0.148 / **−1.076** bp | cumulative | 1 | 86 | `\end{proof}` only | `\end{proof}` plausibly #722; the 0.124 bp ones unfiled |
-| F12 | float and `tabular` boundaries | −0.056 / −0.086 / −0.069 bp | cumulative | 3 | 20 | no (over the rule gate) | open, unfiled |
-| ~~F7~~ | ~~`\bigl(` / `\Bigl[` opening delimiter beside other math~~ | **0 bp — withdrawn** (was "exactly −5.000") | — | 0 | 0 words | no | **not a defect: an oracle artefact.** Fixed in `rank.py` (#752) and `cumulative.py` (this PR) |
+| F6 | two matrices in one display fall out of register | ±2.778 bp, 4x (−5.55 bp net) | 1 | **102** | 0 | yes (5x) | open, unfiled — **unaffected**, `math-sheet` p2 is unshrunk |
+| F2 | display-math **box height** whenever the display holds a `\frac`, `\sqrt` or an operator with limits | 0.05 – 0.88 bp per display | 3 of 5 | **101** | 273 | 1 of 15 | **#754** — survives on 6 unshrunk probes and 4 unshrunk pages; corpus line count was inflated 3.7x |
+| F1 | `\\[<len>]` inside a `\newcommand` body drops its skip | **6.00 pt** (5.978 bp) each, 5x on one page | 1 | **83** | 0 | yes (12x) | **already fixed; behind `linebreak-skip`, invisible until the re-pin (#711)** — unaffected |
+| F4 | `\end{itemize}` -> `\begin{enumerate}` shares one `\addvspace`; entering a list | +6.73 bp, +1.16 bp | 2 | **27** | 113 | 2 of 2 | **#706 + open PR stack #712 -> #722 -> #728 -> #738 -> #741** — the two big steps survive; see below |
+| F12 | float and `tabular` boundaries | −0.056 / −0.086 / −0.069 bp | 3 | **20** | 0 | no (over the rule gate) | open, unfiled — unaffected |
+| — | page origin handed over by the previous page (`lab-report` p2; `conf-paper` p4's is counted in F12) | −0.063 bp | 1 | **13** | 0 | no | open, unfiled |
+| F5 | `\end{proof}` closing skip | **−1.076 bp** | 1 | **2** | 84 | yes | plausibly #722. **The four `\end{definition}`/`\end{example}`/`\end{lemma}` +0.1239 bp steps and the two `theorem` +0.148 bp steps are withdrawn** |
+| ~~F3~~ | ~~`\maketitle` title-block height~~ | ~~−0.513 / +0.176 bp~~ | 0 | **0** | 90 | — | **WITHDRAWN (#755).** `\maketitle` is exact to 0.0009 bp; both steps are `Δr` x the shrink above the first body line |
+| ~~F11~~ | ~~section-heading skip (`\section*` at 11 pt, `\section` at 12 pt)~~ | ~~−0.067 x3, −0.119 bp~~ | 0 | **0** | 116 | no | **WITHDRAWN (this correction).** All four steps are `Δr` x `\@startsection`'s or `\parskip`'s own shrink, on two shrunk pages, with no unshrunk witness and no probe |
+| ~~F7~~ | ~~`\bigl(` / `\Bigl[` opening delimiter beside other math~~ | ~~"exactly −5.000"~~ | 0 | **0** | — | no | **WITHDRAWN (#752/#753).** Not a defect: the oracle measured two word origins the producers segment differently |
+
+The horizontal and structural findings are unchanged: a page's glue set is a
+**vertical** quantity, so it cannot move a word's `x` or change where a line
+breaks. F8, F9 and F10 stand exactly as measured.
+
+| # | finding | size | local / structural | fx | words / pages | > 0.5 bp gate | status |
+|---|---|---|---|---|---|---|---|
 | F8 | interword glue distribution inside a justified line | ~0.20 bp per space, ±1.1 to ±2.0 bp by line end | local, grows *along* the line | 12 | 164 words | yes | partly #710 (font metrics) |
 | F9 | pages where the two sides break lines differently | 1 to 52 reflowed words | structural | 9 | 11 pages | n/a | mixed; 2 of the 9 are the known `ec_metrics_unavailable` pair |
 | F10 | math Ord kerns (TFM lig/kern) and the `\normalfont` heading space | −0.911 bp / +0.604 bp | local (horizontal) | 2 | 5 words | yes | **already fixed; behind `math-font-kerns`, invisible until the re-pin (#711)** |
+
+### What the re-attribution costs the totals
+
+1031 displaced baselines were ranked; **351 survive as attributable and 680 are
+withdrawn** (the tool's own conservative count is 327/704; see the note above the
+ranked table). Three of the original twelve findings are now withdrawn entirely
+(F7 as an instrument artefact, F3 and F11 as double-counts) and a fourth (F5)
+keeps one of its seven witnesses. The two largest surviving vertical findings,
+**F6 and F1, are untouched** — both sit on pages pdfTeX did not shrink.
 
 ### F1 — `\\[<len>]` inside a `\newcommand` body drops its skip
 
@@ -201,6 +356,16 @@ re-pin is worth.
 
 ### F2 — display-math box height
 
+> **Re-attributed.** The finding stands; the corpus line count does not. All
+> **eight** probes below are on unshrunk pages, so the probe column is the
+> measurement to trust. Of F2's 374 corpus lines, **273 sit on set-glue pages**
+> (`twelvept-plain` p3 119, `math-sheet` p1 95, `ps-calculus` p1 59) and are
+> withdrawn — on those pages the "per display" steps are `Δr` x the display
+> skip's own 6 or 7 pt shrink, to three decimal places. **101 lines survive**
+> (`ps-calculus` p2 38 and p3 28, `twelvept-plain` p2 30, `natbib-review` p1 5).
+> The lane behind **#754 is not chasing a double-count** — the probes are
+> independent evidence — but the "374 lines, worst in the corpus" framing was.
+
 The display *skips* are exact (`p5-12pt-display` and `p8-align` both 0.000 bp).
 What is not exact is how tall the display box is, and the error scales with the
 construct inside it:
@@ -234,27 +399,58 @@ depth of `Fraction`, `Radical`, and `Operator`-with-limits), then
 
 ### F4 — list boundaries (covered by open work)
 
-| boundary | step | fixture | lines below |
-|---|---|---|---|
-| `\end{itemize}` -> `\begin{enumerate}` | **+6.732 bp** | twelvept-plain p3 | 19 |
-| paragraph -> `\begin{itemize}` | **+1.155 bp** | hyperref-toc p4 | 8 |
-| paragraph -> `\begin{itemize}` | **−0.979 bp** | twelvept-plain p3 | 24 |
-| `\end{enumerate}` -> paragraph | **−0.977 bp** | twelvept-plain p3 | 12 |
-| `\item` -> `\item` | −0.245 bp x4 | twelvept-plain p3 | 23 + 21 + 17 + 16 |
+> **Re-attributed, and the PR stack's lane should read this row.** Only two of
+> the five boundaries survive. `twelvept-plain` page 3 is shrunk by `- 0.53453`,
+> and every *negative* step on it is `Δr` = 0.1229 x that boundary's own shrink,
+> to within 0.3%. The **+6.732 bp** step is not: it has the wrong sign for the
+> page's artefact and would need 54.8 bp of shrinkable glue where the largest on
+> the page is 7.97 bp. So the #706 shape is real and the stack is right to chase
+> it — but **the −0.979 / −0.977 entry/exit steps and all four `\item` -> `\item`
+> −0.245 bp steps are not defects at all**, and 113 of F4's 140 lines are
+> withdrawn. Do not use `\itemsep` as evidence: `−0.245 bp = 0.1229 x
+> (\itemsep + \parsep)`'s 2 pt.
+
+| boundary | step | fixture | lines below | verdict |
+|---|---|---|---|---|
+| `\end{itemize}` -> `\begin{enumerate}` | **+6.732 bp** | twelvept-plain p3 | 19 | **real** — wrong sign and 7x too large for the page's glue set |
+| paragraph -> `\begin{itemize}` | **+1.155 bp** | hyperref-toc p4 | 8 | **real** — the page is unshrunk |
+| paragraph -> `\begin{itemize}` | −0.979 bp | twelvept-plain p3 | 24 | **withdrawn** — `Δr` x 7.970 bp (`\topsep`+`\partopsep`) |
+| `\end{enumerate}` -> paragraph | −0.977 bp | twelvept-plain p3 | 12 | **withdrawn** — same glue |
+| `\item` -> `\item` | −0.245 bp x4 | twelvept-plain p3 | 23 + 21 + 17 + 16 | **withdrawn** — `Δr` x 1.993 bp (`\itemsep`+`\parsep`) |
 
 The first four are the #706 shape (adjacent list environments sharing one
 `\addvspace`) and belong to the open PR stack #712 -> #722 -> #728 -> #738 ->
 #741, **none of which is on `main` yet** — this sweep measures `main`, so they
 are expected to still be here. Re-measure this table once that stack merges.
-The `\item` -> `\item` −0.245 bp is `\itemsep`, not a boundary, and is not
-obviously inside that stack's scope.
+~~The `\item` -> `\item` −0.245 bp is `\itemsep`, not a boundary, and is not
+obviously inside that stack's scope.~~ It is not a defect; see the box above.
 
-### F11 — section-heading skip
+### ~~F11~~ — WITHDRAWN: the section-heading skip was the page's shrink ratio
+
+**This finding does not exist.** Its original text is kept below the line.
 
 `math-sheet` (`\section*` at 11 pt): −0.0666, −0.0667, −0.0661 bp, carrying 43,
 22 and 15 lines. `twelvept-plain` (`\section` at 12 pt): −0.1189 bp over 36
-lines. Under the 0.5 bp glyph gate; the 12 pt one is over the 0.1 bp rule gate.
-Small, but it is on the commonest construct in the corpus.
+lines. **Both fixtures' pages are shrunk** (`- 0.74042`, `- 0.53453`), and the
+four steps are that page's ratio difference times the shrink component of the
+skip standing at the boundary — `\@startsection`'s `\@minus.2ex` = 0.94266 pt on
+`math-sheet`, `\parskip`'s 1 pt on `twelvept-plain`:
+
+| fixture | step | boundary shrink | implied `Δr` | page's `Δr` from its *other* boundaries |
+|---|---|---|---|---|
+| math-sheet | −0.0666 / −0.0667 / −0.0661 | 0.9391 bp | 0.0709 / 0.0710 / 0.0704 | 0.0742 – 0.0747 |
+| twelvept-plain | −0.1189 | 0.9963 bp | 0.1193 | 0.1226 – 0.1232 |
+
+F11 had **no unshrunk witness and no probe.** Its 116 lines belong to whatever
+made those two pages' natural heights differ — on `math-sheet` that is F2 (the
+only step on the page the ratio does not explain), on `twelvept-plain` it is F4's
++6.732 bp and F2. The `\section` numbers are consistent with the page ratio to
+within 5%, not to within 0.3% as the same-page display and list boundaries are;
+that residue is the honest limit of this decomposition and is *not* an argument
+for a defect — it is smaller than the withdrawn step itself. **Re-measure
+`\section` on a probe before filing anything.** The probe set does not contain
+one; `p5`, `p8`, `q1`, `p2`, `t1`, `s2` and `p3` all measure 0.000 bp for the
+other vertical skips.
 
 ### F6 — two matrices in one display
 
@@ -269,29 +465,49 @@ reference PDF gives cmex the PUA codepoint `U+F8EE` where the candidate emits
 bracket position. The bracket pieces themselves sit 16.4 bp apart on the two
 sides and word alignment cannot measure them at all.
 
-### F3 — `\maketitle` title-block height
+### ~~F3~~ — WITHDRAWN by #755: `\maketitle` is exact
 
-`math-sheet` (`\title{…}\author{}\date{}`, `\maketitle`, `\thispagestyle{empty}`):
-the first body line is **−0.513 bp** and the whole 63-line page carries it.
-`lecture-notes` (`\maketitle` + `\tableofcontents`): **+0.176 bp** over 27
-lines. Opposite signs, so it is not one constant.
+**This finding does not exist.** `\maketitle`'s block is pdfLaTeX's to within
+0.0009 bp at 10, 11 and 12 pt, with and without an author and a date
+(`crates/render-pipeline/tests/maketitle_block_height.rs`,
+`docs/evidence/maketitle-block-height-2026-09-16/`). Its original text:
 
-### F5 — amsthm environment closing skip
+> `math-sheet` (`\title{…}\author{}\date{}`, `\maketitle`,
+> `\thispagestyle{empty}`): the first body line is **−0.513 bp** and the whole
+> 63-line page carries it. `lecture-notes` (`\maketitle` + `\tableofcontents`):
+> **+0.176 bp** over 27 lines. Opposite signs, so it is not one constant.
 
-`lecture-notes`, seven cumulative steps: `\end{definition}` +0.1239 (20 lines),
+The opposite signs were the tell, and this correction now places F3 in a family:
+it is the *first* step on each of two shrunk pages, so it is `Δr` x the whole
+shrinkability standing above the first body line — 0.0742 x 6.92 bp and 0.02485
+x ~7.06 bp. Every other step on both pages is the same `Δr` x its own boundary.
+
+### F5 — `\end{proof}` closing skip (six of its seven steps withdrawn)
+
+> **Re-attributed.** `lecture-notes` page 1 is shrunk by `- 0.30122`, and six of
+> F5's seven steps are `Δr` = 0.02485 x the amsthm `\topsep`'s 5 pt or the
+> display skip's 6 pt shrink — 0.02478 to 0.02488, a 0.4% spread. `\end{proof}`
+> **−1.0761 bp** is not: wrong sign for the page's artefact, and it would need
+> 43 bp of shrinkable glue where the largest on the page is 5.98 bp. So
+> `\end{proof}` is the finding and the other six are its shadow — which also
+> sharpens #755, whose text attributed the page's height difference to "the
+> amsthm closing skips" in general: it is **`\end{proof}` specifically**.
+
+`lecture-notes`, seven cumulative steps: ~~`\end{definition}` +0.1239 (20 lines),
 `\end{example}` +0.1239 (18), `\end{lemma}` +0.1239 (17 and 14), inside
-`theorem` +0.1487 (8), `\end{theorem}` +0.1481 (7), `\end{proof}` **−1.0761**
-(2). 0.1239 bp is over the 0.1 bp rule gate and under the 0.5 bp glyph gate;
-`\end{proof}` is over both. `proof` is a `\trivlist`, so it is plausibly inside
-PR #722's scope; the four theorem-like environments are a separate, smaller,
-unfiled constant.
+`theorem` +0.1487 (8), `\end{theorem}` +0.1481 (7)~~, `\end{proof}` **−1.0761**
+(2 lines). `\end{proof}` is over both gates. `proof` is a `\trivlist`, so it is
+plausibly inside PR #722's scope; **the four theorem-like environments are no
+longer a finding.**
 
 ### F12 — float and `tabular` boundaries
 
 `plain-article` p2 `\end{tabular}` −0.0560 bp (8 lines), `thesis-chapter` p2
 `\begin{figure}` −0.0861 bp (9 lines), `conf-paper` p4 page origin −0.0690 bp
 (3 lines). All over the 0.1 bp rule gate only marginally; listed so the next
-sweep can tell whether they move.
+sweep can tell whether they move. **All three pages are unshrunk** —
+`thesis-chapter` p3 is the shrunk one and carries no ranked step — so F12 is
+untouched by this correction.
 
 ### ~~F7~~ — WITHDRAWN: `\bigl(` was never misplaced; the oracle measured the wrong point
 
@@ -457,6 +673,41 @@ payload — and F1 is the largest cumulative defect in the corpus.
 * **`\vdots`/`\ddots` (#717) and `\twocolumn` (#743/#746).** No fixture in this
   corpus exercises them at a measurable boundary, so this sweep neither
   confirms nor contradicts those fixes.
+* **The candidate's own glue set.** The engine does not expose it.
+  `crates/render-pipeline/src/pagebuild.rs:1475` (`fn glue_set`) computes exactly
+  the right quantity — "positive stretches by `ratio * stretch`, negative shrinks
+  by `-ratio * shrink` (capped at the available shrink, TeX §676/§677)" — and the
+  value dies as a local at `pagebuild.rs:657` once each line's baseline is
+  placed. `BuiltPage` keeps only `lines` and `overfull_by`, and the v2
+  display-list `Page` (`display.rs:524`) carries `number`, `width`, `height`,
+  `content`, where width and height are the fixed paper size. So a consumer
+  cannot re-derive the ratio, and **this document reports the reference's ratio
+  and the engine's own overflow record rather than inventing a candidate
+  number.** Adding a page-level `glue_set` (and its natural height) to the v2
+  page record would make this whole analysis a comparison instead of an
+  inference; it is the single highest-value instrument change this sweep found.
+* **Whether the candidate shrinks these pages too.** Its one published signal is
+  the `overfull_vbox` diagnostic (`typeset.rs:8412`), and **it fired on none of
+  the ten pages pdfTeX shrinks** — there is no `underfull_vbox` counterpart and
+  no diagnostic at all for a page that merely had to shrink. So the candidate
+  column of the glue-set table in `cumulative.md` is empty on every page, which
+  is a fact about the instrument, not evidence that our pages fit.
+* **How much of a flagged step is real.** A step on a set-glue page is
+  `δ - Δr x (shrinkability above it)` and the two terms cannot be separated from
+  one page's profile. Where a step's size matches `Δr x (its own boundary's
+  shrink)` to a fraction of a percent *and* matches the page's sign, it is
+  accounted for; where it does not (F4's +6.732, F5's −1.076), a real `δ` is
+  present but its *position* still does not localise it. The only way to recover
+  the rest is #755's: truncate the page so it no longer overflows and re-measure.
+  That was done for two pages, not for `twelvept-plain` p3 or `ps-calculus` p1.
+* **`ps-calculus` page 1.** Its two steps are +0.1344 and −0.1587 — opposite
+  signs — so no single `Δr` fits and the page is unresolved. Both stay flagged.
+* **Whether the pinned references' own pdfTeX shrinks identically.** Eight of the
+  22 fixtures re-run byte-identical; the other fourteen were pinned under TeX
+  Live 2025 and re-run here under 2026, differing in bytes but with every
+  extracted baseline within **0.001 bp**. A vertical measurement on an identical
+  baseline set is the same measurement, but the glue set is read from the re-run,
+  not from the pinned file, and that is the assumption.
 
 ### One probe-only divergence, recorded here rather than filed
 
