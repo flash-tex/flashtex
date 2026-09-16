@@ -967,6 +967,67 @@ pub(crate) fn style_declaration(name: &str) -> bool {
     )
 }
 
+/// The plain text of an `\item[<label>]` (GH-676): the label's words, with a
+/// space wherever the source had one, and any nested `$…$` flattened to its
+/// characters.
+///
+/// `ItemLabel::text` is what `\ref` to the item resolves to and what a
+/// consumer that has not yet learned to set `content` draws, so a formula has
+/// to contribute its symbols — `\item[$\alpha$]` used to yield the empty
+/// string, which is why the label vanished from the page entirely.
+fn label_plain_text(content: &[Inline]) -> String {
+    let mut text = String::new();
+    for inline in content {
+        let (space_before, math) = match inline {
+            Inline::Text { space_before, .. } => (*space_before, None),
+            Inline::Math { list, space_before, .. } => (*space_before, Some(list)),
+            _ => continue,
+        };
+        if space_before && !text.is_empty() {
+            text.push(' ');
+        }
+        match (inline, math) {
+            (Inline::Text { text: word, .. }, _) => text.push_str(word),
+            (_, Some(list)) => math_plain_text(list, &mut text),
+            _ => {}
+        }
+    }
+    text
+}
+
+/// The characters of a math list, for [`label_plain_text`]. Structure is
+/// flattened, not rendered: scripts follow their nucleus and a fraction
+/// becomes `num/den`, which is what a plain-text label can carry.
+fn math_plain_text(list: &MathList, out: &mut String) {
+    use crate::math::Nucleus;
+    for atom in &list.atoms {
+        match &atom.nucleus {
+            Nucleus::Symbol(text) | Nucleus::Text(text) | Nucleus::Bold(text) => {
+                out.push_str(text);
+            }
+            Nucleus::SizedDelimiter { glyph, .. } => out.push_str(glyph),
+            Nucleus::Radical(inner) | Nucleus::Framed { body: inner, .. } => {
+                math_plain_text(inner, out);
+            }
+            Nucleus::Fraction {
+                numerator,
+                denominator,
+            } => {
+                math_plain_text(numerator, out);
+                out.push('/');
+                math_plain_text(denominator, out);
+            }
+            _ => {}
+        }
+        if let Some(subscript) = &atom.subscript {
+            math_plain_text(subscript, out);
+        }
+        if let Some(superscript) = &atom.superscript {
+            math_plain_text(superscript, out);
+        }
+    }
+}
+
 /// The style after applying one style command or declaration to `style`.
 fn apply_style(style: TextStyle, name: &str) -> TextStyle {
     let mut next = style;
@@ -8299,7 +8360,29 @@ impl P<'_> {
         }
     }
 
-    fn inlines_from_tokens(&mut self, mut tokens: Vec<InputToken>, base: TextStyle) -> Vec<Inline> {
+    fn inlines_from_tokens(&mut self, tokens: Vec<InputToken>, base: TextStyle) -> Vec<Inline> {
+        self.inlines_from_tokens_reporting(tokens, base, false)
+    }
+
+    /// The flattened-token text run behind headings, captions, style
+    /// arguments and `\item[<label>]`.
+    ///
+    /// `report_unsupported` is the `\item` label's mode (GH-676): every
+    /// token this pass cannot set becomes a diagnostic instead of vanishing,
+    /// because a label is short enough that a silent drop leaves nothing at
+    /// all on the page (`\item[$\alpha$]` used to produce no label run and no
+    /// diagnostic). Headings and captions keep the older lenient behaviour —
+    /// they carry `\label`, `\protect`, `\footnotemark` and friends that are
+    /// correctly ignored here, and reporting those would flood.
+    ///
+    /// Nested math (`$…$`, `\(…\)`) is read in **both** modes: a math shift
+    /// is unambiguous wherever it appears, and stripping it was never right.
+    fn inlines_from_tokens_reporting(
+        &mut self,
+        mut tokens: Vec<InputToken>,
+        base: TextStyle,
+        report_unsupported: bool,
+    ) -> Vec<Inline> {
         // `\xspace` from a macro body inside a heading, caption or style
         // argument never reaches the main token loop, so its lookahead runs
         // here on the same flattened token list instead.
@@ -8313,6 +8396,10 @@ impl P<'_> {
         }
         self.t = outer_tokens;
         self.i = outer_index;
+        // Held behind an `Rc` so the nested-math arm below can point
+        // `self.t` at this very run and reuse `dollar_math`/`paren_math`
+        // (and through them `math::parse_tokens`) without copying it.
+        let expanded = std::rc::Rc::new(expanded);
 
         let mut content = Vec::new();
         let mut style = base;
@@ -8599,10 +8686,80 @@ impl P<'_> {
                     style,
                     space_before,
                 }),
+                // `$…$` and `\(…\)` are real inline math here, exactly as in
+                // body text: `\item[this is $2x$]`, `\section{A $2x$ B}`.
+                // Before GH-676 the delimiters were dropped and the formula
+                // was set as roman words ("this is2x"), or — when every piece
+                // was a math-only command, `\item[$\alpha$]` — nothing at all
+                // reached the page and no diagnostic said so.
+                //
+                // `dollar_math`/`paren_math` read from `self.t`/`self.i`, so
+                // point those at this run for the formula and restore them
+                // after. `self.style` carries the colour `finish_math` stamps
+                // on `Inline::Math`, so it follows the run's current style.
+                TokenKind::MathShift | TokenKind::InlineMathOpen => {
+                    let outer_tokens =
+                        std::mem::replace(&mut self.t, std::rc::Rc::clone(&expanded));
+                    let outer_index = std::mem::replace(&mut self.i, index);
+                    let outer_style = std::mem::replace(&mut self.style, style);
+                    if matches!(input.token.kind, TokenKind::MathShift) {
+                        self.dollar_math(input.token.span, &mut content);
+                    } else {
+                        self.paren_math(input.token.span, &mut content);
+                    }
+                    skip_until = self.i;
+                    self.t = outer_tokens;
+                    self.i = outer_index;
+                    self.style = outer_style;
+                }
+                // A stray closer or script marker: the same two diagnostics
+                // the main token loop raises for them in body text.
+                TokenKind::InlineMathClose if report_unsupported => {
+                    self.diags.push(Diagnostic::error(
+                        "stray \\) has no matching \\(",
+                        Some(input.token.span),
+                        Some("ignored the stray inline-math delimiter".into()),
+                    ));
+                }
+                TokenKind::Superscript | TokenKind::Subscript if report_unsupported => {
+                    self.diags.push(
+                        Diagnostic::error(
+                            "math script marker used outside math mode",
+                            Some(input.token.span),
+                            Some("ignored the script marker and continued".into()),
+                        )
+                        .with_help("wrap the marked atom in math mode: \\(x^{...}\\)"),
+                    );
+                }
+                // Never drop a label's content in silence. The command is
+                // not set — pdfLaTeX would not set it either — but the
+                // author is told, at the command's own span.
+                TokenKind::Command(name) if report_unsupported => {
+                    self.unsupported_in_text_run(name, input.token.span);
+                }
                 _ => {}
             }
         }
         content
+    }
+
+    /// A command that a flattened text run (an `\item` label) cannot set.
+    /// `unsupported` cannot be reused: it consumes a following group from
+    /// `self.t`, and this pass has already flattened its tokens.
+    fn unsupported_in_text_run(&mut self, name: &str, span: Span) {
+        if !self.first_command_report(span, name, false) {
+            return;
+        }
+        self.diags.push(
+            Diagnostic::command_error(
+                name,
+                format!("\\{name} is not supported by this compiler version"),
+                Some(span),
+                Some("skipped the command; the rest of the label was typeset".into()),
+            )
+            .with_optional_help(vocabulary::command_help(name))
+            .with_label(span, "this command", true),
+        );
     }
 
     /// A kernel text symbol (`\AA`, `\ss`, `\S`, ...) under the current font
@@ -9419,21 +9576,11 @@ impl P<'_> {
             } else {
                 TextStyle::default()
             };
-            let content = self.inlines_from_tokens(tokens, base);
-            let mut text = String::new();
-            for inline in &content {
-                if let Inline::Text {
-                    text: word,
-                    space_before,
-                    ..
-                } = inline
-                {
-                    if *space_before && !text.is_empty() {
-                        text.push(' ');
-                    }
-                    text.push_str(word);
-                }
-            }
+            // The label's mode: nothing in `[...]` is dropped in silence
+            // (GH-676). A label is a handful of tokens, so the flood the
+            // lenient heading/caption mode avoids cannot happen here.
+            let content = self.inlines_from_tokens_reporting(tokens, base, true);
+            let text = label_plain_text(&content);
             ItemLabel::Explicit {
                 content,
                 text,
