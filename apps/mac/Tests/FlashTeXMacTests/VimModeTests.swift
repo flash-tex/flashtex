@@ -865,4 +865,83 @@ final class VimModeTests: XCTestCase {
         type(".")
         XCTAssertEqual(text, "l5\nl6")
     }
+
+    // MARK: registers — black hole, numbered chain, append
+
+    /// `"_` discards the text entirely: unlike every other register, it
+    /// never touches the unnamed register either, so a prior yank still
+    /// pastes back afterwards.
+    func testBlackHoleRegisterNeverTouchesTheUnnamedRegister() {
+        load("one\ntwo\nthree")
+        type("yy") // unnamed + "0" = "one\n"
+        type("j\"_dd") // discard "two" into the void
+        XCTAssertEqual(text, "one\nthree", "\"_dd still deletes")
+        type("p")
+        XCTAssertEqual(text, "one\nthree\none", "unnamed register still holds the yank, not the black-holed delete")
+    }
+
+    /// `"_` also refuses to *paste* anything (there is nothing in it).
+    func testBlackHoleRegisterPastesNothing() {
+        load("abc")
+        type("\"_p")
+        XCTAssertEqual(text, "abc", "black hole has nothing to paste")
+    }
+
+    /// A yank without an explicit register also fills `"0`, which a
+    /// following delete does not clobber (deletes never touch `"0`).
+    func testYankRegisterZeroSurvivesAnInterveningDelete() {
+        load("one\ntwo")
+        type("yy") // "0 = "one\n"
+        type("jdd") // deletes "two"; "0 must still be "one\n"
+        type("\"0p")
+        XCTAssertEqual(text, "one\none", "\"0p pastes the last yank, unaffected by the delete")
+    }
+
+    /// Whole-line (or multi-line) deletes shift into the numbered registers
+    /// `"1`…`"9`, oldest first, most recent always in `"1`.
+    func testNumberedRegistersShiftOnLinewiseDeletes() {
+        load("a\nb\nc\nd")
+        type("dd") // "1 = a
+        type("dd") // "1 = b, "2 = a
+        type("dd") // "1 = c, "2 = b, "3 = a
+        XCTAssertEqual(text, "d")
+        type("\"3p")
+        XCTAssertEqual(text, "d\na", "\"3 holds the oldest of the three deletes")
+        type("u\"1p")
+        XCTAssertEqual(text, "d\nc", "\"1 still holds the most recent delete after undoing the \"3 paste")
+    }
+
+    /// A delete that stays within one line (too small for a numbered slot)
+    /// goes to `"-`, and never disturbs `"1`.
+    func testSmallDeleteGoesToTheDashRegister() {
+        load("abc")
+        type("x") // "-" = "a"; "1"/"0" untouched
+        XCTAssertEqual(text, "bc")
+        type("\"-p")
+        XCTAssertEqual(text, "bac")
+    }
+
+    /// `"A` appends to `"a` (with the combined text landing in both slots,
+    /// and readable through either name); `"a` alone overwrites as before.
+    func testUppercaseRegisterAppendsInsteadOfOverwriting() {
+        load("alpha beta")
+        type("\"ayiw") // "a" = "alpha"
+        type("w\"Ayiw") // "A" appends -> "a" = "alphabeta" (word-wise, no separator)
+        load("-")
+        type("\"ap")
+        XCTAssertEqual(text, "-alphabeta", "\"A appended onto \"a instead of replacing it")
+        type("\"Ap")
+        XCTAssertEqual(text, "-alphabetaalphabeta", "\"A also reads the same slot as \"a")
+    }
+
+    /// Appending a linewise yank onto a linewise register joins with a
+    /// newline rather than concatenating mid-line.
+    func testUppercaseRegisterAppendsLinewiseWithANewlineJoin() {
+        load("one\ntwo\nthree")
+        type("\"ayy") // "a" = "one\n"
+        type("j\"Ayy") // append "two\n" -> "a" = "one\ntwo\n"
+        load("x")
+        type("\"ap")
+        XCTAssertEqual(text, "x\none\ntwo", "the appended register pastes as two whole lines")
+    }
 }

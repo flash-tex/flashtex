@@ -403,7 +403,17 @@ final class VimMode {
         tv.breakUndoCoalescing()
     }
 
-    private func store(_ range: NSRange, linewise: Bool) {
+    /// Whether text handed to `store` was yanked (`y`) or removed (`d`/`c`/`x`/…):
+    /// decides which of Vim's unnamed-chain registers it lands in when no
+    /// register was named explicitly.
+    private enum StoreKind { case yank, delete }
+
+    /// `"_` (black hole): explicitly selecting it discards the text
+    /// entirely — not even the unnamed register is touched, exactly like
+    /// Vim's `"_dd`. Every other explicit register still also updates the
+    /// unnamed register, which is what `p` reads by default.
+    private func store(_ range: NSRange, linewise: Bool, kind: StoreKind = .delete) {
+        if selectedRegister == "_" { selectedRegister = nil; return }
         let s = text.substring(with: range)
         let r = Register(text: s, linewise: linewise)
         register = r
@@ -412,11 +422,46 @@ final class VimMode {
                 let pb = NSPasteboard.general
                 pb.clearContents()
                 pb.setString(s, forType: .string)
+            } else if reg.isLetter, reg.isUppercase {
+                // `"A` appends to `"a` (and the appended result becomes
+                // both `"a` and the unnamed register).
+                appendToRegister(Character(reg.lowercased()), text: s, linewise: linewise)
             } else {
                 namedRegisters[reg] = r
             }
+            selectedRegister = nil // `"a` names a register for one command only
+            return
         }
-        selectedRegister = nil // `"a` names a register for one command only
+        // No explicit register: Vim's default chain. A yank also fills `"0`
+        // (untouched by deletes, so it always holds the last yank). A delete
+        // spanning whole line(s) shifts into the numbered registers
+        // (`"1`…`"9`, oldest dropped); a delete within one line — too small
+        // to be worth a numbered slot — goes to `"-` instead.
+        switch kind {
+        case .yank:
+            namedRegisters["0"] = r
+        case .delete:
+            if linewise || s.contains("\n") {
+                for n in stride(from: 9, through: 2, by: -1) {
+                    if let prev = namedRegisters[Character(String(n - 1))] { namedRegisters[Character(String(n))] = prev }
+                }
+                namedRegisters["1"] = r
+            } else {
+                namedRegisters["-"] = r
+            }
+        }
+    }
+
+    private func appendToRegister(_ reg: Character, text: String, linewise: Bool) {
+        let combined: Register
+        if let existing = namedRegisters[reg] {
+            let sep = existing.linewise && !existing.text.hasSuffix("\n") ? "\n" : ""
+            combined = Register(text: existing.text + sep + text, linewise: existing.linewise || linewise)
+        } else {
+            combined = Register(text: text, linewise: linewise)
+        }
+        namedRegisters[reg] = combined
+        register = combined
     }
 
     private func registerForPaste() -> Register? {
@@ -425,7 +470,9 @@ final class VimMode {
             guard let s = NSPasteboard.general.string(forType: .string) else { return nil }
             return Register(text: s, linewise: s.hasSuffix("\n"))
         }
-        return namedRegisters[reg]
+        // `"A` and `"a` are the same slot — uppercase only selects
+        // append-on-write, not a separate register to read from.
+        return namedRegisters[reg.isLetter && reg.isUppercase ? Character(reg.lowercased()) : reg]
     }
 
     // MARK: insert mode
@@ -726,7 +773,7 @@ final class VimMode {
         case .change:
             changeLines(count: count)
         case .yank:
-            store(NSRange(location: start, length: end - start), linewise: true)
+            store(NSRange(location: start, length: end - start), linewise: true, kind: .yank)
             resetPending()
             finishRecording()
         case .indent, .outdent:
@@ -781,7 +828,7 @@ final class VimMode {
             replace(range, with: "", actionName: "Change")
             enterInsert(at: range.location)
         case .yank:
-            store(range, linewise: linewise)
+            store(range, linewise: linewise, kind: .yank)
             setCaret(range.location)
             clampNormalCaret()
         case .indent, .outdent:
@@ -840,7 +887,7 @@ final class VimMode {
         let start = lineStart(caret)
         var end = start
         for _ in 0..<count { end = lineEnd(end); if end < length { end += 1 } }
-        store(NSRange(location: start, length: end - start), linewise: true)
+        store(NSRange(location: start, length: end - start), linewise: true, kind: .yank)
     }
 
     private func openLine(below: Bool) {
