@@ -115,6 +115,10 @@ pub struct TextSink {
     /// The document's body font size in pt (`\f@size`), for size-dependent
     /// kerns such as amsmath's `\ex@`; 0 when unknown.
     pub body_size_pt: f64,
+    /// The *text* font size in force where this formula stands (`\normalsize`
+    /// in the body, smaller in a `\footnotesize` run). `\vdots` and `\ddots`
+    /// are built from `\hbox{.}` of that font, whatever the math style.
+    pub text_size_pt: f64,
     /// Whether `amsfonts` (or `amssymb`, which loads it) is loaded: its
     /// `\widehat`/`\widetilde` switch to msbm's extra-wide accents past 2em.
     pub amsfonts: bool,
@@ -149,13 +153,26 @@ pub struct GridCells {
     pub span: flashtex_compiler::Span,
 }
 
-/// A `\boxed` body converted to a math-layout list. It is always laid out in
-/// display style, as amsmath defines `\boxed{#1}` through `\fbox{...$\displaystyle#1$}`.
+/// What a [`FrameBoxSpec`] builds behind its placeholder.
+#[derive(Debug, Clone)]
+pub(crate) enum BoxSpecKind {
+    /// A `\boxed` body converted to a math-layout list. It is always laid out
+    /// in display style, as amsmath defines `\boxed{#1}` through
+    /// `\fbox{...$\displaystyle#1$}`.
+    Frame(ml::MathList),
+    /// `\vdots` (`diagonal` false) and `\ddots` (true), plain.tex 350-354.
+    /// `size_pt` is the *text* font size in force where they appear: both are
+    /// built over `\hbox{.}` of the current text font and absolute point
+    /// kerns, so neither shrinks in a script style.
+    Dots { diagonal: bool, size_pt: f64 },
+}
+
+/// A pre-typeset box standing behind one placeholder character.
 #[derive(Debug, Clone)]
 pub(crate) struct FrameBoxSpec {
     /// Index of the handle character (as for [`GridCells`]).
     handle: usize,
-    body: ml::MathList,
+    kind: BoxSpecKind,
     tag: ml::SourceTag,
 }
 
@@ -231,7 +248,7 @@ impl TextSink {
         let index = self.texts.len();
         match handle_char(index) {
             Some(handle) => {
-                self.frames.push(FrameBoxSpec { handle: index, body, tag });
+                self.frames.push(FrameBoxSpec { handle: index, kind: BoxSpecKind::Frame(body), tag });
                 self.texts.push(String::new());
                 self.keys.push(None);
                 // A `\boxed` frame is an hbox, not a run of math characters.
@@ -241,6 +258,53 @@ impl TextSink {
             None => {
                 self.refused.push("\\boxed{...}".to_string());
                 ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Empty)
+            }
+        }
+    }
+
+    /// An atom for `\vdots` (`diagonal` false) or `\ddots` (true).
+    ///
+    /// plain.tex 350-354 defines them as box constructions over *text*-font
+    /// periods, not as symbols of a math font:
+    ///
+    /// ```tex
+    /// \def\vdots{\vbox{\baselineskip4\p@ \lineskiplimit\z@
+    ///   \kern6\p@\hbox{.}\hbox{.}\hbox{.}}}
+    /// \def\ddots{\mathinner{\mkern1mu\raise7\p@\vbox{\kern7\p@\hbox{.}}\mkern2mu
+    ///   \raise4\p@\hbox{.}\mkern2mu\raise\p@\vbox{\kern7\p@\hbox{.}}\mkern1mu}}
+    /// ```
+    ///
+    /// Both are `14pt + height(.)` tall with no depth — 15.156 pt for cmr10 at
+    /// 10.95 pt — which is what makes an array row holding one *taller than its
+    /// `\@arstrut`* (9.52 pt at 11 pt). A single `⋮`/`⋱` glyph is not: it fits
+    /// inside the strut, the row keeps the strut pitch, and a `\vcenter`ed
+    /// matrix that holds one ends up half the missing height off the axis
+    /// against every other matrix in the same display (GH-MATRIX-REGISTER:
+    /// 2.778 bp per matrix on `fixtures/real-world/math-sheet` page 2).
+    ///
+    /// A `\vbox` in math mode is an ordinary atom; `\ddots` is wrapped in
+    /// `\mathinner`, so it is an Inner one.
+    pub(crate) fn dots_atom(&mut self, diagonal: bool, tag: ml::SourceTag) -> ml::Atom {
+        let class = if diagonal { ml::AtomClass::Inner } else { ml::AtomClass::Ord };
+        let size_pt = self.text_size_pt;
+        if !(size_pt > 0.0) {
+            // No text size recorded (a sink built by hand in a test): keep the
+            // single-glyph reading rather than shaping a period at 0 pt.
+            return ml::Atom::new(class, ml::Nucleus::Symbol(if diagonal { '\u{22F1}' } else { '\u{22EE}' }));
+        }
+        let index = self.texts.len();
+        match handle_char(index) {
+            Some(handle) => {
+                self.frames.push(FrameBoxSpec { handle: index, kind: BoxSpecKind::Dots { diagonal, size_pt }, tag });
+                self.texts.push(String::new());
+                self.keys.push(None);
+                // A box, not a run of math characters: no italic correction.
+                self.italics.push(false);
+                ml::Atom::new(class, ml::Nucleus::Text(handle.to_string()))
+            }
+            None => {
+                self.refused.push(if diagonal { "\\ddots" } else { "\\vdots" }.to_string());
+                ml::Atom::new(class, ml::Nucleus::Empty)
             }
         }
     }
@@ -528,19 +592,91 @@ impl<'a> TextRunMetrics<'a> {
         dims
     }
 
-    /// Lays out a `\boxed` body in display style and wraps it in the standard
-    /// `\fbox` frame. The result is cached per placeholder and parent size.
+    /// Builds the box behind one placeholder: a `\boxed` body laid out in
+    /// display style inside the standard `\fbox` frame, or a `\vdots`/`\ddots`
+    /// construction. The result is cached per placeholder and parent size.
     fn frame_box(&self, frame: &FrameBoxSpec, ch: char, size: SizeClass) -> (f64, f64, f64) {
         let p = self.inner.params(size);
         if let Some(b) = self.frame_boxes.borrow().iter().find(|b| b.ch == ch && b.size == p.size) {
             return (b.hbox.width, b.hbox.height, b.hbox.depth);
         }
-        let laid = ml::layout_with_report(&frame.body, ml::Style::DISPLAY, self);
-        self.frame_limitations.borrow_mut().extend(laid.limitations);
-        let hbox = framed_math_box(laid.root, frame.tag);
+        let hbox = match &frame.kind {
+            BoxSpecKind::Frame(body) => {
+                let laid = ml::layout_with_report(body, ml::Style::DISPLAY, self);
+                self.frame_limitations.borrow_mut().extend(laid.limitations);
+                framed_math_box(laid.root, frame.tag)
+            }
+            BoxSpecKind::Dots { diagonal, size_pt } => self.dots_hbox(*diagonal, *size_pt, size),
+        };
         let dims = (hbox.width, hbox.height, hbox.depth);
         self.frame_boxes.borrow_mut().push(FrameBox { ch, size: p.size, hbox });
         dims
+    }
+
+    /// The `\hbox{.}` of `\vdots`/`\ddots`: one period of the *text* font at
+    /// `size_pt`, shaped by the same route as a `\text` run so it carries the
+    /// TFM advance and the face the paragraphs use.
+    fn period_box(&self, size_pt: f64) -> Option<ml::MathBox> {
+        let found = self.runs.borrow().iter().position(|r| r.text == "." && r.size == size_pt && r.key.is_none() && !r.corrected);
+        let i = match found {
+            Some(i) => i,
+            None => {
+                let (index, first_slot) = {
+                    let runs = self.runs.borrow();
+                    (runs.len(), runs.last().map_or(0, |r| r.first_slot + r.slots()))
+                };
+                let run = shape_run(self.fonts, self.shaper, self.family, None, false, ".", size_pt, first_slot, &mut self.notices.borrow_mut())?;
+                self.runs.borrow_mut().push(run);
+                index
+            }
+        };
+        Some(self.runs.borrow()[i].hbox.clone())
+    }
+
+    /// plain.tex's `\vdots` and `\ddots` (350-354), built from the text-font
+    /// period. See [`TextSink::dots_atom`] for the definitions and for why
+    /// their height matters.
+    ///
+    /// `\vdots` is a `\vbox` whose `\baselineskip` is 4 pt and whose
+    /// `\lineskiplimit` is 0: with a period of height `h` and no depth the
+    /// interline glue is `4 - h` each time, so the three periods sit on
+    /// baselines 0, 4 and 8 pt above the box's own (the bottom one's), under a
+    /// 6 pt kern. Height `14 + h`, depth 0, width the period's.
+    ///
+    /// `\ddots` is an `\mathinner` hbox of the same period raised 7, 4 and
+    /// 1 pt left to right (so it descends), the outer two inside
+    /// `\vbox{\kern7\p@ \hbox{.}}` so that the first reaches the same
+    /// `14 + h`; the `\mkern`s are 1, 2, 2 and 1 math units of the current
+    /// size.
+    fn dots_hbox(&self, diagonal: bool, size_pt: f64, size: SizeClass) -> ml::MathBox {
+        let Some(dot) = self.period_box(size_pt) else {
+            return ml::MathBox::hlist(Vec::new());
+        };
+        let h = dot.height;
+        if !diagonal {
+            return ml::MathBox::vbox(vec![
+                (0.0, ml::MathBox::kern(6.0)),
+                (0.0, dot.clone()),
+                (0.0, ml::MathBox::kern(4.0 - h)),
+                (0.0, dot.clone()),
+                (0.0, ml::MathBox::kern(4.0 - h)),
+                (0.0, dot),
+            ]);
+        }
+        // `\raise7\p@\vbox{\kern7\p@\hbox{.}}` is a box of height `7 + h`
+        // whose baseline is the period's, raised 7 pt: in an hbox a raise is a
+        // negative `dy`.
+        let stacked = |kern: f64| ml::MathBox::vbox(vec![(0.0, ml::MathBox::kern(kern)), (0.0, dot.clone())]);
+        let mu = self.inner.params(size).quad / 18.0;
+        ml::MathBox::hbox(vec![
+            (0.0, ml::MathBox::kern(mu)),
+            (-7.0, stacked(7.0)),
+            (0.0, ml::MathBox::kern(2.0 * mu)),
+            (-4.0, dot.clone()),
+            (0.0, ml::MathBox::kern(2.0 * mu)),
+            (-1.0, stacked(7.0)),
+            (0.0, ml::MathBox::kern(mu)),
+        ])
     }
 
     /// The runs shaped so far and the notices, in order.

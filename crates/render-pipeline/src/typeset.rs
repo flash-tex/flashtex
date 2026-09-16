@@ -1155,6 +1155,7 @@ impl<'a> Context<'a> {
             sink.text_quad = Some((text_quad, text_quad / fam2_quad));
         }
         sink.body_size_pt = self.style.body_size_pt;
+        sink.text_size_pt = size;
         sink.amsfonts = self.ams_symbol_fonts;
         sink.amsmath = self.amsmath_loaded;
         let texts = self.texts;
@@ -6709,6 +6710,26 @@ pub fn convert_math_classed(
                 } else {
                     vec![ml::Atom::group(ml::MathList::new(parts))]
                 }
+            }
+            // `\vdots` and `\ddots`. The compiler resolves both to a single
+            // math character (`⋮` U+22EE, `⋱` U+22F1), but plain.tex builds
+            // them out of *text*-font periods and absolute point kerns
+            // (`TextSink::dots_atom`), and the difference is a box 14pt + the
+            // period's height tall against a glyph that fits inside an array
+            // strut. That height is what keeps a `\vcenter`ed matrix holding
+            // one on the same axis as its neighbours (GH-MATRIX-REGISTER).
+            N::Symbol(s) if s == "\u{22EE}" || s == "\u{22F1}" => {
+                let tag = {
+                    #[cfg(feature = "math-glyph-spans")]
+                    {
+                        math_tag(a.span)
+                    }
+                    #[cfg(not(feature = "math-glyph-spans"))]
+                    {
+                        ml::SourceTag::NONE
+                    }
+                };
+                vec![sink.dots_atom(s == "\u{22F1}", tag)]
             }
             N::Symbol(s) => {
                 let mut chars = s.chars();
