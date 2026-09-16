@@ -39,9 +39,11 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
 /// (`supported.rs` `EXPANSION_COMMANDS`: `\providecommand`,
 /// `\newenvironment`/`\renewenvironment`, `\newcounter`, `\setcounter`,
 /// `\addtocounter`, `\stepcounter`, `\refstepcounter`, `\value`,
-/// `\newlength`, `\settowidth`, `\AtBeginDocument`, `\makeatother`) are
+/// `\newlength`, `\AtBeginDocument`, `\makeatother`) are
 /// implemented and intentionally absent here — each verified by a real
-/// compile (issue #715). The one exception is `\Alph`, kept below: it is in
+/// compile (issue #715). (`\settowidth` is expansion-executed too but is
+/// deliberately NOT in that set: see the entry below.) The one exception
+/// is `\Alph`, kept below: it is in
 /// no `implemented_commands()` table, so delisting it would make a working
 /// command read as `unknown_command`, and it is `\alph`'s case-only tie that
 /// keeps `\lph` from auto-fixing to the wrong command.
@@ -65,6 +67,17 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "fontfamily", "usefont",
     // Definitions, counters and programming.
     "def", "edef", "gdef", "let",
+    // `\settowidth` executes with observable effect and zero diagnostics,
+    // which is exactly why it must stay listed (issue #448): the expansion
+    // pass measures through `DefaultBoxMeasurer`, a documented stub that
+    // reports zero for everything, and nothing in this compiler calls
+    // `set_box_measurer` to replace it — so the stored length is silently
+    // wrong (`\the` reads back `0.0pt`). Do not delist on "no diagnostic
+    // fires" reasoning without checking the measured value; remove this
+    // together with the `settowidth_*` regression test only once a real
+    // `BoxMeasurer` lands (issue #492). (`\newlength` stays delisted: it
+    // only allocates a register, no measurement involved.)
+    "settowidth",
     "newtheorem",
     "arabic", "roman", "Roman", "alph", "Alph", "the", "makeatletter",
     "newif", "relax", "expandafter", "csname", "endcsname",
@@ -552,6 +565,34 @@ mod tests {
             KNOWN_UNIMPLEMENTED_COMMANDS.contains(&"addvspace"),
             "\\addvspace is still unimplemented and must stay listed"
         );
+    }
+
+    /// `\settowidth` executes with no diagnostic but measures nothing (issue
+    /// #448): the expansion pass calls `DefaultBoxMeasurer`, a documented
+    /// zero-for-everything stub nothing in this compiler replaces, so the
+    /// length reads back `0.0pt`. This pins that known-wrong output together
+    /// with the vocabulary entry above — when a real `BoxMeasurer` lands
+    /// (issue #492) and the value stops being `0.0pt`, delete this entry
+    /// from `KNOWN_UNIMPLEMENTED_COMMANDS` in the same change; never "fix"
+    /// this test by re-suppressing the question.
+    #[test]
+    fn settowidth_still_measures_zero_and_stays_listed() {
+        assert!(
+            KNOWN_UNIMPLEMENTED_COMMANDS.contains(&"settowidth"),
+            "\\settowidth must stay listed while it measures zero (issue #448)"
+        );
+        assert!(is_known_command("settowidth"));
+        let output = crate::incremental::compile_full(
+            r"\newlength{\mylen}\settowidth{\mylen}{Hello}\the\mylen",
+            Default::default(),
+        );
+        let rendered: String = output
+            .pages
+            .iter()
+            .flat_map(|page| &page.items)
+            .map(|item| item.text.as_str())
+            .collect();
+        assert_eq!(rendered, "0.0pt", "known-wrong stub measurement (issue #448)");
     }
 
     /// Same disjointness invariant for environments (issue #715): the known
