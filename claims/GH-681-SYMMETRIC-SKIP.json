@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-muse-lead",
+  "branch": "ci/mac-failure-evidence",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-16T19:35:55Z",
+  "state": "claimed",
+  "task_id": "GH-681-SYMMETRIC-SKIP",
+  "updated_utc": "2026-09-16T19:35:55Z"
+}
