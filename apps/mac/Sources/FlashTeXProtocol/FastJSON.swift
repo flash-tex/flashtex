@@ -346,7 +346,11 @@ public struct FastJSON {
     }
 
     private mutating func parseDiagnosticReplacement() throws -> RuntimeV1.Diagnostic.Replacement {
+        // The compiler nests the edit's range in `source` (the same object as
+        // `labels[].source`); a flat `start_byte`/`end_byte` pair is also
+        // accepted, and wins when both are present.
         var start: Int?, end: Int?, text: String?, path: String?
+        var srcPath: String?, srcStart: Int?, srcEnd: Int?
         try parseObject { key, p in
             switch key {
             case "start_byte": start = try p.parseInt()
@@ -356,15 +360,16 @@ public struct FastJSON {
             case "source":
                 if p.peekNull() { try p.parseNull() } else {
                     let src = try p.parseSourceRange()
-                    if path == nil { path = src.path }
+                    srcPath = src.path; srcStart = src.startByte; srcEnd = src.endByte
                 }
             default: try p.skipValue(depth: 3)
             }
         }
-        guard let start else { throw error("replacement missing start_byte") }
-        guard let end else { throw error("replacement missing end_byte") }
+        guard let start = start ?? srcStart else { throw error("replacement missing start_byte") }
+        guard let end = end ?? srcEnd else { throw error("replacement missing end_byte") }
         guard let text else { throw error("replacement missing text") }
-        return .init(startByte: start, endByte: end, text: text, path: path)
+        let resolved = (path?.isEmpty == false) ? path : srcPath
+        return .init(startByte: start, endByte: end, text: text, path: resolved)
     }
 
     private mutating func parseBool() throws -> Bool {

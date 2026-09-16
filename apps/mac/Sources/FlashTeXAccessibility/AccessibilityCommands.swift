@@ -8,16 +8,16 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case editorPreferences
     case openLaTeXFile, newProject, newFile, save, saveAs, openFixture, reloadFixture
     case attachBuiltCompiler, attachRenderPipeline, attachWorker, compile
-    case exportPDF, exportPDFViaRust, exportPDFExact, printDocument, printSource
+    case exportPDF, printDocument, printSource
     case pinInsertionPoint, openCaptureProposal, submitSampleCapture, convertCapture, nearbyCompanion
     case restoreDiscardedBuffer
     case undo
     case commandPalette, toggleProblems, toggleCaptures
     case zoomIn, zoomOut, actualSize, fitWidth, fitPage, increaseEditorFontSize, decreaseEditorFontSize, resetEditorFontSize
-    case completion, completionList, toggleComment, duplicateLine, reindentLines, reindentDocument, signatureHelp, toggleVimKeybindings
+    case completion, completionList, toggleComment, duplicateLine, duplicateLineUp, moveLineUp, moveLineDown, deleteLine, joinLines, sortLinesAscending, sortLinesDescending, trimTrailingWhitespace, reindentLines, reindentDocument, signatureHelp, toggleVimKeybindings
     case fold, unfold, foldAll, unfoldAll
     case goToMatching, nextDiagnostic, previousDiagnostic, nextOccurrence, previousOccurrence, copyDiagnosticsAsText, revealCaretInPreview
-    case goToDefinition, goToSymbol, selectEnvironment, wrapInEnvironment, renameSymbol
+    case goToDefinition, goToSymbol, goToLine, selectEnvironment, wrapInEnvironment, changeEnvironment, renameSymbol
     case selectPreviewItemSource
     case accessibilityHelp
     case durableHistory, findInProject, nextSearchMatch, renameCitation
@@ -101,23 +101,13 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          menuItem: "Compile")
         case .exportPDF:
             return Entry(command: self, title: "Export PDF", shortcuts: ["⌘⇧E"], menu: "File",
-                         description: "Writes the current preview as a PDF with CoreGraphics (always white).",
-                         requires: "a compile result",
+                         description: "Hands the loaded v2 display list to flashtex-pdf-exact from-v2: glyphs by original GID, embedded font programs, typed rules, images and device colour; refuses what it cannot express exactly instead of approximating it.",
+                         requires: "a complete v2 display list and a built flashtex-pdf-exact",
                          menuItem: "Export PDF…")
-        case .exportPDFViaRust:
-            return Entry(command: self, title: "Export PDF via Rust writer", shortcuts: ["⌘⌥E"], menu: "File",
-                         description: "Pipes the compile result to flashtex-pdf --verify (always white).",
-                         requires: "a compile result",
-                         menuItem: "Export PDF via Rust Writer…")
-        case .exportPDFExact:
-            return Entry(command: self, title: "Export PDF (exact, v2)", shortcuts: ["File > Export PDF (exact, v2)…"], menu: "File",
-                         description: "Hands the loaded v2 display list to flashtex-pdf-exact from-v2: glyphs by original GID, embedded font programs, typed rules; refuses what it cannot express exactly.",
-                         requires: "a loaded v2 display list and a built flashtex-pdf-exact",
-                         menuItem: "Export PDF (exact, v2)…")
         case .printDocument:
             return Entry(command: self, title: "Print", shortcuts: ["⌘P"], menu: "File",
-                         description: "Prints the compiled document PDF (the same CoreGraphics bytes as Export PDF…) through the system print panel; page size follows the PDF.",
-                         requires: "a compile result",
+                         description: "Prints the compiled document PDF — the same exact bytes Export PDF… writes — through the system print panel; page size follows the PDF.",
+                         requires: "a complete v2 display list and a built flashtex-pdf-exact",
                          menuItem: "Print…")
         case .printSource:
             return Entry(command: self, title: "Print Source", shortcuts: ["File > Print Source…"], menu: "File",
@@ -207,12 +197,45 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Toggle Vim keybindings", shortcuts: ["⌃⌘V"], menu: "View",
                          description: "Switches the source editor's modal Vim emulation (normal/insert/visual modes, motions, operators, text objects, registers, marks, `/` search and `:` commands) on or off; the same as the Settings switch. A Vim status line at the bottom of the editor pane shows -- NORMAL -- / -- INSERT -- / -- VISUAL -- and the `:` command line.",
                          menuItem: "Toggle Vim Keybindings")
-        case .duplicateLine:
-            return Entry(command: self, title: "Duplicate line", shortcuts: ["⌥⇧↓", "⌥⇧↑"], menu: "Editor",
-                         description: "Copies the line the caret is on — or every line the selection touches — below (⌥⇧↓) or above (⌥⇧↑) itself, leaving the caret on the copy so the key repeats; one undo step per press.")
         case .toggleComment:
             return Entry(command: self, title: "Toggle comment", shortcuts: ["⌘/"], menu: "Editor",
                          description: "Toggles a `% ` line comment on every line the selection touches: all commented lines are uncommented, otherwise the non-blank lines are commented; one undo step.")
+        case .duplicateLine:
+            return Entry(command: self, title: "Duplicate Line", shortcuts: ["⌥⇧↓"], menu: "Editor",
+                         description: "Copies the line the caret is on — or every line the selection touches — below itself, leaving the caret or selection on the copy so the key repeats; one undo step. The Overleaf shortcut; ⇧⌘D remains Go to Matching.",
+                         menuItem: "Duplicate Line")
+        case .duplicateLineUp:
+            return Entry(command: self, title: "Duplicate Line Up", shortcuts: ["⌥⇧↑"], menu: "Editor",
+                         description: "Copies the line the caret is on — or every line the selection touches — above itself, leaving the caret or selection on the copy so the key repeats; one undo step.",
+                         menuItem: "Duplicate Line Up")
+        case .moveLineUp:
+            return Entry(command: self, title: "Move Line Up", shortcuts: ["⌘⌥↑"], menu: "Editor",
+                         description: "Moves every full line the selection touches up one line as one undo step, a no-op on the first line. ⌥⌘[ remains Previous Occurrence.",
+                         menuItem: "Move Line Up")
+        case .moveLineDown:
+            return Entry(command: self, title: "Move Line Down", shortcuts: ["⌘⌥↓"], menu: "Editor",
+                         description: "Moves every full line the selection touches down one line as one undo step, a no-op on the last line. ⌥⌘] remains Next Occurrence.",
+                         menuItem: "Move Line Down")
+        case .deleteLine:
+            return Entry(command: self, title: "Delete Line", shortcuts: ["⌃⌘K"], menu: "Editor",
+                         description: "Deletes every full line the selection touches as one undo step. ⌃⌘K avoids File ▸ Attach Built Compiler (⇧⌘K).",
+                         menuItem: "Delete Line")
+        case .joinLines:
+            return Entry(command: self, title: "Join Lines", shortcuts: ["⌃J"], menu: "Editor",
+                         description: "Joins the selection's lines, or the caret's line with the next, with a single space. Every non-last line is right-trimmed and a trailing % is dropped only when it ends that line; every line after the first is left-trimmed.",
+                         menuItem: "Join Lines")
+        case .sortLinesAscending:
+            return Entry(command: self, title: "Sort Lines Ascending", shortcuts: ["Editor > Sort Lines Ascending"], menu: "Editor",
+                         description: "Sorts the full lines the selection touches ascending with a stable, locale-aware compare, as one undo step.",
+                         menuItem: "Sort Lines Ascending")
+        case .sortLinesDescending:
+            return Entry(command: self, title: "Sort Lines Descending", shortcuts: ["Editor > Sort Lines Descending"], menu: "Editor",
+                         description: "Sorts the full lines the selection touches descending with a stable, locale-aware compare, as one undo step.",
+                         menuItem: "Sort Lines Descending")
+        case .trimTrailingWhitespace:
+            return Entry(command: self, title: "Trim Trailing Whitespace", shortcuts: ["Editor > Trim Trailing Whitespace"], menu: "Editor",
+                         description: "Removes trailing spaces and tabs from every line of the document, leaving verbatim bodies and a line that is only \\\\ plus spaces unchanged.",
+                         menuItem: "Trim Trailing Whitespace")
         case .reindentLines:
             return Entry(command: self, title: "Re-indent Lines", shortcuts: ["⌃I"], menu: "Edit",
                          description: "Reindents the selected lines, or the caret's line when nothing is selected, with LaTeX-aware rules (environments, braces, verbatim bodies, the document exception) as one undo step. ⌃I is Xcode's re-indent and is not Tab; Vim does not bind it. ⌘⇧I remains Toggle Captures.",
@@ -249,6 +272,10 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Go to symbol", shortcuts: ["⌘⇧T"], menu: "Navigate",
                          description: "Opens the symbol picker: fuzzy search over every heading, environment and label of the open documents; ↑/↓ choose, Return goes there, Esc closes.",
                          menuItem: "Go to Symbol…")
+        case .goToLine:
+            return Entry(command: self, title: "Go to line", shortcuts: ["⌘L"], menu: "Navigate",
+                         description: "Opens a field for a 1-based line, line:column, or +N/−N relative to the caret; out-of-range numbers clamp, invalid text shows an inline hint. Return selects the caret and centres it, Esc cancels. Typing :42 in the Commands list jumps directly.",
+                         menuItem: "Go to Line…")
         case .selectEnvironment:
             return Entry(command: self, title: "Select environment", shortcuts: ["⌘⇧A"], menu: "Navigate",
                          description: "Selects the innermost \\begin{X}…\\end{X} around the caret (nesting and unbalanced text tolerated); again selects the enclosing one. The caret on a \\begin or \\end also highlights its partner like a bracket.",
@@ -257,6 +284,10 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Wrap selection in environment", shortcuts: ["⌘⇧W"], menu: "Navigate",
                          description: "Asks for an environment name (suggestions: common ones, then those the document uses) and wraps the selection in \\begin{X}…\\end{X} — whole lines as an indented block, otherwise inline — as one undoable edit with the caret at the body.",
                          menuItem: "Wrap Selection in Environment…")
+        case .changeEnvironment:
+            return Entry(command: self, title: "Change environment", shortcuts: ["⌃⌘E"], menu: "Editor",
+                         description: "Opens a field prefilled with the innermost environment name around the caret; Return rewrites both the \\begin{name} and matching \\end{name} as one undoable edit, preserving a trailing star, optional arguments and any following arguments. Typing inside either name updates the partner live. Refused (beep and VoiceOver) in a verbatim body or when the pair is unbalanced.",
+                         menuItem: "Change Environment…")
         case .renameSymbol:
             return Entry(command: self, title: "Rename symbol", shortcuts: ["⌥⇧R"], menu: "Navigate",
                          description: "Renames the \\label key (every \\ref/\\eqref/\\pageref/\\autoref/\\cref use) or the user command (every \\foo, word-boundary aware, comments and verbatim skipped) under the caret across the open documents: Plan shows the per-file counts, Apply is one undoable edit per document (one guarded apply_group per file when the durable helper is attached).",
@@ -288,8 +319,8 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          menuItem: "Copy Diagnostics as Text")
         case .revealCaretInPreview:
             return Entry(command: self, title: "Reveal caret in preview", shortcuts: ["⌘⇧J"], menu: "Navigate",
-                         description: "Selects the source span of the preview item under the caret and names its page and item.",
-                         requires: "a compile result",
+                         description: "Selects the source span of the preview item under the caret and names its page: the enclosing formula for a caret inside math, the cluster otherwise.",
+                         requires: "a preview showing the document",
                          menuItem: "Reveal Caret in Preview")
         case .restoreDiscardedBuffer:
             return Entry(command: self, title: "Restore Discarded Buffer", shortcuts: ["Edit > Restore Discarded Buffer"], menu: "Edit",
@@ -496,6 +527,7 @@ public enum PanelFocusOrder {
                 Control(name: "Relative line numbers", sourceMarker: "Toggle(\"Relative line numbers\""),
                 Control(name: "Vim keybindings", sourceMarker: "Toggle(\"Vim keybindings\""),
                 Control(name: "Preview follows the caret", sourceMarker: "Toggle(\"Preview follows the caret\""),
+                Control(name: "Autosave", sourceMarker: "Toggle(\"Autosave\""),
                 Control(name: "Restore Defaults", sourceMarker: "Button(\"Restore Defaults\""),
               ],
               sourceFile: "EditorPreferences.swift"),
@@ -521,7 +553,7 @@ public enum PanelFocusOrder {
                 Control(name: "Next Match", sourceMarker: "Button(\"Next Match\")", when: "matches"),
                 Control(name: "Search scope", sourceMarker: "Picker(\"Scope\""),
                 Control(name: "Max matches", sourceMarker: "Stepper(\"Max matches"),
-                Control(name: "Search results, n matches (list)", sourceMarker: "List(selection: $client.selectedID)", when: "after a search"),
+                Control(name: "Search results, n matches (table)", sourceMarker: "SearchResultsTable(matches: results.matches", when: "after a search"),
                 Control(name: "Replacement text", sourceMarker: "TextField(\"Replace with"),
                 Control(name: "Plan Replacement", sourceMarker: "Button(\"Plan Replacement\")", when: "complete search with matches"),
                 Control(name: "Apply n replacements", sourceMarker: "Button(\"Apply \\(plan.summary)\")", when: "a planned proposal"),

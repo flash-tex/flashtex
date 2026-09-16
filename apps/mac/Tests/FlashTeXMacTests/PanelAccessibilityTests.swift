@@ -189,10 +189,10 @@ final class PanelAccessibilityTests: XCTestCase {
     /// Switches EditorPreferencesView puts in the focus ring, in one place so a
     /// new toggle is updated once rather than in each Settings test: wrap long
     /// lines, auto-close brackets, show completion list, check spelling,
-    /// relative line numbers, Vim keybindings, preview follows the caret, and
-    /// the two error-lens rows.
+    /// relative line numbers, Vim keybindings, preview follows the caret,
+    /// autosave, and the two error-lens rows.
     /// Both assertions below print the control list when this drifts.
-    static let preferencesSwitchCount = 9
+    static let preferencesSwitchCount = 10
 
     /// The Capture conversion section (ConversionPreferencesView.swift, shown
     /// in the app's Settings after the editor sections): its AppKit-backed

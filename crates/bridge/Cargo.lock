@@ -188,6 +188,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d"
 
 [[package]]
+name = "flashtex-bibliography"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-bridge"
 version = "0.1.0"
 dependencies = [
@@ -206,6 +210,7 @@ dependencies = [
 name = "flashtex-compiler"
 version = "0.1.0"
 dependencies = [
+ "flashtex-bibliography",
  "flashtex-font-engine",
  "flashtex-tex-boxes",
  "flashtex-tex-expansion",

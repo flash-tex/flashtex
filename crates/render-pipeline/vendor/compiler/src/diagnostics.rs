@@ -277,12 +277,31 @@ impl Diagnostic {
             diagnostic.code = Some(DiagnosticCode::UnsupportedFeature);
         } else {
             diagnostic.code = Some(DiagnosticCode::UnknownCommand);
-            if let Some(known) = crate::vocabulary::suggest_command(name) {
-                let text = format!("\\{known}");
-                diagnostic.suggestion = Some(text.clone());
-                diagnostic = diagnostic.with_help(format!("did you mean \\{known}?"));
-                if let Some(span) = span {
-                    diagnostic = diagnostic.with_replacement(span, text);
+            // Only a *unique* closest match becomes a mechanical edit. The
+            // editor applies `suggestion`/`help.replacement` on Tab without the
+            // author re-reading it, so a tie broken by list order would be a
+            // silent wrong rewrite. Ambiguous cases still get prose help naming
+            // every candidate, and the author picks.
+            match crate::vocabulary::closest_commands(name).as_slice() {
+                [] => {}
+                [known] => {
+                    let text = format!("\\{known}");
+                    diagnostic.suggestion = Some(text.clone());
+                    diagnostic = diagnostic.with_help(format!("did you mean \\{known}?"));
+                    if let Some(span) = span {
+                        diagnostic = diagnostic.with_replacement(span, text);
+                    }
+                }
+                candidates => {
+                    let list = candidates
+                        .iter()
+                        .map(|c| format!("\\{c}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    diagnostic = diagnostic.with_help(format!(
+                        "did you mean one of {list}? \
+                         (no automatic fix: they are equally close)"
+                    ));
                 }
             }
         }

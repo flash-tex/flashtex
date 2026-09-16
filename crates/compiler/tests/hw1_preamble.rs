@@ -143,10 +143,10 @@ fn unimplemented_amsmath_constructs_still_report_themselves() {
         ("$a\\mspace{3mu}b$", "\\mspace"),
         ("$\\varinjlim x$", "\\varinjlim"),
         ("$\\begin{pmatrix}\\hdotsfor{2}\\end{pmatrix}$", "\\hdotsfor"),
-        (
-            "\\begin{multline} \\shoveleft{a} \\\\ b \\end{multline}",
-            "\\shoveleft",
-        ),
+        // `\shoveleft`/`\shoveright` are implemented in `multline` (see
+        // `multline_shove`), so they no longer belong in this inventory; they
+        // still report themselves in displays that cannot shove, e.g.
+        ("\\begin{gather} \\shoveleft{a} \\\\ b \\end{gather}", "\\shoveleft"),
     ] {
         let found = doc(body);
         assert!(

@@ -39,6 +39,12 @@ public enum RuntimeV1 {
         /// (`display_list_base`; proposal r5 §3). Isolated feature: sent only
         /// when the delta capability is requested; omitted from the wire when nil.
         public var displayListBase: DisplayListBase?
+        /// `display-list-v2-window` viewer position (`display_list_window`;
+        /// protocol/proposals/display-list-v2-window.md §4). Sent only next to
+        /// the window capability; omitted from the wire when nil. The
+        /// capability without a position is a legal request and means an
+        /// unwindowed reply (§4), so the field is optional independently.
+        public var displayListWindow: DisplayListWindow?
         /// Absolute directory `\includegraphics` files are read from by the
         /// producer (`project_root`, display-list-v2-images proposal §2).
         /// Optional; omitted from the wire when nil. Old producers ignore it.
@@ -69,20 +75,37 @@ public enum RuntimeV1 {
             }
         }
 
+        /// `display_list_window` (window proposal §4): where the viewer is.
+        /// `firstPage` is 1-based; a window running past the last page is
+        /// clamped by the producer, never refused.
+        public struct DisplayListWindow: Codable, Equatable {
+            public var firstPage: Int
+            public var pageCount: Int
+            enum CodingKeys: String, CodingKey {
+                case firstPage = "first_page", pageCount = "page_count"
+            }
+            public init(firstPage: Int, pageCount: Int) {
+                self.firstPage = firstPage; self.pageCount = pageCount
+            }
+        }
+
         enum CodingKeys: String, CodingKey {
             case projectId = "project_id", revision, entryPath = "entry_path", documents
             case layoutCapabilities = "layout_capabilities"
             case displayListBase = "display_list_base"
+            case displayListWindow = "display_list_window"
             case projectRoot = "project_root"
             case date
         }
         public init(projectId: String, revision: Int, entryPath: String, documents: [Document],
-                    layoutCapabilities: [String]? = nil, displayListBase: DisplayListBase? = nil, projectRoot: String? = nil,
+                    layoutCapabilities: [String]? = nil, displayListBase: DisplayListBase? = nil,
+                    displayListWindow: DisplayListWindow? = nil, projectRoot: String? = nil,
                     date: String? = nil) {
             self.projectId = projectId; self.revision = revision
             self.entryPath = entryPath; self.documents = documents
             self.layoutCapabilities = layoutCapabilities
             self.displayListBase = displayListBase
+            self.displayListWindow = displayListWindow
             self.projectRoot = projectRoot
             self.date = date
         }
@@ -96,6 +119,7 @@ public enum RuntimeV1 {
             layoutCapabilities = try c.decodeIfPresent([String].self, forKey: .layoutCapabilities)
             if let caps = layoutCapabilities { try LayoutCapabilities.validate(caps) }
             displayListBase = try c.decodeIfPresent(DisplayListBase.self, forKey: .displayListBase)
+            displayListWindow = try c.decodeIfPresent(DisplayListWindow.self, forKey: .displayListWindow)
             projectRoot = try c.decodeIfPresent(String.self, forKey: .projectRoot)
             date = try c.decodeIfPresent(String.self, forKey: .date)
             if let date { try RuntimeV1.validateDate(date) }
@@ -112,6 +136,7 @@ public enum RuntimeV1 {
                 try c.encode(caps, forKey: .layoutCapabilities)
             }
             if let base = displayListBase { try c.encode(base, forKey: .displayListBase) }
+            if let window = displayListWindow { try c.encode(window, forKey: .displayListWindow) }
             if let root = projectRoot { try c.encode(root, forKey: .projectRoot) }
             if let date {
                 try RuntimeV1.validateDate(date)
@@ -403,9 +428,11 @@ public enum RuntimeV1 {
         }
 
         /// Mechanical edit for Fix…. Offsets are UTF-8, zero-based,
-        /// end-exclusive. `path` is optional on the wire (defaults to the
-        /// diagnostic's `source.path`); a nested `source` object is also
-        /// accepted for the path only.
+        /// end-exclusive. The compiler emits them nested in a `source` object
+        /// (the same shape as `labels[].source`), so that is the shape to
+        /// expect; a flat `start_byte`/`end_byte` pair is also accepted and
+        /// wins when both are present. `path` is optional on the wire and
+        /// falls back to `source.path`, then to the diagnostic's own source.
         public struct Replacement: Codable, Equatable {
             public var startByte: Int
             public var endByte: Int
@@ -419,15 +446,26 @@ public enum RuntimeV1 {
             }
             public init(from decoder: Decoder) throws {
                 let c = try decoder.container(keyedBy: CodingKeys.self)
-                startByte = try c.decode(Int.self, forKey: .startByte)
-                endByte = try c.decode(Int.self, forKey: .endByte)
+                let src = try c.decodeIfPresent(SourceRange.self, forKey: .source)
+                // The compiler nests the range in `source`; a flat pair is also
+                // accepted and wins when both are present.
+                guard let s = try c.decodeIfPresent(Int.self, forKey: .startByte) ?? src?.startByte else {
+                    throw DecodingError.keyNotFound(CodingKeys.startByte, .init(
+                        codingPath: c.codingPath,
+                        debugDescription: "replacement has neither start_byte nor source.start_byte"))
+                }
+                guard let e = try c.decodeIfPresent(Int.self, forKey: .endByte) ?? src?.endByte else {
+                    throw DecodingError.keyNotFound(CodingKeys.endByte, .init(
+                        codingPath: c.codingPath,
+                        debugDescription: "replacement has neither end_byte nor source.end_byte"))
+                }
+                startByte = s
+                endByte = e
                 text = try c.decode(String.self, forKey: .text)
                 if let p = try c.decodeIfPresent(String.self, forKey: .path), !p.isEmpty {
                     path = p
-                } else if let src = try c.decodeIfPresent(SourceRange.self, forKey: .source) {
-                    path = src.path
                 } else {
-                    path = nil
+                    path = src?.path
                 }
             }
             public func encode(to encoder: Encoder) throws {

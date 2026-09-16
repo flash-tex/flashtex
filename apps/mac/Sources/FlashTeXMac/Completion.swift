@@ -919,12 +919,9 @@ enum Completion {
     /// Names of environments appearing in `\begin{…}` anywhere in the document.
     static func documentEnvironments(in text: String) -> [String] {
         var out: [String] = []
-        withBytes(text) { b in
-            forEachCommand(in: b, upTo: b.count) { name, _, arg in
-                guard let arg, bytes(name, equal: "begin") else { return }
-                let env = String(decoding: arg, as: UTF8.self)
-                if !out.contains(env) { out.append(env) }
-            }
+        for u in EditorNavigation.uses(in: text as NSString) {
+            guard u.name == "begin", let arg = u.arg, !arg.isEmpty else { continue }
+            if !out.contains(arg) { out.append(arg) }
         }
         return out
     }
@@ -1821,8 +1818,10 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         func refresh() {
             guard let view, let layer = view.layer else { return }
             view.effectiveAppearance.performAsCurrentDrawingAppearance {
-                layer.backgroundColor = NSColor.windowBackgroundColor.cgColor
-                layer.borderColor = NSColor.separatorColor.cgColor
+                // The raised floating surface of the Islands palette, not
+                // the stock window ground (DS.Palette).
+                layer.backgroundColor = DS.NSColors.raised.cgColor
+                layer.borderColor = DS.NSColors.componentBorder.cgColor
             }
         }
     }
@@ -1922,6 +1921,14 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
 
     func numberOfRows(in tableView: NSTableView) -> Int { items.count }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        // The muted JetBrains selection band (SidebarTree.swift), not the
+        // stock accent band.
+        let view = (tableView.makeView(withIdentifier: TreeRowView.reuseID, owner: nil) as? TreeRowView) ?? TreeRowView()
+        view.identifier = TreeRowView.reuseID
+        return view
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let id = NSUserInterfaceItemIdentifier("row")
         let view = (tableView.makeView(withIdentifier: id, owner: nil) as? CompletionRowView) ?? {
@@ -1985,14 +1992,14 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
             out.append(NSAttributedString(string: " "))
         }
         out.append(NSAttributedString(string: s.label, attributes: [
-            .font: DS.NSFonts.monoCandidate, .foregroundColor: NSColor.labelColor,
+            .font: DS.NSFonts.monoCandidate, .foregroundColor: DS.Palette.textPrimary,
         ]))
         out.append(NSAttributedString(string: "  \(s.kind.badge) · \(s.detail)", attributes: [
-            .font: DS.NSFonts.secondary, .foregroundColor: NSColor.secondaryLabelColor,
+            .font: DS.NSFonts.secondary, .foregroundColor: DS.Palette.textSecondary,
         ]))
         if let doc = documentation(for: s) {
             out.append(NSAttributedString(string: " — \(doc)", attributes: [
-                .font: DS.NSFonts.secondary, .foregroundColor: NSColor.tertiaryLabelColor,
+                .font: DS.NSFonts.secondary, .foregroundColor: DS.Palette.textTertiary,
             ]))
         }
         return out
@@ -2246,11 +2253,20 @@ final class CompletingTextView: NSTextView {
 
     // MARK: ⌘/ line comment
 
-    /// Toggles `% ` on every line the selection touches (one undo step).
     /// ⌥⇧↓ / ⌥⇧↑: copy the line (or every line the selection touches) below or
     /// above itself, leaving the caret on the copy. One undo step, like
-    /// `toggleLineComment`.
-    func duplicateLines(below: Bool) {
+    /// `toggleLineComment`. A menu key equivalent and `keyDown` must not both
+    /// apply the same event: `performKeyEquivalent` consumes it, and a second
+    /// call with that event's timestamp is ignored.
+    private var lastDuplicateEventTimestamp: TimeInterval = -.infinity
+    private var lastDuplicateEventKeyCode: UInt16 = 0
+
+    func duplicateLines(below: Bool, event: NSEvent? = nil) {
+        if let ev = event ?? Self.duplicateChordEvent(NSApp.currentEvent) {
+            if ev.timestamp == lastDuplicateEventTimestamp, ev.keyCode == lastDuplicateEventKeyCode { return }
+            lastDuplicateEventTimestamp = ev.timestamp
+            lastDuplicateEventKeyCode = ev.keyCode
+        }
         guard !hasMarkedText() else { return }
         let sel = selectedRange()
         guard let (edit, selection) = EditorKeyHandling.duplicateLinesEdit(in: string, range: sel, below: below) else { return }
@@ -2261,6 +2277,15 @@ final class CompletingTextView: NSTextView {
         breakUndoCoalescing()
     }
 
+    /// ⌥⇧↓ / ⌥⇧↑, the chord both `keyDown` and the Editor menu bind.
+    private static func duplicateChordEvent(_ event: NSEvent?) -> NSEvent? {
+        guard let event else { return nil }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        guard modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 else { return nil }
+        return event
+    }
+
+    /// Toggles `% ` on every line the selection touches (one undo step).
     func toggleLineComment() {
         guard !hasMarkedText() else { return }
         let text = string as NSString
@@ -2753,6 +2778,19 @@ final class CompletingTextView: NSTextView {
 
     // MARK: events
 
+    /// Consumes ⌥⇧↓ / ⌥⇧↑ before the Editor menu's key equivalent can fire
+    /// the same chord a second time. `keyDown` still handles the chord when
+    /// the event never goes through `performKeyEquivalent` (hosted tests).
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if hasMarkedText() { return super.performKeyEquivalent(with: event) }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 {
+            duplicateLines(below: event.keyCode == 125, event: event)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     override func keyDown(with event: NSEvent) {
         if hasMarkedText() { super.keyDown(with: event); return } // IME composition owns the keys (mac-editor-accessibility)
         if vimActive, let key = VimMode.Key(event: event), vim.handle(key) { return } // VimMode.swift: normal/visual keys, Esc in insert
@@ -2772,9 +2810,10 @@ final class CompletingTextView: NSTextView {
         // ⌥⇧↓ / ⌥⇧↑: duplicate the line(s) down/up (the Overleaf shortcut).
         // This takes the key from AppKit's extend-selection-by-paragraph
         // binding, which no LaTeX editor's users reach for and which ⇧↓ and
-        // ⌥↓ still cover between them.
+        // ⌥↓ still cover between them. `performKeyEquivalent` also consumes
+        // this chord so an Editor-menu key equivalent cannot apply it twice.
         if modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 {
-            duplicateLines(below: event.keyCode == 125)
+            duplicateLines(below: event.keyCode == 125, event: event)
             return
         }
         guard session != nil else {
@@ -2801,9 +2840,9 @@ final class CompletingTextView: NSTextView {
             } else {
                 // A typed character arms the automatic open (`textChanged`);
                 // everything else (deletion, navigation, Return) does not.
-                // Vim normal/visual mode never arms it: a key `vim.handle`
-                // left unhandled (e.g. an unmapped letter) still reaches
-                // here, but it is a command key, not inserted text.
+                // Vim normal/visual mode never arms it: those modes consume
+                // every key `Key.init` accepts, so what still reaches here
+                // (arrows, ⌃-chords Vim declined) is never inserted text.
                 typingKey = Self.typesACharacter(event) && (!vimActive || vim.mode == .insert)
                 super.keyDown(with: event)
                 typingKey = false

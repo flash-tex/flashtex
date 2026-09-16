@@ -171,4 +171,29 @@ final class EditorKeyHandlingTests: XCTestCase {
         XCTAssertNil(EKH.duplicateLinesEdit(in: "ab", range: NSRange(location: 0, length: 5), below: true))
     }
 
+    /// Review-found: a caret at EOF on an unterminated last line must land on
+    /// the copy (the same column, which is the copy's end), not past it.
+    func testDuplicateUnterminatedLastLineSelectsTheCopy() {
+        let text = "aa\nbb"
+        let r = duplicated(text, NSRange(location: 5, length: 0), below: true)
+        XCTAssertEqual(r?.text, "aa\nbb\nbb")
+        let copy = NSRange(location: 6, length: 2)
+        let sel = r?.selection
+        XCTAssertNotNil(sel)
+        XCTAssertGreaterThanOrEqual(sel?.location ?? -1, copy.location)
+        XCTAssertLessThanOrEqual(sel.map { NSMaxRange($0) } ?? -1, NSMaxRange(copy))
+        XCTAssertEqual(sel?.length, 0)
+    }
+
+    /// Review-found: a multi-line selection stays on the copied block, not
+    /// the original.
+    func testDuplicateMultiLineSelectionIsKeptOnTheCopy() {
+        let text = "aa\nbb\ncc\n"
+        let sel = (text as NSString).range(of: "bb\ncc")
+        guard let r = duplicated(text, sel, below: true) else { return XCTFail("no edit") }
+        XCTAssertEqual(r.text, "aa\nbb\ncc\nbb\ncc\n")
+        XCTAssertEqual(r.selection.length, sel.length)
+        XCTAssertEqual((r.text as NSString).substring(with: r.selection), "bb\ncc")
+    }
+
 }

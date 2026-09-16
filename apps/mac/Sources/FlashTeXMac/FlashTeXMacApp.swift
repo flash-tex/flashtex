@@ -130,7 +130,8 @@ struct FlashTeXMacApp: App {
                     if let id = ProcessInfo.processInfo.environment["FLASHTEX_OPEN_WINDOW"], ["nearby", AccessibilityHelpView.windowID, EditHistoryPanel.windowID, ProjectSearch.windowID, CitationRename.windowID].contains(id) { openWindow(id: id) }
                 }
         }
-        .defaultSize(width: 1500, height: 950) // first launch; the saved frame wins afterwards
+        .defaultSize(width: 1440, height: 900) // VS Code's DEFAULT_WORKSPACE_WINDOW_SIZE (brief §4); the saved frame wins afterwards
+        .windowToolbarStyle(.unifiedCompact(showsTitle: false)) // the ~35pt IDE title bar; WindowChrome.swift makes it transparent
         // The menu bar is part of the App scene graph: any model property a
         // command reads re-evaluates the whole scene when it changes, and SwiftUI
         // then re-reads every window's root preferences (toolbar, title…) —
@@ -138,9 +139,12 @@ struct FlashTeXMacApp: App {
         // while typing (FT-071 sample) because `result`/`displayListV2` were
         // read here per reply. Commands read the change-only mirrors instead.
         .commands {
-            NavigationCommands(model: model) // Navigation.swift (includes Editor ▸ Fold)
+            NavigationCommands(model: model) // Navigation.swift: Navigate menu
             DiagnosticsCommands(model: model) // DiagnosticsPanel.swift: Edit > Copy Diagnostics as Text (⌘⌥C)
-            FindCommands() // EditorFind.swift: Edit > Find submenu (⌘F, ⌥⌘F, ⌘G, ⇧⌘G, ⌘E, ⌘J)
+            Group {
+                FindCommands() // EditorFind.swift: Edit > Find submenu (⌘F, ⌥⌘F, ⌘G, ⇧⌘G, ⌘E, ⌘J)
+                EditorMenuCommands(model: model) // EditorMenu.swift: one Editor menu (line commands + Change Environment…)
+            }
             ProjectSearchCommands(openWindow: openWindow) // ProjectSearchPanel.swift: ⌘⇧F Find in Project…
             CitationRenameCommands(openWindow: openWindow) // CitationRename.swift: Edit > Rename Citation… (no shortcut)
             CommandGroup(after: .toolbar) {
@@ -242,14 +246,11 @@ struct FlashTeXMacApp: App {
                 // document before replacing it with fixture content (#72).
                 Button("Reload Fixture") { model.reloadFixture() }
                 Button("Open Display List (v2)…") { model.openDisplayListV2Panel() } // experimental, PreviewV2View.swift
+                // The app's one export route (ExactPDFExport.swift); File > Print…
+                // prints exactly these bytes.
                 Button("Export PDF…") { model.exportPDF() }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
-                    .disabled(!model.toolbarHasResult)
-                Button("Export PDF via Rust Writer…") { model.exportPDFViaRust() }
-                    .keyboardShortcut("e", modifiers: [.command, .option])
-                    .disabled(!model.toolbarHasResult) // change-only mirror (see .commands)
-                Button("Export PDF (exact, v2)…") { model.exportPDFExact() } // ExactPDFExport.swift
-                    .disabled(!model.toolbarHasV2Frame) // change-only mirror (see .commands)
+                    .disabled(!model.toolbarExportable) // change-only mirror (see .commands)
                 Divider()
                 Button("Attach Built Compiler") { model.attachDiscoveredWorker() }
                     .keyboardShortcut("k", modifiers: [.command, .shift])
@@ -289,7 +290,7 @@ struct FlashTeXMacApp: App {
         Window("Accessibility Help", id: AccessibilityHelpView.windowID) {
             AccessibilityHelpView() // FlashTeXAccessibility: focus order, VoiceOver notes, command table
         }
-        Settings { SettingsRootView() } // EditorPreferences.swift (⌘,): Editor and Conversion tabs, applying live
+        Settings { SettingsRootView().environment(model) } // EditorPreferences.swift (⌘,): Editor, Compile and Conversion tabs, applying live
         ProjectSearchWindow(model: model) // ProjectSearchPanel.swift: Find in Project (⌘⇧F)
         CitationRenameWindow(model: model) // CitationRename.swift: Rename Citation (reviewed plan_citation_rename → apply_group)
     }
