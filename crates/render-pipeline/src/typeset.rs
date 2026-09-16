@@ -9080,6 +9080,13 @@ pub fn assemble_windowed(
         })
         .collect();
     let _ = style;
+    // `display-list-v2-links` §3. Built whatever the request negotiated (the
+    // list is cached across requests with different capabilities); the wire
+    // gate is `display::Wire::links`. A document with no `\url`/`\href` pays
+    // one linear scan of its source and gets `None`.
+    let link_spans: Vec<crate::links::LinkSpan> =
+        documents.iter().flat_map(|d| crate::links::scan(d.path, d.text)).collect();
+    let navigation = crate::links::navigation(&pages, &link_spans);
     DisplayList {
         project_id: project_id.to_string(),
         revision,
@@ -9089,6 +9096,7 @@ pub fn assemble_windowed(
         diagnostics,
         window,
         document_features: Some(doc_features),
+        navigation,
     }
 }
 

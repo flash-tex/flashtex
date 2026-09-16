@@ -396,7 +396,12 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
         v1.accepted = v1.accepted.take().map(|a| a.into_iter().filter(|c| !crate::v1::is_display_list_family(c)).collect());
     };
     if caps.display_list && v1.status != "failed" {
-        let wire = crate::display::Wire { images: caps.images, device_color: caps.device_color, diagnostics: caps.diagnostics };
+        let wire = crate::display::Wire {
+            images: caps.images,
+            device_color: caps.device_color,
+            diagnostics: caps.diagnostics,
+            links: caps.links,
+        };
         // display-list-v2-delta (proposal r5 §3): against the acknowledged
         // installed base, when it is also this worker's last emitted sibling.
         let base = if caps.delta { payload.get("display_list_base").and_then(delta::Base::from_json) } else { None };

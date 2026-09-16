@@ -93,6 +93,10 @@ pub struct Wire {
     /// `display-list-v2-diagnostics`). Labels/notes/help wait for a
     /// vendor/compiler re-pin past #346.
     pub diagnostics: bool,
+    /// Serialise the top-level `navigation` object (proposal
+    /// `display-list-v2-links` §3). Off, or on a document with no link,
+    /// the line is byte-for-byte what it was.
+    pub links: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -814,6 +818,11 @@ pub struct DisplayList {
     /// `None` on a list not built by `typeset::assemble_windowed`, where the
     /// resident scan is already complete; only a windowed list reads it.
     pub document_features: Option<DocumentFeatures>,
+    /// `display-list-v2-links` §3: the document's `\url`/`\href` link
+    /// rectangles. Built whenever the document has a link, serialised only
+    /// when the capability was negotiated (`Wire::links`), so the cached
+    /// list is the same object whatever a request asked for.
+    pub navigation: Option<crate::links::Navigation>,
 }
 
 impl DisplayList {
@@ -822,13 +831,19 @@ impl DisplayList {
     /// serialising a line it would then throw away (the exact check still
     /// runs on the serialised line when the estimate is under the limit).
     pub fn estimated_json_bytes(&self) -> usize {
-        self.estimated_json_bytes_for(Wire { images: true, device_color: true, diagnostics: true })
+        self.estimated_json_bytes_for(Wire { images: true, device_color: true, diagnostics: true, links: true })
     }
 
     /// [`estimated_json_bytes`](Self::estimated_json_bytes) under a negotiated
     /// [`Wire`]: `suggestion` is charged only when it would be serialised.
     pub fn estimated_json_bytes_for(&self, wire: Wire) -> usize {
         let mut n = 512 + self.fonts.len() * 400 + self.documents.len() * 200;
+        if let Some(nav) = self.wire_navigation(wire) {
+            n += 32;
+            for l in &nav.links {
+                n += 160 + 2 * l.uri.len() + 56 * l.rects.len() + l.source.as_ref().map_or(0, |s| 48 + s.document.len());
+            }
+        }
         for d in &self.diagnostics {
             n += 160 + d.message.len() + d.sources.len() * 80;
             if let Some(s) = d.wire_suggestion(wire) {
@@ -880,7 +895,7 @@ impl DisplayList {
 
     /// `images`: whether image items are serialised (adds `image`).
     pub fn required_features_with(&self, images: bool) -> Vec<&'static str> {
-        self.required_features_wire(Wire { images, device_color: false, diagnostics: false })
+        self.required_features_wire(Wire { images, device_color: false, diagnostics: false, links: false })
     }
 
     /// `device-color` is listed when negotiated and some paint carries one.
@@ -926,6 +941,13 @@ impl DisplayList {
         }
     }
 
+    /// The `navigation` object this list serialises under `wire`: only when
+    /// `display-list-v2-links` was negotiated and the document actually has
+    /// a link, so every other reply stays byte-for-byte what it was.
+    pub fn wire_navigation(&self, wire: Wire) -> Option<&crate::links::Navigation> {
+        self.navigation.as_ref().filter(|n| wire.links && !n.is_empty())
+    }
+
     /// Whether any page carries an image item.
     pub fn has_images(&self) -> bool {
         self.resident_page_items().any(|i| matches!(i, Item::Image(_)))
@@ -940,7 +962,7 @@ impl DisplayList {
     /// [`to_json`](Self::to_json); `images` also serialises image items
     /// and lists the `image` feature (negotiated `display-list-v2-images`).
     pub fn to_json_with(&self, id: &str, images: bool) -> Value {
-        self.to_json_wire(id, Wire { images, device_color: false, diagnostics: false })
+        self.to_json_wire(id, Wire { images, device_color: false, diagnostics: false, links: false })
     }
 
     /// [`to_json_with`](Self::to_json_with) with every negotiated proposal.
@@ -992,6 +1014,11 @@ impl DisplayList {
                     .collect(),
             ),
         );
+        // `display-list-v2-links` §3, alphabetically between `fonts` and
+        // `pages`: present only when negotiated and the document has a link.
+        if let Some(nav) = self.wire_navigation(wire) {
+            payload.set("navigation", navigation_json(nav));
+        }
         payload.set("pages", Value::Arr(self.pages.iter().map(|p| page_json(p, wire)).collect()));
         payload.set(
             "diagnostics",
@@ -1027,7 +1054,7 @@ impl DisplayList {
     /// `json::write(&self.to_json_with(id, images))` written directly:
     /// `images` also serialises image items and lists the `image` feature.
     pub fn write_json_with(&self, id: &str, images: bool) -> String {
-        self.write_json_wire(id, Wire { images, device_color: false, diagnostics: false })
+        self.write_json_wire(id, Wire { images, device_color: false, diagnostics: false, links: false })
     }
 
     /// [`write_json_with`](Self::write_json_with) with every negotiated proposal.
@@ -1065,6 +1092,12 @@ impl DisplayList {
         write_documents(&mut o, &self.documents);
         o.push_str(",\"fonts\":");
         write_fonts(&mut o, &self.fonts);
+        // `display-list-v2-links` §3. Alphabetically between `fonts` and
+        // `pages`, so the bytes stay identical to the `Value` tree.
+        if let Some(nav) = self.wire_navigation(wire) {
+            o.push_str(",\"navigation\":");
+            write_navigation(&mut o, nav);
+        }
         o.push_str(",\"pages\":[");
         for (i, p) in self.pages.iter().enumerate() {
             sep(&mut o, i);
@@ -1200,6 +1233,125 @@ fn num(o: &mut String, n: f64) {
 
 fn write_tick(o: &mut String, t: Tick) {
     num(o, t.0 as f64);
+}
+
+/// The `navigation` object (`display-list-v2-links` §3), written directly.
+/// Keys are in the same alphabetical order [`navigation_json`]'s `BTreeMap`
+/// serialises in, so the two writers stay byte-identical.
+fn write_navigation(o: &mut String, nav: &crate::links::Navigation) {
+    // `destinations` is always written, empty included: the Mac model
+    // decodes it as a non-optional dictionary.
+    o.push_str("{\"destinations\":{");
+    for (i, (name, d)) in nav.destinations.iter().enumerate() {
+        sep(o, i);
+        json::write_string_into(name, o);
+        o.push_str(":{\"page\":");
+        num(o, f64::from(d.page));
+        o.push_str(",\"view\":\"xyz\",\"x\":");
+        write_tick(o, d.x);
+        o.push_str(",\"y\":");
+        write_tick(o, d.y);
+        o.push('}');
+    }
+    o.push_str("},\"links\":[");
+    for (i, l) in nav.links.iter().enumerate() {
+        sep(o, i);
+        o.push_str("{\"class\":");
+        json::write_string_into(l.class, o);
+        o.push_str(",\"page\":");
+        num(o, f64::from(l.page));
+        // One rectangle stays `rect`, as the proposal's own example writes
+        // it; several become `rects`. The consumer accepts either.
+        if let [only] = l.rects.as_slice() {
+            o.push_str(",\"rect\":");
+            write_link_rect(o, *only);
+        } else {
+            o.push_str(",\"rects\":[");
+            for (j, r) in l.rects.iter().enumerate() {
+                sep(o, j);
+                write_link_rect(o, *r);
+            }
+            o.push(']');
+        }
+        if let Some(s) = &l.source {
+            o.push_str(",\"source\":{\"document\":");
+            json::write_string_into(&s.document, o);
+            o.push_str(",\"end\":");
+            num(o, s.end as f64);
+            o.push_str(",\"start\":");
+            num(o, s.start as f64);
+            o.push('}');
+        }
+        o.push_str(",\"target\":{\"uri\":");
+        json::write_string_into(&l.uri, o);
+        o.push_str("}}");
+    }
+    o.push_str("]}");
+}
+
+fn write_link_rect(o: &mut String, r: crate::links::LinkRect) {
+    o.push('[');
+    write_tick(o, r.x0);
+    o.push(',');
+    write_tick(o, r.y0);
+    o.push(',');
+    write_tick(o, r.x1);
+    o.push(',');
+    write_tick(o, r.y1);
+    o.push(']');
+}
+
+/// [`write_navigation`] as a `Value` tree.
+fn navigation_json(nav: &crate::links::Navigation) -> Value {
+    let mut o = Value::obj();
+    let mut dests = Value::obj();
+    for (name, d) in &nav.destinations {
+        let mut e = Value::obj();
+        e.set("page", json::num(f64::from(d.page)));
+        e.set("view", json::str_("xyz"));
+        e.set("x", json::num(d.x.0 as f64));
+        e.set("y", json::num(d.y.0 as f64));
+        dests.set(name, e);
+    }
+    o.set("destinations", dests);
+    o.set(
+        "links",
+        Value::Arr(
+            nav.links
+                .iter()
+                .map(|l| {
+                    let rect = |r: &crate::links::LinkRect| {
+                        Value::Arr(vec![
+                            json::num(r.x0.0 as f64),
+                            json::num(r.y0.0 as f64),
+                            json::num(r.x1.0 as f64),
+                            json::num(r.y1.0 as f64),
+                        ])
+                    };
+                    let mut e = Value::obj();
+                    e.set("class", json::str_(l.class));
+                    e.set("page", json::num(f64::from(l.page)));
+                    if let [only] = l.rects.as_slice() {
+                        e.set("rect", rect(only));
+                    } else {
+                        e.set("rects", Value::Arr(l.rects.iter().map(rect).collect()));
+                    }
+                    if let Some(s) = &l.source {
+                        let mut so = Value::obj();
+                        so.set("document", json::str_(s.document.clone()));
+                        so.set("end", json::num(s.end as f64));
+                        so.set("start", json::num(s.start as f64));
+                        e.set("source", so);
+                    }
+                    let mut t = Value::obj();
+                    t.set("uri", json::str_(l.uri.clone()));
+                    e.set("target", t);
+                    e
+                })
+                .collect(),
+        ),
+    );
+    o
 }
 
 fn write_sources(o: &mut String, sources: &[SourceRange]) {
@@ -2154,6 +2306,7 @@ mod tests {
             // Not harvested here: this list is built by hand, so the resident
             // scan is the whole of it.
             document_features: None,
+            navigation: None,
         };
         assert_eq!(list.write_json("id\"1"), json::write(&list.to_json("id\"1")));
         for images in [false, true] {
@@ -2170,6 +2323,7 @@ mod tests {
             window: None,
             diagnostics: Vec::new(),
             document_features: None,
+            navigation: None,
         };
         assert_eq!(empty.write_json(""), json::write(&empty.to_json("")));
         assert_eq!(empty.write_json_with("", true), json::write(&empty.to_json_with("", true)));
@@ -2191,6 +2345,7 @@ mod tests {
             diagnostics: vec![d],
             window: None,
             document_features: None,
+            navigation: None,
         }
     }
 
