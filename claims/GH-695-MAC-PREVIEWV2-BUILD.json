@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/fix-gh695-previewv2-test-class",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/698",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T05:32:55Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-695-MAC-PREVIEWV2-BUILD",
-  "updated_utc": "2026-09-16T05:32:55Z"
+  "updated_utc": "2026-09-16T05:37:10Z"
 }
