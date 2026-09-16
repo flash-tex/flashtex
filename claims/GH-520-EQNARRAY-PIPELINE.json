@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/eqnarray-pipeline",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/751",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T11:15:08Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-520-EQNARRAY-PIPELINE",
-  "updated_utc": "2026-09-16T11:27:44Z"
+  "updated_utc": "2026-09-16T11:36:38Z"
 }
