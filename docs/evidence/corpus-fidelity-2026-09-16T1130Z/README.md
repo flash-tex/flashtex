@@ -4,6 +4,37 @@
 `mac-m5pro-dq222`. Read-only audit: **no rendering behaviour is changed by this
 evidence directory or by the PR that carries it.**
 
+> ## Correction — 2026-09-16, supersedes the original numbers
+>
+> One of the twelve findings below, **F7**, was an artefact of the oracle and is
+> **withdrawn**. `pdftext` splits a word at a new baseline, so pdfTeX's cmex10
+> `\bigl(` — which carries its own origin 8.836 bp above the line — made the
+> reference read `(` and `A…` as two words where we read `(A…` as one. `rank.norm`
+> matched them on their alphanumeric content and the comparison then measured the
+> two **word origins**, which differ by exactly the delimiter's advance. The
+> delimiter's ink agreed with pdfLaTeX's to 0.083 bp all along. #752 fixed
+> `rank.py` (`rank.pair_points` anchors an aligned pair at its first alphanumeric
+> glyph, the content `norm` used to decide it *was* a pair); this PR applies the
+> same anchor to `cumulative.py`, which measured word origins in
+> `lines_from_pairs` and in its reflow test, and re-runs the full 22-fixture
+> sweep. `cumulative.json`, `cumulative.md` and `probes-report/` in this directory
+> are the re-run; every number below is the corrected one.
+>
+> **What moved.** F7 is withdrawn — all **eight** of its occurrences, across four
+> fixtures, measure 0 once anchored. F8 shrinks from 173 to 164 words. Nothing
+> else in the twelve changed.
+>
+> **What did not move, and could not have.** Every vertical finding — F1, F2, F3,
+> F4, F5, F6, F11, F12 — is **byte-identical** before and after: the whole
+> `causes` table, every page's `steps`, `dy_profile`, `lines` and `reflowed_words`
+> across all 22 fixtures and 59 compared pages. That is not luck. A word never
+> spans two baselines (`pdftext.words_from_glyphs` starts a new word at a baseline
+> 0.05 bp away), so a word's first alphanumeric glyph always sits on the word's
+> own baseline and re-anchoring can move a measured `x` but never a measured `y`.
+> Measured over the corpus: the anchor moves `x` on 546 of 16 496 reference words
+> and `y` on **0** of them. The `dy` profile the vertical findings rest on never
+> touched the flawed comparison.
+
 Producer: `flashtex-render --v2` -> `flashtex-pdf-exact from-v2` built from
 `origin/main` `9c5b028d`, fonts `apps/mac/Fonts`. Reference: the pinned
 pdfLaTeX PDFs in `fixtures/real-world/*/` (MacTeX 2026 / TeX Live 2025, see each
@@ -96,7 +127,10 @@ for that display is **−0.066 bp** (F2).
   4/3, `article-twocolumn` 1/2).
 * **HW1 and HW2 have zero vertical steps above 0.05 bp on all six pages.** Every
   baseline on both documents is within 0.055 bp of pdfLaTeX's, and neither has a
-  reflowed word. Their remaining divergences are horizontal only (F7, F8, F10).
+  reflowed word. Their remaining divergences are horizontal only (F8, F10);
+  `rank.py`'s worst horizontal delta on them is 1.086 bp (hw1 p1 / hw2 p1),
+  0.611 bp (hw1 p2) and 0.432 bp (hw2 p2) — the 5.000 bp that used to head this
+  list was F7's measurement artefact.
 * **The vertical skip constants are right.** Probes `p5-12pt-display` (plain
   `\[x=a+b\]` at 12 pt), `p8-align` (plain `align`/`align*` at 11 pt),
   `p4-parskip` (`\parskip 4pt`), `q1-vspace` (`\vspace{6pt}` between
@@ -120,8 +154,8 @@ occurrence. `fx` = fixtures out of 22 that show it.
 | F3 | `\maketitle` title-block height | −0.513 bp / +0.176 bp | cumulative | 2 | 90 | 1 of 2 | open, unfiled |
 | F5 | amsthm environment closing skip (`\end{definition}`, `\end{example}`, `\end{lemma}`, `\end{theorem}`, `\end{proof}`) | +0.124 / +0.148 / **−1.076** bp | cumulative | 1 | 86 | `\end{proof}` only | `\end{proof}` plausibly #722; the 0.124 bp ones unfiled |
 | F12 | float and `tabular` boundaries | −0.056 / −0.086 / −0.069 bp | cumulative | 3 | 20 | no (over the rule gate) | open, unfiled |
-| F7 | `\bigl(` / `\Bigl[` opening delimiter beside other math | **exactly −5.000 bp** | local (horizontal) | 3 | 5 words | yes (10x) | open, unfiled — cause **not** identified |
-| F8 | interword glue distribution inside a justified line | ~0.20 bp per space, ±1.1 to ±2.0 bp by line end | local, grows *along* the line | 12 | 173 words | yes | partly #710 (font metrics) |
+| ~~F7~~ | ~~`\bigl(` / `\Bigl[` opening delimiter beside other math~~ | **0 bp — withdrawn** (was "exactly −5.000") | — | 0 | 0 words | no | **not a defect: an oracle artefact.** Fixed in `rank.py` (#752) and `cumulative.py` (this PR) |
+| F8 | interword glue distribution inside a justified line | ~0.20 bp per space, ±1.1 to ±2.0 bp by line end | local, grows *along* the line | 12 | 164 words | yes | partly #710 (font metrics) |
 | F9 | pages where the two sides break lines differently | 1 to 52 reflowed words | structural | 9 | 11 pages | n/a | mixed; 2 of the 9 are the known `ec_metrics_unavailable` pair |
 | F10 | math Ord kerns (TFM lig/kern) and the `\normalfont` heading space | −0.911 bp / +0.604 bp | local (horizontal) | 2 | 5 words | yes | **already fixed; behind `math-font-kerns`, invisible until the re-pin (#711)** |
 
@@ -259,26 +293,75 @@ unfiled constant.
 (3 lines). All over the 0.1 bp rule gate only marginally; listed so the next
 sweep can tell whether they move.
 
-### F7 — `\bigl(` / `\Bigl[` beside other math: exactly −5.000 bp
+### ~~F7~~ — WITHDRAWN: `\bigl(` was never misplaced; the oracle measured the wrong point
 
-| fixture | source | deviation from the line |
-|---|---|---|
-| hw2 p1 | `\bigl(A\cap B\ne\varnothing\bigr) \Longrightarrow \bigl(A\setminus B\subsetneq A\bigr)` | **−5.000** (x2) |
-| hw2 p2 | `\bigl(C…` | −4.998 |
-| ps-calculus p2 | `$\displaystyle\int \sqrt{\bigl(4 - x^2\bigr)}\,dx$` | −4.997 |
-| ps-calculus p2 | `= \lim_{b\to\infty}\Bigl[\arctan x\Bigr]` | −5.150 |
-| math-sheet p1 | `$(a+b)^n = \sum_{k=0}^{n}\binom{n}{k}…$` | −4.999 |
+**This finding does not exist.** The original text is kept below the line for the
+record; the correction is here.
 
-A repeated, exact 5.000 bp is a constant, not an accumulation of metrics. Probe
-`u2-manual-delims` sets all four manual sizes on their own and shows **no**
-horizontal outlier, so the plain delimiter is right; the offset appears only
-when the delimited group sits beside a relation, a big operator or
-`\displaystyle`. **I did not find the cause and did not guess one** — this needs
-a narrower probe before it is filed.
+The number was a constant because it *was* a constant: a glyph advance. pdfTeX
+sets `\bigl(` from **cmex10**, whose variant glyph carries its own origin, and
+emits it on a baseline 8.836 bp above the line; ours is a LatinModernMath variant
+on the math baseline. `pdftext.words_from_glyphs` starts a new word at a new
+baseline, so the **reference** reads `(` and `A…` as two words while **we** read
+`(A…` as one. `rank.norm` strips punctuation for identity, so `(A` still matched
+`A` — and the comparison then measured the two **word origins**, which differ by
+exactly the delimiter's advance: 4.996 bp for `\big(`, 5.149 bp for `\Big[`.
+
+The engine was exact. Both PDFs put the delimiter's origin at x = 243.037 and the
+following `A` at x = 248.037, and the delimiter's **ink** agrees to 0.083 bp
+vertically.
+
+Anchoring each aligned pair at its first alphanumeric glyph — the content `norm`
+used to decide it was a pair — is `rank.pair_points` (#752 for `rank.py`, this PR
+for `cumulative.py`). Every F7 occurrence in the sweep then measures 0:
+
+| fixture | word | deviation, word origins | deviation, anchored |
+|---|---|---|---|
+| hw1 p2 | `(P(x)` | −5.0001 | **none — under the 0.5 bp gate** |
+| hw2 p1 | `(A` | −5.0000 | **none** |
+| hw2 p1 | `(A` | −5.0000 | **none** |
+| hw2 p2 | `(C` | −4.9980 | **none** |
+| math-sheet p1 | `)a` | −4.9994 | **none** |
+| math-sheet p1 | `(f(x)g(x))` | −4.9986 | **none** |
+| ps-calculus p2 | `(4` | −4.9975 | **none** |
+| ps-calculus p2 | `[arctan` | −5.1499 | **none** |
+
+Eight occurrences across four fixtures, all gone; the horizontal cause group
+`math glyph advance` drops from 86 occurrences / 21.089 bp worst to 78 / 12.891
+bp, and the corpus's total horizontal outliers from 565 to 553. `rank.py`'s
+page maxima move with it: hw1 p2 `dx_max` 5.000 → 0.611, hw2 p1 5.000 → 1.086,
+hw2 p2's `(C` pair 4.998 → 0.432.
+
+Probe `u2-manual-delims` was right after all: it sets all four manual sizes on
+their own and showed **no** horizontal outlier, because with nothing beside them
+both producers segment the words the same way. That the artefact needed "a
+relation, a big operator or `\displaystyle`" beside it was the tell — those are
+what put a cmex glyph on its own baseline.
+
+<details><summary>Original text of F7, superseded</summary>
+
+> ### F7 — `\bigl(` / `\Bigl[` beside other math: exactly −5.000 bp
+>
+> | fixture | source | deviation from the line |
+> |---|---|---|
+> | hw2 p1 | `\bigl(A\cap B\ne\varnothing\bigr) \Longrightarrow \bigl(A\setminus B\subsetneq A\bigr)` | **−5.000** (x2) |
+> | hw2 p2 | `\bigl(C…` | −4.998 |
+> | ps-calculus p2 | `$\displaystyle\int \sqrt{\bigl(4 - x^2\bigr)}\,dx$` | −4.997 |
+> | ps-calculus p2 | `= \lim_{b\to\infty}\Bigl[\arctan x\Bigr]` | −5.150 |
+> | math-sheet p1 | `$(a+b)^n = \sum_{k=0}^{n}\binom{n}{k}…$` | −4.999 |
+>
+> A repeated, exact 5.000 bp is a constant, not an accumulation of metrics. Probe
+> `u2-manual-delims` sets all four manual sizes on their own and shows **no**
+> horizontal outlier, so the plain delimiter is right; the offset appears only
+> when the delimited group sits beside a relation, a big operator or
+> `\displaystyle`. **I did not find the cause and did not guess one** — this needs
+> a narrower probe before it is filed.
+
+</details>
 
 ### F8 — interword glue inside a justified line
 
-The most widespread finding: 173 words over the 0.5 bp gate across the 12
+The most widespread finding: **164** words over the 0.5 bp gate across the 12
 fixtures with measurable pages, with a characteristic shape — the deviation
 grows monotonically along the line and resets on the next one:
 
@@ -289,9 +372,16 @@ listings-manual p1 line 36:  the −0.514   toolchain −0.742   with −0.961  
 
 about 0.19 to 0.22 bp per interword space. Local — no line inherits the previous
 line's error — but present on every prose fixture: lecture-notes 45,
-listings-manual 28, math-sheet 26, unicode-accents 16, article-twocolumn 15,
-natbib-review 11, ps-calculus 9, hw1 8, hw2 8, cv 3, lab-report 3,
+listings-manual 27, math-sheet 24, unicode-accents 16, article-twocolumn 15,
+natbib-review 11, hw1 7, ps-calculus 7, hw2 5, cv 3, lab-report 3,
 siunitx-tables 1. Partly the font-metric work already measured in #710.
+
+The nine words this count lost to the correction were not interword glue: eight
+were F7's delimiter pairs (hw1 −1, hw2 −3, math-sheet −2, ps-calculus −2) and one
+was a word whose line median moved once those pairs were anchored, taking it back
+under the gate (`listings-manual` p1 `--%s",`, −0.5323). The *shape* of F8 —
+monotone growth along a line, reset on the next — is unchanged, and so are the
+example lines above to the fourth decimal.
 
 ### F9 — pages that break lines differently
 
@@ -353,8 +443,17 @@ payload — and F1 is the largest cumulative defect in the corpus.
   sweep at all.** `rank.py`'s pixel comparison is the nearest existing check.
 * **Whether PRs #712–#741 close F4.** They are not on `main`, and building each
   branch is the integration lane's call, not a read-only audit's.
-* **F7's cause.** The number is exact and repeatable and the minimal probe does
-  not reproduce it; I stopped there rather than guess.
+* ~~**F7's cause.**~~ **Found, and it was the instrument.** The number was exact
+  and repeatable and the minimal probe did not reproduce it because there was no
+  defect to reproduce — the comparison was anchored at two word origins the two
+  producers had segmented differently. See the withdrawn F7 above. The right
+  lesson is the general one: *a divergence that is exactly constant across
+  documents is more likely a metric of the measurement than a metric of the
+  layout*, and this sweep now anchors identity and position on the same content.
+* **Whether any other finding hides the same shape.** Checked, not assumed: the
+  correction was applied and the whole sweep re-run. The vertical half is
+  byte-identical (it cannot move — see the Correction at the top), and the
+  horizontal half lost only F7 and one word that followed it under the gate.
 * **`\vdots`/`\ddots` (#717) and `\twocolumn` (#743/#746).** No fixture in this
   corpus exercises them at a measurable boundary, so this sweep neither
   confirms nor contradicts those fixes.

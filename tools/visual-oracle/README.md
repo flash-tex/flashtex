@@ -119,9 +119,10 @@ python3 tools/visual-oracle/cumulative.py --only hw1 --only cv
 python3 tools/visual-oracle/cumulative.py --fixtures <dir-of-probe-fixtures> --out <dir>
 ```
 
-It reuses this tool's producer route, `pdftext` reference reader, word grouper
-and `difflib` alignment unchanged — there is still one definition of a word and
-one alignment in this directory. What it adds:
+It reuses this tool's producer route, `pdftext` reference reader, word grouper,
+`difflib` alignment and `rank.pair_points` anchoring unchanged — there is still
+one definition of a word, one alignment and one measured point in this
+directory. What it adds:
 
 1. aligned word pairs are bucketed into **reference lines**, giving each page a
    `dy` profile;

@@ -56,6 +56,14 @@ advance error inside it is another.
 
 ## Honest limits
 
+* Every delta here is measured at `rank.pair_points`: an aligned pair's first
+  alphanumeric glyph, which is the content `rank.norm` used to decide the two
+  words were the same word. Measuring at the two *word origins* instead reports
+  a leading glyph only one producer groups with the word as a placement error —
+  that is what made F7 of the 2026-09-16 sweep read as an exact −5.000 bp offset
+  on `\bigl(`. It bites the horizontal axis only: `pdftext` starts a new word at
+  a new baseline, so a word's alphanumeric anchor is always on the word's own
+  baseline and `dy` cannot move with it.
 * A page with **reflowed** words (|dx| > 50 bp: the word sits on another line)
   has a different set of lines on the two sides, so its `dy` profile is not a
   measurement of spacing. Those pages are reported as `reflowed`, ranked as
@@ -107,24 +115,54 @@ SAME_LINE = 0.05  # reference baselines within this are one line
 # line profiles
 
 
+def measured_pairs(pairs, ref_words, cand_words):
+    """`(ref_index, cand_index, (rx, ry), (cx, cy))` for every aligned pair.
+
+    The two points come from `rank.pair_points`, which anchors both sides at
+    their first alphanumeric glyph — the content `rank.norm` used to decide the
+    pair was a pair in the first place. Measuring at the two *word origins*
+    instead reports a leading glyph only one side carries as a placement error:
+    pdfTeX emits `\\bigl(` from cmex10 on its own raised baseline, so
+    `pdftext.words_from_glyphs` reads the reference as `(` + `A...` and the
+    candidate as one `(A...`, and the two origins are a delimiter's advance
+    apart. That is what made F7 of the 2026-09-16 sweep read as an exact
+    -5.000 bp offset (see `rank.anchor`).
+
+    This matters here on both axes, not just `dx`: a word's `y_top` is its
+    *first* glyph's baseline, so a pair segmented differently was also being
+    bucketed into a line, and having its `dy` measured, at a baseline the
+    aligned content never sat on.
+    """
+    out = []
+    for i, j in pairs:
+        rp, cp = rank.pair_points(ref_words[i], cand_words[j])
+        out.append((i, j, rp, cp))
+    return out
+
+
 def lines_from_pairs(pairs, ref_words, cand_words):
     """Bucket aligned (ref, cand) word pairs into reference lines, top first.
 
     The reference decides what a line is: it is the oracle, and if the
     candidate broke the line elsewhere the words are reflowed and the page is
     excluded upstream anyway.
+
+    Both the bucketing and the deltas use `measured_pairs`' anchored points, so
+    a line's `ref_y` and its words' `dy` are on one coordinate and cannot
+    disagree.
     """
     buckets = []
-    for i, j in sorted(pairs, key=lambda p: (ref_words[p[0]]["y_top"], ref_words[p[0]]["x"])):
+    measured = measured_pairs(pairs, ref_words, cand_words)
+    for i, j, (rx, ry), (cx, cy) in sorted(measured, key=lambda m: (m[2][1], m[2][0])):
         r, c = ref_words[i], cand_words[j]
-        if buckets and abs(r["y_top"] - buckets[-1]["y"]) < SAME_LINE:
+        if buckets and abs(ry - buckets[-1]["y"]) < SAME_LINE:
             cur = buckets[-1]
         else:
-            cur = {"y": r["y_top"], "words": []}
+            cur = {"y": ry, "words": []}
             buckets.append(cur)
         cur["words"].append({
-            "text": c["text"], "dx": c["x"] - r["x"], "dy": c["y_top"] - r["y_top"],
-            "ref_x": r["x"], "source": c.get("source"), "math": bool(c.get("math")),
+            "text": c["text"], "dx": cx - rx, "dy": cy - ry,
+            "ref_x": rx, "source": c.get("source"), "math": bool(c.get("math")),
             "font": c["font"], "ref_font": r["font"],
         })
     out = []
@@ -568,7 +606,10 @@ def main(argv=None):
                 page["note"] = "no word aligns; the producer typeset different text"
                 d["pages"].append(page)
                 continue
-            reflowed = sum(1 for a, b in pairs if abs(cw[b]["x"] - rw[a]["x"]) > rank.REFLOW_DX)
+            # Anchored points, as everywhere else here: a word origin that only
+            # one side carries a leading delimiter at is not a position.
+            reflowed = sum(1 for _i, _j, rp, cp in measured_pairs(pairs, rw, cw)
+                           if abs(cp[0] - rp[0]) > rank.REFLOW_DX)
             page["reflowed_words"] = reflowed
             lines = lines_from_pairs(pairs, rw, cw)
             page["lines"] = len(lines)

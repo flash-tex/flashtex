@@ -1,11 +1,11 @@
-# Corpus divergences ranked by blast radius — 2026-09-16T112427Z
+# Corpus divergences ranked by blast radius — 2026-09-16T115456Z
 
 Produced by `tools/visual-oracle/cumulative.py` (companion to `rank.py`; same
 producer route, same reference reader, same word grouper, same alignment).
 pdflatex is an oracle only, never in the product path; nothing below is a
 parity claim.
 
-- producer: `/Users/dqi26/flashtex/target-gh66/release/flashtex-render` (`cde76936db0d9d89…`) -> `flashtex-pdf-exact`
+- producer: `/Users/dqi26/flashtex/target-cumcorr/release/flashtex-render` (`1db2e9c051f9f300…`) -> `flashtex-pdf-exact`
 - references: pinned files in `fixtures/real-world/*/`
 - gates: glyph positions 0.5 bp, rules 0.1 bp; step detection floor 0.05 bp
 - host: Darwin 25.6.0 arm64
@@ -141,19 +141,19 @@ the whole rest of the page for a cumulative step, one line for a local one.
 | rank | probable cause | fixtures | occurrences | median |dx| (bp) | max |dx| (bp) | kind |
 |---|---|---|---|---|---|---|
 | 1 | `line-indent-or-margin` | 15 | 117 | 4.3994 | 356.6595 | line |
-| 2 | `font substitution SFRM1095->LMRoman10-Regular` | 10 | 113 | 2.1453 | 446.314 | word |
-| 3 | `math glyph advance` | 7 | 86 | 2.6374 | 21.0889 | word |
+| 2 | `font substitution SFRM1095->LMRoman10-Regular` | 10 | 112 | 2.219 | 446.314 | word |
+| 3 | `math glyph advance` | 7 | 78 | 1.8184 | 12.8912 | word |
 | 4 | `font substitution CMR10->LMRoman10-Regular` | 7 | 71 | 2.2811 | 409.6507 | word |
 | 5 | `font substitution SFRM1000->LMRoman10-Regular` | 2 | 88 | 2.7721 | 246.2029 | word |
-| 6 | `text advance / interword glue` | 1 | 38 | 4.9371 | 471.6361 | word |
+| 6 | `text advance / interword glue` | 1 | 38 | 5.0685 | 471.6361 | word |
 | 7 | `font substitution SFRM1200->LMRoman12-Regular` | 1 | 26 | 4.0532 | 23.0127 | word |
-| 8 | `font substitution SFTT1000->LMMono10-Regular` | 1 | 14 | 3.0316 | 572.0926 | word |
+| 8 | `font substitution SFTT1000->LMMono10-Regular` | 1 | 13 | 3.2341 | 572.0926 | word |
 | 9 | `font substitution CMR9->LMRoman9-Regular` | 1 | 11 | 1.5271 | 297.6041 | word |
 | 10 | `font substitution SFBX1095->LMRoman10-Bold` | 1 | 8 | 1.192 | 2.0413 | word |
 | 11 | `font substitution SFTI1095->LMRoman10-Italic` | 1 | 8 | 0.8912 | 1.7731 | word |
-| 12 | `font substitution SFTT1095->LMMono10-Regular` | 1 | 4 | 9.3375 | 12.4542 | word |
+| 12 | `font substitution SFTT1095->LMMono10-Regular` | 1 | 5 | 6.231 | 12.4542 | word |
 | 13 | `font substitution CMTI10->LMRoman10-Italic` | 1 | 4 | 0.7502 | 0.8273 | word |
-| 14 | `font substitution SFTT1095->LMRoman10-Bold` | 1 | 3 | 2.5189 | 5.9367 | word |
+| 14 | `font substitution SFTT1095->LMRoman10-Bold` | 1 | 3 | 2.067 | 3.4901 | word |
 | 15 | `font substitution CMR12->LMRoman12-Regular` | 1 | 3 | 0.6495 | 0.6541 | word |
 | 16 | `font substitution SFTI1200->LMRoman12-Italic` | 1 | 2 | 227.2877 | 423.1411 | word |
 | 17 | `font substitution SFTI1000->LMRoman10-Italic` | 1 | 2 | 6.1222 | 7.3429 | word |

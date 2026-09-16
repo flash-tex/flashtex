@@ -1,11 +1,11 @@
-# Corpus divergences ranked by blast radius — 2026-09-16T112436Z
+# Corpus divergences ranked by blast radius — 2026-09-16T115524Z
 
 Produced by `tools/visual-oracle/cumulative.py` (companion to `rank.py`; same
 producer route, same reference reader, same word grouper, same alignment).
 pdflatex is an oracle only, never in the product path; nothing below is a
 parity claim.
 
-- producer: `/Users/dqi26/flashtex/target-gh66/release/flashtex-render` (`cde76936db0d9d89…`) -> `flashtex-pdf-exact`
+- producer: `/Users/dqi26/flashtex/target-cumcorr/release/flashtex-render` (`1db2e9c051f9f300…`) -> `flashtex-pdf-exact`
 - references: pinned files in `docs/evidence/corpus-fidelity-2026-09-16T1130Z/probes/*/`
 - gates: glyph positions 0.5 bp, rules 0.1 bp; step detection floor 0.05 bp
 - host: Darwin 25.6.0 arm64

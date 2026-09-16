@@ -8,6 +8,8 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import cumulative as cu  # noqa: E402
+import pdftext  # noqa: E402
+import rank  # noqa: E402
 
 
 def line(dy, dx=0.0, n=4, y=0.0, math=False, spread=0.0, source=None):
@@ -131,6 +133,112 @@ class Aggregate(unittest.TestCase):
     def test_low_confidence_steps_are_not_ranked(self):
         docs = [self._doc("a", [self._step("artefact", 18.9, conf="low")])]
         self.assertEqual(cu.aggregate(docs), [])
+
+
+def glyph(text, x, y, advance, font="CMMI10", size=10.909, bt=0):
+    return {"text": text, "x": x, "y_top": y, "advance": advance,
+            "size": size, "font": font, "bt": bt}
+
+
+class AnchoredMeasurement(unittest.TestCase):
+    r"""`lines_from_pairs` measures where `rank.norm` decided identity.
+
+    The geometry is `fixtures/real-world/hw2` page 1: pdfTeX sets `\bigl(`
+    from cmex10 on a baseline 8.836 bp above the line, so the reference reads
+    `(` and `A...` as two words while the candidate's LatinModernMath variant
+    sits on the math baseline and reads `(A...` as one. Both sides put the
+    delimiter's origin at x = 243.037 and `A` at x = 248.037, so the *word
+    origins* differ by the delimiter's 4.996 bp advance and nothing else.
+    """
+
+    X0, XA, Y = 243.037, 248.037, 435.440
+
+    def _page(self, ref_delim_dy=8.836, advance=4.996, cand_shift=0.0):
+        ref = pdftext.words_from_glyphs([
+            glyph("(", self.X0, self.Y - ref_delim_dy, advance, font="CMEX10"),
+            glyph("A", self.XA, self.Y, 8.182),
+            glyph("B", self.XA + 40.0, self.Y, 8.182),
+        ])
+        cand = pdftext.words_from_glyphs([
+            glyph("(", self.X0 + cand_shift, self.Y, advance, font="LatinModernMath-Regular"),
+            glyph("A", self.XA + cand_shift, self.Y, 8.182, font="LatinModernMath-Regular"),
+            glyph("B", self.XA + 40.0, self.Y, 8.182, font="LatinModernMath-Regular"),
+        ])
+        return ref, cand
+
+    def test_the_two_sides_still_segment_the_delimiter_differently(self):
+        ref, cand = self._page()
+        self.assertEqual([w["text"] for w in ref], ["(", "A", "B"])
+        self.assertEqual([w["text"] for w in cand], ["(A", "B"])
+
+    def test_the_delimiter_is_no_longer_a_five_bp_horizontal_outlier(self):
+        ref, cand = self._page()
+        pairs, _, _ = rank.align_words(ref, cand)
+        lines = cu.lines_from_pairs(pairs, ref, cand)
+        self.assertEqual(len(lines), 1)
+        # Measured at the word origins this pair read dx = -4.996 and became
+        # F7 of the 2026-09-16 sweep; measured at `A` it is exactly zero.
+        self.assertEqual([round(w["dx"], 4) for w in lines[0]["_words"]], [0.0, 0.0])
+        self.assertEqual(round(lines[0]["dx_max"], 4), 0.0)
+        _, outliers = cu.horizontal_findings(lines, cu.GLYPH_GATE)
+        self.assertEqual(outliers, [])
+
+    def test_a_genuine_shift_beside_the_delimiter_is_still_reported(self):
+        # The anchor must not swallow a real defect: move the whole candidate
+        # group right by 3 bp and it has to come back as 3 bp.
+        ref, cand = self._page(cand_shift=3.0)
+        pairs, _, _ = rank.align_words(ref, cand)
+        lines = cu.lines_from_pairs(pairs, ref, cand)
+        self.assertEqual(round(lines[0]["_words"][0]["dx"], 4), 3.0)
+
+    def test_the_vertical_profile_cannot_move_with_the_anchor(self):
+        r"""`dy`, and so every vertical finding, is untouched by this change.
+
+        `pdftext.words_from_glyphs` starts a new word whenever a glyph's
+        baseline differs by 0.05 bp or more, so every glyph of a word shares
+        one baseline and `y_alnum` is that baseline too. Anchoring can
+        therefore move a word's measured `x` but never its `y` — measured over
+        the whole 22-fixture corpus, the anchor moves `x` on 546 of 16496
+        reference words and `y` on 0 of them.
+        """
+        for ref_delim_dy in (0.0, 8.836, 11.952):
+            ref, cand = self._page(ref_delim_dy=ref_delim_dy)
+            for w in ref + cand:
+                if w["y_alnum"] is not None:
+                    self.assertLess(abs(w["y_alnum"] - w["y_top"]), 0.05)
+            pairs, _, _ = rank.align_words(ref, cand)
+            lines = cu.lines_from_pairs(pairs, ref, cand)
+            self.assertEqual([round(ln["dy"], 6) for ln in lines], [0.0])
+            self.assertEqual([round(ln["ref_y"], 3) for ln in lines], [round(self.Y, 3)])
+
+    def test_reflow_detection_uses_the_same_anchored_points(self):
+        r"""A `\Biggl\langle`-sized delimiter must not read as a reflowed word.
+
+        `reflowed` is what excludes a page's whole `dy` profile from the step
+        table, so measuring it at the word origins would let one wide
+        delimiter suppress every vertical finding on the page. The geometry
+        here is the same disagreement, scaled past `REFLOW_DX`: a 60 bp
+        delimiter the candidate groups with the `A` that follows it.
+        """
+        adv, x0 = rank.REFLOW_DX + 10.0, 100.0
+        ref = pdftext.words_from_glyphs([
+            glyph("(", x0, self.Y - 8.836, adv, font="CMEX10"),
+            glyph("A", x0 + adv, self.Y, 8.182),
+        ])
+        cand = pdftext.words_from_glyphs([
+            glyph("(", x0, self.Y, adv, font="LatinModernMath-Regular"),
+            glyph("A", x0 + adv, self.Y, 8.182, font="LatinModernMath-Regular"),
+        ])
+        self.assertEqual([w["text"] for w in ref], ["(", "A"])
+        self.assertEqual([w["text"] for w in cand], ["(A"])
+        pairs, _, _ = rank.align_words(ref, cand)
+        measured = cu.measured_pairs(pairs, ref, cand)
+        self.assertEqual(len(measured), 1)
+        # At the word origins this pair is 60 bp apart and the page's whole
+        # step table would have been thrown away; anchored on `A` it is 0.
+        self.assertEqual(round(measured[0][3][0] - measured[0][2][0], 4), 0.0)
+        self.assertEqual(sum(1 for _i, _j, rp, cp in measured
+                             if abs(cp[0] - rp[0]) > rank.REFLOW_DX), 0)
 
 
 if __name__ == "__main__":
