@@ -100,7 +100,7 @@ fn equals_baselines() -> Vec<f64> {
     let r = render(&docs, "main.tex", 1, "openup-jot", &fonts, &RenderOptions::default());
     assert_eq!(r.v2.pages.len(), 1, "expected a one-page document");
     let mut ys = Vec::new();
-    for item in &r.v2.pages[0].items {
+    for item in r.v2.pages[0].resident_items() {
         let Item::GlyphRun(run) = item else { continue };
         let mut chars = run.clusters.iter().map(|c| {
             run.text[c.text_start_byte as usize..c.text_end_byte as usize].chars().next()

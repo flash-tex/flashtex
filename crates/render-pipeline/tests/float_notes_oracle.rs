@@ -78,7 +78,7 @@ fn ours(r: &flashtex_render_pipeline::Rendered) -> (Vec<W>, Rects, Rects) {
     let mut out: Vec<W> = Vec::new();
     let mut prev_end: Option<(u32, f64, f64)> = None;
     for page in &r.v2.pages {
-        for it in &page.items {
+        for it in page.resident_items() {
             let Item::GlyphRun(run) = it else { continue };
             let (Some(first), Some(last)) = (run.glyphs.first(), run.glyphs.last()) else { continue };
             let (x, baseline) = (first.origin_x.to_bp(), first.baseline_y.to_bp());
@@ -96,7 +96,7 @@ fn ours(r: &flashtex_render_pipeline::Rendered) -> (Vec<W>, Rects, Rects) {
         .v2
         .pages
         .iter()
-        .map(|p| p.items.iter().filter_map(|it| match it {
+        .map(|p| p.resident_items().iter().filter_map(|it| match it {
             Item::Rule(rule) => Some((rule.x.to_bp(), rule.top.to_bp(), rule.width.to_bp(), rule.height.to_bp())),
             _ => None,
         }).collect())
@@ -105,7 +105,7 @@ fn ours(r: &flashtex_render_pipeline::Rendered) -> (Vec<W>, Rects, Rects) {
         .v2
         .pages
         .iter()
-        .map(|p| p.items.iter().filter_map(|it| match it {
+        .map(|p| p.resident_items().iter().filter_map(|it| match it {
             Item::Image(im) => Some((im.x.to_bp(), im.top.to_bp(), im.width.to_bp(), im.height.to_bp())),
             _ => None,
         }).collect())

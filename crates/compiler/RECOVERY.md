@@ -1,4 +1,4 @@
-Generated from commit `9bd4b02535dc7a8cc1692325a564ea8883cbff95` by `cargo test --test recovery generate_recovery_evidence -- --ignored --exact`.
+Generated from commit `82a9861604eb6b5628ec1876dd0692b784d1d93b` by `cargo test --test recovery generate_recovery_evidence -- --ignored --exact`.
 
 # FlashTeX recovery evidence
 
@@ -74,7 +74,6 @@ Status: `recovered`
 
 Diagnostics:
 
-- `environment 'tabbing' is not implemented; its body is typeset as plain text` — recovery: `typeset the body without the environment's formatting`; byte range: `8..14`
 - `\end{itemize} does not match \begin{tabbing}` — recovery: `closed the innermost open environment`; byte range: `27..31`
 
 Positioned text items:
@@ -184,14 +183,14 @@ Positioned text items:
 Input:
 
 ```text
-Visible \begin{tabbing}body\end{tabbing} Tail.
+Visible \begin{picture}body\end{picture} Tail.
 ```
 
 Status: `recovered`
 
 Diagnostics:
 
-- `environment 'tabbing' is not implemented; its body is typeset as plain text` — recovery: `typeset the body without the environment's formatting`; byte range: `8..14`
+- `environment 'picture' is not implemented; its body is typeset as plain text` — recovery: `typeset the body without the environment's formatting`; byte range: `8..14`
 
 Positioned text items:
 

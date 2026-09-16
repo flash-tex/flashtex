@@ -684,12 +684,17 @@ extension ShellModel {
     /// the preference is on) if a manual preview scroll had stopped it.
     func revealCaretInPreview() {
         caretFollow.note(.explicit)
-        guard let result else {
-            navigationNote = "No compile result loaded; the caret maps to no preview item."
-            return
-        }
         guard let byte = CaretSync.byteOffset(ofCaretUTF16: caretUTF16, in: activeText) else {
             navigationNote = "Caret position \(caretUTF16) is not valid in \(activePath)."
+            return
+        }
+        // The v2 pane is the default, and on that route the reply's v1 pages
+        // are elided at our own request (`display-list-v2-only`), so `result`
+        // has nothing to map the caret onto. Ask the display list instead
+        // (PreviewV2View.swift); the v1 branch below serves FLASHTEX_PREVIEW_V2=0.
+        if revealCaretInV2Preview(byte: byte) { return }
+        guard let result else {
+            navigationNote = "No compile result loaded; the caret maps to no preview item."
             return
         }
         let hits = caretIndex()?.itemsContaining(byte: byte) ?? []
@@ -721,8 +726,9 @@ struct NavigationCommands: Commands {
     @FocusedValue(\.diagnosticsPanel) private var diagnosticsPanel
 
     var body: some Commands {
-        EditorFoldCommands() // EditorFolding.swift: Editor ▸ Fold / Unfold
         CommandMenu("Navigate") {
+            Button("Go to Line…") { model.presentGoToLine() }
+                .keyboardShortcut("l", modifiers: [.command])
             Button("Go to Matching \\begin/\\end or \\label/\\ref") { model.goToMatching() }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
             // Editor navigation lane (ShellModel+EditorNavigation.swift / EditorNavigation.swift).

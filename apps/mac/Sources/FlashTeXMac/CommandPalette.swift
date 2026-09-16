@@ -19,7 +19,7 @@ enum CommandPaletteModel {
 
     /// Commands the palette cannot run: they are keys inside the editor, a
     /// mouse action on the preview, or a key that only the search window has.
-    static let notRunnable: Set<AccessibilityCommand> = [.completion, .completionList, .toggleComment, .duplicateLine, .signatureHelp, .selectPreviewItemSource, .nextSearchMatch]
+    static let notRunnable: Set<AccessibilityCommand> = [.completion, .completionList, .toggleComment, .signatureHelp, .selectPreviewItemSource, .nextSearchMatch]
 
     static func isRunnable(_ command: AccessibilityCommand) -> Bool { !notRunnable.contains(command) }
 
@@ -39,18 +39,43 @@ enum CommandPaletteModel {
             let menu = r.entry.menu.lowercased()
             let keys = r.entry.shortcuts.joined(separator: " ").lowercased()
             let description = r.entry.description.lowercased()
-            var best = 3
+            // Rank by the WORST-placed term, not the best. Every term has to
+            // match somewhere (the `return nil` below), so taking the minimum
+            // let one incidental title hit mask the rest. Making Duplicate
+            // Line runnable exposed it: for "go to line" its title supplies
+            // "line" (0) while its description supplies "go" and "to" only
+            // because it says "⇧⌘D remains Go to Matching" (3). The minimum
+            // scored it 0 -- tying Go to Line, whose title holds all three --
+            // and the tie broke on declaration order, so Duplicate Line won.
+            var worst = 0
             for t in terms {
-                if title.contains(t) { best = min(best, 0) }
-                else if item.contains(t) { best = min(best, 1) }
-                else if menu.contains(t) || keys.contains(t) { best = min(best, 2) }
-                else if description.contains(t) { best = min(best, 3) }
+                if title.contains(t) { worst = max(worst, 0) }
+                else if item.contains(t) { worst = max(worst, 1) }
+                else if menu.contains(t) || keys.contains(t) { worst = max(worst, 2) }
+                else if description.contains(t) { worst = max(worst, 3) }
                 else { return nil }
             }
-            return best
+            return worst
         }
         let ranked = all.enumerated().compactMap { i, r in rank(r).map { (rank: $0, index: i, row: r) } }
         return ranked.sorted { ($0.rank, $0.index) < ($1.rank, $1.index) }.map(\.row)
+    }
+
+    /// A leading-colon line jump (`:42`, `:42:7`, `:+5` / `:-5`). Nil when the
+    /// query is not that form, so ordinary command filtering still runs.
+    static func lineJumpInput(from query: String) -> String? {
+        let t = query.trimmingCharacters(in: .whitespaces)
+        guard t.hasPrefix(":"), t.count > 1 else { return nil }
+        if case .success = EditorNavigation.parseLineTarget(t) { return t }
+        return nil
+    }
+
+    /// Palette `:N` route: resolve against the active buffer and select. False
+    /// when `query` is not a colon jump (the caller should run a command row).
+    @MainActor
+    static func performLineJump(_ query: String, model: ShellModel) -> Bool {
+        guard let input = lineJumpInput(from: query) else { return false }
+        return model.applyGoToLine(input)
     }
 
     /// Runs `command` through the same model operations its menu item uses.
@@ -72,8 +97,6 @@ enum CommandPaletteModel {
         case .attachWorker: model.attachWorkerPanel()
         case .compile: if !model.outputBoundExplicitRetry() { model.compile() }
         case .exportPDF: model.exportPDF()
-        case .exportPDFViaRust: model.exportPDFViaRust()
-        case .exportPDFExact: model.exportPDFExact()
         case .printDocument: model.printDocument()
         case .printSource: model.printSource()
         case .pinInsertionPoint: model.pinAnchorAtCaret()
@@ -89,14 +112,25 @@ enum CommandPaletteModel {
         case .findPrevious: EditorFindAction.send(.previousMatch)
         case .useSelectionForFind: EditorFindAction.send(.setSearchString)
         case .jumpToSelection: EditorFindAction.centerSelection()
+        case .duplicateLine: EditorLineCommandAction.duplicateBelow()
+        case .duplicateLineUp: EditorLineCommandAction.duplicateAbove()
+        case .moveLineUp: EditorLineCommandAction.moveUp()
+        case .moveLineDown: EditorLineCommandAction.moveDown()
+        case .deleteLine: EditorLineCommandAction.deleteLines()
+        case .joinLines: EditorLineCommandAction.joinLines()
+        case .sortLinesAscending: EditorLineCommandAction.sortAscending()
+        case .sortLinesDescending: EditorLineCommandAction.sortDescending()
+        case .trimTrailingWhitespace: EditorLineCommandAction.trimTrailingWhitespace()
         case .reindentLines: EditorIndentationAction.reindentLines()
         case .reindentDocument: EditorIndentationAction.reindentDocument()
-        case .completion, .completionList, .toggleComment, .duplicateLine, .signatureHelp, .selectPreviewItemSource, .nextSearchMatch: return false
+        case .completion, .completionList, .toggleComment, .signatureHelp, .selectPreviewItemSource, .nextSearchMatch: return false
         case .goToMatching: model.goToMatching()
         case .goToDefinition: model.goToDefinition() // ShellModel+EditorNavigation.swift
         case .goToSymbol: model.editorNavigation.symbolPickerShown = true
+        case .goToLine: model.presentGoToLine()
         case .selectEnvironment: model.selectEnvironment()
         case .wrapInEnvironment: model.editorNavigation.wrapShown = true
+        case .changeEnvironment: model.presentChangeEnvironment()
         case .renameSymbol: model.presentRenameSymbol()
         case .fold: EditorFoldAction.fold()
         case .unfold: EditorFoldAction.unfold()
@@ -147,6 +181,9 @@ struct PaletteEntry: Identifiable, Equatable {
         case file(path: String, open: Bool, from: String?)
         case outline(DocumentOutline.Item)
         case citation(name: String, detail: String, definedIn: String?)
+        /// `:N` / `:N:C` / `:+N` query: not a scope, a jump. #476 has no
+        /// typed `:` prefix (colons are only in internal ids like `file:`).
+        case lineJump
     }
     let id: String
     let title: String
@@ -211,15 +248,14 @@ struct CommandPalette: View {
                 ContentUnavailableView.search(text: query)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(entries, selection: $selected) { entry in
-                    PaletteRow(entry: entry)
-                        .tag(entry.id)
-                        .contentShape(Rectangle())
-                        .onTapGesture { run(entry) }
-                }
-                .listStyle(.plain)
-                .environment(\.defaultMinListRowHeight, DS.Row.paletteResult)
-                .accessibilityIdentifier(Self.identifier)
+                // A real NSTableView (PaletteResults.swift): dense Search
+                // Everywhere rows, full-width band, click to run; the arrow
+                // keys stay in the query field above.
+                PaletteResultsView(rows: entries.map(\.resultRow),
+                                   selectedID: selected,
+                                   onRun: { id in run(entries.first { $0.id == id }) },
+                                   onSelect: { selected = $0 })
+                    .accessibilityIdentifier(Self.identifier)
             }
             Divider()
             HStack(spacing: DS.Space.l) {
@@ -231,6 +267,7 @@ struct CommandPalette: View {
             .padding(.horizontal, DS.Space.l).padding(.vertical, DS.Space.s)
         }
         .frame(width: DS.Layout.paletteSize.width, height: DS.Layout.paletteSize.height)
+        .background(DS.Colors.surfaceRaised)
         .onAppear {
             fieldFocused = true
             outline = model.outline
@@ -289,6 +326,18 @@ struct CommandPalette: View {
     }
 
     private func filteredEntries() -> [PaletteEntry] {
+        // `:42` is a query prefix, not a scope: it short-circuits Files /
+        // Sections / … the same way the old palette replaced its list.
+        if let jump = CommandPaletteModel.lineJumpInput(from: query) {
+            let preview: String = {
+                switch EditorNavigation.resolveLineTarget(model.activeText, input: jump, caret: model.caretUTF16) {
+                case .success(let t): return "Go to line \(t.line), column \(t.column)"
+                case .failure(let h): return h.message
+                }
+            }()
+            return [PaletteEntry(id: "goto:\(jump)", title: preview,
+                                 context: "⏎ jumps · esc closes", payload: .lineJump)]
+        }
         let entries = allEntries()
         let terms = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
         guard !terms.isEmpty else { return entries }
@@ -355,60 +404,48 @@ struct CommandPalette: View {
         case .citation(_, _, let definedIn):
             dismiss()
             if let definedIn { model.switchOrNote(definedIn) }
+        case .lineJump:
+            let q = query
+            dismiss()
+            DispatchQueue.main.async { _ = CommandPaletteModel.performLineJump(q, model: model) }
         }
     }
 }
 
-private struct PaletteRow: View {
-    let entry: PaletteEntry
-
-    var body: some View {
-        HStack(spacing: DS.Space.m) {
-            icon
-                .font(DS.Fonts.secondary)
-                .frame(width: DS.Size.fileIcon)
-            Text(entry.title).font(DS.Fonts.base).lineLimit(1)
-            Text(entry.context).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary).lineLimit(1)
-            Spacer(minLength: DS.Space.m)
-            trailing
-        }
-        .padding(.vertical, DS.Space.xxs)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(spoken)
-    }
-
-    @ViewBuilder private var icon: some View {
-        switch entry.payload {
-        case .command:
-            Image(systemName: "command").foregroundStyle(DS.Colors.textSecondary)
+private extension PaletteEntry {
+    /// The Search Everywhere row anatomy for the AppKit results table.
+    var resultRow: PaletteResultsView.Row {
+        let icon: (name: String, color: NSColor)
+        var shortcut: String?
+        var hint = false
+        switch payload {
+        case .command(let command):
+            icon = ("command", DS.Palette.textSecondary)
+            shortcut = command.entry.shortcuts.first
+            hint = !CommandPaletteModel.isRunnable(command)
         case .file(let path, _, _):
             let style = FileTypeStyle.of(path: path)
-            Image(systemName: style.systemImage).foregroundStyle(style.color)
+            icon = (style.systemImage, style.nsColor)
         case .outline(let item):
-            Image(systemName: OutlineItemStyle.icon(item)).foregroundStyle(OutlineItemStyle.color(item))
+            icon = (OutlineItemStyle.icon(item), OutlineItemStyle.nsColor(item))
         case .citation:
-            Image(systemName: "quote.opening").foregroundStyle(DS.Colors.typeLabel)
+            icon = ("quote.opening", DS.Palette.typeOrange)
+        case .lineJump:
+            icon = ("number", DS.Palette.textSecondary)
         }
+        return PaletteResultsView.Row(id: id, icon: icon.name, iconColor: icon.color,
+                                      title: title, context: context,
+                                      shortcut: shortcut, hint: hint,
+                                      accessibilityLabel: spoken)
     }
 
-    @ViewBuilder private var trailing: some View {
-        if case .command(let command) = entry.payload {
-            HStack(spacing: DS.Space.xs) {
-                ForEach(command.entry.shortcuts, id: \.self) { s in KeyCap(s) }
-            }
-            if !CommandPaletteModel.isRunnable(command) {
-                Image(systemName: "keyboard").foregroundStyle(DS.Colors.textTertiary)
-                    .help("A key inside the editor or a window; not runnable from the palette")
-            }
-        }
-    }
-
-    private var spoken: String {
-        switch entry.payload {
+    var spoken: String {
+        switch payload {
         case .command(let command): return command.entry.helpLine + (CommandPaletteModel.isRunnable(command) ? "" : " Not runnable from the palette.")
         case .file(let path, let open, _): return "\(path), \(open ? "open" : "not open"); activate to show it"
         case .outline(let item): return "\(item.command) \(item.title), line \(item.line); activate to select it"
         case .citation(let name, _, _): return "citation \(name); activate to open its bibliography source"
+        case .lineJump: return "\(title); activate to jump"
         }
     }
 }

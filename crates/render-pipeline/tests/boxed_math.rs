@@ -21,7 +21,7 @@ fn boxed_math_draws_frames_in_inline_and_display_math() {
         .v2
         .pages
         .iter()
-        .flat_map(|p| p.items.iter())
+        .flat_map(|p| p.resident_items().iter())
         .filter_map(|item| match item {
             Item::Rule(rule) => Some(rule),
             _ => None,
@@ -52,7 +52,7 @@ fn boxed_math_draws_frames_in_inline_and_display_math() {
         .v2
         .pages
         .iter()
-        .flat_map(|p| p.items.iter())
+        .flat_map(|p| p.resident_items().iter())
         .filter_map(|item| match item {
             Item::GlyphRun(run) if run.role == flashtex_render_pipeline::display::RunRole::Math => run.glyphs.first().map(|g| g.origin_x),
             _ => None,

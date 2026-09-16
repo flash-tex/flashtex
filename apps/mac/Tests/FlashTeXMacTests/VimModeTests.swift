@@ -25,7 +25,7 @@ final class VimModeTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        tv.vimEnabledOverride = false
+        tv?.vimEnabledOverride = false
         window.orderOut(nil)
     }
 
@@ -578,5 +578,709 @@ final class VimModeTests: XCTestCase {
         XCTAssertEqual(mode, .visual)
         XCTAssertEqual(tv.selectedRange().location, 0)
         XCTAssertEqual(NSMaxRange(tv.selectedRange()), rows[1].location + 1)
+    }
+
+    // MARK: dispatch policy — normal and visual mode own the keyboard
+
+    /// Keys that legitimately edit the buffer as a single normal-mode
+    /// keystroke. `p`/`P` are here because an earlier key in the sweep (`Y`)
+    /// fills the unnamed register, after which they paste. Every key *not*
+    /// in this set must leave the buffer untouched: before the
+    /// consume-unmapped-keys policy, `_`, `-`, `q`, `[`, `#` and every other
+    /// unmapped printable key fell through to the editor and typed itself
+    /// into the document.
+    private static let normalModeEditingKeys: Set<Character> = ["x", "X", "s", "S", "D", "C", "o", "O", "J", "~", "p", "P"]
+
+    func testNormalModeConsumesEveryUnmappedPrintableKey() {
+        let buffer = "alpha beta(gamma) {delta}\n  second line\nthird"
+        for v in UInt8(32)...UInt8(126) {
+            let ch = Character(UnicodeScalar(v))
+            if Self.normalModeEditingKeys.contains(ch) { continue }
+            load(buffer, caret: 8)
+            key(String(ch))
+            XCTAssertEqual(text, buffer, "normal-mode '\(ch)' must not edit the buffer")
+            type("<Esc>") // clear any pending operator / count / command line the key armed
+        }
+    }
+
+    /// Same sweep over a visual selection, where a fallthrough is worse:
+    /// the typed character *replaces the whole selection* (`u`, `r`, `U` and
+    /// every other unmapped key did exactly that).
+    ///
+    /// This allowlist grows as visual commands are implemented — it is the
+    /// register of keys that *may* edit, not a licence for them to do
+    /// anything: what each one actually does is pinned by its own row in the
+    /// table-driven tests below (`vjD`, `vX`, `vC`, `veU`, `ver-`, …). The
+    /// sweep's job is only to catch a key editing the buffer when nothing
+    /// implements it.
+    private static let visualModeEditingKeys: Set<Character> = [
+        "d", "x", "c", "s", "J", "~", ">", "<", "p", "P",
+        "u", "U", "D", "X", "C", "S", "R", // case + linewise commands (this PR)
+    ]
+
+    func testVisualModeConsumesEveryUnmappedKeyInsteadOfReplacingTheSelection() {
+        let buffer = "alpha beta gamma\nsecond line here\n"
+        for v in UInt8(32)...UInt8(126) {
+            let ch = Character(UnicodeScalar(v))
+            if Self.visualModeEditingKeys.contains(ch) { continue }
+            load(buffer, caret: 0)
+            type("ve") // "alpha" selected
+            key(String(ch))
+            XCTAssertEqual(text, buffer, "visual-mode '\(ch)' must not edit the buffer")
+            type("<Esc><Esc>")
+        }
+    }
+
+    /// Unmapped ⌃-chords must never run the editor's Cocoa bindings from
+    /// normal or visual mode (⌃K killed the line, ⌃O opened one, ⌃T
+    /// transposed, ⌃H deleted, ⌃W deleted a word, ⌃Y yanked the kill buffer).
+    func testControlChordsNeverReachTheEditorsCocoaBindings() {
+        let buffer = "one two three\nfour five six\nseven eight\n"
+        for v in UInt8(ascii: "a")...UInt8(ascii: "z") {
+            let ch = String(UnicodeScalar(v))
+            load(buffer, caret: 4)
+            key(ch, flags: .control)
+            XCTAssertEqual(text, buffer, "normal-mode ⌃\(ch) must not edit the buffer")
+            type("<Esc>")
+            load(buffer, caret: 0)
+            type("ve")
+            key(ch, flags: .control)
+            XCTAssertEqual(text, buffer, "visual-mode ⌃\(ch) must not edit the buffer")
+            type("<Esc><Esc>")
+        }
+    }
+
+    /// Enter inserted a newline, Backspace deleted a character and Tab
+    /// inserted an indent — all from normal mode. Until they gain their Vim
+    /// motions they are consumed no-ops.
+    func testEnterBackspaceAndTabAreNoOpsInNormalAndVisualMode() {
+        let buffer = "first line\nsecond line\n"
+        for (chars, code) in [("\r", UInt16(36)), ("\u{7F}", UInt16(51)), ("\t", UInt16(48))] {
+            load(buffer, caret: 3)
+            key(chars, code: code)
+            XCTAssertEqual(text, buffer, "normal-mode key code \(code) must not edit the buffer")
+            load(buffer, caret: 0)
+            type("ve")
+            key(chars, code: code)
+            XCTAssertEqual(text, buffer, "visual-mode key code \(code) must not edit the buffer")
+            type("<Esc>")
+        }
+    }
+
+    /// The Tab consume is normal/visual-mode only: insert mode still hands
+    /// Tab to the editor (indentation, snippet placeholders, completion).
+    func testTabStillReachesTheEditorInInsertMode() {
+        load("ab")
+        type("i")
+        key("\t", code: 48)
+        XCTAssertNotEqual(text, "ab", "insert-mode Tab must keep taking the editor's path")
+    }
+
+    // MARK: shared status-line lifecycle
+
+    /// The status line is a singleton (`VimMode.Status.shared`) but the truth
+    /// behind it is per-view. Turning the preference off used to reach
+    /// `deactivate()` only through an observation held weakly by a live
+    /// editor's coordinator, so switching Vim off from the menu or the
+    /// command palette with no editor alive left the singleton at
+    /// `-- NORMAL --` — and the next editor opened showed a phantom status
+    /// row with Vim off.
+    func testPreferenceOffClearsTheStatusLineWithNoLiveEditor() {
+        let was = EditorPreferences.shared.vimKeybindings
+        defer { EditorPreferences.shared.vimKeybindings = was }
+        tv.vimEnabledOverride = nil // this view follows the preference, like the app's
+        EditorPreferences.shared.vimKeybindings = true
+        XCTAssertEqual(VimMode.Status.shared.indicator, "-- NORMAL --")
+
+        // Every editor goes away, then the preference is switched off with
+        // nothing left observing it.
+        window.contentView?.subviews.forEach { $0.removeFromSuperview() }
+        tv = nil
+        EditorPreferences.shared.vimKeybindings = false
+        XCTAssertNil(VimMode.Status.shared.indicator, "no editor may leave a phantom status row behind")
+        XCTAssertNil(VimMode.Status.shared.commandLine)
+    }
+
+    /// The clear must be driven by the preference *transition*, not by a
+    /// render gate on the preference: `vimEnabledOverride` pins Vim per-view
+    /// independently of it, and that must keep showing its status line.
+    func testPerViewOverrideKeepsItsStatusLineWhenThePreferenceGoesOff() {
+        let was = EditorPreferences.shared.vimKeybindings
+        defer { EditorPreferences.shared.vimKeybindings = was }
+        EditorPreferences.shared.vimKeybindings = true
+        tv.vimEnabledOverride = true // pinned on, regardless of the preference
+        load("abc")
+        XCTAssertEqual(VimMode.Status.shared.indicator, "-- NORMAL --")
+        EditorPreferences.shared.vimKeybindings = false
+        XCTAssertEqual(VimMode.Status.shared.indicator, "-- NORMAL --", "a pinned view still owns the status line")
+        type("i")
+        XCTAssertEqual(VimMode.Status.shared.indicator, "-- INSERT --", "and keeps driving it")
+        type("<Esc>")
+    }
+
+    /// Turning the preference off is synchronous — the old path scheduled a
+    /// `Task { @MainActor }` that lost the race against coordinator teardown
+    /// on a loaded machine, which is what made this flaky in CI rather than
+    /// always broken.
+    func testPreferenceOffClearsTheStatusLineWithoutWaitingForATask() {
+        let was = EditorPreferences.shared.vimKeybindings
+        defer { EditorPreferences.shared.vimKeybindings = was }
+        tv.vimEnabledOverride = nil
+        EditorPreferences.shared.vimKeybindings = true
+        XCTAssertNotNil(VimMode.Status.shared.indicator)
+        EditorPreferences.shared.vimKeybindings = false
+        XCTAssertNil(VimMode.Status.shared.indicator, "cleared on the setter, not on a later run-loop turn")
+    }
+
+    // MARK: table-driven rows — buffer + caret + keys → buffer + caret
+
+    private struct VimRow {
+        var keys: String
+        var before: String
+        var caret: Int
+        var after: String
+        var caretAfter: Int
+    }
+
+    /// One row per action so coverage is visible and a regression names
+    /// itself (the failing row's keys are in the assertion message).
+    private func run(_ rows: [VimRow]) {
+        for r in rows {
+            load(r.before, caret: r.caret)
+            type(r.keys)
+            XCTAssertEqual(text, r.after, "\(r.keys): buffer")
+            XCTAssertEqual(caret, r.caretAfter, "\(r.keys): caret")
+            type("<Esc>")
+        }
+    }
+
+    // MARK: linewise first-non-blank motions (- + _ Enter |) and g_ / ge / gE / #
+
+    func testLinewiseFirstNonBlankMotions() {
+        let b = "  one\n  two\n  three" // line starts 0 / 6 / 12; first non-blanks 2 / 8 / 14
+        run([
+            VimRow(keys: "-", before: b, caret: 8, after: b, caretAfter: 2),
+            VimRow(keys: "+", before: b, caret: 8, after: b, caretAfter: 14),
+            VimRow(keys: "<CR>", before: b, caret: 2, after: b, caretAfter: 8),
+            VimRow(keys: "2+", before: b, caret: 2, after: b, caretAfter: 14),
+            VimRow(keys: "_", before: b, caret: 4, after: b, caretAfter: 2),
+            VimRow(keys: "2_", before: b, caret: 2, after: b, caretAfter: 8),
+            VimRow(keys: "-", before: b, caret: 2, after: b, caretAfter: 2), // first line: nowhere to go
+            VimRow(keys: "+", before: b, caret: 14, after: b, caretAfter: 14), // last line: nowhere to go
+        ])
+    }
+
+    func testBackspaceColumnAndLastNonBlankMotions() {
+        run([
+            VimRow(keys: "<BS>", before: "  one\n  two", caret: 3, after: "  one\n  two", caretAfter: 2),
+            VimRow(keys: "3<BS>", before: "  one\n  two", caret: 4, after: "  one\n  two", caretAfter: 1),
+            VimRow(keys: "|", before: "  one\n  two", caret: 8, after: "  one\n  two", caretAfter: 6),
+            VimRow(keys: "4|", before: "  one\n  two", caret: 6, after: "  one\n  two", caretAfter: 9),
+            VimRow(keys: "99|", before: "  one\n  two", caret: 6, after: "  one\n  two", caretAfter: 10), // clamps to the line's last character
+            VimRow(keys: "g_", before: "one  \ntwo", caret: 0, after: "one  \ntwo", caretAfter: 2), // trailing blanks skipped
+        ])
+    }
+
+    func testWordEndBackMotions() {
+        let b = "one two three"
+        run([
+            VimRow(keys: "ge", before: b, caret: 8, after: b, caretAfter: 6),
+            VimRow(keys: "ge", before: b, caret: 6, after: b, caretAfter: 2),
+            VimRow(keys: "ge", before: b, caret: 10, after: b, caretAfter: 6), // from inside a word
+            VimRow(keys: "ge", before: "foo( bar", caret: 5, after: "foo( bar", caretAfter: 3), // punctuation run has its own end
+            VimRow(keys: "gE", before: "foo( bar", caret: 5, after: "foo( bar", caretAfter: 3), // big words: ( ends "foo("
+        ])
+    }
+
+    func testNewMotionsAsOperatorTargets() {
+        run([
+            VimRow(keys: "dge", before: "one two three", caret: 8, after: "one twhree", caretAfter: 6), // inclusive, backward
+            VimRow(keys: "d<CR>", before: "  one\n  two\n  three", caret: 2, after: "  three", caretAfter: 2), // linewise: two lines
+            VimRow(keys: "d-", before: "  one\n  two\n  three", caret: 14, after: "  one", caretAfter: 2), // linewise: this line and the one above
+            VimRow(keys: "d_", before: "aa\nbb\ncc", caret: 4, after: "aa\ncc", caretAfter: 3), // one whole line, like dd
+            VimRow(keys: "2d_", before: "aa\nbb\ncc", caret: 3, after: "aa", caretAfter: 0),
+            VimRow(keys: "d|", before: "abcdef", caret: 3, after: "def", caretAfter: 0), // exclusive, back to column 1
+            VimRow(keys: "dg_", before: "one  ", caret: 0, after: "  ", caretAfter: 0), // inclusive to the last non-blank
+        ])
+    }
+
+    func testHashSearchesTheWordUnderTheCaretBackwards() {
+        let b = "foo bar foo baz foo"
+        run([
+            VimRow(keys: "#", before: b, caret: 8, after: b, caretAfter: 0),
+            VimRow(keys: "*", before: b, caret: 8, after: b, caretAfter: 16),
+            VimRow(keys: "#", before: b, caret: 0, after: b, caretAfter: 16), // wraps backwards
+        ])
+        // n continues in the # direction (backwards).
+        load(b, caret: 16)
+        type("#")
+        XCTAssertEqual(caret, 8)
+        type("n")
+        XCTAssertEqual(caret, 0)
+    }
+
+    func testScreenLineMotionsTakeCounts() {
+        load("l1\nl2\nl3\nl4\nl5\nl6", caret: 7) // 6 short lines, all visible
+        type("H")
+        XCTAssertEqual(caret, 0)
+        type("2H")
+        XCTAssertEqual(caret, 3)
+        type("L")
+        XCTAssertEqual(caret, 15)
+        type("2L")
+        XCTAssertEqual(caret, 12)
+    }
+
+    // MARK: correctness fixes pulled forward from the audit
+
+    func testNamedRegisterSelectionDoesNotLeakIntoTheNextCommand() {
+        load("one\ntwo\n")
+        type("\"ayy") // register a: "one\n"
+        type("j")
+        type("yy") // unnamed yank — must not overwrite register a
+        type("\"ap") // paste register a below "two"
+        XCTAssertEqual(text, "one\ntwo\none\n")
+        // …and the register selection is spent: a plain p pastes the unnamed register ("two\n").
+        type("p")
+        XCTAssertEqual(text, "one\ntwo\none\ntwo\n")
+    }
+
+    func testGvRestoresTheLastVisualSelection() {
+        load("alpha beta gamma")
+        type("ve")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 0, length: 5))
+        type("<Esc>w")
+        XCTAssertEqual(mode, .normal)
+        type("gv")
+        XCTAssertEqual(mode, .visual)
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 0, length: 5))
+        // Operators act on the restored selection.
+        type("d")
+        XCTAssertEqual(text, " beta gamma")
+    }
+
+    func testGvWithoutAPriorSelectionAnchorsAtTheCaret() {
+        load("alpha beta", caret: 6)
+        type("gv")
+        XCTAssertEqual(mode, .visual)
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 6, length: 1))
+        type("e") // extending moves the head, proving the anchor is the caret, not stale state
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 6, length: 4))
+    }
+
+    func testDotRepeatsALinewiseEnterDelete() {
+        load("l1\nl2\nl3\nl4\nl5\nl6")
+        type("d<CR>")
+        XCTAssertEqual(text, "l3\nl4\nl5\nl6")
+        type(".")
+        XCTAssertEqual(text, "l5\nl6")
+    }
+
+    // MARK: registers — black hole, numbered chain, append
+
+    /// `"_` discards the text entirely: unlike every other register, it
+    /// never touches the unnamed register either, so a prior yank still
+    /// pastes back afterwards.
+    func testBlackHoleRegisterNeverTouchesTheUnnamedRegister() {
+        load("one\ntwo\nthree")
+        type("yy") // unnamed + "0" = "one\n"
+        type("j\"_dd") // discard "two" into the void
+        XCTAssertEqual(text, "one\nthree", "\"_dd still deletes")
+        type("p")
+        XCTAssertEqual(text, "one\nthree\none", "unnamed register still holds the yank, not the black-holed delete")
+    }
+
+    /// `"_` also refuses to *paste* anything (there is nothing in it).
+    func testBlackHoleRegisterPastesNothing() {
+        load("abc")
+        type("\"_p")
+        XCTAssertEqual(text, "abc", "black hole has nothing to paste")
+    }
+
+    /// A yank without an explicit register also fills `"0`, which a
+    /// following delete does not clobber (deletes never touch `"0`).
+    func testYankRegisterZeroSurvivesAnInterveningDelete() {
+        load("one\ntwo")
+        type("yy") // "0 = "one\n"
+        type("jdd") // deletes "two"; "0 must still be "one\n"
+        type("\"0p")
+        XCTAssertEqual(text, "one\none", "\"0p pastes the last yank, unaffected by the delete")
+    }
+
+    /// Whole-line (or multi-line) deletes shift into the numbered registers
+    /// `"1`…`"9`, oldest first, most recent always in `"1`.
+    func testNumberedRegistersShiftOnLinewiseDeletes() {
+        load("a\nb\nc\nd")
+        type("dd") // "1 = a
+        type("dd") // "1 = b, "2 = a
+        type("dd") // "1 = c, "2 = b, "3 = a
+        XCTAssertEqual(text, "d")
+        type("\"3p")
+        XCTAssertEqual(text, "d\na", "\"3 holds the oldest of the three deletes")
+        type("u\"1p")
+        XCTAssertEqual(text, "d\nc", "\"1 still holds the most recent delete after undoing the \"3 paste")
+    }
+
+    /// A delete that stays within one line (too small for a numbered slot)
+    /// goes to `"-`, and never disturbs `"1`.
+    func testSmallDeleteGoesToTheDashRegister() {
+        load("abc")
+        type("x") // "-" = "a"; "1"/"0" untouched
+        XCTAssertEqual(text, "bc")
+        type("\"-p")
+        XCTAssertEqual(text, "bac")
+    }
+
+    /// `"A` appends to `"a` (with the combined text landing in both slots,
+    /// and readable through either name); `"a` alone overwrites as before.
+    func testUppercaseRegisterAppendsInsteadOfOverwriting() {
+        load("alpha beta")
+        type("\"ayiw") // "a" = "alpha"
+        type("w\"Ayiw") // "A" appends -> "a" = "alphabeta" (word-wise, no separator)
+        load("-")
+        type("\"ap")
+        XCTAssertEqual(text, "-alphabeta", "\"A appended onto \"a instead of replacing it")
+        type("\"Ap")
+        XCTAssertEqual(text, "-alphabetaalphabeta", "\"A also reads the same slot as \"a")
+    }
+
+    /// Appending a linewise yank onto a linewise register joins with a
+    /// newline rather than concatenating mid-line.
+    func testUppercaseRegisterAppendsLinewiseWithANewlineJoin() {
+        load("one\ntwo\nthree")
+        type("\"ayy") // "a" = "one\n"
+        type("j\"Ayy") // append "two\n" -> "a" = "one\ntwo\n"
+        load("x")
+        type("\"ap")
+        XCTAssertEqual(text, "x\none\ntwo", "the appended register pastes as two whole lines")
+    }
+
+    // MARK: case operators gu / gU / g~
+
+    func testCaseOperatorsWithMotionsAndDoubledForms() {
+        run([
+            VimRow(keys: "guw", before: "HELLO World", caret: 0, after: "hello World", caretAfter: 0),
+            VimRow(keys: "gUw", before: "hello world", caret: 0, after: "HELLO world", caretAfter: 0),
+            VimRow(keys: "g~w", before: "Hello", caret: 0, after: "hELLO", caretAfter: 0),
+            VimRow(keys: "gu$", before: "ABC DEF", caret: 4, after: "ABC def", caretAfter: 4),
+            VimRow(keys: "guu", before: "ABC Def\nGHI", caret: 2, after: "abc def\nGHI", caretAfter: 0),
+            VimRow(keys: "gugu", before: "ABC Def\nGHI", caret: 2, after: "abc def\nGHI", caretAfter: 0),
+            VimRow(keys: "2gUU", before: "ab\ncd\nef", caret: 0, after: "AB\nCD\nef", caretAfter: 0),
+            VimRow(keys: "g~~", before: "aBc", caret: 1, after: "AbC", caretAfter: 0),
+        ])
+    }
+
+    func testCaseOperatorsInVisualModeAndDotRepeat() {
+        run([
+            VimRow(keys: "vegu", before: "ABC DEF", caret: 0, after: "abc DEF", caretAfter: 0),
+            VimRow(keys: "veU", before: "abc def", caret: 0, after: "ABC def", caretAfter: 0),
+            VimRow(keys: "vju", before: "AB\nCD", caret: 0, after: "ab\ncD", caretAfter: 0), // charwise through 'C'
+            VimRow(keys: "VjU", before: "ab\ncd", caret: 0, after: "AB\nCD", caretAfter: 0), // linewise: both lines
+        ])
+        load("AAA BBB")
+        type("guw")
+        XCTAssertEqual(text, "aaa BBB")
+        type("w.")
+        XCTAssertEqual(text, "aaa bbb", "`.` repeats guw at the new position")
+    }
+
+    // MARK: visual-mode commands that previously fell through
+
+    func testVisualReplaceEachSelectedCharacter() {
+        run([
+            VimRow(keys: "ver-", before: "abc def", caret: 0, after: "--- def", caretAfter: 0),
+            VimRow(keys: "Vjrx", before: "ab\ncd", caret: 0, after: "xx\nxx", caretAfter: 0), // newline survives
+        ])
+    }
+
+    func testVisualLinewiseDeleteChangeAndYank() {
+        run([
+            VimRow(keys: "vjD", before: "one\ntwo\nthree", caret: 0, after: "three", caretAfter: 0),
+            VimRow(keys: "vX", before: "one\ntwo", caret: 5, after: "one", caretAfter: 0),
+            VimRow(keys: "vYp", before: "one\ntwo", caret: 0, after: "one\none\ntwo", caretAfter: 4), // Y is linewise
+        ])
+        load("  one\n  two", caret: 8)
+        type("vC")
+        XCTAssertEqual(mode, .insert)
+        XCTAssertEqual(text, "  one\n  ", "linewise change keeps the indent")
+        type("x")
+        key("\u{1B}", code: 53)
+        XCTAssertEqual(text, "  one\n  x")
+    }
+
+    func testVisualOSwapsTheSelectionCorners() {
+        load("abcdef")
+        type("vll")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 0, length: 3))
+        type("O")
+        XCTAssertEqual(mode, .visual)
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 0, length: 3), "O keeps the region, moving the head")
+        type("l") // the head is now the LEFT end, so l shrinks from the left
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 1, length: 2))
+        type("<Esc>")
+    }
+
+    // MARK: ip / ap paragraph text objects
+
+    func testParagraphTextObjects() {
+        let b = "aaa\nbbb\n\nccc\nddd\n\neee"
+        run([
+            VimRow(keys: "dip", before: b, caret: 5, after: "\nccc\nddd\n\neee", caretAfter: 0),
+            VimRow(keys: "dap", before: b, caret: 5, after: "ccc\nddd\n\neee", caretAfter: 0), // trailing blank line included
+            VimRow(keys: "dip", before: "aaa\n\n\nbbb", caret: 4, after: "aaa\nbbb", caretAfter: 4), // a blank run is its own paragraph
+            VimRow(keys: "dap", before: "aaa\nbbb\n\n\n", caret: 0, after: "", caretAfter: 0), // paragraph and every trailing blank line
+            VimRow(keys: "yipP", before: b, caret: 9, after: "aaa\nbbb\n\nccc\nddd\nccc\nddd\n\neee", caretAfter: 9),
+        ])
+        // Register is linewise: p pastes on the next line.
+        load(b, caret: 9)
+        type("yipGp")
+        XCTAssertTrue(text.hasSuffix("eee\nccc\nddd"), "yip yanks whole lines, so p pastes below; got \(text)")
+    }
+
+    // MARK: ex line jumps
+
+    func testExLineNumberJumps() {
+        let b = "  l1\nl2\nl3\n  l4\nl5"
+        load(b, caret: 0)
+        type(":3<CR>")
+        XCTAssertEqual(caret, 8)
+        type(":1<CR>")
+        XCTAssertEqual(caret, 2)
+        type(":$<CR>")
+        XCTAssertEqual(caret, 16)
+        type(":99<CR>")
+        XCTAssertEqual(caret, 16, "past the end clamps to the last line")
+    }
+
+    // MARK: zt / zb scrolling
+
+    func testZtAndZbScrollTheCaretLineToTheEdges() throws {
+        load((0..<200).map { "line \($0)" }.joined(separator: "\n"))
+        let lm = try XCTUnwrap(tv.layoutManager)
+        lm.ensureLayout(for: try XCTUnwrap(tv.textContainer)) // bounds/height must be final before scrolling
+        type("100G")
+        let glyph = lm.glyphIndexForCharacter(at: tv.selectedRange().location)
+        let rect = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let inset = tv.textContainerInset.height
+        type("zt")
+        let top = try XCTUnwrap(tv.enclosingScrollView).documentVisibleRect
+        XCTAssertEqual(top.minY, rect.minY + inset, accuracy: rect.height * 1.5, "zt puts the caret line at the top edge")
+        type("zb")
+        let bottom = try XCTUnwrap(tv.enclosingScrollView).documentVisibleRect
+        XCTAssertEqual(bottom.maxY, rect.maxY + inset, accuracy: rect.height * 1.5, "zb puts the caret line at the bottom edge")
+    }
+
+    // MARK: insert-mode chords ⌃W ⌃U ⌃R ⌃T ⌃O
+
+    func testControlWDeletesTheWordBeforeTheCaret() {
+        load("")
+        type("i")
+        type("hello world")
+        type("<C-w>")
+        XCTAssertEqual(text, "hello ")
+        XCTAssertEqual(caret, 6)
+        XCTAssertEqual(mode, .insert)
+        type("<C-w>") // a trailing space alone still counts as "before the word"
+        XCTAssertEqual(text, "")
+    }
+
+    func testControlUDeletesToInsertSessionStartOrFirstNonBlank() {
+        load("")
+        type("i")
+        type("indent text")
+        type("<C-u>")
+        XCTAssertEqual(text, "", "deletes everything typed this session")
+        XCTAssertEqual(caret, 0)
+        type("<Esc>") // back to normal mode: the next `i` must start a fresh session, not type a literal "i"
+
+        load("    abcdef", caret: 10)
+        type("i") // nothing typed yet this session
+        type("<C-u>")
+        XCTAssertEqual(text, "    ", "with nothing typed, ⌃U falls back to the line's first non-blank")
+        XCTAssertEqual(caret, 4)
+    }
+
+    func testControlTIndentsTheCurrentLineFromInsertMode() {
+        let unit = EditorPreferences.shared.indentString
+        load("abc", caret: 1)
+        type("i")
+        type("<C-t>")
+        XCTAssertEqual(text, unit + "abc")
+        XCTAssertEqual(caret, 1 + (unit as NSString).length)
+        XCTAssertEqual(mode, .insert)
+    }
+
+    func testControlRInsertsARegistersContentsAndKeepsTyping() {
+        load("word")
+        type("\"ayiw")
+        load("X")
+        type("i")
+        type("<C-r>a")
+        XCTAssertEqual(text, "wordX")
+        XCTAssertEqual(caret, 4)
+        XCTAssertEqual(mode, .insert)
+        type("!")
+        XCTAssertEqual(text, "word!X")
+    }
+
+    func testControlOEntersOneShotNormalModeThenReturnsToInsert() {
+        load("hello", caret: 5)
+        type("i")
+        type("<C-o>0")
+        XCTAssertEqual(mode, .insert, "a complete one-key motion returns to insert")
+        XCTAssertEqual(caret, 0)
+        type("X")
+        XCTAssertEqual(text, "Xhello")
+    }
+
+    func testControlOStaysInNormalModeMidOperatorThenReturnsAfterTheMotion() {
+        load("keep drop here", caret: 0)
+        type("A") // caret at end of line, insert mode
+        type("<C-o>")
+        XCTAssertEqual(mode, .normal)
+        type("b") // a complete one-key motion returns to insert immediately
+        XCTAssertEqual(mode, .insert)
+        XCTAssertEqual(caret, 10)
+        type("<C-o>")
+        XCTAssertEqual(mode, .normal)
+        type("d")
+        XCTAssertEqual(mode, .normal, "mid-operator: must not return to insert before its motion")
+        type("w")
+        XCTAssertEqual(text, "keep drop ", "dw deleted \"here\" as the one-shot command")
+        XCTAssertEqual(mode, .insert, "the operator+motion pair completed, so ⌃O returns to insert")
+        // Known simplification: real Vim remembers that the caret was past
+        // the last character (end of line) before the one-shot command and
+        // restores that on return; this implementation applies the ordinary
+        // normal-mode clamp (caret sits ON the last character, not after
+        // it), so the caret lands one column short of true end-of-line here.
+        type("!")
+        XCTAssertEqual(text, "keep drop! ")
+    }
+
+    // MARK: marks adjust with edits, jumplist, `` / '', C-a / C-x
+
+    func testMarksShiftWithEditsBeforeThem() {
+        load("one\ntwo\nthree", caret: 4)
+        type("ma")
+        type("gg")
+        type("dd")
+        XCTAssertEqual(text, "two\nthree")
+        type("G`a")
+        XCTAssertEqual(caret, 0, "the mark followed \"two\" after the line before it was deleted")
+    }
+
+    func testJumplistControlOAndControlIRoundTripThroughABigJump() {
+        load((0..<20).map { "line \($0)" }.joined(separator: "\n"))
+        XCTAssertEqual(caret, 0)
+        type("G")
+        let afterG = caret
+        XCTAssertGreaterThan(afterG, 0)
+        key("o", flags: .control)
+        XCTAssertEqual(caret, 0, "C-o returns to before the jump")
+        key("i", flags: .control)
+        XCTAssertEqual(caret, afterG, "C-i goes forward again")
+    }
+
+    func testBacktickAndQuoteReturnToTheLastJump() {
+        load("aaaa\nbbbb\ncccc\ndddd\neeee", caret: 7) // the third 'b' of "bbbb"
+        type("G")
+        type("``")
+        XCTAssertEqual(caret, 7, "`` returns to the exact position before the last jump")
+        type("G")
+        type("''")
+        XCTAssertEqual(caret, 5, "'' goes to the *line start* of the last jump")
+    }
+
+    func testControlAAndControlXIncrementAndDecrementTheNextNumber() {
+        load("count: 41 done", caret: 0)
+        key("a", flags: .control)
+        XCTAssertEqual(text, "count: 42 done")
+        key("x", flags: .control)
+        key("x", flags: .control)
+        XCTAssertEqual(text, "count: 40 done")
+
+        load("x = -5", caret: 0)
+        key("a", flags: .control)
+        XCTAssertEqual(text, "x = -4", "the leading - is part of the number")
+
+        load("v1 to v9", caret: 0)
+        type("3")
+        key("a", flags: .control)
+        XCTAssertEqual(text, "v4 to v9", "a count multiplies the increment")
+    }
+
+    // MARK: ZZ / ZQ
+
+    func testCapitalZZAndZQRouteToTheHandlerLikeWqAndQForce() {
+        var received: [VimMode.ExCommand] = []
+        tv.vim.exCommandHandler = { received.append($0); return nil }
+        load("text")
+        type("ZZ")
+        type("ZQ")
+        XCTAssertEqual(received, [.writeQuit, .quit(force: true)])
+    }
+
+    // MARK: gq / gqq / gqap reformat
+
+    func testGqqReformatsOnlyItsOwnLineNotTheRestOfTheParagraph() {
+        load("aaaa bbbb cccc\ndddd eeee ffff")
+        type(":set textwidth=9<CR>")
+        type("gqq")
+        XCTAssertEqual(text, "aaaa bbbb\ncccc\ndddd eeee ffff", "gqq wraps only the line it started on")
+    }
+
+    func testGqapReformatsTheWholeParagraphAcrossLines() {
+        load("aaaa bbbb cccc\ndddd eeee ffff")
+        type(":set textwidth=9<CR>")
+        type("gqap")
+        XCTAssertEqual(text, "aaaa bbbb\ncccc dddd\neeee ffff\n", "gqap rejoins and rewraps every line of the paragraph")
+    }
+
+    func testGqWithAMotionAndDoubledFormAndDefaultTextwidth() {
+        load("one two three four five six seven eight nine ten")
+        type(":set textwidth=10<CR>")
+        type("gqq")
+        XCTAssertEqual(text, "one two\nthree four\nfive six\nseven\neight nine\nten\n")
+        load("keep this\nwrap this line because it is much longer than the width allows for sure")
+        type(":set tw=20<CR>")
+        type("j0gqq")
+        XCTAssertTrue(text.hasPrefix("keep this\n"), "the first line, outside the motion, is untouched")
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            XCTAssertLessThanOrEqual((String(line) as NSString).length, 20, "\"\(line)\" exceeds textwidth")
+        }
+    }
+
+    // MARK: text objects i< a< is as it at
+
+    func testAngleBracketTextObject() {
+        run([
+            VimRow(keys: "di<", before: "a <bold> b", caret: 4, after: "a <> b", caretAfter: 3),
+            VimRow(keys: "da<", before: "a <bold> b", caret: 4, after: "a  b", caretAfter: 2),
+        ])
+    }
+
+    func testSentenceTextObject() {
+        run([
+            VimRow(keys: "dis", before: "Hi. Ok go. Bye.", caret: 5, after: "Hi.  Bye.", caretAfter: 4),
+            VimRow(keys: "das", before: "Hi. Ok go. Bye.", caret: 5, after: "Hi. Bye.", caretAfter: 4),
+        ])
+    }
+
+    func testTagTextObject() {
+        run([
+            VimRow(keys: "dit", before: "before <b>inside</b> after", caret: 12, after: "before <b></b> after", caretAfter: 10),
+            VimRow(keys: "dat", before: "before <b>inside</b> after", caret: 12, after: "before  after", caretAfter: 7),
+        ])
+        // Self-closing and non-tag angle brackets never open a pair.
+        load("keep <br/> going", caret: 7)
+        type("dit")
+        XCTAssertEqual(text, "keep <br/> going", "<br/> is self-closing: no pair to act on")
+        load("a <!-- note --> b", caret: 5)
+        type("dit")
+        XCTAssertEqual(text, "a <!-- note --> b", "<!-- --> is a comment, not a tag pair")
+        // Nested tags: the caret picks the innermost enclosing pair.
+        load("<b>bold <i>both</i> more</b>", caret: 12) // inside <i>both</i>
+        type("dit")
+        XCTAssertEqual(text, "<b>bold <i></i> more</b>")
     }
 }

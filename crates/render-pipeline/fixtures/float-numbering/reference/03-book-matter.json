@@ -1,0 +1,30 @@
+{
+ "pages": 5,
+ "captions": [
+  {
+   "label": "Figure 1",
+   "page": 1,
+   "x": 241.132,
+   "baseline": 309.19
+  },
+  {
+   "label": "Figure 1.1",
+   "page": 3,
+   "x": 251.385,
+   "baseline": 354.022
+  },
+  {
+   "label": "Table 1.1",
+   "page": 3,
+   "x": 240.952,
+   "baseline": 410.255
+  },
+  {
+   "label": "Figure 1.2",
+   "page": 5,
+   "x": 237.825,
+   "baseline": 309.19
+  }
+ ],
+ "refs": "Refs 1, 1.1, 1.1 and 1.2."
+}

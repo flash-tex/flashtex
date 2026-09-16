@@ -359,22 +359,6 @@ enum EditorFoldAction {
     static func unfoldAll() { NSApp.sendAction(#selector(CompletingTextView.unfoldAll(_:)), to: nil, from: nil) }
 }
 
-/// Editor ▸ Fold / Unfold / Fold All / Unfold All (⌥⌘← / ⌥⌘→ / ⌥⇧⌘← / ⌥⇧⌘→).
-struct EditorFoldCommands: Commands {
-    var body: some Commands {
-        CommandMenu("Editor") {
-            Button("Fold") { EditorFoldAction.fold() }
-                .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
-            Button("Unfold") { EditorFoldAction.unfold() }
-                .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
-            Button("Fold All") { EditorFoldAction.foldAll() }
-                .keyboardShortcut(.leftArrow, modifiers: [.command, .option, .shift])
-            Button("Unfold All") { EditorFoldAction.unfoldAll() }
-                .keyboardShortcut(.rightArrow, modifiers: [.command, .option, .shift])
-        }
-    }
-}
-
 // MARK: - CompletingTextView folding
 
 extension CompletingTextView {

@@ -44,8 +44,9 @@ readback checks and local Poppler raster smoke.
 
 Searchable text/accessibility still needs an explicit original-glyph/font binding
 adapter for the backend's CID font route or marked-content/ActualText contract.
-The outline exporter maintains its provenance sidecar today. Alpha resource
-support remains unsupported by this bounded operator set. Supporting arbitrary
+The outline exporter maintains its provenance sidecar today. Constant alpha is
+supported only as pgf's `/pgf@CA<a>` / `/pgf@ca<a>` ExtGStates; other
+ExtGState keys remain outside the bounded operator set. Supporting arbitrary
 nonterminating rationals would require an explicitly agreed approximation policy;
 none is assumed. Native visual comparison remains a separate acceptance gate.
 

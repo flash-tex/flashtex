@@ -18,7 +18,7 @@ Source and full engineering notes: `apps/ios/README.md`.
 | Mac | FlashTeX for Mac ([install](README.md#quick-start-5-minutes)), on the same Wi-Fi network as the iPad |
 | iPad | An iPad whose iOS version is supported by the Xcode you build with (the project is generated for iOS 17+; Xcode 26 was used for the recorded builds). iPad only — the target does not build for iPhone. |
 | Build tools | Xcode with an iOS platform installed, a free or paid Apple ID (a *Personal Team* works), Python 3 for the project generator |
-| Conversion | On the Mac: the capture bridge attached (*Edit › Attach Capture Bridge*) and either an xAI (Grok) API key in Preferences or a local provider — see [the AI assistant](gui.md#the-ai-assistant) |
+| Conversion | On the Mac: the capture bridge attached (*Edit › Attach Capture Bridge*) and an xAI (Grok) API key in Preferences — see [Capture conversion](gui.md#capture-conversion-the-only-model-backed-feature) |
 
 There is no App Store or TestFlight build. You install it from source with
 Xcode, exactly like any personal-team iOS project.
@@ -170,9 +170,9 @@ relaunch; an interrupted send comes back retryable with the same id.
 - No push from the Mac: the iPad polls.
 - No camera capture inside the app — use the Photos picker (take the photo
   with the Camera app first).
-- Conversion needs the Mac's bridge and a provider (xAI key or local
-  provider); without one the Mac reports `provider_disabled` /
-  `provider_auth_missing` and the capture stays journaled.
+- Conversion needs the Mac's bridge and an xAI API key; without one the Mac
+  reports `provider_disabled` / `provider_auth_missing` and the capture stays
+  journaled.
 - The pairing code is short (about 20 bits) and the connection has no forward
   secrecy; pair on a network you trust. One code pairs one device.
 - Wi-Fi only, same network; no cloud relay.

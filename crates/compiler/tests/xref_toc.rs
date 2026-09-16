@@ -238,3 +238,65 @@ fn incremental_edits_to_headings_match_a_fresh_compile() {
     assert!(texts.contains(&"2.1"));
     assert_eq!(texts.iter().filter(|text| **text == "renamed").count(), 2);
 }
+
+#[test]
+fn refstepcounter_on_a_newcounter_feeds_the_following_label() {
+    let source =
+        r"\newcounter{myc}\refstepcounter{myc}\label{mylab}Value \arabic{myc}, ref \ref{mylab}.";
+    let output = compile(source);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let all = items(&output);
+    let reference = all
+        .iter()
+        .find(|item| slice(source, item) == r"\ref{mylab}")
+        .expect("ref item");
+    assert_eq!(reference.text, "1");
+    let rendered: Vec<&str> = all.iter().map(|item| item.text.as_str()).collect();
+    assert!(rendered.contains(&"Value"), "{rendered:?}");
+    assert!(rendered.contains(&"1"), "{rendered:?}");
+}
+
+#[test]
+fn refstepcounter_label_uses_the_counter_representation() {
+    let source = r"\newcounter{myc}\renewcommand{\themyc}{M-\arabic{myc}}\refstepcounter{myc}\refstepcounter{myc}\label{ml}See \ref{ml}.";
+    let output = compile(source);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let all = items(&output);
+    let reference = all
+        .iter()
+        .find(|item| slice(source, item) == r"\ref{ml}")
+        .expect("ref item");
+    assert_eq!(reference.text, "M-2");
+}
+
+#[test]
+fn section_labels_still_win_over_an_earlier_bare_refstepcounter() {
+    let source =
+        r"\newcounter{myc}\refstepcounter{myc}\refstepcounter{myc}\section{Title}\label{s}See \ref{s}.";
+    let output = compile(source);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let all = items(&output);
+    let reference = all
+        .iter()
+        .find(|item| slice(source, item) == r"\ref{s}")
+        .expect("ref item");
+    assert_eq!(reference.text, "1");
+}
+
+#[test]
+fn each_label_reads_the_most_recent_refstepcounter_in_source_order() {
+    let source = r"\newcounter{ca}\newcounter{cb}\refstepcounter{ca}\label{la}\refstepcounter{cb}\refstepcounter{cb}\label{lb}A \ref{la} B \ref{lb}.";
+    let output = compile(source);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let all = items(&output);
+    let first = all
+        .iter()
+        .find(|item| slice(source, item) == r"\ref{la}")
+        .expect("first ref item");
+    let second = all
+        .iter()
+        .find(|item| slice(source, item) == r"\ref{lb}")
+        .expect("second ref item");
+    assert_eq!(first.text, "1");
+    assert_eq!(second.text, "2");
+}

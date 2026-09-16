@@ -96,7 +96,7 @@ final class WorkspaceShellTests: XCTestCase {
         let notRunnable = rows.filter { !$0.runnable }.map(\.id)
         XCTAssertEqual(Set(notRunnable), CommandPaletteModel.notRunnable)
         // Only editor keys, the preview click and the search window's own key are hints.
-        XCTAssertEqual(Set(notRunnable), [.completion, .completionList, .toggleComment, .duplicateLine, .signatureHelp, .selectPreviewItemSource, .nextSearchMatch])
+        XCTAssertEqual(Set(notRunnable), [.completion, .completionList, .toggleComment, .signatureHelp, .selectPreviewItemSource, .nextSearchMatch])
         for c in notRunnable { XCTAssertNil(c.entry.menuItem, "\(c) is not a menu item") }
         // Every menu item of the table is runnable from the palette.
         for e in AccessibilityCommand.entries where e.menuItem != nil { XCTAssertTrue(CommandPaletteModel.isRunnable(e.command), e.title) }
@@ -107,7 +107,7 @@ final class WorkspaceShellTests: XCTestCase {
         XCTAssertEqual(CommandPaletteModel.rows(matching: "⌘⇧P").map(\.id), [.commandPalette])
         XCTAssertEqual(CommandPaletteModel.rows(matching: "⌘⌥P").map(\.id), [.pinInsertionPoint])
         // Multi-term: every term must match; case-insensitive.
-        XCTAssertEqual(CommandPaletteModel.rows(matching: "EXPORT rust").map(\.id), [.exportPDFViaRust])
+        XCTAssertEqual(CommandPaletteModel.rows(matching: "EXPORT GID").map(\.id), [.exportPDF])
         XCTAssertEqual(CommandPaletteModel.rows(matching: "zzz-nothing"), [])
         // A menu name lists that menu's commands; title matches rank first.
         let navigate = CommandPaletteModel.rows(matching: "navigate").map(\.id)
@@ -135,7 +135,8 @@ final class WorkspaceShellTests: XCTestCase {
         }
         // Panel bounds: the documentation pane is part of the popup's height.
         XCTAssertGreaterThan(CompletionPopup.docHeight, 40)
-        XCTAssertEqual(ProblemsPanel.minHeight, 120)
+        XCTAssertEqual(ProblemsPanel.minHeight, DS.Layout.problemsMinHeight)
+        XCTAssertEqual(ProblemsPanel.idealHeight, DS.Layout.problemsIdealHeight)
         XCTAssertGreaterThan(ProblemsPanel.idealHeight, ProblemsPanel.minHeight)
     }
 

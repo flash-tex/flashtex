@@ -31,7 +31,13 @@ let package = Package(
             // supported-latex.json), synced by scripts/sync-supported-latex.sh;
             // Completion.Vocabulary is decoded from it. make-app.sh copies it
             // into Contents/Resources.
-            resources: [.copy("Resources/supported-latex.json")]
+            resources: [
+                .copy("Resources/supported-latex.json"),
+                // JetBrains Mono (SIL OFL 1.1, licence bundled): the editor's
+                // default face, registered per process at first font
+                // resolution (EditorFontRegistration.swift).
+                .copy("Resources/Fonts"),
+            ]
         ),
         .testTarget(
             name: "FlashTeXProtocolTests",

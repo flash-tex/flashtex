@@ -6,9 +6,9 @@ import FlashTeXProtocol
 ///
 /// `recoverableBuffer` and `ProjectDocuments.detachedBuffers` keep discarded
 /// text for the session only, and only while the preview controller's ledger
-/// is *not* the durable home of that text (a session copy of a file not named
-/// `main.tex`, the direct worker route, the fixture route, or no helper at
-/// all). This store makes such text survive the process: one JSON snapshot
+/// is *not* the durable home of that text (a session temporary project for
+/// an unsaved buffer, the direct worker route, the fixture route, or no
+/// helper at all). This store makes such text survive the process: one JSON snapshot
 /// per file under Application Support (`FLASHTEX_DIRTY_SNAPSHOTS` overrides
 /// the directory for tests and automation), written when
 ///

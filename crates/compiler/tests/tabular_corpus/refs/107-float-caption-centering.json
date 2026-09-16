@@ -1,0 +1,136 @@
+{
+ "fixture": "107-float-caption-centering.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 81.963
+   },
+   {
+    "text": "before",
+    "x": 95.2467,
+    "y_top": 81.963
+   },
+   {
+    "text": "the",
+    "x": 125.1634,
+    "y_top": 81.963
+   },
+   {
+    "text": "table.",
+    "x": 142.319,
+    "y_top": 81.963
+   },
+   {
+    "text": "Table",
+    "x": 236.635,
+    "y_top": 110.743
+   },
+   {
+    "text": "1:",
+    "x": 264.0331,
+    "y_top": 110.743
+   },
+   {
+    "text": "Results",
+    "x": 276.2055,
+    "y_top": 110.743
+   },
+   {
+    "text": "of",
+    "x": 311.3226,
+    "y_top": 110.743
+   },
+   {
+    "text": "the",
+    "x": 322.676,
+    "y_top": 110.743
+   },
+   {
+    "text": "first",
+    "x": 339.8316,
+    "y_top": 110.743
+   },
+   {
+    "text": "run",
+    "x": 360.3914,
+    "y_top": 110.743
+   },
+   {
+    "text": "Name",
+    "x": 256.685,
+    "y_top": 120.108
+   },
+   {
+    "text": "Kind",
+    "x": 294.9294,
+    "y_top": 120.108
+   },
+   {
+    "text": "Count",
+    "x": 328.4715,
+    "y_top": 120.108
+   },
+   {
+    "text": "Alpha",
+    "x": 256.685,
+    "y_top": 132.063
+   },
+   {
+    "text": "x",
+    "x": 303.0908,
+    "y_top": 132.063
+   },
+   {
+    "text": "12",
+    "x": 345.3501,
+    "y_top": 132.063
+   },
+   {
+    "text": "Beta",
+    "x": 256.685,
+    "y_top": 144.019
+   },
+   {
+    "text": "yy",
+    "x": 300.4676,
+    "y_top": 144.019
+   },
+   {
+    "text": "345",
+    "x": 340.3738,
+    "y_top": 144.019
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 171.516
+   },
+   {
+    "text": "after",
+    "x": 95.2467,
+    "y_top": 171.516
+   },
+   {
+    "text": "the",
+    "x": 118.7953,
+    "y_top": 171.516
+   },
+   {
+    "text": "table.",
+    "x": 135.9509,
+    "y_top": 171.516
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  []
+ ]
+}
