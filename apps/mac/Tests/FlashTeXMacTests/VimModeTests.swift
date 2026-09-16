@@ -1249,4 +1249,38 @@ final class VimModeTests: XCTestCase {
             XCTAssertLessThanOrEqual((String(line) as NSString).length, 20, "\"\(line)\" exceeds textwidth")
         }
     }
+
+    // MARK: text objects i< a< is as it at
+
+    func testAngleBracketTextObject() {
+        run([
+            VimRow(keys: "di<", before: "a <bold> b", caret: 4, after: "a <> b", caretAfter: 3),
+            VimRow(keys: "da<", before: "a <bold> b", caret: 4, after: "a  b", caretAfter: 2),
+        ])
+    }
+
+    func testSentenceTextObject() {
+        run([
+            VimRow(keys: "dis", before: "Hi. Ok go. Bye.", caret: 5, after: "Hi.  Bye.", caretAfter: 4),
+            VimRow(keys: "das", before: "Hi. Ok go. Bye.", caret: 5, after: "Hi. Bye.", caretAfter: 4),
+        ])
+    }
+
+    func testTagTextObject() {
+        run([
+            VimRow(keys: "dit", before: "before <b>inside</b> after", caret: 12, after: "before <b></b> after", caretAfter: 10),
+            VimRow(keys: "dat", before: "before <b>inside</b> after", caret: 12, after: "before  after", caretAfter: 7),
+        ])
+        // Self-closing and non-tag angle brackets never open a pair.
+        load("keep <br/> going", caret: 7)
+        type("dit")
+        XCTAssertEqual(text, "keep <br/> going", "<br/> is self-closing: no pair to act on")
+        load("a <!-- note --> b", caret: 5)
+        type("dit")
+        XCTAssertEqual(text, "a <!-- note --> b", "<!-- --> is a comment, not a tag pair")
+        // Nested tags: the caret picks the innermost enclosing pair.
+        load("<b>bold <i>both</i> more</b>", caret: 12) // inside <i>both</i>
+        type("dit")
+        XCTAssertEqual(text, "<b>bold <i></i> more</b>")
+    }
 }

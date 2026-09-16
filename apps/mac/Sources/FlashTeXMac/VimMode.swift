@@ -1956,8 +1956,64 @@ final class VimMode {
         case "$": return mathObject(inner: inner)
         case "e": return environmentObject(inner: inner)
         case "p": return paragraphObject(inner: inner)
+        case "<", ">": return bracketObject(open: 0x3C, close: 0x3E, inner: inner)
+        case "s": return sentenceObject(inner: inner)
+        case "t": return tagObject(inner: inner)
         default: return nil
         }
+    }
+
+    /// `is`/`as`: the sentence containing the caret, on the same boundaries
+    /// `(`/`)` jump between — `as` keeps the whitespace up to the next
+    /// sentence, `is` stops at the sentence-ending punctuation.
+    private func sentenceObject(inner: Bool) -> NSRange? {
+        guard length > 0 else { return nil }
+        let c = min(caret, length - 1)
+        let start = previousSentenceStart(from: c + 1)
+        var end = nextSentenceStart(from: c)
+        if end <= start { end = length }
+        if inner {
+            var e = end
+            while e > start, isBlank(text.character(at: e - 1)) { e -= 1 }
+            return NSRange(location: start, length: max(0, e - start))
+        }
+        return NSRange(location: start, length: end - start)
+    }
+
+    /// `it`/`at`: the innermost `<tag ...>…</tag>` pair around the caret.
+    /// Self-closing tags (`<br/>`) and non-tag angle brackets (`<!-- -->`,
+    /// `<?…?>`) never open a pair.
+    private func tagObject(inner: Bool) -> NSRange? {
+        guard length > 0 else { return nil }
+        let c = min(caret, length - 1)
+        var stack: [(range: NSRange, name: String)] = []
+        var best: (open: NSRange, close: NSRange)?
+        var i = 0
+        while i < length {
+            guard text.character(at: i) == 0x3C /* < */ else { i += 1; continue }
+            var j = i + 1
+            while j < length, text.character(at: j) != 0x3E /* > */ { j += 1 }
+            guard j < length else { break }
+            let token = NSRange(location: i, length: j - i + 1)
+            let inside = text.substring(with: NSRange(location: i + 1, length: j - i - 1))
+            if inside.hasPrefix("/") {
+                let name = inside.dropFirst().trimmingCharacters(in: .whitespaces)
+                if let top = stack.last, top.name == name {
+                    stack.removeLast()
+                    if best == nil, top.range.location <= c, c < NSMaxRange(token) { best = (top.range, token) }
+                }
+            } else if !inside.hasPrefix("!"), !inside.hasPrefix("?"), !inside.hasSuffix("/") {
+                let name = String(inside.split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "\n" }).first ?? "")
+                if !name.isEmpty { stack.append((token, name)) }
+            }
+            i = j + 1
+        }
+        guard let m = best else { return nil }
+        if inner {
+            let s = NSMaxRange(m.open), e = m.close.location
+            return NSRange(location: s, length: max(0, e - s))
+        }
+        return NSRange(location: m.open.location, length: NSMaxRange(m.close) - m.open.location)
     }
 
     /// `ip`/`ap`: the block of lines around the caret sharing its blankness
