@@ -254,6 +254,11 @@ pub fn navigation(pages: &[Page], spans: &[LinkSpan]) -> Option<Navigation> {
     // in reading order however the pages interleave them.
     let mut pieces: Vec<Vec<(u32, LinkRect)>> = vec![Vec::new(); spans.len()];
     let mut bands: BTreeMap<u32, Vec<(i64, i64)>> = BTreeMap::new();
+    // Attribution runs once per cluster -- hundreds of thousands of times on a
+    // real document -- so it may not walk the span list. `scan` yields one
+    // document's spans sorted by start and never overlapping (a `\href` skips
+    // past its own body), so a binary search per document answers it.
+    let index = SpanIndex::of(spans);
     for page in pages {
         let PageContent::Resident(items) = &page.content else { continue };
         // pdfTeX takes a link's height and depth from the *line box*, not
@@ -276,7 +281,7 @@ pub fn navigation(pages: &[Page], spans: &[LinkSpan]) -> Option<Navigation> {
             let Item::GlyphRun(run) = item else { continue };
             for cluster in &run.clusters {
                 let Provenance::Source(sr) = &cluster.provenance else { continue };
-                let Some(which) = containing(spans, sr.path.as_ref(), sr.start_byte, sr.end_byte) else {
+                let Some(which) = index.containing(spans, sr.path.as_ref(), sr.start_byte, sr.end_byte) else {
                     continue;
                 };
                 let r = cluster.hit_rect;
@@ -360,19 +365,36 @@ fn line_extent(bands: &[(i64, i64)], y0: i64, y1: i64) -> (i64, i64) {
     (top, bottom)
 }
 
-/// The index of the smallest span of `path` that contains `start..end`.
-fn containing(spans: &[LinkSpan], path: &str, start: usize, end: usize) -> Option<usize> {
-    let mut best: Option<usize> = None;
-    for (i, s) in spans.iter().enumerate() {
-        if s.path != path || start < s.text.start || end > s.text.end {
-            continue;
+/// The spans of each document, sorted by start byte, as indices into the
+/// flat span list.
+struct SpanIndex {
+    by_path: BTreeMap<String, Vec<usize>>,
+}
+
+impl SpanIndex {
+    fn of(spans: &[LinkSpan]) -> SpanIndex {
+        let mut by_path: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for (i, s) in spans.iter().enumerate() {
+            by_path.entry(s.path.clone()).or_default().push(i);
         }
-        let len = s.text.end - s.text.start;
-        if best.is_none_or(|b| len < spans[b].text.end - spans[b].text.start) {
-            best = Some(i);
+        for v in by_path.values_mut() {
+            v.sort_by_key(|i| spans[*i].text.start);
         }
+        by_path
+            .values()
+            .for_each(|v| debug_assert!(v.windows(2).all(|w| spans[w[0]].text.end <= spans[w[1]].text.start)));
+        SpanIndex { by_path }
     }
-    best
+
+    /// The span of `path` containing `start..end`, if any.
+    fn containing(&self, spans: &[LinkSpan], path: &str, start: usize, end: usize) -> Option<usize> {
+        let of_path = self.by_path.get(path)?;
+        // The last span that begins at or before `start`; spans do not
+        // overlap, so no earlier one can reach this far.
+        let at = of_path.partition_point(|i| spans[*i].text.start <= start).checked_sub(1)?;
+        let which = of_path[at];
+        (end <= spans[which].text.end).then_some(which)
+    }
 }
 
 #[cfg(test)]
