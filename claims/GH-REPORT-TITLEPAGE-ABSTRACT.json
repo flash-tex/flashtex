@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/report-titlepage-abstract",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/741",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T08:59:16Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-REPORT-TITLEPAGE-ABSTRACT",
-  "updated_utc": "2026-09-16T08:59:16Z"
+  "updated_utc": "2026-09-16T09:35:32Z"
 }
