@@ -33,7 +33,7 @@ fn doc(lead: &str) -> String {
 fn render(text: &str, project: &str, fonts: &FontSet, cache: &RenderCache) -> (u32, String) {
     let docs = [SourceDocument { path: "main.tex", text }];
     let r = render_cached(&docs, "main.tex", 1, project, fonts, &RenderOptions::default(), Some(cache));
-    (r.passes, r.v2.write_json_wire("t", Wire { images: false, device_color: false }))
+    (r.passes, r.v2.write_json_wire("t", Wire { images: false, device_color: false, diagnostics: false }))
 }
 
 #[test]
