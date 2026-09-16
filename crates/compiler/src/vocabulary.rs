@@ -579,7 +579,7 @@ mod tests {
     fn settowidth_still_measures_zero_and_stays_listed() {
         assert!(
             KNOWN_UNIMPLEMENTED_COMMANDS.contains(&"settowidth"),
-            "\\settowidth must stay listed while it measures zero (issue #448)"
+            "\\settowidth left the unimplemented list — this is expected once #492 lands a real BoxMeasurer: remove the KNOWN_UNIMPLEMENTED_COMMANDS entry for \"settowidth\" and delete this test in the same change"
         );
         assert!(is_known_command("settowidth"));
         let output = crate::incremental::compile_full(
@@ -592,7 +592,7 @@ mod tests {
             .flat_map(|page| &page.items)
             .map(|item| item.text.as_str())
             .collect();
-        assert_eq!(rendered, "0.0pt", "known-wrong stub measurement (issue #448)");
+        assert_eq!(rendered, "0.0pt", "\\settowidth now measures a real width — this is expected once #492 lands a real BoxMeasurer: remove the KNOWN_UNIMPLEMENTED_COMMANDS entry for \"settowidth\" and delete this test in the same change");
     }
 
     /// Same disjointness invariant for environments (issue #715): the known
