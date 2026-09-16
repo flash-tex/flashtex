@@ -311,6 +311,20 @@ pub enum Inline {
         span: Span,
         style: TextStyle,
     },
+    /// `\phantom`/`\hphantom`/`\vphantom` in text (latex.ltx `\ph@nt`): an
+    /// empty box with the argument's width (`horizontal`) and/or height and
+    /// depth (`vertical`). `content` is parsed with the ordinary dispatch in
+    /// the current style (see `box_inlines`, like `Underline`/`ColorBox`)
+    /// and measured at layout time; nothing is ever painted. The math-mode
+    /// counterparts live in `math.rs` (`Nucleus::Phantom`).
+    Phantom {
+        content: Vec<Inline>,
+        horizontal: bool,
+        vertical: bool,
+        span: Span,
+        /// See `Inline::Text::space_before`.
+        space_before: bool,
+    },
     /// `tabular`/`tabular*`: an inline box (see `crate::tabular`).
     Tabular(Box<crate::tabular::Tabular>),
     /// `\verb`/`\verb*` sitting inline in running text: an unbreakable run of
@@ -1385,6 +1399,9 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "LaTeX",
     "LaTeXe",
     "rule",
+    "phantom",
+    "hphantom",
+    "vphantom",
     "thinspace",
     "negthinspace",
     "medspace",
@@ -3245,6 +3262,10 @@ impl P<'_> {
             // the macro call is `}`, another command, or `, . ! ? ; : ' /`.
             "xspace" => self.xspace(span),
             "rule" => self.text_rule(span, para),
+            // `\phantom`/`\hphantom`/`\vphantom` in text: latex.ltx `\ph@nt`.
+            // Math mode has its own arm (`math.rs` `Nucleus::Phantom`); this
+            // is the text path, with the same flags.
+            "phantom" | "hphantom" | "vphantom" => self.text_phantom(name, span, para),
             "frac" | "sqrt" => self.text_mode_math_command(name, span),
             other => self.unsupported(other, span),
         }
@@ -8875,6 +8896,24 @@ impl P<'_> {
             span: full,
             space_before,
         })));
+    }
+
+    /// `\phantom` (the argument's full width, height and depth),
+    /// `\hphantom` (width only) and `\vphantom` (height and depth only) in
+    /// text mode. The argument is parsed with the ordinary dispatch in the
+    /// current style (see `box_inlines`); the layout measures it as an
+    /// unbroken box and paints nothing.
+    fn text_phantom(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        let (tokens, argument_span) = self.required_group(name, span);
+        let content = self.box_inlines(tokens);
+        para.push(Inline::Phantom {
+            content,
+            horizontal: name != "vphantom",
+            vertical: name != "hphantom",
+            span: span.merge(argument_span),
+            space_before,
+        });
     }
 
     fn text_logo(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
