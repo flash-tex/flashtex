@@ -334,6 +334,11 @@ struct PreviewPane: View {
         }
         .onChange(of: model.previewZoom) { _, _ in hudActivity &+= 1 }
         .onChange(of: currentPage) { _, _ in hudActivity &+= 1 }
+        // Double-click to Fit Width (⌘9 does the same). Used to live on the
+        // now-removed zoom readout; `simultaneousGesture` so it never blocks
+        // the pages' own single-tap-to-navigate gesture underneath (owner
+        // feedback: no floating zoom % over the page).
+        .simultaneousGesture(TapGesture(count: 2).onEnded { model.previewFitWidth() })
         .sheet(isPresented: Binding(get: { model.quickFix != nil }, set: { if !$0 { model.quickFix = nil } })) {
             if let p = model.quickFix {
                 VStack(alignment: .leading, spacing: DS.Space.m) {
@@ -360,13 +365,17 @@ struct PreviewPane: View {
 }
 
 /// The floating preview HUD (owner feedback on #653: no header row over
-/// the pages). Two duties, one chip: the always-quiet state — a mini
-/// spinner while compiling, FIXTURE/HISTORICAL when the pages are not the
-/// worker's current result, staleness and capability warnings — pins the
-/// chip visible; the page / zoom readout shows transiently on pointer-over
-/// and for a beat after scroll, page or zoom changes, then fades. Fading
-/// never reflows anything (§14); a healthy live preview at rest shows no
-/// chrome at all over the pages (§8, Canvas treatment).
+/// the pages; further pared down after owner feedback that a "⚠ ⚠ 87 %"
+/// pill sat on top of the document — the zoom percentage readout and the
+/// capability-warning icons were removed from here entirely; capability
+/// notes now live in the status bar, and the zoom commands (⌘9/⌘0/pinch,
+/// plus double-click on the page) are unaffected). What is left: the
+/// always-quiet state — a mini spinner while compiling, FIXTURE/HISTORICAL
+/// when the pages are not the worker's current result, staleness and load
+/// errors — pins the chip visible; the page readout shows transiently on
+/// pointer-over and for a beat after scroll or page changes, then fades.
+/// Fading never reflows anything (§14); a healthy live preview at rest
+/// shows no chrome at all over the pages (§8, Canvas treatment).
 private struct PreviewHUD: View {
     @Environment(ShellModel.self) var model
     var currentPage = 1
@@ -382,7 +391,7 @@ private struct PreviewHUD: View {
         let chrome = model.chrome
         let badge = Self.stateBadge(chrome)
         let pinned = chrome.compiling || badge != nil || chrome.staleHighlighted
-            || chrome.loadError != nil || !chrome.capabilityNotes.isEmpty
+            || chrome.loadError != nil
             || (model.previewDebugStatus && chrome.resultStatus != nil)
         let visible = hovering || pinned || activityVisible
         HStack(spacing: DS.Space.m) {
@@ -408,21 +417,14 @@ private struct PreviewHUD: View {
             if let err = chrome.loadError {
                 Text(err).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityError).lineLimit(1).help(err)
             }
-            ForEach(chrome.capabilityNotes, id: \.self) { note in
-                Image(systemName: "exclamationmark.circle").foregroundStyle(DS.Colors.severityWarning).help(note)
-                    .accessibilityLabel(note)
-            }
+            // Capability notes moved to the status bar (owner feedback: no
+            // floating warnings/percent over the page) — see StatusBar below.
             if !model.previewV2, chrome.hasResult {
                 Text("\(currentPage) / \(max(model.toolbarPageCount, 1))")
                     .font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textSecondary)
                     .help("Page under the top of the view")
                     .accessibilityLabel("Page \(currentPage) of \(max(model.toolbarPageCount, 1))")
             }
-            Text("\(PreviewZoom.percent(fit: model.previewFitScale, zoom: model.previewZoom)) %")
-                .font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textSecondary)
-                .help("Preview zoom; double-click for Fit Width (⌘9), ⌘0 actual size, or pinch on the preview")
-                .accessibilityLabel("Preview zoom \(PreviewZoom.percent(fit: model.previewFitScale, zoom: model.previewZoom)) percent")
-                .onTapGesture(count: 2) { model.previewFitWidth() }
         }
         .padding(.horizontal, DS.Space.l).padding(.vertical, DS.Space.s)
         .background(DS.Colors.surfaceRaised, in: RoundedRectangle(cornerRadius: DS.Radius.panel))
@@ -525,6 +527,17 @@ struct StatusBar: View {
             }
             Label(route(chrome), systemImage: routeIcon(chrome))
                 .help(chrome.routeHelp)
+            // Capability warnings (moved off the preview HUD, owner feedback:
+            // a "⚠ ⚠ 87 %" pill was floating over the page). Still real
+            // diagnostics, just anchored in the status bar instead of
+            // overlapping the document.
+            if !chrome.capabilityNotes.isEmpty {
+                Label("\(chrome.capabilityNotes.count)", systemImage: "exclamationmark.circle")
+                    .foregroundStyle(DS.Colors.severityWarning)
+                    .help(chrome.capabilityNotes.joined(separator: "\n"))
+                    .accessibilityLabel("\(chrome.capabilityNotes.count) capability warning\(chrome.capabilityNotes.count == 1 ? "" : "s")")
+                    .accessibilityValue(chrome.capabilityNotes.joined(separator: "; "))
+            }
             // Revision counters are diagnostics, not writing state (owner,
             // #653): shown only with View > Show Preview Debug Status.
             if model.previewDebugStatus {

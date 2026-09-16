@@ -67,8 +67,10 @@ enum DesignFixtures {
 
     /// `project()` presented as a healthy live worker result rather than a
     /// fixture: the resting preview the design calls for — no header rows,
-    /// no badge, no page/zoom readout over the pages until the reader hovers
-    /// or scrolls (design-principles §8, owner feedback on #653).
+    /// no badge, no page readout over the pages until the reader hovers or
+    /// scrolls, and no zoom percentage or capability warnings floating over
+    /// the pages at all (design-principles §8, owner feedback on #653 and
+    /// on the follow-up "⚠ ⚠ 87 %" pill).
     static func liveProject() -> ShellModel {
         let model = project()
         model.previewSource = .worker("flashtex-compiler")
