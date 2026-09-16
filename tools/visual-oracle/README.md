@@ -104,3 +104,37 @@ python3 -m unittest discover -s tools/visual-oracle -p 'test_*.py' -v   # 8 pure
   Type 3 / CID fonts and non-Flate filters are reported in `notes`, not read.
 - Ghostscript anti-aliases; pixel counts are the secondary key only.
 - Owners are triage pointers, not verdicts.
+
+## Companion: `cumulative.py` — ranking by blast radius
+
+`rank.py` ranks *pages* by their single largest delta. `cumulative.py` ranks
+*divergences* by how many baselines each one displaces, because the two answers
+differ: GH-706 was 1.99 bp per list boundary and moved every baseline below it
+on 17 fixtures, while GH-717 was 5.06 pt and moved one glyph stack in one
+matrix.
+
+```sh
+python3 tools/visual-oracle/cumulative.py                       # -> docs/evidence/corpus-fidelity-<UTC>/
+python3 tools/visual-oracle/cumulative.py --only hw1 --only cv
+python3 tools/visual-oracle/cumulative.py --fixtures <dir-of-probe-fixtures> --out <dir>
+```
+
+It reuses this tool's producer route, `pdftext` reference reader, word grouper
+and `difflib` alignment unchanged — there is still one definition of a word and
+one alignment in this directory. What it adds:
+
+1. aligned word pairs are bucketed into **reference lines**, giving each page a
+   `dy` profile;
+2. every change in that profile is classified **cumulative** (the median `dy`
+   below it differs from the median above: its cost is the step times the lines
+   below it) or **local** (the page comes back: its cost is one line);
+3. each step is labelled with the LaTeX construct standing between the two
+   lines in the source, so one cause groups its witnesses across fixtures
+   instead of arriving as one finding per fixture;
+4. lines whose own words disagree about `dy` — which is what happens around
+   cmex big operators, where the reference PDF has no usable text for `\int`
+   and a neighbouring limit can pair across the display — are reported as **low
+   confidence** and left out of the ranking.
+
+First report: `docs/evidence/corpus-fidelity-2026-09-16T1130Z/` (GH-66).
+Tests: `python3 -m unittest discover -s tools/visual-oracle -p 'test_*.py'`.
