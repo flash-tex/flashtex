@@ -272,7 +272,11 @@ final class CompletionLatencyTests: XCTestCase {
         exec.runAll()
         spin("session B") { tv.session != nil }
         XCTAssertEqual(tv.session?.items.first?.label, "\\tableofcontents")
-        XCTAssertTrue(tv.session!.items.allSatisfy { $0.label.hasPrefix("\\t") }, "\(tv.session!.items.map(\.label))")
+        // Unwrapped, not forced: a missing session is a test failure, and
+        // forcing it aborts the whole xctest process, so every test scheduled
+        // after this one silently never runs (GH#704).
+        let sessionB = try XCTUnwrap(tv.session, "no completion session on B")
+        XCTAssertTrue(sessionB.items.allSatisfy { $0.label.hasPrefix("\\t") }, "\(sessionB.items.map(\.label))")
         XCTAssertEqual(tv.session?.range, NSRange(location: caretA - 1, length: 2))
 
         // A session on B with an outcome pending; the caret moves to the same
