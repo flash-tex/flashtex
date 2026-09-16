@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/gh75-include",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/735",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-16T07:46:51Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-75-INCLUDE-RESOLUTION",
-  "updated_utc": "2026-09-16T07:46:51Z"
+  "updated_utc": "2026-09-16T07:58:55Z"
 }
