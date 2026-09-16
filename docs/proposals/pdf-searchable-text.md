@@ -29,7 +29,7 @@ of the glyph before the gap:
 
 | gap `g` | promise |
 |---|---|
-| `g >= 150` (`v2::WORD_GAP_EM`) | a word boundary in PDFKit (Preview, the app, `PDFDocument.findString`), Spotlight (`mdimport`), and Poppler `pdftotext -raw` (its `minWordSpacing` constant; *unmeasured here*, Poppler is not installed on this Mac). A Computer Modern word space is 326–333; shrunk to TeX's minimum it is still ≥ 217. |
+| `g >= 150` (`v2::WORD_GAP_EM`) | a word boundary in PDFKit (Preview, the app, `PDFDocument.findString`), Spotlight (`mdimport`), and Poppler `pdftotext -raw` (its `minWordSpacing` constant; measured on 26.09.0 in the 2026-09-16 section below). A Computer Modern word space is 326–333; shrunk to TeX's minimum it is still ≥ 217. |
 | `30 <= g < 150` | **ambiguous** — extractor-dependent; the export report counts these (`ambiguous_gaps`) and names the first eight. Measured: PDFKit breaks from 100, Ghostscript `txtwrite` from 250, Poppler `-raw` from 150 (constant), Poppler default/`-layout` from 30 when the line has a word longer than one glyph. In practice this is TeX's math italic correction (99 after math `f`). |
 | `g < 30` (`v2::CHAR_GAP_EM`) | never a boundary in any measured extractor (kerns, TFM/hmtx rounding). |
 
@@ -51,14 +51,12 @@ Modern space clears.
   one-glyph words** (GH48's `\text{a b}` alone on its line). Poppler treats
   such a line as letter-spaced text: with all words of length 1 it sets the
   break threshold to `min(1.3 × smallest gap, 0.4 em)` and merges `a`+`b`
-  (gap 0.326 em < 0.4 em). The published evidence (647c50c5) shows the
-  *same* `ab` for the f261 output that carried an explicit space glyph, and
-  the same code path explains it (a space glyph ends a word but is not kept;
-  the merged line still gets no `spaceAfter`). Nothing geometry-preserving
-  changes this; only moving `b` ≥ 0.4 em away would, which is forbidden.
-  **Acceptance mode for Poppler is `-raw`** (as the Commander's triage
-  recommended), plus PDFKit and Spotlight, which are what the product ships
-  with.
+  (gap 0.326 em < 0.4 em). Nothing geometry-preserving changes this; only
+  moving `b` ≥ 0.4 em away would, which is forbidden. **Acceptance mode for
+  Poppler is `-raw`**, plus PDFKit and Spotlight, which are what the product
+  ships with. **pdflatex's own PDF answers identically** — see "The pdflatex
+  oracle" below, which also measures the space-glyph row of the table above
+  directly instead of inferring it.
 - **No spaces inferred from source**, no second parser/writer, no glyph moved.
 
 ## Why the current mechanism was chosen (evaluation)
@@ -78,6 +76,68 @@ explicit and measured: the crate now reports `word_gaps` and
 `ambiguous_gaps` (stderr `note: searchable text: …`) so an export's
 extraction risk is visible without running an extractor, and tests pin the
 exact PDFKit strings.
+
+## The pdflatex oracle (2026-09-16, mac-m5pro-dq222, poppler 26.09.0)
+
+The 2026-09-12 measurements above had no `pdftotext` on the machine and no
+pdfTeX comparison, so the Poppler rows were taken from GH48's published
+extracts and from `TextOutputDev.cc` constants. Poppler **26.09.0** is now
+installed, and the missing control — *what does the reference implementation
+do with the same source?* — has been run. It settles the issue.
+
+**Same source, same three modes, both producers:**
+
+| source | producer | default | `-layout` | `-raw` |
+|---|---|---|---|---|
+| `$\text{a b}$` | pdflatex | `ab` | `ab` | `a b` |
+| `$\text{a b}$` | flashtex | `ab` | `ab` | `a b` |
+| `hello world foo` | pdflatex | ✓ | ✓ | ✓ |
+| `hello world foo` | flashtex | ✓ | ✓ | ✓ |
+
+pdfTeX writes the gap as a `TJ` kern inside one text object and this exporter
+writes the two runs at absolute `Tm` origins:
+
+```
+pdflatex: BT /F32 9.9626 Tf 148.712 657.235 Td [(a)-333(b)]TJ ... ET
+flashtex: BT /F1 9.96264 Tf 1 0 0 1 148.712 657.235 Tm (\000\034) Tj ET
+          BT /F1 9.96264 Tf 1 0 0 1 157.015 657.235 Tm (\000#) Tj ET
+```
+
+Both carry the same 0.333 em gap at the same origins, and Poppler answers both
+the same way. **GH48 is therefore not a divergence from the reference
+implementation**; it is Poppler's heuristic, and pdflatex users meet it too
+(`a b c d` from pdflatex extracts as `abcd` in default and `-layout`).
+
+**The space-glyph row, measured rather than inferred.** A PDF whose shown
+string *literally contains U+0020* — `[<612062>]TJ`, i.e. `"a b"` as three
+character codes at one origin — still extracts as `ab` in default and
+`-layout`, and `a b` in `-raw`. Poppler's default and `-layout` modes rebuild
+words from geometry and discard the encoded space entirely, so the "space
+glyph" mechanism in the evaluation table would buy nothing here even if its
+replay-check cost were paid.
+
+**Threshold sweep on 26.09.0** (`a…a \hspace{N em} b…b`, default mode),
+confirming `min(1.3 × smallest gap, 0.4 em)`:
+
+| word length | 0.25 em | 0.30 em | 0.333 em | 0.36 em | 0.40 em | 0.45 em | 0.50 em |
+|---|---|---|---|---|---|---|---|
+| 1 char | merge | merge | merge | merge | merge | SPACE | SPACE |
+| 2+ chars | SPACE | SPACE | SPACE | SPACE | SPACE | SPACE | SPACE |
+
+The only untried geometry-preserving lever left is `/Span <</ActualText …>>`
+marked content around the gap, which does work (measured: default and
+`-layout` both read `a b`). It is still declined here: it is a change to the
+exported file format that pdfTeX does not make, it would wrap every interword
+gap in the document, and adopting it is the owners' policy call, not a
+mechanical fix.
+
+**Regression cover.** `crates/render-pipeline/tests/searchable_text.rs` now
+runs the three modes against a real export on every test run (skipping loudly
+if Poppler is absent): ordinary prose must extract correctly in all three
+modes, `-raw` must show the word break, the default/`-layout` answers are
+pinned to the pdflatex oracle so a drift away from the reference fails, and
+the glyph count and first-glyph origin are pinned so nobody "fixes" extraction
+by painting a space.
 
 ## Bounded occurrence-level rule (request to the producer)
 
@@ -160,4 +220,17 @@ cd apps/mac && FLASHTEX_PDF_EXACT=$PWD/../../crates/pdf/target/release/flashtex-
   swift test --filter SearchableTextTests            # 3 tests, PDFKit exact strings
 gs -q -dNOPAUSE -dBATCH -sDEVICE=txtwrite -sOutputFile=- /tmp/ab.pdf
 mdimport -t -d3 /tmp/ab.pdf | grep kMDItemTextContent
+```
+
+The 2026-09-16 pdflatex oracle (needs `pdftotext` and `pdflatex` on `PATH`):
+
+```sh
+cargo test --release --manifest-path crates/render-pipeline/Cargo.toml --test searchable_text  # 3 tests
+
+printf '\\documentclass{article}\\usepackage{amsmath}\\begin{document}$\\text{a b}$\\end{document}\n' > /tmp/ab.tex
+pdflatex -interaction=nonstopmode -output-directory /tmp /tmp/ab.tex
+flashtex build /tmp/ab.tex -o /tmp/ft-ab.pdf
+for f in /tmp/ab.pdf /tmp/ft-ab.pdf; do
+  for m in "" -layout -raw; do printf '%s %-8s -> ' "$f" "${m:-default}"; pdftotext $m "$f" - | head -1; done
+done
 ```
