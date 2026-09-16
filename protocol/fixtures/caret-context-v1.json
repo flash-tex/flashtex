@@ -1,0 +1,229 @@
+{
+  "$comment": "Caret context and insertion wrapping, one table driving three consumers: the bridge's Rust tests (crates/bridge/tests/caret_context.rs), the Mac's Swift tests (apps/mac/Tests/FlashTeXMacTests/CaretContextTests.swift) and the pdflatex oracle (scripts/caret_context_oracle.py). See protocol/proposals/transfer-v1-caret-context.md.",
+  "version": 1,
+  "preamble": "\\documentclass{article}\n",
+  "cases": [
+    {
+      "name": "text-paragraph-start-wraps-display",
+      "why": "A formula recognised on its own line becomes display math.",
+      "before": "Some prose.\n\n",
+      "after": "\n\nMore prose.\n",
+      "context": {"mode": "text", "delimiter": null, "environment": null, "environments": [], "amsmath": false, "wrap": "display"},
+      "proposal": "\\[ x^2 + y^2 = z^2 \\]",
+      "insert": "\\[ x^2 + y^2 = z^2 \\]",
+      "advisories": []
+    },
+    {
+      "name": "text-paragraph-start-bare-math-gets-wrapped",
+      "why": "The model returned bare LaTeX; the insertion still has to wrap it.",
+      "before": "Some prose.\n\n",
+      "after": "\n\nMore prose.\n",
+      "context": {"mode": "text", "delimiter": null, "environment": null, "environments": [], "amsmath": false, "wrap": "display"},
+      "proposal": "x^2 + y^2 = z^2",
+      "insert": "\\[ x^2 + y^2 = z^2 \\]",
+      "advisories": []
+    },
+    {
+      "name": "text-mid-sentence-bare-math-wraps-inline",
+      "why": "Mid-sentence the same bare formula must be inline, not display.",
+      "before": "We know that ",
+      "after": " holds for all n.\n",
+      "context": {"mode": "text", "delimiter": null, "environment": null, "environments": [], "amsmath": false, "wrap": "inline"},
+      "proposal": "x^2 + y^2",
+      "insert": "$x^2 + y^2$",
+      "advisories": []
+    },
+    {
+      "name": "inline-math-caret-strips-double-dollar-wrap",
+      "why": "THE double-wrap bug: $x^2$ inserted inside $...$ is a pdflatex error.",
+      "before": "Let $a + ",
+      "after": " + b$ hold.\n",
+      "context": {"mode": "inline_math", "delimiter": "$", "environment": null, "environments": [], "amsmath": false, "wrap": "already_math"},
+      "proposal": "$x^2$",
+      "insert": "x^2",
+      "advisories": []
+    },
+    {
+      "name": "inline-math-caret-strips-paren-wrap",
+      "why": "\\(...\\) inside $...$ is the same error in a different spelling.",
+      "before": "Let $a + ",
+      "after": " + b$ hold.\n",
+      "context": {"mode": "inline_math", "delimiter": "$", "environment": null, "environments": [], "amsmath": false, "wrap": "already_math"},
+      "proposal": "\\( x^2 \\)",
+      "insert": "x^2",
+      "advisories": []
+    },
+    {
+      "name": "inline-math-caret-bare-math-untouched",
+      "why": "Already correct: nothing added, nothing stripped.",
+      "before": "Let $a + ",
+      "after": " + b$ hold.\n",
+      "context": {"mode": "inline_math", "delimiter": "$", "environment": null, "environments": [], "amsmath": false, "wrap": "already_math"},
+      "proposal": "x^2",
+      "insert": "x^2",
+      "advisories": []
+    },
+    {
+      "name": "display-math-caret-strips-display-wrap",
+      "why": "\\[...\\] nested in \\[...\\] is a pdflatex error.",
+      "before": "\\[ a + ",
+      "after": " + b \\]\n",
+      "context": {"mode": "display_math", "delimiter": "\\[", "environment": null, "environments": [], "amsmath": false, "wrap": "already_math"},
+      "proposal": "\\[ x^2 \\]",
+      "insert": "x^2",
+      "advisories": []
+    },
+    {
+      "name": "equation-environment-caret-strips-wrap",
+      "why": "Display math inside \\begin{equation} is the same error.",
+      "before": "\\begin{equation}\n a + ",
+      "after": " + b\n\\end{equation}\n",
+      "context": {"mode": "display_math", "delimiter": "environment", "environment": "equation", "environments": ["equation"], "amsmath": false, "wrap": "already_math"},
+      "proposal": "\\[x^2\\]",
+      "insert": "x^2",
+      "advisories": []
+    },
+    {
+      "name": "tabular-cell-never-takes-display-math",
+      "why": "\\[...\\] in a tabular cell is a pdflatex error; a cell takes inline math only.",
+      "before": "\\begin{tabular}{cc}\n a & ",
+      "after": " \\\\\n c & d\n\\end{tabular}\n",
+      "context": {"mode": "text", "delimiter": null, "environment": "tabular", "environments": ["tabular"], "amsmath": false, "wrap": "inline"},
+      "proposal": "\\[ x^2 \\]",
+      "insert": "$x^2$",
+      "advisories": ["AMBIGUOUS: display math is not allowed in a tabular cell; inserted as inline math"]
+    },
+    {
+      "name": "tabular-cell-bare-math-wraps-inline",
+      "why": "Bare math in a cell still has to be wrapped, and inline is the only legal choice.",
+      "before": "\\begin{tabular}{cc}\n a & ",
+      "after": " \\\\\n c & d\n\\end{tabular}\n",
+      "context": {"mode": "text", "delimiter": null, "environment": "tabular", "environments": ["tabular"], "amsmath": false, "wrap": "inline"},
+      "proposal": "x^2",
+      "insert": "$x^2$",
+      "advisories": []
+    },
+    {
+      "name": "verbatim-inserts-literally",
+      "why": "Inside verbatim nothing is LaTeX; wrapping would print the delimiters.",
+      "before": "\\begin{verbatim}\n",
+      "after": "\n\\end{verbatim}\n",
+      "context": {"mode": "verbatim", "delimiter": null, "environment": "verbatim", "environments": ["verbatim"], "amsmath": false, "wrap": "literal"},
+      "proposal": "x^2 + y^2",
+      "insert": "x^2 + y^2",
+      "advisories": ["AMBIGUOUS: the destination is a verbatim block; the transcription was inserted literally and is not typeset as LaTeX"]
+    },
+    {
+      "name": "comment-inserts-literally-single-line",
+      "why": "A caret in a % comment must not gain delimiters, and must not gain a newline.",
+      "before": "text % note: ",
+      "after": "\nmore text\n",
+      "context": {"mode": "comment", "delimiter": null, "environment": null, "environments": [], "amsmath": false, "wrap": "literal"},
+      "proposal": "x^2",
+      "insert": "x^2",
+      "advisories": ["AMBIGUOUS: the destination is a comment; the transcription was inserted literally and is not typeset"]
+    },
+    {
+      "name": "prose-at-math-caret-uses-mbox-without-amsmath",
+      "why": "Prose recognised inside math needs a text box; \\text needs amsmath, \\mbox is kernel.",
+      "before": "Let $a + ",
+      "after": " + b$ hold.\n",
+      "context": {"mode": "inline_math", "delimiter": "$", "environment": null, "environments": [], "amsmath": false, "wrap": "already_math"},
+      "proposal": "for all real numbers",
+      "insert": "\\mbox{for all real numbers}",
+      "advisories": ["AMBIGUOUS: prose recognised at a math caret was wrapped in \\mbox{...}"]
+    },
+    {
+      "name": "prose-at-math-caret-uses-text-with-amsmath",
+      "why": "With amsmath loaded \\text is the idiomatic and correctly-spaced choice.",
+      "preamble": "\\documentclass{article}\n\\usepackage{amsmath}\n",
+      "before": "Let $a + ",
+      "after": " + b$ hold.\n",
+      "context": {"mode": "inline_math", "delimiter": "$", "environment": null, "environments": [], "amsmath": true, "wrap": "already_math"},
+      "proposal": "for all real numbers",
+      "insert": "\\text{for all real numbers}",
+      "advisories": ["AMBIGUOUS: prose recognised at a math caret was wrapped in \\text{...}"]
+    },
+    {
+      "name": "unbalanced-delimiters-are-refused",
+      "why": "Never insert LaTeX that cannot close; refusal beats a broken document.",
+      "before": "Some prose.\n\n",
+      "after": "\n\nMore prose.\n",
+      "context": {"mode": "text", "delimiter": null, "environment": null, "environments": [], "amsmath": false, "wrap": "display"},
+      "proposal": "$x^2 + y",
+      "insert": null,
+      "advisories": ["UNSUPPORTED: the proposal's math delimiters are unbalanced and it cannot be inserted safely"]
+    },
+    {
+      "name": "mixed-prose-and-math-at-text-caret-is-untouched",
+      "why": "A transcribed paragraph that already wraps its own formulas is left exactly as it is.",
+      "before": "Intro.\n\n",
+      "after": "\n\nOutro.\n",
+      "context": {"mode": "text", "delimiter": null, "environment": null, "environments": [], "amsmath": false, "wrap": "display"},
+      "proposal": "The identity $a^2 = b$ follows, and therefore \\[ c = d \\] holds.",
+      "insert": "The identity $a^2 = b$ follows, and therefore \\[ c = d \\] holds.",
+      "advisories": []
+    },
+    {
+      "name": "mixed-prose-and-math-at-math-caret-is-refused",
+      "why": "Text-mode content with interior delimiters cannot be made safe inside math.",
+      "before": "Let $a + ",
+      "after": " + b$ hold.\n",
+      "context": {"mode": "inline_math", "delimiter": "$", "environment": null, "environments": [], "amsmath": false, "wrap": "already_math"},
+      "proposal": "the value $x^2$ of the square",
+      "insert": null,
+      "advisories": ["UNSUPPORTED: text-mode content with its own math delimiters cannot be inserted at a math caret"]
+    },
+    {
+      "name": "escaped-dollar-is-not-a-math-delimiter",
+      "why": "\\$ is a literal dollar sign; the caret after it is still in text mode.",
+      "before": "It costs \\$5 and ",
+      "after": " is the rest.\n",
+      "context": {"mode": "text", "delimiter": null, "environment": null, "environments": [], "amsmath": false, "wrap": "inline"},
+      "proposal": "x^2",
+      "insert": "$x^2$",
+      "advisories": []
+    },
+    {
+      "name": "dollar-inside-a-comment-does-not-open-math",
+      "why": "A stray $ in a comment must not make the whole rest of the file look like math.",
+      "before": "% price is $5 here\nProse and ",
+      "after": " more.\n",
+      "context": {"mode": "text", "delimiter": null, "environment": null, "environments": [], "amsmath": false, "wrap": "inline"},
+      "proposal": "x^2",
+      "insert": "$x^2$",
+      "advisories": []
+    },
+    {
+      "name": "dollar-inside-verbatim-does-not-open-math",
+      "why": "Verbatim bodies are not scanned for delimiters; the caret after the block is text.",
+      "before": "\\begin{verbatim}\ncost $5\n\\end{verbatim}\nProse and ",
+      "after": " more.\n",
+      "context": {"mode": "text", "delimiter": null, "environment": null, "environments": [], "amsmath": false, "wrap": "inline"},
+      "proposal": "x^2",
+      "insert": "$x^2$",
+      "advisories": []
+    },
+    {
+      "name": "nested-math-environment-keeps-math-mode",
+      "why": "aligned inside equation is depth 2; the caret is still math, not text.",
+      "preamble": "\\documentclass{article}\n\\usepackage{amsmath}\n",
+      "before": "\\begin{equation}\n\\begin{aligned}\n a &= ",
+      "after": " \\\\ b &= c\n\\end{aligned}\n\\end{equation}\n",
+      "context": {"mode": "display_math", "delimiter": "environment", "environment": "aligned", "environments": ["equation", "aligned"], "amsmath": true, "wrap": "already_math"},
+      "proposal": "$x^2$",
+      "insert": "x^2",
+      "advisories": []
+    },
+    {
+      "name": "after-a-closed-math-environment-the-caret-is-text",
+      "why": "The nesting counter must come back down; this is the bug depth tracking fixed.",
+      "before": "\\begin{equation}\na = b\n\\end{equation}\nProse and ",
+      "after": " more.\n",
+      "context": {"mode": "text", "delimiter": null, "environment": null, "environments": [], "amsmath": false, "wrap": "inline"},
+      "proposal": "x^2",
+      "insert": "$x^2$",
+      "advisories": []
+    }
+  ]
+}

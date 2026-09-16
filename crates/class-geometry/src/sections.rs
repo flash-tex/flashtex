@@ -150,10 +150,13 @@ fn raw_table() -> [Raw; 5] {
 /// 255, 502); report/book 2 (report.cls `\setcounter{secnumdepth}{2}`,
 /// `\setcounter{tocdepth}{2}`).
 pub fn default_depths(kind: ClassKind) -> (i32, i32) {
-    if kind == ClassKind::Article {
-        (3, 3)
-    } else {
-        (2, 2)
+    match kind {
+        ClassKind::Article => (3, 3),
+        // letter.cls sets neither counter, so both keep latex.ltx's own
+        // zero (`\the\c@secnumdepth` and `\the\c@tocdepth` both read 0 in a
+        // `letter` document, TeX Live 2025).
+        ClassKind::Letter => (0, 0),
+        ClassKind::Report | ClassKind::Book => (2, 2),
     }
 }
 
@@ -166,7 +169,12 @@ pub fn headings(
     fm: FontMetrics,
     secnumdepth: i32,
 ) -> Vec<HeadingSpec> {
-    let _ = kind;
+    // letter.cls defines no `\section`, `\subsection`, ... at all, so there
+    // is nothing to resolve; returning article's table would claim headings
+    // the class does not have.
+    if !kind.has_sections() {
+        return Vec::new();
+    }
     raw_table()
         .iter()
         .map(|r| {
@@ -298,6 +306,11 @@ pub struct PartSpec {
     pub blank_page_after: bool,
 }
 
+/// `\part`'s spec. Meaningless for [`ClassKind::Letter`], which defines no
+/// `\part` — a `letter` document cannot produce the block this describes.
+/// It keeps the in-flow (article) shape rather than report/book's own-page
+/// one so that nothing can turn a letter into a part page; the authoritative
+/// signal that the class has no sectioning is [`headings`] returning empty.
 pub fn part(
     kind: ClassKind,
     fm: FontMetrics,
@@ -305,7 +318,7 @@ pub fn part(
     openright: bool,
     secnumdepth: i32,
 ) -> PartSpec {
-    if kind == ClassKind::Article {
+    if !kind.has_chapters() {
         PartSpec {
             own_page: false,
             page_break: PageBreak::None,

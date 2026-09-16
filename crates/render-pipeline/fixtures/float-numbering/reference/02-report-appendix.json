@@ -1,0 +1,42 @@
+{
+ "pages": 3,
+ "captions": [
+  {
+   "label": "Figure 1.1",
+   "page": 1,
+   "x": 252.077,
+   "baseline": 354.022
+  },
+  {
+   "label": "Table 1.1",
+   "page": 1,
+   "x": 241.644,
+   "baseline": 410.255
+  },
+  {
+   "label": "Figure 2",
+   "page": 1,
+   "x": 208.712,
+   "baseline": 529.886
+  },
+  {
+   "label": "Figure A.1",
+   "page": 2,
+   "x": 231.764,
+   "baseline": 354.022
+  },
+  {
+   "label": "Table A.1",
+   "page": 2,
+   "x": 235.182,
+   "baseline": 410.255
+  },
+  {
+   "label": "Figure B.1",
+   "page": 3,
+   "x": 227.24,
+   "baseline": 354.022
+  }
+ ],
+ "refs": "Refs 1.1, 1.1, 2, A.1, A.1 and B.1."
+}

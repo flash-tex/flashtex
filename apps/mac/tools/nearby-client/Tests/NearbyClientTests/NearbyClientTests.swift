@@ -178,6 +178,43 @@ final class PairFileTests: XCTestCase {
         XCTAssertTrue(json.contains("\"version\" : 1"))
         try? FileManager.default.removeItem(at: dir)
     }
+
+    /// Hammers one `PairFile` from many concurrent tasks (upserts, removes,
+    /// and reads interleaved) and asserts the final state is internally
+    /// consistent: no duplicate fingerprints, every surviving pair readable
+    /// back, and the file on disk agreeing with memory. Completing without a
+    /// crash or torn array is the lock's whole point (cf. #372).
+    func testConcurrentUpsertRemoveKeepsStoreConsistent() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("nearby-client-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("pairs.json")
+        let f = try PairFile(url: url)
+        let fingerprints = (0..<50).map { "fp-\($0)" }
+        await withTaskGroup(of: Void.self) { group in
+            for fp in fingerprints {
+                group.addTask {
+                    let p = PairedMac(fingerprint: fp, macName: "Mac \(fp)", pairId: "pid-\(fp)",
+                                      pairPsk: Data(repeating: 7, count: 32).base64EncodedString(),
+                                      companionName: "iPad")
+                    _ = try? f.upsert(p)
+                }
+                group.addTask { _ = f.pair(fingerprint: fp) }
+            }
+            for fp in fingerprints.prefix(25) {
+                group.addTask { _ = try? f.remove(fingerprint: fp) }
+            }
+        }
+        let final = f.pairs
+        let finalFPs = final.map(\.fingerprint)
+        XCTAssertEqual(Set(finalFPs).count, finalFPs.count, "duplicate fingerprints after concurrent mutation")
+        XCTAssertLessThanOrEqual(final.count, fingerprints.count)
+        for p in final {
+            XCTAssertEqual(f.pair(fingerprint: p.fingerprint)?.pairId, p.pairId)
+            XCTAssertEqual(f.pair(matching: p.fingerprint)?.pairId, p.pairId)
+        }
+        let reloaded = try PairFile(url: url)
+        XCTAssertEqual(Set(reloaded.pairs.map(\.fingerprint)), Set(finalFPs), "file on disk must match memory")
+    }
 }
 
 /// Full client flow against the in-test fake Mac: bootstrap pairing, PSK

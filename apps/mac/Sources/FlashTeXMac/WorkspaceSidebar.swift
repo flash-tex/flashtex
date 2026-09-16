@@ -1,34 +1,54 @@
 import SwiftUI
+import AppKit
 import FlashTeXProtocol
 
-/// The main window's sidebar (mac-ui-redesign): the project's members with
-/// their kind and state, the active buffer's Outline (sections,
-/// environments, labels — DocumentOutline.swift) and a Problems summary.
-/// Every row drives an existing model operation: switching goes through
-/// `ProjectDocuments.switchDocument`, includes open through
-/// `openDocument`, outline rows select through `reveal(outlineItem:)`, and
-/// the Problems rows show/filter the bottom panel. Nothing here is a new
-/// source of truth.
+/// The tool column (design-principles §4): tool windows stack sharing this
+/// column — the Project tree, and under it the Outline of the active buffer
+/// (sections, environments, labels — DocumentOutline.swift), each toggled
+/// from the rail (ContentView.swift). The Outline ships collapsed. Problems
+/// moved out of this column entirely: its homes are the bottom panel and the
+/// status-bar badge.
+///
+/// Both trees are `NSOutlineView`s (SidebarTree.swift), per the brief's
+/// architecture rule; every row still drives an existing model operation:
+/// switching goes through `ProjectDocuments.switchDocument`, includes open
+/// through `openDocument`, outline rows select through
+/// `reveal(outlineItem:)`. Nothing here is a new source of truth.
 struct WorkspaceSidebar: View {
     @Environment(ShellModel.self) var model
+    let projectVisible: Bool
+    let outlineVisible: Bool
     /// Outline of the active buffer, rescanned ~150 ms after edits settle so
     /// a keystroke never pays for a scan on its own frame (TypingBench).
     @State private var outline: [DocumentOutline.Item] = []
     @State private var outlineFor: (path: String, revision: Int) = ("", -1)
-    @State private var expanded: Set<DocumentOutline.Kind> = [.section, .environment, .label]
+    /// The header's filter (D1's in-header "Show" menu): which item kinds the
+    /// outline lists. Document order is never regrouped — for prose the order
+    /// is the meaning (design-principles §7).
+    @State private var shownKinds: Set<DocumentOutline.Kind> = Set(DocumentOutline.Kind.allCases)
+    /// Follow-caret: id of the outline item the caret is in.
+    @State private var currentOutlineID: String?
 
     static let identifier = "workspace.sidebar"
 
     var body: some View {
-        List {
-            ProjectSection()
-            OutlineSection(outline: outline, expanded: $expanded, stale: outlineFor.revision != model.chrome.editorRevision) // throttled (ShellChrome): not per keystroke
-            ProblemsSection()
+        VStack(spacing: 0) {
+            if projectVisible {
+                ProjectSection()
+            }
+            if projectVisible && outlineVisible { Divider().overlay(DS.Colors.separator) }
+            if outlineVisible {
+                OutlineSection(outline: outline,
+                                  shownKinds: $shownKinds,
+                                  stale: outlineFor.revision != model.chrome.editorRevision,
+                                  currentID: currentOutlineID)
+            }
         }
-        .listStyle(.sidebar)
+        .background(DS.Colors.surfacePrimary) // the flat opaque tool window (Islands), never a sidebar material
         .accessibilityIdentifier(Self.identifier)
         .modifier(ProjectScaffoldSheets()) // New Project / New File / Rename / Delete (ProjectScaffoldViews.swift)
-        .task(id: "\(model.activePath)@\(model.chrome.editorRevision)") {
+        .task(id: "\(model.activePath)@\(model.chrome.editorRevision)/\(outlineVisible)") {
+            guard outlineVisible else { return } // no scans for a hidden panel
             // Rescan after a short quiet period; the previous scan is cancelled.
             let revision = model.chrome.editorRevision, path = model.activePath
             if outlineFor.revision >= 0 { try? await Task.sleep(for: .milliseconds(150)) }
@@ -36,100 +56,157 @@ struct WorkspaceSidebar: View {
             outline = model.outline
             outlineFor = (path, revision)
         }
+        .task(id: "\(model.caretUTF16)/\(outline.count)/\(outline.first?.utf16.location ?? -1)") {
+            guard outlineVisible else { return }
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled else { return }
+            let id = DocumentOutline.current(at: model.caretUTF16, in: outline)?.id
+            if id != currentOutlineID { currentOutlineID = id }
+        }
+    }
+}
+
+// MARK: - tool window header
+
+/// The IntelliJ tool-window header: the window's name leading — behind the
+/// same glyph the rail carries for it, accent-tinted so the open tool window
+/// is legible at a glance (owner on #653: more accents, and the rail's icon
+/// style everywhere) — quiet controls trailing, on the panel's own surface.
+struct ToolWindowHeader<Trailing: View>: View {
+    let title: String
+    /// The rail glyph for this tool window; nil keeps a text-only header.
+    var icon: String?
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: DS.Space.s) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(DS.Fonts.base)
+                    .foregroundStyle(DS.Colors.accentSelection)
+                    .accessibilityHidden(true)
+            }
+            Text(title)
+                .font(DS.Fonts.base.weight(.semibold))
+                .foregroundStyle(DS.Colors.textPrimary)
+            Spacer(minLength: 0)
+            trailing()
+        }
+        .padding(.horizontal, DS.Space.l)
+        .frame(height: DS.Row.toolWindowHeader)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(title) header")
     }
 }
 
 // MARK: - Project
 
 /// Open members (entry first) plus every `\input`/`\include` the entry
-/// references that is not open yet (bounded discovery, ProjectDocuments.swift).
+/// references that is not open yet (bounded discovery, ProjectDocuments.swift),
+/// and creatable missing includes.
 private struct ProjectSection: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {
         // Throttled, change-only copies (ShellChrome.swift): `project.listing`
-        // and `discoverClosure()` read `documents`, so this List (an AppKit
-        // outline view) re-evaluated on every keystroke.
+        // and `discoverClosure()` read `documents`, so this tree re-evaluated
+        // on every keystroke otherwise.
         let listing = model.chrome.listing
         let kinds = model.documentKinds
         let closure = model.chrome.closure
-        Section {
-            ForEach(listing) { doc in
-                SidebarRow(selected: doc.path == model.activePath) {
-                    model.switchOrNote(doc.path)
-                } label: {
-                    Label {
-                        HStack(spacing: 4) {
-                            Text(doc.path).lineLimit(1).truncationMode(.middle)
-                            if doc.isDirty { Circle().fill(.orange).frame(width: 6, height: 6).accessibilityLabel("edited") }
-                            Spacer(minLength: 0)
-                            if let r = doc.durableRevision { Text("r\(r)").font(.caption2).foregroundStyle(.tertiary).monospacedDigit() }
-                        }
-                    } icon: {
-                        Image(systemName: Self.icon(for: doc, kind: kinds.kind(of: doc.path)))
-                            .foregroundStyle(doc.path == model.activePath ? Color.accentColor : Color.secondary)
-                    }
+        VStack(spacing: 0) {
+            ToolWindowHeader(title: "Project", icon: "folder") {
+                Text("\(listing.count)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
+                Button { model.scaffold.presentNewFile() } label: { // ProjectScaffoldViews.swift
+                    Image(systemName: "plus")
+                        .font(DS.Fonts.base)
+                        .foregroundStyle(DS.Colors.textSecondary)
+                        .frame(width: DS.Size.inlineIconButton, height: DS.Size.inlineIconButton)
+                        .contentShape(Rectangle())
                 }
-                .help(Self.tooltip(for: doc, kind: kinds.kind(of: doc.path)))
-                .accessibilityLabel(Self.spoken(for: doc, kind: kinds.kind(of: doc.path), active: doc.path == model.activePath))
-                .contextMenu { // ProjectScaffoldViews.swift
-                    Button("New File…") { model.scaffold.presentNewFile() }
-                    if doc.role != .entry {
-                        Divider()
-                        Button("Rename…") { model.scaffold.presentRename(doc.path) }
-                        Button("Delete…") { model.scaffold.presentDelete(doc.path) }
-                    }
-                }
+                .buttonStyle(PressableStyle(cornerRadius: DS.Radius.control))
+                .disabled(model.project.projectRoot == nil)
+                .help("New File… (⌘N): a rooted .tex file in this project, opened in a tab")
+                .accessibilityLabel("New file")
+                .accessibilityIdentifier("project.newfile")
             }
-            let closed = closure.nodes.filter { $0.state == .available }
-            ForEach(Array(closed.enumerated()), id: \.offset) { _, n in
-                let name = n.resolvedPath ?? n.reference.argument
-                SidebarRow(selected: false) {
-                    Task { await model.project.openDocument(name, role: .included(from: n.from)) }
-                } label: {
-                    Label {
-                        Text(name).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
-                    } icon: { Image(systemName: "doc.badge.plus").foregroundStyle(.tertiary) }
-                }
-                .help("\\\(n.reference.kind.rawValue){\(n.reference.argument)} from \(n.from) — click to open")
-                .accessibilityLabel("\(name), not open, included from \(n.from); activate to open")
-            }
-            // A literal, rooted reference with no file behind it: one click creates it (ProjectScaffold.swift).
-            let missing = closure.nodes.filter { if case .unresolvable(let why) = $0.state { return why.hasPrefix("no such file") } else { return false } }
-            ForEach(Array(missing.enumerated()), id: \.offset) { _, n in
-                let name = MissingIncludeFix.path(for: n.reference.argument) ?? n.reference.argument
-                SidebarRow(selected: false) {
-                    Task { await model.project.createMissingInclude(n.reference.argument, from: n.from); model.navigationNote = model.project.status }
-                } label: {
-                    Label {
-                        HStack(spacing: 4) {
-                            Text(name).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
-                            Text("missing — create").font(.caption2).foregroundStyle(.orange)
-                        }
-                    } icon: { Image(systemName: "doc.badge.plus").foregroundStyle(.orange) }
-                }
-                .help("\\\(n.reference.kind.rawValue){\(n.reference.argument)} from \(n.from) has no file — click to create \(name)")
-                .accessibilityLabel("\(name), missing, included from \(n.from); activate to create it")
-            }
-        } header: {
-            HStack {
-                Label("Project", systemImage: "folder")
-                Spacer()
-                Text("\(listing.count)").font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
-                Button { model.scaffold.presentNewFile() } label: { Image(systemName: "plus") } // ProjectScaffoldViews.swift
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .disabled(model.project.projectRoot == nil)
-                    .help("New File… (⌘N): a rooted .tex file in this project, opened in a tab")
-                    .accessibilityLabel("New file")
-                    .accessibilityIdentifier("project.newfile")
-            }
+            SidebarTree(rows: Self.rows(listing: listing, kinds: kinds, closure: closure, activePath: model.activePath),
+                        selectedID: model.activePath,
+                        onSelect: { id in select(id, listing: listing, closure: closure) },
+                        menuItems: { id in menu(for: id, listing: listing) },
+                        accessibilityLabel: "Project tree")
         }
     }
 
-    static func icon(for doc: ProjectDocument, kind: DocumentKind?) -> String {
-        if kind == .bibliography { return "books.vertical" }
-        if doc.role == .entry { return "doc.text.fill" }
-        return "doc.text"
+    /// Row ids: open documents use their path; discovered/missing includes a
+    /// prefixed reference so they never collide with an open path.
+    static func rows(listing: [ProjectDocument], kinds: DocumentKinds,
+                     closure: ProjectDocuments.Closure, activePath: String) -> [SidebarTree.Row] {
+        var rows: [SidebarTree.Row] = listing.map { doc in
+            let style = FileTypeStyle.of(path: doc.path, entry: doc.role == .entry,
+                                         bibliography: kinds.kind(of: doc.path) == .bibliography)
+            return SidebarTree.Row(
+                id: doc.path,
+                icon: style.systemImage,
+                iconColor: style.nsColor,
+                title: doc.path,
+                trailing: doc.durableRevision.map { "r\($0)" },
+                modified: doc.isDirty,
+                tooltip: tooltip(for: doc, kind: kinds.kind(of: doc.path)),
+                accessibilityLabel: spoken(for: doc, kind: kinds.kind(of: doc.path), active: doc.path == activePath))
+        }
+        for n in closure.nodes where n.state == .available {
+            let name = n.resolvedPath ?? n.reference.argument
+            rows.append(SidebarTree.Row(
+                id: "closed:\(name)",
+                icon: "doc.badge.plus",
+                iconColor: DS.Palette.textTertiary,
+                title: name,
+                dimmed: true,
+                tooltip: "\\\(n.reference.kind.rawValue){\(n.reference.argument)} from \(n.from) — click to open",
+                accessibilityLabel: "\(name), not open, included from \(n.from); activate to open"))
+        }
+        for n in closure.nodes {
+            guard case .unresolvable(let why) = n.state, why.hasPrefix("no such file") else { continue }
+            let name = MissingIncludeFix.path(for: n.reference.argument) ?? n.reference.argument
+            rows.append(SidebarTree.Row(
+                id: "missing:\(n.reference.argument):\(n.from)",
+                icon: "doc.badge.plus",
+                iconColor: DS.Palette.severityWarning,
+                title: "\(name) — missing, create",
+                dimmed: true,
+                tooltip: "\\\(n.reference.kind.rawValue){\(n.reference.argument)} from \(n.from) has no file — click to create \(name)",
+                accessibilityLabel: "\(name), missing, included from \(n.from); activate to create it"))
+        }
+        return rows
+    }
+
+    private func select(_ id: String, listing: [ProjectDocument], closure: ProjectDocuments.Closure) {
+        if id.hasPrefix("closed:") {
+            let name = String(id.dropFirst("closed:".count))
+            let from = closure.nodes.first { ($0.resolvedPath ?? $0.reference.argument) == name && $0.state == .available }?.from ?? model.chrome.entryPath
+            Task { await model.project.openDocument(name, role: .included(from: from)) }
+        } else if id.hasPrefix("missing:") {
+            let parts = id.dropFirst("missing:".count).split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { return }
+            Task { _ = await model.project.createMissingInclude(parts[0], from: parts[1]); model.navigationNote = model.project.status }
+        } else {
+            model.switchOrNote(id)
+        }
+    }
+
+    private func menu(for id: String, listing: [ProjectDocument]) -> [SidebarTree.MenuItem] {
+        guard let doc = listing.first(where: { $0.path == id }) else {
+            return [.init(title: "New File…", action: { model.scaffold.presentNewFile() })]
+        }
+        var items: [SidebarTree.MenuItem] = [.init(title: "New File…", action: { model.scaffold.presentNewFile() })]
+        if doc.role != .entry {
+            let path = doc.path
+            items.append(.divider)
+            items.append(.init(title: "Rename…", action: { model.scaffold.presentRename(path) }))
+            items.append(.init(title: "Delete…", action: { model.scaffold.presentDelete(path) }))
+        }
+        return items
     }
 
     static func tooltip(for doc: ProjectDocument, kind: DocumentKind?) -> String {
@@ -165,70 +242,83 @@ private struct ProjectSection: View {
 private struct OutlineSection: View {
     @Environment(ShellModel.self) var model
     let outline: [DocumentOutline.Item]
-    @Binding var expanded: Set<DocumentOutline.Kind>
+    @Binding var shownKinds: Set<DocumentOutline.Kind>
     let stale: Bool
-    /// Follow-caret: the id of the section (else environment) the caret is in
-    /// (`DocumentOutline.current`), refreshed by the leaf `CaretFollower` so a
-    /// caret move re-evaluates this section only when the current item changes.
-    @State private var currentID: String?
+    let currentID: String?
 
     var body: some View {
-        let counts = DocumentOutline.counts(outline)
-        // Structure depth relative to the document's top level: an article's
-        // \section rows sit at depth 0, a report's \chapter rows do.
-        let topLevel = outline.filter { $0.kind == .section }.map(\.level).min() ?? 0
-        Section {
-            CaretFollower(outline: outline, currentID: $currentID)
-            if outline.isEmpty {
-                Text(stale ? "Scanning…" : "No sections, environments or labels in \(model.activePath)")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            ForEach(DocumentOutline.Kind.allCases, id: \.self) { kind in
-                let items = DocumentOutline.items(kind, in: outline)
-                if !items.isEmpty {
-                    DisclosureGroup(isExpanded: Binding(get: { expanded.contains(kind) },
-                                                        set: { if $0 { expanded.insert(kind) } else { expanded.remove(kind) } })) {
-                        ForEach(items) { item in
-                            SidebarRow(selected: item.id == currentID) {
-                                model.reveal(outlineItem: item)
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: Self.icon(item)).foregroundStyle(.secondary).font(.caption)
-                                    Text(item.displayTitle.isEmpty ? "(untitled)" : item.displayTitle).lineLimit(1)
-                                    Spacer(minLength: 0)
-                                    Text("\(item.line)").font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
-                                }
-                                .padding(.leading, CGFloat(min(max(0, item.kind == .section ? item.level - topLevel : item.level), 4)) * 10)
-                            }
-                            .help(Self.tooltip(item))
-                            .accessibilityLabel(Self.spoken(item))
-                        }
-                    } label: {
-                        HStack {
-                            Text(kind.title)
-                            Spacer()
-                            Text("\(counts[kind] ?? 0)").font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
-                        }
-                    }
-                }
-            }
-        } header: {
-            HStack {
-                Label("Outline", systemImage: "list.bullet.indent")
-                Spacer()
+        let rows = Self.rows(outline: outline, shownKinds: shownKinds, stale: stale, activePath: model.activePath)
+        VStack(spacing: 0) {
+            ToolWindowHeader(title: "Outline", icon: "list.bullet.indent") {
                 if stale { ProgressView().controlSize(.mini) }
+                // D1's in-header filter: which kinds are shown; order is
+                // always the document's own.
+                Menu {
+                    ForEach(DocumentOutline.Kind.allCases, id: \.self) { kind in
+                        Toggle(kind.title, isOn: Binding(
+                            get: { shownKinds.contains(kind) },
+                            set: { if $0 { shownKinds.insert(kind) } else { shownKinds.remove(kind) } }))
+                    }
+                } label: {
+                    // The rail's plain-outline vocabulary, not a circled or
+                    // filled variant (owner on #653: one icon style); a
+                    // filter that hides something tints accent instead.
+                    let filtering = shownKinds.count != DocumentOutline.Kind.allCases.count
+                    Image(systemName: "line.3.horizontal.decrease")
+                        .font(DS.Fonts.base)
+                        .foregroundStyle(filtering ? DS.Colors.accentSelection : DS.Colors.textSecondary)
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help("Show or hide sections, environments and labels; the list always keeps document order")
+                .accessibilityLabel("Filter outline")
             }
+            SidebarTree(rows: rows,
+                        selectedID: currentID,
+                        onSelect: { id in
+                            if let item = outline.first(where: { $0.id == id }) { model.reveal(outlineItem: item) }
+                        },
+                        accessibilityLabel: "Outline")
         }
     }
 
-    static func icon(_ item: DocumentOutline.Item) -> String {
-        switch item.kind {
-        case .section: return item.command == "part" ? "book.closed" : item.level <= 1 ? "number" : "number.square"
-        case .environment:
-            if DocumentOutline.floatEnvironments.contains(item.title) { return item.title.hasPrefix("table") ? "tablecells" : "photo" }
-            return item.caption != nil ? "text.book.closed" : "curlybraces"
-        case .label: return "tag"
+    /// One flat list in document order (never grouped by type — for prose
+    /// the order is the meaning, §7), indented by nesting: sections by their
+    /// sectioning level, environments and labels one step under the section
+    /// they follow. Item kinds are told apart by their typed icon.
+    static func rows(outline: [DocumentOutline.Item], shownKinds: Set<DocumentOutline.Kind>,
+                     stale: Bool, activePath: String) -> [SidebarTree.Row] {
+        if outline.isEmpty {
+            return [SidebarTree.Row(
+                id: "outline:empty", icon: stale ? "clock" : "list.bullet.indent",
+                iconColor: DS.Palette.textTertiary,
+                title: stale ? "Scanning…" : "No sections in \(activePath)",
+                dimmed: true, selectable: false)]
         }
+        let topLevel = outline.filter { $0.kind == .section }.map(\.level).min() ?? 0
+        var sectionDepth = 0
+        var out: [SidebarTree.Row] = []
+        for item in outline {
+            let indent: Int
+            switch item.kind {
+            case .section:
+                sectionDepth = min(max(0, item.level - topLevel), 4)
+                guard shownKinds.contains(.section) else { continue }
+                indent = sectionDepth
+            case .environment, .label:
+                guard shownKinds.contains(item.kind) else { continue }
+                indent = min(sectionDepth + 1 + max(0, item.level), 5)
+            }
+            out.append(SidebarTree.Row(
+                id: item.id,
+                icon: OutlineItemStyle.icon(item),
+                iconColor: OutlineItemStyle.nsColor(item),
+                title: item.displayTitle.isEmpty ? "(untitled)" : item.displayTitle,
+                trailing: "\(item.line)",
+                indent: indent,
+                tooltip: tooltip(item),
+                accessibilityLabel: spoken(item)))
+        }
+        return out
     }
 
     static func tooltip(_ item: DocumentOutline.Item) -> String {
@@ -248,83 +338,38 @@ private struct OutlineSection: View {
     }
 }
 
-/// Leaf view that tracks the caret (a debounced `.task(id:)` on
-/// `model.caretUTF16`) and publishes the current outline item's id, so the
-/// outline rows re-evaluate only when the current item actually changes.
-private struct CaretFollower: View {
-    @Environment(ShellModel.self) var model
-    let outline: [DocumentOutline.Item]
-    @Binding var currentID: String?
-
-    var body: some View {
-        EmptyView()
-            .task(id: "\(model.caretUTF16)/\(outline.count)/\(outline.first?.utf16.location ?? -1)") {
-                try? await Task.sleep(for: .milliseconds(80))
-                guard !Task.isCancelled else { return }
-                let id = DocumentOutline.current(at: model.caretUTF16, in: outline)?.id
-                if id != currentID { currentID = id }
-            }
-    }
-}
-
-// MARK: - Problems
-
-/// Counts by severity; activating a row shows the Problems panel filtered to
-/// that severity (ProblemsPanel.swift), the "all" row clears the filter.
-private struct ProblemsSection: View {
-    @Environment(ShellModel.self) var model
-
-    var body: some View {
-        let diags = model.problemsList // change-only (ShellModel): `displayedDiagnostics` reads `result`, replaced per reply
-        let (errors, warnings, gaps) = EditorDiagnostics.counts(diags)
-        Section {
-            if diags.isEmpty {
-                Label { Text("No problems").foregroundStyle(.secondary) } icon: { Image(systemName: "checkmark.circle").foregroundStyle(.green) }
-                    .font(.caption)
-            } else {
-                row("\(errors) error\(errors == 1 ? "" : "s")", icon: "xmark.octagon.fill", tint: .red, filter: .error, enabled: errors > 0)
-                row("\(warnings) warning\(warnings == 1 ? "" : "s")", icon: "exclamationmark.triangle.fill", tint: .orange, filter: .warning, enabled: warnings > 0)
-                if gaps > 0 { row("\(gaps) not implemented", icon: "puzzlepiece.extension", tint: .secondary, filter: nil, enabled: true) }
-                row("All \(diags.count)", icon: "list.bullet.rectangle", tint: .secondary, filter: nil, enabled: true)
-            }
-        } header: {
-            Label("Problems", systemImage: "exclamationmark.triangle")
+/// Typed-icon vocabulary for outline items, shared by the Outline tool
+/// window and the palette's Sections/Labels scopes: the glyph tells the
+/// kind, the colour its *type identity* (floats green/blue, math purple,
+/// labels orange, structure neutral) — never decoration.
+enum OutlineItemStyle {
+    static func icon(_ item: DocumentOutline.Item) -> String {
+        switch item.kind {
+        case .section: return item.command == "part" ? "book.closed" : item.level <= 1 ? "number" : "number.square"
+        case .environment:
+            if DocumentOutline.floatEnvironments.contains(item.title) { return item.title.hasPrefix("table") ? "tablecells" : "photo" }
+            if DocumentOutline.theoremEnvironments.contains(item.title) { return "text.book.closed" }
+            if mathEnvironments.contains(item.title) { return "function" }
+            return "curlybraces"
+        case .label: return "tag"
         }
     }
 
-    private func row(_ title: String, icon: String, tint: Color, filter: RuntimeV1.Severity?, enabled: Bool) -> some View {
-        SidebarRow(selected: model.problemsVisible && model.problemsSeverityFilter == filter && filter != nil) {
-            model.problemsSeverityFilter = filter
-            model.problemsVisible = true
-        } label: {
-            Label { Text(title) } icon: { Image(systemName: icon).foregroundStyle(enabled ? tint : Color.secondary) }
+    static func color(_ item: DocumentOutline.Item) -> Color { Color(nsColor: nsColor(item)) }
+
+    static func nsColor(_ item: DocumentOutline.Item) -> NSColor {
+        switch item.kind {
+        case .section: return DS.Palette.textSecondary
+        case .environment:
+            if item.title.hasPrefix("table") { return DS.Palette.typeBlue }
+            if DocumentOutline.floatEnvironments.contains(item.title) { return DS.Palette.typeGreen }
+            if mathEnvironments.contains(item.title) || DocumentOutline.theoremEnvironments.contains(item.title) { return DS.Palette.typePurple }
+            return DS.Palette.textSecondary
+        case .label: return DS.Palette.typeOrange
         }
-        .disabled(!enabled)
-        .help("Show the Problems panel (⌘⇧M)\(filter.map { " filtered to \($0.rawValue)s" } ?? "")")
     }
-}
 
-// MARK: - Row
-
-/// A sidebar row that is a button (keyboard + VoiceOver activation) and
-/// draws the selected state like a `List` selection.
-struct SidebarRow<Label: View>: View {
-    let selected: Bool
-    let action: () -> Void
-    @ViewBuilder let label: () -> Label
-
-    var body: some View {
-        Button(action: action) {
-            label()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 6).padding(.vertical, 2)
-        .background(selected ? Color.accentColor.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
-        .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
-        .accessibilityAddTraits(selected ? .isSelected : [])
-    }
+    private static let mathEnvironments: Set<String> = ["equation", "equation*", "align", "align*", "gather", "gather*", "multline", "multline*"]
 }
 
 extension ShellModel {

@@ -31,6 +31,9 @@ pub enum TokenKind {
     /// `\[` and `\]`, the alternate display-math delimiters.
     DisplayMathOpen,
     DisplayMathClose,
+    /// `\(` and `\)`, the LaTeX inline-math delimiters (`$` is TeX's).
+    InlineMathOpen,
+    InlineMathClose,
     Superscript,
     Subscript,
     /// `\verb` (or `\verb*`) through its matching delimiter: any character
@@ -310,15 +313,16 @@ pub fn tokenize_document(text: &str, document: DocumentId) -> Vec<Token> {
                             it = lookahead;
                         }
                     }
-                    Some(&(j, '[')) | Some(&(j, ']')) => {
-                        let open = matches!(it.peek(), Some((_, '[')));
+                    Some(&(j, '[')) | Some(&(j, ']')) | Some(&(j, '(')) | Some(&(j, ')')) => {
+                        let kind = match it.peek() {
+                            Some((_, '[')) => TokenKind::DisplayMathOpen,
+                            Some((_, ']')) => TokenKind::DisplayMathClose,
+                            Some((_, '(')) => TokenKind::InlineMathOpen,
+                            _ => TokenKind::InlineMathClose,
+                        };
                         it.next();
                         tokens.push(Token {
-                            kind: if open {
-                                TokenKind::DisplayMathOpen
-                            } else {
-                                TokenKind::DisplayMathClose
-                            },
+                            kind,
                             span: Span::in_document(document, start, j + 1),
                         });
                     }

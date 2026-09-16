@@ -88,6 +88,13 @@ impl Canon {
         self.f(p.b);
         self.f(p.a);
     }
+    #[cfg(feature = "tikz-patterns")]
+    fn pattern(&mut self, p: &display::PathPattern) {
+        self.s(&p.name);
+        for c in p.color {
+            self.f(c);
+        }
+    }
     fn commands(&mut self, cmds: &[PathCmd]) {
         self.u(cmds.len());
         for c in cmds {
@@ -124,7 +131,9 @@ pub fn page_digest(p: &Page, wire: Wire) -> [u8; 32] {
     c.u(p.number as usize);
     c.t(p.width);
     c.t(p.height);
-    let items: Vec<&Item> = p.items.iter().filter(|it| wire.images || !matches!(it, Item::Image(_))).collect();
+    // Unreachable for an elided page: `snapshot`/`try_delta` refuse a windowed
+    // list before any page is digested (`display-list-v2-window` §7).
+    let items: Vec<&Item> = p.items().into_iter().flatten().filter(|it| wire.images || !matches!(it, Item::Image(_))).collect();
     c.u(items.len());
     for it in items {
         match it {
@@ -143,7 +152,7 @@ pub fn page_digest(p: &Page, wire: Wire) -> [u8; 32] {
                     c.u(g.cluster as usize);
                 }
                 c.u(r.clusters.len());
-                for cl in &r.clusters {
+                for (ci, cl) in r.clusters.iter().enumerate() {
                     c.u(cl.text_start_byte);
                     c.u(cl.text_end_byte);
                     let rects = cl.hit_rects();
@@ -154,8 +163,9 @@ pub fn page_digest(p: &Page, wire: Wire) -> [u8; 32] {
                         c.t(h.width);
                         c.t(h.height);
                     }
-                    c.u(cl.carets.len());
-                    for k in cl.carets.iter() {
+                    let carets = r.carets_of(ci);
+                    c.u(carets.len());
+                    for k in carets.iter() {
                         c.u(k.text_byte);
                         c.t(k.x);
                         c.t(k.top);
@@ -231,6 +241,14 @@ pub fn page_digest(p: &Page, wire: Wire) -> [u8; 32] {
                     c.commands(&clip.commands);
                 }
                 c.paint(&p.paint);
+                #[cfg(feature = "tikz-patterns")]
+                match &p.pattern {
+                    Some(pattern) => {
+                        c.0.push(1);
+                        c.pattern(pattern);
+                    }
+                    None => c.0.push(0),
+                }
                 c.provenance(&p.provenance);
             }
         }
@@ -277,6 +295,9 @@ pub fn header_digest(l: &DisplayList, wire: Wire) -> [u8; 32] {
             Severity::Error => "error",
         });
         c.ranges(&d.sources);
+        if let Some(s) = d.wire_suggestion(wire) {
+            c.s(s);
+        }
     }
     c.sha()
 }
@@ -388,7 +409,7 @@ pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation]
         return None;
     }
     let on_wire = |it: &&Item| wire.images || !matches!(it, Item::Image(_));
-    let (bi, ni): (Vec<&Item>, Vec<&Item>) = (base.items.iter().filter(on_wire).collect(), new.items.iter().filter(on_wire).collect());
+    let (bi, ni): (Vec<&Item>, Vec<&Item>) = (base.items()?.iter().filter(on_wire).collect(), new.items()?.iter().filter(on_wire).collect());
     if bi.len() != ni.len() {
         return None;
     }
@@ -401,12 +422,15 @@ pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation]
                     && x.text == y.text
                     && x.glyphs == y.glyphs
                     && x.paint == y.paint
+                    // The carets derive from the cluster bytes, the hit rect
+                    // and the run's end caret, all compared here, so this is
+                    // the same comparison the per-cluster `carets` made.
+                    && x.end_caret == y.end_caret
                     && x.clusters.len() == y.clusters.len()
                     && x.clusters.iter().zip(&y.clusters).all(|(c, d)| {
                         c.text_start_byte == d.text_start_byte
                             && c.text_end_byte == d.text_end_byte
                             && c.hit_rect == d.hit_rect
-                            && c.carets == d.carets
                             && provenance_matches(&c.provenance, &d.provenance, relocs, &mut width_delta)
                     })
             }
@@ -416,7 +440,13 @@ pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation]
             (Item::Image(x), Item::Image(y)) => {
                 x.x == y.x && x.top == y.top && x.width == y.width && x.height == y.height && x.transform == y.transform && x.resource == y.resource && provenance_matches(&x.provenance, &y.provenance, relocs, &mut width_delta)
             }
-            (Item::Path(x), Item::Path(y)) => x.op == y.op && x.commands == y.commands && x.clips == y.clips && x.paint == y.paint && provenance_matches(&x.provenance, &y.provenance, relocs, &mut width_delta),
+            (Item::Path(x), Item::Path(y)) => {
+                #[cfg(feature = "tikz-patterns")]
+                if x.pattern != y.pattern {
+                    return None;
+                }
+                x.op == y.op && x.commands == y.commands && x.clips == y.clips && x.paint == y.paint && provenance_matches(&x.provenance, &y.provenance, relocs, &mut width_delta)
+            }
             _ => false,
         };
         if !ok {
@@ -448,8 +478,8 @@ pub fn relocate_page(base: &Page, relocs: &[Relocation]) -> Option<Page> {
             }
         }
     }
-    let mut items = Vec::with_capacity(base.items.len());
-    for it in &base.items {
+    let mut items = Vec::with_capacity(base.items()?.len());
+    for it in base.items()? {
         items.push(match it {
             Item::GlyphRun(r) => {
                 let mut r = r.clone();
@@ -463,7 +493,7 @@ pub fn relocate_page(base: &Page, relocs: &[Relocation]) -> Option<Page> {
             Item::Path(p) => Item::Path(display::PathItem { provenance: prov(&p.provenance, relocs)?, ..p.clone() }),
         });
     }
-    Some(Page { number: base.number, width: base.width, height: base.height, items })
+    Some(Page::resident(base.number, base.width, base.height, items))
 }
 
 // ---------------------------------------------------------------- snapshots
@@ -562,6 +592,14 @@ pub struct Sibling {
 /// objects measured `page_bytes`) as the base for the next request. Not
 /// retained when over the caps: the next request then answers full.
 pub fn note_full(state: &DeltaState, id: &str, list: &DisplayList, wire: Wire, page_bytes: Vec<usize>, line_len: usize, documents: &[(String, String)]) {
+    // A windowed list is an incomplete view, never a delta base: its
+    // `list_digest` would bind digests for pages it did not materialise
+    // (`protocol/proposals/display-list-v2-window.md` §7). No snapshot, so the
+    // next request answers full -- today's no-snapshot path exactly.
+    if list.window.is_some() {
+        state.clear();
+        return;
+    }
     if list.pages.len() > MAX_SNAPSHOT_PAGES || line_len > MAX_SNAPSHOT_BYTES || !texts_retainable(documents) {
         state.clear();
         return;
@@ -591,6 +629,10 @@ pub fn try_delta(state: &DeltaState, id: &str, list: &DisplayList, wire: Wire, b
     let snapshot = state.snapshot.borrow();
     let snap = snapshot.as_ref()?;
     if snap.acknowledgement() != *base || snap.wire != wire || snap.project_id != list.project_id {
+        return None;
+    }
+    // A window and a delta are mutually exclusive in r1 (§7).
+    if list.window.is_some() {
         return None;
     }
     if list.pages.len() > MAX_SNAPSHOT_PAGES || !texts_retainable(documents) {
@@ -658,7 +700,7 @@ pub fn try_delta(state: &DeltaState, id: &str, list: &DisplayList, wire: Wire, b
     o.push_str("],\"color_space\":\"srgb\",\"coordinate_unit\":\"bp_2pow20\",\"diagnostics\":");
     let mut header_len = 0;
     let start = o.len();
-    display::write_diagnostics(&mut o, &list.diagnostics);
+    display::write_diagnostics(&mut o, &list.diagnostics, wire);
     header_len += o.len() - start;
     o.push_str(",\"digest_scheme\":\"dl2-canon-1\",\"documents\":");
     let start = o.len();
@@ -785,5 +827,123 @@ mod tests {
         let mut b = Canon::new("t");
         b.f(0.0);
         assert_eq!(a.0, b.0);
+    }
+
+    fn diag_list(suggestion: Option<&str>) -> DisplayList {
+        let mut d = display::Diagnostic::error("unknown_command", r"\alpah", vec![SourceRange {
+            path: std::rc::Rc::from("notes.tex"),
+            start_byte: 0,
+            end_byte: 6,
+        }]);
+        d.suggestion = suggestion.map(str::to_string);
+        DisplayList {
+            project_id: "p".into(),
+            revision: 1,
+            documents: vec![display::DocumentResource {
+                path: "notes.tex".into(),
+                revision: 1,
+                sha256: "aa".repeat(32),
+                byte_length: 6,
+            }],
+            fonts: Vec::new(),
+            pages: vec![Page::resident(1, display::Tick(1), display::Tick(1), vec![Item::Rule(
+                display::Rule {
+                    x: display::Tick(0),
+                    top: display::Tick(0),
+                    width: display::Tick(10),
+                    height: display::Tick(10),
+                    paint: display::Paint::BLACK,
+                    provenance: Provenance::Synthetic("pad".repeat(800)),
+                },
+            )])],
+            diagnostics: vec![d],
+            window: None,
+            document_features: None,
+        }
+    }
+
+    #[test]
+    fn suggestion_change_is_hashed_and_deltaed_only_when_serialised() {
+        let off = Wire::default();
+        let on = Wire { diagnostics: true, ..Wire::default() };
+        let none = diag_list(None);
+        let some = diag_list(Some(r"\alpha"));
+        assert_eq!(header_digest(&none, off), header_digest(&some, off));
+        assert_ne!(header_digest(&none, on), header_digest(&some, on));
+        // Diagnostics-off is the old canonical form: a present suggestion must
+        // not change the digest relative to stripping it.
+        assert_eq!(header_digest(&some, off), header_digest(&none, off));
+
+        let docs = vec![("notes.tex".into(), r"\alpah".into())];
+        let state = DeltaState::new();
+        let mut page_bytes = Vec::new();
+        let full = none.write_json_wire_measured("a", on, &mut page_bytes);
+        note_full(&state, "a", &none, on, page_bytes, full.len(), &docs);
+        let base = state.acknowledgement().unwrap();
+        let line = try_delta(&state, "b", &some, on, &base, &docs, usize::MAX).expect("delta for suggestion-only change");
+        assert!(line.contains(r#""suggestion":"\\alpha""#), "{line}");
+        assert!(line.contains("\"type\":\"display_list_delta\""), "{line}");
+    }
+
+    #[test]
+    fn empty_suggestion_is_not_hashed_when_diagnostics_are_on() {
+        let on = Wire { diagnostics: true, ..Wire::default() };
+        assert_eq!(header_digest(&diag_list(Some("")), on), header_digest(&diag_list(None), on));
+    }
+
+    /// Minimal list so Appendix A can be walked by hand: empty pages →
+    /// `required_features` is exactly `glyph_run`, `rgba-srgb`, `cluster-actualtext`.
+    fn header_only_diag_list(suggestion: Option<&str>) -> DisplayList {
+        let mut d = display::Diagnostic::error("unknown_command", r"\alpah", vec![SourceRange {
+            path: std::rc::Rc::from("notes.tex"),
+            start_byte: 0,
+            end_byte: 6,
+        }]);
+        d.suggestion = suggestion.map(str::to_string);
+        DisplayList {
+            project_id: "p".into(),
+            revision: 1,
+            documents: Vec::new(),
+            fonts: Vec::new(),
+            pages: Vec::new(),
+            diagnostics: vec![d],
+            window: None,
+            document_features: None,
+        }
+    }
+
+    #[test]
+    fn diagnostics_suggestion_header_digest_matches_appendix_a() {
+        // Appendix A header_digest (docs/proposals/display-list-v2-delta.md) over
+        // this payload, with suggestion hashed because display-list-v2-diagnostics
+        // is negotiated and the value is the non-empty string "\alpha".
+        //
+        // Canonical bytes, in order (s(t) = i64(len(utf8)) ‖ utf8; i64 little-endian):
+        //   "flashtex:dl2:header:1\0"
+        //   s("display-list-v2") s("bp_2pow20") s("srgb") s("cluster-actualtext") s("p")
+        //   i64(1)                                      // revision
+        //   i64(3) s("glyph_run") s("rgba-srgb") s("cluster-actualtext")
+        //   i64(0) i64(0)                               // documents, fonts
+        //   i64(1)                                      // one diagnostic
+        //   s("unknown_command") s("\\alpah") s("error")
+        //   ranges([{path:"notes.tex", start_byte:0, end_byte:6}])
+        //   s("\\alpha")                                // same encoding as other strings
+        // SHA-256 of that concatenation:
+        let expected = "c4e7c7129994d1b73c8dfe3d9b1b9a0cbf0edc49e7f9e6bc848d8c66e0126bb6";
+        let on = Wire { diagnostics: true, ..Wire::default() };
+        let list = header_only_diag_list(Some(r"\alpha"));
+        assert_eq!(sha256::hex(&header_digest(&list, on)), expected);
+    }
+
+    #[test]
+    fn diagnostics_off_header_digest_ignores_in_memory_suggestion() {
+        let off = Wire::default();
+        let with = header_only_diag_list(Some(r"\alpha"));
+        let without = header_only_diag_list(None);
+        assert_eq!(header_digest(&with, off), header_digest(&without, off));
+        // Same as Appendix A over the payload with the suggestion key omitted:
+        let expected = "e554935e8987d50810a82c72274b661d6be747d2b41993b0d008715cad5f8dbe";
+        assert_eq!(sha256::hex(&header_digest(&with, off)), expected);
+        assert_eq!(sha256::hex(&header_digest(&without, off)), expected);
     }
 }

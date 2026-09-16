@@ -338,7 +338,7 @@ FlashTeX compiles through a **producer** process that ships inside the app.
   producer sized: if you replace the file, the preview shows "stale image:
   figures/plot.png" in the header and leaves that box empty until the next
   compile. Clicking the image selects its `\includegraphics` in the editor.
-  `Export PDF (v2)…` embeds the same images; the exact export does not yet.
+  *File › Export PDF…* embeds the same images.
 - **TikZ: drawn in the preview and v2 export** (v2 pane, `flashtex-render`
   attached). A `tikzpicture` (`\usepackage{tikz}`; the tikz-min subset —
   `\draw`, `\fill`, `\clip`, `\node`, lines, circles, rectangles, arrows,
@@ -346,8 +346,7 @@ FlashTeX compiles through a **producer** process that ships inside the app.
   strokes with their width, caps, joins and dash pattern, clips applied.
   Clicking anywhere on the drawn ink selects the whole `tikzpicture` in the
   editor (the engine attributes each path to the picture, not to one
-  command). `Export PDF (v2)…` writes the same paths; `File › Export PDF
-  (exact, v2)…` does not accept them yet and reports the item it refused.
+  command). *File › Export PDF…* writes the same paths.
 
 ## Problems and quick fixes
 
@@ -377,14 +376,26 @@ What each diagnostic code means is listed in
 
 | Menu item | Shortcut | What it writes |
 |---|---|---|
-| **File › Export PDF (exact, v2)…** | — | The current v2 display list through `flashtex-pdf-exact`: embedded Latin Modern subsets, original glyph IDs, exact positions and typed rules. Needs a v2 frame (i.e. `flashtex-render` attached). Progress and Cancel in the status bar; the file is written atomically. **Use this one.** |
-| File › Export PDF via Rust Writer… | ⌘⌥E | The v1 result through `flashtex-pdf --verify`: base-14/Latin Modern text items; characters outside those encodings become `?` with a warning |
-| File › Export PDF… | ⌘⇧E | A CoreGraphics rendering of the v1 layout (Times/Latin Modern, no images, no links) |
-| Export PDF (v2)… (v2 pane header) | — | A CoreGraphics rendering of the v2 display list: the preview's own draw routine, including `\includegraphics` images and TikZ paths |
+| **File › Export PDF…** | ⌘⇧E | The current display list through `flashtex-pdf-exact`: embedded Latin Modern subsets, original glyph IDs, exact positions, typed rules, `\includegraphics` images and TikZ paths. Needs a display list (i.e. `flashtex-render` attached). Progress and Cancel in the status bar; the file is written atomically |
+| File › Print… | ⌘P | Not an export, but the same bytes: the PDF above, through the system print panel |
 
-All exports are black on white regardless of the dark-preview switch. None of
-them is a pdfTeX PDF: only what the engine laid out is written (no hyperlinks,
-no metadata; `\includegraphics` images and TikZ paths only through *Export PDF (v2)…* for now).
+There is one export route. Three earlier ones — a CoreGraphics rendering of the
+v1 layout (⌘⇧E), *Export PDF via Rust Writer…* (⌘⌥E) and the v2 pane's own
+*Export PDF (v2)…* — were removed in favour of it: each wrote a lower-fidelity
+version of the same document. `flashtex build` on the command line writes the
+same bytes.
+
+The export is black on white regardless of the dark-preview switch. It is not a
+pdfTeX PDF: only what the engine laid out is written (no hyperlinks, no
+metadata). Anything the writer cannot express exactly is refused by name rather
+than approximated.
+
+A long document is previewed through a **page window** — the engine cannot send
+its whole display list in one reply — but it still exports in full: Export and
+Print re-render the complete document through the render pipeline first, which
+takes a few seconds and is reported in the status bar. That needs the render
+pipeline attached (⌘⇧R); without it, Export says so and points you at
+`flashtex build`.
 
 ## Capture conversion (the only model-backed feature)
 
@@ -463,7 +474,7 @@ you trust.
 | Show completion list (off disables both automatic-while-typing and explicit ⌃Space / Esc completion) | on |
 | Vim keybindings (also View › Toggle Vim Keybindings, ⌃⌘V) | off |
 | Preview follows the caret while you edit | on |
-| Capture conversion: provider (None / xAI), key in Keychain, model | None |
+| Capture conversion: provider (None / xAI), key in Keychain, model | xAI (no-op until a key is added) |
 | Restore Defaults | |
 
 ## Keyboard shortcuts
@@ -481,9 +492,8 @@ you trust.
 | ⌘⇧K | Attach built compiler |
 | ⌘K | Attach worker executable… |
 | ⌘⇧O / ⌘R | Open compile-result fixture… / Reload fixture (developer) |
-| File › Export PDF (exact, v2)… | Exact PDF from the v2 display list |
-| ⌘⇧E | Export PDF… (CoreGraphics) |
-| ⌘⌥E | Export PDF via Rust writer… |
+| ⌘⇧E | Export PDF… (the display list through `flashtex-pdf-exact`) |
+| ⌘P | Print… (the same bytes) |
 | ⌘Z | Undo (including an applied fix or capture insertion) |
 | Esc / ⌃Space | Open the completion list explicitly (it also opens on its own — see below) |
 | ↑ ↓ / Tab ⇧Tab / Return / Esc | While the list is open: choose / insert / close |
@@ -543,6 +553,12 @@ as you type it; the caret is a block outside insert mode.
   a composition is in progress). ⌘-shortcuts always work.
 - Counts; motions `h j k l w b e W B E 0 ^ $ gg G { } ( ) f F t T ; , % H M L`,
   ⌃D ⌃U ⌃F ⌃B (`%` also jumps between `\begin` and `\end`).
+- Visual-row motions `gj gk g0 g^ g$`: one *screen* row rather than one logical
+  line. Line wrapping is on by default, so a wrapped paragraph is many rows but
+  one line, and plain `j` jumps over all of it; `gj` moves the way the text
+  looks. They keep their own remembered column, so mixing `j` and `gj` does not
+  make either drift, and they take counts and operators (`3gj`, `dgj`). With
+  wrapping off — or on a line that does not wrap — `gj` is exactly `j`.
 - Operators `d c y > <` with motions, `dd cc yy >> <<`, and text objects
   `iw aw i( a( i[ a[ i{ a{ i" a" i$ a$` (inline math) and `ie ae` (LaTeX environment).
 - `x X D C Y p P J u ⌃R . ~`, marks `m a` / `'a` / `` `a ``, registers `"a`–`"z`

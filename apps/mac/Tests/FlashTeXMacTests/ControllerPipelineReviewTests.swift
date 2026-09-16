@@ -95,16 +95,16 @@ final class ControllerPipelineReviewTests: XCTestCase {
         XCTAssertEqual(model.result?.revision, initial)
     }
 
-    /// Finding 2: `openTex` names the entry document `main.tex` whatever the
-    /// file is called, and `attachController` therefore roots the helper in a
-    /// SESSION TEMPORARY project (a copy of the buffer) whenever the file name
-    /// differs. `saveTexInteractive` routed the save through the helper on
-    /// `controllerAttached` alone, so the helper's rooted export wrote the
-    /// temporary copy, the shell reported "Saved paper.tex" and marked the
-    /// buffer clean, and the real file was never written. The file-routing
-    /// predicate the reload/status paths use (`controllerRoutesFiles`) already
-    /// refuses this case; the save path must use it too.
-    func testSaveOfAFileNotNamedMainTexWritesThatFileNotTheHelpersSessionCopy() async throws {
+    /// Finding 2, updated for the entry-name fix: `openTex` used to name the
+    /// entry document `main.tex` whatever the file was called, so
+    /// `attachController` rooted the helper in a SESSION TEMPORARY project (a
+    /// copy of the buffer) whenever the file name differed, and a save routed
+    /// through the helper wrote the temporary copy instead of the real file.
+    /// The entry document now keeps the opened file's real name, so the
+    /// helper is rooted at the file's own directory, `controllerRoutesFiles`
+    /// accepts it, and the safety property this test pins — the save reaches
+    /// the file the user opened — holds through the helper's rooted export.
+    func testSaveOfAFileNotNamedMainTexWritesThatFileThroughTheRootedHelper() async throws {
         guard let helper = Self.helper, FileManager.default.isExecutableFile(atPath: helper.path),
               ShellModel.locateCompiler() != nil else {
             throw XCTSkip("set FLASHTEX_PREVIEW_CONTROLLER and FLASHTEX_COMPILER to built binaries")
@@ -121,12 +121,12 @@ final class ControllerPipelineReviewTests: XCTestCase {
         let model = ShellModel()
         model.autoCompile = true
         XCTAssertEqual(model.openTex(at: tex), .opened)
-        XCTAssertEqual(model.activePath, "main.tex", "the entry document keeps the fixed name")
+        XCTAssertEqual(model.activePath, "paper.tex", "the entry document keeps the opened file's name")
         model.attachController(at: helper)
         defer { model.detachController() }
-        let ready = await settles(15) { model.result?.revision == model.editorRevision && model.controllerState.durable["main.tex"] != nil && model.inFlightRevision == nil }
+        let ready = await settles(15) { model.result?.revision == model.editorRevision && model.controllerState.durable["paper.tex"] != nil && model.inFlightRevision == nil }
         XCTAssertTrue(ready, "initial preview never arrived: \(model.controllerStatus)")
-        XCTAssertFalse(model.controllerRoutesFiles, "a session project never routes the open file's saves through the helper")
+        XCTAssertTrue(model.controllerRoutesFiles, "a correctly named entry roots the helper at the file's directory and routes its saves")
 
         let edited = "\\begin{document}\nA paper, edited.\n\\end{document}\n"
         model.updateActiveText(edited)

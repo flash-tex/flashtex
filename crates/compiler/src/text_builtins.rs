@@ -75,6 +75,10 @@ pub const TEXT_SYMBOLS: &[(&str, &str)] = &[
     ("textgreater", "\\textgreater"),
     ("textbraceleft", "\\textbraceleft"),
     ("textbraceright", "\\textbraceright"),
+    ("textbullet", "\\textbullet"),
+    ("textperiodcentered", "\\textperiodcentered"),
+    ("textregistered", "\\textregistered"),
+    ("texttrademark", "\\texttrademark"),
 ];
 
 /// Text symbols for printable ASCII characters. The `*.dfu` tables declare
@@ -143,6 +147,83 @@ pub fn text_symbol(name: &str, enc: Encoding) -> Option<SymbolOutcome> {
         .find(|(_, expansion, _)| *expansion == dfu_key)
         .and_then(|(cp, ..)| char::from_u32(*cp))?;
     Some(SymbolOutcome::Char(ch))
+}
+
+/// Kernel text accents whose argument is one letter: `\c` cedilla, `\v`
+/// caron, `\u` breve, `\H` double acute, `\r` ring, `\k` ogonek, `\d` dot
+/// below, `\b` bar below. `\t` (a tie over two letters) is not among them.
+pub const TEXT_ACCENTS: &[&str] = &["c", "v", "u", "H", "r", "k", "d", "b"];
+
+/// LaTeX-kernel `\capital<name>` aliases for the letter-named text accents:
+/// each one is defined as exactly the same accent as its lowercase-named
+/// counterpart, for use over capital-letter bases. Only the aliases whose
+/// canonical accent this compiler implements are listed: the seven aliasing
+/// a punctuation-named accent (`\capitalacute`->`\'`, `\capitalgrave`,
+/// `\capitalcircumflex`, `\capitaldieresis`, `\capitaltilde`,
+/// `\capitalmacron`, `\capitaldotaccent`->`\.`) are deliberately absent,
+/// because those canonicals are not implemented here (the lexer emits them
+/// as escaped-literal words, so `\'{A}` typesets a literal quote followed
+/// by `A`, never Á), and `\capitaltie`/`\capitalnewtie` alias `\t`, which
+/// is not implemented either.
+pub const CAPITAL_ACCENT_ALIASES: &[(&str, &str)] = &[
+    ("capitalcaron", "v"),
+    ("capitalbreve", "u"),
+    ("capitalring", "r"),
+    ("capitalogonek", "k"),
+    ("capitalhungarumlaut", "H"),
+    ("capitalcedilla", "c"),
+];
+
+/// The [`TEXT_ACCENTS`] name `name` means, following [`CAPITAL_ACCENT_ALIASES`]
+/// for a `\capital<name>` alias and itself otherwise.
+pub fn canonical_accent_name(name: &str) -> &str {
+    CAPITAL_ACCENT_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == name)
+        .map(|(_, canonical)| *canonical)
+        .unwrap_or(name)
+}
+
+/// What a text accent over one base typesets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccentOutcome {
+    /// The precomposed character the `*.dfu` tables declare for
+    /// `\<accent> <base>`, so text extraction round-trips.
+    Char(char),
+    /// No declared character: pdfLaTeX builds it with `\accent`, which this
+    /// compiler does not draw yet.
+    NoComposite,
+    /// `LaTeX Error: Command \cmd unavailable in encoding E.` (`\k` in OT1).
+    Unavailable(String),
+}
+
+/// `accent` is a [`TEXT_ACCENTS`] name; `base` a letter, `\i` or `\j` spelled
+/// as the dfu keys spell it (`"s"`, `"\\i"`), or `""` for an empty argument
+/// (`\k{}` declares U+02DB). `None` when `accent` is not a text accent.
+pub fn text_accent(accent: &str, base: &str, enc: Encoding) -> Option<AccentOutcome> {
+    if !TEXT_ACCENTS.contains(&accent) {
+        return None;
+    }
+    let command = format!("\\{accent}");
+    if let Resolution::Unavailable = encoding::resolve(enc, &command) {
+        return Some(AccentOutcome::Unavailable(encoding::unavailable_message(
+            enc, &command,
+        )));
+    }
+    // The dfu files are not uniform: U+01D0 is `\v \i` but U+01F0 `\v\j`.
+    // Only a control-sequence base may drop the space: `\dh` is ð, not `\d h`.
+    let keys = match base {
+        "" => [format!("{command}{{}}"), String::new()],
+        _ if base.starts_with('\\') => [format!("{command} {base}"), format!("{command}{base}")],
+        _ => [format!("{command} {base}"), String::new()],
+    };
+    Some(
+        UNICODE_DECLARATIONS
+            .iter()
+            .find(|(_, expansion, _)| keys.iter().any(|key| !key.is_empty() && expansion == key))
+            .and_then(|(cp, ..)| char::from_u32(*cp))
+            .map_or(AccentOutcome::NoComposite, AccentOutcome::Char),
+    )
 }
 
 /// The encoding `\usepackage[<options>]{fontenc}` leaves current: fontenc
@@ -648,6 +729,18 @@ mod tests {
     }
 
     #[test]
+    fn every_capital_alias_resolves_to_a_real_accent() {
+        for (alias, canonical) in CAPITAL_ACCENT_ALIASES {
+            assert!(
+                TEXT_ACCENTS.contains(canonical),
+                "\\{alias} aliases \\{canonical}, which is not a text accent"
+            );
+            assert_eq!(canonical_accent_name(alias), *canonical);
+        }
+        assert_eq!(canonical_accent_name("v"), "v");
+    }
+
+    #[test]
     fn every_text_symbol_resolves_in_t1() {
         for (name, command) in TEXT_SYMBOLS {
             match text_symbol(name, Encoding::T1) {
@@ -672,6 +765,16 @@ mod tests {
         assert_eq!(t1("pounds"), Some(SymbolOutcome::Char('\u{00A3}')));
         assert_eq!(t1("textbackslash"), Some(SymbolOutcome::Char('\\')));
         assert_eq!(t1("textless"), Some(SymbolOutcome::Char('<')));
+        assert_eq!(t1("textbullet"), Some(SymbolOutcome::Char('\u{2022}')));
+        assert_eq!(
+            t1("textperiodcentered"),
+            Some(SymbolOutcome::Char('\u{00B7}'))
+        );
+        assert_eq!(
+            t1("textregistered"),
+            Some(SymbolOutcome::Char('\u{00AE}'))
+        );
+        assert_eq!(t1("texttrademark"), Some(SymbolOutcome::Char('\u{2122}')));
         for name in [
             "textbackslash",
             "textless",
@@ -685,6 +788,32 @@ mod tests {
                     Some(SymbolOutcome::Char(_))
                 ),
                 "\\{name} must be available in OT1 through its kernel default"
+            );
+        }
+    }
+
+    #[test]
+    fn text_symbol_family_resolves_in_ot1_and_t1() {
+        // GH-TEXT-SYMBOLS-1: each new symbol typesets its dfu code point
+        // under both encodings (OT1 reaches it through the kernel default:
+        // OMS for `\textbullet`/`\textperiodcentered`, the `\textcircled`
+        // construction for `\textregistered`, `\textsuperscript{TM}` for
+        // `\texttrademark`), exactly like the already-working `\textcopyright`.
+        for (name, want) in [
+            ("textbullet", '\u{2022}'),
+            ("textperiodcentered", '\u{00B7}'),
+            ("textregistered", '\u{00AE}'),
+            ("texttrademark", '\u{2122}'),
+        ] {
+            assert_eq!(
+                text_symbol(name, Encoding::T1),
+                Some(SymbolOutcome::Char(want)),
+                "\\{name} in T1"
+            );
+            assert_eq!(
+                text_symbol(name, Encoding::OT1),
+                Some(SymbolOutcome::Char(want)),
+                "\\{name} in OT1"
             );
         }
     }

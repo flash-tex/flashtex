@@ -12,7 +12,7 @@ use flashtex_compiler::incremental::Session;
 use flashtex_compiler::json::{self, Value};
 use flashtex_compiler::layout::LayoutConstraints;
 use flashtex_compiler::protocol::handle_line;
-use flashtex_compiler::{layout, parser};
+use flashtex_compiler::{layout, math, parser};
 
 /// Deterministic xorshift: a fixed seed means a failure is always reproducible.
 struct Rng(u64);
@@ -216,6 +216,60 @@ fn deeply_nested_input_does_not_blow_the_stack() {
         );
         let parsed = parser::parse(&math);
         assert_spans_slice(&math, &parsed.blocks);
+    }
+}
+
+#[test]
+fn math_nesting_past_the_limit_diagnoses_once_and_recovers() {
+    // `MAX_MATH_DEPTH` is the deepest math nesting that parses cleanly;
+    // past it (`\frac`/`\sqrt` recurse through several large frames per
+    // level) the debug stack runs out, so parsing must stop with one honest
+    // diagnostic — not a stack overflow — and every span must still slice.
+    let limit_message = format!(
+        "math nesting deeper than {} levels is not supported",
+        math::MAX_MATH_DEPTH
+    );
+    let over = math::MAX_MATH_DEPTH + 1;
+    for text in [
+        format!("${}x{}$", "{".repeat(over), "}".repeat(over)),
+        format!("${}x{}$", "\\frac{".repeat(over), "}{1}".repeat(over)),
+    ] {
+        let parsed = parser::parse(&text);
+        assert_eq!(
+            parsed
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.message == limit_message)
+                .count(),
+            1,
+            "expected exactly one depth diagnostic for {text:?}"
+        );
+        assert_spans_slice(&text, &parsed.blocks);
+    }
+
+    // At or below the limit, nesting parses exactly as before: no
+    // diagnostic, and the content still typesets.
+    for depth in [1usize, math::MAX_MATH_DEPTH] {
+        for text in [
+            format!("${}x{}$", "{".repeat(depth), "}".repeat(depth)),
+            format!("${}x{}$", "\\frac{".repeat(depth), "}{1}".repeat(depth)),
+        ] {
+            let parsed = parser::parse(&text);
+            assert!(
+                parsed.diagnostics.is_empty(),
+                "unexpected diagnostics at depth {depth}: {:?}",
+                parsed
+                    .diagnostics
+                    .iter()
+                    .map(|diagnostic| &diagnostic.message)
+                    .collect::<Vec<_>>()
+            );
+            assert!(
+                !parsed.blocks.is_empty(),
+                "nesting at depth {depth} typeset nothing"
+            );
+            assert_spans_slice(&text, &parsed.blocks);
+        }
     }
 }
 

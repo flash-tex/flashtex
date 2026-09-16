@@ -82,12 +82,17 @@ impl Paint {
     }
 }
 
-/// Negotiated display-list proposals: image items (FT-063) and device
-/// colours (`display-list-v2-device-color`).
+/// Negotiated display-list proposals: image items (FT-063), device
+/// colours (`display-list-v2-device-color`), and structured diagnostics
+/// (`display-list-v2-diagnostics`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Wire {
     pub images: bool,
     pub device_color: bool,
+    /// Serialise `suggestion` on each diagnostic (proposal
+    /// `display-list-v2-diagnostics`). Labels/notes/help wait for a
+    /// vendor/compiler re-pin past #346.
+    pub diagnostics: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,6 +110,11 @@ pub struct Caret {
     pub top: Tick,
     pub height: Tick,
 }
+
+/// Synthetic-provenance reason for page furniture the typesetter creates
+/// with no source of its own: page numbers, header/footer marks, and the
+/// column separator rule.
+pub const PAGE_CHROME: &str = "page chrome";
 
 /// Where a cluster's bytes came from: exact source ranges, or a stated
 /// reason when the pipeline synthesised it.
@@ -128,12 +138,30 @@ impl Provenance {
     }
 }
 
-/// One or two carets per cluster (its start, and the run end on the last
-/// cluster), stored inline: a page carries a caret pair per cluster.
+/// One or two carets for a cluster: its start, and the run end on the last
+/// cluster.
+///
+/// Derived, never stored (FT-070). The start caret is exactly the cluster's
+/// `hit_rect` and `text_start_byte`, and the end caret's `top`/`height` are
+/// that same rect's — measured over 1 991 552 clusters of the corpus, with
+/// zero exceptions. `place_item` and `shift_x` move the rect and the carets
+/// by the same offset, so placement cannot break the identity either. What
+/// is *not* derivable is the end caret's `x` (the TikZ path clamps the hit
+/// rect's width to one tick but not the caret) and which cluster carries
+/// it, so a run stores that once in [`GlyphRun::end_caret`] instead of
+/// 72 bytes per glyph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Carets {
     pub first: Caret,
     pub last: Option<Caret>,
+}
+
+/// The run-end caret: the part of it that the cluster geometry does not
+/// already say. Held once per [`GlyphRun`], not once per cluster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EndCaret {
+    pub x: Tick,
+    pub text_byte: usize,
 }
 
 impl Carets {
@@ -153,15 +181,25 @@ pub struct Cluster {
     pub text_start_byte: usize,
     pub text_end_byte: usize,
     /// The cluster's hit rectangle (the wire format is a list; this
-    /// pipeline emits exactly one per cluster).
+    /// pipeline emits exactly one per cluster). Also the geometry of both
+    /// of the cluster's carets: see [`Carets`].
     pub hit_rect: Rect,
-    pub carets: Carets,
     pub provenance: Provenance,
 }
 
 impl Cluster {
     pub fn hit_rects(&self) -> &[Rect] {
         std::slice::from_ref(&self.hit_rect)
+    }
+
+    /// The cluster's start caret.
+    pub fn first_caret(&self) -> Caret {
+        Caret {
+            text_byte: self.text_start_byte,
+            x: self.hit_rect.x,
+            top: self.hit_rect.top,
+            height: self.hit_rect.height,
+        }
     }
 }
 
@@ -196,6 +234,27 @@ pub struct GlyphRun {
     pub clusters: Vec<Cluster>,
     pub paint: Paint,
     pub role: RunRole,
+    /// The caret at the end of the run's text, carried by its last cluster.
+    /// `None` for a run that does not end a word (a math run, or a word
+    /// fragment continued by the next run).
+    pub end_caret: Option<EndCaret>,
+}
+
+impl GlyphRun {
+    /// The carets of cluster `i`: its start caret, and the run-end caret if
+    /// this is the last cluster.
+    pub fn carets_of(&self, i: usize) -> Carets {
+        let c = &self.clusters[i];
+        Carets {
+            first: c.first_caret(),
+            last: self.end_caret.filter(|_| i + 1 == self.clusters.len()).map(|e| Caret {
+                text_byte: e.text_byte,
+                x: e.x,
+                top: c.hit_rect.top,
+                height: c.hit_rect.height,
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -279,6 +338,13 @@ pub struct ClipPath {
     pub even_odd: bool,
 }
 
+#[cfg(feature = "tikz-patterns")]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PathPattern {
+    pub name: String,
+    pub color: [f64; 3],
+}
+
 /// A filled or stroked vector path (TikZ pictures).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathItem {
@@ -286,6 +352,8 @@ pub struct PathItem {
     pub commands: Vec<PathCmd>,
     pub clips: Vec<ClipPath>,
     pub paint: Paint,
+    #[cfg(feature = "tikz-patterns")]
+    pub pattern: Option<PathPattern>,
     pub provenance: Provenance,
 }
 
@@ -344,10 +412,9 @@ pub fn shift_x(item: &mut Item, dx: Tick) {
             }
             for c in &mut r.clusters {
                 c.hit_rect.x = add(c.hit_rect.x);
-                c.carets.first.x = add(c.carets.first.x);
-                if let Some(l) = &mut c.carets.last {
-                    l.x = add(l.x);
-                }
+            }
+            if let Some(e) = &mut r.end_caret {
+                e.x = add(e.x);
             }
         }
         Item::Rule(rule) => rule.x = add(rule.x),
@@ -369,12 +436,133 @@ pub fn shift_x(item: &mut Item, dx: Tick) {
     }
 }
 
+/// The range of pages whose glyph content a windowed render materialised.
+///
+/// 1-based and inclusive of `first_page`, clamped by the producer to the
+/// document's page count; the effective window is what the render reports,
+/// never what the request asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageWindow {
+    pub first_page: u32,
+    pub page_count: u32,
+}
+
+/// A window wider than this is clamped (and the clamp is reported).
+///
+/// The binding constraint is not memory, it is the reply limit. PR #273
+/// measured the 500 KB corpus case: 385 pages serialise to a **164 MB**
+/// `display_list` line against a 16 MiB limit — ~426 KB a page — and the
+/// runtime's framed default is 8 MiB. So a repliable window is on the order of
+/// 19 pages at 8 MiB and 39 at 16 MiB for that document, and fewer for a denser
+/// one. 64 is a ceiling with margin over what a viewer actually shows; the
+/// exact fit is decided per reply by the existing size check, which a windowed
+/// list answers for its resident pages only
+/// (`DisplayList::estimated_json_bytes`), so an over-limit window can be
+/// narrowed and re-served instead of declined.
+pub const MAX_WINDOW_PAGES: u32 = 64;
+
+impl PageWindow {
+    /// The effective window over a document of `pages` pages, or `None` when
+    /// the request is not a usable window (page 0, count 0, or past the end
+    /// with nothing to clamp to).
+    pub fn clamped(self, pages: u32) -> Option<PageWindow> {
+        if self.first_page == 0 || self.page_count == 0 || pages == 0 {
+            return None;
+        }
+        let count = self.page_count.min(MAX_WINDOW_PAGES);
+        // Past the last page: serve the last `count` pages rather than refuse.
+        let first = self.first_page.min(pages.saturating_sub(count).max(1));
+        Some(PageWindow { first_page: first, page_count: count.min(pages - first + 1) })
+    }
+
+    pub fn contains(&self, page_number: u32) -> bool {
+        page_number >= self.first_page && page_number < self.first_page + self.page_count
+    }
+
+    /// The widest window around `centre` that a reply of `limit` bytes can
+    /// carry, given a measured `bytes_per_page`.
+    ///
+    /// This is the arithmetic that turns FT-070's memory work into a product
+    /// fix. Today a 385-page document has no reply at all: its display list is
+    /// 164 MB against a 16 MiB limit, so the sibling is declined, the v1
+    /// `compile_result` is itself 20 339 909 bytes for those pages, and the
+    /// request ends `status: failed` (PR #273). A producer that can serve a
+    /// *window* has a reply it can actually send, so the question stops being
+    /// "decline or fail" and becomes "how many pages fit".
+    ///
+    /// Caller supplies `bytes_per_page` from a real measurement — the previous
+    /// reply's `page_bytes`, or `estimated_json_bytes` over what it has built —
+    /// because page size varies by an order of magnitude between a title page
+    /// and a dense one, and a constant here would be a guess presented as a
+    /// bound.
+    pub fn fitting(centre_page: u32, pages: u32, bytes_per_page: u64, limit: u64) -> Option<PageWindow> {
+        if bytes_per_page == 0 {
+            return PageWindow { first_page: 1, page_count: pages }.clamped(pages);
+        }
+        let fits = (limit / bytes_per_page).min(u64::from(u32::MAX)) as u32;
+        let count = fits.min(MAX_WINDOW_PAGES).max(1);
+        let first = centre_page.saturating_sub(count / 2).max(1);
+        PageWindow { first_page: first, page_count: count }.clamped(pages)
+    }
+}
+
+/// Whether a page's glyph-level content was materialised.
+///
+/// A page is always laid out, counted and measured; `Elided` says only that
+/// its items were not built, because the render was windowed
+/// (`protocol/proposals/display-list-v2-window.md`). It is a separate variant
+/// rather than an empty `items` vector so that no consumer can mistake a page
+/// that was not built for a page with nothing on it: the two are
+/// indistinguishable to every `for it in &page.items` in the tree, and one of
+/// them is a bug.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PageContent {
+    Resident(Vec<Item>),
+    Elided,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Page {
     pub number: u32,
     pub width: Tick,
     pub height: Tick,
-    pub items: Vec<Item>,
+    pub content: PageContent,
+}
+
+impl Page {
+    pub fn resident(number: u32, width: Tick, height: Tick, items: Vec<Item>) -> Page {
+        Page { number, width, height, content: PageContent::Resident(items) }
+    }
+
+    pub fn elided(number: u32, width: Tick, height: Tick) -> Page {
+        Page { number, width, height, content: PageContent::Elided }
+    }
+
+    /// The items of a resident page; `None` when the page was not built.
+    pub fn items(&self) -> Option<&Vec<Item>> {
+        match &self.content {
+            PageContent::Resident(items) => Some(items),
+            PageContent::Elided => None,
+        }
+    }
+
+    pub fn items_mut(&mut self) -> Option<&mut Vec<Item>> {
+        match &mut self.content {
+            PageContent::Resident(items) => Some(items),
+            PageContent::Elided => None,
+        }
+    }
+
+    /// The items of a page the caller has already established is resident
+    /// (an unwindowed render, or after refusing an elided page). Panics
+    /// otherwise — deliberately, rather than reading as an empty page.
+    pub fn resident_items(&self) -> &Vec<Item> {
+        self.items().unwrap_or_else(|| panic!("page {} is elided; its items were never built", self.number))
+    }
+
+    pub fn is_resident(&self) -> bool {
+        matches!(self.content, PageContent::Resident(_))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -414,9 +602,23 @@ pub struct Diagnostic {
     pub sources: Vec<SourceRange>,
     /// The compiler's recovery note, when it produced this diagnostic.
     pub recovery: Option<String>,
+    /// Replacement text for the source range (runtime-v1 `suggestion`).
+    /// Serialised on display-list-v2 only when `Wire.diagnostics` is set
+    /// (`protocol/proposals/display-list-v2-diagnostics.md`) and the text
+    /// is non-empty; omitted from the frozen four-key object otherwise.
+    pub suggestion: Option<String>,
 }
 
 impl Diagnostic {
+    /// `suggestion` as it appears on the wire: only when the diagnostics
+    /// capability is on and the text is non-empty (omitted, never `""`).
+    pub(crate) fn wire_suggestion(&self, wire: Wire) -> Option<&str> {
+        if !wire.diagnostics {
+            return None;
+        }
+        self.suggestion.as_deref().filter(|s| !s.is_empty())
+    }
+
     pub fn error(code: &str, message: impl Into<String>, sources: Vec<SourceRange>) -> Diagnostic {
         Diagnostic {
             code: code.into(),
@@ -424,6 +626,7 @@ impl Diagnostic {
             severity: Severity::Error,
             sources,
             recovery: None,
+            suggestion: None,
         }
     }
     pub fn warning(code: &str, message: impl Into<String>, sources: Vec<SourceRange>) -> Diagnostic {
@@ -433,33 +636,165 @@ impl Diagnostic {
             severity: Severity::Warning,
             sources,
             recovery: None,
+            suggestion: None,
         }
     }
 
     /// Converts a compiler diagnostic; `paths` is indexed by `DocumentId`.
+    ///
+    /// The compiler's structured diagnostics (#346/#389) carry three fields
+    /// beyond the code and suggestion this already forwarded (#354): `labels`
+    /// (extra spans with a word about each), `notes` (`= note:` strings) and
+    /// `help` (a suggested fix, optionally with a mechanical `replacement`).
+    /// display-list-v2's `diagnostic` object is
+    /// `additionalProperties: false` over exactly `{code, message, severity,
+    /// sources}` (`protocol/rendering-v2.schema.json`), so there is no wire
+    /// field to put them in and inventing one is the protocol owner's call,
+    /// not this converter's. They are folded onto the fields that already
+    /// mean the same thing instead of being dropped:
+    ///
+    /// * every label's span joins `sources` behind the diagnostic's own span,
+    ///   which is what `sources` is for (v1 still reads `sources.first()`, so
+    ///   its single `source` stays the primary one);
+    /// * each label's text, each note and the help message are appended to
+    ///   `message` as bracketed `[note: ...]` / `[help: ...]` clauses,
+    ///   because the label spans alone would say where without saying what.
+    ///   They stay on **one line**: `message` is a single-line human string
+    ///   here — `flashtex-render --tex` prints one diagnostic per line as
+    ///   `severity[code] message (line:col)` — so rustc's multi-line
+    ///   `= note:` rendering would split the line and lose the position
+    ///   suffix (`tests/cli_e2e.rs`);
+    /// * `help.replacement` back-fills runtime-v1's `suggestion` when the
+    ///   compiler set the structured replacement but not the legacy field.
+    ///
+    /// Both wire limits are respected: `sources` `maxItems` 128 and `message`
+    /// `maxLength` 4096.
     pub fn from_compiler(d: &flashtex_compiler::diagnostics::Diagnostic, paths: &[&str]) -> Diagnostic {
         use flashtex_compiler::diagnostics::Severity as S;
+
+        let range = |s: flashtex_compiler::Span| SourceRange {
+            path: std::rc::Rc::from(paths.get(s.document.0).copied().unwrap_or("")),
+            start_byte: s.start,
+            end_byte: s.end,
+        };
+
+        let mut sources: Vec<SourceRange> = d.span.map(range).into_iter().collect();
+        for l in &d.labels {
+            if sources.len() >= MAX_DIAGNOSTIC_SOURCES {
+                break;
+            }
+            let r = range(l.span);
+            // A label on the diagnostic's own span adds no location.
+            if !sources.contains(&r) {
+                sources.push(r);
+            }
+        }
+
+        let mut message = d.message.clone();
+        let mut push_clause = |prefix: &str, text: &str| {
+            // One line, and no embedded newline from the compiler either.
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if text.is_empty() {
+                return;
+            }
+            let clause = format!(" [{prefix}: {text}]");
+            if message.len() + clause.len() <= MAX_DIAGNOSTIC_MESSAGE {
+                message.push_str(&clause);
+            }
+        };
+        for l in &d.labels {
+            push_clause("note", &l.text);
+        }
+        for n in &d.notes {
+            push_clause("note", n);
+        }
+        if let Some(h) = &d.help {
+            push_clause("help", &h.message);
+        }
+
         Diagnostic {
-            code: "compiler".into(),
-            message: d.message.clone(),
+            // Exactly the compiler's own `code`: its constructors already apply
+            // `default_code`, and a `None` is deliberate (request validation), so
+            // re-deriving one here would disagree with the compiler's runtime-v1 reply.
+            code: d.code.map_or("compiler", |c| c.as_str()).into(),
+            message,
             severity: match d.severity {
                 S::Error => Severity::Error,
                 _ => Severity::Warning,
             },
-            sources: d
-                .span
-                .map(|s| {
-                    vec![SourceRange {
-                        path: std::rc::Rc::from(paths.get(s.document.0).copied().unwrap_or("")),
-                        start_byte: s.start,
-                        end_byte: s.end,
-                    }]
-                })
-                .unwrap_or_default(),
+            sources,
             recovery: d.recovery.clone(),
+            suggestion: d.suggestion.clone().or_else(|| {
+                d.help
+                    .as_ref()
+                    .and_then(|h| h.replacement.as_ref())
+                    .map(|r| r.text.clone())
+            }),
         }
     }
 }
+
+/// Which optional painting features the **whole document** needs, whether or
+/// not the page carrying them is resident.
+///
+/// `required_features` is one of the closures `display-list-v2-window` §3
+/// keeps whole: a consumer that negotiated a feature set from a windowed reply
+/// must be able to paint the rest of the document with it. Deriving it from
+/// the resident pages would quietly shrink it — a rule on page 900 would go
+/// unannounced while the window is 1..10 — which is the same failure mode as a
+/// smaller font closure, and the reason assembly harvests this over every
+/// block in the same pass that harvests the faces and the diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DocumentFeatures {
+    pub rule: bool,
+    pub path_fill: bool,
+    pub path_stroke: bool,
+    pub clip: bool,
+    pub image: bool,
+    pub device_color: bool,
+    /// Whether the document produced any paintable item at all, anywhere.
+    /// Not a wire feature: it is what `v1::fallback` asks to keep `status`
+    /// the same on a windowed reply as on an unwindowed one (§4.1), where
+    /// the resident pages alone cannot answer it.
+    pub any_items: bool,
+}
+
+impl DocumentFeatures {
+    /// Everything one item contributes.
+    pub fn note(&mut self, it: &Item) {
+        self.any_items = true;
+        match it {
+            Item::Rule(r) => {
+                self.rule = true;
+                self.device_color |= r.paint.device.is_some();
+            }
+            Item::GlyphRun(r) => self.device_color |= r.paint.device.is_some(),
+            Item::Path(p) => {
+                self.path_fill |= matches!(p.op, PathPaintOp::Fill { .. });
+                self.path_stroke |= matches!(p.op, PathPaintOp::Stroke(_));
+                self.clip |= !p.clips.is_empty();
+                self.device_color |= p.paint.device.is_some();
+            }
+            Item::Image(_) => self.image = true,
+        }
+    }
+
+    /// The same derivation over the items a list actually holds. On an
+    /// unwindowed list this is the whole document, and it is what
+    /// `required_features` has always computed.
+    pub fn scan<'a>(items: impl Iterator<Item = &'a Item>) -> DocumentFeatures {
+        let mut f = DocumentFeatures::default();
+        for it in items {
+            f.note(it);
+        }
+        f
+    }
+}
+
+/// `protocol/rendering-v2.schema.json`: `diagnostic.sources` `maxItems`.
+const MAX_DIAGNOSTIC_SOURCES: usize = 128;
+/// `protocol/rendering-v2.schema.json`: `diagnostic.message` `maxLength`.
+const MAX_DIAGNOSTIC_MESSAGE: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DisplayList {
@@ -469,6 +804,16 @@ pub struct DisplayList {
     pub fonts: Vec<FontResource>,
     pub pages: Vec<Page>,
     pub diagnostics: Vec<Diagnostic>,
+    /// `Some` when this render materialised only a window of pages. Every
+    /// page is present in `pages` with its number and frame; the ones outside
+    /// the window are `PageContent::Elided`. `None` is a complete compile and
+    /// is what every path in the product produces today.
+    pub window: Option<PageWindow>,
+    /// What the whole document needs to be painted, harvested during assembly
+    /// over every block — including the blocks whose only pages are elided.
+    /// `None` on a list not built by `typeset::assemble_windowed`, where the
+    /// resident scan is already complete; only a windowed list reads it.
+    pub document_features: Option<DocumentFeatures>,
 }
 
 impl DisplayList {
@@ -477,22 +822,56 @@ impl DisplayList {
     /// serialising a line it would then throw away (the exact check still
     /// runs on the serialised line when the estimate is under the limit).
     pub fn estimated_json_bytes(&self) -> usize {
+        self.estimated_json_bytes_for(Wire { images: true, device_color: true, diagnostics: true })
+    }
+
+    /// [`estimated_json_bytes`](Self::estimated_json_bytes) under a negotiated
+    /// [`Wire`]: `suggestion` is charged only when it would be serialised.
+    pub fn estimated_json_bytes_for(&self, wire: Wire) -> usize {
         let mut n = 512 + self.fonts.len() * 400 + self.documents.len() * 200;
         for d in &self.diagnostics {
             n += 160 + d.message.len() + d.sources.len() * 80;
+            if let Some(s) = d.wire_suggestion(wire) {
+                n += s.len() + 20;
+            }
         }
         for p in &self.pages {
             n += 64;
-            for it in &p.items {
+            // Elided pages contribute nothing to the estimate; a windowed
+            // line is smaller than this bound, never larger.
+            for it in p.items().into_iter().flatten() {
                 n += match it {
                     Item::GlyphRun(r) => 220 + 2 * r.text.len() + 120 * r.glyphs.len() + 280 * r.clusters.len(),
                     Item::Rule(_) => 240,
-                    Item::Path(p) => 240 + 64 * (p.commands.len() + p.clips.iter().map(|c| c.commands.len()).sum::<usize>()),
+                    Item::Path(p) => {
+                        #[cfg(feature = "tikz-patterns")]
+                        let pattern_bytes = if matches!(&p.op, PathPaintOp::Fill { .. }) {
+                            p.pattern.as_ref().map_or(0, |pattern| 64 + 2 * pattern.name.len())
+                        } else {
+                            0
+                        };
+                        #[cfg(not(feature = "tikz-patterns"))]
+                        let pattern_bytes = 0;
+                        240 + 64 * (p.commands.len() + p.clips.iter().map(|c| c.commands.len()).sum::<usize>()) + pattern_bytes
+                    },
                     Item::Image(i) => 520 + 2 * i.resource.path.len(),
                 };
             }
         }
         n
+    }
+
+    /// Every item of every page that was materialised.
+    ///
+    /// On a complete compile (`window == None`) that is every item in the
+    /// document. On a windowed list it is the window's items only, so it is
+    /// **not** the thing to derive a document-wide fact from: that is what
+    /// [`DocumentFeatures`] is harvested during assembly for
+    /// (`display-list-v2-window` §3). Use this to answer questions about what
+    /// a list actually carries — how big it serialises, whether a page has
+    /// images to write — not about what the document needs.
+    pub fn resident_page_items(&self) -> impl Iterator<Item = &Item> {
+        self.pages.iter().flat_map(|p| p.items().into_iter().flatten())
     }
 
     pub fn required_features(&self) -> Vec<&'static str> {
@@ -501,47 +880,55 @@ impl DisplayList {
 
     /// `images`: whether image items are serialised (adds `image`).
     pub fn required_features_with(&self, images: bool) -> Vec<&'static str> {
-        self.required_features_wire(Wire { images, device_color: false })
+        self.required_features_wire(Wire { images, device_color: false, diagnostics: false })
     }
 
     /// `device-color` is listed when negotiated and some paint carries one.
     pub fn required_features_wire(&self, wire: Wire) -> Vec<&'static str> {
         let images = wire.images;
+        let d = self.document_feature_set();
         let mut f = vec!["glyph_run", "rgba-srgb", "cluster-actualtext"];
-        if self.pages.iter().any(|p| p.items.iter().any(|i| matches!(i, Item::Rule(_)))) {
+        if d.rule {
             f.insert(1, "rule");
         }
-        let paths = || self.pages.iter().flat_map(|p| p.items.iter()).filter_map(|i| if let Item::Path(p) = i { Some(p) } else { None });
-        if paths().any(|p| matches!(p.op, PathPaintOp::Fill { .. })) {
+        if d.path_fill {
             f.push("path_fill");
         }
-        if paths().any(|p| matches!(p.op, PathPaintOp::Stroke(_))) {
+        if d.path_stroke {
             f.push("path_stroke");
         }
-        if paths().any(|p| !p.clips.is_empty()) {
+        if d.clip {
             f.push("clip");
         }
         if self.fonts.iter().any(|r| r.format == "static-truetype") {
             f.push("static-truetype");
         }
-        if images && self.pages.iter().any(|p| p.items.iter().any(|i| matches!(i, Item::Image(_)))) {
+        if images && d.image {
             f.push("image");
         }
-        let device = |it: &Item| match it {
-            Item::GlyphRun(r) => r.paint.device.is_some(),
-            Item::Rule(r) => r.paint.device.is_some(),
-            Item::Path(p) => p.paint.device.is_some(),
-            Item::Image(_) => false,
-        };
-        if wire.device_color && self.pages.iter().any(|p| p.items.iter().any(device)) {
+        if wire.device_color && d.device_color {
             f.push("device-color");
         }
         f
     }
 
+    /// The features `required_features` is derived from.
+    ///
+    /// An unwindowed list scans its own items, which is every item in the
+    /// document and exactly what this has always done — so every reply on the
+    /// wire today is byte-for-byte unchanged by the harvest existing. Only a
+    /// windowed list, whose resident items are the window's and not the
+    /// document's, reads what assembly harvested (§3).
+    pub fn document_feature_set(&self) -> DocumentFeatures {
+        match (self.window, self.document_features) {
+            (Some(_), Some(d)) => d,
+            _ => DocumentFeatures::scan(self.resident_page_items()),
+        }
+    }
+
     /// Whether any page carries an image item.
     pub fn has_images(&self) -> bool {
-        self.pages.iter().any(|p| p.items.iter().any(|i| matches!(i, Item::Image(_))))
+        self.resident_page_items().any(|i| matches!(i, Item::Image(_)))
     }
 
     /// The `display_list` envelope of rendering-v2 as a JSON value, exactly
@@ -553,7 +940,7 @@ impl DisplayList {
     /// [`to_json`](Self::to_json); `images` also serialises image items
     /// and lists the `image` feature (negotiated `display-list-v2-images`).
     pub fn to_json_with(&self, id: &str, images: bool) -> Value {
-        self.to_json_wire(id, Wire { images, device_color: false })
+        self.to_json_wire(id, Wire { images, device_color: false, diagnostics: false })
     }
 
     /// [`to_json_with`](Self::to_json_with) with every negotiated proposal.
@@ -608,8 +995,18 @@ impl DisplayList {
         payload.set("pages", Value::Arr(self.pages.iter().map(|p| page_json(p, wire)).collect()));
         payload.set(
             "diagnostics",
-            Value::Arr(self.diagnostics.iter().map(diagnostic_json).collect()),
+            Value::Arr(self.diagnostics.iter().map(|d| diagnostic_json_wire(d, wire)).collect()),
         );
+        // `display-list-v2-window` §4: present only on a windowed reply, and
+        // the authority on what was served -- the consumer never infers the
+        // coverage from the shape of `pages`.
+        if let Some(w) = self.window {
+            let mut o = Value::obj();
+            o.set("first_page", json::num(f64::from(w.first_page)));
+            o.set("page_count", json::num(f64::from(w.page_count)));
+            o.set("document_page_count", json::num(self.pages.len() as f64));
+            payload.set("window", o);
+        }
         let mut v = Value::obj();
         v.set("protocol_version", json::num(PROTOCOL_VERSION as f64));
         v.set("id", json::str_(id));
@@ -630,7 +1027,7 @@ impl DisplayList {
     /// `json::write(&self.to_json_with(id, images))` written directly:
     /// `images` also serialises image items and lists the `image` feature.
     pub fn write_json_with(&self, id: &str, images: bool) -> String {
-        self.write_json_wire(id, Wire { images, device_color: false })
+        self.write_json_wire(id, Wire { images, device_color: false, diagnostics: false })
     }
 
     /// [`write_json_with`](Self::write_json_with) with every negotiated proposal.
@@ -663,7 +1060,7 @@ impl DisplayList {
         o.push_str("{\"id\":");
         json::write_string_into(id, &mut o);
         o.push_str(",\"payload\":{\"color_space\":\"srgb\",\"coordinate_unit\":\"bp_2pow20\",\"diagnostics\":");
-        write_diagnostics(&mut o, &self.diagnostics);
+        write_diagnostics(&mut o, &self.diagnostics, wire);
         o.push_str(",\"documents\":");
         write_documents(&mut o, &self.documents);
         o.push_str(",\"fonts\":");
@@ -679,7 +1076,20 @@ impl DisplayList {
         write_features(&mut o, self, wire);
         o.push_str(",\"revision\":");
         num(&mut o, self.revision as f64);
-        o.push_str(",\"text_extraction\":\"cluster-actualtext\"},\"protocol_version\":");
+        o.push_str(",\"text_extraction\":\"cluster-actualtext\"");
+        // Alphabetically last, and written only when the render was windowed:
+        // an unwindowed line -- every line on the wire today -- is byte-for-byte
+        // what it was, and `FULL_LINE_FRAME_BYTES` stays exact for it.
+        if let Some(w) = self.window {
+            o.push_str(",\"window\":{\"document_page_count\":");
+            num(&mut o, self.pages.len() as f64);
+            o.push_str(",\"first_page\":");
+            num(&mut o, f64::from(w.first_page));
+            o.push_str(",\"page_count\":");
+            num(&mut o, f64::from(w.page_count));
+            o.push('}');
+        }
+        o.push_str("},\"protocol_version\":");
         num(&mut o, PROTOCOL_VERSION as f64);
         o.push_str(",\"type\":\"display_list\"}");
         o
@@ -702,7 +1112,7 @@ pub const FULL_LINE_FRAME_BYTES: usize = "{\"id\":".len()
     + ",\"text_extraction\":\"cluster-actualtext\"},\"protocol_version\":2,\"type\":\"display_list\"}".len();
 
 /// The `diagnostics` array of the full line (also carried complete by a delta).
-pub(crate) fn write_diagnostics(o: &mut String, diagnostics: &[Diagnostic]) {
+pub(crate) fn write_diagnostics(o: &mut String, diagnostics: &[Diagnostic], wire: Wire) {
     o.push('[');
     for (i, d) in diagnostics.iter().enumerate() {
         sep(o, i);
@@ -717,6 +1127,10 @@ pub(crate) fn write_diagnostics(o: &mut String, diagnostics: &[Diagnostic]) {
         });
         o.push_str(",\"sources\":");
         write_sources(o, &d.sources);
+        if let Some(s) = d.wire_suggestion(wire) {
+            o.push_str(",\"suggestion\":");
+            json::write_string_into(s, o);
+        }
         o.push('}');
     }
     o.push(']');
@@ -841,6 +1255,19 @@ fn write_paint(o: &mut String, p: &Paint, device: bool) {
 }
 
 /// [`path_json`] written directly.
+#[cfg(feature = "tikz-patterns")]
+fn write_pattern(o: &mut String, p: &PathPattern) {
+    o.push_str("{\"color\":{\"b\":");
+    num(o, p.color[2]);
+    o.push_str(",\"g\":");
+    num(o, p.color[1]);
+    o.push_str(",\"r\":");
+    num(o, p.color[0]);
+    o.push_str("},\"name\":");
+    json::write_string_into(&p.name, o);
+    o.push('}');
+}
+
 fn write_path(o: &mut String, cmds: &[PathCmd]) {
     o.push('[');
     for (i, c) in cmds.iter().enumerate() {
@@ -924,10 +1351,25 @@ fn device_space(d: &flashtex_compiler::color::DeviceColor) -> &'static str {
 /// (and inside a delta's `changed_pages`).
 pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
     let images = wire.images;
+    // An elided page carries its frame and an explicit `resident: false`, and
+    // NO `items` key at all: a consumer that never read the flag gets a decode
+    // error instead of a blank page. A resident page is byte-for-byte what it
+    // has always been — no marker is added — so an unwindowed line, which is
+    // every line on the wire today, is unchanged.
+    let Some(page_items) = p.items() else {
+        o.push_str("{\"height\":");
+        write_tick(o, p.height);
+        o.push_str(",\"number\":");
+        num(o, f64::from(p.number));
+        o.push_str(",\"resident\":false,\"width\":");
+        write_tick(o, p.width);
+        o.push('}');
+        return;
+    };
     o.push_str("{\"height\":");
     write_tick(o, p.height);
     o.push_str(",\"items\":[");
-    for (i, it) in p.items.iter().filter(|it| images || !matches!(it, Item::Image(_))).enumerate() {
+    for (i, it) in page_items.iter().filter(|it| images || !matches!(it, Item::Image(_))).enumerate() {
         sep(o, i);
         match it {
             Item::Image(img) => write_image(o, img),
@@ -936,7 +1378,7 @@ pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
                 for (j, c) in r.clusters.iter().enumerate() {
                     sep(o, j);
                     o.push_str("{\"carets\":[");
-                    for (k, caret) in c.carets.iter().enumerate() {
+                    for (k, caret) in r.carets_of(j).iter().enumerate() {
                         sep(o, k);
                         o.push_str("{\"height\":");
                         write_tick(o, caret.height);
@@ -1012,7 +1454,7 @@ pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
             }
             Item::Path(p) => {
                 // BTreeMap key order: clips, fill_rule, kind, paint, path,
-                // sources, stroke, synthetic_reason.
+                // pattern, sources, stroke, synthetic_reason.
                 o.push('{');
                 if !p.clips.is_empty() {
                     o.push_str("\"clips\":[");
@@ -1042,6 +1484,13 @@ pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
                 write_paint(o, &p.paint, wire.device_color);
                 o.push_str(",\"path\":");
                 write_path(o, &p.commands);
+                #[cfg(feature = "tikz-patterns")]
+                if matches!(&p.op, PathPaintOp::Fill { .. }) {
+                    if let Some(pattern) = &p.pattern {
+                        o.push_str(",\"pattern\":");
+                        write_pattern(o, pattern);
+                    }
+                }
                 let synthetic = matches!(p.provenance, Provenance::Synthetic(_));
                 if !synthetic {
                     write_provenance(o, &p.provenance);
@@ -1124,6 +1573,18 @@ fn paint_json(p: &Paint, device: bool) -> Value {
 }
 
 /// `[["m",x,y],["l",x,y],["c",x1,y1,x2,y2,x,y],["z"]]` in ticks.
+#[cfg(feature = "tikz-patterns")]
+fn pattern_json(p: &PathPattern) -> Value {
+    let mut color = Value::obj();
+    color.set("r", json::num(p.color[0]));
+    color.set("g", json::num(p.color[1]));
+    color.set("b", json::num(p.color[2]));
+    let mut o = Value::obj();
+    o.set("name", json::str_(p.name.clone()));
+    o.set("color", color);
+    o
+}
+
 fn path_json(cmds: &[PathCmd]) -> Value {
     Value::Arr(
         cmds.iter()
@@ -1149,6 +1610,12 @@ fn rect_json(r: &Rect) -> Value {
 }
 
 pub fn diagnostic_json(d: &Diagnostic) -> Value {
+    diagnostic_json_wire(d, Wire::default())
+}
+
+/// [`diagnostic_json`](diagnostic_json) with negotiated proposals: `suggestion`
+/// is present only when `wire.diagnostics` is set and the value is a non-empty `Some`.
+pub fn diagnostic_json_wire(d: &Diagnostic, wire: Wire) -> Value {
     let mut o = Value::obj();
     o.set("code", json::str_(d.code.clone()));
     o.set("message", json::str_(d.message.clone()));
@@ -1160,6 +1627,9 @@ pub fn diagnostic_json(d: &Diagnostic) -> Value {
         }),
     );
     o.set("sources", Value::Arr(d.sources.iter().map(source_json).collect()));
+    if let Some(s) = d.wire_suggestion(wire) {
+        o.set("suggestion", json::str_(s.to_string()));
+    }
     o
 }
 
@@ -1169,10 +1639,14 @@ fn page_json(p: &Page, wire: Wire) -> Value {
     o.set("number", json::num(f64::from(p.number)));
     o.set("width", tick(p.width));
     o.set("height", tick(p.height));
+    let Some(page_items) = p.items() else {
+        o.set("resident", Value::Bool(false));
+        return o;
+    };
     o.set(
         "items",
         Value::Arr(
-            p.items
+            page_items
                 .iter()
                 .filter(|it| images || !matches!(it, Item::Image(_)))
                 .map(|it| match it {
@@ -1205,7 +1679,8 @@ fn page_json(p: &Page, wire: Wire) -> Value {
                             Value::Arr(
                                 r.clusters
                                     .iter()
-                                    .map(|c| {
+                                    .enumerate()
+                                    .map(|(ci, c)| {
                                         let mut o = Value::obj();
                                         o.set("text_start_byte", json::num(c.text_start_byte as f64));
                                         o.set("text_end_byte", json::num(c.text_end_byte as f64));
@@ -1213,7 +1688,7 @@ fn page_json(p: &Page, wire: Wire) -> Value {
                                         o.set(
                                             "carets",
                                             Value::Arr(
-                                                c.carets
+                                                r.carets_of(ci)
                                                     .iter()
                                                     .map(|k| {
                                                         let mut o = Value::obj();
@@ -1273,6 +1748,12 @@ fn page_json(p: &Page, wire: Wire) -> Value {
                             }
                         }
                         o.set("path", path_json(&p.commands));
+                        #[cfg(feature = "tikz-patterns")]
+                        if matches!(&p.op, PathPaintOp::Fill { .. }) {
+                            if let Some(pattern) = &p.pattern {
+                                o.set("pattern", pattern_json(pattern));
+                            }
+                        }
                         if !p.clips.is_empty() {
                             o.set(
                                 "clips",
@@ -1357,17 +1838,148 @@ mod tests {
     }
 
     #[test]
+    fn from_compiler_forwards_code_and_suggestion() {
+        use flashtex_compiler::diagnostics::{Diagnostic as C, DiagnosticCode, Severity as CS};
+        let unknown = C {
+            severity: CS::Error,
+            message: r"\alpah is not supported by this compiler version".into(),
+            span: None,
+            recovery: None,
+            code: Some(DiagnosticCode::UnknownCommand),
+            suggestion: Some(r"\alpha".into()),
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: None,
+        };
+        let out = Diagnostic::from_compiler(&unknown, &[]);
+        assert_eq!(out.code, "unknown_command");
+        assert_eq!(out.suggestion.as_deref(), Some(r"\alpha"));
+
+        let no_explicit = C {
+            severity: CS::Error,
+            message: r"\tikz is not supported by this compiler version".into(),
+            span: None,
+            recovery: None,
+            code: None,
+            suggestion: None,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: None,
+        };
+        // No code on the compiler side stays uncoded, even when the wording would
+        // match `default_code`: the compiler omitted it on purpose.
+        assert_eq!(Diagnostic::from_compiler(&no_explicit, &[]).code, "compiler");
+
+        let none = C {
+            severity: CS::Error,
+            message: "layout_capabilities must be a list".into(),
+            span: None,
+            recovery: None,
+            code: None,
+            suggestion: None,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: None,
+        };
+        assert_eq!(Diagnostic::from_compiler(&none, &[]).code, "compiler");
+        assert_eq!(Diagnostic::from_compiler(&none, &[]).suggestion, None);
+    }
+
+    /// The compiler's structured `labels`/`notes`/`help` (#346/#389) have no
+    /// display-list-v2 wire field of their own, so `from_compiler` folds them
+    /// onto `sources`, `message` and `suggestion` rather than dropping them.
+    #[test]
+    fn from_compiler_folds_labels_notes_and_help() {
+        use flashtex_compiler::diagnostics::{
+            Diagnostic as C, DiagnosticHelp, DiagnosticLabel, DiagnosticReplacement, Severity as CS,
+        };
+        use flashtex_compiler::{DocumentId, Span};
+
+        let at = |start, end| Span { document: DocumentId(0), start, end };
+        let d = C {
+            severity: CS::Error,
+            message: r"\tilde is a math command".into(),
+            span: Some(at(10, 16)),
+            recovery: None,
+            code: None,
+            suggestion: None,
+            labels: vec![
+                // A label on the diagnostic's own span adds no new location...
+                DiagnosticLabel { span: at(10, 16), text: "this command".into(), primary: true },
+                // ...but a label elsewhere does.
+                DiagnosticLabel { span: at(40, 44), text: "opened here".into(), primary: false },
+            ],
+            notes: vec![r"\tilde is a math accent".into()],
+            help: Some(DiagnosticHelp {
+                message: r"wrap it in math: \(\tilde{c}\)".into(),
+                replacement: Some(DiagnosticReplacement {
+                    span: at(10, 16),
+                    text: r"\(\tilde{c}\)".into(),
+                }),
+            }),
+        };
+        let out = Diagnostic::from_compiler(&d, &["main.tex"]);
+
+        // The diagnostic's own span first, then the one label span it does not
+        // already cover; the duplicate is not repeated.
+        assert_eq!(out.sources.len(), 2);
+        assert_eq!((out.sources[0].start_byte, out.sources[0].end_byte), (10, 16));
+        assert_eq!((out.sources[1].start_byte, out.sources[1].end_byte), (40, 44));
+        assert_eq!(&*out.sources[0].path, "main.tex");
+
+        assert_eq!(
+            out.message,
+            concat!(
+                r"\tilde is a math command",
+                " [note: this command]",
+                " [note: opened here]",
+                r" [note: \tilde is a math accent]",
+                r" [help: wrap it in math: \(\tilde{c}\)]",
+            )
+        );
+        // One line: `flashtex-render --tex` prints `severity[code] message
+        // (line:col)` per line, so an embedded newline would strand the
+        // position suffix on a line of its own (`tests/cli_e2e.rs`).
+        assert!(!out.message.contains('\n'), "{}", out.message);
+        // `help.replacement` back-fills the legacy runtime-v1 `suggestion`.
+        assert_eq!(out.suggestion.as_deref(), Some(r"\(\tilde{c}\)"));
+    }
+
+    /// A compiler `suggestion` already set is authoritative; `help.replacement`
+    /// only fills the gap.
+    #[test]
+    fn from_compiler_prefers_an_explicit_suggestion_over_help_replacement() {
+        use flashtex_compiler::diagnostics::{
+            Diagnostic as C, DiagnosticHelp, DiagnosticReplacement, Severity as CS,
+        };
+        use flashtex_compiler::{DocumentId, Span};
+        let at = |start, end| Span { document: DocumentId(0), start, end };
+        let d = C {
+            severity: CS::Warning,
+            message: "m".into(),
+            span: None,
+            recovery: None,
+            code: None,
+            suggestion: Some("explicit".into()),
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: Some(DiagnosticHelp {
+                message: String::new(),
+                replacement: Some(DiagnosticReplacement { span: at(0, 1), text: "from-help".into() }),
+            }),
+        };
+        let out = Diagnostic::from_compiler(&d, &["main.tex"]);
+        assert_eq!(out.suggestion.as_deref(), Some("explicit"));
+        // An empty help message adds no `= help:` line.
+        assert_eq!(out.message, "m");
+    }
+
+    #[test]
     fn write_json_matches_the_value_tree() {
         let src = |a, b| SourceRange {
             path: std::rc::Rc::from("dir/ma\"in.tex"),
             start_byte: a,
             end_byte: b,
-        };
-        let caret = |x| Caret {
-            text_byte: 3,
-            x: Tick(x),
-            top: Tick(-7),
-            height: Tick(1 << 40),
         };
         let cluster = |provenance| Cluster {
             text_start_byte: 0,
@@ -1377,10 +1989,6 @@ mod tests {
                 top: Tick(-2),
                 width: Tick(3),
                 height: Tick(4),
-            },
-            carets: Carets {
-                first: caret(5),
-                last: Some(caret(9)),
             },
             provenance,
         };
@@ -1404,6 +2012,10 @@ mod tests {
                 cluster(Provenance::Sources(vec![src(3, 4), src(5, 6)])),
                 cluster(Provenance::Synthetic("heading number".into())),
             ],
+            // Only the run's last cluster shows it, so the two writers have
+            // to agree about which cluster that is as well as about the
+            // value.
+            end_caret: Some(EndCaret { x: Tick(9), text_byte: 3 }),
             paint: Paint {
                 r: 0.25,
                 g: 0.1,
@@ -1451,6 +2063,8 @@ mod tests {
                 commands: cmds(),
                 clips,
                 paint: Paint { r: 0.5, g: 0.0, b: 1.0, a: 0.25, device: None },
+                #[cfg(feature = "tikz-patterns")]
+                pattern: None,
                 provenance,
             })
         };
@@ -1510,17 +2124,17 @@ mod tests {
                 path: Some("/x".into()),
             }],
             pages: vec![
-                Page {
-                    number: 1,
-                    width: Tick(612 << 20),
-                    height: Tick(792 << 20),
-                    items: vec![run, rule(Provenance::Source(src(7, 8))), rule(Provenance::Synthetic("frac".into()))],
-                },
-                Page {
-                    number: 3,
-                    width: Tick(612 << 20),
-                    height: Tick(792 << 20),
-                    items: vec![
+                Page::resident(
+                    1,
+                    Tick(612 << 20),
+                    Tick(792 << 20),
+                    vec![run, rule(Provenance::Source(src(7, 8))), rule(Provenance::Synthetic("frac".into()))],
+                ),
+                Page::resident(
+                    3,
+                    Tick(612 << 20),
+                    Tick(792 << 20),
+                    vec![
                         path(PathPaintOp::Fill { even_odd: true }, Vec::new(), Provenance::Source(src(1, 3))),
                         path(PathPaintOp::Fill { even_odd: false }, clips(), Provenance::Synthetic("tikz".into())),
                         path(PathPaintOp::Stroke(stroke(Vec::new())), Vec::new(), Provenance::Synthetic("tikz".into())),
@@ -1528,18 +2142,18 @@ mod tests {
                         path(PathPaintOp::Stroke(stroke(vec![Tick(3), Tick(-4)])), clips(), Provenance::Sources(vec![src(2, 5), src(6, 9)])),
                         image(pdf(), Provenance::Synthetic("float".into())),
                     ],
-                },
-                Page {
-                    number: 2,
-                    width: Tick(1),
-                    height: Tick(2),
-                    items: Vec::new(),
-                },
+                ),
+                Page::resident(2, Tick(1), Tick(2), Vec::new()),
+                Page::elided(4, Tick(612 << 20), Tick(792 << 20)),
             ],
             diagnostics: vec![
                 Diagnostic::warning("overfull_hbox", "line \"3\" is 1.5pt too wide", vec![src(1, 9)]),
                 Diagnostic::error("compiler", "x", Vec::new()),
             ],
+            window: Some(PageWindow { first_page: 1, page_count: 3 }),
+            // Not harvested here: this list is built by hand, so the resident
+            // scan is the whole of it.
+            document_features: None,
         };
         assert_eq!(list.write_json("id\"1"), json::write(&list.to_json("id\"1")));
         for images in [false, true] {
@@ -1553,9 +2167,77 @@ mod tests {
             documents: Vec::new(),
             fonts: Vec::new(),
             pages: Vec::new(),
+            window: None,
             diagnostics: Vec::new(),
+            document_features: None,
         };
         assert_eq!(empty.write_json(""), json::write(&empty.to_json("")));
         assert_eq!(empty.write_json_with("", true), json::write(&empty.to_json_with("", true)));
+    }
+
+    fn diag_list(suggestion: Option<&str>) -> DisplayList {
+        let mut d = Diagnostic::error("unknown_command", r"\alpah", vec![SourceRange {
+            path: std::rc::Rc::from("notes.tex"),
+            start_byte: 0,
+            end_byte: 6,
+        }]);
+        d.suggestion = suggestion.map(str::to_string);
+        DisplayList {
+            project_id: "p".into(),
+            revision: 1,
+            documents: Vec::new(),
+            fonts: Vec::new(),
+            pages: Vec::new(),
+            diagnostics: vec![d],
+            window: None,
+            document_features: None,
+        }
+    }
+
+    #[test]
+    fn diagnostics_capability_gates_suggestion_on_the_wire() {
+        let off = Wire::default();
+        let on = Wire { diagnostics: true, ..Wire::default() };
+        let with = diag_list(Some(r"\alpha"));
+        let without = diag_list(None);
+        let off_with = with.write_json_wire("r1", off);
+        let off_without = without.write_json_wire("r1", off);
+        assert_eq!(off_with, off_without, "without the cap, suggestion must not appear");
+        assert!(!off_with.contains("suggestion"), "{off_with}");
+        assert_eq!(off_with, json::write(&with.to_json_wire("r1", off)));
+
+        let on_with = with.write_json_wire("r1", on);
+        let on_without = without.write_json_wire("r1", on);
+        assert_ne!(on_with, on_without);
+        assert!(on_with.contains(r#""suggestion":"\\alpha""#), "{on_with}");
+        assert!(!on_with.contains(r#""suggestion":null"#), "{on_with}");
+        assert!(!on_without.contains("suggestion"), "{on_without}");
+        assert_eq!(on_with, json::write(&with.to_json_wire("r1", on)));
+        assert_eq!(on_without, json::write(&without.to_json_wire("r1", on)));
+        assert_eq!(on_without, off_without);
+    }
+
+    #[test]
+    fn estimate_omits_suggestion_when_diagnostics_are_off() {
+        let off = Wire::default();
+        let on = Wire { diagnostics: true, ..Wire::default() };
+        let with = diag_list(Some(r"\alpha"));
+        let stripped = diag_list(None);
+        let off_bytes = with.write_json_wire("r1", off);
+        assert_eq!(off_bytes, stripped.write_json_wire("r1", off));
+        assert_eq!(with.estimated_json_bytes_for(off), stripped.estimated_json_bytes_for(off), "old-client estimate must match a suggestion-stripped list");
+        assert!(with.estimated_json_bytes_for(on) > stripped.estimated_json_bytes_for(on));
+    }
+
+    #[test]
+    fn empty_suggestion_is_omitted_even_when_diagnostics_are_on() {
+        let on = Wire { diagnostics: true, ..Wire::default() };
+        let empty = diag_list(Some(""));
+        let none = diag_list(None);
+        let empty_bytes = empty.write_json_wire("r1", on);
+        assert_eq!(empty_bytes, none.write_json_wire("r1", on));
+        assert!(!empty_bytes.contains("suggestion"), "{empty_bytes}");
+        assert_eq!(empty.to_json_wire("r1", on), none.to_json_wire("r1", on));
+        assert!(empty.to_json_wire("r1", on).get("payload").unwrap().get("diagnostics").unwrap().as_arr().unwrap()[0].get("suggestion").is_none());
     }
 }

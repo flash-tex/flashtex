@@ -548,6 +548,28 @@ struct SyntaxHighlighter {
         return h.runs(in: NSRange(location: 0, length: text.length), text: text)
     }
 
+    /// Mode **at** `utf16`, not the mode its line starts in: the caret's line
+    /// is re-lexed from its own start mode, so this costs one line rather than
+    /// a document and gives the right answer in the middle of `$x^2$`. `text`
+    /// must be the text this model was built from; anything else answers
+    /// `.text` rather than guessing from a stale line table.
+    ///
+    /// The highlighter is the app's authority on what is math and what is
+    /// verbatim, so `CaretContext` — which decides how a capture is wrapped —
+    /// is checked against this rather than being a second opinion
+    /// (`CaretContextTests.testAgreesWithTheSyntaxHighlighter`).
+    func mode(at utf16: Int, text: NSString) -> Mode {
+        guard text.length == length, length > 0 else { return .text }
+        let clamped = max(0, min(utf16, length))
+        let index = line(at: clamped)
+        let start = lineStarts[index]
+        guard clamped > start else { return modes[index] }
+        var runs: [Run] = []
+        return withUnits(of: text, range: NSRange(location: start, length: clamped - start)) { units in
+            Self.lex(units, from: 0, to: units.count, base: start, mode: modes[index], runs: &runs, collect: false)
+        }
+    }
+
     /// Kind of the run at `utf16` after a full lex (hover/tests), or nil for plain text.
     func kind(at utf16: Int, text: NSString) -> Kind? {
         guard utf16 >= 0, utf16 < length else { return nil }
@@ -579,23 +601,25 @@ struct SyntaxTheme: Sendable {
         }
     }
 
-    static let command = dynamic(light: (155, 35, 147), dark: (252, 95, 163))          // Xcode keyword
-    static let mathCommand = dynamic(light: (50, 109, 116), dark: (103, 183, 164))     // teal
-    static let environment = dynamic(light: (11, 79, 121), dark: (93, 216, 255))       // type
-    static let math = dynamic(light: (28, 0, 207), dark: (208, 168, 255))              // indigo
-    static let mathDelimiter = dynamic(light: (28, 0, 207), dark: (208, 168, 255))
-    static let number = dynamic(light: (28, 0, 207), dark: (208, 191, 105))            // Xcode number
-    static let comment = dynamic(light: (93, 108, 121), dark: (108, 121, 134))         // Xcode comment
-    static let brace = NSColor.secondaryLabelColor
-    static let reference = dynamic(light: (196, 26, 22), dark: (252, 106, 93))         // Xcode string
-    static let file = dynamic(light: (196, 26, 22), dark: (252, 106, 93))
-    static let definition = dynamic(light: (15, 104, 160), dark: (65, 161, 192))       // Xcode declaration
-    static let currentLine = NSColor(name: nil) { appearance in
-        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        return NSColor.labelColor.withAlphaComponent(isDark ? 0.06 : 0.045)
-    }
-    static let gutterText = NSColor.tertiaryLabelColor
-    static let gutterCurrentText = NSColor.secondaryLabelColor
+    // JetBrains' code vocabulary (IntelliJ Light / the New Dark theme), not
+    // Xcode's: commands are keywords (blue / soft orange), references are
+    // strings (green), math is the constant purple — the palette that makes
+    // the editor read as a JetBrains-class IDE pane
+    // (context/PROMPT-appearance-overhaul.md).
+    static let command = dynamic(light: (0, 51, 179), dark: (207, 142, 109))           // keyword
+    static let mathCommand = dynamic(light: (0, 98, 122), dark: (42, 172, 184))        // built-in
+    static let environment = dynamic(light: (0, 98, 122), dark: (86, 168, 245))        // declaration
+    static let math = dynamic(light: (135, 16, 148), dark: (199, 125, 187))            // constant
+    static let mathDelimiter = dynamic(light: (135, 16, 148), dark: (199, 125, 187))
+    static let number = dynamic(light: (23, 80, 235), dark: (42, 172, 184))            // number
+    static let comment = dynamic(light: (140, 140, 140), dark: (122, 126, 133))        // comment
+    static let brace = DS.Palette.textSecondary
+    static let reference = dynamic(light: (6, 125, 23), dark: (106, 171, 115))         // string
+    static let file = dynamic(light: (6, 125, 23), dark: (106, 171, 115))
+    static let definition = dynamic(light: (158, 136, 13), dark: (179, 174, 96))       // metadata
+    static let currentLine = DS.Palette.editorCurrentLine
+    static let gutterText = DS.Palette.editorLineNumber
+    static let gutterCurrentText = DS.Palette.editorLineNumberActive
 
     static func color(for kind: SyntaxHighlighter.Kind) -> NSColor? {
         switch kind {
@@ -700,6 +724,19 @@ final class SyntaxPainter {
         let dirty = highlighter.edit(range: range, replacementLength: replacementLength, text: text)
         lastEditLinesLexed = highlighter.lastEditLinesLexed
         shiftPainted(edit: range, replacementLength: replacementLength)
+        // `flush()` only repaints the overlap of `painted` and the dirty
+        // range, on the assumption that an edit's dirty range already sits
+        // inside the painted window (true for ordinary typing). A
+        // whole-buffer replace (select all, delete) shifts every painted
+        // range to length 0, which `merged` drops — `painted` becomes `[]`
+        // and, since nothing but `reset()` (switching documents away and
+        // back) ever repopulates it, stays empty forever after, so no edit
+        // is ever coloured again. Re-registering the dirty range (clipped to
+        // the visible window, so a large off-screen paste still cannot force
+        // painting outside it) as painted is a no-op union in the ordinary
+        // case and self-heals this one.
+        let visibleDirty = NSIntersectionRange(dirty, Self.window(for: tv))
+        if visibleDirty.length > 0 { painted = Self.merged(painted + [visibleDirty]) }
         pendingDirty = pendingDirty.map { NSUnionRange(Self.shifted($0, edit: range, replacementLength: replacementLength), dirty) } ?? dirty
         lastEditCpuNs = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - t0
         // Painting waits until the layout manager has processed this edit
@@ -739,10 +776,14 @@ final class SyntaxPainter {
         runsPainted += count
     }
 
-    private static func shifted(_ r: NSRange, edit: NSRange, replacementLength: Int) -> NSRange {
+    /// `r` after replacing `edit` with `replacementLength` characters. An edit
+    /// that touches `r` (ends at its start or starts at its end) joins it, so
+    /// text typed at either edge of a painted range is repainted with it
+    /// (GH#280: typing at the end of the painted window stayed uncoloured).
+    static func shifted(_ r: NSRange, edit: NSRange, replacementLength: Int) -> NSRange {
         let delta = replacementLength - edit.length
-        if NSMaxRange(edit) <= r.location { return NSRange(location: r.location + delta, length: r.length) }
-        if edit.location >= NSMaxRange(r) { return r }
+        if NSMaxRange(edit) < r.location { return NSRange(location: r.location + delta, length: r.length) }
+        if edit.location > NSMaxRange(r) { return r }
         let start = min(r.location, edit.location)
         let end = max(NSMaxRange(r), NSMaxRange(edit)) + delta
         return NSRange(location: start, length: max(0, end - start))

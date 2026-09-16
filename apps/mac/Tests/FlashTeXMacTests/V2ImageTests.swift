@@ -291,7 +291,7 @@ final class V2ImageTests: XCTestCase {
     func testPaneRequestsImagesAlongsideV2AndTheCompileRequestCarriesProjectRoot() throws {
         let model = ShellModel()
         model.setLiveV2(true)
-        XCTAssertEqual(model.requestedLayoutCapabilities.suffix(2), [V2Live.capability, RenderingV2.imagesCapability])
+        XCTAssertEqual(model.requestedLayoutCapabilities.suffix(3), [V2Live.capability, RenderingV2.imagesCapability, RenderingV2.linksCapability])
         model.setLiveV2(false)
         XCTAssertFalse(model.requestedLayoutCapabilities.contains(RenderingV2.imagesCapability))
         let req = RuntimeV1.CompileRequest(projectId: "p", revision: 1, entryPath: "main.tex", documents: [.init(path: "main.tex", text: "x")],

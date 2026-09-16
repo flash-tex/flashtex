@@ -536,10 +536,25 @@ def page_glyphs(doc, page):
 
 def words_from_glyphs(glyphs):
     """Groups glyphs into words: same text object, same baseline (0.05 bp),
-    and no gap wider than SPACE_FRACTION em between glyphs."""
+    and no gap wider than SPACE_FRACTION em between glyphs.
+
+    A *font change does not break a word*. That matters: pdfTeX sets one
+    siunitx `S` cell as three `Tf`-switched runs (CMR10 digits, CMMI10
+    decimal marker, CMR10 again) inside one text object, and this rule joins
+    them back into `1.234` — which is the word a reader sees. Any other
+    producer of word boxes has to use this same function, or the two sides
+    disagree about what a word is and the alignment measures the
+    disagreement instead of the geometry (see `rank.v2_words`).
+
+    Each word carries `glyph_index`, the index in `glyphs` of its first
+    glyph. A word's glyphs are always contiguous there (a space glyph ends
+    the current word and is itself dropped), so `glyphs[i:i + w["glyphs"]]`
+    is exactly the run the word was built from, and a caller can carry its
+    own per-glyph data across the grouping.
+    """
     words = []
     cur = None
-    for g in glyphs:
+    for i, g in enumerate(glyphs):
         if g["text"] == " ":
             cur = None
             continue
@@ -550,7 +565,7 @@ def words_from_glyphs(glyphs):
                 cur = None
         if cur is None:
             cur = {"text": "", "x": g["x"], "y_top": g["y_top"], "size": g["size"], "font": g["font"],
-                   "_end": g["x"], "_bt": g["bt"], "glyphs": 0}
+                   "_end": g["x"], "_bt": g["bt"], "glyphs": 0, "glyph_index": i}
             words.append(cur)
         cur["text"] += g["text"]
         cur["_end"] = g["x"] + g["advance"]

@@ -145,6 +145,18 @@ impl FootnoteState {
             log.push((page_index, line_start, y));
         }
     }
+
+    /// Queue lengths for a `tabbing` `\kill` rewind: footnote text queued
+    /// while the killed row lays out (its mark is an ordinary item and
+    /// rewinds with the rest) must not reach the page bottom.
+    pub(super) fn undo_point(&self) -> (usize, usize) {
+        (self.page.len(), self.held.len())
+    }
+
+    pub(super) fn rollback(&mut self, point: (usize, usize)) {
+        self.page.truncate(point.0);
+        self.held.truncate(point.1);
+    }
 }
 
 impl LayoutCursor {
@@ -168,6 +180,9 @@ impl LayoutCursor {
             height_pt: PAGE_HEIGHT_PT,
             items: Vec::new(),
         });
+        // Every shipped page steps the displayed page counter too
+        // (`\thepage`'s `\c@page`), whatever opened it.
+        self.page_value += 1;
         self.take_held_footnotes(first_line_size);
     }
 
@@ -182,6 +197,7 @@ impl LayoutCursor {
                 height_pt: PAGE_HEIGHT_PT,
                 items: Vec::new(),
             });
+            self.page_value += 1;
             self.take_held_footnotes(0.0);
             self.set_page_footnotes();
         }
@@ -308,6 +324,10 @@ impl LayoutCursor {
     ) -> Vec<FootLine> {
         let mut scratch =
             LayoutCursor::with_labels(self.constraints, self.resolved_labels.clone(), true);
+        // A `\thepage` (or `\label`) inside the note resolves on the page
+        // the footnote mark sits on, in the style in force there.
+        scratch.page_style = self.page_style;
+        scratch.page_value = self.page_value;
         scratch.footnotes.line_log = Some(Vec::new());
         // A footnote is an ordinary justified paragraph in LaTeX: wrapped
         // lines stretch to the right edge, the last line stays ragged.
@@ -325,6 +345,7 @@ impl LayoutCursor {
         let page_number = self.pages.len() as u32;
         for (key, mut value) in std::mem::take(&mut scratch.collected_labels) {
             value.page = page_number;
+            value.page_text = self.page_style.format(self.page_value);
             self.collected_labels.insert(key, value);
         }
 

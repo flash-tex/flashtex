@@ -35,7 +35,9 @@ enum DisplayListDelta {
     static var v2OnlyEnabled: Bool { ProcessInfo.processInfo.environment["FLASHTEX_DISPLAY_V2_ONLY"] != "0" }
     /// The per-request capabilities (never part of the mode set
     /// `requestedLayoutCapabilities`; echoed only on replies that honour them).
-    static let perRequestCapabilities: Set<String> = [capability, v2OnlyCapability]
+    /// `display-list-v2-window` (V2PageWindow.swift) is one too: it is sent
+    /// only while engaged and positioned, and echoed only when honoured.
+    static let perRequestCapabilities: Set<String> = [capability, v2OnlyCapability, V2Window.capability]
     static func stripPerRequest(_ caps: [String]) -> [String] { caps.filter { !perRequestCapabilities.contains($0) } }
 
     // MARK: dl2-canon-1
@@ -258,9 +260,12 @@ enum DisplayListDelta {
         }
     }
 
-    /// The snapshot a validated FULL frame installs; nil when it exceeds the retention caps.
+    /// The snapshot a validated FULL frame installs; nil when it exceeds the
+    /// retention caps — or when the frame is windowed: a windowed reply is an
+    /// incomplete view (window proposal §4.1) and must never be a delta base.
     static func installed(from envelope: RenderingV2.Envelope, pageBytes: [Int], lineBytes: Int) -> Installed? {
         let list = envelope.payload
+        guard list.window == nil else { return nil }
         guard list.pages.count <= maxSnapshotPages, pageBytes.count == list.pages.count, lineBytes <= maxSnapshotBytes else { return nil }
         let digests = list.pages.map(pageDigest)
         return Installed(requestId: envelope.id, list: list, pageDigests: digests, listDigest: listDigest(list, pageDigests: digests),
@@ -363,7 +368,7 @@ enum DisplayListDelta {
         let list = RenderingV2.DisplayList(renderFormat: d.renderFormat, coordinateUnit: d.coordinateUnit, colorSpace: d.colorSpace,
                                            textExtraction: d.textExtraction, projectId: d.projectId, revision: d.revision,
                                            requiredFeatures: d.requiredFeatures, documents: d.documents, fonts: d.fonts,
-                                           pages: pages, diagnostics: d.diagnostics)
+                                           pages: pages, diagnostics: d.diagnostics, navigation: installed.list.navigation)
         guard hex(listDigest(list, pageDigests: digests)) == d.listDigest else { throw Refusal.listDigestMismatch }
         return (RenderingV2.Envelope(protocolVersion: d.protocolVersion, id: d.id, type: RenderingV2.messageType, payload: list), d.pageBytes, target)
     }

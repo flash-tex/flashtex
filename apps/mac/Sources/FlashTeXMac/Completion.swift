@@ -506,6 +506,24 @@ enum Completion {
         return ns
     }
 
+    // MARK: math mode at the caret
+
+    /// Whether the caret sits in math mode — inside `$…$`, `$$…$$`, `\\(…\\)`,
+    /// `\\[…\\]` or a math environment.
+    ///
+    /// The answer comes from `SyntaxHighlighter`'s own lexer, which already
+    /// owns this knowledge (delimiters, nesting depth, verbatim), so there is
+    /// no second set of rules to drift. Pass the editor's in-sync model and it
+    /// costs one line's worth of lexing; pass nil (tests, any caller without
+    /// one) and the text is lexed whole.
+    static func isMathMode(in text: NSString, caretUTF16: Int, highlighter: SyntaxHighlighter? = nil) -> Bool {
+        guard text.length > 0 else { return false }
+        var model = highlighter ?? SyntaxHighlighter()
+        if highlighter == nil { model.reset(text) }
+        guard model.length == text.length else { return false }
+        return model.mode(at: caretUTF16, text: text).isMath
+    }
+
     // MARK: suggestions
 
     /// Compatibility entry point: the caller asserts that `result` was compiled
@@ -520,15 +538,19 @@ enum Completion {
     /// `Metadata.bound(to:)`); unbound metadata is the caller's bug, never
     /// this function's to detect. `cancelled` is polled between scan phases
     /// so an off-main computation stops early; a cancelled call returns `[]`.
+    /// `mathMode` says whether the caret is in math mode (`isMathMode`). The
+    /// caller passes it because it can answer cheaply from the editor's own
+    /// syntax model; the default, false, keeps the plain text-mode order.
     static func suggestions(in text: String, caretUTF16: Int, metadata: Metadata?,
                             supported: [String] = defaultSupported, projectFiles: [String] = [],
+                            mathMode: Bool = false,
                             cancelled: () -> Bool = { false }) -> [Suggestion] {
         guard let token = token(in: text, caretUTF16: caretUTF16), !cancelled() else { return [] }
         let out: [Suggestion]
         switch token {
         case .command(let prefix, _, _):
             out = commandSuggestions(prefix: prefix, tokenStart: token.start, text: text,
-                                     metadata: metadata, supported: supported, cancelled: cancelled)
+                                     metadata: metadata, supported: supported, mathMode: mathMode, cancelled: cancelled)
         case .word(let prefix, _, _, let context):
             guard prefix.unicodeScalars.count >= 2 || context != .none else { return [] }
             switch context {
@@ -553,7 +575,7 @@ enum Completion {
     }
 
     private static func commandSuggestions(prefix: String, tokenStart: Int, text: String, metadata: Metadata?,
-                                           supported: [String], cancelled: () -> Bool) -> [Suggestion] {
+                                           supported: [String], mathMode: Bool, cancelled: () -> Bool) -> [Suggestion] {
         var out: [Suggestion] = []
         let scan = scanCommands(in: text, tokenStart: tokenStart, prefix: prefix)
         if cancelled() { return [] }
@@ -568,19 +590,37 @@ enum Completion {
         //    the user's macro, not a builtin). Within the vocabulary the
         //    command spelled exactly as typed comes first (`\sec` before
         //    `\section`); the rest keep table order.
+        //    In math mode the compiler's math commands float above the text
+        //    ones — `\\alpha` and `\\approx` are what `\\a` means inside `$…$`,
+        //    while the table's text-first order buries them under `\\addvspace`.
+        //    The exactly-typed spelling and the project's own declarations stay
+        //    on top of both, and in text mode the order is untouched.
         var offered = Set<String>()
         let declared: [String: Metadata.Item] = Dictionary((metadata?.commands ?? []).filter { $0.definitions > 0 }.map { ($0.name, $0) },
                                                            uniquingKeysWith: { a, _ in a })
         let exact = supported.contains(prefix) ? [prefix] : []
+        /// 0 the exact spelling, 1 a project declaration, 2 a math command,
+        /// 3 everything else. Only consulted when `mathMode` is on.
+        var vocabulary: [(suggestion: Suggestion, rank: Int)] = []
         for name in exact + supported where name.hasPrefix(prefix) && offered.insert(name).inserted {
             if let item = declared[name], let metadata {
-                out.append(Suggestion(label: "\\" + name, insertText: "\\" + name, kind: .command,
-                                      detail: item.detail(noun: "declared", revision: metadata.revision) + " · overrides the builtin"))
+                vocabulary.append((Suggestion(label: "\\" + name, insertText: "\\" + name, kind: .command,
+                                              detail: item.detail(noun: "declared", revision: metadata.revision) + " · overrides the builtin"),
+                                   name == prefix ? 0 : 1))
             } else {
                 let entry = Vocabulary.byName[name] ?? Vocabulary.generic(name)
-                out.append(Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail,
-                                      snippet: entry.snippet))
+                vocabulary.append((Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail,
+                                              snippet: entry.snippet),
+                                   name == prefix ? 0 : entry.mode == .math ? 2 : 3))
             }
+        }
+        if mathMode {
+            // Stable: equal ranks keep the table order they were filled in.
+            out += vocabulary.enumerated().sorted { a, b in
+                a.element.rank != b.element.rank ? a.element.rank < b.element.rank : a.offset < b.offset
+            }.map(\.element.suggestion)
+        } else {
+            out += vocabulary.map(\.suggestion)
         }
         if let metadata {
             for item in metadata.commands where item.name.hasPrefix(prefix) && item.name != prefix && offered.insert(item.name).inserted {
@@ -879,12 +919,9 @@ enum Completion {
     /// Names of environments appearing in `\begin{…}` anywhere in the document.
     static func documentEnvironments(in text: String) -> [String] {
         var out: [String] = []
-        withBytes(text) { b in
-            forEachCommand(in: b, upTo: b.count) { name, _, arg in
-                guard let arg, bytes(name, equal: "begin") else { return }
-                let env = String(decoding: arg, as: UTF8.self)
-                if !out.contains(env) { out.append(env) }
-            }
+        for u in EditorNavigation.uses(in: text as NSString) {
+            guard u.name == "begin", let arg = u.arg, !arg.isEmpty else { continue }
+            if !out.contains(arg) { out.append(arg) }
         }
         return out
     }
@@ -1521,6 +1558,9 @@ final class CompletionScheduler {
         var supported: [String] = Completion.defaultSupported
         /// Project document paths offered after `\input{`, `\include{` and `\includegraphics{`.
         var projectFiles: [String] = []
+        /// Whether the caret is in math mode (`Completion.isMathMode`), decided
+        /// on the main thread where the editor's syntax model is in sync.
+        var mathMode = false
     }
 
     struct Outcome: Equatable {
@@ -1593,7 +1633,8 @@ final class CompletionScheduler {
             let range = Completion.completionRange(in: request.text, caretUTF16: request.caretUTF16)
             let items = job.isCancelled ? [] : Completion.suggestions(in: request.text, caretUTF16: request.caretUTF16,
                                                                      metadata: request.metadata, supported: request.supported,
-                                                                     projectFiles: request.projectFiles, cancelled: { job.isCancelled })
+                                                                     projectFiles: request.projectFiles, mathMode: request.mathMode,
+                                                                     cancelled: { job.isCancelled })
             let t1 = MonotonicClock.nowNs()
             let outcome = Outcome(generation: job.generation, caretUTF16: request.caretUTF16, range: range, items: items,
                                   computeMs: Double(t1 - t0) / 1e6, queuedMs: Double(t0 - scheduledAt) / 1e6, computedAtNs: t1)
@@ -1659,14 +1700,15 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
     private let table = NSTableView()
     /// Documentation pane under the list: the selected candidate's kind,
     /// origin and — for commands/environments — its syntax (IntelliSense style).
+    private var chrome: PopupChrome?
     private let docTitle = NSTextField(labelWithString: "")
     private let docBody = NSTextField(wrappingLabelWithString: "")
     private let docHint = NSTextField(labelWithString: "↑↓ choose · ⏎ insert · esc close")
     private let docSeparator = NSBox()
     private(set) var items: [Completion.Suggestion] = []
-    static let rowHeight: CGFloat = 24
-    static let width: CGFloat = 480
-    static let docHeight: CGFloat = 58
+    static let rowHeight: CGFloat = DS.Row.completion
+    static let width: CGFloat = DS.Layout.completionWidth
+    static let docHeight: CGFloat = DS.Layout.completionDocHeight
 
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.rowHeight * 4 + Self.docHeight),
@@ -1712,20 +1754,20 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         docSeparator.frame = NSRect(x: 0, y: Self.docHeight - 1, width: Self.width, height: 1)
         docSeparator.autoresizingMask = [.width, .minYMargin]
         doc.addSubview(docSeparator)
-        docTitle.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        docTitle.font = DS.NSFonts.header
         docTitle.textColor = .labelColor
         docTitle.lineBreakMode = .byTruncatingTail
         docTitle.frame = NSRect(x: 10, y: Self.docHeight - 20, width: Self.width - 20, height: 15)
         docTitle.autoresizingMask = [.width, .minYMargin]
         doc.addSubview(docTitle)
-        docBody.font = NSFont.systemFont(ofSize: 11)
+        docBody.font = DS.NSFonts.secondary
         docBody.textColor = .secondaryLabelColor
         docBody.maximumNumberOfLines = 2
         docBody.lineBreakMode = .byTruncatingTail
         docBody.frame = NSRect(x: 10, y: 15, width: Self.width - 20, height: 24)
         docBody.autoresizingMask = [.width, .minYMargin]
         doc.addSubview(docBody)
-        docHint.font = NSFont.systemFont(ofSize: 10)
+        docHint.font = DS.NSFonts.secondary
         docHint.textColor = .tertiaryLabelColor
         docHint.frame = NSRect(x: 10, y: 2, width: Self.width - 20, height: 13)
         docHint.autoresizingMask = [.width, .minYMargin]
@@ -1735,12 +1777,53 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         doc.setAccessibilityLabel("Completion documentation")
         contentView?.addSubview(doc)
         contentView?.wantsLayer = true
-        contentView?.layer?.cornerRadius = 8
-        contentView?.layer?.borderWidth = 1
-        contentView?.layer?.borderColor = NSColor.separatorColor.cgColor
+        contentView?.layer?.cornerRadius = DS.Radius.panel
+        contentView?.layer?.borderWidth = DS.Size.hairline
         backgroundColor = .clear
         isOpaque = false
-        contentView?.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        // The chrome colours are re-resolved on every appearance change; see
+        // `PopupChrome`. A CGColor taken here would be frozen against whatever
+        // appearance was current at init.
+        chrome = PopupChrome(view: contentView)
+        chrome?.refresh()
+    }
+
+    /// Keeps the panel's layer-backed chrome in step with the effective
+    /// appearance.
+    ///
+    /// `CALayer` takes `CGColor`s, which carry no appearance: they are resolved
+    /// once, from whatever appearance is current when they are assigned. This
+    /// panel is built before it is attached to a window, so a colour set in
+    /// `init` is resolved against the *application's* appearance rather than the
+    /// window's, and it then never changes when the user (or the system) switches
+    /// between light and dark. That left the documentation pane painted with the
+    /// dark `windowBackgroundColor` while its text used the light `labelColor`,
+    /// which is the unreadable combination the owner reported.
+    ///
+    /// Text colours are unaffected: `NSTextField.textColor` holds the dynamic
+    /// `NSColor` and resolves it at draw time, which is why only the chrome was wrong.
+    final class PopupChrome {
+        private weak var view: NSView?
+        private var observation: NSKeyValueObservation?
+
+        init(view: NSView?) {
+            self.view = view
+            observation = view?.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+                self?.refresh()
+            }
+        }
+
+        /// Resolves `windowBackgroundColor`/`separatorColor` against the view's
+        /// current appearance and applies them.
+        func refresh() {
+            guard let view, let layer = view.layer else { return }
+            view.effectiveAppearance.performAsCurrentDrawingAppearance {
+                // The raised floating surface of the Islands palette, not
+                // the stock window ground (DS.Palette).
+                layer.backgroundColor = DS.NSColors.raised.cgColor
+                layer.borderColor = DS.NSColors.componentBorder.cgColor
+            }
+        }
     }
 
     override var canBecomeKey: Bool { false }
@@ -1838,6 +1921,14 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
 
     func numberOfRows(in tableView: NSTableView) -> Int { items.count }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        // The muted JetBrains selection band (SidebarTree.swift), not the
+        // stock accent band.
+        let view = (tableView.makeView(withIdentifier: TreeRowView.reuseID, owner: nil) as? TreeRowView) ?? TreeRowView()
+        view.identifier = TreeRowView.reuseID
+        return view
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let id = NSUserInterfaceItemIdentifier("row")
         let view = (tableView.makeView(withIdentifier: id, owner: nil) as? CompletionRowView) ?? {
@@ -1901,14 +1992,14 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
             out.append(NSAttributedString(string: " "))
         }
         out.append(NSAttributedString(string: s.label, attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.labelColor,
+            .font: DS.NSFonts.monoCandidate, .foregroundColor: DS.Palette.textPrimary,
         ]))
         out.append(NSAttributedString(string: "  \(s.kind.badge) · \(s.detail)", attributes: [
-            .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor,
+            .font: DS.NSFonts.secondary, .foregroundColor: DS.Palette.textSecondary,
         ]))
         if let doc = documentation(for: s) {
             out.append(NSAttributedString(string: " — \(doc)", attributes: [
-                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.tertiaryLabelColor,
+                .font: DS.NSFonts.secondary, .foregroundColor: DS.Palette.textTertiary,
             ]))
         }
         return out
@@ -1944,13 +2035,13 @@ final class CompletionRowView: NSView {
         icon.frame = NSRect(x: 8, y: 4, width: 16, height: 16)
         icon.autoresizingMask = [.maxXMargin]
         addSubview(icon)
-        label.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+        label.font = DS.NSFonts.monoCandidate
         label.textColor = .labelColor
         label.lineBreakMode = .byTruncatingTail
         label.frame = NSRect(x: 30, y: 4, width: 220, height: 16)
         label.autoresizingMask = [.maxXMargin]
         addSubview(label)
-        detail.font = NSFont.systemFont(ofSize: 11)
+        detail.font = DS.NSFonts.secondary
         detail.textColor = .secondaryLabelColor
         detail.alignment = .right
         detail.lineBreakMode = .byTruncatingMiddle
@@ -2048,6 +2139,21 @@ final class CompletingTextView: NSTextView {
     var supportedCommands = Completion.defaultSupported
     /// Project document paths for `\input{`/`\include{`/`\includegraphics{` (the owner sets them).
     var projectFiles: [String] = []
+    /// Whether the caret is in math mode, answered by the owner from its
+    /// in-sync `SyntaxHighlighter` (`SourceEditorView`), which costs one
+    /// line's lexing. Unwired — a bare text view in a test — it says no, and
+    /// the list keeps the plain text-mode order.
+    var mathModeAtCaret: (Int) -> Bool = { _ in false }
+    /// Code folding (EditorFolding.swift): hidden ranges stay in the storage.
+    let folds = EditorFoldStore()
+
+    /// Whether a mechanical fix hint is showing at the caret (the owner
+    /// answers from `ShellModel.caretFix`). Only Esc is handled here; Tab
+    /// accepts the fix in `SourceEditorView.handleTab`, after this view has
+    /// had its say on completion and snippet placeholders. Unwired — a bare
+    /// text view in a test — it says no and Esc keeps its old meaning.
+    var caretFixVisible: () -> Bool = { false }
+    var dismissCaretFix: () -> Void = {}
 
     // MARK: snippet tab stops (Snippets: Tab / ⇧Tab between placeholders, Esc leaves)
 
@@ -2146,6 +2252,38 @@ final class CompletingTextView: NSTextView {
     }
 
     // MARK: ⌘/ line comment
+
+    /// ⌥⇧↓ / ⌥⇧↑: copy the line (or every line the selection touches) below or
+    /// above itself, leaving the caret on the copy. One undo step, like
+    /// `toggleLineComment`. A menu key equivalent and `keyDown` must not both
+    /// apply the same event: `performKeyEquivalent` consumes it, and a second
+    /// call with that event's timestamp is ignored.
+    private var lastDuplicateEventTimestamp: TimeInterval = -.infinity
+    private var lastDuplicateEventKeyCode: UInt16 = 0
+
+    func duplicateLines(below: Bool, event: NSEvent? = nil) {
+        if let ev = event ?? Self.duplicateChordEvent(NSApp.currentEvent) {
+            if ev.timestamp == lastDuplicateEventTimestamp, ev.keyCode == lastDuplicateEventKeyCode { return }
+            lastDuplicateEventTimestamp = ev.timestamp
+            lastDuplicateEventKeyCode = ev.keyCode
+        }
+        guard !hasMarkedText() else { return }
+        let sel = selectedRange()
+        guard let (edit, selection) = EditorKeyHandling.duplicateLinesEdit(in: string, range: sel, below: below) else { return }
+        breakUndoCoalescing()
+        insertText(edit.replacement, replacementRange: edit.range)
+        setSelectedRange(selection)
+        undoManager?.setActionName(selection.length > 0 || sel.length > 0 ? "Duplicate Lines" : "Duplicate Line")
+        breakUndoCoalescing()
+    }
+
+    /// ⌥⇧↓ / ⌥⇧↑, the chord both `keyDown` and the Editor menu bind.
+    private static func duplicateChordEvent(_ event: NSEvent?) -> NSEvent? {
+        guard let event else { return nil }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        guard modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 else { return nil }
+        return event
+    }
 
     /// Toggles `% ` on every line the selection touches (one undo step).
     func toggleLineComment() {
@@ -2350,6 +2488,7 @@ final class CompletingTextView: NSTextView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         foregroundDecorator?(dirtyRect)
+        folds.drawPlaceholders(in: dirtyRect, textView: self)
     }
 
     /// Scroll view + text view pair, like `NSTextView.scrollableTextView()`
@@ -2420,7 +2559,8 @@ final class CompletingTextView: NSTextView {
         lastCaret = caret
         let metadata = boundMetadata
         let request = CompletionScheduler.Request(text: string, caretUTF16: caret.location, metadata: metadata,
-                                                  supported: supportedCommands, projectFiles: projectFiles)
+                                                  supported: supportedCommands, projectFiles: projectFiles,
+                                                  mathMode: mathModeAtCaret(caret.location))
         scheduler.schedule(request) { [weak self] outcome in
             self?.present(outcome, metadataRevision: metadata?.revision)
         }
@@ -2638,6 +2778,19 @@ final class CompletingTextView: NSTextView {
 
     // MARK: events
 
+    /// Consumes ⌥⇧↓ / ⌥⇧↑ before the Editor menu's key equivalent can fire
+    /// the same chord a second time. `keyDown` still handles the chord when
+    /// the event never goes through `performKeyEquivalent` (hosted tests).
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if hasMarkedText() { return super.performKeyEquivalent(with: event) }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 {
+            duplicateLines(below: event.keyCode == 125, event: event)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     override func keyDown(with event: NSEvent) {
         if hasMarkedText() { super.keyDown(with: event); return } // IME composition owns the keys (mac-editor-accessibility)
         if vimActive, let key = VimMode.Key(event: event), vim.handle(key) { return } // VimMode.swift: normal/visual keys, Esc in insert
@@ -2654,6 +2807,15 @@ final class CompletingTextView: NSTextView {
             toggleLineComment()
             return
         }
+        // ⌥⇧↓ / ⌥⇧↑: duplicate the line(s) down/up (the Overleaf shortcut).
+        // This takes the key from AppKit's extend-selection-by-paragraph
+        // binding, which no LaTeX editor's users reach for and which ⇧↓ and
+        // ⌥↓ still cover between them. `performKeyEquivalent` also consumes
+        // this chord so an Editor-menu key equivalent cannot apply it twice.
+        if modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 {
+            duplicateLines(below: event.keyCode == 125, event: event)
+            return
+        }
         guard session != nil else {
             let plain = event.modifierFlags.intersection([.command, .option, .control]).isEmpty
             if plain, event.keyCode == 48, isSnippetActive { // Tab / ⇧Tab between snippet placeholders
@@ -2665,6 +2827,12 @@ final class CompletingTextView: NSTextView {
                 hideSignatureHelp()
                 return
             }
+            // Esc takes the caret-fix hint down (and with it Tab's claim on the
+            // key) before Esc's other meaning, opening the completion list.
+            if plain, event.keyCode == 53, caretFixVisible() {
+                dismissCaretFix()
+                return
+            }
             // Esc opens the list (AppKit's own `cancelOperation:` → `complete:`
             // binding is not reliable outside a key window, so it is explicit).
             if event.keyCode == 53, plain {
@@ -2672,9 +2840,9 @@ final class CompletingTextView: NSTextView {
             } else {
                 // A typed character arms the automatic open (`textChanged`);
                 // everything else (deletion, navigation, Return) does not.
-                // Vim normal/visual mode never arms it: a key `vim.handle`
-                // left unhandled (e.g. an unmapped letter) still reaches
-                // here, but it is a command key, not inserted text.
+                // Vim normal/visual mode never arms it: those modes consume
+                // every key `Key.init` accepts, so what still reaches here
+                // (arrows, ⌃-chords Vim declined) is never inserted text.
                 typingKey = Self.typesACharacter(event) && (!vimActive || vim.mode == .insert)
                 super.keyDown(with: event)
                 typingKey = false

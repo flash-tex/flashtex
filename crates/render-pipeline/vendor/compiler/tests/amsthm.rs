@@ -340,19 +340,34 @@ fn amsthm_alone_is_silent() {
     assert!(msgs.is_empty(), "{msgs:?}");
 }
 
+/// `\usepackage{amsmath,amssymb,amsthm}` -- HW1's and HW2's line -- is silent
+/// now that all three are implemented, not only amsthm: `crate::math` sets the
+/// amsmath constructs and gates the amssymb inventory, and the constructs that
+/// are still missing report themselves where they are used rather than as a
+/// claim about the package. A package that really is only recognised still
+/// warns from the same `\usepackage`, and only names itself.
 #[test]
-fn amsmath_and_amssymb_still_warn_once_amsthm_no_longer_does() {
+fn the_ams_trio_is_silent_and_an_unimplemented_package_still_warns() {
     let msgs = messages(
         r"\documentclass{article}\usepackage{amsmath,amssymb,amsthm}\begin{document}x\end{document}",
+    );
+    assert!(msgs.is_empty(), "{msgs:?}");
+
+    let msgs = messages(
+        r"\documentclass{article}\usepackage{amsmath,amssymb,amsthm,fancyhdr}\begin{document}x\end{document}",
     );
     let package_msgs: Vec<&String> = msgs
         .iter()
         .filter(|m| m.contains("recognised but not implemented"))
         .collect();
     assert_eq!(package_msgs.len(), 1, "{msgs:?}");
-    assert!(package_msgs[0].contains("amsmath"));
-    assert!(package_msgs[0].contains("amssymb"));
-    assert!(!package_msgs[0].contains("amsthm"));
+    assert!(package_msgs[0].contains("fancyhdr"), "{package_msgs:?}");
+    for implemented in ["amsmath", "amssymb", "amsthm"] {
+        assert!(
+            !package_msgs[0].contains(implemented),
+            "{implemented} must not be blamed: {package_msgs:?}"
+        );
+    }
 }
 
 #[test]

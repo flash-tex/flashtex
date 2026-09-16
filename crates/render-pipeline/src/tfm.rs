@@ -110,6 +110,21 @@ impl Tfm {
         })
     }
 
+    /// The first instruction of `left`'s lig/kern program for `right`
+    /// (tex.web §545) as math's `make_ord` reads it (§752): no boundary
+    /// characters, no run. `None` without an instruction, or when either
+    /// character is missing or the program is malformed.
+    #[cfg(feature = "math-font-kerns")]
+    pub fn pair_program(&self, left: u8, right: u8) -> Option<flashtex_math_layout::tfm::LigKern> {
+        use flashtex_font_resources::tfm::PairAction;
+        Some(match self.inner.pair_action(left, right).ok()?? {
+            PairAction::Kern(k) => flashtex_math_layout::tfm::LigKern::Kern(k.0),
+            PairAction::Ligature { replacement, retain_left, retain_right, advance } => {
+                flashtex_math_layout::tfm::LigKern::Ligature { op: advance * 4 + (u8::from(retain_left) << 1) + u8::from(retain_right), rem: replacement }
+            }
+        })
+    }
+
     /// `\fontdimen n` (1-based) in fixwords.
     pub fn param(&self, n: usize) -> Option<i32> {
         self.inner.parameter(n).map(|v| v.0)
@@ -142,6 +157,32 @@ impl Tfm {
                 })
                 .collect(),
         })
+    }
+}
+
+/// The codes with **no** ligature or kern program applied: every character
+/// stands for itself, nothing is inserted between two of them, and neither
+/// word boundary runs its program.
+///
+/// This is the regime `\verb`, `verbatim`/`verbatim*` and `lstlisting`
+/// typeset under. LaTeX gets there by making `` ` ``, `'`, `<`, `>`, `,`
+/// and `-` active inside verbatim (`\@noligs`, latex.ltx), each expanding
+/// to `\kern\z@` followed by the character, so the ligature program can
+/// never see two of them in a row — visible in pdflatex's `\showbox` as
+/// the `\kern 0.0` between the `b` and the `-` of `\verb*"a b-c"`.
+///
+/// The measured consequence at 12 pt T1 (`ectt1200`, every character
+/// 6.1735 pt): `\verb|x--y|` is 24.69397 pt = 4 characters, while
+/// `\ttfamily x--y` is 18.52048 pt = 3, because `ectt` *does* carry the
+/// `--` → endash ligature and `\ttfamily` is right to use it.
+pub fn literal_run(codes: &[u8]) -> TfmRun {
+    TfmRun {
+        leading_kern: 0,
+        glyphs: codes
+            .iter()
+            .enumerate()
+            .map(|(i, &code)| TfmGlyph { code, input: (i, i + 1), kern_after: 0 })
+            .collect(),
     }
 }
 

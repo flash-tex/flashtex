@@ -1,0 +1,27 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{longtable}
+\setlength{\parindent}{0pt}
+\usepackage{booktabs}
+\begin{document}
+Text before the table.
+
+\begin{longtable}{lc}
+\toprule First & Head\\ \midrule
+\endfirsthead
+\toprule Cont & Head\\ \midrule
+\endhead
+\midrule
+\endfoot
+\bottomrule
+\endlastfoot
+r1 & a\\
+r2 & b\\
+r3 & c\\
+r4 & d\\
+\end{longtable}
+
+Text after the table.
+\end{document}

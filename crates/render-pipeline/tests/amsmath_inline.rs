@@ -12,8 +12,15 @@ mod common;
 use common::*;
 use flashtex_render_pipeline::display::Item;
 
+/// Every construct in this file is amsmath's, and base LaTeX2e defines none
+/// of them: pdflatex answers `! Undefined control sequence` for `\binom`,
+/// `\dfrac`, `\genfrac`, `\substack` and `\operatorname`, and "Environment
+/// dcases undefined" for the `dcases` grid. These documents used to omit the
+/// `\usepackage`, which only worked because the compiler applied amsmath's
+/// constructs unconditionally; it diagnoses them against the document's own
+/// packages now, so the fixture has to load the one it is testing.
 fn doc(body: &str) -> String {
-    format!("\\documentclass{{article}}\\begin{{document}}{body}\\end{{document}}")
+    format!("\\documentclass{{article}}\\usepackage{{amsmath}}\\begin{{document}}{body}\\end{{document}}")
 }
 
 /// Renders `body` and returns every diagnostic code/message pair plus
@@ -22,7 +29,7 @@ fn doc(body: &str) -> String {
 fn render(body: &str) -> (Vec<(String, String)>, bool) {
     let r = render_one(&doc(body));
     let diags = r.v2.diagnostics.iter().map(|d| (d.code.clone(), d.message.clone())).collect();
-    let has_math_glyph = r.v2.pages.iter().flat_map(|p| p.items.iter()).any(|it| matches!(it, Item::GlyphRun(run) if run.role == flashtex_render_pipeline::display::RunRole::Math));
+    let has_math_glyph = r.v2.pages.iter().flat_map(|p| p.resident_items().iter()).any(|it| matches!(it, Item::GlyphRun(run) if run.role == flashtex_render_pipeline::display::RunRole::Math));
     (diags, has_math_glyph)
 }
 

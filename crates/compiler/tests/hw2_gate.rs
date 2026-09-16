@@ -20,7 +20,7 @@ fn compile() -> flashtex_compiler::incremental::CompileOutput {
 }
 
 #[test]
-#[ignore = "3 pages held on daniel-parent/hw2-gate's own base; main d416472a alone already sets HW2 on 4 pages (measured, with and without FT-060) and merging hw2-gate's skips does not bring it back to 3"]
+#[ignore = "fails: expected 3 pages, got 4 at 36fe7ec3"]
 fn hw2_matches_the_reference_page_count() {
     let out = compile();
     assert_eq!(out.pages.len(), 3, "HW2-reference.pdf has 3 pages");

@@ -455,8 +455,8 @@ struct ProposalPreviewView: View {
     @ObservedObject var preview: ProposalPreview
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            HStack(spacing: DS.Space.s) {
                 statusGlyph
                 Text(preview.statusText).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
@@ -465,10 +465,10 @@ struct ProposalPreviewView: View {
             .help("Compiled on a separate preview worker with the proposal inserted at the anchor; the editor buffer is untouched.")
             if case .ready(let r) = preview.state {
                 ForEach(r.new) { f in
-                    HStack(alignment: .top, spacing: 6) {
+                    HStack(alignment: .top, spacing: DS.Space.s) {
                         Image(systemName: f.diagnostic.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                             .foregroundStyle(f.diagnostic.severity == .error ? .red : .orange).font(.caption)
-                        VStack(alignment: .leading, spacing: 1) {
+                        VStack(alignment: .leading, spacing: DS.Size.hairline) {
                             Text(f.diagnostic.message).font(.caption)
                             Text(f.diagnostic.recovery.map { "↳ recovery: \($0)" } ?? "↳ no provisional rendering")
                                 .font(.caption2).foregroundStyle(.secondary)
@@ -482,7 +482,7 @@ struct ProposalPreviewView: View {
                 }
                 if let frag = preview.highlightedFragment {
                     Text(frag).font(.system(.caption, design: .monospaced))
-                        .padding(4).background(Color.yellow.opacity(0.25)).cornerRadius(3)
+                        .padding(DS.Space.xs).background(DS.Colors.statusModified.opacity(DS.State.selectionTintOpacity)).cornerRadius(DS.Radius.control)
                 }
                 let pre = r.nearby.count - r.nearby.filter { n in r.new.contains { $0.diagnostic == n.diagnostic } }.count
                 if pre > 0 || r.unrelatedCount > 0 {
@@ -490,9 +490,9 @@ struct ProposalPreviewView: View {
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
                 if let image = preview.thumbnail, let page = r.insertionPage {
-                    HStack(alignment: .top, spacing: 6) {
+                    HStack(alignment: .top, spacing: DS.Space.s) {
                         Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
-                            .frame(maxWidth: 120).border(.separator)
+                            .frame(maxWidth: DS.Size.imageTile).border(.separator)
                         Text("shadow page \(page) of \(r.pageCount), with the proposal inserted (not the live preview)")
                             .font(.caption2).foregroundStyle(.tertiary)
                     }
@@ -508,7 +508,7 @@ struct ProposalPreviewView: View {
             case .ready(let r):
                 Image(systemName: r.newErrorCount > 0 ? "xmark.octagon.fill" : (r.status == .ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"))
                     .foregroundStyle(r.newErrorCount > 0 ? .red : (r.status == .ok ? .green : .orange))
-            case .failed, .noCompiler: Image(systemName: "bolt.slash").foregroundStyle(.orange)
+            case .failed, .noCompiler: Image(systemName: "bolt.slash").foregroundStyle(DS.Colors.severityWarning)
             case .idle, .notPreviewable: Image(systemName: "eye.slash").foregroundStyle(.secondary)
             }
         }
@@ -522,7 +522,7 @@ struct ProposalApproveWarning: View {
     @ObservedObject var preview: ProposalPreview
     var body: some View {
         if preview.hasNewErrors, case .ready(let r) = preview.state {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(DS.Colors.severityWarning)
                 .help("Preview compile reports \(r.newErrorCount) new error\(r.newErrorCount == 1 ? "" : "s") from this insertion. You may still approve.")
         }
     }

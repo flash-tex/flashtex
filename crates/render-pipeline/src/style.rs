@@ -49,6 +49,12 @@ pub struct HeadingStyle {
     pub bold: bool,
     pub before: Skip,
     pub after: Skip,
+    /// `\@startsection`'s `#5` when it is negative: the heading runs into
+    /// the following paragraph and `\@xsect` puts `\hskip -#5` (this many
+    /// `em` of the heading font) after it instead of vertical glue.
+    /// `None` for a display heading, which uses [`Self::after`].
+    /// article.cls: `\paragraph`/`\subparagraph` are `-1em`.
+    pub run_in_after_em: Option<f64>,
 }
 
 /// `\usepackage[...]{microtype}` as pdfTeX sees it: the package options
@@ -132,7 +138,7 @@ pub struct Stylesheet {
     /// `\labelsep` (article: `.5em` of `\normalsize`): the gap between a
     /// list label's right edge and the item text.
     pub labelsep_pt: f64,
-    headings: [HeadingStyle; 3],
+    headings: [HeadingStyle; 5],
     /// The resolved class + geometry frame this stylesheet was built from
     /// ([`Stylesheet::from_resolved`]); `None` for [`Stylesheet::article`].
     pub class_geometry: Option<Box<ResolvedDocument>>,
@@ -179,11 +185,13 @@ impl Stylesheet {
         };
         let heading = |level: u8| -> HeadingStyle {
             let h = ds.resolve(&[Block::Document, Block::Heading(level)]);
-            let spec = flashtex_document_style::section_spec(level).expect("levels 1..=3");
+            let spec = flashtex_document_style::section_spec(level).expect("levels 1..=5");
             let before = spec.before_ex.scale(ex);
-            let after = match spec.after {
-                flashtex_document_style::SectionAfter::VerticalEx(s) => s.scale(ex),
-                flashtex_document_style::SectionAfter::RunInEm(_) => flashtex_document_style::Skip::ZERO,
+            let (after, run_in_after_em) = match spec.after {
+                flashtex_document_style::SectionAfter::VerticalEx(s) => (s.scale(ex), None),
+                // A run-in heading has no vertical after-skip at all: the
+                // `em` becomes horizontal space on the paragraph's first line.
+                flashtex_document_style::SectionAfter::RunInEm(em) => (flashtex_document_style::Skip::ZERO, Some(em)),
             };
             HeadingStyle {
                 size_pt: h.font_size.0,
@@ -191,6 +199,7 @@ impl Stylesheet {
                 bold: h.bold,
                 before: Skip::new(before.pt, before.plus, before.minus),
                 after: Skip::new(after.pt, after.plus, after.minus),
+                run_in_after_em,
             }
         };
         let parskip = ds.parskip();
@@ -237,7 +246,7 @@ impl Stylesheet {
             leftmargini_pt: list.leftmargin.0,
             parsep: Skip::new(list.parsep.pt, list.parsep.plus, list.parsep.minus),
             labelsep_pt: list.labelsep.0,
-            headings: [heading(1), heading(2), heading(3)],
+            headings: [heading(1), heading(2), heading(3), heading(4), heading(5)],
             class_geometry: None,
             microtype: None,
         }
@@ -282,7 +291,22 @@ impl Stylesheet {
         s.topskip_pt = frame_pt(p.topskip);
         s.maxdepth_pt = frame_pt(p.maxdepth);
         s.parindent_pt = frame_pt(p.parindent);
-        s.raggedbottom = !(doc.flags.twoside || doc.flags.twocolumn);
+        // `\parskip` is a *class* length, not a shared default: article and
+        // friends set `0pt plus 1pt`, letter.cls line 91 sets `0.7em`
+        // (7.66498pt rigid at 11pt), and reading it from the resolved class
+        // instead of `Stylesheet::article`'s is what puts a letter's
+        // paragraphs where pdflatex puts them. Before this the whole page
+        // rode 7.6 bp per paragraph too high.
+        s.parskip = Skip::new(
+            frame_pt(p.parskip.natural),
+            frame_pt(p.parskip.stretch),
+            frame_pt(p.parskip.shrink),
+        );
+        // article/report/book guard it (`\if@twoside\else\raggedbottom\fi`);
+        // letter.cls line 404 is a plain `\raggedbottom` with no guard at
+        // all, so a `[twoside]` letter is ragged-bottom too.
+        s.raggedbottom = doc.options.kind == flashtex_class_geometry::ClassKind::Letter
+            || !(doc.flags.twoside || doc.flags.twocolumn);
         s.columnseprule_pt = frame_pt(frame.columnseprule);
         if doc.flags.twocolumn {
             s.tolerance = 9999.0;
@@ -316,7 +340,63 @@ impl Stylesheet {
     }
 
     pub fn heading(&self, level: u8) -> HeadingStyle {
-        self.headings[usize::from(level.clamp(1, 3) - 1)]
+        self.headings[usize::from(level.clamp(1, 5) - 1)]
+    }
+
+    /// `\small` as `size1x.clo` declares it: `\@setfontsize\small` (the size
+    /// and that size's own `\baselineskip`, from document-style's table) and
+    /// the `\@listi` the command *redefines* while it is in force.
+    ///
+    /// `\small` only `\def`s `\@listi`; it does not execute it, so `\topsep`
+    /// keeps `\normalsize`'s value ([`Stylesheet::topsep`]) until a `\list`
+    /// at depth 1 runs inside the smaller size. `\partopsep` is a plain
+    /// length none of the size commands touch, so it is shared with
+    /// [`Stylesheet::partopsep`].
+    ///
+    /// size10.clo 62-67, size11.clo 58-68, size12.clo 58-68 (v1.4n,
+    /// TeX Live 2025).
+    pub fn small(&self) -> SmallSize {
+        let fs = flashtex_document_style::font_size(self.base, flashtex_document_style::SizeName::Small);
+        let (topsep, parsep) = match self.base {
+            BaseSize::Pt10 => (Skip::new(4.0, 2.0, 2.0), Skip::new(2.0, 1.0, 1.0)),
+            BaseSize::Pt11 => (Skip::new(6.0, 2.0, 2.0), Skip::new(3.0, 2.0, 1.0)),
+            BaseSize::Pt12 => (Skip::new(9.0, 3.0, 5.0), Skip::new(4.5, 2.0, 1.0)),
+        };
+        SmallSize {
+            size_pt: fs.size.0,
+            baselineskip_pt: fs.baselineskip.0,
+            topsep,
+            parsep,
+            partopsep: self.partopsep,
+        }
+    }
+}
+
+/// `\small` in the class's `size1x.clo` (see [`Stylesheet::small`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SmallSize {
+    pub size_pt: f64,
+    pub baselineskip_pt: f64,
+    /// `\topsep` of the `\@listi` `\small` defines (4pt at a 10pt base, not
+    /// `\normalsize`'s 8pt).
+    pub topsep: Skip,
+    pub parsep: Skip,
+    /// `\partopsep`, which no size command redefines.
+    pub partopsep: Skip,
+}
+
+impl SmallSize {
+    /// `\@topsepadd` of a level-1 `\list` opened while `\small` is in force:
+    /// `\topsep` plus `\partopsep` (`\@trivlist` adds `\partopsep` when the
+    /// `\begin` was read in vertical mode, which `\quotation` inside
+    /// `abstract` always is). This is the glue `\endlist`'s `\@endparenv`
+    /// puts after the environment.
+    pub fn topsepadd(self) -> Skip {
+        Skip::new(
+            self.topsep.natural + self.partopsep.natural,
+            self.topsep.stretch + self.partopsep.stretch,
+            self.topsep.shrink + self.partopsep.shrink,
+        )
     }
 }
 

@@ -98,11 +98,10 @@ preferences are kept.
    scrolls the preview to it). Zoom the preview with ⌘= / ⌘- and reset with
    ⌘9 (fit width) or ⌘0 (actual size).
 
-5. **Save and export.** ⌘S saves the `.tex` (UTF-8). *File › Export PDF
-   (exact, v2)…* writes a PDF with the same glyphs and positions as the
-   preview; *File › Export PDF…* (⌘⇧E) is the simpler CoreGraphics route.
-   The dark-preview toggle only changes the on-screen colours — exports are
-   always black on white.
+5. **Save and export.** ⌘S saves the `.tex` (UTF-8). *File › Export PDF…*
+   (⌘⇧E) writes a PDF with the same glyphs and positions as the preview, and
+   *File › Print…* (⌘P) prints those same bytes. The dark-preview toggle only
+   changes the on-screen colours — the export is always black on white.
 
 ### A multi-file project from scratch, in 4 steps
 
@@ -134,6 +133,7 @@ to see what the engine implements today and what it reports as unsupported.
 | Captures and durable edit history | `~/Library/Application Support/FlashTeX/captures/` |
 | AI provider key | the login Keychain (never a file) |
 
-Problems or questions: <https://github.com/flash-tex/flashtex/issues>. When
+Problems or questions: the Discord <https://discord.gg/J4kHDJmTrD> for a quick answer,
+<https://github.com/flash-tex/flashtex/issues> for bugs. When
 reporting a compile problem, *Edit › Copy Diagnostics as Text* (⌘⌥C) copies
 the Problems list in `path:line: severity: message` form for pasting.
