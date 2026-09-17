@@ -18,6 +18,11 @@ use flashtex_tex_expansion as tex;
 pub(crate) struct FontSetup {
     /// `\documentclass[10pt|11pt|12pt]`; the standard classes default to 10pt.
     pub class_pt: f64,
+    /// An AMS size class (`amsart`/`amsbook`/`amsproc`, or `acmart` via its
+    /// `amsart` base): declarations resolve against the AMS `\@typesizes`
+    /// ladder -- the same rung the glyphs are set at -- rather than the
+    /// standard `size1x.clo` tables.
+    pub ams: bool,
     /// `\usepackage[T1]{fontenc}` is in force (EC fonts).
     pub t1: bool,
     /// `\usepackage{lmodern}`'s families are the ones selected.
@@ -28,6 +33,7 @@ impl FontSetup {
     pub(crate) fn new(class_pt: Option<f64>, t1: bool, latin_modern: bool) -> Self {
         FontSetup {
             class_pt: class_pt.unwrap_or(10.0),
+            ams: false,
             t1,
             latin_modern,
         }
@@ -37,7 +43,9 @@ impl FontSetup {
     /// size declaration.
     pub(crate) fn size_pt(self, level: Option<FontSizeLevel>) -> f64 {
         match level {
-            Some(level) => crate::layout::size_declaration_pt(level, self.class_pt),
+            Some(level) => {
+                crate::layout::size_declaration_pt_for_class(level, self.class_pt, self.ams)
+            }
             None if self.class_pt > 11.5 => 12.0,
             None if self.class_pt > 10.5 => 10.95,
             None => 10.0,

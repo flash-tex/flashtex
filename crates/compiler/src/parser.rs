@@ -1066,13 +1066,24 @@ impl FontSizeLevel {
     }
 }
 
+/// The base class `class` resolves to for size purposes: `acmart` loads
+/// `amsart` internally (`acmart.cls` ends with
+/// `\LoadClass[\ACM@fontsize, reqno]{amsart}` and never overrides the
+/// `\@typesizes` ladder), so it classifies as `amsart`; every other class
+/// is its own base.
+pub(crate) fn ams_base_class(class: &str) -> &str {
+    match class {
+        "acmart" => "amsart",
+        other => other,
+    }
+}
+
 /// Whether `class` steps `\larger`/`\smaller` on the AMS `\@typesizes`
-/// ladder and resolves `\tiny`..`\Huge` against the AMS size tables
-/// (`amsart`, `amsbook`, `amsproc`, whose ladder logic is byte-identical).
-/// `acmart` also defines its own `\larger`/`\smaller`, but nothing shows it
-/// shares the AMS ladder, so it stays on the relsize-magstep path.
+/// ladder and resolves `\tiny`..`\Huge` against the AMS size tables:
+/// `amsart`, `amsbook`, `amsproc` (whose ladder logic is byte-identical),
+/// plus `acmart` via its `amsart` base class (see `ams_base_class`).
 pub(crate) fn is_ams_size_class(class: &str) -> bool {
-    matches!(class, "amsart" | "amsbook" | "amsproc")
+    matches!(ams_base_class(class), "amsart" | "amsbook" | "amsproc")
 }
 
 impl TextStyle {
@@ -1150,8 +1161,12 @@ pub(crate) fn style_declaration(name: &str) -> bool {
 /// `body_size_pt` is the document's own body size (`class_size_pt`, i.e.
 /// the 10/11/12pt class table selector); only the relative `\larger` /
 /// `\smaller` steps read it, everything else resolves its level later in
-/// `layout` against the same body size.
-fn apply_style(style: TextStyle, name: &str, body_size_pt: f64) -> TextStyle {
+/// `layout` against the same body size. `ams` selects the step the AMS
+/// classes' own ladder takes (`FontSizeLevel::stepped_ams`) over relsize's
+/// magstep math (`FontSizeLevel::stepped`), exactly like
+/// `P::relative_size_command` does on the main token path, so a step inside
+/// a flattened style argument lands on the same rung as a top-level one.
+fn apply_style(style: TextStyle, name: &str, body_size_pt: f64, ams: bool) -> TextStyle {
     let mut next = style;
     match name {
         "textbf" | "bfseries" => next.bold = true,
@@ -1208,7 +1223,7 @@ fn apply_style(style: TextStyle, name: &str, body_size_pt: f64) -> TextStyle {
             }
         }
         "tt" | "rm" | "sf" => {
-            next = apply_style(TextStyle::default(), &format!("{name}family"), body_size_pt)
+            next = apply_style(TextStyle::default(), &format!("{name}family"), body_size_pt, ams)
         }
         "tiny" => next.size = Some(FontSizeLevel::Tiny),
         "scriptsize" => next.size = Some(FontSizeLevel::ScriptSize),
@@ -1220,12 +1235,25 @@ fn apply_style(style: TextStyle, name: &str, body_size_pt: f64) -> TextStyle {
         "LARGE" => next.size = Some(FontSizeLevel::Large3),
         "huge" => next.size = Some(FontSizeLevel::Huge1),
         "Huge" => next.size = Some(FontSizeLevel::Huge2),
-        // relsize's relative steps: scale the actual current point size
-        // by ×1.2 (or ÷1.2) and take the closest defined size (see
+        // Relative steps: the AMS classes' own ladder rung step (see
+        // `FontSizeLevel::stepped_ams`) under an AMS class, else relsize's
+        // scale-the-actual-size by ×1.2 (or ÷1.2) closest-match step (see
         // `FontSizeLevel::stepped`). Unlike the absolute declarations
         // above, these read `next.size` rather than overwriting it.
-        "larger" => next.size = FontSizeLevel::stepped(next.size, 1, body_size_pt),
-        "smaller" => next.size = FontSizeLevel::stepped(next.size, -1, body_size_pt),
+        "larger" => {
+            next.size = if ams {
+                FontSizeLevel::stepped_ams(next.size, 1)
+            } else {
+                FontSizeLevel::stepped(next.size, 1, body_size_pt)
+            }
+        }
+        "smaller" => {
+            next.size = if ams {
+                FontSizeLevel::stepped_ams(next.size, -1)
+            } else {
+                FontSizeLevel::stepped(next.size, -1, body_size_pt)
+            }
+        }
         _ => {}
     }
     // Font commands (`\normalfont`, `\bf`) never change the colour.
@@ -3511,7 +3539,7 @@ impl P<'_> {
             "larger" | "smaller" => self.relative_size_command(name, span, para),
             _ if style_command(name) => self.style_command_argument(name, span, para),
             _ if style_declaration(name) => {
-                self.style = apply_style(self.style, name, self.body_size_pt())
+                self.style = apply_style(self.style, name, self.body_size_pt(), self.ams_sizes())
             }
             "hfill" | "hfil" | "hrulefill" | "dotfill" | "linebreak" | "nolinebreak" | "hspace"
             | "noindent" | "indent" | "quad" | "qquad" | "thinspace" | "negthinspace" | "medspace"
@@ -4188,6 +4216,12 @@ impl P<'_> {
         self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT)
     }
 
+    /// Whether the AMS `\@typesizes` ladder governs this document's sizes
+    /// (see `is_ams_size_class`): `acmart` counts via its `amsart` base.
+    fn ams_sizes(&self) -> bool {
+        self.document_class.as_deref().is_some_and(is_ams_size_class)
+    }
+
     /// `\larger`/`\smaller` (relsize's, or the AMS classes' own ladder):
     /// declarations with an optional `[n]` step count (default 1), not
     /// argument-taking commands. The step
@@ -4237,13 +4271,9 @@ impl P<'_> {
         let delta = if name == "larger" { steps } else { -steps };
         let mut next = self.style;
         // Only the AMS ladder classes step on their own `\@typesizes`
-        // ladder (`stepped_ams`); `acmart` stays on the relsize-magstep
-        // path (see `is_ams_size_class`).
-        next.size = if self
-            .document_class
-            .as_deref()
-            .is_some_and(is_ams_size_class)
-        {
+        // ladder (`stepped_ams`, `acmart` included via its `amsart` base);
+        // anything else steps relsize's magstep path (see `ams_sizes`).
+        next.size = if self.ams_sizes() {
             FontSizeLevel::stepped_ams(next.size, delta)
         } else {
             FontSizeLevel::stepped(next.size, delta, self.body_size_pt())
@@ -4258,7 +4288,7 @@ impl P<'_> {
         // `\leavevmode\bgroup`.
         self.paragraph_started = true;
         self.skip_spaces();
-        let next = apply_style(self.style, name, self.body_size_pt());
+        let next = apply_style(self.style, name, self.body_size_pt(), self.ams_sizes());
         if let Some(open) = self.closed_group_start() {
             // Re-enter the argument as an ordinary group so math and
             // other commands inside it are parsed normally.
@@ -4853,12 +4883,19 @@ impl P<'_> {
             // classes only offer 10/11/12); any other class keeps ignoring
             // them, exactly as before. This runs after the class name is
             // recorded, since the option list alone cannot tell an AMS
-            // `9pt` from an (invalid) standard-class one.
-            self.class_size_pt = option_list.iter().find_map(|option| match *option {
-                "8pt" => Some(8.0),
-                "9pt" => Some(9.0),
-                _ => None,
-            });
+            // `9pt` from an (invalid) standard-class one. With no
+            // point-size option at all the AMS classes default to 10pt
+            // (measured: bare `\documentclass{amsart}` reports `\f@size`
+            // 10 in pdflatex), not this compiler's 12pt `BODY_SIZE_PT`
+            // fallback for option-less standard classes.
+            self.class_size_pt = option_list
+                .iter()
+                .find_map(|option| match *option {
+                    "8pt" => Some(8.0),
+                    "9pt" => Some(9.0),
+                    _ => None,
+                })
+                .or(Some(10.0));
         }
         // letter.cls lines 91-92 replace the standard classes' paragraph
         // shape outright: `\parskip 0.7em` (rigid, in the class body font)
@@ -6591,7 +6628,8 @@ impl P<'_> {
         // the surrounding style for the `\end` restore), exactly like
         // `begin_theorem` below.
         if size_env {
-            self.style = apply_style(self.style, &environment, self.body_size_pt());
+            self.style =
+                apply_style(self.style, &environment, self.body_size_pt(), self.ams_sizes());
         }
         if self.in_body {
             if let Some(theorem) = self.theorems.get(&environment).cloned() {
@@ -8144,7 +8182,7 @@ impl P<'_> {
             return;
         }
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-        let style = apply_style(self.style, "ttfamily", body);
+        let style = apply_style(self.style, "ttfamily", body, self.ams_sizes());
         for (index, piece) in url_pieces(text).into_iter().enumerate() {
             match piece {
                 UrlPiece::Run(run) => para.push(Inline::Text {
@@ -8455,9 +8493,13 @@ impl P<'_> {
         self.class_size_pt.unwrap_or(10.0)
     }
 
-    /// `<factor>\baselineskip` (`\enlargethispage{2\baselineskip}`), with the
-    /// standard classes' `\normalsize` leading: 12pt, 13.6pt or 14.5pt for a
-    /// 10pt, 11pt or 12pt body.
+    /// `<factor>\baselineskip` (`\enlargethispage{2\baselineskip}`), with
+    /// the `\normalsize` leading: 12pt, 13.6pt or 14.5pt for a 10pt, 11pt
+    /// or 12pt body under the standard classes, else the AMS `\@typesizes`
+    /// normalsize rung's baselineskip half (12/13/14pt at 10/11/12pt --
+    /// the point-size half stays unread here, exactly as
+    /// `size_declaration_pt_for_class` leaves the baselineskip half
+    /// unread for glyphs).
     fn baselineskip_multiple(&self, raw: &str) -> Option<f64> {
         let raw = raw.trim();
         let factor = raw.strip_suffix("\\baselineskip")?.trim();
@@ -8467,7 +8509,9 @@ impl P<'_> {
             f => f.parse::<f64>().ok()?,
         };
         let body = self.latex_body_pt();
-        let leading = if body >= 12.0 {
+        let leading = if self.ams_sizes() {
+            crate::layout::ams_size_declaration_pt(crate::layout::ams_rung(None), body).1
+        } else if body >= 12.0 {
             14.5
         } else if body >= 11.0 {
             13.6
@@ -8851,7 +8895,7 @@ impl P<'_> {
     /// The NFSS inputs `em`/`ex` depend on (see [`crate::font_units`]).
     fn font_setup(&self) -> FontSetup {
         let in_preamble = self.has_document && !self.in_body;
-        FontSetup::new(
+        let mut setup = FontSetup::new(
             self.class_size_pt,
             self.font_encoding == Encoding::T1,
             if in_preamble {
@@ -8859,7 +8903,12 @@ impl P<'_> {
             } else {
                 self.latin_modern
             },
-        )
+        );
+        // `em`/`ex` read the current font's design size: under an AMS
+        // class that is the AMS `\@typesizes` rung, the same one the
+        // glyphs resolve against in layout.
+        setup.ams = self.ams_sizes();
+        setup
     }
 
     fn length_state(&self) -> LengthScope {
@@ -9024,13 +9073,23 @@ impl P<'_> {
                         )),
                     }
                 }
+                // `\larger`/`\smaller` are declarations, not argument-taking
+                // commands: they step the running style at once, exactly
+                // like `relative_size_command` does on the main token path.
+                // Routing them through `pending` below would drop an
+                // unbraced step entirely and step the relsize path under an
+                // AMS class instead of its ladder.
+                TokenKind::Command(name) if name == "larger" || name == "smaller" => {
+                    let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+                    style = apply_style(style, name, body, self.ams_sizes());
+                }
                 TokenKind::Command(name) if style_command(name) => {
                     let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-                    pending = Some(apply_style(style, name, body));
+                    pending = Some(apply_style(style, name, body, self.ams_sizes()));
                 }
                 TokenKind::Command(name) if style_declaration(name) => {
                     let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-                    style = apply_style(style, name, body);
+                    style = apply_style(style, name, body, self.ams_sizes());
                 }
                 TokenKind::LBrace => {
                     saved.push(style);
@@ -14527,16 +14586,115 @@ mod tests {
     }
 
     #[test]
-    fn acmart_larger_stays_on_the_relsize_path() {
-        // `acmart` needs no relsize package either, but nothing shows it
-        // shares the AMS ladder: `\tiny\larger` under relsize's magstep
-        // math stays at `\tiny` (5.9999pt rounds to the closest level,
-        // itself), so three steps hold 5pt — where `amsart` walks 6/7/8/9.
-        let source = r"\documentclass[10pt]{acmart}\begin{document}{\tiny a \larger b \larger c \larger d}\end{document}";
+    fn ams_class_without_a_size_option_defaults_to_10pt() {
+        // Measured with TeX Live 2026 pdflatex
+        // (`\documentclass{amsart}\begin{document}\makeatletter
+        // \typeout{\f@size}\typeout{\the\baselineskip}`): a bare AMS class
+        // defaults to 10pt (12.0pt leading), not this compiler's 12pt
+        // `BODY_SIZE_PT` fallback for option-less standard classes. The
+        // `\Large` probe reads the AMS 10pt row (12pt), not the 12pt row
+        // (17.28pt) the old default selected.
+        let source = r"\documentclass{amsart}\begin{document}{\normalsize e \Large g}\end{document}";
         let output = full_output(source);
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-        assert_eq!(output_size(&output, "a"), 5.0);
-        assert_eq!(output_size(&output, "d"), 5.0);
+        assert_eq!(output_size(&output, "e"), 10.0);
+        assert_eq!(output_size(&output, "g"), 12.0);
+    }
+
+    #[test]
+    fn acmart_uses_the_ams_ladder() {
+        // Measured with TeX Live 2026 pdflatex
+        // (`\documentclass[10pt]{acmart}\begin{document}\makeatletter`
+        // with `\typeout{\f@size}` after each step): `\tiny` is 6pt,
+        // three `\larger`s walk 7/8/9, `\Large` is 12pt and `\Huge`
+        // 20.74pt -- byte-identical to amsart's `\@typesizes` 10pt row,
+        // as expected: `acmart.cls` ends with
+        // `\LoadClass[\ACM@fontsize, reqno]{amsart}` and never overrides
+        // the ladder. (This replaces the earlier relsize-path
+        // expectation, which the pdflatex run refutes.)
+        let source = r"\documentclass[10pt]{acmart}\begin{document}{\tiny a \larger b \larger c \larger d}{\Large g \Huge j}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        for (text, size) in
+            [("a", 6.0), ("b", 7.0), ("c", 8.0), ("d", 9.0), ("g", 12.0), ("j", 20.74)]
+        {
+            assert_eq!(output_size(&output, text), size, "{text}");
+        }
+    }
+
+    #[test]
+    fn flattened_larger_steps_on_the_ams_ladder_like_the_top_level() {
+        // `\section` titles are flattened (`inlines_from_tokens`), not
+        // re-parsed: a `\larger` there must step the AMS ladder exactly
+        // like top-level `{\tiny a \larger b}` does, braced or not.
+        // Measured with TeX Live 2026 pdflatex
+        // (`\documentclass[10pt]{amsart}\begin{document}\section{\tiny a
+        // \larger b \larger{c}}` with `\typeout{\f@size}`): 6/7/8pt.
+        let source = r"\documentclass[10pt]{amsart}\begin{document}\section{\tiny a \larger b \larger{c}}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        for (text, size) in [("a", 6.0), ("b", 7.0), ("c", 8.0)] {
+            assert_eq!(output_size(&output, text), size, "{text}");
+        }
+    }
+
+    #[test]
+    fn ams_em_uses_the_ams_resolved_design_size() {
+        // Measured with TeX Live 2026 pdflatex
+        // (`\documentclass[10pt]{amsart}\begin{document}` with
+        // `{\Large\the\dimexpr1em\relax}`): 1em under `\Large` is
+        // 11.74988pt (cmr12's quad -- `\Large` is 12pt on the AMS 10pt
+        // row) and 9.24994pt under `\small` (cmr9's quad). The standard
+        // table would resolve `\Large` to 14.4pt and read the wrong
+        // design's quad instead.
+        let source = r"\documentclass[10pt]{amsart}\begin{document}{\Large A\hspace{1em}B}{\small C\hspace{1em}D}\end{document}";
+        let parsed = parse(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let mut spaces = Vec::new();
+        for block in &parsed.blocks {
+            if let Block::Paragraph(content) = block {
+                for inline in content {
+                    if let Inline::HSpace { pt, .. } = inline {
+                        spaces.push(*pt);
+                    }
+                }
+            }
+        }
+        assert_eq!(spaces.len(), 2, "{spaces:?}");
+        assert!(
+            (spaces[0] - 11.74988).abs() < 1e-4,
+            "Large 1em, got {}",
+            spaces[0]
+        );
+        assert!(
+            (spaces[1] - 9.24994).abs() < 1e-4,
+            "small 1em, got {}",
+            spaces[1]
+        );
+    }
+
+    #[test]
+    fn ams_baselineskip_multiple_uses_the_ams_normalsize_skip() {
+        // Measured with TeX Live 2026 pdflatex (`\the\baselineskip` under
+        // `\documentclass[10pt/11pt/12pt]{amsart}`): 12.0pt/13.0pt/14.0pt
+        // -- the AMS `\@typesizes` normalsize rung, not the standard
+        // classes' 12/13.6/14.5pt. `\enlargethispage{2\baselineskip}`
+        // reads that register, so it must scale the AMS value too.
+        for (option, leading) in [("10pt", 12.0), ("11pt", 13.0), ("12pt", 14.0)] {
+            let source = format!(
+                "\\documentclass[{option}]{{amsart}}\\begin{{document}}\\enlargethispage{{2\\baselineskip}}text\\end{{document}}"
+            );
+            let parsed = parse(&source);
+            assert!(parsed.diagnostics.is_empty(), "{option}: {:?}", parsed.diagnostics);
+            assert_eq!(
+                assignments(&parsed),
+                vec![(
+                    BreakParameter::EnlargeThisPage { pt: 2.0 * leading, shrink: false },
+                    false
+                )],
+                "{option}"
+            );
+        }
     }
 
     #[test]
