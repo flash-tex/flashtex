@@ -2127,11 +2127,34 @@ impl MathParser<'_> {
                 self.pending.push(space(BMOD_EXTRA_MU / 18.0, span));
                 space(BMOD_EXTRA_MU / 18.0, span)
             }
-            // amsmath's `\mod` (`amsmath.sty` 726-728) is a different command
-            // with a different kern and no parentheses, and is undefined in
-            // base LaTeX2e; it is left exactly as it was, with the rest of the
-            // amsmath-provided constructs.
-            "mod" => text_atom("mod".into(), span),
+            // amsmath's `\mod` (`amsmath.sty` 726-728):
+            //
+            //   \allowbreak\if@display\mkern18mu\else\mkern12mu\fi
+            //   {\operator@font mod}\,\,#1
+            //
+            // so the word "mod" is an Ord atom — a braced group, not
+            // `\mathbin{...}` like `\bmod` — opened by 18mu in display
+            // style (12mu elsewhere) and followed by 6mu (`\,\,`) before
+            // the required argument. (`\allowbreak` is a penalty: no width.)
+            //
+            // Residual, shared with `\bmod`'s `\nonscript`s above: the
+            // parser carries no display flag (display is chosen at layout
+            // time by `layout_display`), and no atom here carries a
+            // style-aware kern, so this always takes the 12mu text/script
+            // branch and display formulas come out 6mu narrow.
+            "mod" => {
+                let body = self.required_group("mod", span);
+                // `Nucleus::Text("mod")` defaults to Bin (see `atom_class`,
+                // which `\bmod` relies on); the braces force Ord here.
+                let word = MathAtom {
+                    class_override: Some(AtomClass::Ord),
+                    ..text_atom("mod".into(), span)
+                };
+                self.pending.push(word);
+                self.pending.push(space(6.0 / 18.0, span));
+                self.pending.extend(body.atoms);
+                space(12.0 / 18.0, span)
+            }
             // amsmath.sty lines 237-241: `\dfrac` = `\genfrac{}{}{}0`,
             // `\tfrac` = `\genfrac{}{}{}1`, `\binom` = `\genfrac()\z@{}`,
             // `\dbinom` = `\genfrac(){0pt}0`, `\tbinom` = `\genfrac(){0pt}1`.
@@ -8352,6 +8375,37 @@ mod package_gating_tests {
             let lead = laid_out(r"\bmod b", packages);
             close(x(&lead, "mod"), BMOD_EXTRA_MU);
             close(x(&lead, "b"), x(&lead, "mod") + own + BMOD_EXTRA_MU);
+        }
+    }
+
+    /// amsmath's `\mod` is `\mkern12mu{\operator@font mod}\,\,#1` outside
+    /// display (18mu there): the word is an Ord atom — not Bin like
+    /// `\bmod` — opened by 12mu and followed by 6mu before the argument.
+    /// The parser carries no display flag, so the 18mu display branch is
+    /// never taken (see the arm); 1mu = 1pt at this `SIZE`, so the mu read
+    /// straight off the coordinates.
+    #[test]
+    fn mod_is_twelve_mu_ord_word_and_six_mu_before_the_argument() {
+        for packages in [MathPackages::KERNEL, AMSMATH, AMSSYMB] {
+            let (list, diagnostics) = parsed(r"a\mod{y}", packages);
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            let word = list
+                .atoms
+                .iter()
+                .find(|atom| matches!(&atom.nucleus, Nucleus::Text(text) if text == "mod"))
+                .expect("the mod word");
+            assert_eq!(word.nucleus, Nucleus::Text("mod".into()));
+            assert_eq!(word.class_override, Some(AtomClass::Ord));
+            assert_eq!(atom_class(word), Some(AtomClass::Ord));
+
+            // The word itself is the same glyphs as the upright baseline.
+            let own = laid_out(r"\mathrm{mod}", packages).width;
+            let mid = laid_out(r"a\mod{y}", packages);
+            let a = laid_out("a", packages).width;
+            let y = laid_out("y", packages).width;
+            close(x(&mid, "mod"), a + 12.0);
+            close(x(&mid, "y"), x(&mid, "mod") + own + 6.0);
+            close(mid.width, a + 12.0 + own + 6.0 + y);
         }
     }
 
