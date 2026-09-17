@@ -35,6 +35,16 @@ fn page_texts(source: &str) -> Vec<String> {
         .collect()
 }
 
+/// Total laid-out width of a single-line document: the last item's right
+/// edge minus the first item's left edge.
+fn line_total(source: &str) -> f64 {
+    let output = compile(source);
+    let items = &output.pages[0].items;
+    let first = items.first().expect("laid-out items");
+    let last = items.last().expect("laid-out items");
+    last.x_pt + text_width(&last.text, BODY_SIZE_PT, Font::TimesRoman) - first.x_pt
+}
+
 /// `(x_pt, baseline_y_pt)` of the first laid-out item whose text is `word`.
 fn position_of(source: &str, word: &str) -> (f64, f64) {
     compile(source).pages[0]
@@ -375,4 +385,79 @@ fn phantom_reference_still_warns_when_undefined() {
         ghost_notes.iter().any(|m| m.contains("undefined")),
         "phantom must not swallow the warning: {ghost_notes:?}"
     );
+}
+
+#[test]
+fn phantom_reserves_leading_interword_glue() {
+    // Fourth review, finding 1: TeX's `\hbox{ X}` reserves the leading
+    // glue, so `A\phantom{ X}B` must lay out exactly like `AX B` (the
+    // review's pdflatex oracle is 25.41672pt at 10pt; here the sibling
+    // render pins the same single-space geometry at this engine's metrics).
+    let source = "\\begin{document}A\\phantom{ X}B\\end{document}";
+    let oracle = "\\begin{document}AX B\\end{document}";
+    assert!(messages(source).is_empty(), "{:?}", messages(source));
+    assert_eq!(line_total(source), line_total(oracle));
+    assert_eq!(page_texts(source), ["A", "B"]);
+}
+
+#[test]
+fn phantom_reserves_leading_and_trailing_glue() {
+    // Fourth review, finding 1: `A\phantom{ X }B` reserves TWO spaces
+    // (pdflatex total 28.75005pt): one word space more than `AX B`.
+    let source = "\\begin{document}A\\phantom{ X }B\\end{document}";
+    let oracle = "\\begin{document}AX B\\end{document}";
+    assert!(messages(source).is_empty(), "{:?}", messages(source));
+    let expected = line_total(oracle) + word_space(BODY_SIZE_PT, Font::TimesRoman);
+    assert!(
+        (line_total(source) - expected).abs() < 0.02,
+        "both spaces must be reserved: total={}, expected={expected}",
+        line_total(source)
+    );
+    assert_eq!(page_texts(source), ["A", "B"]);
+}
+
+#[test]
+fn phantom_whitespace_only_reserves_a_single_space() {
+    // Fourth review, finding 1: `A\phantom{ }B` (whitespace-only) must
+    // lay out exactly like `A B` (pdflatex total 17.9167pt): exactly one
+    // space, not zero and not two.
+    let source = "\\begin{document}A\\phantom{ }B\\end{document}";
+    let oracle = "\\begin{document}A B\\end{document}";
+    assert!(messages(source).is_empty(), "{:?}", messages(source));
+    assert_eq!(line_total(source), line_total(oracle));
+    assert_eq!(page_texts(source), ["A", "B"]);
+}
+
+#[test]
+fn box_trailing_space_emits_no_empty_text_item() {
+    // Fourth review, finding 2: the shared `box_inlines` trailing-gap
+    // marker must not leak a `""` TextItem into the page item stream for
+    // box commands whose ink is kept (`\phantom` never shows it because
+    // its ink is discarded).
+    for source in [
+        "\\usepackage{xcolor}\\begin{document}A\\colorbox{yellow}{X }B\\end{document}",
+        "\\begin{document}A\\underline{X }B\\end{document}",
+    ] {
+        assert!(messages(source).is_empty(), "{source:?}: {:?}", messages(source));
+        let output = compile(source);
+        let items: Vec<_> = output
+            .pages
+            .iter()
+            .flat_map(|page| page.items.iter())
+            .collect();
+        assert!(
+            !items.iter().any(|item| item.text.is_empty()),
+            "{source:?} must lay out no empty-string item: {:?}",
+            items.iter().map(|item| item.text.clone()).collect::<Vec<_>>()
+        );
+        // The widths stay right: the trailing space still adds exactly one
+        // word space past the no-space sibling.
+        let nospace = source.replace("X }", "X}");
+        let (bx_space, _) = position_of(source, "B");
+        let (bx_plain, _) = position_of(&nospace, "B");
+        assert!(
+            ((bx_space - bx_plain) - word_space(BODY_SIZE_PT, Font::TimesRoman)).abs() < 0.02,
+            "{source:?}: trailing space must add one word space: {bx_plain} -> {bx_space}"
+        );
+    }
 }

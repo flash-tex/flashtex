@@ -294,3 +294,50 @@ fn inserting_top_section_recomputes_and_matches_full_build() {
         assert!(output.contains(&expected));
     }
 }
+
+#[test]
+fn figure_caption_centering_measures_the_broken_line() {
+    // Fourth review, finding 3: the caption width must come from the real
+    // emitter (`inline_box`), not a hand-mirrored walk whose catch-all
+    // swallowed `LineBreak` and summed both lines into the centred width.
+    // A two-line caption's first (longest) line is centred on its own width.
+    use flashtex_compiler::layout::{text_width, Font, BODY_SIZE_PT, MARGIN_PT};
+    let source = "\\begin{document}\\begin{figure}\\caption{AAAAAAAAAAAAAAAAAAAAAAAA\\\\B}\\end{figure}\\end{document}";
+    let output = compile_full(source, LayoutConstraints::default());
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let items = &output.pages[0].items;
+    let first = items.first().expect("caption must lay out items");
+    let first_line: Vec<_> = items
+        .iter()
+        .filter(|item| item.baseline_y_pt == first.baseline_y_pt)
+        .collect();
+    assert!(first_line.len() >= 2, "caption must break: {first_line:?}");
+    assert_eq!(first.text, "Figure 1:");
+    let last = first_line.last().expect("first line items");
+    let measure = LayoutConstraints::default().measure_pt;
+    let left_gap = first.x_pt - MARGIN_PT;
+    let right_gap =
+        (MARGIN_PT + measure) - (last.x_pt + text_width(&last.text, BODY_SIZE_PT, Font::TimesRoman));
+    assert!(
+        (left_gap - right_gap).abs() < 0.03,
+        "first caption line must be centred: left={left_gap} right={right_gap}"
+    );
+}
+
+#[test]
+fn figure_caption_measurement_reports_reference_warnings_once() {
+    // Fourth review, finding 3 guard: measuring through the real emitter
+    // must not double-report diagnostics — the measurement's notes are
+    // dropped and only the real emission's survive.
+    let output = compile_full(
+        "\\begin{document}\\begin{figure}\\caption{A\\ref{missing}B}\\end{figure}\\end{document}",
+        LayoutConstraints::default(),
+    );
+    let undefined = output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.message.contains("undefined"))
+        .count();
+    assert_eq!(undefined, 1, "one undefined-reference warning: {:?}", output.diagnostics);
+    assert!(output.pages[0].items.iter().any(|item| item.text == "??"));
+}

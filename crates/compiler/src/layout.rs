@@ -1025,20 +1025,27 @@ impl LayoutCursor {
         }
         self.note_space();
         self.ensure_extents(size, size * (LINE_SPACING - 1.0));
-        let item = TextItem {
-            text,
-            x_pt: round2(self.x),
-            baseline_y_pt: round2(self.y),
-            font_size_pt: size,
-            span,
-            font,
-            rule: None,
-        };
-        self.pages
-            .last_mut()
-            .expect("at least one page")
-            .items
-            .push(item);
+        // Box-edge gap markers (`box_inlines`) are zero-width runs whose
+        // only job is the cursor advance above: reserving interword glue
+        // inside the box. They must never reach the page as a `""` item
+        // (PDF text emission, selection/search, snapshots) — the same
+        // empty guard `push_item` already applies below.
+        if !text.is_empty() {
+            let item = TextItem {
+                text,
+                x_pt: round2(self.x),
+                baseline_y_pt: round2(self.y),
+                font_size_pt: size,
+                span,
+                font,
+                rule: None,
+            };
+            self.pages
+                .last_mut()
+                .expect("at least one page")
+                .items
+                .push(item);
+        }
         self.content_end = self.x + w;
         self.x += w + word_space(size, font);
     }
@@ -1964,7 +1971,7 @@ impl LayoutCursor {
             Block::FigureCaption { content } => {
                 // Centre the full invisible box: every inline width counts,
                 // including a phantom's reserved geometry (see
-                // `caption_content_width`), so e.g.
+                // `caption_box_width`), so e.g.
                 // `\caption{A\phantom{WWWW}B}` centres A, the blank and B
                 // together rather than shifting the visible text right.
                 let width: f64 = self.caption_box_width(content, body_size);
@@ -2100,275 +2107,20 @@ impl LayoutCursor {
         self.constraints.font_size_pt
     }
 
-    /// The centred width of a figure caption's content: a side-effect-free
-    /// simulation of the `(x, content_end)` cursor state `emit` threads
-    /// through the same inlines, so the centring offset accounts for every
-    /// inline rather than just `Inline::Text`. Each arm mirrors its `emit`
-    /// counterpart exactly — including `space_before` rewinds of the eagerly
-    /// reserved interword gap, which is why e.g. `\\caption{A\\phantom{WWWW}B}`
-    /// centres the full invisible box while `\\caption{A X B}` and the plain
-    /// runs keep their long-standing positions. Math is measured through a
-    /// throwaway diagnostics sink (the real emission reports those once);
-    /// display math, tabulars, graphics and footnote marks are not counted
-    /// (as before).
-    fn caption_box_width(&self, inlines: &[Inline], size: f64) -> f64 {
-        let mut x = 0.0f64;
-        let mut content_end = 0.0f64;
-        for inline in inlines {
-            self.caption_advance(inline, size, &mut x, &mut content_end);
-        }
-        content_end
-    }
-
-    /// One inline's step of the simulation above (`x`/`content_end` are the
-    /// cursor's, relative to the line start).
-    fn caption_advance(&self, inline: &Inline, size: f64, x: &mut f64, content_end: &mut f64) {
-        // A `place`-like run: rewind the eagerly reserved gap when glued,
-        // then reserve the next gap. The reserve uses the run's own size and
-        // face, exactly as `place` does.
-        let place = |text: &str,
-                     style: &crate::parser::TextStyle,
-                     space_before: bool,
-                     x: &mut f64,
-                     content_end: &mut f64| {
-            if !space_before {
-                *x = *content_end;
-            }
-            let text_size = style.size.map_or(size, |level| {
-                size_declaration_pt(level, self.constraints.font_size_pt)
-            });
-            let font = style_font(*style);
-            *content_end = *x + glyph_width(text, text_size, font);
-            *x = *content_end + word_space(text_size, font);
-        };
-        match inline {
-            Inline::Text {
-                text,
-                style,
-                space_before,
-                ..
-            } => place(text, style, *space_before, x, content_end),
-            Inline::Verbatim {
-                text,
-                space_before,
-                ..
-            } => {
-                if !space_before {
-                    *x = *content_end;
-                }
-                *content_end = *x + glyph_width(text, size, Font::Courier);
-                *x = *content_end + word_space(size, Font::Courier);
-            }
-            Inline::Discretionary {
-                nobreak, style, ..
-            } => {
-                if !nobreak.is_empty() {
-                    // The generic path always glues the surviving text, set
-                    // in the ambient size with the run's face.
-                    *x = *content_end;
-                    let font = style_font(*style);
-                    *content_end = *x + glyph_width(nobreak, size, font);
-                    *x = *content_end + word_space(size, font);
-                }
-            }
-            Inline::Phantom {
-                content,
-                horizontal,
-                space_before,
-                ..
-            } => {
-                if !space_before {
-                    *x = *content_end;
-                }
-                // The argument is its own unbroken box; a `vphantom`
-                // reserves no width, exactly like the emission arm. The
-                // trailing reserve uses the ambient size and face, as the
-                // emission arm does.
-                let width = if *horizontal {
-                    self.caption_box_width(content, size)
-                } else {
-                    0.0
-                };
-                *content_end = *x + width;
-                *x = *content_end + word_space(size, Font::TimesRoman);
-            }
-            // Transparent wrappers set their content inline. `Underline`
-            // honours `space_before`; `ColorBox`/`Transform` ignore it,
-            // exactly like their emission arms.
-            Inline::Underline(u) => {
-                if !u.space_before {
-                    *x = *content_end;
-                }
-                for inner in &u.content {
-                    self.caption_advance(inner, size, x, content_end);
-                }
-            }
-            Inline::ColorBox(b) => {
-                for inner in &b.content {
-                    self.caption_advance(inner, size, x, content_end);
-                }
-            }
-            Inline::Transform(b) => {
-                for inner in &b.content {
-                    self.caption_advance(inner, size, x, content_end);
-                }
-            }
-            Inline::TextGlue { em, .. } => {
-                *x += em * size;
-                *content_end = *x;
-            }
-            Inline::HSpace {
-                pt,
-                space_before_pt,
-                space_after_pt,
-                ..
-            } => {
-                *x = *content_end + space_before_pt + pt + space_after_pt;
-                *content_end = *x;
-            }
-            Inline::Kern { amount, style, .. } => {
-                use crate::text_builtins::{self as tb};
-                let text_size = style.size.map_or(size, |level| {
-                    size_declaration_pt(level, self.constraints.font_size_pt)
-                });
-                let cx = tb::DimenContext {
-                    quad: tb::pt_to_sp(text_size),
-                    ..Default::default()
-                };
-                *x = *content_end + tb::sp_to_pt(amount.resolve(&cx));
-                *content_end = *x;
-            }
-            Inline::Rule {
-                rule,
-                style,
-                space_before,
-                ..
-            } => {
-                use crate::text_builtins::{self as tb};
-                if !space_before {
-                    *x = *content_end;
-                }
-                let text_size = style.size.map_or(size, |level| {
-                    size_declaration_pt(level, self.constraints.font_size_pt)
-                });
-                let font = style_font(*style);
-                let cx = tb::DimenContext {
-                    quad: tb::pt_to_sp(text_size),
-                    x_height: tb::pt_to_sp(x_height_pt(font, text_size)),
-                    text_width: tb::pt_to_sp(self.constraints.measure_pt),
-                    line_width: tb::pt_to_sp(self.right_edge() - self.left_edge()),
-                    column_width: tb::pt_to_sp(self.constraints.measure_pt),
-                };
-                // `place_rule` glues the rule box like a word in the run's
-                // size and face.
-                let width = tb::sp_to_pt(rule.resolve(&cx).width);
-                *content_end = *x + width;
-                *x = *content_end + word_space(text_size, font);
-            }
-            Inline::Logo {
-                logo,
-                style,
-                space_before,
-                ..
-            } => {
-                use crate::text_builtins::{self as tb};
-                if !space_before {
-                    *x = *content_end;
-                }
-                let text_size = style.size.map_or(size, |level| {
-                    size_declaration_pt(level, self.constraints.font_size_pt)
-                });
-                let font = style_font(*style);
-                let metrics = Core14LogoMetrics {
-                    font,
-                    size: text_size,
-                };
-                // `place_logo` glues the construction like a word in the
-                // run's size and face.
-                let width = tb::sp_to_pt(tb::layout_logo(*logo, &metrics).width);
-                *content_end = *x + width;
-                *x = *content_end + word_space(text_size, font);
-            }
-            Inline::Math { list, space_before, .. } => {
-                if !space_before {
-                    *x = *content_end;
-                }
-                // Measured through a throwaway sink: the real emission
-                // reports any diagnostics exactly once.
-                let width = math::layout(list, size, &mut Vec::new()).width;
-                *content_end = *x + width;
-                *x = *content_end + word_space(size, Font::TimesRoman);
-            }
-            Inline::Reference {
-                key,
-                page,
-                equation,
-                space_before,
-                ..
-            } => {
-                if !space_before {
-                    *x = *content_end;
-                }
-                // The same text the emission arm places, in the same face.
-                let (text, font) = match self.resolved_labels.get(key) {
-                    Some(value) => {
-                        let text = if *page {
-                            value.page_text.clone()
-                        } else {
-                            value.number.clone()
-                        };
-                        let text = if *equation { format!("({text})") } else { text };
-                        (text, Font::TimesRoman)
-                    }
-                    None if *equation => ("(??)".to_string(), Font::TimesRoman),
-                    None => ("??".to_string(), Font::TimesBold),
-                };
-                // `(??)` mixes faces; measure piece-wise like the emission.
-                let width = if text == "(??)" {
-                    glyph_width("(", size, Font::TimesRoman)
-                        + glyph_width("??", size, Font::TimesBold)
-                        + glyph_width(")", size, Font::TimesRoman)
-                } else {
-                    glyph_width(&text, size, font)
-                };
-                *content_end = *x + width;
-                *x = *content_end + word_space(size, Font::TimesRoman);
-            }
-            Inline::CleverReference {
-                keys,
-                page,
-                range,
-                label_only,
-                capitalise,
-                space_before,
-                ..
-            } => {
-                if !space_before {
-                    *x = *content_end;
-                }
-                let (text, unresolved) = clever_reference_text(
-                    keys,
-                    &self.resolved_labels,
-                    &self.cleveref,
-                    *page,
-                    *range,
-                    *label_only,
-                    *capitalise,
-                );
-                let font = if unresolved { Font::TimesBold } else { Font::TimesRoman };
-                *content_end = *x + glyph_width(&text, size, font);
-                *x = *content_end + word_space(size, Font::TimesRoman);
-            }
-            Inline::ThePage { space_before, .. } => {
-                if !space_before {
-                    *x = *content_end;
-                }
-                let text = self.page_style.format(self.page_value);
-                *content_end = *x + glyph_width(&text, size, Font::TimesRoman);
-                *x = *content_end + word_space(size, Font::TimesRoman);
-            }
-            _ => {}
-        }
+    /// The centred width of a figure caption's content: the caption run
+    /// through the real `emit` in a detached `inline_box` cursor, so the
+    /// centring offset accounts for every inline kind by construction —
+    /// including a phantom's reserved geometry (which is why e.g.
+    /// `\\caption{A\\phantom{WWWW}B}` centres A, the blank and B together
+    /// rather than shifting the visible text right), and any image, table
+    /// or footnote mark a hand-mirrored walk would have to re-implement
+    /// arm by arm. Diagnostics the measurement reports are dropped: the
+    /// real emission in the caption arm reports them exactly once below.
+    fn caption_box_width(&mut self, inlines: &[Inline], size: f64) -> f64 {
+        let notes = self.diagnostics.len();
+        let width = self.inline_box(inlines, size, None).0.width;
+        self.diagnostics.truncate(notes);
+        width
     }
 
     /// Lays `inlines` out in a detached cursor as one box whose origin is its
@@ -3602,6 +3354,11 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 // box, not glue: unlike `hspace`, the eagerly reserved
                 // inter-word space around it is kept (see `place`), so
                 // `a \phantom{X} b` keeps both gaps while `X` paints nothing.
+                // Render-pipeline limitation (stated, not fixed): the
+                // pipeline builds against the pinned `vendor/compiler`
+                // mirror (PIN `c95977d6`, which carries only math-mode
+                // `Nucleus::Phantom`), so this text-mode node reaches the
+                // renderer only once vendor/ is re-pinned past it.
                 if !space_before {
                     c.x = c.content_end;
                 }

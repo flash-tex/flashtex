@@ -583,9 +583,9 @@ Canonical sources:
 | `\LaTeX` |  | latex.ltx logo: L, kern -.36em, script-size A raised to the T height, kern -.15em, \TeX |
 | `\LaTeXe` |  | \LaTeX, kern .15em, 2 and a text-style subscript varepsilon |
 | `\rule` | `[raise]{dimension}{dimension}` | filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \textwidth, \linewidth, \columnwidth |
-| `\phantom` | `{...}` | empty box with the argument's width, height and depth; nothing is painted |
-| `\hphantom` | `{...}` | empty box with the argument's width only (zero height and depth) |
-| `\vphantom` | `{...}` | empty box with the argument's height and depth only (zero width) |
+| `\phantom` | `{...}` | empty box with the argument's width, height and depth; nothing is painted (an explicit \item[...] label keeps plain text, so the reserved width is lost there) |
+| `\hphantom` | `{...}` | empty box with the argument's width only (zero height and depth; an explicit \item[...] label keeps plain text, so the reserved width is lost there) |
+| `\vphantom` | `{...}` | empty box with the argument's height and depth only (zero width; an explicit \item[...] label keeps plain text) |
 | `\thinspace` |  | text kern .16667em (math: thin muskip) |
 | `\negthinspace` |  | text kern -.16667em |
 | `\medspace` |  | text kern .2222em |

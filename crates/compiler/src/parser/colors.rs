@@ -240,6 +240,11 @@ impl P<'_> {
         // and sets `content_end` to it, adding precisely one word space.
         // Appending real glue (`Inline::TextGlue`) instead would stack a
         // second space on top of that pending one.
+        let leading_space = tokens
+            .iter()
+            .find(|input| !matches!(input.token.kind, TokenKind::Comment))
+            .filter(|input| matches!(input.token.kind, TokenKind::Space))
+            .map(|input| input.token.span);
         let trailing_space = tokens
             .iter()
             .rev()
@@ -275,7 +280,35 @@ impl P<'_> {
                 _ => Vec::new(),
             })
             .collect();
-        if let Some(span) = trailing_space {
+        // TeX's `\hbox{ X}` reserves the leading interword glue just as
+        // `\hbox{X }` reserves the trailing one. The leading marker is the
+        // mirror of the trailing one below: a zero-width run with
+        // `space_before: false` *before* the content, so `place` rewinds to
+        // `content_end` (dropping outer glue the box is glued against) and
+        // eagerly reserves one word space the first content run then folds
+        // into the box. It carries the style in force where the space sits
+        // (the box entry style), so the reserved gap has that run's face.
+        // A box with no content at all (whitespace-only) needs the leading
+        // path: at x = 0 the trailing marker below has no pending gap to
+        // fold and would measure zero, while the leading one sets the gap
+        // itself. It still gets the trailing marker too, which folds that
+        // freshly set gap into the box — exactly one space either way,
+        // never two (the fold adds nothing of its own).
+        let has_content = !inlines.is_empty();
+        let leading = leading_space.or(if !has_content { trailing_space } else { None });
+        let trailing = trailing_space.or(if !has_content { leading_space } else { None });
+        if let Some(span) = leading {
+            inlines.insert(
+                0,
+                Inline::Text {
+                    text: String::new(),
+                    span,
+                    style: outer_style,
+                    space_before: false,
+                },
+            );
+        }
+        if let Some(span) = trailing {
             inlines.push(Inline::Text {
                 text: String::new(),
                 span,
