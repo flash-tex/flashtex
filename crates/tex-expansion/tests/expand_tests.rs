@@ -955,6 +955,27 @@ fn newtheorem_shared_counter_control_sequence_does_not_falsely_match_a_name() {
 }
 
 #[test]
+fn newtheorem_shared_counter_macro_is_expanded_before_the_existence_check() {
+    // The `[shared]` counter name is an expanded context like the `{name}`
+    // argument (`scan_through_group(true)`): `\base`, a `\def`-defined
+    // macro for the real counter `thm`, must expand to `thm` before the
+    // existence check, so this declaration claims `\cor` exactly like a
+    // literal `[thm]` would -- not the raw token text `\base`, which
+    // matches no declared environment. The expanded name is also what is
+    // handed downstream, so the compiler's own raw read of the bracket
+    // agrees with this check instead of rejecting it.
+    let r = expand_str(
+        r"\newtheorem{thm}{Theorem}\def\base{thm}\newtheorem{cor}[\base]{Corollary}\begin{cor}Hi\end{cor}",
+    );
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    let out = text(&r.tokens);
+    assert!(out.contains("Hi"), "{out:?}");
+    assert!(out.contains("[thm]"), "{out:?}");
+    assert!(out.contains(r"\cor "), "{out:?}");
+    assert!(out.contains(r"\endcor "), "{out:?}");
+}
+
+#[test]
 fn newtheorem_valid_shared_counter_still_declares() {
     // A counter-sharing declaration that refers to an earlier, successful
     // `\newtheorem` keeps working exactly as before: both names are
