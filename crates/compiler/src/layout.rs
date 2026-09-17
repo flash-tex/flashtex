@@ -2375,8 +2375,16 @@ pub(crate) fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f6
 /// `\large`, `\Large`, `\LARGE`, `\huge`, `\Huge` — against the standard
 /// classes' nine (`FontSizeLevel`). The user-visible command names are the
 /// standard ones (the class aliases `\scriptsize` to `\SMALL` and
-/// `\footnotesize` to `\Small`); only `\Tiny` (rung 0) has no
-/// `FontSizeLevel` and folds onto `Tiny` in `ams_rung_level`.
+/// `\footnotesize` to `\Small`).
+///
+/// **Known gap:** `\Tiny` (rung 0) has no `FontSizeLevel` of its own and
+/// folds onto `Tiny` (rung 1, `\tiny`) in `ams_rung_level`, so stepping
+/// below `\tiny` (e.g. three `\smaller`s) re-enters at `\tiny`'s own value
+/// instead of reaching the AMS classes' genuinely smaller `\Tiny` rung.
+/// Representing rung 0 for real needs a new state slot (a `FontSizeLevel`
+/// variant or an AMS-specific rung field on the style), which reaches
+/// roughly 80 call sites across this crate; deliberately left for a
+/// separate, focused change rather than folded into a size-table fix.
 pub(crate) const AMS_RUNG_COUNT: usize = 11;
 
 /// `(font size pt, baselineskip pt)` for one AMS ladder rung, from the real
@@ -2390,25 +2398,34 @@ pub(crate) const AMS_RUNG_COUNT: usize = 11;
 pub(crate) fn ams_size_declaration_pt(rung: usize, body_size_pt: f64) -> (f64, f64) {
     // Rungs: Tiny, tiny, SMALL, Small, small, normalsize, large, Large,
     // LARGE, huge, Huge.
+    // Font sizes verified against a real pdflatex `\f@size` dump (TeX Live
+    // 2026, amsart/amsbook/amsproc identical) -- NOT the `\@xipt`-family
+    // macro names' literal digits. Those macros are NFSS design-size
+    // substitutions, not exact points: `\@xipt` renders at 10.95pt (the
+    // nearest real Computer Modern design size to "11"), `\@xivpt` at
+    // 14.4pt, `\@xviipt` at 17.28pt, `\@xxpt` at 20.74pt and `\@xxvpt` at
+    // 24.88pt. `\@xiipt` (12pt) is already an exact design size, so it
+    // needs no substitution. Baselineskip values are unaffected (plain
+    // dimens, not run through NFSS).
     const SIZE_8PT: [(f64, f64); AMS_RUNG_COUNT] = [
         (5.0, 6.0), (5.0, 6.0), (5.0, 6.0), (6.0, 7.0), (7.0, 8.0), (8.0, 10.0),
-        (9.0, 11.0), (10.0, 12.0), (11.0, 13.0), (12.0, 14.0), (14.0, 17.0),
+        (9.0, 11.0), (10.0, 12.0), (10.95, 13.0), (12.0, 14.0), (14.4, 17.0),
     ];
     const SIZE_9PT: [(f64, f64); AMS_RUNG_COUNT] = [
         (5.0, 6.0), (5.0, 6.0), (6.0, 7.0), (7.0, 8.0), (8.0, 10.0), (9.0, 11.0),
-        (10.0, 12.0), (11.0, 13.0), (12.0, 14.0), (14.0, 17.0), (17.0, 20.0),
+        (10.0, 12.0), (10.95, 13.0), (12.0, 14.0), (14.4, 17.0), (17.28, 20.0),
     ];
     const SIZE_10PT: [(f64, f64); AMS_RUNG_COUNT] = [
         (5.0, 6.0), (6.0, 7.0), (7.0, 8.0), (8.0, 10.0), (9.0, 11.0), (10.0, 12.0),
-        (11.0, 13.0), (12.0, 14.0), (14.0, 17.0), (17.0, 20.0), (20.0, 24.0),
+        (10.95, 13.0), (12.0, 14.0), (14.4, 17.0), (17.28, 20.0), (20.74, 24.0),
     ];
     const SIZE_11PT: [(f64, f64); AMS_RUNG_COUNT] = [
-        (6.0, 7.0), (7.0, 8.0), (8.0, 10.0), (9.0, 11.0), (10.0, 12.0), (11.0, 13.0),
-        (12.0, 14.0), (14.0, 17.0), (17.0, 20.0), (20.0, 24.0), (25.0, 30.0),
+        (6.0, 7.0), (7.0, 8.0), (8.0, 10.0), (9.0, 11.0), (10.0, 12.0), (10.95, 13.0),
+        (12.0, 14.0), (14.4, 17.0), (17.28, 20.0), (20.74, 24.0), (24.88, 30.0),
     ];
     const SIZE_12PT: [(f64, f64); AMS_RUNG_COUNT] = [
-        (7.0, 8.0), (8.0, 10.0), (9.0, 11.0), (10.0, 12.0), (11.0, 13.0), (12.0, 14.0),
-        (14.0, 17.0), (17.0, 20.0), (20.0, 24.0), (25.0, 30.0), (25.0, 30.0),
+        (7.0, 8.0), (8.0, 10.0), (9.0, 11.0), (10.0, 12.0), (10.95, 13.0), (12.0, 14.0),
+        (14.4, 17.0), (17.28, 20.0), (20.74, 24.0), (24.88, 30.0), (24.88, 30.0),
     ];
     let table = if body_size_pt <= 8.5 {
         SIZE_8PT
@@ -3512,19 +3529,23 @@ mod tests {
         // 10pt rows are checked exhaustively; the rest are spot-checked at
         // `\tiny` (rung 1), `\normalsize` (5), `\Large` (7) and `\Huge`
         // (10), with the end-to-end suite covering every option as well.
+        // Font sizes from a real pdflatex `\f@size` dump (TeX Live 2026,
+        // amsart[8pt]/[10pt]), not the `\@xipt`-family macro names' literal
+        // digits -- those are NFSS design-size substitutions (see
+        // `ams_size_declaration_pt`'s own doc comment).
         let full: [(f64, [(f64, f64); AMS_RUNG_COUNT]); 2] = [
             (
                 8.0,
                 [
                     (5.0, 6.0), (5.0, 6.0), (5.0, 6.0), (6.0, 7.0), (7.0, 8.0), (8.0, 10.0),
-                    (9.0, 11.0), (10.0, 12.0), (11.0, 13.0), (12.0, 14.0), (14.0, 17.0),
+                    (9.0, 11.0), (10.0, 12.0), (10.95, 13.0), (12.0, 14.0), (14.4, 17.0),
                 ],
             ),
             (
                 10.0,
                 [
                     (5.0, 6.0), (6.0, 7.0), (7.0, 8.0), (8.0, 10.0), (9.0, 11.0), (10.0, 12.0),
-                    (11.0, 13.0), (12.0, 14.0), (14.0, 17.0), (17.0, 20.0), (20.0, 24.0),
+                    (10.95, 13.0), (12.0, 14.0), (14.4, 17.0), (17.28, 20.0), (20.74, 24.0),
                 ],
             ),
         ];
@@ -3538,9 +3559,9 @@ mod tests {
             }
         }
         let spots: [(f64, [(usize, (f64, f64)); 4]); 3] = [
-            (9.0, [(1, (5.0, 6.0)), (5, (9.0, 11.0)), (7, (11.0, 13.0)), (10, (17.0, 20.0))]),
-            (11.0, [(1, (7.0, 8.0)), (5, (11.0, 13.0)), (7, (14.0, 17.0)), (10, (25.0, 30.0))]),
-            (12.0, [(1, (8.0, 10.0)), (5, (12.0, 14.0)), (7, (17.0, 20.0)), (10, (25.0, 30.0))]),
+            (9.0, [(1, (5.0, 6.0)), (5, (9.0, 11.0)), (7, (10.95, 13.0)), (10, (17.28, 20.0))]),
+            (11.0, [(1, (7.0, 8.0)), (5, (10.95, 13.0)), (7, (14.4, 17.0)), (10, (24.88, 30.0))]),
+            (12.0, [(1, (8.0, 10.0)), (5, (12.0, 14.0)), (7, (17.28, 20.0)), (10, (24.88, 30.0))]),
         ];
         for (body, rungs) in spots {
             for (rung, expected) in rungs {
