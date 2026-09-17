@@ -746,7 +746,9 @@ fn stalled_reader(requests: usize) {
             break;
         }
     }
-    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    // GH#774: OUTPUT_STALL_TIMEOUT (main.rs) is 10s, not 2s -- this margin
+    // must clear it, plus room for process scheduling under load.
+    let deadline = std::time::Instant::now() + Duration::from_secs(13);
     loop {
         if let Some(status) = client.child.try_wait().unwrap() {
             assert!(!status.success());
@@ -1738,7 +1740,10 @@ fn stalled_optional_display_write_triggers_watchdog_with_no_source_loss() {
         "enabled":true,"renderer_support_confirmed":true}),
     );
     // Keep stdout open but unread: small required frames fit, optional 1 MiB does not.
-    let deadline = std::time::Instant::now() + Duration::from_secs(6);
+    // GH#774: OUTPUT_STALL_TIMEOUT (main.rs) is 10s, not 2s -- this margin
+    // must clear it, plus this test's own extra setup (diagnostic_timings, a
+    // real compiler) beyond stalled_reader's.
+    let deadline = std::time::Instant::now() + Duration::from_secs(14);
     loop {
         if let Some(status) = client.child.try_wait().unwrap() {
             assert!(!status.success());

@@ -27,6 +27,17 @@ mod source_plans;
 mod wire;
 const MAX_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 
+// How long a single stdout write (or the final post-shutdown drain) may run
+// before it counts as stalled rather than merely slow. 2s (GH#774) failed
+// under real, reproducible CPU contention on a large-document reply
+// (500 KB+): the writer thread was still making progress, just not
+// scheduled promptly enough under load, which this cannot tell apart from
+// a genuinely stuck pipe at 2s. Not unbounded -- a truly stuck reader (the
+// case this watchdog exists for) still gets caught, just after a longer,
+// CI-realistic wait. Matches the 10s bound #772 established for the
+// sibling helper-lifecycle timeout family (ExactPDFExport/WholeDocumentList).
+const OUTPUT_STALL_TIMEOUT: Duration = Duration::from_secs(10);
+
 const MAX_FRAME: usize = 1024 * 1024;
 // Reserve one MiB for typical wrapping metadata; this is not a proof that every
 // compiler frame fits after reserialization. OutputBuffer checks the complete JSONL.
@@ -279,7 +290,7 @@ fn run(config: Value) -> Result<(), String> {
             .unwrap()
             .as_ref()
             .and_then(|(start, sequence)| {
-                (start.elapsed() >= Duration::from_secs(2)).then_some(*sequence)
+                (start.elapsed() >= OUTPUT_STALL_TIMEOUT).then_some(*sequence)
             });
         if let Some(sequence) = stalled {
             if diagnostic_timings {
@@ -541,7 +552,7 @@ fn run(config: Value) -> Result<(), String> {
     }
     // Drain normal EOF replies, bounded even if the native reader stopped.
     drop(output_tx);
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + OUTPUT_STALL_TIMEOUT;
     while !output_done.load(Ordering::SeqCst)
         && !stopped.load(Ordering::SeqCst)
         && std::time::Instant::now() < deadline
