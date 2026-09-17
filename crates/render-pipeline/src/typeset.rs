@@ -5566,6 +5566,45 @@ impl<'a> Context<'a> {
                     }
                 }
             }
+            RowsEnv::EqnArray => {
+                // Three columns sharing tab stops across every row; see
+                // `eqnarray_columns` for the kernel `\halign` this follows.
+                let mut colw = [0.0f64; 3];
+                for row in &cells {
+                    for (ci, c) in row.iter().enumerate().take(3) {
+                        colw[ci] = colw[ci].max(width(c));
+                    }
+                }
+                let sep = 2.0 * crate::mathgrid::ARRAYCOLSEP;
+                let origins = eqnarray_columns(colw, sep, dw, fleqn.then_some(margin));
+                for (ri, row) in cells.iter().enumerate() {
+                    for (ci, c) in row.iter().enumerate() {
+                        let w = width(c);
+                        xs[ri][ci] = match ci {
+                            // Right, centred, left.
+                            0 => origins[0] + colw[0] - w,
+                            1 => origins[1] + (colw[1] - w) / 2.0,
+                            2 => origins[2],
+                            // pdflatex raises `Too many columns in eqnarray
+                            // environment` and drops the cell into the
+                            // zero-width number column, where it overprints
+                            // whatever is there. Set the extras after
+                            // column 3 instead, so nothing is drawn on top
+                            // of anything else, and say so.
+                            _ => xs[ri][ci - 1] + width(&row[ci - 1]),
+                        };
+                    }
+                }
+                let extra = cells.iter().filter(|r| r.len() > 3).count();
+                if extra > 0 {
+                    let src = self.source(span);
+                    self.emit(None, Diagnostic::warning(
+                        "math_limitation",
+                        format!("{extra} eqnarray row(s) have more than three columns; pdflatex reports `Too many columns in eqnarray environment` and this sets the extra cells after the third column"),
+                        vec![src],
+                    ));
+                }
+            }
             RowsEnv::Gather => {
                 for (ri, row) in cells.iter().enumerate() {
                     let w: f64 = row.iter().map(width).sum();
@@ -5725,6 +5764,15 @@ impl<'a> Context<'a> {
         }
         let above = self.style.abovedisplayskip;
         let below = self.style.belowdisplayskip;
+        // `eqnarray` reaches the same `\jot` as the amsmath rows, by a
+        // different route: amsmath's `\displ@y@` says `\openup\jot`, while
+        // latex.ltx's `\@@eqncr` puts an explicit `\vskip\jot` in the
+        // `\noalign` between rows. pdfTeX baseline-to-baseline for a
+        // two-row `eqnarray` is 15.000/16.600/17.500 pt at 10/11/12 pt --
+        // `\baselineskip` (12/13.6/14.5) + `\jot` (3) -- and identical to
+        // `align`'s, as is the lead-in line to first row distance
+        // (21.917/24.508/26.401 bp). So no arm below is conditioned on
+        // `EqnArray`.
         let first_adjust = if matches!(env, RowsEnv::Multline) { 0.0 } else { -JOT };
         let (an, ast, ash) = skip_tuple(above);
         let n = lines.len();
@@ -7394,6 +7442,46 @@ fn split_at_spaces(list: &flashtex_compiler::math::MathList, fence: &dyn Fn(&Spa
     // box (an empty run follows it).
     out.push((current, None));
     out
+}
+
+/// latex.ltx `\eqnarray` column origins, relative to the text block.
+///
+/// ```text
+/// \tabskip\@centering
+/// $$\everycr{}\halign to\displaywidth\bgroup
+///     \hskip\@centering$\displaystyle\tabskip\z@skip{##}$\@eqnsel
+///    &\global\@eqcnt\@ne\hskip \tw@\arraycolsep \hfil${##}$\hfil
+///    &\global\@eqcnt\tw@ \hskip \tw@\arraycolsep
+///       $\displaystyle{##}$\hfil\tabskip\@centering
+///    &\global\@eqcnt\thr@@ \hb@xt@\z@\bgroup\hss##\egroup
+///       \tabskip\z@skip
+///    \cr}
+/// ```
+///
+/// The only tabskips that stretch across the line are the `\@centering`
+/// one before column 1 and the `\@centering` one after column 3, so the
+/// three-column block is centred on `\displaywidth`; the `\hskip
+/// \@centering` *inside* column 1 stretches only within that column,
+/// which is what right-aligns it. Column 2 is `\hfil${##}$\hfil`
+/// (centred) and column 3 `$\displaystyle{##}$\hfil` (left).
+///
+/// `sep` is `\tw@\arraycolsep`. This is the notorious quirk the issue
+/// calls out: the relation column is `${##}$`, a group, so it is an Ord
+/// and takes no `\thickmuskip` at either edge — the whole gap is the
+/// fixed 2 x `\arraycolsep`, not `align`'s 5 mu. Measured against
+/// pdfTeX 3.141592653 / TeX Live 2026 at 10/11/12 pt: 9.96 bp of gap
+/// either side of the relation, against `align`'s 2.77 bp.
+///
+/// Under `fleqn` (fleqn.clo) the leading tabskip is `\mathindent`
+/// instead, so the block starts at the margin; `leqno` moves only the
+/// number, which the tag code handles.
+fn eqnarray_columns(colw: [f64; 3], sep: f64, dw: f64, fleqn_at: Option<f64>) -> [f64; 3] {
+    let total = colw[0] + colw[1] + colw[2] + 2.0 * sep;
+    let x0 = match fleqn_at {
+        Some(m) => m,
+        None => ((dw - total) / 2.0).max(0.0),
+    };
+    [x0, x0 + colw[0] + sep, x0 + colw[0] + colw[1] + 2.0 * sep]
 }
 
 /// Every `array`/`cases`/matrix grid in `list` and its sub-formulas as
@@ -10369,5 +10457,120 @@ mod math_paint_tests {
         // Partly outside every range, or before it: unpainted.
         assert_eq!(innermost_paint(&ranges, 5, 12), None);
         assert_eq!(innermost_paint(&ranges, 0, 1), None);
+    }
+}
+
+#[cfg(test)]
+mod eqnarray_tests {
+    use super::eqnarray_columns;
+
+    /// pdfTeX 3.141592653 (TeX Live 2026), `article` + `geometry`
+    /// `margin=1in` on US Letter, so the text block runs 72 bp .. 540 bp
+    /// and `\displaywidth` is 468 bp. Glyph origins read with PyMuPDF from
+    ///
+    /// ```tex
+    /// \begin{eqnarray}
+    /// a &=& b \\
+    /// cd &=& e
+    /// \end{eqnarray}
+    /// ```
+    ///
+    /// Everything below is in bp, measured relative to the text left edge
+    /// (72 bp subtracted), and `sep` is the measured gap rather than
+    /// `2\arraycolsep` in pt, so the function is exercised in one unit.
+    /// Gate: 0.5 bp.
+    const TOL: f64 = 0.5;
+    const DW: f64 = 468.0;
+
+    fn check(name: &str, colw: [f64; 3], sep: f64, want: [f64; 3]) {
+        let got = eqnarray_columns(colw, sep, DW, None);
+        for i in 0..3 {
+            assert!(
+                (got[i] - want[i]).abs() <= TOL,
+                "{name}: column {i} at {:.4} bp, pdflatex {:.4} bp",
+                got[i],
+                want[i],
+            );
+        }
+    }
+
+    #[test]
+    fn columns_match_pdflatex_at_ten_point() {
+        // col1 [285.0950,294.5993] rel [304.5619,312.3128] col3 [322.2754,326.9180]
+        check(
+            "10pt",
+            [9.5043, 7.7509, 4.6426],
+            9.9626,
+            [213.0950, 232.5619, 250.2754],
+        );
+    }
+
+    #[test]
+    fn columns_match_pdflatex_at_eleven_point() {
+        // col1 [284.0560,294.4633] rel [304.4233,312.9106] col3 [322.8706,327.9542]
+        check(
+            "11pt",
+            [10.4073, 8.4873, 5.0836],
+            9.9600,
+            [212.0560, 232.4233, 250.8706],
+        );
+    }
+
+    #[test]
+    fn columns_match_pdflatex_at_twelve_point() {
+        // col1 [283.2120,294.3303] rel [304.2890,313.3989] col3 [323.3695,328.7972]
+        check(
+            "12pt",
+            [11.1183, 9.1099, 5.4277],
+            9.9626,
+            [211.2120, 232.2890, 251.3695],
+        );
+    }
+
+    /// A row whose right-hand side is long still centres the block: the
+    /// third column simply grows, it does not push the block off centre.
+    /// 10 pt, `cd &=& xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`:
+    /// col1 [202.0060,211.5103] rel [221.4729,229.2238] col3 [239.1864,410.1546]
+    #[test]
+    fn long_right_hand_side_keeps_the_block_centred() {
+        check(
+            "10pt long rhs",
+            [9.5043, 7.7509, 170.9682],
+            9.9626,
+            [130.0060, 149.4729, 167.1864],
+        );
+    }
+
+    /// fleqn.clo swaps the leading `\@centering` tabskip for `\mathindent`
+    /// (`\leftmargini`, 25 pt at 10 pt), so the block starts at the margin.
+    /// Measured with `\documentclass[10pt,fleqn]`: col1 [96.9070,...],
+    /// rel at 116.3739, col3 at 134.0874 -- 24.9067 bp from the text edge.
+    #[test]
+    fn fleqn_starts_the_block_at_the_math_margin() {
+        let margin = 25.0 / 1.00375;
+        let got = eqnarray_columns([9.5043, 7.7509, 4.6426], 9.9626, DW, Some(margin));
+        for (i, want) in [24.9070, 44.3739, 62.0874].iter().enumerate() {
+            assert!(
+                (got[i] - want).abs() <= TOL,
+                "fleqn: column {i} at {:.4} bp, pdflatex {want:.4} bp",
+                got[i],
+            );
+        }
+    }
+
+    /// The quirk issue #520 names: the gap either side of the relation is
+    /// `2\arraycolsep`, not `align`'s `\thickmuskip`. Measured at 10 pt:
+    /// `eqnarray` 9.9626 bp, `align` 2.7696 bp -- 3.6x wider.
+    #[test]
+    fn relation_gaps_are_arraycolsep_not_thickmuskip() {
+        let colw = [9.5043, 7.7509, 4.6426];
+        let sep = 9.9626;
+        let x = eqnarray_columns(colw, sep, DW, None);
+        let gap_left = x[1] - (x[0] + colw[0]);
+        let gap_right = x[2] - (x[1] + colw[1]);
+        assert!((gap_left - 9.9626).abs() <= 0.5, "{gap_left}");
+        assert!((gap_right - 9.9626).abs() <= 0.5, "{gap_right}");
+        // Well clear of align's 5 mu at this size.
+        assert!(gap_left > 2.7696 * 2.0);
     }
 }
