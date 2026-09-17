@@ -893,6 +893,84 @@ impl Frame {
             _ => None,
         }
     }
+
+    /// The `cancel.sty` diagonal strike(s) of this frame: `\cancel` rises
+    /// (`/`), `\bcancel` falls (`\`), `\xcancel` draws both (an X). Every
+    /// other frame — including the six arrow frames, whose [`Frame::arrow`]
+    /// is `Some` — has none.
+    ///
+    /// A consumer that matches this before its arrow fallback can never
+    /// draw a strike as an arrow: the three cancel variants are `None`
+    /// under [`Frame::arrow`] and non-empty here, while every arrow frame
+    /// is the exact reverse.
+    pub fn cancel_diagonals(self) -> &'static [CancelDiagonal] {
+        match self {
+            Frame::Cancel => &[CancelDiagonal::Rising],
+            Frame::BCancel => &[CancelDiagonal::Falling],
+            Frame::XCancel => &[CancelDiagonal::Rising, CancelDiagonal::Falling],
+            _ => &[],
+        }
+    }
+
+    /// Corner-to-corner strike segments for this frame over a body box
+    /// `width` wide running from `top` to `bottom` (both baseline-relative,
+    /// y down-positive, exactly like [`MathRule`]) at the formula's `size`.
+    ///
+    /// This is the geometry `cancel.sty` draws: each strike joins two
+    /// diagonally opposite corners of the argument's box (a rotated rule
+    /// spanning the box's width and total height), at the compiler's usual
+    /// math-rule thickness. The render pipeline draws these segments from
+    /// the `Frame`; the compiler's own layout keeps the overlapped body box
+    /// (see `layout_nucleus`).
+    pub fn cancel_strikes(self, width: f64, top: f64, bottom: f64, size: f64) -> Vec<CancelStrike> {
+        let thickness = FRACTION_RULE_EM * size;
+        self.cancel_diagonals()
+            .iter()
+            .map(|diagonal| {
+                let (y1, y2) = match diagonal {
+                    CancelDiagonal::Rising => (bottom, top),
+                    CancelDiagonal::Falling => (top, bottom),
+                };
+                CancelStrike {
+                    x1: 0.0,
+                    y1,
+                    x2: width,
+                    y2,
+                    thickness,
+                }
+            })
+            .collect()
+    }
+}
+
+/// One corner-to-corner diagonal strike of a `cancel.sty` frame (see
+/// [`Frame::cancel_diagonals`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelDiagonal {
+    /// `\cancel`: bottom-left to top-right (`/`).
+    Rising,
+    /// `\bcancel`: top-left to bottom-right (`\`).
+    Falling,
+}
+
+/// A single diagonal strike over an argument's box: the segment between two
+/// diagonally opposite corners, in the compiler layout's coordinates (x
+/// right, y down-positive from the math baseline — the same frame as
+/// [`MathRule`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CancelStrike {
+    /// Strike start: one corner of the argument's box.
+    pub x1: f64,
+    /// Strike start, baseline-relative like [`MathRule::y`].
+    pub y1: f64,
+    /// Strike end: the diagonally opposite corner.
+    pub x2: f64,
+    /// Strike end, baseline-relative like [`MathRule::y`].
+    pub y2: f64,
+    /// Stroke thickness: the compiler's usual math-rule thickness
+    /// (`FRACTION_RULE_EM` — overline, underline, fractions; cf. text-mode
+    /// `\sout`'s 0.4pt rule).
+    pub thickness: f64,
 }
 
 /// Math-mode environments implemented as grids: (name, default column
@@ -999,6 +1077,13 @@ pub struct MathPackages {
     /// `amsmath`, so this flag always arrives with `amsmath` set — see
     /// `AMSMATH_PACKAGES`, which already lists `mathtools`.
     pub mathtools: bool,
+    /// `cancel` is loaded, so `\cancel`, `\bcancel` and `\xcancel` exist.
+    ///
+    /// Base LaTeX2e defines none of these three names, so without
+    /// `cancel.sty` pdflatex answers "Undefined control sequence". No
+    /// document class loads `cancel` on its own, so only an explicit
+    /// `\usepackage{cancel}` (folded in by `load_package`) sets this.
+    pub cancel: bool,
 }
 
 /// Packages that load amsmath, so that `\usepackage{X}` alone gives amsmath's
@@ -1089,6 +1174,7 @@ impl MathPackages {
         amssymb: false,
         amsfonts: false,
         mathtools: false,
+        cancel: false,
     };
 
     /// Folds one `\documentclass` name in.
@@ -1103,6 +1189,7 @@ impl MathPackages {
     pub fn load_package(&mut self, package: &str) {
         self.amsmath |= AMSMATH_PACKAGES.contains(&package);
         self.mathtools |= package == "mathtools";
+        self.cancel |= package == "cancel";
         let amssymb = AMSSYMB_PACKAGES.contains(&package);
         self.amssymb |= amssymb;
         // `amssymb.sty` line 8 is `\RequirePackage{amsfonts}`, so anything
@@ -2293,6 +2380,13 @@ impl MathParser<'_> {
                         ams_symbol: None,
                     }
                 }
+            }
+            // `cancel.sty` defines these three; base LaTeX2e has no
+            // definition, so without the package pdflatex answers
+            // "Undefined control sequence" (`missing_package`, like the
+            // `sideset`/amsmath gate above).
+            "cancel" | "bcancel" | "xcancel" if !self.packages.cancel => {
+                self.missing_package(&name, "cancel", span)
             }
             "boxed" | "Aboxed" | "overline" | "underline" | "underbar" | "overbrace" | "underbrace"
             | "overrightarrow" | "overleftarrow" | "overleftrightarrow" | "underrightarrow"
@@ -4960,6 +5054,21 @@ fn layout_nucleus(
         }
         Nucleus::Framed { body, frame } => {
             let mut b = layout_list(body, size, root_size, level, diagnostics);
+            // `cancel.sty` frames are an explicit arm, not a fall-through:
+            // they draw no horizontal or vertical rules in this layout.
+            // Their strikes are the diagonals of `Frame::cancel_diagonals`
+            // (corner-to-corner `Frame::cancel_strikes` geometry), drawn by
+            // the render pipeline from the `Frame` — so the box below only
+            // overlaps the body, at the body's own width and extents,
+            // exactly like pdflatex (see the `cancel_*` layout tests).
+            if !frame.cancel_diagonals().is_empty() {
+                return MathBox {
+                    items: b.items,
+                    width: b.width,
+                    ascent: b.ascent,
+                    descent: b.descent,
+                };
+            }
             let rule = FRACTION_RULE_EM * size;
             let pad = if *frame == Frame::Box {
                 0.25 * size
@@ -6553,6 +6662,7 @@ mod unbraced_argument_tests {
         amssymb: false,
         amsfonts: true,
         mathtools: false,
+        cancel: false,
     };
 
     #[test]
@@ -6762,7 +6872,12 @@ mod unbraced_argument_tests {
             for source in [format!(r"\{command}{{x}}"), format!(r"\{command} xy")] {
                 let mut diagnostics = Vec::new();
                 let tokens = crate::lexer::tokenize(&source);
-                let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+                // The strikes need `cancel.sty` (see `package_gating_tests`).
+                let packages = MathPackages {
+                    cancel: true,
+                    ..MathPackages::KERNEL
+                };
+                let list = parse_tokens(&tokens, packages, &mut diagnostics);
                 assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
                 match &list.atoms[0].nucleus {
                     Nucleus::Framed { body, frame: got } => {
@@ -6834,9 +6949,26 @@ mod accent_tests {
     use super::*;
 
     fn laid_out(source: &str, size: f64) -> (MathBox, Vec<Diagnostic>) {
+        laid_out_with(source, size, MathPackages::KERNEL)
+    }
+
+    /// A document that loaded `cancel`: the three strikes parse silently.
+    const CANCEL: MathPackages = MathPackages {
+        amsmath: false,
+        amssymb: false,
+        amsfonts: false,
+        mathtools: false,
+        cancel: true,
+    };
+
+    fn laid_out_with(
+        source: &str,
+        size: f64,
+        packages: MathPackages,
+    ) -> (MathBox, Vec<Diagnostic>) {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(source);
-        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+        let list = parse_tokens(&tokens, packages, &mut diagnostics);
         let b = layout(&list, size, &mut diagnostics);
         (b, diagnostics)
     }
@@ -7184,19 +7316,20 @@ mod accent_tests {
 
     #[test]
     fn cancel_draws_no_horizontal_rule_in_compiler_layout() {
-        // The diagonals are the render pipeline's job (it sees the `Frame`);
-        // the compiler's own layout keeps the `Framed` box model with no
-        // horizontal rule in it. The extents are deliberately NOT tied to
-        // `\overline`'s: real cancel.sty only overlaps the body and adds no
-        // overline-style headroom of its own (pdflatex sets `$xy+z$` and
-        // `$\cancel{xy+z}$` at the same width; the diagonal overshoot past a
-        // short body is the render pipeline's real geometry, not something
-        // the compiler's layout fakes).
+        // The diagonals are the render pipeline's job (it sees the `Frame`
+        // and draws `Frame::cancel_strikes`); the compiler's own layout
+        // keeps the overlapped body box with no horizontal rule in it. The
+        // extents are deliberately NOT tied to `\overline`'s: real
+        // cancel.sty only overlaps the body and adds no overline-style
+        // headroom of its own (pdflatex sets `$xy+z$` and `$\cancel{xy+z}$`
+        // at the same width; the diagonal overshoot past a short body is
+        // the render pipeline's real geometry, not something the compiler's
+        // layout fakes).
         let size = 10.0;
         let (plain, d0) = laid_out("x", size);
         assert!(d0.is_empty(), "{d0:?}");
         for source in [r"\cancel{x}", r"\bcancel{x}", r"\xcancel{x}"] {
-            let (b, d) = laid_out(source, size);
+            let (b, d) = laid_out_with(source, size, CANCEL);
             assert!(d.is_empty(), "{source}: {d:?}");
             assert!(b.items.iter().all(|i| i.rule.is_none()), "{source}: {b:?}");
             // Only overlaps the body: the width is the body's own width.
@@ -7205,6 +7338,127 @@ mod accent_tests {
             assert!(b.ascent >= plain.ascent, "{source}: {b:?}");
             assert!(b.descent >= plain.descent, "{source}: {b:?}");
         }
+    }
+
+    #[test]
+    fn cancel_variants_have_distinct_diagonals_not_arrows() {
+        // The three strikes must never collapse into one fallback: the
+        // render pipeline's `Nucleus::Framed` wildcard draws every frame it
+        // does not match explicitly as an over-arrow, and `Frame::arrow`
+        // is `None` for all three cancel variants — so without explicit
+        // diagonal arms they all render as `\overrightarrow`-style arrows.
+        // Pin the routing facts here: no arrow for any variant, and each
+        // variant's own diagonal(s).
+        for (source, frame) in [
+            (r"\cancel{x}", Frame::Cancel),
+            (r"\bcancel{x}", Frame::BCancel),
+            (r"\xcancel{x}", Frame::XCancel),
+        ] {
+            let (list, diagnostics) = {
+                let mut diagnostics = Vec::new();
+                let tokens = crate::lexer::tokenize(source);
+                let list = parse_tokens(&tokens, CANCEL, &mut diagnostics);
+                (list, diagnostics)
+            };
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            let Nucleus::Framed { frame: got, .. } = &list.atoms[0].nucleus else {
+                panic!("{source}: expected a framed nucleus, got {:?}", list.atoms[0].nucleus);
+            };
+            assert_eq!(*got, frame, "{source}");
+            // Not an arrow: must not take any arrow rendering path.
+            assert_eq!(got.arrow(), None, "{source}");
+        }
+        // Each variant's own diagonal(s): rising (`/`), falling (`\`), both.
+        assert_eq!(
+            Frame::Cancel.cancel_diagonals(),
+            [CancelDiagonal::Rising].as_slice()
+        );
+        assert_eq!(
+            Frame::BCancel.cancel_diagonals(),
+            [CancelDiagonal::Falling].as_slice()
+        );
+        assert_eq!(
+            Frame::XCancel.cancel_diagonals(),
+            [CancelDiagonal::Rising, CancelDiagonal::Falling].as_slice()
+        );
+        assert_ne!(
+            Frame::Cancel.cancel_diagonals(),
+            Frame::BCancel.cancel_diagonals(),
+            "the two single strikes must differ"
+        );
+        // Every other frame has no diagonals at all.
+        for frame in [
+            Frame::Box,
+            Frame::Over,
+            Frame::Under,
+            Frame::OverBrace,
+            Frame::UnderBrace,
+            Frame::OverRightArrow,
+            Frame::OverLeftArrow,
+            Frame::OverLeftRightArrow,
+            Frame::UnderRightArrow,
+            Frame::UnderLeftArrow,
+            Frame::UnderLeftRightArrow,
+        ] {
+            assert!(frame.cancel_diagonals().is_empty(), "{frame:?}");
+        }
+    }
+
+    #[test]
+    fn cancel_strikes_span_the_body_box_corner_to_corner() {
+        // The geometry cancel.sty draws: one line per diagonal from one
+        // corner of the argument's bounding box to the diagonally opposite
+        // corner, at the compiler's usual math-rule thickness (the same
+        // `FRACTION_RULE_EM` as overline, underline and fractions).
+        let size = 10.0;
+        let (width, top, bottom) = (20.0, -7.5, 3.0);
+        let thickness = FRACTION_RULE_EM * size;
+        assert_eq!(
+            Frame::Cancel.cancel_strikes(width, top, bottom, size),
+            vec![CancelStrike {
+                x1: 0.0,
+                y1: bottom,
+                x2: width,
+                y2: top,
+                thickness,
+            }],
+            "\\cancel rises bottom-left to top-right"
+        );
+        assert_eq!(
+            Frame::BCancel.cancel_strikes(width, top, bottom, size),
+            vec![CancelStrike {
+                x1: 0.0,
+                y1: top,
+                x2: width,
+                y2: bottom,
+                thickness,
+            }],
+            "\\bcancel falls top-left to bottom-right"
+        );
+        assert_eq!(
+            Frame::XCancel.cancel_strikes(width, top, bottom, size),
+            vec![
+                CancelStrike {
+                    x1: 0.0,
+                    y1: bottom,
+                    x2: width,
+                    y2: top,
+                    thickness,
+                },
+                CancelStrike {
+                    x1: 0.0,
+                    y1: top,
+                    x2: width,
+                    y2: bottom,
+                    thickness,
+                },
+            ],
+            "\\xcancel draws both diagonals"
+        );
+        assert!(
+            Frame::Over.cancel_strikes(width, top, bottom, size).is_empty(),
+            "non-cancel frames have no strikes"
+        );
     }
 }
 
@@ -7239,6 +7493,7 @@ mod spacing_tests {
         amssymb: true,
         amsfonts: true,
         mathtools: false,
+        cancel: false,
     };
 
     fn width_with(source: &str, size: f64, packages: MathPackages) -> f64 {
@@ -7254,6 +7509,7 @@ mod spacing_tests {
         amssymb: false,
         amsfonts: false,
         mathtools: true,
+        cancel: false,
     };
 
     fn x(b: &MathBox, text: &str) -> f64 {
@@ -7981,24 +8237,28 @@ mod package_gating_tests {
         amssymb: true,
         amsfonts: true,
         mathtools: false,
+        cancel: false,
     };
     const AMSFONTS: MathPackages = MathPackages {
         amsmath: false,
         amssymb: false,
         amsfonts: true,
         mathtools: false,
+        cancel: false,
     };
     const AMSMATH: MathPackages = MathPackages {
         amsmath: true,
         amssymb: false,
         amsfonts: false,
         mathtools: false,
+        cancel: false,
     };
     const MATHTOOLS: MathPackages = MathPackages {
         amsmath: true,
         amssymb: false,
         amsfonts: false,
         mathtools: true,
+        cancel: false,
     };
 
     fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
@@ -8127,6 +8387,44 @@ mod package_gating_tests {
             let symbol = crate::amssymb::by_name(alias).expect("alias resolves");
             assert_eq!(symbol.name, *target);
             assert_eq!(symbol.provider, Provider::Amssymb, "\\{alias}");
+        }
+    }
+
+    /// `cancel.sty` defines `\cancel`, `\bcancel` and `\xcancel`; base
+    /// LaTeX2e has no definition for any of them, so pdflatex answers
+    /// "Undefined control sequence" where this compiler used to parse them
+    /// silently. They need the package, like every other gated command.
+    #[test]
+    fn cancel_bcancel_xcancel_need_cancel() {
+        // A document that loaded `cancel`: the three strikes exist. No
+        // class loads it, so only an explicit `\usepackage{cancel}` (via
+        // `MathPackages::load_package`) produces this combination.
+        const CANCEL: MathPackages = MathPackages {
+            amsmath: false,
+            amssymb: false,
+            amsfonts: false,
+            mathtools: false,
+            cancel: true,
+        };
+        for name in ["cancel", "bcancel", "xcancel"] {
+            let source = format!("\\{name}{{x}}");
+            let (_, kernel) = parsed(&source, MathPackages::KERNEL);
+            assert_eq!(kernel.len(), 1, "{source} with nothing loaded: {kernel:?}");
+            assert_eq!(
+                kernel[0].message,
+                format!("\\{name} requires \\usepackage{{cancel}}"),
+                "{source}"
+            );
+            // With the package the command parses silently to its frame,
+            // like every other gated command under its own package.
+            let (list, loaded) = parsed(&source, CANCEL);
+            assert!(loaded.is_empty(), "{source} under cancel: {loaded:?}");
+            assert_eq!(list.atoms.len(), 1, "{source}: {list:?}");
+            assert!(
+                matches!(&list.atoms[0].nucleus, Nucleus::Framed { .. }),
+                "{source}: {:?}",
+                list.atoms[0].nucleus
+            );
         }
     }
 
@@ -8478,7 +8776,8 @@ mod package_gating_tests {
                 amsmath: true,
                 amssymb: false,
                 amsfonts: true,
-                mathtools: false
+                mathtools: false,
+                cancel: false
             }
         );
         assert_eq!(
@@ -8487,7 +8786,8 @@ mod package_gating_tests {
                 amsmath: true,
                 amssymb: true,
                 amsfonts: true,
-                mathtools: false
+                mathtools: false,
+                cancel: false
             }
         );
         assert_eq!(class("article"), MathPackages::KERNEL);
@@ -8506,6 +8806,7 @@ mod double_bar_tests {
         amssymb: false,
         amsfonts: false,
         mathtools: false,
+        cancel: false,
     };
 
     /// The glyph texts a formula lays out, in order.
@@ -8761,6 +9062,7 @@ mod lap_tests {
         amssymb: false,
         amsfonts: false,
         mathtools: true,
+        cancel: false,
     };
 
     /// `amsmath` without `mathtools`: the lap family is still undefined.
@@ -8769,6 +9071,7 @@ mod lap_tests {
         amssymb: false,
         amsfonts: false,
         mathtools: false,
+        cancel: false,
     };
 
     fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {

@@ -10060,9 +10060,10 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         "ulem" => options.iter().all(|option| *option == "normalem"),
         // `\cancel`, `\bcancel` and `\xcancel` are implemented (the
         // diagonals are drawn by the render pipeline), so loading the
-        // package is silent. Parsing itself stays unconditional, like the
-        // rest of the `Frame` family: the package load only controls this
-        // warning. cancel.sty's `makeroom` and `thicklines` options change
+        // package is silent. The commands are gated on the package load
+        // (`MathPackages::cancel`, like the other package-gated math
+        // commands), so without it they diagnose instead of parsing.
+        // cancel.sty's `makeroom` and `thicklines` options change
         // the layout and are not implemented, so they keep the warning.
         "cancel" => options.is_empty(),
         _ => false,
@@ -13770,10 +13771,10 @@ mod tests {
     /// `\usepackage{cancel}` is silent: `\cancel`, `\bcancel` and `\xcancel`
     /// are implemented (the diagonals are drawn by the render pipeline), so
     /// the correct document must not warn "recognised but not implemented".
-    /// Parsing itself stays unconditional, like the rest of the `Frame`
-    /// family, so the same math with no package still parses. cancel.sty's
-    /// `makeroom` and `thicklines` options change the layout and are not
-    /// implemented, so they keep the warning.
+    /// Without the package the commands are undefined, like under pdflatex
+    /// ("Undefined control sequence"), so the same math diagnoses the
+    /// missing package. cancel.sty's `makeroom` and `thicklines` options
+    /// change the layout and are not implemented, so they keep the warning.
     #[test]
     fn cancel_package_load_is_silent_but_makeroom_and_thicklines_warn() {
         let doc = |preamble: &str| {
@@ -13791,14 +13792,7 @@ mod tests {
             "\\usepackage{{cancel}} must not warn: {:?}",
             parsed.diagnostics
         );
-        // No package: still parses (unconditional, as scoped) with no
-        // diagnostic at all, and the math is really a cancel frame.
-        let parsed = parse(&doc(""));
-        assert!(
-            parsed.diagnostics.is_empty(),
-            "cancel without the package must still parse silently: {:?}",
-            parsed.diagnostics
-        );
+        // With the package the math is really a cancel frame.
         let math = parsed
             .blocks
             .iter()
@@ -13822,6 +13816,17 @@ mod tests {
             ),
             "{:?}",
             math[0].atoms[0].nucleus
+        );
+        // No package: the command is undefined, diagnosed as the missing
+        // package (pdflatex answers "Undefined control sequence").
+        let parsed = parse(&doc(""));
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("\\cancel requires \\usepackage{cancel}")),
+            "cancel without the package must diagnose: {:?}",
+            parsed.diagnostics
         );
         for options in ["[makeroom]", "[thicklines]", "[makeroom,thicklines]"] {
             let parsed = parse(&doc(&format!("\\usepackage{options}{{cancel}}")));
