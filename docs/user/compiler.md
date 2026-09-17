@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 354 text-mode and 566 math-mode command entries, 67 environments and 24 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 354 text-mode and 566 math-mode command entries, 67 environments and 25 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -624,7 +624,6 @@ Canonical sources:
 | `\pounds` |  | text symbol \textsterling: OT1 £, T1 £ (tex-text-encoding; unavailable is a LaTeX error) |
 | `\dots` |  | text symbol \textellipsis: OT1 …, T1 … (tex-text-encoding; unavailable is a LaTeX error) |
 | `\ldots` |  | text symbol \textellipsis: OT1 …, T1 … (tex-text-encoding; unavailable is a LaTeX error) |
-| `\enquote` | `{text}` | csquotes quotation: the argument wrapped in the ``...'' double-quote marks |
 | `\textsection` |  | text symbol \textsection: OT1 §, T1 § (tex-text-encoding; unavailable is a LaTeX error) |
 | `\textparagraph` |  | text symbol \textparagraph: OT1 ¶, T1 ¶ (tex-text-encoding; unavailable is a LaTeX error) |
 | `\textdagger` |  | text symbol \textdagger: OT1 †, T1 † (tex-text-encoding; unavailable is a LaTeX error) |
@@ -665,6 +664,7 @@ Canonical sources:
 | `\sout` | `{...}` | ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem) |
 | `\newtheorem` | `{env}[counter]{name}` | defines a numbered theorem-like environment (amsthm) |
 | `\theoremstyle` | `{style}` | selects the amsthm style for following \newtheorem |
+| `\enquote` | `{text}` | csquotes quotation: the argument wrapped in the ``...'' double-quote marks |
 | `\\` |  | line break; an optional [length] is consumed |
 | `\-` |  | discretionary hyphen: a break point, invisible unless the line breaks there |
 | `\,` |  | text kern .16667em (\thinspace) |
@@ -979,6 +979,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `natbib` | `numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak` | \citet/\citep/\citealt/\citealp/\citeauthor/\citeyear/\citeyearpar/\citenum/\citetext and the \cite it redefines, with [Author(Year)] \bibitem labels; sort, compress, super and openbib are diagnosed |
 | `biblatex` | `style=numeric, sorting=none, backend=biber` | basic project-relative .bib resources with numeric citations, textcite/parencite/autocite, citeauthor/citeyear, nocite and printbibliography; authoryear labels are minimal, alphabetic warns |
 | `ulem` | `normalem` | \uline: 0.4pt rule under the argument (single-line); \sout: 0.4pt strike at 0.55ex; \emph is not redefined |
+| `csquotes` | `` | \enquote with the fixed ``...'' marks; no locale/babel quote selection, no \enquote* and no package options |
 | `xspace` | `` | \xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
 | `ifthen` | `` | \ifthenelse with \equal, \NOT, \AND, \OR, \isodd, \isundefined, \lengthtest and \boolean tests, and \newif conditionals with \newboolean/\setboolean; \whiledo loops are diagnosed where they are used |
 
