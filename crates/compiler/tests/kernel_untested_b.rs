@@ -4,7 +4,7 @@
 //! `crates/compiler/src/parser.rs`, math arms in `src/math.rs`).
 
 use flashtex_compiler::incremental::{compile_full, CompileOutput};
-use flashtex_compiler::layout::{text_width, word_space, Font, LayoutConstraints, TextItem, BODY_SIZE_PT, MARGIN_PT};
+use flashtex_compiler::layout::{text_width, Font, LayoutConstraints, TextItem, MARGIN_PT};
 use flashtex_compiler::parser::{
     self, Block, Inline, ParagraphStyle, TextFamily, TextStyle,
 };
@@ -211,8 +211,12 @@ fn settowidth_stores_the_width_and_grows_with_the_text() {
 
 /// Slice 2 (`boxmeasurer` review finding #492): a styled argument measures at
 /// its own face, not as the literal characters of the command name at plain
-/// Times-Roman. Expected value comes from `layout::text_width` called
-/// directly with the bold face, not from a hardcoded literal.
+/// Times-Roman. The expectation is a hardcoded literal from the Adobe AFM
+/// metrics this compiler shapes (Times-Bold H=778, i=278 per 1000em, no H-i
+/// kern: (778 + 278) / 1000 * 12 = 12.672pt), never a `layout` helper call —
+/// a shared metric error must fail here, not pass on both sides. No pdflatex
+/// oracle exists for these Times boxes (pdflatex defaults to cmr), so the AFM
+/// tables are the independent ground truth pending a real oracle run.
 #[test]
 fn settowidth_measures_textbf_at_bold_width() {
     let output = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{\textbf{Hi}}\the\mywidth");
@@ -220,23 +224,23 @@ fn settowidth_measures_textbf_at_bold_width() {
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     let rendered = joined(&output);
     let value: f64 = rendered.trim_end_matches("pt").parse().expect("numeric dimension");
-    let expected = text_width("Hi", BODY_SIZE_PT, Font::TimesBold);
     assert!(
-        (value - expected).abs() < 0.02,
-        "bold Hi measures {value}pt, expected {expected}pt ({rendered:?})"
+        (value - 12.672).abs() < 0.02,
+        "bold Hi measures {value}pt, AFM expects 12.672pt ({rendered:?})"
     );
     // The old flat-stringify bug measured the literal `\textbf Hi`
-    // characters as plain text, several times wider.
-    let literal = text_width(r"\textbf Hi", BODY_SIZE_PT, Font::TimesRoman);
+    // characters as plain text, several times wider than 12.672pt.
     assert!(
-        (value - literal).abs() > 1.0,
-        "must not measure the command name literally: {value}pt vs {literal}pt"
+        value < 20.0,
+        "must not measure the command name literally: {value}pt"
     );
 }
 
 /// Slice 2: `~` is the tie — an interword space of the font in force — not a
-/// tilde glyph. Expected value is composed from the same `layout` primitives
-/// the measurer itself uses.
+/// tilde glyph. Both expectations are hardcoded AFM literals (Times-Roman
+/// a=444, space=250, b=500, "~"=541 per 1000em at 12pt: a~b as a tie is
+/// (444 + 250 + 500) / 1000 * 12 = 14.328pt, while a literal tilde shaping
+/// is (444 + 541 + 500) / 1000 * 12 = 17.82pt), never `layout` helper calls.
 #[test]
 fn settowidth_measures_tie_as_interword_space() {
     let output = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{a~b}\the\mywidth");
@@ -244,24 +248,22 @@ fn settowidth_measures_tie_as_interword_space() {
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     let rendered = joined(&output);
     let value: f64 = rendered.trim_end_matches("pt").parse().expect("numeric dimension");
-    let expected = text_width("a", BODY_SIZE_PT, Font::TimesRoman)
-        + word_space(BODY_SIZE_PT, Font::TimesRoman)
-        + text_width("b", BODY_SIZE_PT, Font::TimesRoman);
     assert!(
-        (value - expected).abs() < 0.02,
-        "a~b measures {value}pt, expected {expected}pt ({rendered:?})"
+        (value - 14.328).abs() < 0.02,
+        "a~b measures {value}pt, AFM expects 14.328pt ({rendered:?})"
     );
-    // A literal tilde glyph (the old behavior) is a different width.
-    let tilde = text_width("a~b", BODY_SIZE_PT, Font::TimesRoman);
+    // A literal tilde glyph (the old behavior) is 17.82pt, clearly wider.
     assert!(
-        (value - tilde).abs() > 0.05,
-        "must not shape the tie as a tilde: {value}pt vs {tilde}pt"
+        (value - 17.82).abs() > 0.05,
+        "must not shape the tie as a tilde: {value}pt"
     );
 }
 
 /// Slice 2: height reflects the size in effect (`\Large` at the 12pt body
-/// size is 17.28pt against a 12pt body, so the ratio is exactly 1.44 —
-/// asserted relationally, not via hardcoded AFM literals).
+/// size is 17.28pt against a 12pt body, so the ratio is exactly 1.44). The
+/// body height is additionally pinned to its AFM literal (Times-Roman
+/// ascender 683/1000 * 12 = 8.196pt), not just a ratio, so a shared metric
+/// error cannot pass on both sides.
 #[test]
 fn settoheight_uses_the_size_in_effect() {
     let value = |source: &str| {
@@ -274,6 +276,10 @@ fn settoheight_uses_the_size_in_effect() {
     let body = value(r"\newlength{\myheight}\settoheight{\myheight}{X}\the\myheight");
     let large = value(r"\newlength{\myheight}\settoheight{\myheight}{{\Large X}}\the\myheight");
     assert!(body > 0.0 && large > 0.0);
+    assert!(
+        (body - 8.196).abs() < 0.02,
+        "body X height is {body}pt, AFM expects 8.196pt"
+    );
     let ratio = large / body;
     assert!(
         (ratio - 1.44).abs() < 0.01,
@@ -467,4 +473,118 @@ fn quotation_reports_a_quote_block_and_indents() {
     // margin -- observing the right indent needs a line long enough to
     // wrap, which is out of scope for this test.
     assert!(item(&output, "Hi").x_pt > MARGIN_PT, "left margin indented");
+}
+
+// ===== BoxMeasurer review findings (PR #492 follow-up) =====
+// Expected dimensions below are hardcoded literals derived from the Adobe AFM
+// metric tables this compiler shapes (`crates/font-engine/src/generated.rs`,
+// provenance in that file's header), not from the `layout` helpers the
+// measurer itself uses: Times-Roman advances per 1000em are H=722, i=278
+// (no H-i kern), A=722, V=722 (A-V kern -135), a=444, b=500, space=250,
+// "~"=541; Courier advances are all 600/1000em; Times-Bold H=778, i=278.
+// Widths assume no kerning/ligature applies to the measured string (true for
+// each string used here; "AV" accounts its kern explicitly).
+
+/// The measured dimension rendered by `\the` for a one-box source.
+fn box_value(source: &str) -> f64 {
+    let output = compile(source);
+    let rendered = joined(&output);
+    rendered.trim_end_matches("pt").parse().expect(&format!(
+        "numeric dimension in {rendered:?} (diagnostics: {:?})",
+        output.diagnostics
+    ))
+}
+
+/// Review finding 2: `\tiny`..`\Huge` (and plain text) resolve against the
+/// document's class size, not a hardcoded 12pt body.
+#[test]
+fn settowidth_uses_the_document_class_size() {
+    let ten = box_value(
+        r"\documentclass[10pt]{article}\newlength{\mywidth}\settowidth{\mywidth}{Hi}\the\mywidth",
+    );
+    let twelve = box_value(
+        r"\documentclass[12pt]{article}\newlength{\mywidth}\settowidth{\mywidth}{Hi}\the\mywidth",
+    );
+    // AFM Times-Roman "Hi" = (722 + 278) / 1000 em: 10.0pt at 10pt, 12.0pt at 12pt.
+    assert!((ten - 10.0).abs() < 0.02, "10pt class measures {ten}pt");
+    assert!((twelve - 12.0).abs() < 0.02, "12pt class measures {twelve}pt");
+}
+
+/// Review finding 3: math content is a diagnosed limitation, never a silent
+/// literal `$x$` text width.
+#[test]
+fn settowidth_with_math_reports_a_diagnostic() {
+    let output = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{$x$}\the\mywidth");
+    assert!(
+        messages(&output).iter().any(|m| m.contains("math") && m.contains("settowidth")),
+        "math inside a setto box must diagnose: {:?}",
+        output.diagnostics
+    );
+}
+
+/// Review finding 4: `\hspace{1cm}` contributes its glue instead of measuring
+/// the literal `1cm` as text.
+#[test]
+fn settowidth_measures_hspace_by_its_length() {
+    let value = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{\hspace{1cm}A}\the\mywidth");
+    // 1cm = 28.45274pt (TeX: 72.27pt/in, 2.54cm/in) plus AFM "A" 722/1000*12 = 8.664pt.
+    assert!((value - 37.117).abs() < 0.05, "\\hspace{{1cm}}A measures {value}pt");
+}
+
+/// Review finding 4: `\textasciitilde` measures as the tilde glyph, not zero.
+#[test]
+fn settowidth_measures_textasciitilde_as_a_tilde() {
+    let value = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{\textasciitilde}\the\mywidth");
+    // AFM Times-Roman "~" = 541/1000*12 = 6.492pt.
+    assert!((value - 6.492).abs() < 0.02, "\\textasciitilde measures {value}pt");
+}
+
+/// Review finding 4: an unmeasurable command diagnoses instead of silently
+/// contributing zero (`\LaTeX` is a logo the box measurer cannot set).
+#[test]
+fn settowidth_with_an_unmeasurable_command_reports_a_diagnostic() {
+    let output = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{\LaTeX}\the\mywidth");
+    assert!(
+        messages(&output).iter().any(|m| m.contains("LaTeX") && m.contains("not measured")),
+        "unmeasurable content must diagnose: {:?}",
+        output.diagnostics
+    );
+}
+
+/// Review finding 5: a space deferred across a style change is charged in the
+/// font in force at the space, not the font of the next character.
+#[test]
+fn settowidth_charges_a_deferred_space_in_the_space_font() {
+    let value = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{a \texttt{b}}\the\mywidth");
+    // AFM Times a=444, space=250 at 12pt, then Courier b=600 at 12pt:
+    // 5.328 + 3.0 + 7.2 = 15.528pt.
+    assert!((value - 15.528).abs() < 0.02, "deferred space measures {value}pt");
+}
+
+/// Review finding 6: empty boxes have no height or depth.
+#[test]
+fn settoheight_and_settodepth_are_zero_for_empty_boxes() {
+    assert_eq!(box_value(r"\newlength{\myheight}\settoheight{\myheight}{}\the\myheight"), 0.0);
+    assert_eq!(box_value(r"\newlength{\mydepth}\settodepth{\mydepth}{}\the\mydepth"), 0.0);
+}
+
+/// Review finding 6: descender-free text has no depth (`Hi` gets the face
+/// descender under the old code).
+#[test]
+fn settodepth_is_zero_without_descenders() {
+    assert_eq!(box_value(r"\newlength{\mydepth}\settodepth{\mydepth}{Hi}\the\mydepth"), 0.0);
+}
+
+/// Review finding 7: kerning applies across transparent groups (`A{}V` sets
+/// the `AV` kern, exactly as `AV` does).
+#[test]
+fn settowidth_kerns_across_transparent_groups() {
+    let grouped = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{A{}V}\the\mywidth");
+    let plain = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{AV}\the\mywidth");
+    // AFM Times-Roman A=722, V=722, A-V kern -135: (722 + 722 - 135)/1000*12 = 15.708pt.
+    assert!((plain - 15.708).abs() < 0.02, "AV measures {plain}pt");
+    assert!(
+        (grouped - plain).abs() < 0.005,
+        "A{{}}V ({grouped}pt) must kern like AV ({plain}pt)"
+    );
 }

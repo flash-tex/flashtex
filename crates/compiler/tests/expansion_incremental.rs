@@ -4,6 +4,7 @@
 //! parser tokens with the same spans and definition spans, the same
 //! diagnostics, and the same `\arraystretch` records, after every edit.
 use flashtex_compiler::expansion::{expand_project, expand_project_with_cache, ExpansionCache};
+use flashtex_compiler::lexer::TokenKind;
 use flashtex_compiler::parser::SourceDocument;
 
 struct Rng(u64);
@@ -349,4 +350,59 @@ fn expansion_limit_notes_describe_what_happens() {
         note("\\def\\r{x\\r}\\r after", "expansion step limit exceeded").as_deref(),
         Some("stopped expanding; the rest of the document was typeset without macro expansion")
     );
+}
+
+/// Review finding 1 (`boxmeasurer`): the measurer used to be installed only
+/// on fresh engines, so after an edit before a cached checkpoint a later
+/// `\settowidth` measured `0pt` on the incremental path while a clean
+/// compile gave a nonzero value. Documents using `\setto...` bypass the
+/// incremental cache, so the cached and full expansions agree exactly.
+#[test]
+fn settowidth_after_an_edit_before_a_checkpoint_matches_full_expansion() {
+    let mut text = String::from("\\newlength{\\mywidth}\n");
+    for i in 0..30 {
+        text.push_str(&format!("% padding line {i} to push the box past a checkpoint\n"));
+    }
+    text.push_str("\\settowidth{\\mywidth}{Hi}\\the\\mywidth\n");
+    assert!(text.len() > 1024, "need checkpoints past the edit: {}", text.len());
+    let mut cache = None;
+    {
+        let docs = [SourceDocument { path: "main.tex", text: text.as_str() }];
+        let _ = expand_project_with_cache(&docs, 0, &mut cache);
+    }
+    // Edit inside the first padding comment (before the first checkpoint):
+    // the incremental run restores from checkpoint 0 and re-expands the box
+    // past it, without touching any command.
+    let comment_at = text.find('%').expect("padding comment");
+    text.insert_str(comment_at + 5, "x");
+    let docs = [SourceDocument { path: "main.tex", text: text.as_str() }];
+    let cached = expand_project_with_cache(&docs, 0, &mut cache);
+    let full = expand_project(&docs, 0);
+    assert_eq!(
+        *cached.tokens, *full.tokens,
+        "incremental box measurement must equal a full expansion"
+    );
+    assert_eq!(
+        cached.diagnostics, full.diagnostics,
+        "incremental diagnostics must equal a full expansion"
+    );
+    // `\the` emits one single-character word per character, so the
+    // dimension is recovered from the concatenation, not from one token.
+    let words: String = full
+        .tokens
+        .iter()
+        .filter_map(|t| match &t.token.kind {
+            TokenKind::Word(word) => Some(word.as_str()),
+            _ => None,
+        })
+        .collect();
+    let end = words.find("pt").expect(&format!("a dimension in {words:?}"));
+    let start = words[..end]
+        .rfind(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let value: f64 = words[start..end]
+        .parse()
+        .expect(&format!("numeric dimension in {words:?}"));
+    assert!(value > 0.0, "the box measures nonzero: {words:?}");
 }

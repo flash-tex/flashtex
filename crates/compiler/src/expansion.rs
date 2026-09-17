@@ -49,11 +49,13 @@ use std::rc::Rc;
 
 use flashtex_tex_expansion::{self as tex, CatCode, Edit, Engine, IncrementalExpander, Limits, TokenKind as TexKind};
 
+use flashtex_tex_text_encoding::encoding::Encoding;
+
 use crate::diagnostics::Diagnostic;
-use crate::layout::{BODY_SIZE_PT, Font};
+use crate::layout::BODY_SIZE_PT;
 use crate::lexer::{apply_text_ligatures, tokenize_document, Token, TokenKind};
-use crate::text_builtins::pt_to_sp;
-use crate::parser::{apply_style, path_is_safe, style_command, style_declaration, SourceDocument, TextStyle, BUILT_INS, INCLUDE_DEPTH_LIMIT};
+use crate::text_builtins::{pt_to_sp, sp_to_pt, text_kern, text_symbol, DimenContext, SymbolOutcome, TEXT_SYMBOLS};
+use crate::parser::{TEXT_DESCENDER_GLYPHS, apply_style, parse_dimen_pt_at, path_is_safe, style_command, style_declaration, SourceDocument, TextStyle, BUILT_INS, INCLUDE_DEPTH_LIMIT};
 use crate::{DocumentId, Span};
 
 /// One parser input token with its expansion provenance.
@@ -766,22 +768,63 @@ fn limits_for(bytes: usize) -> Limits {
 /// actually present, e.g. zero depth for `Hi` — is unreachable without new
 /// font-engine plumbing; the face extents are the honest content-aware
 /// approximation this compiler can reach.
-struct CompilerBoxMeasurer;
+struct CompilerBoxMeasurer {
+    /// The body size sizes resolve against: the class option when the source
+    /// gives one, else the layout default — the same fallback the parser
+    /// uses for `class_size_pt`, so a fragment measures as it lays out.
+    body_pt: f64,
+    /// The document selects T1 fontenc: text symbols resolve in T1, else OT1.
+    t1: bool,
+    /// One warning per unmeasurable construct, with its span.
+    notes: RefCell<Vec<MeasurerNote>>,
+}
+
+/// One [`CompilerBoxMeasurer`] limitation, drained into engine diagnostics.
+struct MeasurerNote {
+    message: String,
+    span: tex::Span,
+}
 
 /// One shaped run of `\setto...` box content: characters carrying a single
 /// [`TextStyle`], as one [`crate::parser::Inline::Text`] would hold them.
+/// `text` is raw (unligatured): adjacent same-style runs merge before
+/// [`apply_text_ligatures`] applies, so `A{}V` shapes (and kerns) as `AV`.
 struct StyledRun {
     text: String,
     style: TextStyle,
 }
 
-/// Point size of a run, resolved exactly as [`crate::layout`] resolves laid-out
-/// text: a `\tiny`..`\Huge` declaration against the body size, else the body
-/// size itself (the measurer has no enclosing heading/math context to inherit).
-fn run_size_pt(style: TextStyle) -> f64 {
-    style.size.map_or(BODY_SIZE_PT, |level| {
-        crate::layout::size_declaration_pt(level, BODY_SIZE_PT)
-    })
+impl CompilerBoxMeasurer {
+    fn new(fonts: DocumentFonts) -> Self {
+        CompilerBoxMeasurer {
+            body_pt: fonts.class_pt.unwrap_or(BODY_SIZE_PT),
+            t1: fonts.setup.t1,
+            notes: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// Point size of a run, resolved exactly as [`crate::layout`] resolves
+    /// laid-out text: a `\tiny`..`\Huge` declaration against the body size,
+    /// else the body size itself (the measurer has no enclosing heading/math
+    /// context to inherit).
+    fn run_size_pt(&self, style: TextStyle) -> f64 {
+        style.size.map_or(self.body_pt, |level| {
+            crate::layout::size_declaration_pt(level, self.body_pt)
+        })
+    }
+
+    /// One interword space in the font and size `at` selects.
+    fn space_pt(&self, at: TextStyle) -> f64 {
+        crate::layout::word_space(self.run_size_pt(at), crate::layout::style_font(at))
+    }
+
+    fn note(&self, message: String, span: tex::Span) {
+        self.notes.borrow_mut().push(MeasurerNote { message, span });
+    }
+
+    fn take_notes(&self) -> Vec<MeasurerNote> {
+        std::mem::take(&mut *self.notes.borrow_mut())
+    }
 }
 
 /// Box content as the layout pass would see it: styled text runs plus the
@@ -804,12 +847,60 @@ fn run_size_pt(style: TextStyle) -> f64 {
 ///   glyph, exactly as TeX sets it. This matches the render pipeline's tie
 ///   arm, which likewise recognises only a literal-source `~` and leaves
 ///   `\textasciitilde` (a control sequence here) a tilde;
+/// - math (`$...$`, `\(...\)`, `\[...\]`) is skipped with a warning:
+///   the compiler cannot set it here;
+/// - `\hspace[*]{len}` sets its glue (parsed as a paragraph length);
+///   `\vspace[*]{len}` is ignored with a warning; fills (`\hfill`,
+///   `\hfil`, `\hss`) and `\-` have zero natural width;
+/// - text kerns (`\,`, `\:`, ...) resolve against the size in effect;
+/// - text symbols (`\textasciitilde`, ...) set their resolved character;
 /// - anything else the flat paragraph pass turns into a non-text inline
-///   (math, logos, kerns, rules, graphics, ...) or drops (`_ => {}`) has no
-///   compiler-crate width: it contributes nothing here either, rather than
-///   an invented guess. Such content measures short; measuring it needs
-///   layout/render machinery, which is out of scope for this hook.
-fn styled_runs(tokens: &[tex::Token]) -> (Vec<StyledRun>, f64) {
+///   (logos, rules, graphics, ...) or drops (`_ => {}`) contributes nothing
+///   but records a warning, rather than an invented guess or a silent zero.
+///   Such content measures short; measuring it needs layout/render
+///   machinery, which is out of scope for this hook.
+/// After `\hspace`/`\vspace` at `tokens[*i]`: an optional `*`, optional
+/// spaces, then the braced length. Consumes through the closing brace and
+/// returns the raw length text (`None` when no braced group follows, in
+/// which case nothing is consumed).
+fn take_length_arg(tokens: &[tex::Token], i: &mut usize) -> Option<String> {
+    let mut j = *i;
+    if matches!(tokens.get(j), Some(t) if matches!(&t.kind, TexKind::Char('*', _))) {
+        j += 1;
+    }
+    while matches!(tokens.get(j), Some(t) if matches!(&t.kind, TexKind::Char(_, CatCode::Space))) {
+        j += 1;
+    }
+    if !matches!(tokens.get(j), Some(t) if matches!(&t.kind, TexKind::Char(_, CatCode::BeginGroup)))
+    {
+        return None;
+    }
+    j += 1;
+    let mut raw = String::new();
+    let mut depth = 0u32;
+    while let Some(t) = tokens.get(j) {
+        j += 1;
+        match &t.kind {
+            TexKind::Char(_, CatCode::BeginGroup) => {
+                depth += 1;
+                raw.push('{');
+            }
+            TexKind::Char(_, CatCode::EndGroup) => {
+                if depth == 0 {
+                    *i = j;
+                    return Some(raw);
+                }
+                depth -= 1;
+                raw.push('}');
+            }
+            TexKind::Char(c, _) | TexKind::ActiveChar(c) => raw.push(*c),
+            _ => return None,
+        }
+    }
+    None
+}
+
+fn styled_runs(measurer: &CompilerBoxMeasurer, tokens: &[tex::Token]) -> (Vec<StyledRun>, f64) {
     let mut runs = Vec::new();
     let mut glue_pt = 0.0;
     let mut buf = String::new();
@@ -817,59 +908,106 @@ fn styled_runs(tokens: &[tex::Token]) -> (Vec<StyledRun>, f64) {
     let mut style = TextStyle::default();
     let mut saved = Vec::new();
     let mut pending: Option<TextStyle> = None;
-    // A space token seen since the last ink: at most one interword space per
-    // maximal whitespace run, as the input tokenizer already collapses them.
-    let mut spaced = false;
+    // A space seen since the last ink, with the style in force at the space:
+    // at most one interword space per maximal whitespace run, as the input
+    // tokenizer already collapses them. Charging the recorded style — not
+    // the next character's — keeps `a \texttt{b}`'s space in the outer font.
+    let mut spaced: Option<TextStyle> = None;
+    // Inside `$...$`, `\(...\)` or `\[...\]`: content is skipped (noted
+    // once per box) since the compiler cannot set math here.
+    let mut math_depth = 0u32;
+    let mut math_noted = false;
 
-    // Shape the open run, if any, and start a fresh one under `next`.
+    // Close the open run, if any, and start a fresh one under `next`.
     // A free function (not a closure): the walk reads and writes `buf_style`
-    // between flushes, which a capturing closure would not allow.
-    fn flush(buf: &mut String, runs: &mut Vec<StyledRun>, current: TextStyle, next: TextStyle) -> TextStyle {
+    // between flushes, which a capturing closure would not allow. Runs keep
+    // raw text: ligatures apply per merged run at measurement time, so text
+    // split across a transparent group ligates exactly as unbroken text.
+    fn flush(
+        buf: &mut String,
+        runs: &mut Vec<StyledRun>,
+        current: TextStyle,
+        next: TextStyle,
+    ) -> TextStyle {
         if !buf.is_empty() {
             runs.push(StyledRun {
-                text: apply_text_ligatures(buf),
+                text: std::mem::take(buf),
                 style: current,
             });
-            buf.clear();
         }
         next
     }
 
-    for token in tokens {
+    let mut i = 0;
+    while i < tokens.len() {
+        let token = &tokens[i];
+        i += 1;
+        // In math everything is skipped except the closers, which end the
+        // span; braces inside math are transparent and leave no stack behind.
+        if math_depth > 0 {
+            match &token.kind {
+                TexKind::Char(_, CatCode::MathShift) => math_depth -= 1,
+                TexKind::ControlSequence(name) if name == ")" || name == "]" => math_depth -= 1,
+                _ => {}
+            }
+            continue;
+        }
         match &token.kind {
-            TexKind::Char(_, CatCode::BeginGroup) => {
+            TexKind::Char(_, CatCode::MathShift) => {
                 buf_style = flush(&mut buf, &mut runs, buf_style, style);
+                if let Some(at) = spaced.take() {
+                    // `a $x$`: the space is real hbox glue ahead of the math.
+                    glue_pt += measurer.space_pt(at);
+                }
+                if !math_noted {
+                    math_noted = true;
+                    measurer.note(
+                        "math inside \\settowidth, \\settoheight or \\settodepth is not measured accurately yet".to_string(),
+                        token.span,
+                    );
+                }
+                math_depth = 1;
+            }
+            TexKind::Char(_, CatCode::BeginGroup) => {
+                // No flush: a transparent group must not split the shaping
+                // run (`A{}V` gets the `AV` kern). A pending argument-taking
+                // style still takes effect for what follows; text already in
+                // the buffer keeps `buf_style` and flushes under it when the
+                // style actually changes at the next character.
                 saved.push(style);
                 if let Some(next) = pending.take() {
                     style = next;
-                    buf_style = next;
                 }
             }
             TexKind::Char(_, CatCode::EndGroup) => {
-                flush(&mut buf, &mut runs, buf_style, style);
+                // No flush for the same reason: the buffer keeps its style
+                // and merges on when the restored style agrees. With an
+                // empty buffer the style simply resyncs.
                 if let Some(previous) = saved.pop() {
                     style = previous;
                 }
-                buf_style = style;
+                if buf.is_empty() {
+                    buf_style = style;
+                }
             }
             TexKind::Char(_, CatCode::Space) => {
                 buf_style = flush(&mut buf, &mut runs, buf_style, style);
-                spaced = true;
+                if spaced.is_none() {
+                    spaced = Some(style);
+                }
             }
             TexKind::ActiveChar('~') => {
                 buf_style = flush(&mut buf, &mut runs, buf_style, style);
-                if spaced {
+                if let Some(at) = spaced.take() {
                     // `a ~b`: the space token is real glue and the tie is
                     // more glue; TeX keeps both.
-                    glue_pt += crate::layout::word_space(run_size_pt(style), crate::layout::style_font(style));
-                    spaced = false;
+                    glue_pt += measurer.space_pt(at);
                 }
-                glue_pt += crate::layout::word_space(run_size_pt(style), crate::layout::style_font(style));
+                glue_pt += measurer.space_pt(style);
             }
             TexKind::Char(c, _) | TexKind::ActiveChar(c) => {
-                if spaced {
-                    glue_pt += crate::layout::word_space(run_size_pt(style), crate::layout::style_font(style));
-                    spaced = false;
+                if let Some(at) = spaced.take() {
+                    glue_pt += measurer.space_pt(at);
                 }
                 if buf_style != style {
                     buf_style = flush(&mut buf, &mut runs, buf_style, style);
@@ -885,16 +1023,113 @@ fn styled_runs(tokens: &[tex::Token]) -> (Vec<StyledRun>, f64) {
                 buf_style = flush(&mut buf, &mut runs, buf_style, next);
                 style = next;
             }
-            TexKind::ControlSequence(_) => {
-                // No compiler-crate width (see the doc comment): break the
-                // run as the paragraph pass's non-text inline would, but add
-                // no glue and change no style.
+            // `\(`, `\[`: display- and inline-math openers, like `$`.
+            TexKind::ControlSequence(name) if name == "(" || name == "[" => {
+                buf_style = flush(&mut buf, &mut runs, buf_style, style);
+                if let Some(at) = spaced.take() {
+                    glue_pt += measurer.space_pt(at);
+                }
+                if !math_noted {
+                    math_noted = true;
+                    measurer.note(
+                        "math inside \\settowidth, \\settoheight or \\settodepth is not measured accurately yet".to_string(),
+                        token.span,
+                    );
+                }
+                math_depth = 1;
+            }
+            // `\hspace[*]{len}` sets its glue; `\vspace[*]{len}` has no
+            // horizontal effect and is ignored (noted: content was skipped).
+            TexKind::ControlSequence(name) if name == "hspace" || name == "vspace" => {
+                buf_style = flush(&mut buf, &mut runs, buf_style, style);
+                if let Some(at) = spaced.take() {
+                    glue_pt += measurer.space_pt(at);
+                }
+                match take_length_arg(tokens, &mut i) {
+                    Some(raw) => match parse_dimen_pt_at(&raw, measurer.body_pt) {
+                        Some(pt) if name == "hspace" => glue_pt += pt,
+                        Some(_) => measurer.note(
+                            "\\vspace inside \\settowidth, \\settoheight or \\settodepth is ignored".to_string(),
+                            token.span,
+                        ),
+                        None => measurer.note(
+                            format!("\\{name} argument {raw:?} is not a recognised dimension; ignored this use"),
+                            token.span,
+                        ),
+                    },
+                    None => measurer.note(
+                        format!("\\{name} needs a braced length; ignored this use"),
+                        token.span,
+                    ),
+                }
+            }
+            // Text kerns (`\,`, `\:`) and spacing commands resolve against
+            // the size in effect, exactly as the render pipeline resolves
+            // them against its quad (`quad` there is the size in sp).
+            TexKind::ControlSequence(name) if text_kern(name, false).is_some() => {
+                buf_style = flush(&mut buf, &mut runs, buf_style, style);
+                let amount = text_kern(name, false).expect("checked above");
+                let size = measurer.run_size_pt(style);
+                let cx = DimenContext {
+                    quad: pt_to_sp(size),
+                    ..DimenContext::default()
+                };
+                glue_pt += sp_to_pt(amount.resolve(&cx));
+            }
+            // `\<space>`: an explicit interword space in the font in force.
+            TexKind::ControlSequence(name) if name == " " => {
+                buf_style = flush(&mut buf, &mut runs, buf_style, style);
+                if let Some(at) = spaced.take() {
+                    glue_pt += measurer.space_pt(at);
+                }
+                glue_pt += measurer.space_pt(style);
+            }
+            // Fills and `\-` have zero natural width in an hbox, which is
+            // what `\setto...` takes — complete, with no diagnostic.
+            TexKind::ControlSequence(name)
+                if matches!(name.as_str(), "hfill" | "hfil" | "hss" | "hfilneg" | "-") =>
+            {
                 buf_style = flush(&mut buf, &mut runs, buf_style, style);
             }
+            // Text symbols (`\textasciitilde`, `\textcopyright`, ...) set
+            // their resolved character, as `symbol_inline` typesets it.
+            TexKind::ControlSequence(name) if TEXT_SYMBOLS.iter().any(|(n, _)| n == name) => {
+                if let Some(at) = spaced.take() {
+                    glue_pt += measurer.space_pt(at);
+                }
+                if buf_style != style {
+                    buf_style = flush(&mut buf, &mut runs, buf_style, style);
+                }
+                let enc = if measurer.t1 {
+                    Encoding::T1
+                } else {
+                    Encoding::OT1
+                };
+                match text_symbol(name, enc) {
+                    Some(SymbolOutcome::Char(c)) => buf.push(c),
+                    Some(SymbolOutcome::Text(s)) => buf.push_str(&s),
+                    other => measurer.note(
+                        match other {
+                            Some(SymbolOutcome::Unavailable(message)) => message,
+                            _ => format!("\\{name} inside \\settowidth, \\settoheight or \\settodepth is not measured accurately yet"),
+                        },
+                        token.span,
+                    ),
+                }
+            }
+            TexKind::ControlSequence(name) => {
+                // No compiler-crate width (see the doc comment): break the
+                // run as the paragraph pass's non-text inline would, but add
+                // no glue and change no style — and say so, never silently.
+                buf_style = flush(&mut buf, &mut runs, buf_style, style);
+                measurer.note(
+                    format!("\\{name} inside \\settowidth, \\settoheight or \\settodepth is not measured accurately yet"),
+                    token.span,
+                );
+            }
             TexKind::Param(n) => {
-                if spaced {
-                    glue_pt += crate::layout::word_space(run_size_pt(style), crate::layout::style_font(style));
-                    spaced = false;
+                if let Some(at) = spaced.take() {
+                    glue_pt += measurer.space_pt(at);
                 }
                 if buf_style != style {
                     buf_style = flush(&mut buf, &mut runs, buf_style, style);
@@ -911,59 +1146,81 @@ fn styled_runs(tokens: &[tex::Token]) -> (Vec<StyledRun>, f64) {
     flush(&mut buf, &mut runs, buf_style, style);
     // A trailing space is real hbox glue (only line breaking discards edge
     // glue, and an hbox never breaks).
-    if spaced {
-        glue_pt += crate::layout::word_space(run_size_pt(style), crate::layout::style_font(style));
+    if let Some(at) = spaced.take() {
+        glue_pt += measurer.space_pt(at);
     }
-    (runs, glue_pt)
+    // Adjacent runs the group walk split but TeX sets as one shape together,
+    // so `A{}V` gets the `AV` kern. Styles already agree here, so only the
+    // text joins; ligatures still apply per merged run below, exactly as TeX
+    // ligates across transparent groups.
+    let mut merged: Vec<StyledRun> = Vec::with_capacity(runs.len());
+    for run in runs {
+        match merged.last_mut() {
+            Some(last) if last.style == run.style => last.text.push_str(&run.text),
+            _ => merged.push(run),
+        }
+    }
+    (merged, glue_pt)
 }
 
 impl tex::BoxMeasurer for CompilerBoxMeasurer {
     fn width(&self, tokens: &[tex::Token]) -> i64 {
-        let (runs, glue_pt) = styled_runs(tokens);
+        let (runs, glue_pt) = styled_runs(self, tokens);
         let mut pt = glue_pt;
         for run in &runs {
-            let size = run_size_pt(run.style);
-            pt += crate::layout::text_width(&run.text, size, crate::layout::style_font(run.style));
+            let size = self.run_size_pt(run.style);
+            pt += crate::layout::text_width(
+                &apply_text_ligatures(&run.text),
+                size,
+                crate::layout::style_font(run.style),
+            );
         }
         i64::from(pt_to_sp(pt))
     }
 
     fn height(&self, tokens: &[tex::Token]) -> i64 {
-        let (runs, _) = styled_runs(tokens);
-        let mut tallest = None::<f64>;
+        let (runs, _) = styled_runs(self, tokens);
+        let mut tallest = 0.0f64;
         for run in &runs {
-            let size = run_size_pt(run.style);
-            let (ascender, _) = crate::layout::font_extents(crate::layout::style_font(run.style), size);
-            tallest = Some(tallest.map_or(ascender, |t: f64| t.max(ascender)));
+            let size = self.run_size_pt(run.style);
+            let (ascender, _) =
+                crate::layout::font_extents(crate::layout::style_font(run.style), size);
+            tallest = tallest.max(ascender);
         }
-        // No text runs (empty or glue-only content): the body baseline-face
-        // fallback, as before — the font API has no ink boxes to say better.
-        let pt = tallest.unwrap_or_else(|| {
-            crate::layout::font_extents(Font::TimesRoman, BODY_SIZE_PT).0
-        });
-        i64::from(pt_to_sp(pt))
+        // No text runs (empty or glue-only content): zero, as TeX sets an
+        // empty hbox — never the face extents.
+        i64::from(pt_to_sp(tallest))
     }
 
     fn depth(&self, tokens: &[tex::Token]) -> i64 {
-        let (runs, _) = styled_runs(tokens);
-        let mut deepest = None::<f64>;
+        let (runs, _) = styled_runs(self, tokens);
+        let mut deepest = 0.0f64;
         for run in &runs {
-            let size = run_size_pt(run.style);
-            let (_, descender) = crate::layout::font_extents(crate::layout::style_font(run.style), size);
-            deepest = Some(deepest.map_or(descender, |d: f64| d.max(descender)));
+            // Glyph-aware without ink boxes: only text holding a descender
+            // takes depth (the underline layout's own table), so `Hi` is
+            // zero while `g` takes the face descender.
+            if apply_text_ligatures(&run.text)
+                .chars()
+                .any(|ch| TEXT_DESCENDER_GLYPHS.contains(&ch))
+            {
+                let size = self.run_size_pt(run.style);
+                let (_, descender) =
+                    crate::layout::font_extents(crate::layout::style_font(run.style), size);
+                deepest = deepest.max(descender);
+            }
         }
-        let pt = deepest.unwrap_or_else(|| {
-            crate::layout::font_extents(Font::TimesRoman, BODY_SIZE_PT).1
-        });
-        i64::from(pt_to_sp(pt))
+        i64::from(pt_to_sp(deepest))
     }
 }
 
 /// Host setup shared by the full and the incremental path. Everything it
-/// sets is part of the engine's checkpointed state.
-fn configure(engine: &mut Engine) {
+/// sets is part of the engine's checkpointed state — except the box
+/// measurer: `Engine::restore` rebuilds a default engine, so a restored
+/// checkpoint loses it (see [`has_setto`]). The returned handle lets
+/// [`expand_project`] drain the measurer's limitation notes.
+fn configure(engine: &mut Engine, measurer: Rc<CompilerBoxMeasurer>) {
     engine.run_host_prelude(HOST_PRELUDE);
-    engine.set_box_measurer(Rc::new(CompilerBoxMeasurer));
+    engine.set_box_measurer(measurer);
     engine.set_emit_unbalanced_close(true);
     for name in BUILT_INS {
         engine.declare_host_command(name);
@@ -978,8 +1235,9 @@ fn configure(engine: &mut Engine) {
 
 /// The expansion engine's `em`/`ex` come from the text font its tracked font
 /// commands select ([`crate::font_units`]).
-fn configure_with_fonts(engine: &mut Engine, fonts: DocumentFonts) {
-    configure(engine);
+fn configure_with_fonts(engine: &mut Engine, fonts: DocumentFonts) -> Rc<CompilerBoxMeasurer> {
+    let measurer = Rc::new(CompilerBoxMeasurer::new(fonts));
+    configure(engine, measurer.clone());
     for (name, switch) in crate::font_units::font_switches() {
         engine.declare_font_switch(name, switch);
     }
@@ -987,6 +1245,7 @@ fn configure_with_fonts(engine: &mut Engine, fonts: DocumentFonts) {
         setup: fonts.setup,
         preamble_latin_modern: fonts.preamble_latin_modern,
     }));
+    measurer
 }
 
 /// The document-wide font inputs the engine needs before it executes any
@@ -994,6 +1253,10 @@ fn configure_with_fonts(engine: &mut Engine, fonts: DocumentFonts) {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct DocumentFonts {
     setup: crate::font_units::FontSetup,
+    /// The raw `\documentclass` size option, before [`FontSetup`]'s 10pt
+    /// default: the box measurer falls back to the layout default instead,
+    /// exactly as the parser falls back for `class_size_pt`.
+    class_pt: Option<f64>,
     /// `lmodern` was loaded before `\usepackage[T1]{fontenc}`, whose
     /// `\selectfont` then switches the preamble to Latin Modern already.
     preamble_latin_modern: bool,
@@ -1061,12 +1324,24 @@ fn document_fonts(documents: &[SourceDocument<'_>]) -> DocumentFonts {
     }
     DocumentFonts {
         setup: crate::font_units::FontSetup::new(class_pt, t1, latin_modern),
+        class_pt,
         preamble_latin_modern: preamble_latin_modern && t1,
     }
 }
 
 fn has_includes(text: &str) -> bool {
     text.contains("\\input") || text.contains("\\include")
+}
+
+/// `\settowidth`/`\settoheight`/`\settodepth` force the full expansion
+/// path: the incremental engine restores checkpoints without the box
+/// measurer (`Engine::restore` rebuilds a default engine), so a box
+/// re-expanded past a restored checkpoint would measure `0pt`. Until the
+/// measurer travels with the checkpoint, these documents skip the cache
+/// (correct, just not incremental). Like [`has_includes`], a naive scan: a
+/// false positive only costs incrementality, never correctness.
+fn has_setto(text: &str) -> bool {
+    text.contains("\\settowidth") || text.contains("\\settoheight") || text.contains("\\settodepth")
 }
 
 /// The engine stopped on the step limit or on TeX's "capacity exceeded"
@@ -1412,7 +1687,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     let entry_text: &str = prepared.get(entry).map_or("", |p| p.text.as_ref());
     let limits = limits_for(total_bytes);
     let mut engine = Engine::with_limits(entry_text, limits);
-    configure_with_fonts(&mut engine, document_fonts(documents));
+    let measurer = configure_with_fonts(&mut engine, document_fonts(documents));
 
     let mut conv = Converter::new(documents, entry);
     let mut lookahead: VecDeque<(tex::Token, Option<tex::Span>)> = VecDeque::new();
@@ -1468,6 +1743,11 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
                 conv.resume_unexpanded(document, offset);
             }
         }
+    }
+    // Box-measurement limitations recorded while the engine ran become
+    // engine diagnostics, so they map to document spans like any other.
+    for note in measurer.take_notes() {
+        engine.push_diagnostic(tex::Diagnostic::warning(note.message, note.span));
     }
     let diagnostics = engine.diagnostics().to_vec();
     conv.map_diagnostics(&diagnostics);
@@ -1533,7 +1813,10 @@ pub fn expand_project_cached(documents: &[SourceDocument<'_>], entry: usize) -> 
     let Some(document) = documents.get(entry) else {
         return expand_project(documents, entry);
     };
-    if document.text.len() < INCREMENTAL_MIN_BYTES || has_includes(document.text) {
+    if document.text.len() < INCREMENTAL_MIN_BYTES
+        || has_includes(document.text)
+        || has_setto(document.text)
+    {
         return expand_project(documents, entry);
     }
     CACHES.with(|caches| {
@@ -1590,7 +1873,7 @@ pub fn expand_project_with_cache(
         *cache = None;
         return expand_project(documents, entry);
     };
-    if has_includes(document.text) {
+    if has_includes(document.text) || has_setto(document.text) {
         *cache = None;
         return expand_project(documents, entry);
     }
@@ -1937,6 +2220,12 @@ fn recovery_for(message: &str) -> &'static str {
     } else if message == "conditional nesting limit exceeded" {
         // The engine drops the `\if...` token; its test is read as text.
         "the extra conditional was ignored without evaluating its test, and expansion continued"
+    } else if message.contains("is not measured accurately yet") {
+        "measured the supported content and continued"
+    } else if message.contains("unavailable in encoding") {
+        "typeset nothing for the command, as pdfLaTeX does after this error"
+    } else if message.contains("; ignored this use") || message.ends_with("is ignored") {
+        "ignored it and continued"
     } else if is_stop_limit(message) {
         "stopped expanding; the rest of the document was typeset without macro expansion"
     } else {
