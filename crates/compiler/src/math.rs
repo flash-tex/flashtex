@@ -15,6 +15,20 @@ pub const SUBSCRIPT_LOWER_EM: f64 = 0.2;
 pub const MATH_AXIS_EM: f64 = 0.25;
 pub const FRACTION_GAP_EM: f64 = 0.16;
 pub const FRACTION_RULE_EM: f64 = 0.06;
+/// `cancel.sty` `\@can@slash` draws its diagonals with `\line` inside a
+/// `picture` environment under `\canc@thinlines` (cancel.sty:85), i.e. the
+/// kernel's `\thinlines`: `\@wholewidth` = `\fontdimen8\tenln` (latex.ltx
+/// `ltpictur.dtx`, fixed line font, not the current text font, so this does
+/// NOT scale with the formula's size). `line10.tfm` fontdimen8 measures
+/// 0.399990pt, the well-known fixed 0.4pt picture-mode rule.
+/// (`FRACTION_RULE_EM` is the wrong model here: it scales with font size.)
+pub const CANCEL_STRIKE_PT: f64 = 0.4;
+/// `cancel.sty` `\@can@slash` clamps degenerate argument boxes before
+/// drawing (cancel.sty:91 `\@min@pt\dimen@ 2\@min@pt\totalheight6`,
+/// with `\@min@pt#1#2` = "at least #2pt" at cancel.sty:177): minimum 2pt
+/// wide, minimum 6pt total height, so even `\cancel{}` draws a strike.
+pub const CANCEL_MIN_WIDTH_PT: f64 = 2.0;
+pub const CANCEL_MIN_TOTAL_HEIGHT_PT: f64 = 6.0;
 /// Symbol.afm `radical` (C 214): ink right edge 515 and top 917, per 1000 em.
 pub const RADICAL_INK_RIGHT_EM: f64 = 0.515;
 pub const RADICAL_TOP_EM: f64 = 0.917;
@@ -918,25 +932,53 @@ impl Frame {
     ///
     /// This is the geometry `cancel.sty` draws: each strike joins two
     /// diagonally opposite corners of the argument's box (a rotated rule
-    /// spanning the box's width and total height), at the compiler's usual
-    /// math-rule thickness. The render pipeline draws these segments from
+    /// spanning the box's width and total height). The thickness is the
+    /// fixed 0.4pt picture-mode rule ([`CANCEL_STRIKE_PT`]), never scaled by
+    /// `size`. A degenerate box still draws: like `cancel.sty`'s minimum
+    /// clamp, the strike spans at least [`CANCEL_MIN_WIDTH_PT`] by
+    /// [`CANCEL_MIN_TOTAL_HEIGHT_PT`], centred on the body (as `\ooalign`
+    /// centres the real line), so `\\cancel{}` is a real segment, not a
+    /// zero-length one. `size` is kept for call-site stability and is
+    /// otherwise unused: nothing about the strike scales with font size.
+    ///
+    /// Faithfully NOT modelled: `cancel.sty`'s quantized `\\line` slopes
+    /// (the `\\ifcase` tables at cancel.sty:96-97,103-104 — picture mode
+    /// only allows small integer slopes) and its +2pt overshoot past the
+    /// box (cancel.sty:95,100). Both change the exact endpoints, and mapping
+    /// `\\line(x,y){len}` picture placement onto these segments needs a
+    /// real-pdflatex check this repository cannot run (no pdflatex); the
+    /// corner-to-corner convention stays until that verification lands.
+    /// The render pipeline draws these segments from
     /// the `Frame`; the compiler's own layout keeps the overlapped body box
     /// (see `layout_nucleus`).
-    pub fn cancel_strikes(self, width: f64, top: f64, bottom: f64, size: f64) -> Vec<CancelStrike> {
-        let thickness = FRACTION_RULE_EM * size;
+    pub fn cancel_strikes(
+        self,
+        width: f64,
+        top: f64,
+        bottom: f64,
+        _size: f64,
+    ) -> Vec<CancelStrike> {
+        // Minimum box, centred on the body: identical to the plain
+        // corner-to-corner segment for every non-degenerate body.
+        let span_width = width.max(CANCEL_MIN_WIDTH_PT);
+        let mid_x = width / 2.0;
+        let (x1, x2) = (mid_x - span_width / 2.0, mid_x + span_width / 2.0);
+        let span_height = (bottom - top).max(CANCEL_MIN_TOTAL_HEIGHT_PT);
+        let mid_y = (top + bottom) / 2.0;
+        let (span_top, span_bottom) = (mid_y - span_height / 2.0, mid_y + span_height / 2.0);
         self.cancel_diagonals()
             .iter()
             .map(|diagonal| {
                 let (y1, y2) = match diagonal {
-                    CancelDiagonal::Rising => (bottom, top),
-                    CancelDiagonal::Falling => (top, bottom),
+                    CancelDiagonal::Rising => (span_bottom, span_top),
+                    CancelDiagonal::Falling => (span_top, span_bottom),
                 };
                 CancelStrike {
-                    x1: 0.0,
+                    x1,
                     y1,
-                    x2: width,
+                    x2,
                     y2,
-                    thickness,
+                    thickness: CANCEL_STRIKE_PT,
                 }
             })
             .collect()
@@ -967,9 +1009,10 @@ pub struct CancelStrike {
     pub x2: f64,
     /// Strike end, baseline-relative like [`MathRule::y`].
     pub y2: f64,
-    /// Stroke thickness: the compiler's usual math-rule thickness
-    /// (`FRACTION_RULE_EM` — overline, underline, fractions; cf. text-mode
-    /// `\sout`'s 0.4pt rule).
+    /// Stroke thickness: always [`CANCEL_STRIKE_PT`] (0.4pt), the fixed
+    /// picture-mode rule `cancel.sty` draws with — never scaled by font size
+    /// (cf. text-mode `\sout`'s 0.4pt rule; contrast `FRACTION_RULE_EM`,
+    /// which does scale and is the wrong model here).
     pub thickness: f64,
 }
 
@@ -2412,6 +2455,21 @@ impl MathParser<'_> {
                     "xcancel" => Frame::XCancel,
                     _ => Frame::Under,
                 };
+                // The three cancel frames have no render-pipeline strike arm
+                // (they fall into the over-arrow wildcard there), so — like
+                // `\check` / `\breve` with no base-14 glyph — the command
+                // parses but always diagnoses that its strike is unavailable;
+                // the body is typeset alone. This is what `renders: false`
+                // means in the supported inventory.
+                if !frame.cancel_diagonals().is_empty() {
+                    self.diagnostics.push(Diagnostic::warning(
+                        format!(
+                            "\\{name} draws no diagonal strike yet (the render pipeline has no strike arm)"
+                        ),
+                        Some(span),
+                        Some("typeset the body without the strike and continued".into()),
+                    ));
+                }
                 MathAtom {
                     nucleus: Nucleus::Framed { body, frame },
                     span,
@@ -6878,7 +6936,13 @@ mod unbraced_argument_tests {
                     ..MathPackages::KERNEL
                 };
                 let list = parse_tokens(&tokens, packages, &mut diagnostics);
-                assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+                // Parses, but the strike is unavailable: exactly one
+                // strike warning (see `renders: false` in `supported.rs`).
+                assert_eq!(diagnostics.len(), 1, "{source}: {diagnostics:?}");
+                assert!(
+                    diagnostics[0].message.contains("draws no diagonal strike"),
+                    "{source}: {diagnostics:?}"
+                );
                 match &list.atoms[0].nucleus {
                     Nucleus::Framed { body, frame: got } => {
                         assert_eq!(*got, frame, "{source}");
@@ -6952,7 +7016,8 @@ mod accent_tests {
         laid_out_with(source, size, MathPackages::KERNEL)
     }
 
-    /// A document that loaded `cancel`: the three strikes parse silently.
+    /// A document that loaded `cancel`: the three strikes parse (each use
+    /// warns that its strike is not drawn — see `renders: false`).
     const CANCEL: MathPackages = MathPackages {
         amsmath: false,
         amssymb: false,
@@ -7330,7 +7395,13 @@ mod accent_tests {
         assert!(d0.is_empty(), "{d0:?}");
         for source in [r"\cancel{x}", r"\bcancel{x}", r"\xcancel{x}"] {
             let (b, d) = laid_out_with(source, size, CANCEL);
-            assert!(d.is_empty(), "{source}: {d:?}");
+            // The body box is kept bare, and the one diagnostic is the
+            // strike-unavailable warning, never a rule or package complaint.
+            assert_eq!(d.len(), 1, "{source}: {d:?}");
+            assert!(
+                d[0].message.contains("draws no diagonal strike"),
+                "{source}: {d:?}"
+            );
             assert!(b.items.iter().all(|i| i.rule.is_none()), "{source}: {b:?}");
             // Only overlaps the body: the width is the body's own width.
             assert_eq!(b.width, plain.width, "{source}");
@@ -7360,7 +7431,13 @@ mod accent_tests {
                 let list = parse_tokens(&tokens, CANCEL, &mut diagnostics);
                 (list, diagnostics)
             };
-            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            // One strike-unavailable warning per use; the routing facts
+            // below are what the warning is about.
+            assert_eq!(diagnostics.len(), 1, "{source}: {diagnostics:?}");
+            assert!(
+                diagnostics[0].message.contains("draws no diagonal strike"),
+                "{source}: {diagnostics:?}"
+            );
             let Nucleus::Framed { frame: got, .. } = &list.atoms[0].nucleus else {
                 panic!("{source}: expected a framed nucleus, got {:?}", list.atoms[0].nucleus);
             };
@@ -7408,11 +7485,13 @@ mod accent_tests {
     fn cancel_strikes_span_the_body_box_corner_to_corner() {
         // The geometry cancel.sty draws: one line per diagonal from one
         // corner of the argument's bounding box to the diagonally opposite
-        // corner, at the compiler's usual math-rule thickness (the same
-        // `FRACTION_RULE_EM` as overline, underline and fractions).
+        // corner, at the fixed 0.4pt picture-mode rule (`CANCEL_STRIKE_PT`,
+        // verified against cancel.sty + the kernel + line10.tfm — never the
+        // size-scaled `FRACTION_RULE_EM`).
         let size = 10.0;
         let (width, top, bottom) = (20.0, -7.5, 3.0);
-        let thickness = FRACTION_RULE_EM * size;
+        let thickness = CANCEL_STRIKE_PT;
+        assert_eq!(thickness, 0.4);
         assert_eq!(
             Frame::Cancel.cancel_strikes(width, top, bottom, size),
             vec![CancelStrike {
@@ -7459,6 +7538,52 @@ mod accent_tests {
             Frame::Over.cancel_strikes(width, top, bottom, size).is_empty(),
             "non-cancel frames have no strikes"
         );
+    }
+
+    #[test]
+    fn cancel_strike_thickness_is_fixed_regardless_of_size() {
+        // `cancel.sty` draws under `\\thinlines`: the kernel's fixed 0.4pt
+        // picture-mode rule, independent of font size. Two very different
+        // formula sizes must report the identical thickness, exactly 0.4.
+        let (width, top, bottom) = (20.0, -7.5, 3.0);
+        let small = Frame::Cancel.cancel_strikes(width, top, bottom, 5.0);
+        let large = Frame::Cancel.cancel_strikes(width, top, bottom, 20.0);
+        assert_eq!(small.len(), 1);
+        assert_eq!(large.len(), 1);
+        assert_eq!(small[0].thickness, 0.4);
+        assert_eq!(large[0].thickness, 0.4);
+        assert_eq!(small[0].thickness, large[0].thickness);
+        // The old size-scaled model would have given 0.3 and 1.2 here.
+        assert_ne!(small[0].thickness, FRACTION_RULE_EM * 5.0);
+    }
+
+    #[test]
+    fn cancel_empty_body_still_draws_a_strike() {
+        // `cancel.sty` clamps degenerate boxes (minimum 2pt wide, 6pt tall),
+        // so `$\\cancel{}$` draws a real strike. A zero-width body must
+        // produce a non-degenerate segment, not a zero-length one.
+        for frame in [Frame::Cancel, Frame::BCancel] {
+            let strikes = frame.cancel_strikes(0.0, 0.0, 0.0, 10.0);
+            assert_eq!(strikes.len(), 1, "{frame:?}");
+            let s = strikes[0];
+            assert_eq!(s.thickness, CANCEL_STRIKE_PT);
+            assert_eq!(s.x2 - s.x1, CANCEL_MIN_WIDTH_PT, "{frame:?}: {s:?}");
+            assert_eq!(
+                (s.y2 - s.y1).abs(),
+                CANCEL_MIN_TOTAL_HEIGHT_PT,
+                "{frame:?}: {s:?}"
+            );
+            let len = ((s.x2 - s.x1).powi(2) + (s.y2 - s.y1).powi(2)).sqrt();
+            assert!(len > 0.0, "{frame:?}: {s:?}");
+        }
+        // `\\xcancel` draws both diagonals even over nothing.
+        let strikes = Frame::XCancel.cancel_strikes(0.0, 0.0, 0.0, 10.0);
+        assert_eq!(strikes.len(), 2);
+        for s in &strikes {
+            assert_eq!(s.thickness, CANCEL_STRIKE_PT);
+            assert!((s.x2 - s.x1).abs() > 0.0, "{s:?}");
+            assert!((s.y2 - s.y1).abs() > 0.0, "{s:?}");
+        }
     }
 }
 
@@ -8415,10 +8540,15 @@ mod package_gating_tests {
                 format!("\\{name} requires \\usepackage{{cancel}}"),
                 "{source}"
             );
-            // With the package the command parses silently to its frame,
-            // like every other gated command under its own package.
+            // With the package the command parses to its frame — with
+            // the strike-unavailable warning (`renders: false`), unlike the
+            // silent gated commands under their own packages.
             let (list, loaded) = parsed(&source, CANCEL);
-            assert!(loaded.is_empty(), "{source} under cancel: {loaded:?}");
+            assert_eq!(loaded.len(), 1, "{source} under cancel: {loaded:?}");
+            assert!(
+                loaded[0].message.contains("draws no diagonal strike"),
+                "{source} under cancel: {loaded:?}"
+            );
             assert_eq!(list.atoms.len(), 1, "{source}: {list:?}");
             assert!(
                 matches!(&list.atoms[0].nucleus, Nucleus::Framed { .. }),

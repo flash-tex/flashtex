@@ -717,8 +717,8 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
     (
         &["cancel", "bcancel", "xcancel"],
         "{...}",
-        "diagonal rule over the body: bottom-left to top-right, its mirror, or both",
-        true,
+        "parsed to a framed nucleus, but the diagonal strike is not drawn (no render-pipeline strike arm yet): diagnosed, body typeset alone",
+        false,
     ),
     (
         &["overbrace", "underbrace"],
@@ -1061,7 +1061,7 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "cancel",
         "",
-        "\\cancel, \\bcancel and \\xcancel draw diagonal strikes over the body (the diagonals are set by the render pipeline); the makeroom and thicklines options change the layout and keep warning",
+        "\\cancel, \\bcancel and \\xcancel parse to framed nuclei but their diagonal strikes are not drawn yet (no render-pipeline strike arm): diagnosed, body typeset alone; the makeroom and thicklines options change the layout and keep warning",
     ),
     (
         "xspace",

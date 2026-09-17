@@ -13768,15 +13768,17 @@ mod tests {
         }
     }
 
-    /// `\usepackage{cancel}` is silent: `\cancel`, `\bcancel` and `\xcancel`
-    /// are implemented (the diagonals are drawn by the render pipeline), so
-    /// the correct document must not warn "recognised but not implemented".
-    /// Without the package the commands are undefined, like under pdflatex
-    /// ("Undefined control sequence"), so the same math diagnoses the
-    /// missing package. cancel.sty's `makeroom` and `thicklines` options
-    /// change the layout and are not implemented, so they keep the warning.
+    /// `\usepackage{cancel}` loads without the "recognised but not
+    /// implemented" package warning, and `\cancel` parses to its frame —
+    /// but the strike itself is not drawn (no render-pipeline strike arm),
+    /// so the correct document still carries the one strike warning (this is
+    /// what `renders: false` means in the supported inventory). Without the
+    /// package the commands are undefined, like under pdflatex ("Undefined
+    /// control sequence"), so the same math diagnoses the missing package.
+    /// cancel.sty's `makeroom` and `thicklines` options change the layout
+    /// and are not implemented, so they keep the warning.
     #[test]
-    fn cancel_package_load_is_silent_but_makeroom_and_thicklines_warn() {
+    fn cancel_package_load_is_silent_but_strikes_and_options_warn() {
         let doc = |preamble: &str| {
             format!(
                 "\\documentclass{{article}}{preamble}\
@@ -13790,6 +13792,16 @@ mod tests {
                 .iter()
                 .any(|d| d.message.contains("cancel are recognised")),
             "\\usepackage{{cancel}} must not warn: {:?}",
+            parsed.diagnostics
+        );
+        // The strike is unavailable: the one diagnostic is the strike
+        // warning, never a package complaint.
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("draws no diagonal strike")),
+            "\\cancel must warn that its strike is not drawn: {:?}",
             parsed.diagnostics
         );
         // With the package the math is really a cancel frame.
