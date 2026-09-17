@@ -5,7 +5,7 @@
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-17T00:00:49Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "GH-774-HELPER-STALL",
-  "updated_utc": "2026-09-17T00:00:49Z"
+  "updated_utc": "2026-09-17T00:03:18Z"
 }
