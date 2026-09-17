@@ -712,6 +712,40 @@ pub struct SizedPara {
 /// builds against a `vendor/compiler` that predates the name.
 pub type ParLeading = Option<flashtex_compiler::parser::FontSizeLevel>;
 
+/// One [`ParLeading`] per block, from the compiler's `block_par_leading`.
+///
+/// The compiler's contract is one entry per pushed block, in `blocks` order,
+/// and while it holds the two lists are paired positionally. A pinned
+/// `vendor/compiler` can break it: before the compiler's `P::box_inlines`
+/// learned to truncate `block_par_leading` the way `P::argument_inlines`
+/// always did (crates/compiler, #517), every `\colorbox`/`\fcolorbox` box
+/// argument left one stray entry behind — the leading of a paragraph that
+/// never reached `blocks`.
+///
+/// A stray entry cannot be located after the fact, and it is pushed *before*
+/// the block whose paragraph contains the box, so from the first box onwards
+/// entry *i* no longer names block *i*. Pairing them anyway hands a paragraph
+/// the `\baselineskip` of some box's interior: `\colorbox{white}{\small x}`
+/// in a body paragraph shrinks the whole paragraph's line pitch.
+///
+/// So a length disagreement discards the list: every block falls back to the
+/// body leading, exactly as a `--no-default-features` build does, and the
+/// feature resumes by itself once `vendor/` is re-pinned past #517.
+///
+/// This decision must not depend on the build profile. It used to be a
+/// `debug_assert_eq!`, which made a debug build panic inside `\fcolorbox`
+/// rendering while a release build silently mis-paired — the same input
+/// producing two different outcomes depending on the optimisation level
+/// (#667).
+#[cfg(feature = "par-leading")]
+fn block_leadings(from_compiler: &[ParLeading], blocks: usize) -> Vec<ParLeading> {
+    if from_compiler.len() == blocks {
+        from_compiler.to_vec()
+    } else {
+        vec![None; blocks]
+    }
+}
+
 /// How a paragraph-shape environment began (see [`Block::Paragraph`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EnvOpen {
@@ -1363,21 +1397,17 @@ pub fn adapt_cached(
     let title_blocks = parsed.blocks.iter().filter(|b| matches!(b, CBlock::TitleBlock { .. })).count();
     let stash_titles = style.class_geometry.is_some() && maketitles == title_blocks && maketitles > 0;
     // `Parsed::block_par_leading` is one entry per block, in `blocks` order
-    // (the compiler pushes both from the same place). Without the
+    // (the compiler pushes both from the same place) whenever the pinned
+    // `vendor/compiler` keeps that contract; `block_leadings` is what decides
+    // whether it did, in both build profiles alike. Without the
     // `par-leading` feature the pinned `vendor/compiler` has no such field
     // and every paragraph keeps the body's `\baselineskip`, which is what
     // the pipeline did before this existed.
     #[cfg(feature = "par-leading")]
-    let leadings: Vec<ParLeading> = parsed.block_par_leading.clone();
+    let leadings: Vec<ParLeading> = block_leadings(&parsed.block_par_leading, parsed.blocks.len());
     #[cfg(not(feature = "par-leading"))]
     let leadings: Vec<ParLeading> = vec![None; parsed.blocks.len()];
-    debug_assert_eq!(leadings.len(), parsed.blocks.len());
-    let paired: Vec<(CBlock, ParLeading)> = parsed
-        .blocks
-        .iter()
-        .cloned()
-        .zip(leadings.into_iter().chain(std::iter::repeat(None)))
-        .collect();
+    let paired: Vec<(CBlock, ParLeading)> = parsed.blocks.iter().cloned().zip(leadings).collect();
     let (mut lowered, mut limitations, stashed, letter_spans) = lower_blocks(texts, &paired, stash_titles, style.parskip.natural);
     let mut stashed = stashed.into_iter();
     let title_of = |(title, authors, date): StashedTitle, span: Span| Block::Title {
@@ -9009,6 +9039,51 @@ mod tests {
             },
             Block::Heading { items, .. } => items.clone(),
             _ => panic!("a rule, picture, chapter or page-style block holds no items"),
+        }
+    }
+
+    /// [`block_leadings`] pairs positionally only when the compiler's list is
+    /// exactly one entry per block, and otherwise discards it — with no
+    /// dependence on `debug_assertions`, so a debug and a release build lay
+    /// the same document out the same way (#667).
+    ///
+    /// The predecessor of this function was a `debug_assert_eq!` followed by a
+    /// `zip`: a debug build panicked and a release build paired block *i* with
+    /// a stray entry, which is how `\colorbox{white}{\small x}` came to set a
+    /// whole body paragraph's `\baselineskip` in release only.
+    #[cfg(feature = "par-leading")]
+    #[test]
+    fn block_leadings_are_profile_independent() {
+        use flashtex_compiler::parser::FontSizeLevel;
+        let small = Some(FontSizeLevel::Small);
+        let large = Some(FontSizeLevel::Large1);
+
+        // One entry per block: used as it stands, in order.
+        assert_eq!(block_leadings(&[small, None, large], 3), vec![small, None, large]);
+        assert_eq!(block_leadings(&[], 0), Vec::<ParLeading>::new());
+
+        // Any other length is unpairable: every block takes the body leading.
+        // A stray entry is pushed before the block it belongs to, so a longer
+        // list must not simply be truncated to `blocks` (that is the release
+        // mis-pairing this replaced) and a shorter one must not be padded.
+        assert_eq!(block_leadings(&[small, None], 1), vec![None]);
+        assert_eq!(block_leadings(&[small, small, None], 2), vec![None, None]);
+        assert_eq!(block_leadings(&[small], 3), vec![None, None, None]);
+        assert_eq!(block_leadings(&[small], 0), Vec::<ParLeading>::new());
+
+        // The property the old `debug_assert!` broke: the result depends on
+        // the inputs alone, never on how the crate was compiled.
+        for compiler_len in 0..6usize {
+            for blocks in 0..6usize {
+                let list = vec![small; compiler_len];
+                let got = block_leadings(&list, blocks);
+                assert_eq!(got.len(), blocks, "{compiler_len} entries, {blocks} blocks");
+                assert!(
+                    got.iter().all(|l| *l == small) || got.iter().all(|l| l.is_none()),
+                    "{compiler_len} entries, {blocks} blocks: {got:?}"
+                );
+                assert_eq!(got, block_leadings(&list, blocks), "not deterministic");
+            }
         }
     }
 
