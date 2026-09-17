@@ -930,6 +930,31 @@ fn newtheorem_failed_shared_counter_leaves_the_name_claimable() {
 }
 
 #[test]
+fn newtheorem_shared_counter_control_sequence_does_not_falsely_match_a_name() {
+    // `bracket_arg_text` must not strip the backslash off a control
+    // sequence in `[shared]`: `scan_through_bracket` reads with `next_raw`
+    // (no expansion), so `[\base]` stays the literal token `\base`, and the
+    // compiler's own `parser.rs::new_theorem` never re-expands its bracket
+    // argument either -- both sides must compare the same raw
+    // representation. Before this fix, stripping the backslash turned
+    // `\base` into the string "base", which coincidentally matched the
+    // *name* of an unrelated, already-declared theorem environment
+    // (`\newtheorem{base}{Base}`), letting a declaration through that both
+    // pdflatex and the compiler's own check reject. `\def\base{notcounter}`
+    // is part of the reported repro; this check does not depend on macro
+    // expansion of `\base` (neither side performs it), only on the two
+    // sides agreeing about what `[\base]`'s raw text is.
+    let r = expand_str(
+        "\\newtheorem{base}{Base}\\def\\base{notcounter}\\newtheorem{alias}[\\base]{Alias}\n\\newtheorem{alias}{Alias}\\begin{alias}Hi\\end{alias}",
+    );
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    let out = text(&r.tokens);
+    assert!(out.contains("Hi"), "{out:?}");
+    assert!(out.contains(r"\alias "), "{out:?}");
+    assert!(out.contains(r"\endalias "), "{out:?}");
+}
+
+#[test]
 fn newtheorem_valid_shared_counter_still_declares() {
     // A counter-sharing declaration that refers to an earlier, successful
     // `\newtheorem` keeps working exactly as before: both names are

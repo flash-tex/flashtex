@@ -3405,12 +3405,19 @@ impl Engine {
     }
 
     /// Trimmed text of a `scan_through_bracket` result: leading spaces and
-    /// the outer `[`/`]` delimiters are dropped, and the body tokens are
-    /// read the way `do_newtheorem` reads its `name` (control sequences
-    /// without the backslash, so `[\thm]` and `[thm]` agree) and the way
-    /// the compiler's `parser.rs::new_theorem` reads its `shared` argument
-    /// (trimmed text). A truncated scan (EOF before `]`) yields whatever
-    /// body was collected.
+    /// the outer `[`/`]` delimiters are dropped. `scan_through_bracket`
+    /// reads with `next_raw`, so a control sequence inside the bracket
+    /// (e.g. a `[\base]` shared-counter argument) stays as that literal
+    /// token, unexpanded -- the same way the compiler's
+    /// `parser.rs::new_theorem` sees it (its own token-to-text step never
+    /// re-expands the bracket either), so `display_name`'s backslash is
+    /// kept, not stripped: this is a raw-token comparison against the
+    /// compiler's own `self.theorems` lookup, not a resolved LaTeX name
+    /// (neither side macro-expands a shared-counter argument that is
+    /// itself a macro, e.g. one that would expand to a real counter name;
+    /// that gap is pre-existing and shared by both sides, not introduced
+    /// here). A truncated scan (EOF before `]`) yields whatever body was
+    /// collected.
     fn bracket_arg_text(toks: &[Pending]) -> String {
         let mut body = toks.iter().as_slice();
         while matches!(body.first().map(|p| &p.tok.kind), Some(TokenKind::Char(_, CatCode::Space))) {
@@ -3422,7 +3429,7 @@ impl Engine {
         while matches!(body.last().map(|p| &p.tok.kind), Some(TokenKind::Char(']', CatCode::Other)) | Some(TokenKind::Char(_, CatCode::Space))) {
             body = &body[..body.len() - 1];
         }
-        body.iter().map(|p| p.tok.display_name().replace('\\', "")).collect::<String>().trim().to_string()
+        body.iter().map(|p| p.tok.display_name()).collect::<String>().trim().to_string()
     }
 
     /// `\begin{name}`: LaTeX opens a group, records `\@currenvir`, then
