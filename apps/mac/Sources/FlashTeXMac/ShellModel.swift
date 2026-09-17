@@ -29,6 +29,11 @@ final class ShellModel {
         }
     }
     var resultID: String?
+    /// Test-only: fires synchronously, once per applied result, with the id
+    /// `resultID` was just set to. Not `@Observable`-tracked and never read by
+    /// the app; exists because reconstructing `resultID`'s full history from
+    /// observation alone is racy (see the call site in `handle(_:)`, GH-680).
+    @ObservationIgnored var onResultApplied: ((String) -> Void)?
     var fixtureURL: URL?
     var loadError: String?
     var selection: Selection?
@@ -1214,6 +1219,14 @@ final class ShellModel {
             }
             result = incoming
             resultID = env.id
+            // Test-only, synchronous, in order: an `@Observable` willChange
+            // notification fires before the new value lands, so a test that
+            // wants every id `resultID` ever took (not just the latest) cannot
+            // reconstruct that history by deferring its read to a later
+            // main-actor turn -- two applies close enough together in
+            // wall-clock time can otherwise coalesce before the deferred read
+            // runs, silently dropping the earlier one under load (GH-680).
+            onResultApplied?(env.id)
             // Change-only: `@Observable` fires for every assignment, equal or not,
             // and each of these re-evaluated the header/status views per reply.
             let source = PreviewSource.worker(worker?.executable.lastPathComponent ?? "worker")
