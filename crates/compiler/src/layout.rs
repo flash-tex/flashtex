@@ -2377,14 +2377,15 @@ pub(crate) fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f6
 /// standard ones (the class aliases `\scriptsize` to `\SMALL` and
 /// `\footnotesize` to `\Small`).
 ///
-/// **Known gap:** `\Tiny` (rung 0) has no `FontSizeLevel` of its own and
-/// folds onto `Tiny` (rung 1, `\tiny`) in `ams_rung_level`, so stepping
-/// below `\tiny` (e.g. three `\smaller`s) re-enters at `\tiny`'s own value
-/// instead of reaching the AMS classes' genuinely smaller `\Tiny` rung.
-/// Representing rung 0 for real needs a new state slot (a `FontSizeLevel`
-/// variant or an AMS-specific rung field on the style), which reaches
-/// roughly 80 call sites across this crate; deliberately left for a
-/// separate, focused change rather than folded into a size-table fix.
+/// **Known gap (GH-824):** `\Tiny` (rung 0) has no `FontSizeLevel` of its
+/// own and folds onto `Tiny` (rung 1, `\tiny`) in `ams_rung_level`, so
+/// stepping below `\tiny` (e.g. three `\smaller`s) re-enters at `\tiny`'s
+/// own value instead of reaching the AMS classes' genuinely smaller
+/// `\Tiny` rung. Representing rung 0 for real needs a new state slot (a
+/// `FontSizeLevel` variant or an AMS-specific rung field on the style),
+/// which reaches roughly 80 call sites across this crate; deliberately
+/// left for a separate, focused change rather than folded into a
+/// size-table fix.
 pub(crate) const AMS_RUNG_COUNT: usize = 11;
 
 /// `(font size pt, baselineskip pt)` for one AMS ladder rung, from the real
@@ -2480,7 +2481,12 @@ pub(crate) fn ams_rung_level(rung: usize) -> Option<FontSizeLevel> {
 /// Absolute font size for one `\tiny`..`\Huge` declaration under `ams`
 /// (an AMS class) or the standard classes: the AMS `\@typesizes` rung for
 /// the level when `ams` is set, else `size_declaration_pt` unchanged.
-/// (`\normalsize` never reaches here; callers resolve it to the body size.)
+/// `\normalsize` never reaches here at all -- callers resolve it straight
+/// to the body size (the pre-existing, documented 11pt approximation:
+/// `\normalsize` stays 11.0 there, not the real 10.95 pdflatex uses, same
+/// as the standard classes) -- so `ams_size_declaration_pt`'s own rung 5
+/// entry (10.95 at 11pt) is dead for this specific declaration; it is only
+/// ever read via `\larger`/`\smaller` stepping onto rung 5 from elsewhere.
 pub(crate) fn size_declaration_pt_for_class(
     level: FontSizeLevel,
     body_size_pt: f64,
