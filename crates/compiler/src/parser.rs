@@ -1125,7 +1125,15 @@ pub(crate) fn style_declaration(name: &str) -> bool {
 /// consumer that has not yet learned to set `content` draws, so a formula has
 /// to contribute its symbols — `\item[$\alpha$]` used to yield the empty
 /// string, which is why the label vanished from the page entirely.
-fn label_plain_text(content: &[Inline]) -> String {
+/// `source` is the document text `content`'s spans point into, when
+/// available: [`crate::math::append_math_reference_text`] (the same
+/// exhaustive flattener `\eqref`'s tag text and `\tag`'s own label use)
+/// falls back to a composite atom's raw source text (fractions, radicals,
+/// matrices, ...) when it has no single rendered glyph, exactly like those
+/// callers, instead of the narrower flattening this used to do by hand
+/// (which silently dropped most math nuclei -- `\sqrt`, `\dfrac`, ... --
+/// leaving the label text empty).
+fn label_plain_text(content: &[Inline], source: Option<&str>) -> String {
     let mut text = String::new();
     for inline in content {
         let (space_before, math) = match inline {
@@ -1138,44 +1146,11 @@ fn label_plain_text(content: &[Inline]) -> String {
         }
         match (inline, math) {
             (Inline::Text { text: word, .. }, _) => text.push_str(word),
-            (_, Some(list)) => math_plain_text(list, &mut text),
+            (_, Some(list)) => crate::math::append_math_reference_text(&mut text, list, source),
             _ => {}
         }
     }
     text
-}
-
-/// The characters of a math list, for [`label_plain_text`]. Structure is
-/// flattened, not rendered: scripts follow their nucleus and a fraction
-/// becomes `num/den`, which is what a plain-text label can carry.
-fn math_plain_text(list: &MathList, out: &mut String) {
-    use crate::math::Nucleus;
-    for atom in &list.atoms {
-        match &atom.nucleus {
-            Nucleus::Symbol(text) | Nucleus::Text(text) | Nucleus::Bold(text) => {
-                out.push_str(text);
-            }
-            Nucleus::SizedDelimiter { glyph, .. } => out.push_str(glyph),
-            Nucleus::Radical(inner) | Nucleus::Framed { body: inner, .. } => {
-                math_plain_text(inner, out);
-            }
-            Nucleus::Fraction {
-                numerator,
-                denominator,
-            } => {
-                math_plain_text(numerator, out);
-                out.push('/');
-                math_plain_text(denominator, out);
-            }
-            _ => {}
-        }
-        if let Some(subscript) = &atom.subscript {
-            math_plain_text(subscript, out);
-        }
-        if let Some(superscript) = &atom.superscript {
-            math_plain_text(superscript, out);
-        }
-    }
 }
 
 /// The style after applying one style command or declaration to `style`.
@@ -10431,7 +10406,8 @@ impl P<'_> {
             // (GH-676). A label is a handful of tokens, so the flood the
             // lenient heading/caption mode avoids cannot happen here.
             let content = self.inlines_from_tokens_reporting(tokens, base, true);
-            let text = label_plain_text(&content);
+            let source = self.documents.get(arg_span.document.0).map(|doc| doc.text);
+            let text = label_plain_text(&content, source);
             ItemLabel::Explicit {
                 content,
                 text,

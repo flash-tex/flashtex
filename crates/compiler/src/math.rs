@@ -338,7 +338,7 @@ fn text_run_reference_text_inner(pieces: &[TextPiece], source: Option<&str>) -> 
     text
 }
 
-fn append_math_reference_text(out: &mut String, list: &MathList, source: Option<&str>) {
+pub(crate) fn append_math_reference_text(out: &mut String, list: &MathList, source: Option<&str>) {
     for atom in &list.atoms {
         match &atom.nucleus {
             Nucleus::Symbol(text)

@@ -119,7 +119,8 @@ fn the_issue_repro_keeps_every_label_and_reports_nothing() {
     assert_eq!(labels[4].text(), "1.");
 
     let (content, text) = explicit(&labels[5]);
-    assert_eq!(text, "Term x2");
+    // Unicode superscript, from the shared exhaustive flattener, not "x2".
+    assert_eq!(text, "Term x²");
     assert_eq!(kinds(content), ["Text", "Math"]);
 
     assert!(
@@ -254,6 +255,28 @@ fn display_math_in_a_label_is_diagnosed_not_dropped() {
     assert_eq!(messages, ["Bad math environment delimiter", "Bad math environment delimiter"]);
 }
 
+/// The review's own failure scenarios (#702 findings 1-2): `\sqrt` and
+/// `\dfrac` used to vanish from a label's plain text entirely (the old
+/// hand-rolled `math_plain_text` had no arm for either nucleus), leaving
+/// `ItemLabel.text` empty even though the structured `content` still held
+/// the formula. The shared exhaustive flattener falls back to source text
+/// for both.
+#[test]
+fn sqrt_and_dfrac_are_not_dropped_from_a_labels_plain_text() {
+    let source = "\\documentclass[10pt]{article}\n\\usepackage{amsmath}\n\\begin{document}\n\
+        \\begin{itemize}\n\
+        \\item[$\\sqrt{x}$] a\n\
+        \\item[$\\dfrac{1}{2}$] b\n\
+        \\end{itemize}\n\\end{document}\n";
+    let parsed = parser::parse(source);
+    let labels = labels(&parsed);
+    assert_eq!(labels.len(), 2);
+    let (_, sqrt_text) = explicit(&labels[0]);
+    assert!(!sqrt_text.is_empty(), "\\sqrt vanished from the label text");
+    let (_, frac_text) = explicit(&labels[1]);
+    assert!(!frac_text.is_empty(), "\\dfrac vanished from the label text");
+}
+
 /// `\(…\)` is the other inline-math spelling and reads the same way.
 #[test]
 fn paren_math_in_a_label_is_math_too() {
@@ -262,7 +285,9 @@ fn paren_math_in_a_label_is_math_too() {
     let labels = labels(&parsed);
     let (content, text) = explicit(&labels[0]);
     assert_eq!(kinds(content), ["Text", "Math"]);
-    assert_eq!(text, "at y1");
+    // Unicode subscript, from the shared exhaustive math-reference
+    // flattener (the same one `\eqref`'s tag text uses), not "y1".
+    assert_eq!(text, "at y₁");
     assert_eq!(spanned(&source, content), ["at", "\\(y_1\\)"]);
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
 }
