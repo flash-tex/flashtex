@@ -294,7 +294,9 @@ pub struct TextScriptItem {
 
 /// Which amsmath display alignment a [`ParaPart::Rows`] is (read from the
 /// environment name at the display's first byte; the compiler keeps only
-/// whether cells alternate right/left).
+/// whether cells share tab stops). amsmath's `align`/`gather`/`multline`
+/// family plus LaTeX's own `eqnarray`, which the compiler lowers through
+/// the same multi-row path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RowsEnv {
     /// `align`/`align*`: column pairs spread evenly (`\xatlevel@` 1).
@@ -307,6 +309,10 @@ pub enum RowsEnv {
     Gather,
     /// `multline`/`multline*`: first row left, last row right, others centred.
     Multline,
+    /// `eqnarray`/`eqnarray*` (latex.ltx, not amsmath): three columns —
+    /// right, centred, left — separated by a fixed `\tw@\arraycolsep`, the
+    /// block centred by the `\@centering` tabskips at its two ends.
+    EqnArray,
 }
 
 impl RowsEnv {
@@ -318,6 +324,7 @@ impl RowsEnv {
             "flalign" => RowsEnv::FlAlign,
             "gather" => RowsEnv::Gather,
             "multline" => RowsEnv::Multline,
+            "eqnarray" => RowsEnv::EqnArray,
             _ => RowsEnv::Align,
         }
     }
@@ -9693,6 +9700,18 @@ fn tex_ligatures(chars: Vec<(char, CharSrc)>) -> Vec<(char, CharSrc)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #520: the environment name at the display's first byte picks
+    /// the alignment, so `eqnarray` reaches the kernel `\halign` arm rather
+    /// than falling through to `align`, starred or not.
+    #[test]
+    fn rows_env_reads_eqnarray_from_source() {
+        assert_eq!(RowsEnv::at("\\begin{eqnarray} a &=& b \\end{eqnarray}"), RowsEnv::EqnArray);
+        assert_eq!(RowsEnv::at("\\begin{eqnarray*} a &=& b \\end{eqnarray*}"), RowsEnv::EqnArray);
+        assert_eq!(RowsEnv::at("\\begin{align} a &= b \\end{align}"), RowsEnv::Align);
+        assert_eq!(RowsEnv::at("\\begin{gather} a \\\\ b \\end{gather}"), RowsEnv::Gather);
+        assert_eq!(RowsEnv::at("\\begin{multline} a \\\\ b \\end{multline}"), RowsEnv::Multline);
+    }
 
     fn items(src: &str) -> Vec<Item> {
         let parsed = flashtex_compiler::parser::parse(src);
