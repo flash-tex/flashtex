@@ -275,6 +275,110 @@ fn unterminated_label_math_is_reported_and_closed() {
     );
 }
 
+/// `\cite` in a label sets the same run running text builds — `[?]` plus
+/// the undefined-citation warning — never the false "not supported" error.
+#[test]
+fn cite_in_a_label_matches_running_text() {
+    let source = doc("\\begin{itemize}\\item[\\cite{k}] b\\end{itemize}");
+    let parsed = parser::parse(&source);
+    let labels = labels(&parsed);
+    let (_, text) = explicit(&labels[0]);
+    assert_eq!(text, "[?]");
+    let messages: Vec<_> = parsed
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect();
+    assert_eq!(messages, ["citation 'k' is undefined"]);
+}
+
+/// ... including when the key resolves: `[1]` with no diagnostic at all.
+#[test]
+fn cite_in_a_label_resolves_like_running_text() {
+    let source = doc(concat!(
+        "\\begin{thebibliography}{9}\n",
+        "\\bibitem{k} Someone. Title. 2020.\n",
+        "\\end{thebibliography}\n",
+        "\\begin{itemize}\\item[\\cite{k}] b\\end{itemize}",
+    ));
+    let parsed = parser::parse(&source);
+    // The bibliography's own `\bibitem` is the second list item; the
+    // `\cite` label is the last one.
+    let labels = labels(&parsed);
+    let (_, text) = explicit(&labels[labels.len() - 1]);
+    assert_eq!(text, "[1]");
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "a resolvable cite sets silently: {:?}",
+        parsed.diagnostics
+    );
+}
+
+/// `\label`, `\index` and `\protect` set nothing visible, so a label
+/// swallows them the way a heading does: `[(a)\label{it:a}]` keeps `(a)`
+/// and reports nothing.
+#[test]
+fn label_index_and_protect_are_silent_in_a_label() {
+    let source = doc(concat!(
+        "\\begin{itemize}\n",
+        "\\item[(a)\\label{it:a}] b\n",
+        "\\item[\\index{i}a] c\n",
+        "\\item[\\protect\\cite{k}] d\n",
+        "\\end{itemize}",
+    ));
+    let parsed = parser::parse(&source);
+    let labels = labels(&parsed);
+    assert_eq!(labels.len(), 3);
+    let (_, text) = explicit(&labels[0]);
+    assert_eq!(text, "(a)");
+    let (_, text) = explicit(&labels[1]);
+    assert_eq!(text, "a");
+    // `\protect` vanishes; the `\cite` still sets (and still warns).
+    let (_, text) = explicit(&labels[2]);
+    assert_eq!(text, "[?]");
+    let messages: Vec<_> = parsed
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect();
+    assert_eq!(messages, ["citation 'k' is undefined"]);
+}
+
+/// Built-ins this pass cannot set yet (`\footnote`, `\underline`, `\url`,
+/// ...) get an honest warning naming the command — never the false claim
+/// that the compiler does not support them.
+#[test]
+fn unsettable_builtins_in_a_label_get_an_honest_warning() {
+    let source = doc(concat!(
+        "\\begin{itemize}\n",
+        "\\item[\\footnote{f}] b\n",
+        "\\item[\\underline{u}] c\n",
+        "\\item[\\url{https://x.y}] d\n",
+        "\\end{itemize}",
+    ));
+    let parsed = parser::parse(&source);
+    let messages: Vec<_> = parsed
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "\\footnote inside an \\item label is not set yet",
+            "\\underline inside an \\item label is not set yet",
+            "\\url inside an \\item label is not set yet",
+        ]
+    );
+    // The words around each command still reach the page. (`\url`'s
+    // verbatim argument never arrives here as text — headings drop it
+    // the same way, a pre-existing gap outside this slice — so that
+    // label is empty, but diagnosed above rather than silently dropped.)
+    let labels = labels(&parsed);
+    let texts: Vec<_> = labels.iter().map(|label| label.text().to_string()).collect();
+    assert_eq!(texts, ["f", "u", ""]);
+}
+
 /// The same flattened pass serves headings, captions and style arguments.
 /// Math there is read now too — it was stripped to roman words before — but
 /// those stay lenient about commands they cannot set, because they routinely

@@ -8731,11 +8731,100 @@ impl P<'_> {
                         .with_help("wrap the marked atom in math mode: \\(x^{...}\\)"),
                     );
                 }
-                // Never drop a label's content in silence. The command is
-                // not set — pdfLaTeX would not set it either — but the
-                // author is told, at the command's own span.
+                // `\label`/`\index`/`\glossary` set nothing visible, so a
+                // label swallows each with its argument — the lenient
+                // heading pass does the same — instead of reporting the
+                // `[(a)\label{it:a}]` idiom for working.
+                TokenKind::Command(name)
+                    if report_unsupported
+                        && matches!(name.as_str(), "label" | "index" | "glossary") =>
+                {
+                    match siunitx_group_at(&expanded, index + 1) {
+                        Some((_, _, after)) => skip_until = after,
+                        None => self.diags.push(Diagnostic::error(
+                            format!("\\{name} requires an argument"),
+                            Some(input.token.span),
+                            Some("rendered nothing for the command".into()),
+                        )),
+                    }
+                }
+                // `\protect` never reaches this pass from source (expansion
+                // strips it), but a macro body can still carry one: it marks
+                // the next command robust, sets nothing itself, and is
+                // ignored — again like the heading pass.
+                TokenKind::Command(name) if report_unsupported && name == "protect" => {}
+                // `\cite` in the kernel form sets the same run running text
+                // builds (`bib::cite_inlines`), including its
+                // undefined-citation warning — so `\item[\cite{k}]` reads
+                // exactly as `\cite{k}` does in a paragraph. natbib and
+                // biblatex redefine `\cite`, and this pass does not replay
+                // those styles; there the honest warning below applies.
+                TokenKind::Command(name) if report_unsupported && name == "cite" => {
+                    if self.biblatex.enabled() || self.bibliography.natbib().is_some() {
+                        self.not_set_in_label(name, input.token.span);
+                    } else {
+                        self.document_global_state = true;
+                        let mut next = index + 1;
+                        let mut span = input.token.span;
+                        let mut note = None;
+                        if let Some((raw, raw_span, after)) =
+                            siunitx_bracket_at(&expanded, next)
+                        {
+                            next = after;
+                            if raw_span.document == span.document {
+                                span = span.merge(raw_span);
+                            }
+                            note = Some(raw);
+                        }
+                        match siunitx_group_at(&expanded, next) {
+                            Some((raw, argument_span, after)) => {
+                                next = after;
+                                if argument_span.document == span.document {
+                                    span = span.merge(argument_span);
+                                }
+                                // `cite_keys` over the group's text, as the
+                                // main loop splits it (`\@for` parity).
+                                let keys: Vec<String> = raw
+                                    .split(',')
+                                    .map(str::trim)
+                                    .filter(|key| !key.is_empty())
+                                    .map(str::to_string)
+                                    .collect();
+                                if keys.is_empty() {
+                                    self.diags.push(Diagnostic::warning(
+                                        "\\cite was given an empty key list",
+                                        Some(span),
+                                        Some("rendered nothing for the empty citation".into()),
+                                    ));
+                                } else {
+                                    content.extend(bib::cite_inlines(
+                                        &keys,
+                                        note,
+                                        &self.bibliography,
+                                        span,
+                                        &mut self.diags,
+                                    ));
+                                }
+                            }
+                            None => self.diags.push(Diagnostic::error(
+                                "\\cite requires an argument",
+                                Some(input.token.span),
+                                Some("rendered nothing for the citation".into()),
+                            )),
+                        }
+                        skip_until = next;
+                    }
+                }
+                // Never drop a label's content in silence. A name the
+                // compiler does not know is reported as unsupported, as
+                // before; a real built-in this pass cannot set yet gets
+                // the honest warning instead — see `not_set_in_label`.
                 TokenKind::Command(name) if report_unsupported => {
-                    self.unsupported_in_text_run(name, input.token.span);
+                    if BUILT_INS.contains(&name.as_str()) {
+                        self.not_set_in_label(name, input.token.span);
+                    } else {
+                        self.unsupported_in_text_run(name, input.token.span);
+                    }
                 }
                 _ => {}
             }
@@ -8746,7 +8835,30 @@ impl P<'_> {
     /// A command that a flattened text run (an `\item` label) cannot set.
     /// `unsupported` cannot be reused: it consumes a following group from
     /// `self.t`, and this pass has already flattened its tokens.
+    /// A genuine built-in this flattened pass cannot set yet
+    /// (`\footnote`, `\underline`, `\url`, ...): the compiler supports
+    /// the command — just not inside an `\item` label — so the diagnostic
+    /// says exactly that instead of claiming the command is unknown. The
+    /// command itself is skipped; a following braced group still typesets
+    /// as text, as in the unknown-command case, so nothing vanishes
+    /// without a diagnostic either way.
+    fn not_set_in_label(&mut self, name: &str, span: Span) {
+        if !self.first_command_report(span, name, false) {
+            return;
+        }
+        self.diags.push(
+            Diagnostic::warning(
+                format!("\\{name} inside an \\item label is not set yet"),
+                Some(span),
+                Some("skipped the command; the rest of the label was typeset".into()),
+            )
+            .with_optional_help(vocabulary::command_help(name))
+            .with_label(span, "this command", true),
+        );
+    }
+
     fn unsupported_in_text_run(&mut self, name: &str, span: Span) {
+        debug_assert!(!BUILT_INS.contains(&name));
         if !self.first_command_report(span, name, false) {
             return;
         }
