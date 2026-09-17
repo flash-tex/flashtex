@@ -56,7 +56,7 @@ use crate::diagnostics::Diagnostic;
 use crate::font_units::FontSetup;
 use crate::lexer::{apply_text_ligatures, tokenize_document, Token, TokenKind};
 use crate::math::QUAD_EM;
-use crate::text_builtins::{pt_to_sp, sp_to_pt, text_kern, text_symbol, DimenContext, SymbolOutcome, TEXT_SYMBOLS};
+use crate::text_builtins::{pt_to_sp, sp_to_pt, text_kern, text_symbol, AccentOutcome, CAPITAL_ACCENT_ALIASES, DimenContext, SymbolOutcome, TEXT_ACCENTS, TEXT_SYMBOLS, canonical_accent_name, text_accent};
 use crate::parser::{TEXT_DESCENDER_GLYPHS, apply_style, parse_dimen_pt_at, path_is_safe, style_command, style_declaration, SourceDocument, TextStyle, BUILT_INS, INCLUDE_DEPTH_LIMIT};
 use crate::{DocumentId, Span};
 
@@ -858,6 +858,106 @@ impl CompilerBoxMeasurer {
     }
 }
 
+/// Whether `name` is a kernel text accent (or a `\capital<name>` alias of
+/// one) the paragraph pass would set through `text_accent`.
+fn is_box_accent(name: &str) -> bool {
+    TEXT_ACCENTS.contains(&name)
+        || CAPITAL_ACCENT_ALIASES.iter().any(|(alias, _)| *alias == name)
+}
+
+/// The letter an undrawable accent leaves behind: a `\i`/`\j` base resolves
+/// through `text_symbol` (the dotless character), anything else stands as
+/// typed — exactly as the paragraph pass's `text_accent` falls back.
+fn accent_bare(base: &str, enc: Encoding) -> String {
+    match base.strip_prefix('\\') {
+        Some(dotless) => match text_symbol(dotless, enc) {
+            Some(SymbolOutcome::Char(ch)) => ch.to_string(),
+            _ => String::new(),
+        },
+        None => base.to_string(),
+    }
+}
+
+/// After an accent control sequence at `tokens[*i]` (already past the
+/// command): TeX reads one argument — `<optional spaces>`, then
+/// `{<letter>}`/`{\i}`/`{\j}`/`{}` or a bare letter/`\i`/`\j` — and this
+/// consumes through it, returning the `text_accent` spelling of the base
+/// (`"s"`, `"\\i"`, `""`). `None` when no letter follows (nothing
+/// consumed), which the caller warns about exactly as the paragraph pass
+/// does.
+fn take_accent_base(tokens: &[tex::Token], i: &mut usize) -> Option<String> {
+    fn is_space(token: &tex::Token) -> bool {
+        matches!(&token.kind, TexKind::Char(_, CatCode::Space))
+    }
+    fn dotless(name: &str) -> Option<String> {
+        matches!(name, "i" | "j").then(|| format!("\\{name}"))
+    }
+    let mut j = *i;
+    while tokens.get(j).is_some_and(is_space) {
+        j += 1;
+    }
+    // A typesettable character (a letter, or an `Other` like `,` — TeX
+    // accents whatever follows): structural characters never open one.
+    fn letter(token: &tex::Token) -> Option<char> {
+        match &token.kind {
+            TexKind::Char(c, CatCode::Letter)
+            | TexKind::Char(c, CatCode::Other)
+            | TexKind::ActiveChar(c) => Some(*c),
+            _ => None,
+        }
+    }
+    if matches!(tokens.get(j), Some(token) if matches!(&token.kind, TexKind::Char(_, CatCode::BeginGroup))) {
+        j += 1;
+        let base = match tokens.get(j) {
+            Some(token) if matches!(&token.kind, TexKind::Char(_, CatCode::EndGroup)) => {
+                j += 1;
+                String::new()
+            }
+            Some(token) => match &token.kind {
+                _ if letter(token).is_some() => {
+                    let base = letter(token).expect("checked above").to_string();
+                    j += 1;
+                    base
+                }
+                TexKind::ControlSequence(name) => {
+                    let base = dotless(name)?;
+                    j += 1;
+                    base
+                }
+                _ => return None,
+            },
+            None => return None,
+        };
+        // The paragraph pass tolerates one space before the closing brace.
+        if tokens.get(j).is_some_and(is_space) {
+            j += 1;
+        }
+        if !matches!(tokens.get(j), Some(token) if matches!(&token.kind, TexKind::Char(_, CatCode::EndGroup))) {
+            return None;
+        }
+        j += 1;
+        *i = j;
+        Some(base)
+    } else {
+        match tokens.get(j) {
+            Some(token) => match &token.kind {
+                _ if letter(token).is_some() => {
+                    let base = letter(token).expect("checked above").to_string();
+                    *i = j + 1;
+                    Some(base)
+                }
+                TexKind::ControlSequence(name) => {
+                    let base = dotless(name)?;
+                    *i = j + 1;
+                    Some(base)
+                }
+                _ => None,
+            },
+            None => None,
+        }
+    }
+}
+
 /// Box content as the layout pass would see it: styled text runs plus the
 /// total width of the interword glue (spaces and ties) between them.
 ///
@@ -894,6 +994,9 @@ impl CompilerBoxMeasurer {
 /// - text kerns (`\,`, `\:`, ...) resolve against the size in effect, with
 ///   the document's amsmath state;
 /// - text symbols (`\textasciitilde`, ...) set their resolved character;
+/// - escaped specials (`\&`, `\%`, ...) set their character with no
+///   diagnostic, and kernel text accents (`\c{c}`, ...) set their
+///   precomposed character through the paragraph pass's encoding path;
 /// - anything else the flat paragraph pass turns into a non-text inline
 ///   (logos, rules, graphics, ...) or drops (`_ => {}`) contributes nothing
 ///   but records an error, rather than an invented guess or a silent zero.
@@ -973,13 +1076,14 @@ fn parse_dimen_font_pt(text: &str, (em_sp, ex_sp): (i64, i64)) -> Option<f64> {
 /// After `\hskip` at `tokens[*i]` (already past the command): TeX's `<glue>`
 /// spec — one dimension word, then up to one `plus` and one `minus` clause
 /// (either order) each followed by a dimension word, then an optional
-/// `\relax`. Words are maximal runs of dimension characters off the
-/// character tokens, so a unit split from its number by a space is not
-/// rejoined; `plus`/`minus` stretch never reaches an hbox's natural width,
-/// so those words are only consumed. Returns the fixed part in points, with
-/// `em`/`ex` against the style in effect (`None` when the next word is no
-/// dimension, in which case nothing is consumed and the caller warns,
-/// leaving the word for the text exactly as the parser does).
+/// `\relax`. A dimension word is `<number><optional spaces><unit>`,
+/// mirroring `scan_dimen` (§455): the number run and the unit run are taken
+/// separately, so a unit split from its number by a space is rejoined
+/// (`\hskip 1 em` is one em). `plus`/`minus` stretch never reaches an hbox's
+/// natural width, so those words are only consumed. Returns the fixed part
+/// in points, with `em`/`ex` against the style in effect (`None` when the
+/// next word is no dimension, in which case nothing is consumed and the
+/// caller warns, leaving the word for the text exactly as the parser does).
 fn take_glue_spec(
     tokens: &[tex::Token],
     i: &mut usize,
@@ -993,7 +1097,8 @@ fn take_glue_spec(
         ch.is_ascii_alphanumeric() || matches!(ch, '.' | ',' | '+' | '-')
     }
     /// One maximal dimension-character run starting at `*j` (`None` when the
-    /// next token is not such a character).
+    /// next token is not such a character). Only the `plus`/`minus` keywords
+    /// use this: dimension values go through `take_dimen_word` below.
     fn take_word(tokens: &[tex::Token], j: &mut usize) -> Option<String> {
         let mut word = String::new();
         while let Some(token) = tokens.get(*j) {
@@ -1007,11 +1112,47 @@ fn take_glue_spec(
         }
         if word.is_empty() { None } else { Some(word) }
     }
+    /// One `<number><optional spaces><unit>` dimension word starting at `*j`
+    /// (`None` when the next token starts no number, in which case `*j` is
+    /// untouched). The `<optional spaces>` between the number and the unit
+    /// is TeX's (`scan_dimen` §455): skipped, never glue.
+    fn take_dimen_word(tokens: &[tex::Token], j: &mut usize) -> Option<String> {
+        let mut k = *j;
+        let mut word = String::new();
+        while let Some(token) = tokens.get(k) {
+            match &token.kind {
+                TexKind::Char(ch, _) | TexKind::ActiveChar(ch)
+                    if ch.is_ascii_digit() || matches!(ch, '.' | ',' | '+' | '-') =>
+                {
+                    word.push(*ch);
+                    k += 1;
+                }
+                _ => break,
+            }
+        }
+        if word.is_empty() {
+            return None;
+        }
+        while tokens.get(k).is_some_and(is_space) {
+            k += 1;
+        }
+        while let Some(token) = tokens.get(k) {
+            match &token.kind {
+                TexKind::Char(ch, _) | TexKind::ActiveChar(ch) if ch.is_ascii_alphabetic() => {
+                    word.push(*ch);
+                    k += 1;
+                }
+                _ => break,
+            }
+        }
+        *j = k;
+        Some(word)
+    }
     let mut j = *i;
     while tokens.get(j).is_some_and(is_space) {
         j += 1;
     }
-    let base = take_word(tokens, &mut j)?;
+    let base = take_dimen_word(tokens, &mut j)?;
     let base_pt = parse_dimen_font_pt(&base, measurer.setup.em_ex_sp(style))?;
     // TeX's `<optional spaces>` after the dimension: skipped, never glue
     // (the parser's `skip_spaces` consumes them the same way, so no
@@ -1040,7 +1181,10 @@ fn take_glue_spec(
         while tokens.get(m).is_some_and(is_space) {
             m += 1;
         }
-        if take_word(tokens, &mut m).is_none() {
+        // The clause value rejoins a spaced unit exactly like the base
+        // dimension does (`\hskip 1em plus 2 pt`); only the keyword above
+        // stays a single maximal run.
+        if take_dimen_word(tokens, &mut m).is_none() {
             break;
         }
         if is_plus {
@@ -1068,9 +1212,10 @@ fn take_glue_spec(
 
 /// Whether `ch` reaches the face ascender: capitals (any script), the
 /// ascender lowercase, lining digits, the f-ligatures shaping produces,
-/// punctuation drawn full-height (parens, brackets, slashes, quotes), and
-/// accented lowercase (which usually reaches up as well). Anything else with
-/// ink stays at or below the x-height tier.
+/// punctuation drawn full-height (parens, brackets, slashes, quotes, and —
+/// as a minimal stand-in for per-glyph ink extents — `?`, `!`, `@`, `#`,
+/// `$`, `%`, `&`, `*`), and accented lowercase (which usually reaches up as
+/// well). Anything else with ink stays at or below the x-height tier.
 fn is_tall_glyph(ch: char) -> bool {
     ch.is_uppercase()
         || matches!(
@@ -1078,6 +1223,7 @@ fn is_tall_glyph(ch: char) -> bool {
             'b' | 'd' | 'f' | 'h' | 'i' | 'j' | 'k' | 'l' | 't'
                 | '0'..='9'
                 | '(' | ')' | '[' | ']' | '/' | '\\' | '|' | '\'' | '"' | '`'
+                | '?' | '!' | '@' | '#' | '$' | '%' | '&' | '*'
                 | '\u{FB00}'..='\u{FB04}'
         )
         || (ch.is_lowercase() && !ch.is_ascii())
@@ -1360,6 +1506,65 @@ fn styled_runs(measurer: &CompilerBoxMeasurer, tokens: &[tex::Token]) -> (Vec<St
                             Some(SymbolOutcome::Unavailable(message)) => message,
                             _ => format!("\\{name} inside \\settowidth, \\settoheight or \\settodepth is not measured accurately yet"),
                         },
+                        token.span,
+                    ),
+                }
+            }
+            // Escaped specials (`\&`, `\%`, `\_`, `\$`, `\#`, `\{`,
+            // `\}`): single characters the compiler's own lexer resolves to
+            // literal text everywhere else, so the measurer sets them the
+            // same way — exactly, with no diagnostic.
+            TexKind::ControlSequence(name)
+                if matches!(name.as_str(), "&" | "%" | "_" | "$" | "#" | "{" | "}") =>
+            {
+                if let Some(at) = spaced.take() {
+                    glue_pt += measurer.space_pt(at);
+                }
+                if buf_style != style {
+                    buf_style = flush(&mut buf, &mut runs, buf_style, style);
+                }
+                buf.push_str(name);
+            }
+            // Kernel text accents (`\c{c}`, `\v s`, `\k{}`, ...): one
+            // argument is consumed and the precomposed character is set,
+            // through the same encoding path the paragraph pass's
+            // `text_accent` uses. Diagnostics mirror that pass: no composite
+            // warns and sets the bare letter, an encoding-unavailable accent
+            // errors and sets the bare letter.
+            TexKind::ControlSequence(name) if is_box_accent(name) => {
+                if let Some(at) = spaced.take() {
+                    glue_pt += measurer.space_pt(at);
+                }
+                if buf_style != style {
+                    buf_style = flush(&mut buf, &mut runs, buf_style, style);
+                }
+                let accent = canonical_accent_name(name).to_string();
+                let enc = if measurer.t1 {
+                    Encoding::T1
+                } else {
+                    Encoding::OT1
+                };
+                match take_accent_base(tokens, &mut i) {
+                    Some(base) => match text_accent(&accent, &base, enc) {
+                        Some(AccentOutcome::Char(c)) => buf.push(c),
+                        Some(AccentOutcome::NoComposite) => {
+                            measurer.note(
+                                format!("\\{accent}{{{base}}} has no precomposed character and \\accent is not implemented; the accent is not drawn"),
+                                token.span,
+                            );
+                            buf.push_str(&accent_bare(&base, enc));
+                        }
+                        Some(AccentOutcome::Unavailable(message)) => {
+                            measurer.fail(message, token.span);
+                            buf.push_str(&accent_bare(&base, enc));
+                        }
+                        None => measurer.fail(
+                            format!("\\{name} inside \\settowidth, \\settoheight or \\settodepth is not measured accurately yet"),
+                            token.span,
+                        ),
+                    },
+                    None => measurer.note(
+                        format!("\\{name} has no letter to accent"),
                         token.span,
                     ),
                 }

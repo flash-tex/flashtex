@@ -666,6 +666,76 @@ fn settowidth_measures_hskip_glue() {
     assert!((relaxed - 12.22).abs() < 0.02, "\\hskip.5em\\relax A measures {relaxed}pt");
 }
 
+/// Review round 4 (finding 1): a unit split from its number by a space is
+/// rejoined, per TeX's `<unit of measure>` (`<optional spaces><internal
+/// unit>`, TeXbook). `\hskip 1 em A` measures exactly like `\hskip 1em A`.
+#[test]
+fn settowidth_measures_hskip_with_space_between_number_and_unit() {
+    let output = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{\hskip 1 em A}\the\mywidth");
+    assert!(output.diagnostics.is_empty(), "spaced glue spec is measured, not warned: {:?}", output.diagnostics);
+    let spaced = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{\hskip 1 em A}\the\mywidth");
+    let joined = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{\hskip 1em A}\the\mywidth");
+    // 1em at the 10pt default is the cmr10 quad, 655361sp = 10.00002pt,
+    // plus AFM "A" 722/1000*10 = 7.22pt.
+    assert!((spaced - 17.22002).abs() < 0.03, "\\hskip 1 em A measures {spaced}pt");
+    assert!((spaced - joined).abs() < 0.005, "spaced ({spaced}pt) must equal joined ({joined}pt)");
+    // Same rejoin for the `plus`/`minus` clause values.
+    let stretched = box_value(
+        r"\newlength{\mywidth}\settowidth{\mywidth}{\hskip 1em plus 2 pt minus 1 pt A}\the\mywidth",
+    );
+    assert!((stretched - 17.22002).abs() < 0.03, "spaced plus/minus values measure {stretched}pt");
+}
+
+/// Review round 4 (finding 2): escaped specials (`\&`, `\%`, ...) are single
+/// characters the rest of the compiler resolves, so the measurer sets them
+/// instead of erroring and measuring short.
+#[test]
+fn settowidth_measures_escaped_specials_as_characters() {
+    let output = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{R\&D}\the\mywidth");
+    assert!(output.diagnostics.is_empty(), "escaped specials are measured, not errored: {:?}", output.diagnostics);
+    let value = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{R\&D}\the\mywidth");
+    let want = text_width("R&D", 10.0, Font::TimesRoman);
+    assert!((value - want).abs() < 0.02, "R\\&D measures {value}pt, want {want}pt");
+    let all = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{\&\%\_\$\#\{\}}\the\mywidth");
+    assert!(all.diagnostics.is_empty(), "all escaped specials are measured: {:?}", all.diagnostics);
+    let all_value = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{\&\%\_\$\#\{\}}\the\mywidth");
+    let all_want = text_width("&%_$#{}", 10.0, Font::TimesRoman);
+    assert!((all_value - all_want).abs() < 0.02, "escaped specials measure {all_value}pt, want {all_want}pt");
+}
+
+/// Review round 4 (finding 2): kernel text accents go through the same
+/// encoding path the paragraph pass uses, so valid documents do not error.
+#[test]
+fn settowidth_measures_text_accents_without_error() {
+    let output = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{\c{c}}\the\mywidth");
+    assert!(output.diagnostics.is_empty(), "text accents are measured, not errored: {:?}", output.diagnostics);
+    let accented = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{\c{c}}\the\mywidth");
+    let literal = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{ç}\the\mywidth");
+    assert!((accented - literal).abs() < 0.02, "\\c{{c}} ({accented}pt) must measure like ç ({literal}pt)");
+}
+
+/// Review round 4 (finding 3, minimal fallback): `?`, `!` and friends reach
+/// the face ascender in the text faces, so they take the ascender tier, not
+/// the x-height tier. AFM Times-Roman ascender is 683/1000em: 8.196pt at
+/// 12pt.
+#[test]
+fn settoheight_classes_full_height_punctuation_as_tall() {
+    for glyph in ["?", "!", "@", "#", "$", "%", "&", "*"] {
+        let escaped = match glyph {
+            "%" => r"\%",
+            "#" => r"\#",
+            "$" => r"\$",
+            "&" => r"\&",
+            other => other,
+        };
+        let source = format!(
+            "\\documentclass[12pt]{{article}}\\newlength{{\\myheight}}\\settoheight{{\\myheight}}{{{escaped}}}\\the\\myheight"
+        );
+        let value = box_value(&source);
+        assert!((value - 8.196).abs() < 0.02, "{glyph} height is {value}pt");
+    }
+}
+
 /// Review follow-up (finding 5): a box holding math fails loudly (an error),
 /// instead of silently storing a near-zero width.
 #[test]
@@ -695,10 +765,12 @@ fn settoheight_uses_glyph_height_classes() {
 }
 
 /// Review follow-up (finding 6): depth covers depth-drawn punctuation, not
-/// just the descender allowlist. AFM Times-Roman descender is 217/1000em:
-/// `,` at 12pt is 2.604pt, while `Hi` stays zero.
+/// just the descender allowlist. This asserts the current face-level
+/// approximation — `,` takes the whole face descender (AFM Times-Roman
+/// 217/1000em: 2.604pt at 12pt), not its own smaller ink depth — while `Hi`
+/// stays zero. Per-glyph ink extents are a separate tracking issue.
 #[test]
-fn settodepth_measures_comma_depth() {
+fn settodepth_approximates_comma_depth_with_face_descender() {
     let comma = box_value(
         r"\documentclass[12pt]{article}\newlength{\mydepth}\settodepth{\mydepth}{,}\the\mydepth",
     );
