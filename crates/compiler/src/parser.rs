@@ -8841,8 +8841,26 @@ impl P<'_> {
         // inter-word space. The correction mirrors `preceded_by_space`
         // exactly (real whitespace keeps its space; a comment glues, as TeX
         // eats the line break it comments out).
+        // Transparent grouping hides nothing: descend past opening
+        // braces, tracking depth like the group's own scanners, to the
+        // first visible token, so `\enquote{{ quoted}}` sees the space one
+        // level down exactly as the literal ``` ``{ quoted}'' ``` keeps it.
+        // (An unbalanced close is visible, as there is nothing real before
+        // it.)
+        let mut depth = 0usize;
+        let mut first_visible: Option<&TokenKind> = None;
+        for input in &tokens {
+            match &input.token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace if depth > 0 => depth -= 1,
+                kind => {
+                    first_visible = Some(kind);
+                    break;
+                }
+            }
+        }
         let glued = !matches!(
-            tokens.first().map(|input| &input.token.kind),
+            first_visible,
             Some(TokenKind::Space | TokenKind::ParBreak) | None
         );
         let mut content = self.argument_inlines(tokens, span, style);
@@ -8875,13 +8893,35 @@ impl P<'_> {
                     *before = space_before;
                     text.insert_str(0, &open);
                 }
-                Some(
-                    Inline::Text { space_before: before, .. }
-                    | Inline::Math { space_before: before, .. }
-                    | Inline::Verbatim { space_before: before, .. }
-                    | Inline::Logo { space_before: before, .. },
-                ) => {
-                    *before = false;
+                Some(first) => {
+                    // Any other layout-bearing first inline keeps a separate
+                    // mark item glued against it: its own stream-start
+                    // `space_before: true` is the same splice artifact the
+                    // merged run clears above, so it is cleared here too
+                    // (`\enquote{\underline{quoted}}` glues exactly like the
+                    // literal ``` ``\underline{quoted}'' ```). Inlines
+                    // without a `space_before` field (glue, breaks,
+                    // penalties) need no clearing.
+                    match first {
+                        Inline::Text { space_before: before, .. }
+                        | Inline::Math { space_before: before, .. }
+                        | Inline::Reference { space_before: before, .. }
+                        | Inline::CleverReference { space_before: before, .. }
+                        | Inline::ThePage { space_before: before, .. }
+                        | Inline::Footnote { space_before: before, .. }
+                        | Inline::Marginpar { space_before: before, .. }
+                        | Inline::Logo { space_before: before, .. }
+                        | Inline::Rule { space_before: before, .. }
+                        | Inline::Verbatim { space_before: before, .. } => {
+                            *before = false;
+                        }
+                        Inline::Underline(underline) => underline.space_before = false,
+                        Inline::ColorBox(color_box) => color_box.space_before = false,
+                        Inline::Graphic(graphic) => graphic.space_before = false,
+                        Inline::Transform(transform) => transform.space_before = false,
+                        Inline::Tabular(tabular) => tabular.space_before = false,
+                        _ => {}
+                    }
                     out.push(Inline::Text {
                         text: open,
                         span,
@@ -10599,7 +10639,10 @@ fn siunitx_bracket_at(tokens: &[InputToken], index: usize) -> Option<(String, Sp
 /// of reading its raw source.
 fn group_tokens_at(tokens: &[InputToken], index: usize) -> Option<(Vec<InputToken>, Span, usize)> {
     let mut index = index;
-    while matches!(tokens.get(index).map(|t| &t.token.kind), Some(TokenKind::Space)) {
+    while matches!(
+        tokens.get(index).map(|t| &t.token.kind),
+        Some(TokenKind::Space | TokenKind::Comment)
+    ) {
         index += 1;
     }
     let open = tokens.get(index)?;
@@ -12274,6 +12317,125 @@ mod tests {
             }
         }
         assert_eq!(text, "An\u{201C}example\u{201D}");
+    }
+
+    /// Review fix: the opening mark glues to every layout-bearing first
+    /// inline, not just text/math/verbatim/logo. `\\underline` kept its
+    /// synthetic stream-start `space_before: true`, gapping the mark.
+    #[test]
+    fn enquote_glues_opening_mark_to_underline() {
+        let parsed = parse("\\enquote{\\underline{quoted}}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph, got {:?}", parsed.blocks);
+        };
+        assert!(
+            matches!(inlines.first(), Some(Inline::Text { text, .. }) if text == "\u{201C}"),
+            "{inlines:?}"
+        );
+        let Some(Inline::Underline(underline)) = inlines.get(1) else {
+            panic!("expected an underline second, got {inlines:?}");
+        };
+        assert!(!underline.space_before, "{inlines:?}");
+        // End to end: identical layout to the literal ``\\underline{quoted}''.
+        let (_, enq_items) = items("\\enquote{\\underline{quoted}}");
+        let (lit_parsed, lit_items) = items("``\\underline{quoted}\'\'");
+        assert!(lit_parsed.diagnostics.is_empty(), "{:?}", lit_parsed.diagnostics);
+        let concat = |xs: &[crate::layout::TextItem]| {
+            xs.iter().map(|item| item.text.as_str()).collect::<String>()
+        };
+        assert_eq!(concat(&enq_items), concat(&lit_items));
+        assert_eq!(
+            enq_items.iter().map(|item| item.x_pt).collect::<Vec<_>>(),
+            lit_items.iter().map(|item| item.x_pt).collect::<Vec<_>>(),
+            "{enq_items:?} vs {lit_items:?}"
+        );
+    }
+
+    /// Review fix: glue is decided by the first visible token, not the
+    /// first raw token. `\\enquote{{ quoted}}` must keep the space the
+    /// literal ``` ``{ quoted}'' ``` keeps.
+    #[test]
+    fn enquote_keeps_space_inside_a_leading_group() {
+        let (lit_parsed, lit_items) = items("``{ quoted}\'\'");
+        assert!(lit_parsed.diagnostics.is_empty(), "{:?}", lit_parsed.diagnostics);
+        let (parsed, enq_items) = items("\\enquote{{ quoted}}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        // Same glyphs with the same spacing, mirroring
+        // `enquote_matches_literal_double_quote_ligature`: item boundaries
+        // cannot coincide (the trailing mark merges under `\\enquote`),
+        // so what must coincide is the text, the run start, and where the
+        // run ends (a lost space would move that end).
+        let concat = |xs: &[crate::layout::TextItem]| {
+            xs.iter().map(|item| item.text.as_str()).collect::<String>()
+        };
+        assert_eq!(concat(&enq_items), concat(&lit_items));
+        assert_eq!(
+            enq_items.first().map(|item| item.x_pt),
+            lit_items.first().map(|item| item.x_pt),
+        );
+        let end = |xs: &[crate::layout::TextItem]| {
+            xs.last().map(|item| {
+                let end = item.x_pt + layout::text_width(&item.text, item.font_size_pt, item.font);
+                (end * 100.0).round() / 100.0
+            })
+        };
+        assert_eq!(end(&enq_items), end(&lit_items));
+        assert_eq!(
+            enq_items.last().map(|item| item.baseline_y_pt),
+            lit_items.last().map(|item| item.baseline_y_pt),
+        );
+    }
+
+    /// Review fix: `group_tokens_at` skips comments as well as spaces.
+    /// A `%` comment between `\enquote` and its group in a heading is
+    /// normally eaten by expansion (as TeX eats it), but after expansion
+    /// stops on a runaway macro the tail is raw-lexed and the comment
+    /// survives as a token. There the quote marks were dropped with a
+    /// false "requires a braced argument" error.
+    #[test]
+    fn section_enquote_with_comment_before_argument() {
+        let parsed = parse("\\def\\x{\\x}\\x\n\\section{An \\enquote%\n{example}}");
+        assert!(
+            !parsed
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("requires a braced argument")),
+            "{:?}",
+            parsed.diagnostics
+        );
+        let mut text = String::new();
+        for block in &parsed.blocks {
+            if let Block::Heading { content, .. } = block {
+                for inline in content {
+                    if let Inline::Text { text: word, .. } = inline {
+                        text.push_str(word);
+                    }
+                }
+            }
+        }
+        assert_eq!(text, "An\u{201C}example\u{201D}");
+    }
+
+    /// Review fix, unit level: `group_tokens_at` skips a `Comment` token
+    /// on its way to the argument's opening brace, exactly like the
+    /// sibling skip-sets (`skip_spaces`, `try_skip_braced_group`).
+    #[test]
+    fn group_tokens_at_skips_comments_before_the_brace() {
+        let tokens: Vec<InputToken> = crate::lexer::tokenize_document(
+            "%note\n{example}",
+            crate::DocumentId(0),
+        )
+        .into_iter()
+        .map(|token| crate::expansion::ExpandedToken {
+            token,
+            definition: None,
+            maps_to_invocation: false,
+        })
+        .collect();
+        let (inner, _, _) =
+            group_tokens_at(&tokens, 0).expect("a comment skips to the group");
+        assert_eq!(inner.len(), 1, "{tokens:?}");
     }
 
     #[test]
