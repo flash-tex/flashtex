@@ -795,3 +795,114 @@ fn settowidth_uses_amsmath_text_kerns() {
     );
 }
 
+/// Slice 1 (settowidth-accents finding 1): the seven punctuation accent
+/// commands (`\'`, `` \` ``, `\^`, `\"`, `\~`, `\=`, `\.`) are literal
+/// characters in normal running text — the compiler's lexer reads each as
+/// its character — so all three sizing commands must accept them with no
+/// diagnostic and measure them like the literal character. Before the fix
+/// each fell through to the catch-all "not measured accurately yet" error.
+#[test]
+fn setto_commands_measure_punctuation_accents_as_literal_characters() {
+    let literal_value = |sizing: &str, body: &str| -> f64 {
+        let source =
+            format!("\\newlength{{\\mylen}}\\{sizing}{{\\mylen}}{{{body}}}\\the\\mylen");
+        let output = compile(&source);
+        assert!(
+            output.diagnostics.is_empty(),
+            "{sizing}{{{body}}}: {:?}",
+            output.diagnostics
+        );
+        joined(&output).trim_end_matches("pt").parse().expect("numeric dimension")
+    };
+    for (command, literal) in [
+        (r"\'", "'"),
+        (r"\`", "`"),
+        (r"\^", "^"),
+        ("\\\"", "\""),
+        (r"\~", "~"),
+        (r"\=", "="),
+        (r"\.", "."),
+    ] {
+        for sizing in ["settowidth", "settoheight", "settodepth"] {
+            let accented = literal_value(sizing, &format!("{command}{{e}}"));
+            // `\~` is the exception: a literal `~` in the box is the tie
+            // (interword glue), while `\~` sets a tilde glyph, so only the
+            // width comparison needs the shaped-tilde anchor instead of the
+            // literal box (Times-Roman "~" is 541/1000em: with e=444 that is
+            // 9.85pt at the 10pt default).
+            if sizing == "settowidth" && command == r"\~" {
+                let want = text_width("~e", 10.0, Font::TimesRoman);
+                assert!(
+                    (accented - want).abs() < 0.02,
+                    "\\~{{e}} width is {accented}pt, want {want}pt"
+                );
+                continue;
+            }
+            let want = literal_value(sizing, &format!("{literal}e"));
+            assert!(
+                (accented - want).abs() < 0.02,
+                "{sizing}{{{command}{{e}}}} is {accented}pt, literal {literal}e is {want}pt"
+            );
+        }
+    }
+}
+
+/// Slice 1 (finding 2): the U+FB00–U+FB04 arms of `is_tall_glyph` were dead
+/// — shaping (`apply_text_ligatures`) only builds quote and dash
+/// ligatures, so no engine-produced input could ever reach them (and all
+/// five small ligatures are lowercase non-ASCII, already tall without the
+/// arms). They are removed; the neighbouring `f` arm stays live: `f`-words
+/// keep the ascender tier. AFM Times-Roman ascender is 683/1000em, 6.83pt
+/// at the 10pt default.
+#[test]
+fn settoheight_keeps_ascender_f_without_f_ligature_arms() {
+    // The removal's rationale, pinned: shaping never emits f-ligatures.
+    for word in ["office", "affix", "ff", "fff", "``quoted''", "em---dash"] {
+        let shaped = flashtex_compiler::lexer::apply_text_ligatures(word);
+        assert!(
+            !shaped.chars().any(|c| ('\u{FB00}'..='\u{FB04}').contains(&c)),
+            "{word:?} shapes to {shaped:?}, which must hold no f-ligature"
+        );
+    }
+    // ...and `f` itself is still tall (the live arm the cleanup must keep).
+    for word in ["ff", "office"] {
+        let value = box_value(&format!(
+            "\\newlength{{\\myheight}}\\settoheight{{\\myheight}}{{{word}}}\\the\\myheight"
+        ));
+        assert!(
+            (value - 6.83).abs() < 0.02,
+            "{word} height is {value}pt, want ascender 6.83pt"
+        );
+    }
+    // A literal ﬀ stays tall through the accented-lowercase arm, exactly as
+    // before the removal (the deleted range never decided it).
+    let ligature = box_value("\\newlength{\\myheight}\\settoheight{\\myheight}{ﬀ}\\the\\myheight");
+    assert!(
+        (ligature - 6.83).abs() < 0.02,
+        "literal ﬀ height is {ligature}pt, want ascender 6.83pt"
+    );
+}
+
+/// Slice 1 (finding 3): `\_` is a rule box, not a glyph. OT1
+/// `\textunderscore` is `\leavevmode\kern.06em\vbox{\hrule\@width.3em}`
+/// (latex.ltx), and a bare `\hrule` is 0.4pt high at any size: pdflatex
+/// `\setbox0=\hbox{\_}\showthe\ht0` reports `0.4pt` (and `\showthe\dp0`
+/// `0.0pt`) on cmr10 at 10pt. The old x-height tier (4.5pt here, 5.4pt at
+/// 12pt) was wrong. T1 sets a real depth-bearing glyph instead — a known
+/// limitation left for a follow-up, not this slice.
+#[test]
+fn settoheight_measures_underscore_rule_height() {
+    let underscore = box_value(r"\newlength{\myheight}\settoheight{\myheight}{\_}\the\myheight");
+    assert!(
+        (underscore - 0.4).abs() < 0.02,
+        "underscore height is {underscore}pt, want rule height 0.4pt"
+    );
+    // Rule height is size-independent; mixed content still takes the max.
+    let big = box_value(
+        r"\documentclass[12pt]{article}\newlength{\myheight}\settoheight{\myheight}{\_}\the\myheight",
+    );
+    assert!((big - 0.4).abs() < 0.02, "12pt underscore height is {big}pt, want 0.4pt");
+    let mixed = box_value(r"\newlength{\myheight}\settoheight{\myheight}{x\_}\the\myheight");
+    assert!((mixed - 4.5).abs() < 0.02, "x\\_ height is {mixed}pt, want x-height 4.5pt");
+}
+

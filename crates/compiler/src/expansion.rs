@@ -994,9 +994,12 @@ fn take_accent_base(tokens: &[tex::Token], i: &mut usize) -> Option<String> {
 /// - text kerns (`\,`, `\:`, ...) resolve against the size in effect, with
 ///   the document's amsmath state;
 /// - text symbols (`\textasciitilde`, ...) set their resolved character;
-/// - escaped specials (`\&`, `\%`, ...) set their character with no
-///   diagnostic, and kernel text accents (`\c{c}`, ...) set their
-///   precomposed character through the paragraph pass's encoding path;
+/// - escaped specials (`\&`, `\%`, ...) and punctuation accents (`\'`,
+///   ``\` ``, `\^`, `\"`, `\~`, `\=`, `\.`) set their literal character
+///   with no diagnostic — the compiler's own lexer reads each as that
+///   character in normal running text — and kernel text accents (`\c{c}`,
+///   ...) set their precomposed character through the paragraph pass's
+///   encoding path;
 /// - anything else the flat paragraph pass turns into a non-text inline
 ///   (logos, rules, graphics, ...) or drops (`_ => {}`) contributes nothing
 ///   but records an error, rather than an invented guess or a silent zero.
@@ -1211,11 +1214,13 @@ fn take_glue_spec(
 }
 
 /// Whether `ch` reaches the face ascender: capitals (any script), the
-/// ascender lowercase, lining digits, the f-ligatures shaping produces,
-/// punctuation drawn full-height (parens, brackets, slashes, quotes, and —
-/// as a minimal stand-in for per-glyph ink extents — `?`, `!`, `@`, `#`,
-/// `$`, `%`, `&`, `*`), and accented lowercase (which usually reaches up as
-/// well). Anything else with ink stays at or below the x-height tier.
+/// ascender lowercase, lining digits, punctuation drawn full-height
+/// (parens, brackets, slashes, quotes, and — as a minimal stand-in for
+/// per-glyph ink extents — `?`, `!`, `@`, `#`, `$`, `%`, `&`, `*`), and
+/// accented lowercase (which usually reaches up as well). Anything else
+/// with ink stays at or below the x-height tier. (Shaping never produces
+/// the f-ligatures U+FB00–U+FB04 — `apply_text_ligatures` only builds
+/// quote and dash ligatures — so no arm here may test for them.)
 fn is_tall_glyph(ch: char) -> bool {
     ch.is_uppercase()
         || matches!(
@@ -1224,7 +1229,6 @@ fn is_tall_glyph(ch: char) -> bool {
                 | '0'..='9'
                 | '(' | ')' | '[' | ']' | '/' | '\\' | '|' | '\'' | '"' | '`'
                 | '?' | '!' | '@' | '#' | '$' | '%' | '&' | '*'
-                | '\u{FB00}'..='\u{FB04}'
         )
         || (ch.is_lowercase() && !ch.is_ascii())
 }
@@ -1525,6 +1529,28 @@ fn styled_runs(measurer: &CompilerBoxMeasurer, tokens: &[tex::Token]) -> (Vec<St
                 }
                 buf.push_str(name);
             }
+            // Punctuation accents (`\'`, ``\` ``, `\^`, `\"`, `\~`, `\=`,
+            // `\.`): the compiler's own lexer likewise reads each as its
+            // literal character everywhere else (a two-byte `Word`), so
+            // normal running text sets the character itself — never an
+            // accent, never a diagnostic. The measurer sees the engine's
+            // spelling (a control sequence) and must set the same literal
+            // character with no diagnostic, exactly like the escaped
+            // specials above; shaping (ligatures) then applies identically
+            // at measurement time. None of these names is a kern, a style
+            // command, a symbol, or a letter-named accent, so this arm
+            // cannot shadow an earlier one.
+            TexKind::ControlSequence(name)
+                if matches!(name.as_str(), "'" | "`" | "^" | "\"" | "~" | "=" | ".") =>
+            {
+                if let Some(at) = spaced.take() {
+                    glue_pt += measurer.space_pt(at);
+                }
+                if buf_style != style {
+                    buf_style = flush(&mut buf, &mut runs, buf_style, style);
+                }
+                buf.push_str(name);
+            }
             // Kernel text accents (`\c{c}`, `\v s`, `\k{}`, ...): one
             // argument is consumed and the precomposed character is set,
             // through the same encoding path the paragraph pass's
@@ -1640,9 +1666,17 @@ impl tex::BoxMeasurer for CompilerBoxMeasurer {
                 run_vertical_pt(crate::layout::style_font(run.style), size);
             // Ink height is per glyph class: only a run holding a tall glyph
             // reaches the ascender; x-height text (like `x`) takes the face
-            // x-height instead of a capital-like height.
-            let top = if apply_text_ligatures(&run.text).chars().any(is_tall_glyph) {
+            // x-height instead of a capital-like height. A run of only
+            // underscores is neither: OT1 `\_` is not a glyph at all but a
+            // `\vbox{\hrule}` (latex.ltx `\textunderscore`), whose default
+            // rule height is 0.4pt at any size — pdflatex
+            // `\setbox0=\hbox{\_}\showthe\ht0` reports `0.4pt` — so such a
+            // run takes 0.4pt, not the x-height tier (4.5pt at 10pt).
+            let ligated = apply_text_ligatures(&run.text);
+            let top = if ligated.chars().any(is_tall_glyph) {
                 ascender
+            } else if !ligated.is_empty() && ligated.chars().all(|c| c == '_') {
+                0.4
             } else {
                 x_height
             };
