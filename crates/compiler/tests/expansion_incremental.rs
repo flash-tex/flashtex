@@ -352,11 +352,12 @@ fn expansion_limit_notes_describe_what_happens() {
     );
 }
 
-/// Review finding 1 (`boxmeasurer`): the measurer used to be installed only
-/// on fresh engines, so after an edit before a cached checkpoint a later
-/// `\settowidth` measured `0pt` on the incremental path while a clean
-/// compile gave a nonzero value. Documents using `\setto...` bypass the
-/// incremental cache, so the cached and full expansions agree exactly.
+/// Review finding 7 (`boxmeasurer`): the incremental engine restores
+/// checkpoints without the box measurer, so a `\setto...` box re-expanded
+/// past a restored checkpoint would measure `0pt`. Documents using a literal
+/// `\setto...` bypass the incremental cache entirely — this test pins that
+/// bypass (no cache is kept) and the resulting agreement, not a restore the
+/// bypass never reaches.
 #[test]
 fn settowidth_after_an_edit_before_a_checkpoint_matches_full_expansion() {
     let mut text = String::from("\\newlength{\\mywidth}\n");
@@ -378,6 +379,7 @@ fn settowidth_after_an_edit_before_a_checkpoint_matches_full_expansion() {
     let docs = [SourceDocument { path: "main.tex", text: text.as_str() }];
     let cached = expand_project_with_cache(&docs, 0, &mut cache);
     let full = expand_project(&docs, 0);
+    assert!(cache.is_none(), "a literal \\setto... must bypass the cache");
     assert_eq!(
         *cached.tokens, *full.tokens,
         "incremental box measurement must equal a full expansion"
@@ -388,6 +390,61 @@ fn settowidth_after_an_edit_before_a_checkpoint_matches_full_expansion() {
     );
     // `\the` emits one single-character word per character, so the
     // dimension is recovered from the concatenation, not from one token.
+    let words: String = full
+        .tokens
+        .iter()
+        .filter_map(|t| match &t.token.kind {
+            TokenKind::Word(word) => Some(word.as_str()),
+            _ => None,
+        })
+        .collect();
+    let end = words.find("pt").expect(&format!("a dimension in {words:?}"));
+    let start = words[..end]
+        .rfind(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let value: f64 = words[start..end]
+        .parse()
+        .expect(&format!("numeric dimension in {words:?}"));
+    assert!(value > 0.0, "the box measures nonzero: {words:?}");
+}
+
+/// Review finding 7 (`boxmeasurer`): a dynamically constructed setto command
+/// (`\\csname settowidth\\endcsname`, whose literal name never appears in
+/// the source) bypasses the incremental cache too. Without the bypass, the
+/// edit below restores from a checkpoint whose engine lost the box measurer
+/// (`Engine::restore` rebuilds a default engine) and the box measures `0pt`
+/// while a full expansion measures nonzero.
+#[test]
+fn dynamically_constructed_settowidth_bypasses_the_cache() {
+    let mut text = String::from("\\newlength{\\mywidth}\n");
+    for i in 0..30 {
+        text.push_str(&format!("% padding line {i} to push the box past a checkpoint\n"));
+    }
+    text.push_str("\\csname settowidth\\endcsname{\\mywidth}{Hi}\\the\\mywidth\n");
+    assert!(text.len() > 1024, "need checkpoints past the edit: {}", text.len());
+    let mut cache = None;
+    {
+        let docs = [SourceDocument { path: "main.tex", text: text.as_str() }];
+        let _ = expand_project_with_cache(&docs, 0, &mut cache);
+    }
+    // Edit inside the first padding comment (before the first checkpoint):
+    // with the bypass the rerun is a full expansion, so the box still
+    // measures nonzero and agrees with a clean compile.
+    let comment_at = text.find('%').expect("padding comment");
+    text.insert_str(comment_at + 5, "x");
+    let docs = [SourceDocument { path: "main.tex", text: text.as_str() }];
+    let cached = expand_project_with_cache(&docs, 0, &mut cache);
+    let full = expand_project(&docs, 0);
+    assert!(cache.is_none(), "a dynamic setto... must bypass the cache");
+    assert_eq!(
+        *cached.tokens, *full.tokens,
+        "incremental box measurement must equal a full expansion"
+    );
+    assert_eq!(
+        cached.diagnostics, full.diagnostics,
+        "incremental diagnostics must equal a full expansion"
+    );
     let words: String = full
         .tokens
         .iter()

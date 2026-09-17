@@ -3,6 +3,7 @@
 //! commands (engine primitives in `flashtex-tex-expansion`, parser arms in
 //! `crates/compiler/src/parser.rs`, math arms in `src/math.rs`).
 
+use flashtex_compiler::diagnostics::Severity;
 use flashtex_compiler::incremental::{compile_full, CompileOutput};
 use flashtex_compiler::layout::{text_width, Font, LayoutConstraints, TextItem, MARGIN_PT};
 use flashtex_compiler::parser::{
@@ -219,7 +220,7 @@ fn settowidth_stores_the_width_and_grows_with_the_text() {
 /// tables are the independent ground truth pending a real oracle run.
 #[test]
 fn settowidth_measures_textbf_at_bold_width() {
-    let output = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{\textbf{Hi}}\the\mywidth");
+    let output = compile(r"\documentclass[12pt]{article}\newlength{\mywidth}\settowidth{\mywidth}{\textbf{Hi}}\the\mywidth");
     assert_supported(&output);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     let rendered = joined(&output);
@@ -243,7 +244,7 @@ fn settowidth_measures_textbf_at_bold_width() {
 /// is (444 + 541 + 500) / 1000 * 12 = 17.82pt), never `layout` helper calls.
 #[test]
 fn settowidth_measures_tie_as_interword_space() {
-    let output = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{a~b}\the\mywidth");
+    let output = compile(r"\documentclass[12pt]{article}\newlength{\mywidth}\settowidth{\mywidth}{a~b}\the\mywidth");
     assert_supported(&output);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     let rendered = joined(&output);
@@ -273,8 +274,8 @@ fn settoheight_uses_the_size_in_effect() {
         let rendered = joined(&output);
         rendered.trim_end_matches("pt").parse::<f64>().expect("numeric dimension")
     };
-    let body = value(r"\newlength{\myheight}\settoheight{\myheight}{X}\the\myheight");
-    let large = value(r"\newlength{\myheight}\settoheight{\myheight}{{\Large X}}\the\myheight");
+    let body = value(r"\documentclass[12pt]{article}\newlength{\myheight}\settoheight{\myheight}{X}\the\myheight");
+    let large = value(r"\documentclass[12pt]{article}\newlength{\myheight}\settoheight{\myheight}{{\Large X}}\the\myheight");
     assert!(body > 0.0 && large > 0.0);
     assert!(
         (body - 8.196).abs() < 0.02,
@@ -526,7 +527,7 @@ fn settowidth_with_math_reports_a_diagnostic() {
 /// the literal `1cm` as text.
 #[test]
 fn settowidth_measures_hspace_by_its_length() {
-    let value = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{\hspace{1cm}A}\the\mywidth");
+    let value = box_value(r"\documentclass[12pt]{article}\newlength{\mywidth}\settowidth{\mywidth}{\hspace{1cm}A}\the\mywidth");
     // 1cm = 28.45274pt (TeX: 72.27pt/in, 2.54cm/in) plus AFM "A" 722/1000*12 = 8.664pt.
     assert!((value - 37.117).abs() < 0.05, "\\hspace{{1cm}}A measures {value}pt");
 }
@@ -534,7 +535,7 @@ fn settowidth_measures_hspace_by_its_length() {
 /// Review finding 4: `\textasciitilde` measures as the tilde glyph, not zero.
 #[test]
 fn settowidth_measures_textasciitilde_as_a_tilde() {
-    let value = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{\textasciitilde}\the\mywidth");
+    let value = box_value(r"\documentclass[12pt]{article}\newlength{\mywidth}\settowidth{\mywidth}{\textasciitilde}\the\mywidth");
     // AFM Times-Roman "~" = 541/1000*12 = 6.492pt.
     assert!((value - 6.492).abs() < 0.02, "\\textasciitilde measures {value}pt");
 }
@@ -555,7 +556,7 @@ fn settowidth_with_an_unmeasurable_command_reports_a_diagnostic() {
 /// font in force at the space, not the font of the next character.
 #[test]
 fn settowidth_charges_a_deferred_space_in_the_space_font() {
-    let value = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{a \texttt{b}}\the\mywidth");
+    let value = box_value(r"\documentclass[12pt]{article}\newlength{\mywidth}\settowidth{\mywidth}{a \texttt{b}}\the\mywidth");
     // AFM Times a=444, space=250 at 12pt, then Courier b=600 at 12pt:
     // 5.328 + 3.0 + 7.2 = 15.528pt.
     assert!((value - 15.528).abs() < 0.02, "deferred space measures {value}pt");
@@ -579,8 +580,8 @@ fn settodepth_is_zero_without_descenders() {
 /// the `AV` kern, exactly as `AV` does).
 #[test]
 fn settowidth_kerns_across_transparent_groups() {
-    let grouped = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{A{}V}\the\mywidth");
-    let plain = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{AV}\the\mywidth");
+    let grouped = box_value(r"\documentclass[12pt]{article}\newlength{\mywidth}\settowidth{\mywidth}{A{}V}\the\mywidth");
+    let plain = box_value(r"\documentclass[12pt]{article}\newlength{\mywidth}\settowidth{\mywidth}{AV}\the\mywidth");
     // AFM Times-Roman A=722, V=722, A-V kern -135: (722 + 722 - 135)/1000*12 = 15.708pt.
     assert!((plain - 15.708).abs() < 0.02, "AV measures {plain}pt");
     assert!(
@@ -588,3 +589,137 @@ fn settowidth_kerns_across_transparent_groups() {
         "A{{}}V ({grouped}pt) must kern like AV ({plain}pt)"
     );
 }
+
+/// Review follow-up (finding 2, second half): an omitted class size measures
+/// at article's 10pt default, not a hardcoded 12pt.
+#[test]
+fn settowidth_defaults_to_the_class_size_when_omitted() {
+    let omitted = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{Hi}\the\mywidth");
+    let ten = box_value(
+        r"\documentclass[10pt]{article}\newlength{\mywidth}\settowidth{\mywidth}{Hi}\the\mywidth",
+    );
+    // AFM Times-Roman "Hi" = (722 + 278) / 1000 em: 10.0pt at 10pt.
+    assert!((omitted - 10.0).abs() < 0.02, "omitted class measures {omitted}pt");
+    assert!(
+        (omitted - ten).abs() < 0.005,
+        "omitted class ({omitted}pt) measures like explicit 10pt ({ten}pt)"
+    );
+}
+
+/// Review follow-up (finding 3): `em`/`ex` in `\hspace` resolve against the
+/// active font's quad/x-height, not the body size. Quads below are the
+/// pdflatex `\\fontdimen6` values in `text_fontdimens.rs` row 0 (cmr, OT1):
+/// cmr10 655361sp = 10.00002pt, cmr14 (the `\\Large` size at the 10pt
+/// class) 924047sp = 14.09984pt — the parser's own `em` source, not a
+/// layout call.
+#[test]
+fn settowidth_resolves_hspace_em_against_the_active_font() {
+    let body = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{\hspace{1em}}\the\mywidth");
+    assert!((body - 10.00002).abs() < 0.02, "\\hspace{{1em}} measures {body}pt");
+    let large = box_value(
+        r"\newlength{\mywidth}\settowidth{\mywidth}{{\Large\hspace{1em}}}\the\mywidth",
+    );
+    assert!((large - 14.09984).abs() < 0.02, "{{\\Large\\hspace{{1em}}}} measures {large}pt");
+    // The review's example: the em follows the inner size declaration, so a
+    // `\\Large` box is wider than its body-size twin by more than the `X`.
+    let review = box_value(
+        r"\newlength{\mywidth}\settowidth{\mywidth}{{\Large\hspace{1em}X}}\the\mywidth",
+    );
+    // 924047sp em plus AFM "X" 722/1000*14.4 = 10.3968pt.
+    assert!((review - 24.49664).abs() < 0.03, "{{\\Large\\hspace{{1em}}X}} measures {review}pt");
+}
+
+/// Review follow-up (finding 4): `\\quad`/`\\qquad`/`\\enskip` contribute
+/// their glue instead of falling through as unknown. AFM Times-Roman A=722,
+/// B=667: `A\\quad B` at the 10pt default is (722+1000+667)/1000*10pt.
+#[test]
+fn settowidth_measures_quad_family_glue() {
+    let output = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{A\quad B}\the\mywidth");
+    assert!(output.diagnostics.is_empty(), "quad is measured, not warned: {:?}", output.diagnostics);
+    let quad = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{A\quad B}\the\mywidth");
+    assert!((quad - 23.89).abs() < 0.02, "A\\quad B measures {quad}pt");
+    let qquad = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{A\qquad B}\the\mywidth");
+    assert!((qquad - 33.89).abs() < 0.02, "A\\qquad B measures {qquad}pt");
+    let enskip = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{A\enskip B}\the\mywidth");
+    assert!((enskip - 18.89).abs() < 0.02, "A\\enskip B measures {enskip}pt");
+}
+
+/// Review follow-up (finding 4): `\\hskip` sets its fixed glue
+/// (`plus`/`minus` stretch never reaches an hbox's natural width) and
+/// consumes the whole spec, including `\\relax` and the `<optional spaces>`
+/// after it (which are skipped, never interword glue).
+#[test]
+fn settowidth_measures_hskip_glue() {
+    let output = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{\hskip 10pt A}\the\mywidth");
+    assert!(output.diagnostics.is_empty(), "hskip is measured, not warned: {:?}", output.diagnostics);
+    let fixed = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{\hskip 10pt A}\the\mywidth");
+    // 10pt plus AFM "A" 722/1000*10 = 7.22pt.
+    assert!((fixed - 17.22).abs() < 0.02, "\\hskip 10pt A measures {fixed}pt");
+    let em = box_value(
+        r"\newlength{\mywidth}\settowidth{\mywidth}{\hskip 1em plus 2pt minus 1pt A}\the\mywidth",
+    );
+    // 1em at the 10pt default is the cmr10 quad, 655361sp = 10.00002pt.
+    assert!((em - 17.22002).abs() < 0.03, "\\hskip 1em plus ... measures {em}pt");
+    let relaxed = box_value(
+        r"\newlength{\mywidth}\settowidth{\mywidth}{\hskip.5em\relax A}\the\mywidth",
+    );
+    assert!((relaxed - 12.22).abs() < 0.02, "\\hskip.5em\\relax A measures {relaxed}pt");
+}
+
+/// Review follow-up (finding 5): a box holding math fails loudly (an error),
+/// instead of silently storing a near-zero width.
+#[test]
+fn settowidth_with_math_fails_loudly() {
+    let output = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{$x$}\the\mywidth");
+    let math = output
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains("math") && d.message.contains("settowidth"))
+        .expect("math inside a setto box must diagnose");
+    assert_eq!(math.severity, Severity::Error, "unmeasurable math must error, not warn");
+}
+
+/// Review follow-up (finding 6): height is per glyph class, not the face
+/// ascender. AFM Times-Roman x-height is 450/1000em: `x` at 12pt is 5.4pt,
+/// while a capital keeps the 683/1000 ascender (8.196pt).
+#[test]
+fn settoheight_uses_glyph_height_classes() {
+    let x = box_value(
+        r"\documentclass[12pt]{article}\newlength{\myheight}\settoheight{\myheight}{x}\the\myheight",
+    );
+    assert!((x - 5.4).abs() < 0.02, "x height is {x}pt");
+    let capital = box_value(
+        r"\documentclass[12pt]{article}\newlength{\myheight}\settoheight{\myheight}{X}\the\myheight",
+    );
+    assert!((capital - 8.196).abs() < 0.02, "X height is {capital}pt");
+}
+
+/// Review follow-up (finding 6): depth covers depth-drawn punctuation, not
+/// just the descender allowlist. AFM Times-Roman descender is 217/1000em:
+/// `,` at 12pt is 2.604pt, while `Hi` stays zero.
+#[test]
+fn settodepth_measures_comma_depth() {
+    let comma = box_value(
+        r"\documentclass[12pt]{article}\newlength{\mydepth}\settodepth{\mydepth}{,}\the\mydepth",
+    );
+    assert!((comma - 2.604).abs() < 0.02, "comma depth is {comma}pt");
+}
+
+/// Review follow-up (finding 8): text kerns use the document's amsmath
+/// state. `\\,` is .16667em without amsmath but .1667em with it
+/// (`text_builtins::text_kern`): `a\\,b` at the 10pt default is
+/// (444 + 500)/1000*10 + the kern, 11.10672pt vs 11.10703pt.
+#[test]
+fn settowidth_uses_amsmath_text_kerns() {
+    let plain = box_value(r"\newlength{\mywidth}\settowidth{\mywidth}{a\,b}\the\mywidth");
+    assert!((plain - 11.10672).abs() < 0.005, "plain \\, kern measures {plain}pt");
+    let amsmath = box_value(
+        r"\usepackage{amsmath}\newlength{\mywidth}\settowidth{\mywidth}{a\,b}\the\mywidth",
+    );
+    assert!((amsmath - 11.10703).abs() < 0.005, "amsmath \\, kern measures {amsmath}pt");
+    assert!(
+        (amsmath - plain) > 0.0001,
+        "amsmath must change the kern: {plain}pt vs {amsmath}pt"
+    );
+}
+
