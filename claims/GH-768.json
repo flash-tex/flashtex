@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": null,
-  "gh_ref": null,
+  "gh_ref": "781",
   "machine": "mac-m5pro-dq222",
-  "note": "scoping only the \\hangfrom half; the headings-oracle-test half is separate, unclaimed, larger work",
+  "note": "only the hangfrom half; oracle-test half still open/unclaimed",
   "started_utc": "2026-09-17T07:16:14Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-768",
-  "updated_utc": "2026-09-17T07:16:14Z"
+  "updated_utc": "2026-09-17T07:21:15Z"
 }
