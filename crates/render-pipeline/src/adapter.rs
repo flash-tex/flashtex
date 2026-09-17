@@ -3371,6 +3371,47 @@ pub fn package_options(source: &str, name: &str) -> Option<String> {
     None
 }
 
+/// Every `\graphicspath{{dir1/}{dir2/}...}` directory in the source, in
+/// order (graphics.sty's `\Ginput@path`).
+///
+/// A later `\graphicspath` overwrites the earlier list (`\def`), so only
+/// the last command's groups are returned. The compiler consumes the
+/// command without a diagnostic; the file-loading consumer re-reads the
+/// list here, exactly as `graphics::mode` re-reads the draft/demo options
+/// above. Entries are used verbatim: LaTeX concatenates each directory
+/// with the file name and adds no separator, so callers join them with the
+/// file argument as written.
+pub fn graphicspath(source: &str) -> Vec<String> {
+    let mut from = 0;
+    let mut dirs = Vec::new();
+    while let Some(at) = find_command(&source[from..], "graphicspath") {
+        let abs = from + at;
+        let rest = source[abs + "\\graphicspath".len()..].trim_start();
+        if let Some(arg) = rest.strip_prefix('{') {
+            let mut depth = 1usize;
+            let mut end = None;
+            for (i, c) in arg.char_indices() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(end) = end {
+                dirs = flashtex_compiler::graphics::graphics_path_entries(&arg[..end]);
+            }
+        }
+        from = abs + 1;
+    }
+    dirs
+}
+
 /// The preamble facts that decide the page frame, read by
 /// `flashtex_class_geometry::DocumentSetup::from_preamble` (standard class,
 /// every `\usepackage[..]{geometry}` option, `\geometry{..}` calls,

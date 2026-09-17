@@ -542,6 +542,11 @@ pub struct GraphicsEnv<'a> {
     options: &'a crate::RenderOptions,
     mode: crate::graphics::GraphicsMode,
     images: Rc<std::cell::RefCell<crate::floats::ImageCache>>,
+    /// `\graphicspath` directories of the entry document, in order: an
+    /// inline `\includegraphics` tries the file as written first, then
+    /// under each directory, with the float path's extension search applied
+    /// to every candidate (`Context::graphic_box`).
+    graphicspath: Vec<String>,
 }
 
 impl<'a> Context<'a> {
@@ -608,7 +613,12 @@ impl<'a> Context<'a> {
         entry_text: &str,
         images: Rc<std::cell::RefCell<crate::floats::ImageCache>>,
     ) -> GraphicsEnv<'a> {
-        GraphicsEnv { options, mode: crate::graphics::mode(entry_text), images }
+        GraphicsEnv {
+            options,
+            mode: crate::graphics::mode(entry_text),
+            images,
+            graphicspath: crate::adapter::graphicspath(entry_text),
+        }
     }
 
     /// This context's image environment, for a sub-context.
@@ -1050,7 +1060,29 @@ impl<'a> Context<'a> {
             return Some(self.push_image_rec(graphics::demo_box(&keys), None, Some(floatpage::Placeholder::DemoRule), span, size));
         }
         let draft = keys.iter().rev().find_map(|k| if let GKey::Draft(v) = k { Some(*v) } else { None }).unwrap_or(env.mode.draft);
-        let loaded = env.images.borrow_mut().load(env.options, &g.path, page);
+        // `\graphicspath` (`\Ginput@path`): the file as written first, then
+        // under each directory in order. Every candidate goes through the
+        // float path's loader, so extension search, probing and the
+        // per-request cache are shared rather than re-implemented; when
+        // nothing is found the error names the file as written, as before.
+        let loaded = {
+            let mut images = env.images.borrow_mut();
+            let mut loaded = images.load(env.options, &g.path, page);
+            if loaded.is_err() {
+                for dir in &env.graphicspath {
+                    let candidate = format!("{dir}{}", g.path);
+                    if candidate == g.path {
+                        continue;
+                    }
+                    let next = images.load(env.options, &candidate, page);
+                    if next.is_ok() {
+                        loaded = next;
+                        break;
+                    }
+                }
+            }
+            loaded
+        };
         match loaded {
             Ok((resource, info)) => {
                 let gbox = graphics::size_box(info.width_bp / graphics::BP_PER_PT, info.height_bp / graphics::BP_PER_PT, &keys);
@@ -3442,7 +3474,12 @@ impl<'a> Context<'a> {
                             add_skip_before(&mut opener.vertical, env_before.take());
                             blocks.push(opener);
                         }
-                        let (key, origin) = if cache.is_some() {
+                        // An `\intertext` paragraph holding an inline graphic
+                        // measures it, so the rows block is not cached then
+                        // (see `block_key`).
+                        let intertext_graphic =
+                            rows.iter().any(|row| row.intertext.iter().any(|t| items_hold_graphic(&t.items)));
+                        let (key, origin) = if cache.is_some() && !intertext_graphic {
                             let mut h = std::collections::hash_map::DefaultHasher::new();
                             b'A'.hash(&mut h);
                             style_fp.hash(&mut h);
@@ -7784,6 +7821,18 @@ fn longtable_limitation(ctx: &mut Context, longtables: &[(usize, pagebuild::Regi
     }
 }
 
+/// Whether `items` hold an inline `\includegraphics` at any depth (a lap
+/// sets its material as one box, so the graphic inside one measures the
+/// same way).
+fn items_hold_graphic(items: &[AItem]) -> bool {
+    items.iter().any(|i| match i {
+        AItem::Graphic(_) => true,
+        AItem::Footnote { text, .. } => text.as_ref().is_some_and(|t| items_hold_graphic(t)),
+        AItem::Lap { items } => items_hold_graphic(items),
+        _ => false,
+    })
+}
+
 /// The incremental cache key of one block: `None` whenever the block
 /// cannot be keyed on its own bytes (no cache, a footnote's per-build record
 /// indices, or no source origin at all).
@@ -7794,6 +7843,15 @@ fn block_key(cache: Option<&RenderCache>, style_fp: u64, tag: u8, items: &[AItem
     }
     // A footnote's record indices and note table are per build.
     if items.iter().any(|i| matches!(i, AItem::Footnote { .. })) {
+        return (None, None);
+    }
+    // An inline graphic's measured box depends on facts outside the items
+    // (the file's bytes, the graphicx draft/demo mode, `\graphicspath`),
+    // so a key over the items alone serves a stale box after an edit that
+    // leaves them untouched. The float path never has this problem: it
+    // re-measures every render through its per-request image cache. Running
+    // text does the same by not caching the block at all.
+    if items_hold_graphic(items) {
         return (None, None);
     }
     let Some((document, base)) = incremental::block_origin(items) else {
