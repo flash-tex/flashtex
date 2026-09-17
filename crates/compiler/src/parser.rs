@@ -8800,7 +8800,8 @@ impl P<'_> {
     /// `\normalfont` (`article.cls:355-359`) — and `\normalfont` resets
     /// family, series and shape only, not size or colour. So the marker
     /// starts from the style active where it is used (keeping its size and
-    /// colour) and only overrides `family` (Roman), `italic` (upright) and
+    /// colour) and only overrides `family` (Roman), the whole shape axis
+    /// (`italic`, `slanted` and `small_caps` all reset to upright) and
     /// `bold` (level 2's `\bfseries`), exactly like a real
     /// `\normalfont`/`\bfseries` prefix in its definition would. A
     /// `\renewcommand` of one of these names expands in the expansion pass,
@@ -8822,6 +8823,8 @@ impl P<'_> {
             style: TextStyle {
                 family: TextFamily::Roman,
                 italic: false,
+                slanted: false,
+                small_caps: false,
                 bold,
                 ..style
             },
@@ -9595,9 +9598,12 @@ impl P<'_> {
     /// `lists::default_label` path; anything else is re-lexed and parsed
     /// as inline LaTeX through the ordinary dispatch
     /// (`P::argument_inlines`), the way a `\renewcommand` the expansion
-    /// pass already expanded typesets in running text — so `$\star$`,
-    /// `\textendash` and `\textbf{X}` bodies become real content, and an
-    /// unsupported command gets the usual diagnostic. An enumitem `label=`
+    /// pass already expanded typesets in running text — so an unsupported
+    /// command still gets the usual diagnostic. But only the resulting
+    /// plain text is kept: what reaches the page is the flattened label
+    /// string (`Block::ListItem::label`), which cannot carry styling or
+    /// math, so `\textbf{X}` degrades to plain `X` and a math-only body
+    /// like `$\star$` to empty text. An enumitem `label=`
     /// template never reaches here (it wins earlier, as in real LaTeX).
     ///
     /// Accepted limitation (documented, not fixed here): only the value in
@@ -9614,7 +9620,10 @@ impl P<'_> {
                     // rendered text: re-lex it and parse it as inline
                     // content, mirroring the `\item[<label>]` explicit
                     // branch above (same `Explicit` shape, same plain-text
-                    // derivation; `span` is the capturing `\begin`).
+                    // derivation; `span` is the capturing `\begin`). The
+                    // parse still runs so an unsupported command inside the
+                    // body gets the usual diagnostic, exactly as in running
+                    // text.
                     //
                     // Re-lexing starts the body at byte 0 of a throwaway
                     // copy, so shift every token by the body's real source
@@ -9641,9 +9650,9 @@ impl P<'_> {
                             }
                         })
                         .collect::<Vec<_>>();
-                    let content = self.argument_inlines(tokens, begin, TextStyle::default());
+                    let parsed = self.argument_inlines(tokens, begin, TextStyle::default());
                     let mut plain = String::new();
-                    for inline in &content {
+                    for inline in &parsed {
                         if let Inline::Text {
                             text: word,
                             space_before,
@@ -9656,6 +9665,19 @@ impl P<'_> {
                             plain.push_str(word);
                         }
                     }
+                    // Plain text only: the marker that reaches the page is
+                    // the flattened `label: Option<(String, Span)>` string
+                    // (see `Block::ListItem`), which carries no styling or
+                    // math — so `content` degrades to the same plain text
+                    // as one unstyled run instead of keeping rich content
+                    // that nothing downstream can render. Bold `X` becomes
+                    // plain `X`; a math-only body becomes empty text.
+                    let content = vec![Inline::Text {
+                        text: plain.clone(),
+                        span: begin,
+                        style: TextStyle::default(),
+                        space_before: false,
+                    }];
                     return ItemLabel::Explicit {
                         content,
                         text: plain,

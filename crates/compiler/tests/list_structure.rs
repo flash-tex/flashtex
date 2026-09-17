@@ -4,7 +4,6 @@
 //! `quote` inside an item. See `src/parser/lists.rs` for the latex.ltx,
 //! article.cls and enumitem.sty provenance.
 
-use flashtex_compiler::math::Nucleus;
 use flashtex_compiler::parser::{
     self, Block, CounterStyle, FontSizeLevel, Inline, ItemLabel, ListEnvironment, ListLength,
     ListOption, TextFamily,
@@ -359,6 +358,34 @@ fn labelitem_command_resets_style_rather_than_inheriting_it() {
 }
 
 #[test]
+fn labelitem_command_resets_the_whole_shape_axis() {
+    // Real `\normalfont` resets the whole shape axis, not just italics:
+    // `\slshape\labelitemii` must come out upright, and `\scshape` must
+    // not leak small caps onto the marker either.
+    for body in ["\\slshape\\labelitemii", "\\scshape\\labelitemii"] {
+        let source = doc(body);
+        let parsed = parser::parse(&source);
+        assert!(parsed.diagnostics.is_empty(), "{body}: {:?}", parsed.diagnostics);
+        let mut found = false;
+        for block in &parsed.blocks {
+            if let Block::Paragraph(content) = block {
+                for inline in content {
+                    if let Inline::Text { text, style, .. } = inline {
+                        if text == "–" {
+                            found = true;
+                            assert!(style.bold, "{body}: level 2's marker keeps its own \\bfseries");
+                            assert!(!style.slanted, "{body}: the marker must reset \\slshape, not inherit it");
+                            assert!(!style.small_caps, "{body}: the marker must reset \\scshape, not inherit it");
+                        }
+                    }
+                }
+            }
+        }
+        assert!(found, "{body}: expected the \\labelitemii marker in the output");
+    }
+}
+
+#[test]
 fn labelitem_command_keeps_size_and_colour_but_resets_face() {
     // `\labelitemfont` is `\normalfont` (article.cls:355-359): it resets
     // family, series and shape only, so an active size or colour survives
@@ -411,9 +438,15 @@ fn renewcommand_of_a_deeper_labelitem_applies_only_at_that_nesting_level() {
 }
 
 #[test]
-fn labelitem_override_textbf_body_is_parsed_as_bold_content() {
-    // The captured `\labelitem<i>` body is inline LaTeX, not plain text:
-    // `\textbf{X}` must typeset bold `X`, not the literal `\textbf{X}`.
+fn labelitem_override_textbf_body_degrades_to_plain_text() {
+    // The captured `\labelitem<i>` body is parsed as inline LaTeX (so the
+    // marker text is `X`, not the literal `\textbf{X}`), but only its
+    // plain text survives: the marker that reaches the page is the
+    // flattened label string, which cannot carry styling — and the
+    // renderer reads only that string, never the styled content — so the
+    // bold is honestly dropped instead of kept where nothing could show
+    // it. (`\textbf{X}` itself diagnoses nothing, in the list or in
+    // running text.)
     let source = doc("\\renewcommand{\\labelitemi}{\\textbf{X}}\\begin{itemize}\\item A\\end{itemize}");
     let parsed = parser::parse(&source);
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
@@ -423,8 +456,8 @@ fn labelitem_override_textbf_body_is_parsed_as_bold_content() {
         Some(ItemLabel::Explicit { content, text, .. }) => {
             assert_eq!(text, "X");
             assert!(
-                matches!(&content[..], [Inline::Text { text, style, .. }] if text == "X" && style.bold),
-                "{content:?}"
+                matches!(&content[..], [Inline::Text { text, style, .. }] if text == "X" && !style.bold),
+                "the override marker must be one plain unstyled run, not bold content: {content:?}"
             );
         }
         other => panic!("{other:?}"),
@@ -432,11 +465,15 @@ fn labelitem_override_textbf_body_is_parsed_as_bold_content() {
 }
 
 #[test]
-fn labelitem_override_math_body_becomes_a_math_nucleus() {
-    // `$\star$`: the marker is a math nucleus, not the literal `$\star$`
-    // text. (`\star` itself is unsupported in math mode in this compiler
-    // version; running text reports the same diagnostic, so the test pins
-    // parity with running text rather than clean compilation.)
+fn labelitem_override_math_body_degrades_to_empty_plain_text() {
+    // `$\star$`: the marker keeps the body's plain-text fallback, which
+    // for a math-only body is empty — not a math nucleus, and not the
+    // literal `$\star$` text. The math never reaches the page (see the
+    // `textbf` test above for why), so keeping a nucleus in `content`
+    // would claim support the renderer cannot honour. (`\star` itself is
+    // unsupported in math mode in this compiler version; running text
+    // reports the same diagnostic, so the test still pins parity with
+    // running text rather than clean compilation.)
     let source = doc("\\renewcommand{\\labelitemi}{$\\star$}\\begin{itemize}\\item A\\end{itemize}");
     let parsed = parser::parse(&source);
     let running = parser::parse(&doc("A $\\star$ B"));
@@ -448,10 +485,11 @@ fn labelitem_override_math_body_becomes_a_math_nucleus() {
     assert_eq!(label_texts(&source), [""]);
     let all = items(&source);
     match &all[0].1 {
-        Some(ItemLabel::Explicit { content, .. }) => {
+        Some(ItemLabel::Explicit { content, text, .. }) => {
+            assert_eq!(text, "");
             assert!(
-                matches!(&content[..], [Inline::Math { list, .. }] if list.atoms.iter().any(|a| matches!(&a.nucleus, Nucleus::Symbol(s) if s == "\\star"))),
-                "{content:?}"
+                !content.iter().any(|i| matches!(i, Inline::Math { .. })),
+                "the override marker must carry no math content: {content:?}"
             );
         }
         other => panic!("{other:?}"),
