@@ -476,3 +476,93 @@ fn documents_the_request_sent_are_not_charged_to_the_read_budget() {
     assert!(text.iter().any(|t| t == "OVERLAID0"), "and the sent buffers win: {text:?}");
     assert!(!text.iter().any(|t| t.starts_with("ONDISK")), "never the file on disk: {text:?}");
 }
+
+// -- GH-75 finding 1: the compiler looks an include up by raw spelling ------
+//
+// Discovery normalizes a reference before matching (`./x` becomes `x`), but
+// the compiler looks the include up by the exact spelling in the source
+// (`requested`, then `requested` + ".tex"). A document forwarded only under
+// its normalized path is invisible to a `./`-prefixed reference that
+// resolved to it, so the closure must also forward the spelling variant the
+// lookup will ask for.
+
+/// `\input{./sections/intro}` with only `main.tex` supplied: the file is
+/// discovered as `sections/intro.tex`, and the compile must still find it.
+#[test]
+fn an_input_with_a_dot_slash_prefix_resolves() {
+    let project = Project::new("dotslash-input");
+    let body = "\\input{./sections/intro}";
+    project
+        .write("main.tex", &main_tex(body))
+        .write("sections/intro.tex", "DOTSLASHINTRO");
+
+    let reply = reply(Some(project.path()), &[("main.tex", &main_tex(body))]);
+    assert!(
+        !reply.contains("included file not found"),
+        "a ./-prefixed include that is on disk must be found: {reply}"
+    );
+    assert!(
+        page_text(&reply).iter().any(|t| t == "DOTSLASHINTRO"),
+        "the ./-prefixed include's body must be typeset: {reply}"
+    );
+}
+
+/// The same spelling variant two directories down: `\input{./sections/sub/deep}`
+/// must resolve to `sections/sub/deep.tex`, not just the one-level case.
+#[test]
+fn a_dot_slash_input_in_a_nested_directory_resolves() {
+    let project = Project::new("dotslash-nested");
+    let body = "\\input{./sections/sub/deep}See \\ref{sec:deep}.";
+    project
+        .write("main.tex", &main_tex(body))
+        .write("sections/sub/deep.tex", "\\subsection{Deep}\\label{sec:deep}DEEPDOTSLASH");
+
+    let reply = reply(Some(project.path()), &[("main.tex", &main_tex(body))]);
+    assert!(
+        !reply.contains("included file not found"),
+        "a nested ./-prefixed include that is on disk must be found: {reply}"
+    );
+    let text = page_text(&reply);
+    assert!(text.iter().any(|t| t == "DEEPDOTSLASH"), "the nested include's body must be typeset: {text:?}");
+    assert!(!text.iter().any(|t| t.contains("??")), "\\ref into the nested include must resolve: {text:?}");
+}
+
+// -- GH-75 finding 2: one graphic referenced often costs the budget once ----
+//
+// Disk graphics (and bibliographies) are charged against the read budget but
+// were never added to the walk's `seen` set, so N references to one file
+// cost N times. Thirty-three `\includegraphics{fig}` of a 1 MiB file is
+// 33 MiB against a 32 MiB budget: the whole closure was refused and a later
+// legitimate `\input` dropped, although the unique closure is barely 1 MiB.
+
+/// Thirty-three references to one 1 MiB graphic plus a later `\input`: the
+/// graphic must be charged once, so the closure fits and the later include
+/// survives.
+#[test]
+fn repeated_graphics_are_charged_once_against_the_read_budget() {
+    let project = Project::new("repeated-graphic");
+    // A real (tiny) PNG padded to exactly 1 MiB: decoders stop at IEND, so
+    // the compile sees a valid image while the budget walk weighs 1 MiB.
+    let mut big = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/floats/images/red-72.png"))
+        .expect("read the small fixture image");
+    big.resize(1024 * 1024, 0);
+    std::fs::write(project.path().join("fig.png"), &big).expect("stage a 1 MiB graphic");
+    let mut body = String::from("\\usepackage{graphicx}");
+    for _ in 0..33 {
+        body.push_str("\\includegraphics{fig}");
+    }
+    body.push_str("\\input{sections/tail}");
+    project
+        .write("main.tex", &main_tex(&body))
+        .write("sections/tail.tex", "TAILCONTENT");
+
+    let reply = reply(Some(project.path()), &[("main.tex", &main_tex(&body))]);
+    assert!(
+        !reply.contains("closure_budget_exceeded"),
+        "one 1 MiB graphic referenced 33 times is a ~1 MiB closure and must fit the budget: {reply}"
+    );
+    assert!(
+        page_text(&reply).iter().any(|t| t == "TAILCONTENT"),
+        "the later \\input must survive repeated references to one graphic: {reply}"
+    );
+}

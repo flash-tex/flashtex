@@ -184,7 +184,14 @@ fn closure_read_budget(
                 return None;
             }
             if kind != FileKind::Tex {
-                // Discovery reads it, and never descends into it.
+                // Discovery reads it, and never descends into it. The charge
+                // above succeeded, so this path costs nothing more to look
+                // at: remember it, or every further reference pays the full
+                // size again -- 33 `\includegraphics{fig}` of a 1 MiB file
+                // is 33 MiB against the 32 MiB budget, refusing a closure
+                // that uniquely fits and dropping the legitimate content
+                // after it.
+                self.seen.insert(path.clone());
                 return None;
             }
             std::fs::read_to_string(&os).ok()
@@ -248,7 +255,8 @@ fn closure_from_disk(
     entry: &str,
     supplied: &[(String, String)],
 ) -> (Vec<(String, String)>, Vec<crate::display::Diagnostic>) {
-    use flashtex_project_files::graph::{DiagnosticKind, Overlay, ProjectGraph, Severity};
+    use flashtex_project_files::graph::{DiagnosticKind, FileKind, Overlay, ProjectGraph, Severity};
+    use flashtex_project_files::ReferenceKind;
     use flashtex_project_files::ProjectPath;
 
     let none = (Vec::new(), Vec::new());
@@ -280,6 +288,10 @@ fn closure_from_disk(
     let Ok(graph) = ProjectGraph::discover_with(root, &entry_path, &overlay) else { return none };
 
     let mut documents = Vec::new();
+    // Every path the compile will see, request-sent and forwarded: a raw
+    // spelling variant is only added below when the lookup would otherwise
+    // miss both of the keys it tries.
+    let mut emitted: std::collections::BTreeSet<String> = have.clone();
     for document in graph.documents() {
         if documents.len() >= MAX_CLOSURE_DOCUMENTS {
             break;
@@ -294,7 +306,41 @@ fn closure_from_disk(
         if document.text.len() > MAX_CLOSURE_DOCUMENT_BYTES {
             continue;
         }
+        emitted.insert(document.path.clone());
         documents.push((document.path, document.text));
+    }
+    // Discovery normalizes a reference before matching (`./x` becomes `x`),
+    // but the compiler looks an include up by the exact spelling in the
+    // source (`requested`, then `requested` + ".tex"). A document forwarded
+    // only under its normalized path is invisible to a `./`-prefixed
+    // reference that resolved to it -- `\input{./sections/intro}` finds
+    // `sections/intro.tex` on disk and then omits it -- so each resolved
+    // `\input`/`\include` edge also forwards its raw spelling when neither
+    // of the lookup's two keys is already a document. The alias carries the
+    // same (overlay-winning) text the graph resolved, passes the same
+    // `path_is_safe` gate, and counts against the same document cap; it is
+    // only ever read when the raw spelling names it.
+    for edge in graph.edges() {
+        if !matches!(edge.reference.kind, ReferenceKind::Input | ReferenceKind::Include) {
+            continue;
+        }
+        let raw = edge.reference.argument.clone();
+        if emitted.contains(&raw) || emitted.contains(&format!("{raw}.tex")) {
+            continue;
+        }
+        let Some(file) = graph.file(&edge.to) else { continue };
+        if file.kind != FileKind::Tex {
+            continue;
+        }
+        let Some(text) = file.text.clone() else { continue };
+        if !path_is_safe(&raw) || text.len() > MAX_CLOSURE_DOCUMENT_BYTES {
+            continue;
+        }
+        if documents.len() >= MAX_CLOSURE_DOCUMENTS {
+            break;
+        }
+        emitted.insert(raw.clone());
+        documents.push((raw, text));
     }
 
     let diagnostics = graph
