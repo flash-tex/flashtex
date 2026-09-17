@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 375 text-mode and 570 math-mode command entries, 68 environments and 27 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 376 text-mode and 571 math-mode command entries, 68 environments and 27 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -447,6 +447,7 @@ Canonical sources:
 | `\hrulefill` |  | \hfill filled with a 0.4pt baseline rule (latex.ltx \leaders\hrule\hfill) |
 | `\dotfill` |  | \hfill filled with dots in 0.44em boxes, centred (latex.ltx \cleaders) |
 | `\hfil` |  | infinite-stretch horizontal glue (same order as \hfill) |
+| `\qedhere` |  | amsthm end-of-proof box on this line, flush right; the automatic box at \end{proof} is suppressed |
 | `\hspace` | `{dimension}` | fixed horizontal space; starred form identical |
 | `\hskip` | `<glue>` | TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll |
 | `\strut` |  | zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \strutbox) |
@@ -895,6 +896,7 @@ Canonical sources:
 | `\notag` |  | accepted without effect |
 | `\middle` |  | accepted without effect |
 | `\tag` | `{label}` | (label) two quads after the display; starred form without parentheses |
+| `\qedhere` |  | amsthm end-of-proof box for this display line, set flush right by the render pipeline |
 | `\begin` | `{env}` | opens a math grid environment |
 
 ### Math symbols
