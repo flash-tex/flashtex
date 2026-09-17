@@ -8454,6 +8454,58 @@ impl P<'_> {
                         )),
                     }
                 }
+                // `\phantom`/`\hphantom`/`\vphantom` in a heading, caption
+                // or style argument: without this arm the command was dropped
+                // while its braced group survived as ordinary text, so
+                // `\section{A\phantom{X}B}` visibly typeset `X` with no width
+                // reserved. Consume the group and emit the same
+                // `Inline::Phantom` the main token loop builds
+                // (`P::text_phantom`), with the argument parsed recursively so
+                // nested commands resolve exactly as they do elsewhere in
+                // flattened content.
+                TokenKind::Command(name)
+                    if matches!(name.as_str(), "phantom" | "hphantom" | "vphantom") =>
+                {
+                    match braced_tokens_at(&expanded, index + 1) {
+                        Some((inner, argument_span, after)) => {
+                            skip_until = after;
+                            let span = if argument_span.document == input.token.span.document {
+                                input.token.span.merge(argument_span)
+                            } else {
+                                input.token.span
+                            };
+                            let inner_content = self.inlines_from_tokens(inner, style);
+                            content.push(Inline::Phantom {
+                                content: inner_content,
+                                horizontal: name.as_str() != "vphantom",
+                                vertical: name.as_str() != "hphantom",
+                                span,
+                                space_before,
+                            });
+                        }
+                        None => self.diags.push(Diagnostic::error(
+                            format!("\\{name} requires an argument"),
+                            Some(input.token.span),
+                            Some("rendered nothing for the phantom".into()),
+                        )),
+                    }
+                }
+                // `\quad`/`\qquad`/`\enskip` in a heading, caption or style
+                // argument: the same explicit glue the main token loop builds
+                // (`Inline::TextGlue`), so e.g. a `\phantom{\quad}` inside
+                // such content still reserves its width instead of vanishing.
+                TokenKind::Command(name)
+                    if matches!(name.as_str(), "quad" | "qquad" | "enskip") =>
+                {
+                    content.push(Inline::TextGlue {
+                        em: match name.as_str() {
+                            "qquad" => 2.0 * math::QUAD_EM,
+                            "enskip" => 0.5,
+                            _ => math::QUAD_EM,
+                        },
+                        span: input.token.span,
+                    });
+                }
                 TokenKind::Command(name) if style_command(name) => {
                     pending = Some(apply_style(style, name));
                 }
@@ -10497,6 +10549,49 @@ fn siunitx_group_at(tokens: &[InputToken], index: usize) -> Option<(String, Span
                         open.token.span
                     };
                     return Some((siunitx::raw_text(inner), span, index + offset + 1));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The text between the `[` at `open` and its `]` (brace groups may hold
+/// A braced argument at `index` (after spaces) as tokens without its outer
+/// braces: (argument, span, index after `}`). The token-level counterpart of
+/// [`siunitx_group_at`] for flattened parsers that must recurse into the
+/// argument (e.g. `\phantom` in `inlines_from_tokens`) rather than flatten
+/// it to raw text.
+fn braced_tokens_at(
+    tokens: &[InputToken],
+    index: usize,
+) -> Option<(Vec<InputToken>, Span, usize)> {
+    let mut index = index;
+    while matches!(tokens.get(index).map(|t| &t.token.kind), Some(TokenKind::Space)) {
+        index += 1;
+    }
+    let open = tokens.get(index)?;
+    if open.token.kind != TokenKind::LBrace {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (offset, input) in tokens[index..].iter().enumerate() {
+        match input.token.kind {
+            TokenKind::LBrace => depth += 1,
+            TokenKind::RBrace => {
+                depth -= 1;
+                if depth == 0 {
+                    let span = if input.token.span.document == open.token.span.document {
+                        open.token.span.merge(input.token.span)
+                    } else {
+                        open.token.span
+                    };
+                    return Some((
+                        tokens[index + 1..index + offset].to_vec(),
+                        span,
+                        index + offset + 1,
+                    ));
                 }
             }
             _ => {}

@@ -1140,10 +1140,14 @@ impl LayoutCursor {
     }
 
     /// Explicit horizontal glue (`\quad`/`\qquad` in text mode): no glyph is
-    /// placed, so there is nothing to draw, only `x` to advance. Mirrors TeX's
-    /// discardable glue at a line break: if the glue would overflow the
-    /// measure, the line breaks instead and the glue is dropped rather than
-    /// carried onto the new line.
+    /// placed, so there is nothing to draw, only the cursor to advance.
+    /// Mirrors TeX's discardable glue at a line break: if the glue would
+    /// overflow the measure, the line breaks instead and the glue is dropped
+    /// rather than carried onto the new line. The glue is real content, so
+    /// `content_end` advances with `x`: unlike the eagerly reserved
+    /// inter-word space (which a following glued item rewinds past), this
+    /// width belongs to the line — and to any detached hbox measured through
+    /// `content_end` (`inline_box`, e.g. a `\phantom{\quad}` argument).
     fn text_glue(&mut self, em: f64, size: f64) {
         let width = em * size;
         if self.x > self.left_edge() && self.x + width > self.right_edge() {
@@ -1151,6 +1155,7 @@ impl LayoutCursor {
             return;
         }
         self.x += width;
+        self.content_end = self.x;
     }
 
     fn ensure_extents(&mut self, ascent: f64, descent: f64) {
@@ -2867,7 +2872,16 @@ fn content_needs_box_extents(inlines: &[Inline]) -> bool {
         | Inline::Graphic { .. }
         | Inline::Tabular(_)
         | Inline::Transform(_) => true,
-        Inline::Underline(u) => content_needs_box_extents(&u.content),
+        // An underline hangs its rule below the content (see
+        // `UnderlineGeom::rule_top_and_depth`): every geometry except
+        // `Strike` (whose rule sits above the baseline) deepens the line
+        // beyond what `ensure_text_extents` reserves, so the detached box
+        // must be measured — e.g. `\phantom{\underline{g}}` must reserve
+        // the rule's depth or the following baseline lands too high.
+        Inline::Underline(u) => {
+            !matches!(u.geom, UnderlineGeom::Strike)
+                || content_needs_box_extents(&u.content)
+        }
         Inline::ColorBox(b) => content_needs_box_extents(&b.content),
         Inline::Phantom { content, .. } => content_needs_box_extents(content),
         Inline::Footnote { text, .. } => text
@@ -2900,6 +2914,71 @@ fn content_descender_depth(inlines: &[Inline], size: f64) -> f64 {
     } else {
         0.0
     }
+}
+
+/// Depth below the baseline a phantom must reserve for the underline
+/// constructions in `content`, beyond what `ensure_text_extents` and the
+/// detached box's ink extents already cover. Kernel `\underline` and
+/// `\underbar` follow TeXbook Rule 10
+/// (`UnderlineGeom::rule_top_and_depth`): they reserve a full extra rule
+/// thickness below the painted rule bottom (`box_depth + 5\theta` reserved
+/// against `box_depth + 4\theta` painted), which a detached `inline_box`
+/// measurement derives from painted items alone and therefore drops — e.g.
+/// `\phantom{\underline{g}}` would otherwise leave the following baseline
+/// one thickness too high. `box_depth` is the descender depth the layout
+/// arm measures for text content (`content_descender_depth`); the live-line
+/// term the arm maxes it against vanishes for text because `descent_before`
+/// is captured after whatever precedes the construction, so this is exact
+/// for text content in any line position. `\underbar` zeroes its hbox
+/// first (latex.ltx `\dp\tw@\z@`), hence the literal `0.0`, ignored by
+/// construction exactly as in the layout arm. Recursed through the same
+/// transparent wrappers `ensure_text_extents` traverses; `\sout` sits
+/// above the baseline and ulem `\uline` reserves exactly its painted
+/// bottom, so neither contributes. (Nested underline-in-underline and
+/// math/rule-bearing underline content keep a sub-thickness corner the box
+/// ink does not cover; plain-text arguments — the reported case — match
+/// the real render exactly.)
+fn underline_reserved_depth(inlines: &[Inline], size: f64) -> f64 {
+    let mut depth = 0.0f64;
+    for inline in inlines {
+        match inline {
+            Inline::Underline(u) => {
+                match u.geom {
+                    UnderlineGeom::MathUnderline => {
+                        let (_, extra) = u.geom.rule_top_and_depth(
+                            u.thickness_pt,
+                            content_descender_depth(&u.content, size),
+                            0.25 * size,
+                            CMR_EX_PER_EM * size,
+                        );
+                        depth = depth.max(extra);
+                    }
+                    UnderlineGeom::Underbar => {
+                        let (_, extra) = u.geom.rule_top_and_depth(
+                            u.thickness_pt,
+                            0.0,
+                            0.25 * size,
+                            CMR_EX_PER_EM * size,
+                        );
+                        depth = depth.max(extra);
+                    }
+                    UnderlineGeom::UlemDescender | UnderlineGeom::Strike => {}
+                }
+                depth = depth.max(underline_reserved_depth(&u.content, size));
+            }
+            Inline::ColorBox(b) => depth = depth.max(underline_reserved_depth(&b.content, size)),
+            Inline::Phantom { content, .. } => {
+                depth = depth.max(underline_reserved_depth(content, size))
+            }
+            Inline::Footnote { text, .. } => {
+                if let Some(note) = text {
+                    depth = depth.max(underline_reserved_depth(note, size));
+                }
+            }
+            _ => {}
+        }
+    }
+    depth
 }
 
 fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
@@ -3236,6 +3315,13 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 }
                 let measured = c.inline_box(content, size, None);
                 let width = if *horizontal { measured.0.width } else { 0.0 };
+                // An unbreakable box never starts past the right edge: the
+                // same overflow check `place`/`place_rule`/`place_math`
+                // apply before reserving anything, so the break happens at
+                // the preceding space exactly as it would for real content.
+                if c.x > c.left_edge() && c.x + width > c.right_edge() {
+                    c.wrap_line(size);
+                }
                 if *vertical {
                     // Text runs are laid out with size-based extents (see
                     // `place`), which the detached box's per-glyph AFM
@@ -3247,6 +3333,12 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     ensure_text_extents(c, content, size);
                     if content_needs_box_extents(content) {
                         c.ensure_extents(measured.0.ascent, measured.0.descent);
+                        // Rule 10 reserve (see `underline_reserved_depth`):
+                        // the detached box measures painted ink, so without
+                        // this the line after e.g.
+                        // `\phantom{\underline{g}}` lands one rule
+                        // thickness too high.
+                        c.ensure_extents(0.0, underline_reserved_depth(content, size));
                     }
                 }
                 c.note_space();

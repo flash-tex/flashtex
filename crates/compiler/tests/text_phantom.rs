@@ -7,7 +7,7 @@
 //! occupy if actually typeset).
 
 use flashtex_compiler::incremental::{compile_full, CompileOutput, LayoutConstraints};
-use flashtex_compiler::layout::{text_width, Font, BODY_SIZE_PT};
+use flashtex_compiler::layout::{text_width, word_space, Font, BODY_SIZE_PT};
 use flashtex_compiler::parser::parse;
 
 fn messages(source: &str) -> Vec<String> {
@@ -141,6 +141,112 @@ fn phantom_with_tall_content_matches_the_real_render() {
     assert_eq!(position_of(ghost, "ab"), position_of(real, "ab"));
     assert_eq!(position_of(ghost, "cd"), position_of(real, "cd"));
     assert_eq!(page_texts(ghost), ["ab", "cd"]);
+}
+
+#[test]
+fn phantom_breaks_the_line_before_an_overwide_box() {
+    // Review finding 2, verbatim fixture: the phantom is an unbreakable box,
+    // so TeX breaks at the preceding space instead of leaving it after `A`.
+    let ghost = "\\begin{document}A \\hphantom{\\rule{500pt}{1pt}} B\\end{document}";
+    let real = "\\begin{document}A \\rule{500pt}{1pt} B\\end{document}";
+    assert!(messages(ghost).is_empty(), "{:?}", messages(ghost));
+    assert!(messages(real).is_empty(), "{:?}", messages(real));
+    let (_, ay) = position_of(ghost, "A");
+    let (_, by) = position_of(ghost, "B");
+    assert!(by > ay, "B must wrap to the next line: A y={ay}, B y={by}");
+    // Exactly where the really-typeset rule leaves it.
+    assert_eq!(position_of(ghost, "B"), position_of(real, "B"));
+    assert_eq!(page_texts(ghost), ["A", "B"]);
+}
+
+#[test]
+fn phantom_reserves_trailing_explicit_glue() {
+    // Review finding 3, verbatim fixture: `A\phantom{\quad}B` must leave a
+    // full 1em gap, not butt `B` against `A`.
+    let source = "\\begin{document}A\\phantom{\\quad}B\\end{document}";
+    assert!(messages(source).is_empty(), "{:?}", messages(source));
+    let (ax, _) = position_of(source, "A");
+    let (bx, _) = position_of(source, "B");
+    let gap = bx - ax - text_width("A", BODY_SIZE_PT, Font::TimesRoman);
+    assert!(
+        (gap - BODY_SIZE_PT).abs() < 0.02,
+        "B must start 1em past A's end: A x={ax}, B x={bx}, gap={gap}"
+    );
+    assert_eq!(page_texts(source), ["A", "B"]);
+}
+
+#[test]
+fn phantom_in_a_section_heading_reserves_width_and_paints_nothing() {
+    // Review finding 4, verbatim shape: the flattened heading parser must
+    // build the same `Inline::Phantom` as the main loop, not visibly typeset
+    // the group contents with no width reserved.
+    let ghost = "\\begin{document}\\section{A\\phantom{X}B}\\end{document}";
+    assert!(messages(ghost).is_empty(), "{:?}", messages(ghost));
+    let texts = page_texts(ghost);
+    assert!(
+        !texts.iter().any(|t| t.contains('X')),
+        "X must stay invisible: {texts:?}"
+    );
+    // Same width reservation as really typesetting the heading text: with
+    // spaces around it the word items line up exactly with the visible oracle.
+    let spaced_ghost = "\\begin{document}\\section{A \\phantom{X} B}\\end{document}";
+    let spaced_real = "\\begin{document}\\section{A X B}\\end{document}";
+    assert!(messages(spaced_ghost).is_empty(), "{:?}", messages(spaced_ghost));
+    assert_eq!(position_of(spaced_ghost, "A"), position_of(spaced_real, "A"));
+    assert_eq!(position_of(spaced_ghost, "B"), position_of(spaced_real, "B"));
+    let spaced_texts = page_texts(spaced_ghost);
+    assert!(
+        !spaced_texts.iter().any(|t| t.contains('X')),
+        "X must stay invisible: {spaced_texts:?}"
+    );
+}
+
+#[test]
+fn phantom_in_a_figure_caption_reserves_width_and_paints_nothing() {
+    // Review finding 4, second shape: captions share the flattened
+    // `inlines_from_tokens` path, so `\caption{A\phantom{X}B}` must behave
+    // the same way (captions are centred, so this pins the relative A/B
+    // geometry and invisibility rather than absolute positions).
+    let ghost = "\\begin{document}\\begin{figure}\\caption{A\\phantom{X}B}\\end{figure}\\end{document}";
+    let spaced = "\\begin{document}\\begin{figure}\\caption{A \\phantom{X} B}\\end{figure}\\end{document}";
+    assert!(messages(ghost).is_empty(), "{:?}", messages(ghost));
+    assert!(messages(spaced).is_empty(), "{:?}", messages(spaced));
+    for (label, source) in [("ghost", ghost), ("spaced", spaced)] {
+        let texts = page_texts(source);
+        assert!(
+            !texts.iter().any(|t| t.contains('X')),
+            "{label}: X must stay invisible: {texts:?}"
+        );
+    }
+    // Unspaced B sits exactly where the spaced B sits minus the two
+    // inter-word gaps: the phantom reserved precisely X's width.
+    let (ax, _) = position_of(ghost, "A");
+    let (bx, _) = position_of(ghost, "B");
+    let (sax, _) = position_of(spaced, "A");
+    let (sbx, _) = position_of(spaced, "B");
+    let expected = (sbx - sax) - 2.0 * word_space(BODY_SIZE_PT, Font::TimesRoman);
+    assert!(
+        ((bx - ax) - expected).abs() < 0.02,
+        "caption phantom must reserve X's width: gap={} expected={}",
+        bx - ax,
+        expected
+    );
+}
+
+#[test]
+fn phantom_around_underline_reserves_the_rule_depth() {
+    // Review finding 5: the underline rule hangs below the content box, so
+    // the following baseline must land where the real render puts it, not
+    // where size-based text extents alone would put it.
+    let real = "\\begin{document}\\underline{g}ab\\\\cd\\end{document}";
+    let ghost = "\\begin{document}\\phantom{\\underline{g}}ab\\\\cd\\end{document}";
+    let bare = "\\begin{document}ab\\\\cd\\end{document}";
+    assert!(messages(ghost).is_empty(), "{:?}", messages(ghost));
+    assert_eq!(page_texts(ghost), ["ab", "cd"]);
+    assert_eq!(position_of(ghost, "cd"), position_of(real, "cd"));
+    assert_eq!(position_of(ghost, "ab"), position_of(real, "ab"));
+    // The rule genuinely deepens the line: past where no phantom sits.
+    assert!(position_of(ghost, "cd").1 > position_of(bare, "cd").1);
 }
 
 #[test]
