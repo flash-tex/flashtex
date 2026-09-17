@@ -21,7 +21,7 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
     "dots", "ldots", "dotsc", "dotso", "cdots", "dotsb", "dotsm", "dotsi", "iint", "lbrace",
     "rbrace", "iiint", "bmod", "mod", "dfrac", "tfrac", "cfrac", "frac", "begin", "sqrt", "overset",
     "stackrel", "underset", "sideset", "binom", "dbinom", "tbinom", "mathbf", "textbf", "boxed", "overline",
-    "underline", "underbar", "tag", "pmod", "text", "bigl", "bigr", "quad", "qquad", "mathbb", "hat", "bar",
+    "underline", "underbar", "tag", "pmod", "pod", "text", "bigl", "bigr", "quad", "qquad", "mathbb", "hat", "bar",
     "vec", "tilde", "dot", "ddot", "check", "breve", "acute", "grave", "widehat", "widetilde",
     "dddot", "ddddot", "mathring",
     "overbrace", "underbrace", "overrightarrow", "overleftarrow", "overleftrightarrow",
@@ -39,12 +39,12 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // LaTeX2e document structure and front matter.
     "part", "chapter", "subsubsection", "appendix", "maketitle",
     "title", "author", "date", "thanks", "and", "today", "tableofcontents", "listoffigures",
-    "listoftables", "abstractname", "footnote", "footnotemark", "footnotetext", "marginpar",
+    "listoftables", "abstractname", "footnote", "footnotemark", "footnotetext",
     "index", "glossary", "bibliography", "bibliographystyle", "bibitem", "cite", "nocite",
     // Boxes, spacing, breaking and page control.
     "centering", "raggedright", "raggedleft", "linespread", "vfill", "hss", "vss", "vbox",
     "makebox", "fbox", "framebox", "parbox", "raisebox", "rule", "newline",
-    "clearpage", "cleardoublepage", "thispagestyle",
+    "clearpage", "cleardoublepage", "thispagestyle", "twocolumn", "onecolumn",
     "indent", "phantom", "hphantom", "vphantom", "smash", "strut", "addvspace",
     "vskip", "kern", "enspace", "thinspace", "negthinspace", "hline", "cline",
     "multicolumn", "tabularnewline", "arraystretch",
@@ -137,6 +137,16 @@ pub fn is_known_command(name: &str) -> bool {
     KNOWN
         .get_or_init(|| implemented_commands().chain(KNOWN_UNIMPLEMENTED_COMMANDS.iter().copied()).collect())
         .contains(name)
+}
+
+/// Whether `name` is still carried in `KNOWN_UNIMPLEMENTED_COMMANDS`
+/// specifically — distinct from [`is_known_command`], which is also `true`
+/// for anything actually implemented. A name that is real LaTeX and
+/// implemented must not be in both: `unsupported` (`parser.rs`) asserts the
+/// two lists are disjoint at debug time, and this lets a test enforce it for
+/// a specific name without depending on that debug-only check.
+pub fn is_listed_as_unimplemented(name: &str) -> bool {
+    KNOWN_UNIMPLEMENTED_COMMANDS.contains(&name)
 }
 
 pub fn is_known_environment(name: &str) -> bool {

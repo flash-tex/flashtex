@@ -372,6 +372,105 @@ fn the_ams_trio_is_silent_and_an_unimplemented_package_still_warns() {
     }
 }
 
+/// GitHub issue #700: `\newtheorem{def}` collides with the reserved TeX
+/// primitive `\def` (real pdflatex: "LaTeX Error: Command \def already
+/// defined."). The declaration must report that collision by name — one
+/// precise diagnostic — instead of letting `\begin{def}` execute the
+/// shadowed primitive and fail with a generic "Missing control sequence
+/// inserted.".
+#[test]
+fn reserved_primitive_name_reports_collision_not_missing_control_sequence() {
+    let source = r"\documentclass{article}
+\usepackage{amsthm}
+\newtheorem{def}{Definition}
+\begin{document}
+\begin{def}
+A test.
+\end{def}
+\end{document}";
+    let msgs = messages(source);
+    assert_eq!(msgs, [r"LaTeX Error: Command \def already defined."], "{msgs:?}");
+}
+
+/// A *duplicate* `\newtheorem{thm}{Theorem}` reports the collision pdflatex
+/// reports too, but pdflatex keeps the first definition -- every
+/// `\begin{thm}` still typesets "Theorem 1". A prior fix's rejection marker
+/// did not distinguish "collided with a real environment" from "collided
+/// with something else that must be shadowed", so it swallowed the still-
+/// working environment along with the duplicate declaration.
+#[test]
+fn duplicate_theorem_declaration_keeps_the_first_definition_working() {
+    let source = r"\usepackage{amsthm}
+\newtheorem{thm}{Theorem}\newtheorem{thm}{Theorem}
+\begin{document}\begin{thm}X\end{thm}\end{document}";
+    let msgs = messages(source);
+    assert_eq!(msgs, [r"LaTeX Error: Command \thm already defined."], "{msgs:?}");
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"Theorem 1".to_string()), "{texts:?}");
+    assert!(texts.iter().any(|t| t.contains('X')), "{texts:?}");
+}
+
+/// Same shape, a different kind of prior claim: `\newtheorem` colliding with
+/// an existing `\newenvironment` must report the collision but leave that
+/// environment working too.
+#[test]
+fn newtheorem_colliding_with_an_existing_environment_keeps_it_working() {
+    let source = r"\usepackage{amsthm}
+\newenvironment{foo}{\textbf{FOO}}{}
+\newtheorem{foo}{Foo}
+\begin{document}\begin{foo}\end{foo}\end{document}";
+    let msgs = messages(source);
+    assert_eq!(msgs, [r"LaTeX Error: Command \foo already defined."], "{msgs:?}");
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"FOO".to_string()), "{texts:?}");
+}
+
+/// The classic "define once" guard (`\@ifdefinable`-style): a `\relax`d
+/// name is not a real collision, matching pdflatex's `\@ifundefined`
+/// (review round 3, finding #1).
+#[test]
+fn newtheorem_ifx_csname_relax_guard_is_not_a_collision() {
+    let source = r"\usepackage{amsthm}
+\expandafter\ifx\csname thm\endcsname\relax\newtheorem{thm}{Theorem}\fi
+\begin{document}\begin{thm}X\end{thm}\end{document}";
+    let msgs = messages(source);
+    assert!(msgs.is_empty(), "{msgs:?}");
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"Theorem 1".to_string()), "{texts:?}");
+}
+
+/// A successful re-declaration inside a group claims globally, so it must
+/// still be usable after that group closes -- not undone along with the
+/// group-local `\let` that freed the name up for it (review round 3,
+/// finding #2).
+#[test]
+fn newtheorem_successful_reclaim_inside_a_group_survives_the_group_closing() {
+    let source = r"\usepackage{amsthm}
+\def\foo{}\newtheorem{foo}{Foo}{\let\foo\undefined\newtheorem{foo}{Foo}}
+\begin{document}\begin{foo}X\end{foo}\end{document}";
+    let msgs = messages(source);
+    assert_eq!(msgs, [r"LaTeX Error: Command \foo already defined."], "{msgs:?}");
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"Foo 1".to_string()), "{texts:?}");
+}
+
+/// Ordinary theorem names are unaffected: no diagnostics at all.
+#[test]
+fn ordinary_theorem_name_is_silent() {
+    let source = r"\documentclass{article}
+\usepackage{amsthm}
+\newtheorem{defn}{Definition}
+\begin{document}
+\begin{defn}
+A test.
+\end{defn}
+\end{document}";
+    let msgs = messages(source);
+    assert!(msgs.is_empty(), "{msgs:?}");
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"Definition 1".to_string()), "{texts:?}");
+}
+
 #[test]
 fn unregistered_environment_name_still_reports_the_generic_gap() {
     // A name that was never `\newtheorem`-declared is not silently treated

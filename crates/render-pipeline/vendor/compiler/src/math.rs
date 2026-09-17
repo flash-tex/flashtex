@@ -1020,7 +1020,7 @@ const AMSMATH_PACKAGES: &[&str] = &[
 /// same way with an empty preamble. `article`, `report`, `book`, `memoir`,
 /// `scrartcl`, `scrbook`, `scrreprt`, `revtex4-2`, `elsarticle`, `IEEEtran`,
 /// `letter`, `proc`, `slides` and `amsdtx` measured as kernel.
-const AMSMATH_CLASSES: &[&str] = &["amsart", "amsbook", "amsproc", "acmart", "beamer"];
+pub(crate) const AMSMATH_CLASSES: &[&str] = &["amsart", "amsbook", "amsproc", "acmart", "beamer"];
 
 /// Packages that make the full `amssymb` inventory exist. Measured the same
 /// way: `\documentclass[10pt]{article}\usepackage{X}` compiled with TeX Live
@@ -2409,7 +2409,7 @@ impl MathParser<'_> {
             // The kernel's `\pmod` (`latex.ltx` 15709) opens with
             // `\mkern18mu`; amsmath renews it through `\pod`, which is
             // `\if@display\mkern18mu\else\mkern8mu\fi` (`amsmath.sty`
-            // 719-724), so **inline** it is 10mu narrower while display is
+            // 907-909), so **inline** it is 10mu narrower while display is
             // byte-identical. Both then set `(mod` + 6mu + the argument + `)`
             // — the kernel as `\,\,`, amsmath as `\mkern6mu`.
             //
@@ -2421,22 +2421,44 @@ impl MathParser<'_> {
             // `\@displaytrue` by hand puts amsmath back on 50.82503, which is
             // what makes the display case identical.
             //
-            // This compiler has no display flag on the atom, so the inline
-            // definition is the one that moves; every display formula reaches
-            // the same 18mu it does today.
-            "pmod" => {
-                let body = self.required_group("pmod", span);
-                self.pending.push(text_atom("(mod".into(), span));
-                self.pending.push(space(6.0 / 18.0, span));
+            // `self.display` is LaTeX's `\if@display` (see `parse_tokens_display`):
+            // amsmath opens with 18mu in display math, 8mu inline; the kernel
+            // always opens with 18mu (`QUAD_EM`), so display formulas are
+            // byte-identical under both, exactly as the measurements above.
+            //
+            // amsmath's `\pod` (`amsmath.sty` 907-909) is the same construct
+            // without the `mod` text and its 6mu: `\pmod` is defined through
+            // it (`\pod{{\operator@font mod}}`). The kernel has no `\pod`,
+            // so it needs amsmath, like `\mod`. Both open with amsmath's real
+            // `\allowbreak\if@display\mkern18mu\else\mkern8mu\fi`; the
+            // break itself is `\allowbreak` below (a layout-neutral no-op:
+            // formulas never break across lines here).
+            "pod" if !self.packages.amsmath => self.missing_package(&name, "amsmath", span),
+            "pod" | "pmod" => {
+                let body = self.required_group(&name, span);
+                if name == "pmod" {
+                    self.pending.push(text_atom("(mod".into(), span));
+                    self.pending.push(space(6.0 / 18.0, span));
+                } else {
+                    self.pending.push(text_atom("(".into(), span));
+                }
                 self.pending.extend(body.atoms);
                 self.pending.push(text_atom(")".into(), span));
-                let opening = if self.packages.amsmath {
+                let opening = if self.packages.amsmath && !self.display {
                     AMSMATH_POD_MU / 18.0
                 } else {
                     QUAD_EM
                 };
                 space(opening, span)
             }
+            // Plain TeX's `\allowbreak` (`\penalty0`): a zero-penalty
+            // breakpoint at this point in the formula, mirroring text mode's
+            // `Inline::Penalty { value: 0 }`. The math layout has no
+            // breakpoint mechanism — a formula lays out as one unbreakable
+            // box — so this is recognised and layout-neutral: a zero-width
+            // space atom, which `atom_class` skips (`None`) exactly like
+            // every other explicit kern, leaving spacing byte-identical.
+            "allowbreak" => space(0.0, span),
             // siunitx inside a formula (`crate::siunitx`).
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(&name, span),
@@ -8643,6 +8665,75 @@ mod package_gating_tests {
                 let label = laid_out(r"\pmod{y}", MathPackages::KERNEL);
                 x(&label, "y") - x(&label, "(mod")
             });
+        }
+    }
+
+    /// `\pmod` in display math takes amsmath's `\if@display` 18mu branch,
+    /// so it is byte-identical to the kernel there (the inline 8mu is the
+    /// only thing that moves). The 6mu before the argument does not move.
+    #[test]
+    fn pmod_opens_with_eighteen_mu_in_display_math() {
+        for packages in [MathPackages::KERNEL, AMSMATH] {
+            let b = laid_out_display(r"a\pmod{y}", packages);
+            let a = laid_out_display("a", packages).width;
+            close(x(&b, "(mod"), a + 18.0);
+            close(x(&b, "y") - x(&b, "(mod"), {
+                let label = laid_out_display(r"\pmod{y}", MathPackages::KERNEL);
+                x(&label, "y") - x(&label, "(mod")
+            });
+        }
+    }
+
+    /// amsmath's `\pod` (`amsmath.sty` 907-908) is `\pmod` without the `mod`
+    /// text and its 6mu: `(arg)`, with the same display/inline mu split. The
+    /// kernel has no `\pod`, so it needs amsmath, like `\mod`.
+    #[test]
+    fn pod_needs_amsmath() {
+        // pdflatex without amsmath: `! Undefined control sequence. \pod`.
+        let (_, diagnostics) = parsed(r"a\pod{y}", MathPackages::KERNEL);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message == "\\pod requires \\usepackage{amsmath}"),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn pod_is_pmod_without_the_mod_text_and_its_six_mu() {
+        let b = laid_out(r"a\pod{y}", AMSMATH);
+        let a = laid_out("a", AMSMATH).width;
+        // Same 8mu inline opening as `\pmod` ...
+        close(x(&b, "("), a + AMSMATH_POD_MU);
+        // ... but no `mod` text: `y` sits directly after `(`.
+        assert!(
+            !b.items.iter().any(|i| i.text == "(mod"),
+            "{:?}",
+            b.items.iter().map(|i| &i.text).collect::<Vec<_>>()
+        );
+        // `y` starts where `(` ends: no 6mu gap, unlike `\pmod`.
+        close(
+            x(&b, "y") - x(&b, "("),
+            laid_out("(", AMSMATH).width,
+        );
+        // ... and the 18mu display branch, like `\pmod`.
+        let d = laid_out_display(r"a\pod{y}", AMSMATH);
+        let da = laid_out_display("a", AMSMATH).width;
+        close(x(&d, "("), da + 18.0);
+    }
+
+    /// Plain TeX's `\allowbreak` is recognised in math and lays out exactly
+    /// like the formula without it: the math layout has no breakpoint
+    /// mechanism, so the zero-penalty break is a documented no-op.
+    #[test]
+    fn allowbreak_is_a_layout_neutral_noop_in_math() {
+        for source in [r"a\allowbreak b", r"a \allowbreak b", r"\allowbreak a"] {
+            let (list, diagnostics) = parsed(source, AMSMATH);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            let with_break = layout(&list, SIZE, &mut Vec::new());
+            let plain = source.replace("\\allowbreak", "");
+            let without_break = laid_out(&plain, AMSMATH);
+            close(with_break.width, without_break.width);
         }
     }
 

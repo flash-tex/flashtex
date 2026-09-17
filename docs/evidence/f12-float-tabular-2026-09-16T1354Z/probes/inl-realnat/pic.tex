@@ -1,0 +1,7 @@
+% The graphic `main.tex` includes: compile this first (two passes) and the
+% resulting pic.pdf is a 72 x 36 bp page of solid ink. No binary asset is
+% committed; the probe generates its own.
+\documentclass{article}
+\usepackage[papersize={72bp,36bp},margin=0pt]{geometry}
+\pagestyle{empty}
+\begin{document}\noindent\rule{72bp}{36bp}\end{document}

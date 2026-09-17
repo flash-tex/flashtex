@@ -6011,6 +6011,36 @@ impl<'a> Context<'a> {
             vskips.push(if is_eqnarray && ri + 1 < cells.len() { JOT } else { 0.0 });
             total += h + d;
         }
+        // `\openup\jot` (amsmath `\displ@y@`) advances `\lineskiplimit` as
+        // well as `\baselineskip` and `\lineskip`, but the interline glue
+        // between these rows is laid by `pagebuild` against the page's
+        // `\lineskiplimit` (0pt). A short row above a tall one gives
+        // `\baselineskip+\jot - prevdepth - height` inside `[0pt, \jot)`:
+        // pdflatex has already fallen into lineskip mode there while the
+        // page rule keeps baselineskip mode, so the pair came out one
+        // `\jot` short. (A tall row above a short row gives negative glue,
+        // below either limit, which is why that order already matched.)
+        // Fold the missing difference into the upper row's after-skip
+        // exactly when the opened-up limit, and not the page limit, puts
+        // the pair in lineskip mode. The 1e-9pt slack keeps float noise
+        // from flipping TeX's strict `<` at the boundary: two strut-sized
+        // rows sit exactly on `\jot` and must stay in baselineskip mode.
+        //
+        // `eqnarray` never runs `\openup`: its `\lineskiplimit` is the
+        // page's own, unopened, so this correction (built from the
+        // amsmath-opened `bs`/`ls` constants, not `eqnarray`'s actual
+        // strut-less/un-opened values) does not apply there.
+        if !is_eqnarray {
+            let bs = normal + JOT;
+            let ls = self.style.lineskip_pt + JOT;
+            let limit = self.style.lineskiplimit_pt;
+            for i in 1..extents.len() {
+                let g = bs - extents[i - 1].1 - extents[i].0;
+                if g < limit + JOT - 1e-9 && g >= limit {
+                    vskips[i - 1] += extents[i - 1].1 + ls + extents[i].0 - bs;
+                }
+            }
+        }
         if lines.is_empty() {
             return None;
         }

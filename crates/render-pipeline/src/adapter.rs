@@ -2348,6 +2348,16 @@ pub fn adapt_cached(
         if let Some(m) = split_top_material(&mut blocks, document, open, close) {
             boxed = Some(open);
             top_material = Some((m, Span::in_document(document, open, close + 1)));
+            // The compiler warns on the `[` that its own IR has no
+            // `\@topnewpage` model ("the material is typeset as ordinary
+            // text instead, brackets included") and deliberately leaves the
+            // tokens where they stand so a renderer that *does* have the box
+            // can cut them back out. This is that renderer, and it just did:
+            // the warning describes an output this pipeline does not
+            // produce, so it is superseded the way `abstract`'s is. The
+            // unboxed case below supersedes it too, replacing it with the
+            // typed `twocolumn_top_material` limitation.
+            superseded.push(Span::in_document(document, open, open));
         }
     }
     // Every optional argument that did *not* become a box: one on a
@@ -2372,6 +2382,11 @@ pub fn adapt_cached(
                  is set in the first column instead, brackets included"
                     .to_string(),
             ));
+            // The compiler's own warning on the same `[` says the same fact
+            // less precisely (it cannot know whether this pipeline boxed the
+            // material); this typed limitation replaces it, so the reader
+            // sees one diagnostic per `\twocolumn[`, not two.
+            superseded.push(Span::in_document(flashtex_compiler::DocumentId(entry), open, open));
         }
     }
     let page_starts = clear_page_blocks(texts, &blocks);
@@ -3777,12 +3792,16 @@ fn strip_tag(texts: &[&str], list: &MathList, tag: &mut Option<String>, notes: &
                 // which spans the command too. It is not a label; the
                 // pipeline places the tag itself.
                 Nucleus::Space { .. } => {}
-                // A rich label. `text_run_reference_text` is the flattening
-                // the compiler itself uses for `\eqref` to this tag, so the
-                // set label and the reference to it read alike.
+                // A rich label. `text_run_reference_text_with_source` is the
+                // flattening the compiler itself uses for `\eqref` to this
+                // tag, so the set label and the reference to it read
+                // alike; composite atoms with no single glyph (e.g.
+                // `\frac`) fall back to their source text there, and must
+                // do the same here.
                 #[cfg(feature = "compiler-node-surface")]
                 Nucleus::TextRun(pieces) => {
-                    let text = flashtex_compiler::math::text_run_reference_text(pieces);
+                    let source = texts.get(a.span.document.0).copied().unwrap_or("");
+                    let text = flashtex_compiler::math::text_run_reference_text_with_source(pieces, source);
                     notes.push((
                         "math_limitation",
                         a.span,
