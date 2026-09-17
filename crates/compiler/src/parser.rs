@@ -8606,6 +8606,30 @@ impl P<'_> {
                     style,
                     space_before,
                 }),
+                // `\enquote` in a heading, caption or style argument: the
+                // marks around the argument parsed as running text, exactly
+                // the inlines `P::text_enquote` builds (math, style changes
+                // and nested `\enquote` all work there too). Without this
+                // arm the command was dropped and only its words survived.
+                TokenKind::Command(name) if name == "enquote" => {
+                    match group_tokens_at(&expanded, index + 1) {
+                        Some((inner, argument_span, after)) => {
+                            skip_until = after;
+                            content.extend(self.enquote_inlines(
+                                inner,
+                                input.token.span,
+                                argument_span,
+                                style,
+                                space_before,
+                            ));
+                        }
+                        None => self.diags.push(Diagnostic::error(
+                            "\\enquote requires a braced argument",
+                            Some(input.token.span),
+                            Some("used an empty argument and continued".into()),
+                        )),
+                    }
+                }
                 _ => {}
             }
         }
@@ -8784,9 +8808,35 @@ impl P<'_> {
         let space_before = self.space_precedes(self.i - 1);
         let style = self.style;
         let (tokens, argument_span) = self.required_group("enquote", span);
+        para.extend(self.enquote_inlines(tokens, span, argument_span, style, space_before));
+    }
+
+    /// csquotes `\enquote{...}` as inlines: `tokens` are parsed with the
+    /// ordinary dispatch for running text ([`P::argument_inlines`]), so
+    /// math, style changes, macros and nested `\enquote` inside the argument
+    /// behave exactly as they do in prose. The marks are whatever a literal
+    /// ``` ``...'' ``` typesets ([`apply_text_ligatures`]).
+    ///
+    /// Each mark merges into the text run directly adjacent to it when that
+    /// run carries the surrounding `style`: the literal marks lex as part of
+    /// their neighbour word, so they share one layout item with it and no
+    /// line break can fall between a mark and its content. A neighbour that
+    /// is not same-styled text (math, a logo, styled text) keeps a separate
+    /// mark item glued against it (`space_before: false`), as before. `span`
+    /// is the command token, `argument_span` the braced group.
+    fn enquote_inlines(
+        &mut self,
+        tokens: Vec<InputToken>,
+        span: Span,
+        argument_span: Span,
+        style: TextStyle,
+        space_before: bool,
+    ) -> Vec<Inline> {
+        let open = apply_text_ligatures("``");
+        let close = apply_text_ligatures("''");
         // The argument is spliced directly against the opening mark, so a
         // leading word glues to it exactly as the literal ``` ``word'' ```
-        // lexes as a single word: `inlines_from_tokens` marks stream-start
+        // lexes as a single word: `argument_inlines` marks stream-start
         // content `space_before: true`, which would insert a spurious
         // inter-word space. The correction mirrors `preceded_by_space`
         // exactly (real whitespace keeps its space; a comment glues, as TeX
@@ -8795,31 +8845,84 @@ impl P<'_> {
             tokens.first().map(|input| &input.token.kind),
             Some(TokenKind::Space | TokenKind::ParBreak) | None
         );
-        para.push(Inline::Text {
-            text: apply_text_ligatures("``"),
-            span,
-            style,
-            space_before,
-        });
-        let mut content = self.inlines_from_tokens(tokens, style);
+        let mut content = self.argument_inlines(tokens, span, style);
+        if content.is_empty() {
+            let mut marks = open;
+            marks.push_str(&close);
+            return vec![Inline::Text {
+                text: marks,
+                span,
+                style,
+                space_before,
+            }];
+        }
+        let mut out = Vec::with_capacity(content.len() + 2);
         if glued {
-            if let Some(first) = content.first_mut() {
-                match first {
-                    Inline::Text { space_before, .. }
-                    | Inline::Math { space_before, .. }
-                    | Inline::Verbatim { space_before, .. }
-                    | Inline::Logo { space_before, .. } => *space_before = false,
-                    _ => {}
+            match content.first_mut() {
+                Some(
+                    Inline::Text {
+                        text,
+                        style: inner,
+                        space_before: before,
+                        ..
+                    },
+                ) if *inner == style => {
+                    // The merged run keeps the mark's own spacing: the
+                    // content's stream-start `true` is the splice artifact,
+                    // while `space_before` is the real source gap (or glue)
+                    // in front of `\enquote`, exactly as the literal word's
+                    // spacing.
+                    *before = space_before;
+                    text.insert_str(0, &open);
                 }
+                Some(
+                    Inline::Text { space_before: before, .. }
+                    | Inline::Math { space_before: before, .. }
+                    | Inline::Verbatim { space_before: before, .. }
+                    | Inline::Logo { space_before: before, .. },
+                ) => {
+                    *before = false;
+                    out.push(Inline::Text {
+                        text: open,
+                        span,
+                        style,
+                        space_before,
+                    });
+                }
+                _ => out.push(Inline::Text {
+                    text: open,
+                    span,
+                    style,
+                    space_before,
+                }),
+            }
+        } else {
+            out.push(Inline::Text {
+                text: open,
+                span,
+                style,
+                space_before,
+            });
+        }
+        let mut trailing = None;
+        match content.last_mut() {
+            Some(Inline::Text { text, style: inner, .. }) if *inner == style => {
+                text.push_str(&close);
+            }
+            _ => {
+                trailing = Some(Inline::Text {
+                    text: close,
+                    span: argument_span,
+                    style,
+                    space_before: false,
+                });
             }
         }
-        para.extend(content);
-        para.push(Inline::Text {
-            text: apply_text_ligatures("''"),
-            span: argument_span,
-            style,
-            space_before: false,
-        });
+        out.extend(content);
+        if let Some(mark) = trailing {
+            out.push(mark);
+        }
+        out
     }
 
     /// A siunitx typesetting command (`crate::siunitx`): its arguments are
@@ -10490,6 +10593,41 @@ fn siunitx_bracket_at(tokens: &[InputToken], index: usize) -> Option<(String, Sp
     None
 }
 
+/// A braced group at `index` (after spaces) as tokens without its outer
+/// braces: (argument, span, index after `}`). The token-slice analogue of
+/// [`siunitx_group_at`], for flat passes that re-parse the argument instead
+/// of reading its raw source.
+fn group_tokens_at(tokens: &[InputToken], index: usize) -> Option<(Vec<InputToken>, Span, usize)> {
+    let mut index = index;
+    while matches!(tokens.get(index).map(|t| &t.token.kind), Some(TokenKind::Space)) {
+        index += 1;
+    }
+    let open = tokens.get(index)?;
+    if open.token.kind != TokenKind::LBrace {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (offset, input) in tokens[index..].iter().enumerate() {
+        match input.token.kind {
+            TokenKind::LBrace => depth += 1,
+            TokenKind::RBrace => {
+                depth -= 1;
+                if depth == 0 {
+                    let inner = tokens[index + 1..index + offset].to_vec();
+                    let span = if input.token.span.document == open.token.span.document {
+                        open.token.span.merge(input.token.span)
+                    } else {
+                        open.token.span
+                    };
+                    return Some((inner, span, index + offset + 1));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// A braced siunitx argument at `index` (after spaces) as raw source without
 /// its outer braces: (argument, span, index after `}`).
 fn siunitx_group_at(tokens: &[InputToken], index: usize) -> Option<(String, Span, usize)> {
@@ -12059,6 +12197,83 @@ mod tests {
         );
         let concat: String = items.iter().map(|item| item.text.as_str()).collect();
         assert_eq!(concat, "Say\u{201C}quoted\u{201D}loudly.");
+    }
+
+    /// Finding 1: the marks must not strand on a different line from their
+    /// content. `\noindent\hspace{460pt}\enquote{X}` leaves room for
+    /// neither the mark nor the content, so the whole `“X”` wraps onto the
+    /// next line — exactly where the literal ``X'' goes.
+    #[test]
+    fn enquote_marks_stay_with_their_content_at_the_margin() {
+        let (parsed, enq_items) = items("\\noindent\\hspace{460pt}\\enquote{X}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let (parsed, lit_items) = items("\\noindent\\hspace{460pt}``X''");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(enq_items.len(), lit_items.len(), "{enq_items:?}");
+        assert_eq!(
+            enq_items
+                .iter()
+                .map(|item| (item.x_pt, item.baseline_y_pt))
+                .collect::<Vec<_>>(),
+            lit_items
+                .iter()
+                .map(|item| (item.x_pt, item.baseline_y_pt))
+                .collect::<Vec<_>>(),
+            "{enq_items:?} vs {lit_items:?}"
+        );
+    }
+
+    /// Finding 2: the argument is running text, so `$x$` inside it is a
+    /// real formula, not a roman `x`.
+    #[test]
+    fn enquote_parses_math_in_its_argument() {
+        let parsed = parse("\\enquote{value $x$}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let mut saw_math = false;
+        for block in &parsed.blocks {
+            let Block::Paragraph(inlines) = block else {
+                continue;
+            };
+            for inline in inlines {
+                match inline {
+                    Inline::Math { list, .. } if !list.atoms.is_empty() => saw_math = true,
+                    Inline::Text { text, .. } if text == "x" => {
+                        panic!("math degraded to plain text in {inlines:?}")
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert!(saw_math, "{:?}", parsed.blocks);
+    }
+
+    /// Finding 2: nested `\enquote` keeps both pairs of marks.
+    #[test]
+    fn enquote_nests() {
+        let source = "Say \\enquote{a \\enquote{y} b} loudly.";
+        let (parsed, items) = items(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let concat: String = items.iter().map(|item| item.text.as_str()).collect();
+        assert_eq!(concat, "Say\u{201C}a\u{201C}y\u{201D}b\u{201D}loudly.");
+    }
+
+    /// Finding 2: a section title keeps `\enquote`'s marks (the title's
+    /// flattened parser used to drop the command and keep only the words).
+    #[test]
+    fn section_keeps_enquote_marks() {
+        let parsed = parse("\\section{An \\enquote{example}}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let mut text = String::new();
+        for block in &parsed.blocks {
+            if let Block::Heading { content, .. } = block {
+                for inline in content {
+                    if let Inline::Text { text: word, .. } = inline {
+                        text.push_str(word);
+                    }
+                }
+            }
+        }
+        assert_eq!(text, "An\u{201C}example\u{201D}");
     }
 
     #[test]
