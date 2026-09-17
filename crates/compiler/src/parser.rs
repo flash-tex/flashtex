@@ -8721,6 +8721,20 @@ impl P<'_> {
                         Some("ignored the stray inline-math delimiter".into()),
                     ));
                 }
+                // `\[`/`\]` (display math) inside a label: real pdflatex
+                // rejects it outright ("Bad math environment delimiter",
+                // `\[`'s own kernel definition tests `\ifmmode` and errors
+                // in restricted horizontal mode, which an `\item` label
+                // argument is). This pass has no display-math handling to
+                // fall back to, so match that rejection rather than
+                // silently accepting the delimiter and dropping it.
+                TokenKind::DisplayMathOpen | TokenKind::DisplayMathClose if report_unsupported => {
+                    self.diags.push(Diagnostic::error(
+                        "Bad math environment delimiter",
+                        Some(input.token.span),
+                        Some("display math is not allowed inside an \\item label".into()),
+                    ));
+                }
                 TokenKind::Superscript | TokenKind::Subscript if report_unsupported => {
                     self.diags.push(
                         Diagnostic::error(
@@ -8731,14 +8745,25 @@ impl P<'_> {
                         .with_help("wrap the marked atom in math mode: \\(x^{...}\\)"),
                     );
                 }
-                // `\label`/`\index`/`\glossary` set nothing visible, so a
-                // label swallows each with its argument — the lenient
-                // heading pass does the same — instead of reporting the
-                // `[(a)\label{it:a}]` idiom for working.
-                TokenKind::Command(name)
-                    if report_unsupported
-                        && matches!(name.as_str(), "label" | "index" | "glossary") =>
-                {
+                // `\label` inside a label registers exactly like it does in
+                // running text, so a later `\ref`/`\pageref` to it resolves
+                // instead of printing "??" -- redirect `self.t`/`self.i` the
+                // same way `dollar_math`/`paren_math` above do, so
+                // `label_or_reference_command`'s own `self.required_group`
+                // reads from this run.
+                TokenKind::Command(name) if report_unsupported && name == "label" => {
+                    let outer_tokens = std::mem::replace(&mut self.t, std::rc::Rc::clone(&expanded));
+                    let outer_index = std::mem::replace(&mut self.i, index + 1);
+                    self.label_or_reference_command(name, input.token.span, &mut content);
+                    skip_until = self.i;
+                    self.t = outer_tokens;
+                    self.i = outer_index;
+                }
+                // `\index`/`\glossary` set nothing visible in this compiler
+                // (no index/glossary back-end exists to register into), so a
+                // label swallows each with its argument -- the lenient
+                // heading pass does the same.
+                TokenKind::Command(name) if report_unsupported && matches!(name.as_str(), "index" | "glossary") => {
                     match siunitx_group_at(&expanded, index + 1) {
                         Some((_, _, after)) => skip_until = after,
                         None => self.diags.push(Diagnostic::error(

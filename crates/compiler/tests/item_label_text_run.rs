@@ -243,6 +243,17 @@ fn stray_math_markers_in_a_label_are_diagnosed() {
     assert_eq!(labels(&parsed)[0].text(), "a2");
 }
 
+/// `\[..\]` (display math) inside a label is rejected, matching real
+/// pdflatex's "Bad math environment delimiter" for `\[` in restricted
+/// horizontal mode -- not silently accepted and dropped.
+#[test]
+fn display_math_in_a_label_is_diagnosed_not_dropped() {
+    let source = doc("\\begin{itemize}\\item[\\[x\\]]body\\end{itemize}");
+    let parsed = parser::parse(&source);
+    let messages: Vec<_> = parsed.diagnostics.iter().map(|d| d.message.clone()).collect();
+    assert_eq!(messages, ["Bad math environment delimiter", "Bad math environment delimiter"]);
+}
+
 /// `\(…\)` is the other inline-math spelling and reads the same way.
 #[test]
 fn paren_math_in_a_label_is_math_too() {
@@ -314,27 +325,26 @@ fn cite_in_a_label_resolves_like_running_text() {
     );
 }
 
-/// `\label`, `\index` and `\protect` set nothing visible, so a label
-/// swallows them the way a heading does: `[(a)\label{it:a}]` keeps `(a)`
-/// and reports nothing.
+/// `\index` and `\protect` set nothing visible, so a label swallows them
+/// the way a heading does: `[\index{i}a]` keeps `a` and reports nothing.
+/// `\label`, unlike those two, has a real side effect: it registers the key
+/// exactly like `\label` in running text does, so a later `\ref` to it
+/// resolves instead of printing "??".
 #[test]
-fn label_index_and_protect_are_silent_in_a_label() {
+fn index_and_protect_are_silent_in_a_label() {
     let source = doc(concat!(
         "\\begin{itemize}\n",
-        "\\item[(a)\\label{it:a}] b\n",
         "\\item[\\index{i}a] c\n",
         "\\item[\\protect\\cite{k}] d\n",
         "\\end{itemize}",
     ));
     let parsed = parser::parse(&source);
     let labels = labels(&parsed);
-    assert_eq!(labels.len(), 3);
+    assert_eq!(labels.len(), 2);
     let (_, text) = explicit(&labels[0]);
-    assert_eq!(text, "(a)");
-    let (_, text) = explicit(&labels[1]);
     assert_eq!(text, "a");
     // `\protect` vanishes; the `\cite` still sets (and still warns).
-    let (_, text) = explicit(&labels[2]);
+    let (_, text) = explicit(&labels[1]);
     assert_eq!(text, "[?]");
     let messages: Vec<_> = parsed
         .diagnostics
@@ -342,6 +352,30 @@ fn label_index_and_protect_are_silent_in_a_label() {
         .map(|d| d.message.clone())
         .collect();
     assert_eq!(messages, ["citation 'k' is undefined"]);
+}
+
+/// `\label{it:a}` inside an `\item` label registers the key in the same
+/// place ordinary running text's `\label` does -- proven here by a second,
+/// ordinary `\label{it:a}` colliding with it and firing the ordinary
+/// "duplicate \label" diagnostic (before this fix, the item-bracket
+/// `\label` was silently consumed without registering anything, so the
+/// second one had nothing to collide with, and a `\ref{it:a}` anywhere in
+/// the document would print "??" instead of the item's number).
+#[test]
+fn label_inside_an_item_label_registers_like_running_texts_label() {
+    let source = doc(concat!(
+        "\\begin{itemize}\n",
+        "\\item[(a)\\label{it:a}] b\n",
+        "\\end{itemize}\n",
+        "\\label{it:a}",
+    ));
+    let parsed = parser::parse(&source);
+    let labels = labels(&parsed);
+    assert_eq!(labels.len(), 1);
+    let (_, text) = explicit(&labels[0]);
+    assert_eq!(text, "(a)");
+    let messages: Vec<_> = parsed.diagnostics.iter().map(|d| d.message.clone()).collect();
+    assert_eq!(messages, ["duplicate \\label{it:a}; the second definition wins"]);
 }
 
 /// Built-ins this pass cannot set yet (`\footnote`, `\underline`, `\url`,
