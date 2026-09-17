@@ -1026,6 +1026,26 @@ impl FontSizeLevel {
         }
     }
 
+    /// The AMS classes' (`amsart`, `amsbook`, `amsproc`) own `\larger`
+    /// (`delta > 0`) / `\smaller` (`delta < 0`): a pure integer index step
+    /// through the eleven-rung `crate::layout` ladder — each size command
+    /// sets a rung index (`\tiny` = 1 .. `\Huge` = 10, `\normalsize` = 5)
+    /// and the step adds `delta`, clamping to rung 0 (`\Tiny`) .. rung 10
+    /// (`\Huge`). There is no magstep math and no closest-value search at
+    /// all, unlike `stepped` above: e.g. `\tiny\larger\larger\larger` walks
+    /// tiny(1) → SMALL(2) → Small(3) → small(4), landing exactly on
+    /// `\small`. Rung 0 has no `FontSizeLevel` and folds onto `Tiny` (see
+    /// `crate::layout::ams_rung_level`), so stepping below `\tiny` holds
+    /// the smallest representable declaration.
+    pub fn stepped_ams(current: Option<FontSizeLevel>, delta: i32) -> Option<FontSizeLevel> {
+        if delta == 0 {
+            return current;
+        }
+        let rung = crate::layout::ams_rung(current) as i32 + delta;
+        let rung = rung.clamp(0, crate::layout::AMS_RUNG_COUNT as i32 - 1) as usize;
+        crate::layout::ams_rung_level(rung)
+    }
+
     /// Position of a level in real `relsize.sty`'s scan order
     /// (`normalsize, small, footnotesize, large, Large, LARGE, scriptsize,
     /// tiny, huge, Huge`): the first level in this order wins any tie for
@@ -1044,6 +1064,15 @@ impl FontSizeLevel {
             Some(FontSizeLevel::Huge2) => 9,
         }
     }
+}
+
+/// Whether `class` steps `\larger`/`\smaller` on the AMS `\@typesizes`
+/// ladder and resolves `\tiny`..`\Huge` against the AMS size tables
+/// (`amsart`, `amsbook`, `amsproc`, whose ladder logic is byte-identical).
+/// `acmart` also defines its own `\larger`/`\smaller`, but nothing shows it
+/// shares the AMS ladder, so it stays on the relsize-magstep path.
+pub(crate) fn is_ams_size_class(class: &str) -> bool {
+    matches!(class, "amsart" | "amsbook" | "amsproc")
 }
 
 impl TextStyle {
@@ -1251,7 +1280,8 @@ pub struct Parsed {
     pub diagnostics: Vec<Diagnostic>,
     /// The argument of the first valid `\documentclass`, if present.
     pub document_class: Option<String>,
-    /// Body size from a `10pt`/`11pt`/`12pt` `\documentclass` option.
+    /// Body size from the `\documentclass` point-size option
+    /// (`10pt`/`11pt`/`12pt`, plus `8pt`/`9pt` for the AMS classes).
     pub class_size_pt: Option<f64>,
     /// `\setlength{\parskip}{..}` from the preamble, in points.
     pub parskip_pt: Option<f64>,
@@ -1289,7 +1319,8 @@ pub struct Parsed {
 }
 
 impl Parsed {
-    /// Layout constraints with the preamble's body size and `\parskip` applied.
+    /// Layout constraints with the preamble's body size and `\parskip`
+    /// applied, plus the AMS size-table flag for an AMS `\documentclass`.
     pub fn preamble_constraints(
         &self,
         constraints: crate::layout::LayoutConstraints,
@@ -1297,6 +1328,10 @@ impl Parsed {
         crate::layout::LayoutConstraints {
             font_size_pt: self.class_size_pt.unwrap_or(constraints.font_size_pt),
             parskip_pt: self.parskip_pt.or(constraints.parskip_pt),
+            ams_sizes: self
+                .document_class
+                .as_deref()
+                .is_some_and(is_ams_size_class),
             ..constraints
         }
     }
@@ -3466,8 +3501,9 @@ impl P<'_> {
                 self.transform_box(name, span, para)
             }
             "url" | "nolinkurl" | "href" => self.url_command(name, span, para),
-            // `\larger`/`\smaller` (relsize): declarations with an
-            // optional `[n]` step count (see `FontSizeLevel::stepped`). A
+            // `\larger`/`\smaller` (relsize, or the AMS ladder): declarations
+            // with an optional `[n]` step count (see `FontSizeLevel::stepped`
+            // and `stepped_ams`). A
             // following `{...}` is only an ordinary group — the step stays
             // in effect past it, like `\Large` — so unlike
             // `style_command_argument` (which always demands a group) this
@@ -4152,8 +4188,9 @@ impl P<'_> {
         self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT)
     }
 
-    /// relsize's `\larger`/`\smaller`: declarations with an optional
-    /// `[n]` step count (default 1), not argument-taking commands. The step
+    /// `\larger`/`\smaller` (relsize's, or the AMS classes' own ladder):
+    /// declarations with an optional `[n]` step count (default 1), not
+    /// argument-taking commands. The step
     /// applies to the rest of the enclosing scope: a following `{...}` is
     /// just an ordinary group — it restores the stepped size on close, like
     /// every group restores assignments made before it — so the size stays
@@ -4172,10 +4209,7 @@ impl P<'_> {
         // amsart/amsbook/amsproc/acmart define their own `\larger`/
         // `\smaller` independent of the relsize package, so the gate below
         // does not apply to them (real pdflatex diagnoses nothing under
-        // `\documentclass{amsart}`). This does not give them the AMS
-        // classes' own `\@typesizes`-based step ladder — only their size
-        // table's existing `size_declaration_pt` values — which is a
-        // narrower fix than full AMS ladder support.
+        // `\documentclass{amsart}`).
         //
         // This is deliberately NOT `math::AMSMATH_CLASSES` (which also
         // includes `beamer`): beamer does not define its own `\larger`/
@@ -4202,7 +4236,18 @@ impl P<'_> {
         }
         let delta = if name == "larger" { steps } else { -steps };
         let mut next = self.style;
-        next.size = FontSizeLevel::stepped(next.size, delta, self.body_size_pt());
+        // Only the AMS ladder classes step on their own `\@typesizes`
+        // ladder (`stepped_ams`); `acmart` stays on the relsize-magstep
+        // path (see `is_ams_size_class`).
+        next.size = if self
+            .document_class
+            .as_deref()
+            .is_some_and(is_ams_size_class)
+        {
+            FontSizeLevel::stepped_ams(next.size, delta)
+        } else {
+            FontSizeLevel::stepped(next.size, delta, self.body_size_pt())
+        };
         self.style = next;
     }
 
@@ -4800,6 +4845,20 @@ impl P<'_> {
                 self.counters = crate::xref::Counters::report();
             }
             self.document_class = Some(class);
+        }
+        if self.class_size_pt.is_none()
+            && self.document_class.as_deref().is_some_and(is_ams_size_class)
+        {
+            // The AMS classes also offer `8pt`/`9pt` options (the standard
+            // classes only offer 10/11/12); any other class keeps ignoring
+            // them, exactly as before. This runs after the class name is
+            // recorded, since the option list alone cannot tell an AMS
+            // `9pt` from an (invalid) standard-class one.
+            self.class_size_pt = option_list.iter().find_map(|option| match *option {
+                "8pt" => Some(8.0),
+                "9pt" => Some(9.0),
+                _ => None,
+            });
         }
         // letter.cls lines 91-92 replace the standard classes' paragraph
         // shape outright: `\parskip 0.7em` (rigid, in the class body font)
@@ -14334,6 +14393,136 @@ mod tests {
         );
         assert_eq!(size_of(&top_items, "h"), 24.88);
         assert_eq!(size_of(&top_items, "X"), 24.88);
+    }
+
+    /// Sizes from the full pipeline (`parse` → `preamble_constraints` →
+    /// layout): the only path that applies the `\documentclass`. Plain
+    /// `layout::layout` uses default constraints and never sees the class.
+    fn full_output(source: &str) -> crate::incremental::CompileOutput {
+        crate::incremental::compile_full(source, layout::LayoutConstraints::default())
+    }
+
+    fn output_size(output: &crate::incremental::CompileOutput, text: &str) -> f64 {
+        output
+            .pages
+            .iter()
+            .flat_map(|page| &page.items)
+            .find(|item| item.text == text)
+            .unwrap_or_else(|| panic!("no item {text:?}"))
+            .font_size_pt
+    }
+
+    #[test]
+    fn ams_larger_steps_one_rung_per_command() {
+        // Pure index steps on the eleven-rung ladder (0-based rungs:
+        // `\tiny` = 1, `\normalsize` = 5, `\Huge` = 10), not magstep
+        // scaling: every step moves exactly one rung and clamps at the
+        // ends. Rung 0 (`\Tiny`) folds onto `Tiny`.
+        use FontSizeLevel::*;
+        for (current, delta, expected) in [
+            (Some(Tiny), 1, Some(ScriptSize)),
+            (Some(Tiny), 3, Some(Small)),
+            (None, 1, Some(Large1)),
+            (None, -1, Some(Small)),
+            (Some(Large2), -2, None),
+            (Some(Small), 2, Some(Large1)),
+            (Some(Large3), 2, Some(Huge2)),
+            (Some(Huge2), 1, Some(Huge2)),
+            (Some(Huge2), 9, Some(Huge2)),
+            (Some(Tiny), -1, Some(Tiny)),
+            (Some(Tiny), -5, Some(Tiny)),
+            (None, 0, None),
+            (Some(Small), 0, Some(Small)),
+        ] {
+            assert_eq!(FontSizeLevel::stepped_ams(current, delta), expected, "{current:?} {delta}");
+        }
+    }
+
+    #[test]
+    fn ams_tiny_larger_three_times_lands_on_small() {
+        // The ladder walkthrough: tiny(1) → SMALL(2) → Small(3) → small(4),
+        // landing exactly on `\small` (9pt at 10pt) — with no
+        // `\usepackage{relsize}`, which an AMS class never needs.
+        let source = r"\documentclass[10pt]{amsart}\begin{document}{\tiny a \larger b \larger c \larger d}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "a"), 6.0);
+        assert_eq!(output_size(&output, "b"), 7.0);
+        assert_eq!(output_size(&output, "c"), 8.0);
+        assert_eq!(output_size(&output, "d"), 9.0);
+    }
+
+    #[test]
+    fn ams_plain_declarations_use_the_ams_tables() {
+        // All ten user-visible declarations at 10pt resolve to the AMS
+        // `\@typesizes` row, which genuinely differs from article's (e.g.
+        // `\Large`: 12pt here, 14.4pt in article).
+        let source = r"\documentclass[10pt]{amsart}\begin{document}{\tiny a \scriptsize b \footnotesize c \small d \normalsize e \large f \Large g \LARGE h \huge i \Huge j}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        for (text, size) in
+            [("a", 6.0), ("b", 7.0), ("c", 8.0), ("d", 9.0), ("e", 10.0),
+             ("f", 11.0), ("g", 12.0), ("h", 14.0), ("i", 17.0), ("j", 20.0)]
+        {
+            assert_eq!(output_size(&output, text), size, "{text}");
+        }
+    }
+
+    #[test]
+    fn ams_tables_apply_to_every_point_option_and_class() {
+        // `\tiny`, `\normalsize`, `\Large`, `\Huge` across the remaining
+        // point-size options (10pt is covered exhaustively above), spread
+        // over all three AMS classes to prove they share the ladder.
+        for (class, option, expected) in [
+            ("amsart", "8pt", [5.0, 8.0, 10.0, 14.0]),
+            ("amsart", "9pt", [5.0, 9.0, 11.0, 17.0]),
+            ("amsbook", "11pt", [7.0, 11.0, 14.0, 25.0]),
+            ("amsproc", "12pt", [8.0, 12.0, 17.0, 25.0]),
+        ] {
+            let source = format!(
+                "\\documentclass[{option}]{{{class}}}\\begin{{document}}{{\\tiny a \\normalsize e \\Large g \\Huge j}}\\end{{document}}"
+            );
+            let output = full_output(&source);
+            assert!(output.diagnostics.is_empty(), "{class} {option}: {:?}", output.diagnostics);
+            for (text, size) in ["a", "e", "g", "j"].iter().zip(expected.iter()) {
+                assert_eq!(output_size(&output, text), *size, "{class} {option} {text}");
+            }
+        }
+    }
+
+    #[test]
+    fn ams_bracket_steps_move_multiple_rungs() {
+        // `\larger[2]`/`\smaller[2]` add ±2 to the rung index (10pt).
+        let source = r"\documentclass[10pt]{amsart}\begin{document}{\normalsize n \larger[2]{X} \Large g \smaller[3]{Y}}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "X"), 12.0);
+        assert_eq!(output_size(&output, "Y"), 9.0);
+    }
+
+    #[test]
+    fn ams_relative_steps_clamp_at_both_ends() {
+        // Past `\Huge` the size holds at `\Huge` (20pt at 10pt); below
+        // `\tiny` it holds the smallest representable declaration.
+        let source = r"\documentclass[10pt]{amsart}\begin{document}{\Huge h \larger{X} \tiny t \smaller[3]{Y} \normalsize n \smaller s}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "X"), 20.0);
+        assert_eq!(output_size(&output, "Y"), 6.0);
+        assert_eq!(output_size(&output, "s"), 9.0);
+    }
+
+    #[test]
+    fn acmart_larger_stays_on_the_relsize_path() {
+        // `acmart` needs no relsize package either, but nothing shows it
+        // shares the AMS ladder: `\tiny\larger` under relsize's magstep
+        // math stays at `\tiny` (5.9999pt rounds to the closest level,
+        // itself), so three steps hold 5pt — where `amsart` walks 6/7/8/9.
+        let source = r"\documentclass[10pt]{acmart}\begin{document}{\tiny a \larger b \larger c \larger d}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "a"), 5.0);
+        assert_eq!(output_size(&output, "d"), 5.0);
     }
 
     #[test]

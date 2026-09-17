@@ -1146,6 +1146,7 @@ mod tests {
             font_size_pt: 13.0,
             measure_pt: 320.0,
             parskip_pt: None,
+            ams_sizes: false,
         };
         let result = session.compile(text, constraints);
         eprintln!("constraint ReuseStats: {:?}", result.stats);
