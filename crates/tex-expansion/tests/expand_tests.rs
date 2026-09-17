@@ -908,3 +908,51 @@ fn newtheorem_second_declaration_of_the_same_name_errors() {
     assert_eq!(messages, ["LaTeX Error: Command \\thm already defined."], "{messages:?}");
     assert!(text(&r.tokens).contains("\\newtheorem "), "{:?}", r.tokens);
 }
+
+#[test]
+fn newtheorem_failed_shared_counter_leaves_the_name_claimable() {
+    // `\newtheorem{widget}[nonexistent]{Widget}` shares the counter of an
+    // undeclared environment, so the compiler's `parser.rs::new_theorem`
+    // rejects it -- but expansion must not claim `\widget`/`\endwidget`
+    // first. The failed declaration burns nothing: a corrected retry on
+    // the next line succeeds with no "already defined" error and the
+    // environment is usable. Expansion itself stays silent here (no second
+    // diagnostic); the one diagnostic for the bad `shared` counter comes
+    // from the compiler, which owns that check.
+    let r = expand_str(
+        "\\newtheorem{widget}[nonexistent]{Widget}\n\\newtheorem{widget}{Widget}\\begin{widget}Hi\\end{widget}",
+    );
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    let out = text(&r.tokens);
+    assert!(out.contains("Hi"), "{out:?}");
+    assert!(out.contains(r"\widget "), "{out:?}");
+    assert!(out.contains(r"\endwidget "), "{out:?}");
+}
+
+#[test]
+fn newtheorem_valid_shared_counter_still_declares() {
+    // A counter-sharing declaration that refers to an earlier, successful
+    // `\newtheorem` keeps working exactly as before: both names are
+    // claimed and the shared-counter environment is usable.
+    let r = expand_str(
+        r"\newtheorem{first}{First}\newtheorem{second}[first]{Second}\begin{second}Hi\end{second}",
+    );
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    let out = text(&r.tokens);
+    assert!(out.contains("Hi"), "{out:?}");
+    assert!(out.contains(r"\second "), "{out:?}");
+    assert!(out.contains(r"\endsecond "), "{out:?}");
+}
+
+#[test]
+fn newtheorem_declaration_inside_a_group_is_globally_visible() {
+    // `\newtheorem` is a global declaration in real LaTeX (like
+    // `\newcommand`): a declaration inside a group stays visible and usable
+    // after the group closes.
+    let r = expand_str(r"{\newtheorem{x}{X}}\begin{x}Hi\end{x}");
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    let out = text(&r.tokens);
+    assert!(out.contains("Hi"), "{out:?}");
+    assert!(out.contains(r"\x "), "{out:?}");
+    assert!(out.contains(r"\endx "), "{out:?}");
+}

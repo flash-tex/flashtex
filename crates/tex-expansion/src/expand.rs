@@ -3180,7 +3180,14 @@ impl Engine {
             .trim()
             .to_string();
         back.extend(name_group);
-        if let Some(shared) = self.scan_through_bracket() {
+        let shared_bracket = self.scan_through_bracket();
+        // The counter-sharing name, read the way the compiler's
+        // `parser.rs::new_theorem` reads it (trimmed bracket text), so the
+        // existence check below matches that rule exactly -- same idea,
+        // same set-membership logic. Kept aside before `back` takes
+        // ownership of the tokens.
+        let shared_name = shared_bracket.as_ref().map(|toks| Self::bracket_arg_text(toks));
+        if let Some(shared) = shared_bracket {
             back.extend(shared);
         }
         // The caption body is stored as a token list and only expanded
@@ -3220,15 +3227,33 @@ impl Engine {
             self.clear_prefixes();
             return;
         }
-        if !name.is_empty() {
+        // A counter-sharing declaration whose `shared` name is not a known
+        // theorem environment will be rejected downstream by the compiler's
+        // `parser.rs::new_theorem` ("shares the counter of undefined theorem
+        // environment"). Claim nothing here in that case: claiming
+        // `\name`/`\end{name}` now would permanently burn the name, so a
+        // later corrected retry would fail with "already defined" even
+        // though no real theorem environment exists. The declaration is
+        // still handed back below untouched, so the compiler -- which owns
+        // the diagnostic -- reports it exactly once; no second diagnostic
+        // is emitted from this side. This check must stay the same rule as
+        // the compiler's (`theorem_names` membership here mirrors its
+        // `self.theorems` lookup); see also the field docs in `scopes.rs`.
+        let shared_ok = shared_name.as_ref().map_or(true, |s| self.st.scopes.is_theorem_env(s));
+        if !name.is_empty() && shared_ok {
             // Claim `\name`/`\end{name}` the way `\newenvironment` claims
             // its commands, so `\begin{name}` no longer reports the
             // environment undefined and a later `\newcommand` on either
             // name is refused, as in LaTeX. Both are host commands: still
             // emitted unchanged for the typesetter, which owns the actual
             // declaration (scanned above, handed back below).
+            // Both claims are global (`\newtheorem` is a global declaration
+            // in real LaTeX), and so is the `theorem_names` registration
+            // just below: none of the three pushes a save entry, so no
+            // group close can undo them.
             self.st.scopes.assign_cs(&name, Meaning::Primitive(Primitive::Host), true);
             self.st.scopes.assign_cs(&format!("end{name}"), Meaning::Primitive(Primitive::Host), true);
+            self.st.scopes.register_theorem_env(&name);
             // A stale rejection from an earlier, now-undone collision (e.g.
             // the name was `\let` back to undefined since) must not persist
             // once this declaration succeeds. Global, matching the global
@@ -3377,6 +3402,27 @@ impl Engine {
             }
         }
         Some(out)
+    }
+
+    /// Trimmed text of a `scan_through_bracket` result: leading spaces and
+    /// the outer `[`/`]` delimiters are dropped, and the body tokens are
+    /// read the way `do_newtheorem` reads its `name` (control sequences
+    /// without the backslash, so `[\thm]` and `[thm]` agree) and the way
+    /// the compiler's `parser.rs::new_theorem` reads its `shared` argument
+    /// (trimmed text). A truncated scan (EOF before `]`) yields whatever
+    /// body was collected.
+    fn bracket_arg_text(toks: &[Pending]) -> String {
+        let mut body = toks.iter().as_slice();
+        while matches!(body.first().map(|p| &p.tok.kind), Some(TokenKind::Char(_, CatCode::Space))) {
+            body = &body[1..];
+        }
+        if matches!(body.first().map(|p| &p.tok.kind), Some(TokenKind::Char('[', CatCode::Other))) {
+            body = &body[1..];
+        }
+        while matches!(body.last().map(|p| &p.tok.kind), Some(TokenKind::Char(']', CatCode::Other)) | Some(TokenKind::Char(_, CatCode::Space))) {
+            body = &body[..body.len() - 1];
+        }
+        body.iter().map(|p| p.tok.display_name().replace('\\', "")).collect::<String>().trim().to_string()
     }
 
     /// `\begin{name}`: LaTeX opens a group, records `\@currenvir`, then
