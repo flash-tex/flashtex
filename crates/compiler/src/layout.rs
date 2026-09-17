@@ -110,6 +110,13 @@ pub struct LayoutConstraints {
     pub measure_pt: f64,
     /// `\setlength{\parskip}{..}`; `None` keeps `PARAGRAPH_GAP_PT`.
     pub parskip_pt: Option<f64>,
+    /// True when the document class is one of the AMS classes (`amsart`,
+    /// `amsbook`, `amsproc`): `\tiny`..`\Huge` resolve against the AMS
+    /// `\@typesizes` tables (see `ams_size_declaration_pt`) rather than the
+    /// standard `size10/11/12.clo` tables. Set from the parsed
+    /// `\documentclass` by `Parsed::preamble_constraints`; callers laying
+    /// out bare blocks keep the default (`false`, standard classes).
+    pub ams_sizes: bool,
 }
 
 impl Default for LayoutConstraints {
@@ -118,6 +125,7 @@ impl Default for LayoutConstraints {
             font_size_pt: BODY_SIZE_PT,
             measure_pt: PAGE_WIDTH_PT - 2.0 * MARGIN_PT,
             parskip_pt: None,
+            ams_sizes: false,
         }
     }
 }
@@ -858,6 +866,17 @@ impl LayoutCursor {
         if gap > 0.0 && len > self.line_start {
             self.line_spaces.push((len, gap));
         }
+    }
+
+    /// `size_declaration_pt` for this document's own class: the AMS
+    /// `\@typesizes` rung when the parsed `\documentclass` was an AMS class
+    /// (`constraints.ams_sizes`), the standard class table otherwise.
+    fn declaration_pt(&self, level: FontSizeLevel) -> f64 {
+        size_declaration_pt_for_class(
+            level,
+            self.constraints.font_size_pt,
+            self.constraints.ams_sizes,
+        )
     }
 
     fn newline(&mut self, size: f64) {
@@ -2359,6 +2378,112 @@ pub(crate) fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f6
     table[index]
 }
 
+/// The AMS classes' (`amsart`, `amsbook`, `amsproc`) own size ladder: eleven
+/// rungs — `\Tiny`, `\tiny`, `\SMALL`, `\Small`, `\small`, `\normalsize`,
+/// `\large`, `\Large`, `\LARGE`, `\huge`, `\Huge` — against the standard
+/// classes' nine (`FontSizeLevel`). The user-visible command names are the
+/// standard ones (the class aliases `\scriptsize` to `\SMALL` and
+/// `\footnotesize` to `\Small`); only `\Tiny` (rung 0) has no
+/// `FontSizeLevel` and folds onto `Tiny` in `ams_rung_level`.
+pub(crate) const AMS_RUNG_COUNT: usize = 11;
+
+/// `(font size pt, baselineskip pt)` for one AMS ladder rung, from the real
+/// `\@typesizes` tables in the `amscls` sources (TeX Live 2026; the three
+/// classes share byte-identical ladder logic). `rung` is 0-based
+/// (`\Tiny` = 0 .. `\Huge` = 10); out-of-range rungs clamp to the nearest
+/// end, matching `\larger`/`\smaller`'s own clamping. The table is picked by
+/// the document's point-size option (8/9/10/11/12pt; the standard classes
+/// only offer 10/11/12), selected on the same `body_size_pt` boundaries as
+/// `size_declaration_pt`.
+pub(crate) fn ams_size_declaration_pt(rung: usize, body_size_pt: f64) -> (f64, f64) {
+    // Rungs: Tiny, tiny, SMALL, Small, small, normalsize, large, Large,
+    // LARGE, huge, Huge.
+    const SIZE_8PT: [(f64, f64); AMS_RUNG_COUNT] = [
+        (5.0, 6.0), (5.0, 6.0), (5.0, 6.0), (6.0, 7.0), (7.0, 8.0), (8.0, 10.0),
+        (9.0, 11.0), (10.0, 12.0), (11.0, 13.0), (12.0, 14.0), (14.0, 17.0),
+    ];
+    const SIZE_9PT: [(f64, f64); AMS_RUNG_COUNT] = [
+        (5.0, 6.0), (5.0, 6.0), (6.0, 7.0), (7.0, 8.0), (8.0, 10.0), (9.0, 11.0),
+        (10.0, 12.0), (11.0, 13.0), (12.0, 14.0), (14.0, 17.0), (17.0, 20.0),
+    ];
+    const SIZE_10PT: [(f64, f64); AMS_RUNG_COUNT] = [
+        (5.0, 6.0), (6.0, 7.0), (7.0, 8.0), (8.0, 10.0), (9.0, 11.0), (10.0, 12.0),
+        (11.0, 13.0), (12.0, 14.0), (14.0, 17.0), (17.0, 20.0), (20.0, 24.0),
+    ];
+    const SIZE_11PT: [(f64, f64); AMS_RUNG_COUNT] = [
+        (6.0, 7.0), (7.0, 8.0), (8.0, 10.0), (9.0, 11.0), (10.0, 12.0), (11.0, 13.0),
+        (12.0, 14.0), (14.0, 17.0), (17.0, 20.0), (20.0, 24.0), (25.0, 30.0),
+    ];
+    const SIZE_12PT: [(f64, f64); AMS_RUNG_COUNT] = [
+        (7.0, 8.0), (8.0, 10.0), (9.0, 11.0), (10.0, 12.0), (11.0, 13.0), (12.0, 14.0),
+        (14.0, 17.0), (17.0, 20.0), (20.0, 24.0), (25.0, 30.0), (25.0, 30.0),
+    ];
+    let table = if body_size_pt <= 8.5 {
+        SIZE_8PT
+    } else if body_size_pt <= 9.5 {
+        SIZE_9PT
+    } else if body_size_pt <= 10.5 {
+        SIZE_10PT
+    } else if body_size_pt <= 11.5 {
+        SIZE_11PT
+    } else {
+        SIZE_12PT
+    };
+    table[rung.min(AMS_RUNG_COUNT - 1)]
+}
+
+/// The AMS ladder rung a declaration selects (`None` is `\normalsize`,
+/// rung 5). `\scriptsize`/`\footnotesize` sit on the `\SMALL`/`\Small`
+/// rungs, exactly as the class's own aliases do.
+pub(crate) fn ams_rung(level: Option<FontSizeLevel>) -> usize {
+    match level {
+        Some(FontSizeLevel::Tiny) => 1,
+        Some(FontSizeLevel::ScriptSize) => 2,
+        Some(FontSizeLevel::FootnoteSize) => 3,
+        Some(FontSizeLevel::Small) => 4,
+        None => 5,
+        Some(FontSizeLevel::Large1) => 6,
+        Some(FontSizeLevel::Large2) => 7,
+        Some(FontSizeLevel::Large3) => 8,
+        Some(FontSizeLevel::Huge1) => 9,
+        Some(FontSizeLevel::Huge2) => 10,
+    }
+}
+
+/// The declaration a rung selects. Rung 0 (`\Tiny`) has no `FontSizeLevel`,
+/// so it folds onto `Tiny`: stepping below `\tiny` holds the smallest
+/// representable declaration rather than an exact `\Tiny` size.
+pub(crate) fn ams_rung_level(rung: usize) -> Option<FontSizeLevel> {
+    match rung {
+        0 | 1 => Some(FontSizeLevel::Tiny),
+        2 => Some(FontSizeLevel::ScriptSize),
+        3 => Some(FontSizeLevel::FootnoteSize),
+        4 => Some(FontSizeLevel::Small),
+        5 => None,
+        6 => Some(FontSizeLevel::Large1),
+        7 => Some(FontSizeLevel::Large2),
+        8 => Some(FontSizeLevel::Large3),
+        9 => Some(FontSizeLevel::Huge1),
+        _ => Some(FontSizeLevel::Huge2),
+    }
+}
+
+/// Absolute font size for one `\tiny`..`\Huge` declaration under `ams`
+/// (an AMS class) or the standard classes: the AMS `\@typesizes` rung for
+/// the level when `ams` is set, else `size_declaration_pt` unchanged.
+/// (`\normalsize` never reaches here; callers resolve it to the body size.)
+pub(crate) fn size_declaration_pt_for_class(
+    level: FontSizeLevel,
+    body_size_pt: f64,
+    ams: bool,
+) -> f64 {
+    if ams {
+        ams_size_declaration_pt(ams_rung(Some(level)), body_size_pt).0
+    } else {
+        size_declaration_pt(level, body_size_pt)
+    }
+}
+
 /// Height above and depth below the baseline of `font` at `size`, from the
 /// face's declared ascender/descender. Symbol declares none (its AFM bounding
 /// box is far taller than its glyphs), so it uses Times-Roman's.
@@ -2865,9 +2990,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 // A `\tiny`..`\Huge` declaration is always relative to the
                 // document's own body size, not to `size` (which can already
                 // be a heading's or a math script's own scaled context).
-                let text_size = style.size.map_or(size, |level| {
-                    size_declaration_pt(level, c.constraints.font_size_pt)
-                });
+                let text_size = style.size.map_or(size, |level| c.declaration_pt(level));
                 c.place(
                     text.clone(),
                     text_size,
@@ -3050,9 +3173,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
             // margin): skip it rather than leaking it into the prose.
             Inline::Marginpar { .. } => {}
             Inline::Tabular(table) => {
-                let table_size = table.style.size.map_or(size, |level| {
-                    size_declaration_pt(level, c.constraints.font_size_pt)
-                });
+                let table_size = table.style.size.map_or(size, |level| c.declaration_pt(level));
                 let b = crate::tabular::layout(c, table, table_size);
                 c.place_math(b, size, table.space_before);
             }
@@ -3090,15 +3211,11 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 style,
                 space_before,
             } => {
-                let text_size = style.size.map_or(size, |level| {
-                    size_declaration_pt(level, c.constraints.font_size_pt)
-                });
+                let text_size = style.size.map_or(size, |level| c.declaration_pt(level));
                 c.place_logo(*logo, text_size, *span, style_font(*style), *space_before)
             }
             Inline::Kern { amount, style, .. } => {
-                let text_size = style.size.map_or(size, |level| {
-                    size_declaration_pt(level, c.constraints.font_size_pt)
-                });
+                let text_size = style.size.map_or(size, |level| c.declaration_pt(level));
                 let cx = crate::text_builtins::DimenContext {
                     quad: crate::text_builtins::pt_to_sp(text_size),
                     ..Default::default()
@@ -3111,9 +3228,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 style,
                 space_before,
             } => {
-                let text_size = style.size.map_or(size, |level| {
-                    size_declaration_pt(level, c.constraints.font_size_pt)
-                });
+                let text_size = style.size.map_or(size, |level| c.declaration_pt(level));
                 c.place_rule(rule, text_size, *span, style_font(*style), *space_before)
             }
             Inline::Underline(u) => {
@@ -3190,9 +3305,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 // Shifts use the same local size: `sup2` (text style) for
                 // superscripts, `max(sub1, h − ⅘·x-height)` for subscripts,
                 // like this layout's own footnote marks.
-                let local = t.style.size.map_or(size, |level| {
-                    size_declaration_pt(level, c.constraints.font_size_pt)
-                });
+                let local = t.style.size.map_or(size, |level| c.declaration_pt(level));
                 let mark_size = footnotes::script_mark_size(local);
                 let start_page = c.pages.len();
                 let start_item = c.pages.last().map_or(0, |page| page.items.len());
@@ -3391,6 +3504,7 @@ mod tests {
                 font_size_pt: 11.0,
                 measure_pt: LayoutConstraints::default().measure_pt,
                 parskip_pt: None,
+                ams_sizes: false,
             },
         );
         let body = pages
@@ -3405,6 +3519,79 @@ mod tests {
             .unwrap();
         assert_eq!(body.font, Font::TimesRoman);
         assert_eq!(heading.font, Font::TimesBold);
+    }
+
+    #[test]
+    fn ams_typesizes_tables_match_the_class_source() {
+        // The `\@typesizes` rows, transcribed from the `amscls` sources:
+        // (body pt, [(font pt, baselineskip pt) × 11 rungs]). The 8pt and
+        // 10pt rows are checked exhaustively; the rest are spot-checked at
+        // `\tiny` (rung 1), `\normalsize` (5), `\Large` (7) and `\Huge`
+        // (10), with the end-to-end suite covering every option as well.
+        let full: [(f64, [(f64, f64); AMS_RUNG_COUNT]); 2] = [
+            (
+                8.0,
+                [
+                    (5.0, 6.0), (5.0, 6.0), (5.0, 6.0), (6.0, 7.0), (7.0, 8.0), (8.0, 10.0),
+                    (9.0, 11.0), (10.0, 12.0), (11.0, 13.0), (12.0, 14.0), (14.0, 17.0),
+                ],
+            ),
+            (
+                10.0,
+                [
+                    (5.0, 6.0), (6.0, 7.0), (7.0, 8.0), (8.0, 10.0), (9.0, 11.0), (10.0, 12.0),
+                    (11.0, 13.0), (12.0, 14.0), (14.0, 17.0), (17.0, 20.0), (20.0, 24.0),
+                ],
+            ),
+        ];
+        for (body, rungs) in full {
+            for (rung, expected) in rungs.iter().enumerate() {
+                assert_eq!(
+                    ams_size_declaration_pt(rung, body),
+                    *expected,
+                    "body {body} rung {rung}"
+                );
+            }
+        }
+        let spots: [(f64, [(usize, (f64, f64)); 4]); 3] = [
+            (9.0, [(1, (5.0, 6.0)), (5, (9.0, 11.0)), (7, (11.0, 13.0)), (10, (17.0, 20.0))]),
+            (11.0, [(1, (7.0, 8.0)), (5, (11.0, 13.0)), (7, (14.0, 17.0)), (10, (25.0, 30.0))]),
+            (12.0, [(1, (8.0, 10.0)), (5, (12.0, 14.0)), (7, (17.0, 20.0)), (10, (25.0, 30.0))]),
+        ];
+        for (body, rungs) in spots {
+            for (rung, expected) in rungs {
+                assert_eq!(ams_size_declaration_pt(rung, body), expected, "body {body} rung {rung}");
+            }
+            // Out-of-range rungs clamp to the ends, like `\larger`/`\smaller`.
+            assert_eq!(ams_size_declaration_pt(99, body), rungs[3].1);
+        }
+        // The class-aware font lookup agrees with the table rungs, and the
+        // standard path is byte-identical to `size_declaration_pt`.
+        let levels = [
+            FontSizeLevel::Tiny,
+            FontSizeLevel::ScriptSize,
+            FontSizeLevel::FootnoteSize,
+            FontSizeLevel::Small,
+            FontSizeLevel::Large1,
+            FontSizeLevel::Large2,
+            FontSizeLevel::Large3,
+            FontSizeLevel::Huge1,
+            FontSizeLevel::Huge2,
+        ];
+        for body in [8.0, 9.0, 10.0, 11.0, 12.0] {
+            for level in levels {
+                assert_eq!(
+                    size_declaration_pt_for_class(level, body, true),
+                    ams_size_declaration_pt(ams_rung(Some(level)), body).0,
+                    "body {body} {level:?}"
+                );
+                assert_eq!(
+                    size_declaration_pt_for_class(level, body, false),
+                    size_declaration_pt(level, body),
+                    "body {body} {level:?}"
+                );
+            }
+        }
     }
 
     #[test]
