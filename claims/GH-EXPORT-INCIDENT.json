@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": null,
+  "gh_ref": null,
+  "machine": "mac-m1max-a",
+  "note": null,
+  "started_utc": "2026-09-17T02:23:39Z",
+  "state": "claimed",
+  "task_id": "GH-EXPORT-INCIDENT",
+  "updated_utc": "2026-09-17T02:23:39Z"
+}
