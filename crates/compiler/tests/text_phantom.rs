@@ -257,3 +257,122 @@ fn math_mode_phantoms_are_unaffected() {
     let blocks = blocks_debug(source);
     assert!(blocks.contains("Phantom"), "{blocks}");
 }
+
+#[test]
+fn phantom_with_nested_rule_in_section_reserves_rule_width() {
+    // Finding 2: `\section{A\phantom{\rule{40pt}{1pt}}B}` must route the
+    // phantom argument through ordinary box dispatch, so the nested `\rule`
+    // reserves a 40pt box instead of leaking its literal tokens as text.
+    let ghost =
+        "\\begin{document}\\section{A\\phantom{\\rule{40pt}{1pt}}B}\\end{document}";
+    let empty = "\\begin{document}\\section{A\\phantom{}B}\\end{document}";
+    assert!(messages(ghost).is_empty(), "{ghost:?}: {:?}", messages(ghost));
+    // The rule paints nothing and its dimensions never surface as text.
+    let texts = page_texts(ghost);
+    assert!(
+        !texts.iter().any(|t| t.contains("40pt") || t.contains("1pt")),
+        "rule dimensions must not leak as text: {texts:?}"
+    );
+    // ... but B sits exactly 40pt past where an empty phantom leaves it.
+    let (b_rule, _) = position_of(ghost, "B");
+    let (b_empty, _) = position_of(empty, "B");
+    assert!(
+        (b_rule - b_empty - 40.0).abs() < 0.02,
+        "B must sit one 40pt rule past the empty-phantom spot: {b_empty} -> {b_rule}"
+    );
+    // The parsed phantom really holds a rule box, not literal words.
+    let blocks = blocks_debug(ghost);
+    assert!(blocks.contains("Phantom"), "{blocks}");
+    assert!(blocks.contains("Rule"), "{blocks}");
+}
+
+#[test]
+fn figure_caption_centering_counts_phantom_width() {
+    // Finding 3: `\caption{A\phantom{WWWW}B}` must centre the full invisible
+    // box, so the laid-out line is symmetric within the measure.
+    use flashtex_compiler::layout::{LayoutConstraints, MARGIN_PT};
+    let source = "\\begin{document}\\begin{figure}\\caption{A\\phantom{WWWW}B}\\end{figure}\\end{document}";
+    assert!(messages(source).is_empty(), "{:?}", messages(source));
+    let output = compile(source);
+    let items = &output.pages[0].items;
+    let first = items.first().expect("caption must lay out items");
+    let last = items.last().expect("caption must lay out items");
+    assert_eq!(first.text, "Figure 1:");
+    assert_eq!(last.text, "B");
+    let measure = LayoutConstraints::default().measure_pt;
+    let left_gap = first.x_pt - MARGIN_PT;
+    let right_gap =
+        (MARGIN_PT + measure) - (last.x_pt + text_width("B", BODY_SIZE_PT, Font::TimesRoman));
+    assert!(
+        (left_gap - right_gap).abs() < 0.03,
+        "caption line must be centred: left={left_gap} right={right_gap}"
+    );
+    // The phantom still paints nothing.
+    assert!(!page_texts(source).iter().any(|t| t.contains('W') && t.len() > 1));
+}
+
+#[test]
+fn phantom_preserves_trailing_interword_glue() {
+    // Finding 4: `A\phantom{X }B` must reserve `X` plus exactly one trailing
+    // interword glue (TeX's `\hbox{X }`), so B sits one `X`-width plus one
+    // word space past A. (A spaced oracle such as `A X B` would additionally
+    // carry the source gap between `A` and the box, which the glued source
+    // here does not have.)
+    let ghost = "\\begin{document}A\\phantom{X }B\\end{document}";
+    assert!(messages(ghost).is_empty(), "{:?}", messages(ghost));
+    let (ax, _) = position_of(ghost, "A");
+    let (bx, _) = position_of(ghost, "B");
+    let expected = text_width("A", BODY_SIZE_PT, Font::TimesRoman)
+        + text_width("X", BODY_SIZE_PT, Font::TimesRoman)
+        + word_space(BODY_SIZE_PT, Font::TimesRoman);
+    assert!(
+        ((bx - ax) - expected).abs() < 0.02,
+        "B must start past X plus one word space: A x={ax}, B x={bx}, gap={}, expected={expected}",
+        bx - ax
+    );
+    assert_eq!(page_texts(ghost), ["A", "B"]);
+}
+
+#[test]
+fn glued_overwide_phantom_stays_on_the_line() {
+    // Finding 6: `A\hphantom{\rule{500pt}{1pt}}B` has no breakable space, so
+    // TeX keeps the unbreakable sequence on the current overfull line.
+    let source = "\\begin{document}A\\hphantom{\\rule{500pt}{1pt}}B\\end{document}";
+    assert!(messages(source).is_empty(), "{:?}", messages(source));
+    let (ax, ay) = position_of(source, "A");
+    let (bx, by) = position_of(source, "B");
+    assert_eq!(ay, by, "glued overfull box must not wrap: A y={ay}, B y={by}");
+    let gap = bx - ax - text_width("A", BODY_SIZE_PT, Font::TimesRoman);
+    assert!(
+        (gap - 500.0).abs() < 0.02,
+        "B must start one 500pt rule past A's end: A x={ax}, B x={bx}, gap={gap}"
+    );
+    assert_eq!(page_texts(source), ["A", "B"]);
+}
+
+#[test]
+fn phantom_reference_still_warns_when_undefined() {
+    // Finding 7: `\phantom{\ref{missing}}` must emit the same
+    // undefined-reference warning as the bare `\ref{missing}`.
+    // The undefined-reference warning is emitted at layout time, so read
+    // `compile_full` diagnostics rather than parser diagnostics.
+    let layout_notes = |source: &str| {
+        compile(source)
+            .diagnostics
+            .into_iter()
+            .map(|d| d.message)
+            .collect::<Vec<_>>()
+    };
+    let ghost = "\\begin{document}\\phantom{\\ref{missing}}x\\end{document}";
+    let bare = "\\begin{document}\\ref{missing}x\\end{document}";
+    let ghost_notes = layout_notes(ghost);
+    let bare_notes = layout_notes(bare);
+    assert!(
+        bare_notes.iter().any(|m| m.contains("undefined")),
+        "oracle must warn: {bare_notes:?}"
+    );
+    assert!(
+        ghost_notes.iter().any(|m| m.contains("undefined")),
+        "phantom must not swallow the warning: {ghost_notes:?}"
+    );
+}

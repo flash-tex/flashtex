@@ -8460,9 +8460,12 @@ impl P<'_> {
                 // `\section{A\phantom{X}B}` visibly typeset `X` with no width
                 // reserved. Consume the group and emit the same
                 // `Inline::Phantom` the main token loop builds
-                // (`P::text_phantom`), with the argument parsed recursively so
-                // nested commands resolve exactly as they do elsewhere in
-                // flattened content.
+                // (`P::text_phantom`), with the argument parsed through the
+                // ordinary box dispatch (`P::box_inlines`) in the flattened
+                // style in force here, so nested commands such as
+                // `\rule` resolve exactly as they do in running text (a
+                // recursive `inlines_from_tokens` would only honour this
+                // flattened path's own limited set of arms).
                 TokenKind::Command(name)
                     if matches!(name.as_str(), "phantom" | "hphantom" | "vphantom") =>
                 {
@@ -8474,7 +8477,10 @@ impl P<'_> {
                             } else {
                                 input.token.span
                             };
-                            let inner_content = self.inlines_from_tokens(inner, style);
+                            let outer_style = self.style;
+                            self.style = style;
+                            let inner_content = self.box_inlines(inner);
+                            self.style = outer_style;
                             content.push(Inline::Phantom {
                                 content: inner_content,
                                 horizontal: name.as_str() != "vphantom",

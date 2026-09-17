@@ -227,6 +227,25 @@ impl P<'_> {
     /// A box argument parsed with the ordinary dispatch as one group in the
     /// current style (`\hbox`: restricted horizontal mode ignores `\par`).
     pub(super) fn box_inlines(&mut self, tokens: Vec<InputToken>) -> Vec<Inline> {
+        // TeX's `\hbox{X }` reserves the trailing interword glue as part of
+        // the box. A `Space` at the end of the argument has no following run
+        // to carry `space_before` (spaces only ride along on the next run),
+        // so without this it would vanish and e.g. `A\phantom{X }B` would
+        // leave `B` one word space too far left. Comments are invisible and
+        // skipped when looking for it. The empty run below materialises
+        // exactly the interword gap the layout already holds pending after
+        // the last run (`place` eagerly reserves it in `x` but only a
+        // following run folds it into `content_end`, which is what the box
+        // is measured by): zero-width text with `space_before` keeps `x`
+        // and sets `content_end` to it, adding precisely one word space.
+        // Appending real glue (`Inline::TextGlue`) instead would stack a
+        // second space on top of that pending one.
+        let trailing_space = tokens
+            .iter()
+            .rev()
+            .find(|input| !matches!(input.token.kind, TokenKind::Comment))
+            .filter(|input| matches!(input.token.kind, TokenKind::Space))
+            .map(|input| input.token.span);
         let outer_tokens = std::mem::replace(&mut self.t, std::rc::Rc::new(tokens));
         let outer_index = std::mem::replace(&mut self.i, 0);
         let outer_style = self.style;
@@ -237,6 +256,7 @@ impl P<'_> {
         let mut para = Vec::new();
         self.parse_stream(&mut blocks, &mut para);
         self.flush_paragraph(&mut blocks, &mut para);
+        let end_style = self.style;
         self.block_dependencies.truncate(outer_dependency_blocks);
         // The box's paragraphs never reach `blocks`: their leadings must not
         // reach `block_par_leading` either, which carries exactly one entry
@@ -246,7 +266,7 @@ impl P<'_> {
         self.i = outer_index;
         self.style = outer_style;
         self.pending_item_label = outer_label;
-        blocks
+        let mut inlines: Vec<Inline> = blocks
             .into_iter()
             .flat_map(|block| match block {
                 Block::Paragraph(inlines)
@@ -254,7 +274,16 @@ impl P<'_> {
                 | Block::ListItem { content: inlines, .. } => inlines,
                 _ => Vec::new(),
             })
-            .collect()
+            .collect();
+        if let Some(span) = trailing_space {
+            inlines.push(Inline::Text {
+                text: String::new(),
+                span,
+                style: end_style,
+                space_before: true,
+            });
+        }
+        inlines
     }
 
     /// `\color`/`\textcolor` at `index` of a flat token run: the index after
