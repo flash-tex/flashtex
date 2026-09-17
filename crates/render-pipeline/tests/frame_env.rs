@@ -5,10 +5,6 @@
 //! `frame` lowers to the same `Inline::ColorBox` that `\fcolorbox` makes,
 //! so both tests below assert the identical rule geometry and containment
 //! on the pipeline's shared bordered-box path (`BoxRec::ColorBox`).
-//! The `\begin{frame}` test itself is ignored until `vendor/compiler` is
-//! re-pinned past the compiler change that recognises the environment
-//! (it still sees the old plain-text fallback, by design: lanes never
-//! touch `vendor/`).
 
 mod common;
 
@@ -137,7 +133,6 @@ fn shared_colorbox_path_draws_border_with_content_inside() {
 }
 
 #[test]
-#[ignore = "needs vendor/compiler re-pinned past the frame environment change"]
 fn frame_draws_a_rule_border_around_its_content() {
     if !lm_available() {
         return;

@@ -76,7 +76,7 @@ final class NearbyReconnectTests: XCTestCase {
 
         let a = connect(h)
         hello(a)
-        XCTAssertEqual(type(a.lines(atLeast: 1)[0]), "hello_ack")
+        XCTAssertEqual(type(try a.lines(atLeast: 1)[0]), "hello_ack")
         let full = frame("s1", submit())
         a.send(full.prefix(full.count / 2)) // no newline: the frame never completes
         usleep(100_000)
@@ -90,9 +90,9 @@ final class NearbyReconnectTests: XCTestCase {
 
         let b = connect(h)
         hello(b)
-        XCTAssertEqual(type(b.lines(atLeast: 1)[0]), "hello_ack")
+        XCTAssertEqual(type(try b.lines(atLeast: 1)[0]), "hello_ack")
         b.send(full)
-        let lines = b.lines(atLeast: 2)
+        let lines = try b.lines(atLeast: 2)
         XCTAssertEqual(ack(lines[1])?.captureId, "cap-r1")
         XCTAssertEqual(id(lines[1]), "s1")
         XCTAssertEqual(sink.count, 1, "delivered exactly once")
@@ -115,7 +115,7 @@ final class NearbyReconnectTests: XCTestCase {
 
         let a = connect(h)
         hello(a)
-        XCTAssertEqual(type(a.lines(atLeast: 1)[0]), "hello_ack")
+        XCTAssertEqual(type(try a.lines(atLeast: 1)[0]), "hello_ack")
         a.send(frame("s1", submit()))
         waitUntil("first delivery pending in the sink") { sink.pendingCount == 1 }
         a.cancel()
@@ -126,21 +126,21 @@ final class NearbyReconnectTests: XCTestCase {
 
         let b = connect(h)
         hello(b)
-        XCTAssertEqual(type(b.lines(atLeast: 1)[0]), "hello_ack")
+        XCTAssertEqual(type(try b.lines(atLeast: 1)[0]), "hello_ack")
         b.send(frame("s2", submit())) // identical retry, new envelope id
         waitUntil("retry recognised") { h.snapshot.contains(.captureDuplicate(identity: Self.pairId, captureId: "cap-r1")) }
         XCTAssertEqual(sink.count, 1, "the retry is not delivered again")
         XCTAssertEqual(b.lineCount, 1, "no answer until the sink answers the first delivery")
 
         sink.flush()
-        let lines = b.lines(atLeast: 2)
+        let lines = try b.lines(atLeast: 2)
         XCTAssertEqual(id(lines[1]), "s2", "the retry is answered with its own envelope id")
         XCTAssertEqual(ack(lines[1])?.captureId, "cap-r1")
         XCTAssertEqual(h.snapshot.filter { $0 == .capture(captureId: "cap-r1") }.count, 1)
 
         // Acknowledged now: a further retry is answered from memory at once.
         b.send(frame("s3", submit()))
-        let more = b.lines(atLeast: 3)
+        let more = try b.lines(atLeast: 3)
         XCTAssertEqual(id(more[2]), "s3")
         XCTAssertEqual(ack(more[2])?.captureId, "cap-r1")
         XCTAssertEqual(sink.count, 1)
@@ -148,7 +148,7 @@ final class NearbyReconnectTests: XCTestCase {
         var other = submit()
         other.instructions = "changed"
         b.send(frame("s4", other))
-        XCTAssertEqual(errorCode(b.lines(atLeast: 4)[3]), "capture_id_conflict")
+        XCTAssertEqual(errorCode(try b.lines(atLeast: 4)[3]), "capture_id_conflict")
         XCTAssertEqual(h.listener.memory.count(pairId: Self.pairId), 1)
         b.cancel()
     }
@@ -163,7 +163,7 @@ final class NearbyReconnectTests: XCTestCase {
         defer { h.stop() }
         let a = connect(h)
         hello(a)
-        XCTAssertEqual(type(a.lines(atLeast: 1)[0]), "hello_ack")
+        XCTAssertEqual(type(try a.lines(atLeast: 1)[0]), "hello_ack")
         // Park the listener queue so the frame is budgeted and remembered but
         // its validation result cannot be applied until the peer is gone.
         let gate = DispatchSemaphore(value: 0)
@@ -182,9 +182,9 @@ final class NearbyReconnectTests: XCTestCase {
         }
         let b = connect(h)
         hello(b)
-        XCTAssertEqual(type(b.lines(atLeast: 1)[0]), "hello_ack")
+        XCTAssertEqual(type(try b.lines(atLeast: 1)[0]), "hello_ack")
         b.send(frame("v2", s))
-        let replies = b.lines(atLeast: 2, timeout: 15)
+        let replies = try b.lines(atLeast: 2, timeout: 15)
         XCTAssertEqual(replies.count >= 2 ? ack(replies[1])?.captureId : nil, "cap-v1",
                        "\(replies.map { String(decoding: $0, as: UTF8.self) })")
         XCTAssertEqual(sink.count, 1, "delivered exactly once whichever side of the drop validation landed on")
@@ -204,9 +204,9 @@ final class NearbyReconnectTests: XCTestCase {
         try h1.start()
         let a = connect(h1)
         hello(a)
-        XCTAssertEqual(type(a.lines(atLeast: 1)[0]), "hello_ack")
+        XCTAssertEqual(type(try a.lines(atLeast: 1)[0]), "hello_ack")
         a.send(frame("s1", submit()))
-        XCTAssertEqual(ack(a.lines(atLeast: 2)[1])?.captureId, "cap-r1")
+        XCTAssertEqual(ack(try a.lines(atLeast: 2)[1])?.captureId, "cap-r1")
         XCTAssertEqual(sink.count, 1)
 
         let other = NearbyListener.PSKEntry(identity: "pair-other", key: NearbyListenerTests.pskB, isBootstrap: false)
@@ -221,14 +221,14 @@ final class NearbyReconnectTests: XCTestCase {
 
         let b = connect(h2)
         hello(b)
-        XCTAssertEqual(type(b.lines(atLeast: 1)[0]), "hello_ack")
+        XCTAssertEqual(type(try b.lines(atLeast: 1)[0]), "hello_ack")
         b.send(frame("s2", submit()))
-        XCTAssertEqual(ack(b.lines(atLeast: 2)[1])?.captureId, "cap-r1")
+        XCTAssertEqual(ack(try b.lines(atLeast: 2)[1])?.captureId, "cap-r1")
         XCTAssertEqual(sink.count, 1, "acknowledged from the adopted memory, not re-delivered")
         XCTAssertTrue(h2.snapshot.contains(.captureDuplicate(identity: Self.pairId, captureId: "cap-r1")))
         // The adopted session keeps working too.
         a.send(frame("s3", submit()))
-        XCTAssertEqual(ack(a.lines(atLeast: 3)[2])?.captureId, "cap-r1")
+        XCTAssertEqual(ack(try a.lines(atLeast: 3)[2])?.captureId, "cap-r1")
         XCTAssertEqual(sink.count, 1)
 
         // Forgetting the pairing drops its sessions and its memory.
@@ -291,7 +291,7 @@ final class NearbyReconnectTests: XCTestCase {
         // 2. Authenticated peer that never says hello: hello_timeout, then close.
         let mute = connect(h)
         let t1 = Date()
-        let l = mute.lines(atLeast: 1)
+        let l = try mute.lines(atLeast: 1)
         XCTAssertEqual(errorCode(l[0]), "hello_timeout")
         XCTAssertEqual(XCTWaiter.wait(for: [mute.closed], timeout: 5), .completed)
         let helloClose = Date().timeIntervalSince(t1)
@@ -301,7 +301,7 @@ final class NearbyReconnectTests: XCTestCase {
         // 3. Slow-loris: hello, then one byte of a frame at a time, never a newline.
         let slow = connect(h)
         hello(slow)
-        XCTAssertEqual(type(slow.lines(atLeast: 1)[0]), "hello_ack")
+        XCTAssertEqual(type(try slow.lines(atLeast: 1)[0]), "hello_ack")
         let full = frame("s1", submit())
         let t2 = Date()
         var offset = 0
@@ -312,7 +312,7 @@ final class NearbyReconnectTests: XCTestCase {
             slow.send(full[offset..<offset + 1]); offset += 1
         }
         feeder.resume()
-        let sl = slow.lines(atLeast: 2)
+        let sl = try slow.lines(atLeast: 2)
         feeder.cancel()
         XCTAssertEqual(errorCode(sl[1]), "frame_timeout")
         XCTAssertEqual(XCTWaiter.wait(for: [slow.closed], timeout: 5), .completed)
@@ -327,15 +327,15 @@ final class NearbyReconnectTests: XCTestCase {
         let live = connect(h)
         usleep(150_000)
         hello(live)
-        XCTAssertEqual(type(live.lines(atLeast: 1)[0]), "hello_ack")
+        XCTAssertEqual(type(try live.lines(atLeast: 1)[0]), "hello_ack")
         live.send(full.prefix(full.count / 2))
         usleep(250_000)
         live.send(full.suffix(from: full.count / 2))
-        XCTAssertEqual(ack(live.lines(atLeast: 2)[1])?.captureId, "cap-r1")
+        XCTAssertEqual(ack(try live.lines(atLeast: 2)[1])?.captureId, "cap-r1")
         usleep(900_000) // idle between frames: no deadline is armed
         XCTAssertTrue(live.isReady && !live.isClosed, "idle authenticated session is kept")
         live.send(frame("s2", submit("cap-r2")))
-        XCTAssertEqual(ack(live.lines(atLeast: 3)[2])?.captureId, "cap-r2")
+        XCTAssertEqual(ack(try live.lines(atLeast: 3)[2])?.captureId, "cap-r2")
         XCTAssertEqual(sink.count, 2)
         print(String(format: "measured: handshake close %.2fs, hello close %.2fs, frame close %.2fs (deadlines 0.4/0.4/0.6s), load %.1f",
                      handshakeClose, helloClose, frameClose, load))
@@ -360,12 +360,12 @@ final class NearbyReconnectTests: XCTestCase {
 
         let c = connect(h)
         hello(c)
-        XCTAssertEqual(type(c.lines(atLeast: 1)[0]), "hello_ack")
+        XCTAssertEqual(type(try c.lines(atLeast: 1)[0]), "hello_ack")
         // 3000 pending + a 2000-byte chunk with no newline: cannot end inside 4096.
         c.send(Data(repeating: 0x20, count: 3000))
         usleep(100_000)
         c.send(Data(repeating: 0x20, count: 2000))
-        let l = c.lines(atLeast: 2)
+        let l = try c.lines(atLeast: 2)
         XCTAssertEqual(errorCode(l[1]), "line_too_long")
         XCTAssertEqual(XCTWaiter.wait(for: [c.closed], timeout: 5), .completed)
         waitUntil("close reason") { closedEvents(h, identity: Self.pairId).contains("unterminated line too long") }
@@ -375,7 +375,7 @@ final class NearbyReconnectTests: XCTestCase {
         // closed), and the bytes after the newline start the next line.
         let d = connect(h)
         hello(d)
-        XCTAssertEqual(type(d.lines(atLeast: 1)[0]), "hello_ack")
+        XCTAssertEqual(type(try d.lines(atLeast: 1)[0]), "hello_ack")
         var line = Data("{\"protocol_version\":1,\"id\":\"pad\",\"type\":\"noop\",\"payload\":{\"x\":\"".utf8)
         line.append(Data(repeating: 0x61, count: 3500 - line.count))
         d.send(line)
@@ -387,11 +387,11 @@ final class NearbyReconnectTests: XCTestCase {
         XCTAssertGreaterThan(3500 + tail.count, 4096, "the chunk does exceed the limit")
         XCTAssertLessThanOrEqual(3500 + 504, 4096, "but the line it completes fits")
         d.send(tail)
-        let dl = d.lines(atLeast: 2)
+        let dl = try d.lines(atLeast: 2)
         XCTAssertEqual(errorCode(dl[1]), "unknown_type")
         XCTAssertEqual(id(dl[1]), "pad")
         d.send(Data("\"},\"type\":\"destination_query\"}\n".utf8))
-        XCTAssertEqual(type(d.lines(atLeast: 3)[2]), "destination")
+        XCTAssertEqual(type(try d.lines(atLeast: 3)[2]), "destination")
         XCTAssertTrue(d.isReady && !d.isClosed)
         d.cancel()
 

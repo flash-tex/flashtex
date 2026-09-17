@@ -97,6 +97,7 @@ final class EditHistoryTests: XCTestCase {
         XCTAssertEqual(rows.map(\.steps), [1, 1, 2, 1, 1, 2])
         XCTAssertEqual(rows.map(\.distance), [0, 1, 2, 4, 5, 6], "distance is the newest step's depth from the next undo")
         XCTAssertEqual(rows.map(\.kind), [.typing, .group, .typing, .reload, .capture, .typing])
+        guard rows.count == 6 else { return XCTFail("expected six rows, got \(rows.count)") }
         XCTAssertEqual(rows[4].detail, "Capture cap-7")
         XCTAssertEqual(rows[3].detail, "recorded by the ledger as “Source edit”")
         XCTAssertEqual(Set(rows.map(\.id)).count, rows.count)

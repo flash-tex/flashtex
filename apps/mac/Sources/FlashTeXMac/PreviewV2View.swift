@@ -33,6 +33,15 @@ enum V2Source: Equatable {
     }
     var url: URL? { if case .file(let u) = self { u } else { nil } }
     var isLive: Bool { if case .worker = self { true } else { false } }
+    /// The live line is a `display_list_delta` (display-list-v2-delta): the
+    /// frame was reconstructed from it and the installed base, so the line is
+    /// not a display list on its own and cannot be handed to a list-file tool
+    /// (`flashtex-pdf-exact` refuses it: `type "display_list_delta" is not
+    /// display_list`). Every edit after the first full frame arrives this way.
+    var isDeltaLine: Bool {
+        guard case .worker(_, _, _, let line) = self else { return false }
+        return RenderingV2Fast.header(line)?.type == DisplayListDelta.messageType
+    }
 
     /// A file holding the list: the opened file, or the live line written to a
     /// temporary file named by request id and revision.

@@ -1,0 +1,14 @@
+# tabular-follower-digits-10pt: every baseline pdflatex set on the page.
+# <baseline, bp from the page top> <expected residual bp> <tol bp> <first word>
+# Residual 0 means this engine must agree with pdfTeX. A non-zero residual
+# is the cmr - ec-lmr `charht` difference of that line's tallest glyph; see
+# the test's module docs for why `\lineskip` exposes it.
+81.96300 0.00000 0.1 Alpha
+93.91800 0.00000 0.1 Bravo
+103.68100 0.00000 0.1 Problem
+116.03500 0.00000 0.1 Duplicate
+127.99000 0.00000 0.1 Stale
+139.94500 0.00000 0.1 Bottlenecks
+151.34700 0.00000 0.16 123
+163.30200 0.00000 0.16 Delta
+175.25700 0.00000 0.16 Echo

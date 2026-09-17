@@ -229,7 +229,7 @@ final class AdmissionCorrelationTests: XCTestCase {
         try await waitUntil("A released and B sent", 15) { model.controllerState.inFlight?.editorRevision == revB }
         let releasesAfterA = releaseLines(model)
         XCTAssertEqual(releasesAfterA.count, 1, "A was released exactly once: \(releasesAfterA)")
-        let releaseA = releasesAfterA[0]
+        let releaseA = try XCTUnwrap(releasesAfterA.first)
         XCTAssertTrue(releaseA.contains("(in flight revision \(revA))"), releaseA)
         let rebound = model.workerLog.first { $0.contains("superseded admitted compile \(admittedA.requestID)") }
         if let rebound {
@@ -248,6 +248,7 @@ final class AdmissionCorrelationTests: XCTestCase {
         try await waitUntil("B previewed", 15) { model.result?.revision == revB && model.controllerState.inFlight == nil }
         let releases = releaseLines(model)
         XCTAssertEqual(releases.count, 2, "one release per edit: \(releases)")
+        guard releases.count == 2 else { return XCTFail("expected two releases, got \(releases.count)") }
         XCTAssertTrue(releases[1].contains("preview \(admittedB.requestID) is the admitted compile"), releases[1])
         XCTAssertTrue(releases[1].contains("(in flight revision \(revB))"), releases[1])
         let holds = holdLines(model)
@@ -311,12 +312,15 @@ final class AdmissionCorrelationTests: XCTestCase {
         XCTAssertTrue(releaseLines(model).isEmpty, "\(releaseLines(model))")
         let holds = holdLines(model)
         XCTAssertEqual(holds.count, 4, "\(holds)")
+        guard holds.count == 4 else { return XCTFail("expected four holds, got \(holds.count)") }
         XCTAssertTrue(holds[0].contains("stale \(forgedID) is not the admitted compile \(pair.requestID)"), holds[0])
         XCTAssertTrue(holds[3].contains("carries compile_revision \(pair.compileRevision! + 1), admitted \(pair.compileRevision!)"), holds[3])
 
         try await waitUntil("its own preview") { model.result?.revision == edited && model.controllerState.inFlight == nil }
-        XCTAssertEqual(releaseLines(model).count, 1)
-        XCTAssertTrue(releaseLines(model)[0].contains("preview \(pair.requestID) is the admitted compile"))
+        let finalReleases = releaseLines(model)
+        XCTAssertEqual(finalReleases.count, 1)
+        let finalRelease = try XCTUnwrap(finalReleases.first)
+        XCTAssertTrue(finalRelease.contains("preview \(pair.requestID) is the admitted compile"))
     }
 
     // MARK: fake helper (edit replies without the pair)

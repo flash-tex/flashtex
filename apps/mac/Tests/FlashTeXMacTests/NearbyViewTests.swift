@@ -39,6 +39,8 @@ final class NearbyViewControllerTests: XCTestCase {
                               announcer: { [weak self] in self?.announced.append($0) })
     }
 
+    struct TimedOut: Error {}
+
     private func waitUntil(_ what: String, timeout: TimeInterval = 6, file: StaticString = #filePath, line: UInt = #line,
                            _ cond: @escaping @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
@@ -47,6 +49,7 @@ final class NearbyViewControllerTests: XCTestCase {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
         XCTFail("timed out waiting for \(what)", file: file, line: line)
+        throw TimedOut()
     }
 
     /// Opens a bootstrap connection with `code` and completes hello; returns
@@ -562,6 +565,8 @@ final class NearbyViewControllerTests: XCTestCase {
 /// Never activates the app; skipped unless the directory is set.
 @MainActor
 final class NearbyAppEvidenceTests: XCTestCase {
+    struct TimedOut: Error {}
+
     private func waitUntil(_ what: String, timeout: TimeInterval = 15, _ cond: () throws -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -569,6 +574,7 @@ final class NearbyAppEvidenceTests: XCTestCase {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         XCTFail("timed out waiting for \(what)")
+        throw TimedOut()
     }
 
     private func run(_ exe: String, _ args: [String]) throws -> String {

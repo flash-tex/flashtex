@@ -107,6 +107,7 @@ final class OverlayTests: XCTestCase {
         XCTAssertEqual(lines.map { $0.accessibilityLabel() },
                        ["Page 2, line 1: Method", "Page 2, line 2: Résumé of the steps.", "Page 2, line 3: oops"])
         XCTAssertTrue(lines.allSatisfy { $0.accessibilityParent() as AnyObject === view })
+        guard lines.count == 3 else { return XCTFail("expected three lines, got \(lines.count)") }
 
         let items = try XCTUnwrap(lines[1].accessibilityChildren() as? [PreviewAXElement])
         XCTAssertEqual(items.map { $0.accessibilityRole() }, [.staticText, .staticText])

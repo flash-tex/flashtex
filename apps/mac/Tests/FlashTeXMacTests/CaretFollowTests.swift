@@ -624,7 +624,8 @@ final class CaretFollowHostedTests: XCTestCase {
         print(String(format: "caret-follow hosted: page 3 @ 300 pt is off screen → scrolled 0 → %.1f pt (expected %.1f)", top, expected))
         XCTAssertEqual(top, expected, accuracy: 1.5)
         XCTAssertEqual(probe.followDecisions.count, 1)
-        guard case .scroll = probe.followDecisions[0].decision else { return XCTFail("expected a scroll decision") }
+        guard let firstDecision = probe.followDecisions.first else { return XCTFail("expected one follow decision") }
+        guard case .scroll = firstDecision.decision else { return XCTFail("expected a scroll decision") }
 
         // (2) A caret a few lines further down the same page is already on
         // screen: the decision is `alreadyVisible` and nothing moves at all.
@@ -633,6 +634,7 @@ final class CaretFollowHostedTests: XCTestCase {
         try await settle(0.3)
         XCTAssertEqual(PreviewAnchoringTests.visibleTop(scroll), top, accuracy: 0.5, "a visible caret never yanks the preview")
         XCTAssertEqual(probe.followDecisions.count, 2)
+        guard probe.followDecisions.count == 2 else { return XCTFail("expected two follow decisions, got \(probe.followDecisions.count)") }
         XCTAssertEqual(probe.followDecisions[1].decision, .alreadyVisible)
 
         // (3) Re-applying the same request (SwiftUI re-evaluates the body for

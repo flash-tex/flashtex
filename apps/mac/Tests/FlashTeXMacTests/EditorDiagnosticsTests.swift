@@ -77,13 +77,15 @@ final class EditorDiagnosticsTests: XCTestCase {
         let marks = EditorDiagnostics.marks(for: recovered, path: "main.tex", compiledText: Self.text, currentText: Self.text)
         XCTAssertEqual(marks.map(\.severity), [.error, .warning], "recovery never downgrades or hides the error")
         XCTAssertEqual(marks.map(\.recoveryLine), ["no provisional rendering", "no provisional rendering"])
+        guard marks.count == 2 else { return XCTFail("expected two marks, got \(marks.count)") }
         XCTAssertEqual(marks[0].toolTip, "error here\n↳ no provisional rendering")
         XCTAssertEqual(marks[1].spokenDescription, "Warning: warning here — no provisional rendering")
 
         let ok = result([diagnostic(.warning)], status: .ok)
         let okMarks = EditorDiagnostics.marks(for: ok, path: "main.tex", compiledText: Self.text, currentText: Self.text)
         XCTAssertEqual(okMarks.map(\.recoveryLine), [nil])
-        XCTAssertEqual(okMarks[0].toolTip, "warning here")
+        guard let firstOkMark = okMarks.first else { return XCTFail("expected one mark") }
+        XCTAssertEqual(firstOkMark.toolTip, "warning here")
 
         let failed = result([diagnostic(.error)], status: .failed)
         let failedMarks = EditorDiagnostics.marks(for: failed, path: "main.tex", compiledText: Self.text, currentText: Self.text)
@@ -188,8 +190,9 @@ final class EditorDiagnosticsTests: XCTestCase {
         let edited = "abc\u{301}"
         let marks = EditorDiagnostics.marks(for: res, path: "main.tex", compiledText: "abc", currentText: edited)
         XCTAssertEqual(marks.map(\.nsRange), [NSRange(location: 2, length: 2)])
-        XCTAssertEqual((edited as NSString).substring(with: marks[0].nsRange), "c\u{301}")
-        XCTAssertEqual(edited[Range(marks[0].nsRange, in: edited)!].count, 1, "one Character")
+        let mark = try XCTUnwrap(marks.first)
+        XCTAssertEqual((edited as NSString).substring(with: mark.nsRange), "c\u{301}")
+        XCTAssertEqual(edited[try XCTUnwrap(Range(mark.nsRange, in: edited))].count, 1, "one Character")
 
         // Family emoji: 👨‍👩‍👧 = 3 scalars joined by 2 ZWJ, 18 bytes, 8 UTF-16 units.
         let family = "x\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}y"
@@ -198,7 +201,8 @@ final class EditorDiagnosticsTests: XCTestCase {
         let mid = EditorDiagnostics.marks(for: result([diagnostic(.warning, start: 5, end: 8)]), path: "main.tex",
                                           compiledText: family, currentText: family)
         XCTAssertEqual(mid.map(\.nsRange), [NSRange(location: 1, length: 8)])
-        XCTAssertEqual((family as NSString).substring(with: mid[0].nsRange), "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}")
+        let midMark = try XCTUnwrap(mid.first)
+        XCTAssertEqual((family as NSString).substring(with: midMark.nsRange), "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}")
         // A zero-length span inside the cluster covers the cluster too; a span
         // ending exactly at the cluster end is left alone.
         let point = EditorDiagnostics.marks(for: result([diagnostic(.warning, start: 5, end: 5)]), path: "main.tex",
@@ -260,6 +264,7 @@ final class EditorDiagnosticsTests: XCTestCase {
         // 100 marks before the edit (rebased unchanged), 99 after (shifted by
         // one byte), and the one on line 500 is stale.
         XCTAssertEqual(report.marks.count, 199)
+        guard report.marks.count == 199 else { return XCTFail("expected 199 marks, got \(report.marks.count)") }
         XCTAssertEqual(report.staleCount, 1)
         XCTAssertEqual(report.stale.first?.identity.index, 100)
         XCTAssertEqual(report.marks[99].nsRange.location, report.marks[98].nsRange.location + 5 * (line as NSString).length)
@@ -290,6 +295,7 @@ final class EditorDiagnosticsTests: XCTestCase {
         ])
         let marks = EditorDiagnostics.marks(for: res, resultID: "r", path: "main.tex", compiledText: text, currentText: text)
         XCTAssertEqual(marks.map(\.diagnosticIndex), [0, 1, 2], "marks follow result order")
+        guard marks.count == 3 else { return XCTFail("expected three marks, got \(marks.count)") }
         let items = EditorDiagnostics.navigationItems(marks)
         XCTAssertEqual(items.map(\.id), ["r#1@main.tex:6..<12", "r#0@main.tex:17..<23", "r#2@main.tex:29..<34"],
                        "navigation is in document order")

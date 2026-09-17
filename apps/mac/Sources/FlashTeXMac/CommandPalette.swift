@@ -397,7 +397,10 @@ struct CommandPalette: View {
         case .file(let path, let open, let from):
             dismiss()
             if open { model.switchOrNote(path) }
-            else { Task { await model.project.openDocument(path, role: from.map { .included(from: $0) } ?? .opened) } }
+            else {
+                let role: ProjectDocument.Role = from.map { .included(from: $0) } ?? .opened
+                Task { await model.openAndSwitch(path, role: role) { model.navigationNote = $0 } }
+            }
         case .outline(let item):
             dismiss()
             model.reveal(outlineItem: item)

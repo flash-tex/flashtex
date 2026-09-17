@@ -1,0 +1,5889 @@
+{
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "setups": {
+  "ot1": {
+   "00A0": {
+    "errors": [],
+    "width_sp": 218453
+   },
+   "00A1": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "00A2": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00A3": {
+    "errors": [],
+    "width_sp": 418600
+   },
+   "00A4": {
+    "errors": [],
+    "width_sp": 482655
+   },
+   "00A5": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "00A6": {
+    "errors": [],
+    "width_sp": 109200
+   },
+   "00A7": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00A8": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00A9": {
+    "errors": [],
+    "width_sp": 728000
+   },
+   "00AA": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00AB": {
+    "errors": [
+     "LaTeX Error: Command \\guillemetleft unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "00AC": {
+    "errors": [],
+    "width_sp": 436800
+   },
+   "00AD": {
+    "errors": [],
+    "width_sp": 0
+   },
+   "00AE": {
+    "errors": [],
+    "width_sp": 728000
+   },
+   "00AF": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "00B0": {
+    "errors": [],
+    "width_sp": 218400
+   },
+   "00B1": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "00B2": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00B3": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00B4": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00B5": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "00B6": {
+    "errors": [],
+    "width_sp": 400400
+   },
+   "00B7": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "00B8": {
+    "errors": [],
+    "width_sp": 218453
+   },
+   "00B9": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00BA": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00BB": {
+    "errors": [
+     "LaTeX Error: Command \\guillemetright unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "00BC": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00BD": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00BE": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00BF": {
+    "errors": [],
+    "width_sp": 309476
+   },
+   "00C0": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "00C1": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "00C2": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "00C3": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "00C4": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "00C5": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "00C6": {
+    "errors": [],
+    "width_sp": 591646
+   },
+   "00C7": {
+    "errors": [],
+    "width_sp": 473316
+   },
+   "00C8": {
+    "errors": [],
+    "width_sp": 446010
+   },
+   "00C9": {
+    "errors": [],
+    "width_sp": 446010
+   },
+   "00CA": {
+    "errors": [],
+    "width_sp": 446010
+   },
+   "00CB": {
+    "errors": [],
+    "width_sp": 446010
+   },
+   "00CC": {
+    "errors": [],
+    "width_sp": 236658
+   },
+   "00CD": {
+    "errors": [],
+    "width_sp": 236658
+   },
+   "00CE": {
+    "errors": [],
+    "width_sp": 236658
+   },
+   "00CF": {
+    "errors": [],
+    "width_sp": 236658
+   },
+   "00D0": {
+    "errors": [
+     "LaTeX Error: Command \\DH unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "00D1": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "00D2": {
+    "errors": [],
+    "width_sp": 509726
+   },
+   "00D3": {
+    "errors": [],
+    "width_sp": 509726
+   },
+   "00D4": {
+    "errors": [],
+    "width_sp": 509726
+   },
+   "00D5": {
+    "errors": [],
+    "width_sp": 509726
+   },
+   "00D6": {
+    "errors": [],
+    "width_sp": 509726
+   },
+   "00D7": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "00D8": {
+    "errors": [],
+    "width_sp": 509726
+   },
+   "00D9": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "00DA": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "00DB": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "00DC": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "00DD": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "00DE": {
+    "errors": [
+     "LaTeX Error: Command \\TH unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "00DF": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "00E0": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "00E1": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "00E2": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "00E3": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "00E4": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "00E5": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "00E6": {
+    "errors": [],
+    "width_sp": 473316
+   },
+   "00E7": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "00E8": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "00E9": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "00EA": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "00EB": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "00EC": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "00ED": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "00EE": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "00EF": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "00F0": {
+    "errors": [
+     "LaTeX Error: Command \\dh unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "00F1": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "00F2": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "00F3": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "00F4": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "00F5": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "00F6": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "00F7": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "00F8": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "00F9": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "00FA": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "00FB": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "00FC": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "00FD": {
+    "errors": [],
+    "width_sp": 345886
+   },
+   "00FE": {
+    "errors": [
+     "LaTeX Error: Command \\th unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "00FF": {
+    "errors": [],
+    "width_sp": 345886
+   },
+   "0100": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "0101": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "0102": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "0103": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "0104": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 491521
+   },
+   "0105": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 327681
+   },
+   "0106": {
+    "errors": [],
+    "width_sp": 473316
+   },
+   "0107": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "0108": {
+    "errors": [],
+    "width_sp": 473316
+   },
+   "0109": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "010A": {
+    "errors": [],
+    "width_sp": 473316
+   },
+   "010B": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "010C": {
+    "errors": [],
+    "width_sp": 473316
+   },
+   "010D": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "010E": {
+    "errors": [],
+    "width_sp": 500623
+   },
+   "010F": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "0110": {
+    "errors": [
+     "LaTeX Error: Command \\DJ unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "0111": {
+    "errors": [
+     "LaTeX Error: Command \\dj unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "0112": {
+    "errors": [],
+    "width_sp": 446010
+   },
+   "0113": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "0114": {
+    "errors": [],
+    "width_sp": 446010
+   },
+   "0115": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "0116": {
+    "errors": [],
+    "width_sp": 446010
+   },
+   "0117": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "0118": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 446010
+   },
+   "0119": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 291271
+   },
+   "011A": {
+    "errors": [],
+    "width_sp": 446010
+   },
+   "011B": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "011C": {
+    "errors": [],
+    "width_sp": 514276
+   },
+   "011D": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "011E": {
+    "errors": [],
+    "width_sp": 514276
+   },
+   "011F": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "0120": {
+    "errors": [],
+    "width_sp": 514276
+   },
+   "0121": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "0122": {
+    "errors": [],
+    "width_sp": 514276
+   },
+   "0123": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "0124": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "0125": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "0128": {
+    "errors": [],
+    "width_sp": 236658
+   },
+   "0129": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "012A": {
+    "errors": [],
+    "width_sp": 236658
+   },
+   "012B": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "012C": {
+    "errors": [],
+    "width_sp": 236658
+   },
+   "012D": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "012E": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 236658
+   },
+   "012F": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 182045
+   },
+   "0130": {
+    "errors": [],
+    "width_sp": 236658
+   },
+   "0131": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "0132": {
+    "errors": [],
+    "width_sp": 560331
+   },
+   "0133": {
+    "errors": [],
+    "width_sp": 369185
+   },
+   "0134": {
+    "errors": [],
+    "width_sp": 336783
+   },
+   "0135": {
+    "errors": [],
+    "width_sp": 200250
+   },
+   "0136": {
+    "errors": [],
+    "width_sp": 509726
+   },
+   "0137": {
+    "errors": [],
+    "width_sp": 345886
+   },
+   "0139": {
+    "errors": [],
+    "width_sp": 409601
+   },
+   "013A": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "013B": {
+    "errors": [],
+    "width_sp": 409601
+   },
+   "013C": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "013D": {
+    "errors": [],
+    "width_sp": 409601
+   },
+   "013E": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "0141": {
+    "errors": [],
+    "width_sp": 409601
+   },
+   "0142": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "0143": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "0144": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "0145": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "0146": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "0147": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "0148": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "014A": {
+    "errors": [
+     "LaTeX Error: Command \\NG unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "014B": {
+    "errors": [
+     "LaTeX Error: Command \\ng unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "014C": {
+    "errors": [],
+    "width_sp": 509726
+   },
+   "014D": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "014E": {
+    "errors": [],
+    "width_sp": 509726
+   },
+   "014F": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "0150": {
+    "errors": [],
+    "width_sp": 509726
+   },
+   "0151": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "0152": {
+    "errors": [],
+    "width_sp": 664463
+   },
+   "0153": {
+    "errors": [],
+    "width_sp": 509726
+   },
+   "0154": {
+    "errors": [],
+    "width_sp": 482418
+   },
+   "0155": {
+    "errors": [],
+    "width_sp": 256683
+   },
+   "0156": {
+    "errors": [],
+    "width_sp": 482418
+   },
+   "0157": {
+    "errors": [],
+    "width_sp": 256683
+   },
+   "0158": {
+    "errors": [],
+    "width_sp": 482418
+   },
+   "0159": {
+    "errors": [],
+    "width_sp": 256683
+   },
+   "015A": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "015B": {
+    "errors": [],
+    "width_sp": 258503
+   },
+   "015C": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "015D": {
+    "errors": [],
+    "width_sp": 258503
+   },
+   "015E": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "015F": {
+    "errors": [],
+    "width_sp": 258503
+   },
+   "0160": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "0161": {
+    "errors": [],
+    "width_sp": 258503
+   },
+   "0162": {
+    "errors": [],
+    "width_sp": 473316
+   },
+   "0163": {
+    "errors": [],
+    "width_sp": 254863
+   },
+   "0164": {
+    "errors": [],
+    "width_sp": 473316
+   },
+   "0165": {
+    "errors": [],
+    "width_sp": 254863
+   },
+   "0168": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "0169": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "016A": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "016B": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "016C": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "016D": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "016E": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "016F": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "0170": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "0171": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "0172": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 491521
+   },
+   "0173": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 364090
+   },
+   "0174": {
+    "errors": [],
+    "width_sp": 673566
+   },
+   "0175": {
+    "errors": [],
+    "width_sp": 473316
+   },
+   "0176": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "0177": {
+    "errors": [],
+    "width_sp": 345886
+   },
+   "0178": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "0179": {
+    "errors": [],
+    "width_sp": 400498
+   },
+   "017A": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "017B": {
+    "errors": [],
+    "width_sp": 400498
+   },
+   "017C": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "017D": {
+    "errors": [],
+    "width_sp": 400498
+   },
+   "017E": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "0192": {
+    "errors": [],
+    "width_sp": 200200
+   },
+   "01C4": {
+    "errors": [],
+    "width_sp": 901121
+   },
+   "01C5": {
+    "errors": [],
+    "width_sp": 791894
+   },
+   "01C6": {
+    "errors": [],
+    "width_sp": 655361
+   },
+   "01C7": {
+    "errors": [],
+    "width_sp": 746384
+   },
+   "01C8": {
+    "errors": [],
+    "width_sp": 609851
+   },
+   "01C9": {
+    "errors": [],
+    "width_sp": 382295
+   },
+   "01CA": {
+    "errors": [],
+    "width_sp": 828304
+   },
+   "01CB": {
+    "errors": [],
+    "width_sp": 691771
+   },
+   "01CC": {
+    "errors": [],
+    "width_sp": 564340
+   },
+   "01CD": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "01CE": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "01CF": {
+    "errors": [],
+    "width_sp": 236658
+   },
+   "01D0": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "01D1": {
+    "errors": [],
+    "width_sp": 509726
+   },
+   "01D2": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "01D3": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "01D4": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "01E2": {
+    "errors": [],
+    "width_sp": 591646
+   },
+   "01E3": {
+    "errors": [],
+    "width_sp": 473316
+   },
+   "01E6": {
+    "errors": [],
+    "width_sp": 514276
+   },
+   "01E7": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "01E8": {
+    "errors": [],
+    "width_sp": 509726
+   },
+   "01E9": {
+    "errors": [],
+    "width_sp": 345886
+   },
+   "01EA": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 509726
+   },
+   "01EB": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 327681
+   },
+   "01F0": {
+    "errors": [],
+    "width_sp": 200250
+   },
+   "01F4": {
+    "errors": [],
+    "width_sp": 514276
+   },
+   "01F5": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "0218": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "0219": {
+    "errors": [],
+    "width_sp": 258503
+   },
+   "021A": {
+    "errors": [],
+    "width_sp": 473316
+   },
+   "021B": {
+    "errors": [],
+    "width_sp": 254863
+   },
+   "0232": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "0233": {
+    "errors": [],
+    "width_sp": 345886
+   },
+   "0237": {
+    "errors": [],
+    "width_sp": 200250
+   },
+   "02C6": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "02C7": {
+    "errors": [],
+    "width_sp": 400400
+   },
+   "02D8": {
+    "errors": [],
+    "width_sp": 400400
+   },
+   "02D9": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "02DB": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "02DC": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "02DD": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "0301": {
+    "errors": [
+     "LaTeX Error: Unicode character ́ (U+0301) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "0308": {
+    "errors": [
+     "LaTeX Error: Unicode character ̈ (U+0308) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "03B1": {
+    "errors": [
+     "LaTeX Error: Unicode character α (U+03B1) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "03C0": {
+    "errors": [
+     "LaTeX Error: Unicode character π (U+03C0) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "0416": {
+    "errors": [
+     "LaTeX Error: Unicode character Ж (U+0416) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "0E3F": {
+    "errors": [],
+    "width_sp": 464100
+   },
+   "1E02": {
+    "errors": [],
+    "width_sp": 464215
+   },
+   "1E03": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "1E0D": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "1E1E": {
+    "errors": [],
+    "width_sp": 427806
+   },
+   "1E1F": {
+    "errors": [],
+    "width_sp": 200250
+   },
+   "1E20": {
+    "errors": [],
+    "width_sp": 514276
+   },
+   "1E21": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "1E25": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "1E30": {
+    "errors": [],
+    "width_sp": 509726
+   },
+   "1E31": {
+    "errors": [],
+    "width_sp": 345886
+   },
+   "1E37": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "1E43": {
+    "errors": [],
+    "width_sp": 546135
+   },
+   "1E45": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "1E47": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "1E5B": {
+    "errors": [],
+    "width_sp": 256683
+   },
+   "1E63": {
+    "errors": [],
+    "width_sp": 258503
+   },
+   "1E6D": {
+    "errors": [],
+    "width_sp": 254863
+   },
+   "1E8E": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "1E8F": {
+    "errors": [],
+    "width_sp": 345886
+   },
+   "1E90": {
+    "errors": [],
+    "width_sp": 400498
+   },
+   "1E91": {
+    "errors": [],
+    "width_sp": 291271
+   },
+   "1E9E": {
+    "errors": [],
+    "width_sp": 728180
+   },
+   "1EF2": {
+    "errors": [],
+    "width_sp": 491521
+   },
+   "1EF3": {
+    "errors": [],
+    "width_sp": 345886
+   },
+   "1F600": {
+    "errors": [
+     "LaTeX Error: Unicode character 😀 (U+1F600) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "200C": {
+    "errors": [],
+    "width_sp": 0
+   },
+   "2010": {
+    "errors": [],
+    "width_sp": 218453
+   },
+   "2011": {
+    "errors": [],
+    "width_sp": 218453
+   },
+   "2012": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "2013": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "2014": {
+    "errors": [],
+    "width_sp": 655361
+   },
+   "2015": {
+    "errors": [],
+    "width_sp": 655361
+   },
+   "2016": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "2018": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "2019": {
+    "errors": [],
+    "width_sp": 182045
+   },
+   "201A": {
+    "errors": [
+     "LaTeX Error: Command \\quotesinglbase unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "201C": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "201D": {
+    "errors": [],
+    "width_sp": 327681
+   },
+   "201E": {
+    "errors": [
+     "LaTeX Error: Command \\quotedblbase unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "2020": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "2021": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "2022": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "2026": {
+    "errors": [],
+    "width_sp": 873813
+   },
+   "2030": {
+    "errors": [],
+    "width_sp": 764400
+   },
+   "2031": {
+    "errors": [],
+    "width_sp": 991293
+   },
+   "2039": {
+    "errors": [
+     "LaTeX Error: Command \\guilsinglleft unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "203A": {
+    "errors": [
+     "LaTeX Error: Command \\guilsinglright unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "203B": {
+    "errors": [],
+    "width_sp": 412531
+   },
+   "203D": {
+    "errors": [],
+    "width_sp": 309400
+   },
+   "2044": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "204E": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "2052": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "20A1": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "20A4": {
+    "errors": [],
+    "width_sp": 418600
+   },
+   "20A6": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "20A9": {
+    "errors": [],
+    "width_sp": 673400
+   },
+   "20AB": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "20AC": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "20B1": {
+    "errors": [],
+    "width_sp": 455000
+   },
+   "2103": {
+    "errors": [],
+    "width_sp": 618800
+   },
+   "2116": {
+    "errors": [],
+    "width_sp": 600600
+   },
+   "2117": {
+    "errors": [],
+    "width_sp": 728000
+   },
+   "211E": {
+    "errors": [],
+    "width_sp": 482300
+   },
+   "2120": {
+    "errors": [],
+    "width_sp": 436800
+   },
+   "2122": {
+    "errors": [],
+    "width_sp": 436800
+   },
+   "2126": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "2127": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "212E": {
+    "errors": [],
+    "width_sp": 443170
+   },
+   "2190": {
+    "errors": [],
+    "width_sp": 655200
+   },
+   "2191": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "2192": {
+    "errors": [],
+    "width_sp": 655200
+   },
+   "2193": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "2329": {
+    "errors": [],
+    "width_sp": 254800
+   },
+   "232A": {
+    "errors": [],
+    "width_sp": 254800
+   },
+   "2422": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "2423": {
+    "errors": [],
+    "width_sp": 288358
+   },
+   "25E6": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "25EF": {
+    "errors": [],
+    "width_sp": 728000
+   },
+   "266A": {
+    "errors": [],
+    "width_sp": 400400
+   },
+   "27E8": {
+    "errors": [],
+    "width_sp": 254800
+   },
+   "27E9": {
+    "errors": [],
+    "width_sp": 254800
+   },
+   "3008": {
+    "errors": [],
+    "width_sp": 254800
+   },
+   "3009": {
+    "errors": [],
+    "width_sp": 254800
+   },
+   "4E2D": {
+    "errors": [
+     "LaTeX Error: Unicode character 中 (U+4E2D) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "E000": {
+    "errors": [
+     "LaTeX Error: Unicode character  (U+E000) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "FB00": {
+    "errors": [],
+    "width_sp": 382295
+   },
+   "FB01": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "FB02": {
+    "errors": [],
+    "width_sp": 364090
+   },
+   "FB03": {
+    "errors": [],
+    "width_sp": 546135
+   },
+   "FB04": {
+    "errors": [],
+    "width_sp": 546135
+   },
+   "FB05": {
+    "errors": [],
+    "width_sp": 513366
+   },
+   "FB06": {
+    "errors": [],
+    "width_sp": 513366
+   },
+   "FEFF": {
+    "errors": [],
+    "width_sp": 0
+   }
+  },
+  "ot1-lm": {
+   "00A0": {
+    "errors": [],
+    "width_sp": 218453
+   },
+   "00A1": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "00A2": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "00A3": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00A4": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00A5": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00A6": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "00A7": {
+    "errors": [],
+    "width_sp": 317193
+   },
+   "00A8": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00A9": {
+    "errors": [],
+    "width_sp": 447806
+   },
+   "00AA": {
+    "errors": [],
+    "width_sp": 294518
+   },
+   "00AB": {
+    "errors": [
+     "LaTeX Error: Command \\guillemetleft unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "00AC": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00AD": {
+    "errors": [],
+    "width_sp": 0
+   },
+   "00AE": {
+    "errors": [],
+    "width_sp": 447806
+   },
+   "00AF": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00B0": {
+    "errors": [],
+    "width_sp": 245760
+   },
+   "00B1": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00B2": {
+    "errors": [],
+    "width_sp": 235471
+   },
+   "00B3": {
+    "errors": [],
+    "width_sp": 235471
+   },
+   "00B4": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00B5": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "00B6": {
+    "errors": [],
+    "width_sp": 400490
+   },
+   "00B7": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00B8": {
+    "errors": [],
+    "width_sp": 218453
+   },
+   "00B9": {
+    "errors": [],
+    "width_sp": 239708
+   },
+   "00BA": {
+    "errors": [],
+    "width_sp": 274693
+   },
+   "00BB": {
+    "errors": [
+     "LaTeX Error: Command \\guillemetright unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "00BC": {
+    "errors": [],
+    "width_sp": 540671
+   },
+   "00BD": {
+    "errors": [],
+    "width_sp": 540671
+   },
+   "00BE": {
+    "errors": [],
+    "width_sp": 540671
+   },
+   "00BF": {
+    "errors": [],
+    "width_sp": 309461
+   },
+   "00C0": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00C1": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00C2": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00C3": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00C4": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00C5": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00C6": {
+    "errors": [],
+    "width_sp": 591658
+   },
+   "00C7": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "00C8": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "00C9": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "00CA": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "00CB": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "00CC": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "00CD": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "00CE": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "00CF": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "00D0": {
+    "errors": [
+     "LaTeX Error: Command \\DH unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "00D1": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00D2": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00D3": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00D4": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00D5": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00D6": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00D7": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00D8": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00D9": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00DA": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00DB": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00DC": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00DD": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00DE": {
+    "errors": [
+     "LaTeX Error: Command \\TH unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "00DF": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00E0": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00E1": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00E2": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00E3": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00E4": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00E5": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00E6": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "00E7": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "00E8": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "00E9": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "00EA": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "00EB": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "00EC": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "00ED": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "00EE": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "00EF": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "00F0": {
+    "errors": [
+     "LaTeX Error: Command \\dh unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "00F1": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "00F2": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00F3": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00F4": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00F5": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00F6": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00F7": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00F8": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00F9": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "00FA": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "00FB": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "00FC": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "00FD": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "00FE": {
+    "errors": [
+     "LaTeX Error: Command \\th unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "00FF": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "0100": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0101": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0102": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0103": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0104": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 491520
+   },
+   "0105": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 327680
+   },
+   "0106": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "0107": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "0108": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "0109": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "010A": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "010B": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "010C": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "010D": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "010E": {
+    "errors": [],
+    "width_sp": 500630
+   },
+   "010F": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0110": {
+    "errors": [
+     "LaTeX Error: Command \\DJ unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "0111": {
+    "errors": [
+     "LaTeX Error: Command \\dj unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "0112": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "0113": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "0114": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "0115": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "0116": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "0117": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "0118": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 446005
+   },
+   "0119": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 291275
+   },
+   "011A": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "011B": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "011C": {
+    "errors": [],
+    "width_sp": 514261
+   },
+   "011D": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "011E": {
+    "errors": [],
+    "width_sp": 514261
+   },
+   "011F": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0120": {
+    "errors": [],
+    "width_sp": 514261
+   },
+   "0121": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0122": {
+    "errors": [],
+    "width_sp": 514261
+   },
+   "0123": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0124": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0125": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0128": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "0129": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "012A": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "012B": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "012C": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "012D": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "012E": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 236650
+   },
+   "012F": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 182043
+   },
+   "0130": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "0131": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "0132": {
+    "errors": [],
+    "width_sp": 560330
+   },
+   "0133": {
+    "errors": [],
+    "width_sp": 369178
+   },
+   "0134": {
+    "errors": [],
+    "width_sp": 336790
+   },
+   "0135": {
+    "errors": [],
+    "width_sp": 200245
+   },
+   "0136": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "0137": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "0139": {
+    "errors": [],
+    "width_sp": 409600
+   },
+   "013A": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "013B": {
+    "errors": [],
+    "width_sp": 409600
+   },
+   "013C": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "013D": {
+    "errors": [],
+    "width_sp": 409600
+   },
+   "013E": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "0141": {
+    "errors": [],
+    "width_sp": 409600
+   },
+   "0142": {
+    "errors": [],
+    "width_sp": 182041
+   },
+   "0143": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0144": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0145": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0146": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0147": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0148": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "014A": {
+    "errors": [
+     "LaTeX Error: Command \\NG unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "014B": {
+    "errors": [
+     "LaTeX Error: Command \\ng unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "014C": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "014D": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "014E": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "014F": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0150": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "0151": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0152": {
+    "errors": [],
+    "width_sp": 664470
+   },
+   "0153": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "0154": {
+    "errors": [],
+    "width_sp": 482410
+   },
+   "0155": {
+    "errors": [],
+    "width_sp": 256683
+   },
+   "0156": {
+    "errors": [],
+    "width_sp": 482410
+   },
+   "0157": {
+    "errors": [],
+    "width_sp": 256683
+   },
+   "0158": {
+    "errors": [],
+    "width_sp": 482410
+   },
+   "0159": {
+    "errors": [],
+    "width_sp": 256683
+   },
+   "015A": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "015B": {
+    "errors": [],
+    "width_sp": 258506
+   },
+   "015C": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "015D": {
+    "errors": [],
+    "width_sp": 258506
+   },
+   "015E": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "015F": {
+    "errors": [],
+    "width_sp": 258506
+   },
+   "0160": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0161": {
+    "errors": [],
+    "width_sp": 258506
+   },
+   "0162": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "0163": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "0164": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "0165": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "0168": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0169": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "016A": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "016B": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "016C": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "016D": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "016E": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "016F": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0170": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0171": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0172": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 491520
+   },
+   "0173": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 364085
+   },
+   "0174": {
+    "errors": [],
+    "width_sp": 673578
+   },
+   "0175": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "0176": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0177": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "0178": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0179": {
+    "errors": [],
+    "width_sp": 400490
+   },
+   "017A": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "017B": {
+    "errors": [],
+    "width_sp": 400490
+   },
+   "017C": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "017D": {
+    "errors": [],
+    "width_sp": 400490
+   },
+   "017E": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "0192": {
+    "errors": [],
+    "width_sp": 200245
+   },
+   "01C4": {
+    "errors": [],
+    "width_sp": 901120
+   },
+   "01C5": {
+    "errors": [],
+    "width_sp": 791905
+   },
+   "01C6": {
+    "errors": [],
+    "width_sp": 655360
+   },
+   "01C7": {
+    "errors": [],
+    "width_sp": 746390
+   },
+   "01C8": {
+    "errors": [],
+    "width_sp": 609845
+   },
+   "01C9": {
+    "errors": [],
+    "width_sp": 382288
+   },
+   "01CA": {
+    "errors": [],
+    "width_sp": 828310
+   },
+   "01CB": {
+    "errors": [],
+    "width_sp": 691765
+   },
+   "01CC": {
+    "errors": [],
+    "width_sp": 564330
+   },
+   "01CD": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "01CE": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "01CF": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "01D0": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "01D1": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "01D2": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "01D3": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "01D4": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "01E2": {
+    "errors": [],
+    "width_sp": 591658
+   },
+   "01E3": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "01E6": {
+    "errors": [],
+    "width_sp": 514261
+   },
+   "01E7": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "01E8": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "01E9": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "01EA": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 509738
+   },
+   "01EB": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 327680
+   },
+   "01F0": {
+    "errors": [],
+    "width_sp": 200245
+   },
+   "01F4": {
+    "errors": [],
+    "width_sp": 514261
+   },
+   "01F5": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0218": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0219": {
+    "errors": [],
+    "width_sp": 258506
+   },
+   "021A": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "021B": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "0232": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0233": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "0237": {
+    "errors": [],
+    "width_sp": 200245
+   },
+   "02C6": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "02C7": {
+    "errors": [],
+    "width_sp": 400490
+   },
+   "02D8": {
+    "errors": [],
+    "width_sp": 400490
+   },
+   "02D9": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "02DB": {
+    "errors": [
+     "LaTeX Error: Command \\k unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "02DC": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "02DD": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0301": {
+    "errors": [
+     "LaTeX Error: Unicode character ́ (U+0301) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "0308": {
+    "errors": [
+     "LaTeX Error: Unicode character ̈ (U+0308) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "03B1": {
+    "errors": [
+     "LaTeX Error: Unicode character α (U+03B1) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "03C0": {
+    "errors": [
+     "LaTeX Error: Unicode character π (U+03C0) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "0416": {
+    "errors": [
+     "LaTeX Error: Unicode character Ж (U+0416) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "0E3F": {
+    "errors": [],
+    "width_sp": 464191
+   },
+   "1E02": {
+    "errors": [],
+    "width_sp": 464191
+   },
+   "1E03": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "1E0D": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "1E1E": {
+    "errors": [],
+    "width_sp": 427818
+   },
+   "1E1F": {
+    "errors": [],
+    "width_sp": 200245
+   },
+   "1E20": {
+    "errors": [],
+    "width_sp": 514261
+   },
+   "1E21": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "1E25": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "1E30": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "1E31": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "1E37": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "1E43": {
+    "errors": [],
+    "width_sp": 546111
+   },
+   "1E45": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "1E47": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "1E5B": {
+    "errors": [],
+    "width_sp": 256683
+   },
+   "1E63": {
+    "errors": [],
+    "width_sp": 258506
+   },
+   "1E6D": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "1E8E": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "1E8F": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "1E90": {
+    "errors": [],
+    "width_sp": 400490
+   },
+   "1E91": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "1E9E": {
+    "errors": [],
+    "width_sp": 728170
+   },
+   "1EF2": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "1EF3": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "1F600": {
+    "errors": [
+     "LaTeX Error: Unicode character 😀 (U+1F600) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "200C": {
+    "errors": [],
+    "width_sp": 0
+   },
+   "2010": {
+    "errors": [],
+    "width_sp": 218453
+   },
+   "2011": {
+    "errors": [],
+    "width_sp": 218453
+   },
+   "2012": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "2013": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "2014": {
+    "errors": [],
+    "width_sp": 655360
+   },
+   "2015": {
+    "errors": [],
+    "width_sp": 655360
+   },
+   "2016": {
+    "errors": [],
+    "width_sp": 260686
+   },
+   "2018": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "2019": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "201A": {
+    "errors": [
+     "LaTeX Error: Command \\quotesinglbase unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "201C": {
+    "errors": [],
+    "width_sp": 309330
+   },
+   "201D": {
+    "errors": [],
+    "width_sp": 309330
+   },
+   "201E": {
+    "errors": [
+     "LaTeX Error: Command \\quotedblbase unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "2020": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "2021": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "2022": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "2026": {
+    "errors": [],
+    "width_sp": 873807
+   },
+   "2030": {
+    "errors": [],
+    "width_sp": 747110
+   },
+   "2031": {
+    "errors": [],
+    "width_sp": 954860
+   },
+   "2039": {
+    "errors": [
+     "LaTeX Error: Command \\guilsinglleft unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "203A": {
+    "errors": [
+     "LaTeX Error: Command \\guilsinglright unavailable in encoding OT1."
+    ],
+    "width_sp": 0
+   },
+   "203B": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "203D": {
+    "errors": [],
+    "width_sp": 309461
+   },
+   "2044": {
+    "errors": [],
+    "width_sp": 361168
+   },
+   "204E": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "2052": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "20A1": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "20A4": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "20A6": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "20A9": {
+    "errors": [],
+    "width_sp": 673578
+   },
+   "20AB": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "20AC": {
+    "errors": [],
+    "width_sp": 410616
+   },
+   "20B1": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "2103": {
+    "errors": [],
+    "width_sp": 618921
+   },
+   "2116": {
+    "errors": [],
+    "width_sp": 600310
+   },
+   "2117": {
+    "errors": [],
+    "width_sp": 447806
+   },
+   "211E": {
+    "errors": [],
+    "width_sp": 482410
+   },
+   "2120": {
+    "errors": [],
+    "width_sp": 578878
+   },
+   "2122": {
+    "errors": [],
+    "width_sp": 644415
+   },
+   "2126": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "2127": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "212E": {
+    "errors": [],
+    "width_sp": 443153
+   },
+   "2190": {
+    "errors": [],
+    "width_sp": 655360
+   },
+   "2191": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "2192": {
+    "errors": [],
+    "width_sp": 655360
+   },
+   "2193": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "2329": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "232A": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "2422": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "2423": {
+    "errors": [],
+    "width_sp": 288358
+   },
+   "25E6": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "25EF": {
+    "errors": [],
+    "width_sp": 447806
+   },
+   "266A": {
+    "errors": [],
+    "width_sp": 400490
+   },
+   "27E8": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "27E9": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "3008": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "3009": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "4E2D": {
+    "errors": [
+     "LaTeX Error: Unicode character 中 (U+4E2D) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "E000": {
+    "errors": [
+     "LaTeX Error: Unicode character  (U+E000) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "FB00": {
+    "errors": [],
+    "width_sp": 382271
+   },
+   "FB01": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "FB02": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "FB03": {
+    "errors": [],
+    "width_sp": 546111
+   },
+   "FB04": {
+    "errors": [],
+    "width_sp": 546111
+   },
+   "FB05": {
+    "errors": [],
+    "width_sp": 513376
+   },
+   "FB06": {
+    "errors": [],
+    "width_sp": 513376
+   },
+   "FEFF": {
+    "errors": [],
+    "width_sp": 0
+   }
+  },
+  "t1": {
+   "00A0": {
+    "errors": [],
+    "width_sp": 218400
+   },
+   "00A1": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "00A2": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00A3": {
+    "errors": [],
+    "width_sp": 418600
+   },
+   "00A4": {
+    "errors": [],
+    "width_sp": 482655
+   },
+   "00A5": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "00A6": {
+    "errors": [],
+    "width_sp": 109200
+   },
+   "00A7": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00A8": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00A9": {
+    "errors": [],
+    "width_sp": 728000
+   },
+   "00AA": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00AB": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "00AC": {
+    "errors": [],
+    "width_sp": 436800
+   },
+   "00AD": {
+    "errors": [],
+    "width_sp": 0
+   },
+   "00AE": {
+    "errors": [],
+    "width_sp": 728000
+   },
+   "00AF": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "00B0": {
+    "errors": [],
+    "width_sp": 218400
+   },
+   "00B1": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "00B2": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00B3": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00B4": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00B5": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "00B6": {
+    "errors": [],
+    "width_sp": 400400
+   },
+   "00B7": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "00B8": {
+    "errors": [],
+    "width_sp": 218400
+   },
+   "00B9": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00BA": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00BB": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "00BC": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00BD": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00BE": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00BF": {
+    "errors": [],
+    "width_sp": 309400
+   },
+   "00C0": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "00C1": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "00C2": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "00C3": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "00C4": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "00C5": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "00C6": {
+    "errors": [],
+    "width_sp": 591500
+   },
+   "00C7": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "00C8": {
+    "errors": [],
+    "width_sp": 445900
+   },
+   "00C9": {
+    "errors": [],
+    "width_sp": 445900
+   },
+   "00CA": {
+    "errors": [],
+    "width_sp": 445900
+   },
+   "00CB": {
+    "errors": [],
+    "width_sp": 445900
+   },
+   "00CC": {
+    "errors": [],
+    "width_sp": 236600
+   },
+   "00CD": {
+    "errors": [],
+    "width_sp": 236600
+   },
+   "00CE": {
+    "errors": [],
+    "width_sp": 236600
+   },
+   "00CF": {
+    "errors": [],
+    "width_sp": 236600
+   },
+   "00D0": {
+    "errors": [],
+    "width_sp": 500500
+   },
+   "00D1": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "00D2": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "00D3": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "00D4": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "00D5": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "00D6": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "00D7": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "00D8": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "00D9": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "00DA": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "00DB": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "00DC": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "00DD": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "00DE": {
+    "errors": [],
+    "width_sp": 409500
+   },
+   "00DF": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00E0": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00E1": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00E2": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00E3": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00E4": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00E5": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00E6": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "00E7": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00E8": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00E9": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00EA": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00EB": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "00EC": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "00ED": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "00EE": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "00EF": {
+    "errors": [],
+    "width_sp": 218400
+   },
+   "00F0": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00F1": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "00F2": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00F3": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00F4": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00F5": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00F6": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00F7": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "00F8": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "00F9": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "00FA": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "00FB": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "00FC": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "00FD": {
+    "errors": [],
+    "width_sp": 345800
+   },
+   "00FE": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "00FF": {
+    "errors": [],
+    "width_sp": 345800
+   },
+   "0100": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "0101": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "0102": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "0103": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "0104": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "0105": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "0106": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "0107": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "0108": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "0109": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "010A": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "010B": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "010C": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "010D": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "010E": {
+    "errors": [],
+    "width_sp": 500500
+   },
+   "010F": {
+    "errors": [],
+    "width_sp": 442260
+   },
+   "0110": {
+    "errors": [],
+    "width_sp": 500500
+   },
+   "0111": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "0112": {
+    "errors": [],
+    "width_sp": 445900
+   },
+   "0113": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "0114": {
+    "errors": [],
+    "width_sp": 445900
+   },
+   "0115": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "0116": {
+    "errors": [],
+    "width_sp": 445900
+   },
+   "0117": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "0118": {
+    "errors": [],
+    "width_sp": 445900
+   },
+   "0119": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "011A": {
+    "errors": [],
+    "width_sp": 445900
+   },
+   "011B": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "011C": {
+    "errors": [],
+    "width_sp": 514150
+   },
+   "011D": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "011E": {
+    "errors": [],
+    "width_sp": 514150
+   },
+   "011F": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "0120": {
+    "errors": [],
+    "width_sp": 514150
+   },
+   "0121": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "0122": {
+    "errors": [],
+    "width_sp": 514150
+   },
+   "0123": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "0124": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "0125": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "0128": {
+    "errors": [],
+    "width_sp": 236600
+   },
+   "0129": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "012A": {
+    "errors": [],
+    "width_sp": 236600
+   },
+   "012B": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "012C": {
+    "errors": [],
+    "width_sp": 236600
+   },
+   "012D": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "012E": {
+    "errors": [],
+    "width_sp": 236600
+   },
+   "012F": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "0130": {
+    "errors": [],
+    "width_sp": 236600
+   },
+   "0131": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "0132": {
+    "errors": [],
+    "width_sp": 564200
+   },
+   "0133": {
+    "errors": [],
+    "width_sp": 382200
+   },
+   "0134": {
+    "errors": [],
+    "width_sp": 336700
+   },
+   "0135": {
+    "errors": [],
+    "width_sp": 200200
+   },
+   "0136": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "0137": {
+    "errors": [],
+    "width_sp": 345800
+   },
+   "0139": {
+    "errors": [],
+    "width_sp": 409500
+   },
+   "013A": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "013B": {
+    "errors": [],
+    "width_sp": 409500
+   },
+   "013C": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "013D": {
+    "errors": [],
+    "width_sp": 409500
+   },
+   "013E": {
+    "errors": [],
+    "width_sp": 263900
+   },
+   "0141": {
+    "errors": [],
+    "width_sp": 409500
+   },
+   "0142": {
+    "errors": [],
+    "width_sp": 220220
+   },
+   "0143": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "0144": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "0145": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "0146": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "0147": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "0148": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "014A": {
+    "errors": [],
+    "width_sp": 518700
+   },
+   "014B": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "014C": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "014D": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "014E": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "014F": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "0150": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "0151": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "0152": {
+    "errors": [],
+    "width_sp": 664300
+   },
+   "0153": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "0154": {
+    "errors": [],
+    "width_sp": 482300
+   },
+   "0155": {
+    "errors": [],
+    "width_sp": 256620
+   },
+   "0156": {
+    "errors": [],
+    "width_sp": 482300
+   },
+   "0157": {
+    "errors": [],
+    "width_sp": 256620
+   },
+   "0158": {
+    "errors": [],
+    "width_sp": 482300
+   },
+   "0159": {
+    "errors": [],
+    "width_sp": 256620
+   },
+   "015A": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "015B": {
+    "errors": [],
+    "width_sp": 258440
+   },
+   "015C": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "015D": {
+    "errors": [],
+    "width_sp": 258440
+   },
+   "015E": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "015F": {
+    "errors": [],
+    "width_sp": 258440
+   },
+   "0160": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "0161": {
+    "errors": [],
+    "width_sp": 258440
+   },
+   "0162": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "0163": {
+    "errors": [],
+    "width_sp": 254800
+   },
+   "0164": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "0165": {
+    "errors": [],
+    "width_sp": 254800
+   },
+   "0168": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "0169": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "016A": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "016B": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "016C": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "016D": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "016E": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "016F": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "0170": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "0171": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "0172": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "0173": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "0174": {
+    "errors": [],
+    "width_sp": 673400
+   },
+   "0175": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "0176": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "0177": {
+    "errors": [],
+    "width_sp": 345800
+   },
+   "0178": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "0179": {
+    "errors": [],
+    "width_sp": 400400
+   },
+   "017A": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "017B": {
+    "errors": [],
+    "width_sp": 400400
+   },
+   "017C": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "017D": {
+    "errors": [],
+    "width_sp": 400400
+   },
+   "017E": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "0192": {
+    "errors": [],
+    "width_sp": 200200
+   },
+   "01C4": {
+    "errors": [],
+    "width_sp": 900900
+   },
+   "01C5": {
+    "errors": [],
+    "width_sp": 791700
+   },
+   "01C6": {
+    "errors": [],
+    "width_sp": 655200
+   },
+   "01C7": {
+    "errors": [],
+    "width_sp": 746200
+   },
+   "01C8": {
+    "errors": [],
+    "width_sp": 609700
+   },
+   "01C9": {
+    "errors": [],
+    "width_sp": 382200
+   },
+   "01CA": {
+    "errors": [],
+    "width_sp": 828100
+   },
+   "01CB": {
+    "errors": [],
+    "width_sp": 691600
+   },
+   "01CC": {
+    "errors": [],
+    "width_sp": 564200
+   },
+   "01CD": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "01CE": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "01CF": {
+    "errors": [],
+    "width_sp": 236600
+   },
+   "01D0": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "01D1": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "01D2": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "01D3": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "01D4": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "01E2": {
+    "errors": [],
+    "width_sp": 591500
+   },
+   "01E3": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "01E6": {
+    "errors": [],
+    "width_sp": 514150
+   },
+   "01E7": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "01E8": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "01E9": {
+    "errors": [],
+    "width_sp": 345800
+   },
+   "01EA": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "01EB": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "01F0": {
+    "errors": [],
+    "width_sp": 200200
+   },
+   "01F4": {
+    "errors": [],
+    "width_sp": 514150
+   },
+   "01F5": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "0218": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "0219": {
+    "errors": [],
+    "width_sp": 258440
+   },
+   "021A": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "021B": {
+    "errors": [],
+    "width_sp": 254800
+   },
+   "0232": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "0233": {
+    "errors": [],
+    "width_sp": 345800
+   },
+   "0237": {
+    "errors": [],
+    "width_sp": 200200
+   },
+   "02C6": {
+    "errors": [],
+    "width_sp": 400400
+   },
+   "02C7": {
+    "errors": [],
+    "width_sp": 400400
+   },
+   "02D8": {
+    "errors": [],
+    "width_sp": 400400
+   },
+   "02D9": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "02DB": {
+    "errors": [],
+    "width_sp": 0
+   },
+   "02DC": {
+    "errors": [],
+    "width_sp": 400400
+   },
+   "02DD": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "0301": {
+    "errors": [
+     "LaTeX Error: Unicode character ́ (U+0301) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "0308": {
+    "errors": [
+     "LaTeX Error: Unicode character ̈ (U+0308) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "03B1": {
+    "errors": [
+     "LaTeX Error: Unicode character α (U+03B1) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "03C0": {
+    "errors": [
+     "LaTeX Error: Unicode character π (U+03C0) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "0416": {
+    "errors": [
+     "LaTeX Error: Unicode character Ж (U+0416) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "0E3F": {
+    "errors": [],
+    "width_sp": 464100
+   },
+   "1E02": {
+    "errors": [],
+    "width_sp": 464100
+   },
+   "1E03": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "1E0D": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "1E1E": {
+    "errors": [],
+    "width_sp": 427700
+   },
+   "1E1F": {
+    "errors": [],
+    "width_sp": 200200
+   },
+   "1E20": {
+    "errors": [],
+    "width_sp": 514150
+   },
+   "1E21": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "1E25": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "1E30": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "1E31": {
+    "errors": [],
+    "width_sp": 345800
+   },
+   "1E37": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "1E43": {
+    "errors": [],
+    "width_sp": 546000
+   },
+   "1E45": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "1E47": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "1E5B": {
+    "errors": [],
+    "width_sp": 256620
+   },
+   "1E63": {
+    "errors": [],
+    "width_sp": 258440
+   },
+   "1E6D": {
+    "errors": [],
+    "width_sp": 254800
+   },
+   "1E8E": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "1E8F": {
+    "errors": [],
+    "width_sp": 345800
+   },
+   "1E90": {
+    "errors": [],
+    "width_sp": 400400
+   },
+   "1E91": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "1E9E": {
+    "errors": [],
+    "width_sp": 728000
+   },
+   "1EF2": {
+    "errors": [],
+    "width_sp": 491400
+   },
+   "1EF3": {
+    "errors": [],
+    "width_sp": 345800
+   },
+   "1F600": {
+    "errors": [
+     "LaTeX Error: Unicode character 😀 (U+1F600) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "200C": {
+    "errors": [],
+    "width_sp": 0
+   },
+   "2010": {
+    "errors": [],
+    "width_sp": 218400
+   },
+   "2011": {
+    "errors": [],
+    "width_sp": 218400
+   },
+   "2012": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "2013": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "2014": {
+    "errors": [],
+    "width_sp": 655200
+   },
+   "2015": {
+    "errors": [],
+    "width_sp": 655200
+   },
+   "2016": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "2018": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "2019": {
+    "errors": [],
+    "width_sp": 182000
+   },
+   "201A": {
+    "errors": [],
+    "width_sp": 236600
+   },
+   "201C": {
+    "errors": [],
+    "width_sp": 273000
+   },
+   "201D": {
+    "errors": [],
+    "width_sp": 273000
+   },
+   "201E": {
+    "errors": [],
+    "width_sp": 273000
+   },
+   "2020": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "2021": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "2022": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "2026": {
+    "errors": [],
+    "width_sp": 873600
+   },
+   "2030": {
+    "errors": [],
+    "width_sp": 764400
+   },
+   "2031": {
+    "errors": [],
+    "width_sp": 991293
+   },
+   "2039": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "203A": {
+    "errors": [],
+    "width_sp": 291200
+   },
+   "203B": {
+    "errors": [],
+    "width_sp": 412531
+   },
+   "203D": {
+    "errors": [],
+    "width_sp": 309400
+   },
+   "2044": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "204E": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "2052": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "20A1": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "20A4": {
+    "errors": [],
+    "width_sp": 418600
+   },
+   "20A6": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "20A9": {
+    "errors": [],
+    "width_sp": 673400
+   },
+   "20AB": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "20AC": {
+    "errors": [],
+    "width_sp": 509600
+   },
+   "20B1": {
+    "errors": [],
+    "width_sp": 455000
+   },
+   "2103": {
+    "errors": [],
+    "width_sp": 618800
+   },
+   "2116": {
+    "errors": [],
+    "width_sp": 600600
+   },
+   "2117": {
+    "errors": [],
+    "width_sp": 728000
+   },
+   "211E": {
+    "errors": [],
+    "width_sp": 482300
+   },
+   "2120": {
+    "errors": [],
+    "width_sp": 436800
+   },
+   "2122": {
+    "errors": [],
+    "width_sp": 436800
+   },
+   "2126": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "2127": {
+    "errors": [],
+    "width_sp": 473200
+   },
+   "212E": {
+    "errors": [],
+    "width_sp": 443170
+   },
+   "2190": {
+    "errors": [],
+    "width_sp": 655200
+   },
+   "2191": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "2192": {
+    "errors": [],
+    "width_sp": 655200
+   },
+   "2193": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "2329": {
+    "errors": [],
+    "width_sp": 254800
+   },
+   "232A": {
+    "errors": [],
+    "width_sp": 254800
+   },
+   "2422": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "2423": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "25E6": {
+    "errors": [],
+    "width_sp": 327600
+   },
+   "25EF": {
+    "errors": [],
+    "width_sp": 728000
+   },
+   "266A": {
+    "errors": [],
+    "width_sp": 400400
+   },
+   "27E8": {
+    "errors": [],
+    "width_sp": 254800
+   },
+   "27E9": {
+    "errors": [],
+    "width_sp": 254800
+   },
+   "3008": {
+    "errors": [],
+    "width_sp": 254800
+   },
+   "3009": {
+    "errors": [],
+    "width_sp": 254800
+   },
+   "4E2D": {
+    "errors": [
+     "LaTeX Error: Unicode character 中 (U+4E2D) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "E000": {
+    "errors": [
+     "LaTeX Error: Unicode character  (U+E000) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "FB00": {
+    "errors": [],
+    "width_sp": 382200
+   },
+   "FB01": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "FB02": {
+    "errors": [],
+    "width_sp": 364000
+   },
+   "FB03": {
+    "errors": [],
+    "width_sp": 546000
+   },
+   "FB04": {
+    "errors": [],
+    "width_sp": 546000
+   },
+   "FB05": {
+    "errors": [],
+    "width_sp": 513240
+   },
+   "FB06": {
+    "errors": [],
+    "width_sp": 513240
+   },
+   "FEFF": {
+    "errors": [],
+    "width_sp": 0
+   }
+  },
+  "t1-lm": {
+   "00A0": {
+    "errors": [],
+    "width_sp": 218453
+   },
+   "00A1": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "00A2": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "00A3": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00A4": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00A5": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00A6": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "00A7": {
+    "errors": [],
+    "width_sp": 317193
+   },
+   "00A8": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00A9": {
+    "errors": [],
+    "width_sp": 447806
+   },
+   "00AA": {
+    "errors": [],
+    "width_sp": 294518
+   },
+   "00AB": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "00AC": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00AD": {
+    "errors": [],
+    "width_sp": 0
+   },
+   "00AE": {
+    "errors": [],
+    "width_sp": 447806
+   },
+   "00AF": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00B0": {
+    "errors": [],
+    "width_sp": 245760
+   },
+   "00B1": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00B2": {
+    "errors": [],
+    "width_sp": 235471
+   },
+   "00B3": {
+    "errors": [],
+    "width_sp": 235471
+   },
+   "00B4": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00B5": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "00B6": {
+    "errors": [],
+    "width_sp": 400490
+   },
+   "00B7": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00B8": {
+    "errors": [],
+    "width_sp": 218453
+   },
+   "00B9": {
+    "errors": [],
+    "width_sp": 239708
+   },
+   "00BA": {
+    "errors": [],
+    "width_sp": 274693
+   },
+   "00BB": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "00BC": {
+    "errors": [],
+    "width_sp": 540671
+   },
+   "00BD": {
+    "errors": [],
+    "width_sp": 540671
+   },
+   "00BE": {
+    "errors": [],
+    "width_sp": 540671
+   },
+   "00BF": {
+    "errors": [],
+    "width_sp": 309461
+   },
+   "00C0": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00C1": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00C2": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00C3": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00C4": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00C5": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00C6": {
+    "errors": [],
+    "width_sp": 591658
+   },
+   "00C7": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "00C8": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "00C9": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "00CA": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "00CB": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "00CC": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "00CD": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "00CE": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "00CF": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "00D0": {
+    "errors": [],
+    "width_sp": 500630
+   },
+   "00D1": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00D2": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00D3": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00D4": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00D5": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00D6": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00D7": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00D8": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00D9": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00DA": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00DB": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00DC": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00DD": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "00DE": {
+    "errors": [],
+    "width_sp": 409600
+   },
+   "00DF": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00E0": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00E1": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00E2": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00E3": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00E4": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00E5": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00E6": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "00E7": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "00E8": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "00E9": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "00EA": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "00EB": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "00EC": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "00ED": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "00EE": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "00EF": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "00F0": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00F1": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "00F2": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00F3": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00F4": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00F5": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00F6": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00F7": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "00F8": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "00F9": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "00FA": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "00FB": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "00FC": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "00FD": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "00FE": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "00FF": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "0100": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0101": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0102": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0103": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0104": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0105": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0106": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "0107": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "0108": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "0109": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "010A": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "010B": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "010C": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "010D": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "010E": {
+    "errors": [],
+    "width_sp": 500630
+   },
+   "010F": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0110": {
+    "errors": [],
+    "width_sp": 500630
+   },
+   "0111": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0112": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "0113": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "0114": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "0115": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "0116": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "0117": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "0118": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "0119": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "011A": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "011B": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "011C": {
+    "errors": [],
+    "width_sp": 514261
+   },
+   "011D": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "011E": {
+    "errors": [],
+    "width_sp": 514261
+   },
+   "011F": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0120": {
+    "errors": [],
+    "width_sp": 514261
+   },
+   "0121": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0122": {
+    "errors": [],
+    "width_sp": 514261
+   },
+   "0123": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0124": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0125": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0128": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "0129": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "012A": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "012B": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "012C": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "012D": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "012E": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "012F": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "0130": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "0131": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "0132": {
+    "errors": [],
+    "width_sp": 549781
+   },
+   "0133": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0134": {
+    "errors": [],
+    "width_sp": 336790
+   },
+   "0135": {
+    "errors": [],
+    "width_sp": 200245
+   },
+   "0136": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "0137": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "0139": {
+    "errors": [],
+    "width_sp": 409600
+   },
+   "013A": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "013B": {
+    "errors": [],
+    "width_sp": 409600
+   },
+   "013C": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "013D": {
+    "errors": [],
+    "width_sp": 409600
+   },
+   "013E": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "0141": {
+    "errors": [],
+    "width_sp": 409600
+   },
+   "0142": {
+    "errors": [],
+    "width_sp": 220266
+   },
+   "0143": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0144": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0145": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0146": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0147": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0148": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "014A": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "014B": {
+    "errors": [],
+    "width_sp": 331808
+   },
+   "014C": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "014D": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "014E": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "014F": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0150": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "0151": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0152": {
+    "errors": [],
+    "width_sp": 664470
+   },
+   "0153": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "0154": {
+    "errors": [],
+    "width_sp": 482410
+   },
+   "0155": {
+    "errors": [],
+    "width_sp": 256683
+   },
+   "0156": {
+    "errors": [],
+    "width_sp": 482410
+   },
+   "0157": {
+    "errors": [],
+    "width_sp": 256683
+   },
+   "0158": {
+    "errors": [],
+    "width_sp": 482410
+   },
+   "0159": {
+    "errors": [],
+    "width_sp": 256683
+   },
+   "015A": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "015B": {
+    "errors": [],
+    "width_sp": 258506
+   },
+   "015C": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "015D": {
+    "errors": [],
+    "width_sp": 258506
+   },
+   "015E": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "015F": {
+    "errors": [],
+    "width_sp": 258506
+   },
+   "0160": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0161": {
+    "errors": [],
+    "width_sp": 258506
+   },
+   "0162": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "0163": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "0164": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "0165": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "0168": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0169": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "016A": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "016B": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "016C": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "016D": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "016E": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "016F": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0170": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0171": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0172": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0173": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0174": {
+    "errors": [],
+    "width_sp": 673578
+   },
+   "0175": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "0176": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0177": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "0178": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0179": {
+    "errors": [],
+    "width_sp": 400490
+   },
+   "017A": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "017B": {
+    "errors": [],
+    "width_sp": 400490
+   },
+   "017C": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "017D": {
+    "errors": [],
+    "width_sp": 400490
+   },
+   "017E": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "0192": {
+    "errors": [],
+    "width_sp": 200245
+   },
+   "01C4": {
+    "errors": [],
+    "width_sp": 901120
+   },
+   "01C5": {
+    "errors": [],
+    "width_sp": 791905
+   },
+   "01C6": {
+    "errors": [],
+    "width_sp": 655360
+   },
+   "01C7": {
+    "errors": [],
+    "width_sp": 746390
+   },
+   "01C8": {
+    "errors": [],
+    "width_sp": 609845
+   },
+   "01C9": {
+    "errors": [],
+    "width_sp": 382288
+   },
+   "01CA": {
+    "errors": [],
+    "width_sp": 828310
+   },
+   "01CB": {
+    "errors": [],
+    "width_sp": 691765
+   },
+   "01CC": {
+    "errors": [],
+    "width_sp": 564330
+   },
+   "01CD": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "01CE": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "01CF": {
+    "errors": [],
+    "width_sp": 236650
+   },
+   "01D0": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "01D1": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "01D2": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "01D3": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "01D4": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "01E2": {
+    "errors": [],
+    "width_sp": 591658
+   },
+   "01E3": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "01E6": {
+    "errors": [],
+    "width_sp": 514261
+   },
+   "01E7": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "01E8": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "01E9": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "01EA": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "01EB": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "01F0": {
+    "errors": [],
+    "width_sp": 200245
+   },
+   "01F4": {
+    "errors": [],
+    "width_sp": 514261
+   },
+   "01F5": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0218": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "0219": {
+    "errors": [],
+    "width_sp": 258506
+   },
+   "021A": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "021B": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "0232": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "0233": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "0237": {
+    "errors": [],
+    "width_sp": 200245
+   },
+   "02C6": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "02C7": {
+    "errors": [],
+    "width_sp": 400490
+   },
+   "02D8": {
+    "errors": [],
+    "width_sp": 400490
+   },
+   "02D9": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "02DB": {
+    "errors": [],
+    "width_sp": 0
+   },
+   "02DC": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "02DD": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "0301": {
+    "errors": [
+     "LaTeX Error: Unicode character ́ (U+0301) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "0308": {
+    "errors": [
+     "LaTeX Error: Unicode character ̈ (U+0308) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "03B1": {
+    "errors": [
+     "LaTeX Error: Unicode character α (U+03B1) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "03C0": {
+    "errors": [
+     "LaTeX Error: Unicode character π (U+03C0) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "0416": {
+    "errors": [
+     "LaTeX Error: Unicode character Ж (U+0416) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "0E3F": {
+    "errors": [],
+    "width_sp": 464191
+   },
+   "1E02": {
+    "errors": [],
+    "width_sp": 464191
+   },
+   "1E03": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "1E0D": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "1E1E": {
+    "errors": [],
+    "width_sp": 427818
+   },
+   "1E1F": {
+    "errors": [],
+    "width_sp": 200245
+   },
+   "1E20": {
+    "errors": [],
+    "width_sp": 514261
+   },
+   "1E21": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "1E25": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "1E30": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "1E31": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "1E37": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "1E43": {
+    "errors": [],
+    "width_sp": 546111
+   },
+   "1E45": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "1E47": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "1E5B": {
+    "errors": [],
+    "width_sp": 256683
+   },
+   "1E63": {
+    "errors": [],
+    "width_sp": 258506
+   },
+   "1E6D": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "1E8E": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "1E8F": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "1E90": {
+    "errors": [],
+    "width_sp": 400490
+   },
+   "1E91": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "1E9E": {
+    "errors": [],
+    "width_sp": 728170
+   },
+   "1EF2": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "1EF3": {
+    "errors": [],
+    "width_sp": 345898
+   },
+   "1F600": {
+    "errors": [
+     "LaTeX Error: Unicode character 😀 (U+1F600) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "200C": {
+    "errors": [],
+    "width_sp": 0
+   },
+   "2010": {
+    "errors": [],
+    "width_sp": 218453
+   },
+   "2011": {
+    "errors": [],
+    "width_sp": 218453
+   },
+   "2012": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "2013": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "2014": {
+    "errors": [],
+    "width_sp": 655360
+   },
+   "2015": {
+    "errors": [],
+    "width_sp": 655360
+   },
+   "2016": {
+    "errors": [],
+    "width_sp": 260686
+   },
+   "2018": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "2019": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "201A": {
+    "errors": [],
+    "width_sp": 182043
+   },
+   "201C": {
+    "errors": [],
+    "width_sp": 309330
+   },
+   "201D": {
+    "errors": [],
+    "width_sp": 309330
+   },
+   "201E": {
+    "errors": [],
+    "width_sp": 309330
+   },
+   "2020": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "2021": {
+    "errors": [],
+    "width_sp": 291275
+   },
+   "2022": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "2026": {
+    "errors": [],
+    "width_sp": 873807
+   },
+   "2030": {
+    "errors": [],
+    "width_sp": 747110
+   },
+   "2031": {
+    "errors": [],
+    "width_sp": 954860
+   },
+   "2039": {
+    "errors": [],
+    "width_sp": 254640
+   },
+   "203A": {
+    "errors": [],
+    "width_sp": 254640
+   },
+   "203B": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "203D": {
+    "errors": [],
+    "width_sp": 309461
+   },
+   "2044": {
+    "errors": [],
+    "width_sp": 361168
+   },
+   "204E": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "2052": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "20A1": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "20A4": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "20A6": {
+    "errors": [],
+    "width_sp": 491520
+   },
+   "20A9": {
+    "errors": [],
+    "width_sp": 673578
+   },
+   "20AB": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "20AC": {
+    "errors": [],
+    "width_sp": 410616
+   },
+   "20B1": {
+    "errors": [],
+    "width_sp": 446005
+   },
+   "2103": {
+    "errors": [],
+    "width_sp": 618921
+   },
+   "2116": {
+    "errors": [],
+    "width_sp": 600310
+   },
+   "2117": {
+    "errors": [],
+    "width_sp": 447806
+   },
+   "211E": {
+    "errors": [],
+    "width_sp": 482410
+   },
+   "2120": {
+    "errors": [],
+    "width_sp": 578878
+   },
+   "2122": {
+    "errors": [],
+    "width_sp": 644415
+   },
+   "2126": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "2127": {
+    "errors": [],
+    "width_sp": 473301
+   },
+   "212E": {
+    "errors": [],
+    "width_sp": 443153
+   },
+   "2190": {
+    "errors": [],
+    "width_sp": 655360
+   },
+   "2191": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "2192": {
+    "errors": [],
+    "width_sp": 655360
+   },
+   "2193": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "2329": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "232A": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "2422": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "2423": {
+    "errors": [],
+    "width_sp": 327680
+   },
+   "25E6": {
+    "errors": [],
+    "width_sp": 509738
+   },
+   "25EF": {
+    "errors": [],
+    "width_sp": 447806
+   },
+   "266A": {
+    "errors": [],
+    "width_sp": 400490
+   },
+   "27E8": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "27E9": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "3008": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "3009": {
+    "errors": [],
+    "width_sp": 254870
+   },
+   "4E2D": {
+    "errors": [
+     "LaTeX Error: Unicode character 中 (U+4E2D) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "E000": {
+    "errors": [
+     "LaTeX Error: Unicode character  (U+E000) not set up for use with LaTeX."
+    ],
+    "width_sp": 0
+   },
+   "FB00": {
+    "errors": [],
+    "width_sp": 382271
+   },
+   "FB01": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "FB02": {
+    "errors": [],
+    "width_sp": 364085
+   },
+   "FB03": {
+    "errors": [],
+    "width_sp": 546111
+   },
+   "FB04": {
+    "errors": [],
+    "width_sp": 546111
+   },
+   "FB05": {
+    "errors": [],
+    "width_sp": 513376
+   },
+   "FB06": {
+    "errors": [],
+    "width_sp": 513376
+   },
+   "FEFF": {
+    "errors": [],
+    "width_sp": 0
+   }
+  }
+ }
+}

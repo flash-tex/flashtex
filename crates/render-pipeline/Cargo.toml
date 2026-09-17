@@ -27,7 +27,7 @@ path = "src/bin/flashtex-render.rs"
 # (`hash_math`/`shift_math`/`math_grids`/`math_glue_em`/`convert_math_classed`)
 # fail to build. `--no-default-features` still builds against a pinned vendor
 # older than this without the new variants.
-default = ["amsmath-inline", "request-date", "compiler-package-gating", "par-leading", "math-class-override"]
+default = ["amsmath-inline", "request-date", "compiler-package-gating", "par-leading", "math-class-override", "compiler-node-surface", "linebreak-skip"]
 # The compiler's `Nucleus::Text` (`\text{...}` in math) is an isolated
 # candidate (crates/preview-controller/docs/handoffs/hw1-text-candidate/
 # candidate.patch on compiler base 1c02a2bc, not on main nor in
@@ -120,6 +120,23 @@ math-font-kerns = []
 # Emit the optional `path_fill.pattern` display-list-v2 extension consumed by
 # the TikZ-pattern-aware pdf sibling. Off keeps the existing wire bytes.
 tikz-patterns = []
+# The pipeline's exhaustive matches and node constructors cover the *current*
+# node surface of `crates/compiler` on `main`, which `vendor/compiler` does not
+# yet carry: `parser::Block::Penalty`/`Tabbing`, `parser::Inline::ThePage`/
+# `PageNumbering`/`TabStop`/`TabJump`/`Marginpar`/`PagePenalty`/`Discretionary`
+# and the parameter nodes, `math::Nucleus::TextRun`/`SideSet`/`Lap`,
+# `math::Accent::Mathring`, and `VSpace`/`HSpace`'s glue components
+# (compiler #568, #581, #583, #587, #606, #616). It carries **no behaviour of
+# its own**: every arm it adds is the inert one the pipeline already had for a
+# node the old pin could not produce, so turning it on changes no output. It
+# exists so the vendor re-pin is a single mechanical step -- swap the vendor
+# trees, then move this into `default` -- instead of a re-pin that cannot
+# compile until seven stacked PRs land. The stacked pipeline PRs (#569, #582,
+# #584, #585, #599, #607, #617) replace the inert arms with real layout.
+# Builds only against a `vendor/compiler` re-pinned past those changes; off by
+# default so the crate still builds against the pinned vendor.
+# See `docs/integration/repin-runbook.md`.
+compiler-node-surface = []
 
 [dependencies]
 flashtex-compiler = { path = "vendor/compiler" }
@@ -135,6 +152,9 @@ flashtex-pdf = { path = "vendor/pdf" }
 flashtex-font-resources = { path = "vendor/font-resources" }
 flashtex-project-files = { path = "vendor/project-files" }
 flashtex-vector-graphics = { path = "vendor/vector-graphics" }
+# utf8.def / *.dfu declarations and the NFSS text-command tables, for literal
+# UTF-8 input (`src/inputenc.rs`). Already a dependency of vendor/compiler.
+flashtex-tex-text-encoding = { path = "vendor/tex-text-encoding" }
 # The standard-class + geometry page frame (exact sp). A path to the sibling,
 # not a vendor mirror: a `git archive` of this directory alone must also
 # archive `crates/class-geometry` (zero dependencies) next to it.

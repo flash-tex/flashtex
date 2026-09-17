@@ -1,13 +1,14 @@
 //! `MathFontMetrics` with TeX's own metrics: the Appendix G parameters and
 //! glyph boxes of the `lmmi`/`lmsy`/`lmex` TFMs that pdfLaTeX+`lmodern`
 //! lays math out with, and `rm-lmr*` for the roman family (digits,
-//! parentheses, operators). Latin Modern's math TFMs are metric-identical
-//! to Computer Modern's (verified byte for byte on `lmmi12`, `lmsy10`,
-//! `lmex10`, `lmmi8`, `lmsy8` against `cmmi12`, `cmsy10`, `cmex10`,
-//! `cmmi8`, `cmsy8`), so families 1–3 come from math-layout's embedded
-//! `CmMathMetrics` (`latex_12pt`/`latex_10pt`, plus LaTeX's 11pt sizes) and
-//! only family 0, where `rm-lmr` differs from `cmr` in heights by up to
-//! 0.015 em, is read from the installed TFM.
+//! parentheses, operators) *when `lmodern` is loaded* -- family 0 is the
+//! LaTeX kernel's own `cmr*` otherwise (`style::math_roman_lm`). Latin
+//! Modern's math TFMs are metric-identical to Computer Modern's (verified
+//! byte for byte on `lmmi12`, `lmsy10`, `lmex10`, `lmmi8`, `lmsy8` against
+//! `cmmi12`, `cmsy10`, `cmex10`, `cmmi8`, `cmsy8`), so families 1–3 come
+//! from math-layout's embedded `CmMathMetrics` (`latex_12pt`/`latex_10pt`,
+//! plus LaTeX's 11pt sizes) and only family 0, where `rm-lmr` differs from
+//! `cmr` in heights by up to 0.015 em, is read from the installed TFM.
 //!
 //! Painting still uses the Latin Modern Math OpenType program: every glyph
 //! the layout places is a (TFM font, code) pair that [`TexMathMetrics::otf_gid`]
@@ -66,6 +67,13 @@ pub struct TexMathMetrics {
     /// Why a roman TFM is absent (the first failure), blocking when it is
     /// a required asset.
     roman_status: Option<TfmStatus>,
+    /// Whether family 0 is boxed from those `rm-lmr*` TFMs. Only `lmodern`
+    /// rebinds `operators` to `lmr` ([`crate::style::math_roman_lm`]); every
+    /// other document lays family 0 out with `cmr*`, which is what
+    /// [`Self::cm`] carries. The TFMs are still loaded either way: they are
+    /// the required-asset check [`Self::roman_available`] gates the whole
+    /// TeX-metrics route on.
+    roman_lm: bool,
     /// The text faces that draw the roman family at text/script/
     /// scriptscript size: `lmroman12/8/6` are the OpenType siblings of the
     /// `lmr12/8/6` Type 1 designs the TFMs describe, so digits, parentheses
@@ -130,15 +138,17 @@ impl TexMathMetrics {
     /// `base` is the document's body size (10/11/12). `cmex_designs` is
     /// [`crate::style::cmex_designs`]: with it family 3 is loaded at the
     /// math size in amsfonts' designs, without it at `omxcmex.fd`'s
-    /// `sfixed` 10pt. `otf` supplies the glyph program; `fonts` supplies
-    /// `rm-lmr<d>.tfm` (digest-bound for the 12 pt set).
-    pub fn new(base: u32, cmex_designs: bool, otf: Rc<MathFonts>, fonts: &FontSet) -> TexMathMetrics {
+    /// `sfixed` 10pt. `roman_lm` is [`crate::style::math_roman_lm`]: with it
+    /// family 0 is boxed from `rm-lmr*`, without it from the `cmr*` designs
+    /// the kernel declares. `otf` supplies the glyph program; `fonts`
+    /// supplies `rm-lmr<d>.tfm` (digest-bound for the 12 pt set).
+    pub fn new(base: u32, cmex_designs: bool, roman_lm: bool, otf: Rc<MathFonts>, fonts: &FontSet) -> TexMathMetrics {
         let text = match base {
             10 => 10.0,
             11 => 10.95,
             _ => 12.0,
         };
-        Self::at_text_size(text, cmex_designs, otf, fonts).expect("the class sizes are embedded")
+        Self::at_text_size(text, cmex_designs, roman_lm, otf, fonts).expect("the class sizes are embedded")
     }
 
     /// The metrics `\DeclareMathSizes` selects for text at `text_pt`: the
@@ -146,8 +156,8 @@ impl TexMathMetrics {
     /// `\footnotesize` of the 10pt class and 8/6/5 pt with cmr/cmmi/cmsy 8,
     /// 6 and 5. `None` for a size whose TFMs math-layout does not embed --
     /// 9 pt, the 11pt class's `\footnotesize`, needs cmr9/cmmi9/cmsy9.
-    /// `cmex_designs` is as in [`TexMathMetrics::new`].
-    pub fn at_text_size(text_pt: f64, cmex_designs: bool, otf: Rc<MathFonts>, fonts: &FontSet) -> Option<TexMathMetrics> {
+    /// `cmex_designs` and `roman_lm` are as in [`TexMathMetrics::new`].
+    pub fn at_text_size(text_pt: f64, cmex_designs: bool, roman_lm: bool, otf: Rc<MathFonts>, fonts: &FontSet) -> Option<TexMathMetrics> {
         let close = |at: f64| (text_pt - at).abs() < 0.01;
         let (cm, roman_names) = if close(10.0) {
             (CmMathMetrics::latex_10pt(), ["rm-lmr10", "rm-lmr7", "rm-lmr5"])
@@ -217,6 +227,7 @@ impl TexMathMetrics {
             sizes,
             roman,
             roman_status,
+            roman_lm,
             roman_faces,
             otf,
             unmapped: RefCell::new(Vec::new()),
@@ -482,14 +493,40 @@ impl TexMathMetrics {
         }
     }
 
-    /// The roman-family glyph from `rm-lmr` when available, else `cmr`.
+    /// The roman-family (`operators`, family 0) glyph.
+    ///
+    /// `cmr*` — the kernel's `\DeclareSymbolFont{operators}{OT1}{cmr}{m}{n}`,
+    /// read from the designs [`Self::cm`] embeds — unless the document
+    /// loaded `lmodern`, which rebinds `operators` to `lmr`
+    /// ([`crate::style::math_roman_lm`]); then the installed `rm-lmr*` TFM.
+    /// The two are not scaled copies: `rm-lmr10`'s digits are 0.0147 em
+    /// shorter than `cmr10`'s and its `i` 0.0381 em shorter, so the box a
+    /// `\frac{1}{n}` numerator or a `\sum` limit sets is that much shorter
+    /// with the wrong one, and every baseline under the display moves with
+    /// it (GH-DISPLAY-BOX-HEIGHT, #750 F2).
+    ///
+    /// The painted outline is unchanged either way: `font_id` stays the
+    /// `cmr` id and [`Self::otf_glyph`] maps it to the optical-size Latin
+    /// Modern text face.
     fn roman_glyph(&self, code: u8, ch: char, size: SizeClass) -> Option<Glyph> {
+        let i = Self::size_index(size);
         let font_id = self.cm.text_glyph('0', size)?.font_id;
-        let Some(tfm) = &self.roman[Self::size_index(size)] else {
-            return self.cm.glyph(ch, size);
+        let at = self.cm.sizes[i];
+        let Some(tfm) = self.roman[i].as_ref().filter(|_| self.roman_lm) else {
+            let c = self.cm.families[0][i].char(code)?;
+            return Some(Glyph {
+                font_id,
+                gid: u16::from(code),
+                ch,
+                size: at,
+                width: mtfm::scale(c.width, at),
+                height: mtfm::scale(c.height, at),
+                depth: mtfm::scale(c.depth, at),
+                italic: mtfm::scale(c.italic, at),
+                skew: 0.0,
+            });
         };
         let m = tfm.metrics(code)?;
-        let at = self.cm.sizes[Self::size_index(size)];
         Some(Glyph {
             font_id,
             gid: u16::from(code),
@@ -877,7 +914,9 @@ impl MathFontMetrics for TexMathMetrics {
             MathChar::Text(ch) => cm::ot1_text_slot(ch),
             MathChar::Symbol(ch) => cm::symbol_slot(ch).filter(|&(f, _)| f == Family::Roman).map(|(_, code)| code),
         };
-        let (Some(l), Some(r), Some(tfm)) = (roman_code(left), roman_code(right), &self.roman[i]) else {
+        let (Some(l), Some(r), Some(tfm)) =
+            (roman_code(left), roman_code(right), self.roman[i].as_ref().filter(|_| self.roman_lm))
+        else {
             return Some(pair);
         };
         let (kern, ligature) = match tfm.pair_program(l, r) {

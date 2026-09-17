@@ -552,3 +552,37 @@ fn a_capacity_stop_is_recovered_like_the_step_limit() {
         "the text after the loop was lost"
     );
 }
+
+#[test]
+fn a_very_long_blank_run_lexes_in_linear_time() {
+    // Minimised from fuzz case 1003 (seed
+    // `fixtures/real-world/listings-manual/main.tex`, mutations
+    // `["splice-lines", "long-control-sequence"]`): blanking the
+    // `lstlisting` body for the engine leaves one ~100KB space-only
+    // "line", and the lexer's trailing-space probe rescanned it once per
+    // space — O(N^2), past the fuzz timeout (reported as a hang). The
+    // probe is memoized, so a line costs O(line length) however often it
+    // is asked: even a 200KB run of spaces compiles in milliseconds.
+    let text = format!(
+        "\\documentclass{{article}}\\begin{{document}}\nx{}y\n\\end{{document}}\n",
+        " ".repeat(200_000)
+    );
+    let started = std::time::Instant::now();
+    let messages = compile_messages(&text);
+    let elapsed = started.elapsed();
+    assert!(
+        messages.is_empty(),
+        "{:?}",
+        &messages[..messages.len().min(4)]
+    );
+    assert!(elapsed.as_secs() < 30, "took {elapsed:?}");
+    // The fuzz shape itself: a 100KB line inside `lstlisting`.
+    let listing = format!(
+        "\\documentclass{{article}}\\usepackage{{listings}}\\begin{{document}}\n\\begin{{lstlisting}}\n{}\n\\end{{lstlisting}}\n\\end{{document}}\n",
+        "x".repeat(100_000)
+    );
+    let started = std::time::Instant::now();
+    compile_messages(&listing);
+    let elapsed = started.elapsed();
+    assert!(elapsed.as_secs() < 30, "listing took {elapsed:?}");
+}

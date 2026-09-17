@@ -566,8 +566,15 @@ impl<'d> Converter<'d> {
 
     fn flush_word(&mut self) {
         if let Some(word) = self.word.take() {
+            // Assembled by `push_char` from ordinary characters only —
+            // control symbols bypass the pending word via `push_marked` —
+            // so this is never an escaped character.
             self.emit(ExpandedToken {
-                token: Token { kind: TokenKind::Word(word.text), span: word.span },
+                token: Token {
+                    kind: TokenKind::Word(word.text),
+                    span: word.span,
+                    control_symbol: false,
+                },
                 definition: word.definition,
                 maps_to_invocation: word.maps,
             });
@@ -618,6 +625,14 @@ impl<'d> Converter<'d> {
     }
 
     fn push(&mut self, kind: TokenKind, at: Placement) {
+        self.push_marked(kind, at, false);
+    }
+
+    /// Push one finished token, recording whether it was lexed from a
+    /// backslash control symbol (see [`Token::control_symbol`]). Only the
+    /// single-character control-sequence arm below passes `true`; every
+    /// other converter output is an ordinary token.
+    fn push_marked(&mut self, kind: TokenKind, at: Placement, control_symbol: bool) {
         self.flush_word();
         if matches!(kind, TokenKind::RBrace) && self.closes_document_begin() {
             self.document_begun = true;
@@ -642,7 +657,7 @@ impl<'d> Converter<'d> {
             _ => {}
         }
         sink.push(ExpandedToken {
-            token: Token { kind, span: at.span },
+            token: Token { kind, span: at.span, control_symbol },
             definition: at.definition,
             maps_to_invocation: at.maps,
         });
@@ -726,7 +741,11 @@ impl<'d> Converter<'d> {
         self.push(TokenKind::LBrace, open_at);
         self.flush_word();
         self.emit(ExpandedToken {
-            token: Token { kind: TokenKind::Word(name.to_string()), span: word_at.span },
+            token: Token {
+                kind: TokenKind::Word(name.to_string()),
+                span: word_at.span,
+                control_symbol: false,
+            },
             definition: word_at.definition,
             maps_to_invocation: word_at.maps,
         });
@@ -1104,7 +1123,13 @@ impl<'d> Converter<'d> {
                     "-" => conv.push(TokenKind::Command(name.clone()), at),
                     _ if name.chars().count() == 1 && !name.chars().all(char::is_alphabetic) => {
                         conv.flush_word();
-                        conv.push(TokenKind::Word(name.clone()), at);
+                        // A backslash control symbol (`\,`, `\%`, …): the
+                        // same `Word` variant also carries ordinary literal
+                        // characters, so the escaped identity is recorded in
+                        // the token mark, never inferred from span length —
+                        // expansion rebinds the span to the invocation while
+                        // the mark (like the kind) travels with the token.
+                        conv.push_marked(TokenKind::Word(name.clone()), at, true);
                     }
                     // r2 reads a verbatim body itself and ends it with a frozen
                     // `\end<name>` carrying the `\begin` span.
@@ -1164,7 +1189,7 @@ impl<'d> Converter<'d> {
         for token in tokenize_document(&text[offset..], DocumentId(document)) {
             let span = Span::in_document(DocumentId(document), token.span.start + offset, token.span.end + offset);
             self.emit(ExpandedToken {
-                token: Token { kind: token.kind, span },
+                token: Token { kind: token.kind, span, control_symbol: token.control_symbol },
                 definition: None,
                 maps_to_invocation: false,
             });
@@ -1538,7 +1563,11 @@ fn convert_range(
 
 fn shifted(token: &ExpandedToken, shift: &dyn Fn(Span) -> Span) -> ExpandedToken {
     ExpandedToken {
-        token: Token { kind: token.token.kind.clone(), span: shift(token.token.span) },
+        token: Token {
+            kind: token.token.kind.clone(),
+            span: shift(token.token.span),
+            control_symbol: token.token.control_symbol,
+        },
         definition: token.definition.map(shift),
         maps_to_invocation: token.maps_to_invocation,
     }

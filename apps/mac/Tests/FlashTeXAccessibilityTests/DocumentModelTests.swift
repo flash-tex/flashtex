@@ -49,10 +49,12 @@ final class DocumentModelTests: XCTestCase {
         XCTAssertEqual(model.readingSequence.map(\.text),
                        ["Introduction", "A", "naïve", "approach", "fails.", "Method", "Résumé", "of the steps.", "oops"])
         XCTAssertEqual(model.readingSequence.map(\.role), Array(repeating: .text, count: 9))
+        guard model.pages.count == 2 else { return XCTFail("expected two pages, got \(model.pages.count)") }
         XCTAssertEqual(model.pages[0].label, "Page 1 of 2, 2 lines")
         XCTAssertEqual(model.pages[1].label, "Page 2 of 2, 3 lines")
         XCTAssertEqual(model.summary, "Compile result: recovered, 2 pages, 9 items, 1 error, 1 warning")
         // Heading (17 pt) and body (12 pt) 34 pt apart stay separate lines.
+        guard model.lines.count >= 2 else { return XCTFail("expected at least two lines, got \(model.lines.count)") }
         XCTAssertEqual(model.lines[0].fontSizePt, 17)
         XCTAssertEqual(model.lines[1].fontSizePt, 12)
     }
@@ -79,6 +81,7 @@ final class DocumentModelTests: XCTestCase {
         let bare = AccessibleDocumentModel(result: res)
         XCTAssertEqual(bare.readingSequence.map(\.text), model.readingSequence.map(\.text))
         XCTAssertTrue(bare.readingSequence.allSatisfy { $0.utf16Range == nil })
+        guard bare.readingSequence.count > 2 else { return XCTFail("expected more than two reading-sequence items, got \(bare.readingSequence.count)") }
         XCTAssertEqual(bare.readingSequence[2].value, "12 point", "no text supplied: no staleness claim")
     }
 
@@ -89,7 +92,9 @@ final class DocumentModelTests: XCTestCase {
         let m1 = AccessibleDocumentModel(result: res, documents: ["main.tex": shifted], compiledDocuments: ["main.tex": compiled])
         let naive = try XCTUnwrap(m1.readingSequence.first { $0.text == "naïve" })
         XCTAssertEqual(naive.utf16Range, NSRange(location: 66 + 4, length: 5))
-        XCTAssertEqual(String(shifted[Range(naive.utf16Range!, in: shifted)!]), "naïve")
+        let naiveUTF16Range = try XCTUnwrap(naive.utf16Range)
+        let naiveRange = try XCTUnwrap(Range(naiveUTF16Range, in: shifted))
+        XCTAssertEqual(String(shifted[naiveRange]), "naïve")
         // Edit inside "naïve": that element loses its range; later ones still map.
         let edited = compiled.replacingOccurrences(of: "naïve", with: "naive")
         let m2 = AccessibleDocumentModel(result: res, documents: ["main.tex": edited], compiledDocuments: ["main.tex": compiled])
@@ -103,6 +108,7 @@ final class DocumentModelTests: XCTestCase {
         let (res, text) = try loadMultipage()
         let model = AccessibleDocumentModel(result: res, documents: ["main.tex": text])
         XCTAssertEqual(model.diagnostics.count, 2)
+        guard model.diagnostics.count == 2 else { return XCTFail("expected two diagnostics, got \(model.diagnostics.count)") }
         let err = model.diagnostics[0]
         XCTAssertEqual(err.label, "Error: Missing } inserted for \\textbf.")
         XCTAssertEqual(err.value, "recovery: Closed the group at end of paragraph and rendered its contents in bold.; in page 2 line 3")
@@ -134,9 +140,10 @@ final class DocumentModelTests: XCTestCase {
         ]
         let model = AccessibleDocumentModel(result: result([page(1, items)]))
         XCTAssertEqual(model.lines.count, 1, "scripts and fraction parts must not become their own lines")
-        let line = model.lines[0]
+        guard let line = model.lines.first else { return XCTFail("expected one line") }
         XCTAssertEqual(line.summary, "x superscript 2 superscript 3 + numerator a fraction bar denominator b y subscript i")
         XCTAssertEqual(line.elements.map(\.role), [.text, .superscript, .superscript, .text, .numerator, .rule, .denominator, .text, .subscript])
+        guard line.elements.count == 9 else { return XCTFail("expected nine elements, got \(line.elements.count)") }
         XCTAssertEqual(line.elements[1].label, "superscript 2")
         XCTAssertEqual(line.elements[1].value, "8.4 point, 70% of the 12 point line")
         XCTAssertEqual(line.elements[2].value, "6 point, 50% of the 12 point line")

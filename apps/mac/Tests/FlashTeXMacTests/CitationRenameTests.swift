@@ -114,10 +114,11 @@ final class CitationRenamePureTests: XCTestCase {
         let bib = "@article{knuth84,\n  title={The TeXbook}\n}\n"
         let previews = CitationRename.previews(for: plan, texts: ["refs.bib": bib])
         XCTAssertEqual(previews.count, 1)
-        XCTAssertEqual(previews[0].line, 1)
-        XCTAssertEqual(previews[0].before?.text, "@article{knuth84,")
-        XCTAssertEqual(previews[0].after?.text, "@article{knuth1984,")
-        XCTAssertEqual(CitationRename.accessibilityLabel(index: 0, count: 1, preview: previews[0], kind: .bibliography),
+        guard let firstPreview = previews.first else { return XCTFail("expected one preview") }
+        XCTAssertEqual(firstPreview.line, 1)
+        XCTAssertEqual(firstPreview.before?.text, "@article{knuth84,")
+        XCTAssertEqual(firstPreview.after?.text, "@article{knuth1984,")
+        XCTAssertEqual(CitationRename.accessibilityLabel(index: 0, count: 1, preview: firstPreview, kind: .bibliography),
                        "occurrence 1 of 1, refs.bib (bibliography), line 1, @article{knuth84, becomes @article{knuth1984,")
         let unread = CitationRename.previews(for: plan, texts: [:])
         XCTAssertNil(unread[0].before)
@@ -225,6 +226,7 @@ final class CitationRenameHelperTests: XCTestCase {
         XCTAssertEqual(plan.sourceVersions, ["chapter.tex": 1, "main.tex": 1, "refs.bib": 1])
         XCTAssertEqual(plan.edits.map(\.start), [byte("knuth84", in: Self.chapter), byte("knuth84", in: Self.main), byte("knuth84", in: Self.bib)])
         XCTAssertEqual(client.previews.map(\.line), [2, 4, 1])
+        guard client.previews.count == 3 else { return XCTFail("expected three previews, got \(client.previews.count)") }
         XCTAssertEqual(client.previews[0].after?.text, "Résumé — again \\cite[p.~3]{knuth1984}.")
         XCTAssertEqual(client.previews[2].after?.text, "@article{knuth1984,")
         XCTAssertTrue(client.status.hasPrefix("Proposal: 3 occurrences in 3 files, renaming “knuth84” to “knuth1984” at durable chapter.tex r1 (latex), main.tex r1 (latex), refs.bib r1 (bibliography). Nothing is changed"), client.status)

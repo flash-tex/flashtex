@@ -238,7 +238,7 @@ final class DisplayCandidateState {
     @ObservationIgnored private(set) var deferredReleasedBySupersession = 0
     @ObservationIgnored private(set) var deferredReleasedByInvalidation = 0
 
-    enum DeferredRelease { case candidate, timeout, superseded, invalidated }
+    enum DeferredRelease { case candidate, timeout, invalidated }
 
     /// Runs (in order) and clears the held-back work; nothing when nothing is held.
     func releaseDeferred(_ why: DeferredRelease) {
@@ -248,10 +248,23 @@ final class DisplayCandidateState {
         switch why {
         case .candidate: deferredReleasedByCandidate += 1
         case .timeout: deferredReleasedByTimeout += 1
-        case .superseded: deferredReleasedBySupersession += 1
         case .invalidated: deferredReleasedByInvalidation += 1
         }
         for work in d.works { work() }
+    }
+
+    /// A newer request's hold starts: takes the older request's held work
+    /// (in order) WITHOUT running it, so the caller carries it into the new
+    /// hold. Running it here would put required traffic (a completion fetch)
+    /// on the wire exactly while the newer request's sibling is expected, and
+    /// the helper evicts a queued optional frame on any required reply — the
+    /// newer candidate was lost for good (GH-799: startup preview, then ⌘B).
+    func supersedeDeferred() -> [() -> Void] {
+        guard let d = deferred else { return [] }
+        d.timeout.cancel()
+        deferred = nil
+        deferredReleasedBySupersession += 1
+        return d.works
     }
     // Counters for evidence and tests.
     @ObservationIgnored private(set) var received = 0
@@ -585,7 +598,8 @@ extension ShellModel {
     /// before the sibling is checked invalidates it. Hooks: the completion
     /// refresh and (when `displayCandidateHoldsRelease`) the in-flight edit
     /// release in `applyControllerPreview`. Held work for an older request
-    /// runs first when a newer request's hold starts (never dropped).
+    /// is carried, ahead of `work`, into a newer request's hold and runs when
+    /// THAT hold ends (never dropped, never run inside the newer sibling's window).
     func displayCandidatesAfterSibling(of requestID: String, acceptedLayout: [String], holdsRelease: Bool = false, _ work: @escaping () -> Void) {
         guard displayCandidates.isNegotiated, acceptedLayout.contains(DisplayCandidates.layoutCapability),
               !holdsRelease || Self.displayCandidateHoldsRelease else { work(); return }
@@ -593,12 +607,12 @@ extension ShellModel {
             displayCandidates.deferred?.works.append(work)
             return
         }
-        if displayCandidates.deferred != nil { displayCandidates.releaseDeferred(.superseded) }
+        let carried = displayCandidates.supersedeDeferred()
         let timeout = DispatchWorkItem { [weak self] in
             guard let self, self.displayCandidates.deferred?.requestID == requestID else { return }
             self.displayCandidates.releaseDeferred(.timeout)
         }
-        displayCandidates.deferred = (requestID, [work], timeout)
+        displayCandidates.deferred = (requestID, carried + [work], timeout)
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.displayCandidateSiblingWaitMs / 1000, execute: timeout)
     }
 

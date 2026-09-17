@@ -33,6 +33,7 @@ final class ErrorLensTests: XCTestCase {
         ]
         let errors = ErrorLens.lines(for: marks, warnings: false, lineOf: { h.line(at: $0) })
         XCTAssertEqual(errors.map(\.line), [0, 1])
+        guard errors.count == 2 else { return XCTFail("expected two error lines, got \(errors.count)") }
         XCTAssertEqual(errors[1], .init(line: 1, severity: .error, text: "Missing }"))
         XCTAssertEqual(errors[0].text.count, 90); XCTAssertTrue(errors[0].text.hasSuffix("…"))
         let all = ErrorLens.lines(for: marks, warnings: true, lineOf: { h.line(at: $0) })

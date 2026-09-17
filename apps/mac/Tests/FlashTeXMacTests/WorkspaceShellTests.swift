@@ -36,6 +36,7 @@ final class WorkspaceShellTests: XCTestCase {
                         "environment:theorem", "label:thm:main", "environment:equation"])
         XCTAssertEqual(items.map(\.line), [3, 4, 4, 6, 7, 7, 8])
         XCTAssertEqual(items.map(\.level), [0, 1, 0, 2, 0, 0, 1], "chapter 0, section 1, subsection 2; equation nests inside theorem")
+        guard items.count == 7 else { return XCTFail("expected seven outline items, got \(items.count)") }
         XCTAssertEqual(items[0].command, "chapter")
         XCTAssertEqual(items[1].command, "section", "the starred form keeps its name")
         // The command's own range is selectable text.
@@ -65,6 +66,7 @@ final class WorkspaceShellTests: XCTestCase {
         model.replaceProject(entryText: Self.sample)
         let items = model.outline
         XCTAssertEqual(items.count, 7)
+        guard items.count > 3 else { return XCTFail("expected more than three outline items, got \(items.count)") }
         model.reveal(outlineItem: items[3])
         XCTAssertEqual(model.selection?.path, "main.tex")
         XCTAssertEqual(model.selection?.nsRange, items[3].utf16)

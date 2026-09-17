@@ -23,6 +23,13 @@ Frames (JSON Lines, `protocol_version:1`, configured `session_id`):
                                     capability; error "unknown operation" when
                                     the environment sets FAKE_PC_REFUSE_SNAPSHOTS=1,
                                     like a helper that predates the channel)
+  export {path, expected_revision, expected_sha256, expected_disk_sha256}
+                                 -> writes the durable text under project_root,
+                                    result {path, sha256, bytes}. With
+                                    FAKE_PC_EXPORT_MARK set, that file is created
+                                    on receipt; with FAKE_PC_EXPORT_RELEASE set,
+                                    the reply (and every later frame) waits until
+                                    that file exists — a deterministically slow export
   close {}                       -> result {closed:true}, exit
   anything else                  -> error "unknown operation"
 
@@ -277,6 +284,23 @@ for raw in sys.stdin:
         held = None
         print("fake_preview_controller: negotiated=%s" % negotiated, file=sys.stderr, flush=True)
         result(rid, {"capability": CAPABILITY, "enabled": negotiated})
+    elif op == "export":
+        path = p.get("path")
+        if path not in documents or not ROOT:
+            error(rid, "unknown document %s" % path)
+            continue
+        d = documents[path]
+        if p.get("expected_revision") != d["revision"] or p.get("expected_sha256") != sha256(d["text"]):
+            error(rid, "document_conflict: expected r%s, durable r%d" % (p.get("expected_revision"), d["revision"]))
+            continue
+        if os.environ.get("FAKE_PC_EXPORT_MARK"):
+            open(os.environ["FAKE_PC_EXPORT_MARK"], "w").close()
+        release = os.environ.get("FAKE_PC_EXPORT_RELEASE")
+        while release and not os.path.exists(release):
+            time.sleep(0.01)
+        with open(os.path.join(ROOT, path), "w", encoding="utf-8") as fh:
+            fh.write(d["text"])
+        result(rid, {"path": path, "sha256": sha256(d["text"]), "bytes": len(d["text"].encode("utf-8"))})
     elif op == "restart":
         negotiated = False
         held = None

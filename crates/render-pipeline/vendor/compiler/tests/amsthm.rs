@@ -4,7 +4,7 @@
 //! `definition` bolds the head and leaves the body upright, `remark`
 //! italicises the head and leaves the body upright.
 
-use flashtex_compiler::parser::{self, Block, Inline, TextStyle};
+use flashtex_compiler::parser::{self, Block, FontSizeLevel, Inline, TextStyle};
 
 fn messages(source: &str) -> Vec<String> {
     parser::parse(source)
@@ -42,6 +42,8 @@ fn plain_texts(source: &str) -> Vec<String> {
 const ITALIC: TextStyle = TextStyle {
     bold: false,
     italic: true,
+    slanted: false,
+    small_caps: false,
     family: flashtex_compiler::parser::TextFamily::Roman,
     size: None,
     color: None,
@@ -370,6 +372,105 @@ fn the_ams_trio_is_silent_and_an_unimplemented_package_still_warns() {
     }
 }
 
+/// GitHub issue #700: `\newtheorem{def}` collides with the reserved TeX
+/// primitive `\def` (real pdflatex: "LaTeX Error: Command \def already
+/// defined."). The declaration must report that collision by name — one
+/// precise diagnostic — instead of letting `\begin{def}` execute the
+/// shadowed primitive and fail with a generic "Missing control sequence
+/// inserted.".
+#[test]
+fn reserved_primitive_name_reports_collision_not_missing_control_sequence() {
+    let source = r"\documentclass{article}
+\usepackage{amsthm}
+\newtheorem{def}{Definition}
+\begin{document}
+\begin{def}
+A test.
+\end{def}
+\end{document}";
+    let msgs = messages(source);
+    assert_eq!(msgs, [r"LaTeX Error: Command \def already defined."], "{msgs:?}");
+}
+
+/// A *duplicate* `\newtheorem{thm}{Theorem}` reports the collision pdflatex
+/// reports too, but pdflatex keeps the first definition -- every
+/// `\begin{thm}` still typesets "Theorem 1". A prior fix's rejection marker
+/// did not distinguish "collided with a real environment" from "collided
+/// with something else that must be shadowed", so it swallowed the still-
+/// working environment along with the duplicate declaration.
+#[test]
+fn duplicate_theorem_declaration_keeps_the_first_definition_working() {
+    let source = r"\usepackage{amsthm}
+\newtheorem{thm}{Theorem}\newtheorem{thm}{Theorem}
+\begin{document}\begin{thm}X\end{thm}\end{document}";
+    let msgs = messages(source);
+    assert_eq!(msgs, [r"LaTeX Error: Command \thm already defined."], "{msgs:?}");
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"Theorem 1".to_string()), "{texts:?}");
+    assert!(texts.iter().any(|t| t.contains('X')), "{texts:?}");
+}
+
+/// Same shape, a different kind of prior claim: `\newtheorem` colliding with
+/// an existing `\newenvironment` must report the collision but leave that
+/// environment working too.
+#[test]
+fn newtheorem_colliding_with_an_existing_environment_keeps_it_working() {
+    let source = r"\usepackage{amsthm}
+\newenvironment{foo}{\textbf{FOO}}{}
+\newtheorem{foo}{Foo}
+\begin{document}\begin{foo}\end{foo}\end{document}";
+    let msgs = messages(source);
+    assert_eq!(msgs, [r"LaTeX Error: Command \foo already defined."], "{msgs:?}");
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"FOO".to_string()), "{texts:?}");
+}
+
+/// The classic "define once" guard (`\@ifdefinable`-style): a `\relax`d
+/// name is not a real collision, matching pdflatex's `\@ifundefined`
+/// (review round 3, finding #1).
+#[test]
+fn newtheorem_ifx_csname_relax_guard_is_not_a_collision() {
+    let source = r"\usepackage{amsthm}
+\expandafter\ifx\csname thm\endcsname\relax\newtheorem{thm}{Theorem}\fi
+\begin{document}\begin{thm}X\end{thm}\end{document}";
+    let msgs = messages(source);
+    assert!(msgs.is_empty(), "{msgs:?}");
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"Theorem 1".to_string()), "{texts:?}");
+}
+
+/// A successful re-declaration inside a group claims globally, so it must
+/// still be usable after that group closes -- not undone along with the
+/// group-local `\let` that freed the name up for it (review round 3,
+/// finding #2).
+#[test]
+fn newtheorem_successful_reclaim_inside_a_group_survives_the_group_closing() {
+    let source = r"\usepackage{amsthm}
+\def\foo{}\newtheorem{foo}{Foo}{\let\foo\undefined\newtheorem{foo}{Foo}}
+\begin{document}\begin{foo}X\end{foo}\end{document}";
+    let msgs = messages(source);
+    assert_eq!(msgs, [r"LaTeX Error: Command \foo already defined."], "{msgs:?}");
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"Foo 1".to_string()), "{texts:?}");
+}
+
+/// Ordinary theorem names are unaffected: no diagnostics at all.
+#[test]
+fn ordinary_theorem_name_is_silent() {
+    let source = r"\documentclass{article}
+\usepackage{amsthm}
+\newtheorem{defn}{Definition}
+\begin{document}
+\begin{defn}
+A test.
+\end{defn}
+\end{document}";
+    let msgs = messages(source);
+    assert!(msgs.is_empty(), "{msgs:?}");
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"Definition 1".to_string()), "{texts:?}");
+}
+
 #[test]
 fn unregistered_environment_name_still_reports_the_generic_gap() {
     // A name that was never `\newtheorem`-declared is not silently treated
@@ -447,4 +548,202 @@ Run the Euclidean algorithm.
         }
     );
     assert_eq!(runs[1].1, TextStyle::default(), "the proof body is upright");
+}
+
+/// Every `Inline::Text` run across *every* block kind (paragraphs,
+/// `quote`/`center` styled blocks, list items), in document order.
+fn all_text_runs(source: &str) -> Vec<(String, TextStyle)> {
+    parser::parse(source)
+        .blocks
+        .into_iter()
+        .flat_map(|block| match block {
+            Block::Paragraph(inlines) => inlines,
+            Block::Styled { content, .. } => content,
+            Block::ListItem { content, .. } => content,
+            _ => Vec::new(),
+        })
+        .filter_map(|inline| match inline {
+            Inline::Text { text, style, .. } => Some((text, style)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `\large` in 10pt article.
+const LARGE: Option<FontSizeLevel> = Some(FontSizeLevel::Large1);
+
+/// GH-701: `{\large\begin{proof}...\end{proof}}` keeps `\large` for the
+/// "Proof." head and the body. Real pdflatex sets both at 12pt, since the
+/// size group is in effect when the environment's contents are typeset;
+/// the compiler used to reset to `\normalsize` on entry.
+#[test]
+fn proof_preserves_enclosing_size_in_head_and_body() {
+    let source = r"{\large\begin{proof}Body text.\end{proof}}";
+    let runs = text_runs(source);
+    assert_eq!(runs[0].0, "Proof.");
+    assert_eq!(
+        runs[0].1,
+        TextStyle {
+            italic: true,
+            size: LARGE,
+            ..TextStyle::default()
+        },
+        "the Proof head keeps the enclosing size"
+    );
+    for (text, style) in &runs[1..runs.len() - 1] {
+        assert_eq!(
+            style.size, LARGE,
+            "proof body run {text:?} must stay at the enclosing size"
+        );
+        assert!(
+            !style.italic && !style.bold,
+            "proof body run {text:?} must stay upright"
+        );
+    }
+    let (last_text, last_style) = runs.last().unwrap();
+    assert_eq!(last_text, "∎");
+    assert_eq!(
+        last_style.size, LARGE,
+        "the QED symbol is set in the body font, which keeps the enclosing size"
+    );
+}
+
+/// GH-701: same for a `\newtheorem`-declared `plain`-style theorem (bold
+/// head, italic body).
+#[test]
+fn plain_theorem_preserves_enclosing_size_in_head_and_body() {
+    let source = r"\newtheorem{theorem}{Theorem}
+{\large\begin{theorem}
+Every prime greater than two is odd.
+\end{theorem}}";
+    let runs = text_runs(source);
+    assert_eq!(runs[0].0, "Theorem 1");
+    let large_bold = TextStyle {
+        size: LARGE,
+        ..TextStyle::BOLD
+    };
+    assert_eq!(runs[0].1, large_bold, "the head keeps the enclosing size");
+    assert_eq!(runs[1].0, ".");
+    assert_eq!(
+        runs[1].1, large_bold,
+        "\\the\\thm@headpunct is in the head font, hence also sized"
+    );
+    let large_italic = TextStyle {
+        italic: true,
+        size: LARGE,
+        ..TextStyle::default()
+    };
+    for (text, style) in &runs[2..] {
+        assert_eq!(
+            *style, large_italic,
+            "plain body run {text:?} must be italic at the enclosing size"
+        );
+    }
+}
+
+/// GH-701: the parenthesised note (`\thm@notefont` changes series/shape
+/// only) also keeps the enclosing size, like real pdflatex.
+#[test]
+fn theorem_note_preserves_enclosing_size() {
+    let source = r"\newtheorem{theorem}{Theorem}
+{\large\begin{theorem}[Fermat]
+Statement.
+\end{theorem}}";
+    let runs = text_runs(source);
+    assert_eq!(runs[2].0, "(Fermat)");
+    assert_eq!(
+        runs[2].1,
+        TextStyle {
+            size: LARGE,
+            ..TextStyle::default()
+        },
+        "the note stays upright at the enclosing size"
+    );
+}
+
+/// GH-701: the fix is not `plain`-style-specific — `definition` (bold
+/// head, upright body) and `remark` (italic head with an upright `\@upn`
+/// number, upright body) keep the enclosing size too.
+#[test]
+fn definition_style_preserves_enclosing_size() {
+    let source = r"\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+{\large\begin{definition}
+A number is even if it is divisible by two.
+\end{definition}}";
+    let runs = text_runs(source);
+    assert_eq!(runs[0].0, "Definition 1");
+    assert_eq!(
+        runs[0].1,
+        TextStyle {
+            size: LARGE,
+            ..TextStyle::BOLD
+        }
+    );
+    let large_upright = TextStyle {
+        size: LARGE,
+        ..TextStyle::default()
+    };
+    for (text, style) in &runs[2..] {
+        assert_eq!(
+            *style, large_upright,
+            "definition body run {text:?} must be upright at the enclosing size"
+        );
+    }
+}
+
+#[test]
+fn remark_style_preserves_enclosing_size() {
+    let source = r"\theoremstyle{remark}
+\newtheorem{remark}{Remark}
+{\large\begin{remark}
+This generalizes to any ring.
+\end{remark}}";
+    let runs = text_runs(source);
+    let large_italic = TextStyle {
+        italic: true,
+        size: LARGE,
+        ..TextStyle::default()
+    };
+    let large_upright = TextStyle {
+        size: LARGE,
+        ..TextStyle::default()
+    };
+    assert_eq!(runs[0].0, "Remark");
+    assert_eq!(runs[0].1, large_italic);
+    assert_eq!(runs[1].0, " ");
+    assert_eq!(runs[1].1, large_italic);
+    assert_eq!(runs[2].0, "1");
+    assert_eq!(
+        runs[2].1, large_upright,
+        "\\@upn sets the number upright but keeps the enclosing size"
+    );
+    assert_eq!(runs[3].0, ".");
+    assert_eq!(runs[3].1, large_italic);
+    for (text, style) in &runs[4..] {
+        assert_eq!(
+            *style, large_upright,
+            "remark body run {text:?} must be upright at the enclosing size"
+        );
+    }
+}
+
+/// GH-701 regression guard: `itemize`/`quote`/`center` already carried
+/// `\large` into their contents before the fix; they still do.
+#[test]
+fn size_group_still_reaches_itemize_quote_and_center() {
+    for source in [
+        r"{\large\begin{itemize}\item Alpha beta.\end{itemize}}",
+        r"{\large\begin{quote}Quoted words here.\end{quote}}",
+        r"{\large\begin{center}Centered words here.\end{center}}",
+    ] {
+        let runs = all_text_runs(source);
+        assert!(!runs.is_empty(), "expected text runs for {source:?}");
+        for (text, style) in &runs {
+            assert_eq!(
+                style.size, LARGE,
+                "run {text:?} in {source:?} must stay at the enclosing size"
+            );
+        }
+    }
 }

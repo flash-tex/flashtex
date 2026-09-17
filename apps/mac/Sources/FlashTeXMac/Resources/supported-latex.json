@@ -67,7 +67,7 @@
     {"name": "arraybackslash", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "array no-op: \\\\ already ends the row inside p, m and b entries", "renders": true},
     {"name": "arrayrulecolor", "mode": "text", "origin": "text_dispatch", "arguments": "[model]{colour}", "description": "colortbl: colour of later table rules", "renders": true},
     {"name": "doublerulesepcolor", "mode": "text", "origin": "text_dispatch", "arguments": "[model]{colour}", "description": "colortbl: colour of the gap between double rules", "renders": true},
-    {"name": "setlist", "mode": "text", "origin": "text_dispatch", "arguments": "[list]{options}", "description": "enumitem keys recorded on every matching list; itemsep and topsep also set the built-in layout, other keys warn", "renders": true},
+    {"name": "setlist", "mode": "text", "origin": "text_dispatch", "arguments": "*[list]{options}", "description": "enumitem keys recorded on every matching list; itemsep and topsep also set the built-in layout, other keys warn; the starred form also forces itemsep=0pt", "renders": true},
     {"name": "newcommand", "mode": "text", "origin": "text_dispatch", "arguments": "{\\name}[n]{body}", "description": "defines a macro with 0-9 arguments; rejects an existing name", "renders": true},
     {"name": "renewcommand", "mode": "text", "origin": "text_dispatch", "arguments": "{\\name}[n]{body}", "description": "redefines an existing macro", "renders": true},
     {"name": "DeclareMathOperator", "mode": "text", "origin": "text_dispatch", "arguments": "*{\\name}{text}", "description": "defines \\name as \\operatorname{text}; the starred form takes limits", "renders": true},
@@ -144,6 +144,8 @@
     {"name": "newpage", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "forces a page break", "renders": true},
     {"name": "clearpage", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "forces a page break", "renders": true},
     {"name": "cleardoublepage", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "forces a page break (one-sided article)", "renders": true},
+    {"name": "twocolumn", "mode": "text", "origin": "text_dispatch", "arguments": "[material]", "description": "starts a new two-column page (\\clearpage, then \\if@twocolumn); \\textwidth, \\parindent and the list margins keep the one-column class values, as in LaTeX. The optional full-width material above the columns is not implemented", "renders": true},
+    {"name": "onecolumn", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "starts a new one-column page (\\clearpage, then \\if@twocolumn false); \\columnwidth becomes \\textwidth", "renders": true},
     {"name": "pagebreak", "mode": "text", "origin": "text_dispatch", "arguments": "[n]", "description": "page-break penalty -\\@getpen{n} (4: a forced break); in a paragraph, after the line it is set on", "renders": true},
     {"name": "nopagebreak", "mode": "text", "origin": "text_dispatch", "arguments": "[n]", "description": "page-break penalty \\@getpen{n}; in a paragraph, after the line it is set on", "renders": true},
     {"name": "linebreak", "mode": "text", "origin": "text_dispatch", "arguments": "[n]", "description": "line-break penalty -\\@getpen{n} (4: a forced break, the line stays justified)", "renders": true},
@@ -197,6 +199,8 @@
     {"name": "LARGE", "mode": "text", "origin": "text_size", "arguments": "", "description": "size declaration from the class size table", "renders": true},
     {"name": "huge", "mode": "text", "origin": "text_size", "arguments": "", "description": "size declaration from the class size table", "renders": true},
     {"name": "Huge", "mode": "text", "origin": "text_size", "arguments": "", "description": "size declaration from the class size table", "renders": true},
+    {"name": "larger", "mode": "text", "origin": "text_style", "arguments": "{...}", "description": "relsize: one step up the class size table from the size in effect; without an argument, a declaration for the rest of the scope", "renders": true},
+    {"name": "smaller", "mode": "text", "origin": "text_style", "arguments": "{...}", "description": "relsize: one step down the class size table from the size in effect; without an argument, a declaration for the rest of the scope", "renders": true},
     {"name": "cite", "mode": "text", "origin": "text_dispatch", "arguments": "[note]{keys}", "description": "numbered citation from thebibliography entries, or biblatex's numeric citation when biblatex is loaded; natbib redefines it as \\citet, or as \\citep when an optional argument follows", "renders": true},
     {"name": "parencite", "mode": "text", "origin": "text_dispatch", "arguments": "[pre][post]{keys}", "description": "biblatex parenthetical citation: [n] in numeric style", "renders": true},
     {"name": "textcite", "mode": "text", "origin": "text_dispatch", "arguments": "[pre][post]{keys}", "description": "biblatex textual citation: Author [n] in numeric style", "renders": true},
@@ -235,6 +239,7 @@
     {"name": "closing", "mode": "text", "origin": "text_dispatch", "arguments": "{text}", "description": "letter.cls: closing and signature at \\longindentation, 6\\parskip apart", "renders": true},
     {"name": "cc", "mode": "text", "origin": "text_dispatch", "arguments": "{text}", "description": "letter.cls carbon-copy line, labelled 'cc:'", "renders": true},
     {"name": "encl", "mode": "text", "origin": "text_dispatch", "arguments": "{text}", "description": "letter.cls enclosure line, labelled 'encl:'", "renders": true},
+    {"name": "hangfrom", "mode": "text", "origin": "text_dispatch", "arguments": "{label}", "description": "kernel (ltsect.dtx): label set inline, continuing the paragraph; the hanging indent itself is not applied", "renders": true},
     {"name": "ps", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "letter.cls postscript: a paragraph break and nothing else — it takes no argument", "renders": true},
     {"name": "startbreaks", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "letter.cls: re-allows page breaks after \\closing; no effect on this layout", "renders": true},
     {"name": "stopbreaks", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "letter.cls: forbids page breaks inside the closing; no effect on this layout", "renders": true},
@@ -324,6 +329,8 @@
     {"name": "underline", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox", "renders": true},
     {"name": "underbar", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "kernel text underline: Rule 10 rule like \\underline but content depth zeroed (fixed position)", "renders": true},
     {"name": "sout", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)", "renders": true},
+    {"name": "textsuperscript", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "kernel text superscript: argument at \\sf@size raised like a math superscript (single-line)", "renders": true},
+    {"name": "textsubscript", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "kernel text subscript: argument at \\sf@size lowered like a math subscript (single-line)", "renders": true},
     {"name": "newtheorem", "mode": "text", "origin": "text_dispatch", "arguments": "{env}[counter]{name}", "description": "defines a numbered theorem-like environment (amsthm)", "renders": true},
     {"name": "theoremstyle", "mode": "text", "origin": "text_dispatch", "arguments": "{style}", "description": "selects the amsthm style for following \\newtheorem", "renders": true},
     {"name": "long", "mode": "text", "origin": "expansion", "arguments": "", "description": "prefix: the following definition accepts \\par in arguments", "renders": true},
@@ -416,10 +423,13 @@
     {"name": "bmod", "mode": "math", "origin": "math_structure", "arguments": "", "description": "upright mod", "renders": true},
     {"name": "mod", "mode": "math", "origin": "math_structure", "arguments": "", "description": "upright mod", "renders": true},
     {"name": "pmod", "mode": "math", "origin": "math_structure", "arguments": "{n}", "description": "parenthesised (mod n)", "renders": true},
+    {"name": "pod", "mode": "math", "origin": "math_structure", "arguments": "{n}", "description": "amsmath parenthesised (n): like \\pmod without the mod text; needs amsmath", "renders": true},
+    {"name": "allowbreak", "mode": "math", "origin": "math_structure", "arguments": "", "description": "zero-penalty breakpoint in a formula (\\penalty0); layout-neutral, formulas never break", "renders": true},
     {"name": "mathbb", "mode": "math", "origin": "math_structure", "arguments": "{A-Z}", "description": "double-struck capitals from Latin Modern Math; other arguments are diagnosed", "renders": true},
     {"name": "mathfrak", "mode": "math", "origin": "math_structure", "arguments": "{letters}", "description": "Euler Fraktur letters as Unicode mathematical fraktur; digits and other characters unchanged", "renders": true},
     {"name": "mathcal", "mode": "math", "origin": "math_structure", "arguments": "{A-Z}", "description": "script capitals from New Computer Modern Math at cmsy10 metrics; other arguments are diagnosed", "renders": true},
     {"name": "varnothing", "mode": "math", "origin": "math_structure", "arguments": "", "description": "empty set at msbm10's 0.7778em advance (\\emptyset's glyph)", "renders": true},
+    {"name": "Diamond", "mode": "math", "origin": "math_structure", "arguments": "", "description": "amsfonts alias of \\lozenge (msam, 0.6667em); requires amsfonts/amssymb", "renders": true},
     {"name": "iff", "mode": "math", "origin": "math_structure", "arguments": "", "description": "long double arrow between thick (5mu) spaces", "renders": true},
     {"name": "implies", "mode": "math", "origin": "math_structure", "arguments": "", "description": "long double arrow between thick (5mu) spaces", "renders": true},
     {"name": "impliedby", "mode": "math", "origin": "math_structure", "arguments": "", "description": "long double arrow between thick (5mu) spaces", "renders": true},
@@ -660,6 +670,7 @@
     {"name": "dashv", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⊣", "renders": true, "glyph": "⊣"},
     {"name": "top", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⊤", "renders": true, "glyph": "⊤"},
     {"name": "Box", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol □", "renders": true, "glyph": "□"},
+    {"name": "diamond", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⋄", "renders": true, "glyph": "⋄"},
     {"name": "Longleftrightarrow", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⟺", "renders": true, "glyph": "⟺"},
     {"name": "longrightarrow", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⟶", "renders": true, "glyph": "⟶"},
     {"name": "longleftarrow", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⟵", "renders": true, "glyph": "⟵"},
@@ -1016,6 +1027,7 @@
     {"name": "natbib", "silent_options": "numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak", "description": "\\citet/\\citep/\\citealt/\\citealp/\\citeauthor/\\citeyear/\\citeyearpar/\\citenum/\\citetext and the \\cite it redefines, with [Author(Year)] \\bibitem labels; sort, compress, super and openbib are diagnosed"},
     {"name": "biblatex", "silent_options": "style=numeric, sorting=none, backend=biber", "description": "basic project-relative .bib resources with numeric citations, textcite/parencite/autocite, citeauthor/citeyear, nocite and printbibliography; authoryear labels are minimal, alphabetic warns"},
     {"name": "ulem", "silent_options": "normalem", "description": "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined"},
+    {"name": "relsize", "silent_options": "", "description": "\\larger/\\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size"},
     {"name": "xspace", "silent_options": "", "description": "\\xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)"},
     {"name": "ifthen", "silent_options": "", "description": "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used"}
   ],
@@ -1034,9 +1046,9 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 199, "percent": 48.5},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 201, "percent": 49},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 20, "percent": 66.7},
-      {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 45, "percent": 44.1},
+      {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 46, "percent": 45.1},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
       {"set": "amssymb", "kind": "command", "canonical": 229, "supported": 225, "percent": 98.3},
       {"set": "enumitem", "kind": "command", "canonical": 17, "supported": 1, "percent": 5.9},
@@ -1049,6 +1061,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 18, "percent": 7.5}
     ],
-    "total": {"canonical": 1314, "supported": 548, "percent": 41.7}
+    "total": {"canonical": 1314, "supported": 551, "percent": 41.9}
   }
 }

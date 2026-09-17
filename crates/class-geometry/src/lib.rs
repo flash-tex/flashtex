@@ -182,6 +182,38 @@ impl ResolvedDocument {
     pub fn head_foot(&self, page: i64) -> (Line, Line) {
         self.style_macros.for_page(self.flags.twoside, page)
     }
+
+    /// `\twocolumn` / `\onecolumn` (latex.ltx lines 20256–20275): set
+    /// `\if@twocolumn`, `\col@number` and `\columnwidth` (with
+    /// `\hsize`/`\linewidth`), after a `\clearpage`.
+    ///
+    /// **They change nothing else**, and that is the whole difference
+    /// between the command and the class option. The `twocolumn` *option*
+    /// is read by `size1<n>.clo` while the class file is still running, so
+    /// it also doubles `\textwidth`, and sets `\parindent` to `1em`,
+    /// `\marginparsep` to `10pt` and `\leftmargini` to `2em`
+    /// ([`crate::class`]). The commands run long after `size1<n>.clo` has
+    /// finished, so those keep the one-column values.
+    ///
+    /// Measured against pdflatex (TeX Live 2026, `article`, 10pt, letter):
+    /// `\twocolumn` in the preamble leaves `\textwidth` at 345pt — the
+    /// text block still starts at x = 133.768 bp, not the option's 72.0 —
+    /// and the first line of a paragraph is still indented 15pt, not the
+    /// option's 1em. The two columns are 167.5pt wide with the second at
+    /// +177.5pt (measured 310.605 − 133.768 = 176.837 bp), which is
+    /// exactly `columnwidth(true)` and `\columnsep` of the *one-column*
+    /// `\textwidth`.
+    ///
+    /// `options.twocolumn` is deliberately left alone: it records what
+    /// `\documentclass` asked for, which is what fixed the dimensions.
+    pub fn set_twocolumn(&mut self, twocolumn: bool) {
+        if self.flags.twocolumn == twocolumn {
+            return;
+        }
+        self.flags.twocolumn = twocolumn;
+        self.frame.twocolumn = twocolumn;
+        self.frame.columns = frame::columns(&self.params, twocolumn);
+    }
 }
 
 pub fn resolve(setup: &DocumentSetup) -> ResolvedDocument {

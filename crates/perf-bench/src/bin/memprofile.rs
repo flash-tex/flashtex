@@ -69,6 +69,25 @@ fn mib(b: u64) -> f64 {
     b as f64 / (1024.0 * 1024.0)
 }
 
+/// Ask the allocator to return free pages to the kernel, reporting the
+/// `malloc_trim` return code. `malloc_trim` is a glibc extension, not part of
+/// the musl libc Linux builds also target, so only a glibc/Linux build links
+/// it; every other platform (including musl Linux) gets a no-op `None`
+/// (macOS has no such symbol and would otherwise fail to link, and neither
+/// does musl).
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn release_free_pages() -> Option<i32> {
+    extern "C" {
+        fn malloc_trim(pad: usize) -> i32;
+    }
+    Some(unsafe { malloc_trim(0) })
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn release_free_pages() -> Option<i32> {
+    None
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let want = args.first().cloned().unwrap_or_else(|| "synthetic-2mb".into());
@@ -226,15 +245,20 @@ fn main() {
     // memory, or is it something the walk cannot see? `malloc_trim` asks
     // glibc to return free arena pages to the kernel; if RSS falls by the
     // gap, the gap was retention and nothing in the program owns it.
-    extern "C" {
-        fn malloc_trim(pad: usize) -> i32;
-    }
-    let rc = unsafe { malloc_trim(0) };
-    let after = sys::current_rss_kb().unwrap_or(0) * 1024;
+    // The trim step is Linux-only (`malloc_trim` is glibc-only); other
+    // platforms report RSS untrimmed with a one-line note.
     println!();
-    println!("malloc_trim(0) -> {rc}");
-    println!("VmRSS after trim {:>9.1} MiB   (released {:.1} MiB)", mib(after), mib(rss.saturating_sub(after)));
-    println!("live after trim  {:>9.1} MiB", mib(live()));
+    match release_free_pages() {
+        Some(rc) => {
+            let after = sys::current_rss_kb().unwrap_or(0) * 1024;
+            println!("malloc_trim(0) -> {rc}");
+            println!("VmRSS after trim {:>9.1} MiB   (released {:.1} MiB)", mib(after), mib(rss.saturating_sub(after)));
+            println!("live after trim  {:>9.1} MiB", mib(live()));
+        }
+        None => {
+            println!("RSS trim skipped: malloc_trim is glibc-only (not available on this platform)");
+        }
+    }
 }
 
 /// A runtime-v1 `compile` line.
@@ -292,4 +316,21 @@ fn push_json_str(o: &mut String, s: &str) {
         }
     }
     o.push('"');
+}
+
+#[cfg(test)]
+mod trim_tests {
+    use super::release_free_pages;
+
+    #[test]
+    fn trim_step_matches_platform() {
+        // `malloc_trim` only exists on glibc/Linux: everywhere else, including
+        // musl Linux, the trim step must be a no-op so the binary links
+        // (macOS has no such symbol, and neither does musl). On glibc/Linux
+        // the call itself is safe and returns 0 or 1.
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        assert!(release_free_pages().is_some());
+        #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+        assert!(release_free_pages().is_none());
+    }
 }

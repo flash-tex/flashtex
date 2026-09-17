@@ -404,6 +404,7 @@ fn check_colon_oracle(fonts: &flashtex_render_pipeline::FontSet, (name, body, te
 /// is raised onto the axis, every `=` and the operands stay on the baseline,
 /// and the `mathtools.sty` kerns (-.9mu, -1.2mu) survive the conversion.
 #[test]
+#[cfg_attr(not(feature = "math-class-override"), ignore = "requires the math-class-override feature")]
 fn mathtools_composed_colons_match_pdflatex() {
     if !lm_available() {
         return;
@@ -425,6 +426,7 @@ fn mathtools_composed_colons_match_pdflatex() {
 /// `Symbol`) and `\colon` all keep the colon on the baseline, with mathtools
 /// loaded.
 #[test]
+#[cfg_attr(not(feature = "math-class-override"), ignore = "requires the math-class-override feature")]
 fn unraised_colons_match_pdflatex() {
     if !lm_available() {
         return;
@@ -442,11 +444,9 @@ fn unraised_colons_match_pdflatex() {
 /// pdfLaTeX builds mathtools' `\coloneqq` as `\vcentcolon\mathrel{\mkern-1.2mu}=`
 /// (same oracle as `ColonOracle`): the colon rises 0.415bp, the `=` starts
 /// 1.2mu (0.797bp) before the colon's advance ends, and the formula is
-/// `29.43333pt` wide. The pinned compiler still emits the precomposed U+2254
-/// `≔` on the baseline for `\coloneqq`; the compiler change that decomposes it
-/// under mathtools is #529.
+/// `29.43333pt` wide. The compiler decomposes `\coloneqq` this way under
+/// mathtools since #529.
 #[test]
-#[ignore = "needs re-pin past #529 (compiler: \\coloneqq decomposes under mathtools)"]
 fn coloneqq_decomposes_like_mathtools() {
     if !lm_available() {
         return;
@@ -465,6 +465,7 @@ fn coloneqq_decomposes_like_mathtools() {
 /// colons match pdfLaTeX's -0.415bp, and kernel/amsmath `\colon` without
 /// mathtools stay on the baseline.
 #[test]
+#[cfg_attr(not(feature = "math-class-override"), ignore = "requires the math-class-override feature")]
 fn mathtools_colons_match_pdflatex_vertical_oracle_without_spacing_changes() {
     if !lm_available() {
         return;

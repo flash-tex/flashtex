@@ -27,3 +27,9 @@ __pycache__/
 # Generated design canvas bundle (large single-file build output)
 docs/design/canvas/*.html
 !docs/design/canvas/*.dc.html
+
+# CI evidence from the mac suite: the test log, and the snapshots a failing
+# run actually captured (SNAPSHOT_ARTIFACTS). Both are uploaded as workflow
+# artifacts; neither belongs in the tree.
+apps/mac/swift-test.log
+apps/mac/snapshot-artifacts/
