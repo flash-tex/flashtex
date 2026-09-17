@@ -100,6 +100,32 @@ fn is_rule_command(name: &str, booktabs: bool) -> bool {
             ))
 }
 
+/// Whether this token is an escaped `\&` — a printed ampersand — rather
+/// than the `&` that opens the next entry. `\&` lexes as the one-character
+/// word `&` whose span covers the backslash too (two bytes).
+///
+/// The width is measured on the token's own source bytes, like
+/// `parser::control_symbol_kern`: text expanded from a macro body carries
+/// the invocation's span, so a `\&` inside `\newcommand{\am}{\&}` looks
+/// three bytes wide and would silently become a column break — output
+/// identical to an unescaped `a&b`, shifting every later cell in the row.
+/// Expanded text with no definition bytes (synthesised by the engine)
+/// cannot prove it is escaped, so it separates, as a bare `&` does.
+fn is_escaped_ampersand(input: &InputToken) -> bool {
+    if !matches!(&input.token.kind, TokenKind::Word(word) if word == "&") {
+        return false;
+    }
+    let span = if input.maps_to_invocation {
+        match input.definition {
+            Some(definition) => definition,
+            None => return false,
+        }
+    } else {
+        input.token.span
+    };
+    span.end - span.start == 2
+}
+
 /// Row-scanner state carried between rows.
 #[derive(Default)]
 struct RowState {
@@ -526,13 +552,8 @@ impl P<'_> {
                     self.finish_row(body, &mut row, &mut entries, &mut state);
                     continue;
                 }
-                // `\&` lexes as a one-character word spanning two bytes.
                 TokenKind::Word(word)
-                    if depth == 0
-                        && word.contains('&')
-                        && !(word == "&"
-                            && !input.maps_to_invocation
-                            && span.end - span.start == 2) =>
+                    if depth == 0 && word.contains('&') && !is_escaped_ampersand(&input) =>
                 {
                     let exact = span.end - span.start == word.len();
                     for (index, piece) in word.split('&').enumerate() {

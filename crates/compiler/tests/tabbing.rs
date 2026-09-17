@@ -255,3 +255,142 @@ fn control_symbols_outside_tabbing_are_unchanged() {
     let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
     assert_eq!(texts, vec!["a", "=", "b", "c"]);
 }
+
+// ---------------------------------------------------------------------------
+// GH-760: a control symbol's identity must come from its own source bytes.
+//
+// A token copied out of a macro's replacement text carries the *invocation's*
+// span, so measuring `span.end - span.start == 2` on it really measured how
+// long a name the user happened to give the macro. The failure ran in both
+// directions, and the second one is silent:
+//
+//   - `\=` inside a three-byte macro was missed: it printed a literal `=`
+//     and set no tab stop;
+//   - a plain `=` inside a two-byte macro was mistaken for `\=` and swallowed
+//     as a tab stop — the character the user typed vanished from the output,
+//     and only inside `tabbing`.
+//
+// The fix reads `definition`/`maps_to_invocation`, the idiom `control_symbol_kern`
+// already uses for `\,`.
+
+/// Every `Inline::Text` in a tabbing line, in order.
+fn line_texts(line: &parser::TabbingLine) -> Vec<&str> {
+    line.content
+        .iter()
+        .filter_map(|inline| match inline {
+            Inline::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn tabbing_lines(text: &str) -> (Vec<parser::TabbingLine>, Vec<String>) {
+    let parsed = parser::parse(text);
+    let lines = parsed
+        .blocks
+        .iter()
+        .find_map(|block| match block {
+            Block::Tabbing { lines, .. } => Some(lines.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no Block::Tabbing in {:#?}", parsed.blocks));
+    let diagnostics = parsed
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect();
+    (lines, diagnostics)
+}
+
+#[test]
+fn tab_stop_reached_through_a_long_macro_still_sets_a_stop() {
+    // `\ts` is three bytes, so the old width test missed the `\=` it expands
+    // to and typeset a literal `=` instead.
+    let (lines, diagnostics) =
+        tabbing_lines("\\newcommand{\\ts}{\\=}\n\\begin{tabbing}\nxx\\ts yy\n\\end{tabbing}\n");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(lines.len(), 1);
+    assert_eq!(
+        lines[0]
+            .content
+            .iter()
+            .filter(|inline| matches!(inline, Inline::TabStop { .. }))
+            .count(),
+        1,
+        "{:#?}",
+        lines[0].content
+    );
+    assert_eq!(line_texts(&lines[0]), vec!["xx", "yy"]);
+}
+
+#[test]
+fn tab_jump_reached_through_a_long_macro_still_jumps() {
+    let (lines, diagnostics) = tabbing_lines(
+        "\\newcommand{\\ts}{\\=}\\newcommand{\\tj}{\\>}\n\
+         \\begin{tabbing}\nxx\\ts yy\\kill\na\\tj b\n\\end{tabbing}\n",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(lines.len(), 2);
+    assert_eq!(
+        lines[1]
+            .content
+            .iter()
+            .filter(|inline| matches!(inline, Inline::TabJump { .. }))
+            .count(),
+        1,
+        "{:#?}",
+        lines[1].content
+    );
+    assert_eq!(line_texts(&lines[1]), vec!["a", "b"]);
+}
+
+#[test]
+fn a_plain_character_from_a_two_byte_macro_is_not_a_tabbing_control() {
+    // The silent direction: `\q` is two bytes, so the `=` it expands to used
+    // to look exactly like `\=` and was swallowed as a tab stop.
+    let (lines, diagnostics) =
+        tabbing_lines("\\newcommand{\\q}{=}\n\\begin{tabbing}\nxx\\q yy\n\\end{tabbing}\n");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(lines.len(), 1);
+    assert_eq!(
+        lines[0]
+            .content
+            .iter()
+            .filter(|inline| matches!(inline, Inline::TabStop { .. }))
+            .count(),
+        0,
+        "{:#?}",
+        lines[0].content
+    );
+    assert_eq!(line_texts(&lines[0]), vec!["xx", "=", "yy"]);
+}
+
+#[test]
+fn the_same_macro_prints_the_character_in_running_text_and_in_tabbing() {
+    // The bug was visible only because the two disagreed: the fix must leave
+    // running text exactly as it was.
+    let out = compiled("\\newcommand{\\q}{=}\nxx\\q yy");
+    assert!(out.diagnostics.is_empty(), "{:#?}", out.diagnostics);
+    let texts: Vec<String> = out
+        .pages
+        .iter()
+        .flat_map(|page| page.items.iter().map(|item| item.text.clone()))
+        .collect();
+    assert_eq!(texts, vec!["xx", "=", "yy"]);
+}
+
+#[test]
+fn a_literal_tabbing_control_is_unaffected() {
+    // The fix must not disturb the ordinary, non-macro path.
+    let (lines, diagnostics) = tabbing_lines("\\begin{tabbing}\nxx\\=yy\n\\end{tabbing}\n");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(
+        lines[0]
+            .content
+            .iter()
+            .filter(|inline| matches!(inline, Inline::TabStop { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(line_texts(&lines[0]), vec!["xx", "yy"]);
+}

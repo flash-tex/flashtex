@@ -2608,7 +2608,12 @@ impl P<'_> {
                     if !(self.in_body
                         && !self.document_ended
                         && self.tabbing_active()
-                        && is_tabbing_control(word, self.t[self.i].token.span))
+                        && is_tabbing_control(
+                            word,
+                            self.t[self.i].maps_to_invocation,
+                            self.t[self.i].definition,
+                            self.t[self.i].token.span,
+                        ))
                         && control_symbol_kern(
                             word,
                             self.t[self.i].maps_to_invocation,
@@ -2680,7 +2685,12 @@ impl P<'_> {
                 TokenKind::Word(word)
                     if render
                         && self.tabbing_active()
-                        && is_tabbing_control(&word, tok.span) =>
+                        && is_tabbing_control(
+                            &word,
+                            input.maps_to_invocation,
+                            input.definition,
+                            tok.span,
+                        ) =>
                 {
                     self.i += 1;
                     self.tabbing_control(&word, tok.span, para);
@@ -10505,7 +10515,30 @@ fn preamble_source(text: &str, has_document: bool, tokens: &[InputToken]) -> Str
 /// the backslash too (two bytes), exactly like [`control_symbol_kern`]'s
 /// own test. A literal `=` typed as text (`a = b`) is one byte wide and
 /// never matches.
-fn is_tabbing_control(word: &str, span: Span) -> bool {
+///
+/// The width is measured on the token's own source bytes, for the same
+/// reason [`control_symbol_kern`] measures them: text expanded from a
+/// macro body carries the invocation's span. Without that, `\=` inside
+/// `\newcommand{\ts}{\=}` looks three bytes wide and is typeset as a
+/// literal `=` that sets no tab stop, while a plain `=` inside a two-byte
+/// `\newcommand{\q}{=}` looks like `\=` and is swallowed as a tab stop —
+/// the character the user typed disappears, and only inside `tabbing`.
+/// Expanded text with no definition bytes (synthesised by the engine)
+/// cannot prove it spells a control symbol, so it is typeset instead.
+fn is_tabbing_control(
+    word: &str,
+    maps_to_invocation: bool,
+    definition: Option<Span>,
+    span: Span,
+) -> bool {
+    let span = if maps_to_invocation {
+        match definition {
+            Some(definition) => definition,
+            None => return false,
+        }
+    } else {
+        span
+    };
     matches!(word, "=" | ">" | "<" | "+" | "-") && span.end - span.start == 2
 }
 
