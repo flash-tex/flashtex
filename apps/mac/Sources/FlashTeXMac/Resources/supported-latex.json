@@ -306,6 +306,10 @@
     {"name": "textperiodcentered", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textperiodcentered: OT1 ·, T1 · (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
     {"name": "textregistered", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textregistered: OT1 ®, T1 ® (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
     {"name": "texttrademark", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\texttrademark: OT1 ™, T1 ™ (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
+    {"name": "labelitemi", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "article default itemize level-1 marker: \\textbullet", "renders": true},
+    {"name": "labelitemii", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "article default itemize level-2 marker: bold \\textendash", "renders": true},
+    {"name": "labelitemiii", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "article default itemize level-3 marker: \\textasteriskcentered", "renders": true},
+    {"name": "labelitemiv", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "article default itemize level-4 marker: \\textperiodcentered", "renders": true},
     {"name": "c", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "cedilla text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
     {"name": "v", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "caron text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
     {"name": "u", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "breve text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
@@ -1034,7 +1038,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 199, "percent": 48.5},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 203, "percent": 49.5},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 20, "percent": 66.7},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 45, "percent": 44.1},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -1049,6 +1053,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 18, "percent": 7.5}
     ],
-    "total": {"canonical": 1314, "supported": 548, "percent": 41.7}
+    "total": {"canonical": 1314, "supported": 552, "percent": 42}
   }
 }

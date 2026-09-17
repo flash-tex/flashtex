@@ -2,9 +2,10 @@
 //! used behind `parser::parse_project` for large entry documents) must give
 //! exactly what a from-scratch `expansion::expand_project` gives: the same
 //! parser tokens with the same spans and definition spans, the same
-//! diagnostics, and the same `\arraystretch` records, after every edit.
+//! diagnostics, and the same `\arraystretch`/`\labelitem` records, after
+//! every edit.
 use flashtex_compiler::expansion::{expand_project, expand_project_with_cache, ExpansionCache};
-use flashtex_compiler::parser::SourceDocument;
+use flashtex_compiler::parser::{self, Block, SourceDocument};
 
 struct Rng(u64);
 
@@ -90,6 +91,12 @@ fn check_project(docs: &[SourceDocument<'_>], cache: &mut Option<ExpansionCache>
         only_full.sort();
         panic!("step {step} ({what}): arraystretch differs\n  cached only: {only_cached:?}\n  full only:   {only_full:?}");
     }
+    if cached.labelitem_overrides != full.labelitem_overrides {
+        panic!(
+            "step {step} ({what}): labelitem_overrides differs\n  cached: {:?}\n  full:   {:?}",
+            cached.labelitem_overrides, full.labelitem_overrides
+        );
+    }
     full.diagnostics
         .iter()
         .any(|d| d.message.contains("expansion step limit exceeded") || d.message.starts_with("TeX capacity exceeded, sorry [output token limit="))
@@ -161,6 +168,99 @@ fn typing_and_line_deletion_match_full_expansion() {
         text.insert_str(start, &line);
         check(&text, &mut cache, 101, "restore line");
     }
+}
+
+/// Itemize labels shown after each parse of one editing session.
+fn session_label_texts(path: &str, text: &str) -> Vec<String> {
+    let documents = [SourceDocument { path, text }];
+    parser::parse_project(&documents, path)
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::ListItem { item, .. } => item.as_ref().map(|item| item.text().to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn edited_labelitem_override_updates_the_itemize_label_in_the_same_session() {
+    // Live-typing repro: editing the captured `\labelitemi` body must change
+    // the itemize label on re-parse, not keep showing the stale text. The
+    // document is over the incremental threshold so the re-parse goes
+    // through the incremental machinery exactly like the editor does (a
+    // definition-body edit declines the suffix join, so this pins the
+    // end-to-end behavior rather than the splice path itself — see the
+    // healed-redefinition test below for splice coverage).
+    const PATH: &str = "labelitem-incremental-edit.tex";
+    let mut filler = String::new();
+    for i in 0..200 {
+        filler.push_str(&format!(
+            "Paragraph {i} with some ordinary text padding the document beyond the incremental threshold.\n\n"
+        ));
+    }
+    let head = "\\documentclass{article}\n\\begin{document}\n\\renewcommand{\\labelitemi}{X}\\begin{itemize}\\item A\\end{itemize}\n";
+    let tail = "\n\\end{document}\n";
+    let before = format!("{head}{filler}{tail}");
+    assert!(before.len() > 4 * 1024, "repro needs a document over 4 KiB");
+    assert_eq!(session_label_texts(PATH, &before), ["X"]);
+    let after = before.replacen("\\renewcommand{\\labelitemi}{X}", "\\renewcommand{\\labelitemi}{Y}", 1);
+    assert_eq!(
+        session_label_texts(PATH, &after),
+        ["Y"],
+        "editing the override body must update the label, not reuse the stale one"
+    );
+}
+
+#[test]
+fn healed_labelitem_redefinition_reuses_the_cached_suffix() {
+    // Only the converter's suffix-splice path restores `labelitem_log`
+    // entries, and it only runs once the engine converges downstream. A
+    // later identical `\renewcommand` heals the edited definition, so the
+    // re-parse converges mid-document and splices the rest: the second
+    // itemize sits past the convergence point, so its record can only come
+    // from the restored suffix. It must keep the healed text while the
+    // re-captured first itemize shows the edited body.
+    let mut near = String::new();
+    let mut far = String::new();
+    for i in 0..200 {
+        let paragraph = format!(
+            "Paragraph {i} with some ordinary text padding the document beyond the incremental threshold.\n\n"
+        );
+        if i < 8 {
+            near.push_str(&paragraph);
+        } else {
+            far.push_str(&paragraph);
+        }
+    }
+    let head = "\\documentclass{article}\n\\begin{document}\n\\renewcommand{\\labelitemi}{X}\\begin{itemize}\\item A\\end{itemize}\n\\renewcommand{\\labelitemi}{X}\n";
+    let mid = "\\begin{itemize}\\item B\\end{itemize}\n";
+    let tail = "\n\\end{document}\n";
+    let before = format!("{head}{near}{mid}{far}{tail}");
+    assert!(before.len() > 4 * 1024, "repro needs a document over 4 KiB");
+    let mut cache = None;
+    check(&before, &mut cache, 0, "initial");
+    // Edit only the FIRST body, leaving the healer untouched.
+    let first = before.find("\\renewcommand{\\labelitemi}{X}").expect("first override");
+    let mut after = before.clone();
+    after.replace_range(
+        first + "\\renewcommand{\\labelitemi}{".len()..first + "\\renewcommand{\\labelitemi}{X".len(),
+        "Y",
+    );
+    check(&after, &mut cache, 1, "edit first body");
+    let docs = [SourceDocument { path: "main.tex", text: &after }];
+    let cached = expand_project_with_cache(&docs, 0, &mut cache);
+    let mut firsts: Vec<&str> = cached
+        .labelitem_overrides
+        .values()
+        .map(|recorded| recorded.texts[0].as_str())
+        .collect();
+    firsts.sort_unstable();
+    assert_eq!(
+        firsts,
+        ["X", "Y"],
+        "the edited itemize must show Y while the healed one keeps X, not two copies of one revision"
+    );
 }
 
 #[test]

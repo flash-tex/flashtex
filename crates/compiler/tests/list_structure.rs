@@ -4,8 +4,10 @@
 //! `quote` inside an item. See `src/parser/lists.rs` for the latex.ltx,
 //! article.cls and enumitem.sty provenance.
 
+use flashtex_compiler::math::Nucleus;
 use flashtex_compiler::parser::{
-    self, Block, CounterStyle, Inline, ItemLabel, ListEnvironment, ListLength, ListOption,
+    self, Block, CounterStyle, FontSizeLevel, Inline, ItemLabel, ListEnvironment, ListLength,
+    ListOption, TextFamily,
 };
 
 fn doc(body: &str) -> String {
@@ -70,6 +72,72 @@ fn nested_labels_follow_article_per_kind_depth() {
             ListEnvironment::Itemize
         ]
     );
+}
+
+#[test]
+fn four_itemize_levels_show_all_kernel_markers() {
+    let source = doc(
+        "\\begin{itemize}\\item A\\begin{itemize}\\item B\\begin{itemize}\\item C\\begin{itemize}\\item D\\end{itemize}\\end{itemize}\\end{itemize}\\end{itemize}",
+    );
+    assert_eq!(label_texts(&source), ["•", "–", "∗", "·"]);
+    let all = items(&source);
+    let markers = [
+        ("textbullet", false),
+        ("textendash", true),
+        ("textasteriskcentered", false),
+        ("textperiodcentered", false),
+    ];
+    assert_eq!(all.len(), markers.len());
+    for ((_, item, _), (command, bold)) in all.iter().zip(markers) {
+        assert!(
+            matches!(&item, Some(ItemLabel::Symbol { command: c, bold: b, .. }) if c == command && *b == bold),
+            "{item:?}"
+        );
+    }
+}
+
+#[test]
+fn labelitem_commands_typeset_the_kernel_markers() {
+    let source = doc("A\\labelitemi B\\labelitemii C\\labelitemiii D\\labelitemiv E");
+    let parsed = parser::parse(&source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let mut words: Vec<(String, bool)> = Vec::new();
+    for block in &parsed.blocks {
+        if let Block::Paragraph(content) = block {
+            for inline in content {
+                if let Inline::Text { text, style, .. } = inline {
+                    words.push((text.as_str().to_owned(), style.bold));
+                }
+            }
+        }
+    }
+    assert_eq!(
+        words.iter().map(|(text, _)| text.as_str()).collect::<Vec<_>>().join(" "),
+        "A • B – C ∗ D · E"
+    );
+    // Level 2 keeps its `\bfseries`; the other markers are regular.
+    assert_eq!(
+        words.iter().map(|(_, bold)| *bold).collect::<Vec<_>>(),
+        [false, false, false, true, false, false, false, false, false]
+    );
+}
+
+#[test]
+fn renewcommand_of_a_labelitem_redirects_later_uses() {
+    let source = doc("\\renewcommand{\\labelitemii}{OK}A\\labelitemii B");
+    let parsed = parser::parse(&source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let mut words = Vec::new();
+    for block in &parsed.blocks {
+        if let Block::Paragraph(content) = block {
+            for inline in content {
+                if let Inline::Text { text, .. } = inline {
+                    words.push(text.as_str().to_owned());
+                }
+            }
+        }
+    }
+    assert_eq!(words.join(" "), "A OK B");
 }
 
 #[test]
@@ -252,6 +320,191 @@ fn quote_inside_an_item_is_styled_with_both_frames() {
         })
         .collect();
     assert_eq!(kinds, [("item", 1), ("styled", 2), ("item", 1)]);
+}
+
+#[test]
+fn labelitem_command_survives_as_a_nested_explicit_label() {
+    // `\item[\labelitemi]`: the restricted nested-content dispatcher used
+    // for explicit `[...]` labels previously recognised only
+    // `text_builtins::TEXT_SYMBOLS`, so a `\labelitem<i>` inside it
+    // silently vanished instead of typesetting the marker.
+    let source = doc("\\begin{itemize}\\item[\\labelitemi] A\\item[\\labelitemiii] B\\end{itemize}");
+    assert_eq!(label_texts(&source), ["•", "∗"]);
+}
+
+#[test]
+fn labelitem_command_resets_style_rather_than_inheriting_it() {
+    // The article default for level 2 is `\normalfont\bfseries\textendash`:
+    // the marker's own style, not whatever face happens to be active where
+    // `\labelitemii` is written. `\itshape\labelitemii` must NOT come out
+    // italic-and-bold.
+    let source = doc("\\itshape\\labelitemii");
+    let parsed = parser::parse(&source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let mut found = false;
+    for block in &parsed.blocks {
+        if let Block::Paragraph(content) = block {
+            for inline in content {
+                if let Inline::Text { text, style, .. } = inline {
+                    if text == "–" {
+                        found = true;
+                        assert!(style.bold, "level 2's marker keeps its own \\bfseries");
+                        assert!(!style.italic, "the marker must reset \\itshape, not inherit it");
+                    }
+                }
+            }
+        }
+    }
+    assert!(found, "expected the \\labelitemii marker in the output");
+}
+
+#[test]
+fn labelitem_command_keeps_size_and_colour_but_resets_face() {
+    // `\labelitemfont` is `\normalfont` (article.cls:355-359): it resets
+    // family, series and shape only, so an active size or colour survives
+    // the marker while the surrounding face does not.
+    let source = "\\documentclass[10pt]{article}\n\\usepackage{xcolor}\n\\begin{document}\n{\\Large\\labelitemi} {\\sffamily\\itshape\\color{red}\\labelitemii}\n\\end{document}\n";
+    let parsed = parser::parse(source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let mut markers = Vec::new();
+    for block in &parsed.blocks {
+        if let Block::Paragraph(content) = block {
+            for inline in content {
+                if let Inline::Text { text, style, .. } = inline {
+                    if text == "•" || text == "–" {
+                        markers.push((text.clone(), *style));
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(markers.len(), 2, "{markers:?}");
+    // `\Large` survives the reset; level 1 stays upright roman.
+    assert_eq!(markers[0].1.size, Some(FontSizeLevel::Large2));
+    assert!(!markers[0].1.bold);
+    assert!(!markers[0].1.italic);
+    assert_eq!(markers[0].1.family, TextFamily::Roman);
+    // Level 2 keeps its own `\bfseries`, drops sans+italic, keeps red.
+    assert!(markers[1].1.bold);
+    assert!(!markers[1].1.italic);
+    assert_eq!(markers[1].1.family, TextFamily::Roman);
+    assert_eq!(markers[1].1.size, None);
+    assert_eq!(
+        markers[1].1.color.map(|c| c.fill_operator()),
+        Some("1 0 0 rg".to_string())
+    );
+}
+
+#[test]
+fn renewcommand_of_a_labelitem_changes_the_itemize_default_too() {
+    let source = doc("\\renewcommand{\\labelitemi}{X}\\begin{itemize}\\item A\\end{itemize}");
+    assert_eq!(label_texts(&source), ["X"], "a redefined \\labelitemi should change itemize's own default marker too");
+}
+
+#[test]
+fn renewcommand_of_a_deeper_labelitem_applies_only_at_that_nesting_level() {
+    // The expansion pass captures all four levels at each `\begin{itemize}`;
+    // the parser selects by its own `kind_depth`, so only the renewed level
+    // changes.
+    let source = doc("\\renewcommand{\\labelitemii}{Y}\\begin{itemize}\\item A\\begin{itemize}\\item B\\end{itemize}\\item C\\end{itemize}");
+    assert_eq!(label_texts(&source), ["•", "Y", "•"]);
+}
+
+#[test]
+fn labelitem_override_textbf_body_is_parsed_as_bold_content() {
+    // The captured `\labelitem<i>` body is inline LaTeX, not plain text:
+    // `\textbf{X}` must typeset bold `X`, not the literal `\textbf{X}`.
+    let source = doc("\\renewcommand{\\labelitemi}{\\textbf{X}}\\begin{itemize}\\item A\\end{itemize}");
+    let parsed = parser::parse(&source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(label_texts(&source), ["X"]);
+    let all = items(&source);
+    match &all[0].1 {
+        Some(ItemLabel::Explicit { content, text, .. }) => {
+            assert_eq!(text, "X");
+            assert!(
+                matches!(&content[..], [Inline::Text { text, style, .. }] if text == "X" && style.bold),
+                "{content:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn labelitem_override_math_body_becomes_a_math_nucleus() {
+    // `$\star$`: the marker is a math nucleus, not the literal `$\star$`
+    // text. (`\star` itself is unsupported in math mode in this compiler
+    // version; running text reports the same diagnostic, so the test pins
+    // parity with running text rather than clean compilation.)
+    let source = doc("\\renewcommand{\\labelitemi}{$\\star$}\\begin{itemize}\\item A\\end{itemize}");
+    let parsed = parser::parse(&source);
+    let running = parser::parse(&doc("A $\\star$ B"));
+    assert_eq!(
+        parsed.diagnostics.iter().map(|d| d.message.clone()).collect::<Vec<_>>(),
+        running.diagnostics.iter().map(|d| d.message.clone()).collect::<Vec<_>>(),
+        "the override body must diagnose exactly like the same source in running text"
+    );
+    assert_eq!(label_texts(&source), [""]);
+    let all = items(&source);
+    match &all[0].1 {
+        Some(ItemLabel::Explicit { content, .. }) => {
+            assert!(
+                matches!(&content[..], [Inline::Math { list, .. }] if list.atoms.iter().any(|a| matches!(&a.nucleus, Nucleus::Symbol(s) if s == "\\star"))),
+                "{content:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn labelitem_override_diagnostic_span_lands_on_the_body_command() {
+    // The re-lexed override body must point at the real call site: the
+    // diagnostic for the unsupported command inside
+    // `\renewcommand{\labelitemi}{...}` lands on that command's source
+    // bytes, not at byte 0 of the document.
+    let body = "\\renewcommand{\\labelitemi}{\\textendash}\\begin{itemize}\\item A\\end{itemize}";
+    let source = doc(body);
+    let parsed = parser::parse(&source);
+    let command = "\\textendash";
+    let cmd_at = source.find(command).expect("command");
+    assert!(cmd_at > 0, "the command must not itself sit at byte 0");
+    let diagnostic = parsed
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains(command))
+        .expect("expected the \\textendash diagnostic");
+    let span = diagnostic.span.expect("diagnostic must carry a span");
+    assert_eq!(span.document.0, 0);
+    assert_eq!(
+        (span.start, span.end),
+        (cmd_at, cmd_at + command.len()),
+        "diagnostic span {span:?} must land on the override body command at byte {cmd_at}"
+    );
+}
+
+#[test]
+fn labelitem_override_textendash_body_gets_the_usual_diagnostic() {
+    // `\textendash` is not a supported text-symbol command in this compiler
+    // version (running text reports the same error), so the marker carries
+    // the usual diagnostic instead of the literal `\textendash` text.
+    let source = doc("\\renewcommand{\\labelitemi}{\\textendash}\\begin{itemize}\\item A\\end{itemize}");
+    let parsed = parser::parse(&source);
+    let running = parser::parse(&doc("A \\textendash B"));
+    assert_eq!(
+        parsed.diagnostics.iter().map(|d| d.message.clone()).collect::<Vec<_>>(),
+        running.diagnostics.iter().map(|d| d.message.clone()).collect::<Vec<_>>(),
+        "the override body must diagnose exactly like the same source in running text"
+    );
+    assert!(
+        parsed.diagnostics.iter().any(|d| d.message.contains("\\textendash")),
+        "{:?}",
+        parsed.diagnostics
+    );
+    assert_eq!(label_texts(&source), [""]);
+    let all = items(&source);
+    assert!(matches!(&all[0].1, Some(ItemLabel::Explicit { .. })), "{:?}", all[0].1);
 }
 
 #[test]

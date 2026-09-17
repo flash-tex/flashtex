@@ -88,6 +88,13 @@ pub struct Expansion {
     /// `\arraystretch`'s replacement text in effect at each
     /// `\begin{tabular}`/`tabular*`/`array`, keyed by that `\begin`'s span.
     pub arraystretch: HashMap<(usize, usize), String>,
+    /// `\labelitemi`..`\labelitemiv`'s replacement texts in effect at each
+    /// `\begin{itemize}` (the itemize analogue of [`Expansion::arraystretch`]),
+    /// keyed by that `\begin`'s span. A level the document never redefined
+    /// captures as its own `\labelitem<i>` name (left unexpanded by the
+    /// engine) or the kernel expansion; anything else is a genuine
+    /// `\renewcommand` the parser must honor.
+    pub labelitem_overrides: HashMap<(usize, usize), LabelItemOverride>,
     /// `\@currentlabel`'s expansion just after each bare `\refstepcounter`
     /// (which the engine runs with no output tokens, so the parser would
     /// otherwise never hear about it), keyed by the pushed
@@ -95,14 +102,35 @@ pub struct Expansion {
     pub current_label_by_marker: HashMap<(usize, usize), String>,
 }
 
+/// What one `\begin{itemize}` captured for its four levels: the bodies' texts
+/// plus, per level, where that body's first captured token's own source bytes
+/// live (definition bytes for replacement text). The parser re-lexes each
+/// body from byte 0 of a throwaway copy, so it shifts every re-lexed span by
+/// its body's base to point diagnostics at the real `\renewcommand` site.
+/// `None` when the first captured token is synthesized (the parser then keeps
+/// the old byte-0-relative spans for that body: no worse than today).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LabelItemOverride {
+    pub texts: [String; 4],
+    pub starts: [Option<Span>; 4],
+}
+
 /// Host definitions run before the document. `\DeclareMathOperator` is
 /// amsopn.sty's definition reduced to its effect: `\cmd` becomes
 /// `\operatorname{text}` (`\operatorname*{text}` when starred).
 /// LaTeX's `\tabular`/`\array` read `\arraystretch` when the environment begins; here they emit a
 /// marker plus `\arraystretch`'s current expansion, which the converter
-/// turns back into `\begin{<env>}` and records for the parser. Likewise
-/// `\refstepcounter` (which the engine runs with no output tokens) emits a
-/// marker plus `\@currentlabel`'s current expansion, recorded in
+/// turns back into `\begin{<env>}` and records for the parser.
+/// Likewise `\itemize` (which the engine runs for every `\begin{itemize}`
+/// via `do_begin`) emits a marker plus the current expansions of
+/// `\labelitemi`..`\labelitemiv`, so the parser sees a `\renewcommand` of
+/// one of those names. The wrapper preserves the kernel behavior exactly:
+/// `\itemize` takes no arguments and interacts with no depth counter at
+/// expansion time (nesting is tracked by the parser's `kind_depth`), and
+/// the tail re-emits the pass-through `\begin{itemize}` tokens, so
+/// anything after them (enumitem's `[...]` options included) is untouched.
+/// And `\refstepcounter` (which the engine runs with no output tokens)
+/// emits a marker plus `\@currentlabel`'s current expansion, recorded in
 /// [`Expansion::current_label_by_marker`].
 ///
 /// Kernel definitions that would intercept a command the parser typesets
@@ -154,6 +182,8 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\tabular{\\flashtexbegintabular\\expandafter{\\arraystretch}}%
 \\expandafter\\def\\csname tabular*\\endcsname{\\flashtexbegintabularstar\\expandafter{\\arraystretch}}%
 \\def\\array{\\flashtexbeginarray\\expandafter{\\arraystretch}}%
+\\let\\flashtexrealitemize\\itemize
+\\def\\itemize{\\flashtexbeginitemizelabels{\\labelitemi}{\\labelitemii}{\\labelitemiii}{\\labelitemiv}\\flashtexrealitemize}%
 \\long\\def\\flashtexaddtobeginhook#1#2{\\begingroup\\csname toks@\\endcsname\\expandafter{#1\\flashtexatbeginstart#2\\flashtexatbeginend}\\xdef#1{\\the\\csname toks@\\endcsname}\\endgroup}%
 \\long\\def\\AtBeginDocument#1{\\expandafter\\flashtexaddtobeginhook\\csname @begindocumenthook\\endcsname{#1}}%
 \\makeatletter
@@ -467,6 +497,16 @@ struct Converter<'d> {
     /// Reading the `{<\arraystretch>}` group after a table marker: the key
     /// it is recorded under, brace depth, and the text so far.
     stretch: Option<((usize, usize), usize, String)>,
+    /// Reading the four `{\labelitem<i>}` groups after an itemize marker:
+    /// the `\begin{itemize}` key they are recorded under, its span (used to
+    /// rebuild the pass-through `\begin{itemize}` tokens), which group
+    /// (0-3) is being read, brace depth within it, and the four texts so far.
+    labels: Option<LabelCapture>,
+    /// `\labelitem<i>` replacement texts by `\begin{itemize}` span, and the
+    /// production-ordered log the incremental cache keeps and splices (both
+    /// the itemize analogue of `arraystretch`/`stretch_log`).
+    labelitem_overrides: HashMap<(usize, usize), LabelItemOverride>,
+    labelitem_log: Vec<(usize, (usize, usize), LabelItemOverride)>,
     /// Reading the `{<\@currentlabel>}` group after a `\refstepcounter`
     /// marker: the marker's span (re-keyed to the pushed
     /// `flashtexcurrentlabel` token's own span when the capture completes),
@@ -476,9 +516,10 @@ struct Converter<'d> {
     /// keyed by the pushed `flashtexcurrentlabel` token's own span.
     current_label_by_marker: HashMap<(usize, usize), String>,
     /// Engine token index being converted, and the index of the marker that
-    /// opened the current `\arraystretch` capture.
+    /// opened the current `\arraystretch` or `\labelitem<i>` capture.
     index: usize,
     stretch_index: usize,
+    labelitem_index: usize,
     /// Engine token index of the marker that opened the current
     /// `\@currentlabel` capture.
     current_label_index: usize,
@@ -500,6 +541,75 @@ struct Converter<'d> {
     /// Every `\@currentlabel` record in production order, with its marker's
     /// engine token index (kept and spliced like `stretch_log`).
     current_label_log: Vec<(usize, (usize, usize), String)>,
+}
+
+/// The four `{\labelitem<i>}` groups the `\itemize` wrapper emits after its
+/// marker, being read as plain text (exactly like the `\arraystretch`
+/// capture: characters accumulate, control sequences as `\name`). Plain
+/// groups rather than `\expandafter{...}`: a `\labelitem<i>` the document
+/// never redefined is undefined in the engine and must pass through
+/// unexpanded — the same pass-through the parser's running-text
+/// `\labelitem<i>` arms already rely on — instead of hitting `\expandafter`.
+struct LabelCapture {
+    key: (usize, usize),
+    begin: Span,
+    group: usize,
+    depth: usize,
+    texts: [String; 4],
+    /// Each group's first text-contributing token's own source bytes, when it
+    /// has any (see [`LabelItemOverride::starts`]).
+    starts: [Option<Span>; 4],
+}
+
+impl LabelCapture {
+    /// Fold one engine token in (`real`: its own source bytes, if any). True
+    /// once the fourth group has closed, at which point `texts` holds the
+    /// four current expansions in order.
+    fn consume(&mut self, token: &tex::Token, real: Option<Span>) -> bool {
+        match &token.kind {
+            TexKind::Char(_, CatCode::BeginGroup) => {
+                if self.depth > 0 {
+                    self.push_text('{', real);
+                }
+                self.depth += 1;
+            }
+            TexKind::Char(_, CatCode::EndGroup) if self.depth <= 1 => {
+                if self.group >= 3 {
+                    return true;
+                }
+                self.group += 1;
+                self.depth = 0;
+            }
+            TexKind::Char(_, CatCode::EndGroup) => {
+                self.push_text('}', real);
+                self.depth -= 1;
+            }
+            TexKind::Char(c, _) | TexKind::ActiveChar(c) => {
+                self.push_text(*c, real);
+            }
+            TexKind::ControlSequence(cs) => {
+                let group = self.group;
+                if self.starts[group].is_none() {
+                    self.starts[group] = real;
+                }
+                self.texts[group].push('\\');
+                self.texts[group].push_str(cs);
+            }
+            _ => {}
+        }
+        false
+    }
+
+    /// Push one character of a group's text, remembering the first
+    /// text-contributing token's source bytes (the first mappable one wins,
+    /// so a leading synthesized token does not pin the base to nothing).
+    fn push_text(&mut self, c: char, real: Option<Span>) {
+        let group = self.group;
+        if self.starts[group].is_none() {
+            self.starts[group] = real;
+        }
+        self.texts[group].push(c);
+    }
 }
 
 struct PendingWord {
@@ -898,6 +1008,10 @@ impl<'d> Converter<'d> {
             atbegin_capturing: false,
             atbegin_buffer: Vec::new(),
             stretch: None,
+            labels: None,
+            labelitem_overrides: HashMap::new(),
+            labelitem_log: Vec::new(),
+            labelitem_index: 0,
             current_label: None,
             current_label_by_marker: HashMap::new(),
             index: 0,
@@ -908,14 +1022,16 @@ impl<'d> Converter<'d> {
         }
     }
 
-    /// No partially built word, `\arraystretch` capture, `\@currentlabel`
-    /// capture, or held-back `\AtBeginDocument` output: the output so far
-    /// does not depend on tokens still to come. (The incremental cache only
-    /// records marks and splices while clean, so a capture window is always
-    /// re-converted from an earlier mark with a fresh converter.)
+    /// No partially built word, `\arraystretch` capture, `\labelitem<i>`
+    /// capture, `\@currentlabel` capture, or held-back `\AtBeginDocument`
+    /// output: the output so far does not depend on tokens still to come.
+    /// (The incremental cache only records marks and splices while clean, so
+    /// a capture window is always re-converted from an earlier mark with a
+    /// fresh converter.)
     fn clean(&self) -> bool {
         self.word.is_none()
             && self.stretch.is_none()
+            && self.labels.is_none()
             && self.current_label.is_none()
             && !self.atbegin_capturing
             && self.atbegin_buffer.is_empty()
@@ -950,6 +1066,26 @@ impl<'d> Converter<'d> {
                     conv.stretch = Some((key, depth, text));
                 }
                 _ => conv.stretch = Some((key, depth, text)),
+            }
+            return Flow::Next;
+        }
+        if let Some(mut capture) = conv.labels.take() {
+            if capture.consume(token, at.real) {
+                let recorded = LabelItemOverride { texts: capture.texts.clone(), starts: capture.starts };
+                conv.labelitem_log.push((conv.labelitem_index, capture.key, recorded.clone()));
+                conv.labelitem_overrides.insert(capture.key, recorded);
+                // The wrapper's tail (`\flashtexrealitemize`, swallowed
+                // below) stood exactly here: rebuild the pass-through
+                // `\begin{itemize}` from the real `\begin` span, so the
+                // parser sees byte-identical tokens to the old
+                // pass-through path.
+                conv.push_environment(
+                    "begin",
+                    "itemize",
+                    Placement { span: capture.begin, definition: None, maps: false, real: Some(capture.begin) },
+                );
+            } else {
+                conv.labels = Some(capture);
             }
             return Flow::Next;
         }
@@ -1036,6 +1172,28 @@ impl<'d> Converter<'d> {
                         conv.stretch = Some(((begin.span.document.0, begin.span.start), 0, String::new()));
                         conv.push_environment("begin", env, begin);
                     }
+                    "flashtexbeginitemizelabels" => {
+                        let begin = origin
+                            .and_then(|o| conv.span(o))
+                            .filter(|b| conv.source_text(*b) == "\\begin")
+                            .map(|b| Placement { span: b, definition: None, maps: false, real: Some(b) })
+                            .unwrap_or(at);
+                        conv.labelitem_index = conv.index;
+                        conv.labels = Some(LabelCapture {
+                            key: (begin.span.document.0, begin.span.start),
+                            begin: begin.span,
+                            group: 0,
+                            depth: 0,
+                            texts: [String::new(), String::new(), String::new(), String::new()],
+                            starts: [None, None, None, None],
+                        });
+                    }
+                    // The `\itemize` wrapper's tail: `\let` to the (undefined)
+                    // kernel `\itemize`, so expanding it re-emits this token
+                    // with the `\begin` invocation as its origin. The four
+                    // groups before it already recorded the overrides and
+                    // rebuilt `\begin{itemize}`; swallow this.
+                    "flashtexrealitemize" => {}
                     // `\AtBeginDocument` hook output: the host prelude wraps
                     // every chunk queued before `\begin{document}` in these
                     // markers. The engine runs the hook ahead of the real
@@ -1260,7 +1418,13 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     }
     let diagnostics = engine.diagnostics().to_vec();
     conv.map_diagnostics(&diagnostics);
-    Expansion { tokens: Rc::new(conv.out), diagnostics: conv.diagnostics, arraystretch: conv.arraystretch, current_label_by_marker: conv.current_label_by_marker }
+    Expansion {
+        tokens: Rc::new(conv.out),
+        diagnostics: conv.diagnostics,
+        arraystretch: conv.arraystretch,
+        labelitem_overrides: conv.labelitem_overrides,
+        current_label_by_marker: conv.current_label_by_marker,
+    }
 }
 
 /// A converter state with nothing pending, recorded while converting: after
@@ -1287,6 +1451,7 @@ pub struct ExpansionCache {
     out: Rc<Vec<ExpandedToken>>,
     marks: Vec<Mark>,
     stretch_log: Vec<(usize, (usize, usize), String)>,
+    labelitem_log: Vec<(usize, (usize, usize), LabelItemOverride)>,
     current_label_log: Vec<(usize, (usize, usize), String)>,
     last_span: Span,
     /// Engine tokens the previous run produced.
@@ -1447,6 +1612,7 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         out: Rc::new(Vec::new()),
         marks,
         stretch_log: Vec::new(),
+        labelitem_log: Vec::new(),
         current_label_log: Vec::new(),
         last_span: conv.last_span,
         old_engine_tokens: 0,
@@ -1560,6 +1726,8 @@ fn update_cache(
             conv.last_span = cache.last_span;
             conv.stretch_log = cache.stretch_log.clone();
             conv.arraystretch = stretch_map(&conv.stretch_log);
+            conv.labelitem_log = cache.labelitem_log.clone();
+            conv.labelitem_overrides = labelitem_map(&conv.labelitem_log);
             conv.current_label_log = cache.current_label_log.clone();
             conv.current_label_by_marker = stretch_map(&conv.current_label_log);
             let tokens = cache.out.clone();
@@ -1590,6 +1758,7 @@ fn update_cache(
     out.truncate(out.len() - std::mem::take(&mut cache.recovered));
     let mut old_tail = out.split_off(restart.out_len);
     let old_log = std::mem::take(&mut cache.stretch_log);
+    let old_labels = std::mem::take(&mut cache.labelitem_log);
     let old_label_log = std::mem::take(&mut cache.current_label_log);
     let edit_start = changes.old.start;
     let old_edit_end = changes.old.end;
@@ -1609,6 +1778,8 @@ fn update_cache(
     // ones are regenerated or come back with the spliced suffix.
     conv.stretch_log = old_log.iter().filter(|(index, _, _)| *index < restart.index).cloned().collect();
     conv.arraystretch = stretch_map(&conv.stretch_log);
+    conv.labelitem_log = old_labels.iter().filter(|(index, _, _)| *index < restart.index).cloned().collect();
+    conv.labelitem_overrides = labelitem_map(&conv.labelitem_log);
     conv.current_label_log =
         old_label_log.iter().filter(|(index, _, _)| *index < restart.index).cloned().collect();
     conv.current_label_by_marker = stretch_map(&conv.current_label_log);
@@ -1635,6 +1806,20 @@ fn update_cache(
                 };
                 conv.stretch_log.push(((index as isize + token_offset) as usize, key, text.clone()));
                 conv.arraystretch.insert(key, text);
+            }
+            for (index, key, recorded) in old_labels.into_iter().filter(|(index, _, _)| *index >= old_mark.index) {
+                let key = if key.0 == entry && key.1 >= old_edit_end {
+                    (key.0, (key.1 as isize + delta) as usize)
+                } else {
+                    key
+                };
+                // The bodies' source bytes moved with the edit exactly like
+                // the `\begin` key above: shift them so re-lexed spans still
+                // land on the real `\renewcommand` site.
+                let starts = recorded.starts.map(|start| start.map(|span| shift(span)));
+                let recorded = LabelItemOverride { texts: recorded.texts.clone(), starts };
+                conv.labelitem_log.push(((index as isize + token_offset) as usize, key, recorded.clone()));
+                conv.labelitem_overrides.insert(key, recorded);
             }
             for (index, key, text) in
                 old_label_log.into_iter().filter(|(index, _, _)| *index >= old_mark.index)
@@ -1688,6 +1873,7 @@ fn finish(cache: &mut ExpansionCache, conv: Converter<'_>) -> Expansion {
         out.shrink_to(out.len() + out.len() / 8);
     }
     cache.stretch_log = conv.stretch_log.clone();
+    cache.labelitem_log = conv.labelitem_log.clone();
     cache.current_label_log = conv.current_label_log.clone();
     cache.last_span = conv.last_span;
     cache.old_engine_tokens = cache.expander.tokens().len();
@@ -1702,6 +1888,10 @@ fn stretch_map(log: &[(usize, (usize, usize), String)]) -> HashMap<(usize, usize
     log.iter().map(|(_, key, text)| (*key, text.clone())).collect()
 }
 
+fn labelitem_map(log: &[(usize, (usize, usize), LabelItemOverride)]) -> HashMap<(usize, usize), LabelItemOverride> {
+    log.iter().map(|(_, key, recorded)| (*key, recorded.clone())).collect()
+}
+
 fn finish_diagnostics(cache: &ExpansionCache, mut conv: Converter<'_>) -> Expansion {
     conv.last_span = cache.last_span;
     conv.map_diagnostics(cache.expander.diagnostics());
@@ -1709,6 +1899,7 @@ fn finish_diagnostics(cache: &ExpansionCache, mut conv: Converter<'_>) -> Expans
         tokens: Rc::new(Vec::new()),
         diagnostics: conv.diagnostics,
         arraystretch: conv.arraystretch,
+        labelitem_overrides: conv.labelitem_overrides,
         current_label_by_marker: conv.current_label_by_marker,
     }
 }

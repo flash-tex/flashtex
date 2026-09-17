@@ -13,7 +13,7 @@ use crate::biblatex;
 use crate::date::TodayDate;
 use crate::color::{Colors, DeviceColor};
 use crate::diagnostics::Diagnostic;
-use crate::expansion::{self, ExpansionSite};
+use crate::expansion::{self, ExpansionSite, LabelItemOverride};
 use crate::lexer::{apply_text_ligatures, tokenize_document, Token, TokenKind};
 #[cfg(test)]
 use crate::lexer::tokenize;
@@ -1446,6 +1446,12 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "textperiodcentered",
     "textregistered",
     "texttrademark",
+    // article.cls's `\labelitemi`..`\labelitemiv`: the kernel's default
+    // itemize markers, usable as ordinary text symbols.
+    "labelitemi",
+    "labelitemii",
+    "labelitemiii",
+    "labelitemiv",
     // `text_builtins::TEXT_ACCENTS` and the
     // `text_builtins::CAPITAL_ACCENT_ALIASES` alias names.
     "c",
@@ -1962,6 +1968,7 @@ pub fn parse_project_with(
             tokens: Rc::new(Vec::new()),
             diagnostics: Vec::new(),
             arraystretch: HashMap::new(),
+            labelitem_overrides: HashMap::new(),
             current_label_by_marker: HashMap::new(),
         }
     } else {
@@ -2005,6 +2012,7 @@ pub fn parse_project_with(
         brace_stack: Vec::new(),
         env_stack: Vec::new(),
         arraystretch: expanded.arraystretch,
+        labelitem_overrides: expanded.labelitem_overrides,
         current_label_by_marker: expanded.current_label_by_marker,
         has_document,
         in_body: !has_document,
@@ -2189,6 +2197,9 @@ struct P<'a> {
     hyphenation: Vec<HyphenationException>,
     /// `\arraystretch` at each `\begin{tabular}`, from the expansion pass.
     arraystretch: HashMap<(usize, usize), String>,
+    /// `\labelitemi`..`\labelitemiv` at each `\begin{itemize}`, from the
+    /// expansion pass (see `expansion::Expansion::labelitem_overrides`).
+    labelitem_overrides: HashMap<(usize, usize), LabelItemOverride>,
     /// `\@currentlabel` just after each bare `\refstepcounter`, from the
     /// expansion pass, keyed by the `flashtexcurrentlabel` token's own span.
     /// A following `\label` reads it through `current_counter` below.
@@ -3237,6 +3248,12 @@ impl P<'_> {
                 self.text_accent(text_builtins::canonical_accent_name(name), span, para)
             }
             "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
+            // article.cls's `\labelitemi`..`\labelitemiv`
+            // (`lists::labelitem`): the kernel's default itemize markers
+            // as ordinary text symbols, level 2 bold like `\bfseries`.
+            "labelitemi" | "labelitemii" | "labelitemiii" | "labelitemiv" => {
+                self.labelitem_marker(name, span, para)
+            }
             // ulem `\uline`/`\sout` (need the package). Kernel text-mode
             // `\underline` is latex.ltx `$\@@underline{\hbox{#1}}$` (TeXbook
             // Rule 10); math-mode `\underline`/`\underbar` are in `math.rs`.
@@ -8581,6 +8598,17 @@ impl P<'_> {
                         content.push(inline);
                     }
                 }
+                // `\item[\labelitemi]`-style nested use (#GH-LIST-LABELS
+                // review: this restricted dispatcher previously recognised
+                // only `TEXT_SYMBOLS`, so the marker silently vanished here).
+                TokenKind::Command(name)
+                    if matches!(
+                        name.as_str(),
+                        "labelitemi" | "labelitemii" | "labelitemiii" | "labelitemiv"
+                    ) =>
+                {
+                    content.push(self.labelitem_inline(name, input.token.span, style, space_before));
+                }
                 TokenKind::Command(name) if TextLogo::from_command(name).is_some() => {
                     if let Some(logo) = TextLogo::from_command(name) {
                         content.push(Inline::Logo {
@@ -8763,6 +8791,50 @@ impl P<'_> {
         if let Some(inline) = self.symbol_inline(name, span, style, space_before) {
             para.push(inline);
         }
+    }
+
+    /// A `\labelitem<i>` default marker: the same glyph (and level 2's
+    /// `\bfseries` bold) `lists::labelitem` gives the matching itemize
+    /// level. The article default is `\labelitemfont\bfseries\textendash`
+    /// for level 2 (plain for the others), where `\labelitemfont` is
+    /// `\normalfont` (`article.cls:355-359`) — and `\normalfont` resets
+    /// family, series and shape only, not size or colour. So the marker
+    /// starts from the style active where it is used (keeping its size and
+    /// colour) and only overrides `family` (Roman), `italic` (upright) and
+    /// `bold` (level 2's `\bfseries`), exactly like a real
+    /// `\normalfont`/`\bfseries` prefix in its definition would. A
+    /// `\renewcommand` of one of these names expands in the expansion pass,
+    /// so the redefinition — not this arm — supplies later uses in running
+    /// text. The itemize labels themselves consult the same redefinition
+    /// through the expansion pass's per-`\begin{itemize}` capture (see
+    /// `itemize_default_label`).
+    fn labelitem_inline(&self, name: &str, span: Span, style: TextStyle, space_before: bool) -> Inline {
+        let level = match name {
+            "labelitemi" => 1,
+            "labelitemii" => 2,
+            "labelitemiii" => 3,
+            _ => 4,
+        };
+        let (text, _, bold) = lists::labelitem(level);
+        Inline::Text {
+            text: text.to_string(),
+            span,
+            style: TextStyle {
+                family: TextFamily::Roman,
+                italic: false,
+                bold,
+                ..style
+            },
+            space_before,
+        }
+    }
+
+    /// A `\labelitem<i>` default marker in running text (see
+    /// `labelitem_inline`).
+    fn labelitem_marker(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        let style = self.style;
+        para.push(self.labelitem_inline(name, span, style, space_before));
     }
 
     /// A siunitx typesetting command (`crate::siunitx`): its arguments are
@@ -9456,9 +9528,14 @@ impl P<'_> {
             .filter(|list| list.kind == "enumerate")
             .map(|list| list.current_reference.clone())
             .collect::<Vec<_>>();
-        let Some(list) = self.list_stack.last_mut() else {
+        // `itemize_default_label` below needs `&mut self` (it re-lexes and
+        // parses a `\renewcommand`d marker body), so the innermost frame is
+        // addressed by index and re-borrowed afterwards instead of being
+        // held across that call.
+        let Some(list_index) = self.list_stack.len().checked_sub(1) else {
             return;
         };
+        let list = &mut self.list_stack[list_index];
         list.count += 1;
         let item = match explicit {
             Some(item) => item,
@@ -9487,7 +9564,10 @@ impl P<'_> {
                         template.strip_prefix("label=").unwrap_or(template),
                     ),
                 },
-                _ => lists::default_label(environment, kind_depth, 0),
+                _ => {
+                    let begin = frame.as_ref().map_or(span, |frame| frame.begin_span);
+                    self.itemize_default_label(environment, kind_depth, begin)
+                }
             },
         };
         let item_text = item.text().to_string();
@@ -9495,7 +9575,7 @@ impl P<'_> {
             ItemLabel::Counter { value, style, .. } => style.format(*value),
             _ => item_text.clone(),
         };
-        list.current_reference = item_reference.clone();
+        self.list_stack[list_index].current_reference = item_reference.clone();
         let reference_value = if environment == ListEnvironment::Enumerate {
             Self::enumerate_reference_value(&enclosing_references, item_reference)
         } else {
@@ -9504,6 +9584,87 @@ impl P<'_> {
         self.set_current_counter("item", Some(reference_value));
         self.pending_item_label = Some((item_text, span));
         self.pending_item = Some(item);
+    }
+
+    /// itemize's default label for one `\item`: a `\renewcommand` of the
+    /// matching `\labelitem<i>` — captured by the expansion pass at
+    /// `\begin{itemize}` and read here by that `\begin`'s span, the same
+    /// keying as `array_stretch` — wins over the kernel glyph. Captured
+    /// text that is just the kernel default
+    /// (`lists::is_kernel_labelitem_text`) still takes the
+    /// `lists::default_label` path; anything else is re-lexed and parsed
+    /// as inline LaTeX through the ordinary dispatch
+    /// (`P::argument_inlines`), the way a `\renewcommand` the expansion
+    /// pass already expanded typesets in running text — so `$\star$`,
+    /// `\textendash` and `\textbf{X}` bodies become real content, and an
+    /// unsupported command gets the usual diagnostic. An enumitem `label=`
+    /// template never reaches here (it wins earlier, as in real LaTeX).
+    ///
+    /// Accepted limitation (documented, not fixed here): only the value in
+    /// force at `\begin{itemize}`-time is captured, so a `\renewcommand`
+    /// issued mid-list, after the `\begin`, is not picked up.
+    fn itemize_default_label(&mut self, environment: ListEnvironment, kind_depth: u8, begin: Span) -> ItemLabel {
+        if environment == ListEnvironment::Itemize {
+            let index = kind_depth.clamp(1, 4) as usize - 1;
+            if let Some(recorded) = self.labelitem_overrides.get(&(begin.document.0, begin.start)) {
+                let raw = &recorded.texts[index];
+                let text = raw.trim();
+                if !lists::is_kernel_labelitem_text(kind_depth, text) {
+                    // The capture is LaTeX source (see `LabelCapture`), not
+                    // rendered text: re-lex it and parse it as inline
+                    // content, mirroring the `\item[<label>]` explicit
+                    // branch above (same `Explicit` shape, same plain-text
+                    // derivation; `span` is the capturing `\begin`).
+                    //
+                    // Re-lexing starts the body at byte 0 of a throwaway
+                    // copy, so shift every token by the body's real source
+                    // offset (its first captured token, past any trimmed
+                    // leading whitespace): diagnostics land on the actual
+                    // `\renewcommand` site instead of the document start.
+                    // Without a recorded offset the old byte-0 spans stand.
+                    let lead = raw.len() - raw.trim_start().len();
+                    let base = recorded.starts[index].map(|start| (start.document, start.start + lead));
+                    let tokens = tokenize_document(text, begin.document)
+                        .into_iter()
+                        .map(|mut token| {
+                            if let Some((document, base)) = base {
+                                token.span = Span::in_document(
+                                    document,
+                                    token.span.start + base,
+                                    token.span.end + base,
+                                );
+                            }
+                            InputToken {
+                                token,
+                                definition: None,
+                                maps_to_invocation: false,
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    let content = self.argument_inlines(tokens, begin, TextStyle::default());
+                    let mut plain = String::new();
+                    for inline in &content {
+                        if let Inline::Text {
+                            text: word,
+                            space_before,
+                            ..
+                        } = inline
+                        {
+                            if *space_before && !plain.is_empty() {
+                                plain.push(' ');
+                            }
+                            plain.push_str(word);
+                        }
+                    }
+                    return ItemLabel::Explicit {
+                        content,
+                        text: plain,
+                        span: begin,
+                    };
+                }
+            }
+        }
+        lists::default_label(environment, kind_depth, 0)
     }
 
     fn enumerate_reference_value(prefixes: &[String], current: String) -> String {

@@ -324,16 +324,51 @@ fn roman(mut value: i64) -> String {
     text
 }
 
+/// article.cls 344-349 `\labelitemi`..`\labelitemiv`: `\textbullet`,
+/// `\labelitemfont\bfseries\textendash`, `\textasteriskcentered`,
+/// `\textperiodcentered` (U+00B7, as the `*.dfu` tables declare it), where
+/// `\labelitemfont` is `\normalfont` (article.cls:355-359): it resets
+/// family, series and shape only, so a marker keeps the active size and
+/// colour (see the parser's `\labelitem<i>` arms).
+/// Levels past 4 keep `\labelitemiv`'s marker. `default_label` and the
+/// parser's `\labelitem<i>` arms share this, so a nesting level and the
+/// command for it can never disagree.
+pub(crate) fn labelitem(level: u8) -> (&'static str, &'static str, bool) {
+    match level {
+        0 | 1 => ("•", "textbullet", false),
+        2 => ("–", "textendash", true),
+        3 => ("∗", "textasteriskcentered", false),
+        _ => ("·", "textperiodcentered", false),
+    }
+}
+
+/// Whether an expansion-pass capture of `\labelitem<i>` means "never
+/// redefined": the engine left the bare name unexpanded (it is undefined
+/// there, so the kernel default is in force), or the document renewed the
+/// name to exactly the kernel expansion above. Anything else is a genuine
+/// `\renewcommand` the itemize default must honor.
+pub(crate) fn is_kernel_labelitem_text(level: u8, text: &str) -> bool {
+    let names = [
+        "\\labelitemi",
+        "\\labelitemii",
+        "\\labelitemiii",
+        "\\labelitemiv",
+    ];
+    let kernel = [
+        "\\textbullet",
+        "\\bfseries\\textendash",
+        "\\textasteriskcentered",
+        "\\textperiodcentered",
+    ];
+    let index = level.clamp(1, 4) as usize - 1;
+    text == names[index] || text == kernel[index]
+}
+
 /// article.cls's default label for `environment` at `kind_depth`.
 pub(crate) fn default_label(environment: ListEnvironment, kind_depth: u8, value: i64) -> ItemLabel {
     match environment {
         ListEnvironment::Itemize => {
-            let (text, command, bold) = match kind_depth {
-                0 | 1 => ("•", "textbullet", false),
-                2 => ("–", "textendash", true),
-                3 => ("∗", "textasteriskcentered", false),
-                _ => ("⋅", "textperiodcentered", false),
-            };
+            let (text, command, bold) = labelitem(kind_depth);
             ItemLabel::Symbol {
                 text: text.to_string(),
                 command: command.to_string(),
@@ -731,6 +766,13 @@ mod tests {
         );
         assert_eq!(default_label(ListEnvironment::Enumerate, 4, 2).text(), "B.");
         assert_eq!(default_label(ListEnvironment::Itemize, 2, 0).text(), "–");
+        assert_eq!(default_label(ListEnvironment::Itemize, 3, 0).text(), "∗");
+        assert_eq!(default_label(ListEnvironment::Itemize, 4, 0).text(), "·");
+        assert_eq!(default_label(ListEnvironment::Itemize, 9, 0).text(), "·");
+        assert_eq!(labelitem(1), ("•", "textbullet", false));
+        assert_eq!(labelitem(2), ("–", "textendash", true));
+        assert_eq!(labelitem(3), ("∗", "textasteriskcentered", false));
+        assert_eq!(labelitem(4), ("·", "textperiodcentered", false));
         assert_eq!(template_label("(\\alph*)", 2).text(), "(b)");
         assert!(matches!(
             template_label("\\arabic*.\\alph*", 1),
