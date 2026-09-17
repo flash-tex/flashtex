@@ -879,6 +879,22 @@ impl LayoutCursor {
         )
     }
 
+    /// One text run's point size for its own `TextStyle`: the AMS `\Tiny`
+    /// rung (GH-824) when the style sits on rung 0 of an AMS class's
+    /// ladder, the class's declaration table otherwise, and the ambient
+    /// size when no declaration is in effect. The rung-0 read is gated on
+    /// `constraints.ams_sizes` as well as the style bit, so the bit — only
+    /// ever set for AMS classes — can never change a non-AMS size.
+    fn run_size_pt(&self, style: TextStyle, ambient_pt: f64) -> f64 {
+        match style.size {
+            Some(_) if style.ams_tiny && self.constraints.ams_sizes => {
+                ams_size_declaration_pt(0, self.constraints.font_size_pt).0
+            }
+            Some(level) => self.declaration_pt(level),
+            None => ambient_pt,
+        }
+    }
+
     fn newline(&mut self, size: f64) {
         self.line_spaces.clear();
         self.closed_line_skip = None;
@@ -2377,15 +2393,15 @@ pub(crate) fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f6
 /// standard ones (the class aliases `\scriptsize` to `\SMALL` and
 /// `\footnotesize` to `\Small`).
 ///
-/// **Known gap (GH-824):** `\Tiny` (rung 0) has no `FontSizeLevel` of its
-/// own and folds onto `Tiny` (rung 1, `\tiny`) in `ams_rung_level`, so
-/// stepping below `\tiny` (e.g. three `\smaller`s) re-enters at `\tiny`'s
-/// own value instead of reaching the AMS classes' genuinely smaller
-/// `\Tiny` rung. Representing rung 0 for real needs a new state slot (a
-/// `FontSizeLevel` variant or an AMS-specific rung field on the style),
-/// which reaches roughly 80 call sites across this crate; deliberately
-/// left for a separate, focused change rather than folded into a
-/// size-table fix.
+/// Rung 0 (`\Tiny`) has no `FontSizeLevel` of its own (GH-824): the
+/// pure-level mapping in `ams_rung_level` folds it onto `Tiny` (rung 1,
+/// `\tiny`), while the rung-exact state travels alongside the level as
+/// `parser::TextStyle::ams_tiny` (set by `FontSizeLevel::stepped_ams`,
+/// read by `LayoutCursor::run_size_pt`). A new `FontSizeLevel` variant was
+/// considered and rejected: `render-pipeline`'s `declared_size` matches the
+/// enum exhaustively, so a variant would break a crate this change may not
+/// touch, while the sidecar bit keeps every downstream `FontSizeLevel`
+/// consumer untouched.
 pub(crate) const AMS_RUNG_COUNT: usize = 11;
 
 /// `(font size pt, baselineskip pt)` for one AMS ladder rung, from the real
@@ -2461,8 +2477,10 @@ pub(crate) fn ams_rung(level: Option<FontSizeLevel>) -> usize {
 }
 
 /// The declaration a rung selects. Rung 0 (`\Tiny`) has no `FontSizeLevel`,
-/// so it folds onto `Tiny`: stepping below `\tiny` holds the smallest
-/// representable declaration rather than an exact `\Tiny` size.
+/// so it folds onto `Tiny` here; the rung-exact `\Tiny` state (GH-824) is
+/// carried separately as `parser::TextStyle::ams_tiny` (see
+/// `FontSizeLevel::stepped_ams` and `LayoutCursor::run_size_pt`), which is
+/// what actually reaches the `\Tiny` size at layout time.
 pub(crate) fn ams_rung_level(rung: usize) -> Option<FontSizeLevel> {
     match rung {
         0 | 1 => Some(FontSizeLevel::Tiny),
@@ -3005,7 +3023,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 // A `\tiny`..`\Huge` declaration is always relative to the
                 // document's own body size, not to `size` (which can already
                 // be a heading's or a math script's own scaled context).
-                let text_size = style.size.map_or(size, |level| c.declaration_pt(level));
+                let text_size = c.run_size_pt(*style, size);
                 c.place(
                     text.clone(),
                     text_size,
@@ -3188,7 +3206,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
             // margin): skip it rather than leaking it into the prose.
             Inline::Marginpar { .. } => {}
             Inline::Tabular(table) => {
-                let table_size = table.style.size.map_or(size, |level| c.declaration_pt(level));
+                let table_size = c.run_size_pt(table.style, size);
                 let b = crate::tabular::layout(c, table, table_size);
                 c.place_math(b, size, table.space_before);
             }
@@ -3226,11 +3244,11 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 style,
                 space_before,
             } => {
-                let text_size = style.size.map_or(size, |level| c.declaration_pt(level));
+                let text_size = c.run_size_pt(*style, size);
                 c.place_logo(*logo, text_size, *span, style_font(*style), *space_before)
             }
             Inline::Kern { amount, style, .. } => {
-                let text_size = style.size.map_or(size, |level| c.declaration_pt(level));
+                let text_size = c.run_size_pt(*style, size);
                 let cx = crate::text_builtins::DimenContext {
                     quad: crate::text_builtins::pt_to_sp(text_size),
                     ..Default::default()
@@ -3243,7 +3261,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 style,
                 space_before,
             } => {
-                let text_size = style.size.map_or(size, |level| c.declaration_pt(level));
+                let text_size = c.run_size_pt(*style, size);
                 c.place_rule(rule, text_size, *span, style_font(*style), *space_before)
             }
             Inline::Underline(u) => {
@@ -3312,7 +3330,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 // Shifts use the same local size: `sup2` (text style) for
                 // superscripts, `max(sub1, h − ⅘·x-height)` for subscripts,
                 // like this layout's own footnote marks.
-                let local = t.style.size.map_or(size, |level| c.declaration_pt(level));
+                let local = c.run_size_pt(t.style, size);
                 let mark_size = footnotes::script_mark_size(local);
                 let start_page = c.pages.len();
                 let start_item = c.pages.last().map_or(0, |page| page.items.len());

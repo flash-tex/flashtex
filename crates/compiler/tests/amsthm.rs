@@ -46,6 +46,7 @@ const ITALIC: TextStyle = TextStyle {
     small_caps: false,
     family: flashtex_compiler::parser::TextFamily::Roman,
     size: None,
+    ams_tiny: false,
     color: None,
 };
 
