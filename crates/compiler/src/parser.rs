@@ -6243,7 +6243,10 @@ impl P<'_> {
             para.push(Inline::Text {
                 text: "∎".to_string(),
                 span,
-                style: TextStyle::default(),
+                // `\qed` is typeset in the current (body) font, whose
+                // em-based box scales with the ambient size; unscoped this
+                // is `TextStyle::default()`, exactly as before.
+                style: self.style,
                 space_before: false,
             });
             self.flush_paragraph(blocks, para);
@@ -6409,7 +6412,18 @@ impl P<'_> {
         para: &mut Vec<Inline>,
     ) {
         let note = self.optional_bracket_argument();
-        let head_style = def.style.head_style();
+        // An enclosing size group (`{\large\begin{theorem}...`) stays in
+        // effect for the head, the number, the note and the body: real
+        // pdflatex sets all of them at the ambient size, since neither
+        // `\thm@headfont` nor `\thm@notefont` resets it. `head_style()` /
+        // `body_style()` are context-free definitions (size `None`), so the
+        // ambient size is merged in here at the call site. `number_style`
+        // below derives from `head_style` via `..head_style` and inherits it.
+        let ambient_size = self.style.size;
+        let head_style = TextStyle {
+            size: ambient_size,
+            ..def.style.head_style()
+        };
         // `\thmnumber{...\@upn{#2}}`: the number is `\textup`, so a
         // `remark`-style head (`\thm@headfont{\itshape}`) numbers upright
         // inside its italic name. For the bold heads `\@upn` is a no-op.
@@ -6479,7 +6493,13 @@ impl P<'_> {
                 para.push(Inline::Text {
                     text: format!("({note_text})"),
                     span: note_span,
-                    style: TextStyle::default(),
+                    // `\thm@notefont` (`\fontseries\mddefault\upshape`)
+                    // changes series/shape only, so the note keeps the
+                    // ambient size like the head does.
+                    style: TextStyle {
+                        size: ambient_size,
+                        ..TextStyle::default()
+                    },
                     space_before: false,
                 });
             }
@@ -6494,7 +6514,10 @@ impl P<'_> {
             style: head_style,
             space_before: false,
         });
-        self.style = def.style.body_style();
+        self.style = TextStyle {
+            size: ambient_size,
+            ..def.style.body_style()
+        };
     }
 
     /// `proof`'s italic "Proof." head (or a custom `[...]` heading, still
@@ -6502,6 +6525,9 @@ impl P<'_> {
     /// `environment`'s `\end` handling, once the body's last paragraph is
     /// known.
     fn begin_proof(&mut self, span: Span, para: &mut Vec<Inline>) {
+        // Like `begin_theorem` above: an enclosing size group stays in
+        // effect for the heading and the body.
+        let ambient_size = self.style.size;
         let heading = self
             .optional_bracket_argument()
             .map(|(text, _)| text.trim().to_string())
@@ -6512,11 +6538,15 @@ impl P<'_> {
             span,
             style: TextStyle {
                 italic: true,
+                size: ambient_size,
                 ..TextStyle::default()
             },
             space_before: true,
         });
-        self.style = TextStyle::default();
+        self.style = TextStyle {
+            size: ambient_size,
+            ..TextStyle::default()
+        };
     }
 
     /// `\begin{frame} body \end{frame}`: a rule-bordered box around its body.
