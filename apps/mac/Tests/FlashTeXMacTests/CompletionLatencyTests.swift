@@ -183,6 +183,7 @@ final class CompletionLatencyTests: XCTestCase {
         _ = msUntil("full list", from: MonotonicClock.nowNs()) { tv.session != nil }
         let items = try XCTUnwrap(tv.session?.items)
         XCTAssertEqual(items.count, Completion.maxSuggestions)
+        guard items.count == Completion.maxSuggestions else { return XCTFail("expected \(Completion.maxSuggestions) items, got \(items.count)") }
         let popup = tv.completionPopup
         var fast: [Double] = [], reload: [Double] = [], arrows: [Double] = []
         for round in 0..<10 {
@@ -272,7 +273,10 @@ final class CompletionLatencyTests: XCTestCase {
         exec.runAll()
         spin("session B") { tv.session != nil }
         XCTAssertEqual(tv.session?.items.first?.label, "\\tableofcontents")
-        XCTAssertTrue(tv.session!.items.allSatisfy { $0.label.hasPrefix("\\t") }, "\(tv.session!.items.map(\.label))")
+        guard let sessionB = tv.session else {
+            return XCTFail("session B closed between the wait and the read")
+        }
+        XCTAssertTrue(sessionB.items.allSatisfy { $0.label.hasPrefix("\\t") }, "\(sessionB.items.map(\.label))")
         XCTAssertEqual(tv.session?.range, NSRange(location: caretA - 1, length: 2))
 
         // A session on B with an outcome pending; the caret moves to the same

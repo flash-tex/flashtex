@@ -162,6 +162,49 @@ final class DocumentFilesTests: XCTestCase {
         XCTAssertEqual(model.files.helperRestarts, 0, "one helper served every operation on this root")
     }
 
+    // MARK: no leaked helper (#687: the harness spawned one per test and never reaped it)
+
+    /// A client dropped without an explicit `terminate()`/`detachHelper()` call
+    /// (every real-helper test above does this by the time it returns) must
+    /// still have its helper process killed and reaped -- not left running
+    /// until the whole test binary exits. Regression guard for #687.
+    func testDroppedClientKillsAndReapsItsHelperWithoutExplicitTeardown() async throws {
+        let helper = try requireRealHelper()
+
+        func liveHelperCount() -> Int {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/sh")
+            p.arguments = ["-c", "ps aux | grep -c '[f]lashtex-project-files'"]
+            let pipe = Pipe()
+            p.standardOutput = pipe
+            try? p.run()
+            p.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            return Int(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)) ?? -1
+        }
+
+        let before = liveHelperCount()
+        var clients: [ProjectFilesClient] = []
+        for i in 0..<5 {
+            let dir = try tempDir("no-leak-\(i)")
+            let c = try ProjectFilesClient(executable: helper, root: dir)
+            _ = try await c.ping() // prove it is really up before counting on it
+            clients.append(c)
+        }
+        XCTAssertEqual(liveHelperCount(), before + 5, "5 helpers should be live while the clients are held")
+
+        clients.removeAll() // no terminate()/detachHelper() -- exactly what the tests above do at return
+
+        // Deinit's terminate() call is synchronous, but the child's own exit and
+        // this process's reap of it are not instantaneous; poll briefly rather
+        // than assume zero latency.
+        let deadline = Date().addingTimeInterval(5)
+        while liveHelperCount() > before, Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(liveHelperCount(), before, "helpers must be killed and reaped when the client is deallocated, with no explicit teardown")
+    }
+
     func testHelperRefusesSymlinksAndNeverWritesOutsideTheRoot() throws {
         let helper = try requireRealHelper()
         let outside = try tempDir("outside")

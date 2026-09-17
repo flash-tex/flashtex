@@ -96,6 +96,7 @@ fn big_bracket_heights(class_option: &str, amsmath: bool) -> Vec<f64> {
 /// one variant further up the cmex chain — a visibly taller bracket than
 /// pdflatex sets.
 #[test]
+#[cfg_attr(not(feature = "amsmath-inline"), ignore = "requires the amsmath-inline feature")]
 fn without_amsmath_big_does_not_move_with_the_body_size() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");
@@ -126,6 +127,7 @@ fn with_amsmath_big_tracks_the_body_size() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "amsmath-inline"), ignore = "requires the amsmath-inline feature")]
 fn big_delimiter_heights_match_pdflatex_at_all_article_sizes() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");

@@ -383,15 +383,18 @@ impl T2State<'_> {
         self.point(self.x, self.y);
     }
 
-    fn take_width(&mut self, even: usize) {
-        if !self.width_parsed {
-            self.width_parsed = true;
-            if self.stack.len() % 2 == 1 && even % 2 == 0 || (even == 1 && self.stack.len() > 1) || (even == 5 && self.stack.len() > 4) {
-                // handled by callers with explicit arity below
-            }
-        }
-    }
-
+    /// Consumes the optional leading width argument of a Type 2 charstring
+    /// when `extra` says the first stack-clearing operator carries one
+    /// (Type 2 §3.1: exactly one operator may take one more argument than
+    /// its arity, and that extra argument is `nominalWidthX + w`).
+    ///
+    /// This must run *on that operator*, before its own arguments are read:
+    /// leaving the width on the stack shifts every argument by one, so the
+    /// glyph's first `rmoveto` lands somewhere else entirely and the whole
+    /// outline — and the bounding box taken from it — is translated. Only
+    /// glyphs that declare a width are affected, which is why it shows up
+    /// on a handful of glyphs (Latin Modern Math's radical variants among
+    /// them) rather than everywhere.
     fn width_if(&mut self, extra: bool) {
         if !self.width_parsed {
             self.width_parsed = true;
@@ -652,7 +655,6 @@ impl T2State<'_> {
             if self.trans.len() > 48 {
                 self.trans.clear();
             }
-            let _ = self.take_width(0);
         }
         Ok(())
     }

@@ -85,6 +85,7 @@ final class CaptureListTests: XCTestCase {
                     row("listed-3", .rejected, receipt: "000000000000000003")]
         let plan = CaptureList.merge(rows: rows, into: existing, ledger: .init())
         XCTAssertEqual(plan.map(\.captureId), ["mine-1", "listed-2", "listed-3"], "existing first, then receipt order, no duplicates")
+        guard plan.count == 3 else { return XCTFail("expected three plan rows, got \(plan.count)") }
         XCTAssertEqual(plan[0].kind, .keepExisting(.proposed), "the session's own row keeps its state")
         XCTAssertEqual(plan[1].kind, .add(.pending))
         XCTAssertEqual(plan[2].kind, .add(.rejected))

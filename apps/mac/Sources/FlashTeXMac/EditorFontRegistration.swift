@@ -40,26 +40,15 @@ enum EditorFontRegistration {
         return NSFont(name: regularPostScriptName, size: 13) != nil
     }()
 
-    /// Candidate locations of the bundled `Fonts` directory, in the same
-    /// order (and for the same reason — `Bundle.module` traps when absent) as
-    /// `Completion.Vocabulary.inventoryCandidates()`: the packaged app's
-    /// `Contents/Resources/Fonts`, then the SwiftPM resource bundle beside
-    /// the executable or the test bundle.
+    /// The bundled `Fonts` directory, resolved the same way (and for the same
+    /// reason — `Bundle.module` traps when absent) as the completion
+    /// inventory: the packaged app's `Contents/Resources/Fonts`, then the
+    /// SwiftPM resource bundle in either of its layouts. See
+    /// `BundledResources`.
     private static func fontsDirectory() -> URL? {
-        let module = Bundle(for: EditorFontBundleMarker.self)
-        var candidates: [URL] = []
-        for bundle in [module, Bundle.main] {
-            if let url = bundle.resourceURL?.appendingPathComponent("Fonts") { candidates.append(url) }
-        }
-        let resourceBundle = "FlashTeXMac_FlashTeXMac.bundle"
-        var directories = [module.bundleURL, module.bundleURL.deletingLastPathComponent(), Bundle.main.bundleURL]
-        if let exe = Bundle.main.executableURL { directories.append(exe.deletingLastPathComponent()) }
-        for directory in directories {
-            candidates.append(directory.appendingPathComponent(resourceBundle).appendingPathComponent("Fonts"))
-        }
-        return candidates.first {
-            FileManager.default.fileExists(atPath: $0.appendingPathComponent(faces[0]).path)
-        }
+        BundledResources.directories(module: Bundle(for: EditorFontBundleMarker.self))
+            .map { $0.appendingPathComponent("Fonts") }
+            .first { FileManager.default.fileExists(atPath: $0.appendingPathComponent(faces[0]).path) }
     }
 }
 

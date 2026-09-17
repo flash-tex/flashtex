@@ -749,7 +749,23 @@ pub fn apply(
             size_cpt: (size_of(style, listing.keys.numberstyle).0 * 100.0).round() as u16,
             ..TextStyle::default()
         };
-        for block in &mut blocks[first..=last] {
+        // Whether `\begin{lstlisting}` stands directly after the `\end` of a
+        // `\trivlist` environment *that the block before it does not close
+        // itself*. When it does — `center`, `quote`, `abstract` — that
+        // `\@endparenv` skip is already on the vertical list as the block's
+        // own trailing space and nothing here may add it a second time (the
+        // `abstract`'s is its `\small` `\@topsepadd`, 6/9/12 pt, not the
+        // body's 10/12/13, so re-deriving it here overshot by 3.985/2.989/
+        // 0.996 bp). It is the merged runs that lose it: the adapter reads
+        // `\end{flushleft}\begin{lstlisting}` and
+        // `\end{verbatim}\begin{lstlisting}` as one `ParaStyle` run, leaves
+        // `env_close` false on the block before, and represents the whole
+        // boundary by the *next* block's `env_open`.
+        let after_unclosed_trivlist = texts
+            .get(document)
+            .is_some_and(|t| crate::adapter::ends_trivlist_env_before(t, listing.begin.0))
+            && !matches!(first.checked_sub(1).and_then(|p| blocks.get(p)), Some(Block::Paragraph { env_close: true, .. }));
+        for (k, block) in blocks[first..=last].iter_mut().enumerate() {
             let Block::Paragraph {
                 parts,
                 style: para_style,
@@ -775,11 +791,55 @@ pub fn apply(
             // an 11pt base, and exactly the error the probe showed before
             // this line: our first code baseline sat 11.95 bp below the
             // reference's and everything after it 23.9 bp below.
+            //
+            // The `flushleft` that ran *into* this body is the one place
+            // that lowering carried something real. When the previous
+            // environment's `\end` merged into the same `ParaStyle` run —
+            // `\end{flushleft}\begin{lstlisting}`,
+            // `\end{verbatim}\begin{lstlisting}` — its closing
+            // `\addvspace\@topsepadd` is never materialised on its own
+            // block: the adapter represents that boundary by this
+            // `env_open`, because for two `\trivlist`s the two `\addvspace`s
+            // share one skip and either value stands for both. A
+            // `lstlisting` does not share it, so the value is moved to
+            // `addvspace_before` rather than dropped (`\addvspace` keeps the
+            // larger of the two, so a list end already recorded there wins
+            // unchanged, and `\end{center}`, whose skip rides on its own
+            // `env_close`, is absorbed by `\@xaddvskip` exactly as before).
+            if k == 0 && after_unclosed_trivlist {
+                let (n, stretch, shrink) = match env_open.and_then(|e| e.skips) {
+                    Some(s) => (s.open.natural, s.open.stretch, s.open.shrink),
+                    None => {
+                        let p = if env_open.is_some_and(|e| e.vmode) { style.partopsep } else { crate::style::Skip::default() };
+                        (style.topsep.natural + p.natural, style.topsep.stretch + p.stretch, style.topsep.shrink + p.shrink)
+                    }
+                };
+                if env_open.is_some() && n > *addvspace_before {
+                    *addvspace_before = n;
+                    *addvspace_flex = (stretch, shrink);
+                }
+            }
             *env_open = None;
             *env_close = false;
-            *addvspace_before = 0.0;
-            *addvspace_flex = (0.0, 0.0);
-            *endlist_adjust = 0.0;
+            // ... but the `\addvspace` a *preceding* environment left behind
+            // is not this listing's to drop. `\end{itemize}` contributes
+            // `\addvspace\@topsepadd` before `\begin{lstlisting}` is even
+            // read, and `\lst@Init`'s own skip is `\par\penalty-50\relax
+            // \vspace\lst@aboveskip` (listings.sty 1762-1766) — a `\vspace`,
+            // which *adds* to it rather than competing with it as a second
+            // `\addvspace` would. Zeroing it on the block that carries it
+            // lost the whole `\@topsepadd`: `\end{itemize}\begin{lstlisting}`
+            // was 9.963 bp short at 10 pt, 11.955 at 11 pt and 12.951 at
+            // 12 pt, and the same after `enumerate`, `description`,
+            // `flushleft` and `verbatim` (the shapes whose closing skip
+            // rides on the next block rather than on their own `env_close`).
+            // Only `env_open` above is the `flushleft` lowering's invention;
+            // `addvspace_before` on the first block is LaTeX's.
+            if k > 0 {
+                *addvspace_before = 0.0;
+                *addvspace_flex = (0.0, 0.0);
+                *endlist_adjust = 0.0;
+            }
             *sized = Some(SizedPara {
                 size_pt: basic.0,
                 baselineskip_pt: basic.1,

@@ -32,18 +32,36 @@ pub struct Lexer {
     pos: usize,
     source_id: u32,
     state: State,
+    /// Memoized [`Lexer::rest_of_line_blank`] probe: `(probed_from, floor,
+    /// blank)`. Every byte in `probed_from..floor` is a space; `floor` is
+    /// the first later non-space byte (`blank == false`) or the line end
+    /// itself (`blank == true`). Reused while `pos` stays inside
+    /// `probed_from..=floor`.
+    blank_probe: Option<(usize, usize, bool)>,
 }
 
 impl Lexer {
     pub fn new(src: Rc<str>, source_id: u32) -> Self {
-        Lexer { src, pos: 0, source_id, state: State::NewLine }
+        Lexer {
+            src,
+            pos: 0,
+            source_id,
+            state: State::NewLine,
+            blank_probe: None,
+        }
     }
 
     /// Continue lexing `src` from byte `pos` in lexer state `state` (used
     /// when re-expanding from an incremental checkpoint over an edited
     /// buffer: everything before `pos` is unchanged by construction).
     pub fn resume(src: Rc<str>, source_id: u32, pos: usize, state: State) -> Self {
-        Lexer { src, pos, source_id, state }
+        Lexer {
+            src,
+            pos,
+            source_id,
+            state,
+            blank_probe: None,
+        }
     }
 
     pub fn state(&self) -> State {
@@ -170,8 +188,40 @@ impl Lexer {
 
     /// Are the bytes from the current position to the end of the physical
     /// line all spaces? (TeX's `input_ln` strips trailing spaces.)
-    fn rest_of_line_blank(&self) -> bool {
-        self.src.as_bytes()[self.pos..].iter().take_while(|&&b| b != b'\n' && b != b'\r').all(|&b| b == b' ')
+    ///
+    /// `next_token` asks this once per space, so a naive rescan makes a
+    /// line holding N spaces cost O(N^2) (a 100KB blanked `lstlisting`
+    /// body hangs the engine). The probe is memoized instead: each scan
+    /// records `(probed_from, floor, blank)`; a later probe from inside
+    /// `probed_from..=floor` reuses the answer, and a probe from past
+    /// `floor` rescans, so the scanned ranges across rescans are disjoint
+    /// and a whole line costs O(line length) however often it is asked.
+    /// (`pos` only moves forward and `src` is immutable, so a cached
+    /// probe stays valid; a probe from before `probed_from` rescans
+    /// defensively.)
+    fn rest_of_line_blank(&mut self) -> bool {
+        let pos = self.pos;
+        if let Some((probed_from, floor, blank)) = self.blank_probe {
+            if pos >= probed_from && pos <= floor {
+                return blank;
+            }
+        }
+        let bytes = self.src.as_bytes();
+        let mut i = pos;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b == b'\n' || b == b'\r' {
+                self.blank_probe = Some((pos, i, true));
+                return true;
+            }
+            if b != b' ' {
+                self.blank_probe = Some((pos, i, false));
+                return false;
+            }
+            i += 1;
+        }
+        self.blank_probe = Some((pos, bytes.len(), true));
+        true
     }
 
     /// Skip the rest of the physical line including its line break

@@ -212,7 +212,8 @@ final class BridgeClientTests: XCTestCase {
         let st = try await client.status()
         XCTAssertEqual(st.pendingReceipts.count, 1)
         XCTAssertEqual(st.pendingReceipts.first?.documentBefore?.text, text, "before-source retained until confirmed")
-        XCTAssertFalse(st.pendingReceipts.first!.confirmed)
+        let pendingReceipt = try XCTUnwrap(st.pendingReceipts.first)
+        XCTAssertFalse(pendingReceipt.confirmed)
         // Undo (ordinary replace) keeps the tombstone: the same edit still cannot insert twice.
         let undone = try await client.replaceDocument(expectedRevision: 4, expectedSha256: applied.document.sourceSha256, text: text)
         XCTAssertEqual(undone.revision, 5); XCTAssertEqual(undone.text, text)

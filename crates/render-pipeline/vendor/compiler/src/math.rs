@@ -23,10 +23,89 @@ pub const RADICALEX_THICKNESS_EM: f64 = 0.036;
 pub const MATRIX_COLUMN_GAP_EM: f64 = 1.0;
 pub const MATRIX_ROW_GAP_EM: f64 = 0.3;
 pub const QUAD_EM: f64 = 1.0;
+/// Temporary compiler-route gap after a display tag. PR2 can replace this
+/// single hook with line-width-aware right-margin placement.
+pub const INTERIM_TAG_GAP_EM: f64 = 2.0 * QUAD_EM;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MathList {
     pub atoms: Vec<MathAtom>,
+}
+
+/// The text-face state carried by a piece of a mixed text/math run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TextStyle {
+    Normal,
+    Bold,
+    Italic,
+    BoldItalic,
+}
+
+impl TextStyle {
+    pub const NORMAL: Self = Self::Normal;
+    pub const BOLD: Self = Self::Bold;
+    pub const ITALIC: Self = Self::Italic;
+
+    fn bold(self) -> Self {
+        match self {
+            Self::Normal | Self::Bold => Self::Bold,
+            Self::Italic | Self::BoldItalic => Self::BoldItalic,
+        }
+    }
+
+    fn italic(self) -> Self {
+        match self {
+            Self::Normal | Self::Italic => Self::Italic,
+            Self::Bold | Self::BoldItalic => Self::BoldItalic,
+        }
+    }
+
+    fn toggle_italic(self) -> Self {
+        match self {
+            Self::Normal => Self::Italic,
+            Self::Bold => Self::BoldItalic,
+            Self::Italic => Self::Normal,
+            Self::BoldItalic => Self::Bold,
+        }
+    }
+
+    fn normal(self) -> Self {
+        match self {
+            Self::Italic => Self::Normal,
+            Self::BoldItalic => Self::Bold,
+            other => other,
+        }
+    }
+
+    fn medium(self) -> Self {
+        match self {
+            Self::Bold => Self::Normal,
+            Self::BoldItalic => Self::Italic,
+            other => other,
+        }
+    }
+
+    fn reset(self) -> Self {
+        let _ = self;
+        Self::Normal
+    }
+}
+
+/// One part of a text-mode argument. Nested math remains a real math list so
+/// later layout stages can typeset it at the surrounding text size.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TextPiece {
+    Text { text: String, style: TextStyle },
+    Math(MathList),
+}
+
+impl TextPiece {
+    pub fn text(text: impl Into<String>, style: TextStyle) -> Self {
+        Self::Text {
+            text: text.into(),
+            style,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +157,8 @@ pub enum Nucleus {
     },
     /// Literal text with explicit Roman intent, distinct from math symbols.
     Text(String),
+    /// A text-mode hbox containing literal text and inline math pieces.
+    TextRun(Vec<TextPiece>),
     /// Explicit TeX math glue. `em` is in quads of the math symbol font
     /// (18 mu: `\,` is 3/18) unless `font_em`, when it is in ems of the
     /// current text font: `\quad` is `\hskip1em` (latex.ltx), and `em` in
@@ -87,6 +168,9 @@ pub enum Nucleus {
         em: f64,
         font_em: bool,
     },
+    /// A plain-TeX infix fraction (`\over`/`\atop`) or LaTeX `\frac`.
+    /// The parser marks `\frac` as `Ord` because its outer group wraps the
+    /// infix `\over`; the ungrouped infix forms remain `Inner`.
     Fraction {
         numerator: MathList,
         denominator: MathList,
@@ -94,7 +178,8 @@ pub enum Nucleus {
     Radical(MathList),
     /// `\mathbf{...}`: literal text in the bold roman face.
     Bold(String),
-    /// `\boxed`, `\overline` and `\underline`: a list with real rules.
+    /// `\boxed`, `\overline`, `\underline` and (kernel, like `\underline`)
+    /// `\underbar`: a list with real rules.
     Framed {
         body: MathList,
         frame: Frame,
@@ -137,7 +222,8 @@ pub enum Nucleus {
     /// (parentheses, zero thickness). `thickness_pt` `None` is the default
     /// rule; empty `left`/`right` are null delimiters; `style` `None` keeps
     /// the current style. amsmath wraps the result in a group (an ordinary
-    /// atom), unlike the plain `\frac`'s inner [`Nucleus::Fraction`].
+    /// atom), matching LaTeX's outer group around `\frac`; bare infix
+    /// `\over`/`\atop` fractions remain [`AtomClass::Inner`].
     GenFraction {
         numerator: MathList,
         denominator: MathList,
@@ -178,6 +264,438 @@ pub enum Nucleus {
         above: MathList,
         below: MathList,
     },
+    /// amsmath `\sideset{#1}{#2}{#3}` (`amsmath.sty` 921-929): `operator`
+    /// is `#3`, whose last atom carries the right-hand pair `#2` as its own
+    /// scripts, and `left_superscript`/`left_subscript` are `#1`.
+    ///
+    /// amsmath typesets `\hbox to\dimen@{}\mathop{\kern-\dimen@\box4
+    /// \box6}`, which is two atoms: the parser puts an empty ordinary
+    /// [`Nucleus::Group`] in front of this one, and this atom is the
+    /// `\mathop` (class `Op`), so scripts written after `#3` are its own.
+    /// All three pieces are measured in `\displaystyle` whatever the
+    /// current style, the left pair hangs from an empty box as tall and deep
+    /// as the display operator (left-aligned) and the right pair is
+    /// `#3\nolimits#2`; math-layout's `Atom::left_scripts` sets that exactly.
+    SideSet {
+        operator: MathList,
+        left_superscript: Option<MathList>,
+        left_subscript: Option<MathList>,
+    },
+    /// mathtools `\mathllap`/`\mathrlap`/`\mathclap` (`mathtools.sty`
+    /// 1539-1563): `{{}\llap{...}}`, `{{}\rlap{...}}`, `{{}\clap{...}}` —
+    /// `\hb@xt@\z@` boxes with zero advance whose ink is still painted,
+    /// hanging left (`\hss` after), right (`\hss` before) or centred
+    /// (`\hss` on both sides) on the current point. The opposite of
+    /// [`Nucleus::Phantom`], which reserves the width but paints nothing.
+    Lap { body: MathList, align: LapAlign },
+}
+
+/// Which side of the current point a [`Nucleus::Lap`] box's ink hangs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LapAlign {
+    /// `\mathllap`: `\llap` is `\hb@xt@\z@{\hss ...}`, ink extends left.
+    Left,
+    /// `\mathclap`: `\clap` is `\hb@xt@\z@{\hss ... \hss}`, ink centred.
+    Center,
+    /// `\mathrlap`: `\rlap` is `\hb@xt@\z@{... \hss}`, ink extends right.
+    Right,
+}
+
+/// Returns the literal text when a run contains no nested math.
+pub fn text_run_plain_text(pieces: &[TextPiece]) -> Option<String> {
+    let mut text = String::new();
+    for piece in pieces {
+        match piece {
+            TextPiece::Text { text: part, .. } => text.push_str(part),
+            TextPiece::Math(_) => return None,
+        }
+    }
+    Some(text)
+}
+
+/// Flattens a mixed text/math run for string-only references when no source is
+/// available. Literal text and rendered symbol glyphs are preserved; simple
+/// superscripts use Unicode glyphs (`x^2` becomes `x²`).
+pub fn text_run_reference_text(pieces: &[TextPiece]) -> String {
+    text_run_reference_text_inner(pieces, None)
+}
+
+/// Flattens a mixed text/math run for a reference, using the source span of a
+/// composite math atom when it has no single rendered glyph. References do not
+/// retain a structured `MathList`, so this is deliberately a plain-text view.
+pub fn text_run_reference_text_with_source(pieces: &[TextPiece], source: &str) -> String {
+    text_run_reference_text_inner(pieces, Some(source))
+}
+
+fn text_run_reference_text_inner(pieces: &[TextPiece], source: Option<&str>) -> String {
+    let mut text = String::new();
+    for piece in pieces {
+        match piece {
+            TextPiece::Text { text: part, .. } => text.push_str(part),
+            TextPiece::Math(list) => append_math_reference_text(&mut text, list, source),
+        }
+    }
+    text
+}
+
+fn append_math_reference_text(out: &mut String, list: &MathList, source: Option<&str>) {
+    for atom in &list.atoms {
+        match &atom.nucleus {
+            Nucleus::Symbol(text)
+            | Nucleus::Text(text)
+            | Nucleus::Bold(text)
+            | Nucleus::SizedDelimiter { glyph: text, .. } => out.push_str(text),
+            Nucleus::TextRun(pieces) => out.push_str(&text_run_reference_text_inner(pieces, source)),
+            Nucleus::Space { .. } => out.push(' '),
+            Nucleus::Fraction {
+                numerator,
+                denominator,
+            }
+            | Nucleus::GenFraction {
+                numerator,
+                denominator,
+                ..
+            } => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    out.push('(');
+                    append_math_reference_text(out, numerator, source);
+                    out.push('/');
+                    append_math_reference_text(out, denominator, source);
+                    out.push(')');
+                }
+            }
+            Nucleus::Radical(body) => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    out.push('√');
+                    append_math_reference_text(out, body, source);
+                }
+            }
+            Nucleus::Framed { body, .. }
+            | Nucleus::Accent { body, .. }
+            | Nucleus::Stacked { base: body, .. } => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    append_math_reference_text(out, body, source);
+                }
+            }
+            Nucleus::Matrix {
+                rows, left, right, ..
+            } => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    out.push_str(left);
+                    for (row_index, row) in rows.iter().enumerate() {
+                        if row_index > 0 {
+                            out.push(';');
+                        }
+                        for (column_index, cell) in row.iter().enumerate() {
+                            if column_index > 0 {
+                                out.push(',');
+                            }
+                            append_math_reference_text(out, cell, source);
+                        }
+                    }
+                    out.push_str(right);
+                }
+            }
+            Nucleus::Rule(_) => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                }
+            }
+            Nucleus::SubArray { rows, .. } => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    for (index, row) in rows.iter().enumerate() {
+                        if index > 0 {
+                            out.push(';');
+                        }
+                        append_math_reference_text(out, row, source);
+                    }
+                }
+            }
+            Nucleus::Group(body)
+            | Nucleus::Phantom { body, .. }
+            | Nucleus::Operator { body, .. }
+            | Nucleus::Lap { body, .. } => {
+                append_math_reference_text(out, body, source)
+            }
+            Nucleus::ExtArrow { above, below, .. } => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    append_math_reference_text(out, above, source);
+                    append_math_reference_text(out, below, source);
+                }
+            }
+            Nucleus::SideSet { operator, .. } => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    append_math_reference_text(out, operator, source);
+                }
+            }
+        }
+        if let Some(superscript) = &atom.superscript {
+            append_math_script(out, '^', superscript, source);
+        }
+        if let Some(subscript) = &atom.subscript {
+            append_math_script(out, '_', subscript, source);
+        }
+    }
+}
+
+fn source_text<'a>(source: Option<&'a str>, atom: &MathAtom) -> Option<&'a str> {
+    let source = source?;
+    let mut end = reference_atom_end(atom).min(source.len());
+    while source.as_bytes().get(end) == Some(&b'}') {
+        end += 1;
+    }
+    source.get(atom.span.start..end)
+}
+
+fn reference_atom_end(atom: &MathAtom) -> usize {
+    let mut end = atom.span.end;
+    let mut extend = |list: &MathList| {
+        if let Some(nested_end) = reference_list_end(list) {
+            end = end.max(nested_end);
+        }
+    };
+    match &atom.nucleus {
+        Nucleus::Fraction {
+            numerator,
+            denominator,
+        }
+        | Nucleus::GenFraction {
+            numerator,
+            denominator,
+            ..
+        } => {
+            extend(numerator);
+            extend(denominator);
+        }
+        Nucleus::Radical(body)
+        | Nucleus::Framed { body, .. }
+        | Nucleus::Group(body)
+        | Nucleus::Phantom { body, .. }
+        | Nucleus::Operator { body, .. }
+        | Nucleus::Accent { body, .. }
+        | Nucleus::Lap { body, .. } => extend(body),
+        Nucleus::TextRun(pieces) => {
+            for piece in pieces {
+                if let TextPiece::Math(list) = piece {
+                    extend(list);
+                }
+            }
+        }
+        Nucleus::Stacked { base, over, under } => {
+            extend(base);
+            if let Some(over) = over {
+                extend(over);
+            }
+            if let Some(under) = under {
+                extend(under);
+            }
+        }
+        Nucleus::Matrix { rows, .. } => {
+            for row in rows {
+                for cell in row {
+                    extend(cell);
+                }
+            }
+        }
+        Nucleus::SubArray { rows, .. } => {
+            for row in rows {
+                extend(row);
+            }
+        }
+        Nucleus::SideSet {
+            operator,
+            left_superscript,
+            left_subscript,
+        } => {
+            extend(operator);
+            for list in [left_superscript, left_subscript].into_iter().flatten() {
+                extend(list);
+            }
+        }
+        Nucleus::ExtArrow { above, below, .. } => {
+            extend(above);
+            extend(below);
+        }
+        Nucleus::Symbol(_)
+        | Nucleus::SizedDelimiter { .. }
+        | Nucleus::Text(_)
+        | Nucleus::Space { .. }
+        | Nucleus::Rule(_)
+        | Nucleus::Bold(_) => {}
+    }
+    end
+}
+
+fn reference_list_end(list: &MathList) -> Option<usize> {
+    list.atoms.iter().map(reference_atom_end).max()
+}
+
+fn append_math_script(out: &mut String, marker: char, list: &MathList, source: Option<&str>) {
+    let text = math_reference_text(list, source);
+    if marker == '^' {
+        if let Some(superscript) = text
+            .chars()
+            .map(superscript_char)
+            .collect::<Option<String>>()
+        {
+            out.push_str(&superscript);
+            return;
+        }
+    } else if marker == '_' {
+        if let Some(subscript) = text.chars().map(subscript_char).collect::<Option<String>>() {
+            out.push_str(&subscript);
+            return;
+        }
+    }
+    out.push(marker);
+    out.push_str(&text);
+}
+
+fn math_reference_text(list: &MathList, source: Option<&str>) -> String {
+    let mut text = String::new();
+    append_math_reference_text(&mut text, list, source);
+    text
+}
+
+fn superscript_char(ch: char) -> Option<char> {
+    Some(match ch {
+        '0' => '⁰',
+        '1' => '¹',
+        '2' => '²',
+        '3' => '³',
+        '4' => '⁴',
+        '5' => '⁵',
+        '6' => '⁶',
+        '7' => '⁷',
+        '8' => '⁸',
+        '9' => '⁹',
+        '+' => '⁺',
+        '-' => '⁻',
+        '=' => '⁼',
+        '(' => '⁽',
+        ')' => '⁾',
+        'n' => 'ⁿ',
+        'i' => 'ⁱ',
+        'r' => 'ʳ',
+        'j' => 'ʲ',
+        'h' => 'ʰ',
+        'k' => 'ᵏ',
+        'l' => 'ˡ',
+        'm' => 'ᵐ',
+        's' => 'ˢ',
+        'w' => 'ʷ',
+        'x' => 'ˣ',
+        'y' => 'ʸ',
+        'z' => 'ᶻ',
+        _ => return None,
+    })
+}
+
+fn subscript_char(ch: char) -> Option<char> {
+    Some(match ch {
+        '0' => '₀',
+        '1' => '₁',
+        '2' => '₂',
+        '3' => '₃',
+        '4' => '₄',
+        '5' => '₅',
+        '6' => '₆',
+        '7' => '₇',
+        '8' => '₈',
+        '9' => '₉',
+        '+' => '₊',
+        '-' => '₋',
+        '=' => '₌',
+        '(' => '₍',
+        ')' => '₎',
+        'a' => 'ₐ',
+        'e' => 'ₑ',
+        'h' => 'ₕ',
+        'i' => 'ᵢ',
+        'j' => 'ⱼ',
+        'k' => 'ₖ',
+        'l' => 'ₗ',
+        'm' => 'ₘ',
+        'n' => 'ₙ',
+        'o' => 'ₒ',
+        'p' => 'ₚ',
+        'r' => 'ᵣ',
+        's' => 'ₛ',
+        't' => 'ₜ',
+        'u' => 'ᵤ',
+        'v' => 'ᵥ',
+        'x' => 'ₓ',
+        _ => return None,
+    })
+}
+
+fn text_run_nucleus(pieces: Vec<TextPiece>) -> Nucleus {
+    if pieces.iter().all(|piece| {
+        matches!(
+            piece,
+            TextPiece::Text {
+                style: TextStyle::Normal,
+                ..
+            }
+        )
+    }) {
+        return Nucleus::Text(text_run_plain_text(&pieces).unwrap_or_default());
+    }
+    Nucleus::TextRun(pieces)
+}
+
+fn push_text_piece(pieces: &mut Vec<TextPiece>, text: impl Into<String>, style: TextStyle) {
+    let text = text.into();
+    if text.is_empty() {
+        return;
+    }
+    if let Some(TextPiece::Text {
+        text: previous,
+        style: previous_style,
+    }) = pieces.last_mut()
+    {
+        if *previous_style == style {
+            previous.push_str(&text);
+            return;
+        }
+    }
+    pieces.push(TextPiece::text(text, style));
+}
+
+fn append_text_pieces(dst: &mut Vec<TextPiece>, src: impl IntoIterator<Item = TextPiece>) {
+    for piece in src {
+        match piece {
+            TextPiece::Text { text, style } => push_text_piece(dst, text, style),
+            TextPiece::Math(list) => dst.push(TextPiece::Math(list)),
+        }
+    }
+}
+
+fn text_command_style(name: &str, style: TextStyle) -> Option<TextStyle> {
+    Some(match name {
+        "text" | "mbox" | "hbox" | "texttt" | "textsf" => style,
+        "textbf" => style.bold(),
+        "textit" | "textsl" => style.italic(),
+        "emph" => style.toggle_italic(),
+        "textup" | "textrm" => style.normal(),
+        "textmd" => style.medium(),
+        "textnormal" => style.reset(),
+        _ => return None,
+    })
 }
 
 /// Which extensible arrow an [`Nucleus::ExtArrow`] draws.
@@ -219,7 +737,11 @@ pub enum DelimiterRole {
     Right,
 }
 
-/// `\hat`..`\grave`, plus `\widehat`/`\widetilde`.
+/// `\hat`..`\grave`, plus `\widehat`/`\widetilde` and `\mathring`.
+///
+/// (`\dddot`/`\ddddot` are deliberately NOT here: amsmath defines them as
+/// `{\mathop{\kern\z@#1}\limits^{...}}`, not as `\mathaccent`s — see
+/// [`MathParser::mathop_dots_atom`].)
 ///
 /// The compiler renders math with Adobe's Core 14 Symbol/Times-Roman faces,
 /// not Computer Modern, so TeX's exact accent geometry is not reproducible.
@@ -243,6 +765,7 @@ pub enum Accent {
     Grave,
     WideHat,
     WideTilde,
+    Mathring,
 }
 
 impl Accent {
@@ -260,6 +783,7 @@ impl Accent {
             Accent::Grave => "grave",
             Accent::WideHat => "widehat",
             Accent::WideTilde => "widetilde",
+            Accent::Mathring => "mathring",
         }
     }
 
@@ -288,6 +812,11 @@ impl Accent {
             Accent::Ddot => Some('\u{A8}'),  // diaeresis
             Accent::Acute => Some('\u{B4}'), // acute accent
             Accent::Grave => Some('\u{60}'), // grave accent
+            // TeX's \mathring is a small ring above; no ring-above
+            // character exists in WinAnsi or the Symbol encoding, so the
+            // degree sign — a real ring-shaped base-14 glyph — is the
+            // closest stand-in.
+            Accent::Mathring => Some('\u{B0}'), // degree sign
             Accent::Check | Accent::Breve => None,
         }
     }
@@ -370,6 +899,11 @@ pub(crate) const GRID_ENVIRONMENTS: &[(&str, char, &str, &str)] = &[
     ("cases", 'l', "{", ""),
     // mathtools.sty `\newcases{dcases}`: `cases` with `\displaystyle` cells.
     ("dcases", 'l', "{", ""),
+    // mathtools.sty `\newcases{rcases}` (TeX Live 2026 lines 1029-1030):
+    // the same `\quad`-separated textstyle two-column preamble as `cases`
+    // (`\MT_start_cases:nnnn` runs for both), but a null left delimiter
+    // and `\rbrace` right — the mirror image of `cases`.
+    ("rcases", 'l', "", "}"),
     ("aligned", 'c', "", ""),
     ("alignedat", 'c', "", ""),
     ("split", 'c', "", ""),
@@ -581,7 +1115,23 @@ pub fn parse_tokens(
     packages: MathPackages,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> MathList {
-    let (list, unclosed) = parse_tokens_reporting_unclosed(tokens, packages, diagnostics, false);
+    parse_tokens_display(tokens, packages, diagnostics, false)
+}
+
+/// Like [`parse_tokens`], but `display` says whether this list sits inside
+/// a display construct (`\[...\]`, `$$...$$`, `equation`/`align`/...) rather
+/// than inline math (`$...$`) — LaTeX's `\if@display`, which some amsmath
+/// commands (`\mod`) key their spacing on. Every caller that isn't clearly
+/// one or the other keeps calling [`parse_tokens`], which defaults to
+/// inline; that is every existing call site except the three in `parser.rs`
+/// that actually know which construct they are inside.
+pub fn parse_tokens_display(
+    tokens: &[Token],
+    packages: MathPackages,
+    diagnostics: &mut Vec<Diagnostic>,
+    display: bool,
+) -> MathList {
+    let (list, unclosed) = parse_tokens_reporting_unclosed(tokens, packages, diagnostics, false, display);
     if let Some(open) = unclosed {
         diagnostics.push(Diagnostic::error(
             "math group is missing its closing brace",
@@ -609,6 +1159,7 @@ pub fn parse_tokens_reporting_unclosed(
     packages: MathPackages,
     diagnostics: &mut Vec<Diagnostic>,
     cut_off: bool,
+    display: bool,
 ) -> (MathList, Option<Span>) {
     let split = split_word_tokens(tokens);
     let mut parser = MathParser {
@@ -620,6 +1171,9 @@ pub fn parse_tokens_reporting_unclosed(
         pending: Vec::new(),
         unclosed: None,
         cut_off,
+        open_lefts: 0,
+        dropped_lefts: 0,
+        display,
     };
     let list = parser.list(false);
     (list, parser.unclosed)
@@ -648,6 +1202,22 @@ pub fn is_math_environment(name: &str) -> bool {
 // depth, so the guard fires first on every profile.
 pub const MAX_MATH_DEPTH: usize = 32;
 
+/// The deepest `\left`...`\right` nesting in one formula. Sizing a pair lays
+/// out everything it encloses (`left_right_stretch_scales`), so the cost is
+/// the nesting depth times the formula length: 10k nested pairs took 15 s.
+/// Past the limit the extra delimiters are dropped with TeX's capacity error:
+/// each `\left` is a TeX group, and TeX allows 255 grouping levels
+/// ([`TEX_GROUPING_LEVELS`]). A formula in a document body already sits in
+/// two of them (the `document` environment and the math shift), so pdflatex
+/// accepts 253 nested `\left`s there and stops at the 254th, in display and
+/// inline math alike (measured, TeX Live 2026). Other enclosing groups make
+/// TeX stop sooner; they are not counted here. The layout is not recursive
+/// per pair: 255 levels ran on a 256 KiB release and 512 KiB debug thread.
+pub const MAX_LEFT_RIGHT_DEPTH: usize = TEX_GROUPING_LEVELS - 2;
+
+/// tex.web `max_quarterword`: the most grouping levels TeX allows (§274).
+pub const TEX_GROUPING_LEVELS: usize = 255;
+
 struct MathParser<'a> {
     tokens: &'a [Token],
     i: usize,
@@ -664,6 +1234,16 @@ struct MathParser<'a> {
     unclosed: Option<Span>,
     /// The tokens end where unterminated math was cut off.
     cut_off: bool,
+    /// `\left`s still open, and those dropped past [`MAX_LEFT_RIGHT_DEPTH`]
+    /// (their `\right`s are dropped too).
+    open_lefts: usize,
+    dropped_lefts: usize,
+    /// LaTeX's `\if@display`: this list sits inside a display construct
+    /// (`\[...\]`, `$$...$$`, `equation`/`align`/...) rather than inline
+    /// math (`$...$`). Some amsmath commands (`\mod`) key their spacing on
+    /// it; it does not change for a nested group, script or fraction --
+    /// `\if@display` is LaTeX's outer flag, not TeX's inner math style.
+    display: bool,
 }
 
 impl MathParser<'_> {
@@ -791,19 +1371,7 @@ impl MathParser<'_> {
                 // collects every following `'` as another `\prime` and a
                 // directly following `^{...}` into the same superscript.
                 TokenKind::Word(ref word) if word == "'" => {
-                    let mut script = MathList { atoms: Vec::new() };
-                    while let Some(t) = self.tokens.get(self.i) {
-                        if !matches!(&t.kind, TokenKind::Word(w) if w == "'") {
-                            break;
-                        }
-                        script.atoms.push(symbol("\u{2032}".into(), t.span));
-                        self.i += 1;
-                    }
-                    if matches!(self.tokens.get(self.i).map(|t| &t.kind), Some(TokenKind::Superscript)) {
-                        let marker = self.tokens[self.i].span;
-                        self.i += 1;
-                        script.atoms.extend(self.script_argument(marker).atoms);
-                    }
+                    let script = self.prime_script();
                     if atoms.is_empty() {
                         atoms.push(symbol(String::new(), token.span));
                     }
@@ -852,6 +1420,133 @@ impl MathParser<'_> {
             self.unclosed = open.or_else(|| self.tokens.last().map(|t| t.span));
         }
         MathList { atoms }
+    }
+
+    /// The superscript a run of `'` starts at the current token (latex.ltx
+    /// `\active@math@prime`): one `\prime` per `'`, then a directly
+    /// following `^{...}`.
+    fn prime_script(&mut self) -> MathList {
+        let mut script = MathList { atoms: Vec::new() };
+        while let Some(t) = self.tokens.get(self.i) {
+            if !matches!(&t.kind, TokenKind::Word(w) if w == "'") {
+                break;
+            }
+            script.atoms.push(symbol("\u{2032}".into(), t.span));
+            self.i += 1;
+        }
+        if matches!(self.tokens.get(self.i).map(|t| &t.kind), Some(TokenKind::Superscript)) {
+            let marker = self.tokens[self.i].span;
+            self.i += 1;
+            script.atoms.extend(self.script_argument(marker).atoms);
+        }
+        script
+    }
+
+    /// amsmath `\sideset{#1}{#2}{#3}` (see [`Nucleus::SideSet`]): returns
+    /// the ordinary `\hbox to\dimen@{}` atom and queues the `\mathop`, so
+    /// scripts written after `#3` attach to the `\mathop`.
+    fn sideset(&mut self, span: Span) -> MathAtom {
+        let (left_superscript, left_subscript) = self.sideset_scripts(span);
+        let (right_superscript, right_subscript) = self.sideset_scripts(span);
+        let mut operator = self.required_group("sideset", span);
+        if operator.atoms.is_empty() {
+            operator.atoms.push(symbol(String::new(), span));
+        }
+        // `#3\nolimits#2`: the pair attaches to the last atom of `#3`.
+        let last = operator.atoms.last_mut().expect("pushed above");
+        for (slot, script) in [
+            (&mut last.superscript, right_superscript),
+            (&mut last.subscript, right_subscript),
+        ] {
+            if script.is_some_and(|script| slot.replace(script).is_some()) {
+                self.diagnostics.push(Diagnostic::error(
+                    "duplicate script on a math atom",
+                    Some(span),
+                    Some("used the last script and continued".into()),
+                ));
+            }
+        }
+        self.pending.push(MathAtom {
+            nucleus: Nucleus::SideSet {
+                operator,
+                left_superscript,
+                left_subscript,
+            },
+            ..symbol(String::new(), span)
+        });
+        MathAtom {
+            nucleus: Nucleus::Group(MathList { atoms: Vec::new() }),
+            class_override: Some(AtomClass::Ord),
+            ..symbol(String::new(), span)
+        }
+    }
+
+    /// One braced `\sideset` script group, `{_a^b}`, `{'}` or `{}`: its
+    /// superscript and subscript. amsmath would set any other material in
+    /// the group after the scripts; that is reported and dropped.
+    fn sideset_scripts(&mut self, span: Span) -> (Option<MathList>, Option<MathList>) {
+        while matches!(self.tokens.get(self.i).map(|t| &t.kind), Some(TokenKind::Space)) {
+            self.i += 1;
+        }
+        let open = match self.tokens.get(self.i) {
+            Some(token) if token.kind == TokenKind::LBrace => token.span,
+            _ => {
+                if !self.argument_cut_off() {
+                    self.diagnostics.push(Diagnostic::error(
+                        "\\sideset requires a braced group of scripts",
+                        Some(span),
+                        Some("used an empty group and continued".into()),
+                    ));
+                }
+                return (None, None);
+            }
+        };
+        self.i += 1;
+        let (mut superscript, mut subscript) = (None, None);
+        while let Some(token) = self.tokens.get(self.i).cloned() {
+            let (slot, script) = match token.kind {
+                TokenKind::RBrace => {
+                    self.i += 1;
+                    return (superscript, subscript);
+                }
+                TokenKind::Space | TokenKind::ParBreak | TokenKind::Comment => {
+                    self.i += 1;
+                    continue;
+                }
+                TokenKind::Word(ref word) if word == "'" => (&mut superscript, self.prime_script()),
+                TokenKind::Superscript | TokenKind::Subscript => {
+                    self.i += 1;
+                    let script = self.script_argument(token.span);
+                    if token.kind == TokenKind::Superscript {
+                        (&mut superscript, script)
+                    } else {
+                        (&mut subscript, script)
+                    }
+                }
+                _ => {
+                    if self.atom().is_some() {
+                        self.diagnostics.push(Diagnostic::error(
+                            "only scripts are supported in a \\sideset group",
+                            Some(token.span),
+                            Some("ignored it and continued".into()),
+                        ));
+                    }
+                    self.pending.clear();
+                    continue;
+                }
+            };
+            if slot.replace(script).is_some() {
+                self.diagnostics.push(Diagnostic::error(
+                    "duplicate script on a math atom",
+                    Some(token.span),
+                    Some("used the last script and continued".into()),
+                ));
+            }
+        }
+        if self.unclosed.is_none() {
+            self.unclosed = Some(open);
+        }
+        (superscript, subscript)
     }
 
     fn script_argument(&mut self, marker: Span) -> MathList {
@@ -909,10 +1604,14 @@ impl MathParser<'_> {
                     word.len(),
                     "word tokens must be split before math parsing"
                 );
-                // The lexer turns the control symbols `\,` `\:` `\;` into a
-                // one-character word spanning two source bytes; in math they are
-                // thin/medium/thick spaces (3, 4 and 5 mu), not punctuation.
-                if token.span.end - token.span.start == 2 {
+                // A control symbol (`\,` `\:` `\;` …) lexes as a one-character
+                // word; in math the spacing ones are thin/medium/thick spaces
+                // (3, 4 and 5 mu), not punctuation. The escaped identity comes
+                // from the lexer's `control_symbol` mark — never from span
+                // length, which macro expansion rebinds to the invocation
+                // (issue #756: `\,` inside `\newcommand{\dd}{…}` carries
+                // `\dd`'s 3-byte span, not the 2-byte `\,` span).
+                if token.control_symbol {
                     let mu = match ch {
                         ',' => 3.0,
                         ':' | '>' => 4.0,
@@ -981,6 +1680,12 @@ impl MathParser<'_> {
     }
 
     fn command_atom(&mut self, name: String, span: Span) -> MathAtom {
+        // Expansion-pass side channel: a bare `\refstepcounter`'s
+        // `\@currentlabel` marker is invisible inside math, exactly like the
+        // real command (which the engine runs with no output tokens).
+        if name == "flashtexcurrentlabel" {
+            return space(0.0, span);
+        }
         // The `amsfonts.sty` math alphabets (`\mathbb` 108, `\mathfrak` 106)
         // and its two obsolete spellings exist only once the package is
         // loaded; base LaTeX2e has no definition for any of the four, so
@@ -1071,6 +1776,22 @@ impl MathParser<'_> {
             // enum's own doc comment on `Nucleus`), leaving exactly the
             // written kern between the two glyphs, not kern-plus-Rel-Rel-gap.
             //
+            // `\coloneqq` (":=") = `\vcentcolon \mathrel{\mkern-1.2mu} =`
+            // (`\MATHT@coloneq`, mathtools.sty 487/506/531). Only when
+            // mathtools is loaded: without it the command keeps the
+            // precomposed U+2254 glyph from `command_glyph` below. pdfLaTeX
+            // with mathtools (12pt lmodern, measured): the colon is raised
+            // 0.415bp like `\vcentcolon`, the `=` starts 0.797bp (1.2mu)
+            // before the colon's advance ends, and `$a\coloneqq b$` is
+            // 29.43333pt wide — the same as `\eqqcolon`.
+            "coloneqq" if self.packages.mathtools => {
+                let atoms = vec![vcentcolon_atom(span), mkern(-1.2, span), symbol("=".into(), span)];
+                MathAtom {
+                    nucleus: Nucleus::Group(MathList { atoms }),
+                    class_override: Some(AtomClass::Rel),
+                    ..symbol(String::new(), span)
+                }
+            }
             // `\eqqcolon` ("=:") = `= \mathrel{\mkern-1.2mu} \vcentcolon`.
             "eqqcolon" => {
                 let atoms = vec![symbol("=".into(), span), mkern(-1.2, span), vcentcolon_atom(span)];
@@ -1246,6 +1967,50 @@ impl MathParser<'_> {
                     ams_symbol: None,
                 }
             }
+            // mathtools' lap family needs `\usepackage{mathtools}`:
+            // `mathtools.sty` 1540-1558 defines all three, and neither the
+            // base LaTeX sources nor amsmath does, so without it pdflatex
+            // answers "Undefined control sequence".
+            "mathllap" | "mathrlap" | "mathclap" if !self.packages.mathtools => {
+                self.missing_package(&name, "mathtools", span)
+            }
+            // mathtools.sty 1561-1563: `\mathllap` is `{{}\llap{...}}`,
+            // `\mathrlap` is `{{}\rlap{...}}`, `\mathclap` is `{{}\clap{...}}`.
+            // The outer group is an ordinary atom, so no class is forced
+            // (`atom_class` defaults such boxes to Ord, as TeX does).
+            "mathllap" | "mathrlap" | "mathclap" => {
+                let align = match name.as_str() {
+                    "mathllap" => LapAlign::Left,
+                    "mathclap" => LapAlign::Center,
+                    _ => LapAlign::Right,
+                };
+                // mathtools also accepts `\mathllap[<style>]{...}` (an
+                // explicit `\displaystyle`/`\textstyle`/`\scriptstyle`/
+                // `\scriptscriptstyle` for the body instead of `\mathpalette`'s
+                // current style). This layout has no style threading for lap
+                // bodies — `\genfrac`'s own style argument is likewise laid out
+                // at the ambient size — so the override is consumed and
+                // reported rather than silently becoming the body: without
+                // this, `required_group` below would take the `[` itself as a
+                // single-token argument and garble the rest undiagnosed.
+                if self.raw_bracket_text().is_some() {
+                    self.diagnostics.push(Diagnostic::error(
+                        format!("\\{name}'s optional style argument is not supported"),
+                        Some(span),
+                        Some("ignored the style and continued".into()),
+                    ));
+                }
+                let body = self.required_group(&name, span);
+                MathAtom {
+                    nucleus: Nucleus::Lap { body, align },
+                    span,
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                }
+            }
             "xrightarrow" | "xleftarrow" | "xleftrightarrow" => {
                 let below = self
                     .optional_bracket_list()
@@ -1285,8 +2050,7 @@ impl MathParser<'_> {
             // Upright roman is already the math default in this subset, and
             // the other style switches have no distinct face yet: keep the
             // argument's content rather than dropping or garbling it.
-            "mathrm" | "mathit" | "mathsf" | "mathtt" | "mathnormal" | "boldsymbol" | "bm"
-            | "mbox" | "hbox" | "textrm" | "textit" | "textnormal" => {
+            "mathrm" | "mathit" | "mathsf" | "mathtt" | "mathnormal" | "boldsymbol" | "bm" => {
                 // `\mathsf{AB}`, `\mathtt{T}`, `\mathit{diff}` with a plain
                 // argument: the letters of that math alphabet (fontmath.ltx
                 // `\DeclareMathAlphabet`: OT1 cmss/m/n, cmtt/m/n, cmr/m/it)
@@ -1297,27 +2061,21 @@ impl MathParser<'_> {
                     // fontmath.ltx: `\mathrm` is the `operators` font (OT1
                     // cmr/m/n), the upright roman `Text` sets, so `\mathrm{K}`
                     // is upright; math ignores the spaces in the argument.
-                    let (text, argument_span) = self.required_text_group(&name, span);
+                    // `-` keeps mathcode "2200 (a Bin cmsy minus) inside the
+                    // alphabet, so it splits out into its own Symbol atoms.
+                    let (text, argument_span) = self.required_text_group_string(&name, span);
                     let span = span.merge(argument_span);
                     let letters: String = text.chars().filter(|c| !c.is_whitespace()).collect();
-                    if letters.is_empty() {
-                        space(0.0, span)
-                    } else {
-                        text_atom(letters, span)
-                    }
+                    self.first_queued(split_hyphen_runs(&letters, span, text_atom), span)
                 } else if matches!(&*name, "mathit" | "mathsf" | "mathtt") && self.plain_text_argument() {
-                    let (text, argument_span) = self.required_text_group(&name, span);
+                    let (text, argument_span) = self.required_text_group_string(&name, span);
                     let span = span.merge(argument_span);
                     let glyphs: String = text
                         .chars()
                         .filter(|c| !c.is_whitespace())
                         .map(|c| math_alphabet_char(&name, c))
                         .collect();
-                    if glyphs.is_empty() {
-                        space(0.0, span)
-                    } else {
-                        symbol(glyphs, span)
-                    }
+                    self.first_queued(split_hyphen_runs(&glyphs, span, symbol), span)
                 } else {
                     let body = self.required_group(&name, span);
                     self.group_atom(body, span)
@@ -1329,12 +2087,29 @@ impl MathParser<'_> {
             // time (`left_right_stretch_scales`); here they just record which
             // role they play so that pairing pass can find them.
             "left" | "right" => {
-                let role = if name == "left" {
-                    DelimiterRole::Left
+                let delimiter = self.take_delimiter(&name, span);
+                if name == "left" {
+                    if self.open_lefts >= MAX_LEFT_RIGHT_DEPTH {
+                        if self.dropped_lefts == 0 {
+                            self.diagnostics.push(Diagnostic::error(
+                                format!("TeX capacity exceeded, sorry [grouping levels={TEX_GROUPING_LEVELS}]."),
+                                Some(span),
+                                Some("dropped the \\left/\\right delimiters nested past the limit".into()),
+                            ));
+                        }
+                        self.dropped_lefts += 1;
+                        space(0.0, span)
+                    } else {
+                        self.open_lefts += 1;
+                        left_right_delimiter(delimiter, DelimiterRole::Left)
+                    }
+                } else if self.dropped_lefts > 0 {
+                    self.dropped_lefts -= 1;
+                    space(0.0, span)
                 } else {
-                    DelimiterRole::Right
-                };
-                left_right_delimiter(self.take_delimiter(&name, span), role)
+                    self.open_lefts = self.open_lefts.saturating_sub(1);
+                    left_right_delimiter(delimiter, DelimiterRole::Right)
+                }
             }
             "big" | "Big" | "bigg" | "Bigg" | "bigl" | "Bigl" | "biggl" | "Biggl" | "bigr"
             | "Bigr" | "biggr" | "Biggr" | "bigm" | "Bigm" | "biggm" | "Biggm" => {
@@ -1380,11 +2155,52 @@ impl MathParser<'_> {
                 self.pending.push(space(BMOD_EXTRA_MU / 18.0, span));
                 space(BMOD_EXTRA_MU / 18.0, span)
             }
-            // amsmath's `\mod` (`amsmath.sty` 726-728) is a different command
-            // with a different kern and no parentheses, and is undefined in
-            // base LaTeX2e; it is left exactly as it was, with the rest of the
-            // amsmath-provided constructs.
-            "mod" => text_atom("mod".into(), span),
+            // amsmath's `\mod` (`amsmath.sty` 910-911) is a different command
+            // from `\bmod` and `\pmod`, undefined in base LaTeX2e:
+            //
+            //   \allowbreak\if@display\mkern18mu\else\mkern12mu\fi
+            //   {\operator@font mod}\,\,#1
+            //
+            // so: an opening kern, an **ordinary** upright `mod` (a braced
+            // group, not `\mathbin` — unlike `\bmod`), 6mu, and one argument.
+            //
+            // Measured with TeX Live 2025 pdflatex at 10pt:
+            //
+            //   $x\mod{y}$                            40.14336
+            //   $x\mkern12mu\mathrm{mod}\,\,y$        40.14336
+            //   $x\mkern12mu\mathrm{mod}\mkern6mu y$  40.14336
+            //   $\mod{y}$                             34.42809
+            //   $\mkern12mu\mathrm{mod}\,\,y$         34.42809
+            //
+            // and `$x\mod y$` is 40.14336 too, so the unbraced argument is
+            // the same one token `required_group` takes.
+            //
+            // `\if@display` is false inside `$...$` even under
+            // `\displaystyle` — it is `\everydisplay` that sets it, i.e. it
+            // tracks the *outer* display/inline construct (`self.display`,
+            // threaded from `parser.rs`'s `finish_math`/`equation_environment`/
+            // `multirow_environment`), not `\displaystyle` or any nested
+            // math style. `$\displaystyle x\mod{y}$` measures 40.14336, the
+            // inline (12mu) number, confirming that's the right default;
+            // `\[x\mod{y}\]` takes the 18mu branch straight from the
+            // amsmath.sty source line above.
+            //
+            // The class override is load-bearing: `atom_class` classifies a
+            // `mod` text nucleus as Bin for `\bmod`, and amsmath's `\mod`
+            // wraps it in a group instead, so the 4mu the Bin class would add
+            // on each side is not there.
+            "mod" if !self.packages.amsmath => self.missing_package(&name, "amsmath", span),
+            "mod" => {
+                let opening_mu = if self.display { AMSMATH_MOD_DISPLAY_OPENING_MU } else { AMSMATH_MOD_OPENING_MU };
+                let argument = self.required_group("mod", span);
+                self.pending.push(MathAtom {
+                    class_override: Some(AtomClass::Ord),
+                    ..text_atom("mod".into(), span)
+                });
+                self.pending.push(space(AMSMATH_MOD_TRAILING_MU / 18.0, span));
+                self.pending.extend(argument.atoms);
+                space(opening_mu / 18.0, span)
+            }
             // amsmath.sty lines 237-241: `\dfrac` = `\genfrac{}{}{}0`,
             // `\tfrac` = `\genfrac{}{}{}1`, `\binom` = `\genfrac()\z@{}`,
             // `\dbinom` = `\genfrac(){0pt}0`, `\tbinom` = `\genfrac(){0pt}1`.
@@ -1400,10 +2216,10 @@ impl MathParser<'_> {
                 gen_fraction(numerator, denominator, binom, style, span)
             }
             "genfrac" => {
-                let (left, _) = self.required_text_group("genfrac", span);
-                let (right, _) = self.required_text_group("genfrac", span);
-                let (thickness, thickness_span) = self.required_text_group("genfrac", span);
-                let (style, _) = self.required_text_group("genfrac", span);
+                let (left, _) = self.required_text_group_string("genfrac", span);
+                let (right, _) = self.required_text_group_string("genfrac", span);
+                let (thickness, thickness_span) = self.required_text_group_string("genfrac", span);
+                let (style, _) = self.required_text_group_string("genfrac", span);
                 let numerator = self.required_group("genfrac", span);
                 let denominator = self.required_group("genfrac", span);
                 let thickness = thickness.trim();
@@ -1466,7 +2282,7 @@ impl MathParser<'_> {
                     span,
                     superscript: None,
                     subscript: None,
-                    class_override: None,
+                    class_override: Some(AtomClass::Ord),
                     width_em: None,
                     ams_symbol: None,
                 }
@@ -1495,6 +2311,9 @@ impl MathParser<'_> {
                     _ => radical,
                 }
             }
+            // amsmath.sty 921-929; base LaTeX2e has no `\sideset`.
+            "sideset" if !self.packages.amsmath => self.missing_package(&name, "amsmath", span),
+            "sideset" => self.sideset(span),
             "overset" | "stackrel" | "underset" => {
                 let script = self.required_group(&name, span);
                 let base = self.required_group(&name, span);
@@ -1514,23 +2333,36 @@ impl MathParser<'_> {
                 }
             }
             "mathbf" | "textbf" => {
-                let (text, argument_span) = self.required_text_group(&name, span);
-                MathAtom {
-                    nucleus: Nucleus::Bold(text),
-                    span: span.merge(argument_span),
-                    superscript: None,
-                    subscript: None,
-                    class_override: None,
-                    width_em: None,
-                    ams_symbol: None,
+                let (pieces, argument_span) =
+                    self.required_text_group_styled(&name, span, TextStyle::BOLD);
+                let span = span.merge(argument_span);
+                if let Some(text) = text_run_plain_text(&pieces) {
+                    // Like `\mathrm`, `-` stays a Bin cmsy minus (mathcode
+                    // "2200), not a bold text hyphen: only the hyphen runs
+                    // split out.
+                    self.first_queued(split_hyphen_runs(&text, span, bold), span)
+                } else {
+                    MathAtom {
+                        nucleus: Nucleus::TextRun(pieces),
+                        span,
+                        superscript: None,
+                        subscript: None,
+                        class_override: None,
+                        width_em: None,
+                        ams_symbol: None,
+                    }
                 }
             }
-            "boxed" | "overline" | "underline" | "overbrace" | "underbrace" | "overrightarrow"
-            | "overleftarrow" | "overleftrightarrow" | "underrightarrow" | "underleftarrow"
-            | "underleftrightarrow" => {
+            "boxed" | "Aboxed" | "overline" | "underline" | "underbar" | "overbrace" | "underbrace"
+            | "overrightarrow" | "overleftarrow" | "overleftrightarrow" | "underrightarrow"
+            | "underleftarrow" | "underleftrightarrow" => {
                 let body = self.required_group(&name, span);
                 let frame = match name.as_str() {
-                    "boxed" => Frame::Box,
+                    // mathtools' `\Aboxed{<lhs> <rel> <rhs>}` boxes the whole
+                    // row with the `\boxed` frame; the relation stays a plain
+                    // body atom at its natural position, so the align grid
+                    // keeps a shared alignment point across boxed rows.
+                    "boxed" | "Aboxed" => Frame::Box,
                     "overline" => Frame::Over,
                     "overbrace" => Frame::OverBrace,
                     "underbrace" => Frame::UnderBrace,
@@ -1555,11 +2387,24 @@ impl MathParser<'_> {
             "tag" => {
                 let starred = matches!(self.tokens.get(self.i).map(|t| &t.kind), Some(TokenKind::Word(w)) if w == "*");
                 self.skip_star();
-                let (text, argument_span) = self.required_text_group("tag", span);
-                let label = if starred { text } else { format!("({text})") };
-                self.pending
-                    .push(text_atom(label, span.merge(argument_span)));
-                text_space(2.0 * QUAD_EM, span)
+                let (mut pieces, argument_span) = self.required_text_group("tag", span);
+                if !starred {
+                    let mut wrapped = Vec::with_capacity(pieces.len() + 2);
+                    push_text_piece(&mut wrapped, "(", TextStyle::NORMAL);
+                    append_text_pieces(&mut wrapped, pieces);
+                    push_text_piece(&mut wrapped, ")", TextStyle::NORMAL);
+                    pieces = wrapped;
+                }
+                self.pending.push(MathAtom {
+                    nucleus: text_run_nucleus(pieces),
+                    span: span.merge(argument_span),
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                });
+                text_space(INTERIM_TAG_GAP_EM, span)
             }
             // The kernel's `\pmod` (`latex.ltx` 15709) opens with
             // `\mkern18mu`; amsmath renews it through `\pod`, which is
@@ -1601,9 +2446,23 @@ impl MathParser<'_> {
                 space(0.0, span)
             }
             "text" => {
-                let (text, argument_span) = self.required_text_group("text", span);
+                let (pieces, argument_span) = self.required_text_group("text", span);
                 MathAtom {
-                    nucleus: Nucleus::Text(text),
+                    nucleus: text_run_nucleus(pieces),
+                    span: span.merge(argument_span),
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                }
+            }
+            "textit" | "textrm" | "textnormal" | "mbox" | "hbox" => {
+                let style =
+                    text_command_style(&name, TextStyle::NORMAL).unwrap_or(TextStyle::NORMAL);
+                let (pieces, argument_span) = self.required_text_group_styled(&name, span, style);
+                MathAtom {
+                    nucleus: text_run_nucleus(pieces),
                     span: span.merge(argument_span),
                     superscript: None,
                     subscript: None,
@@ -1615,7 +2474,7 @@ impl MathParser<'_> {
             "quad" => text_space(QUAD_EM, span),
             "qquad" => text_space(2.0 * QUAD_EM, span),
             "mathbb" => {
-                let (text, argument_span) = self.required_text_group("mathbb", span);
+                let (text, argument_span) = self.required_text_group_string("mathbb", span);
                 let span = span.merge(argument_span);
                 let letters: String = text.chars().filter(|c| !c.is_whitespace()).collect();
                 match letters
@@ -1641,21 +2500,17 @@ impl MathParser<'_> {
             // Euler Fraktur letters as Unicode mathematical fraktur; digits
             // and other characters are kept as they are.
             "mathfrak" => {
-                let (text, argument_span) = self.required_text_group("mathfrak", span);
+                let (text, argument_span) = self.required_text_group_string("mathfrak", span);
                 let span = span.merge(argument_span);
                 let glyphs: String = text
                     .chars()
                     .filter(|c| !c.is_whitespace())
                     .map(|c| math_alphabet_char("mathfrak", c))
                     .collect();
-                if glyphs.is_empty() {
-                    space(0.0, span)
-                } else {
-                    symbol(glyphs, span)
-                }
+                self.first_queued(split_hyphen_runs(&glyphs, span, symbol), span)
             }
             "mathcal" => {
-                let (text, argument_span) = self.required_text_group("mathcal", span);
+                let (text, argument_span) = self.required_text_group_string("mathcal", span);
                 let span = span.merge(argument_span);
                 let letters: String = text.chars().filter(|c| !c.is_whitespace()).collect();
                 match letters
@@ -1699,6 +2554,9 @@ impl MathParser<'_> {
             "grave" => self.accent_atom(Accent::Grave, span),
             "widehat" => self.accent_atom(Accent::WideHat, span),
             "widetilde" => self.accent_atom(Accent::WideTilde, span),
+            "dddot" => self.mathop_dots_atom("dddot", "...", span),
+            "ddddot" => self.mathop_dots_atom("ddddot", "....", span),
+            "mathring" => self.accent_atom(Accent::Mathring, span),
             // The dashed arrows are drawn from msam pieces `amsfonts.sty`
             // declares, so without the package there is nothing to draw with
             // and pdflatex answers "Undefined control sequence".
@@ -1716,8 +2574,10 @@ impl MathParser<'_> {
             // 5.40280pt. (The `\hbar` composite reproduces exactly: the
             // macron is 5.00002pt, `\mkern-9mu` is -4.99988pt and math italic
             // `h` is 5.76158pt.) `\rightleftharpoons` is the third such
-            // command; this compiler has no row for it at all, so there is
-            // nothing to gate yet.
+            // command, gated in its own arm below: its kernel `\mathpalette`
+            // stack and amsfonts' msam "0A have the same 10.00002pt advance,
+            // but the kernel stack is Rel by construction while the class
+            // must still be forced without the package's declaration.
             //
             // Only the advance is forced here: the nearest Latin Modern Math
             // character stays the glyph either way, because the kernel's
@@ -1736,6 +2596,32 @@ impl MathParser<'_> {
                     span,
                 )
             },
+            // `\rightleftharpoons` without amsfonts: `fontmath.ltx` 361 is a
+            // `\mathpalette` stack of two harpoons, `\mathrel`, and
+            // `\showthe\wd` of `\hbox{$\rightleftharpoons$}` is 10.00002pt
+            // at 10pt (TeX Live 2025) — the same advance as amsfonts' msam
+            // "0A replacement (only height/depth differ, which this layer
+            // does not track). There is no `COMMAND_GLYPHS` row for it, so
+            // the glyph and class are set here.
+            "rightleftharpoons" if !self.packages.amsfonts => MathAtom {
+                width_em: Some(KERNEL_RIGHTLEFTHARPOONS_EM),
+                class_override: Some(AtomClass::Rel),
+                ..symbol("\u{21CC}".into(), span)
+            },
+            // `\Diamond` (issue #591) has no LaTeX2e kernel definition.
+            // `amsfonts.sty:153` `\let`s it to `\lozenge` (msam "06,
+            // 0.666669em, Ord) once amsfonts or amssymb is loaded; with
+            // neither, pdflatex answers "Undefined control sequence". This
+            // compiler tracks no `latexsym` flag (`MathPackages` has none),
+            // so — unlike the #516 standing choice that made `\Box` always
+            // available — there is no separate fallback design to fall back
+            // to: requiring amsfonts is the whole gate, and routing through
+            // `ams_atom` reuses the same metric path `\lozenge` itself uses.
+            "Diamond" if self.packages.amsfonts => ams_atom(
+                crate::amssymb::by_name("lozenge").expect("lozenge is a table row"),
+                span,
+            ),
+            "Diamond" => self.missing_package(&name, "amsfonts", span),
             // amsfonts `\dashrightarrow` = `\mathrel{\dabar@\dabar@\mathchar"0\hexnumber@
             // \symAMSa 4B}` (`\dasharrow` its alias) and `\dashleftarrow` with the
             // "4C head first (`amsfonts.sty` 87-95).
@@ -1923,6 +2809,22 @@ impl MathParser<'_> {
         }
     }
 
+    /// Returns the first of a split alphabet argument's atoms and queues the
+    /// rest, so `\mathrm{a-b}` flattens into the surrounding list exactly
+    /// like `group_atom`'s braced body does. An empty split (an argument of
+    /// only whitespace, or nothing) is a zero space, matching the fused arms'
+    /// old empty-argument result.
+    fn first_queued(&mut self, atoms: Vec<MathAtom>, span: Span) -> MathAtom {
+        let mut atoms = atoms.into_iter();
+        match atoms.next() {
+            Some(first) => {
+                self.pending.extend(atoms);
+                first
+            }
+            None => space(0.0, span),
+        }
+    }
+
     /// `\rule`'s optional `[<raise>]` as raw text (control words kept).
     fn raw_bracket_text(&mut self) -> Option<String> {
         let mut cursor = self.i;
@@ -1942,6 +2844,9 @@ impl MathParser<'_> {
             match &token.kind {
                 TokenKind::Word(w) if w == "]" => break,
                 TokenKind::Word(w) => text.push_str(w),
+                // The `\refstepcounter` side-channel marker never reaches
+                // user-visible text.
+                TokenKind::Command(name) if name == "flashtexcurrentlabel" => {}
                 TokenKind::Command(name) => {
                     text.push('\\');
                     text.push_str(name);
@@ -1969,7 +2874,7 @@ impl MathParser<'_> {
         }
         match self.tokens.get(self.i).map(|t| &t.kind) {
             Some(TokenKind::LBrace) => {}
-            _ => return self.required_text_group(command, span),
+            _ => return self.required_text_group_string(command, span),
         }
         let open = self.tokens[self.i].span;
         self.i += 1;
@@ -2049,6 +2954,9 @@ impl MathParser<'_> {
             pending: Vec::new(),
             unclosed: None,
             cut_off: false,
+            open_lefts: 0,
+            dropped_lefts: 0,
+            display: self.display,
         };
         let list = parser.list(false);
         if let Some(open) = parser.unclosed {
@@ -2087,6 +2995,41 @@ impl MathParser<'_> {
             superscript: None,
             subscript: None,
             class_override: None,
+            width_em: None,
+            ams_symbol: None,
+        }
+    }
+
+    /// `\dddot`/`\ddddot` (amsmath.sty 744-749): these are NOT `\mathaccent`s
+    /// like `\dot`/`\ddot` (fontmath.ltx 412-419 `\DeclareMathAccent`). The
+    /// real definition is `{\mathop{\kern\z@#1}\limits^{\vbox...}}` — the
+    /// base set as an operator nucleus with a fixed box of three (`...`) or
+    /// four (`....`) `\normalfont` text dots in limits position above it.
+    /// That is the existing [`Nucleus::Stacked`] shape (the `\overset`
+    /// machinery), reused here with no new layout code: the dots are laid
+    /// out in script size, centred over the base at a fixed gap, however
+    /// tall the base is — unlike [`Accent`] marks, which rise with the
+    /// body's ascent. The mark needs no "no representable glyph" diagnostic:
+    /// real `\dddot`/`\ddddot` always typeset, and periods are representable
+    /// (the same `...` text this compiler already uses for `\ldots`).
+    /// The outer braces make the whole an ordinary atom, so the class is
+    /// forced to `Ord`: a `\dddot{=}` is Ord in real TeX, where the shared
+    /// `\overset` path would keep a single-atom relation base's Rel class.
+    fn mathop_dots_atom(&mut self, command: &str, dots: &str, span: Span) -> MathAtom {
+        let base = self.required_group(command, span);
+        let over = MathList {
+            atoms: vec![text_atom(dots.into(), span)],
+        };
+        MathAtom {
+            nucleus: Nucleus::Stacked {
+                base,
+                over: Some(over),
+                under: None,
+            },
+            span,
+            superscript: None,
+            subscript: None,
+            class_override: Some(AtomClass::Ord),
             width_em: None,
             ams_symbol: None,
         }
@@ -2136,7 +3079,7 @@ impl MathParser<'_> {
             self.i += 1;
             return space(0.0, span.merge(token.span));
         }
-        if delimiter == "|" && token.span.end - token.span.start == 2 {
+        if delimiter == "|" && token.control_symbol {
             self.i += 1;
             return symbol("‖".into(), span.merge(token.span));
         }
@@ -2174,30 +3117,113 @@ impl MathParser<'_> {
         }
     }
 
-    fn required_text_group(&mut self, command: &str, span: Span) -> (String, Span) {
+    fn required_text_group(&mut self, command: &str, span: Span) -> (Vec<TextPiece>, Span) {
+        self.required_text_group_styled(command, span, TextStyle::NORMAL)
+    }
+
+    fn required_text_group_string(&mut self, command: &str, span: Span) -> (String, Span) {
+        let (pieces, argument_span) = self.required_text_group(command, span);
+        if pieces
+            .iter()
+            .any(|piece| matches!(piece, TextPiece::Math(_)))
+        {
+            self.diagnostics.push(Diagnostic::error(
+                format!("math syntax is not supported inside \\{command}"),
+                Some(argument_span),
+                Some("used only the literal text and continued".into()),
+            ));
+        }
+        let text = pieces
+            .into_iter()
+            .filter_map(|piece| match piece {
+                TextPiece::Text { text, .. } => Some(text),
+                TextPiece::Math(_) => None,
+            })
+            .collect();
+        (text, argument_span)
+    }
+
+    fn required_text_group_styled(
+        &mut self,
+        command: &str,
+        span: Span,
+        style: TextStyle,
+    ) -> (Vec<TextPiece>, Span) {
         while matches!(
             self.tokens.get(self.i).map(|t| &t.kind),
             Some(TokenKind::Space)
         ) {
             self.i += 1;
         }
+        if self.depth > MAX_MATH_DEPTH {
+            let argument_span = self.skip_text_group_argument(span);
+            self.diagnostics.push(Diagnostic::error(
+                format!("math nesting deeper than {MAX_MATH_DEPTH} levels is not supported"),
+                Some(argument_span),
+                Some("stopped descending and typeset nothing further in this expression".into()),
+            ));
+            return (Vec::new(), argument_span);
+        }
+        self.depth += 1;
+        let result = self.required_text_group_styled_inner(command, span, style);
+        self.depth -= 1;
+        result
+    }
+
+    fn skip_text_group_argument(&mut self, fallback: Span) -> Span {
+        while matches!(
+            self.tokens.get(self.i).map(|t| &t.kind),
+            Some(TokenKind::Space)
+        ) {
+            self.i += 1;
+        }
+        let Some(first) = self.tokens.get(self.i).cloned() else {
+            return fallback;
+        };
+        if first.kind != TokenKind::LBrace {
+            self.i += 1;
+            return first.span;
+        }
+        let mut depth = 0usize;
+        let mut end = first.span;
+        while let Some(token) = self.tokens.get(self.i).cloned() {
+            self.i += 1;
+            end = token.span;
+            match token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        first.span.merge(end)
+    }
+
+    fn required_text_group_styled_inner(
+        &mut self,
+        command: &str,
+        span: Span,
+        style: TextStyle,
+    ) -> (Vec<TextPiece>, Span) {
         let Some(open) = self.tokens.get(self.i).cloned() else {
             self.diagnostics.push(Diagnostic::error(
                 format!("\\{command} requires an argument"),
                 Some(span),
                 Some("used an empty argument and continued".into()),
             ));
-            return (String::new(), span);
+            return (Vec::new(), span);
         };
         if open.kind != TokenKind::LBrace {
-            // TeX's undelimited argument: without a brace, the argument is
-            // the next single token by itself -- one already-split character
-            // (`\mathbb R`, `\mathbf v`) or one whole control sequence --
-            // not a full group scan.
+            // TeX's undelimited argument is one already-split token, not a
+            // scan through the rest of the surrounding math list.
             return match open.kind {
-                TokenKind::Word(ch) => {
+                TokenKind::Word(text) => {
                     self.i += 1;
-                    (ch, open.span)
+                    (vec![TextPiece::text(text, style)], open.span)
                 }
                 TokenKind::Command(name) => {
                     self.i += 1;
@@ -2206,7 +3232,7 @@ impl MathParser<'_> {
                         Some(open.span),
                         Some("typeset the command name literally and continued".into()),
                     ));
-                    (format!("\\{name}"), open.span)
+                    (vec![TextPiece::text(format!("\\{name}"), style)], open.span)
                 }
                 _ => {
                     self.diagnostics.push(Diagnostic::error(
@@ -2214,14 +3240,23 @@ impl MathParser<'_> {
                         Some(span),
                         Some("used an empty argument and continued".into()),
                     ));
-                    (String::new(), span)
+                    (Vec::new(), span)
                 }
             };
         }
         self.i += 1;
+        self.text_group(command, open.span, style)
+    }
+
+    fn text_group(
+        &mut self,
+        command: &str,
+        open: Span,
+        style: TextStyle,
+    ) -> (Vec<TextPiece>, Span) {
+        let mut pieces = Vec::new();
         let mut depth = 1usize;
-        let mut text = String::new();
-        let mut end = open.span;
+        let mut end = open;
         let mut after_comment = false;
         let mut depth_reported = false;
         while let Some(token) = self.tokens.get(self.i).cloned() {
@@ -2242,13 +3277,13 @@ impl MathParser<'_> {
                 TokenKind::RBrace => {
                     depth -= 1;
                     if depth == 0 {
-                        return (text, open.span.merge(end));
+                        return (pieces, open.merge(end));
                     }
                 }
-                TokenKind::Word(word) => text.push_str(&word),
+                TokenKind::Word(word) => push_text_piece(&mut pieces, word, style),
                 TokenKind::Space => {
                     if !after_comment {
-                        text.push(' ');
+                        push_text_piece(&mut pieces, " ", style);
                     }
                 }
                 TokenKind::Comment => {
@@ -2261,7 +3296,7 @@ impl MathParser<'_> {
                         Some(token.span),
                         Some("collapsed the paragraph break to one space and continued".into()),
                     ));
-                    text.push(' ');
+                    push_text_piece(&mut pieces, " ", style);
                 }
                 TokenKind::LineBreak => {
                     self.diagnostics.push(Diagnostic::error(
@@ -2269,29 +3304,47 @@ impl MathParser<'_> {
                         Some(token.span),
                         Some("typeset the line-break command literally and continued".into()),
                     ));
-                    text.push_str("\\\\");
+                    push_text_piece(&mut pieces, "\\\\", style);
                 }
+                // The `\refstepcounter` side-channel marker never reaches
+                // user-visible text (and must not leak its internal name
+                // into a diagnostic).
+                TokenKind::Command(name) if name == "flashtexcurrentlabel" => {}
                 TokenKind::Command(name) => {
-                    self.diagnostics.push(Diagnostic::command_error(
-                        &name,
-                        format!("\\{name} is not supported inside \\{command}"),
-                        Some(token.span),
-                        Some("typeset the command name literally and continued".into()),
-                    ));
-                    text.push('\\');
-                    text.push_str(&name);
+                    if let Some(nested_style) = text_command_style(&name, style) {
+                        let (nested, nested_span) =
+                            self.required_text_group_styled(&name, token.span, nested_style);
+                        end = nested_span;
+                        append_text_pieces(&mut pieces, nested);
+                    } else {
+                        self.diagnostics.push(Diagnostic::command_error(
+                            &name,
+                            format!("\\{name} is not supported inside \\{command}"),
+                            Some(token.span),
+                            Some("typeset the command name literally and continued".into()),
+                        ));
+                        push_text_piece(&mut pieces, format!("\\{name}"), style);
+                    }
                 }
-                TokenKind::Verb { .. } => {
-                    self.diagnostics.push(Diagnostic::error(
-                        format!("\\verb is not supported inside \\{command}"),
-                        Some(token.span),
-                        Some("ignored the \\verb and continued".into()),
-                    ));
+                TokenKind::MathShift => {
+                    let (math, math_span) =
+                        self.text_math(command, token.span, TokenKind::MathShift);
+                    end = math_span;
+                    pieces.push(TextPiece::Math(math));
                 }
-                TokenKind::MathShift
-                | TokenKind::DisplayMathOpen
-                | TokenKind::DisplayMathClose
-                | TokenKind::InlineMathOpen
+                TokenKind::InlineMathOpen => {
+                    let (math, math_span) =
+                        self.text_math(command, token.span, TokenKind::InlineMathClose);
+                    end = math_span;
+                    pieces.push(TextPiece::Math(math));
+                }
+                TokenKind::DisplayMathOpen => {
+                    let (math, math_span) =
+                        self.text_math(command, token.span, TokenKind::DisplayMathClose);
+                    end = math_span;
+                    pieces.push(TextPiece::Math(math));
+                }
+                TokenKind::DisplayMathClose
                 | TokenKind::InlineMathClose
                 | TokenKind::Superscript
                 | TokenKind::Subscript => {
@@ -2300,27 +3353,65 @@ impl MathParser<'_> {
                         Some(token.span),
                         Some("typeset the token literally and continued".into()),
                     ));
-                    text.push_str(match token.kind {
-                        TokenKind::MathShift => "$",
-                        TokenKind::DisplayMathOpen => "\\[",
+                    let literal = match token.kind {
                         TokenKind::DisplayMathClose => "\\]",
-                        TokenKind::InlineMathOpen => "\\(",
                         TokenKind::InlineMathClose => "\\)",
                         TokenKind::Superscript => "^",
                         TokenKind::Subscript => "_",
                         _ => unreachable!(),
-                    });
+                    };
+                    push_text_piece(&mut pieces, literal, style);
+                }
+                TokenKind::Verb { .. } => {
+                    self.diagnostics.push(Diagnostic::error(
+                        format!("\\verb is not supported inside \\{command}"),
+                        Some(token.span),
+                        Some("ignored the \\verb and continued".into()),
+                    ));
                 }
             }
             after_comment = false;
         }
+        self.diagnostics.push(
+            Diagnostic::error(
+                format!("argument to \\{command} is missing its closing brace"),
+                Some(open),
+                Some("closed the text argument at the math delimiter".into()),
+            )
+            .with_help("add a closing '}'"),
+        );
+        (pieces, open.merge(end))
+    }
+
+    fn text_math(&mut self, command: &str, open: Span, close: TokenKind) -> (MathList, Span) {
+        let start = self.i;
+        let mut braces = 0usize;
+        let mut end = open;
+        while let Some(token) = self.tokens.get(self.i).cloned() {
+            if token.kind == close && braces == 0 {
+                let inner = self.tokens[start..self.i].to_vec();
+                self.i += 1;
+                let list = self.sub_list(&inner);
+                return (list, open.merge(token.span));
+            }
+            if matches!(token.kind, TokenKind::RBrace) && braces == 0 {
+                break;
+            }
+            match token.kind {
+                TokenKind::LBrace => braces += 1,
+                TokenKind::RBrace => braces = braces.saturating_sub(1),
+                _ => {}
+            }
+            end = token.span;
+            self.i += 1;
+        }
+        let inner = self.tokens[start..self.i].to_vec();
         self.diagnostics.push(Diagnostic::error(
-            format!("argument to \\{command} is missing its closing brace"),
-            Some(open.span),
-            Some("closed the text argument at the math delimiter".into()),
-        )
-        .with_help("add a closing '}'"));
-        (text, open.span.merge(end))
+            format!("math argument inside \\{command} is missing its closing delimiter"),
+            Some(open.merge(end)),
+            Some("closed the nested math at the end of the text argument".into()),
+        ));
+        (self.sub_list(&inner), open.merge(end))
     }
 
     /// Reads `{name}` after a `\begin` as plain characters.
@@ -2410,7 +3501,7 @@ impl MathParser<'_> {
         }
         if name == "alignedat" {
             // The column-pair count argument; the grid sizes itself from cells.
-            let _ = self.required_text_group("alignedat", span);
+            let _ = self.required_text_group_string("alignedat", span);
         }
         if matches!(name.as_str(), "aligned" | "alignedat" | "split") {
             columns = "rl".repeat(8);
@@ -2707,11 +3798,27 @@ pub(crate) const BMOD_EXTRA_MU: f64 = 1.0;
 /// kernel's 18mu (`QUAD_EM`).
 pub(crate) const AMSMATH_POD_MU: f64 = 8.0;
 
+/// The mu amsmath's `\mod` opens with in inline math
+/// (`\if@display\mkern18mu\else\mkern12mu\fi`; `$x\mod{y}$` measures
+/// 40.14336pt at 10pt, TeX Live 2025, confirming this branch).
+pub(crate) const AMSMATH_MOD_OPENING_MU: f64 = 12.0;
+
+/// The mu amsmath's `\mod` opens with in display math (`\[...\]`,
+/// `equation`, `align`, ...) — the other branch of the same
+/// `\if@display\mkern18mu\else\mkern12mu\fi` line.
+pub(crate) const AMSMATH_MOD_DISPLAY_OPENING_MU: f64 = 18.0;
+
+/// The mu amsmath's `\mod` puts between `mod` and its argument: `\,\,`, two
+/// `\thinmuskip`s of 3mu. Same in both display and inline math — only the
+/// opening kern (`AMSMATH_MOD_OPENING_MU`/`AMSMATH_MOD_DISPLAY_OPENING_MU`)
+/// depends on `\if@display`.
+pub(crate) const AMSMATH_MOD_TRAILING_MU: f64 = 6.0;
+
 /// The kernel `\angle`'s advance in ems, without amsfonts: `fontmath.ltx` 243
 /// builds it from an `\ialign` of rules, so it has no character and no font —
 /// `\showthe\wd` of `\hbox{$\angle$}` is 6.37344pt at every size from 10pt,
 /// and the same 6.37344pt in `\scriptstyle`, TeX Live 2025. amsfonts replaces
-/// it with msam "5A, 0.722224em.
+/// it with msam "5C, 0.722224em.
 pub(crate) const KERNEL_ANGLE_EM: f64 = 0.637344;
 
 /// The kernel `\hbar`'s advance in ems, without amsfonts: `fontmath.ltx` 241
@@ -2720,6 +3827,13 @@ pub(crate) const KERNEL_ANGLE_EM: f64 = 0.637344;
 /// `\showthe\wd` of `\hbox{$\hbar$}` reports. amsfonts replaces it with msbm
 /// "7E, 0.540280em.
 pub(crate) const KERNEL_HBAR_EM: f64 = 0.576172;
+
+/// The kernel `\rightleftharpoons`'s advance in ems, without amsfonts:
+/// `fontmath.ltx` 361 stacks `\rightharpoonup` over `\leftharpoondown`
+/// (`\mathpalette`), and `\showthe\wd` of `\hbox{$\rightleftharpoons$}` is
+/// 10.00002pt at 10pt, TeX Live 2025. amsfonts replaces the stack with msam
+/// "0A at the same 1.000003em advance; only height/depth change.
+pub(crate) const KERNEL_RIGHTLEFTHARPOONS_EM: f64 = 1.000002;
 
 /// The Unicode mathematical alphanumeric symbol that stands for `ch` in the
 /// math alphabet of `command`: `\mathsf` sans-serif (U+1D5A0, digits
@@ -2763,6 +3877,52 @@ fn symbol(text: String, span: Span) -> MathAtom {
         width_em: None,
         ams_symbol: None,
     }
+}
+
+fn bold(text: String, span: Span) -> MathAtom {
+    MathAtom {
+        nucleus: Nucleus::Bold(text),
+        span,
+        superscript: None,
+        subscript: None,
+        class_override: None,
+        width_em: None,
+        ams_symbol: None,
+    }
+}
+
+/// Splits a fused math-alphabet run at ASCII `-`, emitting one `Symbol("-")`
+/// atom per hyphen between the alphabet's own runs.
+///
+/// In real TeX `-` keeps mathcode "2200 (a Bin cmsy minus) inside
+/// `\mathrm`/`\mathit`/`\mathbf`: the alphabet declaration changes letter
+/// shapes, not `-`'s class. Keeping `a-b` in one run would set a text hyphen
+/// — and `--` an en-dash ligature — about 9.8bp off pdflatex; one Symbol per
+/// hyphen reproduces `$a-b$` (and `$a--b$`) exactly, including the Bin
+/// spacing the class pass derives from the same neighbours. Runs without a
+/// hyphen come back as the single atom the caller built before, so
+/// letter/digit behaviour is untouched.
+fn split_hyphen_runs(
+    text: &str,
+    span: Span,
+    mut run: impl FnMut(String, Span) -> MathAtom,
+) -> Vec<MathAtom> {
+    let mut atoms = Vec::new();
+    let mut buf = String::new();
+    for ch in text.chars() {
+        if ch == '-' {
+            if !buf.is_empty() {
+                atoms.push(run(std::mem::take(&mut buf), span));
+            }
+            atoms.push(symbol("-".into(), span));
+        } else {
+            buf.push(ch);
+        }
+    }
+    if !buf.is_empty() {
+        atoms.push(run(buf, span));
+    }
+    atoms
 }
 
 /// mathtools' `\vcentcolon`: the plain `":"` with `\mathrel` spacing. Shared
@@ -3060,6 +4220,16 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("leq", "≤"),
     ("geq", "≥"),
     ("neq", "≠"),
+    // `\not` (`fontmath.ltx` 432: `\mathchardef\not="3236`) is not a symbol
+    // of its own but a zero-width overprint: TeX sets the cmsy `"36` slash in
+    // an empty box and the relation that FOLLOWS it draws on top, which is
+    // why `\hbox{$\not=$}`, `\hbox{$\neq$}` and `\hbox{$=$}` are all 7.77780
+    // pt at 10 pt and `\not<`, `\not\in`, `\not\subset` are exactly as wide
+    // as `<`, `\in`, `\subset`. One `\mathrel` row therefore covers `\not`
+    // before *any* relation, and `\ne`/`\neq`/`\notin` are the same two atoms
+    // spelled as one control word. U+0338 is what Latin Modern Math draws the
+    // slash at (`lm_math::ADVANCES`, advance 0, as in cmsy10).
+    ("not", "\u{0338}"),
     ("approx", "≈"),
     ("cdot", "⋅"),
     ("infty", "∞"),
@@ -3113,8 +4283,22 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("top", "⊤"),
     ("measuredangle", "∡"),
     ("square", "□"),
+    // amssymb's `\Box` is `\let` to `\square` (amsfonts.sty:152, AMSa "03,
+    // Ord): the same open-square glyph and class, drawn generically.
+    ("Box", "□"),
     ("blacksquare", "■"),
     ("lozenge", "◊"),
+    // `\diamond` and `\Diamond` are two genuinely distinct commands (issue
+    // #591): `\diamond` is the kernel cmsy `\mathbin` (U+22C4 ⋄, a small
+    // operator diamond, `crate::lm_math` advance), always available.
+    // `\Diamond` has no kernel definition at all — `amsfonts.sty:153`
+    // `\let`s it to `\lozenge` (U+25CA ◊, AMSa "06, 0.666669em, Ord) once
+    // amsfonts/amssymb is loaded (`command_atom`'s dedicated, package-gated
+    // arm), and is otherwise undefined. This row exists so vocabulary/
+    // export tooling still recognizes the name; the render path never
+    // consults it (see the `"Diamond"` arms in `command_atom`).
+    ("diamond", "⋄"),
+    ("Diamond", "◊"),
     ("checkmark", "✓"),
     // HW2 follow-up (issue #62): the remaining long arrows, drawn from the
     // pinned Latin Modern Math resource like `\Longrightarrow` above.
@@ -3206,6 +4390,10 @@ fn takes_display_limits(nucleus: &Nucleus) -> bool {
             "lim" | "liminf" | "limsup" | "max" | "min" | "sup" | "inf" | "det" | "gcd" | "Pr"
         ),
         Nucleus::Symbol(glyph) => matches!(glyph.as_str(), "∑" | "∏"),
+        // amsmath wraps `\sideset` in an outer `\mathop` with the default
+        // `\displaylimits`, so scripts after `#3` are display limits whatever
+        // the inner operator (`\int`'s own `\nolimits` stays inside).
+        Nucleus::SideSet { .. } => true,
         _ => false,
     }
 }
@@ -3255,6 +4443,8 @@ fn atom_class(atom: &MathAtom) -> Option<AtomClass> {
         Nucleus::Text(text) if text == "..." => Inner,
         Nucleus::Fraction { .. } => Inner,
         Nucleus::Operator { .. } => Op,
+        // `\sideset`'s second atom is the `\mathop` (amsmath.sty 928).
+        Nucleus::SideSet { .. } => Op,
         // `\ext@arrow` is `\mathrel{\mathop{...}\limits...}`.
         Nucleus::ExtArrow { .. } => Rel,
         // `\overbrace`/`\underbrace` are `\mathop{..}\limits` (`fontmath.ltx` 430-437).
@@ -3290,11 +4480,21 @@ fn symbol_class(glyph: &str) -> AtomClass {
         | "⟺" | "⟶" | "⟵" | "⟸" | "⟷"
         // fontmath.ltx 301-302: `\sqsubseteq`/`\sqsupseteq`, `\mathrel` at
         // cmsy "76/"77 (kernel, not amssymb).
-        | "⊑" | "⊒" => Rel,
+        | "⊑" | "⊒"
+        // fontmath.ltx 432: `\mathchardef\not="3236` — class 3, `\mathrel`.
+        // The class matters even though the slash is zero width: TeX puts no
+        // glue between two Rel atoms, so `\not=` is exactly as wide as `=`,
+        // where an Ord `\not` would open a thick space before the relation.
+        | "\u{0338}" => Rel,
         "+" | "-" | "−" | "*" | "±" | "×" | "÷" | "⋅" | "·" | "∗" | "∪" | "∩" | "∨" | "∧" | "⊕"
         | "⊗" | "⊖" | "⊘" | "⊙" | "◯" | "∖" | "∓" | "∘"
         // fontmath.ltx 278-279: `\sqcap`/`\sqcup`, `\mathbin` at cmsy "75/"74.
         | "⊓" | "⊔"
+        // Issue #591: `\diamond` is the kernel cmsy `\mathbin` (U+22C4),
+        // so it takes medium space like `\bigcirc` above — not `Ord` like
+        // the look-alike `\Diamond` (aliased to `\lozenge`, `ams_atom`'s
+        // own class, once amsfonts/amssymb is loaded).
+        | "⋄"
         // `\bigtriangledown`; `\bigtriangleup` shares `\triangle`'s glyph
         // (Ord by default here) and overrides its class to Bin instead.
         | "▽" => Bin,
@@ -3512,6 +4712,58 @@ fn layout_list_with_scales(
     out
 }
 
+fn text_piece_font(style: TextStyle) -> crate::layout::Font {
+    match style {
+        TextStyle::Normal => crate::layout::Font::TimesRoman,
+        TextStyle::Bold => crate::layout::Font::TimesBold,
+        TextStyle::Italic => crate::layout::Font::TimesItalic,
+        TextStyle::BoldItalic => crate::layout::Font::TimesBoldItalic,
+    }
+}
+
+fn layout_text_run(
+    pieces: &[TextPiece],
+    size: f64,
+    root_size: f64,
+    level: usize,
+    atom: &MathAtom,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> MathBox {
+    let mut out = MathBox {
+        items: Vec::new(),
+        width: 0.0,
+        ascent: size,
+        descent: 0.2 * size,
+    };
+    for piece in pieces {
+        match piece {
+            TextPiece::Text { text, style } => {
+                let font = text_piece_font(*style);
+                let width = crate::layout::shaped_width(text, size, font, atom.span, diagnostics).0;
+                out.items.push(MathItem {
+                    font: Some(font),
+                    text: text.clone(),
+                    x: out.width,
+                    baseline: 0.0,
+                    size,
+                    span: atom.span,
+                    rule: None,
+                });
+                out.width += width;
+            }
+            TextPiece::Math(list) => {
+                let mut math = layout_list(list, size, root_size, level, diagnostics);
+                out.ascent = out.ascent.max(math.ascent);
+                out.descent = out.descent.max(math.descent);
+                offset_items(&mut math.items, out.width, 0.0);
+                out.width += math.width;
+                out.items.extend(math.items);
+            }
+        }
+    }
+    out
+}
+
 /// Pairs each `\left` in `list` with the `\right` at the same nesting depth
 /// (a stack of open indices, like matching parentheses) and computes TeX's
 /// rule-19 stretch scale for every matched pair from the atoms strictly
@@ -3710,6 +4962,9 @@ fn layout_nucleus(
                 laid.descent -= raise;
             }
             laid
+        }
+        Nucleus::TextRun(pieces) => {
+            layout_text_run(pieces, size, root_size, level, atom, diagnostics)
         }
         Nucleus::SizedDelimiter { glyph, scale, .. } => {
             let glyph_size = size * scale;
@@ -4063,6 +5318,25 @@ fn layout_nucleus(
             }
             b
         }
+        // mathtools.sty 1539-1563: `\llap`/`\rlap`/`\clap` are
+        // `\hb@xt@\z@` boxes — zero advance, but the ink is painted. The
+        // opposite of `Phantom` above (kept width, cleared ink): here the
+        // items stay and only the width zeroes, shifted so the ink hangs
+        // off the current point on the commanded side. The caller then
+        // advances by 0, so following material overlaps the ink from the
+        // right (`\mathrlap`), the ink overlaps preceding material from
+        // the left (`\mathllap`), or the two overlap equally (`\mathclap`).
+        Nucleus::Lap { body, align } => {
+            let mut b = layout_list(body, size, root_size, level, diagnostics);
+            let shift = match align {
+                LapAlign::Left => -b.width,
+                LapAlign::Center => -b.width / 2.0,
+                LapAlign::Right => 0.0,
+            };
+            offset_items(&mut b.items, shift, 0.0);
+            b.width = 0.0;
+            b
+        }
         Nucleus::Operator { body, .. } => layout_list(body, size, root_size, level, diagnostics),
         // Approximated as the arrow glyph with its labels stacked over and
         // under it (render-pipeline builds amsmath's stretched arrow).
@@ -4087,6 +5361,30 @@ fn layout_nucleus(
                 ..atom.clone()
             };
             layout_nucleus(&stacked, size, root_size, level, diagnostics)
+        }
+        // The left pair on an empty nucleus, then the operator with its own
+        // (right) scripts beside it. This approximate layout has no display
+        // operator size; math-layout's `Atom::left_scripts` is the exact one.
+        Nucleus::SideSet {
+            operator,
+            left_superscript,
+            left_subscript,
+        } => {
+            let carrier = MathList {
+                atoms: vec![MathAtom {
+                    superscript: left_superscript.clone(),
+                    subscript: left_subscript.clone(),
+                    ..symbol(String::new(), atom.span)
+                }],
+            };
+            let mut out = layout_list(&carrier, size, root_size, level, diagnostics);
+            let mut right = layout_list(operator, size, root_size, level, diagnostics);
+            offset_items(&mut right.items, out.width, 0.0);
+            out.items.extend(right.items);
+            out.width += right.width;
+            out.ascent = out.ascent.max(right.ascent);
+            out.descent = out.descent.max(right.descent);
+            out
         }
         Nucleus::SubArray { rows, .. } => {
             let rows: Vec<Vec<MathList>> = rows.iter().map(|r| vec![r.clone()]).collect();
@@ -4305,6 +5603,10 @@ fn split_word_tokens(tokens: &[Token]) -> Vec<Token> {
             for (offset, ch) in word.char_indices() {
                 out.push(Token {
                     kind: TokenKind::Word(ch.to_string()),
+                    // Control symbols are always one character, so a split
+                    // piece of a marked word keeps the mark; ordinary word
+                    // runs stay unmarked, however they were produced.
+                    control_symbol: token.control_symbol,
                     span: if source_matches_word {
                         Span::in_document(
                             token.span.document,
@@ -4344,6 +5646,18 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
             Nucleus::Symbol(s) => Nucleus::Symbol(s.clone()),
             Nucleus::SizedDelimiter { .. } => atom.nucleus.clone(),
             Nucleus::Text(s) => Nucleus::Text(s.clone()),
+            Nucleus::TextRun(pieces) => Nucleus::TextRun(
+                pieces
+                    .iter()
+                    .map(|piece| match piece {
+                        TextPiece::Text { text, style } => TextPiece::Text {
+                            text: text.clone(),
+                            style: *style,
+                        },
+                        TextPiece::Math(list) => TextPiece::Math(shift_list(list, delta)),
+                    })
+                    .collect(),
+            ),
             Nucleus::Space { em, font_em } => Nucleus::Space {
                 em: *em,
                 font_em: *font_em,
@@ -4409,6 +5723,10 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
                 horizontal: *horizontal,
                 vertical: *vertical,
             },
+            Nucleus::Lap { body, align } => Nucleus::Lap {
+                body: shift_list(body, delta),
+                align: *align,
+            },
             Nucleus::Operator { body, limits } => Nucleus::Operator {
                 body: shift_list(body, delta),
                 limits: *limits,
@@ -4426,6 +5744,15 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
             Nucleus::SubArray { rows, align } => Nucleus::SubArray {
                 rows: rows.iter().map(|r| shift_list(r, delta)).collect(),
                 align: *align,
+            },
+            Nucleus::SideSet {
+                operator,
+                left_superscript,
+                left_subscript,
+            } => Nucleus::SideSet {
+                operator: shift_list(operator, delta),
+                left_superscript: left_superscript.as_ref().map(|l| shift_list(l, delta)),
+                left_subscript: left_subscript.as_ref().map(|l| shift_list(l, delta)),
             },
         },
         span: shift(atom.span, delta),
@@ -4520,6 +5847,75 @@ mod parse_tests {
                 assert_eq!(columns, want, "{src}");
             }
         }
+    }
+
+    #[test]
+    fn rcases_parses_as_a_right_brace_mirror_of_cases() {
+        // mathtools.sty `\newcases{rcases}` (TeX Live 2026 lines
+        // 1029-1030): the same two-column textstyle preamble as `cases`
+        // (`\MT_start_cases:nnnn` runs for both), a null left delimiter
+        // and `\rbrace` right — the mirror image. `cases`/`dcases` pin
+        // the pre-existing arms unchanged.
+        for (src, want_left, want_right) in [
+            (r"\begin{cases} a & b \\ c & d \end{cases}", "{", ""),
+            (r"\begin{dcases} a & b \\ c & d \end{dcases}", "{", ""),
+            (r"\begin{rcases} a & b \\ c & d \end{rcases}", "", "}"),
+        ] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(src);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
+            let Nucleus::Matrix {
+                rows,
+                columns,
+                left,
+                right,
+            } = &list.atoms[0].nucleus
+            else {
+                panic!("{src}: not a grid: {:?}", list.atoms)
+            };
+            assert_eq!(rows.len(), 2, "{src}");
+            assert!(rows.iter().all(|row| row.len() == 2), "{src}");
+            assert_eq!(columns, "ll", "{src}");
+            assert_eq!(left, want_left, "{src}");
+            assert_eq!(right, want_right, "{src}");
+        }
+    }
+
+    #[test]
+    fn rcases_brace_lays_out_on_the_right_where_cases_lays_out_on_the_left() {
+        let laid = |src: &str| {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(src);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
+            layout(&list, 12.0, &mut diagnostics)
+        };
+        let cases = laid(r"\begin{cases} a & b \\ c & d \end{cases}");
+        let brace = cases
+            .items
+            .iter()
+            .find(|item| item.text == "{")
+            .expect("cases lays out a left brace");
+        assert_eq!(brace.x, 0.0, "cases brace starts the row");
+        assert!(
+            cases.items.iter().all(|item| item.x >= brace.x),
+            "cases brace is the leftmost ink"
+        );
+        let rcases = laid(r"\begin{rcases} a & b \\ c & d \end{rcases}");
+        let brace = rcases
+            .items
+            .iter()
+            .find(|item| item.text == "}")
+            .expect("rcases lays out a right brace");
+        assert!(
+            brace.x > 0.0,
+            "rcases brace sits past the grid, not at its start"
+        );
+        assert!(
+            rcases.items.iter().all(|item| item.x <= brace.x),
+            "rcases brace is the rightmost ink"
+        );
     }
 
     #[test]
@@ -4673,6 +6069,77 @@ mod parse_tests {
             null.size,
             bar.size
         );
+    }
+
+    #[test]
+    fn left_bar_uses_control_symbol_mark_not_span_length() {
+        // Same bug class as issue #756: `take_delimiter` decided `\|`
+        // (double-bar `‖`) vs `|` (single bar) by span byte-length — a
+        // proxy for "literal backslash" that macro expansion rebinds to
+        // the invocation. A 7-byte `\dblbar` wrapping `\left\|` fell
+        // through to a single bar; a 2-byte `\b` wrapping `\left|`
+        // spuriously became `‖`. The lexer's `control_symbol` mark is
+        // the identity signal instead (preserved through expansion and
+        // `split_word_tokens`), so span length must not matter here.
+        let fences = |tokens: &[Token]| -> Vec<String> {
+            let mut diagnostics = Vec::new();
+            let list = parse_tokens(tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            list.atoms
+                .iter()
+                .filter_map(|atom| match &atom.nucleus {
+                    Nucleus::SizedDelimiter { glyph, .. } => Some(glyph.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        // No regression: literally written delimiters parse as before.
+        assert_eq!(
+            fences(&crate::lexer::tokenize(r"\left\| x \right\|")),
+            ["‖", "‖"]
+        );
+        assert_eq!(
+            fences(&crate::lexer::tokenize(r"\left| x \right|")),
+            ["|", "|"]
+        );
+        // Macro-shaped tokens: the mark decides, however long the
+        // invocation span is. These stand in for delimiter tokens whose
+        // spans expansion rebound to the macro invocation.
+        let stream = |delimiter: Token| -> Vec<Token> {
+            vec![
+                Token {
+                    kind: TokenKind::Command("left".into()),
+                    span: Span::new(0, 5),
+                    control_symbol: false,
+                },
+                delimiter.clone(),
+                Token {
+                    kind: TokenKind::Word("x".into()),
+                    span: Span::new(0, 1),
+                    control_symbol: false,
+                },
+                Token {
+                    kind: TokenKind::Command("right".into()),
+                    span: Span::new(0, 6),
+                    control_symbol: false,
+                },
+                delimiter,
+            ]
+        };
+        // `\|` from a 7-byte `\dblbar` body: still a double bar.
+        let escaped = Token {
+            kind: TokenKind::Word("|".into()),
+            span: Span::new(0, 7),
+            control_symbol: true,
+        };
+        assert_eq!(fences(&stream(escaped)), ["‖", "‖"]);
+        // Literal `|` from a 2-byte `\b` body: still a single bar.
+        let literal = Token {
+            kind: TokenKind::Word("|".into()),
+            span: Span::new(0, 2),
+            control_symbol: false,
+        };
+        assert_eq!(fences(&stream(literal)), ["|", "|"]);
     }
 
     #[test]
@@ -4832,6 +6299,61 @@ mod parse_tests {
             laid.items.iter().filter(|item| item.rule.is_some()).count(),
             6
         );
+    }
+
+    #[test]
+    fn aboxed_boxes_the_full_expression_with_the_boxed_primitive() {
+        // GitHub #567: mathtools' `\Aboxed` draws the `\boxed` frame around
+        // the whole row, so it must reuse the same `Framed`/`Box` primitive
+        // (drawn by the existing `layout_nucleus` arm) rather than inventing
+        // new box-drawing code.
+        for source in [r"\Aboxed{a = b}", r"\boxed{a = b}"] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(source);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "{source}: {list:?}");
+            let Nucleus::Framed { body, frame } = &list.atoms[0].nucleus else {
+                panic!(
+                    "{source}: expected a framed nucleus, got {:?}",
+                    list.atoms[0].nucleus
+                );
+            };
+            assert_eq!(*frame, Frame::Box, "{source}");
+            let texts: Vec<_> = body
+                .atoms
+                .iter()
+                .filter_map(|atom| match &atom.nucleus {
+                    Nucleus::Symbol(text) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(texts, ["a", "=", "b"], "{source}: {body:?}");
+            // The frame covers the full expression: four rules whose outer
+            // edges are the laid-out box, with every body glyph strictly
+            // inside them horizontally.
+            let size = 10.0;
+            let laid = layout(&list, size, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            let rules: Vec<_> = laid.items.iter().filter(|item| item.rule.is_some()).collect();
+            assert_eq!(rules.len(), 4, "{source}: {laid:?}");
+            let left = rules
+                .iter()
+                .map(|item| item.x)
+                .fold(f64::INFINITY, f64::min);
+            let right = rules
+                .iter()
+                .map(|item| item.x + item.rule.unwrap().width)
+                .fold(f64::NEG_INFINITY, f64::max);
+            assert!((left - 0.0).abs() < 1e-9, "{source}: {laid:?}");
+            assert!((right - laid.width).abs() < 1e-9, "{source}: {laid:?}");
+            for item in laid.items.iter().filter(|item| item.rule.is_none()) {
+                assert!(
+                    item.x > 0.0 && item.x < laid.width,
+                    "{source}: {item:?} outside the frame in {laid:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -5082,6 +6604,7 @@ mod unbraced_argument_tests {
             "grave",
             "widehat",
             "widetilde",
+            "mathring",
         ] {
             let mut diagnostics = Vec::new();
             let source = format!(r"\{command} x");
@@ -5239,6 +6762,70 @@ mod unbraced_argument_tests {
         );
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(list.atoms[0].nucleus, Nucleus::Symbol("x".into()));
+    }
+
+    #[test]
+    fn hyphens_inside_math_alphabets_split_out_as_math_minuses() {
+        // TeX gives `-` mathcode "2200 (a Bin cmsy minus) even inside
+        // `\mathrm`/`\mathit`/`\mathbf`: the alphabet changes letter shapes,
+        // not `-`'s class. Fusing `a-b` into one run would set a text hyphen
+        // (`--` an en-dash ligature) instead of a math minus.
+        let parse = |src: &str| {
+            let mut diagnostics = Vec::new();
+            let list = parse_tokens(
+                &crate::lexer::tokenize(src),
+                MathPackages::KERNEL,
+                &mut diagnostics,
+            );
+            assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
+            list
+        };
+        let plain = parse("a-b");
+        assert_eq!(plain.atoms.len(), 3, "{:?}", plain.atoms);
+        assert_eq!(plain.atoms[1].nucleus, Nucleus::Symbol("-".into()));
+        assert_eq!(atom_class(&plain.atoms[1]), Some(AtomClass::Bin));
+        let check_minus = |list: &MathList, index: usize, src: &str| {
+            assert_eq!(
+                list.atoms[index].nucleus, plain.atoms[1].nucleus,
+                "{src}: {:?}",
+                list.atoms
+            );
+            assert_eq!(
+                atom_class(&list.atoms[index]),
+                atom_class(&plain.atoms[1]),
+                "{src}"
+            );
+        };
+        let list = parse(r"\mathrm{a-b}");
+        assert_eq!(list.atoms.len(), 3, "{:?}", list.atoms);
+        assert_eq!(list.atoms[0].nucleus, Nucleus::Text("a".into()));
+        check_minus(&list, 1, r"\mathrm{a-b}");
+        assert_eq!(list.atoms[2].nucleus, Nucleus::Text("b".into()));
+
+        let list = parse(r"\mathit{a-b}");
+        assert_eq!(list.atoms.len(), 3, "{:?}", list.atoms);
+        assert_eq!(list.atoms[0].nucleus, Nucleus::Symbol("\u{1D44E}".into()));
+        check_minus(&list, 1, r"\mathit{a-b}");
+        assert_eq!(list.atoms[2].nucleus, Nucleus::Symbol("\u{1D44F}".into()));
+
+        let list = parse(r"\mathbf{a-b}");
+        assert_eq!(list.atoms.len(), 3, "{:?}", list.atoms);
+        assert_eq!(list.atoms[0].nucleus, Nucleus::Bold("a".into()));
+        check_minus(&list, 1, r"\mathbf{a-b}");
+        assert_eq!(list.atoms[2].nucleus, Nucleus::Bold("b".into()));
+
+        // `--` is two minus atoms, exactly like `$a--b$`; runs without a
+        // hyphen stay one fused atom exactly as before.
+        let list = parse(r"\mathrm{a--b}");
+        assert_eq!(list.atoms.len(), 4, "{:?}", list.atoms);
+        check_minus(&list, 1, r"\mathrm{a--b}");
+        check_minus(&list, 2, r"\mathrm{a--b}");
+        let list = parse(r"\mathrm{mod}");
+        assert_eq!(list.atoms.len(), 1, "{:?}", list.atoms);
+        assert_eq!(list.atoms[0].nucleus, Nucleus::Text("mod".into()));
+        let list = parse(r"\mathbf{v}");
+        assert_eq!(list.atoms.len(), 1, "{:?}", list.atoms);
+        assert_eq!(list.atoms[0].nucleus, Nucleus::Bold("v".into()));
     }
 
     #[test]
@@ -5549,6 +7136,169 @@ mod accent_tests {
     }
 
     #[test]
+    fn mathring_parses_to_its_accent_variant() {
+        // `\mathring` is a genuine `\DeclareMathAccent` (amsmath.sty 793-794),
+        // unlike `\dddot`/`\ddddot` below.
+        let mut diagnostics = Vec::new();
+        let tokens = crate::lexer::tokenize(r"\mathring{x}");
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+        assert_eq!(list.atoms.len(), 1, "{:?}", list.atoms);
+        match &list.atoms[0].nucleus {
+            Nucleus::Accent { accent, body } => {
+                assert_eq!(*accent, Accent::Mathring);
+                assert_eq!(body.atoms.len(), 1, "{:?}", body.atoms);
+                assert_eq!(body.atoms[0].nucleus, Nucleus::Symbol("x".into()));
+            }
+            other => panic!("expected an accent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dddot_and_ddddot_parse_to_the_mathop_limits_stacked_shape() {
+        // amsmath.sty 744-749 defines these as
+        // `{\mathop{\kern\z@#1}\limits^{\vbox...}}` — an operator base with a
+        // fixed three/four-dot box in limits position — NOT a `\mathaccent`
+        // (contrast `\dot`/`\ddot`, fontmath.ltx `\DeclareMathAccent`). So
+        // they build the existing Stacked nucleus shared with `\overset`,
+        // never `Nucleus::Accent`.
+        for (source, dots) in [
+            (r"\dddot{x}", "..."),
+            (r"\ddddot{x}", "...."),
+            (r"\dddot x", "..."),
+        ] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(source);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "{source}: {:?}", list.atoms);
+            // The outer braces make the whole an ordinary atom.
+            assert_eq!(
+                list.atoms[0].class_override,
+                Some(AtomClass::Ord),
+                "{source}"
+            );
+            match &list.atoms[0].nucleus {
+                Nucleus::Stacked { base, over, under } => {
+                    assert!(under.is_none(), "{source}");
+                    assert_eq!(base.atoms.len(), 1, "{source}: {:?}", base.atoms);
+                    assert_eq!(base.atoms[0].nucleus, Nucleus::Symbol("x".into()));
+                    let over = over.as_ref().expect("{source}: dots above the base");
+                    assert_eq!(over.atoms.len(), 1, "{source}: {:?}", over.atoms);
+                    assert_eq!(
+                        over.atoms[0].nucleus,
+                        Nucleus::Text(dots.into()),
+                        "{source}"
+                    );
+                }
+                other => panic!(
+                    "{source}: expected the mathop-limits stacked shape, got {other:?}"
+                ),
+            }
+        }
+        // The braces make even a relation base ordinary (real TeX: Ord),
+        // where the shared `\overset` path preserves the base's Rel class.
+        for (source, expected) in [
+            (r"\dddot{=}", AtomClass::Ord),
+            (r"\overset{?}{=}", AtomClass::Rel),
+        ] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(source);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            assert_eq!(atom_class(&list.atoms[0]), Some(expected), "{source}");
+        }
+    }
+
+    #[test]
+    fn dddot_and_ddddot_typeset_centred_dots_above_the_base() {
+        let size = 10.0;
+        for (source, dots) in [(r"\dddot{x}", "..."), (r"\ddddot{x}", "....")] {
+            let (b, diagnostics) = laid_out(source, size);
+            // Real `\dddot`/`\ddddot` always typeset: no diagnostic (the old
+            // Accent shape warned and left the bare base).
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            let dots_item = b
+                .items
+                .iter()
+                .find(|i| i.text == dots)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{source}: no {dots:?} mark in {:?}",
+                        b.items.iter().map(|i| &i.text).collect::<Vec<_>>()
+                    )
+                });
+            let base_item = b.items.iter().find(|i| i.text == "x").unwrap();
+            // Limits position: strictly above the base ...
+            assert!(
+                dots_item.baseline < base_item.baseline,
+                "{source}: dots at {}, base at {}",
+                dots_item.baseline,
+                base_item.baseline
+            );
+            // ... and centred over it: both boxes share the layout's centre.
+            let mut d = Vec::new();
+            let base_width = crate::layout::shaped_width(
+                "x",
+                size,
+                crate::layout::math_font("x"),
+                base_item.span,
+                &mut d,
+            )
+            .0;
+            let dots_width = crate::layout::shaped_width(
+                dots,
+                size * SCRIPT_SCALE,
+                crate::layout::Font::TimesRoman,
+                dots_item.span,
+                &mut d,
+            )
+            .0;
+            assert!(d.is_empty(), "{source}: {d:?}");
+            let base_centre = base_item.x + base_width / 2.0;
+            let dots_centre = dots_item.x + dots_width / 2.0;
+            assert!(
+                (dots_centre - base_centre).abs() < 1e-9,
+                "{source}: dots centred at {dots_centre}, base at {base_centre}"
+            );
+        }
+        // Fixed-height overlay (the real `\vbox to-1.4\ex@`): the dots sit at
+        // the same height over a tall base as over `x`, unlike an `Accent`
+        // mark, which rises with the body's ascent.
+        let (short, d1) = laid_out(r"\dddot{x}", size);
+        let (tall, d2) = laid_out(r"\dddot{\frac{a}{b}}", size);
+        assert!(d1.is_empty(), "{d1:?}");
+        assert!(d2.is_empty(), "{d2:?}");
+        let short_y = short
+            .items
+            .iter()
+            .find(|i| i.text == "...")
+            .unwrap()
+            .baseline;
+        let tall_y = tall
+            .items
+            .iter()
+            .find(|i| i.text == "...")
+            .unwrap()
+            .baseline;
+        assert!(
+            (short_y - tall_y).abs() < 1e-9,
+            "dots should sit at a fixed height: {short_y} over x, {tall_y} over a fraction"
+        );
+    }
+
+    #[test]
+    fn mathring_centres_the_degree_sign_over_the_body() {
+        let (b, diagnostics) = laid_out(r"\mathring{x}", 10.0);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(
+            b.items.iter().any(|i| i.text == "\u{B0}"),
+            "expected degree-sign accent in {:?}",
+            b.items.iter().map(|i| &i.text).collect::<Vec<_>>()
+        );
+        assert!(b.items.iter().any(|i| i.text == "x"));
+    }
+
+    #[test]
     fn widehat_is_silent_over_one_or_more_symbols() {
         // The accent grows with its body (cmex successor chain, msbm "5B past
         // 2em) in TFM-driven layouts, so a wide body is no longer diagnosed.
@@ -5657,6 +7407,33 @@ mod spacing_tests {
         close(x(&b, "b"), x(&b, "+") + width("+", SIZE) + 4.0);
     }
 
+    /// pdfLaTeX (TeX Live 2026, 10pt) measures `$a\frac12b$` as the exact
+    /// sum of the standalone `a`, `\frac12`, and `b` boxes: 15.96367pt.
+    /// The outer group in LaTeX's `\frac` macro therefore contributes no
+    /// inter-atom spacing, unlike a bare infix `\over` fraction.
+    #[test]
+    fn frac_is_ordinary_around_neighbors_like_pdflatex() {
+        let b = laid_out(r"a\frac12b", SIZE);
+        let fraction = laid_out(r"\frac12", SIZE);
+        close(x(&b, "b"), width("a", SIZE) + fraction.width);
+        close(
+            b.width,
+            width("a", SIZE) + fraction.width + width("b", SIZE),
+        );
+
+        let (infix, diagnostics) = {
+            let mut diagnostics = Vec::new();
+            let list = parse_tokens(
+                &crate::lexer::tokenize(r"{1\over2}"),
+                MathPackages::KERNEL,
+                &mut diagnostics,
+            );
+            (list, diagnostics)
+        };
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(atom_class(&infix.atoms[0]), Some(AtomClass::Inner));
+    }
+
     #[test]
     fn odot_is_a_binary_operator() {
         for (command, glyph) in [("ominus", "⊖"), ("oslash", "⊘"), ("odot", "⊙"), ("bigcirc", "◯")] {
@@ -5664,6 +7441,50 @@ mod spacing_tests {
             close(x(&b, glyph), width("a", SIZE) + 4.0);
             close(x(&b, "b"), x(&b, glyph) + width(glyph, SIZE) + 4.0);
         }
+    }
+
+    /// Issue #591 (`\diamond`/`\Diamond`, follow-up to #516's `\Box`):
+    /// `\diamond` is the kernel cmsy `\mathbin` (U+22C4 ⋄), always
+    /// available. `\Diamond` has no kernel definition — `amsfonts.sty:153`
+    /// `\let`s it to `\lozenge` (U+25CA ◊, AMSa "06, 0.666669em, Ord) once
+    /// amsfonts/amssymb is loaded — genuinely distinct from `\diamond`, not
+    /// a synonym, and metrically distinct from `\square` too. `\diamond`
+    /// stays a known command either way, so it is never misreported as an
+    /// unknown command with `\Diamond` as the typo fix.
+    #[test]
+    fn diamond_and_capital_diamond_are_distinct_diamonds() {
+        assert_eq!(command_glyph("diamond"), Some("⋄"));
+        assert_eq!(command_glyph("square"), Some("□"));
+        assert!(crate::vocabulary::math_mode_help("diamond").is_none());
+        assert!(crate::vocabulary::closest_commands("diamond").is_empty());
+
+        let small = laid_out(r"\diamond", SIZE);
+        let big = laid_out_with(r"\Diamond", SIZE, AMSSYMB);
+        assert_eq!(small.items.len(), 1, "{:?}", small.items);
+        assert_eq!(big.items.len(), 1, "{:?}", big.items);
+        assert_eq!(small.items[0].text, "⋄");
+        assert_eq!(big.items[0].text, "◊");
+        close(small.width, 0.5 * SIZE);
+        close(big.width, 0.666669 * SIZE);
+        // Metrically distinct from each other and from `\square` (msam
+        // 0.777781em under `amssymb`): three different real advances.
+        let square = laid_out_with(r"\square", SIZE, AMSSYMB);
+        assert_eq!(square.items[0].text, "□");
+        for (a, b) in [
+            (small.width, big.width),
+            (small.width, square.width),
+            (big.width, square.width),
+        ] {
+            assert!((a - b).abs() > 0.1, "{a} vs {b}");
+        }
+        // Class: `\diamond` takes Bin spacing like `\bigcirc`, `\Diamond`
+        // is Ord like `\square` — medium space versus none.
+        let b = laid_out(r"a\diamond b", SIZE);
+        close(x(&b, "⋄"), width("a", SIZE) + 4.0);
+        close(x(&b, "b"), x(&b, "⋄") + small.width + 4.0);
+        let b = laid_out_with(r"a\Diamond b", SIZE, AMSSYMB);
+        close(x(&b, "◊"), width("a", SIZE));
+        close(x(&b, "b"), x(&b, "◊") + big.width);
     }
 
     #[test]
@@ -5774,6 +7595,7 @@ mod spacing_tests {
             close(x(&b, "b"), x(&b, glyph) + own + 5.0);
         }
         for (command, glyphs, own) in [
+            ("coloneqq", vec![":", "="], colon + equals - 1.2),
             ("Coloneqq", vec![":", ":", "="], 2.0 * colon + equals - 0.9 - 1.2),
             ("Eqqcolon", vec!["=", ":", ":"], equals + 2.0 * colon - 1.2 - 0.9),
             ("dblcolon", vec![":", ":"], 2.0 * colon - 0.9),
@@ -5827,7 +7649,7 @@ mod spacing_tests {
         // The fix lives in `vcentcolon_atom`'s atoms, so every family member
         // built from them carries raised colons — each `":"` item, not just
         // the first.
-        for command in ["vcentcolon", "eqqcolon", "Coloneqq", "Eqqcolon", "dblcolon"] {
+        for command in ["vcentcolon", "coloneqq", "eqqcolon", "Coloneqq", "Eqqcolon", "dblcolon"] {
             let b = laid_out_with(&format!(r"\{command}"), size, MATHTOOLS);
             let colons: Vec<_> = b.items.iter().filter(|i| i.text == ":").collect();
             assert!(!colons.is_empty(), "\\{command} lays out no colon");
@@ -6005,6 +7827,43 @@ mod spacing_tests {
         let bin = laid_out(r"a\bigtriangleup b", SIZE);
         close(x(&bin, "△"), width("a", SIZE) + 4.0);
         close(x(&bin, "b"), x(&bin, "△") + width("△", SIZE) + 4.0);
+    }
+
+    /// `\not` (`fontmath.ltx` 432: `\mathchardef\not="3236`) is a zero-width
+    /// `\mathrel` overprint, not a symbol of its own: TeX sets the slash in
+    /// an empty box and the relation that follows draws on top of it. Both
+    /// halves of that matter for the box.
+    ///
+    /// pdflatex TL2025 at 10 pt, `\hbox{$ab$}` = 9.57755 pt as the control:
+    /// `\hbox{$\not=$}` = `\hbox{$\neq$}` = `\hbox{$=$}` = 7.77780 pt, and
+    /// `\hbox{$a\not=b$}` = `\hbox{$a=b$}` = 22.91077 pt. Were `\not` Ord
+    /// rather than Rel it would open a 5mu thick space in front of the
+    /// relation (TeX puts no glue between two Rel atoms), and `a\not=b`
+    /// would come out 5mu wide of `a=b`.
+    #[test]
+    fn not_is_a_zero_width_relation_the_following_relation_overprints() {
+        // Zero advance: `\not=` is exactly as wide as `=`, and `\not<` as `<`.
+        close(width(r"\not=", SIZE), width("=", SIZE));
+        close(width(r"\not<", SIZE), width("<", SIZE));
+        close(width(r"\not\in", SIZE), width(r"\in", SIZE));
+        close(width(r"\not\subset", SIZE), width(r"\subset", SIZE));
+        // Rel, not Ord: no extra space opens between `\not` and its relation,
+        // so the negated relation still spaces as one relation would.
+        close(width(r"a\not=b", SIZE), width("a=b", SIZE));
+        close(width(r"a\not\in b", SIZE), width(r"a\in b", SIZE));
+        // `\notin` is the same construction spelled as one control word
+        // (`fontmath.ltx`: `\notin` is `\not\in`), and measures the same.
+        // `\neq` is NOT compared here: this crate's own v1 layout sets it as
+        // the single precomposed U+2260 glyph (`lm_math`, 778 units) rather
+        // than as the composite, which is 0.27 pt narrower than `=` at 18 pt.
+        // That is a property of this layout only -- the render pipeline
+        // decomposes U+2260 back into the two atoms and measures `a \neq b`
+        // at pdflatex's 22.91077 pt exactly.
+        close(width(r"a\notin b", SIZE), width(r"a\in b", SIZE));
+        // The slash itself: one Rel atom whose glyph carries no advance.
+        let b = laid_out(r"\not=", SIZE);
+        close(x(&b, "\u{0338}"), 0.0);
+        close(x(&b, "="), 0.0);
     }
 
     #[test]
@@ -6203,6 +8062,14 @@ mod shift_tests {
                     let nested = match &a.nucleus {
                         Nucleus::Symbol(_) | Nucleus::SizedDelimiter { .. } => usize::MAX,
                         Nucleus::Text(_) => usize::MAX,
+                        Nucleus::TextRun(pieces) => pieces
+                            .iter()
+                            .filter_map(|piece| match piece {
+                                TextPiece::Text { .. } => None,
+                                TextPiece::Math(list) => Some(min_start(list)),
+                            })
+                            .min()
+                            .unwrap_or(usize::MAX),
                         Nucleus::Space { .. } | Nucleus::Rule(_) => usize::MAX,
                         Nucleus::Fraction {
                             numerator,
@@ -6228,6 +8095,7 @@ mod shift_tests {
                         Nucleus::Accent { body, .. } => min_start(body),
                         Nucleus::Group(body)
                         | Nucleus::Phantom { body, .. }
+                        | Nucleus::Lap { body, .. }
                         | Nucleus::Operator { body, .. } => min_start(body),
                         Nucleus::GenFraction {
                             numerator,
@@ -6240,6 +8108,16 @@ mod shift_tests {
                         Nucleus::SubArray { rows, .. } => {
                             rows.iter().map(min_start).min().unwrap_or(usize::MAX)
                         }
+                        Nucleus::SideSet {
+                            operator,
+                            left_superscript,
+                            left_subscript,
+                        } => [Some(operator), left_superscript.as_ref(), left_subscript.as_ref()]
+                            .into_iter()
+                            .flatten()
+                            .map(min_start)
+                            .min()
+                            .unwrap_or(usize::MAX),
                     };
                     let scripts = a
                         .superscript
@@ -6308,6 +8186,16 @@ mod package_gating_tests {
         layout(&list, SIZE, &mut Vec::new())
     }
 
+    /// Like `laid_out`, but as if this formula were inside `\[...\]`/
+    /// `equation`/`align`/... instead of inline `$...$` (LaTeX's
+    /// `\if@display`).
+    fn laid_out_display(source: &str, packages: MathPackages) -> MathBox {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens_display(&crate::lexer::tokenize(source), packages, &mut diagnostics, true);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        layout(&list, SIZE, &mut Vec::new())
+    }
+
     fn x(b: &MathBox, text: &str) -> f64 {
         b.items
             .iter()
@@ -6325,7 +8213,8 @@ mod package_gating_tests {
     /// available under either flag combination a real document produces.
     ///
     /// This is the divergence the lane exists for: base LaTeX2e has no
-    /// definition for any of these 212 names, so pdflatex answers "Undefined
+    /// definition for these names (bar the three kernel composites `\angle`,
+    /// `\hbar` and `\rightleftharpoons`), so pdflatex answers "Undefined
     /// control sequence" where this compiler used to render the msam/msbm
     /// glyph regardless of what the document loaded.
     #[test]
@@ -6334,29 +8223,37 @@ mod package_gating_tests {
         for name in crate::amssymb::command_names() {
             let source = format!("\\{name}");
             let (_, kernel) = parsed(&source, MathPackages::KERNEL);
-            assert_eq!(kernel.len(), 1, "\\{name} with nothing loaded: {kernel:?}");
-            let package = match crate::amssymb::by_name(name).expect("named symbol").provider {
-                Provider::Amsfonts => "amsfonts",
-                Provider::Amssymb => "amssymb",
-            };
-            assert_eq!(
-                kernel[0].message,
-                format!("\\{name} requires \\usepackage{{{package}}}"),
-                "\\{name}"
-            );
+            if matches!(name, "angle" | "hbar" | "rightleftharpoons") {
+                // The three commands base LaTeX2e does define, as composites
+                // (`fontmath.ltx` 243/241/361): no diagnostic, the gated
+                // kernel arms render them at the measured kernel advance.
+                assert!(kernel.is_empty(), "\\{name} with nothing loaded: {kernel:?}");
+            } else {
+                assert_eq!(kernel.len(), 1, "\\{name} with nothing loaded: {kernel:?}");
+                let package = match crate::amssymb::by_name(name).expect("named symbol").provider {
+                    Provider::Amsfonts => "amsfonts",
+                    Provider::Amssymb => "amssymb",
+                };
+                assert_eq!(
+                    kernel[0].message,
+                    format!("\\{name} requires \\usepackage{{{package}}}"),
+                    "\\{name}"
+                );
+            }
 
             let (_, loaded) = parsed(&source, AMSSYMB);
             assert!(loaded.is_empty(), "\\{name} under amssymb: {loaded:?}");
             checked += 1;
         }
-        // 212 declarations plus the 6 `\global\let` aliases.
-        assert_eq!(checked, 218, "table command count");
+        // 218 declarations plus the 6 `\global\let` aliases.
+        assert_eq!(checked, 224, "table command count");
     }
 
-    /// `amsfonts.sty` alone declares a 15-command subset of the same symbol
-    /// fonts (plus the pieces the dashed arrows and wide accents are built
-    /// from). `\usepackage{amsfonts}` provides exactly those, and `\nleq` and
-    /// the other 197 stay undefined — probed name by name with `\ifcsname`.
+    /// `amsfonts.sty` alone declares a 21-command subset of the same symbol
+    /// fonts (141-147, 96-101, 74-77, 64-73, plus the pieces the dashed
+    /// arrows and wide accents are built from). `\usepackage{amsfonts}`
+    /// provides exactly those, and `\nleq` and the other 197 stay undefined
+    /// — probed name by name with `\ifcsname`.
     #[test]
     fn amsfonts_alone_provides_only_its_own_subset() {
         let subset: Vec<&str> = crate::amssymb::command_names()
@@ -6378,6 +8275,12 @@ mod package_gating_tests {
                 "urcorner",
                 "llcorner",
                 "lrcorner",
+                "rightleftharpoons",
+                "angle",
+                "hbar",
+                "sqsubset",
+                "sqsupset",
+                "mho",
                 "yen",
                 "checkmark",
                 "circledR",
@@ -6408,6 +8311,97 @@ mod package_gating_tests {
             assert_eq!(symbol.name, *target);
             assert_eq!(symbol.provider, Provider::Amssymb, "\\{alias}");
         }
+    }
+
+    /// Issue #516: amssymb's `\Box` is `\let` to `\square` (amsfonts.sty:152,
+    /// AMSa "03, Ord), so it parses to the same open-square glyph with the
+    /// same atom class — and `$\Box$` compiles with no diagnostics.
+    #[test]
+    fn box_parses_to_squares_open_square_glyph_and_class() {
+        for packages in [MathPackages::KERNEL, AMSSYMB] {
+            let (list, diagnostics) = parsed(r"\Box", packages);
+            assert!(diagnostics.is_empty(), "\\Box: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "\\Box");
+            assert!(
+                matches!(&list.atoms[0].nucleus, Nucleus::Symbol(glyph) if glyph == "□"),
+                "\\Box: {:?}",
+                list.atoms[0].nucleus
+            );
+        }
+        let (square, diagnostics) = parsed(r"\square", AMSSYMB);
+        assert!(diagnostics.is_empty(), "\\square: {diagnostics:?}");
+        assert_eq!(square.atoms.len(), 1, "\\square");
+        assert!(
+            matches!(&square.atoms[0].nucleus, Nucleus::Symbol(glyph) if glyph == "□"),
+            "\\square: {:?}",
+            square.atoms[0].nucleus
+        );
+        let (list, _) = parsed(r"\Box", AMSSYMB);
+        assert_eq!(
+            atom_class(&list.atoms[0]),
+            atom_class(&square.atoms[0]),
+            "\\Box and \\square take different classes"
+        );
+        assert_eq!(atom_class(&list.atoms[0]), Some(AtomClass::Ord));
+    }
+
+    /// Regression: `\square` itself is unaffected — still gated on its
+    /// package with nothing loaded, still clean once it is.
+    #[test]
+    fn square_keeps_its_package_gate() {
+        let (_, kernel) = parsed(r"\square", MathPackages::KERNEL);
+        assert_eq!(
+            kernel.first().map(|d| d.message.as_str()),
+            Some(r"\square requires \usepackage{amsfonts}"),
+            "\\square without its package: {kernel:?}"
+        );
+        let (_, loaded) = parsed(r"\square", AMSSYMB);
+        assert!(loaded.is_empty(), "\\square under amssymb: {loaded:?}");
+    }
+
+    /// Issue #591: `\Diamond` has no kernel definition at all (unlike
+    /// `\square`, which the kernel just doesn't shape like `amssymb` does),
+    /// so pdflatex reports it undefined with no package loaded, and only
+    /// clean once `amsfonts`/`amssymb` is loaded.
+    #[test]
+    fn diamond_requires_a_package_or_is_undefined() {
+        let (_, kernel) = parsed(r"\Diamond", MathPackages::KERNEL);
+        assert_eq!(
+            kernel.first().map(|d| d.message.as_str()),
+            Some(r"\Diamond requires \usepackage{amsfonts}"),
+            "\\Diamond without its package: {kernel:?}"
+        );
+        let (_, loaded) = parsed(r"\Diamond", AMSSYMB);
+        assert!(loaded.is_empty(), "\\Diamond under amssymb: {loaded:?}");
+        let (_, amsfonts_only) = parsed(r"\Diamond", AMSFONTS);
+        assert!(
+            amsfonts_only.is_empty(),
+            "\\Diamond under amsfonts alone: {amsfonts_only:?}"
+        );
+    }
+
+    /// Issue #516: the two spellings lay out the same glyph at the same
+    /// place. `\Box` takes the generic path (Latin Modern Math U+25A1, 778
+    /// units) while `\square` takes the msam slot advance (0.777781em), so
+    /// the widths agree to 0.000219em — sub-pixel at any size, not bitwise.
+    #[test]
+    fn box_and_square_lay_out_the_same_open_square() {
+        let boxed = laid_out(r"\Box", AMSSYMB);
+        let squared = laid_out(r"\square", AMSSYMB);
+        for (name, b) in [("Box", &boxed), ("square", &squared)] {
+            let item = b
+                .items
+                .iter()
+                .find(|i| i.text == "□")
+                .unwrap_or_else(|| panic!("\\{name} has no open square: {b:?}"));
+            assert_eq!(item.x, 0.0, "\\{name}");
+        }
+        assert!(
+            (boxed.width - squared.width).abs() < 0.01,
+            "Box {} vs square {}",
+            boxed.width,
+            squared.width
+        );
     }
 
     /// mathtools' colon-relation family needs `\usepackage{mathtools}`: base
@@ -6515,6 +8509,33 @@ mod package_gating_tests {
         };
         assert_eq!(inner.atoms.len(), 3, ": <kern> : -- {inner:?}");
         assert!(matches!(&inner.atoms[1].nucleus, Nucleus::Space { em, .. } if (em + 0.9 / 18.0).abs() < 1e-9));
+
+        // `\coloneqq` = `\vcentcolon \mathrel{\mkern-1.2mu} =` once mathtools
+        // is loaded: one Rel group whose colon is a real `vcentcolon_atom`
+        // (so layout raises it), not the precomposed U+2254 glyph.
+        let (list, diagnostics) = parsed(r"\coloneqq", MATHTOOLS);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 1, "\\coloneqq");
+        assert_eq!(list.atoms[0].class_override, Some(AtomClass::Rel), "\\coloneqq");
+        let Nucleus::Group(inner) = &list.atoms[0].nucleus else {
+            panic!("\\coloneqq is not a group: {:?}", list.atoms[0].nucleus);
+        };
+        assert_eq!(inner.atoms.len(), 3, ": <kern> = -- {inner:?}");
+        assert!(matches!(&inner.atoms[0].nucleus, Nucleus::Symbol(g) if g == ":"));
+        assert_eq!(inner.atoms[0].class_override, Some(AtomClass::Rel));
+        assert!(matches!(&inner.atoms[1].nucleus, Nucleus::Space { em, .. } if (em + 1.2 / 18.0).abs() < 1e-9));
+        assert!(matches!(&inner.atoms[2].nucleus, Nucleus::Symbol(g) if g == "="));
+
+        // Without mathtools it keeps the precomposed glyph it always had.
+        for packages in [MathPackages::KERNEL, AMSSYMB] {
+            let (list, diagnostics) = parsed(r"\coloneqq", packages);
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            assert!(
+                matches!(&list.atoms[0].nucleus, Nucleus::Symbol(g) if g == "≔"),
+                "\\coloneqq without mathtools: {:?}",
+                list.atoms[0].nucleus
+            );
+        }
     }
 
     /// The two math alphabets and the dashed arrows are `amsfonts.sty`'s too,
@@ -6543,30 +8564,37 @@ mod package_gating_tests {
         assert!(kernel.is_empty(), "{kernel:?}");
     }
 
-    /// `\angle` and `\hbar` are the two commands here that base LaTeX2e does
-    /// define, as composites amsfonts replaces with one glyph. Measured with
-    /// TeX Live 2025 pdflatex at 10pt: `\hbox{$\angle$}` 6.37344pt without the
-    /// package against 7.22223pt with it, `\hbox{$\hbar$}` 5.76172pt against
-    /// 5.40280pt. Neither changes atom class: `$a\angle b$` grows by exactly
+    /// `\angle`, `\hbar` and `\rightleftharpoons` are the commands here
+    /// that base LaTeX2e does define, as composites amsfonts replaces with
+    /// one msam/msbm glyph. Measured with TeX Live 2025 pdflatex at 10pt:
+    /// `\hbox{$\angle$}` 6.37344pt without the package against 7.22223pt
+    /// with it, `\hbox{$\hbar$}` 5.76172pt against 5.40280pt, and
+    /// `\hbox{$\rightleftharpoons$}` 10.00002pt either way (only height
+    /// and depth change). Neither changes atom class: `$a\angle b$` grows by exactly
     /// the width difference (15.95099 -> 16.79977), and `$a\hbar b$` shrinks
     /// by it (15.33926 -> 14.98035).
     #[test]
     fn angle_and_hbar_keep_the_kernel_composite_without_amsfonts() {
-        for (name, em) in [("angle", KERNEL_ANGLE_EM), ("hbar", KERNEL_HBAR_EM)] {
+        for (name, em, ams_em) in [
+            ("angle", KERNEL_ANGLE_EM, 0.722224),
+            ("hbar", KERNEL_HBAR_EM, 0.540280),
+            ("rightleftharpoons", KERNEL_RIGHTLEFTHARPOONS_EM, 1.000003),
+        ] {
             let (kernel, diagnostics) = parsed(&format!("\\{name}"), MathPackages::KERNEL);
             assert!(diagnostics.is_empty(), "\\{name}: {diagnostics:?}");
             assert_eq!(kernel.atoms[0].width_em, Some(em), "\\{name}");
 
-            // With the package the compiler's glyph row applies unchanged, so
-            // nothing forces the kernel advance any more.
+            // With the package the amsfonts declaration applies: the same
+            // character, at the msam/msbm advance (`crate::amssymb`).
             let (loaded, diagnostics) = parsed(&format!("\\{name}"), AMSSYMB);
             assert!(diagnostics.is_empty(), "\\{name}: {diagnostics:?}");
-            assert_eq!(loaded.atoms[0].width_em, None, "\\{name}");
+            assert_eq!(loaded.atoms[0].width_em, Some(ams_em), "\\{name}");
             assert_eq!(loaded.atoms[0].nucleus, kernel.atoms[0].nucleus, "\\{name}");
         }
-        // pdflatex's widths at 10pt, which the two constants reproduce.
+        // pdflatex's widths at 10pt, which the three constants reproduce.
         close(KERNEL_ANGLE_EM * 10.0, 6.37344);
         close(KERNEL_HBAR_EM * 10.0, 5.76172);
+        close(KERNEL_RIGHTLEFTHARPOONS_EM * 10.0, 10.00002);
     }
 
     /// `\bmod` cancels `\medmuskip` and puts an explicit `\mkern5mu` in its
@@ -6616,6 +8644,44 @@ mod package_gating_tests {
                 x(&label, "y") - x(&label, "(mod")
             });
         }
+    }
+
+    #[test]
+    fn mod_needs_amsmath() {
+        // pdflatex without amsmath: `! Undefined control sequence. \mod`.
+        let (_, diagnostics) = parsed(r"a\mod{b}", MathPackages::KERNEL);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message == "\\mod requires \\usepackage{amsmath}"),
+            "{diagnostics:?}"
+        );
+    }
+
+    /// amsmath's `\mod` (`amsmath.sty` 910-911) opens with `\mkern12mu`
+    /// outside display and puts `\,\,` (6mu) before its argument. Measured at
+    /// 10pt: `$x\mod{y}$` is 40.14336pt, matching `$x\mkern12mu\mathrm{mod}
+    /// \mkern6mu y$` exactly.
+    #[test]
+    fn mod_opens_with_twelve_mu_and_puts_six_before_its_argument() {
+        let b = laid_out(r"x\mod{y}", AMSMATH);
+        let x_width = laid_out("x", AMSMATH).width;
+        let word = laid_out(r"\mathrm{mod}", AMSMATH).width;
+        close(x(&b, "mod"), x_width + AMSMATH_MOD_OPENING_MU);
+        close(x(&b, "y"), x(&b, "mod") + word + AMSMATH_MOD_TRAILING_MU);
+    }
+
+    /// Same construct as `mod_opens_with_twelve_mu_and_puts_six_before_its_argument`,
+    /// but inside `\[...\]`/`equation`/`align`/... instead of `$...$`: amsmath's
+    /// `\if@display\mkern18mu\else\mkern12mu\fi` takes the other branch. The
+    /// 6mu before the argument does not move (review finding #1 on #783).
+    #[test]
+    fn mod_opens_with_eighteen_mu_in_display_math() {
+        let b = laid_out_display(r"x\mod{y}", AMSMATH);
+        let x_width = laid_out_display("x", AMSMATH).width;
+        let word = laid_out_display(r"\mathrm{mod}", AMSMATH).width;
+        close(x(&b, "mod"), x_width + AMSMATH_MOD_DISPLAY_OPENING_MU);
+        close(x(&b, "y"), x(&b, "mod") + word + AMSMATH_MOD_TRAILING_MU);
     }
 
     /// Which `\usepackage` and `\documentclass` names set which flag, measured
@@ -6731,5 +8797,374 @@ mod double_bar_tests {
     fn the_double_bar_is_bound_to_latin_modern_math() {
         assert!(crate::lm_math::advance('\u{2016}').is_some());
         assert!(crate::export::unrepresentable("\u{2016}").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod sideset_tests {
+    use super::*;
+
+    const AMSMATH: MathPackages = MathPackages {
+        amsmath: true,
+        ..MathPackages::KERNEL
+    };
+
+    fn parse(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
+        let mut diagnostics = Vec::new();
+        let tokens = crate::lexer::tokenize(source);
+        let list = parse_tokens(&tokens, packages, &mut diagnostics);
+        (list, diagnostics)
+    }
+
+    fn glyphs(list: &Option<MathList>) -> String {
+        list.as_ref()
+            .map(|l| {
+                l.atoms
+                    .iter()
+                    .map(|a| match &a.nucleus {
+                        Nucleus::Symbol(s) => s.clone(),
+                        other => format!("{other:?}"),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The `\mathop` atom of a parsed `\sideset`, after checking the ordinary
+    /// `\hbox to\dimen@{}` atom in front of it.
+    fn sideset_at(list: &MathList, index: usize) -> (&MathAtom, &MathList, String, String) {
+        let hbox = &list.atoms[index - 1];
+        assert!(
+            matches!(&hbox.nucleus, Nucleus::Group(body) if body.atoms.is_empty()),
+            "{hbox:?}"
+        );
+        assert_eq!(atom_class(hbox), Some(AtomClass::Ord));
+        let op = &list.atoms[index];
+        assert_eq!(atom_class(op), Some(AtomClass::Op));
+        let Nucleus::SideSet {
+            operator,
+            left_superscript,
+            left_subscript,
+        } = &op.nucleus
+        else {
+            panic!("expected SideSet, got {:?}", op.nucleus);
+        };
+        (op, operator, glyphs(left_superscript), glyphs(left_subscript))
+    }
+
+    #[test]
+    fn sideset_is_an_ordinary_box_then_the_operator_with_both_pairs() {
+        let (list, diagnostics) = parse("\\sideset{_a^b}{_c^d}\\sum", AMSMATH);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 2);
+        let (op, operator, sup, sub) = sideset_at(&list, 1);
+        assert_eq!((sup.as_str(), sub.as_str()), ("b", "a"));
+        assert!(op.superscript.is_none() && op.subscript.is_none());
+        let [sum] = operator.atoms.as_slice() else {
+            panic!("{operator:?}")
+        };
+        assert!(matches!(&sum.nucleus, Nucleus::Symbol(s) if s == "∑"));
+        assert_eq!(glyphs(&sum.superscript), "d");
+        assert_eq!(glyphs(&sum.subscript), "c");
+    }
+
+    #[test]
+    fn sideset_prime_braced_operator_and_trailing_scripts() {
+        // `\sideset{}{'}\sum`: the prime is the right superscript.
+        let (list, diagnostics) = parse("x\\sideset{}{'}\\sum_{i} x", AMSMATH);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 4);
+        let (op, operator, sup, sub) = sideset_at(&list, 2);
+        assert_eq!((sup.as_str(), sub.as_str()), ("", ""));
+        assert_eq!(glyphs(&operator.atoms[0].superscript), "′");
+        // Scripts after `#3` belong to the `\mathop`, not to `#2`.
+        assert_eq!(glyphs(&op.subscript), "i");
+        assert!(operator.atoms[0].subscript.is_none());
+
+        let (list, diagnostics) = parse("\\sideset{^{n}}{} {\\prod}", AMSMATH);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (_, operator, sup, _) = sideset_at(&list, 1);
+        assert_eq!(sup, "n");
+        assert!(matches!(&operator.atoms[0].nucleus, Nucleus::Symbol(s) if s == "∏"));
+    }
+
+    #[test]
+    fn sideset_reports_non_script_material_and_a_duplicate_script() {
+        let (list, diagnostics) = parse("\\sideset{x_a}{_c}{\\sum_d}", AMSMATH);
+        let messages: Vec<&str> = diagnostics.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "only scripts are supported in a \\sideset group",
+                "duplicate script on a math atom"
+            ]
+        );
+        let (_, _, _, sub) = sideset_at(&list, 1);
+        assert_eq!(sub, "a");
+    }
+
+    #[test]
+    fn sideset_needs_amsmath() {
+        // pdflatex without amsmath: `! Undefined control sequence. \sideset`.
+        let (_, diagnostics) = parse("\\sideset{_a^b}{_c^d}\\sum", MathPackages::KERNEL);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message == "\\sideset requires \\usepackage{amsmath}"),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn sideset_shifts_and_lays_out_left_of_the_operator() {
+        let (list, _) = parse("\\sideset{_{ab}^b}{_c}\\sum", AMSMATH);
+        let shifted = shift_list(&list, 7);
+        let (_, operator, _, _) = sideset_at(&shifted, 1);
+        let (_, original, _, _) = sideset_at(&list, 1);
+        assert_eq!(operator.atoms[0].span.start, original.atoms[0].span.start + 7);
+        let laid = layout(&list, 10.0, &mut Vec::new());
+        let x = |text: &str| {
+            laid.items
+                .iter()
+                .find(|item| item.text == text)
+                .map(|item| item.x)
+                .unwrap_or_else(|| panic!("{text} in {:?}", laid.items))
+        };
+        assert!(x("a") < x("∑") && x("b") < x("∑") && x("∑") < x("c"));
+        assert!((x("a") - x("b")).abs() < 1e-9, "left scripts share a left edge");
+    }
+
+    #[test]
+    fn sideset_trailing_script_is_a_display_limit_whatever_the_operator() {
+        // pdflatex `\showbox` (amsmath, 10pt). amsmath wraps `\sideset` in an
+        // outer `\mathop` with default `\displaylimits`:
+        // - `\sideset{_a^b}{}\sum_{i}`: inline, `i` is a corner script after
+        //   the operator (x=20.95, shifted down 6.50); in `\displaystyle` it
+        //   is a limit centred under `∑` (x=10.65, baseline 13.30 below).
+        // - `\sideset{_a^b}{}\int_{i}`: inline, a corner script (x=16.50,
+        //   shifted down 9.61); in `\displaystyle` also a limit centred under
+        //   `∫` (x=8.42, baseline 16.41 below), although `\int` is
+        //   `\nolimits` on its own.
+        // So display moves `i` left and down relative to inline for both.
+        let place = |source: &str, glyph: &str, display: bool| {
+            let (list, diagnostics) = parse(source, AMSMATH);
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            let mut diagnostics = Vec::new();
+            let laid = if display {
+                layout_display(&list, 10.0, &mut diagnostics)
+            } else {
+                layout(&list, 10.0, &mut diagnostics)
+            };
+            let at = |text: &str| {
+                laid.items
+                    .iter()
+                    .find(|item| item.text == text)
+                    .map(|item| (item.x, item.baseline))
+                    .unwrap_or_else(|| panic!("{text} in {:?}", laid.items))
+            };
+            (at("i"), at(glyph))
+        };
+        for (source, glyph) in [
+            ("\\sideset{_a^b}{}\\sum_{i}", "∑"),
+            ("\\sideset{_a^b}{}\\int_{i}", "∫"),
+        ] {
+            let ((inline_x, inline_y), (inline_op_x, _)) = place(source, glyph, false);
+            let ((display_x, display_y), (display_op_x, _)) = place(source, glyph, true);
+            assert!(inline_x > inline_op_x, "{source}: inline corner script");
+            assert!(display_x < inline_x, "{source}: {display_x} vs {inline_x}");
+            assert!(display_y > inline_y, "{source}: {display_y} vs {inline_y}");
+            assert!(display_x < display_op_x + 10.0, "{source}: not after");
+            // Same limit baseline as the bare `\sum`'s own display limit.
+            let ((_, sum_display_y), _) = place("\\sum_{i}", "∑", true);
+            assert!((display_y - sum_display_y).abs() < 1e-9, "{source}");
+        }
+
+        // A bare `\int` keeps its corner script in display style.
+        let ((int_x, int_y), (int_op_x, _)) = place("\\int_{i}", "∫", true);
+        let ((_, int_inline_y), _) = place("\\int_{i}", "∫", false);
+        assert!(int_x > int_op_x && (int_y - int_inline_y).abs() < 1e-9);
+    }
+}
+
+/// mathtools `\mathllap`/`\mathrlap`/`\mathclap` (`mathtools.sty` 1539-1563):
+/// `\hb@xt@\z@` boxes with zero advance whose ink is still painted.
+#[cfg(test)]
+mod lap_tests {
+    use super::*;
+
+    /// 1mu = 1pt, so a measured mu reads straight off a coordinate.
+    const SIZE: f64 = 18.0;
+
+    /// A document that loaded `mathtools` (which requires `amsmath`): the lap
+    /// family exists. Base LaTeX2e defines none of it, so the tests that use
+    /// these commands have to say so — see `laps_need_mathtools`.
+    const MATHTOOLS: MathPackages = MathPackages {
+        amsmath: true,
+        amssymb: false,
+        amsfonts: false,
+        mathtools: true,
+    };
+
+    /// `amsmath` without `mathtools`: the lap family is still undefined.
+    const AMSMATH: MathPackages = MathPackages {
+        amsmath: true,
+        amssymb: false,
+        amsfonts: false,
+        mathtools: false,
+    };
+
+    fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(&crate::lexer::tokenize(source), packages, &mut diagnostics);
+        (list, diagnostics)
+    }
+
+    fn laid_out(source: &str) -> MathBox {
+        let (list, diagnostics) = parsed(source, MATHTOOLS);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        layout(&list, SIZE, &mut Vec::new())
+    }
+
+    fn width(source: &str) -> f64 {
+        laid_out(source).width
+    }
+
+    fn x(b: &MathBox, text: &str) -> f64 {
+        b.items
+            .iter()
+            .find(|i| i.text == text)
+            .unwrap_or_else(|| panic!("{text:?} not painted in {:?}", b.items))
+            .x
+    }
+
+    fn close(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+    }
+
+    /// Each command parses to a one-atom `Lap` with its own alignment and the
+    /// argument as its body; a multi-atom argument stays one boxed atom.
+    #[test]
+    fn each_lap_parses_to_its_own_alignment() {
+        for (command, align) in [
+            ("mathllap", LapAlign::Left),
+            ("mathclap", LapAlign::Center),
+            ("mathrlap", LapAlign::Right),
+        ] {
+            let (list, diagnostics) = parsed(&format!("\\{command}{{y}}"), MATHTOOLS);
+            assert!(diagnostics.is_empty(), "{command}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "{command}");
+            match &list.atoms[0].nucleus {
+                Nucleus::Lap { body, align: got } => {
+                    assert_eq!(*got, align, "{command}");
+                    assert_eq!(body.atoms.len(), 1, "{command}");
+                    assert!(
+                        matches!(&body.atoms[0].nucleus, Nucleus::Symbol(s) if s == "y"),
+                        "{command}: {body:?}"
+                    );
+                }
+                other => panic!("{command} parsed as {other:?}"),
+            }
+        }
+        let (list, diagnostics) = parsed(r"\mathclap{a+b}", MATHTOOLS);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        match &list.atoms[0].nucleus {
+            Nucleus::Lap { body, .. } => assert_eq!(body.atoms.len(), 3, "{body:?}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// Base LaTeX2e (and amsmath alone) defines none of the three — each was
+    /// searched for in TeX Live 2026's base and amsmath sources — so without
+    /// `mathtools` each reports the missing package, as pdflatex answers
+    /// "Undefined control sequence".
+    #[test]
+    fn laps_need_mathtools() {
+        for command in ["mathllap", "mathclap", "mathrlap"] {
+            for packages in [MathPackages::KERNEL, AMSMATH] {
+                let (_, diagnostics) = parsed(&format!("\\{command}{{y}}"), packages);
+                assert_eq!(diagnostics.len(), 1, "{command}: {diagnostics:?}");
+                assert_eq!(
+                    diagnostics[0].message,
+                    format!("\\{command} requires \\usepackage{{mathtools}}"),
+                    "{command}"
+                );
+                // Slice 2 (#549 follow-up): the family is implemented, so the
+                // gate reports a known-but-gated command — never an unknown
+                // command with a did-you-mean rewrite.
+                assert_eq!(
+                    diagnostics[0].code,
+                    Some(crate::diagnostics::DiagnosticCode::UnsupportedFeature),
+                    "{command}"
+                );
+                assert_eq!(
+                    diagnostics[0].help.as_ref().map(|h| h.message.as_str()),
+                    Some("add \\usepackage{mathtools} in the preamble"),
+                    "{command}"
+                );
+                assert_eq!(diagnostics[0].suggestion, None, "{command}");
+            }
+        }
+    }
+
+    /// The box advances nothing: flanking material closes up exactly as if the
+    /// lapped content were absent. All three atoms are Ord, so no inter-atom
+    /// glue enters on either side.
+    #[test]
+    fn laps_advance_nothing() {
+        for command in ["mathllap", "mathclap", "mathrlap"] {
+            close(width(&format!("a\\{command}{{x}}b")), width("ab"));
+        }
+        // A wider body still advances nothing.
+        close(width(r"a\mathrlap{xyz}b"), width("ab"));
+    }
+
+    /// The ink is still painted, hung off the current point on the commanded
+    /// side: `\mathrlap`'s ink starts where the following atom starts (it is
+    /// overlapped from the right), `\mathllap`'s ends where the preceding atom
+    /// ends (it overlaps from the left), `\mathclap`'s is centred.
+    #[test]
+    fn lapped_ink_is_painted_at_the_commanded_offset() {
+        let origin = width("a");
+        let ink = width("x");
+        let b = laid_out(r"a\mathrlap{x}b");
+        close(x(&b, "x"), origin);
+        close(x(&b, "b"), origin);
+        let b = laid_out(r"a\mathllap{x}b");
+        close(x(&b, "x"), origin - ink);
+        close(x(&b, "b"), origin);
+        let b = laid_out(r"a\mathclap{x}b");
+        close(x(&b, "x"), origin - ink / 2.0);
+        close(x(&b, "b"), origin);
+    }
+
+    /// Zero width but full paint, vertically too: the lap of `xy` is as tall
+    /// and deep as `xy` itself, and contributes no advance.
+    #[test]
+    fn lap_keeps_the_body_box_except_its_width() {
+        let lapped = laid_out(r"\mathclap{xy}");
+        let plain = laid_out("xy");
+        close(lapped.width, 0.0);
+        assert_eq!(lapped.items.len(), plain.items.len());
+        assert_eq!(lapped.ascent, plain.ascent);
+        assert_eq!(lapped.descent, plain.descent);
+    }
+
+    /// mathtools' `\mathllap[<style>]{...}` override is consumed and reported
+    /// rather than becoming the body; the argument still laps at ambient size.
+    #[test]
+    fn style_override_is_diagnosed_and_ignored() {
+        let (list, diagnostics) = parsed(r"\mathrlap[\scriptstyle]{x}", MATHTOOLS);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(
+            diagnostics[0].message,
+            r"\mathrlap's optional style argument is not supported"
+        );
+        match &list.atoms[0].nucleus {
+            Nucleus::Lap { body, align } => {
+                assert_eq!(*align, LapAlign::Right);
+                assert_eq!(body.atoms.len(), 1, "{body:?}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

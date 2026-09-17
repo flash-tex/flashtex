@@ -34,6 +34,7 @@ final class PreviewAnchoringTests: XCTestCase {
         let layout = PreviewPageLayout(pages: [Self.letter, .init(number: 2, widthPt: 306, heightPt: 400)], scale: 0.5)
         let frames = layout.frames
         XCTAssertEqual(frames.map(\.number), [1, 2])
+        guard frames.count == 2 else { return XCTFail("expected two frames, got \(frames.count)") }
         XCTAssertEqual(frames[0].frame, CGRect(x: 24, y: 24, width: 306, height: 396))
         XCTAssertEqual(frames[1].frame, CGRect(x: 24 + 76.5, y: 24 + 396 + 24, width: 153, height: 200))
         XCTAssertEqual(layout.contentSize, CGSize(width: 306 + 48, height: 24 + 396 + 24 + 200 + 24))

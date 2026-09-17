@@ -10,6 +10,12 @@ import XCTest
 @MainActor
 final class ShellSnapshotTests: XCTestCase {
 
+    /// Pixel comparison only means something on the machine the references
+    /// were recorded on; elsewhere this skips loudly (SnapshotEnvironment.swift).
+    override func setUp() async throws {
+        try SnapshotEnvironment.requireComparableToReferences()
+    }
+
     func testMainWindow() {
         let model = DesignFixtures.project()
         assertWindowSurfaceBothAppearances(ContentView().environment(model).environmentObject(DesignFixtures.nearby()), named: "shell",

@@ -69,7 +69,10 @@ final class ShellModelWorkerTests: XCTestCase {
         XCTAssertFalse(model.isFixture)
         XCTAssertEqual(model.result?.revision, 2)
         XCTAssertFalse(model.previewIsStale)
-        guard case .text(let item) = model.result!.pages[0].items[0] else { return XCTFail() }
+        guard let result = model.result, let firstPage = result.pages.first, let firstItem = firstPage.items.first else {
+            return XCTFail("expected a result with at least one page with at least one item")
+        }
+        guard case .text(let item) = firstItem else { return XCTFail() }
         XCTAssertEqual(item.text, "Second draft")
         model.navigate(to: item.source)
         XCTAssertEqual(model.selection?.nsRange, NSRange(location: 0, length: 12))

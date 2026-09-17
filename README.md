@@ -10,6 +10,8 @@ This project actually consists of two things:
   previews, which pairs with a companion iPad app (FlashTeXPad)
   for inline LaTeX/TiKZ OCR (including diagrams).
 
+![FlashTeX rendering a real homework document: source on the left, live Latin Modern preview on the right, the Problems panel below](docs/images/flashtex-demo-0.1.5.png)
+
 ## See Also
 
 - Landing page: https://flash-tex.github.io/flashtex
@@ -41,8 +43,6 @@ subset of LaTeX (article-class text, sectioning, lists, `amsmath`-style math,
 reported as diagnostics with a recovery note rather than silently dropped,
 and most packages are still missing. `flashtex supported` prints the exact
 inventory and coverage; see [Supported LaTeX](docs/user/compiler.md#supported-latex).
-
-![FlashTeX rendering a real homework document: source on the left, live Latin Modern preview on the right, the Problems panel below](docs/images/flashtex-hw1.png)
 
 ## Features
 

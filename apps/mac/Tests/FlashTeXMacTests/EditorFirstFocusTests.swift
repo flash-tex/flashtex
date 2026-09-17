@@ -230,6 +230,53 @@ final class EditorFirstFocusTests: XCTestCase {
         tv.close(.escape)
     }
 
+    /// GH#280, the owner's launch verbatim: the app comes up with a real `.tex`
+    /// document **already open** (`FLASHTEX_SEED_FILE`, the seed path the
+    /// bundled app uses — not File ▸ Open, not a fixture), in a window that was
+    /// never key, and the user clicks straight into the editor.
+    ///
+    /// The other startup test above loads the `protocol/fixtures` request,
+    /// whose text is `Hello FlashTeX.` — it carries no LaTeX token, so it can
+    /// only ever assert that typing gets coloured, never that the document the
+    /// editor *opened with* is coloured. This is the case that asserts it: the
+    /// colouring must be there at first focus, with no keystroke and no
+    /// document switch ("clicking into another file and then clicking back").
+    func testSeededStartupDocumentIsColouredAndCompletesAtFirstFocus() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("hw1.tex")
+        try Self.document.write(to: file, atomically: true, encoding: .utf8)
+        // Read once, in `ShellModel.init`; unset again before anything else
+        // constructs a model, so no other test sees a seeded environment.
+        setenv("FLASHTEX_SEED_FILE", file.path, 1)
+        let model = ShellModel()
+        unsetenv("FLASHTEX_SEED_FILE")
+        XCTAssertEqual(model.documents.map(\.path), ["hw1.tex"], "the app launched with the seeded document open")
+
+        let tv = try await hostContentView(model)
+        try await waitUntil("the seeded document reaches the view") { tv.string == Self.document }
+        try await turn()
+        // No keystroke, no switch: this is what the editor looks like the
+        // moment the user first sees it.
+        XCTAssertGreaterThan(colourRuns(tv), 0, "the document the app opened with is coloured before anything is typed")
+
+        XCTAssertTrue(window!.makeFirstResponder(tv))
+        let end = (tv.string as NSString).range(of: "\n\n\\end").location + 1
+        tv.setSelectedRange(NSRange(location: end, length: 0))
+        let before = colourRuns(tv)
+        // The completion half needs the bundled command inventory; when it did
+        // not reach the test bundle that is GH#704, a different bug, and this
+        // test must say so rather than fail as a mysterious timeout.
+        try XCTSkipIf(Completion.defaultSupported.isEmpty,
+                      "the bundled completion vocabulary did not reach the test bundle (GH#704); the colouring half above still ran")
+        type(tv, "\\se")
+        XCTAssertEqual(tv.automaticOpenCount, 1, "typing \\se requests the list on first focus")
+        try await waitUntil("the completion list is showing", timeout: 3) { tv.isCompletionActive }
+        XCTAssertGreaterThan(colourRuns(tv), before, "the typed command is coloured")
+        tv.close(.escape)
+    }
+
     func testDocumentPresentBeforeTheEditorMountsIsColouredAndCompletes() async throws {
         let model = ShellModel()
         model.replaceProject(entryText: Self.document)

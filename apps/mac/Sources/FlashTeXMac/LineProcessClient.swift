@@ -132,6 +132,14 @@ final class LineProcessClient {
         try process.run()
     }
 
+    /// Ties the child's lifetime to this object's: a caller that forgets to
+    /// call `terminate()` (the leak in #687 -- one helper per test, reaped only
+    /// when the whole test binary exits) still gets it killed and reaped the
+    /// moment nothing references this client any more.
+    deinit {
+        terminate()
+    }
+
     func terminate() {
         stateLock.withLock { stdinClosed = true }
         // Close on the I/O queue so a write in progress finishes (or fails) first.

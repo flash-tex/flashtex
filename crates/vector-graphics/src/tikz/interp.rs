@@ -533,6 +533,7 @@ impl<'a> Interp<'a> {
 
     pub(crate) fn preamble(&mut self, text: &str) {
         let clean = tx::blank_comments(text);
+        let clean = clean.as_ref();
         let mut st = St::new(self.base_font);
         let mut i = 0;
         while let Some(rel) = clean[i..].find('\\') {

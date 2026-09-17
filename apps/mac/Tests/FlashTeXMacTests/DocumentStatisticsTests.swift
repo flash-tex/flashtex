@@ -49,6 +49,7 @@ final class DocumentStatisticsTests: XCTestCase {
         let r = DocumentStatistics.analyze(doc("\\section{Introduction to Widgets}\nBody text here.\n\\subsection{Details}\nMore body text."))
         XCTAssertEqual(r.counts.headerWords, 4) // "Introduction to Widgets" (3) + "Details" (1)
         XCTAssertEqual(r.sections.count, 2)
+        guard r.sections.count == 2 else { return XCTFail("expected two sections, got \(r.sections.count)") }
         XCTAssertEqual(r.sections[0].title, "Introduction to Widgets")
         XCTAssertEqual(r.sections[0].level, 1)
         XCTAssertEqual(r.sections[1].title, "Details")
@@ -135,6 +136,7 @@ final class DocumentStatisticsTests: XCTestCase {
         XCTAssertEqual(agg.total.bodyWords, 5)
         XCTAssertEqual(agg.documentCount, 2)
         XCTAssertEqual(agg.sections.count, 2)
+        guard agg.sections.count == 2 else { return XCTFail("expected two sections, got \(agg.sections.count)") }
         XCTAssertEqual(agg.sections[0].documentPath, "main.tex")
         XCTAssertEqual(agg.sections[1].documentPath, "chapter2.tex")
     }
@@ -321,6 +323,7 @@ final class WordCountModelTests: XCTestCase {
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One.")])
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One two three four.")])
         XCTAssertEqual(captured.count, 2)
+        guard captured.count == 2 else { return XCTFail("expected two captured work items, got \(captured.count)") }
         XCTAssertTrue(captured[0].isCancelled)
 
         // `DispatchWorkItem.perform()` on a cancelled item is a no-op — it

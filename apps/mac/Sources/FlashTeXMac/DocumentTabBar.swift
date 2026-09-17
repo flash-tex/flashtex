@@ -122,7 +122,7 @@ private struct DocumentTab: View {
         .contextMenu {
             Button("Show \(doc.path)") { model.switchOrNote(doc.path) }.disabled(active)
             if doc.role != .entry {
-                Button("Save \(doc.path)") { Task { await model.project.saveDocument(doc.path) } }
+                Button("Save \(doc.path)") { Task { await model.saveDocumentInteractive(doc.path) } }
                     .disabled(model.documentURL == nil)
             }
         }
@@ -183,9 +183,9 @@ struct ProjectMenu: View {
                 let name = n.resolvedPath ?? n.reference.argument
                 switch n.state {
                 case .available:
-                    Button(indent + "Open \(name)") { Task { await model.project.openDocument(name, role: .included(from: n.from)) } }
+                    Button(indent + "Open \(name)") { Task { await model.openAndSwitch(name, role: .included(from: n.from)) { model.captureNote = $0 } } }
                 case .open:
-                    Button(indent + "Show \(name)") { model.project.switchDocument(to: name) }
+                    Button(indent + "Show \(name)") { model.switchOrNote(name) }
                 case .unresolvable(let why):
                     Text(indent + "\\\(n.reference.kind.rawValue){\(n.reference.argument)}: \(why)")
                 }
@@ -202,7 +202,7 @@ struct ProjectMenu: View {
             }
             if model.activePath != model.chrome.entryPath {
                 Divider()
-                Button("Save \(model.activePath)") { Task { await model.project.saveDocument(model.activePath) } }
+                Button("Save \(model.activePath)") { Task { await model.saveDocumentInteractive(model.activePath) } }
                     .disabled(model.documentURL == nil)
                 Button("Detach \(model.activePath) (this session)") {
                     Task {

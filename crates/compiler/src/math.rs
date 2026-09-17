@@ -1020,7 +1020,7 @@ const AMSMATH_PACKAGES: &[&str] = &[
 /// same way with an empty preamble. `article`, `report`, `book`, `memoir`,
 /// `scrartcl`, `scrbook`, `scrreprt`, `revtex4-2`, `elsarticle`, `IEEEtran`,
 /// `letter`, `proc`, `slides` and `amsdtx` measured as kernel.
-const AMSMATH_CLASSES: &[&str] = &["amsart", "amsbook", "amsproc", "acmart", "beamer"];
+pub(crate) const AMSMATH_CLASSES: &[&str] = &["amsart", "amsbook", "amsproc", "acmart", "beamer"];
 
 /// Packages that make the full `amssymb` inventory exist. Measured the same
 /// way: `\documentclass[10pt]{article}\usepackage{X}` compiled with TeX Live
@@ -1115,7 +1115,23 @@ pub fn parse_tokens(
     packages: MathPackages,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> MathList {
-    let (list, unclosed) = parse_tokens_reporting_unclosed(tokens, packages, diagnostics, false);
+    parse_tokens_display(tokens, packages, diagnostics, false)
+}
+
+/// Like [`parse_tokens`], but `display` says whether this list sits inside
+/// a display construct (`\[...\]`, `$$...$$`, `equation`/`align`/...) rather
+/// than inline math (`$...$`) — LaTeX's `\if@display`, which some amsmath
+/// commands (`\mod`) key their spacing on. Every caller that isn't clearly
+/// one or the other keeps calling [`parse_tokens`], which defaults to
+/// inline; that is every existing call site except the three in `parser.rs`
+/// that actually know which construct they are inside.
+pub fn parse_tokens_display(
+    tokens: &[Token],
+    packages: MathPackages,
+    diagnostics: &mut Vec<Diagnostic>,
+    display: bool,
+) -> MathList {
+    let (list, unclosed) = parse_tokens_reporting_unclosed(tokens, packages, diagnostics, false, display);
     if let Some(open) = unclosed {
         diagnostics.push(Diagnostic::error(
             "math group is missing its closing brace",
@@ -1143,6 +1159,7 @@ pub fn parse_tokens_reporting_unclosed(
     packages: MathPackages,
     diagnostics: &mut Vec<Diagnostic>,
     cut_off: bool,
+    display: bool,
 ) -> (MathList, Option<Span>) {
     let split = split_word_tokens(tokens);
     let mut parser = MathParser {
@@ -1156,6 +1173,7 @@ pub fn parse_tokens_reporting_unclosed(
         cut_off,
         open_lefts: 0,
         dropped_lefts: 0,
+        display,
     };
     let list = parser.list(false);
     (list, parser.unclosed)
@@ -1220,6 +1238,12 @@ struct MathParser<'a> {
     /// (their `\right`s are dropped too).
     open_lefts: usize,
     dropped_lefts: usize,
+    /// LaTeX's `\if@display`: this list sits inside a display construct
+    /// (`\[...\]`, `$$...$$`, `equation`/`align`/...) rather than inline
+    /// math (`$...$`). Some amsmath commands (`\mod`) key their spacing on
+    /// it; it does not change for a nested group, script or fraction --
+    /// `\if@display` is LaTeX's outer flag, not TeX's inner math style.
+    display: bool,
 }
 
 impl MathParser<'_> {
@@ -1580,10 +1604,14 @@ impl MathParser<'_> {
                     word.len(),
                     "word tokens must be split before math parsing"
                 );
-                // The lexer turns the control symbols `\,` `\:` `\;` into a
-                // one-character word spanning two source bytes; in math they are
-                // thin/medium/thick spaces (3, 4 and 5 mu), not punctuation.
-                if token.span.end - token.span.start == 2 {
+                // A control symbol (`\,` `\:` `\;` …) lexes as a one-character
+                // word; in math the spacing ones are thin/medium/thick spaces
+                // (3, 4 and 5 mu), not punctuation. The escaped identity comes
+                // from the lexer's `control_symbol` mark — never from span
+                // length, which macro expansion rebinds to the invocation
+                // (issue #756: `\,` inside `\newcommand{\dd}{…}` carries
+                // `\dd`'s 3-byte span, not the 2-byte `\,` span).
+                if token.control_symbol {
                     let mu = match ch {
                         ',' => 3.0,
                         ':' | '>' => 4.0,
@@ -2127,11 +2155,52 @@ impl MathParser<'_> {
                 self.pending.push(space(BMOD_EXTRA_MU / 18.0, span));
                 space(BMOD_EXTRA_MU / 18.0, span)
             }
-            // amsmath's `\mod` (`amsmath.sty` 726-728) is a different command
-            // with a different kern and no parentheses, and is undefined in
-            // base LaTeX2e; it is left exactly as it was, with the rest of the
-            // amsmath-provided constructs.
-            "mod" => text_atom("mod".into(), span),
+            // amsmath's `\mod` (`amsmath.sty` 910-911) is a different command
+            // from `\bmod` and `\pmod`, undefined in base LaTeX2e:
+            //
+            //   \allowbreak\if@display\mkern18mu\else\mkern12mu\fi
+            //   {\operator@font mod}\,\,#1
+            //
+            // so: an opening kern, an **ordinary** upright `mod` (a braced
+            // group, not `\mathbin` — unlike `\bmod`), 6mu, and one argument.
+            //
+            // Measured with TeX Live 2025 pdflatex at 10pt:
+            //
+            //   $x\mod{y}$                            40.14336
+            //   $x\mkern12mu\mathrm{mod}\,\,y$        40.14336
+            //   $x\mkern12mu\mathrm{mod}\mkern6mu y$  40.14336
+            //   $\mod{y}$                             34.42809
+            //   $\mkern12mu\mathrm{mod}\,\,y$         34.42809
+            //
+            // and `$x\mod y$` is 40.14336 too, so the unbraced argument is
+            // the same one token `required_group` takes.
+            //
+            // `\if@display` is false inside `$...$` even under
+            // `\displaystyle` — it is `\everydisplay` that sets it, i.e. it
+            // tracks the *outer* display/inline construct (`self.display`,
+            // threaded from `parser.rs`'s `finish_math`/`equation_environment`/
+            // `multirow_environment`), not `\displaystyle` or any nested
+            // math style. `$\displaystyle x\mod{y}$` measures 40.14336, the
+            // inline (12mu) number, confirming that's the right default;
+            // `\[x\mod{y}\]` takes the 18mu branch straight from the
+            // amsmath.sty source line above.
+            //
+            // The class override is load-bearing: `atom_class` classifies a
+            // `mod` text nucleus as Bin for `\bmod`, and amsmath's `\mod`
+            // wraps it in a group instead, so the 4mu the Bin class would add
+            // on each side is not there.
+            "mod" if !self.packages.amsmath => self.missing_package(&name, "amsmath", span),
+            "mod" => {
+                let opening_mu = if self.display { AMSMATH_MOD_DISPLAY_OPENING_MU } else { AMSMATH_MOD_OPENING_MU };
+                let argument = self.required_group("mod", span);
+                self.pending.push(MathAtom {
+                    class_override: Some(AtomClass::Ord),
+                    ..text_atom("mod".into(), span)
+                });
+                self.pending.push(space(AMSMATH_MOD_TRAILING_MU / 18.0, span));
+                self.pending.extend(argument.atoms);
+                space(opening_mu / 18.0, span)
+            }
             // amsmath.sty lines 237-241: `\dfrac` = `\genfrac{}{}{}0`,
             // `\tfrac` = `\genfrac{}{}{}1`, `\binom` = `\genfrac()\z@{}`,
             // `\dbinom` = `\genfrac(){0pt}0`, `\tbinom` = `\genfrac(){0pt}1`.
@@ -2352,22 +2421,44 @@ impl MathParser<'_> {
             // `\@displaytrue` by hand puts amsmath back on 50.82503, which is
             // what makes the display case identical.
             //
-            // This compiler has no display flag on the atom, so the inline
-            // definition is the one that moves; every display formula reaches
-            // the same 18mu it does today.
-            "pmod" => {
-                let body = self.required_group("pmod", span);
-                self.pending.push(text_atom("(mod".into(), span));
-                self.pending.push(space(6.0 / 18.0, span));
+            // `self.display` is LaTeX's `\if@display` (see `parse_tokens_display`):
+            // amsmath opens with 18mu in display math, 8mu inline; the kernel
+            // always opens with 18mu (`QUAD_EM`), so display formulas are
+            // byte-identical under both, exactly as the measurements above.
+            //
+            // amsmath's `\pod` (`amsmath.sty` 716-724) is the same construct
+            // without the `mod` text and its 6mu: `\pmod` is defined through
+            // it (`\pod{{\operator@font mod}}`). The kernel has no `\pod`,
+            // so it needs amsmath, like `\mod`. Both open with amsmath's real
+            // `\allowbreak\if@display\mkern18mu\else\mkern8mu\fi`; the
+            // break itself is `\allowbreak` below (a layout-neutral no-op:
+            // formulas never break across lines here).
+            "pod" if !self.packages.amsmath => self.missing_package(&name, "amsmath", span),
+            "pod" | "pmod" => {
+                let body = self.required_group(&name, span);
+                if name == "pmod" {
+                    self.pending.push(text_atom("(mod".into(), span));
+                    self.pending.push(space(6.0 / 18.0, span));
+                } else {
+                    self.pending.push(text_atom("(".into(), span));
+                }
                 self.pending.extend(body.atoms);
                 self.pending.push(text_atom(")".into(), span));
-                let opening = if self.packages.amsmath {
+                let opening = if self.packages.amsmath && !self.display {
                     AMSMATH_POD_MU / 18.0
                 } else {
                     QUAD_EM
                 };
                 space(opening, span)
             }
+            // Plain TeX's `\allowbreak` (`\penalty0`): a zero-penalty
+            // breakpoint at this point in the formula, mirroring text mode's
+            // `Inline::Penalty { value: 0 }`. The math layout has no
+            // breakpoint mechanism — a formula lays out as one unbreakable
+            // box — so this is recognised and layout-neutral: a zero-width
+            // space atom, which `atom_class` skips (`None`) exactly like
+            // every other explicit kern, leaving spacing byte-identical.
+            "allowbreak" => space(0.0, span),
             // siunitx inside a formula (`crate::siunitx`).
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(&name, span),
@@ -2539,6 +2630,20 @@ impl MathParser<'_> {
                 class_override: Some(AtomClass::Rel),
                 ..symbol("\u{21CC}".into(), span)
             },
+            // `\Diamond` (issue #591) has no LaTeX2e kernel definition.
+            // `amsfonts.sty:153` `\let`s it to `\lozenge` (msam "06,
+            // 0.666669em, Ord) once amsfonts or amssymb is loaded; with
+            // neither, pdflatex answers "Undefined control sequence". This
+            // compiler tracks no `latexsym` flag (`MathPackages` has none),
+            // so — unlike the #516 standing choice that made `\Box` always
+            // available — there is no separate fallback design to fall back
+            // to: requiring amsfonts is the whole gate, and routing through
+            // `ams_atom` reuses the same metric path `\lozenge` itself uses.
+            "Diamond" if self.packages.amsfonts => ams_atom(
+                crate::amssymb::by_name("lozenge").expect("lozenge is a table row"),
+                span,
+            ),
+            "Diamond" => self.missing_package(&name, "amsfonts", span),
             // amsfonts `\dashrightarrow` = `\mathrel{\dabar@\dabar@\mathchar"0\hexnumber@
             // \symAMSa 4B}` (`\dasharrow` its alias) and `\dashleftarrow` with the
             // "4C head first (`amsfonts.sty` 87-95).
@@ -2873,6 +2978,7 @@ impl MathParser<'_> {
             cut_off: false,
             open_lefts: 0,
             dropped_lefts: 0,
+            display: self.display,
         };
         let list = parser.list(false);
         if let Some(open) = parser.unclosed {
@@ -2995,7 +3101,7 @@ impl MathParser<'_> {
             self.i += 1;
             return space(0.0, span.merge(token.span));
         }
-        if delimiter == "|" && token.span.end - token.span.start == 2 {
+        if delimiter == "|" && token.control_symbol {
             self.i += 1;
             return symbol("‖".into(), span.merge(token.span));
         }
@@ -3714,6 +3820,22 @@ pub(crate) const BMOD_EXTRA_MU: f64 = 1.0;
 /// kernel's 18mu (`QUAD_EM`).
 pub(crate) const AMSMATH_POD_MU: f64 = 8.0;
 
+/// The mu amsmath's `\mod` opens with in inline math
+/// (`\if@display\mkern18mu\else\mkern12mu\fi`; `$x\mod{y}$` measures
+/// 40.14336pt at 10pt, TeX Live 2025, confirming this branch).
+pub(crate) const AMSMATH_MOD_OPENING_MU: f64 = 12.0;
+
+/// The mu amsmath's `\mod` opens with in display math (`\[...\]`,
+/// `equation`, `align`, ...) — the other branch of the same
+/// `\if@display\mkern18mu\else\mkern12mu\fi` line.
+pub(crate) const AMSMATH_MOD_DISPLAY_OPENING_MU: f64 = 18.0;
+
+/// The mu amsmath's `\mod` puts between `mod` and its argument: `\,\,`, two
+/// `\thinmuskip`s of 3mu. Same in both display and inline math — only the
+/// opening kern (`AMSMATH_MOD_OPENING_MU`/`AMSMATH_MOD_DISPLAY_OPENING_MU`)
+/// depends on `\if@display`.
+pub(crate) const AMSMATH_MOD_TRAILING_MU: f64 = 6.0;
+
 /// The kernel `\angle`'s advance in ems, without amsfonts: `fontmath.ltx` 243
 /// builds it from an `\ialign` of rules, so it has no character and no font —
 /// `\showthe\wd` of `\hbox{$\angle$}` is 6.37344pt at every size from 10pt,
@@ -4188,6 +4310,17 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("Box", "□"),
     ("blacksquare", "■"),
     ("lozenge", "◊"),
+    // `\diamond` and `\Diamond` are two genuinely distinct commands (issue
+    // #591): `\diamond` is the kernel cmsy `\mathbin` (U+22C4 ⋄, a small
+    // operator diamond, `crate::lm_math` advance), always available.
+    // `\Diamond` has no kernel definition at all — `amsfonts.sty:153`
+    // `\let`s it to `\lozenge` (U+25CA ◊, AMSa "06, 0.666669em, Ord) once
+    // amsfonts/amssymb is loaded (`command_atom`'s dedicated, package-gated
+    // arm), and is otherwise undefined. This row exists so vocabulary/
+    // export tooling still recognizes the name; the render path never
+    // consults it (see the `"Diamond"` arms in `command_atom`).
+    ("diamond", "⋄"),
+    ("Diamond", "◊"),
     ("checkmark", "✓"),
     // HW2 follow-up (issue #62): the remaining long arrows, drawn from the
     // pinned Latin Modern Math resource like `\Longrightarrow` above.
@@ -4379,6 +4512,11 @@ fn symbol_class(glyph: &str) -> AtomClass {
         | "⊗" | "⊖" | "⊘" | "⊙" | "◯" | "∖" | "∓" | "∘"
         // fontmath.ltx 278-279: `\sqcap`/`\sqcup`, `\mathbin` at cmsy "75/"74.
         | "⊓" | "⊔"
+        // Issue #591: `\diamond` is the kernel cmsy `\mathbin` (U+22C4),
+        // so it takes medium space like `\bigcirc` above — not `Ord` like
+        // the look-alike `\Diamond` (aliased to `\lozenge`, `ams_atom`'s
+        // own class, once amsfonts/amssymb is loaded).
+        | "⋄"
         // `\bigtriangledown`; `\bigtriangleup` shares `\triangle`'s glyph
         // (Ord by default here) and overrides its class to Bin instead.
         | "▽" => Bin,
@@ -5487,6 +5625,10 @@ fn split_word_tokens(tokens: &[Token]) -> Vec<Token> {
             for (offset, ch) in word.char_indices() {
                 out.push(Token {
                     kind: TokenKind::Word(ch.to_string()),
+                    // Control symbols are always one character, so a split
+                    // piece of a marked word keeps the mark; ordinary word
+                    // runs stay unmarked, however they were produced.
+                    control_symbol: token.control_symbol,
                     span: if source_matches_word {
                         Span::in_document(
                             token.span.document,
@@ -5949,6 +6091,77 @@ mod parse_tests {
             null.size,
             bar.size
         );
+    }
+
+    #[test]
+    fn left_bar_uses_control_symbol_mark_not_span_length() {
+        // Same bug class as issue #756: `take_delimiter` decided `\|`
+        // (double-bar `‖`) vs `|` (single bar) by span byte-length — a
+        // proxy for "literal backslash" that macro expansion rebinds to
+        // the invocation. A 7-byte `\dblbar` wrapping `\left\|` fell
+        // through to a single bar; a 2-byte `\b` wrapping `\left|`
+        // spuriously became `‖`. The lexer's `control_symbol` mark is
+        // the identity signal instead (preserved through expansion and
+        // `split_word_tokens`), so span length must not matter here.
+        let fences = |tokens: &[Token]| -> Vec<String> {
+            let mut diagnostics = Vec::new();
+            let list = parse_tokens(tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            list.atoms
+                .iter()
+                .filter_map(|atom| match &atom.nucleus {
+                    Nucleus::SizedDelimiter { glyph, .. } => Some(glyph.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        // No regression: literally written delimiters parse as before.
+        assert_eq!(
+            fences(&crate::lexer::tokenize(r"\left\| x \right\|")),
+            ["‖", "‖"]
+        );
+        assert_eq!(
+            fences(&crate::lexer::tokenize(r"\left| x \right|")),
+            ["|", "|"]
+        );
+        // Macro-shaped tokens: the mark decides, however long the
+        // invocation span is. These stand in for delimiter tokens whose
+        // spans expansion rebound to the macro invocation.
+        let stream = |delimiter: Token| -> Vec<Token> {
+            vec![
+                Token {
+                    kind: TokenKind::Command("left".into()),
+                    span: Span::new(0, 5),
+                    control_symbol: false,
+                },
+                delimiter.clone(),
+                Token {
+                    kind: TokenKind::Word("x".into()),
+                    span: Span::new(0, 1),
+                    control_symbol: false,
+                },
+                Token {
+                    kind: TokenKind::Command("right".into()),
+                    span: Span::new(0, 6),
+                    control_symbol: false,
+                },
+                delimiter,
+            ]
+        };
+        // `\|` from a 7-byte `\dblbar` body: still a double bar.
+        let escaped = Token {
+            kind: TokenKind::Word("|".into()),
+            span: Span::new(0, 7),
+            control_symbol: true,
+        };
+        assert_eq!(fences(&stream(escaped)), ["‖", "‖"]);
+        // Literal `|` from a 2-byte `\b` body: still a single bar.
+        let literal = Token {
+            kind: TokenKind::Word("|".into()),
+            span: Span::new(0, 2),
+            control_symbol: false,
+        };
+        assert_eq!(fences(&stream(literal)), ["|", "|"]);
     }
 
     #[test]
@@ -7252,6 +7465,50 @@ mod spacing_tests {
         }
     }
 
+    /// Issue #591 (`\diamond`/`\Diamond`, follow-up to #516's `\Box`):
+    /// `\diamond` is the kernel cmsy `\mathbin` (U+22C4 ⋄), always
+    /// available. `\Diamond` has no kernel definition — `amsfonts.sty:153`
+    /// `\let`s it to `\lozenge` (U+25CA ◊, AMSa "06, 0.666669em, Ord) once
+    /// amsfonts/amssymb is loaded — genuinely distinct from `\diamond`, not
+    /// a synonym, and metrically distinct from `\square` too. `\diamond`
+    /// stays a known command either way, so it is never misreported as an
+    /// unknown command with `\Diamond` as the typo fix.
+    #[test]
+    fn diamond_and_capital_diamond_are_distinct_diamonds() {
+        assert_eq!(command_glyph("diamond"), Some("⋄"));
+        assert_eq!(command_glyph("square"), Some("□"));
+        assert!(crate::vocabulary::math_mode_help("diamond").is_none());
+        assert!(crate::vocabulary::closest_commands("diamond").is_empty());
+
+        let small = laid_out(r"\diamond", SIZE);
+        let big = laid_out_with(r"\Diamond", SIZE, AMSSYMB);
+        assert_eq!(small.items.len(), 1, "{:?}", small.items);
+        assert_eq!(big.items.len(), 1, "{:?}", big.items);
+        assert_eq!(small.items[0].text, "⋄");
+        assert_eq!(big.items[0].text, "◊");
+        close(small.width, 0.5 * SIZE);
+        close(big.width, 0.666669 * SIZE);
+        // Metrically distinct from each other and from `\square` (msam
+        // 0.777781em under `amssymb`): three different real advances.
+        let square = laid_out_with(r"\square", SIZE, AMSSYMB);
+        assert_eq!(square.items[0].text, "□");
+        for (a, b) in [
+            (small.width, big.width),
+            (small.width, square.width),
+            (big.width, square.width),
+        ] {
+            assert!((a - b).abs() > 0.1, "{a} vs {b}");
+        }
+        // Class: `\diamond` takes Bin spacing like `\bigcirc`, `\Diamond`
+        // is Ord like `\square` — medium space versus none.
+        let b = laid_out(r"a\diamond b", SIZE);
+        close(x(&b, "⋄"), width("a", SIZE) + 4.0);
+        close(x(&b, "b"), x(&b, "⋄") + small.width + 4.0);
+        let b = laid_out_with(r"a\Diamond b", SIZE, AMSSYMB);
+        close(x(&b, "◊"), width("a", SIZE));
+        close(x(&b, "b"), x(&b, "◊") + big.width);
+    }
+
     #[test]
     fn a_leading_or_post_relation_minus_is_ordinary_and_a_real_minus_sign() {
         let b = laid_out("-x", SIZE);
@@ -7951,6 +8208,16 @@ mod package_gating_tests {
         layout(&list, SIZE, &mut Vec::new())
     }
 
+    /// Like `laid_out`, but as if this formula were inside `\[...\]`/
+    /// `equation`/`align`/... instead of inline `$...$` (LaTeX's
+    /// `\if@display`).
+    fn laid_out_display(source: &str, packages: MathPackages) -> MathBox {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens_display(&crate::lexer::tokenize(source), packages, &mut diagnostics, true);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        layout(&list, SIZE, &mut Vec::new())
+    }
+
     fn x(b: &MathBox, text: &str) -> f64 {
         b.items
             .iter()
@@ -8112,6 +8379,27 @@ mod package_gating_tests {
         );
         let (_, loaded) = parsed(r"\square", AMSSYMB);
         assert!(loaded.is_empty(), "\\square under amssymb: {loaded:?}");
+    }
+
+    /// Issue #591: `\Diamond` has no kernel definition at all (unlike
+    /// `\square`, which the kernel just doesn't shape like `amssymb` does),
+    /// so pdflatex reports it undefined with no package loaded, and only
+    /// clean once `amsfonts`/`amssymb` is loaded.
+    #[test]
+    fn diamond_requires_a_package_or_is_undefined() {
+        let (_, kernel) = parsed(r"\Diamond", MathPackages::KERNEL);
+        assert_eq!(
+            kernel.first().map(|d| d.message.as_str()),
+            Some(r"\Diamond requires \usepackage{amsfonts}"),
+            "\\Diamond without its package: {kernel:?}"
+        );
+        let (_, loaded) = parsed(r"\Diamond", AMSSYMB);
+        assert!(loaded.is_empty(), "\\Diamond under amssymb: {loaded:?}");
+        let (_, amsfonts_only) = parsed(r"\Diamond", AMSFONTS);
+        assert!(
+            amsfonts_only.is_empty(),
+            "\\Diamond under amsfonts alone: {amsfonts_only:?}"
+        );
     }
 
     /// Issue #516: the two spellings lay out the same glyph at the same
@@ -8378,6 +8666,113 @@ mod package_gating_tests {
                 x(&label, "y") - x(&label, "(mod")
             });
         }
+    }
+
+    /// `\pmod` in display math takes amsmath's `\if@display` 18mu branch,
+    /// so it is byte-identical to the kernel there (the inline 8mu is the
+    /// only thing that moves). The 6mu before the argument does not move.
+    #[test]
+    fn pmod_opens_with_eighteen_mu_in_display_math() {
+        for packages in [MathPackages::KERNEL, AMSMATH] {
+            let b = laid_out_display(r"a\pmod{y}", packages);
+            let a = laid_out_display("a", packages).width;
+            close(x(&b, "(mod"), a + 18.0);
+            close(x(&b, "y") - x(&b, "(mod"), {
+                let label = laid_out_display(r"\pmod{y}", MathPackages::KERNEL);
+                x(&label, "y") - x(&label, "(mod")
+            });
+        }
+    }
+
+    /// amsmath's `\pod` (`amsmath.sty` 716-724) is `\pmod` without the `mod`
+    /// text and its 6mu: `(arg)`, with the same display/inline mu split. The
+    /// kernel has no `\pod`, so it needs amsmath, like `\mod`.
+    #[test]
+    fn pod_needs_amsmath() {
+        // pdflatex without amsmath: `! Undefined control sequence. \pod`.
+        let (_, diagnostics) = parsed(r"a\pod{y}", MathPackages::KERNEL);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message == "\\pod requires \\usepackage{amsmath}"),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn pod_is_pmod_without_the_mod_text_and_its_six_mu() {
+        let b = laid_out(r"a\pod{y}", AMSMATH);
+        let a = laid_out("a", AMSMATH).width;
+        // Same 8mu inline opening as `\pmod` ...
+        close(x(&b, "("), a + AMSMATH_POD_MU);
+        // ... but no `mod` text: `y` sits directly after `(`.
+        assert!(
+            !b.items.iter().any(|i| i.text == "(mod"),
+            "{:?}",
+            b.items.iter().map(|i| &i.text).collect::<Vec<_>>()
+        );
+        // `y` starts where `(` ends: no 6mu gap, unlike `\pmod`.
+        close(
+            x(&b, "y") - x(&b, "("),
+            laid_out("(", AMSMATH).width,
+        );
+        // ... and the 18mu display branch, like `\pmod`.
+        let d = laid_out_display(r"a\pod{y}", AMSMATH);
+        let da = laid_out_display("a", AMSMATH).width;
+        close(x(&d, "("), da + 18.0);
+    }
+
+    /// Plain TeX's `\allowbreak` is recognised in math and lays out exactly
+    /// like the formula without it: the math layout has no breakpoint
+    /// mechanism, so the zero-penalty break is a documented no-op.
+    #[test]
+    fn allowbreak_is_a_layout_neutral_noop_in_math() {
+        for source in [r"a\allowbreak b", r"a \allowbreak b", r"\allowbreak a"] {
+            let (list, diagnostics) = parsed(source, AMSMATH);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            let with_break = layout(&list, SIZE, &mut Vec::new());
+            let plain = source.replace("\\allowbreak", "");
+            let without_break = laid_out(&plain, AMSMATH);
+            close(with_break.width, without_break.width);
+        }
+    }
+
+    #[test]
+    fn mod_needs_amsmath() {
+        // pdflatex without amsmath: `! Undefined control sequence. \mod`.
+        let (_, diagnostics) = parsed(r"a\mod{b}", MathPackages::KERNEL);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message == "\\mod requires \\usepackage{amsmath}"),
+            "{diagnostics:?}"
+        );
+    }
+
+    /// amsmath's `\mod` (`amsmath.sty` 910-911) opens with `\mkern12mu`
+    /// outside display and puts `\,\,` (6mu) before its argument. Measured at
+    /// 10pt: `$x\mod{y}$` is 40.14336pt, matching `$x\mkern12mu\mathrm{mod}
+    /// \mkern6mu y$` exactly.
+    #[test]
+    fn mod_opens_with_twelve_mu_and_puts_six_before_its_argument() {
+        let b = laid_out(r"x\mod{y}", AMSMATH);
+        let x_width = laid_out("x", AMSMATH).width;
+        let word = laid_out(r"\mathrm{mod}", AMSMATH).width;
+        close(x(&b, "mod"), x_width + AMSMATH_MOD_OPENING_MU);
+        close(x(&b, "y"), x(&b, "mod") + word + AMSMATH_MOD_TRAILING_MU);
+    }
+
+    /// Same construct as `mod_opens_with_twelve_mu_and_puts_six_before_its_argument`,
+    /// but inside `\[...\]`/`equation`/`align`/... instead of `$...$`: amsmath's
+    /// `\if@display\mkern18mu\else\mkern12mu\fi` takes the other branch. The
+    /// 6mu before the argument does not move (review finding #1 on #783).
+    #[test]
+    fn mod_opens_with_eighteen_mu_in_display_math() {
+        let b = laid_out_display(r"x\mod{y}", AMSMATH);
+        let x_width = laid_out_display("x", AMSMATH).width;
+        let word = laid_out_display(r"\mathrm{mod}", AMSMATH).width;
+        close(x(&b, "mod"), x_width + AMSMATH_MOD_DISPLAY_OPENING_MU);
+        close(x(&b, "y"), x(&b, "mod") + word + AMSMATH_MOD_TRAILING_MU);
     }
 
     /// Which `\usepackage` and `\documentclass` names set which flag, measured

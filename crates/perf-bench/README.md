@@ -60,6 +60,74 @@ Useful invocations:
 ./target/release/flashtex-perf-bench --flamegraph /tmp/fg --flamegraph-case synthetic-500kb
 ```
 
+## Re-recording digests after an intentional rendering change
+
+The CI gate (`--check --require-same-host`) has exactly one part that can fail
+on any machine: a byte-for-byte digest mismatch against
+`baselines/linux-x86_64-ryzen7-7800x3d.json`. The timing checks only ever fire
+when `meta.host_fingerprint` matches the pinned reference host, which no
+public CI runner does, so in practice **a failing `engine performance` check
+means your change altered rendered output** for at least one case — a font
+substitution, a glyph choice, a spacing change, anything that touches
+`digests`, not `metrics`.
+
+That's often correct: you meant to change what gets rendered. When it is,
+re-record the affected cases' digests with `scripts/merge_digests.py`:
+
+```sh
+# 1. Build --release. Debug and release can render differently (#667), so a
+#    debug recording is worthless for this.
+cargo build --release --bin flashtex-perf-bench
+
+# 2. Record a fresh report. Any machine works — digests don't depend on host,
+#    CPU, load or build lane, only on the bytes the render path produces.
+./target/release/flashtex-perf-bench --json /tmp/report.json
+
+# 3. Copy over ONLY the cases you've verified are meant to change. This is a
+#    diff tool, not an "accept all" button: it prints exactly which
+#    case/digest-key values would change, old -> new.
+python3 scripts/merge_digests.py \
+    --baseline baselines/linux-x86_64-ryzen7-7800x3d.json \
+    --new-report /tmp/report.json \
+    --case your-case-id \
+    --out baselines/linux-x86_64-ryzen7-7800x3d.json
+
+# 4. Confirm nothing else moved.
+git diff --stat -- crates/perf-bench/baselines/
+```
+
+Why this is safe, and why it must be done this way rather than with
+`--json`/`--update-baseline` directly against the committed file:
+
+- **Digests are portable, `metrics`/`meta` are not.** `digests` are sha256
+  hashes of rendered bytes only (`cold.reply`, `export.pdf`, and per-keystroke
+  reply hashes for each warm scenario) — see `aggregate()` in `src/report.rs`.
+  No timing, RSS or CPU number feeds them. `metrics` and `meta` (especially
+  `meta.host_fingerprint`, `meta.cpu`, `meta.build_target`) are exactly the
+  opposite: numbers that are only meaningful when recorded on the pinned
+  Ryzen reference host under low load. Re-recording those anywhere else and
+  committing them would silently replace the real timing baseline with noise
+  from whatever machine happened to run it, and — because
+  `--require-same-host` checks `host_fingerprint` — would permanently disable
+  the timing gate without anyone noticing.
+- **`merge_digests.py` touches nothing else.** It copies the `digests` object
+  of each `--case` you name from the new report into the baseline and leaves
+  `metrics`, `meta`, `schema_version`, `targets`, `unmeasured`, and every case
+  you didn't name byte-for-byte identical — verified both by how it edits the
+  file (a text splice of just that span, not a re-serialize) and by a
+  self-check before it writes anything.
+- **You must justify the change in the PR.** A digest update is a claim that
+  the new rendered output is *correct*, not merely different — that's the
+  entire reason the gate exists: to force a human (you, in the PR
+  description, or a reviewer) to look at each case whose output moved and say
+  why. Re-recording digests without that justification defeats the check as
+  surely as deleting it. State, per case: what changed about the rendered
+  output, and why that's the intended behavior of your change (cite the issue
+  or the code path). "CI failed so I re-recorded" is not a justification.
+- **There is no bulk mode on purpose.** `--case` is required per case, with no
+  "update everything" default or flag. If your change affected cases you
+  didn't expect, that is itself a signal to go look, not to sweep them in.
+
 ## Three rules the harness enforces on itself
 
 **No measurement without fonts.** Latin Modern and the pinned 12 pt TFM set

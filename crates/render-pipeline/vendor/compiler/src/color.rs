@@ -545,6 +545,7 @@ const BILLION: u64 = 1_000_000_000;
 
 impl DeviceColor {
     pub const BLACK: DeviceColor = DeviceColor { space: ColorSpace::Gray, values: [0; 4] };
+    pub const WHITE: DeviceColor = DeviceColor { space: ColorSpace::Gray, values: [BILLION as u32; 4] };
 
     /// Operand values in billionths, one per component.
     pub fn billionths(&self) -> &[u32] {

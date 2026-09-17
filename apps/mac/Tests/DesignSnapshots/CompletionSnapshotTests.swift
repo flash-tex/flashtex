@@ -12,6 +12,12 @@ import XCTest
 @MainActor
 final class CompletionSnapshotTests: XCTestCase {
 
+    /// Pixel comparison only means something on the machine the references
+    /// were recorded on; elsewhere this skips loudly (SnapshotEnvironment.swift).
+    override func setUp() async throws {
+        try SnapshotEnvironment.requireComparableToReferences()
+    }
+
     private var suggestions: [Completion.Suggestion] {
         [
             .init(label: "\\section", insertText: "\\section", kind: .command, detail: "supported by this compiler"),

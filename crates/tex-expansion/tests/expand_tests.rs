@@ -736,3 +736,175 @@ fn past_a_nesting_limit_the_extra_group_or_conditional_is_ignored_and_expansion_
     assert_eq!(messages[0], "conditional nesting limit exceeded");
     assert!(messages[1..].iter().any(|m| m.starts_with("Extra ")), "{messages:?}");
 }
+
+#[test]
+fn newtheorem_reserved_name_reports_collision_not_missing_control_sequence() {
+    // GitHub issue #700: `\newtheorem{def}` collides with the `\def`
+    // primitive. Real pdflatex refuses the declaration ("LaTeX Error:
+    // Command \def already defined."); without the check the bad name
+    // reached `\begin{def}`, which executed `\def` and failed with a
+    // generic "Missing control sequence inserted." instead.
+    let r = expand_str(r"\newtheorem{def}{Definition}\begin{def}A test.\end{def}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["LaTeX Error: Command \\def already defined."], "{messages:?}");
+    assert!(!messages.iter().any(|m| m.contains("Missing control sequence")), "{messages:?}");
+    // The rejected environment is skipped; its body still typesets.
+    assert_eq!(text(&r.tokens), "A test.");
+}
+
+#[test]
+fn newtheorem_free_name_passes_through_silently() {
+    let r = expand_str(r"\newtheorem{defn}{Definition}\begin{defn}A test.\end{defn}");
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    let out = text(&r.tokens);
+    assert!(out.contains("A test."), "{out:?}");
+    // The declaration reaches the typesetter, which owns theorem counters.
+    assert!(out.contains("\\newtheorem "), "{out:?}");
+}
+
+#[test]
+fn newtheorem_rejection_leaves_the_shadowed_primitive_usable() {
+    // Only the rejected `\begin{def}`/`\end{def}` are diverted; a later
+    // `\def` still defines.
+    let r = expand_str(r"\newtheorem{def}{Definition}\def\foo{hi}\foo");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["LaTeX Error: Command \\def already defined."], "{messages:?}");
+    assert_eq!(text(&r.tokens), "hi");
+}
+
+#[test]
+fn newtheorem_rejection_does_not_leak_a_pending_global() {
+    // A rejected declaration returned early without clearing pending
+    // prefixes, so `\global` (or `\long`/`\outer`/`\protected`, though none
+    // apply here) leaked onto whatever command read prefixes next.
+    let r = expand_str(r"{\global\newtheorem{def}{D}\def\foo{hi}}\ifdefined\foo Y\else N\fi");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["LaTeX Error: Command \\def already defined."], "{messages:?}");
+    // `\foo` was defined inside the group without `\global` surviving onto
+    // it, so it does not exist once the group closes.
+    assert_eq!(text(&r.tokens), "N", "{:?}", r.tokens);
+}
+
+#[test]
+fn newtheorem_name_is_fully_expanded_before_the_collision_check() {
+    // The name argument is a `\csname`-equivalent context in real TeX: `\n`
+    // expands to `def` before anything checks it, colliding with `\def`
+    // exactly like a literal `\newtheorem{def}{D}` would (review finding
+    // #1), not the unexpanded control sequence name "n".
+    let src = r"\def\n{def}\newtheorem{\n}{D}";
+    let r = expand_str(src);
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["LaTeX Error: Command \\def already defined."], "{messages:?}");
+    // The diagnostic still points at `\newtheorem` in the real source, not
+    // a synthetic span from the macro body that supplied its expanded name.
+    let d = &r.diagnostics[0];
+    assert_eq!(&src[d.span.start as usize..d.span.end as usize], r"\newtheorem", "{d:?}");
+}
+
+#[test]
+fn newtheorem_rejection_is_undone_when_its_group_closes() {
+    // "widget" only collided with a *local* `\def`; once that group closes,
+    // a repeat `\newtheorem{widget}{...}` outside it must succeed cleanly,
+    // and `\begin{widget}`/`\end{widget}` afterwards must actually reach
+    // the typesetter rather than staying silently skipped by a stale
+    // rejection marker (review finding #3: the marker must be
+    // group-scoped, exactly like the local `\def` that caused it).
+    let r = expand_str(
+        r"{\def\widget{}\newtheorem{widget}{Widget}}\newtheorem{widget}{Widget}\begin{widget}\end{widget}",
+    );
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["LaTeX Error: Command \\widget already defined."], "{messages:?}");
+    let out = text(&r.tokens);
+    assert!(out.contains(r"\widget "), "{out:?}");
+    assert!(out.contains(r"\endwidget "), "{out:?}");
+}
+
+#[test]
+fn newtheorem_stale_rejection_is_cleared_by_a_later_successful_claim() {
+    // "foo" collides with a local `\def`, gets rejected, then that `\def` is
+    // undone with `\let` (not a group close, so the rejection's own
+    // group-scoped undo does not fire) before a fresh `\newtheorem{foo}`
+    // succeeds. The stale rejection must not survive a later successful
+    // claim of the same name (review finding #1's "related smaller gap").
+    let r = expand_str(
+        r"\def\foo{}\newtheorem{foo}{Foo}\let\foo\undefined\newtheorem{foo}{Foo}\begin{foo}\end{foo}",
+    );
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["LaTeX Error: Command \\foo already defined."], "{messages:?}");
+    let out = text(&r.tokens);
+    assert!(out.contains(r"\foo "), "{out:?}");
+    assert!(out.contains(r"\endfoo "), "{out:?}");
+}
+
+#[test]
+fn newtheorem_ifx_csname_relax_guard_still_declares() {
+    // The classic "define once" guard: `\csname thm\endcsname` on an
+    // undefined name defines it as `\relax` (real TeX), and pdflatex's
+    // `\@ifdefinable`-style check (`\ifx...\relax`) treats a `\relax`-valued
+    // name as undefined, so the guard falls through to
+    // `\newtheorem{thm}{Theorem}` with no real collision (review round 3,
+    // finding #1).
+    let r = expand_str(
+        r"\expandafter\ifx\csname thm\endcsname\relax\newtheorem{thm}{Theorem}\fi\begin{thm}\end{thm}",
+    );
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    let out = text(&r.tokens);
+    assert!(out.contains(r"\thm "), "{out:?}");
+    assert!(out.contains(r"\endthm "), "{out:?}");
+}
+
+#[test]
+fn newtheorem_let_to_relax_guard_still_declares() {
+    // Same idea, the other common spelling of the guard.
+    let r = expand_str(r"\let\thm\relax\newtheorem{thm}{Theorem}\begin{thm}\end{thm}");
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    let out = text(&r.tokens);
+    assert!(out.contains(r"\thm "), "{out:?}");
+    assert!(out.contains(r"\endthm "), "{out:?}");
+}
+
+#[test]
+fn newtheorem_relax_itself_is_never_definable() {
+    // `\relax`'s own meaning is trivially `Relax`, the same value the
+    // guard idiom above uses as a placeholder for "undefined" -- but
+    // `\relax` is the primitive itself, not a placeholder, and pdflatex
+    // never lets `\newtheorem` (or anything else) redefine it. Regression
+    // for the review round-3 fix's own bug: `is_undefined_or_relax`
+    // treated `\relax` as available for declaration too.
+    let r = expand_str(r"\newtheorem{relax}{Relax}\begin{relax}\end{relax}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["LaTeX Error: Command \\relax already defined."], "{messages:?}");
+    // Rejected and swallowed: \begin{relax}/\end{relax} must not reach the
+    // typesetter as \relax/\endrelax tokens (the bug this regresses would
+    // have let the declaration through, so both would appear).
+    let out = text(&r.tokens);
+    assert!(!out.contains(r"\relax "), "{out:?}");
+    assert!(!out.contains(r"\endrelax "), "{out:?}");
+}
+
+#[test]
+fn newtheorem_successful_reclaim_inside_a_group_is_global() {
+    // The successful branch claims `\name`/`\end<name>` globally
+    // (`assign_cs(..., true)`), so its un-reject of a stale rejection must
+    // be global too -- otherwise the group closing at the end of this
+    // source resurrects the rejection over what is supposed to be a
+    // permanent redeclaration (review round 3, finding #2).
+    let r = expand_str(
+        r"\def\foo{}\newtheorem{foo}{Foo}{\let\foo\undefined\newtheorem{foo}{Foo}}\begin{foo}\end{foo}",
+    );
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["LaTeX Error: Command \\foo already defined."], "{messages:?}");
+    let out = text(&r.tokens);
+    assert!(out.contains(r"\foo "), "{out:?}");
+    assert!(out.contains(r"\endfoo "), "{out:?}");
+}
+
+#[test]
+fn newtheorem_second_declaration_of_the_same_name_errors() {
+    // Like `\newenvironment`, a repeated declaration keeps the first
+    // definition and reports the collision once per redeclaration.
+    let r = expand_str(r"\newtheorem{thm}{Theorem}\newtheorem{thm}{Theorem}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["LaTeX Error: Command \\thm already defined."], "{messages:?}");
+    assert!(text(&r.tokens).contains("\\newtheorem "), "{:?}", r.tokens);
+}
