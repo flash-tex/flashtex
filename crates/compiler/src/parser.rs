@@ -1408,6 +1408,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "hrulefill",
     "dotfill",
     "hfil",
+    "qedhere",
     "hspace",
     "hskip",
     "footnote",
@@ -2246,6 +2247,7 @@ pub fn parse_project_with(
         natbib_limitations: std::collections::BTreeSet::new(),
         natbib_forced_numbers_reported: false,
         hangfrom_hang_indent_reported: false,
+        proof_qedhere: Vec::new(),
         title: None,
         author: None,
         date: None,
@@ -2490,6 +2492,11 @@ struct P<'a> {
     natbib_forced_numbers_reported: bool,
     /// Whether `\hangfrom`'s missing hanging indent has been reported.
     hangfrom_hang_indent_reported: bool,
+    /// One entry per open `proof` environment (innermost last): whether
+    /// `\qedhere` has claimed the end-of-proof box since the matching
+    /// `\begin{proof}`. Read at `\end{proof}`, which appends the automatic
+    /// box only when no entry is set (amsthm's `\popQED`).
+    proof_qedhere: Vec<bool>,
     /// Current text style; saved on `{` and environment entry, restored on
     /// the matching `}` or `\end`.
     style: TextStyle,
@@ -3483,6 +3490,9 @@ impl P<'_> {
             | "nobreakdash" | "discretionary" => {
                 self.horizontal_command(name, span, para)
             }
+            // amsthm `\qedhere` in running text (in math it never reaches
+            // this dispatch; see `raw_qedhere`).
+            "qedhere" => self.qedhere(span, para),
             // latex.ltx `\discretionary` is TeX's primitive; `\-` is
             // `\discretionary{\char\hyphenchar\font}{}{}`.
             "-" if self.tabbing_active() => self.tabbing_control("-", span, para),
@@ -6671,16 +6681,22 @@ impl P<'_> {
         } else if environment == "tabbing" && self.in_body {
             self.end_tabbing(blocks, para);
         } else if environment == "proof" {
-            para.push(Inline::HFill { span, leader: FillLeader::None });
-            para.push(Inline::Text {
-                text: "∎".to_string(),
-                span,
-                // `\qed` is typeset in the current (body) font, whose
-                // em-based box scales with the ambient size; unscoped this
-                // is `TextStyle::default()`, exactly as before.
-                style: self.style,
-                space_before: false,
-            });
+            // amsthm's `\popQED`: a `\qedhere` since the matching
+            // `\begin{proof}` already placed the box, so the automatic one
+            // is suppressed. A stray `\end{proof}` pops nothing.
+            let claimed = self.proof_qedhere.pop().unwrap_or(false);
+            if !claimed {
+                para.push(Inline::HFill { span, leader: FillLeader::None });
+                para.push(Inline::Text {
+                    text: "∎".to_string(),
+                    span,
+                    // `\qed` is typeset in the current (body) font, whose
+                    // em-based box scales with the ambient size; unscoped this
+                    // is `TextStyle::default()`, exactly as before.
+                    style: self.style,
+                    space_before: false,
+                });
+            }
             self.flush_paragraph(blocks, para);
         }
         if environment == "document" && self.has_document {
@@ -6957,6 +6973,9 @@ impl P<'_> {
     /// `environment`'s `\end` handling, once the body's last paragraph is
     /// known.
     fn begin_proof(&mut self, span: Span, para: &mut Vec<Inline>) {
+        // A `\qedhere` inside claims the end-of-proof box (see `qedhere`
+        // and the `\end{proof}` handling in `end_environment`).
+        self.proof_qedhere.push(false);
         // Like `begin_theorem` above: an enclosing size group stays in
         // effect for the heading and the body.
         let ambient_size = self.style.size;
@@ -6979,6 +6998,55 @@ impl P<'_> {
             size: ambient_size,
             ..TextStyle::default()
         };
+    }
+
+    /// amsthm `\qedhere` in running text: the end-of-proof box on this
+    /// line, flush right, exactly the marker `\end{proof}` appends (an
+    /// `HFill` and U+220E sharing one span), so the render pipeline draws
+    /// it through the one existing marker path — here the shared span is
+    /// the `\qedhere` command itself. Also claims the box for the open
+    /// proof, suppressing the automatic one. Outside a proof there is
+    /// nothing to suppress; the box is still placed, as amsthm does.
+    /// In math the token is handled where the display is read (see
+    /// `raw_qedhere`): only the claim is recorded there.
+    fn qedhere(&mut self, span: Span, para: &mut Vec<Inline>) {
+        if let Some(claimed) = self.proof_qedhere.last_mut() {
+            *claimed = true;
+        }
+        para.push(Inline::HFill { span, leader: FillLeader::None });
+        para.push(Inline::Text {
+            text: "\u{220E}".to_string(),
+            span,
+            style: self.style,
+            space_before: false,
+        });
+    }
+
+    /// Whether raw display-math tokens hold a top-level amsthm `\qedhere`
+    /// (outside groups and nested environments, which own their tokens).
+    /// The token itself stays in the list: `math` leaves it as a literal
+    /// marker atom for the render pipeline to strip and place, as with
+    /// `\tag` — only the proof's claim flag is recorded here.
+    fn raw_qedhere(raw: &[Token]) -> bool {
+        let mut depth = 0usize;
+        for token in raw {
+            match &token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => depth = depth.saturating_sub(1),
+                TokenKind::Command(name) if name == "begin" => depth += 1,
+                TokenKind::Command(name) if name == "end" => depth = depth.saturating_sub(1),
+                TokenKind::Command(name) if depth == 0 && name == "qedhere" => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Record a display's `\qedhere` against the open proof, if any.
+    fn note_qedhere(&mut self) {
+        if let Some(claimed) = self.proof_qedhere.last_mut() {
+            *claimed = true;
+        }
     }
 
     /// `\begin{frame} body \end{frame}`: a rule-bordered box around its body.
@@ -7278,6 +7346,11 @@ impl P<'_> {
                 ),
             ));
         }
+        // amsthm `\qedhere` claims the proof's box (see `raw_qedhere`); the
+        // token stays for the consumer to strip and place.
+        if Self::raw_qedhere(&raw) {
+            self.note_qedhere();
+        }
         // `equation`/`equation*` are always display math.
         let list = math::parse_tokens_display(&raw, self.math_packages, &mut self.diags, true);
         let tag = Self::custom_tag_text(&list, self.documents[open.document.0].text, open.document);
@@ -7512,6 +7585,12 @@ impl P<'_> {
             }
         }
 
+        // amsthm `\qedhere` anywhere in the rows claims the proof's box
+        // (see `raw_qedhere`); each row's token stays for the consumer to
+        // strip and place on its own row.
+        if rows.iter().any(|(cells, ..)| cells.iter().any(|cell| Self::raw_qedhere(cell))) {
+            self.note_qedhere();
+        }
         let mut math_rows = Vec::new();
         let mut labels = Vec::new();
         let is_multline = name.starts_with("multline");
@@ -7799,6 +7878,16 @@ impl P<'_> {
                 }
             }
             raw.push(input.token.clone());
+        }
+        // amsthm `\qedhere` claims the proof's box (see `raw_qedhere`).
+        // Inline math has no line of its own to flush the box against, so
+        // the token is dropped there; a display keeps it for the consumer
+        // to strip and place.
+        if Self::raw_qedhere(&raw) {
+            self.note_qedhere();
+            if !display {
+                raw.retain(|t| !matches!(&t.kind, TokenKind::Command(name) if name == "qedhere"));
+            }
         }
         let (list, unclosed) = math::parse_tokens_reporting_unclosed(
             &raw,

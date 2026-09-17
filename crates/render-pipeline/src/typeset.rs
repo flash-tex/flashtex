@@ -1017,6 +1017,54 @@ impl<'a> Context<'a> {
         out
     }
 
+    /// Appends [`Context::qed_items`] flush against `right` on a line whose
+    /// baseline is `baseline`: amsthm `\qedhere` in a display (or one
+    /// alignment row), set with the running-text mark's own boxes, so the
+    /// two are identical. Returns the right edge (always `right`) and the
+    /// box height, so the caller widens a short line and raises it when
+    /// the box sticks up past a short formula.
+    fn append_display_qed(
+        &mut self,
+        runs: &mut Vec<pl::PositionedRun>,
+        line_items: &mut Vec<pl::Item>,
+        line_recs: &mut Vec<Option<usize>>,
+        right: f64,
+        baseline: f64,
+        size: f64,
+        span: Span,
+    ) -> (f64, f64) {
+        let style = TextStyle::default();
+        let quad = self.text_params(style, size).quad;
+        let mut x = right - 0.77778 * quad;
+        for (item, rec) in self.qed_items(style, size, span) {
+            match item {
+                pl::Item::Box(run) => {
+                    let w = run.width;
+                    runs.push(pl::PositionedRun {
+                        x,
+                        baseline_y: baseline,
+                        width: w,
+                        font: run.font,
+                        size: run.size,
+                        glyphs: Vec::new(),
+                        source: run.source.clone(),
+                        is_hyphen: false,
+                    });
+                    x += w;
+                    line_items.push(pl::Item::Box(run));
+                    line_recs.push(rec);
+                }
+                pl::Item::Kern(k) => {
+                    x += k.width;
+                    line_items.push(pl::Item::Kern(k));
+                    line_recs.push(rec);
+                }
+                _ => {}
+            }
+        }
+        (right, 0.675 * quad)
+    }
+
     /// `\TeX`/`\LaTeX`/`\LaTeXe` (compiler `Inline::Logo`): one box per glyph
     /// at the x `text_builtins::layout_logo` computes from this face's TFM
     /// metrics, joined by kerns (not break points: no glue follows them),
@@ -3558,6 +3606,7 @@ impl<'a> Context<'a> {
                         span,
                         number,
                         bracket,
+                        qed_here,
                     } => {
                         // TeX §1145: a display that opens a paragraph whose
                         // list is still empty sets no line — after a
@@ -3599,7 +3648,8 @@ impl<'a> Context<'a> {
                         };
                         let pd = pre_display;
                         let st = *style;
-                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.display_block(list, *span, pd, number.as_ref(), st, geom)) {
+                        let qh = *qed_here;
+                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.display_block(list, *span, pd, number.as_ref(), st, geom, qh)) {
                             if let Some((ej, vs, env)) = empty_start {
                                 let parskip = geom.map_or(ctx.style.parskip, |g| g.parsep);
                                 if ej {
@@ -5328,6 +5378,7 @@ impl<'a> Context<'a> {
     /// right (`\eqno`). `style` and `list_geom` give the paragraph's
     /// `\parshape` (§1149): the display is centred in `\displaywidth`
     /// (`\linewidth`) starting `\displayindent` (`\@totalleftmargin`) in.
+    #[allow(clippy::too_many_arguments)]
     fn display_block(
         &mut self,
         list: &flashtex_compiler::math::MathList,
@@ -5336,6 +5387,7 @@ impl<'a> Context<'a> {
         number: Option<&(String, Span)>,
         style: ParaStyle,
         list_geom: Option<&ListGeom>,
+        qed_here: Option<Span>,
     ) -> Option<BuiltBlock> {
         let rec = self.math_box(list, span, true, self.style.body_size_pt)?;
         let BoxRec::Math(mi) = &self.recs[rec] else { unreachable!() };
@@ -5482,6 +5534,13 @@ impl<'a> Context<'a> {
             }
             (runs, items, recs)
         };
+        // The formula's own line, for `\qedhere` below: with a number on a
+        // line of its own it is the other one (`\leqno` puts the number
+        // first), else the single combined line.
+        let formula_at = match &eqno {
+            Some(_) if separate => usize::from(left),
+            _ => 0,
+        };
         match eqno {
             Some(nb) if separate => {
                 let (nh, nd, nw) = (nb.height, nb.depth, nb.width);
@@ -5507,6 +5566,16 @@ impl<'a> Context<'a> {
                 out_lines.push((runs, line_items, line_recs, height, depth, s + width));
             }
             None => out_lines.push((vec![formula_run], vec![pl::Item::Box(run)], vec![Some(rec)], height, depth, s + width)),
+        }
+        // amsthm `\qedhere` (adapter `strip_qedhere`): the open box on the
+        // formula's own line, flush right within the display width. Gated
+        // strictly on the marker — a display without one is untouched, in
+        // particular whatever the closing proof does after it.
+        if let Some(qspan) = qed_here {
+            let (runs, line_items, line_recs, h, _dp, natural) = &mut out_lines[formula_at];
+            let (edge, qh) = self.append_display_qed(runs, line_items, line_recs, s + z, *h, size, qspan);
+            *h = h.max(qh);
+            *natural = natural.max(edge);
         }
         let mut items = Vec::new();
         let mut recs = Vec::new();
@@ -5986,6 +6055,14 @@ impl<'a> Context<'a> {
                 runs.push(position_run(nrun, if leqno { 0.0 } else { dw - nrun.width }, 0.0));
                 items.push(pl::Item::Box(nrun.clone()));
                 recs.push(Some(*nrec));
+            }
+            // amsthm `\qedhere` on this row (adapter `strip_qedhere`): the
+            // box on the row's own line, flush right within the display
+            // width, on baseline 0 like every other row run.
+            if let Some(qspan) = rows[ri].qed_here {
+                let (edge, qh) = self.append_display_qed(&mut runs, &mut items, &mut recs, dw, 0.0, size, qspan);
+                h = h.max(qh);
+                natural = natural.max(edge);
             }
             if natural > dw + 1e-6 {
                 let src = self.source(rows[ri].span);
