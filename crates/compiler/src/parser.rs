@@ -9204,7 +9204,17 @@ impl P<'_> {
                 // (`\[...\]`) inside a heading, caption, style argument or
                 // `\intertext`: without this the delimiters fell through to
                 // the catch-all below and the formula typeset as plain text.
-                TokenKind::MathShift | TokenKind::InlineMathOpen | TokenKind::DisplayMathOpen => {
+                // `!report_unsupported` keeps this out of an `\item` label's
+                // own way: that pass handles inline math itself (below, via
+                // `dollar_math`/`paren_math`) and rejects display math
+                // outright (further below), matching real pdflatex, which
+                // allows `\[..\]` in a heading (verified: `\section{Heading
+                // \[x\] end}` compiles clean) but not in an `\item` label's
+                // restricted horizontal mode ("Bad math environment
+                // delimiter").
+                TokenKind::MathShift | TokenKind::InlineMathOpen | TokenKind::DisplayMathOpen
+                    if !report_unsupported =>
+                {
                     skip_until =
                         self.flat_math(&expanded, index, style, space_before, &mut content);
                 }
