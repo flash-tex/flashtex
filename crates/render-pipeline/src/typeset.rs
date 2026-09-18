@@ -1583,8 +1583,13 @@ impl<'a> Context<'a> {
         crate::mathtext::substitute(&mut laid.root, &text_runs);
         // Text-style formulas in a paragraph break after top-level Bin/Rel
         // atoms; a formula holding a grid stays one box.
-        let kerned = !(ml_lists.len() == 1 && segments[0].1.is_none());
-        let inline_breaks = if display || has_grid || !inline_math_breaks_enabled() { Vec::new() } else { inline_break_points(&mut laid.root, &ml_lists, kerned) };
+        let inline_breaks = if display || has_grid || !inline_math_breaks_enabled() {
+            Vec::new()
+        } else {
+            let glue: Vec<Option<f64>> = segments.iter().map(|(_, em, _)| *em).collect();
+            let penalties = split_penalties(list, &fence, texts);
+            inline_break_points(&mut laid.root, &ml_lists, &glue, &penalties, style)
+        };
         for text in &sink.refused {
             let src = self.source(span);
             self.emit(
@@ -2446,6 +2451,24 @@ impl<'a> Context<'a> {
                         source: 0..0,
                     };
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(self.recs.len() - 1));
+                }
+                AItem::Penalty { value, flagged } => {
+                    push(
+                        &mut out,
+                        &mut recs,
+                        pl::Item::Penalty(pl::Penalty { value: *value, flagged: *flagged, pre_break: None, automatic: false, post_break: None, replace_count: 0 }),
+                        None,
+                    );
+                }
+                AItem::SpaceBox { style } => {
+                    // `\hbox{\ }`: `\fontdimen2` of the font in force, as a
+                    // box of no height or depth. Every box needs a record;
+                    // a rule of no height ships nothing (see `NoteParBreak`).
+                    let style = merge_style(base, *style);
+                    let width = self.space_glue(style, style.size_or(size), 1000).width;
+                    self.recs.push(BoxRec::Rule { width, height: 0.0, bottom: 0.0, span: Span::new(0, 0) });
+                    let blank = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height: 0.0, depth: 0.0, source: 0..0 };
+                    push(&mut out, &mut recs, pl::Item::Box(blank), Some(self.recs.len() - 1));
                 }
                 AItem::LineBreak { skip_pt } => {
                     if fills {
@@ -7781,86 +7804,184 @@ fn inline_math_breaks_enabled() -> bool {
 /// The paragraph break points of a text-style formula (tex.web §760,
 /// §767: `\binoppenalty` after a Bin atom, `\relpenalty` after a Rel
 /// atom, unless the atom is the formula's last noad or the next noad is a
-/// Rel; glue counts as a next noad). `runs` are the kern-split lists the
-/// formula was laid out from and `root` their layout: one hlist when
-/// `!kerned` (`layout_with_report`), else `layout_kerned`'s hbox of run
-/// hlists joined by kerns. Rules 5/6 run per run, as the layout did.
+/// Rel or a penalty; glue and kerns count as a next noad), plus
+/// the explicit penalty of `\allowbreak` (`\penalty0`; the kernel's
+/// `\pmod`/`\pod`/`\mod` open with one, latex.ltx `\def\pmod#1{%
+/// \allowbreak\mkern18mu(...}`) and of `\bmod` (`\penalty900` after its
+/// `mod`). `runs` are the kern-split lists the formula was laid out from,
+/// `glue` the kern after each (`split_at_spaces`), `split_penalty[r]` the
+/// explicit penalty before that kern, and `root` their layout: one hlist
+/// when there is a single run and no kern (`layout_with_report`), else
+/// `layout_kerned`'s *flat* hlist of every run's children with the kern
+/// and the inter-run spacing glue (when Rule 20 gives any) spliced in
+/// between. Rules 5/6 run per run, as the layout did.
 ///
-/// With break points, `root` is flattened to one hbox of the runs'
-/// children and the kerns (all on the baseline, so the pieces re-hbox
-/// without a shift) and each entry is the index of the Bin/Rel atom's box
-/// among those children. Math-layout's `list` emits, per non-glue atom,
-/// the inter-atom glue (when Rule 20 gives any) then the atom's box, and
-/// one glue box per glue atom, so the boxes are paired with the atoms by
-/// walking both.
-fn inline_break_points(root: &mut ml::MathBox, runs: &[ml::MathList], kerned: bool) -> Vec<(usize, i32)> {
+/// With break points, `root` is flattened to one hbox of the children
+/// (all on the baseline, so the pieces re-hbox without a shift) and each
+/// entry is the index of the Bin/Rel atom's box among those children.
+/// Math-layout's `list` emits, per non-glue atom, the inter-atom glue
+/// (when Rule 20 gives any) then the atom's box, and one glue box per glue
+/// atom, so the boxes are paired with the atoms by walking both; a walk
+/// that does not land exactly on the list's end leaves the formula one box.
+fn inline_break_points(root: &mut ml::MathBox, runs: &[ml::MathList], glue: &[Option<f64>], split_penalty: &[Option<i32>], style: ml::Style) -> Vec<(usize, i32)> {
     use ml::AtomClass::{Bin, Rel};
     let is_glue_atom = |a: &ml::Atom| matches!(a.nucleus, ml::Nucleus::Glue { .. }) && a.superscript.is_none() && a.subscript.is_none();
     let ml::BoxKind::HBox(children) = &root.kind else { return Vec::new() };
-    // The runs' children in order, and each run's range in them.
-    let mut units: Vec<ml::MathBox> = Vec::new();
-    let mut run_ranges: Vec<(usize, usize)> = Vec::new();
-    if kerned {
-        let mut ci = 0usize;
-        for _ in runs {
-            let start = units.len();
-            let Some(ml::BoxKind::HBox(run_children)) = children.get(ci).map(|c| &c.content.kind) else { return Vec::new() };
-            units.extend(run_children.iter().map(|c| c.content.clone()));
-            run_ranges.push((start, units.len()));
-            ci += 1;
-            if let Some(kern) = children.get(ci) {
-                units.push(kern.content.clone());
-                ci += 1;
-            }
-        }
-    } else {
-        units.extend(children.iter().map(|c| c.content.clone()));
-        run_ranges.push((0, units.len()));
-    }
-    let mut breaks = Vec::new();
+    let units: Vec<ml::MathBox> = children.iter().map(|c| c.content.clone()).collect();
+    let is_glue = |u: Option<&ml::MathBox>| matches!(u.map(|u| &u.kind), Some(ml::BoxKind::Glue { .. }));
+    let is_stretchy = |u: Option<&ml::MathBox>| matches!(u.map(|u| &u.kind), Some(ml::BoxKind::Glue { mu, .. }) if *mu >= 4.0);
+    // The inter-run spacing decision of `layout_kerned`: classes of the
+    // whole formula, either side of each kern.
+    let all_atoms: Vec<ml::Atom> = runs.iter().flat_map(|l| l.atoms.iter().cloned()).collect();
+    let all_classes = ml::layout::effective_classes(&all_atoms);
+    let mut breaks: Vec<(usize, i32)> = Vec::new();
+    let mut ci = 0usize;
+    let mut at = 0usize;
     for (r, l) in runs.iter().enumerate() {
         let classes = ml::layout::effective_classes(&l.atoms);
-        let (start, end) = run_ranges[r];
-        let mut ci = start;
+        let kern_after = glue.get(r).copied().flatten().is_some();
+        let explicit_after = if kern_after { split_penalty.get(r).copied().flatten() } else { None };
+        let mut last_unit = None;
         for (i, (atom, class)) in l.atoms.iter().zip(&classes).enumerate() {
             if is_glue_atom(atom) {
                 ci += 1;
                 continue;
             }
-            if matches!(units.get(ci).map(|u| &u.kind), Some(ml::BoxKind::Glue { .. })) {
+            if is_glue(units.get(ci)) {
                 ci += 1;
             }
-            let at = ci;
+            let unit = ci;
             ci += 1;
+            last_unit = Some(unit);
             let next = l.atoms.get(i + 1);
-            let has_next = next.is_some() || r + 1 < runs.len();
+            let has_next = next.is_some() || kern_after;
             let next_rel = next.is_some_and(|n| n.class == Rel && !is_glue_atom(n));
+            // §767: no Bin/Rel penalty when the next noad is a penalty
+            // (`\allowbreak`'s), which breaks there at its own value.
+            let next_penalty = next.is_none() && explicit_after.is_some();
             let penalty = match class {
-                Bin if has_next && !next_rel => Some(700),
-                Rel if has_next && !next_rel => Some(500),
+                Bin if has_next && !next_rel && !next_penalty => Some(700),
+                Rel if has_next && !next_rel && !next_penalty => Some(500),
                 _ => None,
             };
             // `\medmuskip`/`\thickmuskip` after this atom stretch and shrink
             // with the line (`4mu plus 2mu minus 4mu`, `5mu plus 5mu`): the
             // formula is cut there too, with no break allowed unless the
             // atom carries a penalty.
-            let stretchy_glue_next = matches!(units.get(ci).map(|u| &u.kind), Some(ml::BoxKind::Glue { mu, .. }) if *mu >= 4.0);
+            let stretchy_glue_next = is_stretchy(units.get(ci));
             if let Some(penalty) = penalty {
-                breaks.push((at, penalty));
+                breaks.push((unit, penalty));
             } else if stretchy_glue_next {
-                breaks.push((at, pl::INFINITE_PENALTY));
+                breaks.push((unit, pl::INFINITE_PENALTY));
             }
         }
-        // The walk must land on the run's end, else the pairing is off and
-        // the formula stays one box.
-        if ci != end {
-            return Vec::new();
+        at += l.atoms.len();
+        if kern_after {
+            // `layout_kerned`: the kern, then the spacing glue across it.
+            if !matches!(units.get(ci).map(|u| &u.kind), Some(ml::BoxKind::Kern)) {
+                return Vec::new();
+            }
+            ci += 1;
+            let spaced = match (at.checked_sub(1).and_then(|j| all_classes.get(j)), all_classes.get(at)) {
+                (Some(&left), Some(&right)) => ml::between(left, right, style) != ml::Space::None,
+                _ => false,
+            };
+            let mut stretchy = false;
+            if spaced {
+                if !is_glue(units.get(ci)) {
+                    return Vec::new();
+                }
+                stretchy = is_stretchy(units.get(ci));
+                ci += 1;
+            }
+            if let Some(last) = last_unit {
+                let cut = breaks.last().is_some_and(|b| b.0 == last);
+                if let Some(penalty) = explicit_after {
+                    if cut {
+                        breaks.pop();
+                    }
+                    breaks.push((last, penalty));
+                } else if stretchy && !cut {
+                    breaks.push((last, pl::INFINITE_PENALTY));
+                }
+            }
         }
+    }
+    // The walk must land on the list's end, else the pairing is off and
+    // the formula stays one box.
+    if ci != units.len() {
+        return Vec::new();
     }
     if !breaks.is_empty() {
         *root = ml::MathBox::hlist(units);
     }
     breaks
+}
+
+/// The explicit penalty TeX has directly before each kern
+/// `split_at_spaces` splits a formula at: one entry per run, aligned with
+/// its returned entries (the last run's kern is the trailing one, if any).
+/// The compiler spells `\allowbreak` (`\penalty0`) a zero-width `Space`;
+/// `\pmod`, `\pod` and amsmath's `\mod` open with `\allowbreak\mkern..`,
+/// so their opening `Space` — the one directly before the `(`/`mod` text
+/// atom carrying the same span — has it too (the `\,\,` inside them is
+/// glue, no break); `\bmod`'s `mod` is followed by `\penalty900\mkern5mu`
+/// (latex.ltx), so the `Space` directly after its `mod` carries 900.
+fn split_penalties(list: &flashtex_compiler::math::MathList, fence: &dyn Fn(&Span) -> Option<Fence>, texts: &[&str]) -> Vec<Option<i32>> {
+    use flashtex_compiler::math::Nucleus as N;
+    let same_text = |a: &flashtex_compiler::math::MathAtom, other: Option<&flashtex_compiler::math::MathAtom>, prefixes: &[&str]| {
+        other.is_some_and(|n| n.span == a.span && matches!(&n.nucleus, N::Text(t) if prefixes.iter().any(|p| t.starts_with(p))))
+    };
+    let penalty_before_kern = |a: &flashtex_compiler::math::MathAtom, prev: Option<&flashtex_compiler::math::MathAtom>, next: Option<&flashtex_compiler::math::MathAtom>| {
+        let text = texts.get(a.span.document.0).copied().unwrap_or("");
+        let rest = text.get(a.span.start..).and_then(|r| r.strip_prefix('\\'))?;
+        let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
+        match &rest[..word_len] {
+            "allowbreak" => Some(0),
+            "pmod" | "pod" | "mod" if same_text(a, next, &["(", "mod"]) => Some(0),
+            "bmod" if same_text(a, prev, &["mod"]) => Some(900),
+            _ => None,
+        }
+    };
+    let mut out: Vec<Option<i32>> = Vec::new();
+    let mut current_empty = true;
+    let mut depth = 0usize;
+    for (k, a) in list.atoms.iter().enumerate() {
+        match &a.nucleus {
+            N::Space { .. } if depth == 0 && a.superscript.is_none() && a.subscript.is_none() => {
+                let penalty = penalty_before_kern(a, k.checked_sub(1).and_then(|j| list.atoms.get(j)), list.atoms.get(k + 1));
+                if current_empty {
+                    if let Some(prev) = out.last_mut() {
+                        if prev.is_none() {
+                            *prev = penalty;
+                        }
+                        continue;
+                    }
+                }
+                out.push(penalty);
+                current_empty = true;
+            }
+            N::Symbol(sym) if sym.chars().count() <= 1 => {
+                match fence(&a.span) {
+                    Some(Fence::Left) => depth += 1,
+                    Some(Fence::Right) => depth = depth.saturating_sub(1),
+                    None => {}
+                }
+                current_empty = false;
+            }
+            N::SizedDelimiter { role, .. } => {
+                match role {
+                    flashtex_compiler::math::DelimiterRole::Left => depth += 1,
+                    flashtex_compiler::math::DelimiterRole::Right => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+                current_empty = false;
+            }
+            _ => current_empty = false,
+        }
+    }
+    out.push(None);
+    out
 }
 
 /// One top-level part of a formula holding a grid (see

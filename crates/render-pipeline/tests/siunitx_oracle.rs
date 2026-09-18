@@ -22,17 +22,12 @@ const TOL_BP: f64 = 0.5;
 
 /// Fixtures that depend on work not on this branch, with the reason. They
 /// must still differ (so the entry is removed when the dependency lands).
-const PENDING: [(&str, &str); 3] = [
+const PENDING: [(&str, &str); 2] = [
     (
         "39-heading.tex",
         "heading math: the pipeline sets a `$...$` formula in \\section at the heading size (14.35 bp) but an \
          Inline::Math whose span starts at a command (\\qty) at the body size, and every heading holding \
          superscripted math sits 1.66 bp higher than pdfLaTeX's (also with plain `$3\\times 10^{8}$`)",
-    ),
-    (
-        "34-paragraph.tex",
-        "justified line: pdfLaTeX stretches the \\medmuskip glue around \\times (both gaps ~0.7 bp wider); \
-         math glue stretch/shrink in line justification is PR #148 (math-glue-shrink)",
     ),
     (
         "38-power-on-letter.tex",
