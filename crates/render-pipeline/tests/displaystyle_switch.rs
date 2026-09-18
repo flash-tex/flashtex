@@ -99,6 +99,52 @@ fn without_the_switch_the_same_sum_keeps_text_style_scripts() {
     );
 }
 
+/// Issue #894, bug 1: `\displaystyle` is honoured only as the formula's
+/// first atom. TeX's style switches change the style for the rest of the
+/// enclosing group, so `$L(n)=\displaystyle\sum_{n=1}^{\infty}x_n$` sets the
+/// sum exactly as the leading-switch case does: pdflatex puts the
+/// `\infty` 13.637 bp above the text baseline and the `n=1` 12.954 below
+/// it, byte-identical (whole-box ht/dp) to the leading case. Before the
+/// fix the mid-formula switch was silently dropped and the sum kept
+/// text-style side scripts (5.027 above / 3.225 below).
+#[test]
+fn a_midformula_displaystyle_stacks_the_operator_limits() {
+    if !lm_available() {
+        return;
+    }
+    let (rise, drop) = limit_offsets(&DOC.replace("%%SWITCH%%", r"$L(n)=\displaystyle"));
+    assert!(
+        (rise - 13.637).abs() < 0.05 && (drop - 12.954).abs() < 0.05,
+        "mid-formula `\\displaystyle\\sum`: limits {rise:.3} above / {drop:.3} below the baseline, pdflatex has 13.637 / 12.954"
+    );
+}
+
+/// The same mid-formula case for `\prod`, pinned relationally: after the
+/// fix the mid-formula and leading-switch layouts go through the same
+/// display-style path, so their limit offsets agree exactly; before the
+/// fix the mid-formula product kept text-style side scripts.
+#[test]
+fn a_midformula_displaystyle_product_matches_the_leading_switch() {
+    if !lm_available() {
+        return;
+    }
+    const PROD: &str = r"\prod_{n=1}^{\infty} x_n";
+    let doc = |prefix: &str| {
+        DOC.replace("%%SWITCH%%", prefix)
+            .replace(r"\sum_{n=1}^{\infty} x_n", PROD)
+    };
+    let (lead_rise, lead_drop) = limit_offsets(&doc("$\\displaystyle"));
+    let (mid_rise, mid_drop) = limit_offsets(&doc("$L(n)=\\displaystyle"));
+    assert!(
+        (mid_rise - lead_rise).abs() < 0.02 && (mid_drop - lead_drop).abs() < 0.02,
+        "mid-formula `\\prod` limits {mid_rise:.3}/{mid_drop:.3} vs leading-switch {lead_rise:.3}/{lead_drop:.3}"
+    );
+    assert!(
+        (lead_rise - 5.027).abs() > 2.0,
+        "leading-switch `\\prod` should itself be display-style, got rise {lead_rise:.3}"
+    );
+}
+
 /// The interline consequence: the display-style box is deep enough that TeX
 /// clamps the glue to `\lineskip`, so the next line of the same paragraph is
 /// much further down than one `\baselineskip` (13.549 bp at 11 pt). pdflatex
