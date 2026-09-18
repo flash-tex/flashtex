@@ -1119,6 +1119,7 @@ pub(crate) const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("list", "kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep"),
     ("tabular", "table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \\extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned"),
     ("tabular*", "table of a given width"),
+    ("tabularx", "table of a given width whose X columns share the leftover width evenly (needs tabularx)"),
     ("longtable", "page-breaking table with repeated heads and feet (\\endfirsthead, \\endhead, \\endfoot, \\endlastfoot), \\caption, \\kill rows and \\\\* (needs longtable)"),
     ("verbatim", "literal monospaced lines"),
     ("verbatim*", "literal monospaced lines with visible spaces"),

@@ -1052,6 +1052,7 @@
     {"name": "list", "mode": "text", "description": "kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep"},
     {"name": "tabular", "mode": "text", "description": "table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \\extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned"},
     {"name": "tabular*", "mode": "text", "description": "table of a given width"},
+    {"name": "tabularx", "mode": "text", "description": "table of a given width whose X columns share the leftover width evenly (needs tabularx)"},
     {"name": "longtable", "mode": "text", "description": "page-breaking table with repeated heads and feet (\\endfirsthead, \\endhead, \\endfoot, \\endlastfoot), \\caption, \\kill rows and \\\\* (needs longtable)"},
     {"name": "verbatim", "mode": "text", "description": "literal monospaced lines"},
     {"name": "verbatim*", "mode": "text", "description": "literal monospaced lines with visible spaces"},
