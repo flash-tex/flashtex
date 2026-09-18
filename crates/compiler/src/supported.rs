@@ -1187,6 +1187,21 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "",
         "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used",
     ),
+    (
+        "iftex",
+        "",
+        "\\ifxetex and \\ifluatex (with the \\ifXeTeX/\\ifLuaTeX aliases) are false, as iftex.sty sets them under pdflatex, so engine-guarded blocks skip",
+    ),
+    (
+        "ifxetex",
+        "",
+        "legacy shim for iftex's \\ifxetex switch, false here as under pdflatex",
+    ),
+    (
+        "ifluatex",
+        "",
+        "legacy shim for iftex's \\ifluatex switch, false here as under pdflatex",
+    ),
 ];
 
 /// The vendored coverage denominator.

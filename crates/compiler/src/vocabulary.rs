@@ -55,6 +55,12 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "textemdash", "textquoteleft", "textquoteright",
     "textquotedblleft", "textquotedblright", "ldots", "slash", "selectfont", "fontsize",
     "fontfamily", "usefont",
+    // fontspec (XeLaTeX/LuaLaTeX-only): recognised so unguarded use reports
+    // `unsupported_feature` naming the package instead of an unknown-command
+    // typo hunt. A block guarded by `\ifxetex`/`\ifluatex` (false here, as
+    // under pdflatex) never reaches this diagnostic.
+    "setmainfont", "setsansfont", "setmonofont", "newfontfamily", "fontspec",
+    "defaultfontfeatures", "addfontfeature",
     // Definitions, counters and programming.
     "def", "edef", "gdef", "let", "providecommand", "newenvironment", "renewenvironment",
     "newtheorem", "newcounter", "setcounter", "addtocounter", "stepcounter", "refstepcounter",
@@ -301,6 +307,8 @@ pub fn command_package(name: &str) -> Option<&'static str> {
         | "numberwithin" | "allowdisplaybreaks" => Some("amsmath"),
         "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
         | "labelcref" | "crefname" | "Crefname" => Some("cleveref"),
+        "setmainfont" | "setsansfont" | "setmonofont" | "newfontfamily" | "fontspec"
+        | "defaultfontfeatures" | "addfontfeature" => Some("fontspec"),
         "autoref" | "nameref" | "url" | "href" | "hyperref" | "hyperlink" | "hypertarget"
         | "hypersetup" => Some("hyperref"),
         "geometry" => Some("geometry"),
