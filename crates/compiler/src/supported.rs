@@ -126,14 +126,18 @@ pub struct Inventory {
 pub const TEXT_DIAGNOSTIC_ONLY: &[&str] = &["frac", "sqrt", "thanks", "and"];
 
 /// Dispatch arms that are not `parser::BUILT_INS` entries: amsthm's
-/// `newtheorem`/`theoremstyle`, and soul's `so`/`hl`. The soul names stay
+/// `newtheorem`/`theoremstyle`, soul's `so`/`hl`, and amsmath's
+/// `text`/`boxed` in text mode (both stay user-definable: neither
+/// is a kernel command, so the expansion engine must leave them
+/// undefined exactly as for soul above). The soul names stay
 /// out of `BUILT_INS` on purpose — the expansion engine must leave them
 /// undefined so a user's own `\newcommand{\hl}`/`\newcommand{\so}` wins
 /// when soul is not loaded (neither is a kernel command); the parser arm
 /// still diagnoses a bare use without `\usepackage{soul}` and implements
 /// the built-in behavior with it. They are implemented commands, so the
 /// diagnostic vocabulary (`crate::vocabulary`) counts them as known.
-pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &["newtheorem", "theoremstyle", "so", "hl"];
+pub(crate) const TEXT_EXTRA_ARMS: &[&str] =
+    &["newtheorem", "theoremstyle", "so", "hl", "text", "boxed"];
 
 /// Canonical commands the expansion pass executes itself (engine primitives
 /// and kernel-prelude macros of `flashtex-tex-expansion`); their effect
@@ -342,6 +346,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("hl", "{...}", "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)"),
     ("textsuperscript", "{...}", "kernel text superscript: argument at \\sf@size raised like a math superscript (single-line)"),
     ("textsubscript", "{...}", "kernel text subscript: argument at \\sf@size lowered like a math subscript (single-line)"),
+    ("text", "{...}", "amsmath text in text mode: outside math simply \\mbox, the argument as one unbreakable box in the current style"),
+    ("boxed", "{...}", "amsmath box in text mode: the argument with a drawn frame (\\fbox with math inside)"),
     ("thinspace", "", "text kern .16667em (math: thin muskip)"),
     ("negthinspace", "", "text kern -.16667em"),
     ("medspace", "", "text kern .2222em"),
@@ -961,6 +967,7 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
         "numbered list; article labels per depth, enumitem label/label*/shortlabels, start and resume",
     ),
     ("description", "list of bold \\item[term] labels"),
+    ("list", "kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep"),
     ("tabular", "table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \\extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned"),
     ("tabular*", "table of a given width"),
     ("verbatim", "literal monospaced lines"),
