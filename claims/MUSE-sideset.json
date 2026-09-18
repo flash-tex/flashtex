@@ -5,7 +5,7 @@
   "machine": "mac-m5pro-dq222",
   "note": "Commander's corrected 12-lane MAX-OUT dispatch, 2026-09-18 07:55Z",
   "started_utc": "2026-09-18T08:12:36Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "MUSE-sideset",
-  "updated_utc": "2026-09-18T08:12:36Z"
+  "updated_utc": "2026-09-18T08:17:57Z"
 }
