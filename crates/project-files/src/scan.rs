@@ -26,7 +26,7 @@ pub enum ReferenceKind {
     Input,
     /// `\include{file}` (always `file.tex`).
     Include,
-    /// `\bibliography{a,b}` (one reference per item, `.bib` appended).
+    /// `\bibliography{a,b}` (one reference per item, `.bib` then `.bbl` appended).
     Bibliography,
     /// `\addbibresource{file.bib}` (biblatex; literal name, `.bib` if missing).
     AddBibResource,

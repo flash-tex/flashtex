@@ -129,7 +129,46 @@ fn missing_file_diagnostic_has_multibyte_spans() {
     );
     assert_eq!(diags[2].severity, Severity::Error);
     assert!(
-        matches!(&diags[2].kind, DiagnosticKind::MissingFile { tried, .. } if tried == &[pp("refs.bib")])
+        matches!(&diags[2].kind, DiagnosticKind::MissingFile { tried, .. } if tried == &[pp("refs.bib"), pp("refs.bbl")])
+    );
+}
+
+#[test]
+fn bibliography_discovers_a_prebuilt_bbl_when_no_bib_exists() {
+    let t = TempDir::new("bbl");
+    t.write("main.tex", "See \\cite{k}. \\bibliography{refs}");
+    t.write(
+        "refs.bbl",
+        "\\begin{thebibliography}{9}\n\\bibitem{k}K. Title.\n\\end{thebibliography}\n",
+    );
+    let g = ProjectGraph::discover(t.root(), &pp("main.tex")).unwrap();
+    assert!(g.diagnostics().is_empty(), "{:?}", g.diagnostics());
+    let bbl = g.file(&pp("refs.bbl")).unwrap();
+    assert_eq!(bbl.kind, FileKind::Bibliography);
+    assert_eq!(bbl.source, FileSource::Disk);
+    let with_bib: Vec<String> = g
+        .documents_including_bibliography()
+        .into_iter()
+        .map(|d| d.path)
+        .collect();
+    assert_eq!(with_bib, ["main.tex", "refs.bbl"]);
+}
+
+#[test]
+fn bibliography_prefers_an_existing_bib_over_the_bbl() {
+    let t = TempDir::new("bbl");
+    t.write("main.tex", "See \\cite{k}. \\bibliography{refs}");
+    t.write("refs.bib", "@book{k, title={T}}");
+    t.write(
+        "refs.bbl",
+        "\\begin{thebibliography}{9}\n\\bibitem{k}K. Title.\n\\end{thebibliography}\n",
+    );
+    let g = ProjectGraph::discover(t.root(), &pp("main.tex")).unwrap();
+    assert!(g.diagnostics().is_empty(), "{:?}", g.diagnostics());
+    assert_eq!(
+        paths(&g),
+        ["main.tex", "refs.bib"],
+        "the database keeps its existing behavior when present"
     );
 }
 
