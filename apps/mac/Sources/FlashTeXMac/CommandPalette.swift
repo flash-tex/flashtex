@@ -89,6 +89,7 @@ enum CommandPaletteModel {
         case .openLaTeXFile: model.openTexPanel()
         case .newProject: model.scaffold.presentNewProject() // ProjectScaffoldViews.swift
         case .newFile: model.scaffold.presentNewFile()
+        case .moveFile: model.scaffold.presentMove(model.activePath) // ProjectMove.swift
         case .save: model.saveTexInteractive()
         case .saveAs: _ = model.saveTexAs()
         case .showInFinder: model.showActiveDocumentInFinder() // RevealInFinder.swift
