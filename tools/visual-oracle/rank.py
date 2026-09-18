@@ -408,7 +408,12 @@ def run_render(fx, render, pdf_exact, font_dirs, tfm_dirs, work, log):
     # `--images`: flashtex-render hardcoded `Wire { images: false }` for the
     # `--v2` side output, so the display list never carried an image item even
     # when the file resolved.
-    code, out, err, secs, to = corpus.run([render, "--v2", v2, "--images"], stdin_bytes=line, env=env, timeout=180)
+    # `--device-color`: paints carry the exact `rg`/`k`/`g` operands
+    # (proposal `display-list-v2-device-color`), which `from-v2` reads first;
+    # without it a non-dyadic component such as beamer's structure colour
+    # (0.2, 0.2, 0.7) reaches `from-v2` as an f64 and is refused ("0.2 needs
+    # more than 20 decimal digits"), so no candidate PDF is made at all.
+    code, out, err, secs, to = corpus.run([render, "--v2", v2, "--images", "--device-color"], stdin_bytes=line, env=env, timeout=180)
     rec = {"exit": code, "timed_out": to, "seconds": round(secs, 3), "status": "no_reply", "diagnostics": [],
            "stderr_tail": err.decode("utf-8", "replace")[-600:], "pdf": None, "pdf_exit": None, "v2": None}
     for raw in out.decode("utf-8", "replace").splitlines():
