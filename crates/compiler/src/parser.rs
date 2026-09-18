@@ -6499,12 +6499,14 @@ impl P<'_> {
         }
         // A size environment is a group with the size declaration applied
         // for its extent (style save/restore below scopes it). `Tiny` is
-        // one only under an AMS class (its rung 0, GH-824); elsewhere it
-        // stays an unknown environment, as in real LaTeX.
+        // the AMS classes' rung 0 (GH-824): elsewhere it is recognised
+        // like the `\Tiny` command is, with the same AMS-only diagnostic
+        // and the size left unchanged.
         let size_env = self.in_body
-            && (matches!(
+            && matches!(
                 environment.as_str(),
                 "tiny"
+                    | "Tiny"
                     | "scriptsize"
                     | "footnotesize"
                     | "small"
@@ -6514,7 +6516,7 @@ impl P<'_> {
                     | "LARGE"
                     | "huge"
                     | "Huge"
-            ) || (environment == "Tiny" && self.ams_sizes()));
+            );
         self.env_alignments.push(self.declared_alignment);
         self.env_obeylines.push(self.obeylines);
         self.parameter_scopes.push(Vec::new());
@@ -6657,8 +6659,12 @@ impl P<'_> {
         // the surrounding style for the `\end` restore), exactly like
         // `begin_theorem` below.
         if size_env {
-            self.style =
-                apply_style(self.style, &environment, self.body_size_pt(), self.ams_sizes());
+            if environment == "Tiny" && !self.ams_sizes() {
+                self.ams_only_size_declaration("begin{Tiny}", span);
+            } else {
+                self.style =
+                    apply_style(self.style, &environment, self.body_size_pt(), self.ams_sizes());
+            }
         }
         if self.in_body {
             if let Some(theorem) = self.theorems.get(&environment).cloned() {

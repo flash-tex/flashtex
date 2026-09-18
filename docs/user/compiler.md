@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 360 text-mode and 570 math-mode command entries, 67 environments and 25 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 361 text-mode and 570 math-mode command entries, 68 environments and 25 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -527,6 +527,7 @@ Canonical sources:
 | `\obeylines` |  | every source newline ends the line, like \\, for the rest of the group |
 | `\noindent` |  | accepted no-op; paragraphs are never indented |
 | `\indent` |  | accepted; the first-line indent is diagnosed, not drawn |
+| `\Tiny` |  | AMS classes' rung-0 size declaration below \tiny (amsart/amsbook/amsproc only) |
 | `\tiny` |  | size declaration from the class size table |
 | `\scriptsize` |  | size declaration from the class size table |
 | `\footnotesize` |  | size declaration from the class size table |
@@ -921,6 +922,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `quotation` | text | indented paragraphs |
 | `sloppypar` | text | a paragraph set with \sloppy |
 | `samepage` | text | \samepage for the body |
+| `Tiny` | text | the AMS classes' rung-0 size for the environment body (amsart/amsbook/amsproc only) |
 | `tiny` | text | the tiny size for the environment body |
 | `scriptsize` | text | the scriptsize size for the environment body |
 | `footnotesize` | text | the footnotesize size for the environment body |
