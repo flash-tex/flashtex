@@ -219,10 +219,15 @@ fn arr<'a>(v: Option<&'a Value>, what: &str) -> Result<&'a [Value], String> {
         .ok_or_else(|| format!("{what}: expected an array"))
 }
 
-/// Exact decimal of `ticks / 2^20`.
+/// Fractional digits kept in coordinate decimals. 7 is sub-nanometre
+/// precision and avoids the long tokens that trip up Acrobat (#729).
+const COORD_FRAC_DIGITS: usize = 7;
+
+/// Decimal of `ticks / 2^20`, rounded to [`COORD_FRAC_DIGITS`].
 pub fn bp(t: i128) -> Result<Decimal, String> {
-    Decimal::from_ratio(t, TICKS_PER_BP as u128, 20)
-        .ok_or_else(|| format!("tick value {t} has no terminating decimal (impossible for 2^20)"))
+    let exact = Decimal::from_ratio(t, TICKS_PER_BP as u128, 20)
+        .ok_or_else(|| format!("tick value {t} has no terminating decimal (impossible for 2^20)"))?;
+    Ok(exact.rounded(COORD_FRAC_DIGITS))
 }
 
 /// Fractional digits of an sRGB colour component: xcolor computes its
@@ -1465,7 +1470,7 @@ pub fn from_v2_rooted(
                     if num == 0 {
                         return Some(None);
                     }
-                    Decimal::from_ratio(num, den, 20).map(Some)
+                    Decimal::from_ratio(num, den, 20).map(|d| Some(d.rounded(COORD_FRAC_DIGITS)))
                 });
                 match adjust {
                     Some(None) => report.joined_glyphs += 1,
@@ -1688,6 +1693,7 @@ fn ticks_minus(ticks: i128, f: &Decimal) -> Result<Decimal, String> {
     let num = ticks * scale - m * TICKS_PER_BP;
     Decimal::from_ratio(num, (TICKS_PER_BP * scale) as u128, 20 + frac.len())
         .ok_or_else(|| format!("page height minus {t} does not terminate"))
+        .map(|d| d.rounded(COORD_FRAC_DIGITS))
 }
 
 /// The contract's transform (`page_x = e + a·u + c·v`, `page_y = f + b·u +
@@ -1786,11 +1792,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ticks_to_bp_is_exact() {
+    fn ticks_to_bp_rounds_to_coord_precision() {
         assert_eq!(bp(75_497_472).unwrap().as_str(), "72");
-        assert_eq!(bp(1).unwrap().as_str(), "0.00000095367431640625");
+        assert_eq!(bp(1).unwrap().as_str(), "0.000001");
         assert_eq!(bp(-524_288).unwrap().as_str(), "-0.5");
-        assert_eq!(bp(88_033_374).unwrap().as_str(), "83.9551677703857421875");
+        assert_eq!(bp(88_033_374).unwrap().as_str(), "83.9551678");
     }
 
     #[test]

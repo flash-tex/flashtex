@@ -10,6 +10,12 @@ import Foundation
 enum Pairing {
     static let codeLength = 6
     static let codeLifetime: TimeInterval = 120
+    /// How many times a shown code that expired unused is replaced in place
+    /// (fresh code, next generation, same window) before the attempt fails:
+    /// 5 rolls = 5 extra codes = 10 more minutes of an open, unanswered sheet
+    /// (12 in all). Each code still lives `codeLifetime`; rolling never
+    /// lengthens one.
+    static let maxCodeRolls = 5
     static let saltLength = 16
     static let pskLength = 32
     static let pskInfo = Data("flashtex-nearby-v1 psk".utf8)
@@ -407,11 +413,17 @@ enum PairingFlow {
         var pairId: String
         var startedAt: Date
         var expiresAt: Date
+        /// How many earlier codes of this same sitting expired unused before
+        /// this one was minted (`Pairing.maxCodeRolls` bounds it). 0 for a
+        /// code the user asked for; journals written before rolling existed
+        /// decode as 0.
+        var rolls: Int = 0
         enum CodingKeys: String, CodingKey {
-            case generation, code, pairId = "pair_id", startedAt = "started_at", expiresAt = "expires_at"
+            case generation, code, pairId = "pair_id", startedAt = "started_at", expiresAt = "expires_at", rolls
         }
         func remaining(at now: Date) -> TimeInterval { max(0, expiresAt.timeIntervalSince(now)) }
         func isExpired(at now: Date) -> Bool { now >= expiresAt }
+        var canRoll: Bool { rolls < Pairing.maxCodeRolls }
     }
 
     /// Why a code that was being shown is no longer being served.
@@ -467,7 +479,11 @@ enum PairingFlow {
         case restored(Attempt)
         case bootstrapSessionOpened(generation: Int)
         case confirmed(pairId: String, companionName: String, generation: Int)
-        case codeExpired(generation: Int)
+        /// The attempt's code ran out. `replacement` (a fresh code the owner
+        /// minted, next generation, same salt) is taken only while the code is
+        /// still shown with no companion connected and the attempt has rolls
+        /// left; otherwise the attempt fails as if none were offered.
+        case codeExpired(generation: Int, replacement: Attempt? = nil)
         case peerGone(pairId: String?, reason: String, generation: Int)
         case listenerFailed(String)
         /// The transport stopped serving the attempt's code without the user asking.
@@ -500,7 +516,8 @@ enum PairingFlow {
         case clearJournal
         /// Tell the transport to stop accepting the current attempt's bootstrap key.
         case cancelTransport(Attempt)
-        /// Tell the transport to accept this attempt's bootstrap key again.
+        /// Tell the transport to accept this attempt's bootstrap key (again
+        /// after an interruption, or for the first time after a code rolled).
         case resumeTransport(Attempt)
         /// Close every live session of one pairing (cancels a receive).
         case closeSession(pairId: String)
@@ -601,9 +618,20 @@ enum PairingFlow {
                     return .ignoredInput
                 }
 
-            case .codeExpired(let g):
+            case .codeExpired(let g, let replacement):
                 guard g >= generation else { return .staleInput }
                 switch phase {
+                case .codeShown(let a) where a.canRoll && replacement != nil:
+                    // Rolling code: the sheet is open and nobody connected, so
+                    // the expired code is replaced in place rather than failing
+                    // the attempt (#355: a paste that lands a second late).
+                    guard a.generation == g else { return .staleInput }
+                    guard var next = replacement, next.generation > a.generation, next.code != a.code else { return .ignoredInput }
+                    next.rolls = a.rolls + 1
+                    generation = next.generation
+                    phase = .codeShown(next)
+                    return Outcome(effects: [.persist(next), .resumeTransport(next),
+                                             .announce("The pairing code expired unused. New pairing code \(Pairing.spokenCode(next.code)), valid for \(Int(next.remaining(at: now).rounded(.up))) seconds.")])
                 case .codeShown(let a), .verifying(let a):
                     guard a.generation == g else { return .staleInput }
                     phase = .failed(reason: "The pairing code expired before a companion paired.", generation: g)
@@ -776,6 +804,20 @@ enum PairingFlow {
     }
 }
 
+extension PairingFlow.Attempt {
+    /// Journals written before rolling codes carry no `rolls`; they decode as 0
+    /// (in an extension so the memberwise initialiser keeps its default).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        generation = try c.decode(Int.self, forKey: .generation)
+        code = try c.decode(String.self, forKey: .code)
+        pairId = try c.decode(String.self, forKey: .pairId)
+        startedAt = try c.decode(Date.self, forKey: .startedAt)
+        expiresAt = try c.decode(Date.self, forKey: .expiresAt)
+        rolls = try c.decodeIfPresent(Int.self, forKey: .rolls) ?? 0
+    }
+}
+
 // MARK: - user-visible text and accessibility
 
 extension PairingFlow.Phase {
@@ -827,7 +869,8 @@ extension PairingFlow.Phase {
         case .off: return "Not advertising. Turn on Advertise or show a pairing code."
         case .advertising: return "Paired companions can connect. No pairing in progress."
         case .codeShown(let a):
-            return "Enter the code on the companion. Expires in \(Int(a.remaining(at: now).rounded(.up))) s."
+            let lead = a.rolls > 0 ? "The previous code expired unused; enter the new code on the companion." : "Enter the code on the companion."
+            return "\(lead) Expires in \(Int(a.remaining(at: now).rounded(.up))) s."
         case .verifying(let a):
             return "A companion connected with the code; waiting for its hello. Expires in \(Int(a.remaining(at: now).rounded(.up))) s."
         case .paired(let p): return "Paired with \(p.companionName) (\(p.pairId))."
@@ -957,7 +1000,9 @@ enum PairingAccessibility {
 /// the attempt generation counter and the one pending attempt, so a code that
 /// was valid when the app quit can be resumed or explicitly cancelled after
 /// relaunch. The code is a bootstrap secret (≤ 120 s, one pairing); it is
-/// stored only while pending and never together with a long-term PSK.
+/// stored only while pending and never together with a long-term PSK. A code
+/// rolled in place (`Pairing.maxCodeRolls`) replaces the pending attempt with
+/// its `rolls` count, so the cap survives a relaunch too.
 final class PairingJournal {
     static let schemaVersion = 1
 

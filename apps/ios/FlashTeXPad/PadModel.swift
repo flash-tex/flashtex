@@ -369,7 +369,7 @@ final class PadModel: ObservableObject {
 
     func attachFixtureReview(_ f: ReviewedProposal.WorkflowFixture) {
         review = ReviewSession(review: f.review, approved: f.approved)
-        reviewProvenance = .localFixture("crates/assistant-context/examples/review-workflow.json (provider_called:false)")
+        reviewProvenance = .localFixture("bundled review-workflow.json (provider_called:false)")
         reviewError = nil
     }
 

@@ -442,6 +442,9 @@ enum DS {
         static let nearbyEventsMaxHeight: CGFloat = 120
         /// The Settings window's fixed content width.
         static let settingsWidth: CGFloat = 460
+        /// The release-notes scroller inside the Check for Updates alert (UpdateChecker.swift).
+        static let updateNotesWidth: CGFloat = 440
+        static let updateNotesHeight: CGFloat = 180
         /// Find in Project window.
         static let searchWindowMinWidth: CGFloat = 520
         static let searchWindowMinHeight: CGFloat = 320

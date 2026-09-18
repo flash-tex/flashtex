@@ -844,6 +844,12 @@ pub enum Frame {
     UnderLeftArrow,
     /// amsmath `\underleftrightarrow` (1005-1006).
     UnderLeftRightArrow,
+    /// cancel package `\cancel`: forward diagonal (bottom-left to top-right).
+    Cancel,
+    /// cancel package `\bcancel`: backward diagonal (top-left to bottom-right).
+    BCancel,
+    /// cancel package `\xcancel`: both diagonals (an X through the content).
+    XCancel,
 }
 
 impl Frame {
@@ -989,6 +995,12 @@ pub struct MathPackages {
     /// `amsmath`, so this flag always arrives with `amsmath` set — see
     /// `AMSMATH_PACKAGES`, which already lists `mathtools`.
     pub mathtools: bool,
+    /// `cancel` is loaded, providing `\cancel`, `\bcancel`, `\xcancel` and
+    /// `\cancelto`.
+    ///
+    /// Base LaTeX2e does not define these names (`cancel.sty` is a standalone
+    /// package, measured as not loading amsmath).
+    pub cancel: bool,
 }
 
 /// Packages that load amsmath, so that `\usepackage{X}` alone gives amsmath's
@@ -1079,6 +1091,7 @@ impl MathPackages {
         amssymb: false,
         amsfonts: false,
         mathtools: false,
+        cancel: false,
     };
 
     /// Folds one `\documentclass` name in.
@@ -1093,6 +1106,7 @@ impl MathPackages {
     pub fn load_package(&mut self, package: &str) {
         self.amsmath |= AMSMATH_PACKAGES.contains(&package);
         self.mathtools |= package == "mathtools";
+        self.cancel |= package == "cancel";
         let amssymb = AMSSYMB_PACKAGES.contains(&package);
         self.amssymb |= amssymb;
         // `amssymb.sty` line 8 is `\RequirePackage{amsfonts}`, so anything
@@ -2384,6 +2398,26 @@ impl MathParser<'_> {
                     "underleftarrow" => Frame::UnderLeftArrow,
                     "underleftrightarrow" => Frame::UnderLeftRightArrow,
                     _ => Frame::Under,
+                };
+                MathAtom {
+                    nucleus: Nucleus::Framed { body, frame },
+                    span,
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                }
+            }
+            "cancel" | "bcancel" | "xcancel" if !self.packages.cancel => {
+                self.missing_package(&name, "cancel", span)
+            }
+            "cancel" | "bcancel" | "xcancel" => {
+                let body = self.required_group(&name, span);
+                let frame = match name.as_str() {
+                    "cancel" => Frame::Cancel,
+                    "bcancel" => Frame::BCancel,
+                    _ => Frame::XCancel,
                 };
                 MathAtom {
                     nucleus: Nucleus::Framed { body, frame },
@@ -6764,6 +6798,7 @@ mod unbraced_argument_tests {
         amssymb: false,
         amsfonts: true,
         mathtools: false,
+        cancel: false,
     };
 
     #[test]
@@ -7401,6 +7436,7 @@ mod spacing_tests {
         amssymb: true,
         amsfonts: true,
         mathtools: false,
+        cancel: false,
     };
 
     fn width_with(source: &str, size: f64, packages: MathPackages) -> f64 {
@@ -7416,6 +7452,7 @@ mod spacing_tests {
         amssymb: false,
         amsfonts: false,
         mathtools: true,
+        cancel: false,
     };
 
     fn x(b: &MathBox, text: &str) -> f64 {
@@ -8187,24 +8224,28 @@ mod package_gating_tests {
         amssymb: true,
         amsfonts: true,
         mathtools: false,
+        cancel: false,
     };
     const AMSFONTS: MathPackages = MathPackages {
         amsmath: false,
         amssymb: false,
         amsfonts: true,
         mathtools: false,
+        cancel: false,
     };
     const AMSMATH: MathPackages = MathPackages {
         amsmath: true,
         amssymb: false,
         amsfonts: false,
         mathtools: false,
+        cancel: false,
     };
     const MATHTOOLS: MathPackages = MathPackages {
         amsmath: true,
         amssymb: false,
         amsfonts: false,
         mathtools: true,
+        cancel: false,
     };
 
     fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
@@ -8822,7 +8863,8 @@ mod package_gating_tests {
                 amsmath: true,
                 amssymb: false,
                 amsfonts: true,
-                mathtools: false
+                mathtools: false,
+                cancel: false,
             }
         );
         assert_eq!(
@@ -8831,7 +8873,8 @@ mod package_gating_tests {
                 amsmath: true,
                 amssymb: true,
                 amsfonts: true,
-                mathtools: false
+                mathtools: false,
+                cancel: false,
             }
         );
         assert_eq!(class("article"), MathPackages::KERNEL);
@@ -8850,6 +8893,7 @@ mod double_bar_tests {
         amssymb: false,
         amsfonts: false,
         mathtools: false,
+        cancel: false,
     };
 
     /// The glyph texts a formula lays out, in order.
@@ -9105,6 +9149,7 @@ mod lap_tests {
         amssymb: false,
         amsfonts: false,
         mathtools: true,
+        cancel: false,
     };
 
     /// `amsmath` without `mathtools`: the lap family is still undefined.
@@ -9113,6 +9158,7 @@ mod lap_tests {
         amssymb: false,
         amsfonts: false,
         mathtools: false,
+        cancel: false,
     };
 
     fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
