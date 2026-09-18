@@ -558,6 +558,7 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             options: _,
             title,
             subtitle,
+            slides: _,
             span,
         } => {
             shift_inlines(title, changes, deltas)?;
@@ -712,6 +713,9 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             Inline::TabStop { span } | Inline::TabJump { span } => {
                 map_span(span, changes, deltas)?
             }
+            Inline::OverlayBegin { spec: _, kind: _, span }
+            | Inline::OverlayEnd { span }
+            | Inline::Onslide { spec: _, span } => map_span(span, changes, deltas)?,
             Inline::Tabular(table) => {
                 // `Tabular` only offers a mapping copy; its nested inlines are
                 // shifted through the same in-place walk.
@@ -982,6 +986,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         | Inline::PagePenalty { span, .. }
         | Inline::Discretionary { span, .. } => *span,
         Inline::TabStop { span } | Inline::TabJump { span } => *span,
+        Inline::OverlayBegin { span, .. } | Inline::OverlayEnd { span } | Inline::Onslide { span, .. } => *span,
     };
     let first = inlines.first().map(span_of);
     let last = inlines.last().map(span_of);

@@ -536,6 +536,36 @@ pub enum Inline {
         span: Span,
         style: TextStyle,
     },
+    /// beamer (issue #944, Tier 2): the opening of an overlay-aware
+    /// command's argument -- `\uncover<2->{`, `\only<1>{`, `\alert<2>{`,
+    /// `\visible`, `\invisible`, the `uncoverenv`/`onlyenv`/... environments
+    /// and an `\item<2->` (whose scope ends at the next `\item` or the
+    /// list's end, `\beamer@closeitem`). A zero-width marker: the material
+    /// up to the matching [`Inline::OverlayEnd`] -- which may sit in a later
+    /// paragraph or block when the argument holds a paragraph break or an
+    /// environment -- is shown, covered, omitted or coloured per slide as
+    /// `kind` says (`crate::overlay::OverlayKind`). The frame is emitted
+    /// once; the render pipeline sets it once per slide and decides per
+    /// marker. `span` is the command with its specification.
+    OverlayBegin {
+        spec: crate::overlay::OverlaySpec,
+        kind: crate::overlay::OverlayKind,
+        span: Span,
+    },
+    /// The close of the innermost open [`Inline::OverlayBegin`] (the
+    /// argument's `}`, the environment's `\end`, the next `\item`).
+    OverlayEnd {
+        span: Span,
+    },
+    /// beamer `\onslide<spec>` without braces, and `\pause` (which is
+    /// `\onslide<\beamerpauses->` after stepping the counter): from here
+    /// to the next `Onslide` or the frame's end the material is covered on
+    /// the slides `spec` does not select (`\beamer@noargsonslide`). A
+    /// zero-width marker.
+    Onslide {
+        spec: crate::overlay::OverlaySpec,
+        span: Span,
+    },
 }
 
 /// A paragraph- or page-builder parameter set by the document, either as a
@@ -1052,6 +1082,11 @@ pub enum Block {
         options: BeamerFrameOptions,
         title: Vec<Inline>,
         subtitle: Vec<Inline>,
+        /// The number of slides the frame sets (`\beamer@slideinframe`
+        /// loop, `beamerbaseframe.sty`): the largest slide any overlay
+        /// specification in the body names, at least 1. Patched when
+        /// `\end{frame}` is reached.
+        slides: u32,
         span: Span,
     },
     /// `\end{frame}` under beamer: closes the slide opened by the last
@@ -2633,6 +2668,10 @@ pub fn parse_project_with(
         subtitle: None,
         institute: None,
         beamer_frame: None,
+        beamer_pauses: 1,
+        beamer_slides: 1,
+        overlay_groups: Vec::new(),
+        pending_overlay_markers: Vec::new(),
         today: options.today,
         titlepage_option: false,
         twocolumn_option: false,
@@ -2944,6 +2983,20 @@ struct P<'a> {
     /// [`Block::BeamerFrameBegin`], so `\frametitle`/`\framesubtitle` in
     /// the body can patch its title; `None` outside a frame.
     beamer_frame: Option<usize>,
+    /// beamer's `beamerpauses` counter (1 at the start of a frame; `\pause`
+    /// and a `+` in an overlay specification step it) and the largest slide
+    /// number any specification of the open frame named (the frame's slide
+    /// count once `\end{frame}` comes).
+    beamer_pauses: u32,
+    beamer_slides: u32,
+    /// `brace_stack.len()` when each open overlay argument group
+    /// (`\uncover<2->{`) was entered: the `}` that brings the stack back to
+    /// that depth pushes the [`Inline::OverlayEnd`].
+    overlay_groups: Vec<usize>,
+    /// Overlay markers of a paragraph that held nothing else (`\pause` on a
+    /// line of its own between blank lines): carried to the front of the
+    /// next paragraph instead of setting an empty line.
+    pending_overlay_markers: Vec<Inline>,
     /// The date `\today` expands to, supplied by the caller in the compile
     /// request rather than read from the clock here (`ParseOptions::today`).
     today: TodayDate,
@@ -3024,6 +3077,13 @@ struct OpenList {
     series: Option<String>,
     /// The `\begin` keys (saved for `resume*`).
     begin_options: Vec<ListOption>,
+    /// beamer `\begin{itemize}[<+->]`: the default overlay specification
+    /// of every `\item` without one (`\beamer@defaultospec`), decoded per
+    /// item since `+` reads the pause counter at each.
+    default_overlay: Option<String>,
+    /// An `\item<spec>`'s [`Inline::OverlayBegin`] is open: the next
+    /// `\item` or the list's end pushes its [`Inline::OverlayEnd`].
+    item_overlay_open: bool,
 }
 
 /// Extra vertical space `\setlist{itemsep=...,topsep=...}` adds on top of
@@ -3392,6 +3452,12 @@ impl P<'_> {
                         self.restore_length_scope();
                         if let Some(obeylines) = self.obeylines_stack.pop() {
                             self.obeylines = obeylines;
+                        }
+                        if self.overlay_groups.last() == Some(&self.brace_stack.len()) {
+                            self.overlay_groups.pop();
+                            if render {
+                                para.push(Inline::OverlayEnd { span: tok.span });
+                            }
                         }
                     }
                 }
@@ -3901,6 +3967,7 @@ impl P<'_> {
             // `\documentclass{beamer}` (see `beamer_command_available`).
             "frametitle" | "framesubtitle" => self.beamer_frame_title(name, span, blocks, para),
             "alert" => self.beamer_alert(name, span, para),
+            "pause" | "onslide" | "uncover" | "only" | "visible" | "invisible" => self.beamer_overlay_command(name, span, para),
             "titlepage" => self.beamer_titlepage(span, blocks, para),
             "note" => self.beamer_note(name, span),
             "label" | "ref" | "pageref" | "eqref" | "thepage" => self.label_or_reference_command(name, span, para),
@@ -4628,11 +4695,24 @@ impl P<'_> {
                         }
                     })
                     .unwrap_or(0.0);
+                self.close_item_overlay(span, para);
                 self.flush_list_item(blocks, para, gap_before, 0.0);
                 match self.list_stack.last() {
                     Some(_) => {
+                        // beamer: `\item<spec>[label]` or `\item[label]<spec>`;
+                        // without a spec the list's `[<+->]` default applies.
+                        let mut overlay = None;
+                        if self.is_beamer_class() {
+                            overlay = self.take_beamer_overlay_spec();
+                        }
                         let explicit = self.item_label_argument();
+                        if self.is_beamer_class() && overlay.is_none() {
+                            overlay = self.take_beamer_overlay_spec();
+                        }
                         self.begin_item(span, explicit);
+                        if self.is_beamer_class() {
+                            self.open_item_overlay(overlay, span, para);
+                        }
                     }
                     None => self.diags.push(Diagnostic::error(
                         "\\item is only supported inside a list",
@@ -7161,11 +7241,30 @@ impl P<'_> {
         ) && self.in_body
         {
             self.flush_paragraph(blocks, para);
-            let options = self.optional_bracket_argument();
-            let begin_span = options
+            let mut options = self.optional_bracket_argument();
+            let mut begin_span = options
                 .as_ref()
                 .map_or(span.merge(argument_span), |(_, o)| span.merge(*o));
+            // beamer `\begin{itemize}[<+->]`: the default overlay
+            // specification of the list's items, not an enumitem key list
+            // (`\beamer@itemize@@`, beamerbaselocalstructure.sty).
+            let mut default_overlay = None;
+            if self.is_beamer_class() {
+                if let Some((text, _)) = &options {
+                    let text = text.trim();
+                    if let Some(inner) = text.strip_prefix('<').and_then(|t| t.strip_suffix('>')) {
+                        default_overlay = Some(inner.to_string());
+                        options = self.optional_bracket_argument();
+                        if let Some((_, o)) = &options {
+                            begin_span = begin_span.merge(*o);
+                        }
+                    }
+                }
+            }
             self.open_list(&environment, options.map(|(text, _)| text), begin_span, blocks.len());
+            if let (Some(spec), Some(list)) = (default_overlay, self.list_stack.last_mut()) {
+                list.default_overlay = Some(spec);
+            }
         } else if environment == "list" && self.in_body {
             // latex.ltx list: only the default label is consumed here; the
             // decl group stays in the stream as an ordinary group, so its
@@ -7230,6 +7329,8 @@ impl P<'_> {
                 current_reference: String::new(),
                 series: None,
                 begin_options: Vec::new(),
+                default_overlay: None,
+                item_overlay_open: false,
             });
             self.push_list_frame(ListEnvironment::Bibliography, Vec::new(), heading_span);
         } else if environment == "subequations" && self.in_body {
@@ -7271,6 +7372,33 @@ impl P<'_> {
             // below (no "not implemented" warning). The body parses as
             // ordinary blocks until `\end{frame}`.
             self.beamer_frame_begin(span.merge(argument_span), blocks, para);
+        } else if self.in_body
+            && self.is_beamer_class()
+            && matches!(environment.as_str(), "uncoverenv" | "onlyenv" | "visibleenv" | "invisibleenv" | "alertenv" | "actionenv")
+        {
+            // The overlay environments `<spec>` (beamerbaseoverlay.sty):
+            // the body between the markers, decided per slide like the
+            // command forms (`beamer_overlay_environment` for the kinds).
+            let kind = beamer_overlay_environment(&environment).unwrap_or(crate::overlay::OverlayKind::Cover);
+            let spec = self
+                .take_beamer_overlay_spec()
+                .map_or_else(crate::overlay::OverlaySpec::all, |(spec, _)| spec);
+            para.push(Inline::OverlayBegin { spec, kind, span: span.merge(argument_span) });
+        } else if self.in_body && self.is_beamer_class() && is_beamer_block_environment(&environment) {
+            // `\begin{block}<spec>{title}` (Tier 3 sets the block itself):
+            // the overlay specification is read so it never reaches the
+            // page; the body is typeset as plain text as before.
+            let _ = self.take_beamer_overlay_spec();
+            self.diags.push(Diagnostic::environment_warning(
+                &environment,
+                format!(
+                    "environment '{}' is not implemented; its body is typeset as plain text",
+                    environment
+                ),
+                Some(span),
+                Some("typeset the body without the environment's formatting".into()),
+            )
+            .with_optional_help(vocabulary::environment_help(&environment)));
         } else if environment == "sloppypar" && self.in_body {
             // latex.ltx `\def\sloppypar{\par\sloppy}`.
             self.flush_paragraph(blocks, para);
@@ -7415,6 +7543,7 @@ impl P<'_> {
                 ),
                 None => (0.0, 0.0),
             };
+            self.close_item_overlay(span, para);
             self.flush_list_item(blocks, para, gap_before, gap_after);
             let level = self.list_stack.len() as u8;
             if let Some(open) = self.list_stack.pop() {
@@ -7484,6 +7613,8 @@ impl P<'_> {
             // path consumes it synchronously.
             self.flush_paragraph(blocks, para);
             self.beamer_frame_end(span, blocks);
+        } else if self.in_body && self.is_beamer_class() && beamer_overlay_environment(&environment).is_some() {
+            para.push(Inline::OverlayEnd { span });
         } else if environment == "tabbing" && self.in_body {
             self.end_tabbing(blocks, para);
         } else if environment == "proof" {
@@ -7924,6 +8055,11 @@ impl P<'_> {
     /// `\end{frame}`, which pushes the matching [`Block::BeamerFrameEnd`].
     fn beamer_frame_begin(&mut self, open: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         self.flush_paragraph(blocks, para);
+        // `\beamer@framepauses`: the pause counter restarts at 1 and no
+        // slide is named yet.
+        self.beamer_pauses = 1;
+        self.beamer_slides = 1;
+        self.pending_overlay_markers.clear();
         self.skip_beamer_overlay_spec();
         let mut options = BeamerFrameOptions::default();
         if let Some((raw, _)) = self.optional_bracket_argument() {
@@ -7953,17 +8089,245 @@ impl P<'_> {
             options,
             title,
             subtitle,
+            slides: 1,
             span,
         });
         self.finish_block_dependencies();
     }
 
     /// `\end{frame}` under beamer: the [`Block::BeamerFrameEnd`] that closes
-    /// the slide (the paragraph was flushed by the caller).
+    /// the slide (the paragraph was flushed by the caller), and the frame's
+    /// slide count patched onto its [`Block::BeamerFrameBegin`]. Overlay
+    /// markers still pending (a `\pause` after the last paragraph) cover
+    /// nothing and are dropped.
     fn beamer_frame_end(&mut self, span: Span, blocks: &mut Vec<Block>) {
-        self.beamer_frame = None;
+        let open = self
+            .beamer_frame
+            .take()
+            .filter(|&at| matches!(blocks.get(at), Some(Block::BeamerFrameBegin { .. })));
+        if let Some(Block::BeamerFrameBegin { slides, .. }) = open.and_then(|at| blocks.get_mut(at)) {
+            *slides = self.beamer_slides.max(1);
+        }
+        self.pending_overlay_markers.clear();
+        self.beamer_pauses = 1;
+        self.beamer_slides = 1;
         blocks.push(Block::BeamerFrameEnd { span });
         self.finish_block_dependencies();
+    }
+
+    /// A beamer `<overlay>` specification at the cursor, decoded against
+    /// the frame's pause counter (`crate::overlay`), or `None` when the next
+    /// word does not open with `<`. The largest slide it names raises the
+    /// frame's slide count. `<1, 3>` with blanks spans several word tokens:
+    /// they are joined up to the closing `>`.
+    fn take_beamer_overlay_spec(&mut self) -> Option<(crate::overlay::OverlaySpec, Span)> {
+        self.skip_spaces();
+        let first = self.peek()?;
+        let TokenKind::Word(word) = &first.kind else { return None };
+        if !word.starts_with('<') {
+            return None;
+        }
+        let mut span = first.span;
+        let mut raw = String::new();
+        // The words up to the one holding `>`, at most a handful.
+        let mut index = self.i;
+        let mut close: Option<(usize, usize)> = None;
+        for _ in 0..8 {
+            let Some(input) = self.t.get(index) else { break };
+            match &input.token.kind {
+                TokenKind::Word(w) => {
+                    if let Some(at) = w.find('>') {
+                        raw.push_str(&w[..at]);
+                        close = Some((index, at + 1));
+                        span = span.merge(input.token.span);
+                        break;
+                    }
+                    raw.push_str(w);
+                    span = span.merge(input.token.span);
+                }
+                TokenKind::Space => raw.push(' '),
+                _ => break,
+            }
+            index += 1;
+        }
+        let (last, past) = close?;
+        // Consume the words before the last one, then trim the last.
+        self.i = last;
+        self.trim_word_prefix(past);
+        let raw = raw.trim_start_matches('<').to_string();
+        let spec = crate::overlay::OverlaySpec::parse(&raw, &mut self.beamer_pauses);
+        self.beamer_slides = self.beamer_slides.max(spec.max_slide());
+        Some((spec, span))
+    }
+
+    /// `\pause[n]`, `\onslide<spec>` (with or without an argument, `+`/`*`
+    /// forms), `\uncover<spec>{...}`, `\only<spec>{...}`, `\visible`,
+    /// `\invisible` (beamerbaseoverlay.sty): overlay markers in the
+    /// paragraph (see [`Inline::OverlayBegin`]). Like `\alert`, a following
+    /// group is re-entered so a paragraph break or an environment inside
+    /// the argument parses as usual; the group's `}` closes the marker.
+    /// beamer also accepts the specification after the argument
+    /// (`\only{...}<2>`); that order is read too.
+    fn beamer_overlay_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        use crate::overlay::{OverlayKind, OverlaySpec};
+        if !self.beamer_command_available(name, span) {
+            return;
+        }
+        if name == "pause" {
+            // `\beamer@@pause`: step (or set) `beamerpauses`, then
+            // `\onslide<\value{beamerpauses}->`.
+            match self.optional_bracket_argument() {
+                Some((n, _)) => {
+                    if let Ok(n) = n.trim().parse::<u32>() {
+                        self.beamer_pauses = n;
+                    }
+                }
+                None => self.beamer_pauses += 1,
+            }
+            let spec = OverlaySpec::from(self.beamer_pauses);
+            self.beamer_slides = self.beamer_slides.max(spec.max_slide());
+            para.push(Inline::Onslide { spec, span });
+            return;
+        }
+        let mut kind = match name {
+            "only" => OverlayKind::Only,
+            "visible" => OverlayKind::Visible,
+            "invisible" => OverlayKind::Invisible,
+            _ => OverlayKind::Cover,
+        };
+        if name == "onslide" {
+            // `\onslide*` is `\only`, `\onslide+` is `\visible`.
+            if let Some(Token { kind: TokenKind::Word(word), .. }) = self.peek() {
+                if let Some(first) = word.chars().next() {
+                    if first == '*' || first == '+' {
+                        kind = if first == '*' { OverlayKind::Only } else { OverlayKind::Visible };
+                        self.trim_word_prefix(1);
+                    }
+                }
+            }
+        }
+        let leading = self.take_beamer_overlay_spec();
+        self.skip_spaces();
+        let opens_group = matches!(self.peek().map(|token| &token.kind), Some(TokenKind::LBrace));
+        if name == "onslide" && !opens_group {
+            // `\beamer@noargsonslide`: covered from here to the next
+            // `\onslide` (or `\pause`), shown from there when the
+            // specification selects the slide.
+            let spec = leading.map_or_else(OverlaySpec::all, |(spec, _)| spec);
+            para.push(Inline::Onslide { spec, span });
+            return;
+        }
+        if opens_group {
+            if let Some(open) = self.closed_group_start() {
+                // The specification may follow the argument instead; peek
+                // past the group for it.
+                let spec = match leading {
+                    Some((spec, _)) => spec,
+                    None => self.trailing_overlay_spec(),
+                };
+                self.i += 1;
+                self.overlay_groups.push(self.brace_stack.len());
+                self.open_group(open);
+                para.push(Inline::OverlayBegin { spec, kind, span });
+                return;
+            }
+        }
+        let (tokens, _) = self.required_group(name, span);
+        let spec = match leading {
+            Some((spec, _)) => spec,
+            None => self.take_beamer_overlay_spec().map_or_else(OverlaySpec::all, |(spec, _)| spec),
+        };
+        let style = self.style;
+        let content = self.inlines_from_tokens(tokens, style, false);
+        para.push(Inline::OverlayBegin { spec, kind, span });
+        para.extend(content);
+        para.push(Inline::OverlayEnd { span });
+    }
+
+    /// The `<spec>` written after a closed brace group at the cursor
+    /// (`\only{...}<2>`): decoded and removed from the stream, the group
+    /// left in place. `*` when there is none.
+    fn trailing_overlay_spec(&mut self) -> crate::overlay::OverlaySpec {
+        let mut depth = 0usize;
+        let mut index = self.i;
+        while let Some(input) = self.t.get(index) {
+            match input.token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+        let after = index + 1;
+        let opens = matches!(
+            self.t.get(after).map(|input| &input.token.kind),
+            Some(TokenKind::Word(word)) if word.starts_with('<')
+        );
+        if !opens {
+            return crate::overlay::OverlaySpec::all();
+        }
+        let saved = self.i;
+        self.i = after;
+        let spec = self.take_beamer_overlay_spec().map_or_else(crate::overlay::OverlaySpec::all, |(spec, _)| spec);
+        // What the specification took is blanked (a logged edit, like
+        // `trim_word_prefix`'s) so the group's own parse never meets it.
+        let consumed_to = self.i;
+        for index in after..consumed_to {
+            if let Some(input) = self.token_mut(index) {
+                input.token.kind = TokenKind::Comment;
+            }
+        }
+        self.i = saved;
+        spec
+    }
+
+    /// Overlay markers held back from a paragraph that had nothing else
+    /// (`flush_list_item`), moved to the front of `content`.
+    fn take_pending_overlay_markers(&mut self, content: &mut Vec<Inline>) {
+        if self.pending_overlay_markers.is_empty() {
+            return;
+        }
+        let mut markers = std::mem::take(&mut self.pending_overlay_markers);
+        markers.append(content);
+        *content = markers;
+    }
+
+    /// `\item<spec>` (`\beamer@parseitem`: the item in an `actionenv`, i.e.
+    /// `uncoverenv`, closed by `\beamer@closeitem` at the next `\item` or
+    /// the list's end): the [`Inline::OverlayBegin`] opening the item.
+    /// `spec` is the item's own, else the list's `[<+->]` default decoded
+    /// now (so each item's `+` reads the counter in turn).
+    fn open_item_overlay(&mut self, spec: Option<(crate::overlay::OverlaySpec, Span)>, span: Span, para: &mut Vec<Inline>) {
+        let spec = match spec {
+            Some((spec, _)) => Some(spec),
+            None => {
+                let default = self.list_stack.last().and_then(|list| list.default_overlay.clone());
+                default.map(|raw| {
+                    let spec = crate::overlay::OverlaySpec::parse(&raw, &mut self.beamer_pauses);
+                    self.beamer_slides = self.beamer_slides.max(spec.max_slide());
+                    spec
+                })
+            }
+        };
+        let Some(spec) = spec else { return };
+        if let Some(list) = self.list_stack.last_mut() {
+            list.item_overlay_open = true;
+        }
+        para.push(Inline::OverlayBegin { spec, kind: crate::overlay::OverlayKind::Cover, span });
+    }
+
+    /// `\beamer@closeitem`: the [`Inline::OverlayEnd`] of an `\item<spec>`
+    /// still open in the current list.
+    fn close_item_overlay(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let open = self.list_stack.last_mut().map(|list| std::mem::take(&mut list.item_overlay_open));
+        if open == Some(true) {
+            para.push(Inline::OverlayEnd { span });
+        }
     }
 
     /// A beamer `<overlay>` specification (`<1->`, `<2-3>`): consumed so it
@@ -8161,9 +8525,28 @@ impl P<'_> {
             color: Some(DeviceColor::RED),
             ..self.style
         };
-        // `\alert<2>{...}`: the overlay spec is read past (every slide
-        // shows the alert until overlays are modelled).
-        self.skip_beamer_overlay_spec();
+        // `\alert<2>{...}`: the colour is the slide's to decide, so the
+        // argument is bracketed by overlay markers of kind `Alert` and keeps
+        // the surrounding colour here (`beamer_overlay_command` reads the
+        // trailing-spec form too). Without a specification the alert
+        // colour applies on every slide and is set directly.
+        if let Some((spec, _)) = self.take_beamer_overlay_spec() {
+            self.skip_spaces();
+            if let Some(open) = self.closed_group_start() {
+                self.i += 1;
+                self.overlay_groups.push(self.brace_stack.len());
+                self.open_group(open);
+                para.push(Inline::OverlayBegin { spec, kind: crate::overlay::OverlayKind::Alert, span });
+            } else {
+                let (tokens, _) = self.required_group(name, span);
+                let style = self.style;
+                let content = self.inlines_from_tokens(tokens, style, false);
+                para.push(Inline::OverlayBegin { spec, kind: crate::overlay::OverlayKind::Alert, span });
+                para.extend(content);
+                para.push(Inline::OverlayEnd { span });
+            }
+            return;
+        }
         self.skip_spaces();
         if let Some(open) = self.closed_group_start() {
             self.i += 1;
@@ -11740,6 +12123,14 @@ impl P<'_> {
         if paragraph.is_empty() && label.is_none() {
             return;
         }
+        // A paragraph of overlay markers alone (`\pause` on its own line
+        // between blank lines) sets no line: the markers wait for the next
+        // paragraph (`\beamer@smuggle` puts nothing on the list either).
+        if label.is_none() && paragraph.iter().all(is_overlay_marker) {
+            self.pending_overlay_markers.append(paragraph);
+            return;
+        }
+        self.take_pending_overlay_markers(paragraph);
         let item = self.pending_item.take();
         // The item's topsep/itemsep belongs to its labelled first paragraph,
         // even when a blank line inside the item flushes that paragraph
@@ -12196,6 +12587,8 @@ impl P<'_> {
             current_reference: String::new(),
             series,
             begin_options,
+            default_overlay: None,
+            item_overlay_open: false,
         });
         self.push_list_frame(kind, effective, begin_span);
     }
@@ -13433,7 +13826,10 @@ fn inline_span(inline: &Inline) -> Span {
         | Inline::Verbatim { span, .. }
         | Inline::Penalty { span, .. }
         | Inline::PagePenalty { span, .. }
-        | Inline::Discretionary { span, .. } => *span,
+        | Inline::Discretionary { span, .. }
+        | Inline::OverlayBegin { span, .. }
+        | Inline::OverlayEnd { span }
+        | Inline::Onslide { span, .. } => *span,
         Inline::Tabular(t) => t.span,
         Inline::ColorBox(b) => b.span,
         Inline::Underline(u) => u.span,
@@ -13458,6 +13854,33 @@ fn inline_span(inline: &Inline) -> Span {
 /// for a zero width) and contributes no height or depth, matching the
 /// oracle's `(0.0+0.0)` line. It deliberately does not fire for genuinely
 /// empty or label-only paragraphs (no material), nor beside any real box.
+/// beamer's `block`/`alertblock`/`exampleblock` (Tier 3 of #944): only
+/// their `<overlay>` specification is read here.
+fn is_beamer_block_environment(name: &str) -> bool {
+    matches!(name, "block" | "alertblock" | "exampleblock")
+}
+
+/// beamer's overlay environments (beamerbaseoverlay.sty) and what each
+/// does on the slides its specification does not select; `actionenv` with
+/// a plain specification is `uncoverenv`.
+fn beamer_overlay_environment(name: &str) -> Option<crate::overlay::OverlayKind> {
+    use crate::overlay::OverlayKind;
+    Some(match name {
+        "uncoverenv" | "actionenv" => OverlayKind::Cover,
+        "onlyenv" => OverlayKind::Only,
+        "visibleenv" => OverlayKind::Visible,
+        "invisibleenv" => OverlayKind::Invisible,
+        "alertenv" => OverlayKind::Alert,
+        _ => return None,
+    })
+}
+
+/// A beamer overlay marker: zero-width, never a box (see
+/// [`Inline::OverlayBegin`]).
+pub fn is_overlay_marker(inline: &Inline) -> bool {
+    matches!(inline, Inline::OverlayBegin { .. } | Inline::OverlayEnd { .. } | Inline::Onslide { .. })
+}
+
 fn anchor_glyphless_paragraph(content: &mut Vec<Inline>, style: TextStyle) {
     if !content.iter().any(inline_is_bare_glue) || content.iter().any(inline_sets_a_box) {
         return;

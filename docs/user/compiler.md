@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 419 text-mode and 573 math-mode command entries, 68 environments and 31 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 425 text-mode and 573 math-mode command entries, 74 environments and 31 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -713,7 +713,13 @@ Canonical sources:
 | `\enquote` | `{text}` | csquotes: wraps text in typographic quotation marks; nesting alternates double \u{201c}\u{201d} and single \u{2018}\u{2019} (needs csquotes) |
 | `\frametitle` | `{...}` | beamer frame title (\Large, structure colour, in the frametitle box at the top of the slide); optional <overlay> and [short] read past; needs \documentclass{beamer} |
 | `\framesubtitle` | `{...}` | beamer frame subtitle (\footnotesize, under the frame title); needs \documentclass{beamer} |
-| `\alert` | `{...}` | beamer alert text in red; an <overlay> spec is read past (shown on every slide); needs \documentclass{beamer} |
+| `\alert` | `<overlay>{...}` | beamer alert text in red on the slides the <overlay> spec selects (every slide without one); needs \documentclass{beamer} |
+| `\pause` | `[n]` | beamer: the material after it is covered (space kept, not painted) until slide n, the pause count + 1 by default; needs \documentclass{beamer} |
+| `\onslide` | `<overlay>{...}` | beamer: without an argument, the material up to the next \onslide or \pause is covered on the slides the spec does not select; with one, like \uncover (\onslide* like \only, \onslide+ like \visible); needs \documentclass{beamer} |
+| `\uncover` | `<overlay>{...}` | beamer: the argument keeps its space and is not painted on the slides the spec does not select (\setbeamercovered{invisible}); needs \documentclass{beamer} |
+| `\only` | `<overlay>{...}` | beamer: the argument is typeset only on the slides the spec selects and takes no space on the others; needs \documentclass{beamer} |
+| `\visible` | `<overlay>{...}` | beamer: like \uncover; needs \documentclass{beamer} |
+| `\invisible` | `<overlay>{...}` | beamer: the argument is covered on the slides the spec selects; needs \documentclass{beamer} |
 | `\subtitle` | `{...}` | beamer subtitle for \titlepage; optional [short] read past; needs \documentclass{beamer} |
 | `\institute` | `{...}` | beamer institute for \titlepage; optional [short] read past; needs \documentclass{beamer} |
 | `\titlepage` |  | beamer title page (default template: centred title, subtitle, author, institute, date); needs \documentclass{beamer} |
@@ -976,6 +982,12 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `subequations` | text | amsmath: displays inside number as the parent number plus a, b, ...; a \label right after \begin gets the parent number |
 | `figure` | text | numbered captions; no floating |
 | `frame` | text | rule-bordered box around its body (\fboxsep padding, \fboxrule rule in the current colour); under \documentclass{beamer} a slide: one page per frame (empty frames included), the [t]/[c]/[b] body placement, a {title}{subtitle} head or \frametitle in the body; overlay specs, [fragile], [plain] and [allowframebreaks] are read past |
+| `uncoverenv` | text | beamer <overlay> environment: the body keeps its space and is not painted on the slides the spec does not select; needs \documentclass{beamer} |
+| `onlyenv` | text | beamer <overlay> environment: the body is typeset only on the slides the spec selects; needs \documentclass{beamer} |
+| `visibleenv` | text | beamer <overlay> environment: like uncoverenv; needs \documentclass{beamer} |
+| `invisibleenv` | text | beamer <overlay> environment: the body is covered on the slides the spec selects; needs \documentclass{beamer} |
+| `alertenv` | text | beamer <overlay> environment: the body in the alert colour on the slides the spec selects; needs \documentclass{beamer} |
+| `actionenv` | text | beamer <overlay> environment: with a plain spec, uncoverenv; needs \documentclass{beamer} |
 | `center` | text | centred paragraphs |
 | `flushleft` | text | left-aligned paragraphs |
 | `flushright` | text | right-aligned paragraphs |

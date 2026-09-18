@@ -29,6 +29,7 @@ pub mod lm_math;
 pub mod math;
 pub mod natbib;
 pub mod newcm_math;
+pub mod overlay;
 pub mod parser;
 pub mod protocol;
 pub mod supported;
