@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "muse/plaintex-diagnose",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": "corpus finding",
+  "started_utc": "2026-09-18T15:30:00Z",
+  "state": "claimed",
+  "task_id": "MUSE-plaintex-diagnose",
+  "updated_utc": "2026-09-18T15:30:00Z"
+}
