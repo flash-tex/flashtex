@@ -155,6 +155,21 @@ pub fn default_code(message: &str) -> Option<DiagnosticCode> {
     }
 }
 
+/// The digit when `word` is exactly one ASCII digit. The lexer turns a
+/// backslash control symbol (`\2`) into the one-character word `2` with the
+/// control-symbol mark (see `Token::control_symbol`); every other
+/// non-letter symbol (`\%`, `\,`, `\'`, …) is a real LaTeX command with
+/// its own rendering, so only digits qualify as "undefined, the backslash
+/// is a typo". Multi-character words never qualify, even when the mark
+/// survived macro expansion.
+pub fn control_symbol_digit(word: &str) -> Option<char> {
+    let mut chars = word.chars();
+    match (chars.next(), chars.next()) {
+        (Some(digit), None) if digit.is_ascii_digit() => Some(digit),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub severity: Severity,
@@ -306,6 +321,29 @@ impl Diagnostic {
             }
         }
         diagnostic
+    }
+
+    /// An error about `\0`–`\9`: no LaTeX layer defines a control symbol made
+    /// of a digit — pdflatex answers `! Undefined control sequence` for
+    /// `\2` and typesets nothing — so the backslash is a typo for the bare
+    /// digit (set7.tex:206 wrote `\2^9 - 1` for `2^9 - 1`). The recovery
+    /// keeps the digit the lexer already produced, which is what the
+    /// document means, and the help names the one-character fix. The
+    /// mechanical `suggestion` is safe to offer: a digit has exactly one
+    /// reading, unlike a mistyped command name with several equally close
+    /// neighbours.
+    pub fn undefined_control_symbol(digit: char, span: Span) -> Self {
+        debug_assert!(digit.is_ascii_digit());
+        let text = digit.to_string();
+        let mut diagnostic = Diagnostic::error(
+            format!("\\{digit} is not a defined command"),
+            Some(span),
+            Some(format!("typeset `{digit}` literally and continued")),
+        )
+        .with_code(DiagnosticCode::UnknownCommand)
+        .with_help(format!("did you mean `{digit}` (without the backslash)?"));
+        diagnostic.suggestion = Some(text.clone());
+        diagnostic.with_replacement(span, text)
     }
 
     /// An error about environment `name`, classified like
