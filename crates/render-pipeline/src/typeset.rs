@@ -2441,6 +2441,9 @@ impl<'a> Context<'a> {
                         push(&mut out, &mut recs, item, rec);
                     }
                 }
+                // An overlay marker `expand_frames` left in place (a frame
+                // never bracketed, a title): no material.
+                AItem::Overlay(_) => {}
                 AItem::LeaveVmode => {
                     // The empty `\hbox` `\leavevmode` starts a paragraph
                     // with; its only job is to be undiscardable so the
@@ -3407,8 +3410,8 @@ impl<'a> Context<'a> {
                 // An explicit `\item[...]` sets its own content (math,
                 // styles); every other label is plain text or a symbol.
                 let nb = match geom.label_items.as_deref().filter(|items| !items.is_empty()) {
-                    Some(items) => self.label_box_items(items, size, bold),
-                    None => self.label_box(text, *span, size, bold, geom.label_symbol),
+                    Some(items) => self.label_box_items(items, size, bold, geom.hidden),
+                    None => self.label_box(text, *span, size, bold, geom.label_symbol, geom.hidden),
                 };
                 if let Some(nb) = nb {
                     let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
@@ -3708,6 +3711,7 @@ impl<'a> Context<'a> {
                 g.parsep.natural.to_bits().hash(&mut h);
                 g.labelsep_pt.map(f64::to_bits).hash(&mut h);
                 g.itemindent_pt.to_bits().hash(&mut h);
+                g.hidden.hash(&mut h);
                 h.finish()
             });
             for part in parts {
@@ -4188,7 +4192,7 @@ impl<'a> Context<'a> {
     /// not shipped) in msam10's advance so the label box, and with it the
     /// item text, sit where pdflatex puts them (label x 36.23bp, text x
     /// 50.17bp on beamer-default p3).
-    fn beamer_triangle_box(&mut self, span: Span, size: f64, color: Option<flashtex_compiler::color::DeviceColor>) -> Option<NumberBox> {
+    fn beamer_triangle_box(&mut self, span: Span, size: f64, color: Option<flashtex_compiler::color::DeviceColor>, hidden: bool) -> Option<NumberBox> {
         const MSAM_TRIANGLE_WIDTH_EM: f64 = 0.777781;
         const RAISE_PT: f64 = 1.25;
         let width = MSAM_TRIANGLE_WIDTH_EM * size;
@@ -4196,7 +4200,7 @@ impl<'a> Context<'a> {
         let seg = adapter::Segment {
             text: text.to_string(),
             chars: vec![adapter::CharSrc { document: span.document, start: span.start, end: span.end }],
-            style: TextStyle { color, ..TextStyle::default() },
+            style: TextStyle { color, hidden, ..TextStyle::default() },
         };
         let math = self.fonts.resolve(self.style.family, Role::Math, size);
         let (mut run, rec) = if math.substituted.is_none() { self.text_box_in(&seg, size, math.face)? } else { self.text_box(&seg, size)? };
@@ -4249,18 +4253,19 @@ impl<'a> Context<'a> {
     /// the `\item` command's bytes: the words of `text` in the
     /// list's label style (`\descriptionlabel`'s `\bfseries` for a
     /// `description`), separated by interword glue at natural width.
-    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool, symbol: bool) -> Option<NumberBox> {
+    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool, symbol: bool, hidden: bool) -> Option<NumberBox> {
         let text = if symbol && text == "⋅" { "·" } else { text };
         // beamer (`beamerinnerthemedefault.sty` 200-210): every itemize
         // level's label is `\raise1.25pt\hbox{$\blacktriangleright$}` (msam10
         // `I`, 0.777781em wide) and an enumerate's is `\insertenumlabel.`,
-        // both in the structure colour (`item` inherits `structure`).
+        // both in the structure colour (`item` inherits `structure`). A
+        // covered item's label (`hidden`) is set and not painted.
         if self.style.is_beamer() {
             let color = Some(beamer::structure_color());
             let boxed = if symbol {
-                self.beamer_triangle_box(span, size, color)
+                self.beamer_triangle_box(span, size, color, hidden)
             } else {
-                self.word_box(text, span, size, TextStyle { bold, color, ..TextStyle::default() }, false)
+                self.word_box(text, span, size, TextStyle { bold, color, hidden, ..TextStyle::default() }, false)
             };
             if let Some(nb) = &boxed {
                 for (_, rec, _) in &nb.pieces {
@@ -4286,8 +4291,8 @@ impl<'a> Context<'a> {
     /// list's label style, every box at its natural position. What
     /// [`Self::label_box`] does for a plain-text label, for content that
     /// `word_box` cannot set (`\item[$\alpha$]`, issue #676).
-    fn label_box_items(&mut self, items: &[AItem], size: f64, bold: bool) -> Option<NumberBox> {
-        let (mut list, mut recs, _, _) = self.hlist(items, size, TextStyle { bold, ..TextStyle::default() }, ParaStyle::Plain);
+    fn label_box_items(&mut self, items: &[AItem], size: f64, bold: bool, hidden: bool) -> Option<NumberBox> {
+        let (mut list, mut recs, _, _) = self.hlist(items, size, TextStyle { bold, hidden, ..TextStyle::default() }, ParaStyle::Plain);
         // `hlist` ends with TeX's paragraph end (`\penalty10000
         // \parfillskip \penalty-10000`); this is an `\hbox`, not a paragraph.
         if matches!(list.last_chunk::<3>(), Some([pl::Item::Penalty(_), pl::Item::Glue(_), pl::Item::Penalty(_)])) {
@@ -4394,10 +4399,10 @@ impl<'a> Context<'a> {
         let description = list_geom.is_some_and(|g| g.description);
         let linewidth = s.text_width_pt - hang;
         let label = list_geom
-            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol, g.label_items.as_deref())))
-            .and_then(|((text, span), bold, symbol, items)| match items.filter(|items| !items.is_empty()) {
-                Some(items) => self.label_box_items(items, size, bold),
-                None => self.label_box(text, *span, size, bold, symbol),
+            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol, g.label_items.as_deref(), g.hidden)))
+            .and_then(|((text, span), bold, symbol, items, hidden)| match items.filter(|items| !items.is_empty()) {
+                Some(items) => self.label_box_items(items, size, bold, hidden),
+                None => self.label_box(text, *span, size, bold, symbol, hidden),
             });
         let mut width = hang + if bracket { 0.6 * linewidth } else { 0.0 };
         let (mut runs, mut items, mut recs) = (Vec::new(), Vec::new(), Vec::new());
@@ -6729,6 +6734,7 @@ fn merge_style(base: TextStyle, s: TextStyle) -> TextStyle {
         literal: s.literal,
         undefined: s.undefined.or(base.undefined),
         color: s.color.or(base.color),
+        hidden: s.hidden || base.hidden,
     }
 }
 
@@ -6745,6 +6751,7 @@ fn merge_base(style: TextStyle, base: TextStyle) -> TextStyle {
         literal: style.literal,
         undefined: style.undefined.or(base.undefined),
         color: style.color.or(base.color),
+        hidden: style.hidden || base.hidden,
     }
 }
 
@@ -10463,6 +10470,10 @@ fn assemble_block(
                     raise,
                     ..
                 } => {
+                    // beamer covered text: set and measured, not painted.
+                    if style.hidden {
+                        continue;
+                    }
                     used.entry(face.font_id.clone()).or_insert_with(|| face.clone());
                     if let Some(item) = text_item(&local, face, *size, text, clusters, glyphs, *height, *depth, *raise, source_of, Paint::of(style.color)) {
                         match (items.last_mut(), item) {

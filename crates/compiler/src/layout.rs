@@ -3318,6 +3318,10 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     c.place(nobreak.clone(), size, *span, style_font(*style), false);
                 }
             }
+            // beamer overlay markers: this layout sets every slide's
+            // material once, as shown (the per-slide view is the render
+            // pipeline's).
+            Inline::OverlayBegin { .. } | Inline::OverlayEnd { .. } | Inline::Onslide { .. } => {}
             Inline::TextGlue { em, .. } => c.text_glue(*em, size),
             Inline::Math {
                 list,

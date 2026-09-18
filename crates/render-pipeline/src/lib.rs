@@ -34,6 +34,7 @@ pub mod mathtex;
 pub mod mathtext;
 pub mod nfss;
 pub mod packages;
+pub mod overlay;
 pub mod pagebuild;
 pub mod params;
 pub mod pdf;

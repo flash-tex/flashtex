@@ -61,6 +61,13 @@ pub struct TextStyle {
     /// The shape LaTeX reported undefined on the way to this style
     /// (`\wrong@fontshape`); the typesetter reports it once.
     pub undefined: Option<crate::nfss::FontKey>,
+    /// beamer covered text (`\uncover`, `\pause`, `\item<2->` on a slide
+    /// before its own; `crate::overlay`): shaped, measured and broken like
+    /// visible text -- the space is kept -- but its glyph runs are not
+    /// emitted to the display list (`typeset::assemble_block`).
+    /// `\setbeamercovered{invisible}`, the default; pdflatex moves the
+    /// covered text 2000 bp off the page (`\pgfsys@begininvisible`).
+    pub hidden: bool,
 }
 
 impl TextStyle {
@@ -246,6 +253,11 @@ pub enum Item {
     Underline(Box<UnderlineItem>),
     /// `\textsuperscript`/`\textsubscript` (compiler `Inline::TextScript`).
     TextScript(Box<TextScriptItem>),
+    /// A beamer overlay marker (compiler `Inline::OverlayBegin`/
+    /// `OverlayEnd`/`Onslide`): no material. `crate::overlay::expand_frames`
+    /// reads and removes them when it sets a frame once per slide; the
+    /// typesetter ignores any that remain.
+    Overlay(OverlayMark),
     /// LaTeX's `\leavevmode`: an empty zero-width `\hbox`.
     ///
     /// Emitted only in front of a verbatim blank that would otherwise open
@@ -260,6 +272,17 @@ pub enum Item {
     /// pdflatex shows it: `\showbox` of `\verb*"a b-c"` opens with
     /// `.\hbox(0.0+0.0)x0.0`.
     LeaveVmode,
+}
+
+/// beamer overlay markers (see [`Item::Overlay`]).
+#[derive(Debug, Clone, PartialEq)]
+pub enum OverlayMark {
+    /// The opening of an overlay-aware argument or an `\item<spec>`.
+    Begin { spec: flashtex_compiler::overlay::OverlaySpec, kind: flashtex_compiler::overlay::OverlayKind },
+    /// Its close.
+    End,
+    /// `\onslide<spec>` without braces, `\pause`.
+    Onslide { spec: flashtex_compiler::overlay::OverlaySpec },
 }
 
 /// A `\colorbox`/`\fcolorbox`: `items` set as an `\hbox` on a `fill`
@@ -584,6 +607,11 @@ pub enum Block {
         align: flashtex_class_geometry::beamer::FrameAlign,
         /// `[plain]`: read, not modelled (the body box keeps `\textheight`).
         plain: bool,
+        /// The frame's slide count (compiler `BeamerFrameBegin::slides`);
+        /// after `crate::overlay::expand_frames` the frame appears once
+        /// per slide and `slide` says which.
+        slides: u32,
+        slide: u32,
         span: Span,
     },
     /// beamer `\end{frame}`: `addvspace_before` is the `\@endparenv` skip
@@ -715,6 +743,9 @@ pub struct ListGeom {
     /// `None` keeps the class's `\labelsep`. `\@item` ends the label box
     /// `\labelsep` before the first line's text.
     pub labelsep_pt: Option<f64>,
+    /// beamer: the item is covered on this slide (`\item<2->`, a `\pause`
+    /// before it), so its label is not painted either (`TextStyle::hidden`).
+    pub hidden: bool,
     /// The innermost itemize/enumerate's enumitem `itemindent=`, in points
     /// (added to [`Self::itemindent_em`]): the item's first line, and its
     /// label, start this much further in.
@@ -2054,7 +2085,7 @@ pub fn adapt_cached(
                 prev_para_end = None;
             }
             UnitKind::FrameBegin { block, span } => {
-                if let CBlock::BeamerFrameBegin { options, title, subtitle, .. } = block {
+                if let CBlock::BeamerFrameBegin { options, title, subtitle, slides, .. } = block {
                     use flashtex_class_geometry::beamer::FrameAlign;
                     use flashtex_compiler::parser::BeamerFrameAlign;
                     blocks.push(Block::FrameBegin {
@@ -2066,6 +2097,8 @@ pub fn adapt_cached(
                             BeamerFrameAlign::Bottom => FrameAlign::Bottom,
                         },
                         plain: options.plain,
+                        slides: *slides,
+                        slide: 1,
                         span,
                     });
                 }
@@ -2700,6 +2733,9 @@ pub fn adapt_cached(
             superseded.push(Span::in_document(flashtex_compiler::DocumentId(entry), open, open));
         }
     }
+    // beamer: a frame with overlays is set once per slide
+    // (`crate::overlay`), before the block-index tables below are taken.
+    crate::overlay::expand_frames(&mut blocks);
     let page_starts = clear_page_blocks(texts, &blocks);
     // After `listings::apply`, which can insert blocks: the ranges are
     // block indices, so they are taken once the block list is final.
@@ -3102,7 +3138,14 @@ fn clear_page_blocks(texts: &[&str], blocks: &[Block]) -> Vec<usize> {
 /// span (for `\maketitle`, before the title's text), so it must not anchor
 /// the paragraph for gap scans and page-break detection.
 fn anchor_span<'a>(inlines: impl IntoIterator<Item = &'a Inline>) -> Option<Span> {
-    inlines.into_iter().find(|i| !matches!(i, Inline::PageStyle { .. })).map(inline_span)
+    inlines.into_iter().find(|i| !is_marker(i)).map(inline_span)
+}
+
+/// A zero-width marker riding in the paragraph with its command's own
+/// span (`\pagestyle`, beamer's overlay markers): never the paragraph's
+/// first or last source position for gap scans.
+fn is_marker(i: &Inline) -> bool {
+    matches!(i, Inline::PageStyle { .. } | Inline::OverlayBegin { .. } | Inline::OverlayEnd { .. } | Inline::Onslide { .. })
 }
 
 fn inline_span(i: &Inline) -> Span {
@@ -3142,6 +3185,7 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::Penalty { span, .. }
         | Inline::PagePenalty { span, .. }
         | Inline::Discretionary { span, .. } => *span,
+        Inline::OverlayBegin { span, .. } | Inline::OverlayEnd { span } | Inline::Onslide { span, .. } => *span,
     }
 }
 
@@ -3983,6 +4027,7 @@ fn split_at_page_breaks<'p>(
                     itemindent_em: if natbib_bib { -1.0 } else { 0.0 },
                     labelsep_pt,
                     itemindent_pt,
+                    hidden: false,
                 });
             }
         }
@@ -4306,7 +4351,7 @@ fn split_at_page_breaks<'p>(
             | CBlock::BeamerColumnsEnd { span } => Some(*span),
             _ => None,
         };
-        if let Some(last) = inlines_of(block).iter().map(inline_span).last().or(item_label_span).or(block_end) {
+        if let Some(last) = inlines_of(block).iter().filter(|i| !is_marker(i)).map(inline_span).last().or(item_label_span).or(block_end) {
             prev_end = Some(last);
         }
         let _ = eject;
@@ -9106,6 +9151,12 @@ fn gap_has_space(gap: &str) -> bool {
                     i += 1;
                 }
                 i += 1;
+                // The comment ate the line end, and the next line starts
+                // in state N: its leading blanks are skipped too
+                // (`page.}%⏎  \only<2>{On` has no space before `On`).
+                while i < bytes.len() && matches!(bytes[i], b' ' | b'\t') {
+                    i += 1;
+                }
             }
             b'\\' => {
                 i += 1;
@@ -9386,6 +9437,12 @@ fn items_cached(
             | Inline::Discretionary { .. }) => {
                 format!("{other:?}").hash(&mut h);
             }
+            Inline::OverlayBegin { spec, kind, .. } => {
+                spec.hash(&mut h);
+                kind.hash(&mut h);
+            }
+            Inline::OverlayEnd { .. } => {}
+            Inline::Onslide { spec, .. } => spec.hash(&mut h),
         }
     }
     let key = h.finish();
@@ -10239,6 +10296,12 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
             | Inline::Penalty { .. }
             | Inline::PagePenalty { .. }
             | Inline::Discretionary { .. } => {}
+            // beamer overlay markers: no material, no gap of their own (the
+            // interword space around `\only<2>{...}` is read from the
+            // source on either side, as TeX's two glues are).
+            Inline::OverlayBegin { spec, kind, .. } => items.push(Item::Overlay(OverlayMark::Begin { spec: spec.clone(), kind: *kind })),
+            Inline::OverlayEnd { .. } => items.push(Item::Overlay(OverlayMark::End)),
+            Inline::Onslide { spec, .. } => items.push(Item::Overlay(OverlayMark::Onslide { spec: spec.clone() })),
         }
     }
     items

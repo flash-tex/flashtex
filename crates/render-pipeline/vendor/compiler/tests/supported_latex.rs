@@ -330,6 +330,10 @@ fn letter_probe(name: &str, arguments: &str) -> Option<String> {
 /// the letter.cls commands above they are exercised under their own class.
 const BEAMER_DOCUMENT: &str = "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}{Probe}\n#\n\\end{frame}\n\\end{document}\n";
 
+/// beamer's overlay environments (`<overlay>` after `\begin`), probed
+/// inside a frame like the class's commands.
+const BEAMER_ENVIRONMENTS: &[&str] = &["uncoverenv", "onlyenv", "visibleenv", "invisibleenv", "alertenv", "actionenv"];
+
 /// Where a beamer command has to sit to be exercised for real: inside a
 /// frame of a beamer deck. `None` for anything that is not beamer-gated.
 fn beamer_probe(name: &str, arguments: &str) -> Option<String> {
@@ -468,6 +472,12 @@ fn every_inventory_entry_compiles_without_an_unsupported_diagnostic() {
                     },
                 ),
                 format!("environment '{}' is", e.name),
+            ),
+            // beamer's overlay environments exist only inside a frame of a
+            // beamer deck, like the class's commands (`beamer_probe`).
+            Mode::Text if BEAMER_ENVIRONMENTS.contains(&e.name) => (
+                BEAMER_DOCUMENT.replace('#', &format!("\\begin{{{0}}}<2>a\\end{{{0}}}", e.name)),
+                format!("environment '{}' is not implemented", e.name),
             ),
             Mode::Text => (
                 format!(
