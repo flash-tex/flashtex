@@ -1032,6 +1032,7 @@
     {"name": "amsfonts", "silent_options": "", "description": "amsfonts.sty's 22-name symbol subset (\\ulcorner, \\square, \\yen, the dashed arrows) and the \\mathbb and \\mathfrak alphabets; the rest of amssymb stays undefined without \\usepackage{amssymb}"},
     {"name": "amsthm", "silent_options": "", "description": "\\newtheorem, \\theoremstyle and the proof environment"},
     {"name": "array", "silent_options": "", "description": "tabular >{} <{} !{} m b w columns, \\newcolumntype and \\extrarowheight"},
+    {"name": "tabularx", "silent_options": "", "description": "the tabularx environment and its X column, splitting the table's leftover width evenly"},
     {"name": "booktabs", "silent_options": "", "description": "\\toprule, \\midrule, \\bottomrule, \\cmidrule(trim), \\addlinespace, \\specialrule, \\morecmidrules"},
     {"name": "longtable", "silent_options": "", "description": "the page-breaking longtable environment: \\endfirsthead, \\endhead, \\endfoot, \\endlastfoot, \\caption, \\kill, \\\\*"},
     {"name": "multirow", "silent_options": "", "description": "\\multirow[vpos]{rows}[bigstruts]{width}[vmove]{text} in table entries"},

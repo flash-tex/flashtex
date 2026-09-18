@@ -1108,6 +1108,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "tabular >{} <{} !{} m b w columns, \\newcolumntype and \\extrarowheight",
     ),
     (
+        "tabularx",
+        "",
+        "the tabularx environment and its X column, splitting the table's leftover width evenly",
+    ),
+    (
         "booktabs",
         "",
         "\\toprule, \\midrule, \\bottomrule, \\cmidrule(trim), \\addlinespace, \\specialrule, \\morecmidrules",
