@@ -456,6 +456,14 @@ pub struct Context<'a> {
     /// Document sources (indexed like `paths`), read only to re-derive what
     /// the compiler's math list flattens (`\left`/`\right` fences).
     texts: &'a [&'a str],
+    /// The unmasked document sources (indexed like `texts`). `texts` are
+    /// what the compiler parsed: every `figure`/`table` and `multicols`
+    /// environment in them is blanked to spaces (`floats::mask`,
+    /// `multicol::Scan::masked`), so a builder that re-reads bytes from a
+    /// span *inside* one of those -- a float body's `tikzpicture`
+    /// (`picture_block`) -- must read them here (#884). Same as `texts`
+    /// until [`Context::set_sources`] is called.
+    sources: &'a [&'a str],
     shaper: &'a Shaper,
     diagnostics: Vec<Diagnostic>,
     recs: Vec<BoxRec>,
@@ -538,6 +546,13 @@ impl<'a> Context<'a> {
         self.math_colors = colors;
     }
 
+    /// The unmasked document sources (see [`Context::sources`]): the
+    /// request's documents as read, before `floats::mask` blanked the float
+    /// environments the compiler must not see.
+    pub fn set_sources(&mut self, sources: &'a [&'a str]) {
+        self.sources = sources;
+    }
+
     pub fn new(fonts: &'a FontSet, style: &'a Stylesheet, paths: &'a [&'a str]) -> Context<'a> {
         Self::with_texts(fonts, style, paths, &[])
     }
@@ -550,6 +565,7 @@ impl<'a> Context<'a> {
             style,
             paths,
             texts,
+            sources: texts,
             shaper: fonts.shaper(),
             diagnostics: Vec::new(),
             recs: Vec::new(),
@@ -3139,7 +3155,15 @@ impl<'a> Context<'a> {
             .unwrap_or(self.style.baselineskip_pt);
         let (mut list, mut recs, labels, mut skips) = self.hlist(items, size, TextStyle::default(), style);
         if !list.iter().any(|i| matches!(i, pl::Item::Box(_))) {
-            return None;
+            // An empty-body list item (`\item` with no text before the next
+            // `\item` or `\end`) still produces a block: the bullet/label is
+            // content -- pdflatex typesets it on its own line.  The label box
+            // is prepended below, so skip the early exit when one will be
+            // added.
+            let has_label = list_geom.is_some_and(|g| g.label.is_some()) && starts_paragraph;
+            if !has_label {
+                return None;
+            }
         }
         let trailing_skip = drop_trailing_break(&mut list, &mut recs, &mut skips, style);
         // `\item`: the label box `\hskip-\labelwidth \hskip-\labelsep
@@ -3154,7 +3178,14 @@ impl<'a> Context<'a> {
             hang_pt = hang;
             inner_margin_pt = inner;
             if let Some((text, span)) = geom.label.as_ref().filter(|_| starts_paragraph) {
-                if let Some(nb) = self.label_box(text, *span, size, geom.description || geom.label_bold, geom.label_symbol) {
+                let bold = geom.description || geom.label_bold;
+                // An explicit `\item[...]` sets its own content (math,
+                // styles); every other label is plain text or a symbol.
+                let nb = match geom.label_items.as_deref().filter(|items| !items.is_empty()) {
+                    Some(items) => self.label_box_items(items, size, bold),
+                    None => self.label_box(text, *span, size, bold, geom.label_symbol),
+                };
+                if let Some(nb) = nb {
                     let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
                     let protrude = self.item_left_protrusion(&list, &recs);
                     let box_width = if geom.llap { nb.width } else { nb.width.min(labelwidth) };
@@ -3173,6 +3204,11 @@ impl<'a> Context<'a> {
                         }
                         at = x + run.width;
                         lead.push((pl::Item::Box(run), Some(rec)));
+                    }
+                    // Glue or a kern after the label's last box is inside
+                    // the `\hbox` too.
+                    if nb.width > at {
+                        lead.push((pl::Item::kern(nb.width - at), None));
                     }
                     lead.push((pl::Item::kern(labelsep), None));
                     // enumitem `style=nextline` (`\enit@postlabel@i`'s
@@ -3438,6 +3474,11 @@ impl<'a> Context<'a> {
                 if let Some((text, span)) = &g.label {
                     text.hash(&mut h);
                     (span.end - span.start).hash(&mut h);
+                    // An explicit label's own items: its math and styles
+                    // are not in the flattened text.
+                    if let Some(items) = &g.label_items {
+                        incremental::hash_items(items, span.start, &mut h);
+                    }
                 }
                 g.parsep.natural.to_bits().hash(&mut h);
                 g.labelsep_pt.map(f64::to_bits).hash(&mut h);
@@ -3951,6 +3992,41 @@ impl<'a> Context<'a> {
         boxed
     }
 
+    /// An explicit `\item[<label>]` as `\@item` boxes it: the label's own
+    /// items (words, math, styled spans) set as one horizontal list in the
+    /// list's label style, every box at its natural position. What
+    /// [`Self::label_box`] does for a plain-text label, for content that
+    /// `word_box` cannot set (`\item[$\alpha$]`, issue #676).
+    fn label_box_items(&mut self, items: &[AItem], size: f64, bold: bool) -> Option<NumberBox> {
+        let (mut list, mut recs, _, _) = self.hlist(items, size, TextStyle { bold, ..TextStyle::default() }, ParaStyle::Plain);
+        // `hlist` ends with TeX's paragraph end (`\penalty10000
+        // \parfillskip \penalty-10000`); this is an `\hbox`, not a paragraph.
+        if matches!(list.last_chunk::<3>(), Some([pl::Item::Penalty(_), pl::Item::Glue(_), pl::Item::Penalty(_)])) {
+            list.truncate(list.len() - 3);
+            recs.truncate(recs.len().saturating_sub(3));
+        }
+        let mut pieces = Vec::new();
+        let (mut x, mut height, mut depth) = (0.0f64, 0.0f64, 0.0f64);
+        for (item, rec) in list.into_iter().zip(recs) {
+            match item {
+                pl::Item::Box(run) => {
+                    let w = run.width;
+                    if let Some(rec) = rec {
+                        height = height.max(run.height);
+                        depth = depth.max(run.depth);
+                        self.label_recs.insert(rec);
+                        pieces.push((run, rec, x));
+                    }
+                    x += w;
+                }
+                pl::Item::Glue(glue) => x += glue.width,
+                pl::Item::Kern(kern) => x += kern.width,
+                pl::Item::Penalty(_) => {}
+            }
+        }
+        (!pieces.is_empty()).then_some(NumberBox { pieces, width: x, height, depth })
+    }
+
     fn heading_block(&mut self, level: u8, items: &[AItem]) -> Option<BuiltBlock> {
         let h = self.style.heading(level);
         let (list, recs, labels, skips) = self.hlist(
@@ -4029,8 +4105,11 @@ impl<'a> Context<'a> {
         let description = list_geom.is_some_and(|g| g.description);
         let linewidth = s.text_width_pt - hang;
         let label = list_geom
-            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol)))
-            .and_then(|((text, span), bold, symbol)| self.label_box(text, *span, size, bold, symbol));
+            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol, g.label_items.as_deref())))
+            .and_then(|((text, span), bold, symbol, items)| match items.filter(|items| !items.is_empty()) {
+                Some(items) => self.label_box_items(items, size, bold),
+                None => self.label_box(text, *span, size, bold, symbol),
+            });
         let mut width = hang + if bracket { 0.6 * linewidth } else { 0.0 };
         let (mut runs, mut items, mut recs) = (Vec::new(), Vec::new(), Vec::new());
         let (mut height, mut depth) = (0.0, 0.0);
@@ -5097,7 +5176,10 @@ impl<'a> Context<'a> {
     ) -> BuiltBlock {
         use flashtex_vector_graphics::tikz::{Severity, Tikz};
         const PT_PER_BP: f64 = 72.27 / 72.0;
-        let text = self.texts.get(document.0).copied().unwrap_or("");
+        // The unmasked bytes: a picture inside a `figure` is blanked in
+        // `texts`, and compiling the spaces there gave an empty picture with
+        // no nodes and no height (#884).
+        let text = self.sources.get(document.0).copied().unwrap_or("");
         let mut tikz = Tikz::new(self.style.body_size_pt);
         let preamble_end = text.find("\\begin{document}").filter(|e| *e <= source.start).unwrap_or(0);
         let mut diags = tikz.read_preamble(&text[..preamble_end]);
@@ -7291,12 +7373,15 @@ pub fn convert_math_classed(
                     // `\arrowfill@` pieces (`amsmath.sty` 977-979).
                     arrow_frame => {
                         use flashtex_compiler::math::ExtArrow as X;
-                        let pieces = match arrow_frame.arrow() {
-                            Some(X::Left) => ['\u{2190}', '-', '-'],
-                            Some(X::LeftRight) => ['\u{2190}', '-', '\u{2192}'],
-                            _ => ['-', '-', '\u{2192}'],
-                        };
-                        ml::Atom::over_arrow(pieces, body, arrow_frame.is_under(), 1.3 * ams_ex(sink.body_size_pt))
+                        match arrow_frame.arrow() {
+                            Some(X::Left) => ml::Atom::over_arrow(['\u{2190}', '-', '-'], body, arrow_frame.is_under(), 1.3 * ams_ex(sink.body_size_pt)),
+                            Some(X::LeftRight) => ml::Atom::over_arrow(['\u{2190}', '-', '\u{2192}'], body, arrow_frame.is_under(), 1.3 * ams_ex(sink.body_size_pt)),
+                            Some(X::Right) => ml::Atom::over_arrow(['-', '-', '\u{2192}'], body, arrow_frame.is_under(), 1.3 * ams_ex(sink.body_size_pt)),
+                            // A frame this typesetter has no drawing for yet
+                            // (the cancel package's diagonal strikes) sets its
+                            // body undecorated rather than as an arrow.
+                            None => ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(body)),
+                        }
                     }
                 }]
             }
@@ -8436,6 +8521,7 @@ fn top_material_box(ctx: &mut Context, body: &[Block], blocks: &mut Vec<BuiltBlo
     wide.text_width_pt = crate::style::frame_pt(ctx.style.class_geometry.as_deref()?.frame.text_width);
     let first = {
         let mut sub = Context::with_texts(ctx.fonts, &wide, ctx.paths, ctx.texts);
+        sub.set_sources(ctx.sources);
         let mut sub_blocks: Vec<BuiltBlock> = Vec::new();
         sub.box_blocks(body, &mut sub_blocks, span, false);
         absorb(ctx, sub, sub_blocks, blocks)

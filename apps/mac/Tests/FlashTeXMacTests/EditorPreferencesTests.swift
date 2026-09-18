@@ -56,7 +56,7 @@ final class EditorPreferencesTests: XCTestCase {
         XCTAssertEqual(p.font, EditorPreferences.defaultEditorFont(size: 13))
         // Migration stamped the schema version and the absent keys were written as defaults.
         XCTAssertEqual(defaults.integer(forKey: EditorPreferences.schemaVersionKey), EditorPreferences.schemaVersion)
-        XCTAssertEqual(Set(p.lastLoadRepairs), Set(EditorPreferences.Key.allCases).subtracting([.fontFamily]))
+        XCTAssertEqual(Set(p.lastLoadRepairs), Set(EditorPreferences.Key.allCases).subtracting([.fontFamily, .lastUpdateCheck, .skippedUpdateVersion]))
         XCTAssertEqual(defaults.double(forKey: key(.fontSize)), 13)
         XCTAssertNil(defaults.object(forKey: key(.fontFamily)), "the system face is stored as absence")
     }
@@ -208,7 +208,7 @@ final class EditorPreferencesTests: XCTestCase {
         XCTAssertEqual(p.appearance, .system)
         XCTAssertFalse(p.autoCloseBraces, "the one valid value survives")
         XCTAssertTrue(p.completionPopup)
-        XCTAssertEqual(Set(p.lastLoadRepairs), Set(EditorPreferences.Key.allCases).subtracting([.autoCloseBraces]))
+        XCTAssertEqual(Set(p.lastLoadRepairs), Set(EditorPreferences.Key.allCases).subtracting([.autoCloseBraces, .lastUpdateCheck, .skippedUpdateVersion]))
         // Written back as valid values.
         XCTAssertNil(defaults.object(forKey: key(.fontFamily)))
         XCTAssertEqual(defaults.double(forKey: key(.fontSize)), 36)

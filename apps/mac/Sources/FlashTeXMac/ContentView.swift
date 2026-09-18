@@ -158,6 +158,7 @@ struct EditorPane: View {
                 editorRevision: model.editorRevision,
                 projectIndexMetadata: model.completionMetadata,
                 projectFiles: model.documents.map(\.path), // `\input{` completion (Completion.swift)
+                graphicsRoot: { model.project.projectRoot }, // `\includegraphics{` completion walks the saved project's directory
                 onCaretChange: { model.caretUTF16 = $0 },
                 onSelectionChange: { if model.caretLengthUTF16 != $0.length { model.caretLengthUTF16 = $0.length } }, // every keystroke reports length 0; an equal write still invalidates its readers
                 onEditApplied: { model.editApplied($0, newText: $1) },

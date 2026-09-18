@@ -1,7 +1,7 @@
 ---
 name: coordination-tooling
 description: Cross-machine coordination tooling — Beads (bd) ledger, contracts/, MCP Agent Mail, sync and failover conventions. Use when changing how agents coordinate.
-model: opus
+model: claude-opus-5
 effort: high
 ---
 

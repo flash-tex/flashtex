@@ -128,6 +128,12 @@ struct FlashTeXMacApp: App {
                         }
                     }
                     if let id = ProcessInfo.processInfo.environment["FLASHTEX_OPEN_WINDOW"], ["nearby", AccessibilityHelpView.windowID, EditHistoryPanel.windowID, ProjectSearch.windowID, CitationRename.windowID].contains(id) { openWindow(id: id) }
+                    // Opt-in background update check (Settings > Updates; off by
+                    // default): once per 24 h, quiet unless a newer release exists.
+                    // Never during automation launches.
+                    if ProcessInfo.processInfo.environment["FLASHTEX_NO_ACTIVATE"] != "1" {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { UpdatePresenter.shared.automaticCheckAfterLaunch() }
+                    }
                 }
         }
         .defaultSize(width: 1440, height: 900) // VS Code's DEFAULT_WORKSPACE_WINDOW_SIZE (brief §4); the saved frame wins afterwards
@@ -239,6 +245,9 @@ struct FlashTeXMacApp: App {
                     .disabled(model.files.offeredSnapshots.isEmpty)
                 Button("Save As…") { model.saveTexAs() }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
+                Button("Show in Finder") { model.showActiveDocumentInFinder() } // RevealInFinder.swift
+                    .keyboardShortcut("r", modifiers: [.command, .option]) // ⌘⇧R is Attach Render Pipeline
+                    .disabled(model.project.projectRoot == nil)
                 Divider()
                 Button("Open Compile Result Fixture…") { model.openFixturePanel() }
                     .keyboardShortcut("o", modifiers: [.command, .shift])
@@ -278,6 +287,12 @@ struct FlashTeXMacApp: App {
                 Button("Print Source…") { model.printSource() }
                     .disabled(!PrintController.sourceEnabled(model))
                     .help(PrintController.sourceHelp(model))
+            }
+            CommandGroup(after: .appInfo) {
+                // FlashTeX menu, after About (UpdateChecker.swift, #694 slice 1):
+                // asks GitHub Releases, shows version + notes, Download opens the
+                // release page. Nothing is downloaded or installed.
+                Button("Check for Updates…") { UpdatePresenter.shared.checkForUpdatesInteractive() }
             }
         }
         Window("Nearby Companion", id: "nearby") {

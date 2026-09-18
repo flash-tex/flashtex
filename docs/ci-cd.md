@@ -16,9 +16,7 @@ in `scripts/ci/` that also run locally.
 
 * **`rust`** — matrix of `ubuntu-latest` × `macos-15` (Apple Silicon) and the
   crates `compiler, pdf, bridge, edit-ledger, render-pipeline,
-  preview-controller, project-files, assistant-context` (the last with
-  `--features grok`; it is no longer bundled into the Mac app — see
-  `docs/extensibility.md` — and stays in the matrix only as a crate). Each cell runs `cargo build --release --locked` then
+  preview-controller, project-files`. Each cell runs `cargo build --release --locked` then
   `cargo test --release --locked` in that crate directory; the crates are
   independent (no workspace) so each has its own `Swatinem/rust-cache` key.
   `FLASHTEX_FONT_DIRS` / `FLASHTEX_TFM_DIRS` / `FLASHTEX_LM_DIR` point at the

@@ -123,13 +123,29 @@ final class EditorPreferences {
     enum Key: String, CaseIterable {
         case fontFamily, fontSize, lineWrapping, tabWidth, indentStyle, appearance, autoCloseBraces, completionPopup, spellCheck
         case vimKeybindings, followCaretInPreview, relativeLineNumbers, autosave
+        case checkForUpdatesAutomatically, lastUpdateCheck, skippedUpdateVersion
         var storageKey: String { "FlashTeX.EditorPreferences.v\(EditorPreferences.schemaVersion).\(rawValue)" }
     }
+
+    /// Update-check settings (UpdateChecker.swift). Kept out of `Snapshot`
+    /// so a recorded check timestamp never re-applies the editor display
+    /// preferences to every text view.
+    struct UpdateSettings: Equatable, Sendable {
+        /// Background check after launch, at most once per 24 h; default OFF
+        /// (#694: background checking is opt-in).
+        var checkForUpdatesAutomatically: Bool = false
+        var lastUpdateCheck: Date?
+        /// The tag (`v0.1.9`) the user chose “Skip This Version” for; the
+        /// background check stays quiet about it, a manual check still shows it.
+        var skippedUpdateVersion: String?
+    }
+    static let defaultUpdateSettings = UpdateSettings()
 
     // MARK: state
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var storage = EditorPreferences.defaultSnapshot
+    @ObservationIgnored private var updateStorage = EditorPreferences.defaultUpdateSettings
     /// Keys whose stored value was absent or invalid at the last `load()` and
     /// were replaced by a valid one (evidence for tests and the handoff).
     @ObservationIgnored private(set) var lastLoadRepairs: [Key] = []
@@ -245,6 +261,26 @@ final class EditorPreferences {
     var autosave: Bool {
         get { access(keyPath: \.autosave); return storage.autosave }
         set { update(\.autosave, \.autosave, newValue, key: .autosave) }
+    }
+
+    // MARK: update checking (UpdateChecker.swift)
+
+    var checkForUpdatesAutomatically: Bool {
+        get { access(keyPath: \.checkForUpdatesAutomatically); return updateStorage.checkForUpdatesAutomatically }
+        set { updateSetting(\.checkForUpdatesAutomatically, \.checkForUpdatesAutomatically, newValue, key: .checkForUpdatesAutomatically) }
+    }
+
+    var lastUpdateCheck: Date? {
+        get { access(keyPath: \.lastUpdateCheck); return updateStorage.lastUpdateCheck }
+        set { updateSetting(\.lastUpdateCheck, \.lastUpdateCheck, newValue, key: .lastUpdateCheck) }
+    }
+
+    var skippedUpdateVersion: String? {
+        get { access(keyPath: \.skippedUpdateVersion); return updateStorage.skippedUpdateVersion }
+        set {
+            let trimmed = newValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            updateSetting(\.skippedUpdateVersion, \.skippedUpdateVersion, trimmed?.isEmpty == true ? nil : trimmed, key: .skippedUpdateVersion)
+        }
     }
 
     /// All properties at once (registers for every property's changes).
@@ -393,8 +429,21 @@ final class EditorPreferences {
             s.autosave = value
         } else { repairs.append(.autosave) } // absent: new key, no prior explicit choice to preserve — default ON
 
+        var u = Self.defaultUpdateSettings
+        if let value = defaults.object(forKey: Key.checkForUpdatesAutomatically.storageKey) as? Bool {
+            u.checkForUpdatesAutomatically = value
+        } else { repairs.append(.checkForUpdatesAutomatically) }
+        // Absent is the natural state of both (never checked, nothing skipped): no repair.
+        u.lastUpdateCheck = defaults.object(forKey: Key.lastUpdateCheck.storageKey) as? Date
+        if let raw = defaults.object(forKey: Key.skippedUpdateVersion.storageKey) {
+            let tag = (raw as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            u.skippedUpdateVersion = tag?.isEmpty == true ? nil : tag
+            if u.skippedUpdateVersion == nil { repairs.append(.skippedUpdateVersion) } // wrong type or empty: dropped
+        }
+
         withMutation(keyPath: \.generation) {
             storage = s
+            updateStorage = u
             generation += 1
         }
         lastLoadRepairs = repairs
@@ -409,6 +458,8 @@ final class EditorPreferences {
         completionPopup = d.completionPopup; spellCheck = d.spellCheck
         vimKeybindings = d.vimKeybindings; followCaretInPreview = d.followCaretInPreview
         relativeLineNumbers = d.relativeLineNumbers; autosave = d.autosave
+        let u = Self.defaultUpdateSettings
+        checkForUpdatesAutomatically = u.checkForUpdatesAutomatically; lastUpdateCheck = u.lastUpdateCheck; skippedUpdateVersion = u.skippedUpdateVersion
     }
 
     /// Versioned migration. Absent stamp: nothing was ever stored (or only
@@ -434,6 +485,18 @@ final class EditorPreferences {
         write(key)
     }
 
+    private func updateSetting<T: Equatable>(_ property: KeyPath<EditorPreferences, T>, _ field: WritableKeyPath<UpdateSettings, T>,
+                                             _ value: T, key: Key) {
+        guard updateStorage[keyPath: field] != value else { return }
+        withMutation(keyPath: property) {
+            withMutation(keyPath: \.generation) {
+                updateStorage[keyPath: field] = value
+                generation += 1
+            }
+        }
+        write(key)
+    }
+
     private func write(_ key: Key) {
         let k = key.storageKey
         switch key {
@@ -451,6 +514,11 @@ final class EditorPreferences {
         case .followCaretInPreview: defaults.set(storage.followCaretInPreview, forKey: k)
         case .relativeLineNumbers: defaults.set(storage.relativeLineNumbers, forKey: k)
         case .autosave: defaults.set(storage.autosave, forKey: k)
+        case .checkForUpdatesAutomatically: defaults.set(updateStorage.checkForUpdatesAutomatically, forKey: k)
+        case .lastUpdateCheck:
+            if let d = updateStorage.lastUpdateCheck { defaults.set(d, forKey: k) } else { defaults.removeObject(forKey: k) }
+        case .skippedUpdateVersion:
+            if let v = updateStorage.skippedUpdateVersion { defaults.set(v, forKey: k) } else { defaults.removeObject(forKey: k) }
         }
     }
 
@@ -700,6 +768,12 @@ struct EditorPreferencesView: View {
             Section("Saving") {
                 Toggle("Autosave", isOn: $prefs.autosave)
                     .accessibilityHint("Writes the open file to disk a couple of seconds after you stop typing, on top of Command-S. Only applies to a file that has already been saved once; a new, never-saved buffer still needs Command-S or Save As.")
+            }
+            Section("Updates") {
+                Toggle("Check for updates automatically", isOn: $prefs.checkForUpdatesAutomatically) // UpdateChecker.swift: opt-in, once per 24 h after launch
+                    .accessibilityHint("Once a day after launch, asks GitHub Releases whether a newer FlashTeX exists and only says so when one does; nothing is downloaded or installed. FlashTeX > Check for Updates… asks at any time.")
+                Text(UpdateChecker.settingsFootnote(current: AppVersion.current, lastCheck: prefs.lastUpdateCheck, skipped: prefs.skippedUpdateVersion))
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
             }
             if showConversion { ConversionPreferencesSection() } // provider picker, model, API key (Keychain) (ConversionPreferencesView.swift)
             Section {
