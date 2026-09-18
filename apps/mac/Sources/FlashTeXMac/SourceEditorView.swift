@@ -493,6 +493,10 @@ struct SourceEditorView: NSViewRepresentable {
         /// `)` and `\` are closers only as the halves of an auto-inserted `\)`/`\]`
         /// (type-over checks the pending-closer list before the character).
         static func isCloser(_ c: Character) -> Bool { c == "}" || c == "]" || c == "$" || c == ")" || c == "\\" }
+        /// A unit of an auto-inserted closer that can never be typed over on its
+        /// own: `\` (it starts the next command) and the letters of `\right`.
+        /// Only a closer's terminal unit (`)`, `]`, `}`, `|`, `.`, `$`) steps over it.
+        static func isClosingUnitOpener(_ c: Character) -> Bool { c == "\\" || c.isLetter }
 
         /// The math closer for a `(` or `[` just typed before `caretUTF16`
         /// right after a single backslash (`\(` → `\)`, `\[` → `\]`), when
@@ -1215,17 +1219,32 @@ struct SourceEditorView: NSViewRepresentable {
             let replacementLength = (replacementString as NSString?)?.length ?? 0
             marks.noteEdit(range: range, replacementLength: replacementLength)
             // Type-over: the closer the user types is the one that was auto-inserted
-            // here (a unit of an auto-inserted `\right)` counts: the list is the authority).
+            // here (the list is the authority). A multi-unit closer (`\]`, `\)`,
+            // `\right)`) is stepped over only by the keystroke that completes it:
+            // its terminal unit, typed after its other units were typed by hand
+            // (#932: a lone `\` opens a command, it never eats the closer's `\`).
             if !pairing, programmaticChanges == 0, let replacementString, range.length == 0, replacementString.count == 1,
                !textView.hasMarkedText(),
-               let i = pendingClosers.firstIndex(of: range.location),
-               (textView.textStorage?.length ?? 0) > range.location,
-               (textView.string as NSString).substring(with: NSRange(location: range.location, length: 1)) == replacementString {
-                pendingClosers.remove(at: i)
+               let prefix = pendingCloserCompleted(by: replacementString, at: range.location, in: textView) {
+                if prefix > 0 {
+                    // The hand-typed units before the caret duplicate the closer's:
+                    // drop them so the buffer reads as if the closer was stepped over.
+                    pairing = true
+                    textView.breakUndoCoalescing()
+                    textView.insertText("", replacementRange: NSRange(location: range.location - prefix, length: prefix))
+                    textView.breakUndoCoalescing()
+                    pairing = false
+                }
+                let start = range.location - prefix // the closer's first unit after the deletion shifted it
+                pendingClosers.removeAll { $0 >= start && $0 <= start + prefix }
                 noteTypingStep()
-                textView.setSelectedRange(NSRange(location: range.location + 1, length: 0))
+                textView.setSelectedRange(NSRange(location: start + prefix + 1, length: 0))
+                if prefix > 0 {
+                    lastEdit = nil
+                    commitUserChange(textView, edit: nil)
+                }
                 announceMatch(in: textView)
-                return false // nothing changes: the caret stepped over the closer
+                return false // nothing more changes: the caret stepped over the closer
             }
             shiftPendingClosers(edit: range, replacementLength: replacementLength)
             (textView as? CompletingTextView)?.noteFoldEdit(range, replacementLength: replacementLength)
@@ -1269,6 +1288,29 @@ struct SourceEditorView: NSViewRepresentable {
             lastEdit = nil
             commitUserChange(textView, edit: nil)
             return true
+        }
+
+        /// The number of hand-typed units before `caret` that, with `typed`,
+        /// complete the auto-inserted closer whose units are pending from
+        /// `caret`; nil when `typed` completes nothing. `0` is the plain case:
+        /// `typed` is a single-unit closer (`}`) sitting at the caret. For
+        /// `\]`/`\)`/`\right)` the keystroke must be the terminal unit and
+        /// the units before it must already precede the caret — `\[\alpha` +
+        /// `\` inserts a backslash, then `]` steps over the whole `\]`.
+        private func pendingCloserCompleted(by typed: String, at caret: Int, in textView: NSTextView) -> Int? {
+            guard let unit = typed.first, !BraceMatcher.isClosingUnitOpener(unit) else { return nil }
+            let text = textView.string as NSString
+            var k = 0
+            while pendingClosers.contains(caret + k), caret + k < text.length {
+                if text.substring(with: NSRange(location: caret + k, length: 1)) == typed {
+                    guard caret >= k else { return nil }
+                    let handTyped = text.substring(with: NSRange(location: caret - k, length: k))
+                    let units = text.substring(with: NSRange(location: caret, length: k))
+                    return handTyped == units ? k : nil
+                }
+                k += 1
+            }
+            return nil
         }
 
         private func shiftPendingClosers(edit range: NSRange, replacementLength: Int) {

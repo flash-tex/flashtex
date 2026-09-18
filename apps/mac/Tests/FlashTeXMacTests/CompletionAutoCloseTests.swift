@@ -182,6 +182,65 @@ final class CompletionAutoCloseTests: XCTestCase {
         XCTAssertEqual(co2.pendingClosers, [])
     }
 
+    // MARK: #932 — `\` inside an auto-closed `\[ \]` / `\( \)`
+
+    /// `\[` pairs `\]`; a `\` typed to start a command inside is a real
+    /// backslash, never the closer's first half, so `\alpha` lands whole.
+    /// Typing the closer by hand (`\` then `]`) still steps over it.
+    func testABackslashInsideDisplayMathNeverOvertypesTheCloser() throws {
+        let (tv, co, _, _) = try editor(autoClosePairs: ["{", "[", "(", "$"])
+        type("\\[", into: tv)
+        XCTAssertEqual(tv.string, "\\[\\]")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 2, length: 0))
+        XCTAssertEqual(co.pendingClosers.sorted(), [2, 3])
+        type("\\alpha", into: tv)
+        XCTAssertEqual(tv.string, "\\[\\alpha\\]", "the command's backslash was inserted, not stepped over")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 8, length: 0), "the caret before the closer")
+        XCTAssertEqual(co.pendingClosers.sorted(), [8, 9])
+        assertClosersMatchTheText(co, tv)
+        type("\\]", into: tv)
+        XCTAssertEqual(tv.string, "\\[\\alpha\\]", "the hand-typed closer stepped over the inserted one")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 10, length: 0))
+        XCTAssertEqual(co.pendingClosers, [])
+    }
+
+    func testABackslashInsideInlineMathNeverOvertypesTheCloser() throws {
+        let (tv, co, _, _) = try editor(autoClosePairs: ["{", "[", "(", "$"])
+        type("\\(", into: tv)
+        XCTAssertEqual(tv.string, "\\(\\)")
+        type("\\alpha", into: tv)
+        XCTAssertEqual(tv.string, "\\(\\alpha\\)")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 8, length: 0))
+        // A lone `]` (the wrong terminal) is a real character; `\` `)` completes.
+        type("]", into: tv)
+        XCTAssertEqual(tv.string, "\\(\\alpha]\\)")
+        turn() // the body is its own undo group, as separate keystrokes would be
+        type("\\)", into: tv)
+        XCTAssertEqual(tv.string, "\\(\\alpha]\\)")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 11, length: 0))
+        XCTAssertEqual(co.pendingClosers, [])
+        // The step-over's deletion is its own undo step: ⌘Z never takes the body with it.
+        turn()
+        tv.undoManager?.undo()
+        XCTAssertTrue(tv.string.hasPrefix("\\(\\alpha]"), "undo kept the body: \(tv.string.debugDescription)")
+    }
+
+    /// `\right)` is completed the same way: a `\` typed inside `\left( \right)`
+    /// starts a command; the `)` after a hand-typed `\right` steps over the pair.
+    func testABackslashInsideLeftRightNeverOvertypesTheCloser() throws {
+        let (tv, co, _, _) = try editor(autoClosePairs: ["{", "[", "(", "$"])
+        type("$\\left(", into: tv)
+        XCTAssertEqual(tv.string, "$\\left(\\right)$")
+        type("\\frac", into: tv)
+        XCTAssertEqual(tv.string, "$\\left(\\frac\\right)$")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 12, length: 0))
+        assertClosersMatchTheText(co, tv)
+        type("\\right)", into: tv)
+        XCTAssertEqual(tv.string, "$\\left(\\frac\\right)$", "typed over, not duplicated")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 19, length: 0))
+        XCTAssertEqual(co.pendingClosers, [19], "only the paired `$` remains")
+    }
+
     // MARK: the reported bug
 
     /// The owner's exact sequence: `\begin` → accept → `proof` → accept.
