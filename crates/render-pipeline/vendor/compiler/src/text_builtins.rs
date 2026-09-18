@@ -79,6 +79,35 @@ pub const TEXT_SYMBOLS: &[(&str, &str)] = &[
     ("textperiodcentered", "\\textperiodcentered"),
     ("textregistered", "\\textregistered"),
     ("texttrademark", "\\texttrademark"),
+    // textcomp (TS1) single-glyph symbols (GH issue #837): each one is a
+    // `\DeclareTextSymbol` in ts1enc.def with one `\DeclareUnicodeCharacter`
+    // in ts1enc.dfu, so the dfu lookup below resolves it with no font work.
+    // `\textminus`/`\textquotesingle` are deliberately absent: ts1enc.dfu
+    // declares no Unicode character for them, so this table cannot spell them.
+    ("textdegree", "\\textdegree"),
+    ("textmu", "\\textmu"),
+    ("textohm", "\\textohm"),
+    ("textcelsius", "\\textcelsius"),
+    ("texteuro", "\\texteuro"),
+    ("textyen", "\\textyen"),
+    ("textwon", "\\textwon"),
+    ("textcurrency", "\\textcurrency"),
+    ("textestimated", "\\textestimated"),
+    ("textnumero", "\\textnumero"),
+    ("textrecipe", "\\textrecipe"),
+    ("textservicemark", "\\textservicemark"),
+    ("textbardbl", "\\textbardbl"),
+    ("textbrokenbar", "\\textbrokenbar"),
+    ("texttimes", "\\texttimes"),
+    ("textdiv", "\\textdiv"),
+    ("textonehalf", "\\textonehalf"),
+    ("textonequarter", "\\textonequarter"),
+    ("textthreequarters", "\\textthreequarters"),
+    ("textperthousand", "\\textperthousand"),
+    ("textpertenthousand", "\\textpertenthousand"),
+    ("textopenbullet", "\\textopenbullet"),
+    ("textlangle", "\\textlangle"),
+    ("textrangle", "\\textrangle"),
 ];
 
 /// Text symbols for printable ASCII characters. The `*.dfu` tables declare
