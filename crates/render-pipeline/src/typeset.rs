@@ -1377,6 +1377,7 @@ impl<'a> Context<'a> {
         sink.body_size_pt = self.style.body_size_pt;
         sink.amsfonts = self.ams_symbol_fonts;
         sink.amsmath = self.amsmath_loaded;
+        sink.display = display;
         let texts = self.texts;
         let fence = |sp: &Span| fence_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // The atom's own class when the pinned compiler exposes it, and the
@@ -7344,21 +7345,30 @@ pub fn convert_math_classed(
             // `\boxed` uses the pipeline's existing framed-box placeholder
             // and rule substitution path.
             N::Framed { body, frame } => {
+                use crate::mathtext::CancelKind;
                 use flashtex_compiler::math::Frame;
                 let body = sub(body, sink);
+                // The built-box seam's provenance: the whole command.
+                let built_tag = {
+                    #[cfg(feature = "math-glyph-spans")]
+                    {
+                        math_tag(a.span)
+                    }
+                    #[cfg(not(feature = "math-glyph-spans"))]
+                    {
+                        ml::SourceTag::NONE
+                    }
+                };
                 vec![match frame {
                     Frame::Over => ml::Atom::overline(body),
                     Frame::Under => ml::Atom::underline(body),
-                    Frame::Box => sink.frame_atom(body, {
-                        #[cfg(feature = "math-glyph-spans")]
-                        {
-                            math_tag(a.span)
-                        }
-                        #[cfg(not(feature = "math-glyph-spans"))]
-                        {
-                            ml::SourceTag::NONE
-                        }
-                    }),
+                    Frame::Box => sink.frame_atom(body, built_tag),
+                    // cancel.sty: the body in the current style with
+                    // picture-mode `\line`s through it, built after layout
+                    // through the same seam (`mathtext::cancelled_math_box`).
+                    Frame::Cancel => sink.cancel_atom(body, CancelKind::Forward, built_tag),
+                    Frame::BCancel => sink.cancel_atom(body, CancelKind::Backward, built_tag),
+                    Frame::XCancel => sink.cancel_atom(body, CancelKind::Both, built_tag),
                     // `\mathop{..}\limits` (`fontmath.ltx` 430-437): the
                     // compiler's scripts attach below as limits.
                     Frame::OverBrace => ml::Atom::brace(body, false),
@@ -7371,9 +7381,10 @@ pub fn convert_math_classed(
                             Some(X::Left) => ml::Atom::over_arrow(['\u{2190}', '-', '-'], body, arrow_frame.is_under(), 1.3 * ams_ex(sink.body_size_pt)),
                             Some(X::LeftRight) => ml::Atom::over_arrow(['\u{2190}', '-', '\u{2192}'], body, arrow_frame.is_under(), 1.3 * ams_ex(sink.body_size_pt)),
                             Some(X::Right) => ml::Atom::over_arrow(['-', '-', '\u{2192}'], body, arrow_frame.is_under(), 1.3 * ams_ex(sink.body_size_pt)),
-                            // A frame this typesetter has no drawing for yet
-                            // (the cancel package's diagonal strikes) sets its
-                            // body undecorated rather than as an arrow.
+                            // A frame this typesetter has no drawing for
+                            // sets its body undecorated rather than as an
+                            // arrow (none reaches here today: every
+                            // non-arrow frame has its own arm above).
                             None => ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(body)),
                         }
                     }
@@ -10815,7 +10826,7 @@ fn math_items(
     let mut tail: Vec<display::Item> = Vec::new();
     if m.continues {
         let own = Provenance::Source(src.clone());
-        while matches!(items.last(), Some(display::Item::Rule(r)) if r.provenance == own) {
+        while matches!(items.last(), Some(display::Item::Rule(display::Rule { provenance, .. }) | display::Item::Path(display::PathItem { provenance, .. })) if *provenance == own) {
             tail.push(items.pop().expect("checked"));
         }
         tail.reverse();
@@ -11035,6 +11046,35 @@ fn math_items(
         // See the matching glyph-run fallback above.
         #[cfg(not(feature = "math-glyph-spans"))]
         let (paint, rule_src) = (Paint::of(m.color), src.clone());
+        // A cancel strike: the leaf's box is the `\line` extent, stroked
+        // corner to corner with `line10`'s 0.4pt pen (round, like its
+        // glyph ends) in the formula's colour (`\CancelColor` is empty).
+        if let Some(dir) = crate::mathtext::cancel_strike_of(rule.tag) {
+            use crate::mathtext::StrikeDir;
+            let (x0, x1) = (Tick::from_tex_pt(rule.x), Tick::from_tex_pt(rule.x + rule.w));
+            let (top, bottom) = (Tick::from_tex_pt(rule.y), Tick::from_tex_pt(rule.y + rule.h));
+            let (y0, y1) = match dir {
+                StrikeDir::Forward => (bottom, top),
+                StrikeDir::Backward => (top, bottom),
+            };
+            items.push(display::Item::Path(display::PathItem {
+                op: display::PathPaintOp::Stroke(display::Stroke {
+                    width: Tick::from_tex_pt(crate::mathtext::CANCEL_RULE_PT),
+                    cap: display::LineCap::Round,
+                    join: display::LineJoin::Miter,
+                    miter_limit: 10.0,
+                    dash: Vec::new(),
+                    dash_phase: Tick(0),
+                }),
+                commands: vec![display::PathCmd::Move(x0, y0), display::PathCmd::Line(x1, y1)],
+                clips: Vec::new(),
+                paint,
+                #[cfg(feature = "tikz-patterns")]
+                pattern: None,
+                provenance: Provenance::Source(rule_src),
+            }));
+            continue;
+        }
         items.push(display::Item::Rule(Rule {
             x: Tick::from_tex_pt(rule.x),
             top: Tick::from_tex_pt(rule.y),

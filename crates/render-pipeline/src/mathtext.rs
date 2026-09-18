@@ -131,6 +131,11 @@ pub struct TextSink {
     /// `\vbox` lengths (fontmath.ltx 513-520), which do not move with the
     /// body size at all.
     pub amsmath: bool,
+    /// Whether the formula is display math. A `\cancel` body is set by
+    /// `\mathpalette` in the current style, which for a text-size
+    /// placeholder is `\displaystyle` in display math and `\textstyle`
+    /// otherwise ([`BuiltBody::Cancel`]).
+    pub display: bool,
 }
 
 /// An `array`/`cases`/matrix/`aligned` grid met inside a sub-formula (a
@@ -184,7 +189,55 @@ pub(crate) enum BuiltBody {
     /// | 10pt | `\hbox(1.05554+0.0)x2.77779` | `\vbox(15.05554+0.0)x2.77779` | `\hbox(15.05554+0.0)x11.66661` |
     /// | 12pt | `\hbox(1.16666+0.0)x3.26385` | `\vbox(15.16666+0.0)x3.26385` | `\hbox(15.16666+0.0)x13.7915` |
     Dots { diagonal: bool },
+    /// The cancel package's `\cancel`/`\bcancel`/`\xcancel` body, converted
+    /// to a math-layout list. `\mathpalette` sets it in the current style,
+    /// so `display` records whether the formula is display math (the only
+    /// thing a [`SizeClass::Text`] placeholder cannot tell). The strikes
+    /// hang off the laid-out body's box ([`cancelled_math_box`]).
+    Cancel { body: ml::MathList, kind: CancelKind, display: bool },
 }
+
+/// Which diagonals the cancel package draws through a body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CancelKind {
+    /// `\cancel`: bottom-left to top-right (`/`).
+    Forward,
+    /// `\bcancel`: top-left to bottom-right (`\`).
+    Backward,
+    /// `\xcancel`: both.
+    Both,
+}
+
+/// One diagonal of a cancel strike, read back from the rule leaf's
+/// [`ml::SourceTag::attr`] by [`cancel_strike_of`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StrikeDir {
+    /// Bottom-left to top-right.
+    Forward,
+    /// Top-left to bottom-right.
+    Backward,
+}
+
+/// `SourceTag::attr` values marking a cancel strike's rule leaf: the leaf's
+/// box is the strike's bounding box (the `\line` from one corner of it to
+/// the other), which `typeset::math_items` strokes as a path instead of
+/// filling as a rule. High enough not to collide with any attribute a
+/// caller could define (none does today: `attr` is otherwise unused here).
+const CANCEL_FORWARD_ATTR: u32 = 0xC0DE_0001;
+const CANCEL_BACKWARD_ATTR: u32 = 0xC0DE_0002;
+
+/// The strike a rule leaf stands for, if it is one.
+pub(crate) fn cancel_strike_of(tag: ml::SourceTag) -> Option<StrikeDir> {
+    match tag.attr {
+        Some(CANCEL_FORWARD_ATTR) => Some(StrikeDir::Forward),
+        Some(CANCEL_BACKWARD_ATTR) => Some(StrikeDir::Backward),
+        _ => None,
+    }
+}
+
+/// `\thinlines`: `\fontdimen8` of `line10`, the pen cancel.sty's `\line`
+/// draws with (`\canc@thinlines`), in pt.
+pub(crate) const CANCEL_RULE_PT: f64 = 0.4;
 
 /// One [`BuiltBody`] with the handle that stands for it in the math list.
 #[derive(Debug, Clone)]
@@ -265,6 +318,21 @@ impl TextSink {
     /// laid out in display style through the existing placeholder seam.
     pub(crate) fn frame_atom(&mut self, body: ml::MathList, tag: ml::SourceTag) -> ml::Atom {
         self.built_atom(ml::AtomClass::Ord, BuiltBody::Frame(body), tag, "\\boxed{...}")
+    }
+
+    /// An `Ord` atom for a `\cancel`/`\bcancel`/`\xcancel` body
+    /// ([`BuiltBody::Cancel`]): cancel.sty's `\mathpalette{\@cancel..}` ends
+    /// as a `\raise..\hbox{\ooalign{..}}` in the math list, an hbox and so
+    /// an Ord (TeX §1076); the strikes are built after the body is laid out
+    /// through the placeholder seam.
+    pub(crate) fn cancel_atom(&mut self, body: ml::MathList, kind: CancelKind, tag: ml::SourceTag) -> ml::Atom {
+        let refused = match kind {
+            CancelKind::Forward => "\\cancel{...}",
+            CancelKind::Backward => "\\bcancel{...}",
+            CancelKind::Both => "\\xcancel{...}",
+        };
+        let display = self.display;
+        self.built_atom(ml::AtomClass::Ord, BuiltBody::Cancel { body, kind, display }, tag, refused)
     }
 
     /// `\vdots` (`diagonal` false) or `\ddots` (true), through the same seam
@@ -598,6 +666,24 @@ impl<'a> TextRunMetrics<'a> {
                 framed_math_box(laid.root, spec.tag)
             }
             BuiltBody::Dots { diagonal } => self.dot_stack(*diagonal, size, spec.tag),
+            BuiltBody::Cancel { body, kind, display } => {
+                // `\mathpalette` hands `\@cancel` the current style; a
+                // text-size placeholder is either D or T, and only the
+                // formula knows which. Cramped variants are not modelled.
+                let style = match size {
+                    SizeClass::Text if *display => ml::Style::DISPLAY,
+                    SizeClass::Text => ml::Style::TEXT,
+                    SizeClass::Script => ml::Style::SCRIPT,
+                    SizeClass::ScriptScript => ml::Style::SCRIPT_SCRIPT,
+                };
+                let laid = ml::layout_with_report(body, style, self);
+                self.built_limitations.borrow_mut().extend(laid.limitations);
+                // Both `\vcenter`s in `\@cancel`/`\@can@slash` sit inside
+                // their own `$..$`, so they centre on the *text*-size axis
+                // whatever the style of the body.
+                let axis = self.inner.params(SizeClass::Text).axis_height;
+                cancelled_math_box(laid.root, *kind, axis, spec.tag)
+            }
         };
         let dims = (hbox.width, hbox.height, hbox.depth);
         self.built_boxes.borrow_mut().push(BuiltBox { ch, size: p.size, hbox });
@@ -891,6 +977,141 @@ fn framed_math_box(body: ml::MathBox, tag: ml::SourceTag) -> ml::MathBox {
     }
 }
 
+/// The `\line` cancel.sty draws through a body `width` wide and `total`
+/// (height plus depth) tall: its horizontal length and its rise, in pt, or
+/// `None` when picture mode draws nothing.
+///
+/// `\@can@slash` (cancel.sty v2.2) picks the slope and the length:
+///
+/// ```text
+/// \dimen@\width \@min@pt\dimen@ 2\@min@pt\totalheight6%
+/// \ifdim\totalheight<\dimen@ % wide
+///  \@min@pt\dimen@ 8%
+///  \@tempcnta\totalheight \multiply\@tempcnta 5 \divide\@tempcnta\dimen@
+///  \advance\dimen@ 2\p@ %  "+2"
+///  \edef\@tempa{(\ifcase\@tempcnta 6,#11\or 4,#11\or 2,#11\or 4,#13\else 1,#11\fi
+///    ){\strip@pt\dimen@}}%
+/// \else % tall
+///  \@min@pt\totalheight8%
+///  \advance\totalheight2\p@ % "+2"
+///  \@tempcnta\dimen@ \multiply\@tempcnta 5 \divide\@tempcnta\totalheight
+///  \dimen@ \ifcase\@tempcnta .16\or .25\or .5\or .75\else 1\fi \totalheight
+///  \edef\@tempa{(\ifcase\@tempcnta 1,#16\or 1,#14\or 1,#12\or 3,#14\else 1,#11\fi
+///    ){\strip@pt\dimen@}}%
+/// \fi
+/// \expandafter\line\@tempa
+/// ```
+///
+/// so the slope is one of picture mode's, the length is the body's width
+/// plus 2pt (at least 10pt) when the body is wider than tall, and a
+/// fraction of its total height plus 2pt (at least 10pt) otherwise. The
+/// line is then `\@sline` (latex.ltx 16835-16876) out of `line10` segments
+/// at `\thinlines`: whole characters of the slope's glyph, each 10pt along
+/// its longer leg, and a last one overlapped back to the exact length whose
+/// rise is the glyph's height times the leftover, in whole thousandths.
+/// `\@sline` sets nothing at all when the length is shorter than one glyph
+/// (only a `\hskip` and a picture warning), which the `None` reports.
+///
+/// The ink of every `line10` glyph runs corner to corner of its box with a
+/// 0.4pt pen (`line10.pfb`: every bbox is the box grown by 0.2pt), so the
+/// whole strike is one stroke from one corner of the returned extent to the
+/// other.
+pub(crate) fn cancel_strike_extent(width: f64, total: f64) -> Option<(f64, f64)> {
+    let mut dimen = width.max(2.0);
+    let mut total = total.max(6.0);
+    let (x, y, len): (f64, f64, f64) = if total < dimen {
+        dimen = dimen.max(8.0);
+        let case = (total * 5.0 / dimen).floor() as i64;
+        dimen += 2.0;
+        let (x, y) = match case {
+            0 => (6.0, 1.0),
+            1 => (4.0, 1.0),
+            2 => (2.0, 1.0),
+            3 => (4.0, 3.0),
+            _ => (1.0, 1.0),
+        };
+        (x, y, dimen)
+    } else {
+        total = total.max(8.0) + 2.0;
+        let case = (dimen * 5.0 / total).floor() as i64;
+        let (x, y, fraction) = match case {
+            0 => (1.0, 6.0, 0.16),
+            1 => (1.0, 4.0, 0.25),
+            2 => (1.0, 2.0, 0.5),
+            3 => (3.0, 4.0, 0.75),
+            _ => (1.0, 1.0, 1.0),
+        };
+        (x, y, fraction * total)
+    };
+    // The `line10` glyph for slope y/x: its longer leg is the 10pt design
+    // size (`(CHARWD R 0.5) (CHARHT R 1.0)` for (1,2), and so on).
+    let longer = x.max(y);
+    let (wd, ht) = (10.0 * x / longer, 10.0 * y / longer);
+    if len < wd {
+        return None;
+    }
+    // `\@whiledim \@clnwd <\@linelen`: whole glyphs while one more still
+    // fits short of the length, then the overlapped last one.
+    let whole = (len / wd).ceil() - 1.0;
+    let leftover = len - whole * wd;
+    let thousandths = (leftover * 1000.0 / wd).floor();
+    let rise = whole * ht + ht * thousandths / 1000.0;
+    Some((len, rise))
+}
+
+/// The box cancel.sty's `\@cancel` leaves in the math list for a laid-out
+/// `body`: the body at its own baseline, unchanged, and one or two strike
+/// rule leaves whose boxes are the `\line` extents, tagged for
+/// `typeset::math_items` to stroke diagonally ([`cancel_strike_of`]).
+///
+/// `\@cancel` `\vcenter`s the body and the line box on the text-size
+/// `axis`, overlays them with `\ooalign` (rows on one baseline, slashes
+/// first) and raises the `\vtop` by the body's original height less its
+/// vcentered height, which puts the body back where it was and the strike's
+/// centre on the body's centre. Measured with `\showbox` (pdfTeX, TeX Live
+/// 2026, 10pt): `$\cancel{x}$` is `\hbox(7.15277+0.34723)x5.71527` around a
+/// `\vbox(7.5+0.0)` shifted 0.34723, `$\bcancel{x+y}$` is
+/// `\hbox(5.09319+1.94444)x23.199`, `$\xcancel{\frac{a}{b}}$` is
+/// `\hbox(7.9464+3.44841)x6.73764` around a 12.39pt line box -- so the atom
+/// is (rise + h - d)/2 tall, and max(d, axis - (h - d)/2) deep: the `\vtop`
+/// takes its height from the slash row and its depth from the body row,
+/// an `\hbox` whose depth `hpack` never lets go below zero.
+pub(crate) fn cancelled_math_box(body: ml::MathBox, kind: CancelKind, axis: f64, tag: ml::SourceTag) -> ml::MathBox {
+    let (w, h, d) = (body.width, body.height, body.depth);
+    let extent = cancel_strike_extent(w, h + d);
+    let rise = extent.map_or(0.0, |(_, rise)| rise);
+    let height = (rise + h - d) / 2.0;
+    let depth = d.max(axis - (h - d) / 2.0);
+    let mut children = vec![ml::Child { dx: 0.0, dy: 0.0, content: body }];
+    if let Some((len, rise)) = extent {
+        // Centred on the body's centre, (h - d)/2 above the baseline.
+        let centre = (h - d) / 2.0;
+        let dirs: &[StrikeDir] = match kind {
+            CancelKind::Forward => &[StrikeDir::Forward],
+            CancelKind::Backward => &[StrikeDir::Backward],
+            CancelKind::Both => &[StrikeDir::Forward, StrikeDir::Backward],
+        };
+        for dir in dirs {
+            let attr = match dir {
+                StrikeDir::Forward => CANCEL_FORWARD_ATTR,
+                StrikeDir::Backward => CANCEL_BACKWARD_ATTR,
+            };
+            children.push(ml::Child {
+                dx: (w - len) / 2.0,
+                dy: 0.0,
+                content: ml::MathBox::rule(len, centre + rise / 2.0, rise / 2.0 - centre).with_tag(ml::SourceTag { span: tag.span, attr: Some(attr) }),
+            });
+        }
+    }
+    ml::MathBox {
+        kind: ml::BoxKind::HBox(children),
+        width: w,
+        height,
+        depth,
+        tag: ml::SourceTag::NONE,
+    }
+}
+
 /// Replaces nested grid and framed-box placeholders in `root` by their boxes,
 /// including handles nested in a substituted box. Run [`substitute`]
 /// afterwards for the `\text` runs inside them.
@@ -1139,5 +1360,90 @@ mod tests {
         assert!(run.glyph_at(MathFontId(RUN_FONT_BASE + 2), 0).is_none(), "slot before the run");
         assert!(run.glyph_at(MathFontId(RUN_FONT_BASE + 6), 0).is_none(), "slot after the run");
         assert!(run.owns(MathFontId(RUN_FONT_BASE + 5)) && !run.owns(MathFontId(RUN_FONT_BASE + 6)));
+    }
+}
+
+/// cancel.sty's `\line` geometry and the atom's box, against `\showbox`
+/// under pdfTeX (TeX Live 2026, 10pt article, `\showboxdepth=100`).
+#[cfg(test)]
+#[allow(clippy::type_complexity)]
+mod cancel_tests {
+    use super::*;
+
+    fn near(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    /// `(body width, height, depth)` -> `(line length, rise)`, both read
+    /// from the `\hbox` the `\line` characters end up in.
+    #[test]
+    fn strike_extent_matches_showbox() {
+        let cases: [(&str, (f64, f64, f64), (f64, f64)); 7] = [
+            // tall: (1,2) x 5pt, exactly one whole glyph
+            ("\\cancel{x}", (5.71527, 4.30554, 0.0), (5.0, 10.0)),
+            // wide: (4,1) x 25.199pt, two whole glyphs and a 0.519 leftover
+            ("\\bcancel{x+y}", (23.199, 5.83333, 1.94444), (25.199, 6.29749)),
+            // tall: (1,2) x 6.1998pt, one whole glyph and a 0.239 leftover
+            ("\\xcancel{\\frac{a}{b}}", (6.73764, 6.9512, 3.44841), (6.1998, 12.39)),
+            // tall, total height floored to 8pt: (1,4) x 2.5pt, one glyph
+            ("\\cancel{i}", (3.44513, 6.59524, 0.0), (2.5, 10.0)),
+            // wide: (4,1) x 18.06717pt
+            ("\\cancel{xyz}", (16.06717, 4.30554, 1.94444), (18.06717, 4.515)),
+            // wide, case 3: (4,3) x 12.2014pt
+            ("\\cancel{x^2}", (10.2014, 8.14002, 0.0), (12.2014, 9.15)),
+            // wide: (4,1) x 42.62854pt, four whole glyphs
+            ("\\cancel{abcdefgh}", (40.62854, 6.94444, 1.94444), (42.62854, 10.655)),
+        ];
+        for (name, (w, h, d), (len, rise)) in cases {
+            let got = cancel_strike_extent(w, h + d).expect(name);
+            assert!(near(got.0, len) && near(got.1, rise), "{name}: {got:?} vs ({len}, {rise})");
+        }
+    }
+
+    /// A length under one glyph draws nothing (`\@sline` only skips): a
+    /// body under 2pt wide and over 8pt tall takes case 0 of the tall
+    /// branch, 0.16 of the total, which is shorter than the (1,6) glyph's
+    /// 1.66667pt until the total passes 10.4167pt.
+    #[test]
+    fn strike_shorter_than_one_glyph_is_not_drawn() {
+        assert_eq!(cancel_strike_extent(1.0, 8.2), None);
+        let (len, rise) = cancel_strike_extent(1.0, 8.5).expect("drawn");
+        assert!(near(len, 0.16 * 10.5), "{len}");
+        // One whole glyph plus 0.0133pt of a second: 10pt and 7 or 8
+        // thousandths of it, depending on where 1.68/1.66667 rounds.
+        assert!(rise > 10.0 && rise < 10.1, "{rise}");
+    }
+
+    /// The atom around the body: `(rise + h - d)/2` tall, `max(d, axis -
+    /// (h - d)/2)` deep, the body's width, from the `\showbox` listings.
+    #[test]
+    fn cancelled_box_dimensions_match_showbox() {
+        let cases: [(&str, (f64, f64, f64), CancelKind, (f64, f64)); 5] = [
+            ("\\cancel{x}", (5.71527, 4.30554, 0.0), CancelKind::Forward, (7.15277, 0.34723)),
+            ("\\bcancel{x+y}", (23.199, 5.83333, 1.94444), CancelKind::Backward, (5.09319, 1.94444)),
+            ("\\xcancel{\\frac{a}{b}}", (6.73764, 6.9512, 3.44841), CancelKind::Both, (7.9464, 3.44841)),
+            ("\\cancel{i}", (3.44513, 6.59524, 0.0), CancelKind::Forward, (8.29762, 0.0)),
+            ("\\cancel{x^2}", (10.2014, 8.14002, 0.0), CancelKind::Forward, (8.645, 0.0)),
+        ];
+        for (name, (w, h, d), kind, (height, depth)) in cases {
+            let body = ml::MathBox::rule(w, h, d);
+            let b = cancelled_math_box(body, kind, 2.5, ml::SourceTag::NONE);
+            assert!(near(b.width, w) && near(b.height, height) && near(b.depth, depth), "{name}: {} {} {}", b.width, b.height, b.depth);
+            let ml::BoxKind::HBox(children) = &b.kind else { panic!("{name}: an hbox") };
+            // The body first, at its own origin; every strike centred on it.
+            assert!(near(children[0].dx, 0.0) && near(children[0].dy, 0.0), "{name}");
+            for c in &children[1..] {
+                let (len, rise) = (c.content.width, c.content.height + c.content.depth);
+                assert!(near(c.dx + len / 2.0, w / 2.0), "{name}: x centre");
+                assert!(near(c.content.height - rise / 2.0, (h - d) / 2.0), "{name}: y centre");
+            }
+            let dirs: Vec<StrikeDir> = children[1..].iter().map(|c| cancel_strike_of(c.content.tag).expect("tagged")).collect();
+            let want: &[StrikeDir] = match kind {
+                CancelKind::Forward => &[StrikeDir::Forward],
+                CancelKind::Backward => &[StrikeDir::Backward],
+                CancelKind::Both => &[StrikeDir::Forward, StrikeDir::Backward],
+            };
+            assert_eq!(dirs, want, "{name}");
+        }
     }
 }
