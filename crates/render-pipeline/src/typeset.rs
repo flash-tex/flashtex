@@ -456,6 +456,14 @@ pub struct Context<'a> {
     /// Document sources (indexed like `paths`), read only to re-derive what
     /// the compiler's math list flattens (`\left`/`\right` fences).
     texts: &'a [&'a str],
+    /// The unmasked document sources (indexed like `texts`). `texts` are
+    /// what the compiler parsed: every `figure`/`table` and `multicols`
+    /// environment in them is blanked to spaces (`floats::mask`,
+    /// `multicol::Scan::masked`), so a builder that re-reads bytes from a
+    /// span *inside* one of those -- a float body's `tikzpicture`
+    /// (`picture_block`) -- must read them here (#884). Same as `texts`
+    /// until [`Context::set_sources`] is called.
+    sources: &'a [&'a str],
     shaper: &'a Shaper,
     diagnostics: Vec<Diagnostic>,
     recs: Vec<BoxRec>,
@@ -538,6 +546,13 @@ impl<'a> Context<'a> {
         self.math_colors = colors;
     }
 
+    /// The unmasked document sources (see [`Context::sources`]): the
+    /// request's documents as read, before `floats::mask` blanked the float
+    /// environments the compiler must not see.
+    pub fn set_sources(&mut self, sources: &'a [&'a str]) {
+        self.sources = sources;
+    }
+
     pub fn new(fonts: &'a FontSet, style: &'a Stylesheet, paths: &'a [&'a str]) -> Context<'a> {
         Self::with_texts(fonts, style, paths, &[])
     }
@@ -550,6 +565,7 @@ impl<'a> Context<'a> {
             style,
             paths,
             texts,
+            sources: texts,
             shaper: fonts.shaper(),
             diagnostics: Vec::new(),
             recs: Vec::new(),
@@ -5088,7 +5104,10 @@ impl<'a> Context<'a> {
     fn picture_block(&mut self, document: DocumentId, source: &flashtex_vector_graphics::tikz::PictureSource, centered: bool) -> BuiltBlock {
         use flashtex_vector_graphics::tikz::{Severity, Tikz};
         const PT_PER_BP: f64 = 72.27 / 72.0;
-        let text = self.texts.get(document.0).copied().unwrap_or("");
+        // The unmasked bytes: a picture inside a `figure` is blanked in
+        // `texts`, and compiling the spaces there gave an empty picture with
+        // no nodes and no height (#884).
+        let text = self.sources.get(document.0).copied().unwrap_or("");
         let mut tikz = Tikz::new(self.style.body_size_pt);
         let preamble_end = text.find("\\begin{document}").filter(|e| *e <= source.start).unwrap_or(0);
         let mut diags = tikz.read_preamble(&text[..preamble_end]);
@@ -8400,6 +8419,7 @@ fn top_material_box(ctx: &mut Context, body: &[Block], blocks: &mut Vec<BuiltBlo
     wide.text_width_pt = crate::style::frame_pt(ctx.style.class_geometry.as_deref()?.frame.text_width);
     let first = {
         let mut sub = Context::with_texts(ctx.fonts, &wide, ctx.paths, ctx.texts);
+        sub.set_sources(ctx.sources);
         let mut sub_blocks: Vec<BuiltBlock> = Vec::new();
         sub.box_blocks(body, &mut sub_blocks, span, false);
         absorb(ctx, sub, sub_blocks, blocks)
