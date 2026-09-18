@@ -1861,6 +1861,7 @@ fn rec_span(ctx: &Context, r: usize) -> Option<Span> {
         BoxRec::Rule { span, .. } => Some(*span),
         BoxRec::Picture(p) => Some(p.span),
         BoxRec::Table(t) => Some(t.span),
+        BoxRec::Image(i) => Some(i.span),
         BoxRec::ColorBox(b) => Some(b.span),
         BoxRec::Leader { .. } => None,
         BoxRec::Underline(u) => Some(u.span),

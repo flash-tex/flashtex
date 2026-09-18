@@ -690,6 +690,119 @@ fn em_ex(body: f64) -> (f64, f64) {
     }
 }
 
+/// The lengths graphicx dimensions resolve against: the column's own
+/// environment plus the full-width one a `figure*`/`table*` sets in a
+/// two-column document (`\@xdblfloat`: `\hsize\textwidth
+/// \linewidth\textwidth`). Shared by [`prepare`] and the running-text
+/// `\includegraphics` path (`adapter`), so both size one file's keys the
+/// same way.
+pub(crate) fn length_envs(style: &Stylesheet) -> (LengthEnv, LengthEnv) {
+    let (em, ex) = em_ex(style.body_size_pt);
+    // `\textwidth` is the whole text block even in a two-column document,
+    // where `style.text_width_pt` is `\columnwidth` (style.rs: the frame's
+    // first column). Inside a `figure*`/`table*` of a two-column document
+    // `\@xdblfloat` sets `\hsize\textwidth \linewidth\textwidth`, so
+    // `\linewidth` there is the whole block too.
+    let full_text_width = style.class_geometry.as_deref().map_or(style.text_width_pt, |g| crate::style::frame_pt(g.frame.text_width));
+    let env = LengthEnv { text_width: full_text_width, line_width: style.text_width_pt, text_height: style.text_height_pt, paper_width: style.page_width_pt, paper_height: style.page_height_pt, em, ex };
+    let wide_env = LengthEnv { line_width: full_text_width, ..env };
+    (env, wide_env)
+}
+
+/// One `\includegraphics` sized and loaded for layout, however it was
+/// reached: the box it sets plus what paints it (`None` when the file could
+/// not be read and no size is known from `width` and `height` -- then only
+/// the package error is reported and no box is contributed, exactly as
+/// `prepare` always did). [`prepare`]'s `Piece::Graphic` arm and the
+/// running-text path resolve through here, so an inline graphic reserves
+/// exactly what the same keys reserve in a float.
+pub(crate) struct ResolvedGraphic {
+    pub gbox: graphics::GraphicBox,
+    /// `None` when the file could not be read but its size was known from
+    /// `width` and `height` (space is kept, nothing is painted), and
+    /// whenever `placeholder` is set.
+    pub resource: Option<Rc<ImageResource>>,
+    /// What graphicx draws in place of the file under `draft`/`demo`.
+    pub placeholder: Option<Placeholder>,
+}
+
+/// Resolves one `\includegraphics` (`opts` the key list as written, `file`
+/// the file argument as written) with the exact `prepare` logic:
+/// `parse_keys` -> `demo`/`draft`/load -> `size_box`. `src` attributes the
+/// diagnostics the keys or the file read raise.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve_graphic(
+    span: Span,
+    opts: &str,
+    file: &str,
+    env: &LengthEnv,
+    gmode: graphics::GraphicsMode,
+    options: &RenderOptions,
+    images: &mut ImageCache,
+    src: &dyn Fn(Span) -> SourceRange,
+) -> (Option<ResolvedGraphic>, Vec<Diagnostic>) {
+    let mut diags = Vec::new();
+    let (keys, problems) = graphics::parse_keys(opts, env);
+    for p in problems {
+        diags.push(Diagnostic::warning("graphics_option", p, vec![src(span)]));
+    }
+    for k in &keys {
+        if let GKey::Unsupported(name) = k {
+            diags.push(Diagnostic::warning("graphics_option", format!("\\includegraphics key '{name}' is not honoured yet"), vec![src(span)]));
+        }
+    }
+    let page = keys.iter().find_map(|k| if let GKey::Page(p) = k { Some(*p) } else { None }).unwrap_or(1);
+    // `demo` replaced `\Ginclude@graphics` with a rule, so no file is
+    // looked up and the per-image `draft` key never reaches `\Gin@setfile`'s
+    // draft branch.
+    if gmode.demo {
+        let gbox = graphics::demo_box(&keys);
+        return (Some(ResolvedGraphic { gbox, resource: None, placeholder: Some(Placeholder::DemoRule) }), diags);
+    }
+    let draft = keys.iter().rev().find_map(|k| if let GKey::Draft(v) = k { Some(*v) } else { None }).unwrap_or(gmode.draft);
+    match images.load(options, file, page) {
+        Ok((resource, info)) => {
+            let gbox = graphics::size_box(info.width_bp / graphics::BP_PER_PT, info.height_bp / graphics::BP_PER_PT, &keys);
+            // Under `draft` the box is sized from the file and the file is
+            // not embedded: the space is the same and the ink is the frame
+            // `\Gin@setfile` draws instead.
+            let (resource, placeholder) = if draft { (None, Some(Placeholder::DraftFrame)) } else { (Some(resource), None) };
+            (Some(ResolvedGraphic { gbox, resource, placeholder }), diags)
+        }
+        // `pdftex.def`'s `\Gread@pdftex` leaves a file it cannot find at
+        // the bounding box `0 0 72 72` and, under `draft`, warns instead of
+        // raising its package error -- so the graphic still takes one inch
+        // square of space, scaled by whatever the keys ask for.
+        Err(msg) if draft => {
+            let nat = graphics::MISSING_NATURAL_BP / graphics::BP_PER_PT;
+            let gbox = graphics::size_box(nat, nat, &keys);
+            diags.push(Diagnostic::warning(
+                "image_unavailable",
+                format!("{msg}; the `draft` option keeps its 1 in natural size, as pdfTeX does"),
+                vec![src(span)],
+            ));
+            (Some(ResolvedGraphic { gbox, resource: None, placeholder: Some(Placeholder::DraftFrame) }), diags)
+        }
+        Err(msg) => {
+            let w = keys.iter().rev().find_map(|k| if let GKey::Width(v) = k { Some(*v) } else { None });
+            let h = keys.iter().rev().find_map(|k| if let GKey::Height(v) | GKey::TotalHeight(v) = k { Some(*v) } else { None });
+            match (w, h) {
+                (Some(w), Some(h)) => {
+                    diags.push(Diagnostic::error("image_unavailable", format!("{msg} (its requested size is kept empty)"), vec![src(span)]));
+                    let gbox = graphics::GraphicBox { width: w, height: h, depth: 0.0, matrix: [w, 0.0, 0.0, h, 0.0, 0.0] };
+                    (Some(ResolvedGraphic { gbox, resource: None, placeholder: None }), diags)
+                }
+                // No size is known, so only the package error is reported
+                // and no box is contributed.
+                _ => {
+                    diags.push(Diagnostic::error("image_unavailable", msg, vec![src(span)]));
+                    (None, diags)
+                }
+            }
+        }
+    }
+}
+
 /// Builds the layout input of every float. `texts` are the masked texts
 /// the main parse ran on.
 #[allow(clippy::too_many_arguments)]
@@ -706,16 +819,8 @@ pub fn prepare(
 ) -> (Vec<FloatSpec>, Vec<Diagnostic>) {
     let mut specs = Vec::new();
     let mut diags = Vec::new();
-    let (em, ex) = em_ex(style.body_size_pt);
-    // `\textwidth` is the whole text block even in a two-column document,
-    // where `style.text_width_pt` is `\columnwidth` (style.rs: the frame's
-    // first column). Inside a `figure*`/`table*` of a two-column document
-    // `\@xdblfloat` sets `\hsize\textwidth \linewidth\textwidth`, so
-    // `\linewidth` there is the whole block too.
-    let full_text_width = style.class_geometry.as_deref().map_or(style.text_width_pt, |g| crate::style::frame_pt(g.frame.text_width));
+    let (env, wide_env) = length_envs(style);
     let twocolumn = style.class_geometry.as_deref().is_some_and(|g| g.frame.columns.len() > 1);
-    let env = LengthEnv { text_width: full_text_width, line_width: style.text_width_pt, text_height: style.text_height_pt, paper_width: style.page_width_pt, paper_height: style.page_height_pt, em, ex };
-    let wide_env = LengthEnv { line_width: full_text_width, ..env };
     // `draft`/`demo` are per document, from the class options and every
     // `\usepackage` of `graphics`/`graphicx` in the entry file.
     let gmode = graphics::mode(texts.get(entry_index).copied().unwrap_or_default());
@@ -789,63 +894,10 @@ pub fn prepare(
                         }
                     }
                     Piece::Graphic { span, options: opts, path: file } => {
-                        let (keys, problems) = graphics::parse_keys(opts, env);
-                        for p in problems {
-                            diags.push(Diagnostic::warning("graphics_option", p, vec![src(*span)]));
-                        }
-                        for k in &keys {
-                            if let GKey::Unsupported(name) = k {
-                                diags.push(Diagnostic::warning("graphics_option", format!("\\includegraphics key '{name}' is not honoured yet"), vec![src(*span)]));
-                            }
-                        }
-                        let page = keys.iter().find_map(|k| if let GKey::Page(p) = k { Some(*p) } else { None }).unwrap_or(1);
-                        // `demo` replaced `\Ginclude@graphics` with a rule,
-                        // so no file is looked up and the per-image `draft`
-                        // key never reaches `\Gin@setfile`'s draft branch.
-                        if gmode.demo {
-                            let gbox = graphics::demo_box(&keys);
-                            parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource: None, placeholder: Some(Placeholder::DemoRule), span: *span }));
-                            continue;
-                        }
-                        let draft = keys.iter().rev().find_map(|k| if let GKey::Draft(v) = k { Some(*v) } else { None }).unwrap_or(gmode.draft);
-                        match images.load(options, file, page) {
-                            Ok((resource, info)) => {
-                                let gbox = graphics::size_box(info.width_bp / graphics::BP_PER_PT, info.height_bp / graphics::BP_PER_PT, &keys);
-                                // Under `draft` the box is sized from the
-                                // file and the file is not embedded: the
-                                // space is the same and the ink is the
-                                // frame `\Gin@setfile` draws instead.
-                                let (resource, placeholder) = if draft { (None, Some(Placeholder::DraftFrame)) } else { (Some(resource), None) };
-                                parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource, placeholder, span: *span }));
-                            }
-                            // `pdftex.def`'s `\Gread@pdftex` leaves a file
-                            // it cannot find at the bounding box `0 0 72
-                            // 72` and, under `draft`, warns instead of
-                            // raising its package error -- so the graphic
-                            // still takes one inch square of space, scaled
-                            // by whatever the keys ask for.
-                            Err(msg) if draft => {
-                                let nat = graphics::MISSING_NATURAL_BP / graphics::BP_PER_PT;
-                                let gbox = graphics::size_box(nat, nat, &keys);
-                                diags.push(Diagnostic::warning(
-                                    "image_unavailable",
-                                    format!("{msg}; the `draft` option keeps its 1 in natural size, as pdfTeX does"),
-                                    vec![src(*span)],
-                                ));
-                                parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource: None, placeholder: Some(Placeholder::DraftFrame), span: *span }));
-                            }
-                            Err(msg) => {
-                                let w = keys.iter().rev().find_map(|k| if let GKey::Width(v) = k { Some(*v) } else { None });
-                                let h = keys.iter().rev().find_map(|k| if let GKey::Height(v) | GKey::TotalHeight(v) = k { Some(*v) } else { None });
-                                match (w, h) {
-                                    (Some(w), Some(h)) => {
-                                        diags.push(Diagnostic::error("image_unavailable", format!("{msg} (its requested size is kept empty)"), vec![src(*span)]));
-                                        let gbox = graphics::GraphicBox { width: w, height: h, depth: 0.0, matrix: [w, 0.0, 0.0, h, 0.0, 0.0] };
-                                        parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource: None, placeholder: None, span: *span }));
-                                    }
-                                    _ => diags.push(Diagnostic::error("image_unavailable", msg, vec![src(*span)])),
-                                }
-                            }
+                        let (resolved, problems) = resolve_graphic(*span, opts, file, env, gmode, options, images, &src);
+                        diags.extend(problems);
+                        if let Some(r) = resolved {
+                            parts.push(FloatPart::Graphic(PreparedGraphic { gbox: r.gbox, resource: r.resource, placeholder: r.placeholder, span: *span }));
                         }
                     }
                     Piece::Caption { span, arg, .. } => {

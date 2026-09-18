@@ -11,6 +11,7 @@
 //! ("Requested compiler API").
 
 use std::collections::{BTreeMap, HashMap};
+use std::rc::Rc;
 
 use flashtex_compiler::math::MathList;
 use flashtex_compiler::parser::{Block as CBlock, FillLeader, Inline, ItemLabel, Parsed, UnderlineGeom};
@@ -22,7 +23,9 @@ use flashtex_class_geometry::{
     Sp,
 };
 
-use crate::display::Diagnostic;
+use crate::display::{Diagnostic, ImageResource};
+use crate::graphics::GraphicBox;
+use crate::typeset::floatpage::Placeholder;
 use flashtex_compiler::color::DeviceColor;
 use crate::style::Stylesheet;
 use crate::RenderOptions;
@@ -185,6 +188,10 @@ pub enum Item {
     /// `tabular`/`tabular*` (compiler `Inline::Tabular`): one box in the
     /// paragraph, laid out by `table.rs`.
     Table(Box<crate::table::TableItem>),
+    /// `\includegraphics` in running text (compiler `Inline::Graphic`): one
+    /// box in the paragraph, sized and loaded like a float graphic
+    /// (`floats::resolve_graphic`).
+    Image(Box<InlineImage>),
     /// `\TeX`/`\LaTeX`/`\LaTeXe` (compiler `Inline::Logo`): latex.ltx's
     /// construction, set by `typeset` from the face's TFM metrics.
     Logo { logo: TextLogo, style: TextStyle, span: Span },
@@ -253,6 +260,17 @@ pub enum Item {
     /// pdflatex shows it: `\showbox` of `\verb*"a b-c"` opens with
     /// `.\hbox(0.0+0.0)x0.0`.
     LeaveVmode,
+}
+
+/// An `\includegraphics` in running text: the sized box it sets (`gbox`,
+/// in TeX points) plus what paints it (`resource`, or `placeholder` under
+/// `draft`/`demo`). `span` is the command through its file argument.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InlineImage {
+    pub gbox: GraphicBox,
+    pub resource: Option<Rc<ImageResource>>,
+    pub placeholder: Option<Placeholder>,
+    pub span: Span,
 }
 
 /// A `\colorbox`/`\fcolorbox`: `items` set as an `\hbox` on a `fill`
@@ -1311,6 +1329,29 @@ pub fn adapt_cached(
     labels: &Labels,
     cache: Option<&crate::incremental::RenderCache>,
 ) -> Doc {
+    adapt_cached_with_images(texts, entry, parsed, options, labels, cache, None, &[])
+}
+
+/// [`adapt_cached`] that also sets running-text `\includegraphics` (#762):
+/// every depth-0 `Inline::Graphic` of the parsed blocks is sized and loaded
+/// through [`crate::floats::resolve_graphic`] and converted to an
+/// [`Item::Image`]. `images` is the request's image cache (shared with the
+/// float path); `None` keeps the old drop, which is what the float-body and
+/// caption re-parses need: they call [`adapt`], so a graphic nested in a
+/// float's group or `tabular` cell still takes no space and still reports
+/// `float_content_unsupported`. `paths` attributes the new diagnostics and
+/// is indexed by `DocumentId`, like `texts`.
+#[allow(clippy::too_many_arguments)]
+pub fn adapt_cached_with_images(
+    texts: &[&str],
+    entry: usize,
+    parsed: &Parsed,
+    options: &RenderOptions,
+    labels: &Labels,
+    cache: Option<&crate::incremental::RenderCache>,
+    images: Option<&mut crate::floats::ImageCache>,
+    paths: &[&str],
+) -> Doc {
     let _macro_defs = MacroDefsScope::enter(texts);
     let source = texts.get(entry).copied().unwrap_or("");
     let explicit_class = class_options(source);
@@ -1423,8 +1464,20 @@ pub fn adapt_cached(
         }
         h.finish()
     };
-    let items_for = |inlines: &[Inline], heading: bool| -> Vec<Item> { items_cached(texts, inlines, &styles, labels, labels_fp, size, heading, false, cache) };
-    let items_for_weighted = |inlines: &[Inline], compiler_weight: bool| -> Vec<Item> { items_cached(texts, inlines, &styles, labels, labels_fp, size, false, compiler_weight, cache) };
+    // Running-text `\includegraphics` (#762): resolve every graphic the
+    // paragraph path is about to set -- the depth-0 graphics of the parsed
+    // blocks, never anything nested in `Transform` content, `tabular`
+    // cells, footnotes or marginpars (those keep the old drop, exactly as
+    // the float-body re-parse does, since they never enter this map).
+    // `texts` are the float-masked sources here, so a graphic inside a
+    // float environment cannot surface as an `Inline::Graphic` at all and
+    // the in-float placement path is unaffected by construction.
+    let (inline_graphics, inline_diags) = match images {
+        Some(images) => resolve_inline_graphics(parsed, texts, entry, paths, &style, options, images),
+        None => (HashMap::new(), Vec::new()),
+    };
+    let items_for = |inlines: &[Inline], heading: bool| -> Vec<Item> { items_cached(texts, inlines, &styles, labels, labels_fp, size, heading, false, cache, &inline_graphics) };
+    let items_for_weighted = |inlines: &[Inline], compiler_weight: bool| -> Vec<Item> { items_cached(texts, inlines, &styles, labels, labels_fp, size, false, compiler_weight, cache, &inline_graphics) };
     let mut blocks = Vec::new();
     // Page-style, mark, `\chapter` and `\noindent` commands in the entry
     // document's body, read from the source: the compiler accepts the first
@@ -2433,7 +2486,7 @@ pub fn adapt_cached(
     Doc {
         style,
         blocks,
-        diagnostics: Vec::new(),
+        diagnostics: inline_diags,
         limitations,
         secnumdepth,
         page_color: parsed.page_color,
@@ -2479,6 +2532,7 @@ fn item_range(it: &Item, document: flashtex_compiler::DocumentId) -> Option<(usi
     match it {
         Item::Word(w) => of(w.span()),
         Item::Math { span, .. } | Item::Logo { span, .. } | Item::Rule { span, .. } | Item::Footnote { span, .. } => of(*span),
+        Item::Image(image) => of(image.span),
         _ => None,
     }
 }
@@ -8476,6 +8530,76 @@ fn accent(mark: char, base: char) -> Option<char> {
     None
 }
 
+/// Collects and resolves the running-text `\includegraphics` nodes (#762):
+/// every depth-0 `Inline::Graphic` of the parsed blocks, resolved once each
+/// through [`crate::floats::resolve_graphic`] with the column's own length
+/// environment (running text is never the full-width float case). Variants
+/// without running-text inlines (`VSpace`, `Rule`, `Verbatim`, ...) and any
+/// compiler block added later (`_`) contribute nothing: their graphics keep
+/// the old drop, exactly as the float-body re-parse drops them.
+#[allow(clippy::too_many_arguments)]
+fn resolve_inline_graphics(
+    parsed: &Parsed,
+    texts: &[&str],
+    entry: usize,
+    paths: &[&str],
+    style: &Stylesheet,
+    options: &RenderOptions,
+    images: &mut crate::floats::ImageCache,
+) -> (HashMap<Span, InlineImage>, Vec<Diagnostic>) {
+    use std::collections::HashSet;
+    let mut ordered: Vec<(Span, String, String)> = Vec::new();
+    let mut seen: HashSet<Span> = HashSet::new();
+    let mut take_vec = |v: &[Inline]| {
+        for i in v {
+            if let Inline::Graphic(g) = i {
+                if seen.insert(g.span) {
+                    ordered.push((g.span, g.options.clone(), g.path.clone()));
+                }
+            }
+        }
+    };
+    for b in &parsed.blocks {
+        match b {
+            CBlock::Paragraph(v) => take_vec(v),
+            CBlock::Heading { content, .. } | CBlock::FigureCaption { content } | CBlock::Styled { content, .. } | CBlock::ListItem { content, .. } => take_vec(content),
+            CBlock::TitleBlock { title, authors, date } => {
+                take_vec(title);
+                take_vec(authors);
+                if let Some(date) = date {
+                    take_vec(date);
+                }
+            }
+            CBlock::LetterBlock { lines, .. } => {
+                for line in lines {
+                    take_vec(line);
+                }
+            }
+            _ => {}
+        }
+    }
+    if ordered.is_empty() {
+        return (HashMap::new(), Vec::new());
+    }
+    let gmode = crate::graphics::mode(texts.get(entry).copied().unwrap_or_default());
+    let (env, _) = crate::floats::length_envs(style);
+    let mut out: HashMap<Span, InlineImage> = HashMap::with_capacity(ordered.len());
+    let mut diags = Vec::new();
+    for (span, opts, file) in ordered {
+        let src = |s: Span| crate::display::SourceRange {
+            path: Rc::from(paths.get(s.document.0).copied().unwrap_or("")),
+            start_byte: s.start,
+            end_byte: s.end,
+        };
+        let (resolved, problems) = crate::floats::resolve_graphic(span, &opts, &file, &env, gmode, options, images, &src);
+        diags.extend(problems);
+        if let Some(r) = resolved {
+            out.insert(span, InlineImage { gbox: r.gbox, resource: r.resource, placeholder: r.placeholder, span });
+        }
+    }
+    (out, diags)
+}
+
 /// [`items_from_inlines`] through the cross-request cache. The key covers
 /// the inlines (kinds, texts, relative spans, label/reference keys), the
 /// source bytes they sit in (gaps decide spaces, groups decide styles and
@@ -8492,16 +8616,20 @@ fn items_cached(
     heading: bool,
     compiler_weight: bool,
     cache: Option<&crate::incremental::RenderCache>,
+    graphics: &HashMap<Span, InlineImage>,
 ) -> Vec<Item> {
     let Some(cache) = cache else {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, graphics);
     };
-    // Table items nest item lists the relocation does not walk.
-    if inlines.iter().any(|i| matches!(i, Inline::Tabular(_))) {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+    // Table items nest item lists the relocation does not walk, and a
+    // paragraph holding a resolved graphic carries its image resource, which
+    // the cross-request key cannot see a later request rewriting: both are
+    // always converted fresh.
+    if inlines.iter().any(|i| matches!(i, Inline::Tabular(_) | Inline::Graphic(_))) {
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, graphics);
     }
     let Some(first) = inlines.first().map(inline_span) else {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, graphics);
     };
     let document = first.document;
     let mut start = first.start;
@@ -8509,25 +8637,25 @@ fn items_cached(
     for i in inlines {
         let s = inline_span(i);
         if s.document != document {
-            return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+            return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, graphics);
         }
         start = start.min(s.start);
         end = end.max(s.end);
     }
     let Some(src) = texts.get(document.0) else {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, graphics);
     };
     // Macro replacement text carries the invocation's span: the spacing
     // and weight of its words come from the definition (`macro_body`), so
     // a block holding one cannot be keyed by its own bytes alone.
     if inlines.iter().any(|i| is_invocation_span(src, inline_span(i))) {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, graphics);
     }
     // `\\[<dimen>]` reads past the block's last span: the key covers the
     // rest of that line.
     let slice_end = src[end.min(src.len())..].find('\n').map_or(src.len(), |n| end + n + 1).max((end + 2).min(src.len()));
     let Some(slice) = src.get(start..slice_end) else {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, graphics);
     };
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -8680,7 +8808,7 @@ fn items_cached(
     if let Some(a) = cache.adapted(key) {
         return crate::incremental::relocate_items(&a.items, start as isize - a.base as isize);
     }
-    let items = items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+    let items = items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, graphics);
     cache.insert_adapted(key, crate::incremental::AdaptedBlock { items: items.clone(), base: start });
     items
 }
@@ -8697,7 +8825,7 @@ fn items_cached(
 /// declarations were inserted from the column specification, or an amsthm
 /// theorem-like environment, whose head and body fonts the package declares
 /// and the source never spells at the head's span.
-fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Styles], labels: &Labels, size: u32, heading: bool, compiler_weight: bool) -> Vec<Item> {
+fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Styles], labels: &Labels, size: u32, heading: bool, compiler_weight: bool, graphics: &HashMap<Span, InlineImage>) -> Vec<Item> {
     // `\ref`/`\pageref` become ordinary text attributed to the command's
     // bytes; `\label` becomes a zero-width marker.
     let mut resolved: Vec<std::borrow::Cow<Inline>> = Vec::with_capacity(inlines.len());
@@ -8793,7 +8921,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                         if k > 0 {
                             note.push(Item::NoteParBreak);
                         }
-                        note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight));
+                        note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight, graphics));
                     }
                     note
                 });
@@ -8820,7 +8948,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     if k > 0 {
                         note.push(Item::NoteParBreak);
                     }
-                    note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight));
+                    note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight, graphics));
                 }
                 items.push(Item::Marginpar { text: note, span: *span });
                 after_control_word = end == span.end;
@@ -8839,7 +8967,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 after_control_word = false;
                 let src = text_of(span.document);
                 let lengths = crate::table::TableLengths::read(|name, base| length_at(src, name, size, span.start, base));
-                let mut items_of = |inlines: &[Inline], declared: bool| items_from_inlines_styled(texts, inlines, styles, labels, size, false, declared);
+                let mut items_of = |inlines: &[Inline], declared: bool| items_from_inlines_styled(texts, inlines, styles, labels, size, false, declared, graphics);
                 let table = crate::table::from_compiler(t, lengths, declared_size(t.style.size, size), &mut items_of);
                 items.push(Item::Table(Box::new(table)));
                 prev_end = Some(span.end);
@@ -8854,7 +8982,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                let content = items_from_inlines_styled(texts, &b.content, styles, labels, size, heading, compiler_weight);
+                let content = items_from_inlines_styled(texts, &b.content, styles, labels, size, heading, compiler_weight, graphics);
                 items.push(Item::ColorBox(Box::new(ColorBoxItem {
                     fill: b.fill,
                     frame: b.frame,
@@ -8874,7 +9002,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                let content = items_from_inlines_styled(texts, &u.content, styles, labels, size, heading, compiler_weight);
+                let content = items_from_inlines_styled(texts, &u.content, styles, labels, size, heading, compiler_weight, graphics);
                 items.push(Item::Underline(Box::new(UnderlineItem {
                     thickness_pt: u.thickness_pt,
                     geom: u.geom,
@@ -8895,7 +9023,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
                 let size_cpt = declared_size(t.style.size, size);
-                let mut content = items_from_inlines_styled(texts, &t.content, styles, labels, size, heading, compiler_weight);
+                let mut content = items_from_inlines_styled(texts, &t.content, styles, labels, size, heading, compiler_weight, graphics);
                 // `\fontsize\sf@size` replaces the declared size the
                 // argument inherited from the command's context.
                 if size_cpt != 0 {
@@ -8928,19 +9056,34 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 factor = 1000;
                 after_control_word = false;
             }
-            // #169's Inline::Graphic/Transform have no pipeline conversion
-            // arm yet (#170 is not in this integration: its own diff
-            // depends on a wire-protocol capability refactor -- a new
-            // Wire { transforms } field threaded through display.rs's JSON
-            // writers -- that collides with #158's already-merged
-            // Wire { device_color } and needs real reconciliation, not a
-            // mechanical merge). Degrade like the compiler's own Core 14
-            // layout does: an image leaves no space for now, and a
-            // transform box keeps its content set untransformed, so
-            // nothing is silently dropped.
+            // #169's Inline::Transform has no pipeline conversion arm yet
+            // (#170 is not in this integration: its own diff depends on a
+            // wire-protocol capability refactor -- a new Wire { transforms }
+            // field threaded through display.rs's JSON writers -- that
+            // collides with #158's already-merged Wire { device_color } and
+            // needs real reconciliation, not a mechanical merge). Degrade
+            // like the compiler's own Core 14 layout does: a transform box
+            // keeps its content set untransformed, so nothing is silently
+            // dropped.
+            //
+            // `Inline::Graphic` (#762) is set: the pre-pass resolved every
+            // depth-0 graphic through `floats::resolve_graphic`, so this is
+            // one box whose space before it reads like a formula's. A span
+            // missing from the map was never collected -- nested in a
+            // transform, a `tabular` cell, a footnote or a marginpar -- and
+            // keeps the old drop, exactly as the float-body re-parse does.
             Inline::Graphic(g) => {
-                prev_end = Some(g.span.end);
-                prev_span = Some(g.span);
+                let span = g.span;
+                if let Some(image) = graphics.get(&span) {
+                    let gap = space_between(prev_end, prev_span, span, Some("\\includegraphics"), after_control_word);
+                    let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                    gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                    push_gap(&mut items, gap, gap_style, factor);
+                    items.push(Item::Image(Box::new(image.clone())));
+                    factor = 1000;
+                }
+                prev_end = Some(span.end);
+                prev_span = Some(span);
                 after_control_word = false;
             }
             Inline::Transform(t) => {
@@ -8950,7 +9093,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                items.extend(items_from_inlines_styled(texts, &t.content, styles, labels, size, false, compiler_weight));
+                items.extend(items_from_inlines_styled(texts, &t.content, styles, labels, size, false, compiler_weight, graphics));
                 prev_end = Some(span.end);
                 prev_span = Some(span);
                 factor = 1000;

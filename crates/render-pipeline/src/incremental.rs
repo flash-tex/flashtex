@@ -447,6 +447,12 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
             Item::Table(t) => {
                 format!("{t:?}").hash(h);
             }
+            // A resolved graphic: the whole node, like `Table` -- the
+            // resource's content hash is in the stream, so a rewritten
+            // image file re-keys the block.
+            Item::Image(image) => {
+                format!("{image:?}").hash(h);
+            }
             Item::Footnote { number, mark, span, text } => {
                 number.hash(h);
                 mark.hash(h);
@@ -889,6 +895,7 @@ pub fn relocate_items(items: &[Item], delta: isize) -> Vec<Item> {
                 shift_math(list, delta);
             }
             Item::Logo { span, .. } | Item::Rule { span, .. } | Item::QedBox { span, .. } => shift_span(span, delta),
+            Item::Image(image) => shift_span(&mut image.span, delta),
             Item::Footnote { span, text, .. } => {
                 shift_span(span, delta);
                 if let Some(t) = text {

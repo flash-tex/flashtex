@@ -121,6 +121,11 @@ pub enum BoxRec {
     /// A `tabular` (`table.rs`): its cell lines and rules, set as one box
     /// whose origin is the table's reference baseline.
     Table(Rc<TableRec>),
+    /// An `\includegraphics` in running text (`adapter::Item::Image`, #762):
+    /// the resolved box, set like any other box; painted by
+    /// `assemble_block` through `floatpage::paint_graphic`, exactly as a
+    /// float's `Elem::Image` is.
+    Image(Rc<adapter::InlineImage>),
     /// `\colorbox`/`\fcolorbox` (`Context::color_box`).
     ColorBox(Rc<ColorBoxRec>),
     /// ulem `\uline` (`Context::underline_box`).
@@ -2391,6 +2396,24 @@ impl<'a> Context<'a> {
                     if let Some((run, rec)) = self.table_box(table, size) {
                         push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                     }
+                }
+                AItem::Image(image) => {
+                    // One running-text graphic (#762): an unbreakable box of
+                    // the resolved size. Its height and depth ride the
+                    // ordinary interline path, so a tall image opens the
+                    // following baseline through `\lineskip` exactly as in
+                    // pdfTeX.
+                    let run = pl::GlyphRun {
+                        font: MATH_SENTINEL,
+                        size,
+                        glyphs: Vec::new(),
+                        width: image.gbox.width,
+                        height: image.gbox.height,
+                        depth: image.gbox.depth,
+                        source: image.span.start..image.span.end,
+                    };
+                    self.recs.push(BoxRec::Image(Rc::new((**image).clone())));
+                    push(&mut out, &mut recs, pl::Item::Box(run), Some(self.recs.len() - 1));
                 }
                 AItem::ColorBox(cb) => {
                     let (run, rec) = self.color_box(cb, size);
@@ -6172,6 +6195,7 @@ impl<'a> Context<'a> {
                     BoxRec::Rule { span, .. } => Some(*span),
                     BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
+                    BoxRec::Image(i) => Some(i.span),
                     BoxRec::ColorBox(c) => Some(c.span),
                     BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
@@ -9168,6 +9192,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 BoxRec::Rule { span, .. } => Some(*span),
                 BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
+                    BoxRec::Image(i) => Some(i.span),
                     BoxRec::ColorBox(c) => Some(c.span),
                     BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
@@ -9704,6 +9729,7 @@ pub fn assemble_windowed(
                     BoxRec::Rule { span, .. } => Some(*span),
                     BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
+                    BoxRec::Image(i) => Some(i.span),
                     BoxRec::ColorBox(c) => Some(c.span),
                     BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
@@ -9987,6 +10013,16 @@ fn assemble_block(
                             provenance: Provenance::Source(source_of(r.span)),
                         }));
                     }
+                }
+                BoxRec::Image(image) => {
+                    // One running-text graphic (#762): line-local like text
+                    // (the box's left edge at `local.x`, its baseline at 0;
+                    // `place_item` shifts both to the page, exactly as for a
+                    // rule). Painted by the same helper as a float's
+                    // `Elem::Image`, so the same keys paint the same ink
+                    // wherever the graphic stands.
+                    let provenance = Provenance::Source(source_of(image.span));
+                    items.extend(floatpage::paint_graphic(local.x, 0.0, &image.gbox, &image.resource, image.placeholder, &provenance));
                 }
                 BoxRec::ColorBox(cb) => {
                     // xcolor draws the fill (`\color@block`: a `\vrule`), the

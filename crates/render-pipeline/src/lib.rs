@@ -284,7 +284,10 @@ pub fn render_windowed(
         if let Some(c) = cache {
             c.note_label_pass();
         }
-        let doc = adapter::adapt_cached(&texts, entry_index, &parsed, options, &labels, cache);
+        // Running-text `\includegraphics` (#762) resolves through the same
+        // `ImageCache` as the float path, so one file loads once however it
+        // is reached.
+        let doc = adapter::adapt_cached_with_images(&texts, entry_index, &parsed, options, &labels, cache, Some(&mut image_cache), &paths);
         let mut diagnostics: Vec<display::Diagnostic> = parsed
             .diagnostics
             .iter()
