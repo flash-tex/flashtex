@@ -508,6 +508,7 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             extra_gap_after_pt: _,
             leftmargin: _,
             widest_label: _,
+            labelsep_pt: _,
             lists,
             item,
         } => {
