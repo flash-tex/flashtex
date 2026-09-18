@@ -286,6 +286,7 @@ fn diagnostics(text: &str) -> Vec<String> {
 fn not_supported(messages: &[String], name: &str) -> Option<String> {
     let needle = format!("\\{name} is not supported");
     let wrong_class = format!("\\{name} is defined by the letter");
+    let beamer_class = format!("\\{name} is defined by the beamer");
     messages
         .iter()
         // letter.cls commands are refused by their own message when the
@@ -293,7 +294,9 @@ fn not_supported(messages: &[String], name: &str) -> Option<String> {
         // not fail for any of them: an `\opening` diagnosed as "defined by
         // the letter document class" sails past a match on "\opening is not
         // supported", and the inventory row keeps claiming `renders: true`.
-        .find(|m| m.starts_with(&needle) || m.starts_with(&wrong_class))
+        .find(|m| {
+            m.starts_with(&needle) || m.starts_with(&wrong_class) || m.starts_with(&beamer_class)
+        })
         .cloned()
 }
 
@@ -322,10 +325,29 @@ fn letter_probe(name: &str, arguments: &str) -> Option<String> {
     Some(source.replace('#', ""))
 }
 
+/// A minimal beamer deck: `#` marks where a probe's own command goes.
+/// `\frametitle`/`\framesubtitle`/`\alert` exist only under beamer, so like
+/// the letter.cls commands above they are exercised under their own class.
+const BEAMER_DOCUMENT: &str = "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}{Probe}\n#\n\\end{frame}\n\\end{document}\n";
+
+/// Where a beamer command has to sit to be exercised for real: inside a
+/// frame of a beamer deck. `None` for anything that is not beamer-gated.
+fn beamer_probe(name: &str, arguments: &str) -> Option<String> {
+    match name {
+        "frametitle" | "framesubtitle" | "alert" => {
+            Some(BEAMER_DOCUMENT.replace('#', &with_arguments(name, arguments, "1pt")))
+        }
+        _ => None,
+    }
+}
+
 /// A compilable use of `\name` built from its argument shape.
 fn text_probe(name: &str, arguments: &str) -> String {
     if let Some(letter) = letter_probe(name, arguments) {
         return letter;
+    }
+    if let Some(beamer) = beamer_probe(name, arguments) {
+        return beamer;
     }
     match name {
         "\\" => "a\\\\b".into(),
