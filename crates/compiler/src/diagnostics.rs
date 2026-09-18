@@ -598,7 +598,7 @@ mod tests {
             ("\\end{a} does not match \\begin{b}", Some(SyntaxError)),
             ("\\textbf requires a braced argument", Some(SyntaxError)),
             (
-                "\\item is only supported inside itemize or enumerate",
+                "\\item is only supported inside a list",
                 Some(SyntaxError),
             ),
             ("layout_capabilities must be a list", None),

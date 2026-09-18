@@ -776,6 +776,10 @@ pub enum Block {
         /// `\setlist`, or when the level's default `LIST_LEFTMARGIN_EM`
         /// share applies unchanged).
         leftmargin: ListLeftMargin,
+        /// `\setlength{\labelsep}` inside the list, in points: the gap
+        /// between this item's label's right edge and its text (`None` keeps
+        /// the default `LIST_LABELSEP_EM` gap).
+        labelsep_pt: Option<f64>,
         /// `thebibliography`'s widest-label argument (`\begin{thebibliography}{99}`'s
         /// `"99"`), overriding `level`'s hanging indent with `\labelwidth` +
         /// `\labelsep` measured from `[<text>]`, exactly like real LaTeX's
@@ -1779,6 +1783,16 @@ fn is_preamble_length(name: &str) -> bool {
     PREAMBLE_LENGTHS.contains(&name)
 }
 
+/// Lengths a `\begin{list}` decl assigns (`\setlength{\leftmargin}{...}`):
+/// read on the innermost open list rather than warned about. Anything else
+/// list-shaped (`\parsep`, `\itemindent`, ...) keeps the historic warning.
+fn is_list_length(name: &str) -> bool {
+    matches!(
+        name,
+        "leftmargin" | "labelwidth" | "labelsep" | "itemsep" | "topsep"
+    )
+}
+
 fn is_length_reference(raw: &str) -> bool {
     let s = raw.trim().trim_start_matches('=').trim();
     s.contains('\\') || is_preamble_length(s.trim_start_matches('\\'))
@@ -2730,6 +2744,9 @@ struct ListSpacing {
     itemsep_pt: f64,
     topsep_pt: f64,
     leftmargin: LeftMarginSetting,
+    /// `\setlength{\labelsep}` inside the list, in points (`None` keeps the
+    /// default gap between a label's right edge and the item text).
+    labelsep_pt: Option<f64>,
 }
 
 /// `\setlist{leftmargin=...}`'s value, resolved into a `Block::ListItem`'s
@@ -4172,7 +4189,7 @@ impl P<'_> {
                         self.begin_item(span, explicit);
                     }
                     None => self.diags.push(Diagnostic::error(
-                        "\\item is only supported inside itemize or enumerate",
+                        "\\item is only supported inside a list",
                         Some(span),
                         Some("ignored the item marker and continued".into()),
                     )),
@@ -5153,7 +5170,23 @@ impl P<'_> {
         add: bool,
         global: bool,
     ) {
-        let Some(pt) = parse_dimen_pt_current(raw, self.font_setup().em_ex_sp(self.style)) else {
+        let in_preamble = self.has_document && !self.in_body;
+        let in_list = !self.list_stack.is_empty();
+        let dimen = parse_dimen_pt_current(raw, self.font_setup().em_ex_sp(self.style));
+        // A list length read inside the list it shapes also accepts
+        // `<factor>\baselineskip` (the corpus sets `\topsep` to
+        // `0.6\baselineskip`), resolved exactly like `\enlargethispage`
+        // rather than through the length-reference path below, which does
+        // not know `\baselineskip`. Anywhere else the historic error below
+        // applies unchanged.
+        let fallback = if dimen.is_none() && is_list_length(target) && !in_preamble && in_list {
+            self.baselineskip_multiple(raw)
+        } else {
+            None
+        };
+        let dimen = dimen.or(fallback);
+        let via_baselineskip = fallback.is_some();
+        let Some(pt) = dimen else {
             let who = if command.is_empty() {
                 format!("\\{target}")
             } else {
@@ -5166,8 +5199,9 @@ impl P<'_> {
             ));
             return;
         };
-        let in_preamble = self.has_document && !self.in_body;
-        let pt = if is_length_reference(raw) {
+        let pt = if via_baselineskip {
+            pt
+        } else if is_length_reference(raw) {
             match self.resolve_known_length_ref(raw) {
                 Some(v) => v,
                 None => {
@@ -5206,6 +5240,34 @@ impl P<'_> {
                 } else {
                     pt
                 });
+            }
+            // latex.ltx list lengths assigned inside the list they shape
+            // (usually the decl argument): they land on the innermost open
+            // list, so a nested list's own decl shapes only itself. Outside
+            // any list the warning below applies, as before. labelwidth is
+            // accepted with no stored value: labels are right-aligned to end
+            // labelsep before the margin however wide their box is, exactly
+            // makelabel's placement, so there is nothing further to honour.
+            // addtolength on leftmargin and labelsep keeps that warning: only
+            // an absolute setlength is resolved here.
+            "leftmargin" | "labelwidth" | "labelsep" if !in_preamble && !add && in_list => {
+                if let Some(list) = self.list_stack.last_mut() {
+                    match target {
+                        "leftmargin" => list.spacing.leftmargin = LeftMarginSetting::Explicit(pt),
+                        "labelsep" => list.spacing.labelsep_pt = Some(pt),
+                        _ => {}
+                    }
+                }
+            }
+            "itemsep" | "topsep" if !in_preamble && in_list => {
+                if let Some(list) = self.list_stack.last_mut() {
+                    let slot = if target == "itemsep" {
+                        &mut list.spacing.itemsep_pt
+                    } else {
+                        &mut list.spacing.topsep_pt
+                    };
+                    *slot = if add { *slot + pt } else { pt };
+                }
             }
             "parindent" if in_preamble && pt == 0.0 => {}
             // A TeX assignment or `\addtolength` is accepted without noise
@@ -6555,6 +6617,27 @@ impl P<'_> {
                 .as_ref()
                 .map_or(span.merge(argument_span), |(_, o)| span.merge(*o));
             self.open_list(&environment, options.map(|(text, _)| text), begin_span, blocks.len());
+        } else if environment == "list" && self.in_body {
+            // latex.ltx list: only the default label is consumed here; the
+            // decl group stays in the stream as an ordinary group, so its
+            // declarations run as body commands in the list scope and land
+            // on the open list (see apply_length_value). A font declaration
+            // in decl therefore stays scoped to that group rather than to
+            // the matching end, the one deliberate deviation.
+            self.flush_paragraph(blocks, para);
+            let (default_tokens, default_span) = self.required_group("list", span);
+            let default_label = inline_text(&self.inlines_from_tokens(
+                default_tokens,
+                self.style,
+                false,
+            ));
+            let begin_span = span.merge(argument_span).merge(default_span);
+            self.open_list(&environment, None, begin_span, blocks.len());
+            if !default_label.is_empty() {
+                if let Some(list) = self.list_stack.last_mut() {
+                    list.template = Some(default_label);
+                }
+            }
         } else if self.in_body
             && (self.theorems.contains_key(&environment) || environment == "proof")
         {
@@ -6729,7 +6812,7 @@ impl P<'_> {
             self.paragraph_styles.pop();
         } else if matches!(
             environment.as_str(),
-            "itemize" | "enumerate" | "description" | "thebibliography"
+            "itemize" | "enumerate" | "description" | "list" | "thebibliography"
         ) {
             let (gap_before, gap_after) = match self.list_stack.last() {
                 Some(list) => (
@@ -10713,6 +10796,10 @@ impl P<'_> {
             },
             None => ListLeftMargin::Default,
         };
+        let labelsep_pt = self
+            .list_stack
+            .last()
+            .and_then(|list| list.spacing.labelsep_pt);
         // `template` doubles as `thebibliography`'s widest-label argument
         // (see the `\begin` handling in `environment`); `itemize`/`enumerate`
         // use it for their own unrelated `enumitem` template instead, so it
@@ -10732,6 +10819,7 @@ impl P<'_> {
                 extra_gap_before_pt,
                 extra_gap_after_pt,
                 leftmargin,
+                labelsep_pt,
                 widest_label,
                 lists,
                 item,
@@ -10907,20 +10995,7 @@ impl P<'_> {
                 TextStyle::default()
             };
             let content = self.inlines_from_tokens(tokens, base, false);
-            let mut text = String::new();
-            for inline in &content {
-                if let Inline::Text {
-                    text: word,
-                    space_before,
-                    ..
-                } = inline
-                {
-                    if *space_before && !text.is_empty() {
-                        text.push(' ');
-                    }
-                    text.push_str(word);
-                }
-            }
+            let text = inline_text(&content);
             ItemLabel::Explicit {
                 content,
                 text,
@@ -10969,11 +11044,13 @@ impl P<'_> {
                 item
             }
             None => match (&list.template, environment) {
-                (Some(template), ListEnvironment::Itemize) => ItemLabel::Template {
-                    text: apply_text_ligatures(
-                        template.strip_prefix("label=").unwrap_or(template),
-                    ),
-                },
+                (Some(template), ListEnvironment::Itemize | ListEnvironment::List) => {
+                    ItemLabel::Template {
+                        text: apply_text_ligatures(
+                            template.strip_prefix("label=").unwrap_or(template),
+                        ),
+                    }
+                }
                 _ => lists::default_label(environment, kind_depth, 0),
             },
         };
@@ -12268,8 +12345,29 @@ pub const INF_PENALTY: i32 = 10_000;
 /// A penalty this low forces a break (`-\@M`).
 pub const EJECT_PENALTY: i32 = -10_000;
 
+/// The characters of the `Text` runs in `inlines`, in order, with a
+/// space where the runs were separated by one: an `\item` label or a
+/// `\\begin{list}` default label as plain text.
+fn inline_text(inlines: &[Inline]) -> String {
+    let mut text = String::new();
+    for inline in inlines {
+        if let Inline::Text {
+            text: word,
+            space_before,
+            ..
+        } = inline
+        {
+            if *space_before && !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(word);
+        }
+    }
+    text
+}
+
 /// The characters of the `Text` runs in `inlines`, in order (a
-/// `\discretionary` argument).
+/// `\\discretionary` argument).
 fn plain_inline_text(inlines: &[Inline]) -> String {
     inlines
         .iter()
@@ -16841,5 +16939,144 @@ mod tests {
     fn hangfrom_reports_its_missing_hang_only_once_per_document() {
         let parsed = parse(r"\hangfrom{1.}one \hangfrom{2.}two");
         assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
+    }
+    #[test]
+    fn list_items_use_the_default_label_without_a_warning() {
+        let (parsed, laid) = items(r"\begin{list}{*}{}\item Hello\end{list}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let mut found = false;
+        for block in &parsed.blocks {
+            if let Block::ListItem { level, label, .. } = block {
+                assert_eq!(*level, 1);
+                assert_eq!(label.as_ref().map(|(text, _)| text.as_str()), Some("*"));
+                found = true;
+            }
+        }
+        assert!(found, "{:?}", parsed.blocks);
+        let star = laid.iter().find(|item| item.text == "*").expect("label laid out");
+        let hello = laid.iter().find(|item| item.text == "Hello").expect("body laid out");
+        assert_eq!(star.baseline_y_pt, hello.baseline_y_pt);
+        assert!(star.x_pt < hello.x_pt, "{star:?} {hello:?}");
+    }
+
+    #[test]
+    fn list_explicit_item_label_overrides_the_default() {
+        let (parsed, _) = items(r"\begin{list}{*}{}\item[x] Hello\end{list}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        for block in &parsed.blocks {
+            if let Block::ListItem { label, item, .. } = block {
+                assert_eq!(label.as_ref().map(|(text, _)| text.as_str()), Some("x"));
+                assert!(matches!(item, Some(ItemLabel::Explicit { .. })), "{item:?}");
+                return;
+            }
+        }
+        panic!("no list item in {:?}", parsed.blocks);
+    }
+
+    #[test]
+    fn list_setlength_leftmargin_moves_the_item_text() {
+        let text_x = |source: &str| {
+            let (_, laid) = items(source);
+            laid.iter().find(|item| item.text == "Hi").expect("body laid out").x_pt
+        };
+        let narrow = text_x(r"\begin{list}{*}{\setlength{\leftmargin}{0pt}}\item Hi\end{list}");
+        let wide = text_x(r"\begin{list}{*}{\setlength{\leftmargin}{30pt}}\item Hi\end{list}");
+        assert!((wide - narrow - 30.0).abs() < 0.01, "{narrow} {wide}");
+    }
+
+    #[test]
+    fn list_setlength_labelsep_moves_the_label_but_not_the_text() {
+        let positions = |source: &str| {
+            let (_, laid) = items(source);
+            let text = laid.iter().find(|item| item.text == "Hi").expect("body laid out").x_pt;
+            let label = laid.iter().find(|item| item.text == "z").expect("label laid out").x_pt;
+            (text, label)
+        };
+        let (text_wide, label_wide) =
+            positions(r"\begin{list}{-}{\setlength{\leftmargin}{30pt}}\item[z] Hi\end{list}");
+        let (text_zero, label_zero) =
+            positions(r"\begin{list}{-}{\setlength{\leftmargin}{30pt}\setlength{\labelsep}{0pt}}\item[z] Hi\end{list}");
+        assert!((text_wide - text_zero).abs() < 0.01, "{text_wide} {text_zero}");
+        assert!((label_zero - label_wide - 6.0).abs() < 0.01, "{label_wide} {label_zero}");
+    }
+
+    #[test]
+    fn list_setlength_itemsep_widens_the_gap_between_items() {
+        let second_y = |source: &str| {
+            let (_, laid) = items(source);
+            laid.iter().filter(|item| item.text == "A" || item.text == "B").last().expect("items laid out").baseline_y_pt
+        };
+        let tight = second_y(r"\begin{list}{-}{}\item A\item B\end{list}");
+        let loose = second_y(r"\begin{list}{-}{\setlength{\itemsep}{24pt}}\item A\item B\end{list}");
+        assert!((loose - tight - 24.0).abs() < 0.01, "{tight} {loose}");
+    }
+
+    #[test]
+    fn list_nests_with_cumulative_margins_and_inner_lengths() {
+        let (parsed, laid) = items(
+            r"\begin{list}{A}{\setlength{\leftmargin}{10pt}}\item One\begin{list}{B}{\setlength{\leftmargin}{20pt}}\item Two\end{list}\end{list}",
+        );
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let levels: Vec<u8> = parsed
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::ListItem { level, .. } => Some(*level),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(levels, vec![1, 2], "{:?}", parsed.blocks);
+        let x = |text: &str| laid.iter().find(|item| item.text == text).expect("laid out").x_pt;
+        // The inner list's own decl shapes only the inner level, which still
+        // sits inside the outer level's share.
+        assert!(x("Two") > x("One"), "{:?}", laid);
+        assert!((x("Two") - x("One") - 40.0).abs() < 0.01, "{:?}", laid);
+    }
+
+    #[test]
+    fn list_empty_arguments_and_surrounding_spaces_are_valid() {
+        let (parsed, laid) = items(r"\begin{list}  {}  {  }  \item[x] Hi\end{list}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert!(laid.iter().any(|item| item.text == "Hi"), "{laid:?}");
+        // Spaces at either edge of the default label do not become part of it.
+        for source in [
+            r"\begin{list}{ *}{}\item Hi\end{list}",
+            r"\begin{list}{* }{}\item Hi\end{list}",
+        ] {
+            let (parsed, laid) = items(source);
+            assert!(parsed.diagnostics.is_empty(), "{source:?} {:?}", parsed.diagnostics);
+            assert!(laid.iter().any(|item| item.text == "*"), "{source:?} {laid:?}");
+        }
+        // An empty default label leaves a bare \item label-less, like the
+        // kernel's empty \@itemlabel: no label is drawn.
+        let (parsed, laid) = items(r"\begin{list}{}{}\item Hi\end{list}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert!(laid.iter().any(|item| item.text == "Hi"), "{laid:?}");
+    }
+
+    #[test]
+    fn list_lengths_outside_any_list_keep_their_warning() {
+        let parsed = parse(r"\documentclass{article}\begin{document}\setlength{\leftmargin}{5pt}Hi\end{document}");
+        assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
+        assert!(parsed.diagnostics[0].message.contains(
+            r"\setlength{\leftmargin} is recognised but not implemented here"
+        ));
+    }
+
+    #[test]
+    fn list_topsep_accepts_a_baselineskip_factor() {
+        let parsed = parse(
+            r"\documentclass{article}\begin{document}\begin{list}{-}{\setlength{\topsep}{0.6\baselineskip}}\item A\end{list}\end{document}",
+        );
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        for block in &parsed.blocks {
+            if let Block::ListItem { extra_gap_before_pt, extra_gap_after_pt, .. } = block {
+                // 0.6 of the 10pt class leading (12pt).
+                assert!((extra_gap_before_pt - 7.2).abs() < 1e-9, "{extra_gap_before_pt}");
+                assert!((extra_gap_after_pt - 7.2).abs() < 1e-9, "{extra_gap_after_pt}");
+                return;
+            }
+        }
+        panic!("no list item in {:?}", parsed.blocks);
     }
 }

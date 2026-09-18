@@ -961,6 +961,7 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
         "numbered list; article labels per depth, enumitem label/label*/shortlabels, start and resume",
     ),
     ("description", "list of bold \\item[term] labels"),
+    ("list", "kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep"),
     ("tabular", "table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \\extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned"),
     ("tabular*", "table of a given width"),
     ("verbatim", "literal monospaced lines"),
