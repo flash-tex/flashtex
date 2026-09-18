@@ -3616,12 +3616,16 @@ impl P<'_> {
             // fancyhdr's core field commands (see `fancy_command`), in the
             // preamble -- where header setup belongs -- and in the body.
             "fancyhead" | "fancyfoot" | "fancyhf" => self.fancy_command(name, span),
+            // fancyhdr's single-slot field commands (see
+            // `fancy_single_command`), in the preamble -- where header
+            // setup belongs -- and in the body.
+            "lhead" | "chead" | "rhead" | "lfoot" | "cfoot" | "rfoot" => {
+                self.fancy_single_command(name, span)
+            }
             // fancyhdr's later slice (see `fancy_later_command`): recognised
             // as the package's own, so neither the generic preamble advice
-            // nor the unknown-command typo path fires for them.
-            "lhead" | "chead" | "rhead" | "lfoot" | "cfoot" | "rfoot" | "fancypagestyle" => {
-                self.fancy_later_command(name, span)
-            }
+            // nor the unknown-command typo path fires for it.
+            "fancypagestyle" => self.fancy_later_command(name, span),
             // Preamble or body: latex.ltx's `\twocolumn`/`\onecolumn`, which
             // both open with `\clearpage` and then set `\if@twocolumn`.
             // Which columns the page then has is the renderer's business
@@ -4110,8 +4114,54 @@ impl P<'_> {
         }
     }
 
-    /// fancyhdr commands a later slice owns (`\lhead` / `\chead` /
-    /// `\rhead`, `\lfoot` / `\cfoot` / `\rfoot`, `\fancypagestyle`):
+    /// fancyhdr's single-slot field commands `\lhead` / `\chead` /
+    /// `\rhead` and `\lfoot` / `\cfoot` / `\rfoot` (fancyhdr.sty): one
+    /// mandatory group filling one running-head slot -- the odd-page field
+    /// this one-sided layout always ships. The oracle also takes an
+    /// optional `[even]` group first, stored into the even-page field;
+    /// even pages never ship here (`\@outputpage` always uses
+    /// `\@oddhead`; see `fancy_position_slots`), so the bracket is
+    /// consumed and ignored, and `\lhead{X}` stores exactly what
+    /// `\fancyhead[L]{X}` stores. Silent on success: the fields are read
+    /// back when a `fancy` page ships. Without `\usepackage{fancyhdr}`
+    /// the command names what is missing, as `fancy_command` does.
+    #[inline(never)]
+    fn fancy_single_command(&mut self, name: &str, span: Span) {
+        let bracket = self.optional_bracket_argument();
+        let (tokens, argument_span) = self.required_group(name, span);
+        let mut whole = span.merge(argument_span);
+        if let Some((_, bracket_span)) = bracket.as_ref() {
+            whole = span.merge(*bracket_span).merge(argument_span);
+        }
+        if !self.packages.iter().any(|package| package == "fancyhdr") {
+            self.diags.push(Diagnostic::command_error(
+                name,
+                format!("\\{name} needs \\usepackage{{fancyhdr}}"),
+                Some(whole),
+                Some("ignored the command".into()),
+            ));
+            return;
+        }
+        self.document_global_state = true;
+        let style = self.style;
+        // Field content parses as body text even in the preamble, where
+        // header setup belongs (see `fancy_command`).
+        let was_in_body = std::mem::replace(&mut self.in_body, true);
+        let content = self.argument_inlines(tokens, span, style);
+        self.in_body = was_in_body;
+        let slot = match name {
+            "lhead" | "lfoot" => 0,
+            "chead" | "cfoot" => 1,
+            _ => 2,
+        };
+        if name.ends_with("head") {
+            self.fancy.head[slot] = content;
+        } else {
+            self.fancy.foot[slot] = content;
+        }
+    }
+
+    /// fancyhdr commands a later slice owns (`\fancypagestyle`):
     /// recognised as the package's own, so neither the generic preamble
     /// advice (header setup belongs in the preamble) nor the
     /// unknown-command typo path fires. Arguments are consumed so field
