@@ -93,6 +93,31 @@ enum Completion {
             /// For a command the compiler accepts in both modes (`\textbf`,
             /// `\quad`): the math-mode behaviour, shown after the text one.
             var mathDescription: String? = nil
+            /// The inventory's `requires_class`: the one document class that
+            /// defines the command, or nil when every class does. The compiler
+            /// diagnoses `\frametitle` outside beamer and `\opening` outside
+            /// letter exactly as pdflatex's "Undefined control sequence" does;
+            /// see `offered(inClass:)` for what completion makes of that.
+            var requiresClass: String? = nil
+
+            /// Whether completion offers this command in a document whose
+            /// class is `documentClass` (nil when the text declares none).
+            ///
+            /// A class-scoped command is offered only where it is defined:
+            /// a document that declares its class. Universal commands are
+            /// offered everywhere. The asymmetry is deliberate — a document
+            /// with no `\documentclass` is a fragment or a snippet, and
+            /// class-scoped names are rare and beamer/letter-specific while
+            /// the names they collide with are the most-used in LaTeX
+            /// (`\fra` must mean `\frac`, `\a` must reach `\alpha`). A
+            /// fragment that really does use one still completes it from the
+            /// document's own text (`scanCommands`), and the moment the root
+            /// file declares `\documentclass{beamer}` the whole family is
+            /// offered again.
+            func offered(inClass documentClass: String?) -> Bool {
+                guard let requiresClass else { return true }
+                return requiresClass == documentClass
+            }
 
             var label: String { "\\" + name + arguments }
 
@@ -157,6 +182,15 @@ enum Completion {
                 let description: String
                 var glyph: String? = nil
                 let renders: Bool
+                /// Absent for a universal command; the class name for one the
+                /// compiler defines under that `\documentclass` alone
+                /// (`crates/compiler/src/supported.rs`, `requires_class`).
+                var requiresClass: String? = nil
+
+                enum CodingKeys: String, CodingKey {
+                    case name, mode, origin, arguments, description, glyph, renders
+                    case requiresClass = "requires_class"
+                }
             }
             struct Environment: Decodable {
                 let name: String
@@ -237,7 +271,8 @@ enum Completion {
             func add(_ c: Inventory.Command, mathDescription: String? = nil) {
                 guard seen.insert(c.name).inserted else { return }
                 out.append(Entry(name: c.name, arguments: argumentOverrides[c.name] ?? c.arguments, description: c.description,
-                                 mode: c.mode, origin: c.origin, glyph: c.glyph, mathDescription: mathDescription))
+                                 mode: c.mode, origin: c.origin, glyph: c.glyph, mathDescription: mathDescription,
+                                 requiresClass: c.requiresClass))
             }
             for c in rendered where c.mode == .text && c.origin != .controlSymbol { add(c, mathDescription: mathDescriptions[c.name]) }
             for c in rendered where c.origin == .controlSymbol && c.name == "\\" { add(c) }
@@ -580,10 +615,22 @@ enum Completion {
         let declared: [String: Metadata.Item] = Dictionary((metadata?.commands ?? []).filter { $0.definitions > 0 }.map { ($0.name, $0) },
                                                            uniquingKeysWith: { a, _ in a })
         let exact = supported.contains(prefix) ? [prefix] : []
+        //    A class-scoped command (`Entry.requiresClass`) is filtered out of
+        //    the vocabulary unless this document declares its class, so
+        //    beamer's `\frametitle` and `\alert` cannot bury `\frac` and
+        //    `\alpha` in an article — they lead on table order, being text
+        //    entries, and no ranking within the list can undo that. The name
+        //    typed out in full is never hidden (`name == prefix`), and a
+        //    fragment that really uses one still completes it below, from the
+        //    document's own text.
+        let documentClass = documentClass(in: text)
+        func inThisClass(_ name: String) -> Bool {
+            name == prefix || Vocabulary.byName[name]?.offered(inClass: documentClass) ?? true
+        }
         /// 0 the exact spelling, 1 a project declaration, 2 a math command,
         /// 3 everything else. Only consulted when `mathMode` is on.
         var vocabulary: [(suggestion: Suggestion, rank: Int)] = []
-        for name in exact + supported where name.hasPrefix(prefix) && offered.insert(name).inserted {
+        for name in exact + supported where name.hasPrefix(prefix) && inThisClass(name) && offered.insert(name).inserted {
             if let item = declared[name], let metadata {
                 vocabulary.append((Suggestion(label: "\\" + name, insertText: "\\" + name, kind: .command,
                                               detail: item.detail(noun: "declared", revision: metadata.revision) + " · overrides the builtin"),
@@ -621,7 +668,8 @@ enum Completion {
         //    commands whose name contains the typed characters in order
         //    (`\sbs` → `\subsection`).
         if out.isEmpty, prefix.utf8.count >= 2 {
-            for name in supported where out.count < maxSuggestions && !offered.contains(name) && matchRank(name, prefix: prefix) == 2 {
+            for name in supported where out.count < maxSuggestions && !offered.contains(name)
+                && inThisClass(name) && matchRank(name, prefix: prefix) == 2 {
                 offered.insert(name)
                 let entry = Vocabulary.byName[name] ?? Vocabulary.generic(name)
                 out.append(Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail, snippet: entry.snippet))
@@ -895,6 +943,61 @@ enum Completion {
             }
         }
         return stack
+    }
+
+    /// The class of `\documentclass[options]{class}`, or nil when the text
+    /// declares none — a fragment `\input` into a root file, or a bare
+    /// snippet. Read from the open document's own text, which is where this
+    /// file learns every other structural fact about it (`scanCommands`,
+    /// `openEnvironments`, `labels`); there is no other path on the Mac side,
+    /// because the preview-controller's `document_kinds` records `latex` vs
+    /// `bibliography`, never the class.
+    ///
+    /// Scanning stops at the first `\begin`: `\documentclass` is a preamble
+    /// statement, so a later one is prose about LaTeX rather than this
+    /// document's own declaration, and the scan stays proportional to the
+    /// preamble rather than to the document. A `%` comment is skipped to the
+    /// end of its line, so a commented-out declaration does not count.
+    static func documentClass(in text: String) -> String? {
+        withBytes(text) { b -> String? in
+            guard let p = b.baseAddress else { return nil }
+            let n = b.count
+            let table = wordByteClass
+            var i = 0
+            while i < n {
+                if p[i] == UInt8(ascii: "%") {
+                    while i < n, p[i] != UInt8(ascii: "\n") { i += 1 }
+                    i += 1
+                    continue
+                }
+                guard p[i] == backslash else { i += 1; continue }
+                var j = i + 1
+                while j < n, table[Int(p[j])] == 1 { j += 1 }
+                guard j > i + 1 else { i = j + 1; continue } // `\\`, `\%`, `\{`
+                let name = UnsafeBufferPointer(start: p + i + 1, count: j - i - 1)
+                if bytes(name, equal: "begin") { return nil } // the preamble ended without one
+                guard bytes(name, equal: "documentclass") else { i = j; continue }
+                var k = j
+                func skipBlanks() {
+                    while k < n, p[k] == UInt8(ascii: " ") || p[k] == UInt8(ascii: "\t") || p[k] == UInt8(ascii: "\n") { k += 1 }
+                }
+                skipBlanks()
+                if k < n, p[k] == UInt8(ascii: "[") { // `[11pt,a4paper]` is optional
+                    while k < n, p[k] != UInt8(ascii: "]") { k += 1 }
+                    k += 1
+                    skipBlanks()
+                }
+                guard k < n, p[k] == UInt8(ascii: "{") else { i = j; continue }
+                let start = k + 1
+                var end = start
+                while end < n, p[end] != UInt8(ascii: "}"), p[end] != UInt8(ascii: "\n") { end += 1 }
+                guard end < n, p[end] == UInt8(ascii: "}") else { i = j; continue }
+                let cls = String(decoding: UnsafeBufferPointer(start: p + start, count: end - start), as: UTF8.self)
+                    .trimmingCharacters(in: .whitespaces)
+                return cls.isEmpty ? nil : cls
+            }
+            return nil
+        }
     }
 
     /// Names of environments appearing in `\begin{…}` anywhere in the document.

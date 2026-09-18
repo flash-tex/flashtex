@@ -100,13 +100,24 @@ pub struct Command {
 
 impl Command {
     /// Whether completion may offer this command in a document of `class`.
-    /// `None` is an unknown class (a fragment with no `\documentclass`, as in
-    /// the editor's prefix tests): with nothing to gate on, everything stays
-    /// offered and today's table order is untouched.
+    /// A universal command is offered everywhere; a class-scoped one only
+    /// where it is defined, which means only in a document that declares its
+    /// class. `None` — a fragment `\input` into a root file, or the editor's
+    /// own prefix tests — therefore offers the universal commands alone.
+    ///
+    /// Offering a scoped command on an unknown class was the tempting
+    /// permissive reading, and it is the wrong one: a scoped command is a
+    /// text-mode entry, so in table order it *leads* the list, and `\fra`
+    /// would still mean `\frametitle` rather than `\frac` in every fragment.
+    /// The names at stake are asymmetric — beamer's and letter's few against
+    /// the most-used commands in LaTeX — and a fragment that really does use
+    /// one still completes it from its own text (Mac `Completion
+    /// .scanCommands`). This is the rule the Mac editor implements in
+    /// `Completion.Vocabulary.Entry.offered(inClass:)`.
     pub fn offered_in_class(&self, class: Option<&str>) -> bool {
         match (self.requires_class, class) {
             (None, _) => true,
-            (Some(_), None) => true,
+            (Some(_), None) => false,
             (Some(required), Some(class)) => required == class,
         }
     }
@@ -174,10 +185,19 @@ pub const LETTER_CLASS_COMMANDS: &[&str] = &[
     "makelabels",
 ];
 
+/// Text commands defined by `beamer` alone: every one goes through
+/// `parser::Parser::beamer_command_available`, which diagnoses any use outside
+/// `\documentclass{beamer}` the same way `letter_command_available` does.
+/// (`frame` is not here: outside beamer it is the universal `\fbox`-style
+/// bordered box, so it is defined in every class.)
+pub const BEAMER_CLASS_COMMANDS: &[&str] = &["frametitle", "framesubtitle", "alert"];
+
 /// The class in [`Command::requires_class`] terms, or `None` for universal.
 fn requires_class(name: &str) -> Option<&'static str> {
     if LETTER_CLASS_COMMANDS.contains(&name) {
         Some("letter")
+    } else if BEAMER_CLASS_COMMANDS.contains(&name) {
+        Some("beamer")
     } else {
         None
     }

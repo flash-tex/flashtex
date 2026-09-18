@@ -111,18 +111,24 @@ final class CompletionTests: XCTestCase {
         let text = "\\begin{document}\n\\begin{itemize}\n\\item a\n\\e"
         let s = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, result: nil)
         // Innermost closer first, then the vocabulary's `e` commands in table
-        // order (text entries, then math entries). `\encl{text}` is letter.cls's
-        // enclosure line; the vocabulary is the compiler's whole inventory, not
-        // the loaded classes, so it ranks here in every document. The
-        // line/page control parameters `\emergencystretch` and
-        // `\enlargethispage` (#568) precede it in the inventory table.
-        XCTAssertEqual(Array(labels(s).prefix(9)), ["\\end{itemize}", "\\end{document}", "\\emph{...}", "\\end{env}", "\\eqref{key}", "\\em", "\\emergencystretch=<dimen>", "\\enlargethispage*{dimension}", "\\encl{text}"])
+        // order (text entries, then math entries). The line/page control
+        // parameters `\emergencystretch` and `\enlargethispage` (#568) are
+        // kernel commands, so they rank here in every document. letter.cls's
+        // enclosure line `\encl{text}` used to sit between them and
+        // `\enspace`; it is class-scoped (`Entry.requiresClass`) and this
+        // text declares no `\documentclass`, so it is no longer offered.
+        XCTAssertEqual(Array(labels(s).prefix(9)), ["\\end{itemize}", "\\end{document}", "\\emph{...}", "\\end{env}", "\\eqref{key}", "\\em", "\\emergencystretch=<dimen>", "\\enlargethispage*{dimension}", "\\enspace"])
         // `\enspace`/`\enskip` are dual-mode entries (like `\quad`/`\qquad`): text
         // entries whose detail states their math behaviour without a `math ·`
         // prefix, so the math-only run starts only after them: two closers
-        // plus nine text entries put it at index 11, and the 12-entry cap
-        // leaves exactly one math entry (`\eqqcolon`) to satisfy it.
-        XCTAssertTrue(s.dropFirst(11).allSatisfy { $0.detail.hasPrefix("math · ") }, "\(labels(s))")
+        // plus eight text entries put it at index 10, and the 12-entry cap
+        // leaves two math entries (`\eqqcolon`, `\equiv`) to satisfy it.
+        XCTAssertTrue(s.dropFirst(10).allSatisfy { $0.detail.hasPrefix("math · ") }, "\(labels(s))")
+        // The same text under letter.cls does offer it, in its old place: the
+        // command is gated on the class, not dropped from the vocabulary.
+        let letter = "\\documentclass{letter}\n" + text
+        let inLetter = Completion.suggestions(in: letter, caretUTF16: (letter as NSString).length, result: nil)
+        XCTAssertEqual(Array(labels(inLetter).prefix(9)).suffix(2), ["\\enlargethispage*{dimension}", "\\encl{text}"])
         guard let first = s.first else { return XCTFail("expected at least one suggestion") }
         XCTAssertEqual(first.kind, .environment)
         XCTAssertEqual(first.detail, "closes \\begin{itemize} at byte 17")
@@ -132,7 +138,7 @@ final class CompletionTests: XCTestCase {
         // spelling still ranks behind the closer it would have to name.
         let closed = text + "nd{itemize}\n\\en"
         let s2 = Completion.suggestions(in: closed, caretUTF16: (closed as NSString).length, result: nil)
-        XCTAssertEqual(labels(s2), ["\\end{document}", "\\end{env}", "\\enlargethispage*{dimension}", "\\encl{text}", "\\enspace", "\\enskip"])
+        XCTAssertEqual(labels(s2), ["\\end{document}", "\\end{env}", "\\enlargethispage*{dimension}", "\\enspace", "\\enskip"])
         let typed = closed + "d"
         XCTAssertEqual(labels(Completion.suggestions(in: typed, caretUTF16: (typed as NSString).length, result: nil)), ["\\end{document}", "\\end{env}"])
 
@@ -402,6 +408,60 @@ final class CompletionTests: XCTestCase {
         // A schema the editor does not know is refused, never partially used.
         let other = String(data: bundled, encoding: .utf8)!.replacingOccurrences(of: "flashtex-supported-latex/1", with: "flashtex-supported-latex/2")
         XCTAssertThrowsError(try Completion.Vocabulary.decodeInventory(other.data(using: .utf8)!))
+    }
+
+    // MARK: class-scoped commands
+
+    /// `\documentclass[options]{class}` read from the document's own text —
+    /// the only place the Mac side can learn the class from.
+    func testDocumentClassIsReadFromThePreamble() {
+        XCTAssertEqual(Completion.documentClass(in: "\\documentclass{beamer}\n\\begin{document}\n"), "beamer")
+        XCTAssertEqual(Completion.documentClass(in: "\\documentclass[11pt,a4paper]{article}\n"), "article")
+        XCTAssertEqual(Completion.documentClass(in: "\\documentclass [11pt] {letter}\n"), "letter")
+        XCTAssertEqual(Completion.documentClass(in: "% a preamble\n\\RequirePackage{fix}\n\\documentclass{book}\n"), "book")
+        // Nothing to read: a fragment, a commented-out declaration, a
+        // declaration that only appears after the preamble (prose about
+        // LaTeX), and an unterminated one.
+        XCTAssertNil(Completion.documentClass(in: "\\section{Intro}\nBody.\n"))
+        XCTAssertNil(Completion.documentClass(in: "% \\documentclass{beamer}\n\\begin{document}\n"))
+        XCTAssertNil(Completion.documentClass(in: "\\begin{document}\n\\documentclass{beamer} is the first line.\n"))
+        XCTAssertNil(Completion.documentClass(in: "\\documentclass{beamer\n"))
+        XCTAssertNil(Completion.documentClass(in: ""))
+    }
+
+    /// The regression this gate exists for: beamer's `\frametitle` and
+    /// `\alert` are text-mode entries, so in table order they lead the popup
+    /// — `\fra` meant `\frametitle` rather than `\frac`, the most-used
+    /// command in LaTeX, in every document. A class-scoped command is now
+    /// offered only in a document that declares its class.
+    func testClassScopedCommandsAreOfferedOnlyUnderTheirOwnClass() throws {
+        let deck = "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}\n"
+        let article = "\\documentclass{article}\n\\begin{document}\n"
+        func offered(_ prefix: String, in preamble: String) -> [String] {
+            let text = preamble + prefix
+            return Completion.suggestions(in: text, caretUTF16: (text as NSString).length, result: nil).map(\.insertText)
+        }
+        // The inventory really does carry the scope this reads.
+        XCTAssertEqual(Completion.Vocabulary.byName["frametitle"]?.requiresClass, "beamer")
+        XCTAssertEqual(Completion.Vocabulary.byName["opening"]?.requiresClass, "letter")
+        XCTAssertNil(Completion.Vocabulary.byName["frac"]?.requiresClass, "\\frac is universal")
+
+        // A beamer deck offers the beamer family, ahead of `\frac` by table order.
+        XCTAssertEqual(offered("\\fra", in: deck).first, "\\frametitle")
+        XCTAssertTrue(offered("\\al", in: deck).contains("\\alert"))
+        // An article, and a fragment that declares no class at all, do not.
+        for preamble in [article, ""] {
+            XCTAssertEqual(offered("\\fra", in: preamble), ["\\frac"], "preamble: \(preamble.debugDescription)")
+            XCTAssertFalse(offered("\\al", in: preamble).contains("\\alert"))
+            XCTAssertFalse(offered("\\op", in: preamble).contains("\\opening"), "letter.cls scopes the same way")
+        }
+        // Two escape hatches keep the command reachable where it is meant:
+        // the name typed out in full, and a fragment that already uses it.
+        XCTAssertEqual(offered("\\frametitle", in: "").first, "\\frametitle")
+        let fragment = "\\frametitle{Earlier}\n\\fra"
+        XCTAssertEqual(Completion.suggestions(in: fragment, caretUTF16: (fragment as NSString).length, result: nil)
+                         .map(\.insertText), ["\\frac", "\\frametitle"],
+                       "a document that already uses it completes it from its own text, below the universal entry")
     }
 
     /// Every rendered inventory command is offered exactly once with the

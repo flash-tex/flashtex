@@ -584,9 +584,10 @@ fn canonical_list_is_well_formed_and_sourced() {
 // respect it. These tests pin the data that gate reads.
 
 /// The scope list is exactly the parser's real gate: every name here is
-/// diagnosed outside `\documentclass{letter}` (`letter_probe` builds its
-/// document for the same set), and the kernel neighbour `hangfrom` — which
-/// sits beside them in `BUILT_INS` — stays universal.
+/// diagnosed outside its own `\documentclass` (`letter_probe`/`beamer_probe`
+/// build their documents for the same two sets), and the kernel neighbour
+/// `hangfrom` — which sits beside the letter names in `BUILT_INS` — stays
+/// universal.
 #[test]
 fn class_scope_matches_the_parser_gate() {
     let inventory = supported::inventory();
@@ -598,24 +599,37 @@ fn class_scope_matches_the_parser_gate() {
         .collect();
     let listed: BTreeSet<String> = supported::LETTER_CLASS_COMMANDS
         .iter()
+        .chain(supported::BEAMER_CLASS_COMMANDS)
         .map(|s| s.to_string())
         .collect();
-    assert_eq!(scoped, listed, "scope must be exactly the letter gate");
-    for name in supported::LETTER_CLASS_COMMANDS {
-        let command = inventory
-            .commands
-            .iter()
-            .find(|c| c.name == *name)
-            .unwrap_or_else(|| panic!("\\{name} is not in the inventory"));
-        assert_eq!(
-            command.requires_class,
-            Some("letter"),
-            "\\{name} is gated on the letter class"
-        );
-        assert!(
-            letter_probe(name, "{}").is_some(),
-            "\\{name} must go through the parser's letter gate"
-        );
+    assert_eq!(
+        scoped, listed,
+        "scope must be exactly the letter and beamer gates"
+    );
+    for (names, class, probe) in [
+        (
+            supported::LETTER_CLASS_COMMANDS,
+            "letter",
+            letter_probe as fn(&str, &str) -> Option<String>,
+        ),
+        (supported::BEAMER_CLASS_COMMANDS, "beamer", beamer_probe),
+    ] {
+        for name in names {
+            let command = inventory
+                .commands
+                .iter()
+                .find(|c| c.name == *name)
+                .unwrap_or_else(|| panic!("\\{name} is not in the inventory"));
+            assert_eq!(
+                command.requires_class,
+                Some(class),
+                "\\{name} is gated on the {class} class"
+            );
+            assert!(
+                probe(name, "{}").is_some(),
+                "\\{name} must go through the parser's {class} gate"
+            );
+        }
     }
     // The everyday commands — and the kernel neighbour — stay universal.
     for name in [
@@ -637,12 +651,13 @@ fn class_scope_matches_the_parser_gate() {
     }
 }
 
-/// The offer rule completion mirrors: a scoped command is hidden only when
-/// the document class is known and different. An unknown class (a fragment
-/// with no `\documentclass`, as in the editor's prefix tests) keeps today's
-/// table order untouched.
+/// The offer rule completion mirrors: a class-scoped command is offered only
+/// in a document that declares its class. A fragment with no `\documentclass`
+/// (as in the editor's prefix tests) gets the universal commands alone —
+/// scoped entries are text-mode, so leaving them in would let `\frametitle`
+/// lead `\frac` on table order in every fragment.
 #[test]
-fn offer_rule_hides_scoped_commands_only_under_another_class() {
+fn offer_rule_offers_scoped_commands_only_under_their_own_class() {
     let inventory = supported::inventory();
     let by_name = |name: &str| {
         inventory
@@ -651,16 +666,27 @@ fn offer_rule_hides_scoped_commands_only_under_another_class() {
             .find(|c| c.name == name)
             .unwrap_or_else(|| panic!("\\{name} is not in the inventory"))
     };
-    let (frac, opening) = (by_name("frac"), by_name("opening"));
-    assert!(frac.offered_in_class(None));
-    assert!(frac.offered_in_class(Some("article")));
-    assert!(frac.offered_in_class(Some("letter")));
-    assert!(opening.offered_in_class(None), "unknown class gates nothing");
+    let (frac, opening, frametitle) = (by_name("frac"), by_name("opening"), by_name("frametitle"));
+    for class in [None, Some("article"), Some("letter"), Some("beamer")] {
+        assert!(
+            frac.offered_in_class(class),
+            "\\frac is universal: offered under {class:?}"
+        );
+    }
+    assert!(
+        !opening.offered_in_class(None),
+        "an undeclared class offers the universal commands alone"
+    );
     assert!(
         !opening.offered_in_class(Some("article")),
         "\\opening must not be offered in an article"
     );
     assert!(opening.offered_in_class(Some("letter")));
+    assert!(
+        !frametitle.offered_in_class(Some("article")) && !frametitle.offered_in_class(None),
+        "\\frametitle must not be offered outside a beamer deck"
+    );
+    assert!(frametitle.offered_in_class(Some("beamer")));
 }
 
 /// The `requires_class` field reaches `--supported json`, the Mac completion
