@@ -5,7 +5,7 @@
   "machine": "mac-m5pro-dq222",
   "note": "GH-839: tab-only lines don't end a paragraph (14/20 real corpus docs)",
   "started_utc": "2026-09-18T01:51:25Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "tab-blank-line-839",
-  "updated_utc": "2026-09-18T01:51:25Z"
+  "updated_utc": "2026-09-18T02:19:36Z"
 }
