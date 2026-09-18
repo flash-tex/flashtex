@@ -86,7 +86,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
 /// enforces the disjointness now.
 #[rustfmt::skip]
 const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
-    "table", "table*", "figure*", "tabularx",
+    "table", "table*", "figure*",
     "abstract", "minipage", "titlepage",
     "trivlist", "picture", "math", "multlined",
     "tikzpicture", "minted",
