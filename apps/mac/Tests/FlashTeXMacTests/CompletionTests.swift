@@ -63,7 +63,9 @@ final class CompletionTests: XCTestCase {
         // `\allowdisplaybreaks` and `\allowbreak` (the \penalty0 break
         // permission, #568) match `al` too and are not symbols; they sort
         // ahead of the two by inventory order, which is what this asserts.
-        let math = Completion.suggestions(in: "$\\al", caretUTF16: 4, result: nil)
+        // An article project, like `\fr` below: beamer's `\alert` is a text
+        // entry that would otherwise lead the list by table order.
+        let math = Completion.suggestions(in: "$\\al", caretUTF16: 4, result: nil, projectClass: "article")
         XCTAssertEqual(labels(math), ["\\allowdisplaybreaks[0-4]", "\\allowbreak", "\\alpha", "\\aleph"],
                        "inventory (math_symbol) order")
         XCTAssertEqual(math.map(\.detail), ["amsmath page-break permission inside displays; no material",
@@ -72,7 +74,12 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(Completion.Vocabulary.symbols.count, Completion.Vocabulary.inventory.commands.filter { $0.origin == .mathSymbol && $0.renders }.count)
         XCTAssertGreaterThan(Completion.Vocabulary.entries.count, Completion.Vocabulary.symbols.count)
         // Math-only commands are marked once, by the `math ·` prefix of `Entry.detail`.
-        let frac = Completion.suggestions(in: "\\fr", caretUTF16: 3, result: nil)
+        // `\fr` means `\frac`: this fragment belongs to an article project,
+        // so beamer's `\frametitle` (a text entry, ahead of `\frac` in table
+        // order) is gated out by the root document's class — the way an
+        // included file that declares no `\documentclass` learns its class
+        // (`testClassScopedCommandsAreOfferedOnlyUnderTheirOwnClass`).
+        let frac = Completion.suggestions(in: "\\fr", caretUTF16: 3, result: nil, projectClass: "article")
         XCTAssertEqual(labels(frac), ["\\frac{num}{den}"])
         XCTAssertEqual(frac.first?.insertText, "\\frac")
         XCTAssertEqual(frac.first?.detail, "math · fraction; \\cfrac lays out as \\frac")
@@ -111,11 +118,14 @@ final class CompletionTests: XCTestCase {
         let text = "\\begin{document}\n\\begin{itemize}\n\\item a\n\\e"
         let s = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, result: nil)
         // Innermost closer first, then the vocabulary's `e` commands in table
-        // order (text entries, then math entries). `\encl{text}` is letter.cls's
-        // enclosure line; the vocabulary is the compiler's whole inventory, not
-        // the loaded classes, so it ranks here in every document. The
-        // line/page control parameters `\emergencystretch` and
-        // `\enlargethispage` (#568) precede it in the inventory table.
+        // order (text entries, then math entries). The line/page control
+        // parameters `\emergencystretch` and `\enlargethispage` (#568) are
+        // kernel commands, so they rank here in every document. letter.cls's
+        // enclosure line `\encl{text}` sits between them and `\enspace`: it
+        // is class-scoped (`Entry.requiresClass`), but this text declares no
+        // `\documentclass` and has no project root to read one from, so
+        // nothing gates it and it keeps its table place (the converse checks
+        // below are where the gate shows).
         XCTAssertEqual(Array(labels(s).prefix(9)), ["\\end{itemize}", "\\end{document}", "\\emph{...}", "\\end{env}", "\\eqref{key}", "\\em", "\\emergencystretch=<dimen>", "\\enlargethispage*{dimension}", "\\encl{text}"])
         // `\enspace`/`\enskip` are dual-mode entries (like `\quad`/`\qquad`): text
         // entries whose detail states their math behaviour without a `math ·`
@@ -125,6 +135,19 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(s.count, 12, "\(labels(s))")
         XCTAssertEqual(labels(s).last, "\\enquote{text}")
         XCTAssertTrue(s.allSatisfy { !$0.detail.hasPrefix("math · ") }, "\(labels(s))")
+        // The same text in an article — declared by the text itself, or by
+        // the root document of the project it is included in — hides
+        // `\encl`; under letter.cls it keeps its old place. The command is
+        // gated on the class, not dropped from the vocabulary.
+        let article = "\\documentclass{article}\n" + text
+        let inArticle = Completion.suggestions(in: article, caretUTF16: (article as NSString).length, result: nil)
+        XCTAssertFalse(labels(inArticle).contains("\\encl{text}"), "\(labels(inArticle))")
+        let included = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, result: nil, projectClass: "article")
+        XCTAssertFalse(labels(included).contains("\\encl{text}"), "\(labels(included))")
+        XCTAssertEqual(labels(included), labels(inArticle), "the root's class and the text's own gate the same way")
+        let letter = "\\documentclass{letter}\n" + text
+        let inLetter = Completion.suggestions(in: letter, caretUTF16: (letter as NSString).length, result: nil)
+        XCTAssertEqual(Array(labels(inLetter).prefix(9)).suffix(2), ["\\enlargethispage*{dimension}", "\\encl{text}"])
         guard let first = s.first else { return XCTFail("expected at least one suggestion") }
         XCTAssertEqual(first.kind, .environment)
         XCTAssertEqual(first.detail, "closes \\begin{itemize} at byte 17")
@@ -404,6 +427,121 @@ final class CompletionTests: XCTestCase {
         // A schema the editor does not know is refused, never partially used.
         let other = String(data: bundled, encoding: .utf8)!.replacingOccurrences(of: "flashtex-supported-latex/1", with: "flashtex-supported-latex/2")
         XCTAssertThrowsError(try Completion.Vocabulary.decodeInventory(other.data(using: .utf8)!))
+    }
+
+    // MARK: class-scoped commands
+
+    /// `\documentclass[options]{class}` read from the document's own text —
+    /// the only place the Mac side can learn the class from.
+    func testDocumentClassIsReadFromThePreamble() {
+        XCTAssertEqual(Completion.documentClass(in: "\\documentclass{beamer}\n\\begin{document}\n"), "beamer")
+        XCTAssertEqual(Completion.documentClass(in: "\\documentclass[11pt,a4paper]{article}\n"), "article")
+        XCTAssertEqual(Completion.documentClass(in: "\\documentclass [11pt] {letter}\n"), "letter")
+        XCTAssertEqual(Completion.documentClass(in: "% a preamble\n\\RequirePackage{fix}\n\\documentclass{book}\n"), "book")
+        // Nothing to read: a fragment, a commented-out declaration, a
+        // declaration that only appears after the preamble (prose about
+        // LaTeX), and an unterminated one.
+        XCTAssertNil(Completion.documentClass(in: "\\section{Intro}\nBody.\n"))
+        XCTAssertNil(Completion.documentClass(in: "% \\documentclass{beamer}\n\\begin{document}\n"))
+        XCTAssertNil(Completion.documentClass(in: "\\begin{document}\n\\documentclass{beamer} is the first line.\n"))
+        XCTAssertNil(Completion.documentClass(in: "\\documentclass{beamer\n"))
+        XCTAssertNil(Completion.documentClass(in: ""))
+    }
+
+    /// The regression this gate exists for: beamer's `\frametitle` and
+    /// `\alert` are text-mode entries, so in table order they lead the popup
+    /// — `\fra` meant `\frametitle` rather than `\frac`, the most-used
+    /// command in LaTeX, in every document. A class-scoped command is hidden
+    /// in a document of another class. The class is the text's own
+    /// `\documentclass`, else the project root document's (`projectClass`:
+    /// an included chapter or slide file declares none), else unknown —
+    /// which gates nothing, because two-thirds of real `.tex` files declare
+    /// no class and the ones that use `\frametitle` are beamer's own slide
+    /// files.
+    func testClassScopedCommandsAreOfferedOnlyUnderTheirOwnClass() throws {
+        let deck = "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}\n"
+        let article = "\\documentclass{article}\n\\begin{document}\n"
+        func offered(_ prefix: String, in preamble: String, projectClass: String? = nil) -> [String] {
+            let text = preamble + prefix
+            return Completion.suggestions(in: text, caretUTF16: (text as NSString).length, result: nil, projectClass: projectClass)
+                .map(\.insertText)
+        }
+        // The inventory really does carry the scope this reads.
+        XCTAssertEqual(Completion.Vocabulary.byName["frametitle"]?.requiresClass, "beamer")
+        XCTAssertEqual(Completion.Vocabulary.byName["opening"]?.requiresClass, "letter")
+        XCTAssertNil(Completion.Vocabulary.byName["frac"]?.requiresClass, "\\frac is universal")
+
+        // A beamer deck offers the beamer family, ahead of `\frac` by table order.
+        XCTAssertEqual(offered("\\fra", in: deck).first, "\\frametitle")
+        XCTAssertTrue(offered("\\al", in: deck).contains("\\alert"))
+        // An article does not.
+        XCTAssertEqual(offered("\\fra", in: article), ["\\frac"])
+        XCTAssertFalse(offered("\\al", in: article).contains("\\alert"))
+        XCTAssertFalse(offered("\\op", in: article).contains("\\opening"), "letter.cls scopes the same way")
+
+        // An included file declares no class of its own, so the project's
+        // root document decides: a slide file of a beamer project gets
+        // `\frametitle` on first use, the same file in an article project
+        // does not.
+        let slide = "\\begin{frame}\n"
+        XCTAssertEqual(offered("\\fra", in: slide, projectClass: "beamer").first, "\\frametitle")
+        XCTAssertTrue(offered("\\al", in: slide, projectClass: "beamer").contains("\\alert"))
+        XCTAssertEqual(offered("\\fra", in: slide, projectClass: "article"), ["\\frac"])
+        XCTAssertFalse(offered("\\al", in: slide, projectClass: "article").contains("\\alert"))
+        XCTAssertFalse(offered("\\op", in: slide, projectClass: "article").contains("\\opening"))
+        XCTAssertTrue(offered("\\op", in: slide, projectClass: "letter").contains("\\opening"))
+        // A file's own declaration wins over the root's.
+        XCTAssertEqual(offered("\\fra", in: article, projectClass: "beamer"), ["\\frac"])
+        XCTAssertEqual(offered("\\fra", in: deck, projectClass: "article").first, "\\frametitle")
+
+        // No class in the text and no project to read one from: nothing to
+        // gate on, so nothing is hidden (the compiler's `offered_in_class`
+        // reads `None` the same way).
+        XCTAssertEqual(offered("\\fra", in: "").first, "\\frametitle")
+        XCTAssertTrue(offered("\\al", in: "").contains("\\alert"))
+        XCTAssertTrue(offered("\\op", in: "").contains("\\opening"))
+
+        // Two escape hatches keep the command reachable in a document of
+        // another class: the name typed out in full, and a file that already
+        // uses it (completed from its own text, below the universal entry).
+        XCTAssertEqual(offered("\\frametitle", in: article).first, "\\frametitle")
+        let fragment = article + "\\frametitle{Earlier}\n\\fra"
+        XCTAssertEqual(Completion.suggestions(in: fragment, caretUTF16: (fragment as NSString).length, result: nil)
+                         .map(\.insertText), ["\\frac", "\\frametitle"],
+                       "a document that already uses it completes it from its own text, below the universal entry")
+    }
+
+    /// The project layer resolves the class an included file inherits:
+    /// `ProjectDocuments.entryDocumentClass` reads the entry document's
+    /// preamble whichever tab is active, follows the entry's edits, and is
+    /// nil when the entry declares no class — which completion then treats
+    /// as unknown.
+    @MainActor
+    func testIncludedFileInheritsTheEntryDocumentClass() {
+        let model = ShellModel()
+        let entry = { (cls: String) in "\\documentclass{\(cls)}\n\\begin{document}\n\\input{slides}\n\\end{document}\n" }
+        model.documents = [.init(path: "main.tex", text: entry("beamer")), .init(path: "slides.tex", text: "\\begin{frame}\n\\fra")]
+        model.activePath = "slides.tex"
+        XCTAssertEqual(model.project.entryPath, "main.tex")
+        XCTAssertEqual(model.project.entryDocumentClass, "beamer")
+        func offered() -> [String] {
+            let text = model.activeText
+            return Completion.suggestions(in: text, caretUTF16: (text as NSString).length, result: nil,
+                                          projectClass: model.project.entryDocumentClass).map(\.insertText)
+        }
+        XCTAssertEqual(offered().first, "\\frametitle", "a beamer deck's slide file completes \\frametitle on first use")
+        XCTAssertEqual(model.project.entryDocumentClass, "beamer", "cached: the documents did not change")
+
+        // The entry's preamble changes while another tab is active: the
+        // cache is keyed on the documents revision, so the answer follows.
+        model.documents[0].text = entry("article")
+        XCTAssertEqual(model.project.entryDocumentClass, "article")
+        XCTAssertEqual(offered(), ["\\frac"], "the same slide file in an article project gets no \\frametitle")
+
+        // An entry that declares no class leaves the class unknown.
+        model.documents[0].text = "\\input{slides}\n"
+        XCTAssertNil(model.project.entryDocumentClass)
+        XCTAssertEqual(offered().first, "\\frametitle", "unknown gates nothing")
     }
 
     /// Every rendered inventory command is offered exactly once with the

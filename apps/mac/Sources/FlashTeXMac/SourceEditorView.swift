@@ -90,6 +90,12 @@ struct SourceEditorView: NSViewRepresentable {
     /// (`BibScanner.entries(for:)`; `ShellModel.bibliographySources`). Read
     /// once per list request, not per keystroke; nil offers only the helper's keys.
     var bibliographySources: () -> BibScanner.Sources? = { nil }
+    /// The `\documentclass` of the project's root document
+    /// (`ProjectDocuments.entryDocumentClass`): what completion gates
+    /// beamer's and letter's commands on in an included file that declares
+    /// no class itself. Read once per list request, not per keystroke; nil
+    /// (no project) gates nothing.
+    var projectDocumentClass: () -> String? = { nil }
     /// What the buffer is coloured as (`SyntaxHighlighter.Language`): BibTeX
     /// for a declared bibliography, LaTeX otherwise.
     var language: SyntaxHighlighter.Language = .latex
@@ -165,6 +171,7 @@ struct SourceEditorView: NSViewRepresentable {
         // The other open documents' macros complete as declared (Completion.declaredCommands); read when the list is requested.
         (tv as? CompletingTextView)?.otherDocuments = { [hoverContext] in hoverContext().otherDocuments.map(\.text) }
         (tv as? CompletingTextView)?.bibliographySources = bibliographySources // `\cite{` from the project's .bib files (BibScanner.swift)
+        (tv as? CompletingTextView)?.projectDocumentClass = projectDocumentClass // class-scoped commands in an included file (Completion.swift)
         if let m = projectIndexMetadata { _ = (tv as? CompletingTextView)?.accept(projectIndex: m) }
         if let edit = pendingEdit, edit.token != co.appliedEditToken {
             // While marked text exists the storage is ahead of the model by the

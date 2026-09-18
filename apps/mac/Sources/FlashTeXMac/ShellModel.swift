@@ -19,8 +19,13 @@ final class ShellModel {
     }
 
     var documents: [RuntimeV1.Document] = [] {
-        didSet { refreshDocumentMirror() }
+        didSet { documentsRevision &+= 1; refreshDocumentMirror() }
     }
+    /// Advances on every mutation of `documents` — a keystroke, a disk
+    /// reload, a project swap — so a reader that derives something from a
+    /// document's text (`ProjectDocuments.entryDocumentClass`) can cache by
+    /// it. Not observed: it changes per keystroke and no view reads it.
+    @ObservationIgnored private(set) var documentsRevision = 0
     var activePath: String = "main.tex" {
         didSet { if activePath != oldValue { navigationToken &+= 1 } }
     }

@@ -179,6 +179,11 @@ final class SnippetTests: XCTestCase {
         window.makeFirstResponder(tv)
         defer { window.orderOut(nil) }
         tv.allowsUndo = true
+        // A bare view has no project, so nothing would gate class-scoped
+        // commands and beamer's `\frametitle` would lead `\fra` by table
+        // order. Give it what the hosted editor passes — the root document's
+        // class (`ProjectDocuments.entryDocumentClass`): this is an article.
+        tv.projectDocumentClass = { "article" }
 
         func accept(after typing: String, from seed: String) async throws {
             tv.string = seed
