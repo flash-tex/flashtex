@@ -504,6 +504,45 @@ struct SourceEditorView: NSViewRepresentable {
             }
         }
 
+        /// The `\right…` partner for the delimiter just typed before
+        /// `caretUTF16` when it completes `\left(`, `\left[`, `\left\{`,
+        /// `\left|` or `\left.` (the `\left` unescaped and code, the
+        /// delimiter followed by nothing, whitespace or a closing
+        /// delimiter); nil otherwise. Math-mode gating is the caller's
+        /// (`\left` is a math-only command; in text it is a plain error).
+        static func leftRightCloser(in text: String, caretUTF16: Int) -> String? {
+            guard caretUTF16 >= 6, let index = SourceEditorView.scalarIndex(text: text, utf16: caretUTF16) else { return nil }
+            let p = text.utf8.distance(from: text.utf8.startIndex, to: index)
+            var copy = text
+            return copy.withUTF8 { b -> String? in
+                let opener = p - 1
+                guard opener >= 5 else { return nil }
+                let closer: String
+                let leftEnd: Int // the byte after `\left`
+                switch b[opener] {
+                case UInt8(ascii: "("): closer = "\\right)"; leftEnd = opener
+                case UInt8(ascii: "["): closer = "\\right]"; leftEnd = opener
+                case UInt8(ascii: "|"): closer = "\\right|"; leftEnd = opener
+                case UInt8(ascii: "."): closer = "\\right."; leftEnd = opener
+                case UInt8(ascii: "{"):
+                    guard b[opener - 1] == UInt8(ascii: "\\") else { return nil }
+                    closer = "\\right\\}"; leftEnd = opener - 1
+                default: return nil
+                }
+                let start = leftEnd - 5
+                guard start >= 0, b[start] == UInt8(ascii: "\\"), !escaped(b, at: start), isCode(b, at: start),
+                      b[start + 1] == UInt8(ascii: "l"), b[start + 2] == UInt8(ascii: "e"),
+                      b[start + 3] == UInt8(ascii: "f"), b[start + 4] == UInt8(ascii: "t") else { return nil }
+                if p < b.count {
+                    let next = b[p]
+                    let allowedNext = next == 0x20 || next == 0x09 || next == 0x0A || next == 0x0D
+                        || next == UInt8(ascii: "}") || next == UInt8(ascii: "]") || next == UInt8(ascii: ")") || next == UInt8(ascii: "$")
+                    guard allowedNext else { return nil }
+                }
+                return closer
+            }
+        }
+
         static func match(in text: String, caretUTF16: Int) -> Match? {
             guard let index = SourceEditorView.scalarIndex(text: text, utf16: caretUTF16) else { return nil }
             let p = text.utf8.distance(from: text.utf8.startIndex, to: index)
@@ -839,6 +878,14 @@ struct SourceEditorView: NSViewRepresentable {
 
         // MARK: editor intelligence (EditorIntelligence.swift)
 
+        /// Whether `caret` is in math mode (Completion.isMathMode), answered
+        /// from the in-sync syntax model when there is one — one line's
+        /// lexing — else from a whole-buffer lex; nil without a buffer.
+        func mathMode(at caret: Int, in tv: NSTextView) -> Bool? {
+            guard let text = tv.textStorage?.string as NSString? else { return nil }
+            return Completion.isMathMode(in: text, caretUTF16: caret, highlighter: syntax.inSync(with: text) ? syntax.highlighter : nil)
+        }
+
         func installIntelligence(on scroll: NSScrollView, lineNumbers: Bool) {
             guard let tv = scroll.documentView as? NSTextView else { return }
             hover.install(on: tv)
@@ -850,9 +897,8 @@ struct SourceEditorView: NSViewRepresentable {
                 // (Completion.swift): answered from the in-sync syntax model,
                 // one line's lexing; nil (no model) filters nothing.
                 completing.mathModeAtCaret = { [weak self] index in
-                    guard let self, let text = self.textView?.textStorage?.string as NSString? else { return nil }
-                    return Completion.isMathMode(in: text, caretUTF16: index,
-                                                 highlighter: self.syntax.inSync(with: text) ? self.syntax.highlighter : nil)
+                    guard let self, let tv = self.textView else { return nil }
+                    return self.mathMode(at: index, in: tv)
                 }
                 completing.backgroundDecorator = { [weak self] rect in self?.drawCurrentLine(in: rect) }
                 // GH74: a completion snippet's placeholder closer (`\section{}`)
@@ -1095,7 +1141,8 @@ struct SourceEditorView: NSViewRepresentable {
             guard applied else { refuse("the text view declined the change"); return }
             let s = SourceEditorView.nativeText(of: tv)
             lastKnownText = s
-            pendingClosers = []
+            // The edit's own placeholder closer (`\textbf{|}`) overtypes like a hand-typed pair's.
+            pendingClosers = edit.trackedCloser.map { $0 < (s as NSString).length ? [$0] : [] } ?? []
             refreshBraceHighlight(tv)
             announceNow(text: s, range: tv.selectedRange(), prefix: "Inserted capture. ")
             // The model is updated outside the SwiftUI view update; `editApplied`
@@ -1157,9 +1204,10 @@ struct SourceEditorView: NSViewRepresentable {
         func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString: String?) -> Bool {
             let replacementLength = (replacementString as NSString?)?.length ?? 0
             marks.noteEdit(range: range, replacementLength: replacementLength)
-            // Type-over: the closer the user types is the one that was auto-inserted here.
+            // Type-over: the closer the user types is the one that was auto-inserted
+            // here (a unit of an auto-inserted `\right)` counts: the list is the authority).
             if !pairing, programmaticChanges == 0, let replacementString, range.length == 0, replacementString.count == 1,
-               let ch = replacementString.first, BraceMatcher.isCloser(ch), !textView.hasMarkedText(),
+               !textView.hasMarkedText(),
                let i = pendingClosers.firstIndex(of: range.location),
                (textView.textStorage?.length ?? 0) > range.location,
                (textView.string as NSString).substring(with: NSRange(location: range.location, length: 1)) == replacementString {
@@ -1310,6 +1358,19 @@ struct SourceEditorView: NSViewRepresentable {
             guard let edit, edit.range.length == 0, edit.replacement.count == 1, let opener = edit.replacement.first else { return }
             let caret = NSRange(location: edit.range.location + (edit.replacement as NSString).length, length: 0)
             guard tv.selectedRange() == caret else { return }
+            // `\left(` → `\right)` (and `[`, `\{`, `|`, `.`), owner-enabled by
+            // `(` and only in math mode: every unit of the closer is typed over,
+            // so `\right)` typed by hand lands exactly where it already is.
+            if "([{|.".contains(opener), parent.autoClosePairs.contains("("),
+               let leftRight = BraceMatcher.leftRightCloser(in: SourceEditorView.nativeText(of: tv), caretUTF16: caret.location),
+               mathMode(at: caret.location, in: tv) == true {
+                pairing = true
+                tv.insertText(leftRight, replacementRange: caret)
+                tv.setSelectedRange(caret)
+                pairing = false
+                pendingClosers += (0..<(leftRight as NSString).length).map { caret.location + $0 }
+                return
+            }
             // `\(` → `\)`, `\[` → `\]` (owner-enabled by `(`): both halves of the closer are typed over.
             if opener == "(" || opener == "[", parent.autoClosePairs.contains("("),
                let math = BraceMatcher.mathCloser(in: SourceEditorView.nativeText(of: tv), caretUTF16: caret.location) {
