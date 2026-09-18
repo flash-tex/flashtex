@@ -1935,10 +1935,17 @@ impl Engine {
             Some(t) => t,
             None => return,
         };
-        let t1 = self.next_raw_token();
-        let t2 = self.next_raw_token();
+        // `next_raw` plus `push_pending` (as in `\expandafter` and
+        // `peek_one`): the two lookahead tokens re-enter the input with the
+        // origins they had. Re-stamping them with `push_tokens` gave both
+        // the peeked token's origin, so an `\@ifnextchar` peek inside a
+        // `\@protected@testopt` expansion dropped the invocation origin and
+        // the optional-argument path's replacement tokens reached the
+        // parser with the definition's spans instead of the invocation's.
+        let t1 = self.next_raw();
+        let t2 = self.next_raw();
         if let Some(t2) = &t2 {
-            let meaning = self.meaning_of_token(t2);
+            let meaning = self.meaning_of_token(&t2.tok);
             self.define_cs_token(&name_tok, meaning, global);
         }
         let mut reinsert = Vec::new();
@@ -1948,7 +1955,7 @@ impl Engine {
         if let Some(t2) = t2 {
             reinsert.push(t2);
         }
-        self.push_tokens(reinsert);
+        self.push_pending(reinsert);
         self.finish_assignment();
     }
 
