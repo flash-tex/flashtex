@@ -961,7 +961,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
         let first = match block {
             CBlock::Heading { number_span, .. } => Some(*number_span),
             CBlock::Verbatim { span, .. } | CBlock::TableOfContents { span } | CBlock::Rule { span } => Some(*span),
-            _ => inlines_of(block).iter().map(inline_span).next(),
+            _ => anchor_span(inlines_of(block)),
         };
         if pending_vfill > 0 {
             if let Some(at) = first {
@@ -1146,7 +1146,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
                 let mut group: Vec<Inline> = Vec::new();
                 let mut prev_end: Option<Span> = None;
                 for (i, line) in lines.iter().enumerate() {
-                    let first = line.iter().map(inline_span).next();
+                    let first = anchor_span(line.iter());
                     if !group.is_empty() {
                         // The break owns the bytes between the two lines, so
                         // no interword space is read across it (as the
@@ -1599,7 +1599,7 @@ pub fn adapt_cached(
         }
         let unit_start = next.as_ref().and_then(|unit| match &unit.kind {
             UnitKind::Heading { number_span, .. } => Some(*number_span),
-            UnitKind::Paragraph { inlines, .. } => inlines.iter().map(inline_span).next(),
+            UnitKind::Paragraph { inlines, .. } => anchor_span(inlines.iter()),
             UnitKind::Rule { span } => Some(*span),
             UnitKind::Picture { document, picture, .. } => Some(Span::in_document(*document, picture.start, picture.end)),
         });
@@ -2205,7 +2205,7 @@ pub fn adapt_cached(
                 // `\begin{align}` and again at `\end`, so the pieces are
                 // rejoined here (short display skips, no second `\parskip`, no
                 // empty opener line, no indent after the display).
-                let first_span = inlines.iter().map(inline_span).next();
+                let first_span = anchor_span(inlines.iter());
                 let starts_display = matches!(parts.first(), Some(ParaPart::Display { .. } | ParaPart::Rows { .. }));
                 if let (Some(Block::Paragraph { parts: prev_parts, style: prev_style, list: prev_list, .. }), Some(f), Some(p)) = (blocks.last_mut(), first_span, prev_para_end) {
                     // Labels only, or a `label_line` (labels then one space).
@@ -2883,6 +2883,14 @@ fn clear_page_blocks(texts: &[&str], blocks: &[Block]) -> Vec<usize> {
         .collect()
 }
 
+/// The first inline that sits at a real source position: a `\pagestyle` /
+/// `\thispagestyle` marker rides in the paragraph with the command's own
+/// span (for `\maketitle`, before the title's text), so it must not anchor
+/// the paragraph for gap scans and page-break detection.
+fn anchor_span<'a>(inlines: impl IntoIterator<Item = &'a Inline>) -> Option<Span> {
+    inlines.into_iter().find(|i| !matches!(i, Inline::PageStyle { .. })).map(inline_span)
+}
+
 fn inline_span(i: &Inline) -> Span {
     match i {
         Inline::Text { span, .. }
@@ -3428,7 +3436,7 @@ fn split_at_page_breaks<'p>(
         };
         let first = match block {
             CBlock::Heading { number_span, .. } => Some(*number_span),
-            _ => inlines_of(block).iter().map(inline_span).next().or(item_label_span),
+            _ => anchor_span(inlines_of(block)).or(item_label_span),
         };
         let mut eject = std::mem::take(&mut pending_eject) || matches!((prev_end, first), (Some(p), Some(f)) if gap_has_page_break(texts, p, f));
         let mut vspace_before = std::mem::take(&mut pending_vspace);
