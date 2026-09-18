@@ -13,9 +13,9 @@ use crate::diagnostics::Diagnostic;
 use crate::export::{self, ExportFont};
 use crate::math::{self, MathBox};
 use crate::parser::{
-    Block, FillLeader, FontSizeLevel, Inline, LetterPart, ListLeftMargin, MathRow, ParagraphStyle,
-    TextFamily, TextStyle, CMR_EX_PER_EM, TEXT_DESCENDER_DEPTH_EM, TEXT_DESCENDER_GLYPHS,
-    UnderlineGeom,
+    Block, FancyHdr, FillLeader, FontSizeLevel, Inline, LetterPart, ListLeftMargin, MathRow,
+    PageStyleName, ParagraphStyle, TextFamily, TextStyle, CMR_EX_PER_EM, TEXT_DESCENDER_DEPTH_EM,
+    TEXT_DESCENDER_GLYPHS, UnderlineGeom,
 };
 use crate::Span;
 use flashtex_font_engine::core14::Core14;
@@ -31,6 +31,17 @@ mod footnotes;
 pub const PAGE_WIDTH_PT: f64 = 612.0;
 pub const PAGE_HEIGHT_PT: f64 = 792.0;
 pub const MARGIN_PT: f64 = 72.0;
+/// fancyhdr chrome in this layout's fixed frame, measured against the
+/// pdflatex oracle (article, TeX Live 2026): the header baseline sits above
+/// the first body baseline the way the oracle's 96.3pt-from-top header sits
+/// above its 134.8pt body start, and the footer a `\footskip`-like 30pt
+/// below the text bottom. Frame approximations, not the class tables.
+const FANCY_HEAD_BASELINE_PT: f64 = 60.0;
+/// Head rule just under the header baseline (oracle: ~3.8pt below it).
+const FANCY_HEAD_RULE_GAP_PT: f64 = 3.8;
+const FANCY_FOOT_BASELINE_PT: f64 = 750.0;
+/// Foot rule above the footer baseline.
+const FANCY_FOOT_RULE_GAP_PT: f64 = 6.0;
 pub const BODY_SIZE_PT: f64 = 12.0;
 pub const LINE_SPACING: f64 = 1.2;
 pub const PARAGRAPH_GAP_PT: f64 = 6.0;
@@ -441,6 +452,34 @@ fn leader_items(fill: &LineFill, start: f64, width: f64, baseline: f64) -> Vec<T
     }
 }
 
+/// A full-measure fancyhdr rule item (`rule.is_some()` marks it; its text
+/// is empty, so word sequences skip it).
+fn push_fancy_rule(
+    out: &mut Vec<TextItem>,
+    rule_pt: f64,
+    top_pt: f64,
+    width_pt: f64,
+    size: f64,
+    span: Span,
+) {
+    if rule_pt <= 0.0 {
+        return;
+    }
+    out.push(TextItem {
+        text: String::new(),
+        x_pt: round2(MARGIN_PT),
+        baseline_y_pt: round2(top_pt),
+        font_size_pt: size,
+        span,
+        font: Font::TimesRoman,
+        rule: Some(RuleGeometry {
+            y_pt: round2(top_pt),
+            width_pt: round2(width_pt),
+            height_pt: rule_pt,
+        }),
+    });
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextItem {
     pub text: String,
@@ -675,6 +714,23 @@ pub struct LayoutCursor {
     /// reset to 1 by every `\pagenumbering` marker, stepped by every page
     /// shipped after it (latex.ltx's `\c@page`).
     page_value: u32,
+    /// fancyhdr's running-head fields and rule widths, installed from
+    /// [`crate::parser::Parsed::fancy`]; read back when a `fancy` page ships.
+    fancy: FancyHdr,
+    /// The `\pagestyle` in force at the position being set (`Plain` until a
+    /// marker says otherwise). Only `Fancy` draws anything here.
+    chrome: PageStyleName,
+    /// A `\thispagestyle` waiting for its page to ship: (page index, style).
+    thispage: Option<(usize, PageStyleName)>,
+    /// The style each shipped page closed under, in `pages` order; the last
+    /// page is recorded when chrome is stamped.
+    page_chrome: Vec<PageStyleName>,
+    /// The displayed page number each shipped page closed under, in `pages`
+    /// order: `(\pagenumbering style, \c@page)`, so a `\thepage` inside a
+    /// field resolves on its own page. The style is the one in force at end
+    /// of layout -- across a mid-document `\pagenumbering` switch it may lag
+    /// by one numbering change, a documented approximation.
+    page_counts: Vec<(crate::xref::NumberStyle, u32)>,
     cleveref: crate::xref::CleverefConfig,
     /// Contents entries from the previous pass, typeset by
     /// `Block::TableOfContents`.
@@ -756,6 +812,11 @@ impl LayoutCursor {
             collected_labels: BTreeMap::new(),
             page_style: crate::xref::NumberStyle::Arabic,
             page_value: 1,
+            fancy: FancyHdr::default(),
+            chrome: PageStyleName::Plain,
+            thispage: None,
+            page_chrome: Vec::new(),
+            page_counts: Vec::new(),
             cleveref,
             resolved_toc: Vec::new(),
             collected_toc: Vec::new(),
@@ -1495,7 +1556,13 @@ impl LayoutCursor {
     /// Apply the inter-block spacing and return the state used as a cache key.
     pub fn prepare_block(&mut self, block: &Block) -> FlowState {
         let body_size = self.constraints.font_size_pt;
-        if matches!(block, Block::Paragraph(inlines) if inlines.iter().all(|inline| matches!(inline, Inline::Label { .. })))
+        // A paragraph of only whatsits (`\label`, and the zero-width
+        // `\pagestyle` / `\thispagestyle` markers, which collect no text)
+        // lays out nothing and takes no spacing: without this a marker-only
+        // paragraph (a lone `\pagestyle{empty}` line, or a preamble marker
+        // flushed by `\maketitle`) would consume `first_block` and shift
+        // every later page break.
+        if matches!(block, Block::Paragraph(inlines) if inlines.iter().all(|inline| matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. })))
         {
             return self.state();
         }
@@ -2216,6 +2283,7 @@ impl LayoutCursor {
     ) {
         while self.pages.len() <= end.page_index {
             let number = self.pages.len() as u32 + 1;
+            self.ship_page_style();
             self.pages.push(Page {
                 number,
                 width_pt: PAGE_WIDTH_PT,
@@ -2261,7 +2329,224 @@ impl LayoutCursor {
         // last chance here. Idempotent when nothing is pending.
         self.resolve_hfill();
         self.finish_footnotes();
+        self.stamp_fancy_chrome();
         self.pages
+    }
+
+    /// Install fancyhdr state from the parsed document (see
+    /// [`crate::parser::Parsed::fancy`]).
+    pub(crate) fn set_fancy(&mut self, fancy: &FancyHdr) {
+        self.fancy = fancy.clone();
+    }
+
+    /// Record the style and displayed number the closing page ships under:
+    /// a `\thispagestyle` for exactly that page wins over the ambient
+    /// `\pagestyle`, and is consumed doing so.
+    fn ship_page_style(&mut self) {
+        let closed = self.pages.len() - 1;
+        let style = match self.thispage {
+            Some((page, style)) if page == closed => {
+                self.thispage = None;
+                style
+            }
+            _ => self.chrome,
+        };
+        self.page_chrome.push(style);
+        self.page_counts.push((self.page_style, self.page_value));
+    }
+
+    /// Stamp fancyhdr running heads and rules onto every page that shipped
+    /// under `\pagestyle{fancy}` (latex.ltx `\@outputpage`'s head/foot
+    /// lines, in this layout's fixed frame). Header lines go AHEAD of the
+    /// page's body items and footer lines AFTER them, so content-stream
+    /// order matches pdflatex (`pdftotext` reads header, body, footer). A
+    /// page under any other style is untouched; with all six fields empty
+    /// only the default head rule draws, exactly as the oracle does.
+    fn stamp_fancy_chrome(&mut self) {
+        self.ship_page_style();
+        if !self.page_chrome.contains(&PageStyleName::Fancy) {
+            return;
+        }
+        let size = self.constraints.font_size_pt;
+        let measure = self.constraints.measure_pt;
+        for index in 0..self.pages.len() {
+            if self.page_chrome.get(index) != Some(&PageStyleName::Fancy) {
+                continue;
+            }
+            let (number_style, number) = self
+                .page_counts
+                .get(index)
+                .copied()
+                .unwrap_or((self.page_style, index as u32 + 1));
+            let head = self.fancy_line_items(true, size, measure, number_style, number);
+            let foot = self.fancy_line_items(false, size, measure, number_style, number);
+            let page = &mut self.pages[index];
+            let mut stitched = Vec::with_capacity(head.len() + page.items.len() + foot.len());
+            stitched.extend(head.into_iter());
+            stitched.extend(page.items.drain(..));
+            stitched.extend(foot.into_iter());
+            page.items = stitched;
+        }
+    }
+
+    /// Typeset one side's fancyhdr chrome for a page: the three fields'
+    /// lines slotted left/centre/right at the head/foot baseline, with the
+    /// side's rule (the head rule after its text, like the oracle's stream;
+    /// the foot rule before its text). Empty fields contribute nothing; a
+    /// zero-width rule draws nothing. `\thepage` in a field resolves to
+    /// (`number_style`, `number`): the stamped page's own number.
+    ///
+    /// Multi-line fields stack downward line by line, and `\footnote` /
+    /// `\label` inside a field have no backend here (the mark stays, the
+    /// note and the label are dropped): single-line text fields are the
+    /// implemented core.
+    fn fancy_line_items(
+        &mut self,
+        head: bool,
+        size: f64,
+        measure: f64,
+        number_style: crate::xref::NumberStyle,
+        number: u32,
+    ) -> Vec<TextItem> {
+        let rule_pt = if head {
+            self.fancy.headrule_pt
+        } else {
+            self.fancy.footrule_pt
+        };
+        let baseline = if head {
+            FANCY_HEAD_BASELINE_PT
+        } else {
+            FANCY_FOOT_BASELINE_PT
+        };
+        let pitch = size * LINE_SPACING;
+        // Lay out first (the scratch borrows nothing afterwards), then emit
+        // in stream order.
+        let mut laid: Vec<(usize, Vec<Vec<TextItem>>)> = Vec::new();
+        for slot in 0..3 {
+            let field = if head {
+                self.fancy.head[slot].clone()
+            } else {
+                self.fancy.foot[slot].clone()
+            };
+            if field.is_empty() {
+                continue;
+            }
+            laid.push((slot, self.fancy_field_lines(&field, size, number_style, number)));
+        }
+        let span = laid
+            .iter()
+            .flat_map(|(_, lines)| lines.iter())
+            .flat_map(|line| line.iter())
+            .map(|item| item.span)
+            .next()
+            .unwrap_or(Span::new(0, 0));
+        let mut out = Vec::new();
+        // The foot rule streams before the footer text.
+        if !head {
+            push_fancy_rule(
+                &mut out,
+                rule_pt,
+                baseline - FANCY_FOOT_RULE_GAP_PT - rule_pt,
+                measure,
+                size,
+                span,
+            );
+        }
+        for (slot, lines) in laid {
+            for (line_no, line) in lines.into_iter().enumerate() {
+                let width = line
+                    .iter()
+                    .map(|item| {
+                        item.x_pt
+                            + if let Some(rule) = item.rule {
+                                rule.width_pt
+                            } else if item.text.is_empty() {
+                                0.0
+                            } else {
+                                text_width(&item.text, item.font_size_pt, item.font)
+                            }
+                    })
+                    .fold(0.0_f64, f64::max);
+                let dx = match slot {
+                    0 => MARGIN_PT,
+                    1 => MARGIN_PT + (measure - width) / 2.0,
+                    _ => MARGIN_PT + measure - width,
+                };
+                let y = baseline + line_no as f64 * pitch;
+                out.extend(line.into_iter().map(|mut item| {
+                    item.x_pt = round2(dx + item.x_pt);
+                    item.baseline_y_pt = round2(y + item.baseline_y_pt);
+                    if let Some(rule) = item.rule.as_mut() {
+                        rule.y_pt = round2(y + rule.y_pt);
+                    }
+                    item
+                }));
+            }
+        }
+        // The head rule streams after the header text.
+        if head {
+            push_fancy_rule(
+                &mut out,
+                rule_pt,
+                baseline + FANCY_HEAD_RULE_GAP_PT - rule_pt,
+                measure,
+                size,
+                span,
+            );
+        }
+        out
+    }
+
+    /// Lay out one field's content in a scratch cursor at the body size and
+    /// split the items into lines by baseline, each rebased to start at
+    /// x = 0 (the caller slots it left/centre/right). `\thepage` and
+    /// `\pageref` resolve to (`number_style`, `number`): the stamped
+    /// page's own number, like `\pageref`'s late binding.
+    fn fancy_field_lines(
+        &mut self,
+        field: &[Inline],
+        size: f64,
+        number_style: crate::xref::NumberStyle,
+        number: u32,
+    ) -> Vec<Vec<TextItem>> {
+        let mut scratch =
+            LayoutCursor::with_labels(self.constraints, self.resolved_labels.clone(), false);
+        scratch.page_style = number_style;
+        scratch.page_value = number;
+        scratch.x = MARGIN_PT;
+        scratch.content_end = MARGIN_PT;
+        scratch.y = MARGIN_PT + size;
+        scratch.line_ascent = size;
+        scratch.line_descent = size * (LINE_SPACING - 1.0);
+        emit(&mut scratch, field, size, Font::TimesRoman);
+        scratch.resolve_hfill();
+        self.diagnostics.append(&mut scratch.diagnostics);
+        let mut items: Vec<TextItem> =
+            scratch.pages.into_iter().flat_map(|page| page.items).collect();
+        items.sort_by(|a, b| a.baseline_y_pt.total_cmp(&b.baseline_y_pt));
+        let mut lines: Vec<Vec<TextItem>> = Vec::new();
+        for item in items {
+            match lines.last_mut() {
+                Some(line) if (line[0].baseline_y_pt - item.baseline_y_pt).abs() < 0.005 => {
+                    line.push(item)
+                }
+                _ => lines.push(vec![item]),
+            }
+        }
+        // Rebase to the first line: the caller positions lines from the
+        // head/foot baseline down, so items must be line-relative.
+        let origin = lines.first().map_or(0.0, |line| line[0].baseline_y_pt);
+        for line in &mut lines {
+            let left = line.iter().map(|item| item.x_pt).fold(f64::INFINITY, f64::min);
+            for item in line.iter_mut() {
+                item.x_pt = round2(item.x_pt - left);
+                item.baseline_y_pt = round2(item.baseline_y_pt - origin);
+                if let Some(rule) = item.rule.as_mut() {
+                    rule.y_pt = round2(rule.y_pt - origin);
+                }
+            }
+        }
+        lines
     }
 
     pub fn into_pages_and_diagnostics(mut self) -> (Vec<Page>, Vec<Diagnostic>) {
@@ -2273,6 +2558,7 @@ impl LayoutCursor {
     fn into_result(mut self) -> (Vec<Page>, CrossReferences, Vec<Diagnostic>) {
         self.resolve_hfill();
         self.finish_footnotes();
+        self.stamp_fancy_chrome();
         (
             self.pages,
             (self.collected_labels, self.collected_toc),
@@ -2455,6 +2741,18 @@ pub fn layout_converged_with_options(
     constraints: LayoutConstraints,
     cleveref: &crate::xref::CleverefConfig,
 ) -> (Vec<Page>, Vec<Diagnostic>) {
+    layout_converged_with_fancy(blocks, constraints, cleveref, &FancyHdr::default())
+}
+
+/// `layout_converged_with_options` with fancyhdr's fields installed, so pages
+/// shipping under `\pagestyle{fancy}` get their running heads (see
+/// [`crate::parser::Parsed::fancy`]).
+pub fn layout_converged_with_fancy(
+    blocks: &[Block],
+    constraints: LayoutConstraints,
+    cleveref: &crate::xref::CleverefConfig,
+    fancy: &FancyHdr,
+) -> (Vec<Page>, Vec<Diagnostic>) {
     let collect_toc = blocks
         .iter()
         .any(|block| matches!(block, Block::TableOfContents { .. }));
@@ -2473,6 +2771,7 @@ pub fn layout_converged_with_options(
         );
         cursor.resolved_toc = state.1.clone();
         cursor.collect_toc = collect_toc;
+        cursor.set_fancy(fancy);
         for block in blocks {
             cursor.prepare_block(block);
             cursor.render_block(block);
@@ -2959,6 +3258,15 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 // marker itself sets nothing visible.
                 c.page_style = *style;
                 c.page_value = 1;
+            }
+            Inline::PageStyle { style, this_page, .. } => {
+                // A zero-width marker: `\pagestyle` switches the style from
+                // here on, `\thispagestyle` only for the page being built.
+                if *this_page {
+                    c.thispage = Some((c.pages.len() - 1, *style));
+                } else {
+                    c.chrome = *style;
+                }
             }
             Inline::Reference {
                 key,

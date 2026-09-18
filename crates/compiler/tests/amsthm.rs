@@ -347,7 +347,9 @@ fn amsthm_alone_is_silent() {
 /// amsmath constructs and gates the amssymb inventory, and the constructs that
 /// are still missing report themselves where they are used rather than as a
 /// claim about the package. A package that really is only recognised still
-/// warns from the same `\usepackage`, and only names itself.
+/// warns from the same `\usepackage`, and only names itself. (`fancyhdr`
+/// used to be that example; its core is implemented now -- see
+/// `tests/fancyhdr.rs` -- so loading it is silent like the trio.)
 #[test]
 fn the_ams_trio_is_silent_and_an_unimplemented_package_still_warns() {
     let msgs = messages(
@@ -356,14 +358,14 @@ fn the_ams_trio_is_silent_and_an_unimplemented_package_still_warns() {
     assert!(msgs.is_empty(), "{msgs:?}");
 
     let msgs = messages(
-        r"\documentclass{article}\usepackage{amsmath,amssymb,amsthm,fancyhdr}\begin{document}x\end{document}",
+        r"\documentclass{article}\usepackage{amsmath,amssymb,amsthm,microtype}\begin{document}x\end{document}",
     );
     let package_msgs: Vec<&String> = msgs
         .iter()
         .filter(|m| m.contains("recognised but not implemented"))
         .collect();
     assert_eq!(package_msgs.len(), 1, "{msgs:?}");
-    assert!(package_msgs[0].contains("fancyhdr"), "{package_msgs:?}");
+    assert!(package_msgs[0].contains("microtype"), "{package_msgs:?}");
     for implemented in ["amsmath", "amssymb", "amsthm"] {
         assert!(
             !package_msgs[0].contains(implemented),

@@ -88,6 +88,113 @@ pub enum FillLeader {
     Dots,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A page style named by `\pagestyle`/`\thispagestyle`: the kernel's four
+/// plus fancyhdr's `fancy`. `Unknown` keeps any other name accepted and
+/// silent, exactly as `\pagestyle` has always treated styles this layout
+/// does not render.
+pub enum PageStyleName {
+    Empty,
+    Plain,
+    Headings,
+    MyHeadings,
+    Fancy,
+    Unknown,
+}
+
+impl PageStyleName {
+    fn parse(name: &str) -> PageStyleName {
+        match name.trim() {
+            "empty" => PageStyleName::Empty,
+            "plain" => PageStyleName::Plain,
+            "headings" => PageStyleName::Headings,
+            "myheadings" => PageStyleName::MyHeadings,
+            "fancy" => PageStyleName::Fancy,
+            _ => PageStyleName::Unknown,
+        }
+    }
+}
+
+/// fancyhdr's six running-head fields: even and odd pages share one slot
+/// each because this layout is always one-sided, so `[LE,RO]`-style combined
+/// positions resolve to the same slot. Every slot starts empty --
+/// `\pagestyle{fancy}` alone draws no text, and `\fancyhf{}` returns all
+/// six to empty -- and `\fancyhead`/`\fancyfoot` fill them. The rule widths
+/// are fancyhdr's defaults (`\headrulewidth` 0.4pt, `\footrulewidth` 0pt);
+/// `\setlength` on either updates them.
+#[derive(Debug, Clone)]
+pub struct FancyHdr {
+    /// Header fields left, centre, right.
+    pub head: [Vec<Inline>; 3],
+    /// Footer fields left, centre, right.
+    pub foot: [Vec<Inline>; 3],
+    pub headrule_pt: f64,
+    pub footrule_pt: f64,
+}
+
+impl Default for FancyHdr {
+    fn default() -> Self {
+        FancyHdr {
+            head: [Vec::new(), Vec::new(), Vec::new()],
+            foot: [Vec::new(), Vec::new(), Vec::new()],
+            headrule_pt: 0.4,
+            footrule_pt: 0.0,
+        }
+    }
+}
+
+/// Split a `\fancyhead`/`\fancyfoot`/`\fancyhf` `[pos]` list (`L`, `C`,
+/// `R`, combinable with `E`/`O` and commas, as in `[LE,RO]`) into slot
+/// indices 0/1/2. Even/odd collapse: this layout is one-sided, so `E`/`O`
+/// only select a parity that resolves to the same slot. A missing letter
+/// group means "all" (fancyhdr's default when `[...]` is absent, and what an
+/// explicit `[]` means here); unknown letters come back for the caller to
+/// diagnose.
+fn fancy_position_slots(raw: Option<&str>) -> (Vec<usize>, Vec<char>) {
+    let Some(raw) = raw else {
+        return (vec![0, 1, 2], Vec::new());
+    };
+    let mut slots = Vec::new();
+    let mut unknown = Vec::new();
+    let mut placed = false;
+    for c in raw.chars() {
+        match c {
+            'L' => {
+                if !slots.contains(&0) {
+                    slots.push(0);
+                }
+                placed = true;
+            }
+            'C' => {
+                if !slots.contains(&1) {
+                    slots.push(1);
+                }
+                placed = true;
+            }
+            'R' => {
+                if !slots.contains(&2) {
+                    slots.push(2);
+                }
+                placed = true;
+            }
+            // Parity: the same slot one-sided, so nothing to select.
+            'E' | 'O' => {}
+            ',' | ' ' | '\t' | '\n' => {}
+            other => {
+                if !unknown.contains(&other) {
+                    unknown.push(other);
+                }
+            }
+        }
+    }
+    if !placed && unknown.is_empty() {
+        // `[E]`, `[O]` or `[EO]`: parity alone selects every slot.
+        slots = vec![0, 1, 2];
+    }
+    slots.sort();
+    (slots, unknown)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inline {
     Text {
@@ -203,6 +310,16 @@ pub enum Inline {
     /// `span` is the command token.
     PageNumbering {
         style: crate::xref::NumberStyle,
+        span: Span,
+    },
+    /// `\pagestyle{style}` / `\thispagestyle{style}`: a zero-width marker
+    /// recording a page-style switch at this document position. Layout
+    /// applies markers in order as it sets paragraphs, so each shipped page
+    /// knows the style in force for it (`\thispagestyle` only its own
+    /// page). `span` is the command token.
+    PageStyle {
+        style: PageStyleName,
+        this_page: bool,
         span: Span,
     },
     /// `\hfill`/`\hfil`: infinite horizontal stretch. Multiple fills on one
@@ -1374,6 +1491,10 @@ pub struct Parsed {
     pub parameters: Vec<ParameterAssignment>,
     /// `\hyphenation{...}` exceptions, in document order.
     pub hyphenation: Vec<HyphenationException>,
+    /// fancyhdr's running-head fields and rule widths (`\fancyhead` /
+    /// `\fancyfoot` / `\fancyhf` / `\setlength{\headrulewidth}` ...),
+    /// read by layout when a page ships under `\pagestyle{fancy}`.
+    pub fancy: FancyHdr,
 }
 
 impl Parsed {
@@ -1565,6 +1686,16 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "flushcolumns",
     "pagestyle",
     "thispagestyle",
+    "fancyhead",
+    "fancyfoot",
+    "fancyhf",
+    "lhead",
+    "chead",
+    "rhead",
+    "lfoot",
+    "cfoot",
+    "rfoot",
+    "fancypagestyle",
     "pagenumbering",
     "listfiles",
     "centering",
@@ -2367,6 +2498,7 @@ pub fn parse_project_with(
         page_color: None,
         fboxsep_pt: 3.0,
         fboxrule_pt: 0.4,
+        fancy: FancyHdr::default(),
         length_scopes: Vec::new(),
         pending_global: false,
         latin_modern: false,
@@ -2421,6 +2553,7 @@ pub fn parse_project_with(
         expansions,
         parameters: p.parameters,
         hyphenation: p.hyphenation,
+        fancy: p.fancy,
     }
 }
 
@@ -2500,6 +2633,8 @@ struct P<'a> {
     /// `\fboxsep`/`\fboxrule` in TeX points (latex.ltx: 3pt, 0.4pt).
     fboxsep_pt: f64,
     fboxrule_pt: f64,
+    /// fancyhdr's six running-head fields and rule widths.
+    fancy: FancyHdr,
     /// Length values saved at `{`/`}` and environment boundaries.
     length_scopes: Vec<LengthScope>,
     /// A pass-through `\global` waiting for a parser-owned length assignment.
@@ -3420,8 +3555,21 @@ impl P<'_> {
             "counterwithin" | "counterwithout" => self.counter_numbering(name, span),
             "sisetup" | "DeclareSIUnit" => self.siunitx_setup_command(name, span),
             "pagenumbering" => self.pagenumbering_command(span, para),
-            "graphicspath" | "allowdisplaybreaks" | "pagestyle" | "thispagestyle" => {
+            "graphicspath" | "allowdisplaybreaks" => {
                 self.argument_only_command(name, span)
+            }
+            // `\pagestyle` / `\thispagestyle` record a zero-width marker
+            // (see `pagestyle_command`), in the preamble exactly as in the
+            // body: only `fancy` draws anything yet.
+            "pagestyle" | "thispagestyle" => self.pagestyle_command(name, span, para),
+            // fancyhdr's core field commands (see `fancy_command`), in the
+            // preamble -- where header setup belongs -- and in the body.
+            "fancyhead" | "fancyfoot" | "fancyhf" => self.fancy_command(name, span),
+            // fancyhdr's later slice (see `fancy_later_command`): recognised
+            // as the package's own, so neither the generic preamble advice
+            // nor the unknown-command typo path fires for them.
+            "lhead" | "chead" | "rhead" | "lfoot" | "cfoot" | "rfoot" | "fancypagestyle" => {
+                self.fancy_later_command(name, span)
             }
             // Preamble or body: latex.ltx's `\twocolumn`/`\onecolumn`, which
             // both open with `\clearpage` and then set `\if@twocolumn`.
@@ -3792,8 +3940,9 @@ impl P<'_> {
         }
     }
 
-    /// Commands whose arguments are read and dropped: `\graphicspath`,
-    /// `\allowdisplaybreaks`, `\pagestyle`, `\thispagestyle` and `\pagenumbering`.
+    /// Commands whose arguments are read and dropped: `\graphicspath`
+    /// and `\allowdisplaybreaks` (`\pagestyle` / `\thispagestyle` record a
+    /// marker now; see `pagestyle_command`).
     #[inline(never)]
     fn argument_only_command(&mut self, name: &str, span: Span) {
         match name {
@@ -3808,23 +3957,105 @@ impl P<'_> {
             "allowdisplaybreaks" => {
                 let _ = self.optional_bracket_argument();
             }
-            // Preamble or body (GH#321: the preamble is where documents usually
-            // declare them).
-            "pagestyle" => {
-                // No header/footer rendering exists yet, so every style is
-                // accepted with the same (honest) effect: none. `empty` and
-                // `plain` both describe "no footer content beyond a page
-                // number", which is already what happens.
-                let _ = self.required_group(name, span);
-            }
-            // `\thispagestyle` differs from `\pagestyle` only in scope
-            // (current page vs. every later one); since no style ever
-            // renders anything either way, the same honest no-op covers it.
-            "thispagestyle" => {
-                let _ = self.required_group(name, span);
-            }
             _ => unreachable!("\\{name} is not in this command family"),
         }
+    }
+
+    /// `\pagestyle{style}` / `\thispagestyle{style}` (latex.ltx
+    /// `\@pagestyle`), preamble or body (GH#321: the preamble is where
+    /// documents usually declare them). A zero-width marker records the
+    /// switch at this document position, so layout ships each page under
+    /// the style in force for it (`\thispagestyle` only its own page).
+    /// Only `fancy` draws anything here (see [`FancyHdr`]); every other
+    /// style keeps the long-standing honest no-op, so "no visible effect"
+    /// still holds for them.
+    #[inline(never)]
+    fn pagestyle_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let (tokens, _) = self.required_group(name, span);
+        let style = PageStyleName::parse(&token_text(&tokens));
+        self.document_global_state = true;
+        para.push(Inline::PageStyle {
+            style,
+            this_page: name == "thispagestyle",
+            span,
+        });
+    }
+
+    /// fancyhdr's `\fancyhead[pos]{...}`, `\fancyfoot[pos]{...}` and
+    /// `\fancyhf[pos]{...}` (fancyhdr.sty): fill -- or, with empty content,
+    /// clear -- the selected running-head slots. Silent on success: the
+    /// fields are read back when a `fancy` page ships. Without
+    /// `\usepackage{fancyhdr}` the commands name what is missing instead
+    /// of falling through to the generic preamble advice, which would tell
+    /// the author to move header setup out of the preamble it belongs in.
+    #[inline(never)]
+    fn fancy_command(&mut self, name: &str, span: Span) {
+        let bracket = self.optional_bracket_argument();
+        let (tokens, argument_span) = self.required_group(name, span);
+        let mut whole = span.merge(argument_span);
+        if let Some((_, bracket_span)) = bracket.as_ref() {
+            whole = span.merge(*bracket_span).merge(argument_span);
+        }
+        if !self.packages.iter().any(|package| package == "fancyhdr") {
+            self.diags.push(Diagnostic::command_error(
+                name,
+                format!("\\{name} needs \\usepackage{{fancyhdr}}"),
+                Some(whole),
+                Some("ignored the command".into()),
+            ));
+            return;
+        }
+        let (slots, unknown) =
+            fancy_position_slots(bracket.as_ref().map(|(raw, _)| raw.as_str()));
+        if !unknown.is_empty() {
+            let letters: String = unknown.iter().collect();
+            self.diags.push(Diagnostic::warning(
+                format!("\\{name} ignores position '{letters}': not an L, C, R, E or O slot"),
+                Some(whole),
+                Some("set the recognised slots and ignored the rest".into()),
+            ));
+        }
+        self.document_global_state = true;
+        let style = self.style;
+        // Field content parses as body text even in the preamble, where
+        // header setup belongs: without this the inner words are dropped
+        // as preamble material (`argument_inlines` only keeps words while
+        // `in_body`).
+        let was_in_body = std::mem::replace(&mut self.in_body, true);
+        let content = self.argument_inlines(tokens, span, style);
+        self.in_body = was_in_body;
+        let head = name != "fancyfoot";
+        let foot = name != "fancyhead";
+        for slot in slots {
+            if head {
+                self.fancy.head[slot] = content.clone();
+            }
+            if foot {
+                self.fancy.foot[slot] = content.clone();
+            }
+        }
+    }
+
+    /// fancyhdr commands a later slice owns (`\lhead` / `\chead` /
+    /// `\rhead`, `\lfoot` / `\cfoot` / `\rfoot`, `\fancypagestyle`):
+    /// recognised as the package's own, so neither the generic preamble
+    /// advice (header setup belongs in the preamble) nor the
+    /// unknown-command typo path fires. Arguments are consumed so field
+    /// text cannot leak onto the page as prose.
+    #[inline(never)]
+    fn fancy_later_command(&mut self, name: &str, span: Span) {
+        let (_, first_span) = self.required_group(name, span);
+        let mut whole = span.merge(first_span);
+        if name == "fancypagestyle" {
+            let (_, second_span) = self.required_group(name, span);
+            whole = whole.merge(second_span);
+        }
+        self.diags.push(Diagnostic::command_error(
+            name,
+            format!("\\{name} is recognised but not implemented"),
+            Some(whole),
+            Some("ignored the command".into()),
+        ));
     }
 
     /// `\pagenumbering{arabic|roman|...}` (see [`P::command`]).
@@ -4705,8 +4936,13 @@ impl P<'_> {
             } else {
                 priority
             };
+            // Zero-width markers (`\pagestyle` / `\thispagestyle`) are
+            // whatsits like `\label`: they collect no text, so a paragraph
+            // holding only them is still vertical mode.
             let horizontal = self.paragraph_started
-                || para.iter().any(|inline| !matches!(inline, Inline::Label { .. }));
+                || para
+                    .iter()
+                    .any(|inline| !matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. }));
             if horizontal {
                 para.push(Inline::PagePenalty { value, span });
             } else {
@@ -5226,6 +5462,14 @@ impl P<'_> {
             }
             "fboxrule" => {
                 self.fboxrule_pt = if add { self.fboxrule_pt + pt } else { pt };
+            }
+            // fancyhdr's rule widths, read back when a `fancy` page ships
+            // (see `FancyHdr`); preamble-global, like the package's own.
+            "headrulewidth" => {
+                self.fancy.headrule_pt = if add { self.fancy.headrule_pt + pt } else { pt };
+            }
+            "footrulewidth" => {
+                self.fancy.footrule_pt = if add { self.fancy.footrule_pt + pt } else { pt };
             }
             // longtable's lengths are read from the source by the render
             // pipeline's longtable layout.
@@ -11628,6 +11872,13 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // `\larger`/`\smaller` are implemented above, so loading the
         // package is silent (same rule as `ulem`); relsize takes no options.
         "relsize" => options.is_empty(),
+        // fancyhdr's core (`\pagestyle{fancy}`, `\fancyhf`,
+        // `\fancyhead`/`\fancyfoot`, the rule widths) is implemented
+        // above, so loading the package is silent; what is not modelled
+        // (`\lhead` and friends, `\fancypagestyle`) reports itself where
+        // it is used instead (see `fancy_later_command`). fancyhdr.sty
+        // takes no package options of its own.
+        "fancyhdr" => options.is_empty(),
         _ => false,
     }
 }
