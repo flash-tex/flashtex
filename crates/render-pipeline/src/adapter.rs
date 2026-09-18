@@ -3626,6 +3626,26 @@ fn split_at_page_breaks<'p>(
                     Some(ItemLabel::Explicit { content, .. }) if label.is_some() && !content.is_empty() => Some(content.as_slice()),
                     _ => None,
                 };
+                // The compiler's `box_inlines` stashes `pending_item_label`
+                // without `pending_item`, so a box command (`\uline`,
+                // `\sout`, `\underline`, `\mbox`, ...) in the item's first
+                // paragraph consumes the `ItemLabel` while the marker text
+                // survives: `label` is `Some` with `item` `None`. Without
+                // the classification the bullet leaves the `tcrm` symbol
+                // path for the text font's wider bullet and the marker
+                // sits 2.77bp left of pdflatex (#924). Recover a default
+                // itemize symbol from its text; anything else keeps the
+                // unclassified rendering.
+                let (label_symbol, label_bold) = match item {
+                    Some(ItemLabel::Symbol { bold, .. }) => (true, *bold),
+                    _ => match (env, label.as_ref().map(|(text, _)| text.as_str())) {
+                        ("itemize", Some("•")) => (true, false),
+                        ("itemize", Some("–")) => (true, true),
+                        ("itemize", Some("∗")) => (true, false),
+                        ("itemize", Some("⋅")) | ("itemize", Some("·")) => (true, false),
+                        _ => (false, false),
+                    },
+                };
                 list = Some(ListGeom {
                     level: *level,
                     margins,
@@ -3633,8 +3653,8 @@ fn split_at_page_breaks<'p>(
                     label_items: None,
                     description: env == "description",
                     nextline: list_style_nextline(&index.setlist, env, begin_keys),
-                    label_symbol: matches!(item, Some(ItemLabel::Symbol { .. })),
-                    label_bold: matches!(item, Some(ItemLabel::Symbol { bold: true, .. })),
+                    label_symbol,
+                    label_bold,
                     llap: matches!(env, "itemize" | "enumerate"),
                     parsep: seps.parsep_skip,
                     // `\NAT@bibsetup`: `\itemindent-\leftmargin`, so the
