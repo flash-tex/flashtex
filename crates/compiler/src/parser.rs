@@ -1638,6 +1638,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "LaTeX",
     "LaTeXe",
     "rule",
+    "strut",
     "thinspace",
     "negthinspace",
     "medspace",
@@ -3638,6 +3639,7 @@ impl P<'_> {
             // the macro call is `}`, another command, or `, . ! ? ; : ' /`.
             "xspace" => self.xspace(span),
             "rule" => self.text_rule(span, para),
+            "strut" => self.strut(span, para),
             "frac" | "sqrt" => self.text_mode_math_command(name, span),
             other => self.unsupported(other, span),
         }
@@ -10375,6 +10377,38 @@ impl P<'_> {
         }
     }
 
+    /// `\strut` (latex.ltx `\copy\strutbox`/`\unhcopy\strutbox`): a
+    /// zero-width box `0.7\baselineskip` tall and `0.3\baselineskip` deep.
+    /// Like every box it starts a paragraph in vertical mode, and
+    /// mid-paragraph it forces the line's height and depth. Modelled as an
+    /// unpainted `\rule`: zero width means `RuleBox::painted` is false, so
+    /// nothing is drawn, while the raise trick (`-\baselineskip`'s 0.3 over
+    /// a full `\baselineskip` of height) resolves to exactly the strut
+    /// metrics. `\baselineskip` here is the engine's `1.2em`
+    /// (`layout::LINE_SPACING`), within 0.3pt of the class files'
+    /// 12/13.6/14.5pt at 10/11/12pt (measured against pdflatex's
+    /// `\the\ht\strutbox`: 8.4/3.6pt at 10pt, 9.8/4.2pt at `\large`,
+    /// 7.7/3.3pt at `\small` — the box scales with the size in force).
+    fn strut(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        let em = |negative: bool, integer: i32, frac: Vec<u8>| TextDimen {
+            negative,
+            integer,
+            frac,
+            unit: crate::text_builtins::DimenUnit::Em,
+        };
+        para.push(Inline::Rule {
+            rule: TextRule {
+                raise: em(true, 0, vec![3, 6]),
+                width: TextDimen::zero(),
+                height: em(false, 1, vec![2]),
+            },
+            span,
+            style: self.style,
+            space_before,
+        });
+    }
+
     /// `\footnote`, `\footnotemark` and `\footnotetext`, following latex.ltx:
     /// without `[<n>]`, `\footnote`/`\footnotemark` step the counter and
     /// `\footnotetext` reuses its current value; with `[<n>]` none of them
@@ -14632,6 +14666,82 @@ mod tests {
             .message
             .contains(r"\hspace requires a recognised dimension")));
         assert!(!malformed_items.iter().any(|i| i.text == "oops"));
+    }
+
+    /// `\strut` (issue #843): latex.ltx's strut box — zero width,
+    /// `0.7\baselineskip` tall, `0.3\baselineskip` deep — lowered as one
+    /// unpainted rule inline, with no diagnostic. Like every box it starts
+    /// a paragraph in vertical mode, so a body holding only `\strut`
+    /// contributes a paragraph block instead of erroring as unsupported.
+    #[test]
+    fn strut_is_an_unpainted_zero_width_rule_with_strut_metrics() {
+        let parsed = parse("\\begin{document}\nA\\strut B\n\\end{document}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let rule = paragraph_inlines(&parsed)
+            .iter()
+            .find_map(|i| match i {
+                Inline::Rule { rule, .. } => Some(rule.clone()),
+                _ => None,
+            })
+            .expect("expected a rule inline for \\strut");
+        // 10pt article: the quad is 10pt, so 1.2em is the 12pt
+        // `\baselineskip` the strut is measured against.
+        let cx = crate::text_builtins::DimenContext {
+            quad: 10 * 65536,
+            ..Default::default()
+        };
+        let resolved = rule.resolve(&cx);
+        assert_eq!(resolved.width, 0);
+        assert!(!resolved.painted(), "a strut paints nothing");
+        let pt = crate::text_builtins::sp_to_pt;
+        assert!(
+            (pt(resolved.height) - 8.4).abs() < 0.01,
+            "height={}pt, want 0.7 x 12pt",
+            pt(resolved.height)
+        );
+        assert!(
+            (pt(resolved.depth) - 3.6).abs() < 0.01,
+            "depth={}pt, want 0.3 x 12pt",
+            pt(resolved.depth)
+        );
+    }
+
+    /// Issue #843: bodies whose only content is a horizontal-mode item
+    /// reach paragraph assembly as one paragraph block — including
+    /// `\strut`, which used to be an `unsupported` error contributing
+    /// nothing. Genuinely empty bodies (and `\vspace` alone, which is
+    /// vertical material) still contribute no paragraph.
+    #[test]
+    fn horizontal_only_bodies_contribute_one_paragraph_block() {
+        for body in ["\\hspace{1cm}", "\\hfill", "\\strut"] {
+            let parsed = parse(&format!("\\begin{{document}}\n{body}\n\\end{{document}}"));
+            assert!(
+                parsed.diagnostics.is_empty(),
+                "{body}: {:?}",
+                parsed.diagnostics
+            );
+            let paragraphs: Vec<_> = parsed
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    Block::Paragraph(inlines) => Some(inlines),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(paragraphs.len(), 1, "{body}: {:?}", parsed.blocks);
+            assert!(!paragraphs[0].is_empty(), "{body}");
+        }
+        for body in ["", "\\vspace{1cm}"] {
+            let parsed = parse(&format!("\\begin{{document}}\n{body}\n\\end{{document}}"));
+            assert!(
+                !parsed.blocks.iter().any(|block| matches!(
+                    block,
+                    Block::Paragraph(_) | Block::Styled { .. } | Block::ListItem { .. }
+                )),
+                "{body:?}: {:?}",
+                parsed.blocks
+            );
+        }
     }
 
     /// `\xspace` (xspace.sty, issue #496): at the end of a macro body it
