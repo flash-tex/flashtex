@@ -75,10 +75,17 @@ impl P<'_> {
                     "exampleblock" => BeamerBlockKind::Example,
                     _ => BeamerBlockKind::Plain,
                 };
-                // `\begin{block}<overlay>{title}`: the overlay spec belongs
-                // to Tier 2 (the block shows on every slide here).
-                self.skip_beamer_overlay_spec();
+                // `\begin{block}<spec>{title}`: the block is covered on the
+                // slides the specification excludes, like `uncoverenv`; the
+                // marker rides with the title into the block's first
+                // paragraph and its end closes at `\end{block}`.
+                let overlay = self.take_beamer_overlay_spec();
                 let (tokens, title_span) = self.required_group(environment, span);
+                let has_overlay = overlay.is_some();
+                if let Some((spec, spec_span)) = overlay {
+                    para.push(Inline::OverlayBegin { spec, kind: crate::overlay::OverlayKind::Cover, span: spec_span });
+                }
+                self.beamer_block_overlays.push(has_overlay);
                 self.flush_paragraph(blocks, para);
                 let title = self.inlines_from_tokens(tokens, TextStyle::default(), false);
                 blocks.push(Block::BeamerBlockBegin {
@@ -142,6 +149,9 @@ impl P<'_> {
             "block" | "alertblock" | "exampleblock" => {
                 blocks.push(Block::BeamerBlockEnd { span });
                 self.finish_block_dependencies();
+                if self.beamer_block_overlays.pop().unwrap_or(false) {
+                    para.push(Inline::OverlayEnd { span });
+                }
             }
             "columns" => {
                 blocks.push(Block::BeamerColumnsEnd { span });

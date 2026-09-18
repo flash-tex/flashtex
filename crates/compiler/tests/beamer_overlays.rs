@@ -265,9 +265,12 @@ fn overlay_environments_and_block_specs() {
     ));
     assert_eq!(slides, 3);
     assert_eq!(s, vec!["<BEGIN Cover 2-> A. <END> <BEGIN Only 3> B. <END> <BEGIN Alert 2> C. <END>"]);
+    // `\begin{block}<2->{Title}` covers the block (title block and body)
+    // on slide 1 like `uncoverenv`: the marker rides into the body's
+    // paragraph; the title itself lives in the `BeamerBlockBegin` block.
     let (slides, s) = stream(&frame("\\begin{block}<2->{Title}\nBody.\n\\end{block}"));
     assert_eq!(slides, 2);
-    assert!(s.iter().all(|line| !line.contains("<2->") && !line.contains('>')), "{s:?}");
+    assert_eq!(s, vec!["<BEGIN Cover 2-> Body."]);
 }
 
 /// A frame without any specification sets one slide; the counters restart

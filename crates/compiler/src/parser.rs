@@ -2811,6 +2811,7 @@ pub fn parse_project_with(
         institute: None,
         beamer_frame: None,
         beamer_columns_depth: 0,
+        beamer_block_overlays: Vec::new(),
         beamer_pauses: 1,
         beamer_slides: 1,
         overlay_groups: Vec::new(),
@@ -3129,6 +3130,9 @@ struct P<'a> {
     /// How many beamer `columns` environments are open (`\column` outside
     /// one is diagnosed).
     beamer_columns_depth: usize,
+    /// For each open beamer block, whether `\begin{block}<spec>` opened an
+    /// overlay group that `\end{block}` must close.
+    beamer_block_overlays: Vec<bool>,
     /// beamer's `beamerpauses` counter (1 at the start of a frame; `\pause`
     /// and a `+` in an overlay specification step it) and the largest slide
     /// number any specification of the open frame named (the frame's slide
