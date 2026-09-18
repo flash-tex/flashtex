@@ -1249,14 +1249,20 @@ impl LayoutCursor {
     }
 
     /// Draws an `\item` label (bullet/number) right-aligned so it ends
-    /// `\labelsep` before the item's hanging-indent margin, on the item's
+    /// `label_sep` before the item's hanging-indent margin, on the item's
     /// first baseline — mirroring `\makelabel`'s right-justified label box.
     /// Deliberately unclamped: a label wider than the available `labelwidth`
     /// is not wrapped or pushed into the item text, it just extends further
     /// left, exactly like real LaTeX's overfull label box.
-    fn place_list_label(&mut self, text: &str, span: Span, margin_pt: f64, size: f64) {
+    fn place_list_label(
+        &mut self,
+        text: &str,
+        span: Span,
+        margin_pt: f64,
+        size: f64,
+        label_sep: f64,
+    ) {
         let width = glyph_width(text, size, Font::TimesRoman);
-        let label_sep = LIST_LABELSEP_EM * size;
         let x_pt = round2(MARGIN_PT + margin_pt - label_sep - width);
         let item = TextItem {
             text: text.to_string(),
@@ -1862,6 +1868,7 @@ impl LayoutCursor {
                 extra_gap_after_pt,
                 leftmargin,
                 widest_label,
+                labelsep_pt,
                 ..
             } => {
                 self.list_margin_pt = match widest_label {
@@ -1879,7 +1886,8 @@ impl LayoutCursor {
                 };
                 self.justify = true;
                 if let Some((text, span)) = label.as_ref().filter(|(text, _)| !text.is_empty()) {
-                    self.place_list_label(text, *span, self.list_margin_pt, body_size);
+                    let label_sep = labelsep_pt.unwrap_or(LIST_LABELSEP_EM * body_size);
+                    self.place_list_label(text, *span, self.list_margin_pt, body_size, label_sep);
                 }
                 // Same reasoning as `Block::Styled`: `left_edge()` now
                 // reflects the new hanging indent, so `content_end` must
