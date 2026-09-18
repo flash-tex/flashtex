@@ -611,6 +611,8 @@ pub struct ListGeom {
     /// The `\item` marker text and the command's span; `None` for a later
     /// paragraph of the same item (a blank line inside the item's text).
     pub label: Option<(String, Span)>,
+    /// An explicit `\item[<label>]`'s content as items (its math, styles and spaces); `None` for a counter, symbol or template label.
+    pub label_items: Option<Vec<Item>>,
     /// The innermost list's `\parsep` (`\list` sets `\parskip\parsep`):
     /// the glue every paragraph of the item adds. Article's `\@list<i>`
     /// value for the nesting level, or an enumitem `parsep=` key.
@@ -2018,9 +2020,14 @@ pub fn adapt_cached(
                 theorem_item,
                 in_theorem,
                 list,
+                label_inlines,
                 run_in,
                 par_leading,
             } => {
+                let list = list.map(|mut geom| {
+                    geom.label_items = label_inlines.map(|content| items_for(content, false));
+                    geom
+                });
                 for inline in inlines {
                     unsupported_inlines(inline, &mut limitations);
                     if let Inline::Tabular(t) = inline {
@@ -2155,7 +2162,15 @@ pub fn adapt_cached(
                     .iter()
                     .all(|p| matches!(p, ParaPart::Lines(items) if items.iter().all(|i| matches!(i, Item::Label { .. }))));
                 if parts.is_empty() {
-                    continue;
+                    // An empty-body list item (`\item` with no text) still
+                    // carries its bullet/label -- pdflatex typesets the
+                    // marker on a line of its own.  Give it an empty Lines
+                    // part so the typesetter can prepend the label box.
+                    if list.is_some() {
+                        parts.push(ParaPart::Lines(Vec::new()));
+                    } else {
+                        continue;
+                    }
                 }
                 // `\longtable` begins with `\par` and `\endlongtable`
                 // ends with one, so the compiler always gives it a
@@ -2234,7 +2249,7 @@ pub fn adapt_cached(
                         continue;
                     }
                 }
-                if only_labels {
+                if only_labels && list.is_none() {
                     continue;
                 }
                 prev_para_end = inlines.iter().map(inline_span).last();
@@ -3452,6 +3467,9 @@ enum UnitKind<'p> {
         in_theorem: bool,
         /// A compiler `ListItem` paragraph: its `\list` geometry.
         list: Option<ListGeom>,
+        /// The explicit `\item[<label>]` content, converted into
+        /// [`ListGeom::label_items`] once the styles are at hand.
+        label_inlines: Option<&'p [Inline]>,
         /// The paragraph opens with a run-in heading (`\paragraph`,
         /// `\subparagraph`); see [`RunIn`] and [`run_in_heading_at`].
         run_in: Option<RunIn>,
@@ -3576,9 +3594,18 @@ fn split_at_page_breaks<'p>(
             }
             _ => {}
         }
+        // An empty-body `\item` has no inlines: its `\item` command's own
+        // span is the block's material, so the gap bookkeeping below (and
+        // `prev_end` for the block after it) is measured from there rather
+        // than from before the list, which would make the *next* item read
+        // the list's `\begin` and open it a second time.
+        let item_label_span = match block {
+            CBlock::ListItem { label: Some((_, span)), .. } => Some(*span),
+            _ => None,
+        };
         let first = match block {
             CBlock::Heading { number_span, .. } => Some(*number_span),
-            _ => inlines_of(block).iter().map(inline_span).next(),
+            _ => inlines_of(block).iter().map(inline_span).next().or(item_label_span),
         };
         let mut eject = std::mem::take(&mut pending_eject) || matches!((prev_end, first), (Some(p), Some(f)) if gap_has_page_break(texts, p, f));
         let mut vspace_before = std::mem::take(&mut pending_vspace);
@@ -3681,6 +3708,7 @@ fn split_at_page_breaks<'p>(
             }
         }
         let mut list = None;
+        let mut label_inlines: Option<&'p [Inline]> = None;
         if let CBlock::ListItem { level, label, item, .. } = block {
             let anchor = label.as_ref().map(|(_, span)| *span).or(first);
             if let Some(at) = anchor {
@@ -3791,10 +3819,17 @@ fn split_at_page_breaks<'p>(
                     && index.natbib_author_year
                     && label.as_ref().is_none_or(|(text, _)| text.is_empty());
                 let (margins, labelsep_pt, itemindent_pt) = list_margins(index, texts.get(at.document.0).copied().unwrap_or(""), at.start, size, natbib_bib, style.family);
+                // The explicit label's inlines; `adapt_cached` converts
+                // them to items (the styles and label table live there).
+                label_inlines = match item {
+                    Some(ItemLabel::Explicit { content, .. }) if label.is_some() && !content.is_empty() => Some(content.as_slice()),
+                    _ => None,
+                };
                 list = Some(ListGeom {
                     level: *level,
                     margins,
                     label: label.clone(),
+                    label_items: None,
                     description: env == "description",
                     nextline: list_style_nextline(&index.setlist, env, begin_keys),
                     label_symbol: matches!(item, Some(ItemLabel::Symbol { .. })),
@@ -3866,7 +3901,17 @@ fn split_at_page_breaks<'p>(
         // `Some(is_proof)` when this block is the `\item` that opens a
         // theorem-like environment; `proof` is told apart because its closing
         // `\@topsepadd` is not `\topsep` (see [`theorem_skips`]).
-        let theorem_open: Option<bool> = (list.is_none() && styled.is_none())
+        //
+        // A theorem-like environment nested in a list item is its own
+        // `\trivlist`, so its first paragraph takes this path too even
+        // though the compiler reports it as a `ListItem`: a nested proof's
+        // opening `\@topsep` and its head's compiler-scoped italic both
+        // ride on `theorem_item`/`in_theorem`, and without them the head
+        // sets upright and the boundary loses the skip (GH-897). Only the
+        // label-less continuation paragraphs qualify: a labelled `\item`
+        // paragraph opens the enclosing list, whose own `\@topsep`/
+        // `\itemsep` path above already accounts for the boundary.
+        let theorem_open: Option<bool> = (styled.is_none() && list.as_ref().is_none_or(|l| l.label.is_none()))
             .then(|| {
                 let f = first?;
                 let gap_start = match prev_end {
@@ -4002,6 +4047,7 @@ fn split_at_page_breaks<'p>(
                                     theorem_item: std::mem::take(&mut theorem_item),
                                     in_theorem,
                                     list: list.clone(),
+                                    label_inlines,
                                     run_in: std::mem::take(&mut run_in),
                                     par_leading,
                                 },
@@ -4027,6 +4073,7 @@ fn split_at_page_breaks<'p>(
                             theorem_item: std::mem::take(&mut theorem_item),
                             in_theorem,
                             list: list.clone(),
+                            label_inlines,
                             run_in: std::mem::take(&mut run_in),
                             par_leading,
                         },
@@ -4053,7 +4100,7 @@ fn split_at_page_breaks<'p>(
             #[cfg(feature = "compiler-node-surface")]
             CBlock::Tabbing { .. } => unreachable!("lowered by lower_blocks"),
         }
-        if let Some(last) = inlines_of(block).iter().map(inline_span).last() {
+        if let Some(last) = inlines_of(block).iter().map(inline_span).last().or(item_label_span) {
             prev_end = Some(last);
         }
     }
@@ -7479,10 +7526,16 @@ fn is_invocation_span(source: &str, span: Span) -> bool {
 /// `\providecommand`/`\def` for `\<name>` before byte `before` (or the first
 /// one anywhere), as the bytes inside its braces.
 fn macro_body<'a>(source: &'a str, name: &str, before: usize) -> Option<&'a str> {
+    macro_def(source, name, before).map(|d| &source[d.body])
+}
+
+/// The definition [`macro_body`] reads: the last one for `\<name>` before
+/// byte `before`, or the first one anywhere.
+fn macro_def(source: &str, name: &str, before: usize) -> Option<MacroDef> {
     // Within an adapt call the definitions of each document are indexed
     // once (FT-065: rescanning the whole source per invocation token made a
     // warm 500 KB request take seconds); elsewhere the source is scanned.
-    let pick = |defs: &[MacroDef]| defs.iter().rev().find(|d| d.at < before).or(defs.first()).map(|d| &source[d.body.clone()]);
+    let pick = |defs: &[MacroDef]| defs.iter().rev().find(|d| d.at < before).or(defs.first()).cloned();
     let indexed = MACRO_DEFS.with(|scope| {
         let mut scope = scope.borrow_mut();
         let entry = scope.iter_mut().find(|e| e.ptr == source.as_ptr() as usize && e.len == source.len())?;
@@ -7493,10 +7546,10 @@ fn macro_body<'a>(source: &'a str, name: &str, before: usize) -> Option<&'a str>
             }
             by_name
         });
-        Some(index.get(name).map(|defs| (defs.first().map(|d| d.body.clone()), defs.iter().rev().find(|d| d.at < before).map(|d| d.body.clone()))))
+        Some(index.get(name).and_then(|defs| pick(defs)))
     });
     match indexed {
-        Some(found) => found.and_then(|(first, last_before)| last_before.or(first)).map(|r| &source[r]),
+        Some(found) => found,
         None => {
             let defs: Vec<MacroDef> = macro_definitions(source).into_iter().filter(|d| &source[d.name.clone()] == name).collect();
             pick(&defs)
@@ -7504,13 +7557,62 @@ fn macro_body<'a>(source: &'a str, name: &str, before: usize) -> Option<&'a str>
     }
 }
 
+/// Where TeX resumed reading the source after the user-macro invocation
+/// whose `\name` is `inv`: the byte after its last argument (`[opt]` when
+/// the definition gives a default, then the `{...}` groups, a control
+/// sequence or a single character per undelimited argument, blanks between
+/// them skipped), or after the name itself for a macro without arguments.
+/// `None` when `inv` is not a user-macro invocation.
+///
+/// The compiler gives every token of a replacement text the `\name` span
+/// alone, so the gap after such a token must not start at `inv.end`: that
+/// would read the invocation's own argument bytes (`{a b}`) as if TeX had
+/// set them between the replacement and the next token.
+fn invocation_end(source: &str, inv: Span) -> Option<usize> {
+    let name = control_word_at(source, inv.start, inv.end)?;
+    let def = macro_def(source, name, inv.start)?;
+    let bytes = source.as_bytes();
+    let mut end = inv.end;
+    let mut optional = def.optional;
+    for _ in 0..def.args {
+        let mut j = end;
+        while j < bytes.len() && (bytes[j] as char).is_whitespace() {
+            j += 1;
+        }
+        let absent_optional = optional && bytes.get(j) != Some(&b'[');
+        optional = false;
+        if absent_optional {
+            continue;
+        }
+        let next = match bytes.get(j) {
+            Some(b'[') => source[j..].find(']').map(|close| j + close + 1),
+            Some(b'{') => matching_brace(bytes, j).map(|close| close + 1),
+            Some(b'\\') => {
+                let letters = bytes[j + 1..].iter().take_while(|b| b.is_ascii_alphabetic()).count();
+                let symbol = source[j + 1..].chars().next().map_or(0, char::len_utf8);
+                Some(j + 1 + if letters > 0 { letters } else { symbol })
+            }
+            Some(_) => source[j..].chars().next().map(|c| j + c.len_utf8()),
+            None => None,
+        };
+        let Some(next) = next else { break };
+        end = next;
+    }
+    Some(end)
+}
+
 /// One `\newcommand`-style definition: where its command starts, the
-/// defined name's bytes and the replacement text inside its braces.
+/// defined name's bytes, the replacement text inside its braces, and how
+/// many arguments an invocation takes (`[n]`, or `\def`'s `#1#2`), the
+/// first of which is optional when the definition gives it a default
+/// (`[n][default]`).
 #[derive(Debug, Clone)]
 struct MacroDef {
     at: usize,
     name: std::ops::Range<usize>,
     body: std::ops::Range<usize>,
+    args: usize,
+    optional: bool,
 }
 
 /// Per-thread definition indexes for the documents of the adapt call in
@@ -7601,14 +7703,25 @@ fn macro_definitions(source: &str) -> Vec<MacroDef> {
                 i += 1;
             }
             // `[n]`, `[default]` (LaTeX) or `#1#2` (`\def`).
+            let mut args = 0usize;
+            let mut brackets = 0usize;
             loop {
                 skip_ws(&mut i);
                 match bytes.get(i) {
                     Some(b'[') => match source[i..].find(']') {
-                        Some(close) => i += close + 1,
+                        Some(close) => {
+                            if brackets == 0 {
+                                args = source[i + 1..i + close].trim().parse().unwrap_or(0);
+                            }
+                            brackets += 1;
+                            i += close + 1;
+                        }
                         None => break,
                     },
-                    Some(b'#') => i += 2,
+                    Some(b'#') => {
+                        args += 1;
+                        i += 2;
+                    }
                     _ => break,
                 }
             }
@@ -7620,6 +7733,8 @@ fn macro_definitions(source: &str) -> Vec<MacroDef> {
                 at: abs,
                 name: name_range,
                 body: i + 1..close,
+                args,
+                optional: brackets > 1 && args > 0,
             });
         }
     }
@@ -7695,7 +7810,12 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
             // the \input line as a space.
             Some(" ".to_string())
         } else {
-            (pe <= span.start).then(|| src.get(pe..span.start).unwrap_or("").to_string())
+            // After a replacement token (the invocation's `\name` span)
+            // the reader stands past the invocation's arguments, not past
+            // the name: `"\ul{a b}"` has no blank between the underline
+            // and the closing quote, whatever `{a b}` holds.
+            let from = invocation_end(src, ps).unwrap_or(pe);
+            (from <= span.start).then(|| src.get(from..span.start).unwrap_or("").to_string())
         }
     };
     let digits = |k: usize| 1 + k.to_string().len();
@@ -7711,10 +7831,27 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
                 },
             };
             let Some(text) = text else {
-                // Glue or math of a replacement: its place is not searched;
-                // separate tokens of one replacement are taken as spaced.
-                *cursor = Some(BodyCursor::new(span, start));
-                return prev_end.map(|_| " ".to_string());
+                // Glue, math or a box (`\uline{#1}`, `\colorbox`, `$..$`)
+                // of a replacement: it has no text to search for, so it is
+                // taken to be the first thing that can open one after the
+                // cursor -- a control word, `\(`, `\[` or `$` -- and the
+                // bytes read are the source before the invocation plus the
+                // body up to there (`"\ul{a b}"` reads `""`, no blank). The
+                // cursor moves past the construct when its end is clear, so
+                // a word after it is not searched inside it. When nothing in
+                // the body can open one, separate tokens of one replacement
+                // are still taken as spaced.
+                let Some(pos) = box_start(body, start) else {
+                    *cursor = Some(BodyCursor::new(span, start));
+                    return prev_end.map(|_| " ".to_string());
+                };
+                let gap = &body[start..pos];
+                let blank = gap.find(|c: char| c.is_whitespace()).filter(|_| prefix.is_none()).map(|off| start + off);
+                *cursor = Some(BodyCursor { inv: span, at: box_end(body, pos).unwrap_or(pos), word: None, blank });
+                return Some(match prefix {
+                    Some(before) => format!("{before}{gap}"),
+                    None => gap.to_string(),
+                });
             };
             // A control word (the glue arms pass `\hfill`/`\quad`/...) is
             // matched as a whole word, so `\hfil` never stops at `\hfill`.
@@ -7761,6 +7898,74 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
     }
     *cursor = None;
     prev_end.zip(prev_span).and_then(|(pe, ps)| source_gap(pe, ps))
+}
+
+/// The first byte at or after `from` in a macro body that can open a
+/// textless construct of the replacement -- a control word (`\uline{#1}`,
+/// `\begin{tabular}`), `\(`, `\[` or `$` -- or `None` when nothing can.
+/// Control symbols (`\ `, `\,`, `\\`) are part of the gap before it, so a
+/// control space still counts as a blank.
+fn box_start(body: &str, from: usize) -> Option<usize> {
+    let bytes = body.as_bytes();
+    let mut i = from;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'$' => return Some(i),
+            b'\\' => match bytes.get(i + 1) {
+                Some(b'(') | Some(b'[') => return Some(i),
+                Some(c) if c.is_ascii_alphabetic() => return Some(i),
+                _ => i += 2,
+            },
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+/// The byte after the construct [`box_start`] found at `start`: past the
+/// matching `$`/`$$`, `\)`, `\]` or `\end{<env>}`, or past a control word
+/// and the `[..]`/`{..}` arguments that follow it. `None` when the end is
+/// not clear (an unbalanced body).
+fn box_end(body: &str, start: usize) -> Option<usize> {
+    let bytes = body.as_bytes();
+    let rest = body.get(start..)?;
+    if let Some(after) = rest.strip_prefix("$$") {
+        return after.find("$$").map(|p| start + 2 + p + 2);
+    }
+    if let Some(after) = rest.strip_prefix('$') {
+        return after.find('$').map(|p| start + 1 + p + 1);
+    }
+    if let Some(after) = rest.strip_prefix("\\(") {
+        return after.find("\\)").map(|p| start + 2 + p + 2);
+    }
+    if let Some(after) = rest.strip_prefix("\\[") {
+        return after.find("\\]").map(|p| start + 2 + p + 2);
+    }
+    let name = rest.strip_prefix('\\')?;
+    let len = name.bytes().take_while(u8::is_ascii_alphabetic).count();
+    let mut i = start + 1 + len;
+    if &name[..len] == "begin" {
+        let open = body[i..].find('{')? + i;
+        let close = matching_brace(bytes, open)?;
+        let env = &body[open + 1..close];
+        let end = format!("\\end{{{env}}}");
+        return body[close..].find(&end).map(|p| close + p + end.len());
+    }
+    let mut consumed = false;
+    loop {
+        let mut j = i;
+        while j < bytes.len() && (bytes[j] as char).is_whitespace() {
+            j += 1;
+        }
+        match bytes.get(j) {
+            Some(b'[') => i = j + body[j..].find(']')? + 1,
+            Some(b'{') => i = matching_brace(bytes, j)? + 1,
+            // The blanks after a bare control word are skipped with it; the
+            // ones after an argument's `}` are read.
+            _ => return Some(if consumed { i } else { j }),
+        }
+        consumed = true;
+    }
 }
 
 /// The control sequence a compiler `Inline::Kern` was read from: its own
@@ -10779,9 +10984,40 @@ mod tests {
                 Item::Logo { .. } => 'L',
                 Item::Rule { .. } => 'R',
                 Item::Kern { .. } => 'K',
+                Item::Underline(_) => 'U',
+                Item::Math { .. } => 'M',
                 _ => '?',
             })
             .collect()
+    }
+
+    /// GH-919: a replacement text that is a box (`\uline{#1}`, `$x$`) has
+    /// no word to search for in the body; the gap before it is the source
+    /// before the invocation plus the body up to the box, and the gap after
+    /// it starts past the invocation's arguments -- never inside `{a b}`.
+    /// The unquoted `\ul{c} y` keeps its blanks, and only as many groups as
+    /// the definition's arity are arguments: `\ul{a}{x}` sets `x` glued.
+    ///
+    /// (A `\newcommand` with a default argument is not covered: the
+    /// tex-expansion engine expands it through `\@protected@testopt`, whose
+    /// `\futurelet` drops the invocation origin, so its replacement tokens
+    /// reach the parser with the definition's own spans and no
+    /// `maps_to_invocation` — a separate defect of that seam.)
+    #[test]
+    fn macro_box_gaps_follow_the_source_around_the_invocation() {
+        let src = "\\documentclass{article}\n\\usepackage[normalem]{ulem}\n\\newcommand{\\ul}[1]{\\uline{#1}}\n\\newcommand{\\R}{$x$}\n\\begin{document}\n\"\\ul{a b}\" x \\ul{c} y (\\R) z\n\n(\\ul{a}){x} y (\\ul{b}) z\n\\end{document}\n";
+        let parsed = flashtex_compiler::parser::parse(src);
+        let doc = adapt(&[src], 0, &parsed, &RenderOptions::default(), &Labels::default());
+        let shapes: Vec<String> = doc
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph { parts, .. } => Some(parts.iter().map(|p| if let ParaPart::Lines(items) = p { shape(items) } else { "D".to_string() }).collect()),
+                _ => None,
+            })
+            .collect();
+        // `(\ul{a}){x} y`: `)` and `x` glue into one word.
+        assert_eq!(shapes, ["WUWSWSUSWSWMWSW", "WUWSWSWUWSW"]);
     }
 
     #[test]

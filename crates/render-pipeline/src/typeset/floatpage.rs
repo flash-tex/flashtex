@@ -294,6 +294,7 @@ fn build_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, 
 /// already takes for a column's own `\hsize` (`multicol::adopt`).
 fn build_wide_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, fp: &FloatParams, p: &PageParams, wide: &crate::style::Stylesheet) -> FloatBox {
     let mut sub = Context::with_texts(ctx.fonts, wide, ctx.paths, ctx.texts);
+    sub.set_sources(ctx.sources);
     let mut sub_blocks: Vec<BuiltBlock> = Vec::new();
     let mut fb = build_box(&mut sub, &mut sub_blocks, spec, fp, p);
     let block_off = super::absorb(ctx, sub, sub_blocks, blocks);

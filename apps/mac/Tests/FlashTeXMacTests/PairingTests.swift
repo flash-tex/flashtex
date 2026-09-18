@@ -162,6 +162,137 @@ final class PairingFlowMachineTests: XCTestCase {
         }
     }
 
+    // MARK: rolling codes (#355 follow-up)
+
+    /// The replacement the controller offers: next generation, fresh code,
+    /// minted at `now` for a full `codeLifetime`.
+    func replacement(for a: PairingFlow.Attempt, now: Date, code: String = "987654") -> PairingFlow.Attempt {
+        .init(generation: a.generation + 1, code: code, pairId: "pair-\(code)", startedAt: now,
+              expiresAt: now.addingTimeInterval(Pairing.codeLifetime))
+    }
+
+    func testExpiryWhileShownWithReplacementRollsToANewCode() {
+        var m = M()
+        m.apply(.codeIssued(a1), now: t0)
+        let expiry = t0.addingTimeInterval(120)
+        let next = replacement(for: a1, now: expiry)
+        let out = m.apply(.codeExpired(generation: 1, replacement: next), now: expiry)
+        guard case .codeShown(let rolled) = m.phase else { return XCTFail("\(m.phase)") }
+        XCTAssertEqual(rolled.generation, 2)
+        XCTAssertEqual(m.generation, 2, "the machine follows the rolled generation")
+        XCTAssertNotEqual(rolled.code, a1.code)
+        XCTAssertEqual(rolled.code, "987654")
+        XCTAssertEqual(rolled.expiresAt, a1.expiresAt.addingTimeInterval(Pairing.codeLifetime), "one more lifetime, never longer")
+        XCTAssertEqual(rolled.rolls, 1, "the machine counts the roll")
+        XCTAssertTrue(rolled.canRoll)
+        XCTAssertEqual(out.effects, [
+            .persist(rolled),
+            .resumeTransport(rolled),
+            .announce("The pairing code expired unused. New pairing code 9 8, 7 6, 5 4, valid for 120 seconds."),
+        ])
+        XCTAssertFalse(out.stale)
+        XCTAssertFalse(out.ignored)
+        XCTAssertTrue(m.isAdvertising)
+        XCTAssertEqual(m.phase.detail(now: expiry.addingTimeInterval(30)),
+                       "The previous code expired unused; enter the new code on the companion. Expires in 90 s.")
+        XCTAssertTrue(m.phase.canCancel(now: expiry))
+        XCTAssertFalse(m.phase.canShowCode(now: expiry))
+    }
+
+    func testOldCodeIsRefusedAfterARoll() {
+        var m = M()
+        m.apply(.codeIssued(a1), now: t0)
+        let expiry = t0.addingTimeInterval(120)
+        m.apply(.codeExpired(generation: 1, replacement: replacement(for: a1, now: expiry)), now: expiry)
+        guard case .codeShown(let rolled) = m.phase else { return XCTFail("\(m.phase)") }
+        // A companion that pasted the old code late: its session and hello are stale.
+        XCTAssertTrue(m.apply(.bootstrapSessionOpened(generation: 1), now: expiry).stale)
+        XCTAssertTrue(m.apply(.confirmed(pairId: a1.pairId, companionName: "Late iPad", generation: 1), now: expiry).stale)
+        XCTAssertEqual(m.phase, .codeShown(rolled))
+        // Same pair id but the new generation: still refused (the new code has its own pair id).
+        XCTAssertTrue(m.apply(.confirmed(pairId: a1.pairId, companionName: "Late iPad", generation: 2), now: expiry).stale)
+        // A duplicate expiry report for the old code (the second timer) is stale, not a failure.
+        XCTAssertTrue(m.apply(.codeExpired(generation: 1), now: expiry.addingTimeInterval(0.25)).stale)
+        XCTAssertEqual(m.phase, .codeShown(rolled))
+        // The new code pairs.
+        m.apply(.bootstrapSessionOpened(generation: 2), now: expiry.addingTimeInterval(5))
+        let out = m.apply(.confirmed(pairId: rolled.pairId, companionName: "New iPad", generation: 2), now: expiry.addingTimeInterval(6))
+        XCTAssertEqual(m.phase, .paired(.init(pairId: rolled.pairId, companionName: "New iPad", generation: 2)))
+        XCTAssertEqual(out.effects.first, .clearJournal)
+    }
+
+    func testRollCapFallsIntoTheExpiredPath() {
+        var m = M()
+        m.apply(.codeIssued(a1), now: t0)
+        var a = a1
+        var now = t0
+        for i in 1...Pairing.maxCodeRolls {
+            now = a.expiresAt
+            let out = m.apply(.codeExpired(generation: a.generation, replacement: replacement(for: a, now: now, code: "00000\(i)")), now: now)
+            guard case .codeShown(let next) = m.phase else { return XCTFail("roll \(i): \(m.phase)") }
+            XCTAssertEqual(next.rolls, i)
+            XCTAssertEqual(next.generation, i + 1)
+            XCTAssertEqual(out.effects.count, 3, "roll \(i)")
+            a = next
+        }
+        XCTAssertFalse(a.canRoll, "the last code cannot roll")
+        XCTAssertEqual(a.expiresAt, t0.addingTimeInterval(Double(Pairing.maxCodeRolls + 1) * Pairing.codeLifetime), "6 codes = 12 minutes of lifetime in total")
+        // Expiry of the last code, even with a replacement on offer, fails as before.
+        now = a.expiresAt
+        let out = m.apply(.codeExpired(generation: a.generation, replacement: replacement(for: a, now: now, code: "555555")), now: now)
+        XCTAssertEqual(m.phase, .failed(reason: "The pairing code expired before a companion paired.", generation: Pairing.maxCodeRolls + 1))
+        XCTAssertEqual(out.effects, [.clearJournal, .announce("The pairing code expired. Show a new code to try again.")])
+        XCTAssertTrue(m.phase.canDismiss(now: now))
+        XCTAssertTrue(m.phase.canShowCode(now: now))
+        m.apply(.dismiss, now: now)
+        XCTAssertEqual(m.phase, .advertising)
+    }
+
+    func testReplacementIsIgnoredUnlessCodeIsShownWithoutACompanion() {
+        let expiry = t0.addingTimeInterval(120)
+        // Verifying: a companion connected; no roll.
+        var v = M()
+        v.apply(.codeIssued(a1), now: t0)
+        v.apply(.bootstrapSessionOpened(generation: 1), now: later)
+        v.apply(.codeExpired(generation: 1, replacement: replacement(for: a1, now: expiry)), now: expiry)
+        XCTAssertEqual(v.phase, .failed(reason: "The pairing code expired before a companion paired.", generation: 1))
+        // Interrupted: no roll.
+        var i = M()
+        i.apply(.codeIssued(a1), now: t0)
+        i.apply(.withdrawn(generation: 1, reason: "r"), now: later)
+        i.apply(.codeExpired(generation: 1, replacement: replacement(for: a1, now: expiry)), now: expiry)
+        XCTAssertEqual(i.phase, .failed(reason: "The pairing code expired before it could be resumed.", generation: 1))
+        // Shown, but a replacement that is not newer or not different is refused (attempt kept).
+        var s = M()
+        s.apply(.codeIssued(a1), now: t0)
+        XCTAssertTrue(s.apply(.codeExpired(generation: 1, replacement: a1), now: expiry).ignored)
+        XCTAssertTrue(s.apply(.codeExpired(generation: 1, replacement: replacement(for: a1, now: expiry, code: a1.code)), now: expiry).ignored)
+        XCTAssertEqual(s.phase, .codeShown(a1))
+        // No replacement at all: the pre-rolling behaviour.
+        XCTAssertEqual(s.apply(.codeExpired(generation: 1), now: expiry).effects.first, .clearJournal)
+        XCTAssertEqual(s.phase, .failed(reason: "The pairing code expired before a companion paired.", generation: 1))
+    }
+
+    func testExpiryWhileNotRunningIsUnchangedByRolling() {
+        // Restored after a relaunch, already expired: no replacement is ever offered.
+        var m = M()
+        let now = t0.addingTimeInterval(500)
+        m.apply(.restored(a1), now: now)
+        XCTAssertEqual(m.phase, .interrupted(a1, .relaunch, detail: "the code expired while FlashTeX was not running"))
+        XCTAssertFalse(m.phase.canResume(now: now))
+        XCTAssertTrue(m.phase.canDismiss(now: now))
+        // Even a replacement offered here is ignored: an interrupted code fails on expiry.
+        let out = m.apply(.codeExpired(generation: 1, replacement: replacement(for: a1, now: now)), now: now)
+        XCTAssertEqual(m.phase, .failed(reason: "The pairing code expired before it could be resumed.", generation: 1))
+        XCTAssertEqual(out.effects.first, .clearJournal)
+        // A rolled code that was pending at quit restores with its roll count.
+        var r = M()
+        var rolled = a2; rolled.rolls = 3
+        r.apply(.restored(rolled), now: t0)
+        XCTAssertEqual(r.attempt?.rolls, 3)
+        XCTAssertTrue(r.phase.canResume(now: t0))
+    }
+
     func testCancelAtEachCancellableStep() {
         // Code shown.
         var m = M()
@@ -620,6 +751,29 @@ final class PairingPersistenceTests: XCTestCase {
         // A pending attempt from a newer generation advances the counter.
         XCTAssertTrue(k.setPending(PairingFlow.Attempt(generation: 9, code: "1", pairId: "p", startedAt: Date(), expiresAt: Date())))
         XCTAssertEqual(PairingJournal(url: url).generation, 9)
+    }
+
+    func testJournalRoundTripsRollsAndDecodesOlderJournalsAsUnrolled() throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("pairing-session.json")
+        var rolled = PairingFlow.Attempt(generation: 4, code: "246810", pairId: "pid", startedAt: Date(), expiresAt: Date().addingTimeInterval(120))
+        rolled.rolls = 3
+        XCTAssertTrue(PairingJournal(url: url).setPending(rolled))
+        XCTAssertTrue(try String(contentsOf: url, encoding: .utf8).contains("\"rolls\" : 3"))
+        XCTAssertEqual(PairingJournal(url: url).pending?.rolls, 3, "the cap survives a relaunch")
+
+        // A journal written before rolling codes existed (no `rolls` key).
+        let legacy = """
+        {"version": 1, "generation": 2, "pending": {"generation": 2, "code": "123456", "pair_id": "p",
+         "started_at": "2026-09-14T08:00:00Z", "expires_at": "2026-09-14T08:02:00Z"}}
+        """
+        try Data(legacy.utf8).write(to: url)
+        let j = PairingJournal(url: url)
+        XCTAssertNil(j.loadError)
+        XCTAssertEqual(j.pending?.code, "123456")
+        XCTAssertEqual(j.pending?.rolls, 0)
+        XCTAssertTrue(j.pending!.canRoll)
     }
 
     func testJournalRefusesUnknownVersionWithoutOverwriting() throws {

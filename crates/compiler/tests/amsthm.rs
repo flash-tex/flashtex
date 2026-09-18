@@ -610,6 +610,72 @@ fn proof_preserves_enclosing_size_in_head_and_body() {
     );
 }
 
+/// GH-897: a `proof` nested in a list item keeps its italic "Proof." head.
+/// The head inline carries `\begin{proof}`'s span with `italic: true`, the
+/// block is a label-less `ListItem` (a later paragraph of the same `\item`),
+/// and the generated "∎" ends at or before `\end{proof}` so the gap after
+/// the block still holds it. The render pipeline relies on all three: the
+/// head span to recognise the `\trivlist` open, the gap to recognise its
+/// close, and the missing label to tell the proof paragraph apart from a
+/// labelled `\item` paragraph. pdflatex sets the nested head in CMTI10,
+/// exactly like a top-level one.
+#[test]
+fn proof_nested_in_a_list_item_keeps_its_italic_head() {
+    let source = r"\begin{enumerate}
+\item First item body text goes here.
+\begin{proof}
+Proof body nested inside the list item.
+\end{proof}
+\item Second item body text goes here.
+\end{enumerate}";
+    let parsed = parser::parse(source);
+    let content = parsed
+        .blocks
+        .iter()
+        .find_map(|block| match block {
+            Block::ListItem { label, content, .. }
+                if label.is_none()
+                    && content.iter().any(|inline| {
+                        matches!(inline, Inline::Text { text, .. } if text == "Proof.")
+                    }) =>
+            {
+                Some(content)
+            }
+            _ => None,
+        })
+        .expect("the nested proof must be a label-less ListItem");
+    let (head_text, head_style) = match &content[0] {
+        Inline::Text { text, style, .. } => (text, style),
+        other => panic!("nested proof must open with the head text, got {other:?}"),
+    };
+    assert_eq!(head_text, "Proof.");
+    assert_eq!(*head_style, ITALIC, "nested Proof. head must stay italic");
+    let beginproof = source.find("\\begin{proof}").unwrap();
+    let endproof = source.find("\\end{proof}").unwrap();
+    let head_span = match &content[0] {
+        Inline::Text { span, .. } => *span,
+        _ => unreachable!(),
+    };
+    assert!(
+        head_span.start <= beginproof && beginproof < head_span.end,
+        "head span {head_span:?} must cover \\begin{{proof}} at {beginproof}"
+    );
+    let (qed_text, qed_span) = match content.last() {
+        Some(Inline::Text { text, span, .. }) => (text, *span),
+        other => panic!("nested proof must end with the QED text, got {other:?}"),
+    };
+    assert_eq!(qed_text, "∎");
+    assert!(
+        qed_span.end <= endproof,
+        "QED span {qed_span:?} must end at or before \\end{{proof}} at {endproof}"
+    );
+    assert!(
+        source[qed_span.end..endproof].trim().is_empty()
+            && source[endproof..].starts_with("\\end{proof}"),
+        "the gap after the nested proof block must still hold \\end{{proof}}"
+    );
+}
+
 /// GH-701: same for a `\newtheorem`-declared `plain`-style theorem (bold
 /// head, italic body).
 #[test]

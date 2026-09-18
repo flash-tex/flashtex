@@ -2034,6 +2034,7 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
         };
         let laid = {
             let mut sub = Context::with_texts(ctx.fonts, &col_style, ctx.paths, ctx.texts);
+            sub.set_sources(ctx.sources);
             // Every `\marginpar` in this sub-build's own `marginpar::place`
             // pass is inside the region being laid out; `scans` stays empty
             // (giving it the real scans would make `outer_doc`/`paginate`

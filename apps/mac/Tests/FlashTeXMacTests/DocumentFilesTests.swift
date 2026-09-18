@@ -503,6 +503,126 @@ final class DocumentFilesTests: XCTestCase {
         XCTAssertEqual(model.files.lateReplies.count, 3, "three saves, three late replies: \(model.files.lateReplies)")
     }
 
+    /// GH-831 (1): a save that landed is confirmed in the footer; the status
+    /// probe its own write triggers (through the watcher) then also answers
+    /// late. That probe's failure used to replace the confirmation with "Could
+    /// not check paper.tex on disk: no status reply …" — the opposite of what
+    /// happened. Both replies are slow here (the fake delays every operation),
+    /// so the probe times out after `helperTimeout` and its late reply is
+    /// ignored; the confirmation stays. A prompt save followed by a probe that
+    /// cannot even launch the helper is guarded the same way.
+    func testSlowStatusProbeAfterASlowSaveDoesNotReplaceTheSaveConfirmation() async throws {
+        let dir = try tempDir("probe-note")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 0.4
+        model.documentWatcher.debounce = 0.05
+        XCTAssertEqual(model.openTex(at: url), .opened)
+
+        // Slow save: the fake writes, then answers 1.2 s later (a late receipt).
+        model.files.policy = fake(["--mode", "late", "--delay", "1.2"])
+        model.updateActiveText("edited\n")
+        XCTAssertFalse(model.saveTex())
+        try await waitUntil("the late receipt to be reconciled",
+                            state: { "note=\(model.captureNote ?? "nil") late=\(model.files.lateReplies)" }) {
+            model.savedText == "edited\n"
+        }
+        XCTAssertTrue(model.captureNote?.hasPrefix("Late confirmation") == true, model.captureNote ?? "")
+        // Slow probe: the watcher saw the fake's write; its re-armed check runs
+        // after the receipt and goes to the same slow fake, so it times out and
+        // only then (1.2 s later) answers late. Wait for that late status reply:
+        // it proves the probe ran and failed.
+        try await waitUntil("the probe's late status reply",
+                            state: { "note=\(model.captureNote ?? "nil") late=\(model.files.lateReplies)" }) {
+            model.files.lateReplies.count >= 2
+        }
+        XCTAssertTrue(model.files.lateReplies.contains { $0.hasPrefix("status paper.tex") }, "\(model.files.lateReplies)")
+        XCTAssertTrue(model.captureNote?.hasPrefix("Late confirmation") == true,
+                      "the probe failure replaced the save confirmation: \(model.captureNote ?? "nil")")
+        XCTAssertFalse(model.isDirty)
+        XCTAssertNil(model.files.conflict)
+
+        // Prompt save, then a probe that fails outright (helper cannot launch).
+        model.files.policy = fake([])
+        model.updateActiveText("edited again\n")
+        XCTAssertTrue(model.saveTex())
+        XCTAssertEqual(model.captureNote, "Saved paper.tex")
+        model.files.policy = .executable(URL(fileURLWithPath: "/nonexistent/flashtex-\(UUID().uuidString)"), arguments: [])
+        XCTAssertNil(model.checkDiskStatus())
+        XCTAssertEqual(model.captureNote, "Saved paper.tex", "a failed probe right after a confirmed save keeps the confirmation")
+        // Any other note is replaced by the failure as before.
+        model.captureNote = "something else"
+        XCTAssertNil(model.checkDiskStatus())
+        XCTAssertTrue(model.captureNote?.hasPrefix("Could not check paper.tex on disk") == true, model.captureNote ?? "nil")
+        model.documentWatcher.stop()
+    }
+
+    /// GH-831 (2): an external change made while a save's reply is still
+    /// outstanding fires the watcher, whose single retry (after
+    /// `max(helperTimeout, 0.5)` s) still finds the helper busy. The event used
+    /// to be dropped there — deliberately, because a status request then would
+    /// restart the helper and lose the late receipt. Now the check is re-armed
+    /// once and runs when the late reply has settled: no request is sent while
+    /// the save is in flight, and the change is still detected without waiting
+    /// for another filesystem event. `--once` delays only the save, so the
+    /// re-armed probe answers promptly.
+    func testExternalChangeDuringAnInFlightSaveIsCheckedOnceTheSaveSettles() async throws {
+        let dir = try tempDir("inflight")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+        // The receipt is outstanding for 3 s, longer than the autosave idle
+        // time: a live autosave would *itself* send a second save, restart the
+        // busy helper and lose the receipt — a different (pre-existing) path,
+        // not what this pins.
+        let originalAutosave = EditorPreferences.shared.autosave
+        EditorPreferences.shared.autosave = false
+        addTeardownBlock { @MainActor in EditorPreferences.shared.autosave = originalAutosave }
+
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 0.4
+        model.documentWatcher.debounce = 0.05
+        XCTAssertEqual(model.openTex(at: url), .opened)
+
+        model.files.policy = fake(["--mode", "late", "--delay", "3", "--once"])
+        model.updateActiveText("edited\n")
+        XCTAssertFalse(model.saveTex(), "no receipt within the wait")
+        XCTAssertTrue(model.files.helperBusy, "the save's reply is still outstanding")
+        XCTAssertEqual(try disk(url), "edited\n", "the fake did write before sleeping")
+        // Someone else replaces the file while the receipt is outstanding.
+        try "external\n".write(to: url, atomically: true, encoding: .utf8)
+
+        // The watcher's retry (~0.5 s) lands well before the receipt (3 s):
+        // nothing is probed, the check is parked instead of dropped.
+        try await waitUntil("the watcher's retry to park its check",
+                            state: { "busy=\(model.files.helperBusy) note=\(model.captureNote ?? "nil")" }) {
+            model.pendingWatcherRecheck
+        }
+        XCTAssertTrue(model.files.helperBusy, "no status request was sent while the save was in flight")
+        XCTAssertNil(model.files.conflict)
+        XCTAssertEqual(model.files.helperRestarts, 1, "only the policy switch restarted the helper")
+
+        // The late receipt makes "edited" the baseline; the parked check then
+        // sees "external" on disk.
+        try await waitUntil("the late receipt to be reconciled",
+                            state: { "savedText=\(model.savedText ?? "nil") late=\(model.files.lateReplies)" }) {
+            model.savedText == "edited\n"
+        }
+        try await waitUntil("the parked check to report the external change",
+                            state: { "conflict=\(model.files.conflict?.kind.rawValue ?? "nil") pending=\(model.pendingWatcherRecheck) note=\(model.captureNote ?? "nil")" }) {
+            model.files.conflict?.kind == .modifiedExternally
+        }
+        XCTAssertFalse(model.pendingWatcherRecheck, "consumed exactly once")
+        XCTAssertEqual(model.files.conflict?.theirs, SourceDigest.sha256Hex("external\n"))
+        XCTAssertEqual(model.files.helperRestarts, 1, "the parked check reused the helper; no late receipt was lost")
+        XCTAssertEqual(model.files.lateReplies.count, 1, "only the save answered late: \(model.files.lateReplies)")
+        XCTAssertEqual(model.activeText, "edited\n", "the buffer is untouched")
+        model.documentWatcher.stop()
+    }
+
     func testGarbageReplyIsAProtocolFailureNotASave() throws {
         let dir = try tempDir("garbage")
         let url = dir.appendingPathComponent("paper.tex")

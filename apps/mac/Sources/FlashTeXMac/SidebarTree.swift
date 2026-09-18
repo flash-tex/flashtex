@@ -38,6 +38,9 @@ struct SidebarTree: NSViewRepresentable {
     var onSelect: (String) -> Void
     /// Context menu items for a row id; empty = no menu.
     var menuItems: (String) -> [MenuItem] = { _ in [] }
+    /// Context menu for a right-click on the tree's empty space (no row under
+    /// the pointer); empty = AppKit's default (none).
+    var backgroundMenuItems: () -> [MenuItem] = { [] }
     /// Autosave name for column/expansion state; also names the tree for
     /// accessibility.
     var accessibilityLabel: String
@@ -170,7 +173,12 @@ struct SidebarTree: NSViewRepresentable {
 
         func menu(forRowAt index: Int) -> NSMenu? {
             guard rows.indices.contains(index) else { return nil }
-            let items = parent.menuItems(rows[index].id)
+            return menu(items: parent.menuItems(rows[index].id))
+        }
+
+        func backgroundMenu() -> NSMenu? { menu(items: parent.backgroundMenuItems()) }
+
+        private func menu(items: [MenuItem]) -> NSMenu? {
             guard !items.isEmpty else { return nil }
             let menu = NSMenu()
             for item in items {
@@ -197,14 +205,15 @@ private final class MenuTrampoline: NSObject {
 }
 
 /// Outline view that asks the coordinator for a context menu at the clicked
-/// row (`NSMenu` built at click time — the AppKit path the brief requires).
+/// row, or for the tree's empty space below the rows (`NSMenu` built at click
+/// time — the AppKit path the brief requires).
 final class TreeOutlineView: NSOutlineView {
     weak var coordinator: SidebarTree.Coordinator?
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
         let index = row(at: point)
-        guard index >= 0 else { return super.menu(for: event) }
+        guard index >= 0 else { return coordinator?.backgroundMenu() ?? super.menu(for: event) }
         return coordinator?.menu(forRowAt: index) ?? super.menu(for: event)
     }
 }
