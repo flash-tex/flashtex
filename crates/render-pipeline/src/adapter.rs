@@ -9608,16 +9608,22 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
             }
             // amsthm's automatic `\qedsymbol` (GH#443). `\end{proof}` appends
             // exactly two inlines, an `Inline::HFill` with no leader and an
-            // `Inline::Text` holding U+220E, and gives both the *same* span —
-            // the `\end{proof}` bytes. That pair is the compiler's marker (it
-            // emits U+220E nowhere else); a U+220E typed in the source is a
-            // lone text inline with its own span and still sets whatever the
-            // font has. Latin Modern has no U+220E glyph, so the text arm
-            // below would warn `missing_glyph` and draw nothing; amsthm never
-            // wanted a character here in the first place.
+            // `Inline::Text` holding U+220E. The fill carries the
+            // `\end{proof}` bytes; the text carries either the same span or,
+            // since #862, an empty span at that `\end`'s start (so the mark
+            // no longer covers `\end{proof}` in the source map). That pair is
+            // the compiler's marker (it emits U+220E nowhere else); a U+220E
+            // typed in the source is a lone text inline with its own span and
+            // still sets whatever the font has. Latin Modern has no U+220E
+            // glyph, so the text arm below would warn `missing_glyph` and
+            // draw nothing; amsthm never wanted a character here anyway.
             Inline::Text { text, span, .. }
                 if text == "\u{220E}"
-                    && prev_span == Some(*span)
+                    && prev_span.is_some_and(|fill| {
+                        fill.document == span.document
+                            && fill.start == span.start
+                            && (fill.end == span.end || span.end == span.start)
+                    })
                     && matches!(items.last(), Some(Item::HFill { leader: FillLeader::None, .. })) =>
             {
                 let Inline::Text { style: compiler_style, .. } = &**inline else { unreachable!() };
