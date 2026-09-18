@@ -85,6 +85,7 @@ enum CommandPaletteModel {
         switch command {
         case .editorPreferences:
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        case .checkForUpdates: UpdatePresenter.shared.checkForUpdatesInteractive() // UpdateChecker.swift
         case .openLaTeXFile: model.openTexPanel()
         case .newProject: model.scaffold.presentNewProject() // ProjectScaffoldViews.swift
         case .newFile: model.scaffold.presentNewFile()
