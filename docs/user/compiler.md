@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 377 text-mode and 573 math-mode command entries, 68 environments and 31 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 401 text-mode and 573 math-mode command entries, 68 environments and 31 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -660,6 +660,30 @@ Canonical sources:
 | `\textperiodcentered` |  | text symbol \textperiodcentered: OT1 ·, T1 · (tex-text-encoding; unavailable is a LaTeX error) |
 | `\textregistered` |  | text symbol \textregistered: OT1 ®, T1 ® (tex-text-encoding; unavailable is a LaTeX error) |
 | `\texttrademark` |  | text symbol \texttrademark: OT1 ™, T1 ™ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textdegree` |  | text symbol \textdegree: OT1 °, T1 ° (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textmu` |  | text symbol \textmu: OT1 µ, T1 µ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textohm` |  | text symbol \textohm: OT1 Ω, T1 Ω (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textcelsius` |  | text symbol \textcelsius: OT1 ℃, T1 ℃ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\texteuro` |  | text symbol \texteuro: OT1 €, T1 € (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textyen` |  | text symbol \textyen: OT1 ¥, T1 ¥ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textwon` |  | text symbol \textwon: OT1 ₩, T1 ₩ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textcurrency` |  | text symbol \textcurrency: OT1 ¤, T1 ¤ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textestimated` |  | text symbol \textestimated: OT1 ℮, T1 ℮ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textnumero` |  | text symbol \textnumero: OT1 №, T1 № (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textrecipe` |  | text symbol \textrecipe: OT1 ℞, T1 ℞ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textservicemark` |  | text symbol \textservicemark: OT1 ℠, T1 ℠ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textbardbl` |  | text symbol \textbardbl: OT1 ‖, T1 ‖ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textbrokenbar` |  | text symbol \textbrokenbar: OT1 ¦, T1 ¦ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\texttimes` |  | text symbol \texttimes: OT1 ×, T1 × (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textdiv` |  | text symbol \textdiv: OT1 ÷, T1 ÷ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textonehalf` |  | text symbol \textonehalf: OT1 ½, T1 ½ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textonequarter` |  | text symbol \textonequarter: OT1 ¼, T1 ¼ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textthreequarters` |  | text symbol \textthreequarters: OT1 ¾, T1 ¾ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textperthousand` |  | text symbol \textperthousand: OT1 ‰, T1 ‰ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textpertenthousand` |  | text symbol \textpertenthousand: OT1 ‱, T1 ‱ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textopenbullet` |  | text symbol \textopenbullet: OT1 ◦, T1 ◦ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textlangle` |  | text symbol \textlangle: OT1 〈, T1 〈 (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textrangle` |  | text symbol \textrangle: OT1 〉, T1 〉 (tex-text-encoding; unavailable is a LaTeX error) |
 | `\c` | `{letter}` | cedilla text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning |
 | `\v` | `{letter}` | caron text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning |
 | `\u` | `{letter}` | breve text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning |
