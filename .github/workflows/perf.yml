@@ -90,7 +90,7 @@ jobs:
           args="--runs 5"
           if [ "${{ github.event.inputs.full }}" != "true" ]; then
             for id in article-twocolumn cv hw1 hw2 inline-math input-bibliography \
-                      lecture-notes letter math-sheet unicode-accents \
+                      lecture-notes letter math-sheet twelvept-plain unicode-accents \
                       synthetic-500kb math-heavy tikz-heavy; do
               args="$args --only $id"
             done

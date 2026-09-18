@@ -61,6 +61,16 @@ pub enum TokenKind {
 pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
+    /// True when this token was lexed from a backslash control symbol: `\`
+    /// followed by one non-letter character (e.g. `\,`, `\%`, `\ `). Its
+    /// [`TokenKind::Word`] text is then the escaped character, not ordinary
+    /// word text.
+    ///
+    /// The mark is identity, not provenance: macro expansion rebinds `span`
+    /// to the invocation (and the expansion converter re-emits the mark for
+    /// single-character control sequences), so consumers must key the
+    /// escaped-vs-literal distinction off this flag, never off span length.
+    pub control_symbol: bool,
 }
 
 fn is_special(c: char) -> bool {
@@ -176,6 +186,7 @@ pub fn tokenize_document(text: &str, document: DocumentId) -> Vec<Token> {
                     TokenKind::Space
                 },
                 span: Span::in_document(document, start, end),
+                control_symbol: false,
             });
             continue;
         }
@@ -191,6 +202,7 @@ pub fn tokenize_document(text: &str, document: DocumentId) -> Vec<Token> {
                         tokens.push(Token {
                             kind: TokenKind::LineBreak,
                             span: Span::in_document(document, start, j + 1),
+                            control_symbol: false,
                         });
                     }
                     Some(&(_, ch)) if ch.is_alphabetic() => {
@@ -280,12 +292,14 @@ pub fn tokenize_document(text: &str, document: DocumentId) -> Vec<Token> {
                                     listing,
                                 },
                                 span: Span::in_document(document, start, verb_end),
+                                control_symbol: false,
                             });
                             continue;
                         }
                         tokens.push(Token {
                             kind: TokenKind::Command(name),
                             span: Span::in_document(document, start, end),
+                            control_symbol: false,
                         });
                         // Real TeX enters a "skip blanks" state after a control
                         // word and silently discards the whitespace that
@@ -324,6 +338,7 @@ pub fn tokenize_document(text: &str, document: DocumentId) -> Vec<Token> {
                         tokens.push(Token {
                             kind,
                             span: Span::in_document(document, start, j + 1),
+                            control_symbol: false,
                         });
                     }
                     // `\-`, the discretionary hyphen: a command, not the
@@ -333,20 +348,28 @@ pub fn tokenize_document(text: &str, document: DocumentId) -> Vec<Token> {
                         tokens.push(Token {
                             kind: TokenKind::Command("-".to_string()),
                             span: Span::in_document(document, start, j + 1),
+                            control_symbol: false,
                         });
                     }
                     // A control symbol such as `\%`: treat as escaped literal.
+                    // The `control_symbol` mark records that the character
+                    // was backslash-escaped — the same `Word` variant also
+                    // carries ordinary literal characters, so span length
+                    // must never be used to tell them apart (macro expansion
+                    // rebinds spans to the invocation; see `Token`).
                     Some(&(j, ch)) => {
                         it.next();
                         tokens.push(Token {
                             kind: TokenKind::Word(ch.to_string()),
                             span: Span::in_document(document, start, j + ch.len_utf8()),
+                            control_symbol: true,
                         });
                     }
                     None => {
                         tokens.push(Token {
                             kind: TokenKind::Command(String::new()),
                             span: Span::in_document(document, start, bytes.len()),
+                            control_symbol: false,
                         });
                     }
                 }
@@ -363,6 +386,7 @@ pub fn tokenize_document(text: &str, document: DocumentId) -> Vec<Token> {
                 tokens.push(Token {
                     kind,
                     span: Span::in_document(document, i, i + c.len_utf8()),
+                    control_symbol: false,
                 });
             }
             '%' => {
@@ -379,6 +403,7 @@ pub fn tokenize_document(text: &str, document: DocumentId) -> Vec<Token> {
                 tokens.push(Token {
                     kind: TokenKind::Comment,
                     span: Span::in_document(document, start, end),
+                    control_symbol: false,
                 });
             }
             _ => {
@@ -396,6 +421,7 @@ pub fn tokenize_document(text: &str, document: DocumentId) -> Vec<Token> {
                 tokens.push(Token {
                     kind: TokenKind::Word(word),
                     span: Span::in_document(document, start, end),
+                    control_symbol: false,
                 });
             }
         }

@@ -1399,6 +1399,56 @@ mod tests {
         assert!(items.iter().any(|item| item.text == "&"));
     }
 
+    /// Every entry of the first row, as its joined text.
+    fn first_row_cells(t: &super::Tabular) -> Vec<String> {
+        rows(t)[0]
+            .cells
+            .iter()
+            .map(|cell| texts(&cell.content))
+            .collect()
+    }
+
+    /// GH-760: `\&` copied out of a macro's replacement text carries the
+    /// *invocation's* span, so the old two-byte width test saw `\am`'s three
+    /// bytes, took the separator branch, and silently broke the column —
+    /// output identical to an unescaped `a&b`, shifting every later entry of
+    /// the row. That corrupts the table's structure, not just its spacing.
+    #[test]
+    fn escaped_ampersand_from_a_macro_is_text_not_a_column_break() {
+        let (t, diagnostics) = array_table(
+            "\\newcommand{\\am}{\\&}",
+            "\\begin{tabular}{ll}a\\am b & z\\end{tabular}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(first_row_cells(&t), ["a & b", "z"]);
+    }
+
+    /// The other direction: a real alignment tab must still break the column
+    /// when it arrives from a two-byte macro, which is exactly the shape the
+    /// width test used to key on.
+    #[test]
+    fn a_real_ampersand_from_a_two_byte_macro_still_breaks_the_column() {
+        let (t, diagnostics) = array_table(
+            "\\newcommand{\\z}{&}",
+            "\\begin{tabular}{ll}a\\z b\\end{tabular}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(first_row_cells(&t), ["a", "b"]);
+    }
+
+    /// And the ordinary, non-macro paths are untouched: a bare `&` separates,
+    /// a literal `\&` does not.
+    #[test]
+    fn literal_ampersands_keep_their_meanings() {
+        let (separating, diagnostics) = array_table("", "\\begin{tabular}{ll}a&b\\end{tabular}");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(first_row_cells(&separating), ["a", "b"]);
+
+        let (escaped, diagnostics) = array_table("", "\\begin{tabular}{ll}a\\&b & z\\end{tabular}");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(first_row_cells(&escaped), ["a & b", "z"]);
+    }
+
     fn tables(packages: &str, body: &str) -> (Vec<super::Tabular>, Vec<Diagnostic>) {
         let parsed = parse(&format!(
             "\\documentclass{{article}}\\usepackage{packages}\\begin{{document}}{body}\\end{{document}}"

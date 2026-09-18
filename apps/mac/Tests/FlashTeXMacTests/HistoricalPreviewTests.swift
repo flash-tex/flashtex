@@ -16,7 +16,7 @@ final class HistoricalPreviewTests: XCTestCase {
 
     // MARK: token
 
-    func testTokenRoundTripAndForeignTokensRefused() {
+    func testTokenRoundTripAndForeignTokensRefused() throws {
         let nonce = SourceBindingToken.makeNonce()
         XCTAssertEqual(nonce.count, 16)
         let token = SourceBindingToken(nonce: nonce, editorRevision: 42)
@@ -38,7 +38,7 @@ final class HistoricalPreviewTests: XCTestCase {
         XCTAssertNil(state.token(forEditorRevision: 3), "not before the acknowledgement")
         XCTAssertEqual(state.acknowledge(requestID: "pc-9", payload: ["capability": "completed-snapshots-v1", "enabled": true]), nil, "another request's reply")
         XCTAssertEqual(state.acknowledge(requestID: "pc-1", payload: ["capability": "completed-snapshots-v1", "enabled": true]), true)
-        let minted = try! XCTUnwrap(state.token(forEditorRevision: 3))
+        let minted = try XCTUnwrap(state.token(forEditorRevision: 3))
         XCTAssertEqual(SourceBindingToken.parse(minted, nonce: state.nonce)?.editorRevision, 3)
         XCTAssertEqual(state.lastSubmittedEditorRevision, 3)
         // A refused or differently-shaped acknowledgement never negotiates.
@@ -94,7 +94,10 @@ final class HistoricalPreviewTests: XCTestCase {
         XCTAssertEqual(frame.sourceVersions, ["main.tex": 7])
         XCTAssertEqual(frame.sourceBindingToken, "ftx1:00ff:5")
         XCTAssertEqual(frame.result.id, "preview-10")
-        guard case .text(let item) = frame.result.payload.pages[0].items[0] else { return XCTFail() }
+        guard let firstPage = frame.result.payload.pages.first, let firstItem = firstPage.items.first else {
+            return XCTFail("expected at least one page with at least one item")
+        }
+        guard case .text(let item) = firstItem else { return XCTFail() }
         XCTAssertEqual(item.text, "A")
 
         func violation(_ line: Data, _ label: String) {

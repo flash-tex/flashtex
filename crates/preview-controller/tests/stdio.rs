@@ -699,6 +699,103 @@ fn single_stalled_reply_times_out_without_filling_output_queue() {
     stalled_reader(1);
 }
 
+// GH#774: a reader that is merely slow (still draining, just not promptly
+// under load) must not be treated the same as one that is stuck forever.
+// Reads a large reply in small, deliberately paced chunks that add up to
+// well over OUTPUT_STALL_TIMEOUT (main.rs) in total, but with no single gap
+// between reads anywhere close to it -- the writer is making real forward
+// progress the whole time. Before the fix (a bare elapsed-since-write-began
+// clock, however large the threshold), this reliably kills the helper; the
+// fix must let it finish.
+#[test]
+fn slow_but_progressing_reader_survives_a_reply_far_longer_than_the_watchdog() {
+    use std::io::Read;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store");
+    let text = "x".repeat(2_200_000);
+    {
+        let mut store = Store::open(&path).unwrap();
+        store
+            .initialize(Document::new("p".into(), "main.tex".into(), 1, text.clone()).unwrap())
+            .unwrap();
+    }
+    let config = dir.path().join("config.json");
+    std::fs::write(
+        &config,
+        serde_json::to_vec(
+            &json!({"session_id":"session1","project_id":"p","entry_path":"main.tex","store_paths":[path]}),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-preview-controller"))
+        .arg(config)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let mut input = child.stdin.take().unwrap();
+    // Drain the short `ready` frame at ordinary speed, byte-by-byte so no
+    // extra bytes of the (much larger) reply that follows are buffered away
+    // where the slow-read loop below can't account for them.
+    let mut ready = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        stdout.read_exact(&mut byte).unwrap();
+        if byte[0] == b'\n' {
+            break;
+        }
+        ready.push(byte[0]);
+    }
+    assert_eq!(
+        serde_json::from_slice::<Value>(&ready).unwrap()["type"],
+        "ready"
+    );
+    writeln!(
+        input,
+        "{}",
+        json!({"protocol_version":1,"session_id":"session1","id":"big","type":"document","payload":{"path":"main.tex"}})
+    )
+    .unwrap();
+    input.flush().unwrap();
+    // Deliberately paced, but stdin stays open throughout: the helper's main
+    // loop keeps running (this is not the post-shutdown drain), so this
+    // exercises the same per-write watchdog GH#774 diagnosed as the actual
+    // failure, not the separate final-drain deadline.
+    let mut received = Vec::new();
+    let started = std::time::Instant::now();
+    let mut buf = [0u8; 8192];
+    loop {
+        match stdout.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => received.extend_from_slice(&buf[..n]),
+            Err(error) => panic!("read error: {error}"),
+        }
+        if received.last() == Some(&b'\n') {
+            break;
+        }
+        thread::sleep(Duration::from_millis(55));
+    }
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= Duration::from_secs(8),
+        "test is not actually exercising a reply slower than the watchdog: {elapsed:?}"
+    );
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "helper must still be alive: it was slow to deliver, never stuck"
+    );
+    let reply: Value =
+        serde_json::from_slice(received.strip_suffix(b"\n").unwrap_or(&received)).unwrap();
+    assert_eq!(reply["id"], "big");
+    assert_eq!(reply["payload"]["document"]["text"], text);
+    drop(input);
+    let status = child.wait().unwrap();
+    assert!(status.success(), "helper must exit cleanly after a normal close");
+}
+
 fn stalled_reader(requests: usize) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("store");
@@ -746,7 +843,11 @@ fn stalled_reader(requests: usize) {
             break;
         }
     }
-    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    // GH#774: OUTPUT_STALL_TIMEOUT (main.rs) is 10s, not 2s -- this margin
+    // must clear it, plus room for process scheduling under load. This
+    // reader never reads at all, so the writer makes zero progress and the
+    // watchdog still trips at the full bound.
+    let deadline = std::time::Instant::now() + Duration::from_secs(13);
     loop {
         if let Some(status) = client.child.try_wait().unwrap() {
             assert!(!status.success());
@@ -1738,7 +1839,10 @@ fn stalled_optional_display_write_triggers_watchdog_with_no_source_loss() {
         "enabled":true,"renderer_support_confirmed":true}),
     );
     // Keep stdout open but unread: small required frames fit, optional 1 MiB does not.
-    let deadline = std::time::Instant::now() + Duration::from_secs(6);
+    // GH#774: OUTPUT_STALL_TIMEOUT (main.rs) is 10s, not 2s -- this margin
+    // must clear it, plus this test's own extra setup (diagnostic_timings, a
+    // real compiler) beyond stalled_reader's.
+    let deadline = std::time::Instant::now() + Duration::from_secs(14);
     loop {
         if let Some(status) = client.child.try_wait().unwrap() {
             assert!(!status.success());

@@ -17,6 +17,7 @@ final class EnvironmentPairTests: XCTestCase {
         let s = "\\begin{a}\n\\begin{a}\n% \\end{a} commented\nx\n\\end{a}\n\\end{b}\n\\begin{c}\nnever closed" as NSString
         let pairs = EN.environmentPairs(in: s)
         XCTAssertEqual(pairs.map(\.name), ["a", "a", "c"])
+        guard pairs.count == 3 else { return XCTFail("expected three pairs, got \(pairs.count)") }
         // Same-name nesting: the inner \end closes the inner \begin.
         XCTAssertEqual(pairs[1].end, NSRange(location: 42, length: 7))
         XCTAssertNil(pairs[0].end, "the outer \\begin{a} is unclosed (the commented \\end does not count)")
@@ -33,6 +34,7 @@ final class EnvironmentPairTests: XCTestCase {
         let s = "\\begin{verbatim}\n\\begin{itemize}\n\\end{verbatim}\n\\begin{itemize}\n\\item x\n\\end{itemize}" as NSString
         let pairs = EN.environmentPairs(in: s)
         XCTAssertEqual(pairs.map(\.name), ["verbatim", "itemize"])
+        guard pairs.count == 2 else { return XCTFail("expected two pairs, got \(pairs.count)") }
         XCTAssertEqual(pairs[0].end, NSRange(location: 33, length: 14))
         XCTAssertEqual(pairs[1].begin.location, 48)
         XCTAssertNotNil(pairs[1].end)
@@ -55,9 +57,11 @@ final class EnvironmentPairTests: XCTestCase {
 
     func testBeginInsideACommentDoesNotPair() {
         let s = "% \\begin{foo}\n\\begin{foo}\\end{foo}" as NSString
-        XCTAssertEqual(EN.environmentPairs(in: s).map(\.name), ["foo"])
-        XCTAssertEqual(EN.environmentPairs(in: s).count, 1)
-        XCTAssertNotNil(EN.environmentPairs(in: s)[0].end, "only the live pair matches")
+        let pairs = EN.environmentPairs(in: s)
+        XCTAssertEqual(pairs.map(\.name), ["foo"])
+        XCTAssertEqual(pairs.count, 1)
+        guard let onlyPair = pairs.first else { return XCTFail("expected one pair") }
+        XCTAssertNotNil(onlyPair.end, "only the live pair matches")
         let commented = s.range(of: "foo")
         XCTAssertNil(EN.environmentPair(at: commented.location, in: s), "a \\begin{foo} after % is not a pair")
         XCTAssertNil(EditorChangeEnvironment.linkedNames(at: commented.location, in: s))
@@ -111,14 +115,14 @@ final class EnvironmentPairTests: XCTestCase {
         XCTAssertEqual(model.navigationNote, "Caret is not inside an environment.")
     }
 
-    func testWrapCommandPostsOnePendingEditAndCaret() {
+    func testWrapCommandPostsOnePendingEditAndCaret() throws {
         let model = ShellModel()
         model.updateActiveText("a b c")
         model.caretUTF16 = 2; model.caretLengthUTF16 = 1
         model.editorNavigation.wrapShown = true
         model.wrapSelection(inEnvironment: "center")
         XCTAssertFalse(model.editorNavigation.wrapShown)
-        let edit = try! XCTUnwrap(model.pendingEdit)
+        let edit = try XCTUnwrap(model.pendingEdit)
         XCTAssertEqual(edit.nsRange, NSRange(location: 2, length: 1))
         XCTAssertEqual(edit.text, "\\begin{center}b\\end{center}")
         XCTAssertEqual(edit.revision, model.editorRevision)

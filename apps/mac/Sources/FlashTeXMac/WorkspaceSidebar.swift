@@ -185,7 +185,7 @@ private struct ProjectSection: View {
         if id.hasPrefix("closed:") {
             let name = String(id.dropFirst("closed:".count))
             let from = closure.nodes.first { ($0.resolvedPath ?? $0.reference.argument) == name && $0.state == .available }?.from ?? model.chrome.entryPath
-            Task { await model.project.openDocument(name, role: .included(from: from)) }
+            Task { await model.openAndSwitch(name, role: .included(from: from)) { model.captureNote = $0 } }
         } else if id.hasPrefix("missing:") {
             let parts = id.dropFirst("missing:".count).split(separator: ":", maxSplits: 1).map(String.init)
             guard parts.count == 2 else { return }
@@ -200,8 +200,16 @@ private struct ProjectSection: View {
             return [.init(title: "New File…", action: { model.scaffold.presentNewFile() })]
         }
         var items: [SidebarTree.MenuItem] = [.init(title: "New File…", action: { model.scaffold.presentNewFile() })]
+        let path = doc.path
+        // Only for a row backed by a real file under the project root — never
+        // for an unsaved/virtual buffer (no root yet) or one that resolves
+        // outside it. `RevealInFinder.reveal` re-resolves at click time, so a
+        // file deleted or moved after the menu opened is a no-op, not a crash.
+        if RevealInFinder.target(path: path, root: model.project.projectRoot) != nil {
+            items.append(.divider)
+            items.append(.init(title: "View in Finder", action: { RevealInFinder.reveal(path: path, root: model.project.projectRoot) }))
+        }
         if doc.role != .entry {
-            let path = doc.path
             items.append(.divider)
             items.append(.init(title: "Rename…", action: { model.scaffold.presentRename(path) }))
             items.append(.init(title: "Delete…", action: { model.scaffold.presentDelete(path) }))
@@ -377,5 +385,37 @@ extension ShellModel {
     /// unknown member) lands in the footer note instead of silently failing.
     func switchOrNote(_ path: String) {
         if case .refused(let why) = project.switchDocument(to: path) { navigationNote = why }
+    }
+
+    /// Opens `path` and switches to it once it is a project member; a
+    /// refusal (blocked by unsaved edits on the entry, read failure, …) is
+    /// reported through `onRefusal` instead of being silently dropped.
+    /// Shared by go-to-definition file targets, the command palette's Files
+    /// rows, the sidebar's closed-row click, and the Project menu's
+    /// "Open <name>" item — call sites that previously discarded
+    /// `ProjectDocuments.OpenOutcome`.
+    @discardableResult
+    func openAndSwitch(_ path: String, role: ProjectDocument.Role, onRefusal: (String) -> Void) async -> Bool {
+        await openAndSwitch(path, role: role, open: { [project] in await project.openDocument($0, role: $1) }, onRefusal: onRefusal)
+    }
+
+    /// `open` is the membership step (a seam for tests that hold it in flight).
+    func openAndSwitch(_ path: String, role: ProjectDocument.Role,
+                       open: (String, ProjectDocument.Role) async -> ProjectDocuments.OpenOutcome,
+                       onRefusal: (String) -> Void) async -> Bool {
+        navigationToken &+= 1
+        let token = navigationToken
+        switch await open(path, role) {
+        case .opened(let canonical), .alreadyOpen(let canonical):
+            // Switch to the normalized member path (`./ch.tex` opens `ch.tex`),
+            // and only if this is still the latest navigation: a newer open
+            // request or any document switch meanwhile (even A→B→A, which
+            // lands back on the same path) supersedes it. The open still stands.
+            if navigationToken == token { switchOrNote(canonical) }
+            return true
+        case .refused(let why):
+            onRefusal(why)
+            return false
+        }
     }
 }

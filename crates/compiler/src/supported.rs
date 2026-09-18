@@ -132,6 +132,9 @@ pub const TEXT_DIAGNOSTIC_ONLY: &[&str] = &["frac", "sqrt", "thanks", "and"];
 /// engine must leave it undefined: a bare use reports like any other
 /// undefined control sequence, and a user's own `\newcommand{\enquote}` wins
 /// exactly as in real LaTeX. The parser arm is gated on the package instead.
+/// When csquotes IS loaded, expansion declares it as a host command (see
+/// `expansion::csquotes_requested`), so `\renewcommand{\enquote}` is
+/// accepted exactly as real LaTeX accepts redefining csquotes' own macro.
 const TEXT_EXTRA_ARMS: &[&str] = &["newtheorem", "theoremstyle", "enquote"];
 
 /// Canonical commands the expansion pass executes itself (engine primitives
@@ -191,7 +194,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("fcolorbox", "[model]{frame}{fill}{text}", "\\colorbox inside a \\fboxrule frame"),
     ("setlength", "{\\length}{dimension}", "preamble page geometry and \\parskip; \\parindent of 0pt; other lengths warn"),
     ("addtolength", "{\\length}{dimension}", "preamble page geometry and \\parskip; accumulates onto the current value"),
-    ("setlist", "[list]{options}", "enumitem keys recorded on every matching list; itemsep and topsep also set the built-in layout, other keys warn"),
+    ("setlist", "*[list]{options}", "enumitem keys recorded on every matching list; itemsep and topsep also set the built-in layout, other keys warn; the starred form also forces itemsep=0pt"),
     ("newcolumntype", "{X}[n]{spec}", "array column type expanded in later tabular specifications"),
     ("arrayrulecolor", "[model]{colour}", "colortbl: colour of later table rules"),
     ("doublerulesepcolor", "[model]{colour}", "colortbl: colour of the gap between double rules"),
@@ -237,7 +240,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("textrm", "{...}", "roman text"),
     ("textsf", "{...}", "sans-serif text"),
     ("textnormal", "{...}", "normal text face"),
-    ("enquote", "{text}", "csquotes quotation: the argument wrapped in the ``...'' double-quote marks"),
+    ("enquote", "{text}", "csquotes quotation: the argument wrapped in ``...'' double-quote marks, single `...' marks one nesting level down"),
     ("bfseries", "", "switches to bold"),
     ("mdseries", "", "switches to medium weight"),
     ("itshape", "", "switches to italic"),
@@ -266,6 +269,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("LARGE", "", "size declaration from the class size table"),
     ("huge", "", "size declaration from the class size table"),
     ("Huge", "", "size declaration from the class size table"),
+    ("larger", "{...}", "relsize: one step up the class size table from the size in effect; without an argument, a declaration for the rest of the scope"),
+    ("smaller", "{...}", "relsize: one step down the class size table from the size in effect; without an argument, a declaration for the rest of the scope"),
     ("par", "", "ends the paragraph"),
     ("hfill", "", "infinite-stretch horizontal glue"),
     ("hrulefill", "", "\\hfill filled with a 0.4pt baseline rule (latex.ltx \\leaders\\hrule\\hfill)"),
@@ -312,6 +317,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("glossary", "{entry}", "glossary entry: accepted, never typeset (no glossary backend)"),
     ("clearpage", "", "forces a page break"),
     ("cleardoublepage", "", "forces a page break (one-sided article)"),
+    ("twocolumn", "[material]", "starts a new two-column page (\\clearpage, then \\if@twocolumn); \\textwidth, \\parindent and the list margins keep the one-column class values, as in LaTeX. The optional full-width material above the columns is not implemented"),
+    ("onecolumn", "", "starts a new one-column page (\\clearpage, then \\if@twocolumn false); \\columnwidth becomes \\textwidth"),
     ("c", "{letter}", "cedilla text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning"),
     ("v", "{letter}", "caron text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning"),
     ("u", "{letter}", "breve text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning"),
@@ -334,6 +341,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("underline", "{...}", "kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox"),
     ("underbar", "{...}", "kernel text underline: Rule 10 rule like \\underline but content depth zeroed (fixed position)"),
     ("sout", "{...}", "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)"),
+    ("textsuperscript", "{...}", "kernel text superscript: argument at \\sf@size raised like a math superscript (single-line)"),
+    ("textsubscript", "{...}", "kernel text subscript: argument at \\sf@size lowered like a math subscript (single-line)"),
     ("thinspace", "", "text kern .16667em (math: thin muskip)"),
     ("negthinspace", "", "text kern -.16667em"),
     ("medspace", "", "text kern .2222em"),
@@ -424,6 +433,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("closing", "{text}", "letter.cls: closing and signature at \\longindentation, 6\\parskip apart"),
     ("cc", "{text}", "letter.cls carbon-copy line, labelled 'cc:'"),
     ("encl", "{text}", "letter.cls enclosure line, labelled 'encl:'"),
+    ("hangfrom", "{label}", "kernel (ltsect.dtx): label set inline, continuing the paragraph; the hanging indent itself is not applied"),
     ("ps", "", "letter.cls postscript: a paragraph break and nothing else — it takes no argument"),
     ("startbreaks", "", "letter.cls: re-allows page breaks after \\closing; no effect on this layout"),
     ("stopbreaks", "", "letter.cls: forbids page breaks inside the closing; no effect on this layout"),
@@ -631,6 +641,18 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
     (&["bmod", "mod"], "", "upright mod", true),
     (&["pmod"], "{n}", "parenthesised (mod n)", true),
     (
+        &["pod"],
+        "{n}",
+        "amsmath parenthesised (n): like \\pmod without the mod text; needs amsmath",
+        true,
+    ),
+    (
+        &["allowbreak"],
+        "",
+        "zero-penalty breakpoint in a formula (\\penalty0); layout-neutral, formulas never break",
+        true,
+    ),
+    (
         &["mathbb"],
         "{A-Z}",
         "double-struck capitals from Latin Modern Math; other arguments are diagnosed",
@@ -652,6 +674,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         &["varnothing"],
         "",
         "empty set at msbm10's 0.7778em advance (\\emptyset's glyph)",
+        true,
+    ),
+    (
+        &["Diamond"],
+        "",
+        "amsfonts alias of \\lozenge (msam, 0.6667em); requires amsfonts/amssymb",
         true,
     ),
     (
@@ -1062,7 +1090,12 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "csquotes",
         "",
-        "\\enquote with the fixed ``...'' marks; no locale/babel quote selection, no \\enquote* and no package options",
+        "\\enquote with ``...'' marks (single `...' marks one nesting level down, alternating further in); no locale/babel quote selection, no \\enquote* and no package options",
+    ),
+    (
+        "relsize",
+        "",
+        "\\larger/\\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size",
     ),
     (
         "xspace",

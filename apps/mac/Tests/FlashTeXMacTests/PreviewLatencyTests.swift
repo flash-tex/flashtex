@@ -64,19 +64,25 @@ final class PreviewLatencyTests: XCTestCase {
         XCTAssertEqual(first.reusedPages, 0)
         XCTAssertEqual(cache.count, 2)
         XCTAssertEqual(first.pageTokens.count, 2)
+        guard first.pageTokens.count == 2 else { return XCTFail("expected two page tokens, got \(first.pageTokens.count)") }
         // Page 1 and page 2 of `first` differ only by their number, which is part of the bytes.
         XCTAssertNotEqual(first.pageTokens[0], first.pageTokens[1])
         let second = try V2Frame.prepare(data: b, store: Self.store, cache: cache)
         XCTAssertEqual(second.reusedPages, 1, "page 1 arrived as the same bytes; page 2 changed")
+        guard second.pageTokens.count == 2 else { return XCTFail("expected two page tokens, got \(second.pageTokens.count)") }
         XCTAssertEqual(second.pageTokens[0], first.pageTokens[0], "the unchanged page keeps its content token")
         XCTAssertNotEqual(second.pageTokens[1], first.pageTokens[1])
         // Byte-exact page content: what the frame holds equals a fresh, reuse-free decode.
         let fresh = try RenderingV2.decode(b)
         XCTAssertEqual(second.list, fresh.payload)
         XCTAssertEqual(second.list.revision, (first.list.revision) + 1)
-        XCTAssertEqual(second.list.documents[0].sha256, String(repeating: "ab", count: 32))
+        let secondDocument = try XCTUnwrap(second.list.documents.first)
+        XCTAssertEqual(secondDocument.sha256, String(repeating: "ab", count: 32))
         // The reused prepared page paints exactly what a fresh preparation paints (0 differing pixels).
         let freshFrame = try V2Frame.prepare(fresh, store: Self.store)
+        guard second.prepared.count == 2, freshFrame.prepared.count == 2, first.prepared.count == 2 else {
+            return XCTFail("expected two prepared pages in each of second (\(second.prepared.count)), freshFrame (\(freshFrame.prepared.count)), first (\(first.prepared.count))")
+        }
         for index in 0..<2 {
             let reused = try XCTUnwrap(GlyphRunRenderer.rasterize(second.prepared[index], scale: 1))
             let direct = try XCTUnwrap(GlyphRunRenderer.rasterize(freshFrame.prepared[index], scale: 1))

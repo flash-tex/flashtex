@@ -309,6 +309,63 @@ fn setlist_spacing_is_attached_to_the_right_items() {
 }
 
 #[test]
+fn setlist_star_forces_compact_spacing_on_top_of_the_given_keys() {
+    // Gaps: the star keeps `topsep` but forces `itemsep` to zero even
+    // though an explicit nonzero `itemsep` was given.
+    let parsed = parser::parse(&doc(r"\setlist*[enumerate]{itemsep=5pt,topsep=3pt}"));
+    let gaps: Vec<(f64, f64)> = parsed
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::ListItem {
+                extra_gap_before_pt,
+                extra_gap_after_pt,
+                ..
+            } => Some((*extra_gap_before_pt, *extra_gap_after_pt)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(gaps, vec![(3.0, 0.0), (0.0, 0.0), (0.0, 3.0)]);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "{:?}",
+        parsed
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn setlist_star_matches_setlist_with_an_explicit_noitemsep_equivalent() {
+    // `\setlist*` must render exactly like `\setlist` with the
+    // `noitemsep`-equivalent key (`itemsep=0pt`): same keys otherwise.
+    let starred = reply(&compile_line(
+        "star",
+        &doc(r"\setlist*[enumerate]{itemsep=10pt,topsep=8pt,leftmargin=*}"),
+    ));
+    let plain = reply(&compile_line(
+        "plain",
+        &doc(r"\setlist[enumerate]{itemsep=0pt,topsep=8pt,leftmargin=*}"),
+    ));
+    assert!(messages(&starred).is_empty(), "{:?}", messages(&starred));
+    assert!(messages(&plain).is_empty(), "{:?}", messages(&plain));
+    for text in ["Intro.", "Alpha", "Beta", "Gamma", "Outro."] {
+        assert!(
+            (baseline_of(&starred, text) - baseline_of(&plain, text)).abs() < TOLERANCE_PT,
+            "{text} baseline differs: star={} plain={}",
+            baseline_of(&starred, text),
+            baseline_of(&plain, text)
+        );
+    }
+    assert!(
+        (x_of(&starred, "Alpha") - x_of(&plain, "Alpha")).abs() < TOLERANCE_PT,
+        "leftmargin=* must apply identically under the star"
+    );
+}
+
+#[test]
 fn setlist_without_an_environment_argument_applies_to_both_list_types() {
     let source = r"\documentclass{article}\setlist{itemsep=6pt}\begin{document}\begin{itemize}\item One\item Two\end{itemize}\end{document}";
     let baseline = reply(&compile_line(

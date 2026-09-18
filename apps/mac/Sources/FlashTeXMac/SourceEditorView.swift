@@ -808,6 +808,18 @@ struct SourceEditorView: NSViewRepresentable {
             ) { [weak self, weak scroll] _ in
                 MainActor.assumeIsolated {
                     guard let self, let tv = scroll?.documentView as? NSTextView else { return }
+                    // A bounds change posted inside `processEditing` must not
+                    // query layout (GH#681): handle it once the edit is done.
+                    if let storage = tv.textStorage, !storage.editedMask.isEmpty {
+                        DispatchQueue.main.async { [weak self] in
+                            guard let self, let tv = self.textView else { return }
+                            self.marks.scrolled(tv)
+                            self.syntax.scrolled()
+                            self.hover.dismiss()
+                            self.gutter?.needsDisplay = true
+                        }
+                        return
+                    }
                     self.marks.scrolled(tv)
                     self.syntax.scrolled()
                     self.hover.dismiss()
@@ -832,7 +844,7 @@ struct SourceEditorView: NSViewRepresentable {
                 completing.mathModeAtCaret = { [weak self] index in
                     guard let self, let text = self.textView?.textStorage?.string as NSString? else { return false }
                     return Completion.isMathMode(in: text, caretUTF16: index,
-                                                 highlighter: self.syntax.highlighter.length == text.length ? self.syntax.highlighter : nil)
+                                                 highlighter: self.syntax.inSync(with: text) ? self.syntax.highlighter : nil)
                 }
                 completing.backgroundDecorator = { [weak self] rect in self?.drawCurrentLine(in: rect) }
                 // GH74: a completion snippet's placeholder closer (`\section{}`)
@@ -889,7 +901,7 @@ struct SourceEditorView: NSViewRepresentable {
         func quickInfo(at index: Int) -> EditorIntelligence.QuickInfo? {
             guard let tv = textView else { return nil }
             let text = tv.textStorage?.string as NSString? ?? ""
-            let h = syntax.highlighter.length == text.length ? syntax.highlighter : nil
+            let h = syntax.inSync(with: text) ? syntax.highlighter : nil
             return EditorIntelligence.quickInfo(in: text, at: index, marks: marks.marks, highlighter: h,
                                                 userDefinition: parent.userDefinition, context: parent.hoverContext())
         }
@@ -902,7 +914,7 @@ struct SourceEditorView: NSViewRepresentable {
         func mathPreview(at index: Int) -> (image: CGImage, range: NSRange)? {
             guard let tv = textView, let context = parent.mathPreviewContext() else { return nil }
             let text = tv.textStorage?.string as NSString? ?? ""
-            let h = syntax.highlighter.length == text.length ? syntax.highlighter : nil
+            let h = syntax.inSync(with: text) ? syntax.highlighter : nil
             guard let span = EditorIntelligence.inlineMathSpan(in: text, at: index, highlighter: h) else { return nil }
             guard let crop = MathHoverPreview.crop(in: text, at: index, path: context.path, pages: context.frame.list.pages,
                                                    previewIsStale: context.previewIsStale, highlighter: h) else { return nil }
@@ -918,7 +930,7 @@ struct SourceEditorView: NSViewRepresentable {
         func commandClick(at index: Int) -> Bool {
             guard let tv = textView else { return false }
             let text = tv.textStorage?.string as NSString? ?? ""
-            let h = syntax.highlighter.length == text.length ? syntax.highlighter : nil
+            let h = syntax.inSync(with: text) ? syntax.highlighter : nil
             guard let target = EditorIntelligence.definitionTarget(in: text, at: index, highlighter: h) else { return false }
             hover.dismiss()
             tv.setSelectedRange(NSRange(location: index, length: 0)) // onCaretChange → model.caretUTF16

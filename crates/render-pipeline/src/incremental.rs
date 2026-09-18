@@ -317,7 +317,7 @@ pub fn block_origin(items: &[Item]) -> Option<(DocumentId, usize)> {
             }
             // A table's cell blocks hold absolute record indices and
             // spans: blocks containing one are never cached.
-            Item::Table(_) | Item::ColorBox(_) | Item::Underline(_) => return None,
+            Item::Table(_) | Item::ColorBox(_) | Item::Underline(_) | Item::TextScript(_) => return None,
             Item::Math { span, .. } => {
                 if !note(&CharSrc {
                     document: span.document,
@@ -435,6 +435,11 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 (span.start.wrapping_sub(base)).hash(h);
                 (span.end.wrapping_sub(base)).hash(h);
             }
+            Item::QedBox { style, span } => {
+                style.hash(h);
+                (span.start.wrapping_sub(base)).hash(h);
+                (span.end.wrapping_sub(base)).hash(h);
+            }
             Item::Kern { amount, style } => {
                 amount.hash(h);
                 style.hash(h);
@@ -452,6 +457,11 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                     hash_items(t, base, h);
                 }
             }
+            Item::Marginpar { span, text } => {
+                (span.start.wrapping_sub(base)).hash(h);
+                (span.end.wrapping_sub(base)).hash(h);
+                hash_items(text, base, h);
+            }
             Item::ColorBox(b) => {
                 format!("{b:?}").hash(h);
             }
@@ -460,6 +470,9 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
             }
             Item::Underline(u) => {
                 format!("{u:?}").hash(h);
+            }
+            Item::TextScript(t) => {
+                format!("{t:?}").hash(h);
             }
             Item::LeaveVmode => {}
         }
@@ -578,6 +591,43 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
                 hash_math(above, h);
                 hash_math(below, h);
             }
+            // Nuclei only a re-pinned compiler emits. Nested math lists are
+            // hashed through `hash_math` so the key tracks their spans;
+            // the leaf text/alignment fields go in through `Debug`, as the
+            // non-`Hash` fields elsewhere in this crate do.
+            #[cfg(feature = "compiler-node-surface")]
+            Nucleus::TextRun(pieces) => {
+                pieces.len().hash(h);
+                for p in pieces {
+                    match p {
+                        flashtex_compiler::math::TextPiece::Text { text, style } => {
+                            text.hash(h);
+                            format!("{style:?}").hash(h);
+                        }
+                        flashtex_compiler::math::TextPiece::Math(list) => hash_math(list, h),
+                    }
+                }
+            }
+            #[cfg(feature = "compiler-node-surface")]
+            Nucleus::SideSet { operator, left_superscript, left_subscript } => {
+                hash_math(operator, h);
+                for side in [left_superscript, left_subscript] {
+                    match side {
+                        Some(l) => {
+                            1u8.hash(h);
+                            hash_math(l, h);
+                        }
+                        None => 0u8.hash(h),
+                    }
+                }
+            }
+            #[cfg(feature = "compiler-node-surface")]
+            Nucleus::Lap { body, align } => {
+                hash_math(body, h);
+                format!("{align:?}").hash(h);
+            }
+            #[cfg(not(feature = "amsmath-inline"))]
+            other => format!("{other:?}").hash(h),
         }
         match &a.superscript {
             Some(s) => {
@@ -784,6 +834,30 @@ fn shift_math(list: &mut MathList, delta: isize) {
                 shift_math(above, delta);
                 shift_math(below, delta);
             }
+            // Nuclei only a re-pinned compiler emits. Every nested math list
+            // must be shifted, or an edit before the formula leaves the
+            // inner spans pointing at stale bytes.
+            #[cfg(feature = "compiler-node-surface")]
+            Nucleus::TextRun(pieces) => {
+                for p in pieces.iter_mut() {
+                    if let flashtex_compiler::math::TextPiece::Math(list) = p {
+                        shift_math(list, delta);
+                    }
+                }
+            }
+            #[cfg(feature = "compiler-node-surface")]
+            Nucleus::SideSet { operator, left_superscript, left_subscript } => {
+                shift_math(operator, delta);
+                for side in [left_superscript, left_subscript] {
+                    if let Some(l) = side {
+                        shift_math(l, delta);
+                    }
+                }
+            }
+            #[cfg(feature = "compiler-node-surface")]
+            Nucleus::Lap { body, .. } => shift_math(body, delta),
+            #[cfg(not(feature = "amsmath-inline"))]
+            _ => {}
         }
         if let Some(s) = &mut a.superscript {
             shift_math(s, delta);
@@ -814,12 +888,16 @@ pub fn relocate_items(items: &[Item], delta: isize) -> Vec<Item> {
                 shift_span(span, delta);
                 shift_math(list, delta);
             }
-            Item::Logo { span, .. } | Item::Rule { span, .. } => shift_span(span, delta),
+            Item::Logo { span, .. } | Item::Rule { span, .. } | Item::QedBox { span, .. } => shift_span(span, delta),
             Item::Footnote { span, text, .. } => {
                 shift_span(span, delta);
                 if let Some(t) = text {
                     *t = relocate_items(t, delta);
                 }
+            }
+            Item::Marginpar { span, text } => {
+                shift_span(span, delta);
+                *text = relocate_items(text, delta);
             }
             _ => {}
         }

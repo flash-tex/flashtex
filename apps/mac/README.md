@@ -1114,9 +1114,20 @@ Not yet: `.` repeats an operator + motion/text object and re-inserts the
 text of an insert session, but not visual-mode changes; `o` + typed text and
 `cw` + typed text are two undo steps (open/delete, then the insert); no `gu`
 `gU` `gq` `=`, no `iS aS ip ap it at` objects, no regular expressions in
-`/` and `:s` (literal, smart-case), no `:g`, `:'a`, `q` macros, jump list
-(⌃O/⌃I), `Ctrl-V` block mode, `R` replace mode, or `.vimrc` mappings; marks
-do not follow edits; `H`/`M`/`L` use the visible rect without `scrolloff`.
+`/` and `:s` (literal, smart-case), no `:g`, `:'a`, `q` macros, `Ctrl-V`
+block mode, `R` replace mode, or `.vimrc` mappings; `H`/`M`/`L` use the
+visible rect without `scrolloff`.
+
+Marks (`` `a ``, `'a`) and the jumplist follow the buffer for **every** edit,
+not only Vim's own: `VimMode.adjustPositions` hangs off the editor storage's
+`didProcessEditing` notification, so plain insert-mode typing, ⌫, an input
+method committing, completion, paste, undo/redo and a programmatic
+replacement all move them. Text deleted out from under a mark unsets it
+(`` `a `` then answers `E20: Mark not set`) rather than relocating it
+silently, while a jumplist entry collapses to the edit instead — Vim's own
+`ONE_ADJUST` / `ONE_ADJUST_NODEL` split, measured against vim 9.1. Positions
+are UTF-16 offsets rather than Vim's line + column, so an edit before a mark
+on the *same* line moves it here where Vim would leave the column alone.
 
 ## Targets
 

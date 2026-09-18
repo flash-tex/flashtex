@@ -72,7 +72,9 @@ fn parskip_replaces_the_paragraph_gap_with_em_relative_to_the_class_size() {
     let parskip_src = doc("\\setlength{\\parskip}{0.65em}");
     assert_no_diagnostics(&parskip_src);
     let parskip_gap = baseline_gap(&parskip_src);
-    let expected = 0.65 * 11.0 - PARAGRAPH_GAP_PT;
+    // pdflatex `\showthe\parskip`: 0.65em of cmr10 at 10.95pt (its quad is
+    // 10.95003pt, not the 11pt class option).
+    let expected = 7.11745 - PARAGRAPH_GAP_PT;
     assert!(
         (parskip_gap - default_gap - expected).abs() < 0.02,
         "gap grew by {} not {expected}",
@@ -225,11 +227,105 @@ fn hw1_keeps_its_three_reference_pages_with_parskip_applied() {
     let hw1 = include_str!("../../../fixtures/real-world/hw1/HW1.tex");
     let parsed = parse(hw1);
     assert_eq!(parsed.class_size_pt, Some(11.0));
-    assert_eq!(parsed.parskip_pt, Some(0.65 * 11.0));
+    // HW1 loads `fontenc` T1 first, so pdflatex's `\showthe\parskip` is
+    // 0.65em of ecrm1095 (quad 10.88788pt): 7.07704pt, i.e. 463801sp.
+    assert_eq!(parsed.parskip_pt, Some(463_801.0 / 65536.0));
     let (pages, messages) = compile(hw1);
     assert_eq!(pages.len(), 3, "HW1-reference.pdf has 3 pages");
     assert!(
         !messages.iter().any(|m| m.contains("setlength")),
         "{messages:?}"
     );
+}
+
+/// The six `PREAMBLE_LENGTHS` entries the kernel-inventory audit flagged as
+/// implemented but name-untested (GH-TABLE2-UNTESTED-7): each already has a
+/// real dispatch arm (`is_preamble_length` / `length_assignment`) and must
+/// keep it. The parser stores no per-length field for page geometry (only
+/// `parskip_pt`/`class_size_pt` exist), so "took effect" below means the
+/// value is parsed and validated, not swallowed: an unrecognised dimension
+/// for the same name is an error (see
+/// `untested_preamble_lengths_reject_an_unrecognised_dimension`).
+const UNTESTED_PAGE_LENGTHS: &[(&str, &str)] = &[
+    ("paperheight", "11in"),
+    ("evensidemargin", "0.5in"),
+    ("headheight", "12pt"),
+    ("footskip", "30pt"),
+    ("marginparwidth", "65pt"),
+    ("columnsep", "10pt"),
+];
+
+#[test]
+fn preamble_setlength_of_untested_page_lengths_is_accepted() {
+    for (name, dimen) in UNTESTED_PAGE_LENGTHS {
+        let src = format!(
+            "\\documentclass{{article}}\\setlength{{\\{name}}}{{{dimen}}}\
+             \\begin{{document}}Hello\\end{{document}}"
+        );
+        let parsed = parse(&src);
+        assert!(parsed.diagnostics.is_empty(), "{name}: {:?}", parsed.diagnostics);
+        let (_, messages) = compile(&src);
+        assert!(messages.is_empty(), "{name}: {messages:?}");
+    }
+}
+
+#[test]
+fn preamble_tex_assignments_of_untested_page_lengths_are_accepted() {
+    for (name, dimen) in UNTESTED_PAGE_LENGTHS {
+        let src = format!(
+            "\\documentclass{{article}}\\{name}={dimen}\
+             \\begin{{document}}Hello\\end{{document}}"
+        );
+        let parsed = parse(&src);
+        assert!(parsed.diagnostics.is_empty(), "{name}: {:?}", parsed.diagnostics);
+        let (_, messages) = compile(&src);
+        assert!(messages.is_empty(), "{name}: {messages:?}");
+    }
+}
+
+#[test]
+fn preamble_addtolength_of_untested_page_lengths_is_accepted() {
+    for (name, _) in UNTESTED_PAGE_LENGTHS {
+        let src = format!(
+            "\\documentclass{{article}}\\addtolength{{\\{name}}}{{2pt}}\
+             \\begin{{document}}Hello\\end{{document}}"
+        );
+        let parsed = parse(&src);
+        assert!(parsed.diagnostics.is_empty(), "{name}: {:?}", parsed.diagnostics);
+        let (_, messages) = compile(&src);
+        assert!(messages.is_empty(), "{name}: {messages:?}");
+    }
+}
+
+#[test]
+fn untested_preamble_lengths_reject_an_unrecognised_dimension() {
+    // The strongest "took effect" check the parser allows for page geometry:
+    // there is no `parsed.paperheight_pt`-style field (page geometry is
+    // applied by the render pipeline from the source), so instead prove the
+    // value reaches dimension validation — it is not silently swallowed.
+    for (name, _) in UNTESTED_PAGE_LENGTHS {
+        let src = format!(
+            "\\documentclass{{article}}\\setlength{{\\{name}}}{{banana}}\
+             \\begin{{document}}Hello\\end{{document}}"
+        );
+        let parsed = parse(&src);
+        assert!(
+            parsed.diagnostics.iter().any(|d| d.message.contains("requires a recognised dimension")),
+            "{name}: an unrecognised dimension must be an error, got {:?}",
+            parsed.diagnostics
+        );
+    }
+}
+
+#[test]
+fn table_lengths_are_accepted_in_every_assignment_form() {
+    let src = "\\documentclass{article}\\usepackage{array}\\setlength{\\tabcolsep}{4pt}\
+         \\begin{document}{\\setlength\\tabcolsep{2pt}\\addtolength{\\arrayrulewidth}{.2pt}\
+         \\setlength{\\doublerulesep}{1pt}\\setlength{\\extrarowheight}{2pt}\
+         \\begin{tabular}{|l|}a\\end{tabular}}\
+         {\\tabcolsep=1pt \\begin{tabular}{l}b\\end{tabular}}\\end{document}";
+    assert_no_diagnostics(src);
+    let (pages, _) = compile(src);
+    let text: String = format!("{pages:?}");
+    assert!(!text.contains("1pt"), "the assignment's value is not text");
 }

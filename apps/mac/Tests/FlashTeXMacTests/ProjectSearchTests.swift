@@ -242,6 +242,7 @@ final class ProjectSearchHelperTests: XCTestCase {
         XCTAssertEqual(r.matches.map(\.location.start), [byte("café.", in: Self.chapter), byte("café in", in: Self.chapter),
                                                          byte("café —", in: Self.main), byte("café again", in: Self.main)])
         XCTAssertEqual(r.matches.map { $0.location.end - $0.location.start }, [5, 5, 5, 5], "UTF-8 byte ranges")
+        guard r.matches.count == 4 else { return XCTFail("expected four matches, got \(r.matches.count)") }
         XCTAssertEqual(r.matches[0].snippet?.text, "Résumé of café.")
         XCTAssertEqual(r.matches[1].snippet?.text, "% café in a comment", "comments are searched")
         XCTAssertEqual(r.matches[2].snippet, .init(before: "naïve ", match: "café", after: " — see \\ref{sec:b}; café again."))
@@ -559,16 +560,24 @@ final class ProjectSearchPlanPureTests: XCTestCase {
         XCTAssertEqual(command["label"] as? String, "L")
         let edits = command["edits"] as! [[String: Any]]
         XCTAssertEqual(edits.count, 2)
-        XCTAssertEqual(edits[1]["start_byte"] as? Int, 17)
-        XCTAssertEqual(edits[1]["removed_text"] as? String, "café")
-        XCTAssertEqual(edits[1]["replacement"] as? String, "tea")
+        if edits.count > 1 {
+            XCTAssertEqual(edits[1]["start_byte"] as? Int, 17)
+            XCTAssertEqual(edits[1]["removed_text"] as? String, "café")
+            XCTAssertEqual(edits[1]["replacement"] as? String, "tea")
+        } else {
+            XCTFail("expected two edits, got \(edits.count)")
+        }
         let plan = ProjectSearch.ReplacementPlan(literal: "café", replacement: "tea", projectID: "p", sourceVersions: ["main.tex": 1],
                                                  membershipGeneration: 1, documents: nil, workUsed: 0, edits: [a, b])
         let previews = ProjectSearch.previews(for: plan, texts: ["main.tex": text])
         XCTAssertEqual(previews.map(\.line), [1, 1])
-        XCTAssertEqual(previews[0].before?.text, "naïve café — café.")
-        XCTAssertEqual(previews[0].after, .init(before: "naïve ", match: "tea", after: " — café."))
-        XCTAssertEqual(ProjectSearch.accessibilityLabel(index: 1, count: 2, preview: previews[1]), "replacement 2 of 2, main.tex, line 1, naïve café — café. becomes naïve café — tea.")
+        if previews.count > 1 {
+            XCTAssertEqual(previews[0].before?.text, "naïve café — café.")
+            XCTAssertEqual(previews[0].after, .init(before: "naïve ", match: "tea", after: " — café."))
+            XCTAssertEqual(ProjectSearch.accessibilityLabel(index: 1, count: 2, preview: previews[1]), "replacement 2 of 2, main.tex, line 1, naïve café — café. becomes naïve café — tea.")
+        } else {
+            XCTFail("expected two previews, got \(previews.count)")
+        }
         let outcome = ProjectSearch.FileOutcome(path: "main.tex", state: .uncertain("helper exited (9)", commandID: "c1"))
         XCTAssertEqual(outcome.description, "main.tex: uncertain — helper exited (9); retry command c1 unchanged")
     }
@@ -636,6 +645,7 @@ final class ProjectSearchPlanHelperTests: XCTestCase {
         XCTAssertEqual(plan.edits.map(\.start), [byte("café.", in: ProjectSearchHelperTests.chapter), byte("café in", in: ProjectSearchHelperTests.chapter),
                                                  byte("café —", in: ProjectSearchHelperTests.main), byte("café again", in: ProjectSearchHelperTests.main)])
         XCTAssertEqual(client.planPreviews.map(\.line), [2, 3, 4, 4])
+        guard client.planPreviews.count > 2 else { return XCTFail("expected more than two plan previews, got \(client.planPreviews.count)") }
         XCTAssertEqual(client.planPreviews[2].after?.text, "naïve tea — see \\ref{sec:b}; café again.")
         XCTAssertTrue(client.planStatus.hasPrefix("Proposal: 4 replacements in 2 files, replacing “café” with “tea” at durable chapter.tex r1, main.tex r1. Nothing is changed"), client.planStatus)
         // Proposal only: nothing moved.
@@ -686,6 +696,7 @@ final class ProjectSearchPlanHelperTests: XCTestCase {
         model.updateActiveText(ProjectSearchHelperTests.main + "% local\n")
         await client.applyPlan()
         XCTAssertEqual(client.applyOutcomes.map(\.path), ["chapter.tex", "main.tex"])
+        guard client.applyOutcomes.count == 2 else { return XCTFail("expected two apply outcomes, got \(client.applyOutcomes.count)") }
         guard case .applied(2, _, _) = client.applyOutcomes[0].state else { return XCTFail(client.applyOutcomes[0].description) }
         guard case .refused(let why) = client.applyOutcomes[1].state else { return XCTFail(client.applyOutcomes[1].description) }
         XCTAssertTrue(why.contains("not durable yet"), why)

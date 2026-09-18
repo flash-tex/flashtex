@@ -45,9 +45,12 @@
 //! *not* redefined and is unaffected: `$a\ldots ,b$` minus `$a,b$` is
 //! 17.79144, the same as `$a\ldots b$` minus `$ab$`.
 //!
-//! `\vdots` and `\ddots` are also left alone: they are `\vbox` constructions
-//! over *text*-font periods, not runs of math dots, and math-layout has no
-//! atom that builds a vbox. `vdots_and_ddots_are_left_alone` pins that.
+//! `\vdots` and `\ddots` are **not** ellipses in this sense: they are `\vbox`
+//! constructions over *text*-font periods at absolute point offsets, not runs
+//! of math dots, so they are built through a different seam and pinned by
+//! `math_dot_stacks.rs` (issue #717). `vdots_and_ddots_are_not_ellipses` pins
+//! that this module's Punct spacing and math-italic/cmsy dots stay away from
+//! them.
 
 mod common;
 
@@ -175,18 +178,30 @@ fn dots_and_dotsb_follow_the_compilers_own_grouping() {
 }
 
 /// `\vdots` and `\ddots` are a different construct and must not be caught by
-/// the ellipsis rule: pdflatex builds each from *text*-font periods in a
-/// `\vbox`, which math-layout cannot express, so they stay the single glyph
-/// the compiler emits. This pins that the change did not reach them.
+/// the *ellipsis* rule: they are not runs of math dots at all but stacks of
+/// text-font periods at absolute point offsets, built through a different
+/// seam (`math_dot_stacks.rs`). This pins that they take neither the Punct
+/// spacing nor the math-italic/cmsy dot this module is about -- their periods
+/// are the roman ones, and the three are not 3mu apart.
 #[test]
-fn vdots_and_ddots_are_left_alone() {
+fn vdots_and_ddots_are_not_ellipses() {
     if !lm_available() {
         eprintln!("skipped: Latin Modern not available");
         return;
     }
-    for (body, ch) in [("$a\\vdots b$", "\u{22EE}"), ("$a\\ddots b$", "\u{22F1}")] {
+    for body in ["$a\\vdots b$", "$a\\ddots b$"] {
         let g = math_glyphs(body);
-        let n = g.iter().filter(|g| g.0 == ch).count();
-        assert_eq!(n, 1, "{body}: still one glyph, not a rebuilt run of three: {g:?}");
+        for ch in ["\u{22EE}", "\u{22F1}", "\u{22C5}"] {
+            assert!(!g.iter().any(|g| g.0 == ch), "{body}: unexpected {ch:?} in {g:?}");
+        }
+        let dots: Vec<f64> = g.iter().filter(|g| g.0 == ".").map(|g| g.1).collect();
+        assert_eq!(dots.len(), 3, "{body}: three periods expected in {g:?}");
+        // `\vdots` stacks them at one x; `\ddots` steps them by 2mu, not the
+        // 3mu an `\ldots` Punct pair takes.
+        let step = dots[1] - dots[0];
+        assert!(
+            step.abs() < 0.01 || (step - bp(LDOTP + 2.0 * THIN / 3.0)).abs() < 0.01,
+            "{body}: dot step {step:.4} bp is neither a stack nor `\\ddots`' 2mu: {g:?}"
+        );
     }
 }

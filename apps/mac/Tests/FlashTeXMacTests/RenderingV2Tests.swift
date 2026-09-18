@@ -76,17 +76,19 @@ final class RenderingV2Tests: XCTestCase {
         XCTAssertEqual(list.revision, 3)
         XCTAssertEqual(list.requiredFeatures, ["glyph_run", "rgba-srgb", "cluster-actualtext"])
         XCTAssertEqual(list.documents.map(\.path), ["main.tex"])
-        XCTAssertEqual(list.documents[0].byteLength, 161)
+        XCTAssertEqual(try XCTUnwrap(list.documents.first).byteLength, 161)
         // Pipeline deviation from the schema: CFF Latin Modern is `opentype-cff`, not `static-truetype`.
         XCTAssertEqual(Set(list.fonts.map(\.format)), ["opentype-cff"])
         XCTAssertEqual(list.fonts.count, 4)
         XCTAssertTrue(list.fonts.allSatisfy { $0.fontId == $0.sha256 && $0.faceIndex == 0 && $0.unitsPerEm == 1000 && $0.glyphCount == 821 })
         XCTAssertEqual(list.pages.count, 1)
-        XCTAssertEqual(list.pages[0].widthPt, 612, accuracy: 0.0001)
-        XCTAssertEqual(list.pages[0].heightPt, 792, accuracy: 0.0001)
-        XCTAssertEqual(list.pages[0].items.count, 15)
+        let firstPage = try XCTUnwrap(list.pages.first)
+        XCTAssertEqual(firstPage.widthPt, 612, accuracy: 0.0001)
+        XCTAssertEqual(firstPage.heightPt, 792, accuracy: 0.0001)
+        XCTAssertEqual(firstPage.items.count, 15)
+        guard firstPage.items.count > 4 else { return XCTFail("expected more than four items, got \(firstPage.items.count)") }
         // "office": the ffi ligature is one glyph (original GID 123) over three source bytes.
-        guard case .glyphRun(let office) = list.pages[0].items[4] else { return XCTFail("item 4 is not a glyph run") }
+        guard case .glyphRun(let office) = firstPage.items[4] else { return XCTFail("item 4 is not a glyph run") }
         XCTAssertEqual(office.text, "office")
         XCTAssertEqual(office.glyphs.map(\.gid), [81, 123, 43, 50])
         XCTAssertEqual(office.clusters[1].textStartByte, 1)
@@ -98,7 +100,8 @@ final class RenderingV2Tests: XCTestCase {
         XCTAssertEqual(office.clusters[1].carets[0].textByte, 1)
         XCTAssertEqual(office.paint, .black)
         // "café.": é is two text bytes from three source bytes (\'e).
-        guard case .glyphRun(let cafe) = list.pages[0].items[14] else { return XCTFail() }
+        guard firstPage.items.count > 14 else { return XCTFail("expected more than fourteen items, got \(firstPage.items.count)") }
+        guard case .glyphRun(let cafe) = firstPage.items[14] else { return XCTFail() }
         XCTAssertEqual(cafe.text, "café.")
         XCTAssertEqual(cafe.clusterText(3), "é")
         XCTAssertEqual(cafe.clusters[3].sources?[0].endByte, 144)

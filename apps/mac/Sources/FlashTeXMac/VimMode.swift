@@ -24,6 +24,10 @@ import Observation
 ///   manager and diagnostics see Vim edits as ordinary edits. Undo/redo (`u`,
 ///   ⌃R) are the editor's own undo manager; an insert session is one step
 ///   because coalescing is broken at its boundaries.
+/// - Because insert-mode typing is *not* Vim's edit path, marks and the
+///   jumplist are adjusted from the editor storage's `didProcessEditing`
+///   notification (`observeStorage`), the one point every change to the
+///   buffer passes through, rather than from the edit sites themselves.
 /// - `:` commands that need the app (`:w`, `:q`, `:e`, `:set nu`) are handed
 ///   to `exCommandHandler` (wired by the owner to `ShellModel`); `:%s` and
 ///   `:noh` act on the buffer directly.
@@ -233,10 +237,19 @@ final class VimMode {
     private(set) var message: String?
     /// > 0 while a key is being handled: selection changes then are Vim's own.
     private var applying = 0
+    /// The editor storage's `didProcessEditing` observer (`observeStorage`):
+    /// the single point every buffer change is seen from, marks and the
+    /// jumplist adjusted from it.
+    private var storageObserver: NSObjectProtocol?
 
     init(textView: NSTextView) {
         self.textView = textView
         Self.liveModes.add(self)
+        observeStorage()
+    }
+
+    deinit {
+        if let storageObserver { NotificationCenter.default.removeObserver(storageObserver) }
     }
 
     var wantsBlockCaret: Bool { mode != .insert }
@@ -288,6 +301,7 @@ final class VimMode {
     func activate() {
         applying += 1
         defer { applying -= 1 }
+        observeStorage() // no-op unless the storage was not there at init
         mode = .normal
         resetPending()
         commandLine = nil
@@ -433,48 +447,94 @@ final class VimMode {
 
     private func replace(_ range: NSRange, with s: String, actionName: String) {
         guard let tv = textView else { return }
-        adjustPositions(afterReplacing: range, withLength: (s as NSString).length)
+        // No `adjustPositions` call here (or at any other edit site): the
+        // storage observer below sees this edit like every other one.
         tv.breakUndoCoalescing()
         tv.insertText(s, replacementRange: range)
         tv.undoManager?.setActionName(actionName)
         tv.breakUndoCoalescing()
     }
 
-    /// Called from every Vim-driven edit site (`replace`, `shiftLines`,
-    /// `substitute`) so marks and the jumplist track the buffer shifting
-    /// under them: a position entirely before the edit is untouched, one
-    /// entirely after it shifts by the length delta, and one inside the
-    /// replaced range collapses to the edit's start (Vim invalidates marks
-    /// on the deleted text outright; this is a simpler approximation of the
-    /// same idea).
+    /// Moves `marks` (including the `` ` ``/`'` last-jump pair) and the
+    /// jumplist so they keep pointing at the text they were put on when the
+    /// buffer shifts under them. **Nothing calls this directly** — it hangs
+    /// off `observeStorage`, the editor storage's `didProcessEditing`
+    /// notification, which is the one point *every* change to the buffer
+    /// passes through whatever made it: Vim's own `replace`/`shiftLines`/
+    /// `substitute`, plain insert-mode typing and ⌫ (which never reach
+    /// VimMode at all — `handleInsertKey` returns `false` for ordinary keys
+    /// by design, see this file's top doc comment), an input method
+    /// committing a composition, completion and snippet expansion, paste,
+    /// drag, undo/redo, and the owner replacing the document. That is the
+    /// fix for flashtex#678, where only the three Vim-driven sites adjusted
+    /// and a mark on a line the user was typing into drifted silently —
+    /// worse than a missing feature, because every Vim-driven edit (the
+    /// demo path) did track correctly, so it surfaced much later as "the
+    /// mark is just wrong sometimes". Hanging it off the shared path is the
+    /// point: a Vim edit path added tomorrow cannot reintroduce the gap by
+    /// forgetting to call this.
     ///
-    /// KNOWN GAP (flashtex#678): this only fires for edits that originate
-    /// *inside* VimMode. Plain insert-mode typing never calls it — `i`/`a`/
-    /// `o` and everything typed before `<Esc>` goes straight through
-    /// NSTextView's own AppKit path (`handleInsertKey` returns `false` for
-    /// ordinary characters, by design; see this file's top doc comment), so
-    /// a mark on a line the user is actively typing into silently drifts
-    /// out from under them. It looks like a working feature because every
-    /// Vim-driven edit (the common demo/test path) does adjust correctly —
-    /// that's what makes this worth flagging explicitly rather than letting
-    /// it get rediscovered later as an unreproducible "mark is just wrong
-    /// sometimes" report. The real fix is to observe *every* edit here, not
-    /// just Vim's own — an NSTextStorage delegate callback on the editor's
-    /// storage (or whatever the edit-ledger path already uses to see every
-    /// insertText, if it sits above the individual call sites) would let
-    /// this function become the single, edit-source-agnostic place that
-    /// happens, instead of something every future Vim edit path has to
-    /// remember to call.
+    /// Positions move the way Vim's `mark_adjust` (mark.c) moves them,
+    /// checked against vim 9.1 rather than assumed:
+    /// - entirely before the edit: untouched;
+    /// - at or after its end: shifted by the length delta (so a pure
+    ///   insertion at exactly a mark pushes the mark along with its
+    ///   character, rather than swallowing it);
+    /// - on replaced text: a **mark** is dropped, so `` `a `` answers
+    ///   "E20: Mark not set" instead of quietly relocating to text the user
+    ///   never marked, while a **jumplist** entry collapses to the edit's
+    ///   start instead of being dropped, because ⌃O has to keep taking you
+    ///   back somewhere. That asymmetry is Vim's: `ONE_ADJUST` clears named
+    ///   marks and the previous-context mark on deleted lines (`getpos("'a")`
+    ///   → `[0, 0, 0, 0]`, then `E20`), `ONE_ADJUST_NODEL` moves jumplist
+    ///   entries to the first deleted line.
+    ///
+    /// One deliberate divergence: marks here are UTF-16 offsets, not Vim's
+    /// line + column, so an edit before a mark *on the same line* shifts the
+    /// mark, where Vim adjusts only line numbers and lets the column point at
+    /// whatever text slid under it. Tracking the text is the better answer
+    /// and already the behaviour for Vim-driven edits; this only makes it
+    /// uniform.
     private func adjustPositions(afterReplacing range: NSRange, withLength newLength: Int) {
         let delta = newLength - range.length
         guard delta != 0 || range.length > 0 else { return }
+        guard !marks.isEmpty || !jumps.isEmpty else { return }
+        let end = NSMaxRange(range)
         func adjust(_ p: Int) -> Int {
             if p < range.location { return p }
-            if p >= NSMaxRange(range) { return p + delta }
+            if p >= end { return p + delta }
             return range.location
         }
-        for (k, v) in marks { marks[k] = adjust(v) }
+        for (k, v) in marks { marks[k] = (v >= range.location && v < end) ? nil : adjust(v) }
         jumps = jumps.map(adjust)
+    }
+
+    /// Starts following the editor storage, so `adjustPositions` sees every
+    /// edit and not just Vim's own (flashtex#678). A notification rather than
+    /// `NSTextStorageDelegate` because the delegate is a single slot the app
+    /// may want for something else, and because this is already how the
+    /// editor's other storage watchers are wired (SyntaxHighlighter,
+    /// EditorRotor, LaTeXSpellCheck, CompletingTextView's own).
+    ///
+    /// `.editedCharacters` is the guard that matters: syntax highlighting and
+    /// the spell checker post this same notification for attribute-only runs
+    /// over a wide range, and treating one of those as an edit would drop
+    /// every mark inside a freshly recoloured region.
+    private func observeStorage() {
+        guard storageObserver == nil, let storage = textView?.textStorage else { return }
+        storageObserver = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification,
+                                                                 object: storage, queue: nil) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let storage = note.object as? NSTextStorage,
+                      storage.editedMask.contains(.editedCharacters) else { return }
+                // `editedRange` is in the *new* string; the range that was
+                // replaced is the same start with the pre-edit length.
+                let edited = storage.editedRange
+                let delta = storage.changeInLength
+                self.adjustPositions(afterReplacing: NSRange(location: edited.location, length: edited.length - delta),
+                                     withLength: edited.length)
+            }
+        }
     }
 
     /// Whether text handed to `store` was yanked (`y`) or removed (`d`/`c`/`x`/…):
@@ -1118,8 +1178,7 @@ final class VimMode {
         tv.breakUndoCoalescing()
         tv.undoManager?.beginUndoGrouping()
         for e in edits.sorted(by: { $0.range.location > $1.range.location }) {
-            adjustPositions(afterReplacing: e.range, withLength: (e.replacement as NSString).length)
-            tv.insertText(e.replacement, replacementRange: e.range)
+            tv.insertText(e.replacement, replacementRange: e.range) // marks/jumplist: the storage observer
         }
         tv.undoManager?.setActionName(outdent ? "Outdent" : "Indent")
         tv.undoManager?.endUndoGrouping()
@@ -2308,8 +2367,7 @@ final class VimMode {
         tv.breakUndoCoalescing()
         tv.undoManager?.beginUndoGrouping()
         for r in edits.reversed() {
-            adjustPositions(afterReplacing: r, withLength: (replacement as NSString).length)
-            tv.insertText(replacement, replacementRange: r)
+            tv.insertText(replacement, replacementRange: r) // marks/jumplist: the storage observer
         }
         tv.undoManager?.setActionName("Substitute")
         tv.undoManager?.endUndoGrouping()

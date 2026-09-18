@@ -24,11 +24,13 @@ WIDE = ("a_1 + a_2 + a_3 + a_4 + a_5 + a_6 + a_7 + a_8 + a_9 + a_{10} + a_{11} +
         "a_{12} + a_{13} + a_{14} + a_{15} + a_{16} = b")
 
 
-def doc(body, size="10pt", opts="", pre="", fontenc=True):
+def doc(body, size="10pt", opts="", pre="", fontenc=True, lmodern=True):
     classopts = ",".join(o for o in (size, opts) if o)
     lines = [f"\\documentclass[{classopts}]{{article}}"]
     if fontenc:
-        lines += ["\\usepackage[T1]{fontenc}", "\\usepackage{lmodern}"]
+        lines.append("\\usepackage[T1]{fontenc}")
+    if lmodern:
+        lines.append("\\usepackage{lmodern}")
     lines.append("\\usepackage{amsmath}")
     if pre:
         lines.append(pre)
@@ -99,7 +101,30 @@ F["34-parindent-medium-line"] = doc(
     "\\setlength{\\parindent}{15pt}\nA medium length line here\n\\[ a + b + c + d = e \\]\nafter the display.")
 F["35-12pt-fleqn-leqno-align"] = doc("Before.\n\\begin{align} a &= b \\\\ c &= d \\end{align}\nAfter.",
                                      size="12pt", opts="fleqn,leqno")
-F["36-cm-default-fonts"] = doc(f"{SHORT}\n\\[ a + b = c \\]\n{LONG}\n{eq('d = e')}\nafter.", fontenc=False)
+F["36-cm-default-fonts"] = doc(f"{SHORT}\n\\[ a + b = c \\]\n{LONG}\n{eq('d = e')}\nafter.", fontenc=False, lmodern=False)
+
+# Math family 0 (`operators`) is `cmr`, not `rm-lmr`, unless `lmodern` is
+# loaded -- and `[T1]{fontenc}` alone does not load it, which is what most of
+# the real-world corpus does. Every display below has a *family-0* character
+# (a digit) as the tallest thing in its numerator, so the wrong roman design
+# makes the display's box 0.0147 em short and every baseline under it rises.
+# Eight displays down one page, because that is the shape of the defect: one
+# display is 0.11-0.18 bp, under the 0.5 bp gate on its own, and the page is
+# over it. No `\\sqrt`, `\\sum` or `\\left(` here -- a cmex glyph at a size
+# other than 10 bp is not classified as an extension glyph on the candidate
+# side (see `oracle.py`), so it would fail the 11 and 12 pt fixtures for a
+# reason that has nothing to do with the box height.
+_FD = "\\[ x = \\frac{%s}{1 + y} \\]"
+DIGIT_BOXES = "\n".join([SHORT]
+    + [line for i, n in enumerate(("1", "2", "3", "4", "5", "6", "7", "8"))
+       for line in (_FD % n, LONG if i % 2 == 0 else SHORT)]
+    + ["after."])
+F["47-cm-math-roman-boxes"] = doc(DIGIT_BOXES, lmodern=False)
+F["48-cm-math-roman-boxes-11pt"] = doc(DIGIT_BOXES, size="11pt", lmodern=False)
+F["49-cm-math-roman-boxes-12pt"] = doc(DIGIT_BOXES, size="12pt", lmodern=False)
+# The same page with `lmodern`, which really does rebind `operators` to `lmr`:
+# the other branch of the same choice, which must not move.
+F["50-lm-math-roman-boxes"] = doc(DIGIT_BOXES)
 
 
 def main():

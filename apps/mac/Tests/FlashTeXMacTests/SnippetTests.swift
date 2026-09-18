@@ -32,7 +32,7 @@ final class SnippetTests: XCTestCase {
         XCTAssertEqual(figure.text, "figure}\n\\centering\n\\includegraphics[width=0.8\\linewidth]{}\n\\caption{}\n\\label{fig:}\n\\end{figure}")
         XCTAssertEqual(figure.caretUTF16, ("figure}\n\\centering\n\\includegraphics[width=0.8\\linewidth]{" as NSString).length)
         XCTAssertEqual(figure.stops.count, 3, "caption, label, end")
-        XCTAssertEqual(figure.stops[0], ("figure}\n\\centering\n\\includegraphics[width=0.8\\linewidth]{}\n\\caption{" as NSString).length)
+        XCTAssertEqual(try XCTUnwrap(figure.stops.first), ("figure}\n\\centering\n\\includegraphics[width=0.8\\linewidth]{}\n\\caption{" as NSString).length)
         let align = Completion.environmentSnippet("align*", indent: "")
         XCTAssertEqual(align.text, "align*}\n\n\\end{align*}")
         XCTAssertEqual(align.caretUTF16, 8)

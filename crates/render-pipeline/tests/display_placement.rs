@@ -14,6 +14,15 @@
 //! `\check@icl` italic correction before its space). Display 20 sits in a
 //! nested list, whose closing `\topsep` is its own level's. The fixture not
 //! listed here does not pass yet: `\tag{$..$}` math (15).
+//!
+//! 47-50 are the cumulative case: eight displays down one page whose box
+//! height is set by a *family-0* digit. Family 0 (`operators`) is `cmr`
+//! unless `lmodern` is loaded, and `rm-lmr`'s digits are 0.0147 em shorter,
+//! so with the wrong design each display's box is 0.11-0.18 bp short --
+//! under the 0.5 bp gate alone, and 1.17 / 1.29 / 1.41 bp by the foot of the
+//! page at 10 / 11 / 12 pt (89, 89 and 121 of the 163 words outside the
+//! gate). 50 is the same page *with* `lmodern`, which really does rebind
+//! `operators`, so it must not move either way.
 
 mod common;
 
@@ -60,6 +69,10 @@ const PASSING: &[&str] = &[
     "34-parindent-medium-line",
     "35-12pt-fleqn-leqno-align",
     "36-cm-default-fonts",
+    "47-cm-math-roman-boxes",
+    "48-cm-math-roman-boxes-11pt",
+    "49-cm-math-roman-boxes-12pt",
+    "50-lm-math-roman-boxes",
 ];
 
 fn num(v: &Value, k: &str) -> f64 {

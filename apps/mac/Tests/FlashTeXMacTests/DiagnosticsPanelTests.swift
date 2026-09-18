@@ -110,8 +110,9 @@ final class DiagnosticsPanelTests: XCTestCase {
         ]
         let groups = EditorDiagnostics.groups(of: sameCode, documentOrder: ["main.tex"])
         XCTAssertEqual(groups.map(\.count), [2, 1], "same code still splits on different messages")
-        XCTAssertEqual(groups[0].code, "unsupported_feature")
-        XCTAssertEqual(groups[0].id, "error:unsupported_feature:\\in is not supported in math mode")
+        guard let firstGroup = groups.first else { return XCTFail("expected at least one group") }
+        XCTAssertEqual(firstGroup.code, "unsupported_feature")
+        XCTAssertEqual(firstGroup.id, "error:unsupported_feature:\\in is not supported in math mode")
         let split: [RuntimeV1.Diagnostic] = [
             .init(severity: .error, message: "m", source: .init(path: "main.tex", startByte: 0, endByte: 1), recovery: nil,
                   code: "unknown_command"),

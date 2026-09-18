@@ -140,6 +140,63 @@ fn multi_file_project_resolves_inputs_from_the_project_root() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// GH-774: when the PDF step fails, `build` must not report `ok` and must
+/// exit non-zero -- it used to happen (a colour component the exact writer
+/// rejected) that the render succeeded, no PDF was written, and the CLI
+/// still printed `ok` on a `0` exit. Forced here without a bad colour, by
+/// pointing `-o` at a path whose parent does not exist, so `write_atomic`
+/// itself fails; the CLI must treat that exactly like the export-side
+/// failure it is meant to guard.
+#[test]
+fn a_pdf_write_failure_is_not_reported_as_ok() {
+    let dir = tmp("pdf-write-fails");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nHi.\n\\end{document}\n").unwrap();
+    let bad_out = dir.join("no-such-dir").join("main.pdf");
+    let fonts = fonts_dir();
+    let o = run(&["build", src.to_str().unwrap(), "-o", bad_out.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    assert_output_failed(&o);
+    assert!(!bad_out.exists(), "no PDF should exist:\n{}", stderr(&o));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The same rule for a partial failure: the PDF is written, but the `--v2`
+/// display list cannot be, so the build as a whole still failed.
+#[test]
+fn a_v2_write_failure_is_not_reported_as_ok() {
+    let dir = tmp("v2-write-fails");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nHi.\n\\end{document}\n").unwrap();
+    let out = dir.join("main.pdf");
+    let bad_v2 = dir.join("no-such-dir").join("main.v2.json");
+    let fonts = fonts_dir();
+    let o = run(&[
+        "build",
+        src.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+        "--v2",
+        bad_v2.to_str().unwrap(),
+        "--font-dir",
+        fonts.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_output_failed(&o);
+    assert!(out.exists(), "the PDF itself is still written:\n{}", stderr(&o));
+    assert!(!bad_v2.exists(), "{}", stderr(&o));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Exit code, summary line and `--json` status must all say `failed`.
+fn assert_output_failed(o: &Output) {
+    let err = stderr(o);
+    assert_eq!(o.status.code(), Some(1), "an output write failure exits 1:\n{err}");
+    assert!(err.lines().any(|l| l.starts_with("flashtex: error:")), "the failure must be reported:\n{err}");
+    assert!(err.lines().any(|l| l.contains(": failed, ")), "the summary line must say failed:\n{err}");
+    let report = json(&stdout(o));
+    assert_eq!(report.get("status").and_then(|v| v.as_str()), Some("failed"), "{}", stdout(o));
+}
+
 /// A diagnostic raised inside an included file names that file and its own
 /// line. Built on a project written here, not the fixture: the fixture's
 /// sections stopped producing any diagnostic once the compiler supported

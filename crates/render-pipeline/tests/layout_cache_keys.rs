@@ -247,6 +247,12 @@ fn nucleus_name(n: &flashtex_compiler::math::Nucleus) -> &'static str {
         N::Phantom { .. } => "Phantom",
         N::Operator { .. } => "Operator",
         N::ExtArrow { .. } => "ExtArrow",
+        #[cfg(feature = "compiler-node-surface")]
+        N::TextRun(_) => "TextRun",
+        #[cfg(feature = "compiler-node-surface")]
+        N::SideSet { .. } => "SideSet",
+        #[cfg(feature = "compiler-node-surface")]
+        N::Lap { .. } => "Lap",
     }
 }
 

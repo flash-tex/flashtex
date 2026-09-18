@@ -115,7 +115,13 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{25A1}', 778),  // \square
     ('\u{25A0}', 778),  // \blacksquare
     ('\u{25CA}', 572),  // \lozenge
-    ('\u{2713}', 833),  // \checkmark
+    // `\diamond` (issue #591): the kernel cmsy `\mathbin` (U+22C4), a
+    // different glyph from `\Diamond` (U+25C7, which this program does not
+    // carry — see `DIAMOND_LASY_EM` in `crate::math`). Advance read from
+    // this font program like the rest of the table, not copied from
+    // `\square`: the small operator diamond is much narrower than the box.
+    ('\u{22C4}', 500), // \diamond
+    ('\u{2713}', 833), // \checkmark
     // HW2 coverage (issue #62 follow-up): long arrows, \triangle family, \bot,
     // and the amsthm QED mark, all drawn from the same pinned resource.
     ('\u{27FA}', 1534), // \Longleftrightarrow, and \iff (\;\Longleftrightarrow\;)
@@ -134,6 +140,11 @@ pub const ADVANCES: &[(char, u16)] = &[
     // export if it reaches an item's text (e.g. typed literally by an
     // amsthm-style proof ending).
     ('\u{220E}', 666), // ∎ QED
+    // `\not` (`fontmath.ltx` 432: `\mathchardef\not="3236`, cmsy `"36`): the
+    // zero-width negation slash TeX overprints on the relation that follows
+    // it, so `\neq` is exactly as wide as `=`. Latin Modern Math draws it at
+    // U+0338 and gives it the same zero advance cmsy10 does.
+    ('\u{0338}', 0), // ◌̸ \not
 ];
 
 /// The double-struck code point for `\mathbb{letter}`: the Mathematical
@@ -157,10 +168,9 @@ pub fn double_struck(letter: char) -> Option<char> {
 }
 
 pub fn advance(c: char) -> Option<u16> {
-    ADVANCES
-        .iter()
-        .find(|(glyph, _)| *glyph == c)
-        .map(|(_, advance)| *advance)
+    static INDEX: crate::char_table::CharTable<u16> = crate::char_table::CharTable::new(ADVANCES);
+    INDEX
+        .get(c)
         // amssymb/amsfonts symbols bound to the same resource
         // (`crate::amssymb::LM_ADVANCES`, generated from this font program).
         .or_else(|| crate::amssymb::lm_advance(c))
@@ -201,7 +211,8 @@ mod tests {
         assert_eq!(double_struck('A'), Some('\u{1D538}'));
         assert_eq!(double_struck('a'), None);
         assert_eq!(double_struck('1'), None);
-        assert_eq!(ADVANCES.len(), 84);
+        // Total entry count: 85 on main plus `\diamond`'s U+22C4 (issue #591).
+        assert_eq!(ADVANCES.len(), 86);
     }
 
     #[test]

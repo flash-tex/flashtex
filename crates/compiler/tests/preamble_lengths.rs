@@ -238,6 +238,85 @@ fn hw1_keeps_its_three_reference_pages_with_parskip_applied() {
     );
 }
 
+/// The six `PREAMBLE_LENGTHS` entries the kernel-inventory audit flagged as
+/// implemented but name-untested (GH-TABLE2-UNTESTED-7): each already has a
+/// real dispatch arm (`is_preamble_length` / `length_assignment`) and must
+/// keep it. The parser stores no per-length field for page geometry (only
+/// `parskip_pt`/`class_size_pt` exist), so "took effect" below means the
+/// value is parsed and validated, not swallowed: an unrecognised dimension
+/// for the same name is an error (see
+/// `untested_preamble_lengths_reject_an_unrecognised_dimension`).
+const UNTESTED_PAGE_LENGTHS: &[(&str, &str)] = &[
+    ("paperheight", "11in"),
+    ("evensidemargin", "0.5in"),
+    ("headheight", "12pt"),
+    ("footskip", "30pt"),
+    ("marginparwidth", "65pt"),
+    ("columnsep", "10pt"),
+];
+
+#[test]
+fn preamble_setlength_of_untested_page_lengths_is_accepted() {
+    for (name, dimen) in UNTESTED_PAGE_LENGTHS {
+        let src = format!(
+            "\\documentclass{{article}}\\setlength{{\\{name}}}{{{dimen}}}\
+             \\begin{{document}}Hello\\end{{document}}"
+        );
+        let parsed = parse(&src);
+        assert!(parsed.diagnostics.is_empty(), "{name}: {:?}", parsed.diagnostics);
+        let (_, messages) = compile(&src);
+        assert!(messages.is_empty(), "{name}: {messages:?}");
+    }
+}
+
+#[test]
+fn preamble_tex_assignments_of_untested_page_lengths_are_accepted() {
+    for (name, dimen) in UNTESTED_PAGE_LENGTHS {
+        let src = format!(
+            "\\documentclass{{article}}\\{name}={dimen}\
+             \\begin{{document}}Hello\\end{{document}}"
+        );
+        let parsed = parse(&src);
+        assert!(parsed.diagnostics.is_empty(), "{name}: {:?}", parsed.diagnostics);
+        let (_, messages) = compile(&src);
+        assert!(messages.is_empty(), "{name}: {messages:?}");
+    }
+}
+
+#[test]
+fn preamble_addtolength_of_untested_page_lengths_is_accepted() {
+    for (name, _) in UNTESTED_PAGE_LENGTHS {
+        let src = format!(
+            "\\documentclass{{article}}\\addtolength{{\\{name}}}{{2pt}}\
+             \\begin{{document}}Hello\\end{{document}}"
+        );
+        let parsed = parse(&src);
+        assert!(parsed.diagnostics.is_empty(), "{name}: {:?}", parsed.diagnostics);
+        let (_, messages) = compile(&src);
+        assert!(messages.is_empty(), "{name}: {messages:?}");
+    }
+}
+
+#[test]
+fn untested_preamble_lengths_reject_an_unrecognised_dimension() {
+    // The strongest "took effect" check the parser allows for page geometry:
+    // there is no `parsed.paperheight_pt`-style field (page geometry is
+    // applied by the render pipeline from the source), so instead prove the
+    // value reaches dimension validation — it is not silently swallowed.
+    for (name, _) in UNTESTED_PAGE_LENGTHS {
+        let src = format!(
+            "\\documentclass{{article}}\\setlength{{\\{name}}}{{banana}}\
+             \\begin{{document}}Hello\\end{{document}}"
+        );
+        let parsed = parse(&src);
+        assert!(
+            parsed.diagnostics.iter().any(|d| d.message.contains("requires a recognised dimension")),
+            "{name}: an unrecognised dimension must be an error, got {:?}",
+            parsed.diagnostics
+        );
+    }
+}
+
 #[test]
 fn table_lengths_are_accepted_in_every_assignment_form() {
     let src = "\\documentclass{article}\\usepackage{array}\\setlength{\\tabcolsep}{4pt}\

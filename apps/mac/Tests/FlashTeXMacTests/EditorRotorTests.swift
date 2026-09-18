@@ -69,6 +69,7 @@ final class EditorRotorTests: XCTestCase {
         let model = AccessibleEditorModel(text: Self.sample)
         let items = model.rotorItems(.headings)
         XCTAssertEqual(items.map(\.label), ["Section “Introduction”, level 1", "Subsection “Détail”, level 2", "Section “Results”, level 1"])
+        guard items.count == 3 else { return XCTFail("expected three heading items, got \(items.count)") }
         // No current item: first / last, inclusive.
         XCTAssertEqual(EditorRotorSearch.resolve(items: items, start: .fromEnds, forward: true, filter: ""), items[0])
         XCTAssertEqual(EditorRotorSearch.resolve(items: items, start: .fromEnds, forward: false, filter: ""), items[2])
@@ -105,6 +106,7 @@ final class EditorRotorTests: XCTestCase {
         let (_, tv) = hostedTextView(Self.sample)
         let rotors = tv.accessibilityCustomRotors()
         XCTAssertGreaterThanOrEqual(rotors.count, 2)
+        guard rotors.count >= 2 else { return XCTFail("expected at least two rotors, got \(rotors.count)") }
         XCTAssertEqual(rotors[0].type, .heading, "headings use the built-in rotor type so VoiceOver lists them under Headings")
         XCTAssertEqual(rotors[1].label, "Environments")
         XCTAssertTrue(rotors[0].itemSearchDelegate === tv.rotorSearch)

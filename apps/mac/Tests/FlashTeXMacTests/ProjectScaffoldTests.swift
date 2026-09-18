@@ -148,6 +148,7 @@ final class ProjectScaffoldTests: XCTestCase {
         XCTAssertEqual(outcome, .created(path: "sections/results.tex"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("sections/results.tex").path))
         XCTAssertEqual(m.documents.map(\.path), ["main.tex", "sections/results.tex"])
+        guard m.project.listing.count > 1 else { return XCTFail("expected more than one listing entry, got \(m.project.listing.count)") }
         XCTAssertEqual(m.project.listing[1].role, .included(from: "main.tex"))
         // One undoable edit for the entry document, posted for the editor; the
         // switch to the new tab waits for the editor to apply it.
@@ -209,7 +210,8 @@ final class ProjectScaffoldTests: XCTestCase {
         // Sidebar: the reference is unresolvable because the file is missing.
         let nodes = m.project.discoverClosure().nodes
         XCTAssertEqual(nodes.count, 1)
-        XCTAssertEqual(nodes[0].state, .unresolvable("no such file under the project root"))
+        guard let firstNode = nodes.first else { return XCTFail("expected one node") }
+        XCTAssertEqual(firstNode.state, .unresolvable("no such file under the project root"))
         // Quick fix on the compiler's diagnostic (deterministic message, source names the document).
         let d = RuntimeV1.Diagnostic(severity: .error, message: "included file not found: looked for 'chapters/two' and 'chapters/two.tex'",
                                      source: .init(path: "main.tex", startByte: 17, endByte: 36), recovery: "skipped the missing include and continued")
@@ -219,6 +221,7 @@ final class ProjectScaffoldTests: XCTestCase {
         await expect(m.project.createMissingInclude("chapters/two", from: "main.tex"), .created(path: "chapters/two.tex"))
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("chapters/two.tex"), encoding: .utf8), "")
         XCTAssertEqual(m.documents.map(\.path), ["main.tex", "chapters/two.tex"])
+        guard m.project.listing.count > 1 else { return XCTFail("expected more than one listing entry, got \(m.project.listing.count)") }
         XCTAssertEqual(m.project.listing[1].role, .included(from: "main.tex"))
         XCTAssertEqual(m.project.discoverClosure().nodes.map(\.state), [.open])
         XCTAssertNil(MissingIncludeFix.quickFix(for: d, projectRoot: m.project.projectRoot), "the file exists now: no fix offered")
@@ -236,6 +239,7 @@ final class ProjectScaffoldTests: XCTestCase {
         let edits = ReferenceRewrite.plan(oldPath: "ch/one.tex", newPath: "ch/uno.tex", documents: docs)
         XCTAssertEqual(edits.map(\.path), ["main.tex", "ch/two.tex"])
         XCTAssertEqual(edits.map(\.count), [2, 1])
+        guard edits.count == 2 else { return XCTFail("expected two edits, got \(edits.count)") }
         XCTAssertEqual(edits[0].before, "ch/one} % \\input{ch/one}\n\\include{ch/one.tex")
         XCTAssertEqual(edits[0].text, "ch/uno} % \\input{ch/one}\n\\include{ch/uno.tex", "comment untouched; explicit .tex kept")
         XCTAssertEqual(edits[1].before, "ch/one")
@@ -275,6 +279,7 @@ final class ProjectScaffoldTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("ch/uno.tex"), encoding: .utf8), "One.\n")
         XCTAssertEqual(m.documents.map(\.path), ["main.tex", "ch/uno.tex", "ch/two.tex"])
         XCTAssertEqual(m.activePath, "main.tex", "the first referencing document is active for its edit")
+        guard m.project.listing.count > 1 else { return XCTFail("expected more than one listing entry, got \(m.project.listing.count)") }
         XCTAssertEqual(m.project.listing[1].role, .included(from: "main.tex"), "metadata followed the rename")
         XCTAssertFalse(m.project.isDirty("ch/uno.tex"))
         // First edit: main.tex, one grouped replacement (posted once the editor

@@ -566,8 +566,15 @@ impl<'d> Converter<'d> {
 
     fn flush_word(&mut self) {
         if let Some(word) = self.word.take() {
+            // Assembled by `push_char` from ordinary characters only —
+            // control symbols bypass the pending word via `push_marked` —
+            // so this is never an escaped character.
             self.emit(ExpandedToken {
-                token: Token { kind: TokenKind::Word(word.text), span: word.span },
+                token: Token {
+                    kind: TokenKind::Word(word.text),
+                    span: word.span,
+                    control_symbol: false,
+                },
                 definition: word.definition,
                 maps_to_invocation: word.maps,
             });
@@ -618,6 +625,14 @@ impl<'d> Converter<'d> {
     }
 
     fn push(&mut self, kind: TokenKind, at: Placement) {
+        self.push_marked(kind, at, false);
+    }
+
+    /// Push one finished token, recording whether it was lexed from a
+    /// backslash control symbol (see [`Token::control_symbol`]). Only the
+    /// single-character control-sequence arm below passes `true`; every
+    /// other converter output is an ordinary token.
+    fn push_marked(&mut self, kind: TokenKind, at: Placement, control_symbol: bool) {
         self.flush_word();
         if matches!(kind, TokenKind::RBrace) && self.closes_document_begin() {
             self.document_begun = true;
@@ -642,7 +657,7 @@ impl<'d> Converter<'d> {
             _ => {}
         }
         sink.push(ExpandedToken {
-            token: Token { kind, span: at.span },
+            token: Token { kind, span: at.span, control_symbol },
             definition: at.definition,
             maps_to_invocation: at.maps,
         });
@@ -726,7 +741,11 @@ impl<'d> Converter<'d> {
         self.push(TokenKind::LBrace, open_at);
         self.flush_word();
         self.emit(ExpandedToken {
-            token: Token { kind: TokenKind::Word(name.to_string()), span: word_at.span },
+            token: Token {
+                kind: TokenKind::Word(name.to_string()),
+                span: word_at.span,
+                control_symbol: false,
+            },
             definition: word_at.definition,
             maps_to_invocation: word_at.maps,
         });
@@ -856,6 +875,31 @@ fn document_fonts(documents: &[SourceDocument<'_>]) -> DocumentFonts {
 
 fn has_includes(text: &str) -> bool {
     text.contains("\\input") || text.contains("\\include")
+}
+
+/// True when any project document loads csquotes: the only thing that
+/// defines `\enquote`, a csquotes command rather than a kernel one. The
+/// expansion engine must then count `\enquote` as defined (via
+/// `declare_host_command`, exactly like every `BUILT_INS` entry), so that
+/// `\renewcommand{\enquote}` is accepted — as real LaTeX accepts it once
+/// csquotes defines the macro — while without the package the name stays
+/// undefined and `\renewcommand` reports it, also as in real LaTeX.
+/// Scanned from tokens (the same pass as [`document_fonts`]), so a
+/// commented-out `\usepackage{csquotes}` does not count.
+fn csquotes_requested(documents: &[SourceDocument<'_>]) -> bool {
+    documents.iter().enumerate().any(|(document_index, document)| {
+        let tokens = tokenize_document(document.text, DocumentId(document_index));
+        tokens.iter().enumerate().any(|(index, token)| {
+            let TokenKind::Command(name) = &token.kind else {
+                return false;
+            };
+            if name != "usepackage" {
+                return false;
+            }
+            let (_, group) = option_and_group_words(&tokens, index + 1);
+            group.split(',').map(str::trim).any(|package| package == "csquotes")
+        })
+    })
 }
 
 /// The engine stopped on the step limit or on TeX's "capacity exceeded"
@@ -1104,7 +1148,13 @@ impl<'d> Converter<'d> {
                     "-" => conv.push(TokenKind::Command(name.clone()), at),
                     _ if name.chars().count() == 1 && !name.chars().all(char::is_alphabetic) => {
                         conv.flush_word();
-                        conv.push(TokenKind::Word(name.clone()), at);
+                        // A backslash control symbol (`\,`, `\%`, …): the
+                        // same `Word` variant also carries ordinary literal
+                        // characters, so the escaped identity is recorded in
+                        // the token mark, never inferred from span length —
+                        // expansion rebinds the span to the invocation while
+                        // the mark (like the kind) travels with the token.
+                        conv.push_marked(TokenKind::Word(name.clone()), at, true);
                     }
                     // r2 reads a verbatim body itself and ends it with a frozen
                     // `\end<name>` carrying the `\begin` span.
@@ -1164,7 +1214,7 @@ impl<'d> Converter<'d> {
         for token in tokenize_document(&text[offset..], DocumentId(document)) {
             let span = Span::in_document(DocumentId(document), token.span.start + offset, token.span.end + offset);
             self.emit(ExpandedToken {
-                token: Token { kind: token.kind, span },
+                token: Token { kind: token.kind, span, control_symbol: token.control_symbol },
                 definition: None,
                 maps_to_invocation: false,
             });
@@ -1202,6 +1252,9 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     let limits = limits_for(total_bytes);
     let mut engine = Engine::with_limits(entry_text, limits);
     configure_with_fonts(&mut engine, document_fonts(documents));
+    if csquotes_requested(documents) {
+        engine.declare_host_command("enquote");
+    }
 
     let mut conv = Converter::new(documents, entry);
     let mut lookahead: VecDeque<(tex::Token, Option<tex::Span>)> = VecDeque::new();
@@ -1293,6 +1346,10 @@ pub struct ExpansionCache {
     old_engine_tokens: usize,
     /// The class size and font packages change the engine's `em`/`ex`.
     fonts: DocumentFonts,
+    /// Whether csquotes was loaded when the cache was built: it decides if
+    /// `\enquote` counts as defined, so adding or removing the package must
+    /// rebuild rather than reuse, exactly like a font-setup change.
+    csquotes: bool,
     /// Tokens at the end of `out` typeset unexpanded after the engine
     /// stopped (see [`Converter::resume_unexpanded`]); no marks cover them.
     recovered: usize,
@@ -1390,6 +1447,7 @@ pub fn expand_project_with_cache(
         .collect();
     let masked: &str = prepared[entry].text.as_ref();
     let fonts = document_fonts(documents);
+    let csquotes = csquotes_requested(documents);
     // The same limits as `expand_project`, which the expander applies to
     // every edit (`IncrementalExpander::edit_with_limits`).
     let limits = limits_for(documents.iter().map(|d| d.text.len()).sum());
@@ -1397,6 +1455,7 @@ pub fn expand_project_with_cache(
         !c.lent
             && c.entry_path == document.path
             && c.fonts == fonts
+            && c.csquotes == csquotes
             && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
     });
     let expansion = if reusable {
@@ -1424,8 +1483,12 @@ pub fn expand_project_with_cache(
 fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepared<'_>], limits: Limits) -> (ExpansionCache, Expansion) {
     let masked: &str = prepared[entry].text.as_ref();
     let fonts = document_fonts(documents);
+    let csquotes = csquotes_requested(documents);
     let init: Rc<dyn Fn(&mut Engine)> = Rc::new(move |engine| {
         configure_with_fonts(engine, fonts);
+        if csquotes {
+            engine.declare_host_command("enquote");
+        }
     });
     let expander = IncrementalExpander::with_host(masked, limits, CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
@@ -1451,6 +1514,7 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         last_span: conv.last_span,
         old_engine_tokens: 0,
         fonts,
+        csquotes,
         recovered: 0,
         lent: false,
     };
@@ -1538,7 +1602,11 @@ fn convert_range(
 
 fn shifted(token: &ExpandedToken, shift: &dyn Fn(Span) -> Span) -> ExpandedToken {
     ExpandedToken {
-        token: Token { kind: token.token.kind.clone(), span: shift(token.token.span) },
+        token: Token {
+            kind: token.token.kind.clone(),
+            span: shift(token.token.span),
+            control_symbol: token.token.control_symbol,
+        },
         definition: token.definition.map(shift),
         maps_to_invocation: token.maps_to_invocation,
     }

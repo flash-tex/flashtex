@@ -357,6 +357,11 @@ final class LaTeXSpellChecker: NSObject {
 
     private func scrolled() {
         guard enabled, let tv = textView else { return }
+        // Not inside `processEditing`: the window needs layout (GH#681).
+        if let storage = tv.textStorage, !storage.editedMask.isEmpty {
+            DispatchQueue.main.async { [weak self] in self?.scrolled() }
+            return
+        }
         let window = Self.window(for: tv)
         if !checked.contains(where: { NSIntersectionRange($0, window) == window }) { schedule(after: Self.scrollDelay) }
     }

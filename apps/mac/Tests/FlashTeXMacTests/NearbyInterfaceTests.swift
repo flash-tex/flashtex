@@ -64,6 +64,8 @@ final class NearbyInterfaceTests: XCTestCase {
         func cancel() { connection.cancel() }
     }
 
+    struct TimedOut: Error {}
+
     private func waitUntil(_ what: String, timeout: TimeInterval = 8, file: StaticString = #filePath, line: UInt = #line,
                            _ cond: @escaping @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
@@ -72,6 +74,7 @@ final class NearbyInterfaceTests: XCTestCase {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         XCTFail("timed out waiting for \(what)", file: file, line: line)
+        throw TimedOut()
     }
 
     func makeState(name: String) -> (NearbyState, PairStore, ShellModel) {

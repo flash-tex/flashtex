@@ -206,36 +206,17 @@ enum Completion {
             return inventory
         }
 
-        /// Candidate locations of `supported-latex.json`, in order: the main
-        /// bundle's `Contents/Resources` (the packaged app, where
-        /// `make-app.sh` copies it), then the SwiftPM resource bundle
-        /// `FlashTeXMac_FlashTeXMac.bundle` beside the executable or the
-        /// test bundle (`swift build`, `swift run`, `swift test`). Looked up
-        /// by hand rather than through `Bundle.module`, whose accessor traps
-        /// when the resource bundle is absent.
-        static func inventoryCandidates() -> [URL] {
-            let module = Bundle(for: VocabularyBundleMarker.self)
-            var out: [URL] = []
-            for bundle in [module, Bundle.main] {
-                if let url = bundle.url(forResource: Inventory.resourceName, withExtension: Inventory.resourceExtension) { out.append(url) }
-            }
-            let resourceBundle = "FlashTeXMac_FlashTeXMac.bundle"
-            var directories = [module.bundleURL, module.bundleURL.deletingLastPathComponent(), Bundle.main.bundleURL]
-            if let exe = Bundle.main.executableURL { directories.append(exe.deletingLastPathComponent()) }
-            for directory in directories {
-                let url = directory.appendingPathComponent(resourceBundle)
-                    .appendingPathComponent(Inventory.resourceName + "." + Inventory.resourceExtension)
-                if !out.contains(url) { out.append(url) }
-            }
-            return out
-        }
-
+        /// `supported-latex.json` from the packaged app's `Contents/Resources`
+        /// (where `make-app.sh` copies it) or from the SwiftPM resource bundle
+        /// in either of its layouts. See `BundledResources` for why the inner
+        /// bundle is resolved through `Bundle(url:)` rather than by appending
+        /// a path — getting that wrong is what emptied the vocabulary under
+        /// `swift test` (GH#704).
         static func loadInventoryData() throws -> Data {
-            let candidates = inventoryCandidates()
-            for url in candidates where FileManager.default.fileExists(atPath: url.path) {
-                return try Data(contentsOf: url)
-            }
-            throw InventoryError.missing(candidates.map(\.path))
+            let name = Inventory.resourceName + "." + Inventory.resourceExtension
+            let found = BundledResources.url(forResource: name, module: Bundle(for: VocabularyBundleMarker.self))
+            guard let url = found.url else { throw InventoryError.missing(found.searched.map(\.path)) }
+            return try Data(contentsOf: url)
         }
 
         // MARK: derived tables
