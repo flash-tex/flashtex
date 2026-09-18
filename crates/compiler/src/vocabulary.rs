@@ -30,6 +30,7 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
     "underrightarrow", "underleftarrow", "underleftrightarrow", "Bbb", "bold", "dashrightarrow",
     "dasharrow", "dashleftarrow",
     "mathllap", "mathrlap", "mathclap",
+    "cancel", "bcancel", "xcancel",
 ];
 
 /// Real LaTeX2e, amsmath/amssymb and widely used package commands this
@@ -75,7 +76,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "underbrace", "overleftarrow", "overrightarrow", "mathcal", "mathfrak", "mathscr", "pmb",
     "limits", "nolimits", "displaylimits", "colon", "eqqcolon", "Coloneqq", "Eqqcolon",
     "vcentcolon", "dblcolon", "vdots", "ddots", "iff", "implies", "impliedby",
-    "genfrac", "operatornamewithlimits", "cancel", "bcancel", "xcancel",
+    "genfrac", "operatornamewithlimits",
     "cancelto", "numberwithin", "allowdisplaybreaks", "lvert", "rvert", "lVert",
     "rVert", "varepsilon", "vartheta", "varphi", "varrho", "varsigma", "varpi", "digamma",
     "varkappa", "hbar", "hslash", "ell", "wp", "Re", "Im", "aleph", "beth", "gimel", "emptyset",

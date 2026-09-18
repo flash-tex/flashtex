@@ -485,6 +485,9 @@
     {"name": "underrightarrow", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "amsmath \\arrowfill@ as wide as the body, over or under it", "renders": true},
     {"name": "underleftarrow", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "amsmath \\arrowfill@ as wide as the body, over or under it", "renders": true},
     {"name": "underleftrightarrow", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "amsmath \\arrowfill@ as wide as the body, over or under it", "renders": true},
+    {"name": "cancel", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "cancel package: diagonal line(s) through the body (forward slash, backward slash, or X)", "renders": true},
+    {"name": "bcancel", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "cancel package: diagonal line(s) through the body (forward slash, backward slash, or X)", "renders": true},
+    {"name": "xcancel", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "cancel package: diagonal line(s) through the body (forward slash, backward slash, or X)", "renders": true},
     {"name": "dashrightarrow", "mode": "math", "origin": "math_structure", "arguments": "", "description": "amsfonts dashed arrow: two msam \\dabar@ pieces and a head in one relation", "renders": true},
     {"name": "dasharrow", "mode": "math", "origin": "math_structure", "arguments": "", "description": "amsfonts dashed arrow: two msam \\dabar@ pieces and a head in one relation", "renders": true},
     {"name": "dashleftarrow", "mode": "math", "origin": "math_structure", "arguments": "", "description": "amsfonts dashed arrow: two msam \\dabar@ pieces and a head in one relation", "renders": true},
@@ -1033,6 +1036,7 @@
     {"name": "amsthm", "silent_options": "", "description": "\\newtheorem, \\theoremstyle and the proof environment"},
     {"name": "array", "silent_options": "", "description": "tabular >{} <{} !{} m b w columns, \\newcolumntype and \\extrarowheight"},
     {"name": "booktabs", "silent_options": "", "description": "\\toprule, \\midrule, \\bottomrule, \\cmidrule(trim), \\addlinespace, \\specialrule, \\morecmidrules"},
+    {"name": "cancel", "silent_options": "", "description": "\\cancel (forward diagonal), \\bcancel (backward diagonal) and \\xcancel (X) through a math expression; \\cancelto is diagnosed"},
     {"name": "longtable", "silent_options": "", "description": "the page-breaking longtable environment: \\endfirsthead, \\endhead, \\endfoot, \\endlastfoot, \\caption, \\kill, \\\\*"},
     {"name": "multirow", "silent_options": "", "description": "\\multirow[vpos]{rows}[bigstruts]{width}[vmove]{text} in table entries"},
     {"name": "colortbl", "silent_options": "", "description": "\\rowcolor, \\cellcolor, >{\\columncolor}, \\arrayrulecolor, \\doublerulesepcolor"},
@@ -1077,8 +1081,8 @@
       {"set": "tikz", "kind": "command", "canonical": 43, "supported": 0, "percent": 0},
       {"set": "tikz", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
-      {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 19, "percent": 7.9}
+      {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 20, "percent": 8.3}
     ],
-    "total": {"canonical": 1314, "supported": 554, "percent": 42.2}
+    "total": {"canonical": 1314, "supported": 555, "percent": 42.2}
   }
 }
