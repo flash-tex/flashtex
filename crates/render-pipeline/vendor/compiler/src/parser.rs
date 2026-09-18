@@ -27,6 +27,7 @@ use crate::{DocumentId, Span};
 use flashtex_tex_text_encoding::encoding::Encoding;
 use crate::font_units::FontSetup;
 
+mod beamer_blocks;
 mod colors;
 mod lists;
 mod tabular;
@@ -1072,6 +1073,147 @@ pub enum Block {
         date: Vec<Inline>,
         span: Span,
     },
+    /// `\begin{block}{title}` / `alertblock` / `exampleblock` under beamer
+    /// (issue #944, Tier 3; `beamerbaselocalstructure.sty` 107-134): the
+    /// head of a block. Its body follows as ordinary blocks up to the
+    /// matching [`Block::BeamerBlockEnd`]; the pipeline sets the default
+    /// inner theme's `block begin`/`block end` templates around it (the
+    /// `\large` title in the block's colour, the `\medskipamount` /
+    /// `\smallskipamount` skips). `span` is the `\begin{...}{title}` head.
+    BeamerBlockBegin {
+        kind: BeamerBlockKind,
+        title: Vec<Inline>,
+        span: Span,
+    },
+    /// `\end{block}` (and the alerted/example forms) under beamer.
+    BeamerBlockEnd {
+        span: Span,
+    },
+    /// `\begin{columns}[options]` under beamer (`beamerbaseframecomponents.sty`
+    /// 212-240): the head of a row of side-by-side columns. Each column is
+    /// opened by a [`Block::BeamerColumn`] marker; the blocks up to the next
+    /// marker or the [`Block::BeamerColumnsEnd`] are that column's body.
+    BeamerColumnsBegin {
+        options: BeamerColumnsOptions,
+        span: Span,
+    },
+    /// `\column[align]{width}` or `\begin{column}[align]{width}` inside
+    /// `columns`: the previous column closes here. `width` is the argument
+    /// as written (`.5\textwidth`, `4cm`): the pipeline resolves
+    /// `\textwidth`, `\linewidth` and `\paperwidth` against the enclosing
+    /// box (a column's `\textwidth` is the column's width, as
+    /// `\@iiiminipage` sets it).
+    BeamerColumn {
+        width: String,
+        align: Option<BeamerColumnAlign>,
+        span: Span,
+    },
+    /// `\end{columns}` under beamer.
+    BeamerColumnsEnd {
+        span: Span,
+    },
+    /// `\caption{...}` inside beamer's `figure`/`table`
+    /// (`beamerbaselocalstructure.sty` 570-601, `beamer@makecaption`): the
+    /// caption line, set `\small` with the default `caption` template
+    /// (`\insertcaptionname` and the `: ` separator in the structure
+    /// colour, **no number**). The `\vskip\abovecaptionskip` and
+    /// `\vskip\belowcaptionskip` (7pt each) are emitted as
+    /// [`Block::VSpace`] around it. `kind` is `figure` or `table`.
+    BeamerCaption {
+        kind: BeamerFloatKind,
+        content: Vec<Inline>,
+        span: Span,
+    },
+}
+
+/// Which beamer block environment a [`Block::BeamerBlockBegin`] opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BeamerBlockKind {
+    /// `block`: the title in the `block title` colour (`structure`).
+    Plain,
+    /// `alertblock`: `block title alerted` (`alerted text`, red).
+    Alert,
+    /// `exampleblock`: `block title example` (`example text`, green!50!black).
+    Example,
+}
+
+/// beamer's `figure`/`table`, which are not floats in a frame
+/// (`\par\nobreak\begin{center}\nobreak ... \end{center}`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BeamerFloatKind {
+    Figure,
+    Table,
+}
+
+impl BeamerFloatKind {
+    /// `\figurename` / `\tablename`: the caption's `\insertcaptionname`.
+    pub fn name(self) -> &'static str {
+        match self {
+            BeamerFloatKind::Figure => "Figure",
+            BeamerFloatKind::Table => "Table",
+        }
+    }
+}
+
+/// How a beamer column's box sits on the row (`\define@key{beamer@col}`
+/// `c`/`t`/`T`/`b`, `beamerbaseframecomponents.sty` 204-208): the
+/// `minipage` position letter, plus `T`'s `\vskip-1ex\nointerlineskip`
+/// head that aligns the first baselines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum BeamerColumnAlign {
+    /// `c` (the class default: beamer.cls executes option `c`): `\vcenter`.
+    #[default]
+    Center,
+    /// `t`: `\vtop`, the first line's baseline on the row.
+    Top,
+    /// `T`: `\vtop` of an empty first line, `\vskip-1ex` and the content
+    /// with no interline glue.
+    TopBaseline,
+    /// `b`: `\vbox`, the last line's baseline on the row.
+    Bottom,
+}
+
+/// `\begin{columns}[<options>]` (`beamer@col` keys).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct BeamerColumnsOptions {
+    /// `c`/`t`/`T`/`b`: the default for every column of the row.
+    pub align: BeamerColumnAlign,
+    /// `onlytextwidth`: the row is `\hbox to\textwidth` with a `\hfill`
+    /// after every column, instead of the paper-wide box with a `\hfill`
+    /// before, between and after them.
+    pub only_text_width: bool,
+    /// `totalwidth=<dimen>`: like `onlytextwidth` with that box width
+    /// (as written; resolved by the pipeline).
+    pub total_width: Option<String>,
+}
+
+/// The `beamer@col` key list of `\begin{columns}[...]` or `\column[...]`:
+/// `c`, `t`, `T`, `b`, `onlytextwidth`, `totalwidth=<dimen>`; `height=`
+/// (a fixed minipage height) is read past. Returns the alignment when one
+/// was given, so a `\column[t]` can override the row's default.
+pub fn beamer_columns_options(raw: &str) -> (BeamerColumnsOptions, Option<BeamerColumnAlign>) {
+    let mut options = BeamerColumnsOptions::default();
+    let mut align = None;
+    for key in raw.split(',') {
+        let key = key.trim();
+        let (name, value) = match key.split_once('=') {
+            Some((n, v)) => (n.trim(), Some(v.trim())),
+            None => (key, None),
+        };
+        match name {
+            "c" => align = Some(BeamerColumnAlign::Center),
+            "t" => align = Some(BeamerColumnAlign::Top),
+            "T" => align = Some(BeamerColumnAlign::TopBaseline),
+            "b" => align = Some(BeamerColumnAlign::Bottom),
+            "onlytextwidth" => options.only_text_width = true,
+            "totalwidth" => options.total_width = value.map(str::to_string),
+            _ => {}
+        }
+    }
+    if let Some(a) = align {
+        options.align = a;
+    }
+    (options, align)
 }
 
 /// `\begin{frame}[<options>]` (beamerbaseframe.sty `\beamer@frameoptions`).
@@ -2633,6 +2775,7 @@ pub fn parse_project_with(
         subtitle: None,
         institute: None,
         beamer_frame: None,
+        beamer_columns_depth: 0,
         today: options.today,
         titlepage_option: false,
         twocolumn_option: false,
@@ -2944,6 +3087,9 @@ struct P<'a> {
     /// [`Block::BeamerFrameBegin`], so `\frametitle`/`\framesubtitle` in
     /// the body can patch its title; `None` outside a frame.
     beamer_frame: Option<usize>,
+    /// How many beamer `columns` environments are open (`\column` outside
+    /// one is diagnosed).
+    beamer_columns_depth: usize,
     /// The date `\today` expands to, supplied by the caller in the compile
     /// request rather than read from the clock here (`ParseOptions::today`).
     today: TodayDate,
@@ -3903,6 +4049,7 @@ impl P<'_> {
             "alert" => self.beamer_alert(name, span, para),
             "titlepage" => self.beamer_titlepage(span, blocks, para),
             "note" => self.beamer_note(name, span),
+            "column" => self.beamer_column_command(name, span, blocks, para),
             "label" | "ref" | "pageref" | "eqref" | "thepage" => self.label_or_reference_command(name, span, para),
             "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
             | "labelcref" => self.clever_reference(name, span, para),
@@ -4560,17 +4707,29 @@ impl P<'_> {
     fn caption_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         match name {
             "caption" => {
+                // beamer's `\caption` (`beamerbaselocalstructure.sty`): the
+                // unnumbered `\small` caption line of an in-flow
+                // `figure`/`table` (`parser/beamer_blocks.rs`).
+                if self.is_beamer_class() && self.beamer_caption(span, blocks, para) {
+                    return;
+                }
                 let (tokens, _) = self.required_group(name, span);
-                if self.env_stack.last().map(|(name, _)| name.as_str()) != Some("figure") {
-                    self.diags.push(Diagnostic::error(
-                        "\\caption is only supported inside a figure environment",
-                        Some(span),
-                        Some("typeset the caption text as an ordinary paragraph".into()),
-                    ));
-                    let style = self.style;
-                    para.extend(self.inlines_from_tokens(tokens, style, false));
-                } else {
-                    self.push_float_caption("figure", "Figure", tokens, span, blocks, para);
+                let float = match self.env_stack.last().map(|(name, _)| name.as_str()) {
+                    Some("figure") => Some(("figure", "Figure")),
+                    Some("table") => Some(("table", "Table")),
+                    _ => None,
+                };
+                match float {
+                    None => {
+                        self.diags.push(Diagnostic::error(
+                            "\\caption is only supported inside a figure or table environment",
+                            Some(span),
+                            Some("typeset the caption text as an ordinary paragraph".into()),
+                        ));
+                        let style = self.style;
+                        para.extend(self.inlines_from_tokens(tokens, style, false));
+                    }
+                    Some((kind, label)) => self.push_float_caption(kind, label, tokens, span, blocks, para),
                 }
             }
             // caption.sty's `\captionof{<type>}[<short>]{<text>}`: the same
@@ -7143,7 +7302,16 @@ impl P<'_> {
         self.parameter_scopes.push(Vec::new());
         if environment == "document" && self.has_document {
             self.in_body = true;
-        } else if environment == "figure" && self.in_body {
+        } else if matches!(
+            environment.as_str(),
+            "block" | "alertblock" | "exampleblock" | "columns" | "column" | "figure" | "table"
+        ) && self.is_beamer_block_environment(&environment)
+        {
+            // beamer's blocks, columns and in-flow floats (issue #944, Tier
+            // 3; `parser/beamer_blocks.rs`). `figure`/`table` under any
+            // other class take the arms below.
+            self.beamer_environment_begin(&environment, span, argument_span, blocks, para);
+        } else if matches!(environment.as_str(), "figure" | "table") && self.in_body {
             self.flush_paragraph(blocks, para);
         } else if let (Some(style), true) = (paragraph_style(&environment), self.in_body) {
             self.flush_paragraph(blocks, para);
@@ -7476,7 +7644,9 @@ impl P<'_> {
         } else if matches!(environment.as_str(), "multicols" | "multicols*") && self.in_body {
             // `\endmulticols` starts with `\par`.
             self.flush_paragraph(blocks, para);
-        } else if environment == "figure" || self.theorems.contains_key(&environment) {
+        } else if self.is_beamer_block_environment(&environment) {
+            self.beamer_environment_end(&environment, span, blocks, para);
+        } else if matches!(environment.as_str(), "figure" | "table") || self.theorems.contains_key(&environment) {
             self.flush_paragraph(blocks, para);
         } else if environment == "frame" {
             // Beamer slide end: close the paragraph and the frame. In other
