@@ -1,0 +1,778 @@
+{
+  "schema": "flashtex-beamer-audit/1",
+  "generated_utc": "2026-09-18T172738Z",
+  "branch": "beamer/corpus",
+  "base": "origin/main bf3ae45e + pr-855 (b7072f9f) + pr-887 merged; vendor/compiler patched with the #855 src diff (uncommitted, worktree only)",
+  "fixtures_commit": "f8616a5f",
+  "producer": {
+    "render": "/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ad21f0000ffb19c75/crates/flashtex-cli/target/release/flashtex-render",
+    "pdf_exact": "/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ad21f0000ffb19c75/crates/flashtex-cli/target/release/flashtex-pdf-exact",
+    "rasterizer": "`gs` at `/opt/homebrew/bin/gs`",
+    "font_dirs": "/Users/jay3332/Projects/flashtex/apps/mac/Fonts",
+    "tfm_dirs": "/usr/local/texlive/2026/texmf-dist/fonts/tfm/jknappen/ec:/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/lm:/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/amsfonts/symbols"
+  },
+  "oracle": "MacTeX 2026 pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1, oracle only",
+  "ranking_source": "tools/visual-oracle/rank.py --top 5 --thumbs 0 (full report not committed; regenerate with the command in report.md)",
+  "decks": [
+    {
+      "id": "beamer-blocks-columns",
+      "reference_pages": 6,
+      "candidate_pages": 5,
+      "status": "recovered",
+      "render_seconds": 0.575,
+      "compared_pages": 5,
+      "reference_words_on_compared_pages": 156,
+      "candidate_words_on_compared_pages": 205,
+      "aligned_words": 10,
+      "max_abs_dx_bp": 189.186,
+      "max_abs_dy_bp": 111.455,
+      "differing_px_pct_per_page": [
+        4.02,
+        7.08,
+        4.86,
+        3.52,
+        5.04
+      ],
+      "differing_px_pct_mean": 4.9,
+      "diagnostics_by_code": {
+        "unknown_command": 17
+      },
+      "diagnostics_by_construct": [
+        {
+          "code": "unknown_command",
+          "construct": "\\column",
+          "count": 4
+        },
+        {
+          "code": "unknown_command",
+          "construct": "\\textwidth",
+          "count": 4
+        },
+        {
+          "code": "unknown_command",
+          "construct": "environment 'block'",
+          "count": 3
+        },
+        {
+          "code": "unknown_command",
+          "construct": "environment 'columns'",
+          "count": 2
+        },
+        {
+          "code": "unknown_command",
+          "construct": "\\setbeamertemplate",
+          "count": 1
+        },
+        {
+          "code": "unknown_command",
+          "construct": "\\titlepage",
+          "count": 1
+        },
+        {
+          "code": "unknown_command",
+          "construct": "environment 'alertblock'",
+          "count": 1
+        },
+        {
+          "code": "unknown_command",
+          "construct": "environment 'exampleblock'",
+          "count": 1
+        }
+      ],
+      "flashtex_check_summary": "flashtex: main.tex: recovered, 5 pages, 10 errors, 7 warnings",
+      "top_deltas": [
+        {
+          "page": 4,
+          "text": "a",
+          "dx_bp": 189.186,
+          "dy_bp": 77.317,
+          "reference_bp": [
+            8.504,
+            21.057
+          ],
+          "candidate_bp": [
+            197.69,
+            98.374
+          ],
+          "reference_font": "CMSS12",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1999-2000",
+          "excerpt": "{Time per stage for a ten-page document.}"
+        },
+        {
+          "page": 3,
+          "text": "the",
+          "dx_bp": -105.584,
+          "dy_bp": -111.455,
+          "reference_bp": [
+            306.597,
+            146.766
+          ],
+          "candidate_bp": [
+            201.013,
+            35.311
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1604-1607",
+          "excerpt": "ed to six tenths of the text width and cent"
+        },
+        {
+          "page": 3,
+          "text": "of",
+          "dx_bp": -105.576,
+          "dy_bp": -111.455,
+          "reference_bp": [
+            294.165,
+            146.766
+          ],
+          "candidate_bp": [
+            188.589,
+            35.311
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1601-1603",
+          "excerpt": "caled to six tenths of the text width and"
+        },
+        {
+          "page": 2,
+          "text": "of",
+          "dx_bp": 91.172,
+          "dy_bp": 108.899,
+          "reference_bp": [
+            81.836,
+            21.057
+          ],
+          "candidate_bp": [
+            173.008,
+            129.956
+          ],
+          "reference_font": "CMSS12",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1360-1362",
+          "excerpt": "ocks take the width of the column that con"
+        },
+        {
+          "page": 3,
+          "text": "The",
+          "dx_bp": -100.216,
+          "dy_bp": -65.046,
+          "reference_bp": [
+            128.563,
+            100.357
+          ],
+          "candidate_bp": [
+            28.346,
+            35.311
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1567-1570",
+          "excerpt": "g}⏎  \\end{center}⏎  The image is scaled to"
+        }
+      ]
+    },
+    {
+      "id": "beamer-default",
+      "reference_pages": 7,
+      "candidate_pages": 6,
+      "status": "recovered",
+      "render_seconds": 0.052,
+      "compared_pages": 6,
+      "reference_words_on_compared_pages": 270,
+      "candidate_words_on_compared_pages": 286,
+      "aligned_words": 28,
+      "max_abs_dx_bp": 233.403,
+      "max_abs_dy_bp": 124.182,
+      "differing_px_pct_per_page": [
+        6.79,
+        8.1,
+        6.55,
+        6.71,
+        7.22,
+        5.89
+      ],
+      "differing_px_pct_mean": 6.88,
+      "diagnostics_by_code": {
+        "unknown_command": 3,
+        "math_resource_profile": 1
+      },
+      "diagnostics_by_construct": [
+        {
+          "code": "unknown_command",
+          "construct": "\\subtitle",
+          "count": 1
+        },
+        {
+          "code": "unknown_command",
+          "construct": "\\institute",
+          "count": 1
+        },
+        {
+          "code": "unknown_command",
+          "construct": "\\titlepage",
+          "count": 1
+        },
+        {
+          "code": "math_resource_profile",
+          "construct": "lmsy10: glyphs drawn from latinmodern-math (one 10pt design)",
+          "count": 1
+        }
+      ],
+      "flashtex_check_summary": "flashtex: main.tex: recovered, 6 pages, 3 errors, 1 warning",
+      "top_deltas": [
+        {
+          "page": 4,
+          "text": "The",
+          "dx_bp": 185.362,
+          "dy_bp": -94.095,
+          "reference_bp": [
+            50.165,
+            129.406
+          ],
+          "candidate_bp": [
+            235.526,
+            35.311
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1660-1663",
+          "excerpt": "s a paragraph list. The renderer breaks lin"
+        },
+        {
+          "page": 3,
+          "text": "the",
+          "dx_bp": 233.403,
+          "dy_bp": -39.18,
+          "reference_bp": [
+            50.165,
+            158.576
+          ],
+          "candidate_bp": [
+            283.568,
+            119.396
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1527-1530",
+          "excerpt": "cursor is reshaped; the rest is replayed.⏎\\"
+        },
+        {
+          "page": 3,
+          "text": "is",
+          "dx_bp": 226.865,
+          "dy_bp": -39.18,
+          "reference_bp": [
+            100.29,
+            158.576
+          ],
+          "candidate_bp": [
+            327.155,
+            119.396
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1536-1538",
+          "excerpt": "reshaped; the rest is replayed.⏎\\end{fram"
+        },
+        {
+          "page": 4,
+          "text": "The",
+          "dx_bp": 158.927,
+          "dy_bp": -97.084,
+          "reference_bp": [
+            156.774,
+            145.944
+          ],
+          "candidate_bp": [
+            315.701,
+            48.86
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1738-1741",
+          "excerpt": "m and builds pages. The exporter writes the"
+        },
+        {
+          "page": 6,
+          "text": "of",
+          "dx_bp": -107.411,
+          "dy_bp": -74.568,
+          "reference_bp": [
+            324.44,
+            109.879
+          ],
+          "candidate_bp": [
+            217.029,
+            35.311
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:2428-2430",
+          "excerpt": "ph layer gives most of the win; caching pa"
+        }
+      ]
+    },
+    {
+      "id": "beamer-fragile",
+      "reference_pages": 8,
+      "candidate_pages": 6,
+      "status": "recovered",
+      "render_seconds": 0.029,
+      "compared_pages": 6,
+      "reference_words_on_compared_pages": 148,
+      "candidate_words_on_compared_pages": 182,
+      "aligned_words": 16,
+      "max_abs_dx_bp": 186.731,
+      "max_abs_dy_bp": 216.401,
+      "differing_px_pct_per_page": [
+        2.94,
+        4.04,
+        3.31,
+        6.27,
+        3.56,
+        1.94
+      ],
+      "differing_px_pct_mean": 3.68,
+      "diagnostics_by_code": {
+        "unsupported_feature": 1,
+        "unknown_command": 5,
+        "unsupported_block": 1
+      },
+      "diagnostics_by_construct": [
+        {
+          "code": "unknown_command",
+          "construct": "\\note",
+          "count": 2
+        },
+        {
+          "code": "unsupported_feature",
+          "construct": "packages listings",
+          "count": 1
+        },
+        {
+          "code": "unknown_command",
+          "construct": "\\setbeamertemplate",
+          "count": 1
+        },
+        {
+          "code": "unknown_command",
+          "construct": "\\titlepage",
+          "count": 1
+        },
+        {
+          "code": "unknown_command",
+          "construct": "\\frame",
+          "count": 1
+        },
+        {
+          "code": "unsupported_block",
+          "construct": "lstlisting (4 line(s)): `basicstyle` (its size and that size",
+          "count": 1
+        }
+      ],
+      "flashtex_check_summary": "flashtex: main.tex: recovered, 6 pages, 5 errors, 2 warnings",
+      "top_deltas": [
+        {
+          "page": 5,
+          "text": "the",
+          "dx_bp": 186.731,
+          "dy_bp": -143.943,
+          "reference_bp": [
+            109.982,
+            179.254
+          ],
+          "candidate_bp": [
+            296.713,
+            35.311
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1860-1863",
+          "excerpt": "ne or sidebars, and the text width⏎  is the"
+        },
+        {
+          "page": 5,
+          "text": "the",
+          "dx_bp": -114.754,
+          "dy_bp": -130.394,
+          "reference_bp": [
+            184.979,
+            179.254
+          ],
+          "candidate_bp": [
+            70.225,
+            48.86
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1880-1883",
+          "excerpt": "the text width⏎  is the full paper width mi"
+        },
+        {
+          "page": 4,
+          "text": "twelve.",
+          "dx_bp": 4.729,
+          "dy_bp": -216.401,
+          "reference_bp": [
+            74.282,
+            227.36
+          ],
+          "candidate_bp": [
+            79.01,
+            10.959
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1334-1341",
+          "excerpt": "ven.⏎    \\item Item twelve.⏎    \\item Item thir"
+        },
+        {
+          "page": 4,
+          "text": "Item",
+          "dx_bp": 3.088,
+          "dy_bp": -216.401,
+          "reference_bp": [
+            50.165,
+            227.36
+          ],
+          "candidate_bp": [
+            53.253,
+            10.959
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1329-1333",
+          "excerpt": "m eleven.⏎    \\item Item twelve.⏎    \\item I"
+        },
+        {
+          "page": 4,
+          "text": "thirteen.",
+          "dx_bp": 4.729,
+          "dy_bp": -210.515,
+          "reference_bp": [
+            74.282,
+            243.989
+          ],
+          "candidate_bp": [
+            79.01,
+            33.474
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1357-1366",
+          "excerpt": "lve.⏎    \\item Item thirteen.⏎    \\item Item four"
+        }
+      ]
+    },
+    {
+      "id": "beamer-madrid",
+      "reference_pages": 7,
+      "candidate_pages": 6,
+      "status": "recovered",
+      "render_seconds": 0.053,
+      "compared_pages": 6,
+      "reference_words_on_compared_pages": 311,
+      "candidate_words_on_compared_pages": 286,
+      "aligned_words": 34,
+      "max_abs_dx_bp": 317.522,
+      "max_abs_dy_bp": 125.233,
+      "differing_px_pct_per_page": [
+        26.81,
+        20.91,
+        19.2,
+        19.41,
+        19.88,
+        18.81
+      ],
+      "differing_px_pct_mean": 20.84,
+      "diagnostics_by_code": {
+        "unknown_command": 4,
+        "syntax_error": 2,
+        "math_resource_profile": 1
+      },
+      "diagnostics_by_construct": [
+        {
+          "code": "unknown_command",
+          "construct": "\\usetheme",
+          "count": 1
+        },
+        {
+          "code": "syntax_error",
+          "construct": "\\title",
+          "count": 1
+        },
+        {
+          "code": "unknown_command",
+          "construct": "\\subtitle",
+          "count": 1
+        },
+        {
+          "code": "syntax_error",
+          "construct": "\\author",
+          "count": 1
+        },
+        {
+          "code": "unknown_command",
+          "construct": "\\institute",
+          "count": 1
+        },
+        {
+          "code": "unknown_command",
+          "construct": "\\titlepage",
+          "count": 1
+        },
+        {
+          "code": "math_resource_profile",
+          "construct": "lmsy10: glyphs drawn from latinmodern-math (one 10pt design)",
+          "count": 1
+        }
+      ],
+      "flashtex_check_summary": "flashtex: main.tex: recovered, 6 pages, 6 errors, 1 warning",
+      "top_deltas": [
+        {
+          "page": 1,
+          "text": "1",
+          "dx_bp": -317.522,
+          "dy_bp": -104.942,
+          "reference_bp": [
+            345.868,
+            269.469
+          ],
+          "candidate_bp": [
+            28.346,
+            164.527
+          ],
+          "reference_font": "CMSS8",
+          "candidate_font": "LMRoman12-Bold",
+          "span": "main.tex:965-973",
+          "excerpt": "rence.⏎\\end{frame}⏎⏎\\section{Motivation}⏎⏎\\begin"
+        },
+        {
+          "page": 4,
+          "text": "The",
+          "dx_bp": 202.799,
+          "dy_bp": -92.436,
+          "reference_bp": [
+            32.727,
+            127.747
+          ],
+          "candidate_bp": [
+            235.526,
+            35.311
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1768-1771",
+          "excerpt": "s a paragraph list. The renderer breaks lin"
+        },
+        {
+          "page": 5,
+          "text": "the",
+          "dx_bp": -247.405,
+          "dy_bp": 43.694,
+          "reference_bp": [
+            337.507,
+            102.8
+          ],
+          "candidate_bp": [
+            90.102,
+            146.494
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:2401-2404",
+          "excerpt": "t.⏎    \\item Report the largest deltas firs"
+        },
+        {
+          "page": 3,
+          "text": "the",
+          "dx_bp": 250.841,
+          "dy_bp": -40.231,
+          "reference_bp": [
+            32.727,
+            159.627
+          ],
+          "candidate_bp": [
+            283.568,
+            119.396
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1635-1638",
+          "excerpt": "cursor is reshaped; the rest is replayed.⏎\\"
+        },
+        {
+          "page": 3,
+          "text": "is",
+          "dx_bp": 244.303,
+          "dy_bp": -40.231,
+          "reference_bp": [
+            82.852,
+            159.627
+          ],
+          "candidate_bp": [
+            327.155,
+            119.396
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1644-1646",
+          "excerpt": "reshaped; the rest is replayed.⏎\\end{fram"
+        }
+      ]
+    },
+    {
+      "id": "beamer-overlays",
+      "reference_pages": 14,
+      "candidate_pages": 6,
+      "status": "recovered",
+      "render_seconds": 0.028,
+      "compared_pages": 6,
+      "reference_words_on_compared_pages": 165,
+      "candidate_words_on_compared_pages": 203,
+      "aligned_words": 40,
+      "max_abs_dx_bp": 2069.818,
+      "max_abs_dy_bp": 1949.635,
+      "differing_px_pct_per_page": [
+        2.66,
+        3.74,
+        5.2,
+        4.18,
+        3.71,
+        3.3
+      ],
+      "differing_px_pct_mean": 3.8,
+      "diagnostics_by_code": {
+        "unknown_command": 8,
+        "syntax_error": 1
+      },
+      "diagnostics_by_construct": [
+        {
+          "code": "unknown_command",
+          "construct": "\\pause",
+          "count": 2
+        },
+        {
+          "code": "unknown_command",
+          "construct": "\\only",
+          "count": 2
+        },
+        {
+          "code": "unknown_command",
+          "construct": "\\onslide",
+          "count": 2
+        },
+        {
+          "code": "unknown_command",
+          "construct": "\\setbeamertemplate",
+          "count": 1
+        },
+        {
+          "code": "syntax_error",
+          "construct": "\\alert",
+          "count": 1
+        },
+        {
+          "code": "unknown_command",
+          "construct": "\\uncover",
+          "count": 1
+        }
+      ],
+      "flashtex_check_summary": "flashtex: main.tex: recovered, 6 pages, 9 errors, 0 warnings",
+      "top_deltas": [
+        {
+          "page": 4,
+          "text": "The",
+          "dx_bp": -2069.818,
+          "dy_bp": 1943.658,
+          "reference_bp": [
+            2098.165,
+            -1840.601
+          ],
+          "candidate_bp": [
+            28.346,
+            103.057
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1776-1779",
+          "excerpt": "the two slides.}⏎⏎  The line after the unco"
+        },
+        {
+          "page": 4,
+          "text": "the",
+          "dx_bp": -2016.906,
+          "dy_bp": 1949.635,
+          "reference_bp": [
+            2105.105,
+            -1873.677
+          ],
+          "candidate_bp": [
+            88.199,
+            75.959
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:1715-1718",
+          "excerpt": "e⏎  is reserved, so the sentence below does"
+        },
+        {
+          "page": 1,
+          "text": "Break",
+          "dx_bp": -1996.938,
+          "dy_bp": 1946.1,
+          "reference_bp": [
+            2050.191,
+            -1843.243
+          ],
+          "candidate_bp": [
+            53.253,
+            102.858
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:541-546",
+          "excerpt": "\\pause⏎    \\item Break lines and pages.⏎"
+        },
+        {
+          "page": 1,
+          "text": "lines",
+          "dx_bp": -1995.299,
+          "dy_bp": 1946.1,
+          "reference_bp": [
+            2080.249,
+            -1843.243
+          ],
+          "candidate_bp": [
+            84.95,
+            102.858
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:547-552",
+          "excerpt": "use⏎    \\item Break lines and pages.⏎  \\end{i"
+        },
+        {
+          "page": 1,
+          "text": "and",
+          "dx_bp": -1993.912,
+          "dy_bp": 1946.1,
+          "reference_bp": [
+            2103.771,
+            -1843.243
+          ],
+          "candidate_bp": [
+            109.859,
+            102.858
+          ],
+          "reference_font": "CMSS10",
+          "candidate_font": "LMRoman10-Regular",
+          "span": "main.tex:553-556",
+          "excerpt": "\\item Break lines and pages.⏎  \\end{itemi"
+        }
+      ]
+    }
+  ]
+}
