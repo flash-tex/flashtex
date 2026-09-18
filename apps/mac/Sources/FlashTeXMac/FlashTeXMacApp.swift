@@ -233,6 +233,8 @@ struct FlashTeXMacApp: App {
                 Button("New File…") { model.scaffold.presentNewFile() }
                     .keyboardShortcut("n")
                     .disabled(model.project.projectRoot == nil)
+                Button("Move To…") { model.scaffold.presentMove(model.activePath) } // ProjectMove.swift (no key: the tree drags too)
+                    .disabled(model.project.projectRoot == nil || model.activePath == model.project.entryPath)
                 Button("Open LaTeX File…") { model.openTexPanel() }
                     .keyboardShortcut("o")
                 Button("Save") { model.saveTexInteractive() }

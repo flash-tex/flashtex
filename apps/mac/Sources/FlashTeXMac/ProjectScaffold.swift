@@ -386,7 +386,8 @@ extension ProjectDocuments {
     /// The rooted URL a new member would be written to, or why not.
     struct Refusal: Error, Equatable { var why: String }
 
-    private func newFileURL(_ path: String) -> Result<URL, Refusal> {
+    /// Also the destination check of a move (ProjectMove.swift).
+    func newFileURL(_ path: String) -> Result<URL, Refusal> {
         guard let root = projectRoot else { return .failure(Refusal(why: "the entry document is not saved, so there is no project root; save it first (⌘S)")) }
         // Every existing ancestor must be a real directory under the root; the
         // leaf may not exist yet, so check the deepest existing prefix.
