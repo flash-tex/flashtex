@@ -3702,7 +3702,17 @@ fn split_at_page_breaks<'p>(
         // `Some(is_proof)` when this block is the `\item` that opens a
         // theorem-like environment; `proof` is told apart because its closing
         // `\@topsepadd` is not `\topsep` (see [`theorem_skips`]).
-        let theorem_open: Option<bool> = (list.is_none() && styled.is_none())
+        //
+        // A theorem-like environment nested in a list item is its own
+        // `\trivlist`, so its first paragraph takes this path too even
+        // though the compiler reports it as a `ListItem`: a nested proof's
+        // opening `\@topsep` and its head's compiler-scoped italic both
+        // ride on `theorem_item`/`in_theorem`, and without them the head
+        // sets upright and the boundary loses the skip (GH-897). Only the
+        // label-less continuation paragraphs qualify: a labelled `\item`
+        // paragraph opens the enclosing list, whose own `\@topsep`/
+        // `\itemsep` path above already accounts for the boundary.
+        let theorem_open: Option<bool> = (styled.is_none() && list.as_ref().is_none_or(|l| l.label.is_none()))
             .then(|| {
                 let f = first?;
                 let gap_start = match prev_end {

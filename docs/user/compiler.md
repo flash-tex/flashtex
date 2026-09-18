@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 380 text-mode and 573 math-mode command entries, 68 environments and 30 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 405 text-mode and 573 math-mode command entries, 68 environments and 32 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -662,6 +662,30 @@ Canonical sources:
 | `\textperiodcentered` |  | text symbol \textperiodcentered: OT1 ·, T1 · (tex-text-encoding; unavailable is a LaTeX error) |
 | `\textregistered` |  | text symbol \textregistered: OT1 ®, T1 ® (tex-text-encoding; unavailable is a LaTeX error) |
 | `\texttrademark` |  | text symbol \texttrademark: OT1 ™, T1 ™ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textdegree` |  | text symbol \textdegree: OT1 °, T1 ° (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textmu` |  | text symbol \textmu: OT1 µ, T1 µ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textohm` |  | text symbol \textohm: OT1 Ω, T1 Ω (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textcelsius` |  | text symbol \textcelsius: OT1 ℃, T1 ℃ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\texteuro` |  | text symbol \texteuro: OT1 €, T1 € (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textyen` |  | text symbol \textyen: OT1 ¥, T1 ¥ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textwon` |  | text symbol \textwon: OT1 ₩, T1 ₩ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textcurrency` |  | text symbol \textcurrency: OT1 ¤, T1 ¤ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textestimated` |  | text symbol \textestimated: OT1 ℮, T1 ℮ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textnumero` |  | text symbol \textnumero: OT1 №, T1 № (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textrecipe` |  | text symbol \textrecipe: OT1 ℞, T1 ℞ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textservicemark` |  | text symbol \textservicemark: OT1 ℠, T1 ℠ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textbardbl` |  | text symbol \textbardbl: OT1 ‖, T1 ‖ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textbrokenbar` |  | text symbol \textbrokenbar: OT1 ¦, T1 ¦ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\texttimes` |  | text symbol \texttimes: OT1 ×, T1 × (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textdiv` |  | text symbol \textdiv: OT1 ÷, T1 ÷ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textonehalf` |  | text symbol \textonehalf: OT1 ½, T1 ½ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textonequarter` |  | text symbol \textonequarter: OT1 ¼, T1 ¼ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textthreequarters` |  | text symbol \textthreequarters: OT1 ¾, T1 ¾ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textperthousand` |  | text symbol \textperthousand: OT1 ‰, T1 ‰ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textpertenthousand` |  | text symbol \textpertenthousand: OT1 ‱, T1 ‱ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textopenbullet` |  | text symbol \textopenbullet: OT1 ◦, T1 ◦ (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textlangle` |  | text symbol \textlangle: OT1 〈, T1 〈 (tex-text-encoding; unavailable is a LaTeX error) |
+| `\textrangle` |  | text symbol \textrangle: OT1 〉, T1 〉 (tex-text-encoding; unavailable is a LaTeX error) |
 | `\c` | `{letter}` | cedilla text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning |
 | `\v` | `{letter}` | caron text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning |
 | `\u` | `{letter}` | breve text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning |
@@ -727,6 +751,7 @@ Canonical sources:
 | `\ignorespaces` |  | skips the spaces that follow |
 | `\jobname` |  | expands to texput |
 | `\ifthenelse` | `{test}{true}{false}` | the ifthen package's conditional: \equal, \NOT, \AND, \OR, \isodd, \isundefined, \lengthtest and \boolean tests select one branch at expansion time |
+| `\iftoggle` | `{name}{true}{false}` | the etoolbox toggle conditional: the named toggle (\newtoggle/\providetoggle declare it false, \toggletrue/\togglefalse set it) selects one branch at expansion time |
 
 ### Math structures
 
@@ -1001,6 +1026,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `amsfonts` | `` | amsfonts.sty's 22-name symbol subset (\ulcorner, \square, \yen, the dashed arrows) and the \mathbb and \mathfrak alphabets; the rest of amssymb stays undefined without \usepackage{amssymb} |
 | `amsthm` | `` | \newtheorem, \theoremstyle and the proof environment |
 | `array` | `` | tabular >{} <{} !{} m b w columns, \newcolumntype and \extrarowheight |
+| `tabularx` | `` | the tabularx environment and its X column, splitting the table's leftover width evenly |
 | `booktabs` | `` | \toprule, \midrule, \bottomrule, \cmidrule(trim), \addlinespace, \specialrule, \morecmidrules |
 | `cancel` | `` | \cancel (forward diagonal), \bcancel (backward diagonal) and \xcancel (X) through a math expression; \cancelto is diagnosed |
 | `longtable` | `` | the page-breaking longtable environment: \endfirsthead, \endhead, \endfoot, \endlastfoot, \caption, \kill, \\* |
@@ -1020,6 +1046,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `xspace` | `` | \xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
 | `ifthen` | `` | \ifthenelse with \equal, \NOT, \AND, \OR, \isodd, \isundefined, \lengthtest and \boolean tests, and \newif conditionals with \newboolean/\setboolean; \whiledo loops are diagnosed where they are used |
 | `csquotes` | `` | \enquote: typographic quotation marks, alternating double/single on nesting |
+| `etoolbox` | `` | toggle booleans: \newtoggle/\providetoggle declare a false toggle, \toggletrue/\togglefalse set it, \iftoggle{name}{true}{false} selects a branch at expansion time; a duplicate \newtoggle and any use of an undefined toggle are diagnosed where they are used and leave existing state alone. The rest of etoolbox (patching, hooks, list processing) is diagnosed where it is used |
 
 Any other package, or these packages with other options, is recorded and reported as recognised but not implemented.
 <!-- END GENERATED supported-latex -->

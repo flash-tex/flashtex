@@ -215,6 +215,31 @@ fn find_pictures_locates_bodies_and_options() {
 }
 
 #[test]
+fn braced_arithmetic_in_coordinate_defines_the_node() {
+    // Issue #898: `({\a+\c},2)` is the idiomatic way to write macro
+    // arithmetic in a coordinate; the braces must parse as a group and
+    // later paths referencing `(P)` must still draw.
+    let p = render(
+        r"\def\a{3}
+        \def\c{1}
+        \coordinate (O) at (0,0);
+        \coordinate (P) at ({\a+\c},2);
+        \draw[thick] (O) -- (P);
+        \draw[dotted, thick] (O) -- (4,0) -- (P) -- cycle;",
+    );
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 2, "both draws reference (P) and must draw");
+    // (P) is (4,2): the first stroke spans 4cm horizontally.
+    let (a, b) = match (s[0].path.commands()[0], s[0].path.commands()[1]) {
+        (PathCommand::MoveTo(a), PathCommand::LineTo(b)) => (a, b),
+        other => panic!("{other:?}"),
+    };
+    assert!(close(b.x - a.x, 4.0 * CM * K, 1e-6), "{a:?} {b:?}");
+    assert!(close(a.y - b.y, 2.0 * CM * K, 1e-6), "{a:?} {b:?}");
+}
+
+#[test]
 fn rounded_corners_arcs_grids_and_curves() {
     let p = render(r"\draw[rounded corners] (0,0) rectangle (2,1);
         \draw (3,0) arc (0:90:1);
