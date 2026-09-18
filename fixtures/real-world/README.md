@@ -40,6 +40,24 @@ out of them live in [`fixtures/divergence-probes/`](../divergence-probes/README.
 | `hyperref-toc` | documentation: `hyperref` + `\hypersetup`, `\tableofcontents`, `\listoffigures`, `\listoftables`, `\addcontentsline`, `\pageref` — **substituted `ectt` metrics** | 4 / 1 | 3 |
 | `natbib-review` | literature review: `natbib` `\citep`/`\citet`/`\citeauthor`/`\citeyearpar`, `\newblock` bibliography, long cited prose | 3 / 0 | 3 |
 
+## 2026-09-18 additions — beamer slide decks
+
+Owner: lane `beamer/corpus` (mac-claude-a). Written for this corpus as the
+conformance set for full `\documentclass{beamer}` support (issue #841, PRs
+#855 and #887). Each deck is at most eight frames; the expected page count
+is the reference's, which is what the overlay rule and frame breaking must
+reproduce. References were generated with MacTeX 2026 (TeX Live 2026) and
+say so in `reference_engine`. The first audit is under
+`docs/evidence/beamer-audit-2026-09-18T172738Z/`.
+
+| fixture | what it exercises | pdfLaTeX pages / overfull |
+|---|---|---|
+| `beamer-default` | default theme, navigation symbols **on**: `\title`/`\subtitle`/`\author`/`\institute`/`\date` + `\titlepage` frame, six `\frametitle` frames with prose, `itemize`, `enumerate`, `\section` between frames (must not print) | 7 / 0 |
+| `beamer-madrid` | the same content with `\usetheme{Madrid}`: short `\title[..]`/`\author[..]`/`\institute[..]`, filled frametitle bar, three-box infolines footline with frame/total counter, 1em text margins | 7 / 0 |
+| `beamer-overlays` | `\pause` in a list, `\item<2->`/`<3->`, `\only<1>{}\only<2>{}`, `\uncover<2->{}`, `\alert<2>{}`, `\onslide<2->`/`<3->`: frames of 3, 3, 2, 2, 3 and 1 slides | 14 / 0 |
+| `beamer-blocks-columns` | `block`/`alertblock`/`exampleblock`, `columns[T]` with two `\column{.5\textwidth}`, `\includegraphics[width=.6\textwidth]` (`figure.png`, copied from `tests/grok-corpus/images/clean-quadratic-formula.png`), `table` + `booktabs` `tabular` + `\caption` in a frame, `\footnote` in a frame, `columns` inside a `block` | 6 / 0 |
+| `beamer-fragile` | `[fragile]` with `verbatim` and `lstlisting`, `[allowframebreaks]` with a twenty-item list that breaks onto a second page (`A long list I`/`II`), the `\frame{...}` command form, `[plain]`, `\note{...}` (must not print) | 8 / 0 |
+
 `listings-manual` and `hyperref-toc` (and `siunitx-tables`) contain `\texttt`
 or `verbatim`. The bundled `texmf/fonts/tfm/jknappen/ec` ships no `ectt*.tfm`,
 so the renderer falls back to `ec-lmr*` metrics and the harness reports
