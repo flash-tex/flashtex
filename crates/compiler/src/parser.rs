@@ -724,6 +724,20 @@ pub enum Block {
         lines: Vec<Vec<Inline>>,
         vmode: bool,
         span: Span,
+        /// The enclosing `quote`/`quotation`/`verse` style, if any (captured
+        /// like `Block::Styled`'s own `style`; an enclosing centering
+        /// declaration is never kept: alltt cancels it). Layout applies it
+        /// to `left_edge()` so the body sits at the enclosing quote's
+        /// margin (`alltt.sty` sets `\leftskip\@totalleftmargin`).
+        style: Option<ParagraphStyle>,
+        /// The enclosing `\list` level driving the hanging-indent margin
+        /// (like `Block::ListItem`'s `level`), with its `\setlist`
+        /// `leftmargin` effect (`leftmargin`) and `thebibliography`
+        /// widest-label override (`widest_label`). `None` outside a list
+        /// item's context, where the body starts at the page margin.
+        level: Option<u8>,
+        leftmargin: ListLeftMargin,
+        widest_label: Option<String>,
     },
     /// `\tableofcontents`: the article.cls contents list, built from the
     /// numbered headings of the previous layout pass (see
@@ -2557,10 +2571,45 @@ impl P<'_> {
         if frame.lines.is_empty() {
             frame.lines.push(Vec::new());
         }
+        // The enclosing quote/list margin, captured the same way
+        // `flush_list_item` captures it for `Styled`/`ListItem` siblings so
+        // the alltt body sits at the same x (`alltt.sty`'s
+        // `\leftskip\@totalleftmargin`).
+        let style = self
+            .paragraph_styles
+            .last()
+            .filter(|style| **style == ParagraphStyle::Quote)
+            .copied();
+        let in_quote = self.pending_item_label.is_none()
+            && self
+                .list_frames
+                .last()
+                .is_some_and(|frame| frame.environment.is_quote_like());
+        let level = self
+            .list_stack
+            .last()
+            .filter(|list| list.count > 0 && !in_quote)
+            .map(|_| self.list_stack.len() as u8);
+        let leftmargin = match self.list_stack.last() {
+            Some(OpenList { spacing, .. }) => match spacing.leftmargin {
+                LeftMarginSetting::Explicit(pt) => ListLeftMargin::Explicit(pt),
+                LeftMarginSetting::Unset | LeftMarginSetting::Widest => ListLeftMargin::Default,
+            },
+            None => ListLeftMargin::Default,
+        };
+        let widest_label = self.list_stack.last().and_then(|list| {
+            (list.kind == "thebibliography")
+                .then(|| list.template.clone())
+                .flatten()
+        });
         blocks.push(Block::Alltt {
             lines: frame.lines,
             vmode: frame.vmode,
             span: frame.span,
+            style,
+            level,
+            leftmargin,
+            widest_label,
         });
         self.finish_block_dependencies();
     }
@@ -6323,6 +6372,17 @@ impl P<'_> {
                     for block in &mut blocks[start..] {
                         if let Block::ListItem {
                             level: item_level,
+                            leftmargin,
+                            ..
+                        } = block
+                        {
+                            if *item_level == level && matches!(leftmargin, ListLeftMargin::Default)
+                            {
+                                *leftmargin = ListLeftMargin::Widest(labels.clone());
+                            }
+                        }
+                        if let Block::Alltt {
+                            level: Some(item_level),
                             leftmargin,
                             ..
                         } = block

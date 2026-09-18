@@ -550,6 +550,8 @@ pub struct FlowState {
     content_end: f64,
     /// See `LayoutCursor::closed_line_skip`.
     closed_line_skip: Option<f64>,
+    /// See `LayoutCursor::closed_after_alltt`.
+    closed_after_alltt: bool,
     /// See `LayoutCursor::eject_after_line`.
     eject_after_line: bool,
 }
@@ -564,6 +566,7 @@ impl FlowState {
             && self.trailing_line_items == other.trailing_line_items
             && self.content_end.to_bits() == other.content_end.to_bits()
             && self.closed_line_skip.map(f64::to_bits) == other.closed_line_skip.map(f64::to_bits)
+            && self.closed_after_alltt == other.closed_after_alltt
             && self.eject_after_line == other.eject_after_line
     }
 }
@@ -700,6 +703,12 @@ pub struct LayoutCursor {
     /// and its own `\addvspace`-style gap only adds what exceeds this skip.
     /// Cleared by `newline`.
     closed_line_skip: Option<f64>,
+    /// The pending `closed_line_skip` was laid down by a `Block::Alltt`
+    /// (`\@endparenv`'s `\@topsepadd`): the next block's exit gap uses the
+    /// alltt entry's `\parskip` convention (`unwrap_or(0.0)`) instead of the
+    /// ordinary paragraph gap. Set and consumed together with
+    /// `closed_line_skip`, so it needs no handling of its own elsewhere.
+    closed_after_alltt: bool,
     /// A forced `Inline::PagePenalty` (`\pagebreak` inside a paragraph,
     /// `\vadjust{\penalty-\@M}`) was set on the current line: the page ends
     /// after that line, when the next one starts.
@@ -768,6 +777,7 @@ impl LayoutCursor {
             list_margin_pt: 0.0,
             footnotes: footnotes::FootnoteState::default(),
             closed_line_skip: None,
+            closed_after_alltt: false,
             eject_after_line: false,
             no_wrap: false,
         }
@@ -866,6 +876,7 @@ impl LayoutCursor {
     fn newline(&mut self, size: f64) {
         self.line_spaces.clear();
         self.closed_line_skip = None;
+        self.closed_after_alltt = false;
         self.resolve_hfill();
         self.align_current_line();
         self.footnotes
@@ -1512,6 +1523,9 @@ impl LayoutCursor {
             .closed_line_skip
             .take()
             .filter(|_| self.state().trailing_line_items == 0);
+        // Consumed together with `closed`: only the guarded arms below ever
+        // observe it, and `newline` clears both, so no stale flag survives.
+        let closed_after_alltt = std::mem::take(&mut self.closed_after_alltt);
         let parskip = self.constraints.parskip_pt.unwrap_or(PARAGRAPH_GAP_PT);
         // Lists reset `\parskip` to `\parsep`, so a document's custom
         // `\parskip` never reaches its items. Without one, the fixed
@@ -1529,6 +1543,9 @@ impl LayoutCursor {
                 if closed.is_some() =>
             {
                 let gap = match block {
+                    Block::Paragraph(_) | Block::Tabbing { .. } if closed_after_alltt => {
+                        self.constraints.parskip_pt.unwrap_or(0.0)
+                    }
                     Block::Paragraph(_) | Block::Tabbing { .. } => parskip,
                     // A `\\` that ended a centred paragraph is `\@centercr`,
                     // which cancels the next paragraph's `\parskip`.
@@ -2078,7 +2095,34 @@ impl LayoutCursor {
                     }
                 }
             }
-            Block::Alltt { lines, .. } => {
+            Block::Alltt {
+                lines,
+                vmode,
+                style,
+                level,
+                leftmargin,
+                widest_label,
+                ..
+            } => {
+                // `alltt.sty` sets `\leftskip\@totalleftmargin`: apply the
+                // enclosing quote indent (like `Block::Styled`) and list
+                // margin (like `Block::ListItem`) captured at parse time, so
+                // the body sits at the enclosing list's margin. Any enclosing
+                // centering is deliberately not applied: alltt cancels it.
+                self.style = *style;
+                self.list_margin_pt = match level {
+                    Some(depth) => match widest_label {
+                        Some(text) => {
+                            glyph_width(&bib::label_bracket(text), body_size, Font::TimesRoman)
+                                + LIST_LABELSEP_EM * body_size
+                        }
+                        None => {
+                            let override_pt = list_leftmargin_override_pt(leftmargin, body_size);
+                            list_margin_pt(*depth, body_size, override_pt)
+                        }
+                    },
+                    None => 0.0,
+                };
                 self.x = self.left_edge();
                 self.content_end = self.x;
                 self.no_wrap = true;
@@ -2089,10 +2133,22 @@ impl LayoutCursor {
                     }
                 }
                 self.no_wrap = false;
+                self.style = None;
+                self.list_margin_pt = 0.0;
                 self.newline(body_size);
-                let topsep = alltt_topsep_pt(body_size);
-                self.vertical_gap(topsep);
-                self.closed_line_skip = Some(topsep);
+                // `\@endparenv`'s closing skip is `\@topsepadd`: `topsep`,
+                // plus `partopsep` when entered in vertical mode (mirroring
+                // the entry arm in `prepare_block`). Reported as a
+                // closed-line skip so the next block starts on this baseline.
+                let closing = alltt_topsep_pt(body_size)
+                    + if *vmode {
+                        alltt_partopsep_pt(body_size)
+                    } else {
+                        0.0
+                    };
+                self.vertical_gap(closing);
+                self.closed_line_skip = Some(closing);
+                self.closed_after_alltt = true;
             }
         }
         // A block is the incremental cache unit. Resolve its final line before
@@ -2230,6 +2286,7 @@ impl LayoutCursor {
             trailing_line_items: self.pages[page_index].items.len() - self.line_start,
             content_end: self.content_end,
             closed_line_skip: self.closed_line_skip,
+            closed_after_alltt: self.closed_after_alltt,
             eject_after_line: self.eject_after_line,
         }
     }
@@ -2263,6 +2320,7 @@ impl LayoutCursor {
         self.x = end.x;
         self.content_end = end.content_end;
         self.closed_line_skip = end.closed_line_skip;
+        self.closed_after_alltt = end.closed_after_alltt;
         self.eject_after_line = end.eject_after_line;
         self.y = end.y;
         self.line_ascent = end.line_ascent;
