@@ -351,6 +351,8 @@ fn text_probe(name: &str, arguments: &str) -> String {
         "captionof" => "\\captionof{figure}{x}".into(),
         "uline" => "\\usepackage{ulem}\\uline{x}".into(),
         "sout" => "\\usepackage{ulem}\\sout{x}".into(),
+        "so" => "\\usepackage{soul}\\so{x}".into(),
+        "hl" => "\\usepackage{soul}\\hl{x}".into(),
         _ => with_arguments(name, arguments, "1pt"),
     }
 }
@@ -550,4 +552,184 @@ fn canonical_list_is_well_formed_and_sourced() {
         );
         assert!(!name.contains('@'), "{name}");
     }
+}
+
+// ---- class scope (completion gating) --------------------------------------
+// Adding a class-scoped family to the inventory (beamer's `\frametitle`,
+// `\alert`, ...) changed completion for every document: `\fra` offered
+// `\frametitle` ahead of `\frac`, `\a` offered `\alert` ahead of `\alpha`.
+// The inventory records the dependency (`requires_class`); completion has to
+// respect it. These tests pin the data that gate reads.
+
+/// The scope list is exactly the parser's real gate: every name here is
+/// diagnosed outside `\documentclass{letter}` (`letter_probe` builds its
+/// document for the same set), and the kernel neighbour `hangfrom` — which
+/// sits beside them in `BUILT_INS` — stays universal.
+#[test]
+fn class_scope_matches_the_parser_gate() {
+    let inventory = supported::inventory();
+    let scoped: BTreeSet<String> = inventory
+        .commands
+        .iter()
+        .filter(|c| c.requires_class.is_some())
+        .map(|c| c.name.to_string())
+        .collect();
+    let listed: BTreeSet<String> = supported::LETTER_CLASS_COMMANDS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(scoped, listed, "scope must be exactly the letter gate");
+    for name in supported::LETTER_CLASS_COMMANDS {
+        let command = inventory
+            .commands
+            .iter()
+            .find(|c| c.name == *name)
+            .unwrap_or_else(|| panic!("\\{name} is not in the inventory"));
+        assert_eq!(
+            command.requires_class,
+            Some("letter"),
+            "\\{name} is gated on the letter class"
+        );
+        assert!(
+            letter_probe(name, "{}").is_some(),
+            "\\{name} must go through the parser's letter gate"
+        );
+    }
+    // The everyday commands — and the kernel neighbour — stay universal.
+    for name in [
+        "frac",
+        "alpha",
+        "aleph",
+        "allowdisplaybreaks",
+        "allowbreak",
+        "section",
+        "hangfrom",
+        "today",
+    ] {
+        let command = inventory
+            .commands
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap_or_else(|| panic!("\\{name} is not in the inventory"));
+        assert_eq!(command.requires_class, None, "\\{name} is universal");
+    }
+}
+
+/// The offer rule completion mirrors: a scoped command is hidden only when
+/// the document class is known and different. An unknown class (a fragment
+/// with no `\documentclass`, as in the editor's prefix tests) keeps today's
+/// table order untouched.
+#[test]
+fn offer_rule_hides_scoped_commands_only_under_another_class() {
+    let inventory = supported::inventory();
+    let by_name = |name: &str| {
+        inventory
+            .commands
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap_or_else(|| panic!("\\{name} is not in the inventory"))
+    };
+    let (frac, opening) = (by_name("frac"), by_name("opening"));
+    assert!(frac.offered_in_class(None));
+    assert!(frac.offered_in_class(Some("article")));
+    assert!(frac.offered_in_class(Some("letter")));
+    assert!(opening.offered_in_class(None), "unknown class gates nothing");
+    assert!(
+        !opening.offered_in_class(Some("article")),
+        "\\opening must not be offered in an article"
+    );
+    assert!(opening.offered_in_class(Some("letter")));
+}
+
+/// The `requires_class` field reaches `--supported json`, the Mac completion
+/// vocabulary's data source, without moving anything else: the schema marker
+/// stays `flashtex-supported-latex/1` (the sync script greps for it and the
+/// Swift decoder asserts it), universal entries gain no key, and every scoped
+/// entry carries its class.
+#[test]
+fn requires_class_is_emitted_in_supported_json() {
+    let inventory = supported::inventory();
+    let parsed =
+        json::parse(&supported::render_json(&inventory)).expect("--supported json is valid JSON");
+    assert_eq!(
+        parsed.get("schema").and_then(|v| v.as_str()),
+        Some("flashtex-supported-latex/1"),
+        "schema bump would break the Swift decoder and the sync script"
+    );
+    let commands = parsed
+        .get("commands")
+        .and_then(|v| v.as_arr())
+        .expect("commands array");
+    assert_eq!(commands.len(), inventory.commands.len());
+    for entry in commands {
+        let name = entry
+            .get("name")
+            .and_then(|v| v.as_str())
+            .expect("command name");
+        let model = inventory
+            .commands
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap_or_else(|| panic!("JSON-only command \\{name}"));
+        match model.requires_class {
+            Some(class) => assert_eq!(
+                entry.get("requires_class").and_then(|v| v.as_str()),
+                Some(class),
+                "\\{name} must carry its class in JSON"
+            ),
+            None => assert!(
+                entry.get("requires_class").is_none(),
+                "\\{name} is universal and must not gain the key"
+            ),
+        }
+    }
+}
+
+/// The article-visibility contract the completion gate implements: under
+/// `article`, every prefix-visible name is universal, so a future
+/// class-scoped family can never outrank `\frac` on `\fra` or `\alpha` on
+/// `\a` again. (`\address` is the letter-scoped witness for the `\a`
+/// prefix; beamer's `\alert`/`\frametitle` register the same way.)
+#[test]
+fn article_prefix_completion_has_no_class_scoped_command() {
+    let inventory = supported::inventory();
+    let visible = |class: Option<&str>, prefix: &str| -> Vec<&str> {
+        inventory
+            .commands
+            .iter()
+            .filter(|c| c.renders && c.offered_in_class(class))
+            .map(|c| c.name)
+            .filter(|name| name.starts_with(prefix))
+            .collect()
+    };
+    for prefix in ["a", "c", "o", "s", "fra", "al"] {
+        assert!(
+            visible(Some("article"), prefix)
+                .iter()
+                .all(|name| visible(None, prefix).contains(name)),
+            "gating only removes, never adds, for prefix {prefix:?}"
+        );
+        assert!(
+            !visible(Some("article"), prefix).contains(&"opening"),
+            "prefix {prefix:?}"
+        );
+    }
+    assert!(
+        !visible(Some("article"), "a").contains(&"address"),
+        "the letter-scoped \\address must not be offered in an article"
+    );
+    for name in ["allowdisplaybreaks", "allowbreak", "alpha", "aleph"] {
+        assert!(
+            visible(Some("article"), "a").contains(&name),
+            "\\{name} stays offered in an article"
+        );
+    }
+    assert!(
+        visible(Some("article"), "fra").contains(&"frac"),
+        "\\frac stays offered in an article"
+    );
+    assert!(
+        visible(Some("letter"), "o").contains(&"opening"),
+        "the gate opens under the owning class"
+    );
 }

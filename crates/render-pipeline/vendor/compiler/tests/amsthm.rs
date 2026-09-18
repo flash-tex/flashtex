@@ -347,7 +347,9 @@ fn amsthm_alone_is_silent() {
 /// amsmath constructs and gates the amssymb inventory, and the constructs that
 /// are still missing report themselves where they are used rather than as a
 /// claim about the package. A package that really is only recognised still
-/// warns from the same `\usepackage`, and only names itself.
+/// warns from the same `\usepackage`, and only names itself. (`fancyhdr`
+/// used to be that example; its core is implemented now -- see
+/// `tests/fancyhdr.rs` -- so loading it is silent like the trio.)
 #[test]
 fn the_ams_trio_is_silent_and_an_unimplemented_package_still_warns() {
     let msgs = messages(
@@ -356,14 +358,14 @@ fn the_ams_trio_is_silent_and_an_unimplemented_package_still_warns() {
     assert!(msgs.is_empty(), "{msgs:?}");
 
     let msgs = messages(
-        r"\documentclass{article}\usepackage{amsmath,amssymb,amsthm,fancyhdr}\begin{document}x\end{document}",
+        r"\documentclass{article}\usepackage{amsmath,amssymb,amsthm,microtype}\begin{document}x\end{document}",
     );
     let package_msgs: Vec<&String> = msgs
         .iter()
         .filter(|m| m.contains("recognised but not implemented"))
         .collect();
     assert_eq!(package_msgs.len(), 1, "{msgs:?}");
-    assert!(package_msgs[0].contains("fancyhdr"), "{package_msgs:?}");
+    assert!(package_msgs[0].contains("microtype"), "{package_msgs:?}");
     for implemented in ["amsmath", "amssymb", "amsthm"] {
         assert!(
             !package_msgs[0].contains(implemented),
@@ -724,6 +726,92 @@ This generalizes to any ring.
         assert_eq!(
             *style, large_upright,
             "remark body run {text:?} must be upright at the enclosing size"
+        );
+    }
+}
+
+/// GH-852: the generated closing "∎" is spanned (empty) at the `\end{proof}`
+/// command instead of covering it, so the source gap after the proof block
+/// still holds `\end{proof}`. The render pipeline reads that gap to tell
+/// whether a following `\begin{<list>}` was read in vertical mode (which
+/// carries `\partopsep` at the list open, kept for its close); covering the
+/// `\end` hid it, and every list directly after a proof lost `\partopsep`
+/// at both boundaries (~2bp at 10pt, ~3bp at 11pt). Both a body proof and
+/// the empty case pin this; the head still opens at `\begin{proof}` (the
+/// other edge), and the `\hfill` still covers the `\end` (so edits there
+/// overlap a span of this block).
+#[test]
+fn proof_qed_span_leaves_endproof_in_the_gap_after_the_block() {
+    for body in ["Top proof text here.", ""] {
+        let source = format!(
+            "\\begin{{proof}}\n{body}\n\\end{{proof}}\n\\begin{{itemize}}\n\\item After.\n\\end{{itemize}}"
+        );
+        let parsed = parser::parse(&source);
+        // The paragraph holding the generated "∎" (an empty proof splits
+        // the head into its own paragraph on the blank line, and the mark
+        // stands alone after it).
+        let inlines = parsed
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                Block::Paragraph(inlines)
+                    if inlines.iter().any(|inline| {
+                        matches!(inline, Inline::Text { text, .. } if text == "∎")
+                    }) =>
+                {
+                    Some(inlines)
+                }
+                _ => None,
+            })
+            .expect("a paragraph must hold the proof QED mark");
+        let beginproof = source.find("\\begin{proof}").unwrap();
+        let endproof = source.find("\\end{proof}").unwrap();
+        // Other edge: the "Proof." head still opens at `\begin{proof}`.
+        let head_span = match parsed
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                Block::Paragraph(inlines) => Some(inlines),
+                _ => None,
+            })
+            .expect("proof head is a paragraph")
+            .first()
+        {
+            Some(Inline::Text { span, .. }) => *span,
+            other => panic!("proof head must be text, got {other:?}"),
+        };
+        assert!(
+            head_span.start <= beginproof && beginproof < head_span.end,
+            "head span {head_span:?} must cover \\begin{{proof}} at {beginproof}"
+        );
+        // The `\hfill` still covers the `\end`, so edits there overlap this block.
+        assert!(
+            inlines.iter().any(|inline| matches!(
+                inline,
+                Inline::HFill { span, .. }
+                if span.start <= endproof && endproof < span.end
+            )),
+            "an \\hfill span must still cover \\end{{proof}} at {endproof}"
+        );
+        // The boundary: the last inline (the generated "∎") ends where the
+        // body does, at or before the `\end`, leaving `\end{proof}` ahead in
+        // the gap (only whitespace between).
+        let (qed_text, qed_span) = match inlines.last() {
+            Some(Inline::Text { text, span, .. }) => (text, *span),
+            other => panic!("proof must end with the QED text, got {other:?}"),
+        };
+        assert_eq!(qed_text, "∎");
+        assert!(
+            qed_span.end <= endproof,
+            "QED span {qed_span:?} must end at or before \\end{{proof}} at {endproof}"
+        );
+        assert!(
+            source[qed_span.end..endproof].trim().is_empty(),
+            "only whitespace may sit between the proof block end and \\end{{proof}}"
+        );
+        assert!(
+            source[endproof..].starts_with("\\end{proof}"),
+            "the gap after the proof block must still hold \\end{{proof}}"
         );
     }
 }

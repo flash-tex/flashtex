@@ -2869,6 +2869,7 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::Math { span, .. }
         | Inline::MathRows { span, .. }
         | Inline::Label { span, .. }
+        | Inline::PageStyle { span, .. }
         | Inline::Reference { span, .. }
         | Inline::CleverReference { span, .. }
         | Inline::HFill { span, .. }
@@ -8685,6 +8686,10 @@ fn items_cached(
                 key.hash(&mut h);
                 value.hash(&mut h);
             }
+            Inline::PageStyle { style, this_page, .. } => {
+                (*style as u8).hash(&mut h);
+                this_page.hash(&mut h);
+            }
             Inline::Reference { key, page, equation, .. } => {
                 key.hash(&mut h);
                 page.hash(&mut h);
@@ -8888,6 +8893,9 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
         }
         match &**inline {
             Inline::Label { key, .. } => items.push(Item::Label { key: key.clone() }),
+            // `\pagestyle`/`\thispagestyle` set no horizontal material;
+            // the page chrome is the compiler layout's (fancyhdr, #849).
+            Inline::PageStyle { .. } => {}
             Inline::Reference { .. } | Inline::CleverReference { .. } | Inline::Verbatim { .. } => unreachable!("lowered by lower_inline above"),
             Inline::Footnote { number, span, mark, text, .. } => {
                 // `\@footnotemark` keeps the space factor; the space before

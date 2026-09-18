@@ -227,6 +227,7 @@ impl LayoutCursor {
     /// whose first body line has size `first_line_size`.
     pub(super) fn open_next_page(&mut self, first_line_size: f64) {
         self.set_page_footnotes();
+        self.ship_page_style();
         let number = self.pages.len() as u32 + 1;
         self.pages.push(Page {
             number,
@@ -245,6 +246,7 @@ impl LayoutCursor {
         self.set_page_footnotes();
         while !self.footnotes.held.is_empty() {
             let number = self.pages.len() as u32 + 1;
+            self.ship_page_style();
             self.pages.push(Page {
                 number,
                 width_pt: PAGE_WIDTH_PT,
