@@ -1008,6 +1008,10 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
         "frame",
         "rule-bordered box around its body (\\fboxsep padding, \\fboxrule rule in the current colour)",
     ),
+    (
+        "tcolorbox",
+        "tcolorbox with colback/colframe only, sized to its content like \\fcolorbox (0.5mm rule, 1mm padding, black!5!white fill, black!75!white frame); other keys warn and are ignored, corners stay square, no title, one-line bodies only",
+    ),
     ("center", "centred paragraphs"),
     ("flushleft", "left-aligned paragraphs"),
     ("flushright", "right-aligned paragraphs"),
@@ -1176,6 +1180,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "fancyhdr",
         "",
         "\\pagestyle{fancy} ships the \\fancyhead/\\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \\fancyhf clears all six fields; \\lhead and friends plus \\fancypagestyle are diagnosed where they are used",
+    ),
+    (
+        "tcolorbox",
+        "",
+        "the tcolorbox environment with colback/colframe only (see the tcolorbox environment); every other key and every library option is diagnosed",
     ),
     (
         "xspace",

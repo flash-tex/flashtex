@@ -6876,6 +6876,14 @@ impl P<'_> {
                 self.frame_environment(span, argument_span, space_before, para);
                 return;
             }
+            // tcolorbox's `colback`/`colframe` box (see
+            // `colors::P::tcolorbox_environment`): consumed synchronously
+            // through its `\end`, so like `frame` nothing is pushed on the
+            // environment stacks for it.
+            if environment == "tcolorbox" && self.in_body {
+                self.tcolorbox_environment(span, argument_span, space_before, blocks, para);
+                return;
+            }
             if matches!(
                 environment.as_str(),
                 "equation" | "equation*" | "displaymath"
@@ -12091,6 +12099,12 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // it is used instead (see `fancy_later_command`). fancyhdr.sty
         // takes no package options of its own.
         "fancyhdr" => options.is_empty(),
+        // tcolorbox's `colback`/`colframe` box is implemented above (an
+        // `\fcolorbox` in environment form with tcolorbox's own defaults),
+        // so loading the package is silent; a library option (`most`,
+        // `skins`, ...) is not, because libraries change real output and
+        // keep the warning (the same rule `amsmath` follows).
+        "tcolorbox" => options.is_empty(),
         _ => false,
     }
 }

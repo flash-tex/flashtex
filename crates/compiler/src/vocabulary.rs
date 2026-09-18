@@ -106,7 +106,7 @@ const IMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "alignat", "alignat*", "flalign", "flalign*", "eqnarray", "eqnarray*", "multline", "multline*",
     "tiny", "scriptsize", "footnotesize", "small", "normalsize",
     "large", "Large", "LARGE", "huge", "Huge",
-    "tabbing",
+    "tabbing", "tcolorbox",
 ];
 
 /// Real LaTeX2e / amsmath / common-package environments not implemented.
