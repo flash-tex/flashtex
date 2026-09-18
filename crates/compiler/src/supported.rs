@@ -87,6 +87,29 @@ pub struct Command {
     /// False for arms that parse the command but always diagnose that its
     /// output is unavailable (`\check`, `\breve`); excluded from coverage.
     pub renders: bool,
+    /// The document class that defines the command, when it is not universal.
+    /// `None` is every class (`\frac`, `\section`); `Some("letter")` is only
+    /// under `\documentclass{letter}` (the parser diagnoses the rest, exactly
+    /// as pdflatex's "Undefined control sequence" does). Completion must not
+    /// offer a scoped command whose class differs from the document's; a new
+    /// class-scoped family (beamer's `\frametitle`, `\alert`, ...) registers
+    /// here the same way. Emitted as `requires_class` in `--supported json`,
+    /// the Mac completion vocabulary's data source.
+    pub requires_class: Option<&'static str>,
+}
+
+impl Command {
+    /// Whether completion may offer this command in a document of `class`.
+    /// `None` is an unknown class (a fragment with no `\documentclass`, as in
+    /// the editor's prefix tests): with nothing to gate on, everything stays
+    /// offered and today's table order is untouched.
+    pub fn offered_in_class(&self, class: Option<&str>) -> bool {
+        match (self.requires_class, class) {
+            (None, _) => true,
+            (Some(_), None) => true,
+            (Some(required), Some(class)) => required == class,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -124,6 +147,41 @@ pub struct Inventory {
 /// renders in ordinary body text like any other kernel macro, so it is an
 /// inventory entry rather than a diagnostic.
 pub const TEXT_DIAGNOSTIC_ONLY: &[&str] = &["frac", "sqrt", "thanks", "and"];
+
+/// Text commands defined by one document class alone: every one of these goes
+/// through `parser::Parser::letter_command_available`, which diagnoses any use
+/// outside `\documentclass{letter}` exactly as pdflatex's "Undefined control
+/// sequence" does. (`\hangfrom` sits beside them in `BUILT_INS` but is kernel
+/// `ltsect.dtx`, so it stays universal.) Completion reads this through
+/// [`Command::requires_class`]: a scoped command must not outrank universal
+/// ones in a document of another class (`\frametitle` over `\frac`,
+/// `\alert` over `\alpha`). A new class-scoped family extends this list with
+/// its own class name.
+pub const LETTER_CLASS_COMMANDS: &[&str] = &[
+    "address",
+    "signature",
+    "name",
+    "location",
+    "telephone",
+    "opening",
+    "closing",
+    "cc",
+    "encl",
+    "ps",
+    "startbreaks",
+    "stopbreaks",
+    "stopletter",
+    "makelabels",
+];
+
+/// The class in [`Command::requires_class`] terms, or `None` for universal.
+fn requires_class(name: &str) -> Option<&'static str> {
+    if LETTER_CLASS_COMMANDS.contains(&name) {
+        Some("letter")
+    } else {
+        None
+    }
+}
 
 /// Dispatch arms that are not `parser::BUILT_INS` entries: amsthm's
 /// `newtheorem`/`theoremstyle`, and soul's `so`/`hl`. The soul names stay
@@ -1177,6 +1235,7 @@ pub fn inventory() -> Inventory {
             description: text_description(name),
             glyph: None,
             renders: true,
+            requires_class: requires_class(name),
         });
     }
     for &(name, arguments, description) in EXPANSION_COMMANDS {
@@ -1188,6 +1247,7 @@ pub fn inventory() -> Inventory {
             description: description.to_string(),
             glyph: None,
             renders: true,
+            requires_class: None,
         });
     }
     for &(name, mode, description) in CONTROL_SYMBOLS {
@@ -1199,6 +1259,7 @@ pub fn inventory() -> Inventory {
             description: description.to_string(),
             glyph: None,
             renders: true,
+            requires_class: None,
         });
     }
     for &(names, arguments, description, renders) in MATH_STRUCTURES {
@@ -1211,6 +1272,7 @@ pub fn inventory() -> Inventory {
                 description: description.to_string(),
                 glyph: None,
                 renders,
+                requires_class: None,
             });
         }
     }
@@ -1233,6 +1295,7 @@ pub fn inventory() -> Inventory {
             description: format!("symbol {glyph}"),
             glyph: Some(glyph),
             renders: true,
+            requires_class: None,
         });
     }
     // amssymb/amsfonts symbols (`crate::amssymb`), which take precedence over
@@ -1265,6 +1328,7 @@ pub fn inventory() -> Inventory {
             ),
             glyph: Some(ams.text),
             renders: true,
+            requires_class: None,
         });
     }
     for &name in math::OPERATOR_NAMES {
@@ -1276,6 +1340,7 @@ pub fn inventory() -> Inventory {
             description: "upright operator name".to_string(),
             glyph: None,
             renders: true,
+            requires_class: None,
         });
     }
 
@@ -1447,6 +1512,14 @@ pub fn render_json(inventory: &Inventory) -> String {
             );
             if let Some(glyph) = c.glyph {
                 line.push_str(&format!(", \"glyph\": {}", json_str(glyph)));
+            }
+            // The schema stays `flashtex-supported-latex/1`: Swift's
+            // `JSONDecoder` ignores unknown keys, so the Mac vocabulary keeps
+            // decoding while it learns to read this field (and
+            // `sync-supported-latex.sh` greps for the `/1` marker, so a bump
+            // would break the sync, not just the decoder).
+            if let Some(class) = c.requires_class {
+                line.push_str(&format!(", \"requires_class\": {}", json_str(class)));
             }
             line.push('}');
             line
