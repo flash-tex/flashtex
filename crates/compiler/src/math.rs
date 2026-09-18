@@ -2136,13 +2136,16 @@ impl MathParser<'_> {
             | "Bigr" | "biggr" | "Biggr" | "bigm" | "Bigm" | "biggm" | "Biggm" => {
                 sized_delimiter(self.take_delimiter(&name, span), &name)
             }
-            // Bare `\dots` (and its low-dots spellings `\dotsc`/`\dotso`)
-            // does not choose its form here: `resolve_dots` rewrites the
-            // marker to the centred symbol when the following non-space
-            // atom is class `Bin` or `Rel`. `\ldots` stays baseline and
-            // `\cdots`/`\dotsb`/`\dotsm`/`\dotsi` stay centred, always.
-            "dots" | "dotsc" | "dotso" => auto_dots_atom(span),
-            "ldots" => text_atom("...".into(), span),
+            // Only bare `\dots` auto-detects its form here: `resolve_dots`
+            // rewrites the marker to the centred symbol when the following
+            // non-space atom is class `Bin` or `Rel`. Every other spelling
+            // is a fixed choice in real amsmath (amsmath.dtx): `\dotsc`
+            // ("dots with commas") and `\dotso` ("other dots") are always
+            // baseline, like `\ldots`; `\cdots`/`\dotsb`/`\dotsm`/`\dotsi`
+            // are always centred — confirmed against the pdflatex oracle
+            // (`\dotsc + x`/`\dotso + x` are CMMI10 baseline, not centred).
+            "dots" => auto_dots_atom(span),
+            "ldots" | "dotsc" | "dotso" => text_atom("...".into(), span),
             "cdots" | "dotsb" | "dotsm" | "dotsi" => symbol("⋅⋅⋅".into(), span),
             // Symbol has no U+222C/U+222D: repeated real integral glyphs.
             "iint" => symbol("∫∫".into(), span),
@@ -4409,9 +4412,9 @@ fn text_atom(text: String, span: Span) -> MathAtom {
     }
 }
 
-/// A `\dots`/`\dotsc`/`\dotso` atom whose baseline-vs-centred choice is still
-/// pending (issue #893): `resolve_dots` rewrites it once the following atom
-/// is known.
+/// A bare `\dots` atom whose baseline-vs-centred choice is still pending
+/// (issue #893): `resolve_dots` rewrites it once the following atom is
+/// known.
 ///
 /// The pending marker is `class_override: Some(AtomClass::Inner)`, which
 /// `atom_class` maps to `Inner` -- exactly what the plain `Text("...")` it
@@ -4425,8 +4428,8 @@ fn auto_dots_atom(span: Span) -> MathAtom {
     atom
 }
 
-/// Resolve pending `\dots`/`\dotsc`/`\dotso` atoms (`auto_dots_atom`) in
-/// place: a pending atom becomes the centred `\cdots` symbol when the next
+/// Resolve pending bare-`\dots` atoms (`auto_dots_atom`) in place: a pending
+/// atom becomes the centred `\cdots` symbol when the next
 /// non-space atom's class is `Bin` or `Rel` (explicit glue classifies as
 /// nothing and is skipped), and plain baseline `\ldots` otherwise -- before
 /// `,`, before close delimiters, and at the end of the list.
@@ -6631,10 +6634,11 @@ mod parse_tests {
         assert!(matches!(list.atoms[0].nucleus, Nucleus::Text(ref text) if text == "x"));
     }
 
-    /// Issue #893: bare `\dots` (and its low-dots spellings `\dotsc`,
-    /// `\dotso`) must choose the centred `\cdots` form when the next
-    /// non-space atom is class `Bin` or `Rel`, and the baseline `\ldots`
-    /// form otherwise. The explicit `\cdots`/`\ldots` spellings never move.
+    /// Issue #893: bare `\dots` must choose the centred `\cdots` form when
+    /// the next non-space atom is class `Bin` or `Rel`, and the baseline
+    /// `\ldots` form otherwise. `\dotsc`/`\dotso` are fixed baseline in real
+    /// amsmath (pdflatex oracle: CMMI10 even before `Bin`/`Rel`) and never
+    /// move; neither do the explicit `\cdots`/`\ldots` spellings.
     #[test]
     fn dots_chooses_centred_before_bin_or_rel_and_baseline_otherwise() {
         // (source, centred?): the first atom whose nucleus is a dots form
@@ -6651,9 +6655,9 @@ mod parse_tests {
             // Close delimiters and the end of a formula stay baseline.
             (r"(a_1 + \dots)", false),
             (r"a_n \dots", false),
-            // The low-dots spellings follow the same rule (issue #893).
-            (r"\dotsc + x", true),
-            (r"\dotso = x", true),
+            // \dotsc/\dotso are fixed baseline, never context-sensitive.
+            (r"\dotsc + x", false),
+            (r"\dotso = x", false),
             (r"\dotsc, x", false),
             // Explicit glue between the dots and the operator is skipped.
             (r"\dots\,+ x", true),
