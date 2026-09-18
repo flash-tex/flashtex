@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 376 text-mode and 573 math-mode command entries, 68 environments and 29 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 380 text-mode and 573 math-mode command entries, 68 environments and 30 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -449,6 +449,8 @@ Canonical sources:
 | `\hfil` |  | infinite-stretch horizontal glue (same order as \hfill) |
 | `\hspace` | `{dimension}` | fixed horizontal space; starred form identical |
 | `\hskip` | `<glue>` | TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll |
+| `\pdfgentounicode` |  | pdfTeX glyph-to-Unicode switch: accepted no-op, copy-paste metadata with no visible output |
+| `\pdfglyphtounicode` | `{name}{hex}` | pdfTeX glyph-to-Unicode mapping: accepted no-op, copy-paste metadata with no visible output |
 | `\strut` |  | zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \strutbox) |
 | `\footnote` | `[n]{...}` | numbered mark and page-bottom footnote text |
 | `\footnotemark` | `[n]` | footnote mark only |
@@ -687,6 +689,8 @@ Canonical sources:
 | `\text` | `{...}` | amsmath text in text mode: outside math simply \mbox, the argument as one unbreakable box in the current style |
 | `\boxed` | `{...}` | amsmath box in text mode: the argument with a drawn frame (\fbox with math inside) |
 | `\enquote` | `{text}` | csquotes: wraps text in typographic quotation marks; nesting alternates double \u{201c}\u{201d} and single \u{2018}\u{2019} (needs csquotes) |
+| `\titleformat` | `{\section}{format}{label}{sep}{before}[after]` | titlesec: \section headings take the format's face and size (an empty label prints no number); a \titlerule after-code draws the full-width rule; other levels are diagnosed (needs titlesec) |
+| `\titlerule` |  | titlesec: a rule filling the rest of the line, or the full text width between paragraphs (needs titlesec) |
 | `\\` |  | line break; an optional [length] is consumed |
 | `\-` |  | discretionary hyphen: a break point, invisible unless the line breaks there |
 | `\,` |  | text kern .16667em (\thinspace) |
@@ -1012,6 +1016,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `soul` | `` | \so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828); \st stays unsupported |
 | `relsize` | `` | \larger/\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size |
 | `fancyhdr` | `` | \pagestyle{fancy} ships the \fancyhead/\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \fancyhf clears all six fields; \lhead and friends plus \fancypagestyle are diagnosed where they are used |
+| `titlesec` | `` | \titleformat{\section} headings take the format's face and size (unnumbered with an empty label) with the \titlerule after-code rule; other levels, printed labels, before-code and shapes beyond the implemented subset are diagnosed where they are used |
 | `xspace` | `` | \xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
 | `ifthen` | `` | \ifthenelse with \equal, \NOT, \AND, \OR, \isodd, \isundefined, \lengthtest and \boolean tests, and \newif conditionals with \newboolean/\setboolean; \whiledo loops are diagnosed where they are used |
 | `csquotes` | `` | \enquote: typographic quotation marks, alternating double/single on nesting |
