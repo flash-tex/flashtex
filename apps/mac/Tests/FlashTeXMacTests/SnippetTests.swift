@@ -83,13 +83,16 @@ final class SnippetTests: XCTestCase {
         let pkg2 = Completion.suggestions(in: "\\usepackage{amsmath,hyp", caretUTF16: 23, result: nil)
         XCTAssertEqual(labels(pkg2).first, "hyperref")
         XCTAssertEqual(Completion.completionRange(in: "\\usepackage{amsmath,hyp", caretUTF16: 23), NSRange(location: 20, length: 3))
-        // `\input{`/`\include{`/`\includegraphics{`: project files, matched on path or basename.
-        let files = ["chapters/one.tex", "chapters/two.tex", "figures/plot.pdf", "main.tex"]
+        // `\input{`/`\include{`: project documents; `\includegraphics{`: the
+        // project root's image files — each matched on path or basename.
+        let files = ["chapters/one.tex", "chapters/two.tex", "main.tex"]
         let inp = Completion.suggestions(in: "\\input{ch", caretUTF16: 9, metadata: nil, projectFiles: files)
         XCTAssertEqual(labels(inp), ["chapters/one.tex", "chapters/two.tex"])
         XCTAssertEqual(inp.first?.detail, "project document")
-        let gfx = Completion.suggestions(in: "\\includegraphics{plot", caretUTF16: 21, metadata: nil, projectFiles: files)
+        let gfx = Completion.suggestions(in: "\\includegraphics{plot", caretUTF16: 21, metadata: nil, projectFiles: files,
+                                         graphicsFiles: ["figures/plot.pdf", "figures/other.png"])
         XCTAssertEqual(labels(gfx), ["figures/plot.pdf"])
+        XCTAssertEqual(gfx.first?.detail, "graphics file")
         XCTAssertEqual(labels(Completion.suggestions(in: "\\include{", caretUTF16: 9, metadata: nil, projectFiles: files)), files)
         XCTAssertTrue(Completion.suggestions(in: "\\input{zz", caretUTF16: 9, metadata: nil, projectFiles: files).isEmpty)
         XCTAssertTrue(Completion.suggestions(in: "\\input{ch", caretUTF16: 9, result: nil).isEmpty, "no project: nothing")

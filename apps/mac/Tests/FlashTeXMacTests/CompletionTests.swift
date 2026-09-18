@@ -1833,4 +1833,191 @@ final class CompletionLiveHelperTests: XCTestCase {
         XCTAssertEqual(kn.items.first?.kind, .citation)
         print("live helper: declared-bibliography cite completion — before: \(unresolved.items.map(\.detail)); after: \(resolved.items.map(\.detail))")
     }
+
+    // MARK: recently used, declared environments, graphics files
+
+    @MainActor
+    func testRecentlyUsedCommandsAndEnvironmentsRankFirst() {
+        // The ordering rule: recent names lead in recency order, the table
+        // follows, names the table does not know are ignored.
+        XCTAssertEqual(Completion.prioritising(["a", "b", "c", "d"], recent: ["c", "zzz", "a"]), ["c", "a", "b", "d"])
+        XCTAssertEqual(Completion.prioritising(["a", "b"], recent: []), ["a", "b"])
+        XCTAssertEqual(Completion.prioritising(["a", "b"], recent: ["zzz"]), ["a", "b"])
+        // Through `suggestions`, isolated from the inventory by the `supported:` seam.
+        let synthetic = ["tableofcontents", "textbf", "textit", "today"]
+        let ordered = Completion.prioritising(synthetic, recent: ["today", "textbf"])
+        let t = Completion.suggestions(in: "x \\t", caretUTF16: 4, result: nil, supported: ordered)
+        XCTAssertEqual(t.map(\.insertText), ["\\today", "\\textbf", "\\tableofcontents", "\\textit"])
+        XCTAssertEqual(t[1].snippet, .init(text: "\\textbf{}", caretUTF16: 8, stops: [9]), "a recent command keeps its snippet")
+        XCTAssertEqual(Completion.suggestions(in: "x \\textit", caretUTF16: 9, result: nil, supported: ordered).first?.insertText, "\\textit",
+                       "the exact spelling still ranks first")
+        // Environments: recent names lead, then the compiler's table; a name
+        // neither the table nor the document knows is not invented.
+        let text = "\\begin{document}\n\\begin{a"
+        let envs = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, metadata: nil,
+                                          recentEnvironments: ["align*", "nonsense", "array"])
+        let table = Completion.knownEnvironments.filter { $0.hasPrefix("a") }
+        XCTAssertEqual(envs.map(\.label), ["align*", "array"] + table.filter { $0 != "align*" && $0 != "array" })
+        XCTAssertEqual(envs.first?.snippet, .init(text: "align*}\n\n\\end{align*}", caretUTF16: 8, stops: [21]))
+        // The store: commands by name, environments by name, closers and
+        // keys ignored, a repeat moves to the front, bounded.
+        let store = Completion.RecentlyUsed()
+        store.record(Completion.Suggestion(label: "\\section{title}", insertText: "\\section", kind: .command, detail: ""))
+        store.record(Completion.Suggestion(label: "\\frac{num}{den}", insertText: "\\frac", kind: .command, detail: ""))
+        store.record(Completion.Suggestion(label: "itemize", insertText: "itemize}", kind: .environment, detail: ""))
+        store.record(Completion.Suggestion(label: "\\end{itemize}", insertText: "\\end{itemize}", kind: .environment, detail: ""))
+        store.record(Completion.Suggestion(label: "eq:main", insertText: "eq:main}", kind: .reference, detail: ""))
+        store.record(Completion.Suggestion(label: "figures/plot.pdf", insertText: "figures/plot.pdf", kind: .command, detail: ""))
+        store.record(Completion.Suggestion(label: "\\section{title}", insertText: "\\section", kind: .command, detail: ""))
+        XCTAssertEqual(store.commands, ["section", "frac"])
+        XCTAssertEqual(store.environments, ["itemize"])
+        for i in 0..<(Completion.RecentlyUsed.limit + 5) {
+            store.record(Completion.Suggestion(label: "\\c\(i)", insertText: "\\c\(i)", kind: .command, detail: ""))
+        }
+        XCTAssertEqual(store.commands.count, Completion.RecentlyUsed.limit)
+        XCTAssertEqual(store.commands.first, "c\(Completion.RecentlyUsed.limit + 4)")
+    }
+
+    @MainActor
+    func testAcceptingACommandRanksItFirstOnTheNextOpen() async throws {
+        HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let scroll = CompletingTextView.scrollable()
+        scroll.frame = window.contentView!.bounds
+        window.contentView!.addSubview(scroll)
+        let tv = try XCTUnwrap(scroll.documentView as? CompletingTextView)
+        window.orderFrontRegardless() // never makeKey: the test must not steal focus
+        window.makeFirstResponder(tv)
+        defer { window.orderOut(nil) }
+        tv.allowsUndo = true
+        tv.string = "x \\su"
+        let end = (tv.string as NSString).length
+        tv.setSelectedRange(NSRange(location: end, length: 0))
+        let table = Completion.suggestions(in: tv.string, caretUTF16: end, result: nil).map(\.insertText)
+        let subsetIndex = try XCTUnwrap(table.firstIndex(of: "\\subset"))
+        XCTAssertGreaterThan(subsetIndex, 0, "the inventory does not start `\\su` with \\subset")
+
+        key(tv, " ", code: 49, flags: .control)
+        try await waitUntil("popup") { tv.session != nil }
+        XCTAssertEqual(tv.session?.items.map(\.insertText), table, "nothing accepted yet: the inventory's order")
+        for _ in 0..<subsetIndex { key(tv, "\u{F701}", code: 125) }
+        XCTAssertEqual(tv.session?.selected?.insertText, "\\subset")
+        key(tv, "\r", code: 36)
+        XCTAssertEqual(tv.string, "x \\subset")
+        XCTAssertEqual(tv.recentlyUsed.commands, ["subset"])
+
+        // The next `\su` puts \subset first; the rest keep the table's order.
+        tv.string = "x \\su"
+        tv.setSelectedRange(NSRange(location: end, length: 0))
+        key(tv, " ", code: 49, flags: .control)
+        try await waitUntil("popup again") { tv.session != nil }
+        XCTAssertEqual(tv.session?.items.map(\.insertText), ["\\subset"] + table.filter { $0 != "\\subset" })
+        XCTAssertEqual(tv.session?.selectedIndex, 0)
+        key(tv, "\u{1B}", code: 53)
+
+        // A bare view keeps its own list; the hosted editor installs the shared one.
+        let other = try XCTUnwrap(CompletingTextView.scrollable().documentView as? CompletingTextView)
+        XCTAssertTrue(other.recentlyUsed.commands.isEmpty)
+        XCTAssertFalse(other.recentlyUsed === tv.recentlyUsed)
+    }
+
+    func testDeclaredEnvironmentsAreOfferedAfterBegin() {
+        let text = """
+        \\newtheorem{lemma}{Lemma}[section]
+        \\newtheorem*{remark}{Remark}
+        \\newenvironment{proofsketch}{\\begin{proof}[Sketch]}{\\end{proof}}
+        \\renewenvironment{abstract}{}{}
+        \\begin{document}
+        \\begin{le
+        """
+        XCTAssertEqual(Completion.declaredEnvironments(in: text), ["lemma", "remark", "proofsketch", "abstract"])
+        let s = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, metadata: nil)
+        XCTAssertEqual(s.map(\.label), ["letter", "lemma"], "the compiler's table first, then the document's declarations")
+        XCTAssertEqual(s.last?.detail, "declared in this document")
+        XCTAssertEqual(s.last?.insertText, "lemma}")
+        XCTAssertEqual(s.last?.snippet, .init(text: "lemma}\n\n\\end{lemma}", caretUTF16: 7, stops: [19]))
+        // The starred form and `\newenvironment`, before any `\begin{}` uses them.
+        let star = text.replacingOccurrences(of: "\\begin{le", with: "\\begin{rem")
+        XCTAssertEqual(Completion.suggestions(in: star, caretUTF16: (star as NSString).length, metadata: nil).map(\.label), ["remark"])
+        let sketch = text.replacingOccurrences(of: "\\begin{le", with: "\\begin{proofs")
+        XCTAssertEqual(Completion.suggestions(in: sketch, caretUTF16: (sketch as NSString).length, metadata: nil).map(\.label), ["proofsketch"])
+        // A declaration that is also used is offered once, as declared.
+        let used = text.replacingOccurrences(of: "\\begin{le", with: "\\begin{lemma}\n\\end{lemma}\n\\begin{lem")
+        let u = Completion.suggestions(in: used, caretUTF16: (used as NSString).length, metadata: nil)
+        XCTAssertEqual(u.map(\.label), ["lemma"])
+        XCTAssertEqual(u.first?.detail, "declared in this document")
+        // `\end{` still closes the innermost open environment first.
+        let closing = text.replacingOccurrences(of: "\\begin{le", with: "\\begin{lemma}\n\\end{")
+        XCTAssertEqual(Completion.suggestions(in: closing, caretUTF16: (closing as NSString).length, metadata: nil).first?.label, "lemma")
+        XCTAssertTrue(Completion.declaredEnvironments(in: "\\newtheorem\n\\newtheorem*\\newenvironment{}").isEmpty)
+    }
+
+    func testIncludegraphicsOffersImageFilesUnderTheProjectRoot() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flashtex-graphics-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        for rel in ["figures/plot.pdf", "figures/plot.png", "img/photo.JPG", "notes.tex", "refs.bib", ".hidden/secret.png", "figures/data.csv"] {
+            let url = root.appendingPathComponent(rel)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data().write(to: url)
+        }
+        XCTAssertEqual(Completion.graphicsFiles(under: root), ["figures/plot.pdf", "figures/plot.png", "img/photo.JPG"])
+        XCTAssertEqual(Completion.graphicsFiles(under: root, limit: 1).count, 1)
+        XCTAssertTrue(Completion.graphicsFiles(under: root.appendingPathComponent("missing")).isEmpty)
+
+        // `\includegraphics{` is a graphics key — also behind its usual optional argument.
+        let g = "\\includegraphics[width=2cm]{plo"
+        XCTAssertEqual(Completion.token(in: g, caretUTF16: (g as NSString).length), .word(text: "plo", start: 28, end: 31, context: .graphics))
+        XCTAssertTrue(Completion.opensAutomatically(Completion.token(in: g, caretUTF16: 31)))
+        let files = ["chapters/one.tex", "figures/plot.tex"]
+        let s = Completion.suggestions(in: g, caretUTF16: 31, metadata: nil, projectFiles: files, graphicsFiles: Completion.graphicsFiles(under: root))
+        XCTAssertEqual(s.map(\.label), ["figures/plot.pdf", "figures/plot.png"])
+        XCTAssertEqual(s.first?.detail, "graphics file")
+        XCTAssertEqual(s.first?.insertText, "figures/plot.pdf")
+        // `\input{` keeps the document list and never lists an image.
+        let d = Completion.suggestions(in: "\\input{plo", caretUTF16: 10, metadata: nil, projectFiles: files, graphicsFiles: ["figures/plot.pdf"])
+        XCTAssertEqual(d.map(\.label), ["figures/plot.tex"])
+        XCTAssertEqual(d.first?.detail, "project document")
+        // The optional argument is skipped for every key context.
+        XCTAssertEqual(Completion.suggestions(in: "\\usepackage[utf8]{inpu", caretUTF16: 22, metadata: nil).map(\.label), ["inputenc"])
+        let cite = "\\bibitem{knuth}\\cite[p.~3]{kn"
+        XCTAssertEqual(Completion.suggestions(in: cite, caretUTF16: (cite as NSString).length, metadata: nil).map(\.label), ["knuth"])
+        XCTAssertNil(Completion.token(in: "\\item[x]{ab", caretUTF16: 11).flatMap { t -> Completion.Token.Context? in
+            if case .word(_, _, _, let c) = t { return c == .none ? nil : c } else { return nil }
+        }, "a bracket before a plain brace is not a key context")
+    }
+
+    @MainActor
+    func testIncludegraphicsListsTheProjectRootsImagesThroughTheTextView() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flashtex-graphics-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("figures"), withIntermediateDirectories: true)
+        try Data().write(to: root.appendingPathComponent("figures/plot.pdf"))
+        HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let scroll = CompletingTextView.scrollable()
+        scroll.frame = window.contentView!.bounds
+        window.contentView!.addSubview(scroll)
+        let tv = try XCTUnwrap(scroll.documentView as? CompletingTextView)
+        window.orderFrontRegardless() // never makeKey: the test must not steal focus
+        window.makeFirstResponder(tv)
+        defer { window.orderOut(nil) }
+        tv.graphicsRoot = { root }
+        tv.string = "\\includegraphics[width=\\linewidth]{plo"
+        let end = (tv.string as NSString).length
+        tv.setSelectedRange(NSRange(location: end, length: 0))
+        key(tv, " ", code: 49, flags: .control)
+        try await waitUntil("graphics list") { tv.session != nil }
+        XCTAssertEqual(tv.session?.items.map(\.label), ["figures/plot.pdf"])
+        XCTAssertEqual(tv.session?.items.first?.detail, "graphics file")
+        key(tv, "\u{1B}", code: 53)
+        // No root (a bare view, an unsaved buffer): nothing is offered, nothing is walked.
+        tv.graphicsRoot = { nil }
+        tv.string = "\\includegraphics{plo"
+        let short = (tv.string as NSString).length
+        tv.setSelectedRange(NSRange(location: short, length: 0))
+        key(tv, " ", code: 49, flags: .control)
+        try await waitUntil("empty outcome") { tv.lastOutcome?.caretUTF16 == short }
+        XCTAssertEqual(tv.lastOutcome?.items, [])
+        XCTAssertNil(tv.session)
+    }
 }

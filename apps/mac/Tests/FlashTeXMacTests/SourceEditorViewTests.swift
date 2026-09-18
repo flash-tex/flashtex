@@ -754,6 +754,7 @@ final class SourceEditorViewTests: XCTestCase {
 
         // The list is open; a composition starting under it closes it and its
         // pending scan can never reopen it while marked text exists.
+        Completion.RecentlyUsed.shared.removeAll() // the hosted editor ranks what earlier tests accepted first; this asserts the inventory's order
         completing.requestCompletion()
         try await waitUntil("completion list") { completing.session != nil }
         // The vocabulary lane shows the argument shape in the label (computed
