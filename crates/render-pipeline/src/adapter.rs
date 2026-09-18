@@ -7406,7 +7406,7 @@ fn invocation_end(source: &str, inv: Span) -> Option<usize> {
 /// defined name's bytes, the replacement text inside its braces, and how
 /// many arguments an invocation takes (`[n]`, or `\def`'s `#1#2`), the
 /// first of which is optional when the definition gives it a default
-/// (`[n][default]`).
+/// (`[n][default]`; `default` is that text's bytes).
 #[derive(Debug, Clone)]
 struct MacroDef {
     at: usize,
@@ -7414,6 +7414,7 @@ struct MacroDef {
     body: std::ops::Range<usize>,
     args: usize,
     optional: bool,
+    default: Option<std::ops::Range<usize>>,
 }
 
 /// Per-thread definition indexes for the documents of the adapt call in
@@ -7506,6 +7507,7 @@ fn macro_definitions(source: &str) -> Vec<MacroDef> {
             // `[n]`, `[default]` (LaTeX) or `#1#2` (`\def`).
             let mut args = 0usize;
             let mut brackets = 0usize;
+            let mut default = None;
             loop {
                 skip_ws(&mut i);
                 match bytes.get(i) {
@@ -7513,6 +7515,8 @@ fn macro_definitions(source: &str) -> Vec<MacroDef> {
                         Some(close) => {
                             if brackets == 0 {
                                 args = source[i + 1..i + close].trim().parse().unwrap_or(0);
+                            } else if brackets == 1 {
+                                default = Some(i + 1..i + close);
                             }
                             brackets += 1;
                             i += close + 1;
@@ -7536,6 +7540,7 @@ fn macro_definitions(source: &str) -> Vec<MacroDef> {
                 body: i + 1..close,
                 args,
                 optional: brackets > 1 && args > 0,
+                default: default.filter(|_| brackets > 1 && args > 0),
             });
         }
     }
@@ -7544,13 +7549,17 @@ fn macro_definitions(source: &str) -> Vec<MacroDef> {
 }
 
 /// For a macro invoked at `inv` (its `\name` span), the index (from 1) of
-/// the brace-delimited argument whose bytes contain `at`, and the macro's
-/// name.
+/// the argument whose bytes contain `at`, and the macro's name. When the
+/// definition gives `#1` a default, a `[..]` right after the name is that
+/// argument and the brace groups count from 2 (present or not: `\lb{a}`'s
+/// group is `#2`); otherwise brackets are skipped.
 fn macro_arg_index(source: &str, inv: Span, at: usize) -> Option<(&str, usize)> {
     let name = control_word_at(source, inv.start, inv.end)?;
+    let optional = macro_def(source, name, inv.start).is_some_and(|d| d.optional);
     let bytes = source.as_bytes();
     let mut i = inv.end;
-    let mut k = 0usize;
+    let mut k = usize::from(optional);
+    let mut first = true;
     loop {
         while i < bytes.len() && (bytes[i] as char).is_whitespace() {
             i += 1;
@@ -7558,6 +7567,9 @@ fn macro_arg_index(source: &str, inv: Span, at: usize) -> Option<(&str, usize)> 
         match bytes.get(i) {
             Some(b'[') => {
                 let close = source[i..].find(']')?;
+                if optional && first && at > i && at < i + close {
+                    return Some((name, 1));
+                }
                 i += close + 1;
             }
             Some(b'{') => {
@@ -7570,7 +7582,20 @@ fn macro_arg_index(source: &str, inv: Span, at: usize) -> Option<(&str, usize)> 
             }
             _ => return None,
         }
+        first = false;
     }
+}
+
+/// Whether the invocation at `inv` supplies its optional argument (a `[`
+/// after the name, blanks skipped): if not, the tokens of `#1` come from
+/// the definition's default text.
+fn optional_given(source: &str, inv: Span) -> bool {
+    let bytes = source.as_bytes();
+    let mut i = inv.end;
+    while i < bytes.len() && (bytes[i] as char).is_whitespace() {
+        i += 1;
+    }
+    bytes.get(i) == Some(&b'[')
 }
 
 /// Where the reader stands inside a macro's replacement text: the
@@ -7588,11 +7613,17 @@ struct BodyCursor {
     /// lies wholly inside the body: the interword space is set in the font in
     /// force there.
     blank: Option<usize>,
+    /// The reader stands inside the optional argument's default text
+    /// (`[n][default]`, invoked without `[..]`), at this byte offset of it;
+    /// `at` is then the body offset after the `#1` being read. `word` and
+    /// `blank` point at that `#1`: the font in force there is the
+    /// default's.
+    default_at: Option<usize>,
 }
 
 impl BodyCursor {
     fn new(inv: Span, at: usize) -> BodyCursor {
-        BodyCursor { inv, at, word: None, blank: None }
+        BodyCursor { inv, at, word: None, blank: None, default_at: None }
     }
 }
 
@@ -7622,13 +7653,14 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
     let digits = |k: usize| 1 + k.to_string().len();
     // A word of a replacement text.
     if let Some(name) = control_word_at(src, span.start, span.end) {
-        if let Some(body) = macro_body(src, name, span.start) {
-            let (start, prefix) = match *cursor {
-                Some(c) if c.inv == span => (c.at, None),
+        if let Some(def) = macro_def(src, name, span.start) {
+            let body = &src[def.body.clone()];
+            let (start, prefix, default_at) = match *cursor {
+                Some(c) if c.inv == span => (c.at, None, c.default_at),
                 _ => match prev_span.and_then(|ps| macro_arg_index(src, span, ps.start)) {
                     // The previous token was an argument of this invocation.
-                    Some((_, k)) => (body.find(&format!("#{k}")).map_or(0, |p| p + digits(k)), None),
-                    None => (0, prev_end.zip(prev_span).map(|(pe, ps)| source_gap(pe, ps).unwrap_or_default())),
+                    Some((_, k)) => (body.find(&format!("#{k}")).map_or(0, |p| p + digits(k)), None, None),
+                    None => (0, prev_end.zip(prev_span).map(|(pe, ps)| source_gap(pe, ps).unwrap_or_default()), None),
                 },
             };
             let Some(text) = text else {
@@ -7648,7 +7680,7 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
                 };
                 let gap = &body[start..pos];
                 let blank = gap.find(|c: char| c.is_whitespace()).filter(|_| prefix.is_none()).map(|off| start + off);
-                *cursor = Some(BodyCursor { inv: span, at: box_end(body, pos).unwrap_or(pos), word: None, blank });
+                *cursor = Some(BodyCursor { inv: span, at: box_end(body, pos).unwrap_or(pos), word: None, blank, default_at: None });
                 return Some(match prefix {
                     Some(before) => format!("{before}{gap}"),
                     None => gap.to_string(),
@@ -7660,12 +7692,47 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
                 Some(name) if name.chars().all(|c| c.is_ascii_alphabetic()) => find_command(rest, name),
                 _ => rest.find(text),
             };
+            let is_blank = |c: char| c.is_whitespace();
+            // The default of the optional argument (`[n][default]`, invoked
+            // without `[..]`): the compiler spans its tokens at the
+            // invocation like the body's, but they are not in the body --
+            // TeX reads them where the body reaches `#1`.
+            let default = def.default.clone().filter(|_| !optional_given(src, span)).map(|r| &src[r]);
+            if let Some(default) = default {
+                // Standing inside the default: the next word of it, if any,
+                // is found there before the body is searched.
+                if let Some(d) = default_at {
+                    if let Some(p) = default.get(d..).and_then(find_text) {
+                        let param = start - digits(1);
+                        let gap = &default[d..d + p];
+                        *cursor = Some(BodyCursor { inv: span, at: start, word: Some(param), blank: gap.find(is_blank).map(|_| param), default_at: Some(d + p + text.len()) });
+                        return Some(gap.to_string());
+                    }
+                }
+                // Reaching `#1` before the word's own bytes in the body: the
+                // word is the default's, and the gap is the body up to `#1`
+                // plus the default up to the word.
+                let param = body.get(start..).and_then(|rest| rest.find("#1")).map(|p| start + p);
+                let in_body = body.get(start..).and_then(find_text).map(|p| start + p);
+                if let (Some(param), Some(p)) = (param, find_text(default)) {
+                    if in_body.is_none_or(|w| param < w) {
+                        let body_gap = &body[start..param];
+                        let gap = &default[..p];
+                        let blank = body_gap.find(is_blank).map(|off| start + off).or_else(|| gap.find(is_blank).map(|_| param)).filter(|_| prefix.is_none());
+                        *cursor = Some(BodyCursor { inv: span, at: param + digits(1), word: Some(param), blank, default_at: Some(p + text.len()) });
+                        return Some(match prefix {
+                            Some(before) => format!("{before}{body_gap}{gap}"),
+                            None => format!("{body_gap}{gap}"),
+                        });
+                    }
+                }
+            }
             match body.get(start..).and_then(find_text) {
                 Some(p) => {
                     let pos = start + p;
                     let gap = &body[start..pos];
-                    let blank = gap.find(|c: char| c.is_whitespace()).filter(|_| prefix.is_none()).map(|off| start + off);
-                    *cursor = Some(BodyCursor { inv: span, at: pos + text.len(), word: Some(pos), blank });
+                    let blank = gap.find(is_blank).filter(|_| prefix.is_none()).map(|off| start + off);
+                    *cursor = Some(BodyCursor { inv: span, at: pos + text.len(), word: Some(pos), blank, default_at: None });
                     return Some(match prefix {
                         Some(before) => format!("{before}{gap}"),
                         None => gap.to_string(),
