@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 376 text-mode and 573 math-mode command entries, 68 environments and 29 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 376 text-mode and 573 math-mode command entries, 69 environments and 29 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -964,6 +964,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `comment` | text | body discarded unread, even invalid commands inside (comment package) |
 | `proof` | text | amsthm proof with a closing square |
 | `thebibliography` | text | References section with numbered \bibitem entries |
+| `mcitethebibliography` | text | References section like thebibliography (mciteplus; its sublist grouping is not applied) |
 | `multicols` | text | multicol {n}[preface][premulticols]: balanced columns, laid out by the render pipeline |
 | `multicols*` | text | multicol {n}[preface][premulticols]: unbalanced columns, laid out by the render pipeline |
 | `array` | math | math grid, centred cells |

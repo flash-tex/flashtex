@@ -33,6 +33,7 @@ mod tabular;
 
 pub use lists::{
     CounterStyle, ItemLabel, ListEnvironment, ListFrame, ListLength, ListOption, ListSkip,
+    is_bibliography_environment,
 };
 
 /// Maximum number of active nested `\input`/`\include` calls.
@@ -4472,8 +4473,7 @@ impl P<'_> {
                 }
             }
             "bibitem" => {
-                let in_bibliography =
-                    matches!(self.list_stack.last(), Some(list) if list.kind == "thebibliography");
+                let in_bibliography = matches!(self.list_stack.last(), Some(list) if lists::is_bibliography_environment(&list.kind));
                 if !in_bibliography {
                     self.diags.push(Diagnostic::error(
                         "\\bibitem is only supported inside thebibliography",
@@ -7019,7 +7019,9 @@ impl P<'_> {
             && (self.theorems.contains_key(&environment) || environment == "proof")
         {
             self.flush_paragraph(blocks, para);
-        } else if environment == "thebibliography" && self.in_body {
+        } else if matches!(environment.as_str(), "thebibliography" | "mcitethebibliography")
+            && self.in_body
+        {
             self.flush_paragraph(blocks, para);
             // article.cls: `\begin{thebibliography}{#1}` is
             // `\section*{\refname}` followed by a `\list` whose
@@ -7224,7 +7226,7 @@ impl P<'_> {
             self.paragraph_styles.pop();
         } else if matches!(
             environment.as_str(),
-            "itemize" | "enumerate" | "description" | "list" | "thebibliography"
+            "itemize" | "enumerate" | "description" | "list" | "thebibliography" | "mcitethebibliography"
         ) {
             let (gap_before, gap_after) = match self.list_stack.last() {
                 Some(list) => (
@@ -11316,7 +11318,7 @@ impl P<'_> {
         // use it for their own unrelated `enumitem` template instead, so it
         // only carries a `widest_label` for a `thebibliography` list.
         let widest_label = self.list_stack.last().and_then(|list| {
-            (list.kind == "thebibliography")
+            lists::is_bibliography_environment(&list.kind)
                 .then(|| list.template.clone())
                 .flatten()
         });
