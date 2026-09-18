@@ -16,8 +16,8 @@ pub mod sections;
 pub mod tex;
 
 pub use class::{
-    body_font, class_params, letter_indentation, BaseSize, ClassKind, ClassOptions, FontMetrics,
-    FontSize, Glue, PageParams, Paper,
+    body_font, class_params, koma_params, letter_indentation, BaseSize, ClassKind, ClassOptions,
+    DivSpec, FontMetrics, FontSize, Glue, PageParams, Paper,
 };
 pub use frame::{Column, PageFrame, Side};
 pub use geometry::{apply_geometry, GeometryInput, LayoutFlags};
@@ -59,7 +59,8 @@ impl DocumentSetup {
     /// Scan a LaTeX preamble (up to `\begin{document}`) for
     /// `\documentclass[..]{..}`, `\usepackage[..]{..geometry..}`,
     /// `\geometry{..}` and `\pagestyle{..}`. Returns `None` when the class
-    /// is not one of the three standard classes.
+    /// is not one of the standard classes, `letter`, or KOMA's
+    /// `scrartcl` / `scrreprt` / `scrbook`.
     pub fn from_preamble(source: &str) -> Option<DocumentSetup> {
         let src = strip_comments(source);
         let end = src.find("\\begin{document}").unwrap_or(src.len());
@@ -259,6 +260,12 @@ pub fn resolve(setup: &DocumentSetup) -> ResolvedDocument {
             &params,
             flags,
             if setup.geometry.is_some() {
+                (params.paperwidth, params.paperheight)
+            } else if options.kind.is_koma() && options.pagesize_pdf {
+                // `typearea` sets `\pdfpagewidth` / `\pdfpageheight` from
+                // the paper (unless `pagesize=false`); the standard classes
+                // never touch them, so their media stays the engine default
+                // even for `a4paper`.
                 (params.paperwidth, params.paperheight)
             } else {
                 setup.engine_default_media
