@@ -102,7 +102,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
 #[rustfmt::skip]
 const IMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "document", "figure", "frame", "center", "flushright", "flushleft", "quote", "quotation", "itemize",
-    "enumerate", "equation", "equation*", "displaymath", "gather", "gather*", "align", "align*",
+    "enumerate", "list", "equation", "equation*", "displaymath", "gather", "gather*", "align", "align*",
     "alignat", "alignat*", "flalign", "flalign*", "eqnarray", "eqnarray*", "multline", "multline*",
     "tiny", "scriptsize", "footnotesize", "small", "normalsize",
     "large", "Large", "LARGE", "huge", "Huge",
@@ -114,7 +114,7 @@ const IMPLEMENTED_ENVIRONMENTS: &[&str] = &[
 const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "description", "table", "table*", "figure*", "tabular", "tabular*", "tabularx", "longtable",
     "verbatim", "verbatim*", "verse", "abstract", "minipage", "titlepage", "thebibliography",
-    "list", "trivlist", "picture", "math", "gathered", "multlined",
+    "trivlist", "picture", "math", "gathered", "multlined",
     "subequations", "proof", "tikzpicture", "lstlisting", "minted",
     "wrapfigure", "subfigure", "comment", "landscape", "filecontents",
 ];
@@ -314,7 +314,7 @@ pub fn command_package(name: &str) -> Option<&'static str> {
 /// (a known command with no extra package/mode hint).
 pub fn command_help(name: &str) -> Option<String> {
     if is_math_command(name) {
-        return Some(format!("wrap this in math mode: \\(\\{name}\\)"));
+        return Some(format!("\\{name} is a math command; use it in math mode"));
     }
     if let Some(package) = command_package(name) {
         return Some(format!(
@@ -492,7 +492,7 @@ mod tests {
         );
         assert_eq!(
             command_help("alpha").as_deref(),
-            Some("wrap this in math mode: \\(\\alpha\\)")
+            Some("\\alpha is a math command; use it in math mode")
         );
         assert!(command_help("maketitle").is_none(), "{:?}", command_help("maketitle"));
         assert_eq!(
@@ -517,7 +517,7 @@ mod tests {
             assert!(is_known_command(name), "{name}");
             assert_eq!(
                 command_help(name),
-                Some(format!("wrap this in math mode: \\(\\{name}\\)")),
+                Some(format!("\\{name} is a math command; use it in math mode")),
                 "{name}"
             );
             assert!(math_mode_help(name).is_none(), "{name}");
