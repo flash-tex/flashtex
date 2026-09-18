@@ -35,6 +35,8 @@ pub struct PageFrame {
     /// driver sets it from the paper (geometry.sty lines 1051–1054); without
     /// geometry the LaTeX kernel leaves the engine default from
     /// `pdftexconfig.tex` (US Letter in MacTeX 2026), even for `a4paper`.
+    /// KOMA's `typearea` is the exception: it always sets the media from
+    /// the class paper (unless `pagesize=false`).
     pub pdf_page_width: Sp,
     pub pdf_page_height: Sp,
     pub text_width: Sp,

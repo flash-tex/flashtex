@@ -849,13 +849,33 @@ fn document_fonts(documents: &[SourceDocument<'_>]) -> DocumentFonts {
             };
             match name.as_str() {
                 "documentclass" if class_pt.is_none() => {
-                    let (options, _) = option_and_group_words(&tokens, index + 1);
+                    let (options, group) = option_and_group_words(&tokens, index + 1);
                     class_pt = options.split(',').find_map(|option| match option.trim() {
                         "10pt" => Some(10.0),
                         "11pt" => Some(11.0),
                         "12pt" => Some(12.0),
                         _ => None,
                     });
+                    // KOMA classes default to 11pt and take `fontsize=11pt`;
+                    // the legacy `10pt`/`11pt`/`12pt` names above already won
+                    // when present.
+                    if class_pt.is_none()
+                        && matches!(
+                            group.trim(),
+                            "scrartcl" | "scrarticle" | "scrreprt" | "scrbook"
+                        )
+                    {
+                        class_pt = options
+                            .split(',')
+                            .filter_map(|option| {
+                                option.trim().strip_prefix("fontsize=").map(str::trim)
+                            })
+                            .filter_map(|v| {
+                                v.strip_suffix("pt").unwrap_or(v).parse::<f64>().ok()
+                            })
+                            .next()
+                            .or(Some(11.0));
+                    }
                 }
                 "usepackage" => {
                     let (options, group) = option_and_group_words(&tokens, index + 1);
@@ -1960,6 +1980,38 @@ fn include(
 #[cfg(test)]
 mod tests {
     use super::after_bracket_option;
+    use super::document_fonts;
+    use crate::parser::SourceDocument;
+
+    fn class_pt_of(preamble: &str) -> f64 {
+        let doc = SourceDocument {
+            path: "main.tex",
+            text: preamble,
+        };
+        document_fonts(std::slice::from_ref(&doc)).setup.class_pt
+    }
+
+    /// KOMA classes default to 11pt and honour `fontsize=`; the legacy
+    /// size names keep working and keep winning when present.
+    #[test]
+    fn koma_document_font_size() {
+        assert_eq!(class_pt_of("\\documentclass{scrartcl}\n\\begin{document}"), 11.0);
+        assert_eq!(class_pt_of("\\documentclass{scrreprt}\n\\begin{document}"), 11.0);
+        assert_eq!(class_pt_of("\\documentclass{scrbook}\n\\begin{document}"), 11.0);
+        assert_eq!(
+            class_pt_of("\\documentclass[fontsize=12pt]{scrartcl}\n\\begin{document}"),
+            12.0
+        );
+        assert_eq!(
+            class_pt_of("\\documentclass[10pt]{scrartcl}\n\\begin{document}"),
+            10.0
+        );
+        assert_eq!(class_pt_of("\\documentclass{article}\n\\begin{document}"), 10.0);
+        assert_eq!(
+            class_pt_of("\\documentclass[11pt]{article}\n\\begin{document}"),
+            11.0
+        );
+    }
 
     /// The byte index just past the options that `after_bracket_option`
     /// finds in `text` (whose `[` follows `\begin{lstlisting}` at index 0).
