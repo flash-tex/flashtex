@@ -37,38 +37,33 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
 #[rustfmt::skip]
 const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // LaTeX2e document structure and front matter.
-    "part", "chapter", "subsubsection", "appendix", "maketitle",
-    "title", "author", "date", "thanks", "and", "today", "tableofcontents", "listoffigures",
-    "listoftables", "abstractname", "footnote", "footnotemark", "footnotetext",
-    "index", "glossary", "bibliography", "bibliographystyle", "bibitem", "cite", "nocite",
+    "part", "chapter", "appendix",
+    "listoffigures",
+    "listoftables", "abstractname",
     // Boxes, spacing, breaking and page control.
-    "centering", "raggedright", "raggedleft", "linespread", "vfill", "hss", "vss", "vbox",
-    "makebox", "fbox", "framebox", "parbox", "raisebox", "rule", "newline",
-    "clearpage", "cleardoublepage", "thispagestyle", "twocolumn", "onecolumn",
-    "indent", "phantom", "hphantom", "vphantom", "smash", "strut", "addvspace",
-    "vskip", "kern", "enspace", "thinspace", "negthinspace", "hline", "cline",
+    "linespread", "hss", "vss", "vbox",
+    "makebox", "fbox", "framebox", "parbox", "raisebox", "newline",
+    "phantom", "hphantom", "vphantom", "smash", "strut", "addvspace",
+    "vskip", "kern", "hline", "cline",
     "multicolumn", "tabularnewline", "arraystretch",
     // Fonts and text symbols.
-    "underbar", "LaTeX",
-    "LaTeXe", "TeX", "dag", "ddag", "S", "P", "copyright", "pounds", "textbackslash",
-    "textasciitilde", "textasciicircum", "textbar", "textless", "textgreater", "textendash",
+    "textendash",
     "textemdash", "textquoteleft", "textquoteright",
-    "textquotedblleft", "textquotedblright", "ldots", "slash", "selectfont", "fontsize",
+    "textquotedblleft", "textquotedblright", "slash", "selectfont", "fontsize",
     "fontfamily", "usefont",
     // Definitions, counters and programming.
-    "def", "edef", "gdef", "let", "providecommand", "newenvironment", "renewenvironment",
-    "newtheorem", "newcounter", "setcounter", "addtocounter", "stepcounter", "refstepcounter",
-    "value", "arabic", "roman", "Roman", "alph", "Alph", "fnsymbol", "the", "makeatletter",
-    "makeatother", "newif", "relax", "expandafter", "csname", "endcsname",
-    "newlength", "settowidth", "DeclareMathOperator", "ensuremath", "protect",
-    "verb", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "lstset", "RequirePackage",
-    "PassOptionsToPackage", "AtBeginDocument",
+    "def", "edef", "gdef", "let",
+    "arabic", "roman", "Roman", "alph", "the", "makeatletter",
+    "newif", "relax", "expandafter", "csname", "endcsname",
+    "ensuremath", "protect",
+    "verb", "geometry", "RequirePackage",
+    "PassOptionsToPackage",
     // Cross-references and links.
-    "eqref", "autoref", "nameref", "url", "href", "hyperref", "hyperlink",
-    "hypertarget", "cite", "parencite", "textcite", "autocite", "citep", "citet", "citeauthor", "citeyear", "nocite", "addbibresource", "printbibliography",
+    "autoref", "nameref", "hyperref", "hyperlink",
+    "hypertarget",
     // Colour and graphics packages.
     "tikz",
-    "usetikzlibrary", "draw", "node", "fill", "path", "scalebox", "resizebox", "rotatebox",
+    "usetikzlibrary", "draw", "node", "fill", "path",
     "subcaption", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
     "intertext", "shortintertext", "substack", "xrightarrow", "xleftarrow", "overbrace",
@@ -76,7 +71,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "limits", "nolimits", "displaylimits", "colon", "eqqcolon", "Coloneqq", "Eqqcolon",
     "vcentcolon", "dblcolon", "vdots", "ddots", "iff", "implies", "impliedby",
     "genfrac", "operatornamewithlimits", "cancel", "bcancel", "xcancel",
-    "cancelto", "numberwithin", "allowdisplaybreaks", "lvert", "rvert", "lVert",
+    "cancelto", "lvert", "rvert", "lVert",
     "rVert", "varepsilon", "vartheta", "varphi", "varrho", "varsigma", "varpi", "digamma",
     "varkappa", "hbar", "hslash", "ell", "wp", "Re", "Im", "aleph", "beth", "gimel", "emptyset",
     "varnothing", "nabla", "partial", "infty", "forall", "exists", "nexists", "neg", "lnot", "top",
@@ -114,7 +109,7 @@ const IMPLEMENTED_ENVIRONMENTS: &[&str] = &[
 const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "description", "table", "table*", "figure*", "tabular", "tabular*", "tabularx", "longtable",
     "verbatim", "verbatim*", "verse", "abstract", "minipage", "titlepage", "thebibliography",
-    "list", "trivlist", "picture", "math", "gathered", "multlined",
+    "list", "trivlist", "picture", "math", "multlined",
     "subequations", "proof", "tikzpicture", "lstlisting", "minted",
     "wrapfigure", "subfigure", "comment", "landscape", "filecontents",
 ];
@@ -124,6 +119,7 @@ fn implemented_commands() -> impl Iterator<Item = &'static str> {
         .iter()
         .copied()
         .chain(crate::supported::TEXT_EXTRA_ARMS.iter().copied())
+        .chain(crate::supported::expansion_command_names())
         .chain(MATH_COMMANDS.iter().copied())
         .chain(COMMAND_GLYPHS.iter().map(|(name, _)| *name))
         .chain(crate::amssymb::command_names())
@@ -527,6 +523,29 @@ mod tests {
         assert_eq!(
             environment_help("tikzpicture").as_deref(),
             Some("environment 'tikzpicture' needs the tikz package, which this compiler does not implement")
+        );
+    }
+
+    /// `fn unsupported` (`parser.rs`) carries
+    /// `debug_assert!(!BUILT_INS.contains(&name))`: a name with a parser
+    /// dispatch arm must never be listed as unimplemented, or the
+    /// unsupported-feature diagnostic claims a working command cannot render
+    /// (issue #715 pruned 73 such entries: 72 in `BUILT_INS` plus
+    /// `newtheorem` via `TEXT_EXTRA_ARMS`). That assert only fires when the
+    /// stale name is actually used in a debug build; this test fails
+    /// statically the moment the two lists overlap again — including via
+    /// `supported::TEXT_EXTRA_ARMS`, whose arms are dispatch arms too.
+    #[test]
+    fn unimplemented_commands_stay_disjoint_from_implemented_dispatch() {
+        let overlap: Vec<&&str> = KNOWN_UNIMPLEMENTED_COMMANDS
+            .iter()
+            .filter(|name| {
+                BUILT_INS.contains(name) || crate::supported::TEXT_EXTRA_ARMS.contains(name)
+            })
+            .collect();
+        assert!(
+            overlap.is_empty(),
+            "listed as unimplemented but implemented: {overlap:?}"
         );
     }
 
