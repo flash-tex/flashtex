@@ -5,7 +5,7 @@
   "machine": "mac-m5pro-dq222",
   "note": "marker-only paragraph carried past \\pagebreak, pagestyle takes effect one page late",
   "started_utc": "2026-09-18T06:04:47Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "GH-876",
-  "updated_utc": "2026-09-18T06:04:47Z"
+  "updated_utc": "2026-09-18T06:31:07Z"
 }
