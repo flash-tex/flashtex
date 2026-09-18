@@ -6664,21 +6664,56 @@ impl P<'_> {
     ) {
         let popped = self.env_stack.pop();
         let had_open_environment = popped.is_some();
+        // `\end{document}` closing over unclosed environments reports only
+        // the innermost one, at any depth: pdflatex (TeX Live 2026) emits a
+        // single `! LaTeX Error: \begin{<innermost>} ... ended by
+        // \end{document}.` no matter how many levels are open, and the
+        // intermediate levels close silently. Without the drain below, every
+        // level left on `env_stack` (including `document` itself) earns its
+        // own diagnostic from the end-of-input sweep, which reads as though
+        // more of the document were broken than actually is.
+        let mut document_closed_over_open = false;
         match popped {
             Some((open, _)) if open == environment => {}
-            Some((open, _)) => self.diags.push(Diagnostic::error(
-                format!(
-                    "\\end{{{}}} does not match \\begin{{{}}}",
-                    environment, open
-                ),
-                Some(span),
-                Some("closed the innermost open environment".into()),
-            )),
+            Some((open, _)) => {
+                self.diags.push(Diagnostic::error(
+                    format!(
+                        "\\end{{{}}} does not match \\begin{{{}}}",
+                        environment, open
+                    ),
+                    Some(span),
+                    Some("closed the innermost open environment".into()),
+                ));
+                document_closed_over_open = environment == "document" && self.has_document;
+            }
             None => self.diags.push(Diagnostic::error(
                 format!("\\end{{{}}} with no matching \\begin", environment),
                 Some(span),
                 Some("ignored the stray \\end".into()),
             )),
+        }
+        if document_closed_over_open {
+            // Silently unwind the intermediate levels (and `document`
+            // itself) so the end-of-input sweep reports nothing more. Each
+            // `begin_environment` saves exactly one entry on each per-level
+            // stack, so drop the same count the sweep would otherwise
+            // diagnose; the single pop the teardown below performs restores
+            // the pre-document state, exactly as before.
+            let silent = self.env_stack.len();
+            self.env_stack.clear();
+            // One entry per open environment on each per-level stack (see
+            // `begin_environment`); truncate rather than pop in a loop so a
+            // historically unbalanced stack can never underflow here.
+            let truncate = |len: usize| len.saturating_sub(silent);
+            self.env_styles.truncate(truncate(self.env_styles.len()));
+            self.env_alignments
+                .truncate(truncate(self.env_alignments.len()));
+            self.env_obeylines
+                .truncate(truncate(self.env_obeylines.len()));
+            self.parameter_scopes
+                .truncate(truncate(self.parameter_scopes.len()));
+            self.length_scopes
+                .truncate(truncate(self.length_scopes.len()));
         }
         if environment == "subequations" && self.in_body {
             self.end_subequations();
