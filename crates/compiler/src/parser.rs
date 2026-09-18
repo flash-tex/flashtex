@@ -12041,6 +12041,14 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // itself where it is used instead: `\whiledo` is not implemented
         // and is diagnosed as an unknown command at its own span.
         "ifthen" => options.is_empty(),
+        // etoolbox's toggle booleans (`\newtoggle`/`\providetoggle`,
+        // `\toggletrue`/`\togglefalse`, `\iftoggle`) run in the expansion
+        // pass (see expansion's `HOST_PRELUDE`), so loading the package is
+        // silent. Everything else etoolbox ships (`\patchcmd`,
+        // `\AtEndPreamble`, list processing, robust-command variants) is
+        // not implemented and is diagnosed as an unknown command where it
+        // is used.
+        "etoolbox" => options.is_empty(),
         // natbib citation commands (crate::natbib) with the delimiter,
         // separator and citation-style options that decide the characters
         // they set. `sort`/`compress`/`super`/`longnamesfirst` are parsed but
