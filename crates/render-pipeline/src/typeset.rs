@@ -1402,13 +1402,17 @@ impl<'a> Context<'a> {
         // each a formula of its own; a grid nested in a sub-formula (a
         // fraction, a script, inside `\left...\right`, another grid's cell)
         // enters math-layout as a box handle (`mathtext::GridCells`).
-        let segments = split_at_spaces(list, &fence, sink.font_em_ratio());
-        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits, &text_italic, &text_split, &ellipsis)).collect();
+        // A mid-formula style switch (`\displaystyle` past the first atom)
+        // governs the segments after it (TeX §1171); re-read like the other
+        // source-derived facts above.
+        let switch = |sp: &Span| style_switch_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+        let segments = split_at_spaces(list, &fence, sink.font_em_ratio(), &switch);
+        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits, &text_italic, &text_split, &ellipsis)).collect();
         // Glue at a top-level grid cell's own top level is split out like
         // the formula's; only deeper glue is dropped.
         let nested_glue_em: f64 = segments
             .iter()
-            .flat_map(|(atoms, _)| atoms.iter())
+            .flat_map(|(atoms, _, _)| atoms.iter())
             .map(|a| match &a.nucleus {
                 flashtex_compiler::math::Nucleus::Matrix { rows, .. } if a.superscript.is_none() && a.subscript.is_none() => rows
                     .iter()
@@ -1435,7 +1439,7 @@ impl<'a> Context<'a> {
         }
         let default_style = if display { ml::Style::DISPLAY } else { ml::Style::TEXT };
         let style = leading_style_switch(list, texts).unwrap_or(default_style);
-        let has_grid = segments.iter().any(|(atoms, _)| top_level_grids(atoms, &fence).into_iter().any(|top| top));
+        let has_grid = segments.iter().any(|(atoms, _, _)| top_level_grids(atoms, &fence).into_iter().any(|top| top));
         // Every `\text` must be collected before the metrics borrow the sink.
         let grid_pieces = if has_grid { grid_pieces(&segments, &mut sink, &fence, &class, &op_limits, texts) } else { Vec::new() };
         let pitch = crate::mathgrid::Pitch {
@@ -1460,8 +1464,13 @@ impl<'a> Context<'a> {
         let mut laid = if has_grid {
             self.grid_formula(&grid_pieces, style, &text_metrics, span)
         } else {
-            let glue: Vec<Option<f64>> = segments.iter().map(|(_, em)| *em).collect();
-            layout_kerned(&ml_lists, &glue, style, &text_metrics)
+            let glue: Vec<Option<f64>> = segments.iter().map(|(_, em, _)| *em).collect();
+            // Segments after a mid-formula style switch are laid out in its
+            // style; every other segment uses the formula's own. The joins
+            // (kerns, inter-atom spacing, break points) still run over the
+            // whole formula exactly as before.
+            let run_styles: Vec<ml::Style> = segments.iter().map(|(_, _, active)| active.unwrap_or(style)).collect();
+            layout_kerned(&ml_lists, &glue, style, &run_styles, &text_metrics)
         };
         let (grid_boxes, grid_limitations) = text_metrics.take_grids();
         let (built_boxes, built_limitations) = text_metrics.take_built();
@@ -1716,7 +1725,8 @@ impl<'a> Context<'a> {
                         .map(|row| {
                             row.iter()
                                 .map(|(runs, glue)| {
-                                    let part = layout_kerned(runs, glue, spec.style, text_metrics);
+                                    let cell_styles = vec![spec.style; runs.len()];
+                                    let part = layout_kerned(runs, glue, spec.style, &cell_styles, text_metrics);
                                     limitations.extend(part.limitations);
                                     part.root
                                 })
@@ -6550,12 +6560,16 @@ pub fn fence_before(text: &str, at: usize) -> Option<Fence> {
 /// §679), so the following baseline stayed a plain `\baselineskip` away and
 /// every later line in the document was that much too high.
 ///
-/// Only a switch that is the formula's *first* atom is honoured, which is the
-/// case where it governs the whole formula and nothing else — the idiom in
-/// every corpus use (`$\displaystyle\int_0^{\pi/2}\dots$`). A switch in the
-/// middle of a list, or inside a grid cell or sub-formula, still needs the
-/// compiler to emit an atom for it (math-layout is ready: it already has
-/// `Nucleus::Styled`, laid out at `layout.rs:345`).
+/// Only a switch that is the formula's *first* atom is honoured here, which
+/// is the case where it governs the whole formula and nothing else — the
+/// idiom in most corpus uses (`$\displaystyle\int_0^{\pi/2}\dots$`). A
+/// switch past the first atom governs the kern-split segments after it
+/// (TeX §1171): [`split_at_spaces`] records it and [`layout_kerned`] lays
+/// those segments out in its style, with the joins (kerns, inter-atom
+/// spacing, break points) unchanged. Still dropped, as before: a switch
+/// inside a sub-formula (a fraction, a script, a group, `\left...\right`)
+/// or a grid formula, where the compiler's zero-width atom never reaches
+/// the top-level split.
 pub fn leading_style_switch(list: &flashtex_compiler::math::MathList, texts: &[&str]) -> Option<ml::Style> {
     let a = list.atoms.first()?;
     if a.superscript.is_some() || a.subscript.is_some() {
@@ -7473,9 +7487,15 @@ fn ml_style(s: flashtex_compiler::math::MathStyle) -> ml::Style {
 /// across glue (glue does not reset `r_type`, §760). Rules 5/6 (Bin ->
 /// Ord) run over the whole formula, so the classes at each split are the
 /// ones TeX would space by.
-fn layout_kerned(runs: &[ml::MathList], glue: &[Option<f64>], style: ml::Style, metrics: &dyn ml::MathFontMetrics) -> ml::Layout {
+///
+/// Each run is laid out in `run_styles[i]` — the formula's own style,
+/// except past a mid-formula style switch, where it is the switch's (TeX
+/// §1171). The joins (kerns, cross-glue spacing, break points) still use
+/// the formula's `style`: display and text share a size class, so their mu
+/// is the same, and that is the only thing the joins read from the style.
+fn layout_kerned(runs: &[ml::MathList], glue: &[Option<f64>], style: ml::Style, run_styles: &[ml::Style], metrics: &dyn ml::MathFontMetrics) -> ml::Layout {
     if runs.len() == 1 && glue.first().is_none_or(|g| g.is_none()) {
-        return ml::layout_with_report(&runs[0], style, metrics);
+        return ml::layout_with_report(&runs[0], run_styles.first().copied().unwrap_or(style), metrics);
     }
     let all_atoms: Vec<ml::Atom> = runs.iter().flat_map(|l| l.atoms.iter().cloned()).collect();
     let classes = ml::layout::effective_classes(&all_atoms);
@@ -7509,7 +7529,7 @@ fn layout_kerned(runs: &[ml::MathList], glue: &[Option<f64>], style: ml::Style, 
     let mut limitations = Vec::new();
     let mut at = 0usize;
     for (i, l) in runs.iter().enumerate() {
-        let part = ml::layout_with_report(l, style, metrics);
+        let part = ml::layout_with_report(l, run_styles.get(i).copied().unwrap_or(style), metrics);
         limitations.extend(part.limitations);
         push(&mut children, &mut x, part.root);
         at += l.atoms.len();
@@ -7647,7 +7667,7 @@ pub enum GridPiece {
 /// Converts the kern-split segments of a formula into [`GridPiece`]s,
 /// collecting every `\text` into `sink` (runs and cells alike).
 fn grid_pieces(
-    segments: &[(Vec<flashtex_compiler::math::MathAtom>, Option<f64>)],
+    segments: &[(Vec<flashtex_compiler::math::MathAtom>, Option<f64>, Option<ml::Style>)],
     sink: &mut crate::mathtext::TextSink,
     fence: &dyn Fn(&Span) -> Option<Fence>,
     class: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::AtomClass>,
@@ -7664,7 +7684,9 @@ fn grid_pieces(
     let ellipsis = |sp: &Span| math_ellipsis_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
     let ellipsis = &ellipsis;
     let mut pieces = Vec::new();
-    for (atoms, em) in segments {
+    // A mid-formula style switch in a grid formula is still dropped, as
+    // before: grid pieces are laid out in the formula's own style.
+    for (atoms, em, _) in segments {
         let mut run: Vec<MathAtom> = Vec::new();
         let flush = |run: &mut Vec<MathAtom>, pieces: &mut Vec<GridPiece>, sink: &mut crate::mathtext::TextSink| {
             if !run.is_empty() {
@@ -7698,9 +7720,9 @@ fn grid_pieces(
                             }
                             _ => cell,
                         };
-                        let parts = split_at_spaces(cell, fence, sink.font_em_ratio());
-                        let runs = parts.iter().map(|(atoms, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class, op_limits, text_italic, text_split, ellipsis)).collect();
-                        let glue = parts.iter().map(|(_, em)| *em).collect();
+                        let parts = split_at_spaces(cell, fence, sink.font_em_ratio(), &|_| None);
+                        let runs = parts.iter().map(|(atoms, _, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class, op_limits, text_italic, text_split, ellipsis)).collect();
+                        let glue = parts.iter().map(|(_, em, _)| *em).collect();
                         (runs, glue)
                     };
                     pieces.push(GridPiece::Grid {
@@ -7761,22 +7783,48 @@ fn top_level_grids(atoms: &[flashtex_compiler::math::MathAtom], fence: &dyn Fn(&
 ///
 /// Glue in text-font ems (`\quad`, compiler `font_em`) is converted to math
 /// symbol font quads with `font_em_ratio` (text quad / family-2 quad).
-fn split_at_spaces(list: &flashtex_compiler::math::MathList, fence: &dyn Fn(&Span) -> Option<Fence>, font_em_ratio: f64) -> Vec<(Vec<flashtex_compiler::math::MathAtom>, Option<f64>)> {
+/// Each segment's third element is the math style in force where the segment
+/// starts: a style switch (`\displaystyle` etc., a zero-width `Space` atom
+/// re-read from the control word at its span) changes the style for the rest
+/// of the enclosing group (TeX §1171), so it governs every later segment of
+/// this list. A switch that is the list's very first atom is
+/// [`leading_style_switch`]'s — the whole formula is already laid out in its
+/// style — so it leaves the active style unset, exactly as if it were absent.
+fn split_at_spaces(
+    list: &flashtex_compiler::math::MathList,
+    fence: &dyn Fn(&Span) -> Option<Fence>,
+    font_em_ratio: f64,
+    switch: &dyn Fn(&Span) -> Option<ml::Style>,
+) -> Vec<(
+    Vec<flashtex_compiler::math::MathAtom>,
+    Option<f64>,
+    Option<ml::Style>,
+)> {
     use flashtex_compiler::math::Nucleus as N;
-    let mut out: Vec<(Vec<flashtex_compiler::math::MathAtom>, Option<f64>)> = Vec::new();
+    let mut out: Vec<(
+        Vec<flashtex_compiler::math::MathAtom>,
+        Option<f64>,
+        Option<ml::Style>,
+    )> = Vec::new();
     let mut current = Vec::new();
     let mut depth = 0usize;
-    for a in &list.atoms {
+    let mut active: Option<ml::Style> = None;
+    for (idx, a) in list.atoms.iter().enumerate() {
         match &a.nucleus {
             N::Space { em, .. } if depth == 0 && a.superscript.is_none() && a.subscript.is_none() => {
+                if *em == 0.0 && idx > 0 {
+                    if let Some(s) = switch(&a.span) {
+                        active = Some(s);
+                    }
+                }
                 let em = &space_em(a, *em, font_em_ratio);
                 if current.is_empty() {
-                    if let Some((_, Some(prev))) = out.last_mut() {
+                    if let Some((_, Some(prev), _)) = out.last_mut() {
                         *prev += em;
                         continue;
                     }
                 }
-                out.push((std::mem::take(&mut current), Some(*em)));
+                out.push((std::mem::take(&mut current), Some(*em), active));
             }
             N::Symbol(sym) if sym.chars().count() <= 1 => {
                 match fence(&a.span) {
@@ -7799,7 +7847,7 @@ fn split_at_spaces(list: &flashtex_compiler::math::MathList, fence: &dyn Fn(&Spa
     }
     // A trailing space keeps its kern: TeX includes it in the formula's
     // box (an empty run follows it).
-    out.push((current, None));
+    out.push((current, None, active));
     out
 }
 
