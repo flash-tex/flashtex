@@ -12,6 +12,7 @@ final class EditorModelTests: XCTestCase {
     func testLinesCarryBothOffsets() {
         let m = AccessibleEditorModel(text: Self.sample)
         XCTAssertEqual(m.lines.count, 4)
+        guard m.lines.count == 4 else { return XCTFail("expected four lines, got \(m.lines.count)") }
         XCTAssertEqual(m.lines.map(\.number), [1, 2, 3, 4])
         XCTAssertEqual(m.lines[0].text, "\\section{Intro}")
         XCTAssertEqual(m.lines[0].utf8, 0..<15)
@@ -65,6 +66,7 @@ final class EditorModelTests: XCTestCase {
         let line2 = m.tokens(in: m.lines[1]).filter { $0.kind != .whitespace }
         XCTAssertEqual(line2.map(\.text), ["A", "nai\u{308}ve", "🎉", "test"])
         XCTAssertEqual(line2.map(\.kind), [.word, .word, .symbol, .word])
+        guard line2.count == 4 else { return XCTFail("expected four tokens, got \(line2.count)") }
         XCTAssertEqual(line2[1].utf16, NSRange(location: 18, length: 6))
         XCTAssertEqual(line2[1].utf8, 18..<25)
         XCTAssertEqual(line2[2].utf16, NSRange(location: 25, length: 2))
@@ -152,6 +154,7 @@ final class EditorModelTests: XCTestCase {
 
         XCTAssertEqual(m.rotorItems(.headings).map(\.label), ["Section “Introduction”, level 1", "Subsection “Détail”, level 2"])
         XCTAssertEqual(m.rotorItems(.headings).map(\.line), [3, 8])
+        guard m.rotorItems(.headings).count == 2 else { return XCTFail("expected two heading rotor items, got \(m.rotorItems(.headings).count)") }
         let heading2 = m.rotorItems(.headings)[1]
         XCTAssertEqual(String(text[Range(heading2.utf16, in: text)!]), "\\subsection*{Détail}")
         XCTAssertEqual(heading2.utf8.count, "\\subsection*{Détail}".utf8.count)

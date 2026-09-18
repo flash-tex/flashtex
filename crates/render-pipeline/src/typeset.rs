@@ -125,6 +125,21 @@ pub enum BoxRec {
     ColorBox(Rc<ColorBoxRec>),
     /// ulem `\uline` (`Context::underline_box`).
     Underline(Rc<UnderlineRec>),
+    /// `\textsuperscript`/`\textsubscript` (`Context::text_script_box`).
+    TextScript(Rc<TextScriptRec>),
+}
+
+/// A laid-out `\textsuperscript`/`\textsubscript`: the script-size content
+/// as one line, its baseline `raise` points above the line's (negative for
+/// a subscript); `width` includes `\scriptspace`.
+#[derive(Clone)]
+pub struct TextScriptRec {
+    pub block: BuiltBlock,
+    pub width: f64,
+    pub height: f64,
+    pub depth: f64,
+    pub raise: f64,
+    pub span: Span,
 }
 
 /// A laid-out `\colorbox`/`\fcolorbox`: the content as one line whose
@@ -413,6 +428,7 @@ fn position_run(run: &pl::GlyphRun, x: f64, baseline_y: f64) -> pl::PositionedRu
 
 pub mod floatpage;
 pub mod footnotes;
+pub mod marginpar;
 mod toc;
 pub mod multicol;
 
@@ -488,6 +504,11 @@ pub struct Context<'a> {
     /// `\footnotetext`): see [`footnotes`].
     notes: Vec<footnotes::NoteSrc>,
     note_anchors: Vec<(usize, usize)>,
+    /// Margin-note texts met while building horizontal lists, and for each
+    /// the box record its note follows (the box before `\marginpar`, which
+    /// sets no mark of its own): see [`marginpar`].
+    marginpars: Vec<marginpar::MarginparSrc>,
+    marginpar_anchors: Vec<(usize, usize)>,
     /// The body in reading order (`adapter::reading_order`): where a float
     /// of an `\include`d file stands among the other documents' blocks.
     reading_order: Vec<Span>,
@@ -549,6 +570,8 @@ impl<'a> Context<'a> {
             label_recs: BTreeSet::new(),
             notes: Vec::new(),
             note_anchors: Vec::new(),
+            marginpars: Vec::new(),
+            marginpar_anchors: Vec::new(),
             reading_order: Vec::new(),
             parbox: false,
             multicol: multicol::State::default(),
@@ -787,7 +810,7 @@ impl<'a> Context<'a> {
                     .copied()
                     .filter(|a| self.texts.iter().any(|t| t.contains(a.command())))
                     .collect();
-                let tex = TexMathMetrics::new(base, self.style.cmex_designs, m.clone(), self.fonts)
+                let tex = TexMathMetrics::new(base, self.style.cmex_designs, self.style.math_roman_lm, m.clone(), self.fonts)
                     .with_alphabets(self.fonts, &used);
                 let provider = if tex.roman_available() {
                     MathProvider::Tex(Rc::new(tex))
@@ -855,7 +878,7 @@ impl<'a> Context<'a> {
         let r = self.fonts.resolve(self.style.family, Role::Math, size);
         let sized = MathFonts::new(r.face, MathSizes { text: size, script, script_script })
             .map(|m| Rc::new(m.with_double_struck(self.fonts.otf(crate::mathfont::BB_FONT_FILE))))
-            .and_then(|m| TexMathMetrics::at_text_size(size, self.style.cmex_designs, m, self.fonts))
+            .and_then(|m| TexMathMetrics::at_text_size(size, self.style.cmex_designs, self.style.math_roman_lm, m, self.fonts))
             .filter(TexMathMetrics::roman_available)
             .map(|t| MathProvider::Tex(Rc::new(t)));
         if sized.is_none() {
@@ -940,6 +963,60 @@ impl<'a> Context<'a> {
         (run, self.recs.len() - 1)
     }
 
+    /// One rule of an [`Context::qed_items`] box: an hbox `width` wide whose
+    /// painted rectangle is `height` tall and sits `bottom` above the
+    /// baseline.
+    fn qed_rule(&mut self, size: f64, span: Span, width: f64, height: f64, bottom: f64) -> (pl::Item, Option<usize>) {
+        self.recs.push(BoxRec::Rule { width, height, bottom, span });
+        let run = pl::GlyphRun {
+            font: MATH_SENTINEL,
+            size,
+            glyphs: Vec::new(),
+            width,
+            height: bottom + height,
+            depth: 0.0,
+            source: span.start..span.end,
+        };
+        (pl::Item::Box(run), Some(self.recs.len() - 1))
+    }
+
+    /// amsthm's `\qedsymbol` (adapter `Item::QedBox`, GH#443), which is
+    /// `\openbox`:
+    ///
+    /// ```text
+    /// \hbox to.77778em{\hfil\vrule\vbox to.675em{\hrule width.6em\vfil\hrule}\vrule\hfil}
+    /// ```
+    ///
+    /// Four rules, not a character: an open square `.6em` wide and `.675em`
+    /// tall, sitting on the baseline, drawn with `\vrule`/`\hrule` at TeX's
+    /// default 0.4 pt thickness (absolute — it does not scale with the font),
+    /// centred by the two `\hfil` in an hbox `.77778em` wide. `em` is the
+    /// current font's quad, so the box grows with `\large` exactly as the
+    /// pdflatex oracle does (`tests/qed_box.rs`).
+    ///
+    /// The two horizontal rules share the vbox's width, so the second is
+    /// pulled back over the first with a kern; kerns between boxes are not
+    /// legal break points, so the whole mark stays on one line.
+    fn qed_items(&mut self, style: TextStyle, size: f64, span: Span) -> Vec<(pl::Item, Option<usize>)> {
+        /// `\vrule`/`\hrule` with no `width`/`height`: `\z@` plus TeX's
+        /// default rule thickness, 0.4 pt (tex.web §463).
+        const RULE_PT: f64 = 0.4;
+        let quad = self.text_params(style, size).quad;
+        let width = 0.6 * quad;
+        let height = 0.675 * quad;
+        // Each `\hfil` of the `\hbox to.77778em`.
+        let pad = (0.77778 * quad - (width + 2.0 * RULE_PT)) / 2.0;
+        let mut out = Vec::with_capacity(7);
+        out.push((pl::Item::kern(pad), None));
+        out.push(self.qed_rule(size, span, RULE_PT, height, 0.0));
+        out.push(self.qed_rule(size, span, width, RULE_PT, height - RULE_PT));
+        out.push((pl::Item::kern(-width), None));
+        out.push(self.qed_rule(size, span, width, RULE_PT, 0.0));
+        out.push(self.qed_rule(size, span, RULE_PT, height, 0.0));
+        out.push((pl::Item::kern(pad), None));
+        out
+    }
+
     /// `\TeX`/`\LaTeX`/`\LaTeXe` (compiler `Inline::Logo`): one box per glyph
     /// at the x `text_builtins::layout_logo` computes from this face's TFM
     /// metrics, joined by kerns (not break points: no glue follows them),
@@ -1019,18 +1096,55 @@ impl<'a> Context<'a> {
 
     /// Shapes one styled segment into a box record and a paragraph-layout box.
     fn text_box(&mut self, seg: &adapter::Segment, size: f64) -> Option<(pl::GlyphRun, usize)> {
+        let filtered = self.input_filtered(seg);
+        let (seg, reject_cuts): (&adapter::Segment, &[usize]) = match &filtered {
+            Some((seg, cuts)) => (seg, cuts),
+            None => (seg, &[]),
+        };
         let span = seg_span(seg)?;
         let face = self.face(seg.style, size, span);
-        self.text_box_in(seg, size, face)
+        // Where the input encoding puts a character outside the font's
+        // ligature/kern program (an OT1 `\accent`, a TS1 symbol), the text
+        // is shaped in pieces split around it. Computed here, not in
+        // `text_box_shaped`, because it depends on `self.style.input` -- the
+        // *document's* input encoding -- which only applies to text that
+        // actually came from `\inputenc`-decoded source. `reject_cuts` are
+        // folded in too: a rejected character breaks the ligature/kern
+        // program in real pdfLaTeX regardless of whether `input_filtered`
+        // dropped it or kept a plain letter for it.
+        let mut cuts: Vec<usize> = match &self.style.input {
+            Some(input) if !seg.text.is_ascii() => seg
+                .text
+                .char_indices()
+                .filter(|(_, c)| input.cuts_ligkern(*c))
+                .flat_map(|(i, c)| [i, i + c.len_utf8()])
+                .collect(),
+            _ => Vec::new(),
+        };
+        cuts.extend_from_slice(reject_cuts);
+        self.text_box_shaped(seg, size, face, &cuts)
     }
 
-    /// [`Self::text_box`] shaped in `face` instead of the style's face.
+    /// [`Self::text_box`] shaped in `face` instead of the style's face, with
+    /// no input-encoding cuts: `tcrm_symbol_box`'s synthetic bullet/centre-dot
+    /// segments never went through `\inputenc` decoding, so running the input
+    /// table on them would have the wrong meaning even where it is a no-op
+    /// today.
     fn text_box_in(&mut self, seg: &adapter::Segment, size: f64, face: Rc<LoadedFace>) -> Option<(pl::GlyphRun, usize)> {
+        self.text_box_shaped(seg, size, face, &[])
+    }
+
+    /// Shared tail of [`Self::text_box`]/[`Self::text_box_in`]: `cuts` are
+    /// the input-encoding ligature/kern break points (empty for callers that
+    /// have none, e.g. `text_box_in`'s synthetic segments).
+    fn text_box_shaped(&mut self, seg: &adapter::Segment, size: f64, face: Rc<LoadedFace>, cuts: &[usize]) -> Option<(pl::GlyphRun, usize)> {
         let span = seg_span(seg)?;
         // Verbatim runs the font's ligature/kern program not at all
         // (`\@noligs`); every other run runs it as TeX does.
         let shaped = if seg.style.literal {
             self.shaper.shape_literal(&face, &seg.text)
+        } else if !cuts.is_empty() {
+            self.shaper.shape_cut(&face, &seg.text, cuts)
         } else {
             self.shaper.shape(&face, &seg.text)
         };
@@ -1135,6 +1249,96 @@ impl<'a> Context<'a> {
             raise: 0.0,
         });
         Some((run, self.recs.len() - 1))
+    }
+
+    /// pdfLaTeX's input errors for the literal UTF-8 characters of `seg`
+    /// (`crate::inputenc`): each rejected character is reported at its
+    /// source as the LaTeX error pdfLaTeX logs, and removed from the text —
+    /// or replaced by the letter pdfLaTeX still sets (`\k a` in OT1 sets
+    /// `a`). Also returns the byte offset of each rejection in the filtered
+    /// text, for `text_box` to fold into its own ligature/kern cuts (the
+    /// error itself breaks the program there in real pdfLaTeX). `None`
+    /// when the segment keeps every character.
+    fn input_filtered(&mut self, seg: &adapter::Segment) -> Option<(adapter::Segment, Vec<usize>)> {
+        let input = self.style.input.as_ref()?;
+        if seg.text.is_ascii() {
+            return None;
+        }
+        // Only a character typed in the source is input: one a macro
+        // generates (`\fnsymbol`'s U+2217 for `\thanks`) has its invocation's
+        // span, not its own bytes. A `\verb` body is input too (its
+        // characters stay active), though its characters all carry the
+        // span of the whole `\verb|...|`.
+        let texts = self.texts;
+        let typed = |i: usize, c: char| {
+            seg.chars.get(i).is_some_and(|s| {
+                texts.get(s.document.0).is_some_and(|t| {
+                    t.get(s.start..s.end).is_some_and(|t| t.len() == c.len_utf8() && t.starts_with(c))
+                        || verb_body(t, s.start, s.end).is_some_and(|b| b.contains(c))
+                })
+            })
+        };
+        let rejected: Vec<(usize, char, crate::inputenc::Rejected)> = seg
+            .text
+            .chars()
+            .enumerate()
+            .filter_map(|(i, c)| input.rejected(c).filter(|_| typed(i, c)).map(|r| (i, c, r)))
+            .collect();
+        if rejected.is_empty() {
+            return None;
+        }
+        let mut text = String::with_capacity(seg.text.len());
+        let mut chars = Vec::with_capacity(seg.chars.len());
+        // Real pdfLaTeX's error at a rejected character (`\GenericError`'s
+        // group) is a non-character command, so it ends the ligature/kern
+        // program there: a kept letter does not kern with what preceded the
+        // rejection, and a fully-dropped character still severs its
+        // neighbours from each other. One byte offset per rejection, at the
+        // boundary right before whatever gets appended for it (nothing, if
+        // dropped): `shape_cut` already drops a cut at offset 0, which is
+        // exactly right here too, since there is nothing before it in this
+        // segment to sever.
+        let mut cuts = Vec::new();
+        let mut next = rejected.iter().peekable();
+        for (i, c) in seg.text.chars().enumerate() {
+            let src = seg.chars.get(i).copied();
+            let keep = match next.peek() {
+                Some((at, _, r)) if *at == i => {
+                    let keep = r.keep;
+                    next.next();
+                    cuts.push(text.len());
+                    keep
+                }
+                _ => Some(c),
+            };
+            match (keep, src) {
+                (Some(k), Some(src)) => {
+                    text.push(k);
+                    chars.push(src);
+                }
+                // A dropped mark that extends the source character before it
+                // (`e` + U+0301) stays in that character's source range, so
+                // the base letter's cluster never covers half of a character.
+                (None, Some(src)) if extends_grapheme(c) => {
+                    if let Some(prev) = chars.last_mut().filter(|p| p.document == src.document && p.end == src.start) {
+                        prev.end = src.end;
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (i, c, r) in rejected {
+            let Some(csrc) = seg.chars.get(i).copied() else { continue };
+            let src = self.source(csrc.span());
+            let code = if r.message.contains("not set up for use with LaTeX") { "unicode_not_set_up" } else { "command_unavailable_in_encoding" };
+            let mut d = Diagnostic::error(code, r.message, vec![src]);
+            d.recovery = Some(match r.keep {
+                Some(k) => format!("typeset `{k}` without the accent, as pdfLaTeX does after this error"),
+                None => format!("typeset nothing for U+{:04X}, as pdfLaTeX does after this error", c as u32),
+            });
+            self.report_once(format!("input:{}:{}:{}", csrc.document.0, csrc.start, c), d);
+        }
+        Some((adapter::Segment { text, chars, style: seg.style }, cuts))
     }
 
     /// Marks a text box as the continuation of the word box before it.
@@ -1249,10 +1453,10 @@ impl<'a> Context<'a> {
                 grid: g.clone(),
             })
             .collect();
-        let frames = sink.frames.clone();
+        let built = sink.built.clone();
         let text_metrics = crate::mathtext::TextRunMetrics::new(fonts.metrics(), self.fonts, self.shaper, self.style.family, &sink.texts, &sink.keys, &sink.italics)
             .with_grids(&nested)
-            .with_frames(&frames);
+            .with_built(&built);
         let mut laid = if has_grid {
             self.grid_formula(&grid_pieces, style, &text_metrics, span)
         } else {
@@ -1260,11 +1464,11 @@ impl<'a> Context<'a> {
             layout_kerned(&ml_lists, &glue, style, &text_metrics)
         };
         let (grid_boxes, grid_limitations) = text_metrics.take_grids();
-        let (frame_boxes, frame_limitations) = text_metrics.take_frames();
+        let (built_boxes, built_limitations) = text_metrics.take_built();
         laid.limitations.extend(grid_limitations);
-        laid.limitations.extend(frame_limitations);
+        laid.limitations.extend(built_limitations);
         let (text_runs, notices) = text_metrics.finish();
-        crate::mathtext::substitute_math_boxes(&mut laid.root, &grid_boxes, &frame_boxes);
+        crate::mathtext::substitute_math_boxes(&mut laid.root, &grid_boxes, &built_boxes);
         crate::mathtext::substitute(&mut laid.root, &text_runs);
         // Text-style formulas in a paragraph break after top-level Bin/Rel
         // atoms; a formula holding a grid stays one box.
@@ -1949,6 +2153,10 @@ impl<'a> Context<'a> {
         };
         // Notes of this list: (item index, mark record, note).
         let mut notes: Vec<(usize, Option<usize>, usize)> = Vec::new();
+        // Margin notes of this list, same shape (`\marginpar` never has a
+        // mark, so the record is always `None` here and resolves to the
+        // box before the call below).
+        let mut margins: Vec<(usize, Option<usize>, usize)> = Vec::new();
         for (idx, item) in items.iter().enumerate() {
             match item {
                 AItem::Footnote { number, mark, span, text } => {
@@ -1972,6 +2180,14 @@ impl<'a> Context<'a> {
                     if let Some(n) = note {
                         notes.push((out.len(), anchor, n));
                     }
+                }
+                AItem::Marginpar { text, span } => {
+                    // No mark is set; the note follows the line of the box
+                    // before the call (resolved with the footnotes below).
+                    // The interword gap around the command is already in
+                    // the list (see `adapter::items_from_inlines_styled`).
+                    self.marginpars.push(marginpar::MarginparSrc { span: *span, items: text.clone() });
+                    margins.push((out.len(), None, self.marginpars.len() - 1));
                 }
                 AItem::Word(w) => {
                     // TeX hyphenates a word only when it directly follows
@@ -2184,6 +2400,10 @@ impl<'a> Context<'a> {
                     let (run, rec) = self.underline_box(ul, size);
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                 }
+                AItem::TextScript(ts) => {
+                    let (run, rec) = self.text_script_box(ts, size);
+                    push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
+                }
                 AItem::Kern { amount, style } => {
                     let style = merge_base(*style, base);
                     let cx = self.dimen_context(style, style.size_or(size));
@@ -2200,6 +2420,12 @@ impl<'a> Context<'a> {
                 AItem::Logo { logo, style, span } => {
                     let style = merge_base(*style, base);
                     for (item, rec) in self.logo_items(*logo, style, style.size_or(size), *span) {
+                        push(&mut out, &mut recs, item, rec);
+                    }
+                }
+                AItem::QedBox { style, span } => {
+                    let style = merge_base(*style, base);
+                    for (item, rec) in self.qed_items(style, style.size_or(size), *span) {
                         push(&mut out, &mut recs, item, rec);
                     }
                 }
@@ -2237,6 +2463,12 @@ impl<'a> Context<'a> {
             let rec = anchor.or_else(|| recs[..at.min(recs.len())].iter().rev().find_map(|r| *r)).or_else(|| recs.iter().find_map(|r| *r));
             if let Some(rec) = rec {
                 self.note_anchors.push((rec, n));
+            }
+        }
+        for (at, anchor, m) in margins {
+            let rec = anchor.or_else(|| recs[..at.min(recs.len())].iter().rev().find_map(|r| *r)).or_else(|| recs.iter().find_map(|r| *r));
+            if let Some(rec) = rec {
+                self.marginpar_anchors.push((rec, m));
             }
         }
         (out, recs, labels, skips)
@@ -3098,20 +3330,6 @@ impl<'a> Context<'a> {
                     }
                 }
             }
-            // `\addvspace`: only the excess over the skip the previous
-            // block already left (`\@xaddvskip`).
-            if *addvspace_before != 0.0 {
-                let prev_after = blocks.last().and_then(|b| b.vertical.space_after).map_or(0.0, |s| s.0);
-                vspace += (addvspace_before - prev_after).max(0.0);
-                // `\@xaddvskip` keeps whichever skip is larger *whole*: when
-                // the previous block's trailing skip wins, its own stretch
-                // and shrink are what survive, so the list skip's are not
-                // added on top of them.
-                if prev_after <= 0.0 {
-                    flex.0 += addvspace_flex.0;
-                    flex.1 += addvspace_flex.1;
-                }
-            }
             // `\begin{center}`/`\begin{quote}`: `\addvspace{\topsep}` (plus
             // `\partopsep` from vertical mode) before the first paragraph;
             // `\end{...}` adds the same after the last (`\@endparenv`).
@@ -3120,6 +3338,33 @@ impl<'a> Context<'a> {
                 let p = if vmode { ctx.style.partopsep } else { crate::style::Skip::default() };
                 (t.natural + p.natural, t.stretch + p.stretch, t.shrink + p.shrink)
             };
+            // The environment's own opening `\addvspace\@topsep`, when this
+            // block opens one. It competes for the same `\lastskip` as
+            // `addvspace_before` (the `\@topsepadd` a list closed just
+            // before left behind), and two `\addvspace`s keep the larger —
+            // they never sum. So it is resolved here, before the
+            // `addvspace_before` bookkeeping, rather than added on top of
+            // it: `\end{itemize}\begin{quote}` used to be 10pt + 8pt = 18pt
+            // where pdflatex puts max(10pt, 10pt) = 10pt.
+            let env_natural = env_open.map_or(0.0, |e| match e.skips {
+                Some(s) => s.open.natural,
+                None => env_skip(e.vmode).0,
+            });
+            // `\addvspace`: only the excess over the skip the previous
+            // block already left (`\@xaddvskip`).
+            if *addvspace_before != 0.0 {
+                let prev_after = blocks.last().and_then(|b| b.vertical.space_after).map_or(0.0, |s| s.0);
+                vspace += (addvspace_before - prev_after).max(0.0);
+                // `\@xaddvskip` keeps whichever skip is larger *whole*: when
+                // the previous block's trailing skip wins, its own stretch
+                // and shrink are what survive, so the list skip's are not
+                // added on top of them. The environment's own opening skip
+                // wins the same way, and brings its own flex with it.
+                if prev_after <= 0.0 && env_natural <= *addvspace_before {
+                    flex.0 += addvspace_flex.0;
+                    flex.1 += addvspace_flex.1;
+                }
+            }
             if let Some(e) = env_open {
                 st.env_vmode = e.vmode;
                 st.env_skips = e.skips;
@@ -3147,7 +3392,14 @@ impl<'a> Context<'a> {
                     Some(s) => (s.open.natural, s.open.stretch, s.open.shrink),
                     None => env_skip(e.vmode),
                 };
-                let last = blocks.last().and_then(|b| b.vertical.space_after).map_or(0.0, |s| s.0);
+                // `\lastskip` as `\@item`'s `\addvspace\@topsep` sees it:
+                // the previous block's trailing skip, already raised to
+                // `addvspace_before` above when that was the larger.
+                let last = blocks
+                    .last()
+                    .and_then(|b| b.vertical.space_after)
+                    .map_or(0.0, |s| s.0)
+                    .max(*addvspace_before);
                 if st.after_heading || last >= n {
                     (0.0, 0.0, 0.0)
                 } else {
@@ -3424,6 +3676,7 @@ impl<'a> Context<'a> {
         // `\footnote` inside a float box: `footnotes::prepare` has already
         // run, so a note raised here would set its mark and never be placed.
         let (notes, anchors) = (self.notes.len(), self.note_anchors.len());
+        let (mnotes, manchors) = (self.marginpars.len(), self.marginpar_anchors.len());
         let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None };
         let outer = std::mem::replace(&mut self.parbox, true);
         // `\@floatboxreset` runs `\@setminipage`, and `\addvspace` does
@@ -3508,6 +3761,16 @@ impl<'a> Context<'a> {
             self.diagnostics.push(Diagnostic::warning(
                 "float_footnote_unplaced",
                 "a \\footnote inside a float body is not placed yet (LaTeX needs \\footnotemark here and \\footnotetext outside the float); the mark is set and the note text is omitted",
+                source,
+            ));
+        }
+        if self.marginpars.len() > mnotes {
+            let source = vec![self.source(float)];
+            self.marginpars.truncate(mnotes);
+            self.marginpar_anchors.truncate(manchors);
+            self.diagnostics.push(Diagnostic::warning(
+                "float_marginpar_unplaced",
+                "a \\marginpar inside a float body is not placed (LaTeX forbids marginpars there); the note text is omitted",
                 source,
             ));
         }
@@ -4165,12 +4428,16 @@ impl<'a> Context<'a> {
         // `\footnotetext`s of `\thanks`) after `\@maketitle` in vertical
         // mode: the notes' inserts follow the title's last line.
         let before = self.note_anchors.len();
+        let mbefore = self.marginpar_anchors.len();
         self.rlap_marks = true;
         let out = self.title_blocks_set(title, authors, date, g, form, columns);
         self.rlap_marks = false;
         let last = out.iter().rev().find_map(|b| b.block.lines.lines.last().and_then(|l| b.recs.get(l.items.clone()).and_then(|r| r.iter().rev().find_map(|r| *r))));
         if let Some(rec) = last {
             for anchor in &mut self.note_anchors[before..] {
+                anchor.0 = rec;
+            }
+            for anchor in &mut self.marginpar_anchors[mbefore..] {
                 anchor.0 = rec;
             }
         }
@@ -4535,10 +4802,10 @@ impl<'a> Context<'a> {
         (run, self.recs.len() - 1)
     }
 
-    /// ulem `\uline`/`\sout` or kernel `\underline`: content as an `\hbox`,
-    /// rule placed by `ul.geom`. `\uline` keeps the 0.25em-top / 0.4pt path.
-    fn underline_box(&mut self, ul: &adapter::UnderlineItem, size: f64) -> (pl::GlyphRun, usize) {
-        let (placed, width) = self.hbox_runs(&ul.items, size);
+    /// `items` as one unbreakable `\hbox` line at natural width, runs placed
+    /// from its left edge: the block and its width, height and depth.
+    fn hbox_block(&mut self, items: &[AItem], size: f64) -> (BuiltBlock, f64, f64, f64) {
+        let (placed, width) = self.hbox_runs(items, size);
         let (mut ht, mut dp) = (0.0f64, 0.0f64);
         let mut runs = Vec::with_capacity(placed.len());
         let mut items = Vec::with_capacity(placed.len());
@@ -4593,7 +4860,7 @@ impl<'a> Context<'a> {
                 contributed: None,
                 line_penalty: Vec::new(),
                 // TeX §890 `\brokenpenalty` follows a discretionary-broken
-                // line; the underlined fragment is one unbreakable line
+                // line; the boxed fragment is one unbreakable line
                 // (`hyphenated: false`), so there is never one to follow.
                 broken_penalty: Vec::new(),
                 depth_after: pagebuild::DepthAfter::default(),
@@ -4601,6 +4868,44 @@ impl<'a> Context<'a> {
             labels: Vec::new(),
             cache_key: None,
         };
+        (block, width, ht, dp)
+    }
+
+    /// latex.ltx `\@textsuperscript`/`\@textsubscript`:
+    /// `\m@th\ensuremath{^{\mbox{\fontsize\sf@size\z@\selectfont #1}}}` (`_`
+    /// for the subscript). The `\mbox` is set at the `\sf@size` of the text
+    /// size in effect, then shifted as the script of an empty nucleus in
+    /// text style (TeX §756-§758, Appendix G rules 18a-c): up by
+    /// `max(sup2, d + x-height/4)`, or down by `max(sub1, h - 4/5 x-height)`,
+    /// with the symbol font's parameters at the text size. `\scriptspace`
+    /// is part of the box's width. (pdflatex 10pt: `^{th}` shifted -3.62892,
+    /// `_{2}` shifted 1.49998; 12pt: -4.3547, 1.79999.)
+    fn text_script_box(&mut self, ts: &adapter::TextScriptItem, size: f64) -> (pl::GlyphRun, usize) {
+        let local = if ts.size_cpt == 0 { size } else { f64::from(ts.size_cpt) / 100.0 };
+        let sf = footnotes::script_size(local);
+        let (block, content_width, ht, dp) = self.hbox_block(&ts.items, sf);
+        let x_height = 0.430555 * local;
+        let (raise, height, depth) = if ts.superscript {
+            let shift = footnotes::sup2_pt(local).max(dp + 0.25 * x_height);
+            (shift, ht + shift, (dp - shift).max(0.0))
+        } else {
+            let shift = footnotes::textsub_shift_pt(
+                footnotes::sub_drop_pt(sf),
+                footnotes::sub1_pt(local),
+                ht - 0.8 * x_height,
+            );
+            (-shift, (ht - shift).max(0.0), dp + shift)
+        };
+        let width = content_width + footnotes::SCRIPT_SPACE;
+        self.recs.push(BoxRec::TextScript(Rc::new(TextScriptRec { block, width, height, depth, raise, span: ts.span })));
+        let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height, depth, source: ts.span.start..ts.span.end };
+        (run, self.recs.len() - 1)
+    }
+
+    /// ulem `\uline`/`\sout` or kernel `\underline`: content as an `\hbox`,
+    /// rule placed by `ul.geom`. `\uline` keeps the 0.25em-top / 0.4pt path.
+    fn underline_box(&mut self, ul: &adapter::UnderlineItem, size: f64) -> (pl::GlyphRun, usize) {
+        let (block, width, ht, dp) = self.hbox_block(&ul.items, size);
         let descender = self.uline_depth(size);
         let ex = self.text_params(TextStyle::default(), size).x_height;
         let (top, extra_depth) =
@@ -5506,6 +5811,45 @@ impl<'a> Context<'a> {
                     }
                 }
             }
+            RowsEnv::EqnArray => {
+                // Three columns sharing tab stops across every row; see
+                // `eqnarray_columns` for the kernel `\halign` this follows.
+                let mut colw = [0.0f64; 3];
+                for row in &cells {
+                    for (ci, c) in row.iter().enumerate().take(3) {
+                        colw[ci] = colw[ci].max(width(c));
+                    }
+                }
+                let sep = 2.0 * crate::mathgrid::ARRAYCOLSEP;
+                let origins = eqnarray_columns(colw, sep, dw, fleqn.then_some(margin));
+                for (ri, row) in cells.iter().enumerate() {
+                    for (ci, c) in row.iter().enumerate() {
+                        let w = width(c);
+                        xs[ri][ci] = match ci {
+                            // Right, centred, left.
+                            0 => origins[0] + colw[0] - w,
+                            1 => origins[1] + (colw[1] - w) / 2.0,
+                            2 => origins[2],
+                            // pdflatex raises `Too many columns in eqnarray
+                            // environment` and drops the cell into the
+                            // zero-width number column, where it overprints
+                            // whatever is there. Set the extras after
+                            // column 3 instead, so nothing is drawn on top
+                            // of anything else, and say so.
+                            _ => xs[ri][ci - 1] + width(&row[ci - 1]),
+                        };
+                    }
+                }
+                let extra = cells.iter().filter(|r| r.len() > 3).count();
+                if extra > 0 {
+                    let src = self.source(span);
+                    self.emit(None, Diagnostic::warning(
+                        "math_limitation",
+                        format!("{extra} eqnarray row(s) have more than three columns; pdflatex reports `Too many columns in eqnarray environment` and this sets the extra cells after the third column"),
+                        vec![src],
+                    ));
+                }
+            }
             RowsEnv::Gather => {
                 for (ri, row) in cells.iter().enumerate() {
                     let w: f64 = row.iter().map(width).sum();
@@ -5561,9 +5905,13 @@ impl<'a> Context<'a> {
                 vec![src],
             ));
         }
-        // Rows: `\strut@` (.7/.3 `\normalbaselineskip`) minima.
+        // Rows: `\strut@` (.7/.3 `\normalbaselineskip`) minima -- amsmath's
+        // `\displ@y@` family only. The kernel `\@@eqncr` template for real
+        // `eqnarray` has no strut at all: each row is a plain `\halign` row
+        // with only its own material's natural height/depth.
+        let is_eqnarray = matches!(env, RowsEnv::EqnArray);
         let normal = self.style.baselineskip_pt;
-        let (strut_h, strut_d) = (0.7 * normal, 0.3 * normal);
+        let (strut_h, strut_d) = if is_eqnarray { (0.0, 0.0) } else { (0.7 * normal, 0.3 * normal) };
         let mut items = Vec::new();
         let mut recs = Vec::new();
         let mut lines: Vec<pl::Line> = Vec::with_capacity(rows.len());
@@ -5657,15 +6005,66 @@ impl<'a> Context<'a> {
                 hyphenated: false,
             });
             extents.push((h, d));
-            vskips.push(0.0);
+            // `\@@eqncr`'s `\noalign{\vskip\jot}`: between each pair of rows
+            // only, never after the last (nothing follows `\end{eqnarray}`'s
+            // last row but the display's own `\belowdisplayskip`).
+            vskips.push(if is_eqnarray && ri + 1 < cells.len() { JOT } else { 0.0 });
             total += h + d;
+        }
+        // `\openup\jot` (amsmath `\displ@y@`) advances `\lineskiplimit` as
+        // well as `\baselineskip` and `\lineskip`, but the interline glue
+        // between these rows is laid by `pagebuild` against the page's
+        // `\lineskiplimit` (0pt). A short row above a tall one gives
+        // `\baselineskip+\jot - prevdepth - height` inside `[0pt, \jot)`:
+        // pdflatex has already fallen into lineskip mode there while the
+        // page rule keeps baselineskip mode, so the pair came out one
+        // `\jot` short. (A tall row above a short row gives negative glue,
+        // below either limit, which is why that order already matched.)
+        // Fold the missing difference into the upper row's after-skip
+        // exactly when the opened-up limit, and not the page limit, puts
+        // the pair in lineskip mode. The 1e-9pt slack keeps float noise
+        // from flipping TeX's strict `<` at the boundary: two strut-sized
+        // rows sit exactly on `\jot` and must stay in baselineskip mode.
+        //
+        // `eqnarray` never runs `\openup`: its `\lineskiplimit` is the
+        // page's own, unopened, so this correction (built from the
+        // amsmath-opened `bs`/`ls` constants, not `eqnarray`'s actual
+        // strut-less/un-opened values) does not apply there.
+        if !is_eqnarray {
+            let bs = normal + JOT;
+            let ls = self.style.lineskip_pt + JOT;
+            let limit = self.style.lineskiplimit_pt;
+            for i in 1..extents.len() {
+                let g = bs - extents[i - 1].1 - extents[i].0;
+                if g < limit + JOT - 1e-9 && g >= limit {
+                    vskips[i - 1] += extents[i - 1].1 + ls + extents[i].0 - bs;
+                }
+            }
         }
         if lines.is_empty() {
             return None;
         }
         let above = self.style.abovedisplayskip;
         let below = self.style.belowdisplayskip;
-        let first_adjust = if matches!(env, RowsEnv::Multline) { 0.0 } else { -JOT };
+        // `eqnarray` reaches `\jot` by a different route than amsmath's
+        // rows: amsmath's `\displ@y@` says `\openup\jot`, which advances
+        // `\baselineskip`, `\lineskip` AND `\lineskiplimit` for the whole
+        // display, while latex.ltx's `\@@eqncr` puts one explicit
+        // `\vskip\jot` in the `\noalign` between each pair of rows only --
+        // never before the first row or after the last, and never folded
+        // into the baselineskip/lineskip choice itself. For a short-row
+        // alignment (`a &= b \\ c &= d`, no strut on either side) that
+        // difference is invisible: both land in baselineskip mode at the
+        // same 15.000/16.600/17.500 pt (10/11/12pt) gap. It stops being
+        // invisible once a row is tall (a `\frac`, an integral): amsmath's
+        // `\openup`d `\lineskip`/`\lineskiplimit` push more rows into
+        // baselineskip mode and add `\jot` there too, while the kernel's
+        // plain `\lineskip`/`\lineskiplimit` fall into lineskip mode
+        // sooner and only ever add `\jot` from the explicit `\noalign`.
+        // Verified against pdflatex (10pt article): a `\frac` row followed
+        // by a short row gives 15.00pt baseline-to-baseline in `eqnarray`*
+        // but 19.26pt in `align`* for the identical two rows.
+        let first_adjust = if matches!(env, RowsEnv::Multline) || is_eqnarray { 0.0 } else { -JOT };
         let (an, ast, ash) = skip_tuple(above);
         let n = lines.len();
         let lines = pl::Lines {
@@ -5697,7 +6096,6 @@ impl<'a> Context<'a> {
             space_after: Some(skip_tuple(below)),
             no_interline_first: false,
             no_interline_after: false,
-            baselineskip: Some(normal + JOT),
             // `\openup\jot` (amsmath `\displ@y@`) advances `\lineskip` as
             // well as `\baselineskip` — `\openup` is `\advance` on all three
             // of `\lineskip`, `\baselineskip` and `\lineskiplimit`. Leaving
@@ -5711,8 +6109,12 @@ impl<'a> Context<'a> {
             // integral/fraction rows of a real problem set drifted 3pt per
             // row. pdfLaTeX's own `\showoutput` for
             // `fixtures/real-world/ps-calculus` prints `\glue(\lineskip) 4.0`
-            // between the rows of both of its alignments.
-            lineskip: Some(self.style.lineskip_pt + JOT),
+            // between the rows of both of its alignments. `eqnarray` does
+            // not `\openup`: its `\jot` is the explicit per-row `\vskip`
+            // added to `vskips` below, so its baselineskip/lineskip stay
+            // exactly the page's own.
+            baselineskip: Some(if is_eqnarray { normal } else { normal + JOT }),
+            lineskip: Some(self.style.lineskip_pt + if is_eqnarray { 0.0 } else { JOT }),
             vskip_after: vskips,
             broken_penalty: Vec::new(),
             pre_space_after: None,
@@ -5773,6 +6175,7 @@ impl<'a> Context<'a> {
                     BoxRec::ColorBox(c) => Some(c.span),
                     BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
+                    BoxRec::TextScript(t) => Some(t.span),
                 })
                 .next();
             let _ = list;
@@ -6424,22 +6827,37 @@ pub fn operator_thin_space_split(text: &str, at: usize) -> Option<(&'static str,
 /// assumes; amsmath makes `\dots` guess from what follows it, and neither
 /// side models that.
 ///
-/// `\vdots` and `\ddots` are deliberately **not** here. They are not runs of
-/// dots at all but vertical box constructions over *text*-font periods --
-/// `\vdots` is a `\vbox` of three `\hbox{.}` at `\baselineskip` 2.83334 over
-/// a `\kern 6.0`, and `\ddots` an Inner hbox of three `\hbox{.}` shifted
-/// -7.0/-4.0/-1.0 between kerns of 0.66666 and 1.33331 -- and math-layout has
-/// no atom that builds a vbox, so they need their own change.
-pub fn math_ellipsis_of(text: &str, at: usize) -> Option<char> {
+/// `\vdots` and `\ddots` are here too, as [`MathDots::Vertical`] and
+/// [`MathDots::Diagonal`], but they are a different construction: not a run of
+/// math characters at all but *text*-font periods in a `\vbox`, at absolute
+/// point offsets ([`crate::mathtext::BuiltBody::Dots`]). The compiler maps both to one Latin
+/// Modern Math codepoint (U+22EE, U+22F1) whose advance is 2.18pt and 6.13pt
+/// and whose ink box is 5.06pt too short, so the atom is rebuilt here for the
+/// same reason the `\ldots` family is.
+pub fn math_ellipsis_of(text: &str, at: usize) -> Option<MathDots> {
     let rest = text.get(at..)?.strip_prefix('\\')?;
     let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
     Some(match &rest[..word_len] {
         // `\ldotp`, `\mathcode`"013A: the math italic period.
-        "ldots" | "dots" | "dotsc" | "dotso" => '.',
+        "ldots" | "dots" | "dotsc" | "dotso" => MathDots::Inline('.'),
         // `\cdotp`, cmsy `"01`: the centred dot.
-        "cdots" | "dotsb" | "dotsm" | "dotsi" => '\u{22C5}',
+        "cdots" | "dotsb" | "dotsm" | "dotsi" => MathDots::Inline('\u{22C5}'),
+        "vdots" => MathDots::Vertical,
+        "ddots" => MathDots::Diagonal,
         _ => return None,
     })
+}
+
+/// Which dots a control word at a span sets ([`math_ellipsis_of`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathDots {
+    /// `\ldots`/`\cdots` and the amsmath spellings: `\mathinner` of three
+    /// Punct atoms of this math character.
+    Inline(char),
+    /// `\vdots`: the `\vbox` stack of three text-font periods.
+    Vertical,
+    /// `\ddots`: the `\mathinner` of three raised text-font periods.
+    Diagonal,
 }
 
 /// [`convert_math_fenced`] with `class` giving the forced class of a
@@ -6454,7 +6872,7 @@ pub fn convert_math_classed(
     op_limits: &dyn Fn(&Span) -> Option<ml::Limits>,
     text_italic: &dyn Fn(&Span) -> bool,
     text_split: &dyn Fn(&Span) -> Option<(&'static str, &'static str)>,
-    ellipsis: &dyn Fn(&Span) -> Option<char>,
+    ellipsis: &dyn Fn(&Span) -> Option<MathDots>,
 ) -> ml::MathList {
     use flashtex_compiler::math::{DelimiterRole, Nucleus as N};
     // Open fences: (left delimiter, atoms converted since it, its span).
@@ -6470,11 +6888,30 @@ pub fn convert_math_classed(
             // `Nucleus::Symbol("⋅⋅⋅")` for the centred ones -- so the atoms
             // are rebuilt here: three Punct dots (3mu apart) inside one Inner
             // atom (a thin space against each neighbour).
-            N::Text(_) | N::Symbol(_) if ellipsis(&a.span).is_some() => {
-                let dot = ellipsis(&a.span).expect("checked by the guard");
-                let dots = (0..3).map(|_| ml::Atom::new(ml::AtomClass::Punct, ml::Nucleus::Symbol(dot))).collect();
-                vec![ml::Atom::new(ml::AtomClass::Inner, ml::Nucleus::List(ml::MathList::new(dots)))]
-            }
+            N::Text(_) | N::Symbol(_) if ellipsis(&a.span).is_some() => match ellipsis(&a.span).expect("checked by the guard") {
+                MathDots::Inline(dot) => {
+                    let dots = (0..3).map(|_| ml::Atom::new(ml::AtomClass::Punct, ml::Nucleus::Symbol(dot))).collect();
+                    vec![ml::Atom::new(ml::AtomClass::Inner, ml::Nucleus::List(ml::MathList::new(dots)))]
+                }
+                // `\vdots`/`\ddots`: text-font periods stacked at absolute
+                // point offsets, not a character. math-layout has no nucleus
+                // for a box the caller builds, so they go through the same
+                // placeholder seam as a grid or a `\boxed` frame
+                // (`crate::mathtext::BuiltBody::Dots`).
+                dots @ (MathDots::Vertical | MathDots::Diagonal) => {
+                    let tag = {
+                        #[cfg(feature = "math-glyph-spans")]
+                        {
+                            math_tag(a.span)
+                        }
+                        #[cfg(not(feature = "math-glyph-spans"))]
+                        {
+                            ml::SourceTag::NONE
+                        }
+                    };
+                    vec![sink.dots_atom(dots == MathDots::Diagonal, tag)]
+                }
+            },
             // `\lim`, `\sin`, `\max`, ...: TeX's `\mathop` of upright roman
             // text (`latex.ltx` 15523-15556), so an `Op` atom -- which is both
             // the thin space the Op class contributes on each side and, for
@@ -6874,6 +7311,53 @@ pub fn convert_math_classed(
                 let atom_class = if left.is_empty() && right.is_empty() { ml::AtomClass::Ord } else { ml::AtomClass::Inner };
                 vec![sink.grid_atom(atom_class, cells, columns, left, right, a.span)]
             }
+            // `\text{..}` with nested math (`TextRun`) replaces the old pin's
+            // flat `Nucleus::Text` for the same input, so this arm must set
+            // *something* for every piece or the re-pin would silently drop
+            // the words. It is the old `Text` handling, piece by piece, with
+            // the nested formulas spliced in place; what it does not yet do
+            // is honour a piece's own `TextStyle` (PR #585).
+            #[cfg(feature = "compiler-node-surface")]
+            N::TextRun(pieces) => {
+                let mut parts: Vec<ml::Atom> = Vec::new();
+                for p in pieces {
+                    match p {
+                        flashtex_compiler::math::TextPiece::Text { text, .. } => parts.push(sink.atom(text)),
+                        flashtex_compiler::math::TextPiece::Math(inner) => parts.extend(sub(inner, sink).atoms),
+                    }
+                }
+                vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(ml::MathList::new(parts)))]
+            }
+            // `\sideset{_a^b}{_c^d}\sum`: the left pair hangs off an empty
+            // box before the operator, which is what math-layout's
+            // `Atom::left_scripts` sets exactly -- PR #582's job. Until then
+            // the left scripts are set on an empty Ord atom in front of the
+            // operator, so every sub-formula is still painted, just without
+            // the display-style measuring the real construction needs.
+            #[cfg(feature = "compiler-node-surface")]
+            N::SideSet { operator, left_superscript, left_subscript } => {
+                let mut out = Vec::new();
+                if left_superscript.is_some() || left_subscript.is_some() {
+                    let mut lead = ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(ml::MathList::new(Vec::new())));
+                    if let Some(l) = left_superscript {
+                        lead = lead.with_sup(sub(l, sink));
+                    }
+                    if let Some(l) = left_subscript {
+                        lead = lead.with_sub(sub(l, sink));
+                    }
+                    out.push(lead);
+                }
+                out.extend(sub(operator, sink).atoms);
+                out
+            }
+            // mathtools `\mathllap`/`\mathrlap`/`\mathclap`: a zero-advance
+            // box whose ink is still painted. math-layout has no lap atom, so
+            // the body is set as an ordinary group -- its ink is right, its
+            // advance is not yet zero.
+            #[cfg(feature = "compiler-node-surface")]
+            N::Lap { body, .. } => vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(sub(body, sink)))],
+            #[cfg(not(feature = "amsmath-inline"))]
+            _ => continue,
         };
         // Every atom this compiler atom produced maps to its bytes unless a
         // more precise span was already given (a `\left...\right` pair).
@@ -7289,6 +7773,46 @@ fn split_at_spaces(list: &flashtex_compiler::math::MathList, fence: &dyn Fn(&Spa
     out
 }
 
+/// latex.ltx `\eqnarray` column origins, relative to the text block.
+///
+/// ```text
+/// \tabskip\@centering
+/// $$\everycr{}\halign to\displaywidth\bgroup
+///     \hskip\@centering$\displaystyle\tabskip\z@skip{##}$\@eqnsel
+///    &\global\@eqcnt\@ne\hskip \tw@\arraycolsep \hfil${##}$\hfil
+///    &\global\@eqcnt\tw@ \hskip \tw@\arraycolsep
+///       $\displaystyle{##}$\hfil\tabskip\@centering
+///    &\global\@eqcnt\thr@@ \hb@xt@\z@\bgroup\hss##\egroup
+///       \tabskip\z@skip
+///    \cr}
+/// ```
+///
+/// The only tabskips that stretch across the line are the `\@centering`
+/// one before column 1 and the `\@centering` one after column 3, so the
+/// three-column block is centred on `\displaywidth`; the `\hskip
+/// \@centering` *inside* column 1 stretches only within that column,
+/// which is what right-aligns it. Column 2 is `\hfil${##}$\hfil`
+/// (centred) and column 3 `$\displaystyle{##}$\hfil` (left).
+///
+/// `sep` is `\tw@\arraycolsep`. This is the notorious quirk the issue
+/// calls out: the relation column is `${##}$`, a group, so it is an Ord
+/// and takes no `\thickmuskip` at either edge — the whole gap is the
+/// fixed 2 x `\arraycolsep`, not `align`'s 5 mu. Measured against
+/// pdfTeX 3.141592653 / TeX Live 2026 at 10/11/12 pt: 9.96 bp of gap
+/// either side of the relation, against `align`'s 2.77 bp.
+///
+/// Under `fleqn` (fleqn.clo) the leading tabskip is `\mathindent`
+/// instead, so the block starts at the margin; `leqno` moves only the
+/// number, which the tag code handles.
+fn eqnarray_columns(colw: [f64; 3], sep: f64, dw: f64, fleqn_at: Option<f64>) -> [f64; 3] {
+    let total = colw[0] + colw[1] + colw[2] + 2.0 * sep;
+    let x0 = match fleqn_at {
+        Some(m) => m,
+        None => ((dw - total) / 2.0).max(0.0),
+    };
+    [x0, x0 + colw[0] + sep, x0 + colw[0] + colw[1] + 2.0 * sep]
+}
+
 /// Every `array`/`cases`/matrix grid in `list` and its sub-formulas as
 /// `(rows, columns)`; see the `Matrix` arm of [`convert_math_fenced`].
 fn math_grids(list: &flashtex_compiler::math::MathList, out: &mut Vec<(usize, usize)>) {
@@ -7328,6 +7852,27 @@ fn math_grids(list: &flashtex_compiler::math::MathList, out: &mut Vec<(usize, us
                 math_grids(above, out);
                 math_grids(below, out);
             }
+            // Nuclei only a re-pinned compiler emits: a grid can hide inside
+            // any of their nested lists, so all of them are walked.
+            #[cfg(feature = "compiler-node-surface")]
+            N::TextRun(pieces) => {
+                for p in pieces {
+                    if let flashtex_compiler::math::TextPiece::Math(inner) = p {
+                        math_grids(inner, out);
+                    }
+                }
+            }
+            #[cfg(feature = "compiler-node-surface")]
+            N::SideSet { operator, left_superscript, left_subscript } => {
+                math_grids(operator, out);
+                for l in [left_superscript, left_subscript].into_iter().flatten() {
+                    math_grids(l, out);
+                }
+            }
+            #[cfg(feature = "compiler-node-surface")]
+            N::Lap { body, .. } => math_grids(body, out),
+            #[cfg(not(feature = "amsmath-inline"))]
+            _ => {}
         }
         if let Some(s) = &a.superscript {
             math_grids(s, out);
@@ -7373,6 +7918,24 @@ fn math_glue_em(list: &flashtex_compiler::math::MathList) -> f64 {
                 N::SubArray { rows, .. } => rows.iter().map(math_glue_em).sum(),
                 #[cfg(feature = "amsmath-inline")]
                 N::ExtArrow { above, below, .. } => math_glue_em(above) + math_glue_em(below),
+                // Nuclei only a re-pinned compiler emits: explicit glue can
+                // sit inside any of their nested lists.
+                #[cfg(feature = "compiler-node-surface")]
+                N::TextRun(pieces) => pieces
+                    .iter()
+                    .map(|p| match p {
+                        flashtex_compiler::math::TextPiece::Math(inner) => math_glue_em(inner),
+                        flashtex_compiler::math::TextPiece::Text { .. } => 0.0,
+                    })
+                    .sum(),
+                #[cfg(feature = "compiler-node-surface")]
+                N::SideSet { operator, left_superscript, left_subscript } => {
+                    math_glue_em(operator) + [left_superscript, left_subscript].into_iter().flatten().map(math_glue_em).sum::<f64>()
+                }
+                #[cfg(feature = "compiler-node-surface")]
+                N::Lap { body, .. } => math_glue_em(body),
+                #[cfg(not(feature = "amsmath-inline"))]
+                _ => 0.0,
             };
             own + a.superscript.as_ref().map_or(0.0, math_glue_em) + a.subscript.as_ref().map_or(0.0, math_glue_em)
         })
@@ -7402,6 +7965,11 @@ fn accent_char(a: flashtex_compiler::math::Accent) -> char {
         A::Breve => '\u{02D8}',
         A::Acute => '\u{00B4}',
         A::Grave => '`',
+        // `\mathring` (`\mathaccent"017` in the LaTeX kernel, the ring of
+        // `\r`): U+02DA RING ABOVE, the spacing modifier this table uses for
+        // every non-wide accent. Only a re-pinned compiler can produce it.
+        #[cfg(feature = "compiler-node-surface")]
+        A::Mathring => '\u{02DA}',
     }
 }
 
@@ -7484,6 +8052,34 @@ fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<S
                 math_approximations(above, out);
                 math_approximations(below, out);
             }
+            // Nuclei only a re-pinned compiler emits. The two that this
+            // crate does not set exactly yet say so here, so the
+            // approximation reaches the document's limitations instead of
+            // being invisible; the stacked PRs delete these two lines when
+            // they set the real construction.
+            #[cfg(feature = "compiler-node-surface")]
+            N::TextRun(pieces) => {
+                for p in pieces {
+                    if let flashtex_compiler::math::TextPiece::Math(inner) = p {
+                        math_approximations(inner, out);
+                    }
+                }
+            }
+            #[cfg(feature = "compiler-node-surface")]
+            N::SideSet { operator, left_superscript, left_subscript } => {
+                out.push("\\sideset left scripts set on an empty box before the operator, not measured in display style".to_string());
+                math_approximations(operator, out);
+                for l in [left_superscript, left_subscript].into_iter().flatten() {
+                    math_approximations(l, out);
+                }
+            }
+            #[cfg(feature = "compiler-node-surface")]
+            N::Lap { body, .. } => {
+                out.push("\\mathllap/\\mathrlap/\\mathclap set as an ordinary group: math-layout has no zero-advance lap box".to_string());
+                math_approximations(body, out);
+            }
+            #[cfg(not(feature = "amsmath-inline"))]
+            _ => {}
         }
         for part in [&a.superscript, &a.subscript].into_iter().flatten() {
             math_approximations(part, out);
@@ -7612,7 +8208,7 @@ fn block_key(cache: Option<&RenderCache>, style_fp: u64, tag: u8, items: &[AItem
         return (None, None);
     }
     // A footnote's record indices and note table are per build.
-    if items.iter().any(|i| matches!(i, AItem::Footnote { .. })) {
+    if items.iter().any(|i| matches!(i, AItem::Footnote { .. } | AItem::Marginpar { .. })) {
         return (None, None);
     }
     let Some((document, base)) = incremental::block_origin(items) else {
@@ -7729,6 +8325,96 @@ const TABCOLSEP_PT: f64 = 6.0;
 /// -\dbltextfloatsep` takes back off its own box.
 const DBLTEXTFLOATSEP_PT: f64 = 20.0;
 
+/// [`pagebuild::natural_layout`] with the height TeX gives a `\vbox` whose
+/// list ends in glue, which `\@topnewpage`'s `\vskip -\dbltextfloatsep`
+/// makes it: the depth of the last box counts toward the height instead of
+/// becoming the box's depth. When the list already ends in glue that depth
+/// is in the total, so nothing is added.
+fn natural_box(p: &pagebuild::PageParams, list: &[pagebuild::VItem]) -> (Vec<pagebuild::Placed>, f64) {
+    let (placed, total) = pagebuild::natural_layout(p, list, false);
+    let trailing = list
+        .iter()
+        .rev()
+        .find_map(|i| match i {
+            pagebuild::VItem::Box { depth, .. } => Some(*depth),
+            pagebuild::VItem::Glue { .. } => Some(0.0),
+            pagebuild::VItem::Penalty(_) => None,
+        })
+        .unwrap_or(0.0);
+    (placed, total + trailing)
+}
+
+/// Merges a sub-[`Context`] -- one built against a `Stylesheet` of its own,
+/// which is the only way to set material at a width other than
+/// `\columnwidth` -- back into `ctx`. Its box and math records are appended
+/// and every index into them fixed up. Returns where its blocks landed.
+pub(crate) fn absorb(ctx: &mut Context, mut sub: Context, mut sub_blocks: Vec<BuiltBlock>, blocks: &mut Vec<BuiltBlock>) -> usize {
+    let (rec_off, math_off, block_off) = (ctx.recs.len(), ctx.maths.len(), blocks.len());
+    let fix = |b: &mut BuiltBlock| {
+        for r in b.recs.iter_mut().flatten() {
+            *r += rec_off;
+        }
+        b.cache_key = None;
+    };
+    let mut recs = std::mem::take(&mut sub.recs);
+    for r in &mut recs {
+        match r {
+            BoxRec::Math(m) => *m += math_off,
+            BoxRec::Table(t) => {
+                let mut tr = (**t).clone();
+                for piece in &mut tr.pieces {
+                    fix(&mut piece.block);
+                }
+                *t = Rc::new(tr);
+            }
+            _ => {}
+        }
+    }
+    ctx.recs.extend(recs);
+    ctx.maths.extend(std::mem::take(&mut sub.maths));
+    for b in &mut sub_blocks {
+        fix(b);
+    }
+    blocks.append(&mut sub_blocks);
+    for d in sub.take_diagnostics() {
+        if !ctx.diagnostics.iter().any(|x| x.code == d.code && x.message == d.message && x.sources == d.sources) {
+            ctx.diagnostics.push(d);
+        }
+    }
+    block_off
+}
+
+/// `\@topnewpage`'s box (latex.ltx 20466-20505):
+///
+/// ```text
+/// \vbox{\hsize\textwidth \@parboxrestore \col@number\@ne #1 \vskip -\dbltextfloatsep}
+/// ```
+///
+/// The material is set once, at the full `\textwidth`, with
+/// `\@parboxrestore`'s zero `\parindent` and `\parskip` -- which is what
+/// [`Context::box_blocks`] already sets a box's body with. Returns the
+/// triple `top_title` carries: where the blocks landed, their lines at
+/// their natural positions in the box, and the box's natural height.
+fn top_material_box(ctx: &mut Context, body: &[Block], blocks: &mut Vec<BuiltBlock>, span: Span) -> Option<(usize, Vec<pagebuild::Placed>, f64)> {
+    let mut wide = ctx.style.clone();
+    wide.text_width_pt = crate::style::frame_pt(ctx.style.class_geometry.as_deref()?.frame.text_width);
+    let first = {
+        let mut sub = Context::with_texts(ctx.fonts, &wide, ctx.paths, ctx.texts);
+        let mut sub_blocks: Vec<BuiltBlock> = Vec::new();
+        sub.box_blocks(body, &mut sub_blocks, span, false);
+        absorb(ctx, sub, sub_blocks, blocks)
+    };
+    let p = page_params(ctx.style);
+    let vb: Vec<VBlock> = blocks[first..].iter().map(|b| b.vertical.clone()).collect();
+    let (placed, height) = natural_box(&p, &pagebuild::vlist(&p, &vb));
+    // The lines are placed in the box, not in a column: they must not be
+    // contributed to the page's vertical list as well.
+    for b in &mut blocks[first..] {
+        b.vertical.lines.clear();
+    }
+    Some((first, placed, height))
+}
+
 /// Reports a `\twocolumn[<material>]` case `\@topnewpage` handles and this
 /// page builder does not, against the title block's first source span.
 fn top_title_warning(ctx: &mut Context, blocks: &[BuiltBlock], first: usize, message: &str) {
@@ -7796,6 +8482,17 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // placed in the box, and the box height plus `\dbltextfloatsep` that
     // both columns of the first page lose.
     let mut top_title: Option<(usize, Vec<pagebuild::Placed>, f64)> = None;
+    // `\twocolumn[<material>]`: the optional argument is the page's first
+    // material and `\@topnewpage` sets it in a box above both columns. The
+    // adapter has already cut it out of `doc.blocks`; an empty one
+    // (`\twocolumn[]`) is a box of no height and leaves the page alone.
+    if let Some((body, span)) = doc.top_material.as_ref().filter(|(b, _)| !b.is_empty()) {
+        if n_columns > 1 {
+            top_title = top_material_box(ctx, body, &mut blocks, *span);
+        } else {
+            ctx.box_blocks(body, &mut blocks, *span, false);
+        }
+    }
     // `\sectionmark`/`\chaptermark` as defined by the last `\ps@headings` or
     // `\ps@myheadings` (`\ps@plain`/`\ps@empty` leave them alone).
     let mut mark_rules: Vec<flashtex_class_geometry::MarkRule> = geo.map(|g| g.mark_rules.clone()).unwrap_or_default();
@@ -7813,9 +8510,30 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     let mut wide_blocks: Vec<usize> = Vec::new();
     // longtable page-breaking regions, by built-block index.
     let mut longtables: Vec<(usize, pagebuild::Region)> = Vec::new();
+    // `titlepage` `abstract` pages (`adapter::Doc::abstract_pages`), as
+    // `(the opening \null, the last block of the body, the closing \null)`
+    // in built-block indices; the `\vfil`s are resolved after the loop.
+    let mut abstract_pages: Vec<(usize, usize, usize)> = Vec::new();
+    let mut open_abstract: Option<usize> = None;
     for (doc_index, block) in doc.blocks.iter().enumerate() {
         if doc.page_starts.binary_search(&doc_index).is_ok() {
             page_start_blocks.push(blocks.len());
+        }
+        // `titlepage`'s `abstract` (report.cls 441-450): `\titlepage` is
+        // `\newpage \thispagestyle{empty} \setcounter{page}\@ne`, and the
+        // environment opens `\null\vfil` under it. The `\null` is what
+        // fixes the head's distance from the text top: without it the
+        // first box on the page would be the head line itself, and
+        // `\topskip` would shrink by its height.
+        if doc.abstract_pages.iter().any(|&(start, _)| start == doc_index) && open_abstract.is_none() {
+            let span = crate::abstractenv::block_span(block).unwrap_or_else(|| Span::in_document(flashtex_compiler::DocumentId(0), 0, 0));
+            events.push((blocks.len(), adapter::ChromeEvent::ThisPageStyle(flashtex_class_geometry::PageStyle::Empty), span));
+            events.push((blocks.len(), adapter::ChromeEvent::SetPage(1), span));
+            let mut null = plain_vblock(vec![(0.0, 0.0)]);
+            null.penalty_before = Some(pagebuild::EJECT_PENALTY);
+            open_abstract = Some(blocks.len());
+            blocks.push(empty_block(null));
+            after_heading = false;
         }
         match block {
             Block::Heading {
@@ -8097,6 +8815,48 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 after_heading = false;
             }
         }
+        // `\end{abstract}` is `\par\vfil\null\endtitlepage`, and
+        // `\endtitlepage` is `\newpage` plus, one-sided,
+        // `\setcounter{page}\@ne` again -- so the material after the
+        // environment starts the next page, which is half of what this
+        // branch of the environment is.
+        if let Some(start) = open_abstract.filter(|_| doc.abstract_pages.iter().any(|&(_, last)| last == doc_index)) {
+            let last_material = (blocks.len().saturating_sub(1)).max(start);
+            let mut null = plain_vblock(vec![(0.0, 0.0)]);
+            null.penalty_after = Some(pagebuild::EJECT_PENALTY);
+            blocks.push(empty_block(null));
+            if geo.is_none_or(|g| !g.flags.twoside) {
+                let span = crate::abstractenv::block_span(block).unwrap_or_else(|| Span::in_document(flashtex_compiler::DocumentId(0), 0, 0));
+                events.push((blocks.len(), adapter::ChromeEvent::SetPage(1), span));
+            }
+            abstract_pages.push((start, last_material, blocks.len() - 1));
+            open_abstract = None;
+            after_heading = false;
+        }
+    }
+    // The two `\vfil`s of a `titlepage` `abstract` and `\newpage`'s third
+    // share what the page leaves over (a fourth of `.0001fil` under
+    // `\raggedbottom`'s `\@textbottom`), exactly as the `titlepage`
+    // `\maketitle` does. The page builder has no stretchable vertical glue,
+    // so the share is resolved here into a rigid skip against the page's
+    // own natural height -- which is why it runs after every block of the
+    // page is built and not while one is.
+    for &(start, last_material, end) in &abstract_pages {
+        let p = page_params(style);
+        let vb: Vec<VBlock> = blocks[start..=end].iter().map(|b| b.vertical.clone()).collect();
+        let (_, natural) = pagebuild::natural_layout(&p, &pagebuild::vlist(&p, &vb), true);
+        let fils = 3.0 + if style.raggedbottom { 1e-4 } else { 0.0 };
+        let fil = ((style.text_height_pt - natural) / fils).max(0.0);
+        // `\null\vfil` and `\par\vfil\null`: the two are one glue when the
+        // abstract set no body at all.
+        let takers = if start == last_material { 1 } else { 2 };
+        for &at in [start, last_material].iter().take(takers) {
+            let v = &mut blocks[at].vertical;
+            v.space_after = Some(match v.space_after {
+                Some((n, s, k)) => (n + fil, s, k),
+                None => (fil, 0.0, 0.0),
+            });
+        }
     }
     // `\twocolumn` begins with `\clearpage`: column material after
     // full-width material starts a page (`\onecolumn`'s own `\clearpage`
@@ -8365,6 +9125,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     if let Some(g) = geo {
         page_chrome(ctx, g, &mut blocks, &mut pages, &mut line_dx, &events, &counters);
     }
+    // Margin notes ride the calling line's page: placed after page breaking
+    // (and the chrome above) so each note lands on the page its line
+    // shipped on, clipped to the text area.
+    marginpar::place(ctx, &mut blocks, &mut pages, &mut line_dx);
     // Float image items and labels are numbered by page-builder column
     // (before `\cleardoublepage`'s empty pages): map them to their page and
     // give them the page's margin and column offset (an even twoside page's
@@ -8407,6 +9171,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     BoxRec::ColorBox(c) => Some(c.span),
                     BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
+                    BoxRec::TextScript(t) => Some(t.span),
             });
         let src = span.map(|sp| vec![ctx.source(sp)]).unwrap_or_default();
         ctx.diagnostics.push(Diagnostic::warning(
@@ -8942,6 +9707,7 @@ pub fn assemble_windowed(
                     BoxRec::ColorBox(c) => Some(c.span),
                     BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
+                    BoxRec::TextScript(t) => Some(t.span),
                     BoxRec::Text { .. } => None,
                 });
                 unmapped_diags.push(Diagnostic::warning(
@@ -9289,6 +10055,23 @@ fn assemble_block(
                             provenance: Provenance::Source(source_of(ul.span)),
                         }));
                     }
+                }
+                BoxRec::TextScript(ts) => {
+                    let a = assemble_block(&ts.block, recs, maths, 0.0, source_of, paths, empty);
+                    let dx = Tick::from_tex_pt(local.x);
+                    let dy = Tick::from_tex_pt(-ts.raise);
+                    for line_items in &a.lines {
+                        for it in line_items {
+                            let mut item = incremental::place_item(it, dy, "", 0);
+                            display::shift_x(&mut item, dx);
+                            items.push(item);
+                        }
+                    }
+                    for f in a.faces {
+                        used.entry(f.font_id.clone()).or_insert(f);
+                    }
+                    resources.extend(a.resources);
+                    unmapped.extend(a.unmapped);
                 }
                 BoxRec::Leader { .. } => {}
                 BoxRec::Rule { width, height, bottom, span } => {
@@ -10174,6 +10957,29 @@ pub fn documents_referenced(list: &DisplayList) -> BTreeSet<DocumentId> {
     out
 }
 
+/// Whether `c` never starts a user-perceived character of its own (Unicode
+/// grapheme `Extend`/`ZWJ` in the common Latin/symbol/emoji blocks):
+/// combining marks, joiners, variation selectors, emoji modifiers and tags.
+fn extends_grapheme(c: char) -> bool {
+    matches!(c as u32,
+        0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x200C..=0x200D | 0x20D0..=0x20FF
+        | 0xFE00..=0xFE0F | 0xFE20..=0xFE2F | 0x1F3FB..=0x1F3FF | 0xE0020..=0xE007F | 0xE0100..=0xE01EF)
+}
+
+/// The body of the `\verb<d>...<d>` (or `\verb*`) whose command name is
+/// `text[start..end]`, as the compiler spans a `\verb`'s characters.
+fn verb_body(text: &str, start: usize, end: usize) -> Option<&str> {
+    let name = text.get(start..end)?;
+    if name != "\\verb" && name != "\\verb*" {
+        return None;
+    }
+    let rest = text.get(end..)?;
+    let rest = if name == "\\verb" { rest.strip_prefix('*').unwrap_or(rest) } else { rest };
+    let delimiter = rest.chars().next().filter(|d| !d.is_ascii_alphabetic() && !d.is_whitespace())?;
+    let body = &rest[delimiter.len_utf8()..];
+    Some(&body[..body.find(delimiter)?])
+}
+
 #[cfg(all(test, feature = "math-glyph-spans"))]
 mod math_paint_tests {
     use super::*;
@@ -10190,5 +10996,120 @@ mod math_paint_tests {
         // Partly outside every range, or before it: unpainted.
         assert_eq!(innermost_paint(&ranges, 5, 12), None);
         assert_eq!(innermost_paint(&ranges, 0, 1), None);
+    }
+}
+
+#[cfg(test)]
+mod eqnarray_tests {
+    use super::eqnarray_columns;
+
+    /// pdfTeX 3.141592653 (TeX Live 2026), `article` + `geometry`
+    /// `margin=1in` on US Letter, so the text block runs 72 bp .. 540 bp
+    /// and `\displaywidth` is 468 bp. Glyph origins read with PyMuPDF from
+    ///
+    /// ```tex
+    /// \begin{eqnarray}
+    /// a &=& b \\
+    /// cd &=& e
+    /// \end{eqnarray}
+    /// ```
+    ///
+    /// Everything below is in bp, measured relative to the text left edge
+    /// (72 bp subtracted), and `sep` is the measured gap rather than
+    /// `2\arraycolsep` in pt, so the function is exercised in one unit.
+    /// Gate: 0.5 bp.
+    const TOL: f64 = 0.5;
+    const DW: f64 = 468.0;
+
+    fn check(name: &str, colw: [f64; 3], sep: f64, want: [f64; 3]) {
+        let got = eqnarray_columns(colw, sep, DW, None);
+        for i in 0..3 {
+            assert!(
+                (got[i] - want[i]).abs() <= TOL,
+                "{name}: column {i} at {:.4} bp, pdflatex {:.4} bp",
+                got[i],
+                want[i],
+            );
+        }
+    }
+
+    #[test]
+    fn columns_match_pdflatex_at_ten_point() {
+        // col1 [285.0950,294.5993] rel [304.5619,312.3128] col3 [322.2754,326.9180]
+        check(
+            "10pt",
+            [9.5043, 7.7509, 4.6426],
+            9.9626,
+            [213.0950, 232.5619, 250.2754],
+        );
+    }
+
+    #[test]
+    fn columns_match_pdflatex_at_eleven_point() {
+        // col1 [284.0560,294.4633] rel [304.4233,312.9106] col3 [322.8706,327.9542]
+        check(
+            "11pt",
+            [10.4073, 8.4873, 5.0836],
+            9.9600,
+            [212.0560, 232.4233, 250.8706],
+        );
+    }
+
+    #[test]
+    fn columns_match_pdflatex_at_twelve_point() {
+        // col1 [283.2120,294.3303] rel [304.2890,313.3989] col3 [323.3695,328.7972]
+        check(
+            "12pt",
+            [11.1183, 9.1099, 5.4277],
+            9.9626,
+            [211.2120, 232.2890, 251.3695],
+        );
+    }
+
+    /// A row whose right-hand side is long still centres the block: the
+    /// third column simply grows, it does not push the block off centre.
+    /// 10 pt, `cd &=& xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`:
+    /// col1 [202.0060,211.5103] rel [221.4729,229.2238] col3 [239.1864,410.1546]
+    #[test]
+    fn long_right_hand_side_keeps_the_block_centred() {
+        check(
+            "10pt long rhs",
+            [9.5043, 7.7509, 170.9682],
+            9.9626,
+            [130.0060, 149.4729, 167.1864],
+        );
+    }
+
+    /// fleqn.clo swaps the leading `\@centering` tabskip for `\mathindent`
+    /// (`\leftmargini`, 25 pt at 10 pt), so the block starts at the margin.
+    /// Measured with `\documentclass[10pt,fleqn]`: col1 [96.9070,...],
+    /// rel at 116.3739, col3 at 134.0874 -- 24.9067 bp from the text edge.
+    #[test]
+    fn fleqn_starts_the_block_at_the_math_margin() {
+        let margin = 25.0 / 1.00375;
+        let got = eqnarray_columns([9.5043, 7.7509, 4.6426], 9.9626, DW, Some(margin));
+        for (i, want) in [24.9070, 44.3739, 62.0874].iter().enumerate() {
+            assert!(
+                (got[i] - want).abs() <= TOL,
+                "fleqn: column {i} at {:.4} bp, pdflatex {want:.4} bp",
+                got[i],
+            );
+        }
+    }
+
+    /// The quirk issue #520 names: the gap either side of the relation is
+    /// `2\arraycolsep`, not `align`'s `\thickmuskip`. Measured at 10 pt:
+    /// `eqnarray` 9.9626 bp, `align` 2.7696 bp -- 3.6x wider.
+    #[test]
+    fn relation_gaps_are_arraycolsep_not_thickmuskip() {
+        let colw = [9.5043, 7.7509, 4.6426];
+        let sep = 9.9626;
+        let x = eqnarray_columns(colw, sep, DW, None);
+        let gap_left = x[1] - (x[0] + colw[0]);
+        let gap_right = x[2] - (x[1] + colw[1]);
+        assert!((gap_left - 9.9626).abs() <= 0.5, "{gap_left}");
+        assert!((gap_right - 9.9626).abs() <= 0.5, "{gap_right}");
+        // Well clear of align's 5 mu at this size.
+        assert!(gap_left > 2.7696 * 2.0);
     }
 }

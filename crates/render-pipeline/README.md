@@ -128,7 +128,9 @@ inline and display math (`$`, `\[`, `$$`, `equation` with `(n)` flush right,
 `article`/`report`/`book` page frame at 10/11/12pt on every class paper
 with the complete `geometry` algorithm (see "Page frame" below). Diagnostics carry source
 ranges and codes (`font_unavailable`, `missing_glyph`, `overfull_hbox`,
-`overfull_vbox`, `unsupported_script`, `math_limitation`, `labels_unstable`).
+`overfull_vbox`, `unsupported_script`, `math_limitation`, `labels_unstable`,
+and pdfLaTeX's literal-UTF-8 input errors `unicode_not_set_up` and
+`command_unavailable_in_encoding`, see `src/inputenc.rs`).
 
 Floats and images (FT-063; `src/floats.rs`, `src/graphics.rs`,
 `src/typeset/floatpage.rs`, `tests/floats_oracle.rs`,

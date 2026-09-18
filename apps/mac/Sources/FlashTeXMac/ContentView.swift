@@ -173,7 +173,7 @@ struct EditorPane: View {
                     switch target {
                     case .label, .citation: model.goToMatching() // caret already on the token
                     case .environment, .command: model.goToDefinition() // ShellModel+EditorNavigation.swift: \newcommand/\newenvironment first, else the matching \begin/\end
-                    case .file(let path, _): Task { await model.project.openDocument(path, role: .opened) }
+                    case .file(let path, _): Task { await model.openAndSwitch(path, role: .opened) { model.navigationNote = $0 } }
                     }
                 },
                 userDefinition: { model.definitionSummary(forCommand: $0) }, // hover peek of \newcommand bodies (EditorNavigation.swift)
@@ -188,7 +188,7 @@ struct EditorPane: View {
                     case .write: model.saveTexInteractive(); return nil
                     case .writeQuit: model.saveTexInteractive(); return closeActiveDocument(discardingEdits: false)
                     case .quit(let force): return closeActiveDocument(discardingEdits: force)
-                    case .edit(let path): Task { await model.project.openDocument(path, role: .opened) }; return nil
+                    case .edit(let path): Task { await model.openAndSwitch(path, role: .opened) { model.navigationNote = $0 } }; return nil
                     case .setNumber(let on): lineNumbers = on; return nil
                     }
                 }

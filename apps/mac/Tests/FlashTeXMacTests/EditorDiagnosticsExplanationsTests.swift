@@ -52,15 +52,16 @@ final class EditorDiagnosticsExplanationsTests: XCTestCase {
         let fixed = Data(Self.realReplyLine.utf8)
         let decoded = try EditorDiagnostics.decodeExplanations(fixed, expectedCount: 1)
         XCTAssertEqual(decoded.count, 1)
-        let x = decoded[0]
+        let x = try XCTUnwrap(decoded.first)
         XCTAssertEqual(x.catalogID, "unsupported-command")
         XCTAssertTrue(x.isCatalogued)
         XCTAssertEqual(x.title, "\\foo is not supported")
         XCTAssertEqual(x.category, "unsupported-command")
         XCTAssertEqual(x.severity, "error")
         XCTAssertEqual(x.suggestions.count, 2)
-        XCTAssertEqual(x.suggestions[0].edits, [.init(path: "main.tex", startByte: 181, endByte: 190, replacement: "bar")])
-        XCTAssertEqual(x.suggestions[0].confidence, "low")
+        let firstSuggestion = try XCTUnwrap(x.suggestions.first)
+        XCTAssertEqual(firstSuggestion.edits, [.init(path: "main.tex", startByte: 181, endByte: 190, replacement: "bar")])
+        XCTAssertEqual(firstSuggestion.confidence, "low")
         XCTAssertEqual(x.context?.line, 5); XCTAssertEqual(x.context?.column, 45); XCTAssertEqual(x.context?.spanInBounds, true)
         XCTAssertTrue(x.line.hasPrefix("explain: \\foo is not supported — The compiler implements a fixed, documented set of commands and has no macro packages, so \\foo has no definition here."), x.line)
         XCTAssertTrue(x.line.hasSuffix("…"), "the why paragraph is cut at the line limit")
@@ -90,8 +91,10 @@ final class EditorDiagnosticsExplanationsTests: XCTestCase {
         XCTAssertEqual(x.why.count, Limits.maxParagraphCharacters)
         XCTAssertEqual(x.whatHappened.count, Limits.maxParagraphCharacters)
         XCTAssertEqual(x.suggestions.count, Limits.maxSuggestions)
-        XCTAssertEqual(x.suggestions[0].edits.count, Limits.maxEditsPerSuggestion)
-        XCTAssertEqual(x.suggestions[0].edits[0].replacement.count, Limits.maxContextCharacters)
+        let firstBoundedSuggestion = try XCTUnwrap(x.suggestions.first)
+        XCTAssertEqual(firstBoundedSuggestion.edits.count, Limits.maxEditsPerSuggestion)
+        let firstBoundedEdit = try XCTUnwrap(firstBoundedSuggestion.edits.first)
+        XCTAssertEqual(firstBoundedEdit.replacement.count, Limits.maxContextCharacters)
         XCTAssertEqual(x.context?.text.count, Limits.maxContextCharacters)
         XCTAssertFalse(x.isCatalogued)
         XCTAssertEqual(x.line, "explain: " + x.title + " (not in the catalogue)", "uncatalogued: title only, never the why")
@@ -134,11 +137,12 @@ final class EditorDiagnosticsExplanationsTests: XCTestCase {
         XCTAssertEqual(report.marks.map(\.explanation), [nil])
         let attached = EditorDiagnostics.attach(two, to: report)
         XCTAssertEqual(attached.marks.count, 1)
-        XCTAssertEqual(attached.marks[0].diagnosticIndex, 1)
-        XCTAssertEqual(attached.marks[0].explanation, a[0].line)
-        XCTAssertEqual(attached.marks[0].toolTip,
+        let attachedMark = try XCTUnwrap(attached.marks.first)
+        XCTAssertEqual(attachedMark.diagnosticIndex, 1)
+        XCTAssertEqual(attachedMark.explanation, a[0].line)
+        XCTAssertEqual(attachedMark.toolTip,
                        Self.fooDiagnostic.message + "\n↳ recovery: " + Self.fooDiagnostic.recovery! + "\n↳ " + a[0].line)
-        XCTAssertTrue(attached.marks[0].spokenDescription.hasSuffix(" — " + a[0].line))
+        XCTAssertTrue(attachedMark.spokenDescription.hasSuffix(" — " + a[0].line))
         XCTAssertEqual(EditorDiagnostics.attach(nil, to: report), report, "no explanations: report unchanged")
         XCTAssertEqual(EditorDiagnostics.attach([], to: report), report)
         // Fewer explanations than diagnostics never crashes; the mark just has none.
@@ -195,7 +199,7 @@ final class EditorDiagnosticsExplanationsTests: XCTestCase {
         }
         let first = try fetch(result(diagnostics))
         XCTAssertEqual(first.count, 1)
-        let x = first[0]
+        let x = try XCTUnwrap(first.first)
         XCTAssertEqual(x.catalogID, "unsupported-command")
         XCTAssertEqual(x.title, "\\foo is not supported")
         XCTAssertEqual(x.message, Self.fooDiagnostic.message)
@@ -217,7 +221,8 @@ final class EditorDiagnosticsExplanationsTests: XCTestCase {
         XCTAssertEqual(multi.count, env.payload.diagnostics.count)
         XCTAssertEqual(multi.map(\.isCatalogued), env.payload.diagnostics.map { _ in false })
         XCTAssertEqual(multi.map(\.message), env.payload.diagnostics.map(\.message))
-        XCTAssertTrue(multi[0].line.hasPrefix("explain: Missing } inserted for \\textbf. (not in the catalogue)"), multi[0].line)
+        let firstMulti = try XCTUnwrap(multi.first)
+        XCTAssertTrue(firstMulti.line.hasPrefix("explain: Missing } inserted for \\textbf. (not in the catalogue)"), firstMulti.line)
         XCTAssertEqual(events, [], "no stderr, no protocol violations")
         // Cached per result id and shown on the mark.
         var cache = EditorDiagnostics.ExplanationCache()
@@ -225,7 +230,11 @@ final class EditorDiagnosticsExplanationsTests: XCTestCase {
         let doc = try XCTUnwrap(req.payload.documents.first)
         let report = EditorDiagnostics.attach(cache[env.id], to: EditorDiagnostics.report(for: env.payload, resultID: env.id, path: doc.path, compiledText: doc.text, currentText: doc.text))
         XCTAssertEqual(report.marks.count, 1)
-        XCTAssertEqual(report.marks[0].explanation, multi[report.marks[0].diagnosticIndex].line)
+        let reportMark = try XCTUnwrap(report.marks.first)
+        guard multi.indices.contains(reportMark.diagnosticIndex) else {
+            return XCTFail("diagnosticIndex \(reportMark.diagnosticIndex) out of range for \(multi.count) explanations")
+        }
+        XCTAssertEqual(reportMark.explanation, multi[reportMark.diagnosticIndex].line)
     }
 
     private static func compile(_ text: String, with compiler: URL) throws -> RuntimeV1.CompileResult {
@@ -345,6 +354,7 @@ final class EditorDiagnosticsExplanationsTests: XCTestCase {
         XCTAssertEqual(report.marks.count, 199)
         XCTAssertEqual(report.staleCount, 1)
         XCTAssertEqual(report.marks.compactMap(\.explanation).count, 199)
+        guard report.marks.count == 199 else { return XCTFail("expected 199 marks, got \(report.marks.count)") }
         XCTAssertEqual(report.marks[150].explanation, "explain: \\cmd151 is not supported — The compiler implements a fixed, documented set of commands and has no macro packages, so the command has no definition here.")
         XCTAssertTrue(report.marks[0].toolTip.hasSuffix(report.marks[0].explanation!))
         let sorted = samples.sorted()

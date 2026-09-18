@@ -140,6 +140,19 @@ else
 fi
 ENT_KEYS="$(plutil -convert json -o - "$MAC_DIR/Resources/FlashTeX.entitlements" 2>/dev/null || echo '{}')"
 if [[ "$ENT_KEYS" == "{}" ]]; then ok "FlashTeX.entitlements grants no entitlements (empty dict)"; else bad "FlashTeX.entitlements is not empty: $ENT_KEYS (every key needs a documented reason)"; fi
+# JetBrains Mono (#742): make-app.sh copies these by name from
+# Sources/FlashTeXMac/Resources/Fonts into Contents/Resources/Fonts, and its
+# own post-staging check refuses to ship without them -- this just confirms
+# the source files that check depends on are still there.
+JETBRAINS_MISSING=""
+for f in JetBrainsMono-Regular.ttf JetBrainsMono-Bold.ttf JetBrainsMono-Italic.ttf JetBrainsMono-BoldItalic.ttf OFL.txt; do
+  [[ -f "$MAC_DIR/Sources/FlashTeXMac/Resources/Fonts/$f" ]] || JETBRAINS_MISSING="$JETBRAINS_MISSING $f"
+done
+if [[ -z "$JETBRAINS_MISSING" ]]; then
+  ok "JetBrains Mono (4 faces + OFL.txt licence) present in Sources/FlashTeXMac/Resources/Fonts"
+else
+  bad "JetBrains Mono source files missing:$JETBRAINS_MISSING"
+fi
 
 section "--help"
 for s in make-app.sh launch-check.sh repro-check.sh texmf-acceptance.sh; do

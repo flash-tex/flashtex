@@ -164,6 +164,72 @@ pub fn sup2_pt(size: f64) -> f64 {
     ratio * size
 }
 
+/// `sub1` (fontdimen 16) of the symbol font at text size `size`, in points,
+/// chosen like [`sup2_pt`] (cmsy5-cmsy10 TFM values).
+pub fn sub1_pt(size: f64) -> f64 {
+    let ratio = match size {
+        s if s < 5.5 => 0.2,
+        s if s < 6.5 => 0.166667,
+        s if s < 7.5 => 0.142858,
+        s if s < 8.5 => 0.125,
+        s if s < 9.5 => 0.111111,
+        _ => 0.15,
+    };
+    ratio * size
+}
+
+/// `sub_drop` (fontdimen 19) of the symbol font at `size`, in points, chosen
+/// like [`sup2_pt`] (cmsy5-cmsy10 TFM values). Appendix G rule 18a: an empty
+/// subscript nucleus (as `\textsubscript` always has) gives `v = sub_drop`,
+/// and rule 18b takes `max(v, sub1, h - 4/5 x-height)` — so this is the
+/// third candidate in that max, alongside [`sub1_pt`]. With CM/LM fonts
+/// `sub_drop` is small enough (≈0.35pt at cmsy7) that `sub1`/the
+/// box-height term already dominate at every size this compiler renders;
+/// it is still part of the real formula, for a font/size where it would not.
+pub fn sub_drop_pt(size: f64) -> f64 {
+    let ratio = match size {
+        s if s < 5.5 => 0.1,
+        s if s < 6.5 => 0.083333,
+        s if s < 7.5 => 0.071428,
+        s if s < 8.5 => 0.0625,
+        s if s < 9.5 => 0.055556,
+        _ => 0.05,
+    };
+    ratio * size
+}
+
+/// `\@textsubscript` drop (Appendix G rules 18a-b): an empty subscript
+/// nucleus gives `v = sub_drop(script font)` (rule 18a, `d(nucleus) = 0`),
+/// and the final shift is `max(v, sub1(text size), h(script) - 4/5
+/// x-height)` (rule 18b). `sub_drop_pt`/`sub1_pt` are evaluated at
+/// different sizes (the script size and the outer text size), so this
+/// takes the three already-computed candidates rather than the sizes
+/// themselves — real CM/LM tables never let `sub_drop` win (it stays
+/// under 0.5pt through every design this compiler selects, well below
+/// `sub1`'s 1.1-2pt), so `sub_drop_dominates_the_drop_for_a_synthetic_
+/// tall_font` below exercises the third-candidate branch directly.
+pub fn textsub_shift_pt(sub_drop: f64, sub1: f64, height_minus_x_height_term: f64) -> f64 {
+    sub_drop.max(sub1).max(height_minus_x_height_term)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sub_drop_dominates_the_drop_for_a_synthetic_tall_font() {
+        // Real CM/LM `sub_drop` never exceeds `sub1` at any size this
+        // compiler renders, so this proves the three-way max picks
+        // `sub_drop` when it genuinely is the largest candidate, with
+        // synthetic values rather than a real font/size pair.
+        assert_eq!(textsub_shift_pt(5.0, 1.5, 0.8), 5.0);
+        // The other two candidates still win when they are the largest,
+        // unaffected by `sub_drop` being present in the max at all.
+        assert_eq!(textsub_shift_pt(0.35, 1.5, 0.8), 1.5);
+        assert_eq!(textsub_shift_pt(0.35, 1.2, 3.0), 3.0);
+    }
+}
+
 /// Hook for `minipage` footnotes (`\@mpfootnotetext`): a minipage collects
 /// its notes (marks `\thempfootnote`, `{\itshape\@alph\c@mpfootnote}`) and
 /// sets them at its own foot, `\vskip\skip\@mpfootins \footnoterule

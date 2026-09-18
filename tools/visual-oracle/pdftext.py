@@ -28,6 +28,10 @@ import zlib
 
 SPACE_FRACTION = 0.16  # gap (in em) that separates two words
 
+# The same character class `rank.norm` keeps when it decides whether two words
+# are the same word; see `words_from_glyphs` for why position is anchored on it.
+_ALNUM = re.compile(r"\w", re.UNICODE)
+
 _WS = b"\x00\t\n\x0c\r "
 _DELIM = b"()<>[]{}/%"
 
@@ -551,6 +555,21 @@ def words_from_glyphs(glyphs):
     the current word and is itself dropped), so `glyphs[i:i + w["glyphs"]]`
     is exactly the run the word was built from, and a caller can carry its
     own per-glyph data across the grouping.
+
+    A word also carries `x_alnum`/`y_alnum`: the origin of its first
+    *alphanumeric* glyph, or `None` when it has none. Two producers can
+    disagree about which word a punctuation glyph belongs to even when every
+    glyph is in the same place, because "same baseline" is a font
+    convention: pdfTeX sets a `\\bigl(` from cmex10, whose variant glyph
+    carries its own origin, and emits it on a baseline ~8.8 bp above the
+    line, so the reference reads `(` as its own word and `A` as the next;
+    the candidate's LatinModernMath variant sits on the math baseline and
+    reads `(A` as one word. `rank.norm` then matches `(A` to `A` — it
+    compares words on their alphanumeric content — and the *word origins*
+    differ by the delimiter's advance. Anchoring the comparison at the first
+    alphanumeric glyph makes position agree with identity. When both sides
+    carry the same leading punctuation the anchor shifts both by the same
+    amount, so no other measurement moves.
     """
     words = []
     cur = None
@@ -565,8 +584,12 @@ def words_from_glyphs(glyphs):
                 cur = None
         if cur is None:
             cur = {"text": "", "x": g["x"], "y_top": g["y_top"], "size": g["size"], "font": g["font"],
+                   "x_alnum": None, "y_alnum": None,
                    "_end": g["x"], "_bt": g["bt"], "glyphs": 0, "glyph_index": i}
             words.append(cur)
+        if cur["x_alnum"] is None and _ALNUM.search(g["text"]):
+            cur["x_alnum"] = g["x"]
+            cur["y_alnum"] = g["y_top"]
         cur["text"] += g["text"]
         cur["_end"] = g["x"] + g["advance"]
         cur["glyphs"] += 1

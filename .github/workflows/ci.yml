@@ -151,8 +151,16 @@ jobs:
         # `pipefail` is what makes a failing test fail the step: the default
         # shell is `bash -e`, and a pipeline's status is its LAST command's,
         # so without it `tail` returned 0 over any number of test failures.
+        env:
+          # swift-snapshot-testing writes the image it actually captured next
+          # to a failure. It defaults to NSTemporaryDirectory(), which dies
+          # with the runner -- so a snapshot mismatch in CI was reported as
+          # "does not match reference" with no way to see WHAT it captured.
+          # Point it somewhere the upload step below can reach.
+          SNAPSHOT_ARTIFACTS: ${{ github.workspace }}/apps/mac/snapshot-artifacts
         run: |
           set -o pipefail
+          mkdir -p "$SNAPSHOT_ARTIFACTS"
           swift test 2>&1 | tee swift-test.log | grep -vE '^\s*$' | tail -n 400
       - name: Upload swift test log
         if: always()
@@ -160,6 +168,17 @@ jobs:
         with:
           name: mac-swift-test-log
           path: apps/mac/swift-test.log
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload the snapshots the run actually captured
+        # Only on failure: on a green run these are not written at all.
+        # Pair each file with its committed reference under
+        # apps/mac/Tests/DesignSnapshots/__Snapshots__/ to see the difference.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-snapshot-artifacts
+          path: apps/mac/snapshot-artifacts
           if-no-files-found: ignore
           retention-days: 7
 

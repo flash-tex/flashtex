@@ -322,6 +322,13 @@ fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<
                 Err(e) => failures.push(e),
             }
         }
+        // A render that reported `ok`/`recovered` but then failed to write an
+        // output file (the PDF above, or `--v2`) is not truthful as `ok`: no
+        // usable output exists. Downgrade the status so the summary line,
+        // `--json` and the exit code (below) all agree with what's on disk.
+        if !failures.is_empty() && outcome.status != "failed" {
+            outcome.status = "failed";
+        }
     }
     let mut total_ms = started.elapsed().as_secs_f64() * 1000.0;
 

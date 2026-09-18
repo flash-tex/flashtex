@@ -231,10 +231,10 @@ struct NewProjectSheet: View {
 
     private func create() {
         let state = model.scaffold
-        guard model.isDirty || model.project.anyDirty else { state.createProject(); return }
+        guard model.hasUnsavedDocuments else { state.createProject(); return }
         let alert = NSAlert()
-        alert.messageText = "Save changes to \(model.documentURL?.lastPathComponent ?? "the unsaved buffer") before creating the project?"
-        alert.informativeText = "Discarded text stays recoverable this session via Edit > Restore Discarded Buffer."
+        alert.messageText = "Save changes to \(model.unsavedDocumentsDescription) before creating the project?"
+        alert.informativeText = "Discarded text stays recoverable: \(model.discardRecoveryRoutes)"
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Discard")
         alert.addButton(withTitle: "Cancel")

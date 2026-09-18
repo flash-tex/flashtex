@@ -127,6 +127,57 @@ impl Shaper {
         self.shape_with(face, text, true)
     }
 
+    /// Shapes `text` with kerning and ligatures on, but restarts the
+    /// ligature/kern program at every byte offset in `cuts` — where TeX's
+    /// list has something other than a character of this font between two
+    /// characters (an OT1 `\accent` group, a symbol from another encoding;
+    /// see `crate::inputenc::cuts_ligkern`). The pieces are shaped (and
+    /// cached) on their own and joined. When they disagree on metrics (one
+    /// piece left the TFM for the font program), the text is shaped whole.
+    pub fn shape_cut(&self, face: &Rc<LoadedFace>, text: &str, cuts: &[usize]) -> Rc<Shaped> {
+        let mut bounds: Vec<usize> = cuts.iter().copied().filter(|&b| b > 0 && b < text.len() && text.is_char_boundary(b)).collect();
+        bounds.sort_unstable();
+        bounds.dedup();
+        if bounds.is_empty() {
+            return self.shape(face, text);
+        }
+        let starts = std::iter::once(0).chain(bounds.iter().copied());
+        let ends = bounds.iter().copied().chain(std::iter::once(text.len()));
+        let parts: Vec<(usize, Rc<Shaped>)> = starts.zip(ends).map(|(a, b)| (a, self.shape(face, &text[a..b]))).collect();
+        let (_, first) = &parts[0];
+        let uniform = parts.iter().all(|(_, p)| {
+            p.units_per_em == first.units_per_em && p.tfm_metrics == first.tfm_metrics && p.refused.is_none() && p.tfm_error.is_none()
+        });
+        if !uniform {
+            return self.shape(face, text);
+        }
+        let mut joined = Shaped {
+            face: face.clone(),
+            text: text.to_string(),
+            clusters: Vec::new(),
+            units_per_em: first.units_per_em,
+            tfm_metrics: first.tfm_metrics,
+            width_units: 0,
+            height_units: 0,
+            depth_units: 0,
+            missing: Vec::new(),
+            refused: None,
+            tfm_error: None,
+        };
+        for (at, p) in &parts {
+            joined.clusters.extend(p.clusters.iter().map(|c| SCluster {
+                glyphs: c.glyphs.clone(),
+                text_range: c.text_range.start + at..c.text_range.end + at,
+                text: c.text.clone(),
+            }));
+            joined.missing.extend(p.missing.iter().map(|(ch, off)| (*ch, off + at)));
+            joined.width_units += p.width_units;
+            joined.height_units = joined.height_units.max(p.height_units);
+            joined.depth_units = joined.depth_units.max(p.depth_units);
+        }
+        Rc::new(joined)
+    }
+
     fn shape_with(&self, face: &Rc<LoadedFace>, text: &str, literal: bool) -> Rc<Shaped> {
         // Keyed by the face's metrics identity, not its wire `font_id`: one
         // OpenType program is laid out with different TFMs (`ec-lmr10` for
@@ -422,5 +473,32 @@ mod tests {
         assert!(s.missing.is_empty());
         // Round letters overshoot the baseline by 11 units in Latin Modern.
         assert!(s.height_units > 600 && s.depth_units <= 15, "{} {}", s.height_units, s.depth_units);
+    }
+
+    #[test]
+    fn shape_cut_severs_kerning_at_the_cut_boundary() {
+        if !DEFAULT_FONT_DIRS.iter().any(|d| std::path::Path::new(d).join("lmroman10-regular.otf").is_file()) {
+            eprintln!("skipping: Latin Modern not installed");
+            return;
+        }
+        let fonts = FontSet::with_default_dirs(&[]);
+        let face = fonts.resolve(Family::LatinModern, Role::Text { bold: false, italic: false }, 10.0).face;
+        let shaper = Shaper::new();
+        let advance_of = |s: &Rc<Shaped>| -> i64 { s.clusters.iter().flat_map(|c| c.glyphs.iter()).map(|g| i64::from(g.advance)).sum() };
+        let kerned = advance_of(&shaper.shape(&face, "AV"));
+        let separate = advance_of(&shaper.shape(&face, "A")) + advance_of(&shaper.shape(&face, "V"));
+        // "AV" kerns tighter than "A" and "V" typeset separately -- the
+        // baseline this test's cut must reproduce (font-engine README:
+        // "AV" is 13.89pt at 10pt, kerned; "A"+"V" separately is more).
+        assert!(kerned < separate, "kerned {kerned} should be tighter than separate {separate}");
+        // `crate::typeset::input_filtered` puts a cut right where a rejected
+        // character sat, whether it was dropped or kept as a plain letter --
+        // real pdfLaTeX's error there ends the ligature/kern program too, so
+        // "AV" with a cut at byte 1 (as if a character between them had been
+        // rejected and removed) must shape exactly as "A" and "V" typeset
+        // separately, not kerned.
+        let cut = advance_of(&shaper.shape_cut(&face, "AV", &[1]));
+        assert_ne!(cut, kerned, "the cut must remove the kern, not leave it in");
+        assert_eq!(cut, separate, "cut pieces must shape exactly as if typeset separately");
     }
 }

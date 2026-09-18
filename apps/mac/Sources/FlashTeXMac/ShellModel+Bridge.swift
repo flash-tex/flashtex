@@ -213,7 +213,11 @@ extension ShellModel {
             if new == expected.afterText {
                 // Contract step 4: the editor adopted the durable document; export, receipt. No document_edit.
                 appliedCaptureIDs.insert(expected.edit.captureId)
-                bridge.applicationApplied(newRevision: revision, afterText: new, sourceURL: documentURL) // also drops the pinned destination
+                // `documentURL` is the entry's file: a session opened on a member
+                // (attached while it was active) exports nothing — the member
+                // stays dirty and reaches its own file through save/autosave.
+                bridge.applicationApplied(newRevision: revision, afterText: new,
+                                          sourceURL: path == project.entryPath ? documentURL : nil) // also drops the pinned destination
                 captureNote = "Inserted \(expected.edit.captureId) via bridge edit \(expected.edit.editId) (undo with ⌘Z); pin a new insertion point for the next capture."
                 return
             }

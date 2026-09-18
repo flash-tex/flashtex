@@ -89,7 +89,10 @@ final class MathCaretHighlightTests: XCTestCase {
         XCTAssertEqual(sourceText(tex, box.source), sqrt)
         XCTAssertEqual(box.clusterCount, 2, "√ and z")
         XCTAssertEqual(box.ruleCount, 1, "the overbar")
-        guard case .rule(let overbar) = page.items[box.itemIndices.last!], case .glyphRun(let run) = page.items[box.itemIndices.first!] else { return XCTFail() }
+        guard let lastItemIndex = box.itemIndices.last, let firstItemIndex = box.itemIndices.first else {
+            return XCTFail("expected non-empty itemIndices")
+        }
+        guard case .rule(let overbar) = page.items[lastItemIndex], case .glyphRun(let run) = page.items[firstItemIndex] else { return XCTFail() }
         XCTAssertLessThan(overbar.top, run.clusters[1].hitRects[0].top, "the overbar is above the radicand")
         // The radical sign's hit rect reaches slightly above the overbar (measured:
         // 22 ticks); the box top is the higher of the two, never below the overbar.

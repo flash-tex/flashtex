@@ -168,7 +168,7 @@ impl P<'_> {
             self.style = next;
         } else {
             let (tokens, _) = self.required_group("textcolor", span);
-            para.extend(self.inlines_from_tokens(tokens, next));
+            para.extend(self.inlines_from_tokens(tokens, next, false));
         }
     }
 
@@ -221,6 +221,7 @@ impl P<'_> {
             fboxrule_pt: self.fboxrule_pt,
             span: span.merge(body),
             space_before,
+            highlight: None,
         })));
     }
 

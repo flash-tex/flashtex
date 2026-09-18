@@ -41,6 +41,7 @@ fn assert_no_limitation_or_unsupported(construct: &str, body: &str) {
 }
 
 #[test]
+#[cfg_attr(not(feature = "amsmath-inline"), ignore = "requires the amsmath-inline feature")]
 fn binom_is_a_genfraction_with_parenthesis_delimiters_and_no_rule() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");
@@ -50,6 +51,7 @@ fn binom_is_a_genfraction_with_parenthesis_delimiters_and_no_rule() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "amsmath-inline"), ignore = "requires the amsmath-inline feature")]
 fn dfrac_is_a_genfraction_in_display_style() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");
@@ -59,6 +61,7 @@ fn dfrac_is_a_genfraction_in_display_style() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "amsmath-inline"), ignore = "requires the amsmath-inline feature")]
 fn tfrac_is_a_genfraction_in_text_style() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");
@@ -68,6 +71,7 @@ fn tfrac_is_a_genfraction_in_text_style() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "amsmath-inline"), ignore = "requires the amsmath-inline feature")]
 fn phantom_sets_an_empty_box_without_a_limitation() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");
@@ -82,6 +86,7 @@ fn phantom_sets_an_empty_box_without_a_limitation() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "amsmath-inline"), ignore = "requires the amsmath-inline feature")]
 fn substack_stacks_rows_as_a_subarray_without_a_limitation() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");
@@ -91,6 +96,7 @@ fn substack_stacks_rows_as_a_subarray_without_a_limitation() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "amsmath-inline"), ignore = "requires the amsmath-inline feature")]
 fn smallmatrix_is_a_top_level_grid_without_a_limitation() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");
@@ -100,6 +106,7 @@ fn smallmatrix_is_a_top_level_grid_without_a_limitation() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "amsmath-inline"), ignore = "requires the amsmath-inline feature")]
 fn big_delimiters_are_sized_as_amsmath_big_delimiter_atoms() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");
@@ -109,6 +116,7 @@ fn big_delimiters_are_sized_as_amsmath_big_delimiter_atoms() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "amsmath-inline"), ignore = "requires the amsmath-inline feature")]
 fn dcases_is_a_cases_style_grid_without_a_limitation() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");
@@ -118,6 +126,7 @@ fn dcases_is_a_cases_style_grid_without_a_limitation() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "amsmath-inline"), ignore = "requires the amsmath-inline feature")]
 fn operatorname_and_declaremathoperator_are_operator_nuclei_without_a_limitation() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");
@@ -128,6 +137,7 @@ fn operatorname_and_declaremathoperator_are_operator_nuclei_without_a_limitation
 }
 
 #[test]
+#[cfg_attr(not(feature = "amsmath-inline"), ignore = "requires the amsmath-inline feature")]
 fn genfrac_with_explicit_delimiters_and_style_is_modeled() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");
@@ -140,6 +150,7 @@ fn genfrac_with_explicit_delimiters_and_style_is_modeled() {
 /// as a box (`mathtext::GridCells`), not flattened into one row, so it
 /// carries no `math_limitation`.
 #[test]
+#[cfg_attr(not(feature = "amsmath-inline"), ignore = "requires the amsmath-inline feature")]
 fn a_grid_nested_inside_a_genfraction_is_laid_out_as_a_box() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");

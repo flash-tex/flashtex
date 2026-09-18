@@ -118,7 +118,8 @@ final class LineWrappingTests: XCTestCase {
         let rows = try fragments(tv, characters: range)
         XCTAssertEqual(rows.count, 1, "with wrapping off the long line must scroll, not wrap")
         XCTAssertTrue(scroll.hasHorizontalScroller)
-        XCTAssertGreaterThan(rows[0].width, 320, "the unwrapped row is wider than the window, as it must be")
+        let row = try XCTUnwrap(rows.first)
+        XCTAssertGreaterThan(row.width, 320, "the unwrapped row is wider than the window, as it must be")
     }
 
     // MARK: the wrap follows the window

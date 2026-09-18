@@ -238,7 +238,8 @@ final class V2ImageTests: XCTestCase {
         // Without a project root every image is refused, each with its own notice.
         let noRoot = try V2Frame.prepare(data: Self.data(f.list), store: V2FontStore(directories: []), cache: nil, images: V2ImageStore())
         XCTAssertEqual(noRoot.imageNotices.count, 3)
-        XCTAssertTrue(noRoot.imageNotices[0].hasPrefix("image unavailable: figures/a.png: no project root"), noRoot.imageNotices[0])
+        let firstNotice = try XCTUnwrap(noRoot.imageNotices.first)
+        XCTAssertTrue(firstNotice.hasPrefix("image unavailable: figures/a.png: no project root"), firstNotice)
     }
 
     func testSymlinkedImagePathIsRefusedEvenWhenTheTargetBytesMatch() throws {

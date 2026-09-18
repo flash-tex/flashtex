@@ -21,7 +21,11 @@ Genuine-implementation ground truth, most to least authoritative
      `render_supported_latex.sh`): the compiler's own registered inventory,
      already reconciled against the literal `match` arms in `src/parser.rs`
      and `src/math.rs` by `tests/supported_latex.rs` (both directions). A
-     kernel name present here (any mode, any origin) is genuinely dispatched.
+     kernel name present here (any mode, any origin) is genuinely dispatched,
+     EXCEPT the `RECOGNISED_BUT_NOT_IMPLEMENTED` entry below: `indent` is
+     registered yet compiles to "recognised but paragraph indentation is
+     not implemented" — registration alone overstates support, so it is
+     forced back to unimplemented (Table 1B).
   2. Three small, curated, source-derived supplements for real dispatch that
      the inventory above does not enumerate, all parsed out of source here
      (not hand-copied), so they cannot themselves drift from the dispatch
@@ -39,6 +43,20 @@ Genuine-implementation ground truth, most to least authoritative
          before the parser ever sees them, so they leave no trace in
          `crates/compiler/src/` and are outside `--supported json`, which
          only enumerates the compiler crate's own registrations.
+  3. The committed `DISPATCHED_OUTSIDE_LEDGERS` list below: kernel names
+     with real dispatch outside the four ledgers above — the tabular
+     sub-parser (`src/parser/tabular.rs`: `\hline`/`\cline` row rules,
+     `\multicolumn` cell spans, `\vline`/`\extracolsep` `@{}` material),
+     the title-block `\and` separator, the `\linewidth`/`\columnwidth`
+     dimension units and `fil`/`fill`/`filll` glue orders, the
+     `\fboxsep`/`\fboxrule` length assignments, the expansion pre-pass's
+     `\includeonly`, the beamer `frame` environment, and the float
+     pre-pass's `table` environment. Each entry carries its dispatch site
+     as a comment, so a reader can re-check it with a behaviour probe
+     (compile the name through `protocol::handle_line`, as
+     `tests/supported_latex.rs::
+     every_inventory_entry_compiles_without_an_unsupported_diagnostic`
+     does) rather than trusting the list.
   This is deliberately NOT `vocabulary.rs`'s `KNOWN_UNIMPLEMENTED_COMMANDS` /
   `KNOWN_UNIMPLEMENTED_ENVIRONMENTS`: those lists are for a different job
   (choosing the `unknown_command` vs `unsupported_feature` diagnostic for a
@@ -54,9 +72,12 @@ Genuine-implementation ground truth, most to least authoritative
   exactly this reason, and is not part of the generated document.
 
 Classification per kernel (kind, name), not in the ground truth above
+(minus the `RECOGNISED_BUT_NOT_IMPLEMENTED` overrides, which are never
+genuine implementation despite any ledger entry)
   Table 1A  zero word-boundary matches anywhere in `crates/compiler/src/`.
   Table 1B  matches exist (comments, `KNOWN_UNIMPLEMENTED_*` entries, unrelated
-            identifiers, ...) but none constitute genuine implementation.
+            identifiers, ...) but the name is in none of the ground-truth
+            ledgers nor the `DISPATCHED_OUTSIDE_LEDGERS` list.
   (Both are "not implemented"; the split only tells a reader whether a naive
   grep would have looked promising. Neither reproduces from the ground-truth
   ledger above, so this script does not try to explain *why* each hit is
@@ -89,6 +110,80 @@ TSV = COMPILER / "supported" / "canonical-latex.tsv"
 DEFAULT_OUT = REPO / "docs" / "dev" / "kernel-inventory-audit.md"
 
 REGENERATE = "run crates/compiler/scripts/kernel_inventory_audit.py"
+
+# Finding 1 (PR #714 review): registered in `--supported json` yet with no
+# genuine dispatch. Behaviour-probe evidence (compiled through
+# `protocol::handle_line`, the path
+# `tests/supported_latex.rs::
+# every_inventory_entry_compiles_without_an_unsupported_diagnostic`
+# exercises): `--supported json` lists `indent` (text_dispatch: "accepted;
+# the first-line indent is diagnosed, not drawn") yet it compiles to
+# "\indent is recognised but paragraph indentation is not implemented"
+# (`src/parser.rs` "indent" arm), so the entry is forced back to
+# unimplemented.
+#
+# NOTE (rebase onto main): the review's other two names, `twocolumn` and
+# `onecolumn`, were undispatched at the PR base (unknown_command probes,
+# only the class *option* plumbed) but current main dispatches both for
+# real (`src/parser.rs` "twocolumn" | "onecolumn" arm routing to
+# `column_command`: page break plus honest optional-argument warning;
+# body/preamble probes compile with zero diagnostics). They were REMOVED
+# from this list on the rebase — keeping them would understate support,
+# the mirror image of the overstatement this list exists to prevent.
+RECOGNISED_BUT_NOT_IMPLEMENTED = [
+    (
+        "indent",
+        "compiles to 'recognised but paragraph indentation is not "
+        "implemented' despite its --supported json entry",
+    ),
+]
+
+# Finding 2 (PR #714 review): real dispatch outside the four ledgers above
+# (sub-parsers, dimension/glue tables, the expansion pre-pass and the float
+# pre-pass), which the ledger-only check mis-files as "NO genuine
+# implementation". Dispatch-site evidence per name:
+#   and:          `src/parser.rs` `title_text_command` "and" arm, plus the
+#                 author-block `name == "and"` separator.
+#   cline:        `src/parser/tabular.rs` row-rule dispatch ("cline" arm).
+#   columnwidth:  `src/text_builtins.rs` `DimenUnit::ColumnWidth` dimension
+#                 unit (also `src/parser.rs` length-allowance lists).
+#   extracolsep:  `src/parser/tabular.rs` `@{}`-expression dispatch (only
+#                 `\fill` and 0pt are accepted).
+#   fboxrule:     `src/parser.rs` length-assignment guard and `set_length`
+#                 arms.
+#   fboxsep:      `src/parser.rs` length-assignment guard and `set_length`
+#                 arms.
+#   fill:         `src/parser.rs` glue-order table (`fil`/`fill`/`filll`)
+#                 and `\extracolsep{\fill}`.
+#   frame:        the beamer `frame` environment dispatch (`src/parser.rs`)
+#                 and `TEXT_ENVIRONMENTS` entry (`src/supported.rs`).
+#   hline:        `src/parser/tabular.rs` row-rule dispatch ("hline" arm).
+#   includeonly:  `src/expansion.rs` preamble `\includeonly` dispatch.
+#   linewidth:    `src/text_builtins.rs` `DimenUnit::LineWidth` dimension
+#                 unit (also `src/parser.rs` length-allowance lists).
+#   multicolumn:  `src/parser/tabular.rs` `\multicolumn` cell-span
+#                 dispatch.
+#   vline:        `src/parser/tabular.rs` `rule_material` ("vline", [])
+#                 dispatch.
+#   table:        the render pipeline's float pre-pass handles the `table`
+#                 environment (per main's prior hand audit); `--supported
+#                 json` lists only `figure`.
+DISPATCHED_OUTSIDE_LEDGERS = [
+    ("and", "title_text_command 'and' arm and author-block separator (src/parser.rs)"),
+    ("cline", "tabular row-rule 'cline' arm (src/parser/tabular.rs)"),
+    ("columnwidth", "DimenUnit::ColumnWidth dimension unit (src/text_builtins.rs)"),
+    ("extracolsep", "@{}-expression dispatch in the tabular sub-parser (src/parser/tabular.rs)"),
+    ("fboxrule", "length-assignment guard and set_length arms (src/parser.rs)"),
+    ("fboxsep", "length-assignment guard and set_length arms (src/parser.rs)"),
+    ("fill", "glue-order table and \\extracolsep{\\fill} (src/parser.rs, src/parser/tabular.rs)"),
+    ("frame", "beamer frame environment dispatch (src/parser.rs) and TEXT_ENVIRONMENTS entry"),
+    ("hline", "tabular row-rule 'hline' arm (src/parser/tabular.rs)"),
+    ("includeonly", "preamble \\includeonly dispatch (src/expansion.rs)"),
+    ("linewidth", "DimenUnit::LineWidth dimension unit (src/text_builtins.rs)"),
+    ("multicolumn", "\\multicolumn cell-span dispatch (src/parser/tabular.rs)"),
+    ("vline", "rule_material ('vline', []) dispatch (src/parser/tabular.rs)"),
+    ("table", "float pre-pass handles the table environment (per main's prior hand audit)"),
+]
 
 
 def kernel_rows():
@@ -247,6 +342,8 @@ def main():
     test_files = all_files(COMPILER / "tests")
     inline_test_texts = inline_test_regions(src_files)
 
+    recognised_but_unimplemented = {name for name, _ in RECOGNISED_BUT_NOT_IMPLEMENTED}
+    dispatched_outside_ledgers = {name for name, _ in DISPATCHED_OUTSIDE_LEDGERS}
     table_1a, table_1b, table_2 = [], [], []
     for kind, name in kernel_rows():
         pattern = name_pattern(name)
@@ -256,9 +353,12 @@ def main():
                 or name in preamble_lengths
                 or name in table_lengths
                 or name in engine_commands
-            )
+                or name in dispatched_outside_ledgers
+            ) and name not in recognised_but_unimplemented
         else:
-            implemented = name in impl_environments
+            implemented = (
+                name in impl_environments or name in dispatched_outside_ledgers
+            )
 
         if implemented:
             tested = any_match(pattern, test_files) or any_match_in_texts(
@@ -282,6 +382,9 @@ def main():
     )
 
 
+OVERRIDE_WHY = {name: why for name, why in RECOGNISED_BUT_NOT_IMPLEMENTED}
+
+
 def render(table_1a, table_1b, table_2):
     lines = []
     lines.append("# Kernel command inventory audit")
@@ -296,14 +399,20 @@ def render(table_1a, table_1b, table_2):
         "440 total: 410 commands, 30 environments) are cross-referenced "
         "against `flashtex-compiler --supported json` (the compiler's own "
         "registered inventory, reconciled against the real `match` arms in "
-        "`src/parser.rs`/`src/math.rs` by `tests/supported_latex.rs`), plus "
+        "`src/parser.rs`/`src/math.rs` by `tests/supported_latex.rs`, minus "
+        "the `RECOGNISED_BUT_NOT_IMPLEMENTED` override — `indent`, which is "
+        "registered but genuinely undispatched), plus "
         "two length-register dispatch tables that inventory omits by design "
         "(`PREAMBLE_LENGTHS`, `TABLE_LENGTHS` in `src/parser.rs`) and every "
         "primitive/register table entry in `crates/tex-expansion/src/` "
         "(engine-dispatched kernel primitives such as `\\day`/`\\message`/"
-        "`\\verb`, invisible to the compiler crate), all parsed from source, "
-        "not hand-copied. A name absent from all four is genuinely "
-        "unimplemented. Test coverage is a word-boundary match "
+        "`\\verb`, invisible to the compiler crate), and the committed "
+        "`DISPATCHED_OUTSIDE_LEDGERS` list (sub-parser, dimension/glue-table, "
+        "expansion-pre-pass and float-pre-pass dispatch the ledgers miss), "
+        "all parsed from source except the two small committed lists, whose "
+        "entries each cite their dispatch site. A name absent from all of "
+        "these is genuinely unimplemented. Test coverage is a word-boundary "
+        "match "
         "in `crates/compiler/tests/` or inside any `#[cfg(test)] mod` "
         "region of `crates/compiler/src/` (treated as running to end of "
         "file). See this script's module docstring "
@@ -330,20 +439,30 @@ def render(table_1a, table_1b, table_2):
     lines.append("")
     lines.append(
         "Word-grep below returns hits (comments, `KNOWN_UNIMPLEMENTED_*` "
-        "entries, unrelated identifiers, ...), but none of them is a "
-        "registered command/environment, nor a `PREAMBLE_LENGTHS`/"
-        "`TABLE_LENGTHS`/engine-primitive entry — see Method."
+        "entries, unrelated identifiers, ...), but no hit is genuine "
+        "implementation under Method: the name is either absent from every "
+        "ground-truth ledger and the committed sub-parser/pre-pass dispatch "
+        "list, or held out of the ledgers by the recognised-but-unimplemented "
+        "override (cited per-row) — see Method."
     )
     lines.append("")
     lines.append("| kind | name | word grep (run from repo root) | genuine-impl check |")
     lines.append("| ---- | ---- | ------------------------------- | ------------------- |")
     for kind, name in table_1b:
         grep = f"grep -rnwF -e '{name}' crates/compiler/src/"
-        lines.append(
-            f"| {kind} | {name} | `{grep}` | not in `--supported json`, "
-            "`PREAMBLE_LENGTHS`, `TABLE_LENGTHS` or a `crates/tex-expansion/src/` "
-            "primitive/register table |"
-        )
+        if name in OVERRIDE_WHY:
+            check = (
+                "recognised-but-unimplemented override (see Method): "
+                f"{OVERRIDE_WHY[name]}"
+            )
+        else:
+            check = (
+                "not in `--supported json`, `PREAMBLE_LENGTHS`, "
+                "`TABLE_LENGTHS`, a `crates/tex-expansion/src/` "
+                "primitive/register table, or the committed sub-parser/pre-pass "
+                "dispatch list"
+            )
+        lines.append(f"| {kind} | {name} | `{grep}` | {check} |")
     lines.append("")
 
     lines.append(
@@ -352,9 +471,11 @@ def render(table_1a, table_1b, table_2):
     )
     lines.append("")
     lines.append(
-        "\"Implemented\" means registered in `--supported json`, a "
-        "`PREAMBLE_LENGTHS`/`TABLE_LENGTHS` dispatch guard, or a "
-        "`crates/tex-expansion/src/` primitive/register table entry. Both test "
+        "\"Implemented\" means registered in `--supported json` (minus the "
+        "recognised-but-unimplemented `indent` override), a "
+        "`PREAMBLE_LENGTHS`/`TABLE_LENGTHS` dispatch guard, a "
+        "`crates/tex-expansion/src/` primitive/register table entry, or the "
+        "committed sub-parser/pre-pass dispatch list. Both test "
         "greps below return no output: `grep -rnwF -e 'NAME' "
         "crates/compiler/tests/` and the same word match inside any "
         "`#[cfg(test)] mod` region of `crates/compiler/src/`."

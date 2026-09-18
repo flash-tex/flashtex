@@ -1191,6 +1191,137 @@ final class VimModeTests: XCTestCase {
         XCTAssertEqual(caret, 5, "'' goes to the *line start* of the last jump")
     }
 
+    // MARK: marks/jumplist track edits Vim did not make (flashtex#678)
+    //
+    // Insert-mode typing never reaches VimMode (`handleInsertKey` declines
+    // ordinary keys so IMEs, completion and snippets keep working), so these
+    // drive the *editor's own* AppKit path — `key("X")` inside an insert
+    // session, ⌫, and a direct storage mutation — and check that marks and
+    // the jumplist still end up on the text they were put on. Expectations
+    // are Vim 9.1's (`mark_adjust`, mark.c), measured with `vim -Nu NONE`.
+
+    func testMarksFollowTextTypedBeforeThemInInsertMode() {
+        load("one\ntwo\nthree", caret: 4) // the 't' of "two"
+        type("ma")
+        type("gg")
+        type("i")
+        key("X"); key("Y"); key("Z") // the editor's own typing path, not Vim's
+        type("<Esc>")
+        XCTAssertEqual(text, "XYZone\ntwo\nthree")
+        type("G`a")
+        XCTAssertEqual(caret, 7, "the mark followed \"two\" across text typed in front of it")
+    }
+
+    func testMarksFollowALineOpenedAndTypedIntoAboveThem() {
+        // The issue's own repro: `ma`, then `o` a line *before* the mark and
+        // type into it. `o` is Vim's edit path, the text after it is not.
+        load("alpha\nbeta\ngamma", caret: 6) // the 'b' of "beta"
+        type("ma")
+        type("gg")
+        type("o")
+        key("n"); key("e"); key("w")
+        type("<Esc>")
+        XCTAssertEqual(text, "alpha\nnew\nbeta\ngamma")
+        type("G`a")
+        XCTAssertEqual(caret, 10, "the mark stayed on \"beta\" after a line was opened and typed into above it")
+    }
+
+    func testMarksAreUnmovedByTypingAfterThem() {
+        load("one\ntwo\nthree", caret: 0)
+        type("ma")
+        type("G")
+        type("A")
+        key("!"); key("!")
+        type("<Esc>")
+        XCTAssertEqual(text, "one\ntwo\nthree!!")
+        type("`a")
+        XCTAssertEqual(caret, 0, "an edit after a mark leaves it exactly where it was")
+    }
+
+    func testAMarkOnTextDeletedByBackspaceIsInvalidatedRatherThanRelocated() {
+        // Vim drops a mark whose text is deleted (`ONE_ADJUST` clears the
+        // line number, and `` `a `` then answers E20) instead of silently
+        // leaving it pointing at whatever moved into that spot.
+        load("one\ntwo\nthree", caret: 4) // the 't' of "two"
+        type("ma")
+        type("A") // append at the end of "two": caret 7, insert mode
+        key("\u{7F}", code: 51); key("\u{7F}", code: 51); key("\u{7F}", code: 51)
+        type("<Esc>")
+        XCTAssertEqual(text, "one\n\nthree")
+        type("gg")
+        type("`a")
+        XCTAssertEqual(caret, 0, "the marked text is gone: the mark does not move somewhere else")
+        XCTAssertEqual(tv.vim.message, "E20: Mark not set")
+    }
+
+    func testTheBacktickMarkIsInvalidatedWhenTypingDeletesItsText() {
+        // `` is Vim's previous-context mark, adjusted by the same ONE_ADJUST
+        // as the named marks: deleting its text unsets it.
+        load("one\ntwo\nthree", caret: 4)
+        type("G") // records 4 as `` and on the jumplist
+        type("kk")
+        type("jl") // caret 5, no jump recorded: j/k/l are not jumps
+        type("i")
+        key("\u{7F}", code: 51) // ⌫ deletes the 't' at offset 4
+        type("<Esc>")
+        XCTAssertEqual(text, "one\nwo\nthree")
+        XCTAssertEqual(tv.vim.message, nil, "Esc cleared any earlier message")
+        type("``") // a `G` here would re-record `` and hide the invalidation
+        XCTAssertEqual(tv.vim.message, "E20: Mark not set", "`` was on the deleted character")
+    }
+
+    func testAJumplistEntryOnDeletedTextCollapsesToTheEditInsteadOfBeingDropped() {
+        // The other half of Vim's asymmetry: `ONE_ADJUST_NODEL` moves a
+        // jumplist entry to the start of the deleted text, never unsets it,
+        // so ⌃O keeps taking you back somewhere.
+        load("one\ntwo\nthree", caret: 4)
+        type("G") // the jumplist records 4
+        type("kk")
+        type("jl") // caret 5
+        type("i")
+        key("\u{7F}", code: 51)
+        type("<Esc>")
+        XCTAssertEqual(text, "one\nwo\nthree")
+        key("o", flags: .control)
+        XCTAssertEqual(caret, 4, "the entry collapsed to the edit; ⌃O still goes back")
+    }
+
+    func testTheJumplistFollowsTextTypedBeforeIt() {
+        load("one\ntwo\nthree", caret: 4)
+        type("G") // the jumplist records 4
+        type("kk") // back to line 1 without recording a jump
+        type("i")
+        key("X"); key("Y")
+        type("<Esc>")
+        XCTAssertEqual(text, "XYone\ntwo\nthree")
+        key("o", flags: .control)
+        XCTAssertEqual(caret, 6, "⌃O went back to \"two\", not two characters short of it")
+    }
+
+    func testMarksFollowAProgrammaticEditNoOneTypedAtAll() {
+        // Paste, a snippet, an input method committing, the owner replacing
+        // a range: none of them are a keystroke Vim ever sees.
+        load("one\ntwo\nthree", caret: 4)
+        type("ma")
+        tv.textStorage?.replaceCharacters(in: NSRange(location: 0, length: 0), with: "ZZ")
+        XCTAssertEqual(text, "ZZone\ntwo\nthree")
+        type("G`a")
+        XCTAssertEqual(caret, 6, "the mark tracked an edit that never went through a key at all")
+    }
+
+    func testAttributeOnlyStorageEditsLeaveMarksAlone() {
+        // Syntax highlighting and the spell checker post the same storage
+        // notification for a run of attributes; treating one as an edit
+        // would drop every mark inside the recoloured range.
+        load("one\ntwo\nthree", caret: 4)
+        type("ma")
+        tv.textStorage?.addAttribute(.foregroundColor, value: NSColor.systemRed, range: NSRange(location: 0, length: 13))
+        type("gg")
+        type("`a")
+        XCTAssertEqual(caret, 4, "recolouring the text is not an edit")
+        XCTAssertEqual(tv.vim.message, nil)
+    }
+
     func testControlAAndControlXIncrementAndDecrementTheNextNumber() {
         load("count: 41 done", caret: 0)
         key("a", flags: .control)

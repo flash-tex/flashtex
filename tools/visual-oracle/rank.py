@@ -213,6 +213,43 @@ def owner_for_word(word, delta, page_median, diags):
     return "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta"
 
 
+def anchor(word):
+    """The point a word's position is measured at: its first alphanumeric
+    glyph, else its first glyph.
+
+    `norm` decides *identity* on a word's alphanumeric content, so position
+    has to be measured there too. Otherwise a pair the two sides segment
+    differently — `(A` here against a bare `A` in the reference, because
+    pdfTeX emits the cmex10 `\\bigl(` on its own baseline while our
+    LatinModernMath variant sits on the math baseline — is compared at two
+    points that are a delimiter's advance apart, and reports that advance as
+    a placement error. That is what made F7 of the 2026-09-16 corpus sweep
+    read as an exact −5.000 bp offset on `\\bigl(`/`\\Bigl[`: 4.996 bp is the
+    width of `\\big(` at 10.95 pt and 5.149 bp the width of `\\Big[`, and the
+    delimiter's ink is in fact within 0.09 bp of the reference's.
+
+    When both sides carry the same leading punctuation the anchor moves both
+    by the same amount and `dx`/`dy` are unchanged, so this only touches
+    pairs the two producers segment differently.
+    """
+    x, y = word.get("x_alnum"), word.get("y_alnum")
+    if x is None or y is None:
+        return word["x"], word["y_top"]
+    return x, y
+
+
+def pair_points(ref_word, cand_word):
+    """The two points an aligned pair is compared at.
+
+    Both sides are anchored the same way. A pair where only one side has an
+    alphanumeric glyph falls back to the word origin on *both*, which is
+    also what `norm` falls back to when it has no alphanumeric content.
+    """
+    if (ref_word.get("x_alnum") is None) != (cand_word.get("x_alnum") is None):
+        return (ref_word["x"], ref_word["y_top"]), (cand_word["x"], cand_word["y_top"])
+    return anchor(ref_word), anchor(cand_word)
+
+
 def geometry_page(ref_words, cand_words, diags, top_n):
     pairs, ref_un, cand_un = align_words(ref_words, cand_words)
     rec = {"reference_words": len(ref_words), "candidate_words": len(cand_words), "aligned": len(pairs),
@@ -223,7 +260,8 @@ def geometry_page(ref_words, cand_words, diags, top_n):
     deltas = []
     for i, j in pairs:
         r, c = ref_words[i], cand_words[j]
-        deltas.append((c["x"] - r["x"], c["y_top"] - r["y_top"], i, j))
+        (rx, ry), (cx, cy) = pair_points(r, c)
+        deltas.append((cx - rx, cy - ry, i, j))
     mdx = statistics.median(d[0] for d in deltas)
     mdy = statistics.median(d[1] for d in deltas)
     absx = [abs(d[0]) for d in deltas]
@@ -258,11 +296,15 @@ def geometry_page(ref_words, cand_words, diags, top_n):
     top = []
     for dx, dy, i, j in ranked[:top_n]:
         r, c = ref_words[i], cand_words[j]
+        # The measured points, not the word origins: `reference` + (dx, dy)
+        # must equal `candidate`, or the report cannot be checked by hand.
+        (rx, ry), (cx, cy) = pair_points(r, c)
         top.append({
             "text": c["text"], "ref_text": r["text"],
             "dx": round(dx, 3), "dy": round(dy, 3),
-            "reference": [round(r["x"], 3), round(r["y_top"], 3)],
-            "candidate": [round(c["x"], 3), round(c["y_top"], 3)],
+            "reference": [round(rx, 3), round(ry, 3)],
+            "candidate": [round(cx, 3), round(cy, 3)],
+            "anchor": "alnum" if (rx, ry) != (r["x"], r["y_top"]) or (cx, cy) != (c["x"], c["y_top"]) else "word",
             "font": c["font"], "ref_font": r["font"],
             "source": c.get("source"),
             "owner": owner_for_word(c, (dx, dy), (mdx, mdy), diags),

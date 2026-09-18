@@ -65,30 +65,42 @@ pub struct PageFrame {
     pub reversemargin: bool,
 }
 
+/// The text block's columns: one of `\textwidth`, or two of
+/// `\columnwidth` = `(\textwidth - \columnsep) / 2` separated by
+/// `\columnsep` (latex.ltx `\twocolumn`/`\onecolumn`, which set
+/// `\columnwidth` and `\col@number` and nothing else).
+///
+/// Separate from [`PageFrame::new`] because `\twocolumn` and `\onecolumn`
+/// can also change `\if@twocolumn` *during* the document, long after the
+/// frame was built ([`crate::ResolvedDocument::set_twocolumn`]).
+pub fn columns(p: &PageParams, twocolumn: bool) -> Vec<Column> {
+    let cw = p.columnwidth(twocolumn);
+    if twocolumn {
+        vec![
+            Column {
+                offset: Sp::ZERO,
+                width: cw,
+            },
+            Column {
+                offset: cw + p.columnsep,
+                width: cw,
+            },
+        ]
+    } else {
+        vec![Column {
+            offset: Sp::ZERO,
+            width: cw,
+        }]
+    }
+}
+
 impl PageFrame {
     pub fn new(p: &PageParams, flags: LayoutFlags, media: (Sp, Sp)) -> PageFrame {
         let inch = Sp::parse("1in").unwrap();
         let head_top = inch + p.voffset + p.topmargin;
         let head_baseline = head_top + p.headheight;
         let text_top = head_baseline + p.headsep;
-        let cw = p.columnwidth(flags.twocolumn);
-        let columns = if flags.twocolumn {
-            vec![
-                Column {
-                    offset: Sp::ZERO,
-                    width: cw,
-                },
-                Column {
-                    offset: cw + p.columnsep,
-                    width: cw,
-                },
-            ]
-        } else {
-            vec![Column {
-                offset: Sp::ZERO,
-                width: cw,
-            }]
-        };
+        let columns = columns(p, flags.twocolumn);
         PageFrame {
             paper_width: p.paperwidth,
             paper_height: p.paperheight,

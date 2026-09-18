@@ -911,6 +911,7 @@ extension ProjectSearchClient {
         if current, path != model.activePath, let i = model.documents.firstIndex(where: { $0.path == path }),
            let text = document["text"] as? String, !model.documents[i].text.sameBytes(as: text) {
             model.documents[i].text = text // an open non-active document that still equals the snapshot
+            model.scheduleAutosave() // `updateActiveText` does this for the active buffer only
         }
         if !current {
             // The returned document derives from the editor state at the send

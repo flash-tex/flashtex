@@ -218,7 +218,14 @@ files, not against the token file itself.
   `assertSurfaceBothAppearances(...)`. PNGs land in
   `Tests/DesignSnapshots/__Snapshots__/<TestClass>/`.
 - Run: `cd apps/mac && swift test --filter DesignSnapshots`. Record or
-  re-record with `RECORD_SNAPSHOTS=1` in front of it.
+  re-record with `RECORD_SNAPSHOTS=1` in front of it. Recording also rewrites
+  `__Snapshots__/environment.json`, which records the backing scale and macOS
+  version the references came from — a window-server capture is not portable,
+  so a machine that does not match it skips the pixel comparison loudly
+  instead of reporting a hardware difference as a design regression. After a
+  pass that invalidates the references, re-record them **and** the manifest
+  together (locally, or via the "Record design snapshots" workflow, which
+  uploads both as an artifact to commit).
 - **This is your only way to see your work.** Peekaboo and XcodeBuildMCP are
   not available here and macOS `screencapture` cannot reach the window server
   over SSH, so the MCP tools named in this file's `tools:` list do not exist in

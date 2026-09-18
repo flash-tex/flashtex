@@ -1,0 +1,14 @@
+# table-tabular-nocaption-10pt: every baseline pdflatex set on the page.
+# <baseline, bp from the page top> <expected residual bp> <tol bp> <first word>
+# Residual 0 means this engine must agree with pdfTeX. A non-zero residual
+# is the cmr - ec-lmr `charht` difference of that line's tallest glyph; see
+# the test's module docs for why `\lineskip` exposes it.
+81.96300 0.00000 0.1 Alpha
+93.91800 0.00000 0.1 Bravo
+114.64000 0.00000 0.1 Problem
+126.99400 0.00000 0.1 Duplicate
+138.94900 0.00000 0.1 Stale
+150.90400 0.00000 0.1 Bottlenecks
+178.79900 0.00000 0.1 Charlie
+190.75500 0.00000 0.1 Delta
+202.71000 0.00000 0.1 Echo

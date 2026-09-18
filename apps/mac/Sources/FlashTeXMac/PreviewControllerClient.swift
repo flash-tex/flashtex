@@ -263,6 +263,13 @@ final class PreviewControllerClient {
         try? stdin.fileHandleForWriting.close()
     }
 
+    /// Same lifetime-tying rule as `LineProcessClient` (#687): a dropped client
+    /// still kills and reaps its helper, instead of relying on every call site
+    /// to remember `terminate()`/`detachController()`.
+    deinit {
+        if process.isRunning { process.terminate() }
+    }
+
     func terminate() {
         try? stdin.fileHandleForWriting.close()
         if process.isRunning { process.terminate() }

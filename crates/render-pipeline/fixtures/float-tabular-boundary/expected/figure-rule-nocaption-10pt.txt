@@ -1,0 +1,10 @@
+# figure-rule-nocaption-10pt: every baseline pdflatex set on the page.
+# <baseline, bp from the page top> <expected residual bp> <tol bp> <first word>
+# Residual 0 means this engine must agree with pdfTeX. A non-zero residual
+# is the cmr - ec-lmr `charht` difference of that line's tallest glyph; see
+# the test's module docs for why `\lineskip` exposes it.
+81.96300 0.00000 0.1 Alpha
+93.91800 0.00000 0.1 Bravo
+189.55900 0.00000 0.1 Charlie
+201.51400 0.00000 0.1 Delta
+213.46900 0.00000 0.1 Echo

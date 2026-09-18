@@ -62,10 +62,12 @@ enum WholeDocumentList {
         // Drain both pipes from the moment the child starts: a producer that
         // writes a reply before reading could otherwise fill a pipe and
         // deadlock against us while we are still writing the request.
-        var errData = Data()
+        // Published under a lock: the bounded wait below can return while a
+        // drain is still running.
+        let captured = CapturedStderr()
         let drained = DispatchGroup()
         drained.enter(); DispatchQueue.global().async { _ = stdout.fileHandleForReading.readDataToEndOfFile(); drained.leave() }
-        drained.enter(); DispatchQueue.global().async { errData = stderr.fileHandleForReading.readDataToEndOfFile(); drained.leave() }
+        drained.enter(); DispatchQueue.global().async { let d = stderr.fileHandleForReading.readDataToEndOfFile(); captured.put(d); drained.leave() }
         try process.run()
         // The request goes out on its own thread for the same reason.
         drained.enter()
@@ -83,13 +85,32 @@ enum WholeDocumentList {
             if process.isRunning { process.terminate() }
             _ = exited.wait(timeout: .now() + 5)
         }
-        drained.wait()
+        // `timeout` bounded the process, not the pipes. `terminate()` is SIGTERM
+        // to the direct child only: if it ignores it, or a descendant still
+        // holds the write ends, `readDataToEndOfFile` never sees EOF and an
+        // unbounded `drained.wait()` blocks this thread forever. In the Mac test
+        // bundle that thread is the main thread, so the whole xctest process
+        // hangs with no output and no failure (observed twice, main thread
+        // parked in `_dispatch_group_wait_slow` at this line). Bound it,
+        // escalate to SIGKILL, and report whatever was drained.
+        if drained.wait(timeout: .now() + 10) == .timedOut {
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            _ = drained.wait(timeout: .now() + 5)
+        }
         if timedOut {
             throw Failure(description: "\(producer.lastPathComponent) did not finish within \(Int(timeout)) s; terminated")
         }
         let bytes = (try? FileManager.default.attributesOfItem(atPath: out.path)[.size] as? Int) ?? 0
         return Outcome(exitCode: process.terminationStatus,
-                       stderr: String(decoding: errData, as: UTF8.self), bytes: bytes)
+                       stderr: String(decoding: captured.read(), as: UTF8.self), bytes: bytes)
+    }
+
+    /// The stderr drain's output, published under a lock (see the bounded wait).
+    private final class CapturedStderr: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+        func put(_ d: Data) { lock.lock(); data = d; lock.unlock() }
+        func read() -> Data { lock.lock(); defer { lock.unlock() }; return data }
     }
 }
 
@@ -126,6 +147,15 @@ extension ShellModel {
                                                            id: "mac-export", type: "compile", payload: request))
     }
 
+    /// Why a frame that must be re-rendered cannot be without the render
+    /// pipeline: a page window, or a live frame built from a delta.
+    static func noProducerReason(window: RenderingV2.Window?) -> String {
+        if let window {
+            return "Cannot export: this document is too large to send in one reply, so the preview is showing a page window (pages \(window.firstPage)–\(window.firstPage + window.pageCount - 1) of \(window.documentPageCount)). Exporting it needs the render pipeline: attach it with ⌘⇧R, build crates/render-pipeline, or run `flashtex build` on the command line."
+        }
+        return "Cannot export: the preview was updated incrementally, so there is no complete display list to export. Exporting it needs the render pipeline: attach it with ⌘⇧R, build crates/render-pipeline, or run `flashtex build` on the command line."
+    }
+
     /// The display list `File > Export PDF…` and `File > Print…` should hand to
     /// `flashtex-pdf-exact`, produced if necessary.
     ///
@@ -137,14 +167,19 @@ extension ShellModel {
         guard let (frame, source) = displayListV2?.retained else {
             return .failure(.init(reason: "Nothing to export: no rendering-v2 display list."))
         }
-        // Unwindowed: the frame on screen is the whole document already.
-        guard let window = frame.list.window else {
+        // Unwindowed and received as a full list: the line on screen is the
+        // whole document already. A frame reconstructed from a
+        // `display_list_delta` (every edit after the first full frame, i.e.
+        // exactly the unsaved-edit case) has no full line to hand the tool, so
+        // it is re-rendered like a windowed one.
+        let window = frame.list.window
+        if window == nil, !source.isDeltaLine {
             do { return .success(.init(url: try source.listFileURL(), temporary: false)) } catch {
                 return .failure(.init(reason: "PDF export: could not write the display list to a file: \(error.localizedDescription)"))
             }
         }
         guard let producer = wholeDocumentProducer else {
-            return .failure(.init(reason: "Cannot export: this document is too large to send in one reply, so the preview is showing a page window (pages \(window.firstPage)–\(window.firstPage + window.pageCount - 1) of \(window.documentPageCount)). Exporting it needs the render pipeline: attach it with ⌘⇧R, build crates/render-pipeline, or run `flashtex build` on the command line."))
+            return .failure(.init(reason: Self.noProducerReason(window: window)))
         }
         let requestLine: Data
         do { requestLine = try wholeDocumentRequestLine() } catch {
@@ -154,7 +189,7 @@ extension ShellModel {
             .appendingPathComponent("flashtex-whole-document-\(UUID().uuidString).json")
         let images = requestedLayoutCapabilities.contains(RenderingV2.imagesCapability)
         let environment = BundledMetrics.producerEnvironment()
-        captureNote = "Rendering all \(window.documentPageCount) pages…"
+        captureNote = "Rendering all \(window?.documentPageCount ?? frame.list.pages.count) pages…"
         let outcome: WholeDocumentList.Outcome
         do {
             outcome = try await Task.detached(priority: .userInitiated) {
