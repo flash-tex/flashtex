@@ -199,7 +199,15 @@ pub const BEAMER_CLASS_COMMANDS: &[&str] = &[
     "setbeamercovered",
     "setbeamersize",
     "beamertemplatenavigationsymbolsempty",
+    "column",
 ];
+
+/// Environments defined by `beamer.cls` alone (`beamerbaselocalstructure.sty`
+/// blocks, `beamerbaseframecomponents.sty` columns); outside
+/// `\documentclass{beamer}` the parser diagnoses them by class, like the
+/// commands above. `frame`, `figure` and `table` exist in every class and
+/// only *behave* differently under beamer, so they are not here.
+pub const BEAMER_CLASS_ENVIRONMENTS: &[&str] = &["block", "alertblock", "exampleblock", "columns", "column"];
 
 /// The class in [`Command::requires_class`] terms, or `None` for universal.
 fn requires_class(name: &str) -> Option<&'static str> {
@@ -254,6 +262,7 @@ pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "setbeamercovered",
     "setbeamersize",
     "beamertemplatenavigationsymbolsempty",
+    "column",
 ];
 
 /// Canonical commands the expansion pass executes itself (engine primitives
@@ -347,6 +356,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("setbeamercovered", "{...}", "accepted and read past (overlays are not modelled yet); needs \\documentclass{beamer}"),
     ("setbeamersize", "{...}", "accepted and read past: beamer's default text margins stay in force; needs \\documentclass{beamer}"),
     ("beamertemplatenavigationsymbolsempty", "", "accepted; the renderer draws no navigation symbols either way yet; needs \\documentclass{beamer}"),
+    ("column", "{width}", "beamer column inside columns: a minipage of the given width (.5\\textwidth, 4cm) set beside the others; optional [c|t|T|b] alignment; needs \\documentclass{beamer}"),
     ("label", "{key}", "names the current section, equation or figure number"),
     ("ref", "{key}", "number of the labelled item"),
     ("pageref", "{key}", "page number of the labelled item, in the \\pagenumbering style in force at the label"),
@@ -1088,7 +1098,13 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
         "subequations",
         "amsmath: displays inside number as the parent number plus a, b, ...; a \\label right after \\begin gets the parent number",
     ),
-    ("figure", "numbered captions; no floating"),
+    ("figure", "numbered captions; no floating (under beamer an in-flow centred box with an unnumbered \\small caption)"),
+    ("table", "numbered captions; no floating (under beamer an in-flow centred box with an unnumbered \\small caption)"),
+    ("block", "beamer block: the \\large title in the structure colour, the body below it at the enclosing width, \\medskip above and \\smallskip below; needs \\documentclass{beamer}"),
+    ("alertblock", "beamer alert block: like block with the title in red; needs \\documentclass{beamer}"),
+    ("exampleblock", "beamer example block: like block with the title in green; needs \\documentclass{beamer}"),
+    ("columns", "beamer columns row: \\column{width} or column environments set side by side across the paper width ([onlytextwidth]/[totalwidth=] across the text width), [c|t|T|b] alignment; needs \\documentclass{beamer}"),
+    ("column", "beamer column (environment form of \\column): [c|t|T|b]{width}; needs \\documentclass{beamer}"),
     (
         "frame",
         "rule-bordered box around its body (\\fboxsep padding, \\fboxrule rule in the current colour); under \\documentclass{beamer} a slide: one page per frame (empty frames included), the [t]/[c]/[b] body placement, a {title}{subtitle} head or \\frametitle in the body; overlay specs, [fragile], [plain] and [allowframebreaks] are read past",

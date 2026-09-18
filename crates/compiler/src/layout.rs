@@ -1715,6 +1715,19 @@ impl LayoutCursor {
                 }
                 self.vertical_gap(2.0 * body_size);
             }
+            // beamer blocks, columns and captions (Tier 3): this cursor
+            // sets the block title as a heading line and the caption like
+            // a figure caption; the columns flow one after the other.
+            Block::BeamerBlockBegin { .. } | Block::BeamerCaption { .. } => {
+                if !self.first_block {
+                    self.newline(body_size);
+                    self.vertical_gap(PARAGRAPH_GAP_PT);
+                }
+            }
+            Block::BeamerBlockEnd { .. }
+            | Block::BeamerColumnsBegin { .. }
+            | Block::BeamerColumn { .. }
+            | Block::BeamerColumnsEnd { .. } => {}
             Block::Verbatim { .. } => {
                 if !self.first_block {
                     self.newline(body_size);
@@ -2126,6 +2139,28 @@ impl LayoutCursor {
                 }
             }
             Block::BeamerFrameEnd { .. } => {}
+            Block::BeamerBlockBegin { title, .. } => {
+                if !title.is_empty() {
+                    let size = heading_size(2, body_size);
+                    emit(self, title, size, Font::TimesRoman);
+                    self.newline(size);
+                }
+            }
+            Block::BeamerCaption { kind, content, span } => {
+                let mut caption = vec![Inline::Text {
+                    text: format!("{}:", kind.name()),
+                    span: *span,
+                    style: TextStyle::default(),
+                    space_before: true,
+                }];
+                caption.extend(content.iter().cloned());
+                self.render_block(&Block::FigureCaption { content: caption });
+                return;
+            }
+            Block::BeamerBlockEnd { .. }
+            | Block::BeamerColumnsBegin { .. }
+            | Block::BeamerColumn { .. }
+            | Block::BeamerColumnsEnd { .. } => {}
             Block::BeamerTitlePage {
                 title,
                 subtitle,
@@ -2914,6 +2949,13 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
                 visit_inline_references(subtitle, visitor);
             }
             Block::BeamerFrameEnd { .. } => {}
+            Block::BeamerBlockBegin { title: content, .. } | Block::BeamerCaption { content, .. } => {
+                visit_inline_references(content, visitor)
+            }
+            Block::BeamerBlockEnd { .. }
+            | Block::BeamerColumnsBegin { .. }
+            | Block::BeamerColumn { .. }
+            | Block::BeamerColumnsEnd { .. } => {}
             Block::BeamerTitlePage {
                 title,
                 subtitle,

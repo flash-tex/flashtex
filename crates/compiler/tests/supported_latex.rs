@@ -456,6 +456,19 @@ fn every_inventory_entry_compiles_without_an_unsupported_diagnostic() {
                 LETTER_DOCUMENT.replace('#', ""),
                 "environment 'letter' is not implemented".to_string(),
             ),
+            // beamer's blocks and columns exist only under beamer, like the
+            // class's commands: exercised inside a frame of a deck.
+            Mode::Text if supported::BEAMER_CLASS_ENVIRONMENTS.contains(&e.name) => (
+                BEAMER_DOCUMENT.replace(
+                    '#',
+                    &match e.name {
+                        "columns" => "\\begin{columns}\\column{.5\\textwidth}a\\end{columns}".to_string(),
+                        "column" => "\\begin{columns}\\begin{column}{.5\\textwidth}a\\end{column}\\end{columns}".to_string(),
+                        name => format!("\\begin{{{name}}}{{T}}a\\end{{{name}}}"),
+                    },
+                ),
+                format!("environment '{}' is", e.name),
+            ),
             Mode::Text => (
                 format!(
                     "\\begin{{{0}}}{1}a\\end{{{0}}}",

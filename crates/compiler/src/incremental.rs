@@ -565,6 +565,18 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             map_span(span, changes, deltas)
         }
         Block::BeamerFrameEnd { span } => map_span(span, changes, deltas),
+        Block::BeamerBlockBegin { kind: _, title, span } => {
+            shift_inlines(title, changes, deltas)?;
+            map_span(span, changes, deltas)
+        }
+        Block::BeamerCaption { kind: _, content, span } => {
+            shift_inlines(content, changes, deltas)?;
+            map_span(span, changes, deltas)
+        }
+        Block::BeamerBlockEnd { span }
+        | Block::BeamerColumnsBegin { options: _, span }
+        | Block::BeamerColumn { width: _, align: _, span }
+        | Block::BeamerColumnsEnd { span } => map_span(span, changes, deltas),
         Block::BeamerTitlePage {
             title,
             subtitle,
@@ -953,6 +965,12 @@ fn block_signature(block: &Block) -> BlockSignature {
         Block::BeamerFrameBegin { title, .. } => title,
         Block::BeamerFrameEnd { .. } => &[],
         Block::BeamerTitlePage { title, .. } => title,
+        Block::BeamerBlockBegin { title, .. } => title,
+        Block::BeamerCaption { content, .. } => content,
+        Block::BeamerBlockEnd { .. }
+        | Block::BeamerColumnsBegin { .. }
+        | Block::BeamerColumn { .. }
+        | Block::BeamerColumnsEnd { .. } => &[],
     };
     let span_of = |inline: &Inline| match inline {
         Inline::Text { span, .. } => *span,
