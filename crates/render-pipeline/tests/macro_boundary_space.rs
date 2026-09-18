@@ -142,3 +142,118 @@ fn unquoted_macro_keeps_its_blank() {
         assert!((x - want_x).abs() < TOL, "`{letter}` at {x:.3}, pdflatex {want_x:.3}");
     }
 }
+
+// ---- GH-925: the same seams through a macro with an optional argument ----
+//
+// `\newcommand{\lb}[2][z]{\uline{#1#2}}` and `\newcommand{\lt}[2][z]{#1#2}`.
+// An optional argument goes through `\@protected@testopt` -> `\@ifnextchar`
+// -> `\futurelet`, whose lookahead dropped the invocation origin of the
+// tokens it re-inserted (tex-expansion `do_futurelet`), so the compiler
+// placed every replacement token at its *definition* bytes and `token_gap`
+// read preamble text as the gap before `)`: `)` sat +3.32 bp right of
+// pdflatex. With the origin restored, the adapter also has to count the
+// `[..]` as `#1` (`macro_arg_index`) and read the default's tokens (`z`)
+// where the body reaches `#1`, since they are not in the body.
+//
+// pdflatex (same oracle as above) sets each macro line identically to its
+// direct spelling; the numbers are its word origins.
+
+/// `(cluster text, x)` of every glyph cluster on the baseline, in order:
+/// the compiler cuts a replacement text's `z` and the argument's `a` into
+/// separate runs, so runs cannot be compared with the direct line, but the
+/// glyphs can.
+fn glyphs_on(text: &str, baseline: f64) -> Vec<(String, f64)> {
+    let r = common::render_one(text);
+    assert_eq!(r.v2.pages.len(), 1);
+    let mut out = Vec::new();
+    for item in r.v2.pages[0].resident_items() {
+        let Item::GlyphRun(run) = item else { continue };
+        let Some(g) = run.glyphs.first() else { continue };
+        if (g.baseline_y.to_bp() - baseline).abs() > 0.05 || run.text.trim() == "\u{2022}" {
+            continue;
+        }
+        for (i, c) in run.clusters.iter().enumerate() {
+            let Some(g) = run.glyphs.iter().find(|g| g.cluster as usize == i) else { continue };
+            out.push((run.text[c.text_start_byte..c.text_end_byte].to_string(), g.origin_x.to_bp()));
+        }
+    }
+    out
+}
+
+fn doc_optional(items: &[&str]) -> String {
+    let mut s = String::from(
+        "\\documentclass{article}\n\\usepackage[T1]{fontenc}\n\\usepackage[normalem]{ulem}\n\
+         \\newcommand{\\lb}[2][z]{\\uline{#1#2}}\n\\newcommand{\\lt}[2][z]{#1#2}\n\
+         \\begin{document}\n\\begin{itemize}\n",
+    );
+    for item in items {
+        s.push_str("\\item ");
+        s.push_str(item);
+        s.push('\n');
+    }
+    s.push_str("\\end{itemize}\n\\end{document}\n");
+    s
+}
+
+/// `letters`: pdflatex's word origins, pinned in order on the first glyph
+/// of each word (pdftext folds punctuation into its neighbours).
+const OPTIONAL_BOUNDARIES: [Boundary; 4] = [
+    Boundary {
+        name: "parens, default then given",
+        via_macro: "(\\lb{a b}) x (\\lb[y]{c d}) y.",
+        direct: "(\\uline{za b}) x (\\uline{yc d}) y.",
+        letters: &[("(", 158.676), ("z", 162.548), ("b", 175.275), ("x", 187.999), ("(", 196.584), ("y", 200.453), ("d", 213.456), ("y", 226.180)],
+    },
+    Boundary {
+        name: "quotes, given then default",
+        via_macro: "\"\\lb[y]{a b}\" x \"\\lb{c d}\" y.",
+        direct: "\"\\uline{ya b}\" x \"\\uline{zc d}\" y.",
+        letters: &[("y", 163.655), ("b", 176.935), ("x", 190.766), ("z", 204.326), ("d", 216.500), ("y", 230.331)],
+    },
+    Boundary {
+        name: "plain-text body in parens",
+        via_macro: "(\\lt{a}) x (\\lt[y]{b}) w.",
+        direct: "(za) x (yb) w.",
+        letters: &[("(", 158.676), ("x", 179.147), ("(", 187.722), ("w", 209.586)],
+    },
+    Boundary {
+        name: "em dash",
+        via_macro: "p---\\lb{a b}---x q---\\lb[y]{c d}---y.",
+        direct: "p---\\uline{za b}---x q---\\uline{yc d}---y.",
+        letters: &[("p", 158.676), ("z", 174.169), ("b", 186.896), ("q", 210.965), ("y", 226.183), ("d", 239.187)],
+    },
+];
+
+#[test]
+fn optional_argument_macro_lines_are_identical_and_match_pdflatex() {
+    if !common::lm_available() {
+        return;
+    }
+    let items: Vec<&str> = OPTIONAL_BOUNDARIES.iter().flat_map(|b| [b.via_macro, b.direct]).collect();
+    let text = doc_optional(&items);
+    for (k, b) in OPTIONAL_BOUNDARIES.iter().enumerate() {
+        let expanded = glyphs_on(&text, FIRST_BASELINE + BASELINESKIP * (2 * k) as f64);
+        let plain = glyphs_on(&text, FIRST_BASELINE + BASELINESKIP * (2 * k + 1) as f64);
+        assert!(!expanded.is_empty(), "{}: no glyphs on the macro line", b.name);
+        assert_eq!(
+            expanded.len(),
+            plain.len(),
+            "{}: the macro line has different glyphs\n macro: {expanded:?}\n direct: {plain:?}",
+            b.name
+        );
+        for ((text, x), (want_text, want_x)) in expanded.iter().zip(&plain) {
+            assert_eq!(text, want_text, "{}: glyph order differs", b.name);
+            assert!((x - want_x).abs() < TOL, "{}: `{text}` at {x:.3} via the macro, {want_x:.3} directly", b.name);
+        }
+        let mut from = 0;
+        for &(letter, want_x) in b.letters {
+            let at = expanded[from..]
+                .iter()
+                .position(|(t, _)| t == letter)
+                .unwrap_or_else(|| panic!("{}: no glyph `{letter}` after #{from} on the macro line: {expanded:?}", b.name));
+            let x = expanded[from + at].1;
+            assert!((x - want_x).abs() < TOL, "{}: `{letter}` at {x:.3}, pdflatex {want_x:.3}", b.name);
+            from += at + 1;
+        }
+    }
+}
