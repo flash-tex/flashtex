@@ -44,6 +44,14 @@ struct SidebarTree: NSViewRepresentable {
     /// Autosave name for column/expansion state; also names the tree for
     /// accessibility.
     var accessibilityLabel: String
+    /// Drag-and-drop moves (the project tree; the outline leaves these at
+    /// their defaults, so nothing there drags). `dragPath`: the rooted file a
+    /// row is dragged as, nil for rows that cannot move. `dropFolder`: the
+    /// folder dropping `path` on row `id` (nil id = the tree's empty space)
+    /// would land in, nil to refuse the drop. `onMove`: the accepted drop.
+    var dragPath: (String) -> String? = { _ in nil }
+    var dropFolder: (_ path: String, _ rowID: String?) -> String? = { _, _ in nil }
+    var onMove: (_ path: String, _ folder: String) -> Void = { _, _ in }
 
     struct MenuItem {
         var title: String
@@ -74,6 +82,10 @@ struct SidebarTree: NSViewRepresentable {
         outline.dataSource = context.coordinator
         outline.target = context.coordinator
         outline.action = #selector(Coordinator.rowClicked(_:))
+        // Row moves are local drags only (never a file promise to Finder).
+        outline.registerForDraggedTypes([Coordinator.rowPasteboardType])
+        outline.setDraggingSourceOperationMask(.move, forLocal: true)
+        outline.setDraggingSourceOperationMask([], forLocal: false)
         context.coordinator.outline = outline
 
         let scroll = NSScrollView()
@@ -169,6 +181,42 @@ struct SidebarTree: NSViewRepresentable {
             } else if current >= 0 {
                 outline.deselectAll(nil)
             }
+        }
+
+        // MARK: drag-and-drop moves
+
+        /// Private pasteboard type carrying the dragged row's rooted path.
+        static let rowPasteboardType = NSPasteboard.PasteboardType("dev.flashtex.project-tree-path")
+
+        func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
+            guard let row = row(for: item), row.selectable, let path = parent.dragPath(row.id) else { return nil }
+            let pb = NSPasteboardItem()
+            pb.setString(path, forType: Self.rowPasteboardType)
+            return pb
+        }
+
+        /// The dragged path when the drag started in this tree.
+        private func draggedPath(_ info: NSDraggingInfo) -> String? {
+            guard let source = info.draggingSource as? NSOutlineView, source === outline else { return nil }
+            return info.draggingPasteboard.string(forType: Self.rowPasteboardType)
+        }
+
+        /// The tree is flat, so a drop is always *on* a row (its folder) or on
+        /// the tree itself (the root) — never between rows; `validateDrop`
+        /// retargets AppKit's insertion-gap proposal accordingly.
+        func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int) -> NSDragOperation {
+            guard let path = draggedPath(info) else { return [] }
+            let targetID = item.flatMap { row(for: $0) }?.id
+            guard parent.dropFolder(path, targetID) != nil else { return [] }
+            outlineView.setDropItem(targetID == nil ? nil : item, dropChildIndex: NSOutlineViewDropOnItemIndex)
+            return .move
+        }
+
+        func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
+            guard let path = draggedPath(info),
+                  let folder = parent.dropFolder(path, item.flatMap { row(for: $0) }?.id) else { return false }
+            parent.onMove(path, folder)
+            return true
         }
 
         func menu(forRowAt index: Int) -> NSMenu? {

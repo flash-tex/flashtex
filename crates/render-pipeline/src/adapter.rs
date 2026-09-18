@@ -24,6 +24,7 @@ use flashtex_class_geometry::{
 
 use crate::display::Diagnostic;
 use flashtex_compiler::color::DeviceColor;
+use flashtex_paragraph_layout as pl;
 use crate::style::Stylesheet;
 use crate::RenderOptions;
 
@@ -258,6 +259,15 @@ pub enum Item {
     /// reads and removes them when it sets a frame once per slide; the
     /// typesetter ignores any that remain.
     Overlay(OverlayMark),
+    /// A paragraph (or other horizontal list) whose assembly already passed
+    /// `pl::MAX_ITEMS`: the breaker would reject it with
+    /// `LayoutError::TooManyItems`, so assembly stops here instead of doing
+    /// any more per-word work. `span` is the list's first inline (the error's
+    /// source position); `count` is the assembly count that already exceeded
+    /// the limit. `typeset` expands this back into an over-limit
+    /// paragraph-layout list, so the failure surfaces through the exact same
+    /// `paragraph_layout_error` path as a fully assembled list.
+    Overlong { span: Span, count: usize },
     /// LaTeX's `\leavevmode`: an empty zero-width `\hbox`.
     ///
     /// Emitted only in front of a verbatim blank that would otherwise open
@@ -272,6 +282,17 @@ pub enum Item {
     /// pdflatex shows it: `\showbox` of `\verb*"a b-c"` opens with
     /// `.\hbox(0.0+0.0)x0.0`.
     LeaveVmode,
+    /// An explicit break point: `\penalty<value>`, or, `flagged`, an empty
+    /// `\discretionary{}{}{}` — charged `\exhyphenpenalty` (50) and
+    /// counted as a hyphenated line for `\doublehyphendemerits`. listings'
+    /// `breaklines` puts one after every token of a `\lstinline`
+    /// (lstmisc.sty `\lst@discretionary`, see `listings::break_inline`).
+    Penalty { value: i32, flagged: bool },
+    /// `\hbox{\ }`: a blank of the font in force set as a box, so it is
+    /// neither stretchable nor discarded at a line break. listings sets
+    /// every blank of a `\lstinline` this way (`\lst@outputspace`), which
+    /// is why pdflatex's next line can open with one.
+    SpaceBox { style: TextStyle },
 }
 
 /// beamer overlay markers (see [`Item::Overlay`]).
@@ -2788,7 +2809,7 @@ fn item_range(it: &Item, document: flashtex_compiler::DocumentId) -> Option<(usi
     let of = |s: Span| (s.document == document).then_some((s.start, s.end));
     match it {
         Item::Word(w) => of(w.span()),
-        Item::Math { span, .. } | Item::Logo { span, .. } | Item::Rule { span, .. } | Item::Footnote { span, .. } => of(*span),
+        Item::Math { span, .. } | Item::Logo { span, .. } | Item::Rule { span, .. } | Item::Footnote { span, .. } | Item::Overlong { span, .. } => of(*span),
         _ => None,
     }
 }
@@ -4010,6 +4031,25 @@ fn split_at_page_breaks<'p>(
                     Some(ItemLabel::Explicit { content, .. }) if label.is_some() && !content.is_empty() => Some(content.as_slice()),
                     _ => None,
                 };
+                // GH-924: an item whose text holds a box argument (`\uline`,
+                // `\sout`, `\underline`, `\colorbox`) reaches here with its
+                // label text but no `item`: the compiler's `box_inlines`
+                // restores `pending_item_label` around the nested parse but
+                // not `pending_item`, which the box's own paragraph flush
+                // consumes. A labelled itemize item never has any other
+                // `item` than article's `\labelitem<i>` symbol, so read it
+                // back from the text: otherwise the bullet is set as a
+                // Latin Modern Roman word (0.7778 em) instead of `tcrm`'s
+                // 0.5 em symbol, 2.77 bp too far left.
+                let (label_symbol, label_bold) = match item {
+                    Some(ItemLabel::Symbol { bold, .. }) => (true, *bold),
+                    None if env == "itemize" => match label.as_ref().map(|(text, _)| text.as_str()) {
+                        Some("•" | "∗" | "⋅") => (true, false),
+                        Some("–") => (true, true),
+                        _ => (false, false),
+                    },
+                    _ => (false, false),
+                };
                 list = Some(ListGeom {
                     level: *level,
                     margins,
@@ -4017,8 +4057,8 @@ fn split_at_page_breaks<'p>(
                     label_items: None,
                     description: env == "description",
                     nextline: list_style_nextline(&index.setlist, env, begin_keys),
-                    label_symbol: matches!(item, Some(ItemLabel::Symbol { .. })),
-                    label_bold: matches!(item, Some(ItemLabel::Symbol { bold: true, .. })),
+                    label_symbol,
+                    label_bold,
                     llap: matches!(env, "itemize" | "enumerate"),
                     parsep: seps.parsep_skip,
                     // `\NAT@bibsetup`: `\itemindent-\leftmargin`, so the
@@ -7878,7 +7918,7 @@ fn invocation_end(source: &str, inv: Span) -> Option<usize> {
 /// defined name's bytes, the replacement text inside its braces, and how
 /// many arguments an invocation takes (`[n]`, or `\def`'s `#1#2`), the
 /// first of which is optional when the definition gives it a default
-/// (`[n][default]`).
+/// (`[n][default]`; `default` is that text's bytes).
 #[derive(Debug, Clone)]
 struct MacroDef {
     at: usize,
@@ -7886,6 +7926,7 @@ struct MacroDef {
     body: std::ops::Range<usize>,
     args: usize,
     optional: bool,
+    default: Option<std::ops::Range<usize>>,
 }
 
 /// Per-thread definition indexes for the documents of the adapt call in
@@ -7978,6 +8019,7 @@ fn macro_definitions(source: &str) -> Vec<MacroDef> {
             // `[n]`, `[default]` (LaTeX) or `#1#2` (`\def`).
             let mut args = 0usize;
             let mut brackets = 0usize;
+            let mut default = None;
             loop {
                 skip_ws(&mut i);
                 match bytes.get(i) {
@@ -7985,6 +8027,8 @@ fn macro_definitions(source: &str) -> Vec<MacroDef> {
                         Some(close) => {
                             if brackets == 0 {
                                 args = source[i + 1..i + close].trim().parse().unwrap_or(0);
+                            } else if brackets == 1 {
+                                default = Some(i + 1..i + close);
                             }
                             brackets += 1;
                             i += close + 1;
@@ -8008,6 +8052,7 @@ fn macro_definitions(source: &str) -> Vec<MacroDef> {
                 body: i + 1..close,
                 args,
                 optional: brackets > 1 && args > 0,
+                default: default.filter(|_| brackets > 1 && args > 0),
             });
         }
     }
@@ -8016,13 +8061,17 @@ fn macro_definitions(source: &str) -> Vec<MacroDef> {
 }
 
 /// For a macro invoked at `inv` (its `\name` span), the index (from 1) of
-/// the brace-delimited argument whose bytes contain `at`, and the macro's
-/// name.
+/// the argument whose bytes contain `at`, and the macro's name. When the
+/// definition gives `#1` a default, a `[..]` right after the name is that
+/// argument and the brace groups count from 2 (present or not: `\lb{a}`'s
+/// group is `#2`); otherwise brackets are skipped.
 fn macro_arg_index(source: &str, inv: Span, at: usize) -> Option<(&str, usize)> {
     let name = control_word_at(source, inv.start, inv.end)?;
+    let optional = macro_def(source, name, inv.start).is_some_and(|d| d.optional);
     let bytes = source.as_bytes();
     let mut i = inv.end;
-    let mut k = 0usize;
+    let mut k = usize::from(optional);
+    let mut first = true;
     loop {
         while i < bytes.len() && (bytes[i] as char).is_whitespace() {
             i += 1;
@@ -8030,6 +8079,9 @@ fn macro_arg_index(source: &str, inv: Span, at: usize) -> Option<(&str, usize)> 
         match bytes.get(i) {
             Some(b'[') => {
                 let close = source[i..].find(']')?;
+                if optional && first && at > i && at < i + close {
+                    return Some((name, 1));
+                }
                 i += close + 1;
             }
             Some(b'{') => {
@@ -8042,7 +8094,20 @@ fn macro_arg_index(source: &str, inv: Span, at: usize) -> Option<(&str, usize)> 
             }
             _ => return None,
         }
+        first = false;
     }
+}
+
+/// Whether the invocation at `inv` supplies its optional argument (a `[`
+/// after the name, blanks skipped): if not, the tokens of `#1` come from
+/// the definition's default text.
+fn optional_given(source: &str, inv: Span) -> bool {
+    let bytes = source.as_bytes();
+    let mut i = inv.end;
+    while i < bytes.len() && (bytes[i] as char).is_whitespace() {
+        i += 1;
+    }
+    bytes.get(i) == Some(&b'[')
 }
 
 /// Where the reader stands inside a macro's replacement text: the
@@ -8060,11 +8125,17 @@ struct BodyCursor {
     /// lies wholly inside the body: the interword space is set in the font in
     /// force there.
     blank: Option<usize>,
+    /// The reader stands inside the optional argument's default text
+    /// (`[n][default]`, invoked without `[..]`), at this byte offset of it;
+    /// `at` is then the body offset after the `#1` being read. `word` and
+    /// `blank` point at that `#1`: the font in force there is the
+    /// default's.
+    default_at: Option<usize>,
 }
 
 impl BodyCursor {
     fn new(inv: Span, at: usize) -> BodyCursor {
-        BodyCursor { inv, at, word: None, blank: None }
+        BodyCursor { inv, at, word: None, blank: None, default_at: None }
     }
 }
 
@@ -8094,13 +8165,14 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
     let digits = |k: usize| 1 + k.to_string().len();
     // A word of a replacement text.
     if let Some(name) = control_word_at(src, span.start, span.end) {
-        if let Some(body) = macro_body(src, name, span.start) {
-            let (start, prefix) = match *cursor {
-                Some(c) if c.inv == span => (c.at, None),
+        if let Some(def) = macro_def(src, name, span.start) {
+            let body = &src[def.body.clone()];
+            let (start, prefix, default_at) = match *cursor {
+                Some(c) if c.inv == span => (c.at, None, c.default_at),
                 _ => match prev_span.and_then(|ps| macro_arg_index(src, span, ps.start)) {
                     // The previous token was an argument of this invocation.
-                    Some((_, k)) => (body.find(&format!("#{k}")).map_or(0, |p| p + digits(k)), None),
-                    None => (0, prev_end.zip(prev_span).map(|(pe, ps)| source_gap(pe, ps).unwrap_or_default())),
+                    Some((_, k)) => (body.find(&format!("#{k}")).map_or(0, |p| p + digits(k)), None, None),
+                    None => (0, prev_end.zip(prev_span).map(|(pe, ps)| source_gap(pe, ps).unwrap_or_default()), None),
                 },
             };
             let Some(text) = text else {
@@ -8120,7 +8192,7 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
                 };
                 let gap = &body[start..pos];
                 let blank = gap.find(|c: char| c.is_whitespace()).filter(|_| prefix.is_none()).map(|off| start + off);
-                *cursor = Some(BodyCursor { inv: span, at: box_end(body, pos).unwrap_or(pos), word: None, blank });
+                *cursor = Some(BodyCursor { inv: span, at: box_end(body, pos).unwrap_or(pos), word: None, blank, default_at: None });
                 return Some(match prefix {
                     Some(before) => format!("{before}{gap}"),
                     None => gap.to_string(),
@@ -8132,12 +8204,47 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
                 Some(name) if name.chars().all(|c| c.is_ascii_alphabetic()) => find_command(rest, name),
                 _ => rest.find(text),
             };
+            let is_blank = |c: char| c.is_whitespace();
+            // The default of the optional argument (`[n][default]`, invoked
+            // without `[..]`): the compiler spans its tokens at the
+            // invocation like the body's, but they are not in the body --
+            // TeX reads them where the body reaches `#1`.
+            let default = def.default.clone().filter(|_| !optional_given(src, span)).map(|r| &src[r]);
+            if let Some(default) = default {
+                // Standing inside the default: the next word of it, if any,
+                // is found there before the body is searched.
+                if let Some(d) = default_at {
+                    if let Some(p) = default.get(d..).and_then(find_text) {
+                        let param = start - digits(1);
+                        let gap = &default[d..d + p];
+                        *cursor = Some(BodyCursor { inv: span, at: start, word: Some(param), blank: gap.find(is_blank).map(|_| param), default_at: Some(d + p + text.len()) });
+                        return Some(gap.to_string());
+                    }
+                }
+                // Reaching `#1` before the word's own bytes in the body: the
+                // word is the default's, and the gap is the body up to `#1`
+                // plus the default up to the word.
+                let param = body.get(start..).and_then(|rest| rest.find("#1")).map(|p| start + p);
+                let in_body = body.get(start..).and_then(find_text).map(|p| start + p);
+                if let (Some(param), Some(p)) = (param, find_text(default)) {
+                    if in_body.is_none_or(|w| param < w) {
+                        let body_gap = &body[start..param];
+                        let gap = &default[..p];
+                        let blank = body_gap.find(is_blank).map(|off| start + off).or_else(|| gap.find(is_blank).map(|_| param)).filter(|_| prefix.is_none());
+                        *cursor = Some(BodyCursor { inv: span, at: param + digits(1), word: Some(param), blank, default_at: Some(p + text.len()) });
+                        return Some(match prefix {
+                            Some(before) => format!("{before}{body_gap}{gap}"),
+                            None => format!("{body_gap}{gap}"),
+                        });
+                    }
+                }
+            }
             match body.get(start..).and_then(find_text) {
                 Some(p) => {
                     let pos = start + p;
                     let gap = &body[start..pos];
-                    let blank = gap.find(|c: char| c.is_whitespace()).filter(|_| prefix.is_none()).map(|off| start + off);
-                    *cursor = Some(BodyCursor { inv: span, at: pos + text.len(), word: Some(pos), blank });
+                    let blank = gap.find(is_blank).filter(|_| prefix.is_none()).map(|off| start + off);
+                    *cursor = Some(BodyCursor { inv: span, at: pos + text.len(), word: Some(pos), blank, default_at: None });
                     return Some(match prefix {
                         Some(before) => format!("{before}{gap}"),
                         None => gap.to_string(),
@@ -9253,14 +9360,14 @@ fn items_cached(
     cache: Option<&crate::incremental::RenderCache>,
 ) -> Vec<Item> {
     let Some(cache) = cache else {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     };
     // Table items nest item lists the relocation does not walk.
     if inlines.iter().any(|i| matches!(i, Inline::Tabular(_))) {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     }
     let Some(first) = inlines.first().map(inline_span) else {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     };
     let document = first.document;
     let mut start = first.start;
@@ -9268,25 +9375,25 @@ fn items_cached(
     for i in inlines {
         let s = inline_span(i);
         if s.document != document {
-            return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+            return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
         }
         start = start.min(s.start);
         end = end.max(s.end);
     }
     let Some(src) = texts.get(document.0) else {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     };
     // Macro replacement text carries the invocation's span: the spacing
     // and weight of its words come from the definition (`macro_body`), so
     // a block holding one cannot be keyed by its own bytes alone.
     if inlines.iter().any(|i| is_invocation_span(src, inline_span(i))) {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     }
     // `\\[<dimen>]` reads past the block's last span: the key covers the
     // rest of that line.
     let slice_end = src[end.min(src.len())..].find('\n').map_or(src.len(), |n| end + n + 1).max((end + 2).min(src.len()));
     let Some(slice) = src.get(start..slice_end) else {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     };
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -9449,7 +9556,7 @@ fn items_cached(
     if let Some(a) = cache.adapted(key) {
         return crate::incremental::relocate_items(&a.items, start as isize - a.base as isize);
     }
-    let items = items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+    let items = items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     cache.insert_adapted(key, crate::incremental::AdaptedBlock { items: items.clone(), base: start });
     items
 }
@@ -9466,7 +9573,14 @@ fn items_cached(
 /// declarations were inserted from the column specification, or an amsthm
 /// theorem-like environment, whose head and body fonts the package declares
 /// and the source never spells at the head's span.
-fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Styles], labels: &Labels, size: u32, heading: bool, compiler_weight: bool) -> Vec<Item> {
+/// `bound` is whether the list being built is laid out as a paragraph (or
+/// paragraph-like block) subject to the breaker's item limit. Pure-`\hbox`
+/// content (`\colorbox`, `\underline`, `\textsuperscript`: set at natural
+/// width by `hbox_runs`, never line-broken) passes `false`, so an enormous
+/// box keeps today's slow success instead of a spurious paragraph error;
+/// everything laid out through `break_paragraph` passes `true`.
+#[allow(clippy::too_many_arguments)]
+fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Styles], labels: &Labels, size: u32, heading: bool, compiler_weight: bool, bound: bool) -> Vec<Item> {
     // `\ref`/`\pageref` become ordinary text attributed to the command's
     // bytes; `\label` becomes a zero-width marker.
     let mut resolved: Vec<std::borrow::Cow<Inline>> = Vec::with_capacity(inlines.len());
@@ -9535,7 +9649,22 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
         }
     };
 
+    // The first inline's span, for the over-long marker below.
+    let first_span = resolved.first().map(|i| inline_span(i));
     for (k, inline) in resolved.iter().enumerate() {
+        // Fail fast instead of failing slow: the breaker rejects any list
+        // past `pl::MAX_ITEMS`, and assembling further only burns
+        // superlinear work (`space_style`'s source rescan per word, shaping
+        // and the breaker itself) on a paragraph that cannot be set.
+        // `typeset` expands the marker back into an over-limit list, so this
+        // surfaces as the same `paragraph_layout_error` a full assembly
+        // would have produced — same code, same limit, same position.
+        // Lists at or under the limit never take this branch, so every
+        // paragraph that succeeds (or fails quickly) today is unaffected.
+        if bound && items.len() > pl::MAX_ITEMS {
+            let span = first_span.unwrap_or_else(|| inline_span(inline));
+            return vec![Item::Overlong { span, count: items.len() }];
+        }
         if let Some(sep) = head_sep {
             if sep.opens_the_body(inline_span(inline)) {
                 pending_head_sep.set(Some((sep.pt, sep.stretch_pt, sep.shrink_pt)));
@@ -9565,7 +9694,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                         if k > 0 {
                             note.push(Item::NoteParBreak);
                         }
-                        note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight));
+                        note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight, bound));
                     }
                     note
                 });
@@ -9592,7 +9721,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     if k > 0 {
                         note.push(Item::NoteParBreak);
                     }
-                    note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight));
+                    note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight, bound));
                 }
                 items.push(Item::Marginpar { text: note, span: *span });
                 after_control_word = end == span.end;
@@ -9611,7 +9740,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 after_control_word = false;
                 let src = text_of(span.document);
                 let lengths = crate::table::TableLengths::read(|name, base| length_at(src, name, size, span.start, base));
-                let mut items_of = |inlines: &[Inline], declared: bool| items_from_inlines_styled(texts, inlines, styles, labels, size, false, declared);
+                let mut items_of = |inlines: &[Inline], declared: bool| items_from_inlines_styled(texts, inlines, styles, labels, size, false, declared, bound);
                 let table = crate::table::from_compiler(t, lengths, declared_size(t.style.size, size), &mut items_of);
                 items.push(Item::Table(Box::new(table)));
                 prev_end = Some(span.end);
@@ -9626,7 +9755,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                let content = items_from_inlines_styled(texts, &b.content, styles, labels, size, heading, compiler_weight);
+                let content = items_from_inlines_styled(texts, &b.content, styles, labels, size, heading, compiler_weight, false);
                 items.push(Item::ColorBox(Box::new(ColorBoxItem {
                     fill: b.fill,
                     frame: b.frame,
@@ -9646,7 +9775,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                let content = items_from_inlines_styled(texts, &u.content, styles, labels, size, heading, compiler_weight);
+                let content = items_from_inlines_styled(texts, &u.content, styles, labels, size, heading, compiler_weight, false);
                 items.push(Item::Underline(Box::new(UnderlineItem {
                     thickness_pt: u.thickness_pt,
                     geom: u.geom,
@@ -9667,7 +9796,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
                 let size_cpt = declared_size(t.style.size, size);
-                let mut content = items_from_inlines_styled(texts, &t.content, styles, labels, size, heading, compiler_weight);
+                let mut content = items_from_inlines_styled(texts, &t.content, styles, labels, size, heading, compiler_weight, false);
                 // `\fontsize\sf@size` replaces the declared size the
                 // argument inherited from the command's context.
                 if size_cpt != 0 {
@@ -9731,7 +9860,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                items.extend(items_from_inlines_styled(texts, &t.content, styles, labels, size, false, compiler_weight));
+                items.extend(items_from_inlines_styled(texts, &t.content, styles, labels, size, false, compiler_weight, bound));
                 prev_end = Some(span.end);
                 prev_span = Some(span);
                 factor = 1000;
@@ -10277,6 +10406,27 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 after_control_word = control_word_at(source, span.start, span.end).is_some() && !is_invocation_span(source, *span);
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
+                // A lowered `\verb`/`\lstinline` (`lower_inline`): the
+                // compiler's span is the control word alone, so the gap
+                // after it would be read from the delimited argument's own
+                // bytes -- `\verb|a b|.` got a rigid typewriter blank before
+                // the `.`, where TeX has none (the `|` ends the group and
+                // the `.` follows it directly), and `\verb|a b| y` a blank
+                // of the typewriter font where TeX reads the space token in
+                // the outer font. What was read is the whole command.
+                // (`\lstinline` is spelled over as `\verb` for the engine,
+                // and its span is those five bytes: the word is re-read
+                // from the source at the span's start.)
+                if reference_spans.contains(span) {
+                    let word_end = source.get(span.start + 1..).map_or(span.start, |r| span.start + 1 + r.bytes().take_while(u8::is_ascii_alphabetic).count());
+                    if let Some(name) = control_word_at(source, span.start, word_end).filter(|n| verb_command(n)) {
+                        if let Some(v) = verb_span(source, span.start, span.start + 1 + name.len()) {
+                            prev_end = Some(v.whole.1);
+                            prev_span = Some(Span::in_document(span.document, span.start, v.whole.1));
+                            after_control_word = false;
+                        }
+                    }
+                }
             }
             // Inlines only a re-pinned compiler emits. Every one of them is
             // a zero-width marker in the horizontal list -- a penalty, a
@@ -10468,7 +10618,24 @@ fn space_style(
     // of the invocation) the bytes up to an argument are the call's earlier
     // arguments, not what TeX read: `\pair{\textit{a b}}{c}`'s body space
     // before `#2` is not in `a b`'s italic. Read the call site's font.
-    if let Some(bs) = src[..pe].rfind('\\') {
+    //
+    // Only the last backslash before `pe` can open an invocation span
+    // ending there (an earlier one would leave a `\` inside the span, which
+    // `control_word_at` rejects), and such a span is `\` plus an alphabetic
+    // name, so walking back over the trailing alphabetic run finds that
+    // backslash exactly when a whole-prefix `rfind` would find one that
+    // matters — in word-length time instead of document-prefix time. A
+    // backslash followed by anything else fails `is_invocation_span` either
+    // way, so stopping at the first non-alphabetic byte changes nothing.
+    let bs = {
+        let bytes = src.as_bytes();
+        let mut k = pe.min(bytes.len());
+        while k > 0 && bytes[k - 1].is_ascii_alphabetic() {
+            k -= 1;
+        }
+        (k > 0 && bytes[k - 1] == b'\\').then(|| k - 1)
+    };
+    if let Some(bs) = bs {
         if is_invocation_span(src, Span { document: span.document, start: bs, end: pe }) {
             return style_at(intervals, bs);
         }

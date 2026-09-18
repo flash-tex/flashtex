@@ -254,6 +254,7 @@ fn restyle(item: &mut AItem, state: &mut State) {
         | AItem::Logo { style, .. }
         | AItem::Rule { style, .. }
         | AItem::QedBox { style, .. }
+        | AItem::SpaceBox { style }
         | AItem::Kern { style, .. } => state.apply(style),
         AItem::Footnote { text: Some(t), .. } | AItem::Marginpar { text: t, .. } | AItem::Lap { items: t } => {
             let mut first = None;
@@ -283,6 +284,8 @@ fn restyle(item: &mut AItem, state: &mut State) {
         | AItem::NoteParBreak
         | AItem::HSpace { .. }
         | AItem::Overlay(_)
+        | AItem::Penalty { .. }
+        | AItem::Overlong { .. }
         | AItem::LeaveVmode => {}
     }
 }

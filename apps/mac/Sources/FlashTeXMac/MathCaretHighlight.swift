@@ -33,6 +33,21 @@ extension V2Geometry {
         var bounds: RenderingV2.Rect
     }
 
+    /// The caret's paragraph on a page: every item whose source span lies
+    /// within the paragraph's bytes, merged into one rectangle per line row.
+    struct ParagraphBand: Equatable {
+        /// The paragraph's bytes (blank-line delimited in the source).
+        var source: RenderingV2.SourceRange
+        /// One rectangle per row the paragraph occupies on this page, in
+        /// ticks, top to bottom: the union of the member rectangles that
+        /// overlap vertically (a superscript, a fraction bar and its line
+        /// share a row).
+        var rows: [RenderingV2.Rect]
+        /// Member items on this page (glyph runs with at least one member
+        /// cluster, plus rules).
+        var itemCount: Int
+    }
+
     enum CaretHighlight: Equatable {
         /// Exact caret bar (1:1 cluster with a caret at that byte) or the
         /// whole-cluster fallback, exactly as before.
@@ -40,6 +55,100 @@ extension V2Geometry {
         /// The caret is inside a formula: the enclosing box of every item
         /// carrying that span.
         case formula(FormulaBox)
+        /// The caret's whole paragraph, as a faint band per row (only when
+        /// the preview follows the caret; always last in the list, so
+        /// `first` keeps meaning the caret itself).
+        case paragraph(ParagraphBand)
+    }
+
+    /// The bytes of the paragraph containing `byte` of `text`: the caret's
+    /// line grown over every adjacent non-blank line, up to the newline
+    /// before the next blank line. A blank line holds only spaces, tabs or a
+    /// CR. A caret on a blank line (or past the end) gets an empty range.
+    static func paragraphBounds(containing byte: Int, in text: String) -> Range<Int> {
+        var copy = text
+        return copy.withUTF8 { b -> Range<Int> in
+            let n = b.count
+            let byte = max(0, min(byte, n))
+            let nl = UInt8(ascii: "\n")
+            func isBlank(_ s: Int, _ e: Int) -> Bool {
+                var i = s
+                while i < e { let c = b[i]; if c != 0x20, c != 0x09, c != 0x0D { return false }; i += 1 }
+                return true
+            }
+            // The caret's line.
+            var lineStart = byte
+            while lineStart > 0, b[lineStart - 1] != nl { lineStart -= 1 }
+            var lineEnd = byte
+            while lineEnd < n, b[lineEnd] != nl { lineEnd += 1 }
+            guard !isBlank(lineStart, lineEnd) else { return lineStart..<lineStart }
+            // Backwards over non-blank lines: `start - 1` is the newline ending the previous line.
+            var start = lineStart
+            while start > 0 {
+                var previous = start - 1
+                while previous > 0, b[previous - 1] != nl { previous -= 1 }
+                if isBlank(previous, start - 1) { break }
+                start = previous
+            }
+            // Forwards over non-blank lines: `end` is the newline ending the current last line.
+            var end = lineEnd
+            while end < n {
+                var next = end + 1
+                while next < n, b[next] != nl { next += 1 }
+                if isBlank(end + 1, next) { break }
+                end = next
+            }
+            return start..<end
+        }
+    }
+
+    /// Every item of `page` whose sources for `path` lie within `paragraph`,
+    /// as one band of row rectangles; nil when nothing on the page does.
+    static func paragraphBand(for paragraph: Range<Int>, path: String, in page: RenderingV2.Page) -> ParagraphBand? {
+        guard !paragraph.isEmpty else { return nil }
+        @inline(__always) func inside(_ s: RenderingV2.SourceRange) -> Bool {
+            s.path == path && s.startByte >= paragraph.lowerBound && s.endByte <= paragraph.upperBound
+                && (s.startByte < s.endByte || paragraph.contains(s.startByte))
+        }
+        var rects: [RenderingV2.Rect] = []
+        var items = 0
+        for item in page.items {
+            switch item {
+            case .rule(let r):
+                guard r.sources?.contains(where: inside) == true else { continue }
+                items += 1
+                rects.append(RenderingV2.Rect(x: r.x, top: r.top, width: r.width, height: r.height))
+            case .glyphRun(let run):
+                var member = false
+                for c in run.clusters where c.sources?.contains(where: inside) == true {
+                    member = true
+                    rects.append(contentsOf: c.hitRects)
+                }
+                if member { items += 1 }
+            case .image, .path:
+                continue // figures are not part of a text band
+            }
+        }
+        guard !rects.isEmpty else { return nil }
+        return ParagraphBand(source: RenderingV2.SourceRange(path: path, startByte: paragraph.lowerBound, endByte: paragraph.upperBound),
+                             rows: rows(merging: rects), itemCount: items)
+    }
+
+    /// Merges `rects` into one rectangle per row: sorted by top, a rectangle
+    /// joins the current row when it overlaps it vertically, else opens the
+    /// next one. Each row is the union of its members.
+    static func rows(merging rects: [RenderingV2.Rect]) -> [RenderingV2.Rect] {
+        var rows: [RenderingV2.Rect] = []
+        for r in rects.sorted(by: { $0.top < $1.top }) {
+            if let last = rows.last, r.top < last.top &+ last.height {
+                let x = min(last.x, r.x), top = min(last.top, r.top)
+                let right = max(last.x &+ last.width, r.x &+ r.width), bottom = max(last.top &+ last.height, r.top &+ r.height)
+                rows[rows.count - 1] = RenderingV2.Rect(x: x, top: top, width: right &- x, height: bottom &- top)
+            } else {
+                rows.append(r)
+            }
+        }
+        return rows
     }
 
     /// Whether `match` maps its source bytes 1:1 onto its text bytes (an
@@ -85,8 +194,17 @@ extension V2Geometry {
     ///   when the producer supplied one at that byte, else its rects);
     /// - otherwise, for each distinct fanned-out span containing the byte
     ///   (carried by two or more items, or by any rule), one `.formula` box;
-    /// - a span carried by a single glyph cluster stays `.cluster` (fallback).
-    static func caretHighlights(containing byte: Int, path: String, in page: RenderingV2.Page) -> [CaretHighlight] {
+    /// - a span carried by a single glyph cluster stays `.cluster` (fallback);
+    /// - with `paragraph` (the caret's paragraph bytes, `paragraphBounds`),
+    ///   one trailing `.paragraph` band when any item of the page lies in it.
+    static func caretHighlights(containing byte: Int, path: String, in page: RenderingV2.Page,
+                                paragraph: Range<Int>? = nil) -> [CaretHighlight] {
+        var out = caretItemHighlights(containing: byte, path: path, in: page)
+        if let paragraph, let band = paragraphBand(for: paragraph, path: path, in: page) { out.append(.paragraph(band)) }
+        return out
+    }
+
+    private static func caretItemHighlights(containing byte: Int, path: String, in page: RenderingV2.Page) -> [CaretHighlight] {
         let matches = clusters(containing: byte, path: path, in: page)
         var exact: [CaretHighlight] = []
         var fanned: [RenderingV2.SourceRange] = []

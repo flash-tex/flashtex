@@ -86,6 +86,18 @@ without leaving the app, or open an existing `.tex` file.
    it; references to it show as *missing — create* again. Both are refused
    while the file (or, for Rename, a document that references it) has
    unsaved edits, so nothing is rewritten under you.
+5. **Move** a file by dragging its row onto another row (it lands in that
+   row's folder — the tree is flat, so a file row stands for its folder) or
+   onto the tree's empty space (the project root); **Move to…** in the
+   row's context menu, or *File › Move To…* for the active document, asks
+   for the folder instead. Every `\input`, `\include`, `\includegraphics`,
+   `\bibliography`, `\addbibresource` and `\lstinputlisting` that resolved
+   to the file (with or without its extension, `./`-prefixed or not) is
+   rewritten to the new path: one undoable edit per open document (⌘Z
+   there; the file itself stays moved), and closed documents of the
+   include tree are rewritten on disk — the footer note lists both. A drop
+   onto the file's own folder, onto a folder under it, or over an existing
+   name is refused; so is moving the entry document.
 
 ### Opening and working in a project
 
@@ -224,6 +236,17 @@ without leaving the app, or open an existing `.tex` file.
   environments first, then the ones the document already uses — and wraps
   the selection: whole lines become an indented block on their own lines,
   anything else is wrapped inline; one undoable edit, caret at the body.
+- **Wrap in a command**: **⌘⇧B** (*Edit › Bold*), **⌘I** (*Emphasize*) and
+  **⌘U** (*Underline*) wrap the selection in `\textbf{…}`, `\emph{…}` and
+  `\underline{…}` — `\mathbf` and `\mathit` when the caret is in math mode
+  — as one undoable edit with the caret after the closing brace; with nothing
+  selected the caret lands between the braces and typing `}` steps over the
+  one already there. **⌘⌥W** (*Wrap Selection in Command…*) asks for any
+  command name (common ones first, then the document's own macros). ⌘B stays
+  Compile.
+- **`\left` … `\right`**: in math mode, typing `\left(`, `\left[`,
+  `\left\{`, `\left|` or `\left.` inserts the matching `\right…` after
+  the caret; typing it by hand steps over the inserted one.
 - **Go to definition** (⌘-click a `\foo`, or ⌃⌘J): selects the
   `\newcommand`/`\renewcommand`/`\def`/`\let`/`\DeclareMathOperator`/
   `\NewDocumentCommand` (for `\begin{X}`: `\newenvironment`/`\newtheorem`)
@@ -487,6 +510,7 @@ you trust.
 | ⌘O | Open LaTeX file… (becomes the entry document) |
 | ⌘⌥N | New Project… (folder, name, template; opens `main.tex` with its include tree) |
 | ⌘N | New File… (rooted `.tex` name; optional `\input` at the caret; also the sidebar's + and the project row's context menu) |
+| File › Move To… | Move file: the active document into another project folder (also *Move to…* in a row's context menu, or drag a row onto another row / the tree's empty space); file references are rewritten |
 | ⌘S / ⌘⇧S | Save / Save As… |
 | ⌘⌥R | Show in Finder (the active document; sidebar rows have *Reveal in Finder*, the tree's empty space *Reveal Project in Finder*) |
 | ⌘⇧P | Command palette |
@@ -511,6 +535,8 @@ you trust.
 | ⌘⇧T | Go to symbol… (fuzzy picker over headings, environments and labels of the open documents) |
 | ⌘⇧A | Select environment (innermost `\begin`…`\end` around the caret; again widens) |
 | ⌘⇧W | Wrap selection in environment… |
+| ⌘⇧B / ⌘I / ⌘U | Bold / emphasize / underline: wrap the selection in `\textbf{}` / `\emph{}` / `\underline{}` (`\mathbf` / `\mathit` in math mode) |
+| ⌘⌥W | Wrap selection in command… |
 | ⌥⇧R | Rename symbol (`\label` key or user command, across the open documents) |
 | ⌘⇧] / ⌘⇧[ | Next / previous diagnostic |
 | ⌘⌥] / ⌘⌥[ | Next / previous occurrence within the selected Problems group |

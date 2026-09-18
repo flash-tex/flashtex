@@ -985,6 +985,114 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(delivered.first?.items.map(\.detail), Array(repeating: "declared in an open document", count: 2))
     }
 
+    // MARK: `\cite{` straight from the project's .bib files (BibScanner.swift)
+
+    private static let knuthBib = "% refs\n@article{knuth84,\n  title = {Literate {Programming}},\n  author = {Knuth, Donald E.},\n  year = {1984}\n}\n@book{lamport86,\n  author = \"Lamport, Leslie\",\n  year = 1986\n}\n"
+
+    private func bibProject(_ name: String, bib: String = CompletionTests.knuthBib) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("bib-\(name)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try bib.write(to: dir.appendingPathComponent("refs.bib"), atomically: true, encoding: .utf8)
+        return dir
+    }
+
+    /// The scheduler reads the `.bib` files `\bibliography{…}` names from the
+    /// project root when the caret is in `\cite{` — no helper, no metadata —
+    /// and each key carries its entry type, file and title.
+    @MainActor
+    func testCiteCompletionReadsTheProjectsBibFilesWithoutTheHelper() throws {
+        let root = try bibProject("bibliography")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let text = "\\bibliographystyle{plain}\n\\bibliography{refs}\n\\cite{kn"
+        let exec = ManualExecutor()
+        let scheduler = CompletionScheduler(executor: exec.run)
+        var delivered: [CompletionScheduler.Outcome] = []
+        var req = CompletionScheduler.Request(text: text, caretUTF16: (text as NSString).length, metadata: nil)
+        req.bibliography = BibScanner.Sources(projectRoot: root, documents: [.init(path: "main.tex", text: text)])
+        scheduler.schedule(req) { delivered.append($0) }
+        exec.runAll()
+        spin("delivery") { scheduler.statistics.delivered == 1 }
+        let items = try XCTUnwrap(delivered.first?.items)
+        XCTAssertEqual(items.map(\.label), ["knuth84"])
+        let knuth = try XCTUnwrap(items.first)
+        XCTAssertEqual(knuth.kind, .citation)
+        XCTAssertEqual(knuth.insertText, "knuth84}")
+        XCTAssertTrue(knuth.detail.contains("@article"), knuth.detail)
+        XCTAssertTrue(knuth.detail.contains("refs.bib"), knuth.detail)
+        XCTAssertEqual(knuth.detail, "@article · refs.bib")
+        XCTAssertEqual(knuth.documentation, "Literate Programming", "the title is the doc line, protective braces stripped")
+        XCTAssertEqual(CompletionPopup.displayedDocumentation(for: knuth), "Literate Programming")
+        // The whole file with no prefix: the second entry has no title, so author + year is its line.
+        let all = Completion.suggestions(in: "\\cite{", caretUTF16: 6, metadata: nil,
+                                         bibliographyEntries: BibScanner.entries(for: req.bibliography!))
+        XCTAssertEqual(all.map(\.label), ["knuth84", "lamport86"])
+        XCTAssertEqual(all[1].detail, "@book · refs.bib")
+        XCTAssertEqual(all[1].documentation, "Lamport 1986")
+    }
+
+    /// `\addbibresource[…]{refs.bib}` (biblatex) declares the same file; the
+    /// parse is cached per file by modification date, so a second request
+    /// costs one attribute read.
+    @MainActor
+    func testCiteCompletionReadsAddbibresourceAndCachesByModificationDate() throws {
+        let root = try bibProject("addbibresource")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let text = "\\addbibresource[datatype=bibtex]{refs.bib}\n\\cite{lam"
+        XCTAssertEqual(BibScanner.declaredBibliographies(in: text), ["refs.bib"])
+        XCTAssertEqual(BibScanner.declaredBibliographies(in: "\\bibliography{refs, more}\\bibliographystyle{alpha}"), ["refs.bib", "more.bib"])
+        let cache = BibScanner.Cache()
+        let sources = BibScanner.Sources(projectRoot: root, documents: [.init(path: "main.tex", text: text)])
+        let first = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, metadata: nil,
+                                           bibliographyEntries: BibScanner.entries(for: sources, cache: cache))
+        XCTAssertEqual(first.map(\.label), ["lamport86"])
+        XCTAssertEqual(first.first?.detail, "@book · refs.bib")
+        XCTAssertEqual(cache.parses, 1)
+        _ = BibScanner.entries(for: sources, cache: cache)
+        XCTAssertEqual(cache.parses, 1, "unchanged file: served from the cache")
+        // A rewrite with a new modification date is parsed again.
+        let url = root.appendingPathComponent("refs.bib")
+        try "@misc{fresh, title = {New}}\n".write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: url.path)
+        XCTAssertEqual(BibScanner.entries(for: sources, cache: cache).map(\.key), ["fresh"])
+        XCTAssertEqual(cache.parses, 2)
+        // An open .bib is parsed from its buffer, ahead of the disk, and never read from disk.
+        let open = BibScanner.Sources(projectRoot: nil, documents: [.init(path: "main.tex", text: "\\cite{"),
+                                                                     .init(path: "notes.bib", text: "@article{buffered, title = {In memory}}")])
+        XCTAssertEqual(BibScanner.entries(for: open, cache: cache).map(\.detail), ["@article · notes.bib"])
+        // Declared through the helper's Document Kinds (no \bibliography line in any source).
+        let declared = BibScanner.Sources(projectRoot: root, declaredPaths: ["refs.bib"], documents: [.init(path: "main.tex", text: "\\cite{")])
+        XCTAssertEqual(BibScanner.entries(for: declared, cache: cache).map(\.key), ["fresh"])
+    }
+
+    /// With the helper attached its index rows win: a key both know is one
+    /// row with the helper's provenance and the record's doc line; a key only
+    /// the file has is appended after the index's rows.
+    func testCiteCompletionDedupesHelperKeysAgainstTheBibFiles() throws {
+        let versions = ["main.tex": 3, "refs.bib": 1]
+        let loc: [String: Any] = ["path": "refs.bib", "revision": 1, "start_byte": 0, "end_byte": 3]
+        let payload: [String: Any] = ["source_versions": versions, "completions": [
+            ["name": "knuth84", "definitions": [loc], "occurrences": [loc], "locations_truncated": false],
+        ]]
+        let keys = try Completion.Metadata.decodeProjectIndexReply(JSONSerialization.data(withJSONObject: payload), category: .citation,
+                                                                   editorRevision: 9, expectedSourceVersions: versions)
+        let snapshot = try Completion.Metadata.decodeProjectIndexSnapshot(JSONSerialization.data(withJSONObject: [
+            "project_id": "p", "source_versions": versions, "membership_generation": 2,
+            "document_kinds": ["main.tex": "latex", "refs.bib": "bibliography"],
+        ] as [String: Any]), editorRevision: 9, expectedSourceVersions: versions)
+        let metadata = try XCTUnwrap(keys.merged(with: snapshot))
+        let entries = [BibScanner.Entry(key: "knuth84", type: "article", path: "refs.bib", title: "Literate Programming"),
+                       BibScanner.Entry(key: "kernighan78", type: "book", path: "refs.bib", author: "Kernighan and Ritchie", year: "1978")]
+        let text = "\\bibitem{knope} x \\cite{k"
+        let out = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, metadata: metadata, bibliographyEntries: entries)
+        XCTAssertEqual(out.map(\.label), ["knope", "knuth84", "kernighan78"])
+        guard out.count == 3 else { return XCTFail("expected three suggestions, got \(out.count)") }
+        XCTAssertEqual(out[1].detail, "record in refs.bib (declared bibliography) · 1 use · revision 9", "the helper's row wins")
+        XCTAssertEqual(out[1].documentation, "Literate Programming", "…and gains the record's line")
+        XCTAssertEqual(out[2].detail, "@book · refs.bib")
+        XCTAssertEqual(out[2].documentation, "Kernighan and Ritchie 1978")
+        XCTAssertNil(out[0].documentation)
+    }
+
     // MARK: cancellation and stale refusal
 
     /// Holds jobs until the test runs them, so caret moves and job completion

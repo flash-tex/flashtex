@@ -977,6 +977,7 @@ explain that nothing is loaded.
 | ⌘O | Open LaTeX file… (becomes the `main.tex` entry document; compiles if a worker is attached) |
 | ⌘⌥N | New Project… sheet (folder, name, template: Blank article / Article with sections / Report with chapters / Homework sheet; writes `<folder>/<name>/main.tex` plus its `\input`/`\include` members, opens `main.tex` as the entry document with the include tree in the sidebar; asks before replacing existing template files) |
 | ⌘N | New File… sheet (also the sidebar's + button and the project row's context menu): a rooted `.tex` name, subfolders allowed, never above the project root; "Insert `\input` at the caret" (on by default while the entry document is active) is one undoable edit; the file opens in a tab |
+| File > Move To… | Move file: the active document into another folder of the project (also "Move to…" in a project row's context menu; dragging a row onto another row moves it into that row's folder, onto the tree's empty space to the project root). Every `\input`/`\include`/`\includegraphics`/`\bibliography`/`\addbibresource`/`\lstinputlisting` that resolved to the file is rewritten to the new rooted path — one undoable edit per open document (⌘Z there), closed documents of the include tree on disk; refused for the entry document, with unsaved edits, or onto an existing file |
 | ⌘S / ⌘⇧S | Save / Save As… (UTF-8; header shows "— edited" when dirty) |
 | ⌘⌥R | Show in Finder: the active document's file, selected (also "Reveal in Finder" in a sidebar row's context menu; right-click the project tree's empty space for "Reveal Project in Finder") |
 | Edit > Restore Discarded Buffer | Brings back the unsaved text replaced by a "Discard" decision when opening another file |
@@ -1041,6 +1042,10 @@ explain that nothing is loaded.
 | ⌘⇧T | Go to symbol: fuzzy picker over every heading, environment and label of the open documents |
 | ⌘⇧A | Select environment: the innermost `\begin{X}`…`\end{X}` around the caret, again for the enclosing one (a caret on `\begin`/`\end` highlights its partner) |
 | ⌘⇧W | Wrap selection in environment… (whole lines as an indented block, otherwise inline; one undoable edit) |
+| ⌘⇧B | Bold: wrap the selection in `\textbf{…}` (`\mathbf{…}` in math mode; one undoable edit, caret after the `}`, between the braces when nothing is selected). ⌘B is Compile |
+| ⌘I | Emphasize: wrap the selection in `\emph{…}` (`\mathit{…}` in math mode) |
+| ⌘U | Underline: wrap the selection in `\underline{…}` |
+| ⌘⌥W | Wrap selection in command… (asks for a command name; common commands first, then the document's own macros) |
 | ⌃⌘E | Change environment… (innermost pair; rewrites both `\begin` and `\end` names as one undo step; typing in either name updates the partner) |
 | ⌥⇧R | Rename symbol: the `\label` key or user command under the caret across the open documents (Plan → Apply; one undoable edit per document, one guarded `apply_group` per file with the helper) |
 | ⌘⇧] / ⌘⇧[ | Next / previous diagnostic (refused if its span was edited since the compile) |

@@ -86,6 +86,13 @@ struct SourceEditorView: NSViewRepresentable {
     /// the project's other open documents and a file probe
     /// (EditorHoverResolution.swift). Read once per hover, not per keystroke.
     var hoverContext: () -> EditorIntelligence.HoverContext = { .init() }
+    /// The project's `.bib` files `\cite{` completes from directly
+    /// (`BibScanner.entries(for:)`; `ShellModel.bibliographySources`). Read
+    /// once per list request, not per keystroke; nil offers only the helper's keys.
+    var bibliographySources: () -> BibScanner.Sources? = { nil }
+    /// What the buffer is coloured as (`SyntaxHighlighter.Language`): BibTeX
+    /// for a declared bibliography, LaTeX otherwise.
+    var language: SyntaxHighlighter.Language = .latex
     /// The current v2 preview, for the inline math hover preview
     /// (MathHoverPreview.swift); nil when there is no v2 frame to crop from.
     var mathPreviewContext: () -> MathHoverPreview.Context? = { nil }
@@ -126,6 +133,7 @@ struct SourceEditorView: NSViewRepresentable {
         tv.setAccessibilityHelp("LaTeX source editor. Moving the selection announces the line and column.")
         tv.string = text
         context.coordinator.syntax.enabled = syntaxHighlighting
+        context.coordinator.syntax.language = language // before attach: the first lex is already in the right language
         context.coordinator.syntax.attach(tv) // follows the storage from here on; paints the visible window
         context.coordinator.attach(scroll)
         context.coordinator.spelling.attach(tv) // LaTeX-aware spell checking (LaTeXSpellCheck.swift)
@@ -145,6 +153,7 @@ struct SourceEditorView: NSViewRepresentable {
             if syntaxHighlighting { co.syntax.reset() }
         }
         co.setLineNumbers(showLineNumbers, on: scroll)
+        co.syntax.language = language // no-op unless the document's kind changed (a .bib tab)
         if let completing = tv as? CompletingTextView {
             // Change-only: the setter rebuilds the completion metadata, and this
             // update runs on every keystroke, not only when a result arrives.
@@ -155,6 +164,7 @@ struct SourceEditorView: NSViewRepresentable {
         (tv as? CompletingTextView)?.graphicsRoot = graphicsRoot
         // The other open documents' macros complete as declared (Completion.declaredCommands); read when the list is requested.
         (tv as? CompletingTextView)?.otherDocuments = { [hoverContext] in hoverContext().otherDocuments.map(\.text) }
+        (tv as? CompletingTextView)?.bibliographySources = bibliographySources // `\cite{` from the project's .bib files (BibScanner.swift)
         if let m = projectIndexMetadata { _ = (tv as? CompletingTextView)?.accept(projectIndex: m) }
         if let edit = pendingEdit, edit.token != co.appliedEditToken {
             // While marked text exists the storage is ahead of the model by the
@@ -483,6 +493,10 @@ struct SourceEditorView: NSViewRepresentable {
         /// `)` and `\` are closers only as the halves of an auto-inserted `\)`/`\]`
         /// (type-over checks the pending-closer list before the character).
         static func isCloser(_ c: Character) -> Bool { c == "}" || c == "]" || c == "$" || c == ")" || c == "\\" }
+        /// A unit of an auto-inserted closer that can never be typed over on its
+        /// own: `\` (it starts the next command) and the letters of `\right`.
+        /// Only a closer's terminal unit (`)`, `]`, `}`, `|`, `.`, `$`) steps over it.
+        static func isClosingUnitOpener(_ c: Character) -> Bool { c == "\\" || c.isLetter }
 
         /// The math closer for a `(` or `[` just typed before `caretUTF16`
         /// right after a single backslash (`\(` → `\)`, `\[` → `\]`), when
@@ -499,6 +513,45 @@ struct SourceEditorView: NSViewRepresentable {
                 if p < b.count {
                     let next = b[p]
                     guard next == 0x20 || next == 0x09 || next == 0x0A || next == 0x0D else { return nil }
+                }
+                return closer
+            }
+        }
+
+        /// The `\right…` partner for the delimiter just typed before
+        /// `caretUTF16` when it completes `\left(`, `\left[`, `\left\{`,
+        /// `\left|` or `\left.` (the `\left` unescaped and code, the
+        /// delimiter followed by nothing, whitespace or a closing
+        /// delimiter); nil otherwise. Math-mode gating is the caller's
+        /// (`\left` is a math-only command; in text it is a plain error).
+        static func leftRightCloser(in text: String, caretUTF16: Int) -> String? {
+            guard caretUTF16 >= 6, let index = SourceEditorView.scalarIndex(text: text, utf16: caretUTF16) else { return nil }
+            let p = text.utf8.distance(from: text.utf8.startIndex, to: index)
+            var copy = text
+            return copy.withUTF8 { b -> String? in
+                let opener = p - 1
+                guard opener >= 5 else { return nil }
+                let closer: String
+                let leftEnd: Int // the byte after `\left`
+                switch b[opener] {
+                case UInt8(ascii: "("): closer = "\\right)"; leftEnd = opener
+                case UInt8(ascii: "["): closer = "\\right]"; leftEnd = opener
+                case UInt8(ascii: "|"): closer = "\\right|"; leftEnd = opener
+                case UInt8(ascii: "."): closer = "\\right."; leftEnd = opener
+                case UInt8(ascii: "{"):
+                    guard b[opener - 1] == UInt8(ascii: "\\") else { return nil }
+                    closer = "\\right\\}"; leftEnd = opener - 1
+                default: return nil
+                }
+                let start = leftEnd - 5
+                guard start >= 0, b[start] == UInt8(ascii: "\\"), !escaped(b, at: start), isCode(b, at: start),
+                      b[start + 1] == UInt8(ascii: "l"), b[start + 2] == UInt8(ascii: "e"),
+                      b[start + 3] == UInt8(ascii: "f"), b[start + 4] == UInt8(ascii: "t") else { return nil }
+                if p < b.count {
+                    let next = b[p]
+                    let allowedNext = next == 0x20 || next == 0x09 || next == 0x0A || next == 0x0D
+                        || next == UInt8(ascii: "}") || next == UInt8(ascii: "]") || next == UInt8(ascii: ")") || next == UInt8(ascii: "$")
+                    guard allowedNext else { return nil }
                 }
                 return closer
             }
@@ -839,6 +892,14 @@ struct SourceEditorView: NSViewRepresentable {
 
         // MARK: editor intelligence (EditorIntelligence.swift)
 
+        /// Whether `caret` is in math mode (Completion.isMathMode), answered
+        /// from the in-sync syntax model when there is one — one line's
+        /// lexing — else from a whole-buffer lex; nil without a buffer.
+        func mathMode(at caret: Int, in tv: NSTextView) -> Bool? {
+            guard let text = tv.textStorage?.string as NSString? else { return nil }
+            return Completion.isMathMode(in: text, caretUTF16: caret, highlighter: syntax.inSync(with: text) ? syntax.highlighter : nil)
+        }
+
         func installIntelligence(on scroll: NSScrollView, lineNumbers: Bool) {
             guard let tv = scroll.documentView as? NSTextView else { return }
             hover.install(on: tv)
@@ -850,9 +911,8 @@ struct SourceEditorView: NSViewRepresentable {
                 // (Completion.swift): answered from the in-sync syntax model,
                 // one line's lexing; nil (no model) filters nothing.
                 completing.mathModeAtCaret = { [weak self] index in
-                    guard let self, let text = self.textView?.textStorage?.string as NSString? else { return nil }
-                    return Completion.isMathMode(in: text, caretUTF16: index,
-                                                 highlighter: self.syntax.inSync(with: text) ? self.syntax.highlighter : nil)
+                    guard let self, let tv = self.textView else { return nil }
+                    return self.mathMode(at: index, in: tv)
                 }
                 completing.backgroundDecorator = { [weak self] rect in self?.drawCurrentLine(in: rect) }
                 // GH74: a completion snippet's placeholder closer (`\section{}`)
@@ -1095,7 +1155,8 @@ struct SourceEditorView: NSViewRepresentable {
             guard applied else { refuse("the text view declined the change"); return }
             let s = SourceEditorView.nativeText(of: tv)
             lastKnownText = s
-            pendingClosers = []
+            // The edit's own placeholder closer (`\textbf{|}`) overtypes like a hand-typed pair's.
+            pendingClosers = edit.trackedCloser.map { $0 < (s as NSString).length ? [$0] : [] } ?? []
             refreshBraceHighlight(tv)
             announceNow(text: s, range: tv.selectedRange(), prefix: "Inserted capture. ")
             // The model is updated outside the SwiftUI view update; `editApplied`
@@ -1157,17 +1218,33 @@ struct SourceEditorView: NSViewRepresentable {
         func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString: String?) -> Bool {
             let replacementLength = (replacementString as NSString?)?.length ?? 0
             marks.noteEdit(range: range, replacementLength: replacementLength)
-            // Type-over: the closer the user types is the one that was auto-inserted here.
+            // Type-over: the closer the user types is the one that was auto-inserted
+            // here (the list is the authority). A multi-unit closer (`\]`, `\)`,
+            // `\right)`) is stepped over only by the keystroke that completes it:
+            // its terminal unit, typed after its other units were typed by hand
+            // (#932: a lone `\` opens a command, it never eats the closer's `\`).
             if !pairing, programmaticChanges == 0, let replacementString, range.length == 0, replacementString.count == 1,
-               let ch = replacementString.first, BraceMatcher.isCloser(ch), !textView.hasMarkedText(),
-               let i = pendingClosers.firstIndex(of: range.location),
-               (textView.textStorage?.length ?? 0) > range.location,
-               (textView.string as NSString).substring(with: NSRange(location: range.location, length: 1)) == replacementString {
-                pendingClosers.remove(at: i)
+               !textView.hasMarkedText(),
+               let prefix = pendingCloserCompleted(by: replacementString, at: range.location, in: textView) {
+                if prefix > 0 {
+                    // The hand-typed units before the caret duplicate the closer's:
+                    // drop them so the buffer reads as if the closer was stepped over.
+                    pairing = true
+                    textView.breakUndoCoalescing()
+                    textView.insertText("", replacementRange: NSRange(location: range.location - prefix, length: prefix))
+                    textView.breakUndoCoalescing()
+                    pairing = false
+                }
+                let start = range.location - prefix // the closer's first unit after the deletion shifted it
+                pendingClosers.removeAll { $0 >= start && $0 <= start + prefix }
                 noteTypingStep()
-                textView.setSelectedRange(NSRange(location: range.location + 1, length: 0))
+                textView.setSelectedRange(NSRange(location: start + prefix + 1, length: 0))
+                if prefix > 0 {
+                    lastEdit = nil
+                    commitUserChange(textView, edit: nil)
+                }
                 announceMatch(in: textView)
-                return false // nothing changes: the caret stepped over the closer
+                return false // nothing more changes: the caret stepped over the closer
             }
             shiftPendingClosers(edit: range, replacementLength: replacementLength)
             (textView as? CompletingTextView)?.noteFoldEdit(range, replacementLength: replacementLength)
@@ -1211,6 +1288,29 @@ struct SourceEditorView: NSViewRepresentable {
             lastEdit = nil
             commitUserChange(textView, edit: nil)
             return true
+        }
+
+        /// The number of hand-typed units before `caret` that, with `typed`,
+        /// complete the auto-inserted closer whose units are pending from
+        /// `caret`; nil when `typed` completes nothing. `0` is the plain case:
+        /// `typed` is a single-unit closer (`}`) sitting at the caret. For
+        /// `\]`/`\)`/`\right)` the keystroke must be the terminal unit and
+        /// the units before it must already precede the caret — `\[\alpha` +
+        /// `\` inserts a backslash, then `]` steps over the whole `\]`.
+        private func pendingCloserCompleted(by typed: String, at caret: Int, in textView: NSTextView) -> Int? {
+            guard let unit = typed.first, !BraceMatcher.isClosingUnitOpener(unit) else { return nil }
+            let text = textView.string as NSString
+            var k = 0
+            while pendingClosers.contains(caret + k), caret + k < text.length {
+                if text.substring(with: NSRange(location: caret + k, length: 1)) == typed {
+                    guard caret >= k else { return nil }
+                    let handTyped = text.substring(with: NSRange(location: caret - k, length: k))
+                    let units = text.substring(with: NSRange(location: caret, length: k))
+                    return handTyped == units ? k : nil
+                }
+                k += 1
+            }
+            return nil
         }
 
         private func shiftPendingClosers(edit range: NSRange, replacementLength: Int) {
@@ -1310,6 +1410,19 @@ struct SourceEditorView: NSViewRepresentable {
             guard let edit, edit.range.length == 0, edit.replacement.count == 1, let opener = edit.replacement.first else { return }
             let caret = NSRange(location: edit.range.location + (edit.replacement as NSString).length, length: 0)
             guard tv.selectedRange() == caret else { return }
+            // `\left(` → `\right)` (and `[`, `\{`, `|`, `.`), owner-enabled by
+            // `(` and only in math mode: every unit of the closer is typed over,
+            // so `\right)` typed by hand lands exactly where it already is.
+            if "([{|.".contains(opener), parent.autoClosePairs.contains("("),
+               let leftRight = BraceMatcher.leftRightCloser(in: SourceEditorView.nativeText(of: tv), caretUTF16: caret.location),
+               mathMode(at: caret.location, in: tv) == true {
+                pairing = true
+                tv.insertText(leftRight, replacementRange: caret)
+                tv.setSelectedRange(caret)
+                pairing = false
+                pendingClosers += (0..<(leftRight as NSString).length).map { caret.location + $0 }
+                return
+            }
             // `\(` → `\)`, `\[` → `\]` (owner-enabled by `(`): both halves of the closer are typed over.
             if opener == "(" || opener == "[", parent.autoClosePairs.contains("("),
                let math = BraceMatcher.mathCloser(in: SourceEditorView.nativeText(of: tv), caretUTF16: caret.location) {
