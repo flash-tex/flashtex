@@ -29,7 +29,7 @@
 //! With `\fancyhf{}` alone the oracle draws the 0.4pt head rule but no
 //! header or footer text at all.
 
-use flashtex_compiler::incremental::{compile_full, CompileOutput};
+use flashtex_compiler::incremental::{compile_full, CompileOutput, Session};
 use flashtex_compiler::layout::{LayoutConstraints, TextItem};
 use flashtex_compiler::parser::parse;
 
@@ -425,6 +425,66 @@ fn thispagestyle_clears_only_its_own_page() {
         chrome_words(&out, 1).contains(&"Every".to_string()),
         "later pages keep the style: {:?}",
         chrome_words(&out, 1)
+    );
+}
+
+#[test]
+fn pagestyle_empty_does_not_force_a_full_recompile() {
+    // Editor latency, not rendering: `empty` renders nothing here, so its
+    // marker must not set document-global state (which forces a full
+    // recompile on every keystroke). A one-character body edit must reuse
+    // the untouched paragraph and render exactly what a full build renders.
+    let base = "\\documentclass{article}\n\
+         \\pagestyle{empty}\n\
+         \\begin{document}\n\
+         First paragraph stays.\n\n\
+         Body text here.\n\
+         \\end{document}\n";
+    let edited = base.replace("here.", "here!");
+    let constraints = LayoutConstraints::default();
+    let mut session = Session::new();
+    session.compile(base, constraints);
+    let incremental = session.compile(&edited, constraints);
+    let clean = compile_full(&edited, constraints);
+    assert_eq!(
+        format!("{:#?}", incremental.output),
+        format!("{clean:#?}"),
+        "reuse must render exactly what a full build renders"
+    );
+    assert!(
+        !incremental.stats.full_recompile,
+        "a one-character edit must not force a full recompile: {:?}",
+        incremental.stats
+    );
+    assert!(
+        incremental.stats.blocks_reused > 0,
+        "the untouched paragraph must be reused: {:?}",
+        incremental.stats
+    );
+}
+
+#[test]
+fn pagestyle_fancy_still_forces_a_full_recompile() {
+    // The other direction of the gate: `fancy` ships running heads, so its
+    // marker keeps setting document-global state and still rebuilds fully.
+    let base = "\\documentclass{article}\n\
+         \\usepackage{fancyhdr}\n\
+         \\pagestyle{fancy}\n\
+         \\fancyhf{}\n\
+         \\fancyhead[L]{Head}\n\
+         \\begin{document}\n\
+         First paragraph stays.\n\n\
+         Body text here.\n\
+         \\end{document}\n";
+    let edited = base.replace("here.", "here!");
+    let constraints = LayoutConstraints::default();
+    let mut session = Session::new();
+    session.compile(base, constraints);
+    let incremental = session.compile(&edited, constraints);
+    assert!(
+        incremental.stats.full_recompile,
+        "a fancy marker must still force a full recompile: {:?}",
+        incremental.stats
     );
 }
 

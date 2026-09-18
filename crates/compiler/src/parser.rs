@@ -3990,12 +3990,18 @@ impl P<'_> {
     /// the style in force for it (`\thispagestyle` only its own page).
     /// Only `fancy` draws anything here (see [`FancyHdr`]); every other
     /// style keeps the long-standing honest no-op, so "no visible effect"
-    /// still holds for them.
+    /// still holds for them. Only `fancy` sets document-global state: the
+    /// incremental path replays no marker side effects and stamps no
+    /// chrome, which is output-identical exactly when no page can ship
+    /// under `fancy` -- while `empty`/`plain` markers forced a full
+    /// recompile on every keystroke for nothing.
     #[inline(never)]
     fn pagestyle_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
         let (tokens, _) = self.required_group(name, span);
         let style = PageStyleName::parse(&token_text(&tokens));
-        self.document_global_state = true;
+        if style == PageStyleName::Fancy {
+            self.document_global_state = true;
+        }
         para.push(Inline::PageStyle {
             style,
             this_page: name == "thispagestyle",
