@@ -5,7 +5,7 @@ import Foundation
 /// lives in, and a discoverable description. The UI can render this as an
 /// "Accessibility help" list; the test target checks it against the README.
 public enum AccessibilityCommand: String, CaseIterable, Equatable {
-    case editorPreferences
+    case editorPreferences, checkForUpdates
     case openLaTeXFile, newProject, newFile, save, saveAs, showInFinder, openFixture, reloadFixture
     case attachBuiltCompiler, attachRenderPipeline, attachWorker, compile
     case exportPDF, printDocument, printSource
@@ -343,6 +343,10 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
         case .editorPreferences:
             return Entry(command: self, title: "Settings window", shortcuts: ["⌘,"], menu: "FlashTeX",
                          description: "Opens the editor preferences (the system Settings item): font family and size, wrapping, tab width and indent style, appearance, auto-close braces, completion list, Restore Defaults; Tab walks the controls top to bottom, ⌘W closes and the editor keeps the keyboard.")
+        case .checkForUpdates:
+            return Entry(command: self, title: "Check for updates", shortcuts: ["FlashTeX > Check for Updates…"], menu: "FlashTeX",
+                         description: "Asks GitHub Releases for the newest FlashTeX and shows the installed and available versions with the release notes; Download opens the release page in the browser, Skip This Version silences the background check for that version. Nothing is downloaded or installed by the app. The background check is Settings > Updates (off by default, at most once a day).",
+                         menuItem: "Check for Updates…")
         case .durableHistory:
             return Entry(command: self, title: "Durable History window", shortcuts: ["Edit > Durable History…"], menu: "Edit",
                          description: "Opens the durable undo/redo history on the helper's edit ledger: Refresh, Undo, Redo (Retry/Discard after an uncertain reply), retention gauge, then the undo and redo stacks as a list; ⌘W closes and the editor keeps the keyboard.",
@@ -533,6 +537,7 @@ public enum PanelFocusOrder {
                 Control(name: "Vim keybindings", sourceMarker: "Toggle(\"Vim keybindings\""),
                 Control(name: "Preview follows the caret", sourceMarker: "Toggle(\"Preview follows the caret\""),
                 Control(name: "Autosave", sourceMarker: "Toggle(\"Autosave\""),
+                Control(name: "Check for updates automatically", sourceMarker: "Toggle(\"Check for updates automatically\""),
                 Control(name: "Restore Defaults", sourceMarker: "Button(\"Restore Defaults\""),
               ],
               sourceFile: "EditorPreferences.swift"),
