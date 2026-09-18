@@ -10856,6 +10856,21 @@ fn math_items(
             ('\u{23DE}', 0x7B) | ('\u{23DF}', 0x7D) => (g.x + g.width - face_adv, face_adv),
             ('\u{23DE}' | '\u{23DF}', _) => (g.x, face_adv),
             _ if ams.is_some_and(|a| a.name == "dashrightarrow@") => (g.x + g.width - face_adv, adv),
+            // `\vec` (`plain.tex`: `\mathaccent"017E`, cmmi `"7E`) is a
+            // spacing accent in TeX but paints as U+20D7, a Unicode
+            // *combining* mark: its ink lies entirely to the LEFT of its
+            // own origin -- Latin Modern Math puts `uni20D7` at x in
+            // [-472, -56]/1000em (centre -264), while the cmmi10 arrow it
+            // stands for inks [182, 625]/1000em (centre 403.5). Painted at
+            // the TeX box's origin the arrow lands ~2/3em too far left.
+            //
+            // So shift the painted outline to put the combining ink's
+            // centre where the spacing accent's ink centre sits:
+            // (403.5 + 264)/1000 = 0.6675em. This moves no box: the
+            // accent keeps its TeX origin for hit-testing and the TFM
+            // advance, so layout (already exact against pdflatex
+            // `\showbox`) is untouched -- paint only.
+            ('\u{20D7}', 0x7E) => (g.x + 0.6675 * g.size, adv),
             // `\not` (`fontmath.ltx` 432: `\mathchar"3236`, cmsy `"36`) is a
             // zero-width overlay. TeX boxes it empty and the slash strikes
             // the relation that *follows* it, which is why `\neq` is exactly
