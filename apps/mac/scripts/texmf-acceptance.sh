@@ -33,9 +33,16 @@
 #              pinned verifier must refuse the copy (exit 1)
 #   verifier   crates/rendering-core/tools/verify_bundle_resources.py on the
 #              real bundle (exit 0 required)
-# PASS requires zero missing-metric diagnostics (tfm_missing,
-# required_metrics_unavailable, font_unavailable) in every env-* compile
-# result, an explicit failure in the removed run and verifier exit 0. The
+# PASS requires zero missing-metric diagnostics in every env-* compile result,
+# evidence in the removed run that the deletion itself was noticed, and
+# verifier exit 0. "Missing-metric" is no longer a list written out here: it is
+# read from crates/render-pipeline/src/fontdiag.rs via
+# scripts/font_diagnostics.py, because the copy that used to live here named
+# only tfm_missing/required_metrics_unavailable/font_unavailable and so scored
+# ec_metrics_unavailable, font_outline_substituted and math_font_unavailable as
+# clean -- this gate printed ok while the bundle had failed to provide a font
+# resource. Widening the list can make a previously passing bundle fail here;
+# that is the gate working, not a regression in the script. The
 # control run is recorded, and required only with --require-discovery. Every
 # run records `uptime` next to its result. No app window is opened; nothing is
 # downloaded; only processes this script spawned are waited on.
@@ -140,7 +147,21 @@ if result is None: print(json.dumps({"error": "no preview update", "frames": len
 print(json.dumps(result))
 PY
 
-MISSING_CODES='tfm_missing|required_metrics_unavailable|font_unavailable'
+# Which diagnostic codes mean "the bundle did not provide a font resource".
+# Derived, never hand-written: crates/render-pipeline/src/fontdiag.rs is the
+# source of truth and crates/render-pipeline/tests/fontdiag.rs fails if a code
+# lands in typeset.rs that nobody classified.
+#
+# This list used to be three codes hard-coded here, omitting
+# ec_metrics_unavailable, font_outline_substituted and math_font_unavailable.
+# A run emitting only those printed "0 missing-metric diagnostics = ok" while
+# a real substitution had happened -- on the acceptance gate for the shipped
+# app's font discovery. `die` on failure: a gate that cannot read its own
+# criteria must stop, not count zero.
+MISSING_CODES="$(python3 "$REPO_ROOT/scripts/font_diagnostics.py" --view substitution --format regex)" \
+  || die "cannot read the font-diagnostic classification (scripts/font_diagnostics.py)"
+[[ -n "$MISSING_CODES" ]] || die "font-diagnostic classification came back empty"
+echo "==> missing-metric codes counted: $MISSING_CODES"
 # Counts missing-metric diagnostics across every compile_result line in $1.
 count_missing() { { grep -oE "\"code\":\"($MISSING_CODES)\"" "$1" || true; } | wc -l | tr -d ' '; }
 results_in() { grep -c '"type":"compile_result"' "$1" || true; }
@@ -211,7 +232,22 @@ mkdir -p "$WORK/removed" && ditto "$APP_DIR" "$COPY"
 rm "$COPY/Contents/Resources/texmf/fonts/tfm/public/lm/ec-lmr10.tfm"
 run_producer removed "$COPY/Contents/MacOS/flashtex-render" "FLASHTEX_TFM_DIRS=$COPY/Contents/Resources/texmf/fonts/tfm/public/lm"
 n="$(count_missing "$EVIDENCE_DIR/removed.output.jsonl")"
-if [[ "$n" -gt 0 ]] && grep -q 'ec-lmr10.tfm' "$EVIDENCE_DIR/removed.output.jsonl"; then ok "removed: $n explicit missing-metric diagnostics naming ec-lmr10.tfm"; else bad "removed: expected explicit diagnostics, got $n"; fi
+# Differential, not absolute. `n > 0` alone does not show the deletion was
+# noticed -- an intact bundle can already emit missing-metric diagnostics for
+# unrelated faces, and `grep ec-lmr10.tfm` matches the intact run too, because
+# the ec_metrics_unavailable message says "... ec-lmr10.tfm used". Measured on
+# an intact tree: the deletion's own evidence is a `tfm_missing` naming
+# ec-lmr10.tfm that the intact run does not produce. Require exactly that.
+deleted_tfm() { { grep -oE '"code":"tfm_missing","message":"[^"]*ec-lmr10\.tfm[^"]*"' "$1" || true; } | wc -l | tr -d ' '; }
+after="$(deleted_tfm "$EVIDENCE_DIR/removed.output.jsonl")"
+before="$(deleted_tfm "$EVIDENCE_DIR/env-direct.output.jsonl")"
+if [[ "$after" -gt 0 && "$before" -eq 0 ]]; then
+  ok "removed: deleting ec-lmr10.tfm produces $after tfm_missing diagnostic(s) naming it that the intact bundle does not ($n missing-metric diagnostics in total)"
+elif [[ "$before" -gt 0 ]]; then
+  bad "removed: the INTACT bundle already reports ec-lmr10.tfm missing ($before), so this check proves nothing about the deletion"
+else
+  bad "removed: deleting ec-lmr10.tfm produced no tfm_missing naming it (total missing-metric diagnostics: $n)"
+fi
 rc=0; python3 "$VERIFIER" "$COPY/Contents/Resources" > "$EVIDENCE_DIR/removed.verifier.json" 2>&1 || rc=$?
 if [[ "$rc" -eq 1 ]] && grep -q '"missing"' "$EVIDENCE_DIR/removed.verifier.json"; then ok "removed: verifier refuses the copy (exit 1, ec-lmr10.tfm missing)"; else bad "removed: verifier exit $rc"; fi
 

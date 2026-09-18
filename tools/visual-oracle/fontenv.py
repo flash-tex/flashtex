@@ -91,29 +91,27 @@ Usage in a harness
     good = ... and not bad
 """
 import os
+import pathlib
+import sys
 
 #: Diagnostic codes that mean the geometry produced is **not** the reference
 #: geometry, so any position comparison against a pdflatex reference is void.
 #: A harness that sees one of these must fail rather than score the run.
-#: Codes are emitted by `render-pipeline/src/typeset.rs`.
-FONT_DIAGNOSTIC_CODES = frozenset({
-    # Latin Modern face unavailable; Times metrics substituted.
-    "font_unavailable",
-    # Pinned Latin Modern 2.004 metrics missing; OpenType advances used.
-    "required_metrics_unavailable",
-    # A .tfm the face needs was not found.
-    "tfm_missing",
-    # T1/EC metrics missing (e.g. no `ectt*` for a \texttt fixture).
-    "ec_metrics_unavailable",
-    # Latin Modern Math unavailable; math is not typeset at all.
-    "math_font_unavailable",
-    # rm-lmr*.tfm unavailable; math laid out from the OpenType MATH table.
-    "math_metrics_opentype",
-})
+#:
+#: Derived, not hand-written. `crates/render-pipeline/src/fontdiag.rs` is the
+#: source of truth for every code `typeset.rs` emits and for what each one
+#: means; `crates/render-pipeline/tests/fontdiag.rs` fails if a new code lands
+#: there unclassified. This module used to keep its own copy, as did
+#: `apps/mac/scripts/{texmf-acceptance.sh,faces-acceptance.py}`, and the three
+#: had drifted apart.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "scripts"))
+from font_diagnostics import codes as _font_codes  # noqa: E402
+
+FONT_DIAGNOSTIC_CODES = frozenset(_font_codes("geometry_void"))
 
 #: Reported but not fatal: the outline differs while the metrics — and so the
 #: positions these harnesses compare — are still the reference ones.
-ADVISORY_FONT_DIAGNOSTIC_CODES = frozenset({"font_outline_substituted"})
+ADVISORY_FONT_DIAGNOSTIC_CODES = frozenset(_font_codes("advisory"))
 
 
 def split(value):
