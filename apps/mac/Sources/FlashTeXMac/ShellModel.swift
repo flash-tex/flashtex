@@ -119,6 +119,11 @@ final class ShellModel {
         /// applied last-first as one undo group instead of `nsRange`/`text`.
         /// Change Environment uses the two name spans so the body is not rewritten.
         var groupedEdits: [EditorKeyHandling.LineEdit] = []
+        /// UTF-16 offset (post-edit coordinates) of a closing delimiter the
+        /// edit itself placed right after the caret — `\textbf{|}` — which the
+        /// editor then tracks like an auto-inserted closer so typing `}` steps
+        /// over it (SourceEditorView.applyPendingEdit → pendingClosers).
+        var trackedCloser: Int? = nil
     }
     struct CaptureRefund: Equatable { var proposal: RuntimeV1.CaptureProposal; var anchorBefore: InsertionAnchor }
     var caretUTF16: Int = 0 {
