@@ -6782,9 +6782,21 @@ impl P<'_> {
             self.end_tabbing(blocks, para);
         } else if environment == "proof" {
             para.push(Inline::HFill { span, leader: FillLeader::None });
+            // The closing "∎" is generated text placed at the end of the
+            // body: span it (empty) at the `\end` command instead of
+            // covering it, so the block's last span ends where the body
+            // does and the source gap after the block still holds
+            // `\end{proof}`. The render pipeline reads that gap to decide
+            // whether a following `\begin{<list>}` was read in vertical
+            // mode (`\partopsep` at open, kept for the close); covering
+            // the `\end` hid it, and every list directly after a proof
+            // lost `\partopsep` at both boundaries (~2bp at 10pt). The
+            // `\hfill` keeps the `\end` span, so edits there still overlap
+            // a span of this block.
+            let qed_span = Span::in_document(span.document, span.start, span.start);
             para.push(Inline::Text {
                 text: "∎".to_string(),
-                span,
+                span: qed_span,
                 // `\qed` is typeset in the current (body) font, whose
                 // em-based box scales with the ambient size; unscoped this
                 // is `TextStyle::default()`, exactly as before.
