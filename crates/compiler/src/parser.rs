@@ -10858,6 +10858,7 @@ impl P<'_> {
         let outer_index = std::mem::replace(&mut self.i, 0);
         let outer_style = self.style;
         let outer_label = self.pending_item_label.take();
+        let outer_item = self.pending_item.take();
         let outer_dependency_blocks = self.block_dependencies.len();
         let outer_par_leading_blocks = self.block_par_leading.len();
         let mut out = Vec::with_capacity(segments.len());
@@ -10886,6 +10887,7 @@ impl P<'_> {
         self.i = outer_index;
         self.style = outer_style;
         self.pending_item_label = outer_label;
+        self.pending_item = outer_item;
         out
     }
 
