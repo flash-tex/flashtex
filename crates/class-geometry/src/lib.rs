@@ -8,6 +8,7 @@
 //! is used; see `README.md` for provenance and `CONTRACT.md` for the
 //! proposed render-pipeline integration.
 
+pub mod beamer;
 pub mod class;
 pub mod frame;
 pub mod geometry;

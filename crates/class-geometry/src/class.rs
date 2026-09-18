@@ -1242,12 +1242,14 @@ pub fn beamer_paper_size(given: &[String]) -> (Sp, Sp) {
 /// (`\baselineskip` 13.6pt, i.e. `size11.clo`'s `\normalsize`).
 ///
 /// Everything else follows the 11pt article conventions (`size11.clo`):
-/// `\topskip` 11pt, `\maxdepth` half that, `\parskip` 0pt plus 1pt,
-/// `\footnotesep` 7.7pt, `\skip\footins` 10pt plus 4pt minus 2pt,
-/// `\columnsep` 10pt, `\leftmargini` 2.5em, `\labelsep` .5em, and the draft
-/// `\overfullrule`. One deliberate departure: `\parindent` is 0pt (like
-/// `letter`, the other non-article-shaped class — slides do not use
-/// first-line indentation), documented here.
+/// `\topskip` 11pt, `\maxdepth` half that, `\footnotesep` 7.7pt,
+/// `\skip\footins` 10pt plus 4pt minus 2pt, `\columnsep` 10pt,
+/// `\labelsep` .5em, and the draft `\overfullrule`. beamer's own settings
+/// (measured `\the` readings inside a frame, TeX Live 2026): `\parindent`
+/// 0pt and `\parskip` 0pt (`beamer.cls` `\parskip=0pt`; the gaps between
+/// paragraphs on a slide are only the list `\topsep`s), `\leftmargini` 2em
+/// (`beamerbaselocalstructure.sty` line 144: 21.90005pt; the level-1 list
+/// skips are in [`crate::beamer::list_level`]).
 fn beamer_params(o: &ClassOptions) -> PageParams {
     let (pw, ph) = o.beamer_paper.unwrap_or((len("128mm"), len("96mm")));
     let fm = body_font(BaseSize::Pt11);
@@ -1260,7 +1262,7 @@ fn beamer_params(o: &ClassOptions) -> PageParams {
     // The whole paper-minus-text gap is the 4pt footskip reservation.
     let footskip = len("4pt");
     let textheight = ph - footskip;
-    let leftmargini = fm.em.scaled("2.5").unwrap();
+    let leftmargini = fm.em.scaled("2").unwrap();
     PageParams {
         paperwidth: pw,
         paperheight: ph,
@@ -1277,7 +1279,7 @@ fn beamer_params(o: &ClassOptions) -> PageParams {
         topskip: Sp::pt(11),
         baselineskip: len("13.6pt"),
         parindent: Sp::ZERO,
-        parskip: Glue::new("0pt", "1pt", "0pt"),
+        parskip: Glue::fixed(Sp::ZERO),
         marginparwidth: len("4pt"),
         marginparsep: Sp::pt(10),
         marginparpush: Sp::pt(5),

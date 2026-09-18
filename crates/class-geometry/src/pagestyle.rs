@@ -136,10 +136,14 @@ impl StyleMacros {
 /// The class's default `\pagestyle` (article.cls line 629 `plain`;
 /// book.cls line 734 `headings`).
 pub fn class_default(kind: ClassKind) -> PageStyle {
-    if kind == ClassKind::Book {
-        PageStyle::Headings
-    } else {
-        PageStyle::Plain
+    match kind {
+        ClassKind::Book => PageStyle::Headings,
+        // beamer ships its own headline/footline templates through its
+        // output routine; the default theme's are empty and there is no
+        // folio (measured: no digit on any page of the beamer corpus). The
+        // kernel page style underneath is irrelevant, so `empty` models it.
+        ClassKind::Beamer => PageStyle::Empty,
+        _ => PageStyle::Plain,
     }
 }
 

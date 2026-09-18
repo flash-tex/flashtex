@@ -82,11 +82,12 @@ fn beamer_default_lengths() {
     assert_eq!(r.frame.text_top, Sp::ZERO);
     assert_eq!(r.frame.first_baseline, Sp::pt(11));
     assert_eq!(r.frame.foot_baseline, mm("96mm"));
-    // Class shape: no chapters, plain page style, article-like depths.
+    // Class shape: no chapters, no folio (`empty`: the default theme has no
+    // headline/footline and beamer prints no page number), article-like depths.
     assert_eq!((r.secnumdepth, r.tocdepth), (3, 3));
     assert!(r.chapter.is_none());
     assert!(!r.headings.is_empty());
-    assert_eq!(r.pagestyle, PageStyle::Plain);
+    assert_eq!(r.pagestyle, PageStyle::Empty);
     assert!(r.options.unused.is_empty());
 }
 
