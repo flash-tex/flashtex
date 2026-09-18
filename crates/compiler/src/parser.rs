@@ -6318,6 +6318,18 @@ impl P<'_> {
         // `\maketitle` ends with `\setcounter{footnote}{0}`.
         self.footnote_counter = 0;
         self.finish_block_dependencies();
+        // `\maketitle` issues `\thispagestyle{plain}` (article.cls
+        // `\@maketitle`): the title page ships with no running head while
+        // later pages keep the ambient style. The marker rides in `para`
+        // with whatever paragraph comes next, so layout records the page
+        // that is still open then -- the title's own page, like the
+        // hand-written `\thispagestyle{plain}` this mirrors (a marker-only
+        // paragraph still reaches layout when nothing follows).
+        para.push(Inline::PageStyle {
+            style: PageStyleName::Plain,
+            this_page: true,
+            span,
+        });
     }
 
     /// A captured `\title`/`\author`/`\date` argument as inline content

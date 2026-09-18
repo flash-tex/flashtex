@@ -429,6 +429,44 @@ fn thispagestyle_clears_only_its_own_page() {
 }
 
 #[test]
+fn maketitle_suppresses_the_running_head_on_the_title_page_only() {
+    // `\maketitle` issues `\thispagestyle{plain}` (article.cls): the title
+    // page ships with no running head, later pages keep the ambient style.
+    // Oracle: no header on page 1, `HDRMARK` on page 2.
+    let body = "Filler sentence ends here. ".repeat(160);
+    let text = format!(
+        "\\documentclass{{article}}\n\
+         \\usepackage{{fancyhdr}}\n\
+         \\pagestyle{{fancy}}\n\
+         \\fancyhf{{}}\n\
+         \\fancyhead[L]{{HDRMARK}}\n\
+         \\title{{A Title}}\n\
+         \\author{{An Author}}\n\
+         \\begin{{document}}\n\
+         \\maketitle\n\
+         {body}\n\
+         \\end{{document}}\n"
+    );
+    let out = compile(&text);
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+    assert!(
+        out.pages.len() >= 2,
+        "needs two pages, got {}",
+        out.pages.len()
+    );
+    assert!(
+        !chrome_words(&out, 0).contains(&"HDRMARK".to_string()),
+        "title page carries no running head: {:?}",
+        chrome_words(&out, 0)
+    );
+    assert!(
+        chrome_words(&out, 1).contains(&"HDRMARK".to_string()),
+        "later pages keep the head: {:?}",
+        chrome_words(&out, 1)
+    );
+}
+
+#[test]
 fn rule_widths_follow_setlength() {
     let text = |preamble: &str| {
         compile(&format!(
