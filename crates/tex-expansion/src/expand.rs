@@ -827,6 +827,21 @@ impl Engine {
         self.sources.push(Input::Toks(toks, 0));
     }
 
+    /// Back up tokens exactly as [`Engine::next_raw`] returned them: an
+    /// origin of `None` stays `None` (the token was read from source
+    /// text), unlike [`Engine::push_pending`], which attributes such a
+    /// token to the last read.
+    fn push_pending_as_read(&mut self, toks: Vec<Pending>) {
+        if toks.is_empty() {
+            return;
+        }
+        self.prune_exhausted();
+        if self.input_capacity_exceeded() {
+            return;
+        }
+        self.sources.push(Input::Toks(toks, 0));
+    }
+
     fn push_frozen(&mut self, tok: Token) {
         self.prune_exhausted();
         let origin = self.last_origin;
@@ -1929,26 +1944,29 @@ impl Engine {
         self.finish_assignment();
     }
 
+    /// `\futurelet\cs<t1><t2>`: `\let\cs=<t2>`, then `<t1><t2>` re-enter
+    /// the input as they were read -- each with its own invocation origin
+    /// and freeze state (#925). `<t2>` is usually the document's lookahead
+    /// (`\@ifnextchar`), read straight from source text: re-pushing both
+    /// with the origin of that last read (`push_tokens`) stamped `<t1>`
+    /// (`\@ifnch`) with no origin, so the macro call it leads to -- and
+    /// every replacement token of a `\newcommand` with an optional
+    /// argument -- was attributed to the prelude's `\@ifnch` token instead
+    /// of the document command.
     fn do_futurelet(&mut self) {
         let global = self.take_assignment_prefixes("futurelet");
         let name_tok = match self.next_raw_token() {
             Some(t) => t,
             None => return,
         };
-        let t1 = self.next_raw_token();
-        let t2 = self.next_raw_token();
+        let t1 = self.next_raw();
+        let t2 = self.next_raw();
         if let Some(t2) = &t2 {
-            let meaning = self.meaning_of_token(t2);
+            let meaning = self.meaning_of_token(&t2.tok);
             self.define_cs_token(&name_tok, meaning, global);
         }
-        let mut reinsert = Vec::new();
-        if let Some(t1) = t1 {
-            reinsert.push(t1);
-        }
-        if let Some(t2) = t2 {
-            reinsert.push(t2);
-        }
-        self.push_tokens(reinsert);
+        let reinsert: Vec<Pending> = t1.into_iter().chain(t2).collect();
+        self.push_pending_as_read(reinsert);
         self.finish_assignment();
     }
 
