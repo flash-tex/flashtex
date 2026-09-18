@@ -5,7 +5,7 @@
   "machine": "mac-m5pro-dq222",
   "note": "corpus finding",
   "started_utc": "2026-09-18T15:30:00Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "MUSE-plaintex-diagnose",
-  "updated_utc": "2026-09-18T15:30:00Z"
+  "updated_utc": "2026-09-18T16:39:21Z"
 }
