@@ -174,10 +174,39 @@ pub const LETTER_CLASS_COMMANDS: &[&str] = &[
     "makelabels",
 ];
 
+/// Text commands defined by `beamer.cls` alone (`beamerbaseframe.sty`,
+/// `beamerbasetitle.sty`, `beamerbasetemplates.sty`, ...): every one goes
+/// through `parser::Parser::beamer_command_available`, which diagnoses any
+/// use outside `\documentclass{beamer}`. Scoped like the letter family so
+/// completion never offers `\frametitle` over `\frac` in an article (the
+/// #855 Mac regression: `\fra`⇥ expanded to `\frametitle{}`).
+pub const BEAMER_CLASS_COMMANDS: &[&str] = &[
+    "frametitle",
+    "framesubtitle",
+    "alert",
+    "subtitle",
+    "institute",
+    "titlepage",
+    "note",
+    "usetheme",
+    "usecolortheme",
+    "usefonttheme",
+    "useinnertheme",
+    "useoutertheme",
+    "setbeamertemplate",
+    "setbeamercolor",
+    "setbeamerfont",
+    "setbeamercovered",
+    "setbeamersize",
+    "beamertemplatenavigationsymbolsempty",
+];
+
 /// The class in [`Command::requires_class`] terms, or `None` for universal.
 fn requires_class(name: &str) -> Option<&'static str> {
     if LETTER_CLASS_COMMANDS.contains(&name) {
         Some("letter")
+    } else if BEAMER_CLASS_COMMANDS.contains(&name) {
+        Some("beamer")
     } else {
         None
     }
@@ -194,8 +223,38 @@ fn requires_class(name: &str) -> Option<&'static str> {
 /// still diagnoses a bare use without `\usepackage{soul}` and implements
 /// the built-in behavior with it. They are implemented commands, so the
 /// diagnostic vocabulary (`crate::vocabulary`) counts them as known.
-pub(crate) const TEXT_EXTRA_ARMS: &[&str] =
-    &["newtheorem", "theoremstyle", "so", "hl", "text", "boxed"];
+///
+/// beamer's whole command family ([`BEAMER_CLASS_COMMANDS`]) is here for
+/// the same reason as soul's: `\note`, `\alert`, `\subtitle`, `\institute`
+/// are common user macro names in other classes, and a document's own
+/// `\newcommand{\note}[1]{...}` must win; under beamer the arm applies.
+pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
+    "newtheorem",
+    "theoremstyle",
+    "so",
+    "hl",
+    "text",
+    "boxed",
+    "enquote",
+    "frametitle",
+    "framesubtitle",
+    "alert",
+    "subtitle",
+    "institute",
+    "titlepage",
+    "note",
+    "usetheme",
+    "usecolortheme",
+    "usefonttheme",
+    "useinnertheme",
+    "useoutertheme",
+    "setbeamertemplate",
+    "setbeamercolor",
+    "setbeamerfont",
+    "setbeamercovered",
+    "setbeamersize",
+    "beamertemplatenavigationsymbolsempty",
+];
 
 /// Canonical commands the expansion pass executes itself (engine primitives
 /// and kernel-prelude macros of `flashtex-tex-expansion`); their effect
@@ -226,6 +285,7 @@ const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("ignorespaces", "", "skips the spaces that follow"),
     ("jobname", "", "expands to texput"),
     ("ifthenelse", "{test}{true}{false}", "the ifthen package's conditional: \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests select one branch at expansion time"),
+    ("iftoggle", "{name}{true}{false}", "the etoolbox toggle conditional: the named toggle (\\newtoggle/\\providetoggle declare it false, \\toggletrue/\\togglefalse set it) selects one branch at expansion time"),
 ];
 
 /// (name, arguments, description) for every `parser::BUILT_INS` entry that
@@ -269,6 +329,24 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("listfiles", "", "accepted no-op; there is no log stream"),
     ("section", "{...}", "numbered section heading; starred form unnumbered"),
     ("subsection", "{...}", "numbered subsection heading; starred form unnumbered"),
+    ("frametitle", "{...}", "beamer frame title (\\Large, structure colour, in the frametitle box at the top of the slide); optional <overlay> and [short] read past; needs \\documentclass{beamer}"),
+    ("framesubtitle", "{...}", "beamer frame subtitle (\\footnotesize, under the frame title); needs \\documentclass{beamer}"),
+    ("alert", "{...}", "beamer alert text in red; an <overlay> spec is read past (shown on every slide); needs \\documentclass{beamer}"),
+    ("subtitle", "{...}", "beamer subtitle for \\titlepage; optional [short] read past; needs \\documentclass{beamer}"),
+    ("institute", "{...}", "beamer institute for \\titlepage; optional [short] read past; needs \\documentclass{beamer}"),
+    ("titlepage", "", "beamer title page (default template: centred title, subtitle, author, institute, date); needs \\documentclass{beamer}"),
+    ("note", "{...}", "beamer note: typesets nothing (notes are shown only with \\setbeameroption{show notes}); needs \\documentclass{beamer}"),
+    ("usetheme", "{...}", "accepted and read past: only beamer's default theme is modelled; needs \\documentclass{beamer}"),
+    ("usecolortheme", "{...}", "accepted and read past: only beamer's default colour theme is modelled; needs \\documentclass{beamer}"),
+    ("usefonttheme", "{...}", "accepted and read past: only beamer's default font theme is modelled; needs \\documentclass{beamer}"),
+    ("useinnertheme", "{...}", "accepted and read past: only beamer's default inner theme is modelled; needs \\documentclass{beamer}"),
+    ("useoutertheme", "{...}", "accepted and read past: only beamer's default outer theme is modelled; needs \\documentclass{beamer}"),
+    ("setbeamertemplate", "{...}{...}", "accepted and read past; \\setbeamertemplate{navigation symbols}{} is honoured by the renderer; needs \\documentclass{beamer}"),
+    ("setbeamercolor", "{...}{...}", "accepted and read past: beamer's default colours stay in force; needs \\documentclass{beamer}"),
+    ("setbeamerfont", "{...}{...}", "accepted and read past: beamer's default fonts stay in force; needs \\documentclass{beamer}"),
+    ("setbeamercovered", "{...}", "accepted and read past (overlays are not modelled yet); needs \\documentclass{beamer}"),
+    ("setbeamersize", "{...}", "accepted and read past: beamer's default text margins stay in force; needs \\documentclass{beamer}"),
+    ("beamertemplatenavigationsymbolsempty", "", "accepted; the renderer draws no navigation symbols either way yet; needs \\documentclass{beamer}"),
     ("label", "{key}", "names the current section, equation or figure number"),
     ("ref", "{key}", "number of the labelled item"),
     ("pageref", "{key}", "page number of the labelled item, in the \\pagenumbering style in force at the label"),
@@ -403,6 +481,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("sout", "{...}", "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)"),
     ("so", "{...}", "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)"),
     ("hl", "{...}", "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)"),
+    ("enquote", "{text}", "csquotes: wraps text in typographic quotation marks; nesting alternates double \\u{201c}\\u{201d} and single \\u{2018}\\u{2019} (needs csquotes)"),
     ("textsuperscript", "{...}", "kernel text superscript: argument at \\sf@size raised like a math superscript (single-line)"),
     ("textsubscript", "{...}", "kernel text subscript: argument at \\sf@size lowered like a math subscript (single-line)"),
     ("text", "{...}", "amsmath text in text mode: outside math simply \\mbox, the argument as one unbreakable box in the current style"),
@@ -491,9 +570,9 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("bibitem", "[label]{key}", "entry of thebibliography; natbib's [Author(Year)] and [Author, Year] labels feed author-year citations"),
     ("bibliography", "{files}", "diagnosed: .bib input is not read"),
     ("bibliographystyle", "{style}", "diagnosed: no effect without .bib support"),
-    ("title", "{...}", "title for \\maketitle"),
-    ("author", "{...}", "author block for \\maketitle; \\and and \\thanks inside it"),
-    ("date", "{...}", "date for \\maketitle; \\today inside it"),
+    ("title", "{...}", "title for \\maketitle (beamer: and \\titlepage, with an optional [short] form read past)"),
+    ("author", "{...}", "author block for \\maketitle; \\and and \\thanks inside it (beamer: optional [short] form read past)"),
+    ("date", "{...}", "date for \\maketitle; \\today inside it (beamer: optional [short] form read past)"),
     ("maketitle", "", "article.cls title block"),
     // letter.cls. Every one of these exists only under
     // \documentclass{letter}; in any other class they are diagnosed, exactly
@@ -1012,7 +1091,7 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("figure", "numbered captions; no floating"),
     (
         "frame",
-        "rule-bordered box around its body (\\fboxsep padding, \\fboxrule rule in the current colour)",
+        "rule-bordered box around its body (\\fboxsep padding, \\fboxrule rule in the current colour); under \\documentclass{beamer} a slide: one page per frame (empty frames included), the [t]/[c]/[b] body placement, a {title}{subtitle} head or \\frametitle in the body; overlay specs, [fragile], [plain] and [allowframebreaks] are read past",
     ),
     ("center", "centred paragraphs"),
     ("flushleft", "left-aligned paragraphs"),
@@ -1114,6 +1193,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "tabular >{} <{} !{} m b w columns, \\newcolumntype and \\extrarowheight",
     ),
     (
+        "tabularx",
+        "",
+        "the tabularx environment and its X column, splitting the table's leftover width evenly",
+    ),
+    (
         "booktabs",
         "",
         "\\toprule, \\midrule, \\bottomrule, \\cmidrule(trim), \\addlinespace, \\specialrule, \\morecmidrules",
@@ -1197,6 +1281,16 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "ifthen",
         "",
         "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used",
+    ),
+    (
+        "csquotes",
+        "",
+        "\\enquote: typographic quotation marks, alternating double/single on nesting",
+    ),
+    (
+        "etoolbox",
+        "",
+        "toggle booleans: \\newtoggle/\\providetoggle declare a false toggle, \\toggletrue/\\togglefalse set it, \\iftoggle{name}{true}{false} selects a branch at expansion time; a duplicate \\newtoggle and any use of an undefined toggle are diagnosed where they are used and leave existing state alone. The rest of etoolbox (patching, hooks, list processing) is diagnosed where it is used",
     ),
 ];
 

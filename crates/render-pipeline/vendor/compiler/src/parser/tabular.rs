@@ -218,6 +218,9 @@ fn block_inlines(block: Block) -> Vec<Inline> {
         | Block::Verbatim { .. }
         | Block::TableOfContents { .. }
         | Block::TitleBlock { .. }
+        | Block::BeamerFrameBegin { .. }
+        | Block::BeamerFrameEnd { .. }
+        | Block::BeamerTitlePage { .. }
         | Block::VFill
         | Block::Penalty { .. } => Vec::new(),
         // A `\opening`/`\closing` block inside a tabular cell cannot
@@ -405,28 +408,15 @@ impl P<'_> {
             .is_none_or(|index| preceded_by_space(&self.t, index));
         let style = self.style;
         let body = self.body_pt();
-        let width = if name == "tabular*" {
-            let (tokens, argument_span) = self.required_group(name, open);
-            let length = table_length(&tokens, body);
-            if length.is_none() {
-                self.diags.push(Diagnostic::error(
-                    format!(
-                        "tabular* width must be a dimension or a multiple of \\textwidth, got '{}'",
-                        token_text(&tokens).trim()
-                    ),
-                    Some(argument_span),
-                    Some("laid the table out at its natural width".into()),
-                ));
-            }
-            length
-        } else {
-            None
-        };
         let features = TableFeatures {
             longtable: name == "longtable",
             colortbl: self.colortbl(),
             multirow: self.packages.iter().any(|package| package == "multirow"),
         };
+        // The position argument comes before the width argument
+        // (`\begin{tabular*}[t]{width}{cols}`, likewise `tabularx`; latex.ltx
+        // `\@array`), so it is parsed first. (`tabular` and `longtable`
+        // take no width argument, for which this order is equivalent.)
         let mut longtable_align = None;
         let position = match self.optional_bracket_argument() {
             // longtable.sty 106/120-126: `[l]`/`[c]`/`[r]` set `\LTleft`/`\LTright`.
@@ -453,6 +443,25 @@ impl P<'_> {
             let number = self.counters.step("table");
             self.set_current_counter("table", number);
         }
+        // `tabular*` and `tabularx` both take a required total-width
+        // argument before the column specification (unlike `tabular`).
+        let width = if name == "tabular*" || name == "tabularx" {
+            let (tokens, argument_span) = self.required_group(name, open);
+            let length = table_length(&tokens, body);
+            if length.is_none() {
+                self.diags.push(Diagnostic::error(
+                    format!(
+                        "{name} width must be a dimension or a multiple of \\textwidth, got '{}'",
+                        token_text(&tokens).trim()
+                    ),
+                    Some(argument_span),
+                    Some("laid the table out at its natural width".into()),
+                ));
+            }
+            length
+        } else {
+            None
+        };
         let rule_color = self.table_rule_color.clone();
         let double_rule_sep_color = self.table_double_rule_sep_color.clone();
         let (spec_tokens, spec_span) = self.required_group(name, open);
@@ -718,7 +727,7 @@ impl P<'_> {
                     content,
                     columns: columns_spanned,
                     template,
-                    alignment: align.paragraph_width().and(alignment),
+                    alignment: align.is_paragraph().then_some(alignment).flatten(),
                     declarations,
                     color: cell_color,
                     multirow,
@@ -760,6 +769,10 @@ impl P<'_> {
     /// `\par`, then the table as a block of its own, a paragraph holding
     /// only the table). Without the package LaTeX has no such environment,
     /// so it stays diagnosed. Returns whether the environment was taken.
+    ///
+    /// `tabularx` likewise needs its package; unlike `longtable` it is
+    /// inline content (a `tabular*` of the requested width), so it is
+    /// parsed straight into the enclosing paragraph like `tabular`.
     pub(super) fn package_table_environment(
         &mut self,
         open: Span,
@@ -767,9 +780,15 @@ impl P<'_> {
         blocks: &mut Vec<Block>,
         para: &mut Vec<Inline>,
     ) -> bool {
-        const LONGTABLE: &str = "longtable";
-        if name != LONGTABLE || !self.packages.iter().any(|package| package == LONGTABLE) {
+        if name != "longtable" && name != "tabularx" {
             return false;
+        }
+        if !self.packages.iter().any(|package| package == name) {
+            return false;
+        }
+        if name == "tabularx" {
+            self.tabular_environment(open, name, para);
+            return true;
         }
         self.flush_paragraph(blocks, para);
         let mut table = Vec::new();
@@ -1905,6 +1924,16 @@ impl P<'_> {
                         Pending::Par(ch)
                     };
                     last = 10;
+                }
+                // tabularx.sty's `X`: a bare letter with no `{width}` group,
+                // rewritten to `p{\TX@col@width}` at layout time. A user
+                // `\newcolumntype{X}` still wins: `spec_items` expands it
+                // before this dispatch ever sees the letter.
+                SpecItem::Char('X', _)
+                    if self.packages.iter().any(|package| package == "tabularx") =>
+                {
+                    pre.array_classz(last, Align::Flexible);
+                    last = 0;
                 }
                 SpecItem::Char(ch, span) => {
                     self.diags.push(Diagnostic::error(

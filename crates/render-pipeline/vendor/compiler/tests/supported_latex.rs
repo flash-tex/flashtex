@@ -286,6 +286,7 @@ fn diagnostics(text: &str) -> Vec<String> {
 fn not_supported(messages: &[String], name: &str) -> Option<String> {
     let needle = format!("\\{name} is not supported");
     let wrong_class = format!("\\{name} is defined by the letter");
+    let beamer_class = format!("\\{name} is defined by the beamer");
     messages
         .iter()
         // letter.cls commands are refused by their own message when the
@@ -293,7 +294,9 @@ fn not_supported(messages: &[String], name: &str) -> Option<String> {
         // not fail for any of them: an `\opening` diagnosed as "defined by
         // the letter document class" sails past a match on "\opening is not
         // supported", and the inventory row keeps claiming `renders: true`.
-        .find(|m| m.starts_with(&needle) || m.starts_with(&wrong_class))
+        .find(|m| {
+            m.starts_with(&needle) || m.starts_with(&wrong_class) || m.starts_with(&beamer_class)
+        })
         .cloned()
 }
 
@@ -322,10 +325,29 @@ fn letter_probe(name: &str, arguments: &str) -> Option<String> {
     Some(source.replace('#', ""))
 }
 
+/// A minimal beamer deck: `#` marks where a probe's own command goes.
+/// `\frametitle`/`\framesubtitle`/`\alert` exist only under beamer, so like
+/// the letter.cls commands above they are exercised under their own class.
+const BEAMER_DOCUMENT: &str = "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}{Probe}\n#\n\\end{frame}\n\\end{document}\n";
+
+/// Where a beamer command has to sit to be exercised for real: inside a
+/// frame of a beamer deck. `None` for anything that is not beamer-gated.
+fn beamer_probe(name: &str, arguments: &str) -> Option<String> {
+    match name {
+        n if supported::BEAMER_CLASS_COMMANDS.contains(&n) => {
+            Some(BEAMER_DOCUMENT.replace('#', &with_arguments(name, arguments, "1pt")))
+        }
+        _ => None,
+    }
+}
+
 /// A compilable use of `\name` built from its argument shape.
 fn text_probe(name: &str, arguments: &str) -> String {
     if let Some(letter) = letter_probe(name, arguments) {
         return letter;
+    }
+    if let Some(beamer) = beamer_probe(name, arguments) {
+        return beamer;
     }
     match name {
         "\\" => "a\\\\b".into(),
@@ -348,6 +370,9 @@ fn text_probe(name: &str, arguments: &str) -> String {
         // A bare `{x}` test is not a valid `\ifthenelse` test (the engine
         // reports "Missing test"), so probe the real form instead.
         "ifthenelse" => "\\ifthenelse{\\equal{a}{a}}{yes}{no}".into(),
+        // `\iftoggle` needs a declared toggle; probing it bare would
+        // report the undefined-toggle marker instead of rendering.
+        "iftoggle" => "\\newtoggle{x}\\toggletrue{x}\\iftoggle{x}{yes}{no}".into(),
         "captionof" => "\\captionof{figure}{x}".into(),
         "uline" => "\\usepackage{ulem}\\uline{x}".into(),
         "sout" => "\\usepackage{ulem}\\sout{x}".into(),
@@ -576,9 +601,26 @@ fn class_scope_matches_the_parser_gate() {
         .collect();
     let listed: BTreeSet<String> = supported::LETTER_CLASS_COMMANDS
         .iter()
+        .chain(supported::BEAMER_CLASS_COMMANDS)
         .map(|s| s.to_string())
         .collect();
-    assert_eq!(scoped, listed, "scope must be exactly the letter gate");
+    assert_eq!(scoped, listed, "scope must be exactly the letter and beamer gates");
+    for name in supported::BEAMER_CLASS_COMMANDS {
+        let command = inventory
+            .commands
+            .iter()
+            .find(|c| c.name == *name)
+            .unwrap_or_else(|| panic!("\\{name} is not in the inventory"));
+        assert_eq!(
+            command.requires_class,
+            Some("beamer"),
+            "\\{name} is gated on the beamer class"
+        );
+        assert!(
+            beamer_probe(name, "{}").is_some(),
+            "\\{name} must go through the parser's beamer gate"
+        );
+    }
     for name in supported::LETTER_CLASS_COMMANDS {
         let command = inventory
             .commands

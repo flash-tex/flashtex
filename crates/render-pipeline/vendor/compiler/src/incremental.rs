@@ -554,6 +554,32 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             fil: _,
             span,
         } => map_span(span, changes, deltas),
+        Block::BeamerFrameBegin {
+            options: _,
+            title,
+            subtitle,
+            span,
+        } => {
+            shift_inlines(title, changes, deltas)?;
+            shift_inlines(subtitle, changes, deltas)?;
+            map_span(span, changes, deltas)
+        }
+        Block::BeamerFrameEnd { span } => map_span(span, changes, deltas),
+        Block::BeamerTitlePage {
+            title,
+            subtitle,
+            authors,
+            institute,
+            date,
+            span,
+        } => {
+            shift_inlines(title, changes, deltas)?;
+            shift_inlines(subtitle, changes, deltas)?;
+            shift_inlines(authors, changes, deltas)?;
+            shift_inlines(institute, changes, deltas)?;
+            shift_inlines(date, changes, deltas)?;
+            map_span(span, changes, deltas)
+        }
         Block::LetterBlock {
             part: _,
             lines,
@@ -922,6 +948,11 @@ fn block_signature(block: &Block) -> BlockSignature {
         // candidate set on an author/date-only edit, never produce a wrong
         // reuse, since `shift_block`'s full equality check still gates that.
         Block::TitleBlock { title, .. } => title,
+        // Signature only (see `TitleBlock`): the title narrows the
+        // candidate set, `shift_block`'s equality check gates reuse.
+        Block::BeamerFrameBegin { title, .. } => title,
+        Block::BeamerFrameEnd { .. } => &[],
+        Block::BeamerTitlePage { title, .. } => title,
     };
     let span_of = |inline: &Inline| match inline {
         Inline::Text { span, .. } => *span,

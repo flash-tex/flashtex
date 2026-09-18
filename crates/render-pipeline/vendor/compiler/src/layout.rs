@@ -1700,6 +1700,21 @@ impl LayoutCursor {
                     self.force_page_break();
                 }
             }
+            // A beamer slide: one page per frame, like `\newpage` (the
+            // frame geometry itself is the render pipeline's; this cursor
+            // sets the frametitle as a level-1 heading at the page top).
+            Block::BeamerFrameBegin { .. } => {
+                if !self.first_block {
+                    self.force_page_break();
+                }
+            }
+            Block::BeamerFrameEnd { .. } => {}
+            Block::BeamerTitlePage { .. } => {
+                if !self.first_block {
+                    self.newline(body_size);
+                }
+                self.vertical_gap(2.0 * body_size);
+            }
             Block::Verbatim { .. } => {
                 if !self.first_block {
                     self.newline(body_size);
@@ -2094,6 +2109,50 @@ impl LayoutCursor {
                 }
                 self.vertical_gap(1.5 * body_size);
 
+                self.style = None;
+            }
+            Block::BeamerFrameBegin { title, subtitle, .. } => {
+                // The frametitle at `\Large` as a heading line; the exact
+                // beamer box is the render pipeline's.
+                if !title.is_empty() {
+                    let size = heading_size(1, body_size);
+                    emit(self, title, size, Font::TimesRoman);
+                    self.newline(size);
+                }
+                if !subtitle.is_empty() {
+                    let size = heading_size(2, body_size);
+                    emit(self, subtitle, size, Font::TimesRoman);
+                    self.newline(size);
+                }
+            }
+            Block::BeamerFrameEnd { .. } => {}
+            Block::BeamerTitlePage {
+                title,
+                subtitle,
+                authors,
+                institute,
+                date,
+                ..
+            } => {
+                let title_size = size_declaration_pt(FontSizeLevel::Large2, body_size);
+                let small = size_declaration_pt(FontSizeLevel::ScriptSize, body_size);
+                self.style = Some(ParagraphStyle::Center);
+                for (part, size) in [
+                    (title, title_size),
+                    (subtitle, body_size),
+                    (authors, body_size),
+                    (institute, small),
+                    (date, body_size),
+                ] {
+                    if part.is_empty() {
+                        continue;
+                    }
+                    self.x = self.left_edge();
+                    self.content_end = self.x;
+                    emit(self, part, size, Font::TimesRoman);
+                    self.newline(size);
+                    self.vertical_gap(body_size);
+                }
                 self.style = None;
             }
             Block::Rule { span } => {
@@ -2848,6 +2907,23 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
                 visit_inline_references(authors, visitor);
                 if let Some(date) = date {
                     visit_inline_references(date, visitor);
+                }
+            }
+            Block::BeamerFrameBegin { title, subtitle, .. } => {
+                visit_inline_references(title, visitor);
+                visit_inline_references(subtitle, visitor);
+            }
+            Block::BeamerFrameEnd { .. } => {}
+            Block::BeamerTitlePage {
+                title,
+                subtitle,
+                authors,
+                institute,
+                date,
+                ..
+            } => {
+                for part in [title, subtitle, authors, institute, date] {
+                    visit_inline_references(part, visitor);
                 }
             }
             Block::LetterBlock { lines, .. } => {

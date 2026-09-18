@@ -1039,6 +1039,91 @@ pub enum Block {
         indent_pt: f64,
         span: Span,
     },
+    /// `\begin{frame}` under `\documentclass{beamer}` (issue #841, #944):
+    /// the head of one slide. The frame's body follows as ordinary blocks
+    /// up to the matching [`Block::BeamerFrameEnd`]; the pipeline sets the
+    /// whole run as one `\vbox to\textheight` page
+    /// (`beamerbaseframe.sty`: the frametitle box, `\vskip 0pt plus 1fill`,
+    /// the body, `\vskip 0pt plus 1.5fill`). `title`/`subtitle` come from
+    /// the `{title}{subtitle}` head arguments or from `\frametitle` /
+    /// `\framesubtitle` inside the body (the parser patches this block).
+    /// `span` is the `\begin{frame}` command with its arguments.
+    BeamerFrameBegin {
+        options: BeamerFrameOptions,
+        title: Vec<Inline>,
+        subtitle: Vec<Inline>,
+        span: Span,
+    },
+    /// `\end{frame}` under beamer: closes the slide opened by the last
+    /// [`Block::BeamerFrameBegin`].
+    BeamerFrameEnd {
+        span: Span,
+    },
+    /// beamer's `\titlepage` (`beamerinnerthemedefault.sty` `title page`
+    /// template): the title, subtitle, author, institute and date, each
+    /// already-resolved inline content (empty when the preamble never set
+    /// it). Layout (the `sep=8pt` colour boxes, `\vskip1em`/`0.25em`/
+    /// `0.5em`, the `\vfill`s) lives in the render pipeline.
+    BeamerTitlePage {
+        title: Vec<Inline>,
+        subtitle: Vec<Inline>,
+        authors: Vec<Inline>,
+        institute: Vec<Inline>,
+        date: Vec<Inline>,
+        span: Span,
+    },
+}
+
+/// `\begin{frame}[<options>]` (beamerbaseframe.sty `\beamer@frameoptions`).
+/// Keys that select a layout this compiler reads but the pipeline does not
+/// model yet are still recorded so the pipeline can say so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct BeamerFrameOptions {
+    /// `t`/`c`/`b`: how the body sits in the frame (`c` is the class
+    /// default; the `t`/`c`/`b` class options are not read yet).
+    pub align: BeamerFrameAlign,
+    /// `plain`: no headline, footline or sidebars; the body box is
+    /// `\paperheight` high.
+    pub plain: bool,
+    /// `fragile` (and `fragile=singleslide`): the body is read verbatim by
+    /// beamer; here it only marks the frame.
+    pub fragile: bool,
+    /// `allowframebreaks`: the body may be split across pages.
+    pub allowframebreaks: bool,
+}
+
+/// The vertical placement of a beamer frame's body (`beamerbaseframe.sty`
+/// lines 255-278): the glue above and below the body box.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum BeamerFrameAlign {
+    /// `[t]`: `.2cm plus .5\paperheight` above, `0pt plus 1fill` below.
+    Top,
+    /// `[c]` (default): `0pt plus 1fill` above, `0pt plus 1.5fill` below.
+    #[default]
+    Center,
+    /// `[b]`: `0pt plus 1fill` above, nothing below.
+    Bottom,
+}
+
+/// `\begin{frame}[<options>]`: the comma list of beamer frame keys. Unknown
+/// keys (`label=`, `shrink`, `squeeze`, `noframenumbering`, ...) are read
+/// past; `fragile=singleslide` counts as `fragile`.
+pub fn beamer_frame_options(raw: &str) -> BeamerFrameOptions {
+    let mut options = BeamerFrameOptions::default();
+    for key in raw.split(',') {
+        let key = key.trim();
+        let name = key.split('=').next().unwrap_or("").trim();
+        match name {
+            "t" => options.align = BeamerFrameAlign::Top,
+            "c" => options.align = BeamerFrameAlign::Center,
+            "b" => options.align = BeamerFrameAlign::Bottom,
+            "plain" => options.plain = true,
+            "fragile" => options.fragile = true,
+            "allowframebreaks" => options.allowframebreaks = true,
+            _ => {}
+        }
+    }
+    options
 }
 
 /// Which `letter.cls` block a [`Block::LetterBlock`] is.
@@ -1554,6 +1639,14 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "paragraph",
     "subparagraph",
     "tableofcontents",
+    // NOTE: beamer's commands (`\frametitle`, `\alert`, `\note`,
+    // `\subtitle`, `\institute`, `\titlepage`, `\usetheme`, ...) are
+    // deliberately NOT here, like soul's `\so`/`\hl` below: they exist only
+    // under `\documentclass{beamer}`, and an article's own
+    // `\newcommand{\note}[1]{...}` must win exactly as in real LaTeX.
+    // They have dispatch arms and inventory entries
+    // (`supported::BEAMER_CLASS_COMMANDS`, listed in `TEXT_EXTRA_ARMS`),
+    // class-gated at the arm by `beamer_command_available`.
     "index",
     "glossary",
     "textbf",
@@ -1857,6 +1950,30 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "textperiodcentered",
     "textregistered",
     "texttrademark",
+    "textdegree",
+    "textmu",
+    "textohm",
+    "textcelsius",
+    "texteuro",
+    "textyen",
+    "textwon",
+    "textcurrency",
+    "textestimated",
+    "textnumero",
+    "textrecipe",
+    "textservicemark",
+    "textbardbl",
+    "textbrokenbar",
+    "texttimes",
+    "textdiv",
+    "textonehalf",
+    "textonequarter",
+    "textthreequarters",
+    "textperthousand",
+    "textpertenthousand",
+    "textopenbullet",
+    "textlangle",
+    "textrangle",
     // `text_builtins::TEXT_ACCENTS` and the
     // `text_builtins::CAPITAL_ACCENT_ALIASES` alias names.
     "c",
@@ -2509,9 +2626,13 @@ pub fn parse_project_with(
         natbib_limitations: std::collections::BTreeSet::new(),
         natbib_forced_numbers_reported: false,
         hangfrom_hang_indent_reported: false,
+        enquote_depth: 0,
         title: None,
         author: None,
         date: None,
+        subtitle: None,
+        institute: None,
+        beamer_frame: None,
         today: options.today,
         titlepage_option: false,
         twocolumn_option: false,
@@ -2757,6 +2878,9 @@ struct P<'a> {
     natbib_forced_numbers_reported: bool,
     /// Whether `\hangfrom`'s missing hanging indent has been reported.
     hangfrom_hang_indent_reported: bool,
+    /// csquotes `\enquote` nesting depth: 0 = outer (double quotes),
+    /// 1 = first inner (single quotes), etc.
+    enquote_depth: u32,
     /// Current text style; saved on `{` and environment entry, restored on
     /// the matching `}` or `\end`.
     style: TextStyle,
@@ -2812,6 +2936,14 @@ struct P<'a> {
     /// argument (`\date{}`) suppresses the date line entirely once
     /// `\maketitle` expands it.
     date: Option<(Vec<InputToken>, Span)>,
+    /// beamer's `\subtitle{...}` and `\institute{...}` (beamerbasetitle.sty),
+    /// read by `\titlepage`. The optional short forms are dropped.
+    subtitle: Option<(Vec<InputToken>, Span)>,
+    institute: Option<(Vec<InputToken>, Span)>,
+    /// The index in the body's block list of the open beamer frame's
+    /// [`Block::BeamerFrameBegin`], so `\frametitle`/`\framesubtitle` in
+    /// the body can patch its title; `None` outside a frame.
+    beamer_frame: Option<usize>,
     /// The date `\today` expands to, supplied by the caller in the compile
     /// request rather than read from the clock here (`ParseOptions::today`).
     today: TodayDate,
@@ -3465,6 +3597,14 @@ impl P<'_> {
             // this arm runs in either place, unlike the preamble catch-all
             // just below.
             "title" | "author" | "date" => self.title_block_command(name, span),
+            // beamer's `\subtitle`/`\institute` and its theme and template
+            // declarations: preamble commands like `\title`, accepted in
+            // the body too (the default theme is the one modelled; see
+            // `beamer_declaration`). Ahead of the preamble catch-all below.
+            "subtitle" | "institute" => self.beamer_title_command(name, span),
+            "usetheme" | "usecolortheme" | "usefonttheme" | "useinnertheme" | "useoutertheme"
+            | "setbeamertemplate" | "setbeamercolor" | "setbeamerfont" | "setbeamercovered"
+            | "setbeamersize" | "beamertemplatenavigationsymbolsempty" => self.beamer_declaration(name, span),
             "maketitle" => self.maketitle(span, blocks, para),
             // letter.cls's preamble declarations (lines 154-163). Each is
             // `\def`ined to empty by the class, so writing one simply
@@ -3757,6 +3897,12 @@ impl P<'_> {
             // pipeline started laying these heads out correctly.
             "paragraph" | "subparagraph" => self.run_in_heading_command(blocks, para),
             "section" | "subsection" | "subsubsection" => self.section_command(name, span, blocks, para),
+            // Beamer slide titles and alert text: real commands only under
+            // `\documentclass{beamer}` (see `beamer_command_available`).
+            "frametitle" | "framesubtitle" => self.beamer_frame_title(name, span, blocks, para),
+            "alert" => self.beamer_alert(name, span, para),
+            "titlepage" => self.beamer_titlepage(span, blocks, para),
+            "note" => self.beamer_note(name, span),
             "label" | "ref" | "pageref" | "eqref" | "thepage" => self.label_or_reference_command(name, span, para),
             "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
             | "labelcref" => self.clever_reference(name, span, para),
@@ -3823,7 +3969,12 @@ impl P<'_> {
             | "textcopyright" | "textsterling" | "textellipsis" | "textbackslash"
             | "textasciitilde" | "textasciicircum" | "textunderscore" | "textbar" | "textless"
             | "textgreater" | "textbraceleft" | "textbraceright" | "textbullet"
-            | "textperiodcentered" | "textregistered" | "texttrademark" => {
+            | "textperiodcentered" | "textregistered" | "texttrademark" | "textdegree"
+            | "textmu" | "textohm" | "textcelsius" | "texteuro" | "textyen" | "textwon"
+            | "textcurrency" | "textestimated" | "textnumero" | "textrecipe"
+            | "textservicemark" | "textbardbl" | "textbrokenbar" | "texttimes" | "textdiv"
+            | "textonehalf" | "textonequarter" | "textthreequarters" | "textperthousand"
+            | "textpertenthousand" | "textopenbullet" | "textlangle" | "textrangle" => {
                 self.text_symbol(name, span, para)
             }
             // `text_builtins::TEXT_ACCENTS` and the
@@ -3843,6 +3994,9 @@ impl P<'_> {
             // package; soul `\st` (strikethrough, GH-330's ulem-side work)
             // stays unimplemented and keeps its `unknown_command` error.
             "so" | "hl" => self.soul_command(name, span, para),
+            // csquotes `\enquote`: wraps the argument in language-appropriate
+            // quotation marks, alternating double/single on nesting.
+            "enquote" => self.enquote_command(span, para),
             // Kernel text-mode `\textsuperscript` / `\textsubscript`
             // (latex.ltx `ltmisc.dtx`): no package needed, unlike ulem's
             // commands above.
@@ -3888,6 +4042,12 @@ impl P<'_> {
     /// `\title`, `\author` and `\date`.
     #[inline(never)]
     fn title_block_command(&mut self, name: &str, span: Span) {
+        // beamerbasetitle.sty: `\title[short]{...}`, `\author[short]{...}`,
+        // `\date[short]{...}` take an optional short form (for the
+        // headline/footline templates), which article's never do.
+        if self.is_beamer_class() {
+            let _ = self.optional_bracket_argument();
+        }
         match name {
         "title" => {
             let (tokens, argument_span) = self.required_group(name, span);
@@ -4200,6 +4360,23 @@ impl P<'_> {
                 _ => 3,
             };
             let starred = self.take_optional_star();
+            if self.is_beamer_class() {
+                // beamerbasesection.sty: `\section<mode>*[short]{title}`
+                // records the entry for the navigation bars and the table
+                // of contents and typesets **nothing** in the default theme
+                // (only an `\AtBeginSection` hook would). The counter still
+                // steps so `\thesection` reads as beamer's would.
+                self.skip_beamer_overlay_spec();
+                let _ = self.optional_bracket_argument();
+                let (_, _) = self.required_group(name, span);
+                self.flush_paragraph(blocks, para);
+                if !starred {
+                    let number = self.counters.step(name).unwrap_or_default();
+                    self.set_current_counter(name, Some(number));
+                }
+                self.current_dependencies.clear();
+                return;
+            }
             let (tokens, _) = self.required_group(name, span);
             self.flush_paragraph(blocks, para);
             let number = if starred {
@@ -6871,8 +7048,10 @@ impl P<'_> {
         if kind == "begin" {
             // The bordered-box `frame` environment is consumed synchronously
             // (through its `\end`), so nothing is pushed on the environment
-            // stacks for it.
-            if environment == "frame" && self.in_body {
+            // stacks for it. Under `\documentclass{beamer}` a `frame` is a
+            // slide instead, and takes the ordinary `begin_environment` path
+            // (with a beamer branch there) so its body parses as blocks.
+            if environment == "frame" && self.in_body && !self.is_beamer_class() {
                 self.frame_environment(span, argument_span, space_before, para);
                 return;
             }
@@ -7086,6 +7265,12 @@ impl P<'_> {
                 lines: Vec::new(),
                 span: span.merge(argument_span),
             });
+        } else if environment == "frame" && self.in_body && self.is_beamer_class() {
+            // Beamer slide (issue #841): a page break plus the optional
+            // `[options]`/`{title}`/`{subtitle}`, then the shared pushes
+            // below (no "not implemented" warning). The body parses as
+            // ordinary blocks until `\end{frame}`.
+            self.beamer_frame_begin(span.merge(argument_span), blocks, para);
         } else if environment == "sloppypar" && self.in_body {
             // latex.ltx `\def\sloppypar{\par\sloppy}`.
             self.flush_paragraph(blocks, para);
@@ -7293,6 +7478,12 @@ impl P<'_> {
             self.flush_paragraph(blocks, para);
         } else if environment == "figure" || self.theorems.contains_key(&environment) {
             self.flush_paragraph(blocks, para);
+        } else if environment == "frame" {
+            // Beamer slide end: close the paragraph and the frame. In other
+            // classes `\end{frame}` never arrives here: the bordered-box
+            // path consumes it synchronously.
+            self.flush_paragraph(blocks, para);
+            self.beamer_frame_end(span, blocks);
         } else if environment == "tabbing" && self.in_body {
             self.end_tabbing(blocks, para);
         } else if environment == "proof" {
@@ -7688,6 +7879,300 @@ impl P<'_> {
             space_before,
             highlight: None,
         })));
+    }
+
+    /// Whether `\documentclass{beamer}` is in force. Beamer redefines the
+    /// `frame` environment as a slide and provides `\frametitle`,
+    /// `\framesubtitle` and `\alert`; in any other class `frame` stays the
+    /// bordered box above and those commands are undefined.
+    fn is_beamer_class(&self) -> bool {
+        self.document_class.as_deref() == Some("beamer")
+    }
+
+    /// Whether a beamer command may run here. Modelled on
+    /// `letter_command_available`: outside `beamer` the command is undefined,
+    /// so the diagnostic names the class and the braced argument is left for
+    /// the main token loop, which keeps the author's prose on the page.
+    fn beamer_command_available(&mut self, name: &str, span: Span) -> bool {
+        if self.is_beamer_class() {
+            return true;
+        }
+        let class = self
+            .document_class
+            .clone()
+            .unwrap_or_else(|| "no \\documentclass".to_string());
+        self.diags.push(
+            Diagnostic::error(
+                format!(
+                    "\\{name} is defined by the beamer document class; this document is {class}"
+                ),
+                Some(span),
+                Some("skipped the command; any braced argument was typeset as plain text".into()),
+            )
+            .with_code(crate::diagnostics::DiagnosticCode::UnknownCommand),
+        );
+        false
+    }
+
+    /// `\begin{frame}` under `beamer` (issue #841, #944): pushes the slide's
+    /// [`Block::BeamerFrameBegin`] after reading beamer's
+    /// `<overlay>[<options>]{title}{subtitle}` head. Overlay specs multiply
+    /// pages (a separate slice) and are read and ignored; the options are
+    /// kept (`t`/`c`/`b`/`plain`/`fragile`/`allowframebreaks`), the rest
+    /// (`label=`, `shrink`, `squeeze`, ...) read past. Only the head is
+    /// consumed here; the body parses with the ordinary dispatch until
+    /// `\end{frame}`, which pushes the matching [`Block::BeamerFrameEnd`].
+    fn beamer_frame_begin(&mut self, open: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        self.flush_paragraph(blocks, para);
+        self.skip_beamer_overlay_spec();
+        let mut options = BeamerFrameOptions::default();
+        if let Some((raw, _)) = self.optional_bracket_argument() {
+            options = beamer_frame_options(&raw);
+        }
+        self.skip_beamer_overlay_spec();
+        // `{title}` then `{subtitle}`: at most two brace groups, and only
+        // when the next token opens one — body text is never consumed. A
+        // blank line ends the head, as `\@ifnextchar` stops at `\par`.
+        let mut head: [Vec<Inline>; 2] = [Vec::new(), Vec::new()];
+        let mut span = open;
+        for slot in head.iter_mut() {
+            self.skip_spaces();
+            if !matches!(
+                self.peek().map(|token| &token.kind),
+                Some(TokenKind::LBrace)
+            ) {
+                break;
+            }
+            let (tokens, title_span) = self.required_group("frame", open);
+            span = span.merge(title_span);
+            *slot = self.inlines_from_tokens(tokens, TextStyle::default(), false);
+        }
+        let [title, subtitle] = head;
+        self.beamer_frame = Some(blocks.len());
+        blocks.push(Block::BeamerFrameBegin {
+            options,
+            title,
+            subtitle,
+            span,
+        });
+        self.finish_block_dependencies();
+    }
+
+    /// `\end{frame}` under beamer: the [`Block::BeamerFrameEnd`] that closes
+    /// the slide (the paragraph was flushed by the caller).
+    fn beamer_frame_end(&mut self, span: Span, blocks: &mut Vec<Block>) {
+        self.beamer_frame = None;
+        blocks.push(Block::BeamerFrameEnd { span });
+        self.finish_block_dependencies();
+    }
+
+    /// A beamer `<overlay>` specification (`<1->`, `<2-3>`): consumed so it
+    /// is not typeset. Only a word that opens with `<` and closes with `>`
+    /// is taken, so prose starting with `<` is left for the paragraph; a
+    /// trailing tail (`<1>text`) stays in the stream.
+    fn skip_beamer_overlay_spec(&mut self) {
+        self.skip_spaces();
+        let past = match self.peek() {
+            Some(Token {
+                kind: TokenKind::Word(word),
+                ..
+            }) if word.starts_with('<') => match word.find('>') {
+                Some(close) => close + 1,
+                None => return,
+            },
+            _ => return,
+        };
+        self.trim_word_prefix(past);
+    }
+
+    /// `\frametitle<overlay>[short]{...}` / `\framesubtitle{...}` (beamer):
+    /// the slide head, stored on the open frame's [`Block::BeamerFrameBegin`]
+    /// (beamer `\gdef`s `\insertframetitle`; the frametitle template sets
+    /// it when the frame box is assembled, not where the command stands).
+    /// Outside a frame beamer errors ("Frame title must be given inside a
+    /// frame"); here the command is diagnosed and typesets nothing.
+    fn beamer_frame_title(
+        &mut self,
+        name: &str,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        if !self.beamer_command_available(name, span) {
+            return;
+        }
+        self.skip_beamer_overlay_spec();
+        let _ = self.optional_bracket_argument();
+        let (tokens, _) = self.required_group(name, span);
+        self.flush_paragraph(blocks, para);
+        let content = self.inlines_from_tokens(tokens, TextStyle::default(), false);
+        self.current_dependencies.clear();
+        let open = self
+            .beamer_frame
+            .filter(|&at| matches!(blocks.get(at), Some(Block::BeamerFrameBegin { .. })));
+        match open {
+            Some(at) => {
+                if let Some(Block::BeamerFrameBegin { title, subtitle, .. }) = blocks.get_mut(at) {
+                    if name == "frametitle" {
+                        *title = content;
+                    } else {
+                        *subtitle = content;
+                    }
+                }
+            }
+            None => self.diags.push(Diagnostic::warning(
+                format!("\\{name} outside a frame (beamer: \"Frame title must be given inside a frame\")"),
+                Some(span),
+                Some("ignored the title".into()),
+            )),
+        }
+    }
+
+    /// `\subtitle[short]{...}` / `\institute[short]{...}`
+    /// (beamerbasetitle.sty): stored for `\titlepage`.
+    fn beamer_title_command(&mut self, name: &str, span: Span) {
+        if !self.beamer_command_available(name, span) {
+            return;
+        }
+        let _ = self.optional_bracket_argument();
+        let (tokens, argument_span) = self.required_group(name, span);
+        let value = Some((tokens, span.merge(argument_span)));
+        if name == "subtitle" {
+            self.subtitle = value;
+        } else {
+            self.institute = value;
+        }
+    }
+
+    /// `\titlepage` (beamer): the [`Block::BeamerTitlePage`] of everything
+    /// the preamble declared. beamer sets the template regardless of what is
+    /// missing (an unset `\title` is simply empty), unlike article's
+    /// `\maketitle`, so nothing here is an error. `\date` defaults to
+    /// `\today` as in article.
+    fn beamer_titlepage(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        if !self.beamer_command_available("titlepage", span) {
+            return;
+        }
+        self.skip_beamer_overlay_spec();
+        self.flush_paragraph(blocks, para);
+        let field = |this: &mut Self, value: Option<(Vec<InputToken>, Span)>| -> Vec<Inline> {
+            match value {
+                Some((tokens, _)) => this.inlines_from_tokens(tokens, TextStyle::default(), false),
+                None => Vec::new(),
+            }
+        };
+        let title = field(self, self.title.clone());
+        let subtitle = field(self, self.subtitle.clone());
+        let author_tokens = self.author.clone();
+        let author_span = author_tokens.as_ref().map_or(span, |(_, s)| *s);
+        let mut authors: Vec<Inline> = Vec::new();
+        if let Some((tokens, _)) = author_tokens {
+            // `\and` in beamer's `\insertauthor` is `\quad`-separated on one
+            // line; article's per-line stacking is kept here for now.
+            for (i, group) in split_on_and(tokens).into_iter().enumerate() {
+                let inlines = self.inlines_from_tokens(group, TextStyle::default(), false);
+                if inlines.is_empty() {
+                    continue;
+                }
+                if i > 0 && !authors.is_empty() {
+                    authors.push(Inline::LineBreak {
+                        span: author_span,
+                        skip_pt: None,
+                    });
+                }
+                authors.extend(inlines);
+            }
+        }
+        let institute = field(self, self.institute.clone());
+        let date = match self.date.clone() {
+            None => vec![Inline::Text {
+                text: self.today.latex_today(),
+                span,
+                style: TextStyle::default(),
+                space_before: true,
+            }],
+            Some((tokens, _)) => self.inlines_from_tokens(tokens, TextStyle::default(), false),
+        };
+        blocks.push(Block::BeamerTitlePage {
+            title,
+            subtitle,
+            authors,
+            institute,
+            date,
+            span,
+        });
+        self.finish_block_dependencies();
+    }
+
+    /// `\note<overlay>[options]{text}` (beamer): notes are typeset only with
+    /// `\setbeameroption{show notes}`; by default the argument produces
+    /// nothing, so it is read and dropped.
+    fn beamer_note(&mut self, name: &str, span: Span) {
+        if !self.beamer_command_available(name, span) {
+            return;
+        }
+        self.skip_beamer_overlay_spec();
+        let _ = self.optional_bracket_argument();
+        self.skip_spaces();
+        if matches!(self.peek().map(|token| &token.kind), Some(TokenKind::LBrace)) {
+            let _ = self.required_group(name, span);
+        }
+    }
+
+    /// beamer's theme and template declarations (`\usetheme[opts]{name}`,
+    /// `\setbeamertemplate{name}[opt]{...}`, `\setbeamercolor{name}{spec}`,
+    /// `\setbeamerfont{name}{spec}`, `\setbeamercovered{spec}`,
+    /// `\setbeamersize{spec}`, `\beamertemplatenavigationsymbolsempty`):
+    /// read past so the deck compiles. Only the default theme is modelled;
+    /// the render pipeline reads `\setbeamertemplate{navigation symbols}{}`
+    /// back from the source.
+    fn beamer_declaration(&mut self, name: &str, span: Span) {
+        if !self.beamer_command_available(name, span) {
+            return;
+        }
+        self.skip_beamer_overlay_spec();
+        let _ = self.optional_bracket_argument();
+        let groups = match name {
+            "beamertemplatenavigationsymbolsempty" => 0,
+            "usetheme" | "usecolortheme" | "usefonttheme" | "useinnertheme" | "useoutertheme"
+            | "setbeamercovered" | "setbeamersize" => 1,
+            _ => 2,
+        };
+        for i in 0..groups {
+            if i > 0 {
+                let _ = self.optional_bracket_argument();
+            }
+            self.skip_spaces();
+            if !matches!(self.peek().map(|token| &token.kind), Some(TokenKind::LBrace)) {
+                break;
+            }
+            let _ = self.required_group(name, span);
+        }
+    }
+
+    /// `\alert{text}` (beamer): text in the alert colour, which the default
+    /// beamer theme sets to red. Shaped like `\textcolor`: a following group
+    /// is re-entered with the colour applied, otherwise one braced argument.
+    fn beamer_alert(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        if !self.beamer_command_available(name, span) {
+            return;
+        }
+        let next = TextStyle {
+            color: Some(DeviceColor::RED),
+            ..self.style
+        };
+        // `\alert<2>{...}`: the overlay spec is read past (every slide
+        // shows the alert until overlays are modelled).
+        self.skip_beamer_overlay_spec();
+        self.skip_spaces();
+        if let Some(open) = self.closed_group_start() {
+            self.i += 1;
+            self.open_group(open);
+            self.style = next;
+        } else {
+            let (tokens, _) = self.required_group(name, span);
+            para.extend(self.inlines_from_tokens(tokens, next, false));
+        }
     }
 
     /// `verbatim`, `verbatim*`, and basic `lstlisting`. The body is not read
@@ -10507,6 +10992,54 @@ impl P<'_> {
         })));
     }
 
+    /// csquotes `\enquote{text}`: wraps the argument in typographic quotation
+    /// marks, alternating between double (\u{201c}\u{201d}) and single (\u{2018}\u{2019})
+    /// on each nesting level. Without `\usepackage{csquotes}` the argument is
+    /// typeset as plain text with a diagnostic, matching the soul pattern.
+    fn enquote_command(&mut self, span: Span, para: &mut Vec<Inline>) {
+        self.paragraph_started = true;
+        let space_before = self.space_precedes(self.i - 1);
+        let (tokens, argument_span) = self.required_group("enquote", span);
+        let full = span.merge(argument_span);
+        if !self.packages.iter().any(|package| package == "csquotes") {
+            self.diags.push(Diagnostic::command_error(
+                "enquote",
+                "\\enquote needs \\usepackage{csquotes}".to_string(),
+                Some(full),
+                Some("typeset the argument as plain text".into()),
+            ));
+            para.extend(self.box_inlines(tokens));
+            return;
+        }
+        // Even depth = double quotes, odd depth = single quotes.
+        let (open, close) = if self.enquote_depth % 2 == 0 {
+            ("\u{201c}", "\u{201d}") // U+201C / U+201D: left/right double quotation mark
+        } else {
+            ("\u{2018}", "\u{2019}") // U+2018 / U+2019: left/right single quotation mark
+        };
+        // Opening quote mark.
+        para.push(Inline::Text {
+            text: open.into(),
+            span,
+            style: self.style,
+            space_before,
+        });
+        // Parse the body at the next nesting level through the full parser
+        // dispatch (`box_inlines` calls `parse_stream`), so nested
+        // `\enquote` is handled by the same `command` arm recursively.
+        self.enquote_depth += 1;
+        let inner = self.box_inlines(tokens);
+        self.enquote_depth -= 1;
+        para.extend(inner);
+        // Closing quote mark.
+        para.push(Inline::Text {
+            text: close.into(),
+            span: argument_span,
+            style: self.style,
+            space_before: false,
+        });
+    }
+
     /// soul `\so{text}` (letterspacing) or `\hl{text}` (highlight). Without
     /// soul, the package commands diagnose and typeset the argument as
     /// plain text, like the ulem commands above.
@@ -11986,6 +12519,14 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // itself where it is used instead: `\whiledo` is not implemented
         // and is diagnosed as an unknown command at its own span.
         "ifthen" => options.is_empty(),
+        // etoolbox's toggle booleans (`\newtoggle`/`\providetoggle`,
+        // `\toggletrue`/`\togglefalse`, `\iftoggle`) run in the expansion
+        // pass (see expansion's `HOST_PRELUDE`), so loading the package is
+        // silent. Everything else etoolbox ships (`\patchcmd`,
+        // `\AtEndPreamble`, list processing, robust-command variants) is
+        // not implemented and is diagnosed as an unknown command where it
+        // is used.
+        "etoolbox" => options.is_empty(),
         // natbib citation commands (crate::natbib) with the delimiter,
         // separator and citation-style options that decide the characters
         // they set. `sort`/`compress`/`super`/`longnamesfirst` are parsed but
@@ -12007,9 +12548,10 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
             .iter()
             .all(|option| matches!(*option, "errorshow" | "infoshow" | "balancingshow" | "markshow" | "debugshow")),
         // Table packages (parser/tabular.rs, crate::tabular): booktabs rules
-        // and spacing, longtable page-breaking tables, multirow entries and
-        // colortbl row/column/cell colours and rule colours.
-        "booktabs" | "longtable" | "multirow" | "colortbl" => options.is_empty(),
+        // and spacing, longtable page-breaking tables, multirow entries,
+        // colortbl row/column/cell colours and rule colours, and tabularx
+        // total-width tables with X columns.
+        "booktabs" | "longtable" | "multirow" | "colortbl" | "tabularx" => options.is_empty(),
         // xspace.sty takes no options; its only widely used command,
         // `\xspace`, is implemented above, so loading it is silent.
         "xspace" => options.is_empty(),
@@ -12095,6 +12637,10 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // (math.rs Frame::Cancel/BCancel/XCancel); \cancelto is diagnosed
         // where used. cancel takes no package options.
         "cancel" => options.is_empty(),
+        // `\enquote` is implemented; csquotes' style/language options
+        // (`style=`, `autostyle`, ...) are not modelled, so only a bare load
+        // is silent.
+        "csquotes" => options.is_empty(),
         _ => false,
     }
 }
@@ -14405,6 +14951,294 @@ mod tests {
         assert!(
             texts.iter().any(|t| t.contains('\u{2122}')),
             "expected U+2122 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textdegree` is U+00B0 DEGREE SIGN, like pdfLaTeX.
+    #[test]
+    fn textdegree_typesets_a_degree_sign() {
+        let (parsed, items) = items("x \\textdegree y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00B0}')),
+            "expected U+00B0 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textmu` is U+00B5 MICRO SIGN, like pdfLaTeX.
+    #[test]
+    fn textmu_typesets_a_micro_sign() {
+        let (parsed, items) = items("x \\textmu y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00B5}')),
+            "expected U+00B5 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textohm` is U+2126 OHM SIGN, like pdfLaTeX.
+    #[test]
+    fn textohm_typesets_an_ohm_sign() {
+        let (parsed, items) = items("x \\textohm y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2126}')),
+            "expected U+2126 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textcelsius` is U+2103 DEGREE CELSIUS, like pdfLaTeX.
+    #[test]
+    fn textcelsius_typesets_degree_celsius() {
+        let (parsed, items) = items("x \\textcelsius y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2103}')),
+            "expected U+2103 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\texteuro` is U+20AC EURO SIGN, like pdfLaTeX.
+    #[test]
+    fn texteuro_typesets_a_euro_sign() {
+        let (parsed, items) = items("x \\texteuro y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{20AC}')),
+            "expected U+20AC in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textyen` is U+00A5 YEN SIGN, like pdfLaTeX.
+    #[test]
+    fn textyen_typesets_a_yen_sign() {
+        let (parsed, items) = items("x \\textyen y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00A5}')),
+            "expected U+00A5 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textwon` is U+20A9 WON SIGN, like pdfLaTeX.
+    #[test]
+    fn textwon_typesets_a_won_sign() {
+        let (parsed, items) = items("x \\textwon y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{20A9}')),
+            "expected U+20A9 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textcurrency` is U+00A4 CURRENCY SIGN, like pdfLaTeX.
+    #[test]
+    fn textcurrency_typesets_a_currency_sign() {
+        let (parsed, items) = items("x \\textcurrency y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00A4}')),
+            "expected U+00A4 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textestimated` is U+212E ESTIMATED SYMBOL, like pdfLaTeX.
+    #[test]
+    fn textestimated_typesets_an_estimated_symbol() {
+        let (parsed, items) = items("x \\textestimated y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{212E}')),
+            "expected U+212E in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textnumero` is U+2116 NUMERO SIGN, like pdfLaTeX.
+    #[test]
+    fn textnumero_typesets_a_numero_sign() {
+        let (parsed, items) = items("x \\textnumero y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2116}')),
+            "expected U+2116 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textrecipe` is U+211E PRESCRIPTION TAKE, like pdfLaTeX.
+    #[test]
+    fn textrecipe_typesets_a_prescription_take() {
+        let (parsed, items) = items("x \\textrecipe y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{211E}')),
+            "expected U+211E in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textservicemark` is U+2120 SERVICE MARK, like pdfLaTeX.
+    #[test]
+    fn textservicemark_typesets_a_service_mark() {
+        let (parsed, items) = items("x \\textservicemark y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2120}')),
+            "expected U+2120 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textbardbl` is U+2016 DOUBLE VERTICAL LINE, like pdfLaTeX.
+    #[test]
+    fn textbardbl_typesets_a_double_vertical_line() {
+        let (parsed, items) = items("x \\textbardbl y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2016}')),
+            "expected U+2016 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textbrokenbar` is U+00A6 BROKEN BAR, like pdfLaTeX.
+    #[test]
+    fn textbrokenbar_typesets_a_broken_bar() {
+        let (parsed, items) = items("x \\textbrokenbar y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00A6}')),
+            "expected U+00A6 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\texttimes` is U+00D7 MULTIPLICATION SIGN, like pdfLaTeX.
+    #[test]
+    fn texttimes_typesets_a_multiplication_sign() {
+        let (parsed, items) = items("x \\texttimes y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00D7}')),
+            "expected U+00D7 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textdiv` is U+00F7 DIVISION SIGN, like pdfLaTeX.
+    #[test]
+    fn textdiv_typesets_a_division_sign() {
+        let (parsed, items) = items("x \\textdiv y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00F7}')),
+            "expected U+00F7 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textonehalf` is U+00BD VULGAR FRACTION ONE HALF, like pdfLaTeX.
+    #[test]
+    fn textonehalf_typesets_one_half() {
+        let (parsed, items) = items("x \\textonehalf y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00BD}')),
+            "expected U+00BD in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textonequarter` is U+00BC VULGAR FRACTION ONE QUARTER.
+    #[test]
+    fn textonequarter_typesets_one_quarter() {
+        let (parsed, items) = items("x \\textonequarter y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00BC}')),
+            "expected U+00BC in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textthreequarters` is U+00BE VULGAR FRACTION THREE QUARTERS.
+    #[test]
+    fn textthreequarters_typesets_three_quarters() {
+        let (parsed, items) = items("x \\textthreequarters y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00BE}')),
+            "expected U+00BE in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textperthousand` is U+2030 PER MILLE SIGN, like pdfLaTeX.
+    #[test]
+    fn textperthousand_typesets_a_per_mille_sign() {
+        let (parsed, items) = items("x \\textperthousand y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2030}')),
+            "expected U+2030 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textpertenthousand` is U+2031 PER TEN THOUSAND SIGN.
+    #[test]
+    fn textpertenthousand_typesets_a_per_ten_thousand_sign() {
+        let (parsed, items) = items("x \\textpertenthousand y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2031}')),
+            "expected U+2031 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textopenbullet` is U+25E6 WHITE BULLET, like pdfLaTeX.
+    #[test]
+    fn textopenbullet_typesets_a_white_bullet() {
+        let (parsed, items) = items("x \\textopenbullet y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{25E6}')),
+            "expected U+25E6 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textlangle` is U+2329 LEFT-POINTING ANGLE BRACKET.
+    #[test]
+    fn textlangle_typesets_a_left_angle_bracket() {
+        let (parsed, items) = items("x \\textlangle y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2329}')),
+            "expected U+2329 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textrangle` is U+232A RIGHT-POINTING ANGLE BRACKET.
+    #[test]
+    fn textrangle_typesets_a_right_angle_bracket() {
+        let (parsed, items) = items("x \\textrangle y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{232A}')),
+            "expected U+232A in {texts:?}"
         );
     }
 
