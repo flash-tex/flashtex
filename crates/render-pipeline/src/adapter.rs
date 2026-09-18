@@ -940,7 +940,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
         let first = match block {
             CBlock::Heading { number_span, .. } => Some(*number_span),
             CBlock::Verbatim { span, .. } | CBlock::TableOfContents { span } | CBlock::Rule { span } => Some(*span),
-            _ => inlines_of(block).iter().map(inline_span).next(),
+            _ => anchor_span(inlines_of(block)),
         };
         if pending_vfill > 0 {
             if let Some(at) = first {
@@ -1125,7 +1125,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
                 let mut group: Vec<Inline> = Vec::new();
                 let mut prev_end: Option<Span> = None;
                 for (i, line) in lines.iter().enumerate() {
-                    let first = line.iter().map(inline_span).next();
+                    let first = anchor_span(line.iter());
                     if !group.is_empty() {
                         // The break owns the bytes between the two lines, so
                         // no interword space is read across it (as the
@@ -1578,7 +1578,7 @@ pub fn adapt_cached(
         }
         let unit_start = next.as_ref().and_then(|unit| match &unit.kind {
             UnitKind::Heading { number_span, .. } => Some(*number_span),
-            UnitKind::Paragraph { inlines, .. } => inlines.iter().map(inline_span).next(),
+            UnitKind::Paragraph { inlines, .. } => anchor_span(inlines.iter()),
             UnitKind::Rule { span } => Some(*span),
             UnitKind::Picture { document, picture, .. } => Some(Span::in_document(*document, picture.start, picture.end)),
         });
@@ -2184,7 +2184,7 @@ pub fn adapt_cached(
                 // `\begin{align}` and again at `\end`, so the pieces are
                 // rejoined here (short display skips, no second `\parskip`, no
                 // empty opener line, no indent after the display).
-                let first_span = inlines.iter().map(inline_span).next();
+                let first_span = anchor_span(inlines.iter());
                 let starts_display = matches!(parts.first(), Some(ParaPart::Display { .. } | ParaPart::Rows { .. }));
                 if let (Some(Block::Paragraph { parts: prev_parts, style: prev_style, list: prev_list, .. }), Some(f), Some(p)) = (blocks.last_mut(), first_span, prev_para_end) {
                     // Labels only, or a `label_line` (labels then one space).
@@ -2862,6 +2862,14 @@ fn clear_page_blocks(texts: &[&str], blocks: &[Block]) -> Vec<usize> {
         .collect()
 }
 
+/// The first inline that sits at a real source position: a `\pagestyle` /
+/// `\thispagestyle` marker rides in the paragraph with the command's own
+/// span (for `\maketitle`, before the title's text), so it must not anchor
+/// the paragraph for gap scans and page-break detection.
+fn anchor_span<'a>(inlines: impl IntoIterator<Item = &'a Inline>) -> Option<Span> {
+    inlines.into_iter().find(|i| !matches!(i, Inline::PageStyle { .. })).map(inline_span)
+}
+
 fn inline_span(i: &Inline) -> Span {
     match i {
         Inline::Text { span, .. }
@@ -2869,6 +2877,7 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::Math { span, .. }
         | Inline::MathRows { span, .. }
         | Inline::Label { span, .. }
+        | Inline::PageStyle { span, .. }
         | Inline::Reference { span, .. }
         | Inline::CleverReference { span, .. }
         | Inline::HFill { span, .. }
@@ -3377,6 +3386,18 @@ fn split_at_page_breaks<'p>(
                 prev_vmode = true;
                 continue;
             }
+            // A paragraph holding only `\pagestyle`/`\thispagestyle`
+            // markers (compiler pin `75a2a03a`, fancyhdr #849; the old pin
+            // read the command's argument and emitted nothing). They are
+            // whatsits, no material -- TeX stays in vertical mode -- so it
+            // is no block here: the page style is read from the source by
+            // [`body_commands`], and `prev_end`/`prev_vmode` keep telling
+            // the next block what really precedes it. A preamble
+            // `\pagestyle{empty}` ahead of the document's first list made
+            // that list's `\begin` look like it was read in horizontal
+            // mode, which dropped `\partopsep` from its closing
+            // `\@topsepadd` (`nested_list_end_skips`).
+            CBlock::Paragraph(inlines) if !inlines.is_empty() && inlines.iter().all(|i| matches!(i, Inline::PageStyle { .. })) => continue,
             CBlock::Rule { span } => {
                 let eject = std::mem::take(&mut pending_eject) || prev_end.is_some_and(|p| gap_has_page_break(texts, p, *span));
                 units.push(Unit {
@@ -3406,7 +3427,7 @@ fn split_at_page_breaks<'p>(
         };
         let first = match block {
             CBlock::Heading { number_span, .. } => Some(*number_span),
-            _ => inlines_of(block).iter().map(inline_span).next().or(item_label_span),
+            _ => anchor_span(inlines_of(block)).or(item_label_span),
         };
         let mut eject = std::mem::take(&mut pending_eject) || matches!((prev_end, first), (Some(p), Some(f)) if gap_has_page_break(texts, p, f));
         let mut vspace_before = std::mem::take(&mut pending_vspace);
@@ -8853,6 +8874,10 @@ fn items_cached(
                 key.hash(&mut h);
                 value.hash(&mut h);
             }
+            Inline::PageStyle { style, this_page, .. } => {
+                (*style as u8).hash(&mut h);
+                this_page.hash(&mut h);
+            }
             Inline::Reference { key, page, equation, .. } => {
                 key.hash(&mut h);
                 page.hash(&mut h);
@@ -9056,6 +9081,9 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
         }
         match &**inline {
             Inline::Label { key, .. } => items.push(Item::Label { key: key.clone() }),
+            // `\pagestyle`/`\thispagestyle` set no horizontal material;
+            // the page chrome is the compiler layout's (fancyhdr, #849).
+            Inline::PageStyle { .. } => {}
             Inline::Reference { .. } | Inline::CleverReference { .. } | Inline::Verbatim { .. } => unreachable!("lowered by lower_inline above"),
             Inline::Footnote { number, span, mark, text, .. } => {
                 // `\@footnotemark` keeps the space factor; the space before
@@ -9451,16 +9479,22 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
             }
             // amsthm's automatic `\qedsymbol` (GH#443). `\end{proof}` appends
             // exactly two inlines, an `Inline::HFill` with no leader and an
-            // `Inline::Text` holding U+220E, and gives both the *same* span —
-            // the `\end{proof}` bytes. That pair is the compiler's marker (it
-            // emits U+220E nowhere else); a U+220E typed in the source is a
-            // lone text inline with its own span and still sets whatever the
-            // font has. Latin Modern has no U+220E glyph, so the text arm
-            // below would warn `missing_glyph` and draw nothing; amsthm never
-            // wanted a character here in the first place.
+            // `Inline::Text` holding U+220E. The fill carries the
+            // `\end{proof}` bytes; the text carries either the same span or,
+            // since #862, an empty span at that `\end`'s start (so the mark
+            // no longer covers `\end{proof}` in the source map). That pair is
+            // the compiler's marker (it emits U+220E nowhere else); a U+220E
+            // typed in the source is a lone text inline with its own span and
+            // still sets whatever the font has. Latin Modern has no U+220E
+            // glyph, so the text arm below would warn `missing_glyph` and
+            // draw nothing; amsthm never wanted a character here anyway.
             Inline::Text { text, span, .. }
                 if text == "\u{220E}"
-                    && prev_span == Some(*span)
+                    && prev_span.is_some_and(|fill| {
+                        fill.document == span.document
+                            && fill.start == span.start
+                            && (fill.end == span.end || span.end == span.start)
+                    })
                     && matches!(items.last(), Some(Item::HFill { leader: FillLeader::None, .. })) =>
             {
                 let Inline::Text { style: compiler_style, .. } = &**inline else { unreachable!() };

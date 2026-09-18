@@ -1,4 +1,4 @@
-Generated from commit `82a9861604eb6b5628ec1876dd0692b784d1d93b` by `cargo test --test recovery generate_recovery_evidence -- --ignored --exact`.
+Generated from commit `931d70092d74da32c3682e840d5e5e802c0e3170` by `cargo test --test recovery generate_recovery_evidence -- --ignored --exact`.
 
 # FlashTeX recovery evidence
 
@@ -119,6 +119,29 @@ Positioned text items:
 
 - `Visible` — byte range `0..7`
 - `Tail.` — byte range `30..35`
+
+## backslash digit
+
+Input:
+
+```text
+Lead $\2^9 - 1$ Tail.
+```
+
+Status: `recovered`
+
+Diagnostics:
+
+- `\2 is not a defined command` — recovery: `typeset `2` literally and continued`; byte range: `6..8`
+
+Positioned text items:
+
+- `Lead` — byte range `0..4`
+- `2` — byte range `6..8`
+- `9` — byte range `9..10`
+- `−` — byte range `11..12`
+- `1` — byte range `13..14`
+- `Tail.` — byte range `16..21`
 
 ## include of a file the request did not supply
 
