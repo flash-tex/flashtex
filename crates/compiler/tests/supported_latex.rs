@@ -529,6 +529,12 @@ fn every_inventory_entry_compiles_without_an_unsupported_diagnostic() {
                 "\\usepackage{longtable}\\begin{longtable}{cc}a&b\\end{longtable}".into(),
                 "environment 'longtable' is not implemented".to_string(),
             ),
+            // `tabularx` likewise exists only with its package, and takes a
+            // target width before the column specification (#901).
+            Mode::Text if e.name == "tabularx" => (
+                "\\usepackage{tabularx}\\begin{tabularx}{\\linewidth}{cX}a&b\\end{tabularx}".into(),
+                "environment 'tabularx' is not implemented".to_string(),
+            ),
             Mode::Text => (
                 format!(
                     "\\begin{{{0}}}{1}a\\end{{{0}}}",
