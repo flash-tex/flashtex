@@ -12858,6 +12858,7 @@ fn inline_span(inline: &Inline) -> Span {
         | Inline::CleverReference { span, .. }
         | Inline::ThePage { span, .. }
         | Inline::PageNumbering { span, .. }
+        | Inline::PageStyle { span, .. }
         | Inline::HFill { span, .. }
         | Inline::HSpace { span, .. }
         | Inline::TabStop { span, .. }
