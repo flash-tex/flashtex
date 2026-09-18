@@ -103,7 +103,9 @@ const SANS: u32 = 1 << 6;
 const MONO: u32 = 2 << 6;
 const BODY: u32 = 1 << 8;
 
-const SIZE_LEVELS: [FontSizeLevel; 9] = [
+// `Tiny`/`AmsTiny` (the AMS classes' rung 0) is appended last so the nine
+// existing `FontSwitch` size codes (1 = `\tiny` .. 9 = `\Huge`) stay stable.
+const SIZE_LEVELS: [FontSizeLevel; 10] = [
     FontSizeLevel::Tiny,
     FontSizeLevel::ScriptSize,
     FontSizeLevel::FootnoteSize,
@@ -113,9 +115,10 @@ const SIZE_LEVELS: [FontSizeLevel; 9] = [
     FontSizeLevel::Large3,
     FontSizeLevel::Huge1,
     FontSizeLevel::Huge2,
+    FontSizeLevel::AmsTiny,
 ];
 
-const SIZE_NAMES: [&str; 9] = [
+const SIZE_NAMES: [&str; 10] = [
     "tiny",
     "scriptsize",
     "footnotesize",
@@ -125,6 +128,7 @@ const SIZE_NAMES: [&str; 9] = [
     "LARGE",
     "huge",
     "Huge",
+    "Tiny",
 ];
 
 fn switch(clear: u32, set: u32) -> tex::FontSwitch {

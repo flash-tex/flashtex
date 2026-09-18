@@ -249,6 +249,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("tt", "", "LaTeX 2.09 form: upright typewriter"),
     ("rm", "", "LaTeX 2.09 form: upright roman"),
     ("sf", "", "LaTeX 2.09 form: upright sans-serif"),
+    ("Tiny", "", "AMS classes' rung-0 size declaration below \\tiny (amsart/amsbook/amsproc only)"),
     ("tiny", "", "size declaration from the class size table"),
     ("scriptsize", "", "size declaration from the class size table"),
     ("footnotesize", "", "size declaration from the class size table"),
@@ -449,6 +450,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
 ];
 
 const SIZE_DECLARATIONS: &[&str] = &[
+    "Tiny",
     "tiny",
     "scriptsize",
     "footnotesize",
@@ -931,6 +933,7 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("quotation", "indented paragraphs"),
     ("sloppypar", "a paragraph set with \\sloppy"),
     ("samepage", "\\samepage for the body"),
+    ("Tiny", "the AMS classes' rung-0 size for the environment body (amsart/amsbook/amsproc only)"),
     ("tiny", "the tiny size for the environment body"),
     ("scriptsize", "the scriptsize size for the environment body"),
     ("footnotesize", "the footnotesize size for the environment body"),

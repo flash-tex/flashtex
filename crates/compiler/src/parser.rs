@@ -911,6 +911,10 @@ pub enum TextFamily {
 /// than a parallel size stack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FontSizeLevel {
+    /// `\Tiny`: the AMS classes' (`amsart`/`amsbook`/`amsproc`) own rung 0,
+    /// below `\tiny`. Only an AMS class ever sets it (the parser diagnoses
+    /// `\Tiny` elsewhere); on the standard-class table it reads as `\tiny`.
+    AmsTiny,
     Tiny,
     ScriptSize,
     FootnoteSize,
@@ -1034,9 +1038,8 @@ impl FontSizeLevel {
     /// (`\Huge`). There is no magstep math and no closest-value search at
     /// all, unlike `stepped` above: e.g. `\tiny\larger\larger\larger` walks
     /// tiny(1) → SMALL(2) → Small(3) → small(4), landing exactly on
-    /// `\small`. Rung 0 has no `FontSizeLevel` and folds onto `Tiny` (see
-    /// `crate::layout::ams_rung_level`), so stepping below `\tiny` holds
-    /// the smallest representable declaration.
+    /// `\small`; `\tiny\smaller` steps down to rung 0, `\Tiny`
+    /// (`AmsTiny`), and holds there (GH-824).
     pub fn stepped_ams(current: Option<FontSizeLevel>, delta: i32) -> Option<FontSizeLevel> {
         if delta == 0 {
             return current;
@@ -1049,7 +1052,9 @@ impl FontSizeLevel {
     /// Position of a level in real `relsize.sty`'s scan order
     /// (`normalsize, small, footnotesize, large, Large, LARGE, scriptsize,
     /// tiny, huge, Huge`): the first level in this order wins any tie for
-    /// closest to the step's target.
+    /// closest to the step's target. `AmsTiny` is not in relsize's scan
+    /// (`ORDER` never yields it: only the AMS ladder does); it ranks after
+    /// `Tiny` purely to keep the match exhaustive.
     fn scan_rank(level: Option<FontSizeLevel>) -> usize {
         match level {
             None => 0,
@@ -1060,8 +1065,9 @@ impl FontSizeLevel {
             Some(FontSizeLevel::Large3) => 5,
             Some(FontSizeLevel::ScriptSize) => 6,
             Some(FontSizeLevel::Tiny) => 7,
-            Some(FontSizeLevel::Huge1) => 8,
-            Some(FontSizeLevel::Huge2) => 9,
+            Some(FontSizeLevel::AmsTiny) => 8,
+            Some(FontSizeLevel::Huge1) => 9,
+            Some(FontSizeLevel::Huge2) => 10,
         }
     }
 }
@@ -1144,6 +1150,7 @@ pub(crate) fn style_declaration(name: &str) -> bool {
             | "tt"
             | "rm"
             | "sf"
+            | "Tiny"
             | "tiny"
             | "scriptsize"
             | "footnotesize"
@@ -1225,6 +1232,9 @@ fn apply_style(style: TextStyle, name: &str, body_size_pt: f64, ams: bool) -> Te
         "tt" | "rm" | "sf" => {
             next = apply_style(TextStyle::default(), &format!("{name}family"), body_size_pt, ams)
         }
+        // AMS-only rung 0; the parser gates `\Tiny` to AMS classes before
+        // it reaches here (see `text_command`'s `"Tiny"` arm).
+        "Tiny" => next.size = Some(FontSizeLevel::AmsTiny),
         "tiny" => next.size = Some(FontSizeLevel::Tiny),
         "scriptsize" => next.size = Some(FontSizeLevel::ScriptSize),
         "footnotesize" => next.size = Some(FontSizeLevel::FootnoteSize),
@@ -1551,6 +1561,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "obeylines",
     "noindent",
     "indent",
+    "Tiny",
     "tiny",
     "scriptsize",
     "footnotesize",
@@ -3537,6 +3548,11 @@ impl P<'_> {
             // `style_command_argument` (which always demands a group) this
             // path consumes no braces itself.
             "larger" | "smaller" => self.relative_size_command(name, span, para),
+            // `\Tiny` is the AMS classes' own rung 0 (GH-824); real pdflatex
+            // reports "Undefined control sequence" for it under any other
+            // class, so it is diagnosed here before the generic declaration
+            // arm below can set `AmsTiny` outside an AMS ladder.
+            "Tiny" if !self.ams_sizes() => self.ams_only_size_declaration(name, span),
             _ if style_command(name) => self.style_command_argument(name, span, para),
             _ if style_declaration(name) => {
                 self.style = apply_style(self.style, name, self.body_size_pt(), self.ams_sizes())
@@ -4220,6 +4236,17 @@ impl P<'_> {
     /// (see `is_ams_size_class`): `acmart` counts via its `amsart` base.
     fn ams_sizes(&self) -> bool {
         self.document_class.as_deref().is_some_and(is_ams_size_class)
+    }
+
+    /// `\Tiny` outside an AMS class (GH-824): undefined in real LaTeX, so
+    /// diagnose and leave the size alone (the prose after it still typesets).
+    fn ams_only_size_declaration(&mut self, name: &str, span: Span) {
+        self.diags.push(Diagnostic::command_error(
+            name,
+            format!("\\{name} is only defined by the AMS classes (amsart, amsbook, amsproc)"),
+            Some(span),
+            Some("left the size unchanged".into()),
+        ));
     }
 
     /// `\larger`/`\smaller` (relsize's, or the AMS classes' own ladder):
@@ -6471,9 +6498,11 @@ impl P<'_> {
             return;
         }
         // A size environment is a group with the size declaration applied
-        // for its extent (style save/restore below scopes it).
+        // for its extent (style save/restore below scopes it). `Tiny` is
+        // one only under an AMS class (its rung 0, GH-824); elsewhere it
+        // stays an unknown environment, as in real LaTeX.
         let size_env = self.in_body
-            && matches!(
+            && (matches!(
                 environment.as_str(),
                 "tiny"
                     | "scriptsize"
@@ -6485,7 +6514,7 @@ impl P<'_> {
                     | "LARGE"
                     | "huge"
                     | "Huge"
-            );
+            ) || (environment == "Tiny" && self.ams_sizes()));
         self.env_alignments.push(self.declared_alignment);
         self.env_obeylines.push(self.obeylines);
         self.parameter_scopes.push(Vec::new());
@@ -9086,6 +9115,12 @@ impl P<'_> {
                 TokenKind::Command(name) if style_command(name) => {
                     let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
                     pending = Some(apply_style(style, name, body, self.ams_sizes()));
+                }
+                // `\Tiny` is AMS-only (GH-824): diagnosed like the main
+                // token path does, never applied as a standard-class size.
+                TokenKind::Command(name) if name == "Tiny" && !self.ams_sizes() => {
+                    let span = input.token.span;
+                    self.ams_only_size_declaration(name, span);
                 }
                 TokenKind::Command(name) if style_declaration(name) => {
                     let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
@@ -14476,7 +14511,7 @@ mod tests {
         // Pure index steps on the eleven-rung ladder (0-based rungs:
         // `\tiny` = 1, `\normalsize` = 5, `\Huge` = 10), not magstep
         // scaling: every step moves exactly one rung and clamps at the
-        // ends. Rung 0 (`\Tiny`) folds onto `Tiny`.
+        // ends -- rung 0 is `\Tiny` (`AmsTiny`, GH-824), rung 10 `\Huge`.
         use FontSizeLevel::*;
         for (current, delta, expected) in [
             (Some(Tiny), 1, Some(ScriptSize)),
@@ -14488,8 +14523,11 @@ mod tests {
             (Some(Large3), 2, Some(Huge2)),
             (Some(Huge2), 1, Some(Huge2)),
             (Some(Huge2), 9, Some(Huge2)),
-            (Some(Tiny), -1, Some(Tiny)),
-            (Some(Tiny), -5, Some(Tiny)),
+            (Some(Tiny), -1, Some(AmsTiny)),
+            (Some(Tiny), -5, Some(AmsTiny)),
+            (Some(AmsTiny), -1, Some(AmsTiny)),
+            (Some(AmsTiny), 1, Some(Tiny)),
+            (Some(AmsTiny), 5, None),
             (None, 0, None),
             (Some(Small), 0, Some(Small)),
         ] {
@@ -14572,16 +14610,9 @@ mod tests {
         let output = full_output(source);
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
         assert_eq!(output_size(&output, "X"), 20.74);
-        // Known remaining gap (tracked separately, not this fix): pdflatex
-        // holds at `\Tiny` (5pt) below `\tiny`, but rung 0 has no
-        // `FontSizeLevel` yet and folds onto `\tiny` (6pt) in
-        // `ams_rung_level`, so three steps down from `\tiny` still land on
-        // `\tiny` itself rather than the AMS classes' own lower `\Tiny`
-        // rung. Fixing it needs a real state slot for rung 0 (a new
-        // `FontSizeLevel` variant or an AMS-specific rung field), which
-        // touches ~80 call sites across this crate -- deliberately not
-        // done in the same change as the table-value fix above.
-        assert_eq!(output_size(&output, "Y"), 6.0);
+        // Below `\tiny` the size holds at rung 0, `\Tiny` (5pt at 10pt;
+        // measured `\f@size` 5 for `\tiny\smaller[3]` -- GH-824).
+        assert_eq!(output_size(&output, "Y"), 5.0);
         assert_eq!(output_size(&output, "s"), 9.0);
     }
 
@@ -14599,6 +14630,113 @@ mod tests {
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
         assert_eq!(output_size(&output, "e"), 10.0);
         assert_eq!(output_size(&output, "g"), 12.0);
+    }
+
+    // --- `\Tiny`, the AMS classes' rung 0 (GH-824) ---
+
+    #[test]
+    fn ams_tiny_is_a_distinct_rung_below_tiny() {
+        // Measured with TeX Live 2026 pdflatex
+        // (`\documentclass[10pt]{amsart}` ... `\makeatletter\typeout{\f@size}`):
+        // `\Tiny` is 5pt and `\tiny` 6pt -- two different rungs, not one.
+        let source =
+            r"\documentclass[10pt]{amsart}\begin{document}{\Tiny a}{\tiny b}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "a"), 5.0);
+        assert_eq!(output_size(&output, "b"), 6.0);
+    }
+
+    #[test]
+    fn ams_tiny_reads_the_rung_0_row_for_every_point_option() {
+        // Measured `\f@size` under `\Tiny`/`\tiny`: 11pt gives 6/7, 12pt
+        // 7/8; the 8pt and 9pt rows come from the class source (`\Tiny`
+        // and `\tiny` share 5pt there, exactly as `\@typesizes` lists).
+        for (option, ams_tiny, tiny) in [
+            ("8pt", 5.0, 5.0),
+            ("9pt", 5.0, 5.0),
+            ("11pt", 6.0, 7.0),
+            ("12pt", 7.0, 8.0),
+        ] {
+            let source = format!(
+                "\\documentclass[{option}]{{amsart}}\\begin{{document}}{{\\Tiny a}}{{\\tiny b}}\\end{{document}}"
+            );
+            let output = full_output(&source);
+            assert!(output.diagnostics.is_empty(), "{option}: {:?}", output.diagnostics);
+            assert_eq!(output_size(&output, "a"), ams_tiny, "{option} \\Tiny");
+            assert_eq!(output_size(&output, "b"), tiny, "{option} \\tiny");
+        }
+    }
+
+    #[test]
+    fn ams_smaller_below_tiny_reaches_tiny_rung_0() {
+        // Measured `\f@size` for `{\tiny\smaller x}` under amsart[10pt]: 5
+        // (the `\Tiny` rung), and `\Tiny\larger` climbs back to 6 (`\tiny`).
+        let source = r"\documentclass[10pt]{amsart}\begin{document}{\tiny\smaller x}{\Tiny\larger y}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "x"), 5.0);
+        assert_eq!(output_size(&output, "y"), 6.0);
+    }
+
+    #[test]
+    fn ams_smaller_clamps_at_tiny_rung_0() {
+        // Measured `\f@size` for five `\smaller`s from `\normalsize` under
+        // amsart[10pt]: 5 -- rung 5 → 0 clamps at `\Tiny`, not `\tiny`.
+        let source = r"\documentclass[10pt]{amsart}\begin{document}{\smaller\smaller\smaller\smaller\smaller T}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "T"), 5.0);
+    }
+
+    #[test]
+    fn ams_tiny_is_shared_by_amsbook_and_amsproc() {
+        for class in ["amsbook", "amsproc"] {
+            let source = format!(
+                "\\documentclass[10pt]{{{class}}}\\begin{{document}}{{\\Tiny a}}{{\\tiny b}}\\end{{document}}"
+            );
+            let output = full_output(&source);
+            assert!(output.diagnostics.is_empty(), "{class}: {:?}", output.diagnostics);
+            assert_eq!(output_size(&output, "a"), 5.0, "{class} \\Tiny");
+            assert_eq!(output_size(&output, "b"), 6.0, "{class} \\tiny");
+        }
+    }
+
+    #[test]
+    fn ams_tiny_environment_matches_its_declaration() {
+        // `\begin{Tiny}` is a size environment under an AMS class, like
+        // `\begin{tiny}` is everywhere, and scopes to its `\end`.
+        let source = r"\documentclass[10pt]{amsart}\begin{document}\begin{Tiny}a\end{Tiny} b\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "a"), 5.0);
+        assert_eq!(output_size(&output, "b"), 10.0);
+    }
+
+    #[test]
+    fn tiny_rung_0_is_diagnosed_outside_the_ams_classes() {
+        // pdflatex: "Undefined control sequence" for `\Tiny` under article
+        // (and any other non-AMS class); the size stays as it was and the
+        // prose still typesets. Both the main token path and a flattened
+        // `\section` argument diagnose it.
+        for source in [
+            r"\documentclass{article}\begin{document}{\Tiny x}\end{document}",
+            r"\documentclass{article}\begin{document}\section{\Tiny x}\end{document}",
+        ] {
+            let output = full_output(source);
+            assert!(
+                output
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.message.contains("\\Tiny is only defined by the AMS classes")),
+                "{source}: {:?}",
+                output.diagnostics
+            );
+            assert!(
+                output.pages.iter().flat_map(|p| &p.items).any(|item| item.text == "x"),
+                "{source}: prose after \\Tiny was dropped"
+            );
+        }
     }
 
     #[test]

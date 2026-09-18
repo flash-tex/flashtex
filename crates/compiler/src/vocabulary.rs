@@ -104,7 +104,7 @@ const IMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "document", "figure", "frame", "center", "flushright", "flushleft", "quote", "quotation", "itemize",
     "enumerate", "equation", "equation*", "displaymath", "gather", "gather*", "align", "align*",
     "alignat", "alignat*", "flalign", "flalign*", "eqnarray", "eqnarray*", "multline", "multline*",
-    "tiny", "scriptsize", "footnotesize", "small", "normalsize",
+    "Tiny", "tiny", "scriptsize", "footnotesize", "small", "normalsize",
     "large", "Large", "LARGE", "huge", "Huge",
     "tabbing",
 ];

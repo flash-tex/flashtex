@@ -2357,7 +2357,10 @@ pub(crate) fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f6
         SIZE_12PT
     };
     let index = match level {
-        FontSizeLevel::Tiny => 0,
+        // `AmsTiny` is never set outside an AMS class (the parser diagnoses
+        // `\Tiny` there), so on the standard table it simply reads as the
+        // smallest standard size rather than needing a tenth column.
+        FontSizeLevel::AmsTiny | FontSizeLevel::Tiny => 0,
         FontSizeLevel::ScriptSize => 1,
         FontSizeLevel::FootnoteSize => 2,
         FontSizeLevel::Small => 3,
@@ -2375,17 +2378,8 @@ pub(crate) fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f6
 /// `\large`, `\Large`, `\LARGE`, `\huge`, `\Huge` — against the standard
 /// classes' nine (`FontSizeLevel`). The user-visible command names are the
 /// standard ones (the class aliases `\scriptsize` to `\SMALL` and
-/// `\footnotesize` to `\Small`).
-///
-/// **Known gap (GH-824):** `\Tiny` (rung 0) has no `FontSizeLevel` of its
-/// own and folds onto `Tiny` (rung 1, `\tiny`) in `ams_rung_level`, so
-/// stepping below `\tiny` (e.g. three `\smaller`s) re-enters at `\tiny`'s
-/// own value instead of reaching the AMS classes' genuinely smaller
-/// `\Tiny` rung. Representing rung 0 for real needs a new state slot (a
-/// `FontSizeLevel` variant or an AMS-specific rung field on the style),
-/// which reaches roughly 80 call sites across this crate; deliberately
-/// left for a separate, focused change rather than folded into a
-/// size-table fix.
+/// `\footnotesize` to `\Small`), plus the AMS-only `\Tiny` for rung 0
+/// (`FontSizeLevel::AmsTiny`; GH-824).
 pub(crate) const AMS_RUNG_COUNT: usize = 11;
 
 /// `(font size pt, baselineskip pt)` for one AMS ladder rung, from the real
@@ -2444,9 +2438,10 @@ pub(crate) fn ams_size_declaration_pt(rung: usize, body_size_pt: f64) -> (f64, f
 
 /// The AMS ladder rung a declaration selects (`None` is `\normalsize`,
 /// rung 5). `\scriptsize`/`\footnotesize` sit on the `\SMALL`/`\Small`
-/// rungs, exactly as the class's own aliases do.
+/// rungs, exactly as the class's own aliases do; `\Tiny` is rung 0.
 pub(crate) fn ams_rung(level: Option<FontSizeLevel>) -> usize {
     match level {
+        Some(FontSizeLevel::AmsTiny) => 0,
         Some(FontSizeLevel::Tiny) => 1,
         Some(FontSizeLevel::ScriptSize) => 2,
         Some(FontSizeLevel::FootnoteSize) => 3,
@@ -2460,12 +2455,12 @@ pub(crate) fn ams_rung(level: Option<FontSizeLevel>) -> usize {
     }
 }
 
-/// The declaration a rung selects. Rung 0 (`\Tiny`) has no `FontSizeLevel`,
-/// so it folds onto `Tiny`: stepping below `\tiny` holds the smallest
-/// representable declaration rather than an exact `\Tiny` size.
+/// The declaration a rung selects: the inverse of `ams_rung`, with
+/// out-of-range rungs clamped to `\Huge`.
 pub(crate) fn ams_rung_level(rung: usize) -> Option<FontSizeLevel> {
     match rung {
-        0 | 1 => Some(FontSizeLevel::Tiny),
+        0 => Some(FontSizeLevel::AmsTiny),
+        1 => Some(FontSizeLevel::Tiny),
         2 => Some(FontSizeLevel::ScriptSize),
         3 => Some(FontSizeLevel::FootnoteSize),
         4 => Some(FontSizeLevel::Small),
@@ -3579,6 +3574,7 @@ mod tests {
         // The class-aware font lookup agrees with the table rungs, and the
         // standard path is byte-identical to `size_declaration_pt`.
         let levels = [
+            FontSizeLevel::AmsTiny,
             FontSizeLevel::Tiny,
             FontSizeLevel::ScriptSize,
             FontSizeLevel::FootnoteSize,
