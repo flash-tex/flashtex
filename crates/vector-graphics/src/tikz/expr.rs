@@ -167,6 +167,17 @@ impl P<'_> {
                 self.i += 1;
                 self.unit_suffix(v)
             }
+            // TikZ brace groups: `({\a+\c},2)` keeps macro arithmetic
+            // safe, so a `{...}` group parses like `(...)`.
+            Some(b'{') => {
+                self.i += 1;
+                let v = self.expr()?;
+                if self.peek() != Some(b'}') {
+                    return Err("missing `}`".into());
+                }
+                self.i += 1;
+                self.unit_suffix(v)
+            }
             Some(c) if c.is_ascii_digit() || c == b'.' => {
                 let start = self.i;
                 while self.i < self.s.len() && (self.s[self.i].is_ascii_digit() || self.s[self.i] == b'.') {
@@ -279,6 +290,9 @@ mod tests {
         assert!((eval("2*3+4^2/8", 10.0).unwrap().v - 8.0).abs() < 1e-12);
         assert!((eval("sin(30)", 10.0).unwrap().v - 0.5).abs() < 1e-12);
         assert!((eval("-(1+2)*.5", 10.0).unwrap().v + 1.5).abs() < 1e-12);
+        assert!((eval("{3+1}", 10.0).unwrap().v - 4.0).abs() < 1e-12);
+        assert!((eval("{{2}*3}", 10.0).unwrap().v - 6.0).abs() < 1e-12);
+        assert!(eval("{1+2", 10.0).is_err());
         assert!((length_pt(".3333em", 10.0).unwrap() - 3.333).abs() < 1e-9);
         assert!(eval("foo", 10.0).is_err());
     }
