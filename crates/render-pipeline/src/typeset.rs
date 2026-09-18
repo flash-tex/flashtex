@@ -3721,8 +3721,8 @@ impl<'a> Context<'a> {
                     add_vspace(&mut b.vertical, *vspace_before);
                     blocks.push(b);
                 }
-                Block::Picture { document, picture, centered, vspace_before, .. } => {
-                    let mut b = self.picture_block(*document, picture, *centered);
+                Block::Picture { document, picture, centered, indent, list, vspace_before, .. } => {
+                    let mut b = self.picture_block(*document, picture, *centered, *indent, list.as_ref());
                     add_vspace(&mut b.vertical, *vspace_before);
                     blocks.push(b);
                     // A picture is set in a paragraph: `\everypar` has run.
@@ -5083,9 +5083,18 @@ impl<'a> Context<'a> {
     /// A `tikzpicture` (the TikZ subset of `flashtex-vector-graphics`),
     /// compiled at the body size with node text shaped in Latin Modern and
     /// set as one box of the picture's bounding box whose bottom edge is the
-    /// baseline (TikZ's default `baseline`), flush left (centred inside
-    /// `center`), with the paragraph's `\parskip` and interline glue.
-    fn picture_block(&mut self, document: DocumentId, source: &flashtex_vector_graphics::tikz::PictureSource, centered: bool) -> BuiltBlock {
+    /// baseline (TikZ's default `baseline`): indented like the paragraph it
+    /// starts (`\parindent` when `indent`, the hanging indent inside a list
+    /// item), centred inside `center`, with the paragraph's `\parskip` and
+    /// interline glue.
+    fn picture_block(
+        &mut self,
+        document: DocumentId,
+        source: &flashtex_vector_graphics::tikz::PictureSource,
+        centered: bool,
+        indent: bool,
+        list_geom: Option<&ListGeom>,
+    ) -> BuiltBlock {
         use flashtex_vector_graphics::tikz::{Severity, Tikz};
         const PT_PER_BP: f64 = 72.27 / 72.0;
         let text = self.texts.get(document.0).copied().unwrap_or("");
@@ -5139,7 +5148,28 @@ impl<'a> Context<'a> {
             span,
         })));
         let rec = self.recs.len() - 1;
-        let x = if centered { ((self.style.text_width_pt - width) / 2.0).max(0.0) } else { 0.0 };
+        let x = if centered {
+            ((self.style.text_width_pt - width) / 2.0).max(0.0)
+        } else {
+            // The paragraph's first-line offset: `\parindent` when the
+            // picture opens an indented paragraph, otherwise the list's
+            // hanging indent (`\@totalleftmargin`), where the item's text
+            // starts. Mirrors `paragraph_block`'s `line_params` plus its
+            // `\itemindent`/`description` adjustments.
+            let size = self.style.body_size_pt;
+            let (hang, _, inner) = list_geom.map_or((0.0, 0.0, 0.0), |g| self.list_geometry(g, size));
+            let mut x = hang;
+            if indent {
+                x += self.style.parindent_pt;
+            }
+            if let Some(geom) = list_geom {
+                x += geom.itemindent_em * self.text_params(TextStyle::default(), size).quad + geom.itemindent_pt;
+                if geom.description {
+                    x -= inner;
+                }
+            }
+            x
+        };
         let run = pl::GlyphRun {
             font: MATH_SENTINEL,
             size: self.style.body_size_pt,
@@ -8803,10 +8833,12 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 document,
                 picture,
                 centered,
+                indent,
+                list,
                 eject_before,
                 vspace_before,
             } => {
-                let mut b = ctx.picture_block(*document, picture, *centered);
+                let mut b = ctx.picture_block(*document, picture, *centered, *indent, list.as_ref());
                 if *eject_before {
                     b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
                 }
