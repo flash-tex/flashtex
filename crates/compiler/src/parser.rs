@@ -116,8 +116,9 @@ impl PageStyleName {
 }
 
 /// fancyhdr's six running-head fields: even and odd pages share one slot
-/// each because this layout is always one-sided, so `[LE,RO]`-style combined
-/// positions resolve to the same slot. Every slot starts empty --
+/// each because this layout is always one-sided, so an even-only group
+/// (`LE` in `[LE,RO]`) never ships and the odd group alone selects. Every
+/// slot starts empty --
 /// `\pagestyle{fancy}` alone draws no text, and `\fancyhf{}` returns all
 /// six to empty -- and `\fancyhead`/`\fancyfoot` fill them. The rule widths
 /// are fancyhdr's defaults (`\headrulewidth` 0.4pt, `\footrulewidth` 0pt);
@@ -145,11 +146,15 @@ impl Default for FancyHdr {
 
 /// Split a `\fancyhead`/`\fancyfoot`/`\fancyhf` `[pos]` list (`L`, `C`,
 /// `R`, combinable with `E`/`O` and commas, as in `[LE,RO]`) into slot
-/// indices 0/1/2. Even/odd collapse: this layout is one-sided, so `E`/`O`
-/// only select a parity that resolves to the same slot. A missing letter
-/// group means "all" (fancyhdr's default when `[...]` is absent, and what an
-/// explicit `[]` means here); unknown letters come back for the caller to
-/// diagnose.
+/// indices 0/1/2. The bracket splits on `,` first: a group containing `E`
+/// but not `O` selects nothing, because a one-sided document's
+/// `\@outputpage` always uses `\@oddhead` and even-only fields never ship;
+/// otherwise the group's `L`/`C`/`R` letters select. A group with neither
+/// `E` nor `O` applies always, so `[LE,RO]` (the fancyhdr manual's
+/// canonical idiom) is the `R` slot alone here, and `[LO,RE]` the `L` slot
+/// alone. No `L`/`C`/`R` letter anywhere (`[]`, `[O]`, `[EO]`) is fancyhdr's
+/// default when no position is given: every slot; unknown letters come back
+/// for the caller to diagnose.
 fn fancy_position_slots(raw: Option<&str>) -> (Vec<usize>, Vec<char>) {
     let Some(raw) = raw else {
         return (vec![0, 1, 2], Vec::new());
@@ -157,38 +162,55 @@ fn fancy_position_slots(raw: Option<&str>) -> (Vec<usize>, Vec<char>) {
     let mut slots = Vec::new();
     let mut unknown = Vec::new();
     let mut placed = false;
-    for c in raw.chars() {
-        match c {
-            'L' => {
-                if !slots.contains(&0) {
-                    slots.push(0);
+    let mut applied = false;
+    for group in raw.split(',') {
+        if group.contains('E') && !group.contains('O') {
+            // Even-only group: never ships one-sided. Unknown letters in
+            // it still warn, exactly as elsewhere in the bracket.
+            for c in group.chars() {
+                if !matches!(c, 'L' | 'C' | 'R' | 'E' | 'O' | ' ' | '\t' | '\n')
+                    && !unknown.contains(&c)
+                {
+                    unknown.push(c);
                 }
-                placed = true;
             }
-            'C' => {
-                if !slots.contains(&1) {
-                    slots.push(1);
+            continue;
+        }
+        applied = true;
+        for c in group.chars() {
+            match c {
+                'L' => {
+                    if !slots.contains(&0) {
+                        slots.push(0);
+                    }
+                    placed = true;
                 }
-                placed = true;
-            }
-            'R' => {
-                if !slots.contains(&2) {
-                    slots.push(2);
+                'C' => {
+                    if !slots.contains(&1) {
+                        slots.push(1);
+                    }
+                    placed = true;
                 }
-                placed = true;
-            }
-            // Parity: the same slot one-sided, so nothing to select.
-            'E' | 'O' => {}
-            ',' | ' ' | '\t' | '\n' => {}
-            other => {
-                if !unknown.contains(&other) {
-                    unknown.push(other);
+                'R' => {
+                    if !slots.contains(&2) {
+                        slots.push(2);
+                    }
+                    placed = true;
+                }
+                'E' | 'O' => {}
+                ' ' | '\t' | '\n' => {}
+                other => {
+                    if !unknown.contains(&other) {
+                        unknown.push(other);
+                    }
                 }
             }
         }
     }
-    if !placed && unknown.is_empty() {
-        // `[E]`, `[O]` or `[EO]`: parity alone selects every slot.
+    if !placed && unknown.is_empty() && applied {
+        // `[E]` alone selects nothing (every group is even-only, so nothing
+        // applied); anything else letter-less (`[]`, `[O]`, `[EO]`) is the
+        // no-position default: every slot.
         slots = vec![0, 1, 2];
     }
     slots.sort();

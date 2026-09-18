@@ -171,8 +171,9 @@ fn positions_edges_and_empty_cases() {
     assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
     assert_eq!(page_words(&out), ["Left", "Text."]);
 
-    // `\\fancyhf` with a position fills both sides; parity alone (`[E]`)
-    // selects every slot one-sided.
+    // `\\fancyhf` with a position fills both sides; an even-only `[E]`
+    // selects nothing one-sided (LaTeX's `\@outputpage` always uses
+    // `\@oddhead`, so even fields never ship -- the oracle is silent too).
     let out = compile(
         "\\documentclass{article}\n\
          \\usepackage{fancyhdr}\n\
@@ -182,12 +183,9 @@ fn positions_edges_and_empty_cases() {
          \\begin{document}\nText.\n\\end{document}\n",
     );
     assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
-    // `[E]` filled every slot; the later `[R]` overwrote slot 2 -- head
+    // `[E]` filled no slot; the later `[R]` filled slot 2 alone -- head
     // lines stream L, C, R, then the body, then the foot lines.
-    assert_eq!(
-        page_words(&out),
-        ["Everywhere", "Everywhere", "Side", "Text.", "Everywhere", "Everywhere", "Side"],
-    );
+    assert_eq!(page_words(&out), ["Side", "Text.", "Side"],);
 
     // A footer field streams after the body and sits below it.
     let out = compile(
@@ -239,6 +237,96 @@ fn positions_edges_and_empty_cases() {
         "a mispositioned field must not leak onto the page: {:?}",
         page_words(&out)
     );
+}
+
+/// One fancyhdr field document: `field_line` is the `\fancyhead...` line.
+/// Returns `(hits, x)` for items whose text is exactly `marker` on page 0.
+fn field_hits(field_line: &str, marker: &str) -> (usize, f64) {
+    let text = format!(
+        "\\documentclass{{article}}\n\
+         \\usepackage{{fancyhdr}}\n\
+         \\pagestyle{{fancy}}\n\
+         \\fancyhf{{}}\n\
+         {field_line}\n\
+         \\begin{{document}}\n\
+         Body.\n\
+         \\end{{document}}\n"
+    );
+    let out = compile(&text);
+    assert!(
+        out.diagnostics.is_empty(),
+        "{field_line}: {:?}",
+        out.diagnostics
+    );
+    let mut xs: Vec<f64> = out.pages[0]
+        .items
+        .iter()
+        .filter(|item| item.text == marker)
+        .map(|item| item.x_pt)
+        .collect();
+    xs.sort_by(|a, b| a.total_cmp(b));
+    let n = xs.len();
+    (n, xs.first().copied().unwrap_or(f64::NAN))
+}
+
+#[test]
+fn le_ro_places_the_field_on_the_right_only() {
+    // The canonical fancyhdr manual idiom in a one-sided document: LaTeX's
+    // `\@outputpage` always uses `\@oddhead`, so only the `O` group ships.
+    // Oracle (pdflatex TeX Live 2026, `Package: fancyhdr 2025/02/07 v5.2` in
+    // the .log): `\fancyhead[LE,RO]{PAGEMARK}` renders once, xMin=418.05
+    // (RIGHT only). This engine's metrics differ from pdflatex's, so the pin
+    // is exact equality with this engine's own bare-`[R]` x, plus strictly
+    // right of its bare-`[L]` x -- a both-sides regression cannot satisfy it.
+    let (n_ref, x_ref) = field_hits("\\fancyhead[R]{PAGEMARK}", "PAGEMARK");
+    assert_eq!(n_ref, 1, "reference [R] must render once");
+    let (n, x) = field_hits("\\fancyhead[LE,RO]{PAGEMARK}", "PAGEMARK");
+    assert_eq!(
+        n, 1,
+        "[LE,RO] must render the field once, not on both sides"
+    );
+    assert_eq!(
+        x, x_ref,
+        "[LE,RO] must land at the RIGHT slot x ({x_ref}), got {x}"
+    );
+    let (_, x_left) = field_hits("\\fancyhead[L]{PAGEMARK}", "PAGEMARK");
+    assert!(
+        x > x_left,
+        "[LE,RO] x ({x}) must be right of the LEFT slot x ({x_left})"
+    );
+    // A space after the comma is the same idiom, not a new position.
+    let (n_sp, x_sp) = field_hits("\\fancyhead[LE, RO]{PAGEMARK}", "PAGEMARK");
+    assert_eq!((n_sp, x_sp), (1, x_ref), "[LE, RO] must match [LE,RO]");
+}
+
+#[test]
+fn lo_re_places_the_field_on_the_left_only() {
+    // Mirror idiom: only the `O` group (`LO`) ships one-sided.
+    // Oracle: `\fancyhead[LO,RE]{MARKB}` renders only LEFT, xMin=133.77.
+    let (n_ref, x_ref) = field_hits("\\fancyhead[L]{MARKB}", "MARKB");
+    assert_eq!(n_ref, 1, "reference [L] must render once");
+    let (n, x) = field_hits("\\fancyhead[LO,RE]{MARKB}", "MARKB");
+    assert_eq!(
+        n, 1,
+        "[LO,RE] must render the field once, not on both sides"
+    );
+    assert_eq!(
+        x, x_ref,
+        "[LO,RE] must land at the LEFT slot x ({x_ref}), got {x}"
+    );
+    let (_, x_right) = field_hits("\\fancyhead[R]{MARKB}", "MARKB");
+    assert!(
+        x < x_right,
+        "[LO,RE] x ({x}) must be left of the RIGHT slot x ({x_right})"
+    );
+}
+
+#[test]
+fn empty_bracket_still_selects_every_slot() {
+    // The empty case: an explicit `[]` carries no position, so fancyhdr's
+    // default (every slot) applies -- six fields around one body word.
+    let (n, _) = field_hits("\\fancyhf[]{X}", "X");
+    assert_eq!(n, 6, "[] must fill all six slots, got {n} hits");
 }
 
 /// Text items outside the body band: the running head and foot.
