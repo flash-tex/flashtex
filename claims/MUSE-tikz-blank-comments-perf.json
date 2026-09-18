@@ -5,7 +5,7 @@
   "machine": "mac-m5pro-dq222",
   "note": "#650: blank_comments re-scans the whole document once per tikzpicture instead of once total",
   "started_utc": "2026-09-18T12:56:03Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "MUSE-tikz-blank-comments-perf",
-  "updated_utc": "2026-09-18T12:56:03Z"
+  "updated_utc": "2026-09-18T13:08:36Z"
 }
