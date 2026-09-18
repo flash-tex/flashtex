@@ -113,6 +113,7 @@ final class CompletionLatencyTests: XCTestCase {
         tv.string = demo.replacingCharacters(in: NSRange(location: endDoc, length: 0), with: "\\s\n")
         let caret = endDoc + 2
         tv.setSelectedRange(NSRange(location: caret, length: 0))
+        tv.recentlyUsed = Completion.RecentlyUsed() // the previous iteration's accept must not reorder this one's list
         // Settle the editor's own layout/display of the new text so the pickup
         // stage times the completion path, not the document swap.
         tv.layoutManager?.ensureLayout(for: tv.textContainer!)

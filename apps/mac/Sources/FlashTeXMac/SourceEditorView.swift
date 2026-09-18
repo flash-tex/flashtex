@@ -41,6 +41,9 @@ struct SourceEditorView: NSViewRepresentable {
     var projectIndexMetadata: Completion.Metadata?
     /// Project document paths for `\input{`/`\include{` completion (Completion.swift).
     var projectFiles: [String] = []
+    /// The rooted project directory whose image files `\includegraphics{`
+    /// completes; read when the list is requested, not per keystroke.
+    var graphicsRoot: () -> URL? = { nil }
     var onCaretChange: (Int) -> Void = { _ in }
     var onSelectionChange: (NSRange) -> Void = { _ in }
     var onEditApplied: (ShellModel.PendingEdit, String) -> Void = { _, _ in }
@@ -128,6 +131,7 @@ struct SourceEditorView: NSViewRepresentable {
         context.coordinator.spelling.attach(tv) // LaTeX-aware spell checking (LaTeXSpellCheck.swift)
         context.coordinator.installIntelligence(on: scroll, lineNumbers: showLineNumbers)
         (tv as? CompletingTextView)?.installFolding() // EditorFolding.swift: TextKit-1 glyph hiding
+        (tv as? CompletingTextView)?.recentlyUsed = .shared // what was accepted in one document ranks first in every document
         (tv as? CompletingTextView)?.vim.exCommandHandler = { [weak coordinator = context.coordinator] in coordinator?.parent.onExCommand($0) } // VimMode.swift
         return scroll
     }
@@ -148,6 +152,7 @@ struct SourceEditorView: NSViewRepresentable {
             if completing.editorRevision != editorRevision { completing.editorRevision = editorRevision }
         }
         if let completing = tv as? CompletingTextView, completing.projectFiles != projectFiles { completing.projectFiles = projectFiles }
+        (tv as? CompletingTextView)?.graphicsRoot = graphicsRoot
         if let m = projectIndexMetadata { _ = (tv as? CompletingTextView)?.accept(projectIndex: m) }
         if let edit = pendingEdit, edit.token != co.appliedEditToken {
             // While marked text exists the storage is ahead of the model by the

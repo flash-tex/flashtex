@@ -287,7 +287,7 @@ enum Completion {
         /// A run of letters, with what immediately precedes it (`\begin{`, `\ref{`, …).
         case word(text: String, start: Int, end: Int, context: Context)
 
-        enum Context: Equatable { case none, beginEnvironment, endEnvironment, reference, citation, label, package, file }
+        enum Context: Equatable { case none, beginEnvironment, endEnvironment, reference, citation, label, package, file, graphics }
 
         var start: Int {
             switch self { case .command(_, let s, _), .word(_, let s, _, _): return s }
@@ -334,21 +334,35 @@ enum Completion {
     /// opener immediately before it.
     private static func context(in b: UnsafeBufferPointer<UInt8>, before start: Int) -> Token.Context {
         guard start > 0, b[start - 1] == UInt8(ascii: "{") else { return .none }
-        if endsWith(b, upTo: start, suffix: "\\begin{") { return .beginEnvironment }
-        if endsWith(b, upTo: start, suffix: "\\end{") { return .endEnvironment }
-        if endsWith(b, upTo: start, suffix: "\\label{") { return .label }
-        if endsWith(b, upTo: start, suffix: "\\ref{") || endsWith(b, upTo: start, suffix: "\\eqref{")
-            || endsWith(b, upTo: start, suffix: "\\pageref{") || endsWith(b, upTo: start, suffix: "\\autoref{") {
+        // `\includegraphics[width=2cm]{`, `\usepackage[utf8]{`, `\cite[p.~3]{`:
+        // one optional argument between the command and its brace is skipped
+        // (single-line, unnested — the shapes these commands take).
+        var end = start - 1
+        if end > 0, b[end - 1] == UInt8(ascii: "]") {
+            var j = end - 1
+            while j > 0, b[j - 1] != UInt8(ascii: "["), b[j - 1] != UInt8(ascii: "\n"), b[j - 1] != UInt8(ascii: "{"), b[j - 1] != UInt8(ascii: "}") { j -= 1 }
+            guard j > 0, b[j - 1] == UInt8(ascii: "[") else { return .none }
+            end = j - 1
+        }
+        if endsWith(b, upTo: end, suffix: "\\begin") { return .beginEnvironment }
+        if endsWith(b, upTo: end, suffix: "\\end") { return .endEnvironment }
+        if endsWith(b, upTo: end, suffix: "\\label") { return .label }
+        if endsWith(b, upTo: end, suffix: "\\ref") || endsWith(b, upTo: end, suffix: "\\eqref")
+            || endsWith(b, upTo: end, suffix: "\\pageref") || endsWith(b, upTo: end, suffix: "\\autoref") {
             return .reference
         }
-        if citationCommands.contains(where: { endsWith(b, upTo: start, suffix: "\\" + $0 + "{") }) { return .citation }
-        if endsWith(b, upTo: start, suffix: "\\usepackage{") { return .package }
-        if fileCommands.contains(where: { endsWith(b, upTo: start, suffix: "\\" + $0 + "{") }) { return .file }
+        if citationCommands.contains(where: { endsWith(b, upTo: end, suffix: "\\" + $0) }) { return .citation }
+        if endsWith(b, upTo: end, suffix: "\\usepackage") { return .package }
+        if fileCommands.contains(where: { endsWith(b, upTo: end, suffix: "\\" + $0) }) { return .file }
+        if graphicsCommands.contains(where: { endsWith(b, upTo: end, suffix: "\\" + $0) }) { return .graphics }
         return .none
     }
 
-    /// Commands whose `{` argument completes a project file path.
-    static let fileCommands = ["input", "include", "includegraphics"]
+    /// Commands whose `{` argument completes a project document path.
+    static let fileCommands = ["input", "include"]
+
+    /// Commands whose `{` argument completes an image file under the project root.
+    static let graphicsCommands = ["includegraphics"]
 
     /// Argument keys are wider than words: `eq:main`, `knuth-84`, `ch/one.tex`,
     /// `amsmath` after a comma. Scanned back from the caret over key bytes to
@@ -375,7 +389,7 @@ enum Completion {
         }
         let context = context(in: b, before: opener)
         switch context {
-        case .reference, .citation, .label, .package, .file:
+        case .reference, .citation, .label, .package, .file, .graphics:
             let text = String(decoding: b[start..<caretByte], as: UTF8.self)
             guard text.utf8.allSatisfy({ $0 < 0x80 }) || text.unicodeScalars.allSatisfy({ $0.properties.isAlphabetic }) else { return nil }
             return .word(text: text, start: start, end: caretByte, context: context)
@@ -476,6 +490,59 @@ enum Completion {
         return strong.isEmpty ? weak : strong
     }
 
+    // MARK: recently used
+
+    /// What the author accepted from the list lately, most recent first, so
+    /// `\t` offers `\textbf` above the inventory's `\tableofcontents` once it
+    /// has been chosen once. Commands are kept by name (no backslash),
+    /// environments by name; nothing else is remembered. In memory for the
+    /// app's lifetime, per editor by default (`CompletingTextView.recentlyUsed`)
+    /// and shared across documents by the hosted editor (`shared`).
+    @MainActor
+    final class RecentlyUsed {
+        static let shared = RecentlyUsed()
+        static let limit = 64
+        private(set) var commands: [String] = []
+        private(set) var environments: [String] = []
+
+        func record(_ suggestion: Suggestion) {
+            switch suggestion.kind {
+            case .command where suggestion.insertText.hasPrefix("\\"):
+                Self.push(String(suggestion.insertText.dropFirst()), onto: &commands)
+            case .environment where !suggestion.label.hasPrefix("\\"):
+                Self.push(suggestion.label, onto: &environments)
+            default:
+                break
+            }
+        }
+
+        /// Forgets everything (tests that assert the inventory's own order on
+        /// a hosted editor, which shares this store across the process).
+        func removeAll() {
+            commands = []
+            environments = []
+        }
+
+        private static func push(_ name: String, onto list: inout [String]) {
+            list.removeAll { $0 == name }
+            list.insert(name, at: 0)
+            if list.count > limit { list.removeLast(list.count - limit) }
+        }
+    }
+
+    /// `supported` with the names in `recent` (most recent first) moved to
+    /// the front; the rest keep their table order. `commandSuggestions` walks
+    /// `supported` in order, so this is what ranks recent commands first
+    /// without changing how they are matched.
+    static func prioritising(_ supported: [String], recent: [String]) -> [String] {
+        guard !recent.isEmpty else { return supported }
+        let known = Set(supported)
+        let first = recent.filter { known.contains($0) }
+        guard !first.isEmpty else { return supported }
+        let moved = Set(first)
+        return first + supported.filter { !moved.contains($0) }
+    }
+
     /// UTF-16 range the chosen suggestion replaces: the token before the caret
     /// including a leading `\`, or an empty range at the caret.
     static func completionRange(in text: String, caretUTF16: Int) -> NSRange {
@@ -524,6 +591,7 @@ enum Completion {
     /// syntax model; the default, false, keeps the plain text-mode order.
     static func suggestions(in text: String, caretUTF16: Int, metadata: Metadata?,
                             supported: [String] = defaultSupported, projectFiles: [String] = [],
+                            graphicsFiles: [String] = [], recentEnvironments: [String] = [],
                             mathMode: Bool = false,
                             cancelled: () -> Bool = { false }) -> [Suggestion] {
         guard let token = token(in: text, caretUTF16: caretUTF16), !cancelled() else { return [] }
@@ -537,7 +605,7 @@ enum Completion {
             switch context {
             case .beginEnvironment, .endEnvironment:
                 out = environmentSuggestions(prefix: prefix, tokenStart: token.start, text: text,
-                                             closing: context == .endEnvironment, metadata: metadata)
+                                             closing: context == .endEnvironment, metadata: metadata, recent: recentEnvironments)
             case .reference:
                 out = referenceSuggestions(prefix: prefix, text: text, metadata: metadata)
             case .citation:
@@ -547,7 +615,9 @@ enum Completion {
             case .package:
                 out = packageSuggestions(prefix: prefix)
             case .file:
-                out = fileSuggestions(prefix: prefix, files: projectFiles)
+                out = fileSuggestions(prefix: prefix, files: projectFiles, detail: "project document")
+            case .graphics:
+                out = fileSuggestions(prefix: prefix, files: graphicsFiles, detail: "graphics file")
             case .none:
                 out = wordSuggestions(prefix: prefix, tokenStart: token.start, text: text)
             }
@@ -648,9 +718,9 @@ enum Completion {
         }
     }
 
-    /// `\input{`/`\include{`/`\includegraphics{` candidates: the project's
-    /// document paths, matched on the path or its basename.
-    private static func fileSuggestions(prefix: String, files: [String]) -> [Suggestion] {
+    /// `\input{`/`\include{` (project documents) and `\includegraphics{`
+    /// (image files) candidates, matched on the path or its basename.
+    private static func fileSuggestions(prefix: String, files: [String], detail: String) -> [Suggestion] {
         var seen = Set<String>()
         let unique = files.filter { seen.insert($0).inserted }
         let matched = fuzzyFilter(unique, prefix: prefix) { path in
@@ -658,17 +728,49 @@ enum Completion {
             return matchRank(path, prefix: prefix) != nil ? path : base
         }
         return matched.prefix(maxSuggestions).map {
-            Suggestion(label: $0, insertText: $0, kind: .command, detail: "project document")
+            Suggestion(label: $0, insertText: $0, kind: .command, detail: detail)
         }
     }
 
+    /// Image files `\includegraphics{}` can read under `root`, as project-relative
+    /// paths in sorted order: graphicx's extensions (`graphicsExtensions`),
+    /// hidden entries and package contents skipped, at most `limit` files and
+    /// `visitLimit` directory entries walked so a root that is really a home
+    /// directory costs a bounded scan, not a crawl. Runs off-main (the
+    /// scheduler's job) and only when the caret is in a graphics argument.
+    static func graphicsFiles(under root: URL, limit: Int = 500, visitLimit: Int = 5000) -> [String] {
+        let extensions = Set(EditorIntelligence.graphicsExtensions)
+        guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey],
+                                                          options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
+        let base = root.standardizedFileURL.path
+        var out: [String] = []
+        var visited = 0
+        for case let url as URL in walker {
+            visited += 1
+            if visited > visitLimit || out.count >= limit { break }
+            guard extensions.contains(url.pathExtension.lowercased()),
+                  (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+            let path = url.standardizedFileURL.path
+            guard path.hasPrefix(base + "/") else { continue }
+            out.append(String(path.dropFirst(base.count + 1)))
+        }
+        return out.sorted()
+    }
+
     private static func environmentSuggestions(prefix: String, tokenStart: Int, text: String, closing: Bool,
-                                               metadata: Metadata?) -> [Suggestion] {
+                                               metadata: Metadata?, recent: [String]) -> [Suggestion] {
         var names: [String] = []
         if closing {
             names += openEnvironments(in: text, beforeByte: tokenStart).reversed().map(\.name)
         }
+        let declared = declaredEnvironments(in: text)
+        let offered = Set(knownEnvironments + declared)
+        // Recently accepted names first (the environments this author keeps
+        // opening), then the compiler's table, the document's declarations and
+        // the names it already uses.
+        names += recent.filter { offered.contains($0) }
         names += knownEnvironments
+        names += declared
         names += documentEnvironments(in: text)
         var seen = Set<String>()
         var out: [Suggestion] = []
@@ -676,7 +778,8 @@ enum Completion {
         // the (indented) middle line; closing stays the exact name.
         let indent = closing ? "" : lineIndent(in: text, beforeByte: tokenStart)
         for name in fuzzyFilter(names, prefix: prefix, key: { $0 }) where seen.insert(name).inserted {
-            var detail = knownEnvironments.contains(name) ? "supported by this compiler" : "seen in this document"
+            var detail = knownEnvironments.contains(name) ? "supported by this compiler"
+                : declared.contains(name) ? "declared in this document" : "seen in this document"
             if let message = metadata?.diagnosticsByEnvironment[name] { detail += " — " + message }
             let snippet = closing ? nil : environmentSnippet(name, indent: indent)
             out.append(Suggestion(label: name, insertText: name + "}", kind: .environment, detail: detail, snippet: snippet))
@@ -895,6 +998,36 @@ enum Completion {
             }
         }
         return stack
+    }
+
+    /// Environments the document defines, in order: the first argument of
+    /// `\newenvironment`, `\renewenvironment`, `\newtheorem` and `\newtheorem*`
+    /// (`\newtheorem{lemma}{Lemma}` makes `lemma` an environment before it is
+    /// ever used, which is when `\begin{lem` wants it).
+    static func declaredEnvironments(in text: String) -> [String] {
+        var out: [String] = []
+        withBytes(text) { b in
+            guard let p = b.baseAddress else { return }
+            forEachCommand(in: b, upTo: b.count) { name, nameStart, arg in
+                var group = arg
+                if group == nil, bytes(name, equal: "newtheorem") {
+                    // `\newtheorem*{name}`: the star sits between the name and the brace.
+                    var j = nameStart + name.count
+                    guard j + 1 < b.count, p[j] == UInt8(ascii: "*"), p[j + 1] == UInt8(ascii: "{") else { return }
+                    j += 2
+                    let start = j
+                    while j < b.count, p[j] != UInt8(ascii: "}"), p[j] != UInt8(ascii: "{"), p[j] != backslash, p[j] != UInt8(ascii: "\n") { j += 1 }
+                    guard j < b.count, p[j] == UInt8(ascii: "}") else { return }
+                    group = UnsafeBufferPointer(start: p + start, count: j - start)
+                }
+                guard let group, !group.isEmpty,
+                      bytes(name, equal: "newtheorem") || bytes(name, equal: "newenvironment") || bytes(name, equal: "renewenvironment")
+                else { return }
+                let env = String(decoding: group, as: UTF8.self)
+                if !out.contains(env) { out.append(env) }
+            }
+        }
+        return out
     }
 
     /// Names of environments appearing in `\begin{…}` anywhere in the document.
@@ -1537,8 +1670,15 @@ final class CompletionScheduler {
         /// Already bound to the revision of `text` (`Metadata.bound(to:)`).
         var metadata: Completion.Metadata?
         var supported: [String] = Completion.defaultSupported
-        /// Project document paths offered after `\input{`, `\include{` and `\includegraphics{`.
+        /// Project document paths offered after `\input{` and `\include{`.
         var projectFiles: [String] = []
+        /// Directory whose image files `\includegraphics{` offers; walked by
+        /// the job, and only when the caret is in that argument.
+        var graphicsRoot: URL? = nil
+        /// Recently accepted commands and environments, most recent first
+        /// (`Completion.RecentlyUsed`); they rank first.
+        var recentCommands: [String] = []
+        var recentEnvironments: [String] = []
         /// Whether the caret is in math mode (`Completion.isMathMode`), decided
         /// on the main thread where the editor's syntax model is in sync.
         var mathMode = false
@@ -1612,9 +1752,16 @@ final class CompletionScheduler {
         execute { [weak self] in
             let t0 = MonotonicClock.nowNs()
             let range = Completion.completionRange(in: request.text, caretUTF16: request.caretUTF16)
+            var graphics: [String] = []
+            if let root = request.graphicsRoot, !job.isCancelled,
+               case .word(_, _, _, .graphics)? = Completion.token(in: request.text, caretUTF16: request.caretUTF16) {
+                graphics = Completion.graphicsFiles(under: root)
+            }
             let items = job.isCancelled ? [] : Completion.suggestions(in: request.text, caretUTF16: request.caretUTF16,
-                                                                     metadata: request.metadata, supported: request.supported,
-                                                                     projectFiles: request.projectFiles, mathMode: request.mathMode,
+                                                                     metadata: request.metadata,
+                                                                     supported: Completion.prioritising(request.supported, recent: request.recentCommands),
+                                                                     projectFiles: request.projectFiles, graphicsFiles: graphics,
+                                                                     recentEnvironments: request.recentEnvironments, mathMode: request.mathMode,
                                                                      cancelled: { job.isCancelled })
             let t1 = MonotonicClock.nowNs()
             let outcome = Outcome(generation: job.generation, caretUTF16: request.caretUTF16, range: range, items: items,
@@ -2118,8 +2265,15 @@ final class CompletingTextView: NSTextView {
         didSet { resultMetadata = compileResult.map(Completion.Metadata.from) }
     }
     var supportedCommands = Completion.defaultSupported
-    /// Project document paths for `\input{`/`\include{`/`\includegraphics{` (the owner sets them).
+    /// Project document paths for `\input{`/`\include{` (the owner sets them).
     var projectFiles: [String] = []
+    /// The project root whose image files `\includegraphics{` offers, asked
+    /// on the main thread when the list is requested; nil (a bare text view,
+    /// an unsaved buffer) offers none.
+    var graphicsRoot: () -> URL? = { nil }
+    /// Accepted commands and environments, ranked first on the next open. A
+    /// bare text view keeps its own; the hosted editor installs the shared one.
+    var recentlyUsed = Completion.RecentlyUsed()
     /// Whether the caret is in math mode, answered by the owner from its
     /// in-sync `SyntaxHighlighter` (`SourceEditorView`), which costs one
     /// line's lexing. Unwired — a bare text view in a test — it says no, and
@@ -2541,6 +2695,8 @@ final class CompletingTextView: NSTextView {
         let metadata = boundMetadata
         let request = CompletionScheduler.Request(text: string, caretUTF16: caret.location, metadata: metadata,
                                                   supported: supportedCommands, projectFiles: projectFiles,
+                                                  graphicsRoot: graphicsRoot(), recentCommands: recentlyUsed.commands,
+                                                  recentEnvironments: recentlyUsed.environments,
                                                   mathMode: mathModeAtCaret(caret.location))
         scheduler.schedule(request) { [weak self] outcome in
             self?.present(outcome, metadataRevision: metadata?.revision)
@@ -2638,6 +2794,7 @@ final class CompletingTextView: NSTextView {
             insertCompletion(item.insertText, forPartialWordRange: range, movement: NSReturnTextMovement, isFinal: true)
         }
         applyingCompletion = false
+        recentlyUsed.record(item)
         scheduler.cancel()
         close(.accepted)
     }
