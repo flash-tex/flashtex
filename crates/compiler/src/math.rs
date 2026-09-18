@@ -1278,8 +1278,13 @@ impl MathParser<'_> {
             return MathList { atoms: Vec::new() };
         }
         self.depth += 1;
-        let result = self.list_inner(stop_at_brace);
+        let mut result = self.list_inner(stop_at_brace);
         self.depth -= 1;
+        // Every multi-atom list funnels through here (braced groups, the top
+        // level, and `sub_list`'s fresh parser for grid cells and optional
+        // arguments), so one pass resolves every `\dots` against its final
+        // following atom, including atoms flattened in from sublists.
+        resolve_dots(&mut result);
         result
     }
 
@@ -1580,7 +1585,12 @@ impl MathParser<'_> {
         if let Some(atom) = self.atom() {
             let mut atoms = vec![atom];
             atoms.append(&mut self.pending);
-            MathList { atoms }
+            // The queued atoms (if any) are the rest of this same script, so
+            // they are the only followers a pending `\dots` can see here;
+            // resolving also clears the marker before the atom escapes.
+            let mut list = MathList { atoms };
+            resolve_dots(&mut list);
+            list
         } else {
             if self.argument_cut_off() {
                 return MathList { atoms: Vec::new() };
@@ -2140,7 +2150,16 @@ impl MathParser<'_> {
             | "Bigr" | "biggr" | "Biggr" | "bigm" | "Bigm" | "biggm" | "Biggm" => {
                 sized_delimiter(self.take_delimiter(&name, span), &name)
             }
-            "dots" | "ldots" | "dotsc" | "dotso" => text_atom("...".into(), span),
+            // Only bare `\dots` auto-detects its form here: `resolve_dots`
+            // rewrites the marker to the centred symbol when the following
+            // non-space atom is class `Bin` or `Rel`. Every other spelling
+            // is a fixed choice in real amsmath (amsmath.dtx): `\dotsc`
+            // ("dots with commas") and `\dotso` ("other dots") are always
+            // baseline, like `\ldots`; `\cdots`/`\dotsb`/`\dotsm`/`\dotsi`
+            // are always centred — confirmed against the pdflatex oracle
+            // (`\dotsc + x`/`\dotso + x` are CMMI10 baseline, not centred).
+            "dots" => auto_dots_atom(span),
+            "ldots" | "dotsc" | "dotso" => text_atom("...".into(), span),
             "cdots" | "dotsb" | "dotsm" | "dotsi" => symbol("⋅⋅⋅".into(), span),
             // Symbol has no U+222C/U+222D: repeated real integral glyphs.
             "iint" => symbol("∫∫".into(), span),
@@ -3726,7 +3745,12 @@ impl MathParser<'_> {
         if let Some(atom) = self.atom() {
             let mut atoms = vec![atom];
             atoms.append(&mut self.pending);
-            return MathList { atoms };
+            // As in `script_argument`: the queued atoms are the only possible
+            // followers in this single-atom argument, and resolving clears a
+            // pending `\dots` marker before the atom escapes the parser.
+            let mut list = MathList { atoms };
+            resolve_dots(&mut list);
+            return list;
         }
         self.diagnostics.push(Diagnostic::error(
             format!("\\{} requires an argument", command),
@@ -4419,6 +4443,51 @@ fn text_atom(text: String, span: Span) -> MathAtom {
         class_override: None,
         width_em: None,
         ams_symbol: None,
+    }
+}
+
+/// A bare `\dots` atom whose baseline-vs-centred choice is still pending
+/// (issue #893): `resolve_dots` rewrites it once the following atom is
+/// known.
+///
+/// The pending marker is `class_override: Some(AtomClass::Inner)`, which
+/// `atom_class` maps to `Inner` -- exactly what the plain `Text("...")` it
+/// wraps derives on its own -- so spacing is identical while the choice is
+/// pending, and no other producer ever sets `Some(Inner)`. Resolution clears
+/// the marker, so a list that keeps the baseline form comes out byte-identical
+/// to the atom `text_atom` used to produce directly.
+fn auto_dots_atom(span: Span) -> MathAtom {
+    let mut atom = text_atom("...".into(), span);
+    atom.class_override = Some(AtomClass::Inner);
+    atom
+}
+
+/// Resolve pending bare-`\dots` atoms (`auto_dots_atom`) in place: a pending
+/// atom becomes the centred `\cdots` symbol when the next
+/// non-space atom's class is `Bin` or `Rel` (explicit glue classifies as
+/// nothing and is skipped), and plain baseline `\ldots` otherwise -- before
+/// `,`, before close delimiters, and at the end of the list.
+///
+/// The class read is the raw `atom_class`, not the spacing-adjusted one: TeX
+/// decides from the following token's own class (`amsmath.sty` `\mdots@@`),
+/// so a `+` that spacing later demotes still centres the dots.
+fn resolve_dots(list: &mut MathList) {
+    for i in 0..list.atoms.len() {
+        let pending = matches!(&list.atoms[i].nucleus, Nucleus::Text(text) if text == "...")
+            && list.atoms[i].class_override == Some(AtomClass::Inner);
+        if !pending {
+            continue;
+        }
+        let centred = list.atoms[i + 1..]
+            .iter()
+            .filter_map(atom_class)
+            .next()
+            .is_some_and(|class| matches!(class, AtomClass::Bin | AtomClass::Rel));
+        let atom = &mut list.atoms[i];
+        atom.class_override = None;
+        if centred {
+            atom.nucleus = Nucleus::Symbol("⋅⋅⋅".into());
+        }
     }
 }
 
@@ -6597,6 +6666,89 @@ mod parse_tests {
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(list.atoms.len(), 1, "{:?}", list.atoms);
         assert!(matches!(list.atoms[0].nucleus, Nucleus::Text(ref text) if text == "x"));
+    }
+
+    /// Issue #893: bare `\dots` must choose the centred `\cdots` form when
+    /// the next non-space atom is class `Bin` or `Rel`, and the baseline
+    /// `\ldots` form otherwise. `\dotsc`/`\dotso` are fixed baseline in real
+    /// amsmath (pdflatex oracle: CMMI10 even before `Bin`/`Rel`) and never
+    /// move; neither do the explicit `\cdots`/`\ldots` spellings.
+    #[test]
+    fn dots_chooses_centred_before_bin_or_rel_and_baseline_otherwise() {
+        // (source, centred?): the first atom whose nucleus is a dots form
+        // must be `Symbol("⋅⋅⋅")` when centred, `Text("...")` otherwise --
+        // the two existing branches the pipeline already lays out as the
+        // centred and baseline ellipsis respectively.
+        for (source, centred) in [
+            (r"\dots = \gcd(a,b)", true),
+            (r"a_1 + \dots + a_n", true),
+            (r"x \dots \le y", true),
+            (r"a_1, \dots, a_n", false),
+            (r"\cdots = \gcd(a,b)", true),
+            (r"\ldots = \gcd(a,b)", false),
+            // Close delimiters and the end of a formula stay baseline.
+            (r"(a_1 + \dots)", false),
+            (r"a_n \dots", false),
+            // \dotsc/\dotso are fixed baseline, never context-sensitive.
+            (r"\dotsc + x", false),
+            (r"\dotso = x", false),
+            (r"\dotsc, x", false),
+            // Explicit glue between the dots and the operator is skipped.
+            (r"\dots\,+ x", true),
+            // The choice also applies inside a braced group.
+            (r"\frac{\dots + x}{y}", true),
+            (r"\frac{a, \dots, b}{y}", false),
+        ] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(source);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            fn dots_nucleus(list: &MathList) -> Option<bool> {
+                for atom in &list.atoms {
+                    match &atom.nucleus {
+                        Nucleus::Symbol(s) if s == "⋅⋅⋅" => return Some(true),
+                        Nucleus::Text(t) if t == "..." => return Some(false),
+                        Nucleus::Group(body) => {
+                            if let Some(found) = dots_nucleus(body) {
+                                return Some(found);
+                            }
+                        }
+                        Nucleus::Fraction { numerator, .. } => {
+                            if let Some(found) = dots_nucleus(numerator) {
+                                return Some(found);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                None
+            }
+            assert_eq!(
+                dots_nucleus(&list),
+                Some(centred),
+                "{source}: wrong dots form in {:?}",
+                list.atoms
+                    .iter()
+                    .map(|a| format!("{:?}", a.nucleus))
+                    .collect::<Vec<_>>()
+            );
+            // The chosen form must lay out exactly like its explicit
+            // counterpart: no new diagnostic, and the dots item keeps the
+            // same advance in both forms (only the glyph differs).
+            let before = diagnostics.len();
+            let laid = layout(&list, 12.0, &mut diagnostics);
+            assert_eq!(
+                diagnostics.len(),
+                before,
+                "{source}: layout added {diagnostics:?}"
+            );
+            assert!(
+                laid.items
+                    .iter()
+                    .any(|item| item.text == "..." || item.text == "⋅⋅⋅"),
+                "{source}: no dots item laid out"
+            );
+        }
     }
 }
 
