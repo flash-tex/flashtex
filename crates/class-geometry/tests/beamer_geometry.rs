@@ -233,3 +233,32 @@ fn beamer_with_geometry_package() {
         (mm("160mm"), mm("90mm"))
     );
 }
+
+/// `\usetheme{Madrid}` (issue #944, Tier 4): the infolines outer theme's
+/// `\setbeamersize{text margin left=1em,text margin right=1em}` and its
+/// footline (`ht=2.25ex dp=1ex` at `\tiny`, plus `\beamer@calculateheadfoot`'s
+/// 4pt) — measured `\textwidth` 342.2953pt, `\textheight` 260.48pt, the
+/// body's first word at x = 10.909bp on the corpus deck
+/// `fixtures/real-world/beamer-madrid`.
+#[test]
+fn madrid_theme_geometry() {
+    let setup = DocumentSetup::from_preamble("\\documentclass{beamer}\n\\usetheme{Madrid}\n\\title{T}\n\\begin{document}").unwrap();
+    assert_eq!(setup.beamer_theme, beamer::ThemeKind::Madrid);
+    let r = resolve(&setup);
+    assert_eq!(r.beamer_theme.kind, beamer::ThemeKind::Madrid);
+    // 22432665sp in pdflatex; `body_font`'s printed em (10.95003pt) is 3sp
+    // over the font's own, so 6sp under here.
+    assert!((r.params.textwidth.to_pt() - 342.2953).abs() < 0.0002, "{:?}", r.params.textwidth);
+    // 17070817sp in pdflatex (`\footheight` 830120sp exactly as here; the
+    // 11sp are the paper height's own rounding).
+    assert!((r.params.textheight.to_pt() - 260.47999).abs() < 0.0003, "{:?}", r.params.textheight);
+    assert!((r.frame.odd_text_left.to_bp() - 10.909).abs() < 0.001, "{:?}", r.frame.odd_text_left);
+    assert!((r.params.footskip.to_pt() - 12.66663).abs() < 0.00002);
+    // An unmodelled theme keeps the default geometry; an article never
+    // reads `\usetheme`.
+    let other = DocumentSetup::from_preamble("\\documentclass{beamer}\n\\usetheme{Berlin}\n\\begin{document}").unwrap();
+    assert_eq!(other.beamer_theme, beamer::ThemeKind::Default);
+    assert_eq!(resolve(&other).params, params("beamer", ""));
+    let article = DocumentSetup::from_preamble("\\documentclass{article}\n\\usetheme{Madrid}\n\\begin{document}").unwrap();
+    assert_eq!(article.beamer_theme, beamer::ThemeKind::Default);
+}

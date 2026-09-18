@@ -36,6 +36,9 @@ pub struct DocumentSetup {
     pub geometry: Option<GeometryInput>,
     /// Last preamble `\pagestyle`, if any.
     pub pagestyle: Option<PageStyle>,
+    /// beamer: the last `\usetheme{..}` (`ThemeKind::Default` when none or
+    /// an unmodelled name; see [`beamer::theme`]).
+    pub beamer_theme: beamer::ThemeKind,
     /// PDF media size when geometry does not set it (pdftex's
     /// `pdftexconfig.tex`; US Letter 8.5in x 11in in MacTeX 2026).
     pub engine_default_media: (Sp, Sp),
@@ -53,6 +56,7 @@ impl DocumentSetup {
             class_options: class_options.to_string(),
             geometry: None,
             pagestyle: None,
+            beamer_theme: beamer::ThemeKind::Default,
             engine_default_media: letter_media(),
         }
     }
@@ -100,6 +104,15 @@ impl DocumentSetup {
                 ("pagestyle", Some(a)) => {
                     if let (Some(s), Some(ps)) = (setup.as_mut(), PageStyle::parse(&a)) {
                         s.pagestyle = Some(ps);
+                    }
+                }
+                // `\usetheme{Madrid}` (beamer): a comma list loads several
+                // themes; the last name decides.
+                ("usetheme", Some(a)) => {
+                    if let Some(s) = setup.as_mut().filter(|s| s.class == ClassKind::Beamer) {
+                        if let Some(name) = a.split(',').next_back() {
+                            s.beamer_theme = beamer::ThemeKind::parse(name);
+                        }
                     }
                 }
                 _ => {}
@@ -173,6 +186,8 @@ pub struct ResolvedDocument {
     pub mark_rules: Vec<MarkRule>,
     pub numbering: Numbering,
     pub warnings: Vec<String>,
+    /// beamer's theme (the default one for every other class).
+    pub beamer_theme: beamer::Theme,
 }
 
 impl ResolvedDocument {
@@ -229,6 +244,10 @@ pub fn resolve(setup: &DocumentSetup) -> ResolvedDocument {
         reversemargin: false,
     };
     let mut params = base;
+    let beamer_theme = beamer::theme(if options.kind == ClassKind::Beamer { setup.beamer_theme } else { beamer::ThemeKind::Default });
+    if options.kind == ClassKind::Beamer {
+        beamer::apply_theme(&mut params, &beamer_theme);
+    }
     let mut warnings: Vec<String> = options
         .unused
         .iter()
@@ -290,5 +309,6 @@ pub fn resolve(setup: &DocumentSetup) -> ResolvedDocument {
         style_macros: macros,
         numbering: Numbering::Arabic,
         warnings,
+        beamer_theme,
     }
 }

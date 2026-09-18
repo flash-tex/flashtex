@@ -422,6 +422,409 @@ pub enum ColumnAlign {
     Bottom,
 }
 
+// ---------------------------------------------------------------------------
+// Tier 4: frame options and the Madrid theme (issue #944).
+// ---------------------------------------------------------------------------
+
+/// `\tiny` at 11pt (`size11.clo`: 6pt on 7pt): the infolines footline's
+/// font (`beamerfontthemedefault.sty` 19/67: `footline` parent `tiny
+/// structure`, `size=\tiny`).
+pub const TINY: FontSpec = FontSpec::pt(6.0, 7.0);
+/// `\fontdimen5` of the `\tiny` sans font (`cmss8 at 6pt`: pdftex prints
+/// 2.66666pt, `\dimen0=2.25\fontdimen5` 5.99997pt): the infolines
+/// footline boxes' `ht=2.25ex dp=1ex` and `leftskip=2ex`. Measured: the
+/// boxes are 8.634bp = 8.66663pt tall and `\footheight` reads 12.66663pt.
+pub const TINY_EX: Sp = Sp(174_762);
+
+/// An RGB triple in [0, 1], as `\extractcolorspec` reports it.
+pub type Rgb = (f64, f64, f64);
+
+/// `structure.fg!<pct>!black` (xcolor: `pct`% of the colour, the rest
+/// black).
+const fn shade(rgb: Rgb, pct: f64) -> Rgb {
+    (rgb.0 * pct / 100.0, rgb.1 * pct / 100.0, rgb.2 * pct / 100.0)
+}
+
+/// `<colour>!10!white` (`orchid`: `block body` bg = `block title.bg!10!bg`
+/// on the white page).
+const fn tint(rgb: Rgb, pct: f64) -> Rgb {
+    (
+        rgb.0 * pct / 100.0 + (100.0 - pct) / 100.0,
+        rgb.1 * pct / 100.0 + (100.0 - pct) / 100.0,
+        rgb.2 * pct / 100.0 + (100.0 - pct) / 100.0,
+    )
+}
+
+/// `beamercolorthemewhale.sty`: `palette primary` bg = `structure.fg`,
+/// `secondary` = `structure.fg!75!black`, `tertiary` = `!50!black`, every
+/// fg white. Measured in the corpus footline: `0.2 0.2 0.7`, `0.15 0.15
+/// 0.525`, `0.09999 0.09999 0.34999 rg`.
+pub const PALETTE_PRIMARY_BG: Rgb = STRUCTURE_RGB;
+pub const PALETTE_SECONDARY_BG: Rgb = shade(STRUCTURE_RGB, 75.0);
+pub const PALETTE_TERTIARY_BG: Rgb = shade(STRUCTURE_RGB, 50.0);
+pub const WHITE: Rgb = (1.0, 1.0, 1.0);
+
+/// Which theme the deck loaded (`\usetheme{..}`): the ones this crate
+/// models. Any other name keeps the default theme.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ThemeKind {
+    #[default]
+    Default,
+    /// `beamerthemeMadrid.sty`: `whale` + `orchid` colours, `rounded`
+    /// inner theme (with `shadow=true`), `infolines` outer theme with the
+    /// `headline` reset to the default (empty) one, text margins 1em.
+    Madrid,
+}
+
+impl ThemeKind {
+    pub fn parse(name: &str) -> ThemeKind {
+        match name.trim() {
+            "Madrid" => ThemeKind::Madrid,
+            _ => ThemeKind::Default,
+        }
+    }
+}
+
+/// One `beamercolorbox` of the infolines footline
+/// (`beamerouterthemeinfolines.sty` 41-58): `wd=.333333\paperwidth,
+/// ht=2.25ex, dp=1ex`, centred unless `leftskip`/`rightskip` are given.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FootBox {
+    /// `.333333\paperwidth`.
+    pub width: Sp,
+    pub bg: Rgb,
+    pub fg: Rgb,
+    pub content: FootContent,
+    /// `leftskip`/`rightskip` natural parts (`2ex` for the date box);
+    /// the centred boxes have `0pt plus1fill` both sides.
+    pub leftskip: Sp,
+    pub rightskip: Sp,
+    /// Whether the skips carry `plus1fill` (the `center` key).
+    pub centered: bool,
+}
+
+/// What each footline box sets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FootContent {
+    /// `\insertshortauthor\expandafter\ifblank...{~~(\insertshortinstitute)}`
+    /// (`author in head/foot`, palette tertiary).
+    AuthorInstitute,
+    /// `\insertshorttitle` (`title in head/foot`, palette secondary).
+    Title,
+    /// `\hfill\insertshortdate{}\hfill` + `page number in head/foot`
+    /// `[totalframenumber]` (`date in head/foot`, palette primary): the
+    /// date and `\makebox[<wd of T\,/\,T>][r]{n\,/\,T}` with the two
+    /// `\hfill`s sharing the width between `leftskip` and `rightskip`.
+    DateFrameNumber,
+}
+
+/// The infolines footline: an `\hbox` of three boxes at the paper's
+/// bottom edge (the footline is set below `\textheight`;
+/// `\beamer@calculateheadfoot`: `\footheight` = ht + dp + 4pt).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Footline {
+    /// `ht=2.25ex` in the footline font.
+    pub height: Sp,
+    /// `dp=1ex`: the text baseline is this far above the paper bottom.
+    /// Measured: 269.469bp from the top of a 272.126bp page.
+    pub depth: Sp,
+    pub font: FontSpec,
+    pub boxes: [FootBox; 3],
+}
+
+impl Footline {
+    /// `\footheight`: the box plus 4pt. Measured `\footheight` 12.66663pt,
+    /// `\textheight` 260.48pt (273.14662 − 12.66663).
+    pub fn footheight(&self) -> Sp {
+        self.height + self.depth + Sp::pt(4)
+    }
+}
+
+/// `beamerboxesrounded` around the title page's `title` colour box
+/// (`beamerinnerthemerounded.sty`: `title page` `[default][colsep=-4bp,
+/// rounded=true,shadow=..]`; `beamerbaseboxes.sty` 36-252 with an empty
+/// head): the colour box's own `\hbox` sits inside a `\vbox` of
+/// `\vskip4bp`, an empty head `\hbox(1.5pt)`, `\vskip-1pt`, the lower
+/// `minipage` (`\vskip2pt` + the box, raised 0.5pt) and `\vskip4bp`, so
+/// it gains `above` over the box top and `below` under its bottom. The
+/// painted rounded rectangle overhangs `\textwidth` by 4bp each side and
+/// starts/ends `inset` (1bp) inside the vbox's top and bottom (head path
+/// top `3bp` above the head box's top, lower path `3bp` under its
+/// baseline). Measured (corpus title page): the fill spans 59.758bp to
+/// 113.832bp from the page top, x 6.909bp to 355.926bp; the title
+/// baseline moved up 2.23bp and the author down 4.49bp relative to the
+/// default template.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RoundedBox {
+    pub above: Sp,
+    pub below: Sp,
+    pub overhang: Sp,
+    pub inset: Sp,
+    pub bg: Rgb,
+    pub fg: Rgb,
+}
+
+/// The rounded inner theme's `blocks` `[rounded]` template
+/// (`beamerinnerthemedefault.sty` `block begin`/`block end` `[rounded]`:
+/// a `beamerboxesrounded[upper=block title,lower=block body,shadow=..]`
+/// whose head is the `\large` title): the colours the orchid theme gives
+/// the title and body boxes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RoundedBlocks {
+    pub title_bg: Rgb,
+    pub title_fg: Rgb,
+    pub body_bg: Rgb,
+    pub alert_title_bg: Rgb,
+    pub alert_body_bg: Rgb,
+    pub example_title_bg: Rgb,
+    pub example_body_bg: Rgb,
+}
+
+/// Everything a theme changes that the render pipeline lays out. Every
+/// number is transcribed from the theme's `.sty` and checked against the
+/// corpus deck `fixtures/real-world/beamer-madrid` (see the item docs).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Theme {
+    pub kind: ThemeKind,
+    /// `\beamer@leftmargin` / `\beamer@rightmargin`
+    /// (`\setbeamersize{text margin left=..}`): 1cm in the default outer
+    /// theme, `1em` (10.95pt) in infolines. Measured Madrid body x =
+    /// 10.909bp, `\textwidth` 342.2953pt.
+    pub text_margin_left: Sp,
+    pub text_margin_right: Sp,
+    /// The `frametitle` beamercolor's background (`titlelike` parent
+    /// `palette primary` in whale): the frametitle `beamercolorbox` is
+    /// painted `\paperwidth` wide, and `\nointerlineskip` drops the
+    /// `\lineskip` before it and `\vskip-.3cm` is skipped
+    /// (`beamerouterthemedefault.sty` 164, 180). `None` paints nothing.
+    pub frametitle_bg: Option<Rgb>,
+    pub frametitle_fg: Rgb,
+    pub footline: Option<Footline>,
+    pub title_page: Option<RoundedBox>,
+    /// `\setbeamertemplate{items}[ball]`: itemize labels are a shaded
+    /// ball (a pgf radial shading, not drawn here) and enumerate labels
+    /// the number in white `\tiny` over a ball.
+    pub ball_items: bool,
+    pub blocks: Option<RoundedBlocks>,
+}
+
+/// The theme table.
+pub fn theme(kind: ThemeKind) -> Theme {
+    let cm = len("1cm");
+    match kind {
+        ThemeKind::Default => Theme {
+            kind,
+            text_margin_left: cm,
+            text_margin_right: cm,
+            frametitle_bg: None,
+            frametitle_fg: STRUCTURE_RGB,
+            footline: None,
+            title_page: None,
+            ball_items: false,
+            blocks: None,
+        },
+        ThemeKind::Madrid => {
+            let em = crate::class::body_font(BaseSize::Pt11).em;
+            let third = footline_box_width(len("128mm"));
+            let two_ex = TINY_EX.times(2);
+            let boxed = |bg: Rgb, content: FootContent, skips: Option<Sp>| FootBox {
+                width: third,
+                bg,
+                fg: WHITE,
+                content,
+                leftskip: skips.unwrap_or(Sp::ZERO),
+                rightskip: skips.unwrap_or(Sp::ZERO),
+                centered: skips.is_none(),
+            };
+            Theme {
+                kind,
+                text_margin_left: em,
+                text_margin_right: em,
+                frametitle_bg: Some(PALETTE_PRIMARY_BG),
+                frametitle_fg: WHITE,
+                footline: Some(Footline {
+                    height: TINY_EX.scaled("2.25").unwrap(),
+                    depth: TINY_EX,
+                    font: TINY,
+                    boxes: [
+                        boxed(PALETTE_TERTIARY_BG, FootContent::AuthorInstitute, None),
+                        boxed(PALETTE_SECONDARY_BG, FootContent::Title, None),
+                        boxed(PALETTE_PRIMARY_BG, FootContent::DateFrameNumber, Some(two_ex)),
+                    ],
+                }),
+                title_page: Some(RoundedBox {
+                    above: len("4bp") + len("0.5pt") + Sp::pt(2),
+                    below: len("0.5pt") + len("4bp"),
+                    overhang: len("4bp"),
+                    inset: len("1bp"),
+                    bg: PALETTE_PRIMARY_BG,
+                    fg: WHITE,
+                }),
+                ball_items: true,
+                blocks: Some(RoundedBlocks {
+                    title_bg: shade(STRUCTURE_RGB, 75.0),
+                    title_fg: WHITE,
+                    body_bg: tint(shade(STRUCTURE_RGB, 75.0), 10.0),
+                    alert_title_bg: shade(ALERT_RGB, 75.0),
+                    alert_body_bg: tint(shade(ALERT_RGB, 75.0), 10.0),
+                    example_title_bg: shade(EXAMPLE_RGB, 75.0),
+                    example_body_bg: tint(shade(EXAMPLE_RGB, 75.0), 10.0),
+                }),
+            }
+        }
+    }
+}
+
+/// The theme's page parameters over `beamer_params`'s
+/// (`beamerbaseframecomponents.sty` `\beamer@calculateheadfoot`, and
+/// `\setbeamersize{text margin left/right}`): `\textwidth` = paper less
+/// the two text margins (the side margin is the left one), `\footskip` =
+/// `\footheight` (the footline box + 4pt) and `\textheight` = paper −
+/// footheight − headheight (0: Madrid's headline is the default empty
+/// one). Measured (Madrid, `\the`): `\textwidth` 342.2953pt, `\textheight`
+/// 260.48pt, `\footheight` 12.66663pt; body x 10.909bp.
+pub fn apply_theme(params: &mut crate::class::PageParams, theme: &Theme) {
+    if theme.kind == ThemeKind::Default {
+        // `beamer_params` already models the default outer theme's 1cm
+        // margins (its `2cm` scanned once, as TeX's `{-2cm}` is).
+        return;
+    }
+    let inch = len("1in");
+    params.textwidth = params.paperwidth - theme.text_margin_left - theme.text_margin_right;
+    params.oddsidemargin = theme.text_margin_left - inch;
+    params.evensidemargin = theme.text_margin_left - inch;
+    if let Some(foot) = theme.footline {
+        params.footskip = foot.footheight();
+        params.textheight = params.paperheight - foot.footheight();
+    }
+}
+
+/// `.333333\paperwidth`: a footline box's width (the theme table is built
+/// for the default 128mm paper; other aspect ratios rescale from here).
+pub fn footline_box_width(paperwidth: Sp) -> Sp {
+    paperwidth.scaled("0.333333").unwrap()
+}
+
+/// [`frametitle_box`] under a theme whose `frametitle` colour has a
+/// background: `\nointerlineskip` before the colour box (no `\lineskip`),
+/// the `\vskip-.3cm` skipped, so the painted bar is the default's inner
+/// height plus `sep` and the title baseline sits 1pt higher. Measured
+/// (Madrid p2): the bar is 27.569bp tall from the page top (27.672pt =
+/// 19.136 + 8.5359) and `Outline` sits at baseline 20.061bp
+/// (20.136pt = 8.5359 − 6.4 + 5.4 + 12.6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThemedFrameTitle {
+    pub geometry: FrameTitleBox,
+    /// The painted bar's height from the frame (paper) top, when the
+    /// theme paints one.
+    pub bar_height: Option<Sp>,
+}
+
+pub fn frametitle_box_themed(paperwidth: Sp, title_lines: usize, subtitle_lines: usize, theme: &Theme) -> Option<ThemedFrameTitle> {
+    let plain = frametitle_box(paperwidth, title_lines, subtitle_lines)?;
+    if theme.frametitle_bg.is_none() {
+        return Some(ThemedFrameTitle { geometry: plain, bar_height: None });
+    }
+    let sep = len("0.3cm");
+    let lineskip = Sp::pt(1);
+    let after = crate::class::body_font(BaseSize::Pt11).em.scaled("0.25").unwrap();
+    // The default's box less its `\lineskip` and trailing `0.25em`, plus
+    // the `sep` that `\vskip-.3cm` no longer cancels.
+    let bar = plain.height - lineskip - after + sep;
+    Some(ThemedFrameTitle {
+        geometry: FrameTitleBox {
+            height: bar + after,
+            title_baseline: plain.title_baseline - lineskip,
+            subtitle_baseline: plain.subtitle_baseline.map(|b| b - lineskip),
+            ..plain
+        },
+        bar_height: Some(bar),
+    })
+}
+
+/// `[allowframebreaks]` (`beamerbaseframesize.sty` 212-243): the frame's
+/// vertical list is `\vsplit` to `factor × \textheight` (0.95 by
+/// default) at the last feasible break, the split part is `\unvbox`ed
+/// into a `\vbox to\textheight` with the `autobreak` skips
+/// (`beamerbaseframe.sty` 256-260: `[c]` gives `0pt plus .4\paperheight`
+/// above and `0pt plus .6\paperheight` below — finite, so the body's own
+/// stretch (`\itemsep` `plus 2pt`) takes its share), and the remainder
+/// starts the next frame after `\frametitle{<title> II}` under a
+/// `\splittopskip` of `\baselineskip`. Measured (corpus p4/p5): 14 items
+/// on the first page with `glue set 0.04607`, 6 on the second with
+/// `0.50691`; item pitch 16.63bp on p4 (16.6pt + 2pt x 0.046).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AutoBreak {
+    /// `\beamer@autobreakfactor`.
+    pub factor: f64,
+    /// `\beamer@frametopskipautobreak` stretch (`.4\paperheight` for `[c]`).
+    pub top_stretch: Sp,
+    /// `\beamer@framebottomskipautobreak` stretch (`.6\paperheight`).
+    pub bottom_stretch: Sp,
+    /// The natural part of the top skip (`[t]`: `.2cm`).
+    pub top: Sp,
+    /// `\splittopskip` for the continuation's first box: `\baselineskip`.
+    pub splittopskip: Sp,
+}
+
+pub fn autobreak(align: FrameAlign, paperheight: Sp) -> AutoBreak {
+    let splittopskip = NORMAL.baselineskip;
+    match align {
+        FrameAlign::Center => AutoBreak {
+            factor: 0.95,
+            top_stretch: paperheight.scaled("0.4").unwrap(),
+            bottom_stretch: paperheight.scaled("0.6").unwrap(),
+            top: Sp::ZERO,
+            splittopskip,
+        },
+        // `[t]`/`[b]` copy `\beamer@frametopskip`/`bottomskip`: `[t]`'s
+        // `.2cm plus .5\paperheight` above and a fill below; `[b]` a fill
+        // above and nothing below. A fill is modelled as a stretch far
+        // larger than any finite one.
+        FrameAlign::Top => AutoBreak { factor: 0.95, top_stretch: paperheight.scaled("0.5").unwrap(), bottom_stretch: Sp::pt(1_000_000), top: len("0.2cm"), splittopskip },
+        FrameAlign::Bottom => AutoBreak { factor: 0.95, top_stretch: Sp::pt(1_000_000), bottom_stretch: Sp::ZERO, top: Sp::ZERO, splittopskip },
+    }
+}
+
+/// The continuation suffix of a broken frame's title: `frametitle
+/// continuation` `[default]` = `\insertcontinuationcountroman`
+/// (`\@Roman\beamer@autobreakcount`), which `\insertframetitle` appends
+/// after a blank on every page of an `[allowframebreaks]` frame (the
+/// first too). Measured: "A long list I", "A long list II".
+pub fn continuation_suffix(count: usize) -> String {
+    let mut n = count;
+    let mut out = String::new();
+    for (value, numeral) in [(1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"), (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I")] {
+        while n >= value {
+            out.push_str(numeral);
+            n -= value;
+        }
+    }
+    out
+}
+
+/// `[plain]` (`beamerbaseframe.sty` 244-246, 781-783): the frame keeps
+/// `\vbox to\textheight` but its entry code is `\vspace*{-\headheight}` and
+/// its exit code `\vspace*{-\footheight}` (a zero-height rule and the
+/// negative skip inside the box, so the fills gain `\headheight +
+/// \footheight` of free height), and the body's own `\vbox{}` is followed
+/// by `\nointerlineskip` (line 116), so the first body line carries no
+/// interline glue. Measured (default theme, `\footheight` 4pt): the
+/// two-line corpus frame's first baseline is 120.80bp against 123.64 for
+/// the same body on a normal frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlainFrame {
+    /// `-\headheight` at the top.
+    pub head: Sp,
+    /// `-\footheight` at the bottom.
+    pub foot: Sp,
+}
+
+pub fn plain_frame(theme: &Theme) -> PlainFrame {
+    let foot = theme.footline.map_or(Sp::pt(4), |f| f.footheight());
+    PlainFrame { head: Sp::ZERO, foot }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -499,6 +902,54 @@ mod tests {
         assert_eq!(body_glue(FrameAlign::Center), BodyGlue { above: Sp::ZERO, above_fill: 1.0, below_fill: 1.5 });
         assert_eq!(body_glue(FrameAlign::Top).above, len("0.2cm"));
         assert_eq!(body_glue(FrameAlign::Bottom).below_fill, 0.0);
+    }
+
+
+    #[test]
+    fn madrid_theme_numbers() {
+        let t = theme(ThemeKind::Madrid);
+        assert_eq!(bp(t.text_margin_left), 10.909);
+        let f = t.footline.unwrap();
+        assert!((f.footheight().to_pt() - 12.66663).abs() < 0.00002, "{:?}", f.footheight());
+        assert!(((f.height + f.depth).to_bp() - 8.634).abs() < 0.002);
+        assert_eq!(bp(f.boxes[0].width), 120.943);
+        assert_eq!(f.boxes[0].bg, (0.1, 0.1, 0.35));
+        assert_eq!(f.boxes[1].bg, (0.15, 0.15, 0.525));
+        assert_eq!(f.boxes[2].bg, (0.2, 0.2, 0.7));
+        assert!((f.boxes[2].leftskip.to_pt() - 5.33331).abs() < 0.00002);
+        let b = t.blocks.unwrap();
+        assert!((b.body_bg.0 - 0.915).abs() < 1e-9 && (b.body_bg.2 - 0.9525).abs() < 1e-9);
+        let r = t.title_page.unwrap();
+        assert!((r.above.to_pt() - 6.51501).abs() < 0.001, "{:?}", r.above);
+        assert!((r.below.to_pt() - 4.51501).abs() < 0.001, "{:?}", r.below);
+        assert_eq!(ThemeKind::parse("Madrid"), ThemeKind::Madrid);
+        assert_eq!(ThemeKind::parse("Berlin"), ThemeKind::Default);
+    }
+
+    #[test]
+    fn madrid_frametitle_bar() {
+        let pw = len("128mm");
+        let t = frametitle_box_themed(pw, 1, 0, &theme(ThemeKind::Madrid)).unwrap();
+        assert!((t.bar_height.unwrap().to_pt() - 27.6718).abs() < 0.0005, "{:?}", t.bar_height);
+        assert_eq!(bp(t.bar_height.unwrap()), 27.569);
+        assert_eq!(bp(t.geometry.title_baseline), 20.061);
+        assert!((t.geometry.height.to_pt() - 30.4093).abs() < 0.0005);
+        let d = frametitle_box_themed(pw, 1, 0, &theme(ThemeKind::Default)).unwrap();
+        assert_eq!(d.bar_height, None);
+        assert_eq!(d.geometry, frametitle_box(pw, 1, 0).unwrap());
+    }
+
+    #[test]
+    fn autobreak_and_plain() {
+        let a = autobreak(FrameAlign::Center, len("96mm"));
+        assert!((a.top_stretch.to_pt() - 109.25697).abs() < 0.001, "{:?}", a.top_stretch);
+        assert!((a.bottom_stretch.to_pt() - 163.88963).abs() < 0.002, "{:?}", a.bottom_stretch);
+        assert_eq!(continuation_suffix(1), "I");
+        assert_eq!(continuation_suffix(2), "II");
+        assert_eq!(continuation_suffix(4), "IV");
+        assert_eq!(continuation_suffix(9), "IX");
+        assert_eq!(plain_frame(&theme(ThemeKind::Default)).foot, Sp::pt(4));
+        assert!((plain_frame(&theme(ThemeKind::Madrid)).foot.to_pt() - 12.66663).abs() < 0.00002);
     }
 
     #[test]
