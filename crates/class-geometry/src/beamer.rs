@@ -246,9 +246,231 @@ pub fn title_page() -> TitlePageSpec {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Tier 3: blocks, columns and in-flow floats (issue #944).
+// ---------------------------------------------------------------------------
+
+/// `\large` at 11pt: `block title` (`beamerfontthemedefault.sty` 84,
+/// `size11.clo` `\large` = 12pt on 14pt).
+pub const BLOCK_TITLE: FontSpec = FontSpec::pt(12.0, 14.0);
+/// `\small` at 11pt: `caption` (`beamerfontthemedefault.sty` 76; 10pt on 12pt).
+pub const SMALL: FontSpec = FontSpec::pt(10.0, 12.0);
+
+/// `alerted text` (`beamercolorthemedefault.sty` 19: `fg=red`) — the
+/// `alertblock` title.
+pub const ALERT_RGB: (f64, f64, f64) = (1.0, 0.0, 0.0);
+/// `example text` (line 20: `fg=green!50!black`) — the `exampleblock` title.
+pub const EXAMPLE_RGB: (f64, f64, f64) = (0.0, 0.5, 0.0);
+
+/// The x-height of the body font, `cmss10` at 10.95pt (`\fontdimen5`:
+/// 0.444444 x 10.95pt): the `\vskip-.25ex` at the top of a block body and
+/// the `\vskip-1ex` of a `[T]` column both read it in the body font.
+/// `\showbox` prints `\glue -4.86665` and `\glue -1.21666`.
+pub const SANS_BODY_EX: Sp = Sp(318_940);
+
+/// `\fontdimen22` of the math symbol font (`cmsy10` at 10.95pt: 0.25em =
+/// 2.7375pt), the axis a `[c]` column's `\vcenter` centres on
+/// (`\@iiiparbox`: `$\vcenter{...}\m@th$`).
+pub const MATH_AXIS: Sp = Sp(179_405);
+
+/// The default inner theme's `block begin`/`block end` templates
+/// (`beamerinnerthemedefault.sty` 390-405) with no background colour (the
+/// default colour theme leaves `block title`/`block body` bg empty, so
+/// `colsep*` never applies and no box is painted):
+///
+/// ```text
+/// \par\vskip\medskipamount                         before
+/// \hbox{\vbox{ \large title, raggedright }}         title box (no strut:
+///                                                   glyph heights)
+/// {\parskip0pt\par}                                 (\lineskip glue follows,
+///                                                   the body box is taller
+///                                                   than \baselineskip)
+/// \hbox{\vbox{ \vskip-.25ex \vbox{} body ... }}    body box
+/// \vskip\smallskipamount                            after
+/// ```
+///
+/// Measured (`fixtures/real-world/beamer-blocks-columns` p2): titles at
+/// 84.58 / 133.98 / 183.37bp; a body's first baseline 13.33bp under a
+/// depthless title (`1 + 13.6 - .25ex`), 15.66bp under "Example" (+ the
+/// `p`'s 2.33pt depth); two-line bodies put the blocks 49.40bp apart
+/// (`1 + 25.98 + 3 + 6 + 13.6`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockSpec {
+    /// `\medskipamount`: 6pt plus 2pt minus 2pt.
+    pub before: Glue,
+    /// `\smallskipamount`: 3pt plus 1pt minus 1pt.
+    pub after: Glue,
+    /// `\vskip-.25ex` (body font) at the top of the body box.
+    pub body_top: Sp,
+}
+
+pub fn block() -> BlockSpec {
+    BlockSpec {
+        before: Glue::new("6pt", "2pt", "2pt"),
+        after: Glue::new("3pt", "1pt", "1pt"),
+        body_top: Sp::ZERO - SANS_BODY_EX.scaled("0.25").unwrap(),
+    }
+}
+
+/// `\topsep` of a `\trivlist` environment (`center`, and beamer's
+/// `figure`/`table`, which are `center`) on a slide: `size11.clo`'s
+/// `\@listI` value, 9pt plus 3pt minus 5pt. beamer redefines `\@listi`
+/// (3pt, [`list_level`]) but never executes it at the top level, so the
+/// register keeps the value the size file set when the class loaded; only
+/// a `\list` (itemize, enumerate) runs `\@listi` and sees 3pt. Measured:
+/// `\glue 9.0 plus 3.0 minus 5.0` around the `center` of the corpus deck's
+/// graphic and table frames.
+pub fn trivlist_topsep(size: BaseSize) -> Glue {
+    match size {
+        BaseSize::Pt10 => Glue::new("8pt", "2pt", "4pt"),
+        BaseSize::Pt11 => Glue::new("9pt", "3pt", "5pt"),
+        BaseSize::Pt12 => Glue::new("10pt", "4pt", "6pt"),
+    }
+}
+
+/// `\abovecaptionskip` = `\belowcaptionskip` = 7pt
+/// (`beamerbaselocalstructure.sty` 567-568), around the `\small` caption
+/// line of an in-flow `figure`/`table`. Measured: caption baseline 176.82bp
+/// on the corpus deck's table frame, 21.77bp under the last row
+/// (`\bottomrule` 0.876 + 7 + \lineskip 1 + 6.944 + the row's 4.08 strut
+/// depth + 1.95 rule gap).
+pub const CAPTION_SKIP: Sp = Sp(7 * 65536);
+
+/// How a `columns` row is set (`beamerbaseframecomponents.sty` 212-240).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColumnsBox {
+    /// The default: `\hbox to\textwidth{\hskip-\beamer@leftmargin \hbox to
+    /// (\textwidth + both margins){\hbox{}\hfill col \hfill col ... \hfill}
+    /// \hskip-\beamer@rightmargin}` — the paper-wide box, a `\hfill`
+    /// before, between and after the columns.
+    PaperWide,
+    /// `[onlytextwidth]` / `[totalwidth=<w>]`: `\hbox to <w>{col \hfill col
+    /// \hfill}` whose exit code is `\unskip\egroup` — the last `\hfill`
+    /// is removed, so only the gaps *between* columns stretch. Measured:
+    /// two `.3\textwidth` columns under `[onlytextwidth]` start at x =
+    /// 28.35 and 242.65bp (the second after all 122.92pt of free width).
+    Fixed(Sp),
+}
+
+/// The left edge of every column, measured from the **text** left edge
+/// (negative for the first column of a paper-wide row, which starts
+/// `\beamer@leftmargin` to the left of the text). `widths` are the
+/// columns' `minipage` widths; `text_width` is the enclosing `\textwidth`;
+/// `left_margin`/`right_margin` are `\beamer@leftmargin`/`\beamer@rightmargin`
+/// (1cm each in the default theme). `\hfill` glue shares the free width
+/// equally; a row wider than its box gets no glue (an overfull `\hbox`).
+///
+/// Measured (corpus deck p3, two `.5\textwidth` columns): the columns start
+/// at x = 18.90bp and 190.87bp from the paper edge, i.e. −9.45bp and
+/// 162.52bp from the text edge: `(364.195 − 307.290) / 3 = 18.968pt` per
+/// `\hfill`.
+pub fn column_origins(kind: ColumnsBox, widths: &[Sp], text_width: Sp, left_margin: Sp, right_margin: Sp) -> Vec<Sp> {
+    let total: i64 = widths.iter().map(|w| w.0).sum();
+    let (box_width, start, leading) = match kind {
+        ColumnsBox::PaperWide => (text_width + left_margin + right_margin, Sp::ZERO - left_margin, true),
+        ColumnsBox::Fixed(w) => (w, Sp::ZERO, false),
+    };
+    // Paper-wide: a fill before, between and after (n + 1); fixed: between
+    // only (n - 1), the trailing one `\unskip`ped.
+    let fills = if leading { widths.len() as i64 + 1 } else { widths.len() as i64 - 1 };
+    let free = (box_width.0 - total).max(0);
+    let fill = if fills > 0 { free / fills } else { 0 };
+    let mut x = start.0 + if leading { fill } else { 0 };
+    let mut out = Vec::with_capacity(widths.len());
+    for w in widths {
+        out.push(Sp(x));
+        x += w.0 + fill;
+    }
+    out
+}
+
+/// The `(height, depth)` of a column's box on the row, from the natural
+/// extent of its content (`total` = the content's height plus its last
+/// depth, `first_height` its first box's height, `last_depth` its last
+/// box's depth), by the `minipage` position letter (`\@iiiparbox`):
+///
+/// * `[t]`: `\vtop` — height of the first box, the rest is depth;
+/// * `[T]`: `\vtop` of an empty `\hbox` first (`\leavevmode` then the
+///   `\vskip-1ex` ends that paragraph), so height 0 and everything, the
+///   `-1ex` included, is depth;
+/// * `[c]`: `$\vcenter{...}\m@th$` — centred on [`MATH_AXIS`];
+/// * `[b]`: `\vbox` — the last depth is the depth.
+///
+/// Measured (corpus deck): `[T]` columns `\vbox(0.0+78.8667)`, `[c]` ones
+/// `\vbox(5.17082+-0.30417)` for a 4.86665pt-high single line and
+/// `\vbox(14.40416+8.92917)` for two lines totalling 23.33333pt.
+pub fn column_box(align: ColumnAlign, total: Sp, first_height: Sp, last_depth: Sp) -> (Sp, Sp) {
+    match align {
+        ColumnAlign::Top => (first_height, total - first_height),
+        ColumnAlign::TopBaseline => (Sp::ZERO, total),
+        ColumnAlign::Center => {
+            let half = Sp(total.0 / 2);
+            (half + MATH_AXIS, total - half - MATH_AXIS)
+        }
+        ColumnAlign::Bottom => (total - last_depth, last_depth),
+    }
+}
+
+/// The `beamer@col` alignment keys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ColumnAlign {
+    #[default]
+    Center,
+    Top,
+    /// `T`: `\vskip-1ex\nointerlineskip` before the content.
+    TopBaseline,
+    Bottom,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn block_skips_are_the_templates() {
+        let b = block();
+        assert_eq!(b.before, Glue::new("6pt", "2pt", "2pt"));
+        assert_eq!(b.after, Glue::new("3pt", "1pt", "1pt"));
+        assert!((b.body_top.to_pt() + 1.21666).abs() < 0.00002, "{:?}", b.body_top);
+        assert!((SANS_BODY_EX.to_pt() - 4.86665).abs() < 0.00002);
+        assert!((MATH_AXIS.to_pt() - 2.7375).abs() < 0.00002);
+        assert_eq!(trivlist_topsep(BaseSize::Pt11), Glue::new("9pt", "3pt", "5pt"));
+    }
+
+    #[test]
+    fn column_origins_match_the_corpus_deck() {
+        let tw = len("128mm") - len("2cm");
+        let half = tw.scaled("0.5").unwrap();
+        let x = column_origins(ColumnsBox::PaperWide, &[half, half], tw, len("1cm"), len("1cm"));
+        // From the paper edge: 18.90 and 190.87bp.
+        assert_eq!(bp(x[0] + len("1cm")), 18.898);
+        assert_eq!(bp(x[1] + len("1cm")), 190.866);
+        let y = column_origins(ColumnsBox::Fixed(tw), &[half, half], tw, len("1cm"), len("1cm"));
+        assert_eq!(y[0], Sp::ZERO);
+        assert_eq!(y[1], half);
+        // `[onlytextwidth]` with two `.3\textwidth` columns: the second
+        // starts at 242.645 - 28.346bp from the text edge (one `\hfill`).
+        let third = tw.scaled("0.3").unwrap();
+        let z = column_origins(ColumnsBox::Fixed(tw), &[third, third], tw, len("1cm"), len("1cm"));
+        assert!((bp(z[1]) - 214.299).abs() < 0.0015, "{}", bp(z[1]));
+        // `[totalwidth=6cm]` with 2cm + 3cm columns: 2cm + 1cm of fill.
+        let t = column_origins(ColumnsBox::Fixed(len("6cm")), &[len("2cm"), len("3cm")], tw, len("1cm"), len("1cm"));
+        assert_eq!(bp(t[1]), bp(len("3cm")));
+    }
+
+    #[test]
+    fn column_boxes_by_alignment() {
+        let one = Sp::pt(4) + Sp(56_797); // 4.86665pt
+        let (h, d) = column_box(ColumnAlign::Center, one, one, Sp::ZERO);
+        assert!((h.to_pt() - 5.17082).abs() < 0.0001, "{:?}", h);
+        assert!((d.to_pt() + 0.30417).abs() < 0.0001, "{:?}", d);
+        let (h, d) = column_box(ColumnAlign::TopBaseline, Sp::pt(78), Sp::ZERO, Sp::pt(2));
+        assert_eq!((h, d), (Sp::ZERO, Sp::pt(78)));
+        let (h, d) = column_box(ColumnAlign::Top, Sp::pt(30), Sp::pt(7), Sp::pt(2));
+        assert_eq!((h, d), (Sp::pt(7), Sp::pt(23)));
+        let (h, d) = column_box(ColumnAlign::Bottom, Sp::pt(30), Sp::pt(7), Sp::pt(2));
+        assert_eq!((h, d), (Sp::pt(28), Sp::pt(2)));
+    }
 
     fn bp(sp: Sp) -> f64 {
         (sp.to_bp() * 1000.0).round() / 1000.0
