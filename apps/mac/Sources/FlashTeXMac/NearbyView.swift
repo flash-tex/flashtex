@@ -230,9 +230,32 @@ final class PairingFlowController: ObservableObject {
             expectingWithdrawal = false // our own cancel or advertising-off; the machine already moved
         } else if let until = nearby.codeExpiresAt, until.timeIntervalSinceNow > 1 {
             apply(.withdrawn(generation: a.generation, reason: "the transport withdrew the code"))
+        } else if case .codeShown = phase, a.canRoll {
+            // We are inside `pairingCode`'s willSet; rolling would publish the
+            // replacement from within it and lose it to the outer `nil`. Roll
+            // once the transport has finished withdrawing the expired code.
+            DispatchQueue.main.async { [weak self] in self?.codeExpired(a) }
         } else {
             apply(.codeExpired(generation: a.generation))
         }
+    }
+
+    /// `a`'s code ran out. While it is still the shown code with no companion
+    /// connected and rolls remain, the machine is offered a replacement (next
+    /// journal generation, fresh code, this Mac's salt) and re-serves it in
+    /// place; otherwise the attempt fails as before. The machine decides.
+    private func codeExpired(_ a: PairingFlow.Attempt) {
+        guard case .codeShown(let shown) = phase, shown.generation == a.generation, shown.canRoll, let nearby else {
+            apply(.codeExpired(generation: a.generation))
+            return
+        }
+        let now = Date()
+        let code = Pairing.generateCode()
+        let replacement = PairingFlow.Attempt(
+            generation: journal.nextGeneration(), code: code,
+            pairId: Pairing.derive(code: code, salt: nearby.store.salt).pairId,
+            startedAt: now, expiresAt: now.addingTimeInterval(Pairing.codeLifetime))
+        apply(.codeExpired(generation: a.generation, replacement: replacement), now: now)
     }
 
     // MARK: machine + effects
@@ -297,9 +320,10 @@ final class PairingFlowController: ObservableObject {
 
     /// The transport expires its own codes (and restarts without the key);
     /// this timer is the belt to that suspender, and drops an attempt that
-    /// only the coordinator still holds.
+    /// only the coordinator still holds. After a roll the coordinator holds
+    /// the replacement, so nothing is dropped.
     private func expired(_ a: PairingFlow.Attempt) {
-        apply(.codeExpired(generation: a.generation))
+        codeExpired(a)
         guard let nearby, nearby.pairingCode == nil, nearby.coordinator.current?.code == a.code else { return }
         nearby.coordinator.cancel()
         if nearby.isAdvertising { nearby.startAdvertising() }
@@ -584,9 +608,12 @@ struct NearbyFlowView: View {
                 HStack(spacing: DS.Space.l) {
                     TimelineView(.periodic(from: .now, by: 1)) { ctx in
                         let left = Int(a.remaining(at: ctx.date).rounded(.up))
-                        Text("expires in \(left) s").font(.callout).foregroundStyle(left <= 15 ? .red : .secondary)
+                        // An unused code is replaced in place up to `maxCodeRolls`
+                        // times; say so, so a late paste is not a surprise.
+                        let rolled = a.rolls > 0 ? " (code \(a.rolls + 1) of \(Pairing.maxCodeRolls + 1))" : ""
+                        Text("expires in \(left) s\(rolled)").font(.callout).foregroundStyle(left <= 15 ? .red : .secondary)
                             .accessibilityLabel("Code expiry")
-                            .accessibilityValue("\(left) seconds left")
+                            .accessibilityValue("\(left) seconds left\(rolled)")
                             .accessibilityAddTraits(.updatesFrequently)
                             .accessibilityIdentifier("nearby.pairing.expiry")
                     }
@@ -595,7 +622,9 @@ struct NearbyFlowView: View {
                             .accessibilityLabel("Verifying companion")
                     }
                 }
-                Text("Scan the QR code, or type the digits on the companion.")
+                Text(a.canRoll
+                     ? "Scan the QR code, or type the digits on the companion. An unused code is replaced when it expires."
+                     : "Scan the QR code, or type the digits on the companion. This is the last code; the attempt ends when it expires.")
                     .font(.caption).foregroundStyle(.secondary)
                     .accessibilityHidden(true)
             }
