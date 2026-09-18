@@ -5,7 +5,7 @@
   "machine": "mac-m5pro-dq222",
   "note": "visual-sweep bug from Commander, 2026-09-18 08:07Z",
   "started_utc": "2026-09-18T08:32:59Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "MUSE-displaystyle-midformula",
-  "updated_utc": "2026-09-18T08:32:59Z"
+  "updated_utc": "2026-09-18T09:57:30Z"
 }
