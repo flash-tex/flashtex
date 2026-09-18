@@ -806,7 +806,7 @@ pub fn layout_with(table: &TableItem, rows: &[Vec<MCell>], m: &Metrics, cols: &W
                         x += piece.width();
                     }
                     let content_x = match cell.align {
-                        Align::Left | Align::Paragraph(_) | Align::Middle(_) | Align::Bottom(_) | Align::Fixed(..) => x,
+                        Align::Left | Align::Paragraph(_) | Align::Middle(_) | Align::Bottom(_) | Align::Fixed(..) | Align::Flexible => x,
                         Align::Right => right - after_width - cell.content.width,
                         Align::Center => x + (right - after_width - x - cell.content.width) / 2.0,
                     };

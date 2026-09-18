@@ -238,6 +238,7 @@ impl Bibliography {
                     extra_gap_after_pt: 0.0,
                     leftmargin: ListLeftMargin::Default,
                     widest_label: Some(widest.clone()),
+                    labelsep_pt: None,
                     lists: Vec::new(),
                     item: Some(ItemLabel::Template { text: label }),
                 });

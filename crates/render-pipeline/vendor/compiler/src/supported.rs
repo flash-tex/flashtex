@@ -87,6 +87,29 @@ pub struct Command {
     /// False for arms that parse the command but always diagnose that its
     /// output is unavailable (`\check`, `\breve`); excluded from coverage.
     pub renders: bool,
+    /// The document class that defines the command, when it is not universal.
+    /// `None` is every class (`\frac`, `\section`); `Some("letter")` is only
+    /// under `\documentclass{letter}` (the parser diagnoses the rest, exactly
+    /// as pdflatex's "Undefined control sequence" does). Completion must not
+    /// offer a scoped command whose class differs from the document's; a new
+    /// class-scoped family (beamer's `\frametitle`, `\alert`, ...) registers
+    /// here the same way. Emitted as `requires_class` in `--supported json`,
+    /// the Mac completion vocabulary's data source.
+    pub requires_class: Option<&'static str>,
+}
+
+impl Command {
+    /// Whether completion may offer this command in a document of `class`.
+    /// `None` is an unknown class (a fragment with no `\documentclass`, as in
+    /// the editor's prefix tests): with nothing to gate on, everything stays
+    /// offered and today's table order is untouched.
+    pub fn offered_in_class(&self, class: Option<&str>) -> bool {
+        match (self.requires_class, class) {
+            (None, _) => true,
+            (Some(_), None) => true,
+            (Some(required), Some(class)) => required == class,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -125,8 +148,54 @@ pub struct Inventory {
 /// inventory entry rather than a diagnostic.
 pub const TEXT_DIAGNOSTIC_ONLY: &[&str] = &["frac", "sqrt", "thanks", "and"];
 
-/// Dispatch arms that are not `parser::BUILT_INS` entries.
-const TEXT_EXTRA_ARMS: &[&str] = &["newtheorem", "theoremstyle"];
+/// Text commands defined by one document class alone: every one of these goes
+/// through `parser::Parser::letter_command_available`, which diagnoses any use
+/// outside `\documentclass{letter}` exactly as pdflatex's "Undefined control
+/// sequence" does. (`\hangfrom` sits beside them in `BUILT_INS` but is kernel
+/// `ltsect.dtx`, so it stays universal.) Completion reads this through
+/// [`Command::requires_class`]: a scoped command must not outrank universal
+/// ones in a document of another class (`\frametitle` over `\frac`,
+/// `\alert` over `\alpha`). A new class-scoped family extends this list with
+/// its own class name.
+pub const LETTER_CLASS_COMMANDS: &[&str] = &[
+    "address",
+    "signature",
+    "name",
+    "location",
+    "telephone",
+    "opening",
+    "closing",
+    "cc",
+    "encl",
+    "ps",
+    "startbreaks",
+    "stopbreaks",
+    "stopletter",
+    "makelabels",
+];
+
+/// The class in [`Command::requires_class`] terms, or `None` for universal.
+fn requires_class(name: &str) -> Option<&'static str> {
+    if LETTER_CLASS_COMMANDS.contains(&name) {
+        Some("letter")
+    } else {
+        None
+    }
+}
+
+/// Dispatch arms that are not `parser::BUILT_INS` entries: amsthm's
+/// `newtheorem`/`theoremstyle`, soul's `so`/`hl`, and amsmath's
+/// `text`/`boxed` in text mode (both stay user-definable: neither
+/// is a kernel command, so the expansion engine must leave them
+/// undefined exactly as for soul above). The soul names stay
+/// out of `BUILT_INS` on purpose — the expansion engine must leave them
+/// undefined so a user's own `\newcommand{\hl}`/`\newcommand{\so}` wins
+/// when soul is not loaded (neither is a kernel command); the parser arm
+/// still diagnoses a bare use without `\usepackage{soul}` and implements
+/// the built-in behavior with it. They are implemented commands, so the
+/// diagnostic vocabulary (`crate::vocabulary`) counts them as known.
+pub(crate) const TEXT_EXTRA_ARMS: &[&str] =
+    &["newtheorem", "theoremstyle", "so", "hl", "text", "boxed", "enquote"];
 
 /// Canonical commands the expansion pass executes itself (engine primitives
 /// and kernel-prelude macros of `flashtex-tex-expansion`); their effect
@@ -157,6 +226,7 @@ const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("ignorespaces", "", "skips the spaces that follow"),
     ("jobname", "", "expands to texput"),
     ("ifthenelse", "{test}{true}{false}", "the ifthen package's conditional: \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests select one branch at expansion time"),
+    ("iftoggle", "{name}{true}{false}", "the etoolbox toggle conditional: the named toggle (\\newtoggle/\\providetoggle declare it false, \\toggletrue/\\togglefalse set it) selects one branch at expansion time"),
 ];
 
 /// (name, arguments, description) for every `parser::BUILT_INS` entry that
@@ -276,7 +346,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("vspace", "{dimension}", "ends the paragraph and adds fixed vertical space"),
     ("hrule", "", "full-measure horizontal rule"),
     ("newpage", "", "forces a page break"),
-    ("pagestyle", "{style}", "accepted; no headers or footers are rendered"),
+    ("pagestyle", "{style}", "records a page-style switch per page: fancy ships the fancyhead/fancyfoot fields, every other style renders no headers or footers"),
     ("noindent", "", "accepted no-op; paragraphs are never indented"),
     ("subsubsection", "{...}", "numbered subsubsection heading; starred form unnumbered"),
     ("paragraph", "{...}", "run-in heading: bold, flush, set into the first line of the paragraph that follows it"),
@@ -327,12 +397,18 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("LaTeX", "", "latex.ltx logo: L, kern -.36em, script-size A raised to the T height, kern -.15em, \\TeX"),
     ("LaTeXe", "", "\\LaTeX, kern .15em, 2 and a text-style subscript varepsilon"),
     ("rule", "[raise]{dimension}{dimension}", "filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \\textwidth, \\linewidth, \\columnwidth"),
+    ("strut", "", "zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \\strutbox)"),
     ("uline", "{...}", "ulem underline: 0.4pt rule under the argument (single-line; needs ulem)"),
     ("underline", "{...}", "kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox"),
     ("underbar", "{...}", "kernel text underline: Rule 10 rule like \\underline but content depth zeroed (fixed position)"),
     ("sout", "{...}", "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)"),
+    ("so", "{...}", "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)"),
+    ("hl", "{...}", "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)"),
+    ("enquote", "{text}", "csquotes: wraps text in typographic quotation marks; nesting alternates double \\u{201c}\\u{201d} and single \\u{2018}\\u{2019} (needs csquotes)"),
     ("textsuperscript", "{...}", "kernel text superscript: argument at \\sf@size raised like a math superscript (single-line)"),
     ("textsubscript", "{...}", "kernel text subscript: argument at \\sf@size lowered like a math subscript (single-line)"),
+    ("text", "{...}", "amsmath text in text mode: outside math simply \\mbox, the argument as one unbreakable box in the current style"),
+    ("boxed", "{...}", "amsmath box in text mode: the argument with a drawn frame (\\fbox with math inside)"),
     ("thinspace", "", "text kern .16667em (math: thin muskip)"),
     ("negthinspace", "", "text kern -.16667em"),
     ("medspace", "", "text kern .2222em"),
@@ -373,8 +449,18 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("newcolumn", "", "multicol: ends the current column of multicols, filling it"),
     ("raggedcolumns", "", "multicol: columns keep their natural height"),
     ("flushcolumns", "", "multicol: columns are stretched to one height (the default)"),
-    ("thispagestyle", "{style}", "accepted; no headers or footers are rendered"),
+    ("thispagestyle", "{style}", "records a one-page style switch: fancy ships the fancyhead/fancyfoot fields, every other style renders no headers or footers"),
     ("pagenumbering", "{style}", "resets the page counter to 1 and selects the \\thepage/\\pageref style (arabic, roman, Roman, alph, Alph); unknown styles fall back to arabic"),
+    ("fancyhead", "[pos]{...}", "fancyhdr: sets the header fields for positions L, C, R (combinable with E/O, as in [LE,RO]); empty content clears them"),
+    ("fancyfoot", "[pos]{...}", "fancyhdr: sets the footer fields for positions L, C, R (combinable with E/O, as in [LE,RO]); empty content clears them"),
+    ("fancyhf", "[pos]{...}", "fancyhdr: sets all six header and footer fields at once; empty content clears them"),
+    ("lhead", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
+    ("chead", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
+    ("rhead", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
+    ("lfoot", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
+    ("cfoot", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
+    ("rfoot", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
+    ("fancypagestyle", "{style}{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
     ("centering", "", "centres the following paragraphs"),
     ("Centering", "", "centres the following paragraphs (ragged2e form)"),
     ("raggedright", "", "left-aligned following paragraphs"),
@@ -759,6 +845,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["cancel", "bcancel", "xcancel"],
+        "{body}",
+        "cancel package: diagonal line(s) through the body (forward slash, backward slash, or X)",
+        true,
+    ),
+    (
         &["dashrightarrow", "dasharrow", "dashleftarrow"],
         "",
         "amsfonts dashed arrow: two msam \\dabar@ pieces and a head in one relation",
@@ -952,6 +1044,7 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
         "numbered list; article labels per depth, enumitem label/label*/shortlabels, start and resume",
     ),
     ("description", "list of bold \\item[term] labels"),
+    ("list", "kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep"),
     ("tabular", "table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \\extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned"),
     ("tabular*", "table of a given width"),
     ("verbatim", "literal monospaced lines"),
@@ -1023,9 +1116,19 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "tabular >{} <{} !{} m b w columns, \\newcolumntype and \\extrarowheight",
     ),
     (
+        "tabularx",
+        "",
+        "the tabularx environment and its X column, splitting the table's leftover width evenly",
+    ),
+    (
         "booktabs",
         "",
         "\\toprule, \\midrule, \\bottomrule, \\cmidrule(trim), \\addlinespace, \\specialrule, \\morecmidrules",
+    ),
+    (
+        "cancel",
+        "",
+        "\\cancel (forward diagonal), \\bcancel (backward diagonal) and \\xcancel (X) through a math expression; \\cancelto is diagnosed",
     ),
     (
         "longtable",
@@ -1078,9 +1181,19 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined",
     ),
     (
+        "soul",
+        "",
+        "\\so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \\hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828); \\st stays unsupported",
+    ),
+    (
         "relsize",
         "",
         "\\larger/\\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size",
+    ),
+    (
+        "fancyhdr",
+        "",
+        "\\pagestyle{fancy} ships the \\fancyhead/\\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \\fancyhf clears all six fields; \\lhead and friends plus \\fancypagestyle are diagnosed where they are used",
     ),
     (
         "xspace",
@@ -1091,6 +1204,16 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "ifthen",
         "",
         "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used",
+    ),
+    (
+        "csquotes",
+        "",
+        "\\enquote: typographic quotation marks, alternating double/single on nesting",
+    ),
+    (
+        "etoolbox",
+        "",
+        "toggle booleans: \\newtoggle/\\providetoggle declare a false toggle, \\toggletrue/\\togglefalse set it, \\iftoggle{name}{true}{false} selects a branch at expansion time; a duplicate \\newtoggle and any use of an undefined toggle are diagnosed where they are used and leave existing state alone. The rest of etoolbox (patching, hooks, list processing) is diagnosed where it is used",
     ),
 ];
 
@@ -1160,6 +1283,7 @@ pub fn inventory() -> Inventory {
             description: text_description(name),
             glyph: None,
             renders: true,
+            requires_class: requires_class(name),
         });
     }
     for &(name, arguments, description) in EXPANSION_COMMANDS {
@@ -1171,6 +1295,7 @@ pub fn inventory() -> Inventory {
             description: description.to_string(),
             glyph: None,
             renders: true,
+            requires_class: None,
         });
     }
     for &(name, mode, description) in CONTROL_SYMBOLS {
@@ -1182,6 +1307,7 @@ pub fn inventory() -> Inventory {
             description: description.to_string(),
             glyph: None,
             renders: true,
+            requires_class: None,
         });
     }
     for &(names, arguments, description, renders) in MATH_STRUCTURES {
@@ -1194,6 +1320,7 @@ pub fn inventory() -> Inventory {
                 description: description.to_string(),
                 glyph: None,
                 renders,
+                requires_class: None,
             });
         }
     }
@@ -1216,6 +1343,7 @@ pub fn inventory() -> Inventory {
             description: format!("symbol {glyph}"),
             glyph: Some(glyph),
             renders: true,
+            requires_class: None,
         });
     }
     // amssymb/amsfonts symbols (`crate::amssymb`), which take precedence over
@@ -1248,6 +1376,7 @@ pub fn inventory() -> Inventory {
             ),
             glyph: Some(ams.text),
             renders: true,
+            requires_class: None,
         });
     }
     for &name in math::OPERATOR_NAMES {
@@ -1259,6 +1388,7 @@ pub fn inventory() -> Inventory {
             description: "upright operator name".to_string(),
             glyph: None,
             renders: true,
+            requires_class: None,
         });
     }
 
@@ -1430,6 +1560,14 @@ pub fn render_json(inventory: &Inventory) -> String {
             );
             if let Some(glyph) = c.glyph {
                 line.push_str(&format!(", \"glyph\": {}", json_str(glyph)));
+            }
+            // The schema stays `flashtex-supported-latex/1`: Swift's
+            // `JSONDecoder` ignores unknown keys, so the Mac vocabulary keeps
+            // decoding while it learns to read this field (and
+            // `sync-supported-latex.sh` greps for the `/1` marker, so a bump
+            // would break the sync, not just the decoder).
+            if let Some(class) = c.requires_class {
+                line.push_str(&format!(", \"requires_class\": {}", json_str(class)));
             }
             line.push('}');
             line

@@ -11,7 +11,7 @@ use std::rc::Rc;
 use crate::bib;
 use crate::biblatex;
 use crate::date::TodayDate;
-use crate::color::{Colors, DeviceColor};
+use crate::color::{ColorSpace, Colors, DeviceColor};
 use crate::diagnostics::Diagnostic;
 use crate::expansion::{self, ExpansionSite};
 use crate::lexer::{apply_text_ligatures, tokenize_document, Token, TokenKind};
@@ -86,6 +86,135 @@ pub enum FillLeader {
     Rule,
     /// Periods centred in 0.44em boxes, the boxes centred in the glue (`\cleaders`).
     Dots,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A page style named by `\pagestyle`/`\thispagestyle`: the kernel's four
+/// plus fancyhdr's `fancy`. `Unknown` keeps any other name accepted and
+/// silent, exactly as `\pagestyle` has always treated styles this layout
+/// does not render.
+pub enum PageStyleName {
+    Empty,
+    Plain,
+    Headings,
+    MyHeadings,
+    Fancy,
+    Unknown,
+}
+
+impl PageStyleName {
+    fn parse(name: &str) -> PageStyleName {
+        match name.trim() {
+            "empty" => PageStyleName::Empty,
+            "plain" => PageStyleName::Plain,
+            "headings" => PageStyleName::Headings,
+            "myheadings" => PageStyleName::MyHeadings,
+            "fancy" => PageStyleName::Fancy,
+            _ => PageStyleName::Unknown,
+        }
+    }
+}
+
+/// fancyhdr's six running-head fields: even and odd pages share one slot
+/// each because this layout is always one-sided, so an even-only group
+/// (`LE` in `[LE,RO]`) never ships and the odd group alone selects. Every
+/// slot starts empty --
+/// `\pagestyle{fancy}` alone draws no text, and `\fancyhf{}` returns all
+/// six to empty -- and `\fancyhead`/`\fancyfoot` fill them. The rule widths
+/// are fancyhdr's defaults (`\headrulewidth` 0.4pt, `\footrulewidth` 0pt);
+/// `\setlength` on either updates them.
+#[derive(Debug, Clone)]
+pub struct FancyHdr {
+    /// Header fields left, centre, right.
+    pub head: [Vec<Inline>; 3],
+    /// Footer fields left, centre, right.
+    pub foot: [Vec<Inline>; 3],
+    pub headrule_pt: f64,
+    pub footrule_pt: f64,
+}
+
+impl Default for FancyHdr {
+    fn default() -> Self {
+        FancyHdr {
+            head: [Vec::new(), Vec::new(), Vec::new()],
+            foot: [Vec::new(), Vec::new(), Vec::new()],
+            headrule_pt: 0.4,
+            footrule_pt: 0.0,
+        }
+    }
+}
+
+/// Split a `\fancyhead`/`\fancyfoot`/`\fancyhf` `[pos]` list (`L`, `C`,
+/// `R`, combinable with `E`/`O` and commas, as in `[LE,RO]`) into slot
+/// indices 0/1/2. The bracket splits on `,` first: a group containing `E`
+/// but not `O` selects nothing, because a one-sided document's
+/// `\@outputpage` always uses `\@oddhead` and even-only fields never ship;
+/// otherwise the group's `L`/`C`/`R` letters select. A group with neither
+/// `E` nor `O` applies always, so `[LE,RO]` (the fancyhdr manual's
+/// canonical idiom) is the `R` slot alone here, and `[LO,RE]` the `L` slot
+/// alone. No `L`/`C`/`R` letter anywhere (`[]`, `[O]`, `[EO]`) is fancyhdr's
+/// default when no position is given: every slot; unknown letters come back
+/// for the caller to diagnose.
+fn fancy_position_slots(raw: Option<&str>) -> (Vec<usize>, Vec<char>) {
+    let Some(raw) = raw else {
+        return (vec![0, 1, 2], Vec::new());
+    };
+    let mut slots = Vec::new();
+    let mut unknown = Vec::new();
+    let mut placed = false;
+    let mut applied = false;
+    for group in raw.split(',') {
+        if group.contains('E') && !group.contains('O') {
+            // Even-only group: never ships one-sided. Unknown letters in
+            // it still warn, exactly as elsewhere in the bracket.
+            for c in group.chars() {
+                if !matches!(c, 'L' | 'C' | 'R' | 'E' | 'O' | ' ' | '\t' | '\n')
+                    && !unknown.contains(&c)
+                {
+                    unknown.push(c);
+                }
+            }
+            continue;
+        }
+        applied = true;
+        for c in group.chars() {
+            match c {
+                'L' => {
+                    if !slots.contains(&0) {
+                        slots.push(0);
+                    }
+                    placed = true;
+                }
+                'C' => {
+                    if !slots.contains(&1) {
+                        slots.push(1);
+                    }
+                    placed = true;
+                }
+                'R' => {
+                    if !slots.contains(&2) {
+                        slots.push(2);
+                    }
+                    placed = true;
+                }
+                'E' | 'O' => {}
+                ' ' | '\t' | '\n' => {}
+                other => {
+                    if !unknown.contains(&other) {
+                        unknown.push(other);
+                    }
+                }
+            }
+        }
+    }
+    if !placed && unknown.is_empty() && applied {
+        // `[E]` alone selects nothing (every group is even-only, so nothing
+        // applied); anything else letter-less (`[]`, `[O]`, `[EO]`) is the
+        // no-position default: every slot.
+        slots = vec![0, 1, 2];
+    }
+    slots.sort();
+    (slots, unknown)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -203,6 +332,16 @@ pub enum Inline {
     /// `span` is the command token.
     PageNumbering {
         style: crate::xref::NumberStyle,
+        span: Span,
+    },
+    /// `\pagestyle{style}` / `\thispagestyle{style}`: a zero-width marker
+    /// recording a page-style switch at this document position. Layout
+    /// applies markers in order as it sets paragraphs, so each shipped page
+    /// knows the style in force for it (`\thispagestyle` only its own
+    /// page). `span` is the command token.
+    PageStyle {
+        style: PageStyleName,
+        this_page: bool,
         span: Span,
     },
     /// `\hfill`/`\hfil`: infinite horizontal stretch. Multiple fills on one
@@ -518,6 +657,22 @@ pub enum UnderlineGeom {
     /// above the baseline, thickness `\ULthickness`. pdflatex 10pt
     /// `rule(2.76805+-2.36806)`; 12pt `rule(3.24167+-2.84167)`.
     Strike,
+    /// soul `\hl`: the highlight rule drawn BEHIND the text
+    /// (`\setul{}{2.5ex}` with `xcolor` loaded), covering the glyphs and
+    /// extending below the baseline. The fragment's width stays the
+    /// content's own, but its height AND depth both grow to the rule: with
+    /// `xcolor` loaded, pdflatex 10pt `\hl{word}` is 21.4167pt wide (like
+    /// `word`), 7.5347pt tall (1.75ex above the baseline, covering the
+    /// ascenders) and 3.22914pt deep (0.75ex below). Without `color` or
+    /// `xcolor` loaded `soul-ori.sty` degrades `\hl` to plain `\ul`
+    /// geometry instead, which is why a probe taken without `xcolor`
+    /// misreports the height as the content's own. A fragment never breaks
+    /// within itself; a multi-word `\hl` is one fragment per word,
+    /// breakable between the fragments (real soul's rule also follows each
+    /// line fragment instead — the render-pipeline painting of a
+    /// line-broken highlight stays a known follow-up, see `\hl`, see
+    /// GH-828).
+    SoulHighlight,
 }
 
 impl UnderlineGeom {
@@ -546,9 +701,48 @@ impl UnderlineGeom {
                 let bottom_above = SOUT_RAISE_EX * ex;
                 (-(bottom_above + thickness), 0.0)
             }
+            Self::SoulHighlight => {
+                // The rule covers the glyphs (top above the baseline) and
+                // reaches `SOUL_HIGHLIGHT_DEPTH_EX` below it; both arms are
+                // font-relative, so 10pt cmr gives 1.75 * 4.30554pt =
+                // 7.5347pt of top above the baseline and 0.75 * 4.30554pt =
+                // 3.22914pt of depth, exactly as measured (soul's
+                // `\setul{}{2.5ex}` rule is 2.5ex tall: 1.75ex above plus
+                // 0.75ex below). `thickness` is ignored on purpose: `\hl`
+                // is always emitted with thickness 0 (see `soul_command`) —
+                // the yellow comes from the wrapping zero-sep color box,
+                // and a nonzero thickness would draw the pipeline's black
+                // over-bar instead.
+                (-SOUL_HIGHLIGHT_TOP_EX * ex, SOUL_HIGHLIGHT_DEPTH_EX * ex)
+            }
         }
     }
 }
+
+/// How far below the baseline soul's `\hl` rule reaches, in ex, with
+/// `xcolor` loaded. 10pt cmr: 0.75 * 4.30554pt = 3.22914pt, the measured
+/// `\hl{word}` depth.
+const SOUL_HIGHLIGHT_DEPTH_EX: f64 = 0.75;
+
+/// How far above the baseline soul's `\hl` rule reaches, in ex, with
+/// `xcolor` loaded: 1.75ex. 10pt cmr: 1.75 * 4.30554pt = 7.5347pt above
+/// the baseline; 12pt cmr (x-height 5.16667pt): 9.0417pt. Together with
+/// [`SOUL_HIGHLIGHT_DEPTH_EX`] (0.75ex below) this is soul's
+/// `\setul{}{2.5ex}` rule. (Without `color`/`xcolor` `soul-ori.sty`
+/// degrades `\hl` to `\ul` geometry, so probes taken without `xcolor`
+/// report the content height instead.) The depth arm extends the fragment
+/// below the baseline in both layouts; the top arm extends the fragment
+/// above the baseline through the layout's underline path (see GH-828)
+/// and additionally rides on the wrapping zero-sep color box as
+/// [`SoulHighlightExtents`] so the render-pipeline background paint path
+/// can extend the yellow fill above the glyphs once it consumes it
+/// (round-2 finding 3; pipeline consumption still pending, see GH-828).
+const SOUL_HIGHLIGHT_TOP_EX: f64 = 1.75;
+
+/// How far past the content on each side soul's `\hl` fill reaches, in TeX
+/// points. Carried on the box by [`SoulHighlightExtents`] with the top
+/// above; the paint path consumes both as a follow-up.
+const SOUL_HIGHLIGHT_SIDE_PT: f64 = 0.25;
 
 /// An underline / strike wrapper (`Inline::Underline`).
 ///
@@ -556,8 +750,12 @@ impl UnderlineGeom {
 /// top at 0.25em). [`UnderlineGeom::MathUnderline`] is kernel text
 /// `\underline` (content depth preserved).
 /// [`UnderlineGeom::Underbar`] is kernel `\underbar` (content depth zeroed).
-/// [`UnderlineGeom::Strike`] is ulem `\sout`. The fragment
-/// does not break across lines.
+/// [`UnderlineGeom::Strike`] is ulem `\sout`.
+/// [`UnderlineGeom::SoulHighlight`] is soul `\hl`'s behind-text rule
+/// (always emitted with thickness 0; its depth arm extends the fragment
+/// below the baseline while its top arm rides on the wrapping box as
+/// [`SoulHighlightExtents`]). A fragment never breaks within itself;
+/// a multi-word highlight breaks between its fragments.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Underline {
     pub content: Vec<Inline>,
@@ -567,6 +765,25 @@ pub struct Underline {
     pub span: Span,
     /// See `Inline::Text::space_before`.
     pub space_before: bool,
+}
+
+/// soul `\hl` highlight extents carried on the background-paint node
+/// (round-2 finding 3, see GH-828): the wrapping zero-separation
+/// `ColorBox` paints its yellow fill from the content bounds, which never
+/// reach soul's highlight top above the glyphs. The render-pipeline fill
+/// must extend by these instead once it consumes them (still pending).
+/// The compiler's own layouts already realise the top through the
+/// fragment's underline geometry, so only the downstream paint hook waits.
+/// `None` on an ordinary xcolor box.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SoulHighlightExtents {
+    /// How far above the baseline the yellow fill reaches, in ex (soul's
+    /// 1.75ex: [`SOUL_HIGHLIGHT_TOP_EX`]), resolved font-relatively
+    /// downstream like the underline geometry.
+    pub top_ex: f64,
+    /// How far past the content on each side the fill reaches, in TeX
+    /// points ([`SOUL_HIGHLIGHT_SIDE_PT`]).
+    pub side_pt: f64,
 }
 
 /// A `\textsuperscript{...}` / `\textsubscript{...}` wrapper
@@ -594,6 +811,9 @@ pub struct TextScript {
 /// (xcolor.sty 3.02 `\color@b@x`, `\XC@frameb@x`): `content` in an
 /// unbreakable box, behind it a `fill` rectangle `\fboxsep` larger on
 /// every side, and for `\fcolorbox` a `frame` of `\fboxrule` around that.
+/// soul `\hl` reuses this node with zero separation for its yellow
+/// behind-text rule (one box per word fragment); then `highlight` carries
+/// the fill extents above.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColorBox {
     pub fill: DeviceColor,
@@ -606,6 +826,9 @@ pub struct ColorBox {
     pub span: Span,
     /// See `Inline::Text::space_before`.
     pub space_before: bool,
+    /// soul `\hl` only (`None` for `\colorbox`/`\fcolorbox`): the
+    /// highlight top/overlap extents for the background paint path.
+    pub highlight: Option<SoulHighlightExtents>,
 }
 
 /// One `\\`-separated row of a multi-row display; cells are split on `&`.
@@ -692,6 +915,10 @@ pub enum Block {
         /// `\setlist`, or when the level's default `LIST_LEFTMARGIN_EM`
         /// share applies unchanged).
         leftmargin: ListLeftMargin,
+        /// `\setlength{\labelsep}` inside the list, in points: the gap
+        /// between this item's label's right edge and its text (`None` keeps
+        /// the default `LIST_LABELSEP_EM` gap).
+        labelsep_pt: Option<f64>,
         /// `thebibliography`'s widest-label argument (`\begin{thebibliography}{99}`'s
         /// `"99"`), overriding `level`'s hanging indent with `\labelwidth` +
         /// `\labelsep` measured from `[<text>]`, exactly like real LaTeX's
@@ -1026,6 +1253,26 @@ impl FontSizeLevel {
         }
     }
 
+    /// The AMS classes' (`amsart`, `amsbook`, `amsproc`) own `\larger`
+    /// (`delta > 0`) / `\smaller` (`delta < 0`): a pure integer index step
+    /// through the eleven-rung `crate::layout` ladder — each size command
+    /// sets a rung index (`\tiny` = 1 .. `\Huge` = 10, `\normalsize` = 5)
+    /// and the step adds `delta`, clamping to rung 0 (`\Tiny`) .. rung 10
+    /// (`\Huge`). There is no magstep math and no closest-value search at
+    /// all, unlike `stepped` above: e.g. `\tiny\larger\larger\larger` walks
+    /// tiny(1) → SMALL(2) → Small(3) → small(4), landing exactly on
+    /// `\small`. Rung 0 has no `FontSizeLevel` and folds onto `Tiny` (see
+    /// `crate::layout::ams_rung_level`), so stepping below `\tiny` holds
+    /// the smallest representable declaration.
+    pub fn stepped_ams(current: Option<FontSizeLevel>, delta: i32) -> Option<FontSizeLevel> {
+        if delta == 0 {
+            return current;
+        }
+        let rung = crate::layout::ams_rung(current) as i32 + delta;
+        let rung = rung.clamp(0, crate::layout::AMS_RUNG_COUNT as i32 - 1) as usize;
+        crate::layout::ams_rung_level(rung)
+    }
+
     /// Position of a level in real `relsize.sty`'s scan order
     /// (`normalsize, small, footnotesize, large, Large, LARGE, scriptsize,
     /// tiny, huge, Huge`): the first level in this order wins any tie for
@@ -1044,6 +1291,15 @@ impl FontSizeLevel {
             Some(FontSizeLevel::Huge2) => 9,
         }
     }
+}
+
+/// Whether `class` steps `\larger`/`\smaller` on the AMS `\@typesizes`
+/// ladder and resolves `\tiny`..`\Huge` against the AMS size tables
+/// (`amsart`, `amsbook`, `amsproc`, whose ladder logic is byte-identical).
+/// `acmart` also defines its own `\larger`/`\smaller`, but nothing shows it
+/// shares the AMS ladder, so it stays on the relsize-magstep path.
+pub(crate) fn is_ams_size_class(class: &str) -> bool {
+    matches!(class, "amsart" | "amsbook" | "amsproc")
 }
 
 impl TextStyle {
@@ -1251,7 +1507,8 @@ pub struct Parsed {
     pub diagnostics: Vec<Diagnostic>,
     /// The argument of the first valid `\documentclass`, if present.
     pub document_class: Option<String>,
-    /// Body size from a `10pt`/`11pt`/`12pt` `\documentclass` option.
+    /// Body size from the `\documentclass` point-size option
+    /// (`10pt`/`11pt`/`12pt`, plus `8pt`/`9pt` for the AMS classes).
     pub class_size_pt: Option<f64>,
     /// `\setlength{\parskip}{..}` from the preamble, in points.
     pub parskip_pt: Option<f64>,
@@ -1286,10 +1543,15 @@ pub struct Parsed {
     pub parameters: Vec<ParameterAssignment>,
     /// `\hyphenation{...}` exceptions, in document order.
     pub hyphenation: Vec<HyphenationException>,
+    /// fancyhdr's running-head fields and rule widths (`\fancyhead` /
+    /// `\fancyfoot` / `\fancyhf` / `\setlength{\headrulewidth}` ...),
+    /// read by layout when a page ships under `\pagestyle{fancy}`.
+    pub fancy: FancyHdr,
 }
 
 impl Parsed {
-    /// Layout constraints with the preamble's body size and `\parskip` applied.
+    /// Layout constraints with the preamble's body size and `\parskip`
+    /// applied, plus the AMS size-table flag for an AMS `\documentclass`.
     pub fn preamble_constraints(
         &self,
         constraints: crate::layout::LayoutConstraints,
@@ -1297,6 +1559,10 @@ impl Parsed {
         crate::layout::LayoutConstraints {
             font_size_pt: self.class_size_pt.unwrap_or(constraints.font_size_pt),
             parskip_pt: self.parskip_pt.or(constraints.parskip_pt),
+            ams_sizes: self
+                .document_class
+                .as_deref()
+                .is_some_and(is_ams_size_class),
             ..constraints
         }
     }
@@ -1410,6 +1676,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "hfil",
     "hspace",
     "hskip",
+    "strut",
     "footnote",
     "footnotemark",
     "footnotetext",
@@ -1477,6 +1744,16 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "flushcolumns",
     "pagestyle",
     "thispagestyle",
+    "fancyhead",
+    "fancyfoot",
+    "fancyhf",
+    "lhead",
+    "chead",
+    "rhead",
+    "lfoot",
+    "cfoot",
+    "rfoot",
+    "fancypagestyle",
     "pagenumbering",
     "listfiles",
     "centering",
@@ -1615,6 +1892,30 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "textperiodcentered",
     "textregistered",
     "texttrademark",
+    "textdegree",
+    "textmu",
+    "textohm",
+    "textcelsius",
+    "texteuro",
+    "textyen",
+    "textwon",
+    "textcurrency",
+    "textestimated",
+    "textnumero",
+    "textrecipe",
+    "textservicemark",
+    "textbardbl",
+    "textbrokenbar",
+    "texttimes",
+    "textdiv",
+    "textonehalf",
+    "textonequarter",
+    "textthreequarters",
+    "textperthousand",
+    "textpertenthousand",
+    "textopenbullet",
+    "textlangle",
+    "textrangle",
     // `text_builtins::TEXT_ACCENTS` and the
     // `text_builtins::CAPITAL_ACCENT_ALIASES` alias names.
     "c",
@@ -1637,6 +1938,17 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "sout",
     "textsuperscript",
     "textsubscript",
+    // NOTE: soul's `so`/`hl` are deliberately NOT here. They have parser
+    // dispatch arms and inventory entries (see `supported.rs`
+    // `TEXT_EXTRA_ARMS`, the same pattern as amsthm's
+    // `newtheorem`/`theoremstyle`), but the
+    // expansion engine must leave them undefined: neither is a kernel
+    // command, so a document that `\newcommand{\hl}` (or `\so`) without
+    // loading soul must win exactly as in real LaTeX. Declaring them as
+    // host commands would make that `\newcommand` fail with "already
+    // defined" and then misdiagnose the uses as needing soul. The built-in
+    // soul behavior kicks in at the parser arm, gated on
+    // `\usepackage{soul}` being present.
 ];
 
 /// Parses a LaTeX dimension using the legacy body-size context (`em` is the
@@ -1682,6 +1994,16 @@ fn is_table_length(name: &str) -> bool {
 
 fn is_preamble_length(name: &str) -> bool {
     PREAMBLE_LENGTHS.contains(&name)
+}
+
+/// Lengths a `\begin{list}` decl assigns (`\setlength{\leftmargin}{...}`):
+/// read on the innermost open list rather than warned about. Anything else
+/// list-shaped (`\parsep`, `\itemindent`, ...) keeps the historic warning.
+fn is_list_length(name: &str) -> bool {
+    matches!(
+        name,
+        "leftmargin" | "labelwidth" | "labelsep" | "itemsep" | "topsep"
+    )
 }
 
 fn is_length_reference(raw: &str) -> bool {
@@ -2246,6 +2568,7 @@ pub fn parse_project_with(
         natbib_limitations: std::collections::BTreeSet::new(),
         natbib_forced_numbers_reported: false,
         hangfrom_hang_indent_reported: false,
+        enquote_depth: 0,
         title: None,
         author: None,
         date: None,
@@ -2258,6 +2581,7 @@ pub fn parse_project_with(
         page_color: None,
         fboxsep_pt: 3.0,
         fboxrule_pt: 0.4,
+        fancy: FancyHdr::default(),
         length_scopes: Vec::new(),
         pending_global: false,
         latin_modern: false,
@@ -2312,6 +2636,7 @@ pub fn parse_project_with(
         expansions,
         parameters: p.parameters,
         hyphenation: p.hyphenation,
+        fancy: p.fancy,
     }
 }
 
@@ -2391,6 +2716,8 @@ struct P<'a> {
     /// `\fboxsep`/`\fboxrule` in TeX points (latex.ltx: 3pt, 0.4pt).
     fboxsep_pt: f64,
     fboxrule_pt: f64,
+    /// fancyhdr's six running-head fields and rule widths.
+    fancy: FancyHdr,
     /// Length values saved at `{`/`}` and environment boundaries.
     length_scopes: Vec<LengthScope>,
     /// A pass-through `\global` waiting for a parser-owned length assignment.
@@ -2490,6 +2817,9 @@ struct P<'a> {
     natbib_forced_numbers_reported: bool,
     /// Whether `\hangfrom`'s missing hanging indent has been reported.
     hangfrom_hang_indent_reported: bool,
+    /// csquotes `\enquote` nesting depth: 0 = outer (double quotes),
+    /// 1 = first inner (single quotes), etc.
+    enquote_depth: u32,
     /// Current text style; saved on `{` and environment entry, restored on
     /// the matching `}` or `\end`.
     style: TextStyle,
@@ -2635,6 +2965,9 @@ struct ListSpacing {
     itemsep_pt: f64,
     topsep_pt: f64,
     leftmargin: LeftMarginSetting,
+    /// `\setlength{\labelsep}` inside the list, in points (`None` keeps the
+    /// default gap between a label's right edge and the item text).
+    labelsep_pt: Option<f64>,
 }
 
 /// `\setlist{leftmargin=...}`'s value, resolved into a `Block::ListItem`'s
@@ -2778,8 +3111,23 @@ impl P<'_> {
                 {
                     let span = self.t[self.i].token.span;
                     let space_before = self.space_precedes(self.i);
+                    let control_symbol = self.t[self.i].token.control_symbol;
                     self.i += 1;
                     if self.in_body && !self.document_ended {
+                        // `\2`: no LaTeX layer defines a control symbol made
+                        // of a digit (pdflatex: `! Undefined control
+                        // sequence`), so the backslash is a typo for the
+                        // bare digit. The digit is still typeset below;
+                        // this only adds the diagnostic the silent literal
+                        // was missing.
+                        if control_symbol {
+                            if let Some(digit) = crate::diagnostics::control_symbol_digit(&word)
+                            {
+                                self.diags.push(Diagnostic::undefined_control_symbol(
+                                    digit, span,
+                                ));
+                            }
+                        }
                         para.push(Inline::Text {
                             text: apply_text_ligatures(word),
                             span,
@@ -2879,6 +3227,18 @@ impl P<'_> {
                     let space_before = self.space_precedes(self.i);
                     self.i += 1;
                     if render {
+                        // Same `\0`–`\9` report as the fast path above, for
+                        // tokens that fell through the tabbing/kern arms
+                        // (e.g. inside `tabbing`, where the first arm bows
+                        // out). Exactly one of the two arms runs per token.
+                        if tok.control_symbol {
+                            if let Some(digit) = crate::diagnostics::control_symbol_digit(&word)
+                            {
+                                self.diags.push(Diagnostic::undefined_control_symbol(
+                                    digit, tok.span,
+                                ));
+                            }
+                        }
                         para.push(Inline::Text {
                             text: apply_text_ligatures(&word),
                             span: tok.span,
@@ -3281,8 +3641,21 @@ impl P<'_> {
             "counterwithin" | "counterwithout" => self.counter_numbering(name, span),
             "sisetup" | "DeclareSIUnit" => self.siunitx_setup_command(name, span),
             "pagenumbering" => self.pagenumbering_command(span, para),
-            "graphicspath" | "allowdisplaybreaks" | "pagestyle" | "thispagestyle" => {
+            "graphicspath" | "allowdisplaybreaks" => {
                 self.argument_only_command(name, span)
+            }
+            // `\pagestyle` / `\thispagestyle` record a zero-width marker
+            // (see `pagestyle_command`), in the preamble exactly as in the
+            // body: only `fancy` draws anything yet.
+            "pagestyle" | "thispagestyle" => self.pagestyle_command(name, span, para),
+            // fancyhdr's core field commands (see `fancy_command`), in the
+            // preamble -- where header setup belongs -- and in the body.
+            "fancyhead" | "fancyfoot" | "fancyhf" => self.fancy_command(name, span),
+            // fancyhdr's later slice (see `fancy_later_command`): recognised
+            // as the package's own, so neither the generic preamble advice
+            // nor the unknown-command typo path fires for them.
+            "lhead" | "chead" | "rhead" | "lfoot" | "cfoot" | "rfoot" | "fancypagestyle" => {
+                self.fancy_later_command(name, span)
             }
             // Preamble or body: latex.ltx's `\twocolumn`/`\onecolumn`, which
             // both open with `\clearpage` and then set `\if@twocolumn`.
@@ -3466,8 +3839,9 @@ impl P<'_> {
                 self.transform_box(name, span, para)
             }
             "url" | "nolinkurl" | "href" => self.url_command(name, span, para),
-            // `\larger`/`\smaller` (relsize): declarations with an
-            // optional `[n]` step count (see `FontSizeLevel::stepped`). A
+            // `\larger`/`\smaller` (relsize, or the AMS ladder): declarations
+            // with an optional `[n]` step count (see `FontSizeLevel::stepped`
+            // and `stepped_ams`). A
             // following `{...}` is only an ordinary group — the step stays
             // in effect past it, like `\Large` — so unlike
             // `style_command_argument` (which always demands a group) this
@@ -3513,7 +3887,12 @@ impl P<'_> {
             | "textcopyright" | "textsterling" | "textellipsis" | "textbackslash"
             | "textasciitilde" | "textasciicircum" | "textunderscore" | "textbar" | "textless"
             | "textgreater" | "textbraceleft" | "textbraceright" | "textbullet"
-            | "textperiodcentered" | "textregistered" | "texttrademark" => {
+            | "textperiodcentered" | "textregistered" | "texttrademark" | "textdegree"
+            | "textmu" | "textohm" | "textcelsius" | "texteuro" | "textyen" | "textwon"
+            | "textcurrency" | "textestimated" | "textnumero" | "textrecipe"
+            | "textservicemark" | "textbardbl" | "textbrokenbar" | "texttimes" | "textdiv"
+            | "textonehalf" | "textonequarter" | "textthreequarters" | "textperthousand"
+            | "textpertenthousand" | "textopenbullet" | "textlangle" | "textrangle" => {
                 self.text_symbol(name, span, para)
             }
             // `text_builtins::TEXT_ACCENTS` and the
@@ -3529,6 +3908,13 @@ impl P<'_> {
             // `\underline` is latex.ltx `$\@@underline{\hbox{#1}}$` (TeXbook
             // Rule 10); math-mode `\underline`/`\underbar` are in `math.rs`.
             "uline" | "underline" | "underbar" | "sout" => self.underline_command(name, span, para),
+            // soul `\so` (letterspacing) and `\hl` (highlight) need the
+            // package; soul `\st` (strikethrough, GH-330's ulem-side work)
+            // stays unimplemented and keeps its `unknown_command` error.
+            "so" | "hl" => self.soul_command(name, span, para),
+            // csquotes `\enquote`: wraps the argument in language-appropriate
+            // quotation marks, alternating double/single on nesting.
+            "enquote" => self.enquote_command(span, para),
             // Kernel text-mode `\textsuperscript` / `\textsubscript`
             // (latex.ltx `ltmisc.dtx`): no package needed, unlike ulem's
             // commands above.
@@ -3539,6 +3925,15 @@ impl P<'_> {
             // the macro call is `}`, another command, or `, . ! ? ; : ' /`.
             "xspace" => self.xspace(span),
             "rule" => self.text_rule(span, para),
+            "strut" => self.strut(span, para),
+                        // amsmath `\text{...}` in text mode is `\mbox{...}` (amsmath.dtx
+            // `\ifmmode...\else\expandafter\mbox\fi`): one unbreakable box
+            // in the current style, with no diagnostic.
+            "text" => self.text_command(span, para),
+            // amsmath `\boxed{...}` in text mode (`\fbox` with math inside):
+            // the argument boxed with a drawn frame, like the `frame`
+            // environment.
+            "boxed" => self.text_boxed(span, para),
             "frac" | "sqrt" => self.text_mode_math_command(name, span),
             other => self.unsupported(other, span),
         }
@@ -3649,8 +4044,9 @@ impl P<'_> {
         }
     }
 
-    /// Commands whose arguments are read and dropped: `\graphicspath`,
-    /// `\allowdisplaybreaks`, `\pagestyle`, `\thispagestyle` and `\pagenumbering`.
+    /// Commands whose arguments are read and dropped: `\graphicspath`
+    /// and `\allowdisplaybreaks` (`\pagestyle` / `\thispagestyle` record a
+    /// marker now; see `pagestyle_command`).
     #[inline(never)]
     fn argument_only_command(&mut self, name: &str, span: Span) {
         match name {
@@ -3665,23 +4061,111 @@ impl P<'_> {
             "allowdisplaybreaks" => {
                 let _ = self.optional_bracket_argument();
             }
-            // Preamble or body (GH#321: the preamble is where documents usually
-            // declare them).
-            "pagestyle" => {
-                // No header/footer rendering exists yet, so every style is
-                // accepted with the same (honest) effect: none. `empty` and
-                // `plain` both describe "no footer content beyond a page
-                // number", which is already what happens.
-                let _ = self.required_group(name, span);
-            }
-            // `\thispagestyle` differs from `\pagestyle` only in scope
-            // (current page vs. every later one); since no style ever
-            // renders anything either way, the same honest no-op covers it.
-            "thispagestyle" => {
-                let _ = self.required_group(name, span);
-            }
             _ => unreachable!("\\{name} is not in this command family"),
         }
+    }
+
+    /// `\pagestyle{style}` / `\thispagestyle{style}` (latex.ltx
+    /// `\@pagestyle`), preamble or body (GH#321: the preamble is where
+    /// documents usually declare them). A zero-width marker records the
+    /// switch at this document position, so layout ships each page under
+    /// the style in force for it (`\thispagestyle` only its own page).
+    /// Only `fancy` draws anything here (see [`FancyHdr`]); every other
+    /// style keeps the long-standing honest no-op, so "no visible effect"
+    /// still holds for them. Only `fancy` sets document-global state: the
+    /// incremental path replays no marker side effects and stamps no
+    /// chrome, which is output-identical exactly when no page can ship
+    /// under `fancy` -- while `empty`/`plain` markers forced a full
+    /// recompile on every keystroke for nothing.
+    #[inline(never)]
+    fn pagestyle_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let (tokens, _) = self.required_group(name, span);
+        let style = PageStyleName::parse(&token_text(&tokens));
+        if style == PageStyleName::Fancy {
+            self.document_global_state = true;
+        }
+        para.push(Inline::PageStyle {
+            style,
+            this_page: name == "thispagestyle",
+            span,
+        });
+    }
+
+    /// fancyhdr's `\fancyhead[pos]{...}`, `\fancyfoot[pos]{...}` and
+    /// `\fancyhf[pos]{...}` (fancyhdr.sty): fill -- or, with empty content,
+    /// clear -- the selected running-head slots. Silent on success: the
+    /// fields are read back when a `fancy` page ships. Without
+    /// `\usepackage{fancyhdr}` the commands name what is missing instead
+    /// of falling through to the generic preamble advice, which would tell
+    /// the author to move header setup out of the preamble it belongs in.
+    #[inline(never)]
+    fn fancy_command(&mut self, name: &str, span: Span) {
+        let bracket = self.optional_bracket_argument();
+        let (tokens, argument_span) = self.required_group(name, span);
+        let mut whole = span.merge(argument_span);
+        if let Some((_, bracket_span)) = bracket.as_ref() {
+            whole = span.merge(*bracket_span).merge(argument_span);
+        }
+        if !self.packages.iter().any(|package| package == "fancyhdr") {
+            self.diags.push(Diagnostic::command_error(
+                name,
+                format!("\\{name} needs \\usepackage{{fancyhdr}}"),
+                Some(whole),
+                Some("ignored the command".into()),
+            ));
+            return;
+        }
+        let (slots, unknown) =
+            fancy_position_slots(bracket.as_ref().map(|(raw, _)| raw.as_str()));
+        if !unknown.is_empty() {
+            let letters: String = unknown.iter().collect();
+            self.diags.push(Diagnostic::warning(
+                format!("\\{name} ignores position '{letters}': not an L, C, R, E or O slot"),
+                Some(whole),
+                Some("set the recognised slots and ignored the rest".into()),
+            ));
+        }
+        self.document_global_state = true;
+        let style = self.style;
+        // Field content parses as body text even in the preamble, where
+        // header setup belongs: without this the inner words are dropped
+        // as preamble material (`argument_inlines` only keeps words while
+        // `in_body`).
+        let was_in_body = std::mem::replace(&mut self.in_body, true);
+        let content = self.argument_inlines(tokens, span, style);
+        self.in_body = was_in_body;
+        let head = name != "fancyfoot";
+        let foot = name != "fancyhead";
+        for slot in slots {
+            if head {
+                self.fancy.head[slot] = content.clone();
+            }
+            if foot {
+                self.fancy.foot[slot] = content.clone();
+            }
+        }
+    }
+
+    /// fancyhdr commands a later slice owns (`\lhead` / `\chead` /
+    /// `\rhead`, `\lfoot` / `\cfoot` / `\rfoot`, `\fancypagestyle`):
+    /// recognised as the package's own, so neither the generic preamble
+    /// advice (header setup belongs in the preamble) nor the
+    /// unknown-command typo path fires. Arguments are consumed so field
+    /// text cannot leak onto the page as prose.
+    #[inline(never)]
+    fn fancy_later_command(&mut self, name: &str, span: Span) {
+        let (_, first_span) = self.required_group(name, span);
+        let mut whole = span.merge(first_span);
+        if name == "fancypagestyle" {
+            let (_, second_span) = self.required_group(name, span);
+            whole = whole.merge(second_span);
+        }
+        self.diags.push(Diagnostic::command_error(
+            name,
+            format!("\\{name} is recognised but not implemented"),
+            Some(whole),
+            Some("ignored the command".into()),
+        ));
     }
 
     /// `\pagenumbering{arabic|roman|...}` (see [`P::command`]).
@@ -4046,7 +4530,7 @@ impl P<'_> {
                         self.begin_item(span, explicit);
                     }
                     None => self.diags.push(Diagnostic::error(
-                        "\\item is only supported inside itemize or enumerate",
+                        "\\item is only supported inside a list",
                         Some(span),
                         Some("ignored the item marker and continued".into()),
                     )),
@@ -4152,8 +4636,9 @@ impl P<'_> {
         self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT)
     }
 
-    /// relsize's `\larger`/`\smaller`: declarations with an optional
-    /// `[n]` step count (default 1), not argument-taking commands. The step
+    /// `\larger`/`\smaller` (relsize's, or the AMS classes' own ladder):
+    /// declarations with an optional `[n]` step count (default 1), not
+    /// argument-taking commands. The step
     /// applies to the rest of the enclosing scope: a following `{...}` is
     /// just an ordinary group — it restores the stepped size on close, like
     /// every group restores assignments made before it — so the size stays
@@ -4172,10 +4657,7 @@ impl P<'_> {
         // amsart/amsbook/amsproc/acmart define their own `\larger`/
         // `\smaller` independent of the relsize package, so the gate below
         // does not apply to them (real pdflatex diagnoses nothing under
-        // `\documentclass{amsart}`). This does not give them the AMS
-        // classes' own `\@typesizes`-based step ladder — only their size
-        // table's existing `size_declaration_pt` values — which is a
-        // narrower fix than full AMS ladder support.
+        // `\documentclass{amsart}`).
         //
         // This is deliberately NOT `math::AMSMATH_CLASSES` (which also
         // includes `beamer`): beamer does not define its own `\larger`/
@@ -4202,7 +4684,18 @@ impl P<'_> {
         }
         let delta = if name == "larger" { steps } else { -steps };
         let mut next = self.style;
-        next.size = FontSizeLevel::stepped(next.size, delta, self.body_size_pt());
+        // Only the AMS ladder classes step on their own `\@typesizes`
+        // ladder (`stepped_ams`); `acmart` stays on the relsize-magstep
+        // path (see `is_ams_size_class`).
+        next.size = if self
+            .document_class
+            .as_deref()
+            .is_some_and(is_ams_size_class)
+        {
+            FontSizeLevel::stepped_ams(next.size, delta)
+        } else {
+            FontSizeLevel::stepped(next.size, delta, self.body_size_pt())
+        };
         self.style = next;
     }
 
@@ -4562,8 +5055,13 @@ impl P<'_> {
             } else {
                 priority
             };
+            // Zero-width markers (`\pagestyle` / `\thispagestyle`) are
+            // whatsits like `\label`: they collect no text, so a paragraph
+            // holding only them is still vertical mode.
             let horizontal = self.paragraph_started
-                || para.iter().any(|inline| !matches!(inline, Inline::Label { .. }));
+                || para
+                    .iter()
+                    .any(|inline| !matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. }));
             if horizontal {
                 para.push(Inline::PagePenalty { value, span });
             } else {
@@ -4637,6 +5135,82 @@ impl P<'_> {
             .with_help(format!("wrap it in math mode: \\(\\{name}{{...}}\\)"))
             .with_label(span, "this command", true),
         );
+    }
+
+    /// amsmath `\text{...}` in text mode: outside math it is simply
+    /// `\mbox{...}` (amsmath.dtx). The argument is parsed as a
+    /// restricted-horizontal-mode box in the current style — the same
+    /// `box_inlines` every other box argument uses — and spliced into
+    /// the paragraph, so declarations like `\Large` stay inside the box
+    /// exactly as in `\mbox`. The content already reached the page
+    /// through `unsupported`'s prose fallthrough; this arm retires the
+    /// false `unsupported_feature` error without moving a glyph. Like
+    /// `\leavevmode`, it starts the paragraph.
+    ///
+    /// Argument-edge spaces follow the engine's other box arguments
+    /// (`\textbf`, plain groups): a leading space survives on the first
+    /// inline's `space_before`; a trailing one is dropped (pdflatex
+    /// keeps it — a pre-existing engine limitation, not introduced
+    /// here).
+    fn text_command(&mut self, span: Span, para: &mut Vec<Inline>) {
+        // `\DeclareTextFontCommand`-style `\leavevmode\bgroup`.
+        self.paragraph_started = true;
+        let site_space = self.space_precedes(self.i - 1);
+        let (tokens, _) = self.required_group("text", span);
+        // An argument-edge space is real interword glue inside the box
+        // (pdflatex sets `Before\text{ after}After.` as "Before
+        // afterAfter."), so only without one does the splice convention
+        // apply: the first piece keeps the command site's `space_before`
+        // (cf. soul's `\so` below), and a missing one invents no gap
+        // (`Before\text{X}After.` stays gapless, like `{X}`).
+        let leading_space = matches!(
+            tokens.first().map(|input| &input.token.kind),
+            Some(TokenKind::Space)
+        );
+        let mut content = self.box_inlines(tokens);
+        if !leading_space {
+            match content.first_mut() {
+                Some(Inline::Text {
+                    space_before: first,
+                    ..
+                }) => *first = site_space,
+                Some(Inline::Math {
+                    space_before: first,
+                    ..
+                }) => *first = site_space,
+                Some(Inline::ColorBox(boxed)) => boxed.space_before = site_space,
+                Some(Inline::Underline(underlined)) => underlined.space_before = site_space,
+                _ => {}
+            }
+        }
+        para.extend(content);
+    }
+
+    /// amsmath `\boxed{...}` in text mode (`\fbox` with math inside):
+    /// the argument as one bordered box, exactly like the `frame`
+    /// environment — `Inline::ColorBox` with the page colour as fill
+    /// and the current colour as frame — so the rule the old
+    /// `unsupported` path silently dropped now reaches the page. An
+    /// argument that already holds `$...$` keeps its formula (the
+    /// corpus case); a bare one is boxed as text, like `\fbox`. Full
+    /// amsmath fidelity (`\displaystyle` forced around a bare
+    /// argument) is follow-up work, not this slice.
+    fn text_boxed(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        // An `\fbox` starts the paragraph, like `\mbox` above.
+        self.paragraph_started = true;
+        let (tokens, argument_span) = self.required_group("boxed", span);
+        let content = self.box_inlines(tokens);
+        para.push(Inline::ColorBox(Box::new(ColorBox {
+            fill: self.page_color.unwrap_or(DeviceColor::WHITE),
+            frame: Some(self.style.color.unwrap_or(DeviceColor::BLACK)),
+            content,
+            fboxsep_pt: self.fboxsep_pt,
+            fboxrule_pt: self.fboxrule_pt,
+            span: span.merge(argument_span),
+            space_before,
+            highlight: None,
+        })));
     }
 
     /// `\xspace` (xspace.sty) in running text: a word space unless the token
@@ -4800,6 +5374,20 @@ impl P<'_> {
                 self.counters = crate::xref::Counters::report();
             }
             self.document_class = Some(class);
+        }
+        if self.class_size_pt.is_none()
+            && self.document_class.as_deref().is_some_and(is_ams_size_class)
+        {
+            // The AMS classes also offer `8pt`/`9pt` options (the standard
+            // classes only offer 10/11/12); any other class keeps ignoring
+            // them, exactly as before. This runs after the class name is
+            // recorded, since the option list alone cannot tell an AMS
+            // `9pt` from an (invalid) standard-class one.
+            self.class_size_pt = option_list.iter().find_map(|option| match *option {
+                "8pt" => Some(8.0),
+                "9pt" => Some(9.0),
+                _ => None,
+            });
         }
         // letter.cls lines 91-92 replace the standard classes' paragraph
         // shape outright: `\parskip 0.7em` (rigid, in the class body font)
@@ -5027,7 +5615,23 @@ impl P<'_> {
         add: bool,
         global: bool,
     ) {
-        let Some(pt) = parse_dimen_pt_current(raw, self.font_setup().em_ex_sp(self.style)) else {
+        let in_preamble = self.has_document && !self.in_body;
+        let in_list = !self.list_stack.is_empty();
+        let dimen = parse_dimen_pt_current(raw, self.font_setup().em_ex_sp(self.style));
+        // A list length read inside the list it shapes also accepts
+        // `<factor>\baselineskip` (the corpus sets `\topsep` to
+        // `0.6\baselineskip`), resolved exactly like `\enlargethispage`
+        // rather than through the length-reference path below, which does
+        // not know `\baselineskip`. Anywhere else the historic error below
+        // applies unchanged.
+        let fallback = if dimen.is_none() && is_list_length(target) && !in_preamble && in_list {
+            self.baselineskip_multiple(raw)
+        } else {
+            None
+        };
+        let dimen = dimen.or(fallback);
+        let via_baselineskip = fallback.is_some();
+        let Some(pt) = dimen else {
             let who = if command.is_empty() {
                 format!("\\{target}")
             } else {
@@ -5040,8 +5644,9 @@ impl P<'_> {
             ));
             return;
         };
-        let in_preamble = self.has_document && !self.in_body;
-        let pt = if is_length_reference(raw) {
+        let pt = if via_baselineskip {
+            pt
+        } else if is_length_reference(raw) {
             match self.resolve_known_length_ref(raw) {
                 Some(v) => v,
                 None => {
@@ -5067,6 +5672,14 @@ impl P<'_> {
             "fboxrule" => {
                 self.fboxrule_pt = if add { self.fboxrule_pt + pt } else { pt };
             }
+            // fancyhdr's rule widths, read back when a `fancy` page ships
+            // (see `FancyHdr`); preamble-global, like the package's own.
+            "headrulewidth" => {
+                self.fancy.headrule_pt = if add { self.fancy.headrule_pt + pt } else { pt };
+            }
+            "footrulewidth" => {
+                self.fancy.footrule_pt = if add { self.fancy.footrule_pt + pt } else { pt };
+            }
             // longtable's lengths are read from the source by the render
             // pipeline's longtable layout.
             "LTleft" | "LTright" | "LTpre" | "LTpost" | "LTcapwidth" => {}
@@ -5080,6 +5693,34 @@ impl P<'_> {
                 } else {
                     pt
                 });
+            }
+            // latex.ltx list lengths assigned inside the list they shape
+            // (usually the decl argument): they land on the innermost open
+            // list, so a nested list's own decl shapes only itself. Outside
+            // any list the warning below applies, as before. labelwidth is
+            // accepted with no stored value: labels are right-aligned to end
+            // labelsep before the margin however wide their box is, exactly
+            // makelabel's placement, so there is nothing further to honour.
+            // addtolength on leftmargin and labelsep keeps that warning: only
+            // an absolute setlength is resolved here.
+            "leftmargin" | "labelwidth" | "labelsep" if !in_preamble && !add && in_list => {
+                if let Some(list) = self.list_stack.last_mut() {
+                    match target {
+                        "leftmargin" => list.spacing.leftmargin = LeftMarginSetting::Explicit(pt),
+                        "labelsep" => list.spacing.labelsep_pt = Some(pt),
+                        _ => {}
+                    }
+                }
+            }
+            "itemsep" | "topsep" if !in_preamble && in_list => {
+                if let Some(list) = self.list_stack.last_mut() {
+                    let slot = if target == "itemsep" {
+                        &mut list.spacing.itemsep_pt
+                    } else {
+                        &mut list.spacing.topsep_pt
+                    };
+                    *slot = if add { *slot + pt } else { pt };
+                }
             }
             "parindent" if in_preamble && pt == 0.0 => {}
             // A TeX assignment or `\addtolength` is accepted without noise
@@ -5864,6 +6505,18 @@ impl P<'_> {
         // `\maketitle` ends with `\setcounter{footnote}{0}`.
         self.footnote_counter = 0;
         self.finish_block_dependencies();
+        // `\maketitle` issues `\thispagestyle{plain}` (article.cls
+        // `\@maketitle`): the title page ships with no running head while
+        // later pages keep the ambient style. The marker rides in `para`
+        // with whatever paragraph comes next, so layout records the page
+        // that is still open then -- the title's own page, like the
+        // hand-written `\thispagestyle{plain}` this mirrors (a marker-only
+        // paragraph still reaches layout when nothing follows).
+        para.push(Inline::PageStyle {
+            style: PageStyleName::Plain,
+            this_page: true,
+            span,
+        });
     }
 
     /// A captured `\title`/`\author`/`\date` argument as inline content
@@ -6429,6 +7082,27 @@ impl P<'_> {
                 .as_ref()
                 .map_or(span.merge(argument_span), |(_, o)| span.merge(*o));
             self.open_list(&environment, options.map(|(text, _)| text), begin_span, blocks.len());
+        } else if environment == "list" && self.in_body {
+            // latex.ltx list: only the default label is consumed here; the
+            // decl group stays in the stream as an ordinary group, so its
+            // declarations run as body commands in the list scope and land
+            // on the open list (see apply_length_value). A font declaration
+            // in decl therefore stays scoped to that group rather than to
+            // the matching end, the one deliberate deviation.
+            self.flush_paragraph(blocks, para);
+            let (default_tokens, default_span) = self.required_group("list", span);
+            let default_label = inline_text(&self.inlines_from_tokens(
+                default_tokens,
+                self.style,
+                false,
+            ));
+            let begin_span = span.merge(argument_span).merge(default_span);
+            self.open_list(&environment, None, begin_span, blocks.len());
+            if !default_label.is_empty() {
+                if let Some(list) = self.list_stack.last_mut() {
+                    list.template = Some(default_label);
+                }
+            }
         } else if self.in_body
             && (self.theorems.contains_key(&environment) || environment == "proof")
         {
@@ -6565,21 +7239,56 @@ impl P<'_> {
     ) {
         let popped = self.env_stack.pop();
         let had_open_environment = popped.is_some();
+        // `\end{document}` closing over unclosed environments reports only
+        // the innermost one, at any depth: pdflatex (TeX Live 2026) emits a
+        // single `! LaTeX Error: \begin{<innermost>} ... ended by
+        // \end{document}.` no matter how many levels are open, and the
+        // intermediate levels close silently. Without the drain below, every
+        // level left on `env_stack` (including `document` itself) earns its
+        // own diagnostic from the end-of-input sweep, which reads as though
+        // more of the document were broken than actually is.
+        let mut document_closed_over_open = false;
         match popped {
             Some((open, _)) if open == environment => {}
-            Some((open, _)) => self.diags.push(Diagnostic::error(
-                format!(
-                    "\\end{{{}}} does not match \\begin{{{}}}",
-                    environment, open
-                ),
-                Some(span),
-                Some("closed the innermost open environment".into()),
-            )),
+            Some((open, _)) => {
+                self.diags.push(Diagnostic::error(
+                    format!(
+                        "\\end{{{}}} does not match \\begin{{{}}}",
+                        environment, open
+                    ),
+                    Some(span),
+                    Some("closed the innermost open environment".into()),
+                ));
+                document_closed_over_open = environment == "document" && self.has_document;
+            }
             None => self.diags.push(Diagnostic::error(
                 format!("\\end{{{}}} with no matching \\begin", environment),
                 Some(span),
                 Some("ignored the stray \\end".into()),
             )),
+        }
+        if document_closed_over_open {
+            // Silently unwind the intermediate levels (and `document`
+            // itself) so the end-of-input sweep reports nothing more. Each
+            // `begin_environment` saves exactly one entry on each per-level
+            // stack, so drop the same count the sweep would otherwise
+            // diagnose; the single pop the teardown below performs restores
+            // the pre-document state, exactly as before.
+            let silent = self.env_stack.len();
+            self.env_stack.clear();
+            // One entry per open environment on each per-level stack (see
+            // `begin_environment`); truncate rather than pop in a loop so a
+            // historically unbalanced stack can never underflow here.
+            let truncate = |len: usize| len.saturating_sub(silent);
+            self.env_styles.truncate(truncate(self.env_styles.len()));
+            self.env_alignments
+                .truncate(truncate(self.env_alignments.len()));
+            self.env_obeylines
+                .truncate(truncate(self.env_obeylines.len()));
+            self.parameter_scopes
+                .truncate(truncate(self.parameter_scopes.len()));
+            self.length_scopes
+                .truncate(truncate(self.length_scopes.len()));
         }
         if environment == "subequations" && self.in_body {
             self.end_subequations();
@@ -6603,7 +7312,7 @@ impl P<'_> {
             self.paragraph_styles.pop();
         } else if matches!(
             environment.as_str(),
-            "itemize" | "enumerate" | "description" | "thebibliography"
+            "itemize" | "enumerate" | "description" | "list" | "thebibliography"
         ) {
             let (gap_before, gap_after) = match self.list_stack.last() {
                 Some(list) => (
@@ -6683,9 +7392,21 @@ impl P<'_> {
             self.end_tabbing(blocks, para);
         } else if environment == "proof" {
             para.push(Inline::HFill { span, leader: FillLeader::None });
+            // The closing "∎" is generated text placed at the end of the
+            // body: span it (empty) at the `\end` command instead of
+            // covering it, so the block's last span ends where the body
+            // does and the source gap after the block still holds
+            // `\end{proof}`. The render pipeline reads that gap to decide
+            // whether a following `\begin{<list>}` was read in vertical
+            // mode (`\partopsep` at open, kept for the close); covering
+            // the `\end` hid it, and every list directly after a proof
+            // lost `\partopsep` at both boundaries (~2bp at 10pt). The
+            // `\hfill` keeps the `\end` span, so edits there still overlap
+            // a span of this block.
+            let qed_span = Span::in_document(span.document, span.start, span.start);
             para.push(Inline::Text {
                 text: "∎".to_string(),
-                span,
+                span: qed_span,
                 // `\qed` is typeset in the current (body) font, whose
                 // em-based box scales with the ambient size; unscoped this
                 // is `TextStyle::default()`, exactly as before.
@@ -7060,6 +7781,7 @@ impl P<'_> {
             fboxrule_pt: self.fboxrule_pt,
             span: open.merge(argument_span).merge(end_span),
             space_before,
+            highlight: None,
         })));
     }
 
@@ -7222,6 +7944,98 @@ impl P<'_> {
         })
     }
 
+    /// Lift `\label{...}` commands out of a display-math token stream
+    /// (`\[...\]` and `$$...$$`, via `finish_math`): amsmath lets an
+    /// unnumbered display carry `\tag`/`\label` even though it never steps
+    /// the counter (TeX Live 2026 pdflatex prints `(B)` for
+    /// `\[x=1 \tag{B}\label{e:d}\]` and `\eqref` reads `(B)`).
+    /// Returns the math tokens with the labels removed plus the extracted
+    /// `(key, span)` pairs. Mirrors the `equation`/multi-row environments,
+    /// which likewise lift every `\label` (at any depth) before math
+    /// parsing, with the same diagnostics for malformed arguments; inline
+    /// math is untouched and keeps its "not supported in math mode" error.
+    fn take_display_labels(&mut self, raw: Vec<Token>) -> (Vec<Token>, Vec<(String, Span)>) {
+        let mut clean = Vec::with_capacity(raw.len());
+        let mut labels = Vec::new();
+        let mut index = 0;
+        while index < raw.len() {
+            if !matches!(&raw[index].kind, TokenKind::Command(name) if name == "label") {
+                clean.push(raw[index].clone());
+                index += 1;
+                continue;
+            }
+            let command_span = raw[index].span;
+            index += 1;
+            while index < raw.len() && raw[index].kind == TokenKind::Space {
+                index += 1;
+            }
+            let open_token = raw.get(index).cloned();
+            let Some(open_token) = open_token else {
+                self.diags.push(Diagnostic::error(
+                    "\\label requires a braced argument",
+                    Some(command_span),
+                    Some("used an empty argument and continued".into()),
+                ));
+                break;
+            };
+            if open_token.kind != TokenKind::LBrace {
+                self.diags.push(Diagnostic::error(
+                    "\\label requires a braced argument",
+                    Some(command_span),
+                    Some("used an empty argument and continued".into()),
+                ));
+                continue;
+            }
+            index += 1;
+            let mut key = String::new();
+            let mut depth = 1usize;
+            let mut end = open_token.span.end;
+            let mut closed = false;
+            while index < raw.len() {
+                let token = &raw[index];
+                match &token.kind {
+                    TokenKind::LBrace => depth += 1,
+                    TokenKind::RBrace => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = token.span.end;
+                            index += 1;
+                            closed = true;
+                            break;
+                        }
+                    }
+                    TokenKind::Word(text) | TokenKind::Command(text) => key.push_str(text),
+                    TokenKind::Space | TokenKind::ParBreak => key.push(' '),
+                    _ => {}
+                }
+                end = token.span.end;
+                index += 1;
+            }
+            if !closed {
+                self.diags.push(Diagnostic::error(
+                    "argument to \\label is missing its closing brace",
+                    Some(open_token.span),
+                    Some("closed the argument at end of input".into()),
+                )
+                .with_help("add a closing '}'"));
+            }
+            let key = key.trim().to_string();
+            if key.is_empty() {
+                continue;
+            }
+            let span = self.span_through(command_span, end);
+            if self.seen_labels.insert(key.clone(), span).is_some() {
+                self.diags.push(Diagnostic::warning(
+                    format!("duplicate \\label{{{key}}}; the second definition wins"),
+                    Some(span),
+                    Some("replaced the earlier label definition".into()),
+                ));
+            }
+            labels.push((key, span));
+        }
+        (clean, labels)
+    }
+
     fn equation_environment(
         &mut self,
         open: Span,
@@ -7231,13 +8045,6 @@ impl P<'_> {
     ) {
         self.flush_paragraph(blocks, para);
         let numbered = name == "equation";
-        let number = if numbered {
-            let number = self.counters.step("equation").unwrap_or_default();
-            self.set_current_counter("equation", Some(number.clone()));
-            number
-        } else {
-            self.counters.the("equation").unwrap_or_default()
-        };
         let mut raw = Vec::new();
         let mut labels: Vec<(String, Span)> = Vec::new();
         let mut end = open.end;
@@ -7292,13 +8099,25 @@ impl P<'_> {
         // `equation`/`equation*` are always display math.
         let list = math::parse_tokens_display(&raw, self.math_packages, &mut self.diags, true);
         let tag = Self::custom_tag_text(&list, self.documents[open.document.0].text, open.document);
+        // A `\tag{...}` display keeps the tag as its number and never
+        // steps the counter — the single-environment half of the
+        // multi-row rule above (TeX Live 2026 pdflatex: a tagged
+        // `equation` is followed by (1), not (2)). Only displays that get
+        // an automatic number step the counter.
+        let number = if numbered && tag.is_none() {
+            let number = self.counters.step("equation").unwrap_or_default();
+            self.set_current_counter("equation", Some(number.clone()));
+            number
+        } else {
+            self.counters.the("equation").unwrap_or_default()
+        };
         let color_ranges = self.math_color_ranges(&raw);
         para.push(Inline::Math {
             color: self.style.color,
             color_ranges,
             list,
             display: true,
-            number: numbered.then_some(number.clone()),
+            number: (numbered && tag.is_none()).then_some(number.clone()),
             number_span: numbered.then_some(open),
             span: self.span_through(open, end),
             // Always its own line (see `layout::LayoutCursor::display_math`),
@@ -7521,11 +8340,44 @@ impl P<'_> {
             for (index, row) in rows.iter_mut().enumerate() {
                 row.1 |= index != last;
             }
+            // pdflatex's rule is per environment for `multline`: a `\tag`
+            // ANYWHERE in the environment replaces the single number and
+            // steps nothing. The tag lookup in the per-row loop below only
+            // sees each row's own cells, so a tag on any row other than the
+            // last would suppress nothing and the last row (the number's
+            // owner) would still print and step a spurious number. Hoist
+            // the search: if any row carries `\tag`, the last row is
+            // unnumbered too. `align`/`gather` keep the per-row behaviour —
+            // each row owns its own number there — so this stays
+            // `multline`-only.
+            let tagged = rows.iter().any(|(cells, _, _, _)| {
+                cells.iter().flatten().any(|token| {
+                    matches!(&token.kind, TokenKind::Command(command) if command == "tag")
+                })
+            });
+            if tagged {
+                if let Some(last_row) = rows.last_mut() {
+                    last_row.1 = true;
+                }
+            }
         }
 
         let mut math_rows = Vec::new();
         let mut labels = Vec::new();
         let is_multline = name.starts_with("multline");
+        // A `multline` carries one number/tag for the whole environment,
+        // always on the last row, so a `\label` on ANY row means that
+        // value. The per-row value below reads "0" (the unstepped
+        // counter) for every row but the tag's own — TeX Live 2026
+        // pdflatex instead records `{1}` for a first-row `\label` in an
+        // untagged multline and `{{B}}` for a middle-row `\tag{B}`. Row
+        // labels are stashed until the environment's tag/number is known
+        // (the number only ever lands on the last row, which is parsed
+        // last) and resolved together after the loop. Every other display
+        // keeps the per-row value: each row owns its own number there.
+        let mut multline_labels: Vec<(String, Span)> = Vec::new();
+        let mut multline_tag: Option<String> = None;
+        let mut multline_number: Option<String> = None;
         for (mut cells, unnumbered, row_labels, intertext) in rows {
             let span = cells
                 .iter()
@@ -7536,29 +8388,6 @@ impl P<'_> {
                 .filter(|span| span.document == open.document)
                 .reduce(Span::merge)
                 .unwrap_or(open);
-            let number = (numbered && !unnumbered).then(|| {
-                let number = self.counters.step("equation").unwrap_or_default();
-                self.set_current_counter("equation", Some(number.clone()));
-                number
-            });
-            for (key, label_span) in row_labels {
-                self.document_global_state = true;
-                if self.seen_labels.insert(key.clone(), label_span).is_some() {
-                    self.diags.push(Diagnostic::warning(
-                        format!("duplicate \\label{{{key}}}; the second definition wins"),
-                        Some(label_span),
-                        Some("replaced the earlier label definition".into()),
-                    ));
-                }
-                labels.push(Inline::Label {
-                    key,
-                    value: number
-                        .clone()
-                        .unwrap_or_else(|| self.counters.the("equation").unwrap_or_default()),
-                    kind: "equation".into(),
-                    span: label_span,
-                });
-            }
             // A `\shoveleft`/`\shoveright` at the top level of a `multline`
             // row's first cell directs the whole row, so it is lifted before
             // the cells are parsed and recorded for layout; in any other
@@ -7569,10 +8398,63 @@ impl P<'_> {
             let packages = self.math_packages;
             // gather/align/multline/eqnarray and their variants are always
             // display math.
-            let cells = cells
+            let cells: Vec<MathList> = cells
                 .iter()
                 .map(|cell| math::parse_tokens_display(cell, packages, &mut self.diags, true))
                 .collect();
+            // A row carrying its own `\tag{...}` keeps the tag as its
+            // number (exactly like the single-`equation` path via
+            // `custom_tag_text`) and never steps the counter: `\tag` is
+            // amsmath's own opt-out of automatic numbering, `\notag`-like
+            // (verified against TeX Live 2026 pdflatex: a tagged row prints
+            // its tag while the next untagged row keeps the unstepped
+            // number). Only rows that get an automatic number step it.
+            let tag: Option<String> = {
+                let source: &str = &self.documents[open.document.0].text;
+                cells
+                    .iter()
+                    .find_map(|cell| Self::custom_tag_text(cell, source, open.document))
+            };
+            let number = if tag.is_some() {
+                None
+            } else {
+                (numbered && !unnumbered).then(|| {
+                    let number = self.counters.step("equation").unwrap_or_default();
+                    self.set_current_counter("equation", Some(number.clone()));
+                    number
+                })
+            };
+            if is_multline {
+                // The first tag in row order wins, mirroring the single
+                // tag the layout prints; the automatic number only ever
+                // lands on the last row, so the last one seen stands.
+                if multline_tag.is_none() {
+                    multline_tag = tag.clone();
+                }
+                if number.is_some() {
+                    multline_number = number.clone();
+                }
+                multline_labels.extend(row_labels);
+            } else {
+                for (key, label_span) in row_labels {
+                    self.document_global_state = true;
+                    if self.seen_labels.insert(key.clone(), label_span).is_some() {
+                        self.diags.push(Diagnostic::warning(
+                            format!("duplicate \\label{{{key}}}; the second definition wins"),
+                            Some(label_span),
+                            Some("replaced the earlier label definition".into()),
+                        ));
+                    }
+                    labels.push(Inline::Label {
+                        key,
+                        value: tag.clone().or(number.clone()).unwrap_or_else(|| {
+                            self.counters.the("equation").unwrap_or_default()
+                        }),
+                        kind: "equation".into(),
+                        span: label_span,
+                    });
+                }
+            }
             math_rows.push(MathRow {
                 cells,
                 number,
@@ -7580,6 +8462,30 @@ impl P<'_> {
                 intertext,
                 shove,
             });
+        }
+        if is_multline {
+            // One value for the whole environment: the tag wherever it
+            // was typed, else the last row's number, else the running
+            // counter exactly as an unnumbered row read it before.
+            let value = multline_tag.or(multline_number).unwrap_or_else(|| {
+                self.counters.the("equation").unwrap_or_default()
+            });
+            for (key, label_span) in multline_labels {
+                self.document_global_state = true;
+                if self.seen_labels.insert(key.clone(), label_span).is_some() {
+                    self.diags.push(Diagnostic::warning(
+                        format!("duplicate \\label{{{key}}}; the second definition wins"),
+                        Some(label_span),
+                        Some("replaced the earlier label definition".into()),
+                    ));
+                }
+                labels.push(Inline::Label {
+                    key,
+                    value: value.clone(),
+                    kind: "equation".into(),
+                    span: label_span,
+                });
+            }
         }
         if name == "eqnarray" || name == "eqnarray*" {
             // ltmath.dtx `\eqnarray` opens with `\stepcounter{equation}` on
@@ -7811,6 +8717,14 @@ impl P<'_> {
             }
             raw.push(input.token.clone());
         }
+        // An unnumbered display can still carry `\label` (with `\tag`
+        // read off the parsed list below); lift the labels first so math
+        // parsing never sees — and literally typesets — them.
+        let (raw, display_labels) = if display {
+            self.take_display_labels(raw)
+        } else {
+            (raw, Vec::new())
+        };
         let (list, unclosed) = math::parse_tokens_reporting_unclosed(
             &raw,
             self.math_packages,
@@ -7871,6 +8785,12 @@ impl P<'_> {
         }
         // `\[...\]` and `$$...$$` are unnumbered displays in LaTeX: they never
         // print a number or advance the equation counter.
+        let tag = if display {
+            let source: &str = &self.documents[open.document.0].text;
+            Self::custom_tag_text(&list, source, open.document)
+        } else {
+            None
+        };
         let color_ranges = self.math_color_ranges(&raw);
         para.push(Inline::Math {
             color: self.style.color,
@@ -7882,6 +8802,22 @@ impl P<'_> {
             span: self.span_through(open, end),
             space_before,
         });
+        for (key, span) in display_labels {
+            self.document_global_state = true;
+            let (value, kind) = match &tag {
+                Some(tag) => (tag.clone(), "equation".to_string()),
+                None => (
+                    self.current_counter.clone().unwrap_or_default(),
+                    self.current_counter_kind.clone().unwrap_or_default(),
+                ),
+            };
+            para.push(Inline::Label {
+                key,
+                value,
+                kind,
+                span,
+            });
+        }
     }
 
     /// `open` through byte `end`. Expanded tokens (a macro body,
@@ -8981,6 +9917,79 @@ impl P<'_> {
                         )),
                     }
                 }
+                // soul `\so`/`\hl` reach here whenever they sit in a heading,
+                // a caption or a style argument, flattened into a token list
+                // instead of being re-parsed (review finding 4). Without this
+                // arm the command was dropped and its braced argument survived
+                // as ordinary text, so `\section{\hl{word}}` typeset a plain
+                // "word". Emit the same inlines the main token loop builds
+                // (`soul_highlight` / letterspaced runs), so both places
+                // behave identically — including the missing-package
+                // diagnostic with plain-text fallback. Edge (`.55em`) spaces
+                // around the command stay natural here: flattened contexts
+                // are single-line moving arguments, and only the command
+                // site's own `space_before` is carried.
+                TokenKind::Command(name) if name == "so" || name == "hl" => {
+                    match flat_group_at(&expanded, index + 1) {
+                        Some((group, argument_span, after)) => {
+                            skip_until = after;
+                            let full = if argument_span.document == input.token.span.document {
+                                input.token.span.merge(argument_span)
+                            } else {
+                                input.token.span
+                            };
+                            if !self.packages.iter().any(|package| package == "soul") {
+                                self.diags.push(Diagnostic::command_error(
+                                    name,
+                                    format!("\\{name} needs \\usepackage{{soul}}"),
+                                    Some(full),
+                                    Some("typeset the argument as plain text".into()),
+                                ));
+                                let outer = std::mem::replace(&mut self.style, style);
+                                let mut plain = self.box_inlines(group);
+                                self.style = outer;
+                                match plain.first_mut() {
+                                    Some(Inline::Text { space_before: first, .. }) => {
+                                        *first = space_before
+                                    }
+                                    Some(Inline::ColorBox(b)) => b.space_before = space_before,
+                                    Some(Inline::Underline(u)) => u.space_before = space_before,
+                                    _ => {}
+                                }
+                                content.extend(plain);
+                            } else if name == "hl" {
+                                let em_pt =
+                                    self.font_setup().em_ex_sp(style).0 as f64 / 65536.0;
+                                let outer = std::mem::replace(&mut self.style, style);
+                                let fragments =
+                                    self.soul_hl_fragments(&group, em_pt, full, space_before);
+                                self.style = outer;
+                                content.extend(fragments);
+                            } else {
+                                let em_pt =
+                                    self.font_setup().em_ex_sp(style).0 as f64 / 65536.0;
+                                let outer = std::mem::replace(&mut self.style, style);
+                                let mut spaced =
+                                    self.soul_inner_content(&group, em_pt);
+                                self.style = outer;
+                                match spaced.first_mut() {
+                                    Some(Inline::Text { space_before: first, .. }) => {
+                                        *first = space_before
+                                    }
+                                    Some(Inline::ColorBox(b)) => b.space_before = space_before,
+                                    Some(Inline::Underline(u)) => u.space_before = space_before,
+                                    _ => {}
+                                }
+                                content.extend(spaced);
+                            }
+                        }
+                        None => self.diags.push(Diagnostic::error(
+                            format!("\\{name} requires a braced argument"),
+                            Some(input.token.span),
+                            Some("used an empty argument and continued".into()),
+                        )),
+                    }
+                }
                 TokenKind::Command(name) if style_command(name) => {
                     let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
                     pending = Some(apply_style(style, name, body));
@@ -9037,12 +10046,27 @@ impl P<'_> {
                         });
                     }
                 }
-                TokenKind::Word(text) => content.push(Inline::Text {
-                    text: apply_text_ligatures(text),
-                    span: input.token.span,
-                    style,
-                    space_before,
-                }),
+                TokenKind::Word(text) => {
+                    // Same `\0`–`\9` report for titles, captions and other
+                    // moving arguments built here rather than in the main
+                    // loop. The kern arm above cannot match a digit, so a
+                    // control-symbol digit always reaches this arm exactly
+                    // once.
+                    if input.token.control_symbol {
+                        if let Some(digit) = crate::diagnostics::control_symbol_digit(&text) {
+                            self.diags.push(Diagnostic::undefined_control_symbol(
+                                digit,
+                                input.token.span,
+                            ));
+                        }
+                    }
+                    content.push(Inline::Text {
+                        text: apply_text_ligatures(text),
+                        span: input.token.span,
+                        style,
+                        space_before,
+                    });
+                }
                 TokenKind::LineBreak => content.push(Inline::LineBreak {
                     span: input.token.span,
                     skip_pt: None,
@@ -9578,6 +10602,383 @@ impl P<'_> {
         })));
     }
 
+    /// csquotes `\enquote{text}`: wraps the argument in typographic quotation
+    /// marks, alternating between double (\u{201c}\u{201d}) and single (\u{2018}\u{2019})
+    /// on each nesting level. Without `\usepackage{csquotes}` the argument is
+    /// typeset as plain text with a diagnostic, matching the soul pattern.
+    fn enquote_command(&mut self, span: Span, para: &mut Vec<Inline>) {
+        self.paragraph_started = true;
+        let space_before = self.space_precedes(self.i - 1);
+        let (tokens, argument_span) = self.required_group("enquote", span);
+        let full = span.merge(argument_span);
+        if !self.packages.iter().any(|package| package == "csquotes") {
+            self.diags.push(Diagnostic::command_error(
+                "enquote",
+                "\\enquote needs \\usepackage{csquotes}".to_string(),
+                Some(full),
+                Some("typeset the argument as plain text".into()),
+            ));
+            para.extend(self.box_inlines(tokens));
+            return;
+        }
+        // Even depth = double quotes, odd depth = single quotes.
+        let (open, close) = if self.enquote_depth % 2 == 0 {
+            ("\u{201c}", "\u{201d}") // U+201C / U+201D: left/right double quotation mark
+        } else {
+            ("\u{2018}", "\u{2019}") // U+2018 / U+2019: left/right single quotation mark
+        };
+        // Opening quote mark.
+        para.push(Inline::Text {
+            text: open.into(),
+            span,
+            style: self.style,
+            space_before,
+        });
+        // Parse the body at the next nesting level through the full parser
+        // dispatch (`box_inlines` calls `parse_stream`), so nested
+        // `\enquote` is handled by the same `command` arm recursively.
+        self.enquote_depth += 1;
+        let inner = self.box_inlines(tokens);
+        self.enquote_depth -= 1;
+        para.extend(inner);
+        // Closing quote mark.
+        para.push(Inline::Text {
+            text: close.into(),
+            span: argument_span,
+            style: self.style,
+            space_before: false,
+        });
+    }
+
+    /// soul `\so{text}` (letterspacing) or `\hl{text}` (highlight). Without
+    /// soul, the package commands diagnose and typeset the argument as
+    /// plain text, like the ulem commands above.
+    fn soul_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        // Captured BEFORE `required_group` advances the cursor past the
+        // argument: a real source space just before the command is `\so`'s
+        // `.55em` leading edge space (see below).
+        let leading_space = (self.i >= 2)
+            .then(|| self.t.get(self.i - 2))
+            .flatten()
+            .filter(|input| matches!(input.token.kind, TokenKind::Space))
+            .map(|input| input.token.span);
+        let (tokens, argument_span) = self.required_group(name, span);
+        let full = span.merge(argument_span);
+        if !self.packages.iter().any(|package| package == "soul") {
+            self.diags.push(Diagnostic::command_error(
+                name,
+                format!("\\{name} needs \\usepackage{{soul}}"),
+                Some(full),
+                Some("typeset the argument as plain text".into()),
+            ));
+            para.extend(self.box_inlines(tokens));
+            return;
+        }
+        // The em all soul spaces are measured in: the ambient font's quad
+        // (`font_setup` resolves the encoding/family/size to scaled points,
+        // exactly like `\hspace{<n>em}` parsing does).
+        let em_pt = self.font_setup().em_ex_sp(self.style).0 as f64 / 65536.0;
+        if name == "hl" {
+            // soul's highlight is a yellow rule BEHIND the text (see
+            // `soul_highlight`): one breakable fragment per word with
+            // pdflatex's natural glue between the words (round-2 findings
+            // 1 and 2a), while argument-edge spaces stay painted inside
+            // the end fragments (review finding 8).
+            para.extend(self.soul_hl_fragments(&tokens, em_pt, full, space_before));
+            return;
+        }
+        // `\so`: soul's letterspaced argument (soul.sty's `\sodef\textso`
+        // letterskip). The argument as ordinary inlines with that kern
+        // between every two adjacent letters, so the existing kern machinery
+        // lays it out wider with no new node type. Word gaps and the spaces
+        // just outside become soul's wider spaces (see `space_out_letters`,
+        // `SOUL_INNER_SPACE_EM`, `SOUL_EDGE_SPACE_EM`).
+        //
+        // A real source space just before the command is the `.55em`
+        // leading edge space: explicit glue replaces the natural glue. Only
+        // a true `Space` token counts, and only mid-paragraph (`para`
+        // non-empty): at a paragraph start the layouts already neutralize
+        // the command site's flag, and explicit glue there would add width
+        // where real TeX has none. Otherwise the first piece keeps the
+        // command site's `space_before`, since the content splices directly
+        // into the paragraph (a wrapper would carry it instead).
+        let emit_leading = leading_space.is_some() && !para.is_empty();
+        if let Some(space_span) = leading_space.filter(|_| emit_leading) {
+            para.push(soul_glue(SOUL_EDGE_SPACE_EM, em_pt, space_span));
+        }
+        let mut spaced = self.soul_inner_content(&tokens, em_pt);
+        let carry_space = space_before && !emit_leading;
+        match spaced.first_mut() {
+            Some(Inline::Text { space_before: first, .. }) => *first = carry_space,
+            Some(Inline::ColorBox(b)) => b.space_before = carry_space,
+            Some(Inline::Underline(u)) => u.space_before = carry_space,
+            _ => {}
+        }
+        para.extend(spaced);
+        // A real source space just after the argument is soul's `.55em`
+        // trailing edge space — unless the paragraph (or line) ends there,
+        // where real TeX drops the glue: no space is emitted before a
+        // paragraph break, `\\`, `\par`, `\end`, or end of input. The token
+        // is rewritten to `Comment` in place (the sanctioned edit, same as
+        // the preface-bracket blanking): the main loop skips it like any
+        // comment, and — crucially — the next inline's `space_before` no
+        // longer fires, so no natural glue doubles the explicit one. This
+        // also keeps `\so{ab} \so{cd}` to one widened gap, since the second
+        // `\so` sees no preceding space.
+        if matches!(
+            self.t.get(self.i).map(|input| &input.token.kind),
+            Some(TokenKind::Space)
+        ) && self.soul_trailing_text_follows()
+        {
+            let glue_span = self.t[self.i].token.span;
+            if let Some(t) = self.token_mut(self.i) {
+                t.token.kind = TokenKind::Comment;
+            }
+            para.push(soul_glue(SOUL_EDGE_SPACE_EM, em_pt, glue_span));
+        }
+    }
+
+    /// Whether paragraph text follows the space at `self.i` (skipping
+    /// further spaces and comments): false before a paragraph/line end,
+    /// where soul's trailing edge space must not be emitted.
+    fn soul_trailing_text_follows(&self) -> bool {
+        let mut j = self.i + 1;
+        while let Some(kind) = self.t.get(j).map(|input| &input.token.kind) {
+            match kind {
+                TokenKind::Space | TokenKind::Comment => j += 1,
+                TokenKind::ParBreak | TokenKind::LineBreak => return false,
+                TokenKind::Command(name) if name == "par" || name == "end" => return false,
+                _ => return true,
+            }
+        }
+        false
+    }
+
+    /// Raw `\so`/`\hl` argument tokens split at top-level spaces:
+    /// one token run per word plus the span of each split space.
+    /// Splitting the raw tokens (rather than relying on the boxed runs'
+    /// `space_before`) keeps argument-edge spaces that `box_inlines` would
+    /// otherwise fold away, and consecutive spaces collapse to one, as in
+    /// TeX. Spaces nested inside groups stay inside their segment.
+    fn soul_split_argument(tokens: &[InputToken]) -> (Vec<Vec<InputToken>>, Vec<Span>) {
+        let mut segments: Vec<Vec<InputToken>> = vec![Vec::new()];
+        let mut spaces: Vec<Span> = Vec::new();
+        let mut depth = 0usize;
+        for token in tokens {
+            match &token.token.kind {
+                TokenKind::LBrace => {
+                    depth += 1;
+                    segments.last_mut().expect("at least one segment").push(token.clone());
+                }
+                TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1);
+                    segments.last_mut().expect("at least one segment").push(token.clone());
+                }
+                TokenKind::Space if depth == 0 => {
+                    spaces.push(token.token.span);
+                    segments.push(Vec::new());
+                }
+                _ => segments.last_mut().expect("at least one segment").push(token.clone()),
+            }
+        }
+        (segments, spaces)
+    }
+
+    /// `\so` argument content with soul's inner word spaces: each segment
+    /// boxed in turn and letterspaced, and joined with soul's `.65em`
+    /// replacement glue carrying each split space's own span (review
+    /// findings 1 and 8). Nested spaces (inside groups) keep the run-span
+    /// glue that `space_out_letters` bridges where adjacent.
+    fn soul_inner_content(&mut self, tokens: &[InputToken], em_pt: f64) -> Vec<Inline> {
+        let (segments, spaces) = Self::soul_split_argument(tokens);
+        let last = segments.len() - 1;
+        let boxed = self.soul_box_segments(&segments);
+        let mut out = Vec::new();
+        for (index, pieces) in boxed.into_iter().enumerate() {
+            let mut pieces = space_out_letters(&pieces, em_pt);
+            // An empty middle segment is a collapsed consecutive space: its
+            // glue is skipped, while leading/trailing ones stay (finding 8).
+            if index > 0 && (!segments[index].is_empty() || index == last) {
+                out.push(soul_glue(SOUL_INNER_SPACE_EM, em_pt, spaces[index - 1]));
+            }
+            // Past the first segment the pieces always follow soul glue (or
+            // a collapsed space), so no natural space of their own survives
+            // — exactly what `space_out_letters` establishes within one box.
+            if index > 0 {
+                match pieces.first_mut() {
+                    Some(Inline::Text { space_before: first, .. }) => *first = false,
+                    Some(Inline::ColorBox(b)) => b.space_before = false,
+                    Some(Inline::Underline(u)) => u.space_before = false,
+                    _ => {}
+                }
+            }
+            out.extend(pieces);
+        }
+        out
+    }
+
+    /// soul `\hl` argument content (round-2 findings 1 and 2a): one yellow
+    /// behind-text fragment per word, so the highlight is genuinely
+    /// breakable at the compiler level instead of one overfull box. Gaps
+    /// between words are pdflatex's natural interword glue — no explicit
+    /// `HSpace`, so `\hl{a b}` is exactly as wide as `a b` — while a
+    /// leading or trailing argument space stays painted inside its end
+    /// fragment at that same natural width (finding 8). Consecutive spaces
+    /// collapse to one, as in TeX; spaces nested inside groups keep their
+    /// natural boxed glue. A fragment's span covers its word's bytes, so the
+    /// layouts read the natural gaps from the source between the fragments.
+    ///
+    /// Known limitation (round-3 finding 3, see GH-828): those interword
+    /// gaps are ordinary source glue outside any highlight box, so real
+    /// soul's continuous mid-line fill renders here as one yellow patch per
+    /// word with unpainted gutters between them. A multi-word `\hl` therefore
+    /// emits one `FidelityNote` diagnostic naming the unpainted gaps; the
+    /// inventory string for `\hl` records the same limitation.
+    fn soul_hl_fragments(
+        &mut self,
+        tokens: &[InputToken],
+        em_pt: f64,
+        full: Span,
+        space_before: bool,
+    ) -> Vec<Inline> {
+        let (segments, spaces) = Self::soul_split_argument(tokens);
+        let boxed = self.soul_box_segments(&segments);
+        // Segments with rendered content, in order, with their word spans.
+        let mut words: Vec<(usize, Span, Vec<Inline>)> = Vec::new();
+        for (index, pieces) in boxed.into_iter().enumerate() {
+            if pieces.is_empty() {
+                continue;
+            }
+            let span = segments[index]
+                .first()
+                .map(|first| {
+                    segments[index]
+                        .last()
+                        .map(|last| first.token.span.merge(last.token.span))
+                        .unwrap_or(first.token.span)
+                })
+                .unwrap_or(full);
+            words.push((index, span, pieces));
+        }
+        if words.is_empty() {
+            // `\hl{}` typesets nothing; `\hl{ }` highlights one natural
+            // space (finding 8: argument spaces are highlighted too).
+            if let Some(space) = spaces.first() {
+                let content = vec![soul_glue(SOUL_HL_SPACE_EM, em_pt, *space)];
+                return vec![soul_highlight(content, full, space_before)];
+            }
+            return Vec::new();
+        }
+        if words.len() > 1 {
+            // Round-3 finding 3 (see GH-828): one diagnostic per `\hl`,
+            // however many gaps it holds. Single-word highlights (including
+            // ones with painted argument-edge spaces) stay silent.
+            let gaps = words.len() - 1;
+            self.diags.push(
+                Diagnostic::warning(
+                    format!(
+                        "\\hl spans {} words: the {} interword gap{} between the fragments {} left unpainted (each word paints its own fragment; continuous mid-line fill is tracked, see GH-828)",
+                        words.len(),
+                        gaps,
+                        if gaps == 1 { "" } else { "s" },
+                        if gaps == 1 { "is" } else { "are" },
+                    ),
+                    Some(full),
+                    Some("painted each word's own fragment and continued".into()),
+                )
+                .with_code(crate::diagnostics::DiagnosticCode::FidelityNote),
+            );
+        }
+        let first_word = words.first().expect("at least one word").0;
+        let last_word = words.last().expect("at least one word").0;
+        let last_position = words.len() - 1;
+        words
+            .into_iter()
+            .enumerate()
+            .map(|(position, (_, span, mut pieces))| {
+                if position == 0 {
+                    // A leading argument space stays painted inside the
+                    // first fragment at the natural width (finding 8,
+                    // corrected to the natural width by finding 1).
+                    if first_word > 0 {
+                        pieces.insert(
+                            0,
+                            soul_glue(SOUL_HL_SPACE_EM, em_pt, spaces[first_word - 1]),
+                        );
+                    }
+                } else {
+                    // Past the first fragment the pieces follow a natural
+                    // interword gap, which the layouts read from the source
+                    // between the fragments; the flag carries it in the
+                    // layout that keys gaps off `space_before`.
+                    match pieces.first_mut() {
+                        Some(Inline::Text { space_before: first, .. }) => *first = true,
+                        Some(Inline::ColorBox(b)) => b.space_before = true,
+                        Some(Inline::Underline(u)) => u.space_before = true,
+                        _ => {}
+                    }
+                }
+                // A trailing argument space stays painted inside the last
+                // fragment at the natural width (finding 8, corrected to
+                // the natural width by finding 1).
+                if position == last_position && last_word < segments.len() - 1 {
+                    if let Some(space) = spaces.last() {
+                        pieces.push(soul_glue(SOUL_HL_SPACE_EM, em_pt, *space));
+                    }
+                }
+                soul_highlight(
+                    pieces,
+                    span,
+                    if position == 0 { space_before } else { true },
+                )
+            })
+            .collect()
+    }
+
+    /// Box each of `\so`/`\hl`'s space-separated argument segments in turn,
+    /// threading the text style across the segments exactly as boxing the
+    /// whole argument at once would (a declaration in an early segment still
+    /// applies to later ones). Otherwise identical to `box_inlines`:
+    /// restricted horizontal mode with the paragraphs flattened.
+    fn soul_box_segments(&mut self, segments: &[Vec<InputToken>]) -> Vec<Vec<Inline>> {
+        let outer_tokens = std::mem::replace(&mut self.t, std::rc::Rc::new(Vec::new()));
+        let outer_index = std::mem::replace(&mut self.i, 0);
+        let outer_style = self.style;
+        let outer_label = self.pending_item_label.take();
+        let outer_item = self.pending_item.take();
+        let outer_dependency_blocks = self.block_dependencies.len();
+        let outer_par_leading_blocks = self.block_par_leading.len();
+        let mut out = Vec::with_capacity(segments.len());
+        for segment in segments {
+            self.t = std::rc::Rc::new(segment.clone());
+            self.i = 0;
+            let mut blocks = Vec::new();
+            let mut para = Vec::new();
+            self.parse_stream(&mut blocks, &mut para);
+            self.flush_paragraph(&mut blocks, &mut para);
+            self.block_dependencies.truncate(outer_dependency_blocks);
+            self.block_par_leading.truncate(outer_par_leading_blocks);
+            out.push(
+                blocks
+                    .into_iter()
+                    .flat_map(|block| match block {
+                        Block::Paragraph(inlines)
+                        | Block::Styled { content: inlines, .. }
+                        | Block::ListItem { content: inlines, .. } => inlines,
+                        _ => Vec::new(),
+                    })
+                    .collect(),
+            );
+        }
+        self.t = outer_tokens;
+        self.i = outer_index;
+        self.style = outer_style;
+        self.pending_item_label = outer_label;
+        self.pending_item = outer_item;
+        out
+    }
+
     /// Kernel text-mode `\textsuperscript{...}` / `\textsubscript{...}`
     /// (latex.ltx `ltmisc.dtx` `\@textsuperscript` / `\@textsubscript`):
     /// always supported, no package needed. The argument is parsed as an
@@ -9655,6 +11056,43 @@ impl P<'_> {
                     height,
                 },
                 span: full,
+                style: self.style,
+                space_before,
+            });
+        }
+    }
+
+    /// `\strut`: latex.ltx's `\setbox\strutbox\hbox{\vrule
+    /// \@height.7\baselineskip \@depth.3\baselineskip \@width\z@}` copied
+    /// (`\unhcopy` in text, `\copy` in math) at the point of use — a
+    /// zero-width rule .7/.3 of the current `\baselineskip`. The
+    /// compiler's `\baselineskip` is `layout::LINE_SPACING` times the
+    /// ambient size (see `crate::tabular`'s identical `\@arstrut`), at the
+    /// size declaration in force here, like `text_rule`. A zero width
+    /// never paints (`RuleBox::painted`), but the box is real: a
+    /// paragraph holding only a strut still sets a line (issue #843).
+    fn strut(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        let body = self.body_size_pt();
+        let size = self
+            .style
+            .size
+            .map_or(body, |level| crate::layout::size_declaration_pt(level, body));
+        let baselineskip = crate::layout::LINE_SPACING * size;
+        let dimen = |pt: f64| TextDimen::parse(&format!("{pt:.4}pt"));
+        // `TextRule` carries depth as a negative raise (see `text_rule`):
+        // height .7 and depth .3 read as raise -.3 and height 1.0.
+        if let (Some(height), Some(raise)) = (
+            dimen(baselineskip),
+            dimen(-0.3 * baselineskip),
+        ) {
+            para.push(Inline::Rule {
+                rule: TextRule {
+                    raise,
+                    width: TextDimen::zero(),
+                    height,
+                },
+                span,
                 style: self.style,
                 space_before,
             });
@@ -9930,7 +11368,9 @@ impl P<'_> {
             (Some(_), _) => extra_gap_before_pt,
             (None, _) => 0.0,
         };
-        let content = std::mem::take(paragraph);
+        let mut content = std::mem::take(paragraph);
+        // A paragraph of only horizontal glue still sets a line (issue #843).
+        anchor_glyphless_paragraph(&mut content, self.style);
         // A list level is "current" only once its first `\item` has been
         // seen (`count > 0`); text typed directly inside `itemize`/
         // `enumerate` before any `\item` falls back to an ordinary
@@ -9957,6 +11397,10 @@ impl P<'_> {
             },
             None => ListLeftMargin::Default,
         };
+        let labelsep_pt = self
+            .list_stack
+            .last()
+            .and_then(|list| list.spacing.labelsep_pt);
         // `template` doubles as `thebibliography`'s widest-label argument
         // (see the `\begin` handling in `environment`); `itemize`/`enumerate`
         // use it for their own unrelated `enumitem` template instead, so it
@@ -9976,6 +11420,7 @@ impl P<'_> {
                 extra_gap_before_pt,
                 extra_gap_after_pt,
                 leftmargin,
+                labelsep_pt,
                 widest_label,
                 lists,
                 item,
@@ -10151,20 +11596,7 @@ impl P<'_> {
                 TextStyle::default()
             };
             let content = self.inlines_from_tokens(tokens, base, false);
-            let mut text = String::new();
-            for inline in &content {
-                if let Inline::Text {
-                    text: word,
-                    space_before,
-                    ..
-                } = inline
-                {
-                    if *space_before && !text.is_empty() {
-                        text.push(' ');
-                    }
-                    text.push_str(word);
-                }
-            }
+            let text = inline_text(&content);
             ItemLabel::Explicit {
                 content,
                 text,
@@ -10213,11 +11645,13 @@ impl P<'_> {
                 item
             }
             None => match (&list.template, environment) {
-                (Some(template), ListEnvironment::Itemize) => ItemLabel::Template {
-                    text: apply_text_ligatures(
-                        template.strip_prefix("label=").unwrap_or(template),
-                    ),
-                },
+                (Some(template), ListEnvironment::Itemize | ListEnvironment::List) => {
+                    ItemLabel::Template {
+                        text: apply_text_ligatures(
+                            template.strip_prefix("label=").unwrap_or(template),
+                        ),
+                    }
+                }
                 _ => lists::default_label(environment, kind_depth, 0),
             },
         };
@@ -10697,6 +12131,14 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // itself where it is used instead: `\whiledo` is not implemented
         // and is diagnosed as an unknown command at its own span.
         "ifthen" => options.is_empty(),
+        // etoolbox's toggle booleans (`\newtoggle`/`\providetoggle`,
+        // `\toggletrue`/`\togglefalse`, `\iftoggle`) run in the expansion
+        // pass (see expansion's `HOST_PRELUDE`), so loading the package is
+        // silent. Everything else etoolbox ships (`\patchcmd`,
+        // `\AtEndPreamble`, list processing, robust-command variants) is
+        // not implemented and is diagnosed as an unknown command where it
+        // is used.
+        "etoolbox" => options.is_empty(),
         // natbib citation commands (crate::natbib) with the delimiter,
         // separator and citation-style options that decide the characters
         // they set. `sort`/`compress`/`super`/`longnamesfirst` are parsed but
@@ -10718,9 +12160,10 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
             .iter()
             .all(|option| matches!(*option, "errorshow" | "infoshow" | "balancingshow" | "markshow" | "debugshow")),
         // Table packages (parser/tabular.rs, crate::tabular): booktabs rules
-        // and spacing, longtable page-breaking tables, multirow entries and
-        // colortbl row/column/cell colours and rule colours.
-        "booktabs" | "longtable" | "multirow" | "colortbl" => options.is_empty(),
+        // and spacing, longtable page-breaking tables, multirow entries,
+        // colortbl row/column/cell colours and rule colours, and tabularx
+        // total-width tables with X columns.
+        "booktabs" | "longtable" | "multirow" | "colortbl" | "tabularx" => options.is_empty(),
         // xspace.sty takes no options; its only widely used command,
         // `\xspace`, is implemented above, so loading it is silent.
         "xspace" => options.is_empty(),
@@ -10789,9 +12232,27 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // `\uline` and `\sout` are implemented; `\emph` is not redefined
         // (ulem's default `ULforem`) and `\uuline` stays unsupported if used.
         "ulem" => options.iter().all(|option| *option == "normalem"),
+        // `\so` and `\hl` are implemented (soul takes no package options);
+        // `\st` stays unsupported if used.
+        "soul" => options.is_empty(),
         // `\larger`/`\smaller` are implemented above, so loading the
         // package is silent (same rule as `ulem`); relsize takes no options.
         "relsize" => options.is_empty(),
+        // fancyhdr's core (`\pagestyle{fancy}`, `\fancyhf`,
+        // `\fancyhead`/`\fancyfoot`, the rule widths) is implemented
+        // above, so loading the package is silent; what is not modelled
+        // (`\lhead` and friends, `\fancypagestyle`) reports itself where
+        // it is used instead (see `fancy_later_command`). fancyhdr.sty
+        // takes no package options of its own.
+        "fancyhdr" => options.is_empty(),
+        // cancel.sty: \cancel, \bcancel, \xcancel are implemented
+        // (math.rs Frame::Cancel/BCancel/XCancel); \cancelto is diagnosed
+        // where used. cancel takes no package options.
+        "cancel" => options.is_empty(),
+        // `\enquote` is implemented; csquotes' style/language options
+        // (`style=`, `autostyle`, ...) are not modelled, so only a bare load
+        // is silent.
+        "csquotes" => options.is_empty(),
         _ => false,
     }
 }
@@ -11045,6 +12506,208 @@ fn preamble_source(text: &str, has_document: bool, tokens: &[InputToken]) -> Str
         .to_string()
 }
 
+/// soul.sty `\sodef\textso{}{.25em}{...}` (soul-ori.sty:670): the letterskip
+/// between the letters, as a font-relative kern like the text-mode kerns
+/// above. Measured against real pdflatex (10pt article): `ab` = 10.55559pt,
+/// `\so{ab}` = 13.05559pt, difference 2.5pt = exactly .25em for the one gap.
+fn soul_letterskip() -> TextDimen {
+    TextDimen {
+        negative: false,
+        integer: 0,
+        frac: vec![2, 5],
+        unit: text_builtins::DimenUnit::Em,
+    }
+}
+
+/// soul.sty's interword space inside `\so{...}` (`.65em`), replacing the
+/// natural interword glue. Measured: `ab cd` = 23.88893pt, `\so{ab cd}` =
+/// 32.05554pt: two .25em letterskip gaps (5pt) plus the wider space
+/// (6.5pt vs 3.33333pt natural = +3.16667pt). Lowered as [`soul_glue`]
+/// (replacement `HSpace`, never beside a natural space).
+const SOUL_INNER_SPACE_EM: f64 = 0.65;
+
+/// soul.sty's space just outside `\so{...}` (`.55em`), replacing the natural
+/// interword glue on each side. Measured: `x ab y` = 27.77785pt,
+/// `x \so{ab} y` = 34.61125pt: one .25em gap (2.5pt) plus two widened
+/// spaces (2 * (5.5pt - 3.33333pt) = +4.33334pt). Lowered as [`soul_glue`].
+const SOUL_EDGE_SPACE_EM: f64 = 0.55;
+
+// Round-2 finding 1 keeps pdflatex's natural glue inside `\hl` (unlike
+/// `\so`, soul never widens highlight spaces: `\hl{a b}` is exactly as
+/// wide as `a b`). cmr's interword glue is `em/3` (fontdimen2; see
+/// [`SOUL_GLUE_STRETCH_FRAC`]), so [`soul_glue`] with this fraction
+/// reproduces the natural space — finite stretch/shrink included. Only
+/// argument-edge spaces are lowered this way, painted inside their end
+/// fragment; gaps between words stay ordinary source glue so the
+/// highlight breaks there (round-2 finding 2a).
+const SOUL_HL_SPACE_EM: f64 = 1.0 / 3.0;
+
+/// Stretch/shrink of soul's replacement spaces, as fractions of the natural
+/// width: cmr's interword glue is `em/3` plus `em/6` minus `em/9`
+/// (fontdimen2/3/4), so the stretch is half the natural width and the shrink
+/// a third. This keeps soul's spaces justifiable in proportion, like the
+/// natural glue they replace; the exact soul ratios are not in the
+/// measurements this implementation cites, so they still want a pdflatex
+/// `\showbox` confirmation (review finding 1).
+const SOUL_GLUE_STRETCH_FRAC: f64 = 0.5;
+/// See [`SOUL_GLUE_STRETCH_FRAC`].
+const SOUL_GLUE_SHRINK_FRAC: f64 = 1.0 / 3.0;
+
+/// One soul replacement space (an inner `.65em` or edge `.55em`): an
+/// [`Inline::HSpace`] whose span covers exactly the source space it
+/// replaces, so consumers that read interword gaps from source bytes find no
+/// natural space beside it, and whose finite stretch/shrink scales with the
+/// natural width like cmr's own interword glue. `HSpace` (not `TextGlue`)
+/// because its layout arm advances `content_end`: Core14's `text_glue` only
+/// moves `x`, so the next `space_before: false` piece rewinds past the glue
+/// and drops it, while the pipeline keeps the source space beside the glue
+/// and sets the line too wide (review finding 1).
+fn soul_glue(em_frac: f64, em_pt: f64, span: Span) -> Inline {
+    let pt = em_frac * em_pt;
+    Inline::HSpace {
+        pt,
+        space_before_pt: 0.0,
+        space_after_pt: 0.0,
+        span,
+        stretch_pt: pt * SOUL_GLUE_STRETCH_FRAC,
+        stretch_fil: 0,
+        shrink_pt: pt * SOUL_GLUE_SHRINK_FRAC,
+        shrink_fil: 0,
+    }
+}
+
+/// soul's yellow behind-text rule (`\setul{}{2.5ex}`) as rendering
+/// representation: the yellow comes from the xcolor `ColorBox` paint path
+/// (fill first, content over it — the correct layer), with ZERO separation
+/// so the width stays the content's own, while a zero-thickness
+/// [`UnderlineGeom::SoulHighlight`] underline inside still extends the
+/// fragment to the highlight depth. A bare `Inline::Underline` would be the
+/// natural node — except the pipeline paints every underline rule black and
+/// *over* the text, which would bury the glyphs under a black bar.
+/// One word-fragment only (an unbreakable box within the word): a
+/// multi-word `\hl` is one of these per word (see `soul_hl_fragments`),
+/// breakable between the fragments, while real soul's rule also follows
+/// each line fragment — the render-pipeline painting of a line-broken
+/// highlight stays a known follow-up (see GH-828).
+fn soul_highlight(content: Vec<Inline>, span: Span, space_before: bool) -> Inline {
+    let yellow = DeviceColor::from_billionths(ColorSpace::Cmyk, &[0, 0, 1_000_000_000, 0])
+        .unwrap_or(DeviceColor::BLACK);
+    let underline = Inline::Underline(Box::new(Underline {
+        content,
+        thickness_pt: 0.0,
+        geom: UnderlineGeom::SoulHighlight,
+        span,
+        // The command site's own gap: Core14's underline arm rewinds past
+        // the reserved word space when this is false, which would glue the
+        // highlight to the preceding word; the pipeline reads the gap from
+        // source bytes either way.
+        space_before,
+    }));
+    Inline::ColorBox(Box::new(ColorBox {
+        fill: yellow,
+        frame: None,
+        content: vec![underline],
+        fboxsep_pt: 0.0,
+        fboxrule_pt: 0.0,
+        span,
+        space_before,
+        highlight: Some(SoulHighlightExtents {
+            top_ex: SOUL_HIGHLIGHT_TOP_EX,
+            side_pt: SOUL_HIGHLIGHT_SIDE_PT,
+        }),
+    }))
+}
+
+/// Whether an inline is one letterspaceable letter for `\so`: a single
+/// non-whitespace character of a text run. Word spaces, boxes, rules and
+/// math keep their own spacing, so no kern touches them.
+fn is_spaced_letter(inline: &Inline) -> bool {
+    match inline {
+        Inline::Text { text, .. } => {
+            let mut chars = text.chars();
+            matches!(chars.next(), Some(c) if !c.is_whitespace()) && chars.next().is_none()
+        }
+        _ => false,
+    }
+}
+
+/// soul `\so`: split text runs into single letters, kern every two adjacent
+/// letters WITHIN a word, and widen the word spaces. A piece starting a new
+/// word (first character of a run whose original `space_before` was true)
+/// gets soul's `.65em` inner space INSTEAD of the natural interword glue
+/// (an explicit [`soul_glue`], so no natural space is ever added), and no
+/// letterskip kern crosses the gap. The very first piece keeps its incoming
+/// `space_before`; the caller replaces it with the command site's edge
+/// handling (`.55em` when a real space precedes).
+/// Pieces keep their style and span.
+fn space_out_letters(content: &[Inline], em_pt: f64) -> Vec<Inline> {
+    let kern = soul_letterskip();
+    let mut out = Vec::with_capacity(content.len() * 2);
+    // End of the last letterspaced letter: the inner glue bridges exactly
+    // the source bytes between two adjacent words (the space the lexer
+    // folded into the next run's `space_before`), so its span covers the
+    // replaced space. `None` until the first letter lands.
+    let mut word_end: Option<Span> = None;
+    for inline in content {
+        if let Inline::Text { text, span, style, space_before } = inline {
+            let mut first = true;
+            for c in text.chars() {
+                // A first character carrying the run's `space_before` opens a
+                // new word. Past the very first piece this is a genuine
+                // inner word gap: soul's `.65em` space replaces the natural
+                // glue (which is why the piece itself is `space_before`
+                // false), and no kern is added across it.
+                let word_start = first && *space_before;
+                first = false;
+                if word_start && !out.is_empty() {
+                    // Only bridge across a directly adjacent letter: after a
+                    // box, rule or group the bytes in between are not a
+                    // plain word space, so the glue keeps the run's own span
+                    // there (the pre-replacement behaviour). Macro-expanded
+                    // words carry invocation spans whose bytes may not be
+                    // adjacent either; the ordering guard falls back the
+                    // same way.
+                    let adjacent = matches!(out.last(), Some(Inline::Text { .. }));
+                    let glue_span = match word_end {
+                        Some(prev)
+                            if adjacent
+                                && prev.document == span.document
+                                && prev.end <= span.start =>
+                        {
+                            Span::in_document(span.document, prev.end, span.start)
+                        }
+                        _ => *span,
+                    };
+                    out.push(soul_glue(SOUL_INNER_SPACE_EM, em_pt, glue_span));
+                }
+                let piece = Inline::Text {
+                    text: c.to_string(),
+                    span: *span,
+                    style: *style,
+                    space_before: word_start && out.is_empty(),
+                };
+                if !word_start
+                    && is_spaced_letter(&piece)
+                    && out.last().is_some_and(is_spaced_letter)
+                {
+                    if let Some(Inline::Text { style: left, .. }) = out.last() {
+                        out.push(Inline::Kern {
+                            amount: kern.clone(),
+                            span: *span,
+                            style: *left,
+                        });
+                    }
+                }
+                out.push(piece);
+                word_end = Some(*span);
+            }
+        } else {
+            out.push(inline.clone());
+        }
+    }
+    out
+}
+
 /// Whether a [`TokenKind::Word`] is really a `tabbing` control symbol
 /// (`\=`, `\>`, `\<`, `\+`, `\-`): a single character whose span covers
 /// the backslash too (two bytes), exactly like [`control_symbol_kern`]'s
@@ -11190,6 +12853,54 @@ fn siunitx_bracket_at(tokens: &[InputToken], index: usize) -> Option<(String, Sp
     None
 }
 
+/// A braced group at `index` (after spaces) in a flat token run: the inner
+/// tokens, the span across both braces, and the index after `}`. (Like
+/// `siunitx_group_at`, but keeping tokens instead of raw source, so soul
+/// `\\so`/`\\hl` in headings and captions can box their argument.)
+fn flat_group_at(
+    tokens: &[InputToken],
+    index: usize,
+) -> Option<(Vec<InputToken>, Span, usize)> {
+    let mut cursor = index;
+    while matches!(
+        tokens.get(cursor).map(|input| &input.token.kind),
+        Some(TokenKind::Space)
+    ) {
+        cursor += 1;
+    }
+    if !matches!(
+        tokens.get(cursor).map(|input| &input.token.kind),
+        Some(TokenKind::LBrace)
+    ) {
+        return None;
+    }
+    let open = tokens[cursor].token.span;
+    let inner_start = cursor + 1;
+    let mut depth = 1usize;
+    cursor = inner_start;
+    while let Some(input) = tokens.get(cursor) {
+        match &input.token.kind {
+            TokenKind::LBrace => depth += 1,
+            TokenKind::RBrace => {
+                depth -= 1;
+                if depth == 0 {
+                    let close = input.token.span;
+                    let full = if close.document == open.document {
+                        open.merge(close)
+                    } else {
+                        open
+                    };
+                    return Some((tokens[inner_start..cursor].to_vec(), full, cursor + 1));
+                }
+            }
+            TokenKind::ParBreak => return None,
+            _ => {}
+        }
+        cursor += 1;
+    }
+    None
+}
+
 /// A braced siunitx argument at `index` (after spaces) as raw source without
 /// its outer braces: (argument, span, index after `}`).
 fn siunitx_group_at(tokens: &[InputToken], index: usize) -> Option<(String, Span, usize)> {
@@ -11259,8 +12970,152 @@ pub const INF_PENALTY: i32 = 10_000;
 /// A penalty this low forces a break (`-\@M`).
 pub const EJECT_PENALTY: i32 = -10_000;
 
+/// Whether `inline` sets a box on the horizontal list, and so starts a line
+/// on its own (issue #843). Text (even an unresolved `??` reference), math,
+/// rules, logos, boxes and image/drawing nodes all do; glue, kerns, breaks,
+/// penalties and whatsits (`\label`, `\marginpar`, `\pagenumbering`) do not.
+/// Box wrappers recurse into their content; an `\hrulefill`/`\dotfill`
+/// carries its own `\leavevmode` box through its leader, while a bare
+/// `\hfill` is only glue.
+fn inline_sets_a_box(inline: &Inline) -> bool {
+    match inline {
+        Inline::Text { text, .. } => !text.is_empty(),
+        Inline::Math { .. }
+        | Inline::MathRows { .. }
+        | Inline::Rule { .. }
+        | Inline::Logo { .. }
+        | Inline::Tabular(_)
+        | Inline::Verbatim { .. }
+        | Inline::Graphic(_)
+        | Inline::Reference { .. }
+        | Inline::CleverReference { .. }
+        | Inline::ThePage { .. }
+        | Inline::Footnote { .. } => true,
+        Inline::HFill { leader, .. } => !matches!(leader, FillLeader::None),
+        Inline::Discretionary { nobreak, .. } => !nobreak.is_empty(),
+        Inline::ColorBox(b) => b.content.iter().any(inline_sets_a_box),
+        Inline::Transform(b) => b.content.iter().any(inline_sets_a_box),
+        Inline::Underline(u) => u.content.iter().any(inline_sets_a_box),
+        Inline::TextScript(t) => t.content.iter().any(inline_sets_a_box),
+        _ => false,
+    }
+}
+
+/// Whether `inline` is horizontal material with no box of its own: the
+/// fixed and infinite glue (`\hspace`, `\hskip`, `\hfill`, `\quad`,
+/// `\enskip`) and kerns (`\,`, `\/`, `\:`, `\enspace`). Measured against
+/// pdflatex (TeX Live 2026, article): each of these alone in the body
+/// ships a one-page PDF, while an empty or comment-only body ships none.
+fn inline_is_bare_glue(inline: &Inline) -> bool {
+    matches!(
+        inline,
+        Inline::HSpace { .. }
+            | Inline::TextGlue { .. }
+            | Inline::Kern { .. }
+            | Inline::HFill {
+                leader: FillLeader::None,
+                ..
+            }
+    )
+}
+
+/// The source range of one inline, for nodes synthesised at flush time.
+fn inline_span(inline: &Inline) -> Span {
+    match inline {
+        Inline::Text { span, .. }
+        | Inline::LineBreak { span, .. }
+        | Inline::TextGlue { span, .. }
+        | Inline::Math { span, .. }
+        | Inline::MathRows { span, .. }
+        | Inline::Label { span, .. }
+        | Inline::Reference { span, .. }
+        | Inline::CleverReference { span, .. }
+        | Inline::ThePage { span, .. }
+        | Inline::PageNumbering { span, .. }
+        | Inline::PageStyle { span, .. }
+        | Inline::HFill { span, .. }
+        | Inline::HSpace { span, .. }
+        | Inline::TabStop { span, .. }
+        | Inline::TabJump { span, .. }
+        | Inline::Footnote { span, .. }
+        | Inline::Marginpar { span, .. }
+        | Inline::Logo { span, .. }
+        | Inline::Rule { span, .. }
+        | Inline::Kern { span, .. }
+        | Inline::Verbatim { span, .. }
+        | Inline::Penalty { span, .. }
+        | Inline::PagePenalty { span, .. }
+        | Inline::Discretionary { span, .. } => *span,
+        Inline::Tabular(t) => t.span,
+        Inline::ColorBox(b) => b.span,
+        Inline::Underline(u) => u.span,
+        Inline::TextScript(t) => t.span,
+        Inline::Graphic(g) => g.span,
+        Inline::Transform(t) => t.span,
+    }
+}
+
+/// The empty-line anchor (issue #843). When a paragraph holds horizontal
+/// material but no box — `\hspace{1cm}` or `\hfill` alone are the reported
+/// cases — every downstream consumer drops it: the Core 14 layout places
+/// no item, and the render pipeline's paragraph builder needs a box to
+/// break a line, so the document ends with no pages at all. Real TeX still
+/// sets the paragraph's single line (empty, since trailing glue is dropped
+/// at the break) and ships the page; the oracle PDFs for `\hspace{1cm}`,
+/// `\hfill`, `\quad`, `\enskip`, `\hfil`, `\hskip` and `\,` alone are all
+/// one empty page with only the folio.
+///
+/// The anchor is a zero-size rule at the paragraph's start: a box, so the
+/// line is built, but one that paints nothing (`RuleBox::painted` is false
+/// for a zero width) and contributes no height or depth, matching the
+/// oracle's `(0.0+0.0)` line. It deliberately does not fire for genuinely
+/// empty or label-only paragraphs (no material), nor beside any real box.
+fn anchor_glyphless_paragraph(content: &mut Vec<Inline>, style: TextStyle) {
+    if !content.iter().any(inline_is_bare_glue) || content.iter().any(inline_sets_a_box) {
+        return;
+    }
+    let Some(first) = content.first() else {
+        return;
+    };
+    let span = inline_span(first);
+    content.insert(
+        0,
+        Inline::Rule {
+            rule: TextRule {
+                raise: TextDimen::zero(),
+                width: TextDimen::zero(),
+                height: TextDimen::zero(),
+            },
+            span,
+            style,
+            space_before: false,
+        },
+    );
+}
+
+/// The characters of the `Text` runs in `inlines`, in order, with a
+/// space where the runs were separated by one: an `\item` label or a
+/// `\\begin{list}` default label as plain text.
+fn inline_text(inlines: &[Inline]) -> String {
+    let mut text = String::new();
+    for inline in inlines {
+        if let Inline::Text {
+            text: word,
+            space_before,
+            ..
+        } = inline
+        {
+            if *space_before && !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(word);
+        }
+    }
+    text
+}
+
 /// The characters of the `Text` runs in `inlines`, in order (a
-/// `\discretionary` argument).
+/// `\\discretionary` argument).
 fn plain_inline_text(inlines: &[Inline]) -> String {
     inlines
         .iter()
@@ -12708,6 +14563,294 @@ mod tests {
         assert!(
             texts.iter().any(|t| t.contains('\u{2122}')),
             "expected U+2122 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textdegree` is U+00B0 DEGREE SIGN, like pdfLaTeX.
+    #[test]
+    fn textdegree_typesets_a_degree_sign() {
+        let (parsed, items) = items("x \\textdegree y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00B0}')),
+            "expected U+00B0 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textmu` is U+00B5 MICRO SIGN, like pdfLaTeX.
+    #[test]
+    fn textmu_typesets_a_micro_sign() {
+        let (parsed, items) = items("x \\textmu y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00B5}')),
+            "expected U+00B5 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textohm` is U+2126 OHM SIGN, like pdfLaTeX.
+    #[test]
+    fn textohm_typesets_an_ohm_sign() {
+        let (parsed, items) = items("x \\textohm y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2126}')),
+            "expected U+2126 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textcelsius` is U+2103 DEGREE CELSIUS, like pdfLaTeX.
+    #[test]
+    fn textcelsius_typesets_degree_celsius() {
+        let (parsed, items) = items("x \\textcelsius y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2103}')),
+            "expected U+2103 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\texteuro` is U+20AC EURO SIGN, like pdfLaTeX.
+    #[test]
+    fn texteuro_typesets_a_euro_sign() {
+        let (parsed, items) = items("x \\texteuro y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{20AC}')),
+            "expected U+20AC in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textyen` is U+00A5 YEN SIGN, like pdfLaTeX.
+    #[test]
+    fn textyen_typesets_a_yen_sign() {
+        let (parsed, items) = items("x \\textyen y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00A5}')),
+            "expected U+00A5 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textwon` is U+20A9 WON SIGN, like pdfLaTeX.
+    #[test]
+    fn textwon_typesets_a_won_sign() {
+        let (parsed, items) = items("x \\textwon y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{20A9}')),
+            "expected U+20A9 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textcurrency` is U+00A4 CURRENCY SIGN, like pdfLaTeX.
+    #[test]
+    fn textcurrency_typesets_a_currency_sign() {
+        let (parsed, items) = items("x \\textcurrency y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00A4}')),
+            "expected U+00A4 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textestimated` is U+212E ESTIMATED SYMBOL, like pdfLaTeX.
+    #[test]
+    fn textestimated_typesets_an_estimated_symbol() {
+        let (parsed, items) = items("x \\textestimated y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{212E}')),
+            "expected U+212E in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textnumero` is U+2116 NUMERO SIGN, like pdfLaTeX.
+    #[test]
+    fn textnumero_typesets_a_numero_sign() {
+        let (parsed, items) = items("x \\textnumero y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2116}')),
+            "expected U+2116 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textrecipe` is U+211E PRESCRIPTION TAKE, like pdfLaTeX.
+    #[test]
+    fn textrecipe_typesets_a_prescription_take() {
+        let (parsed, items) = items("x \\textrecipe y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{211E}')),
+            "expected U+211E in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textservicemark` is U+2120 SERVICE MARK, like pdfLaTeX.
+    #[test]
+    fn textservicemark_typesets_a_service_mark() {
+        let (parsed, items) = items("x \\textservicemark y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2120}')),
+            "expected U+2120 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textbardbl` is U+2016 DOUBLE VERTICAL LINE, like pdfLaTeX.
+    #[test]
+    fn textbardbl_typesets_a_double_vertical_line() {
+        let (parsed, items) = items("x \\textbardbl y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2016}')),
+            "expected U+2016 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textbrokenbar` is U+00A6 BROKEN BAR, like pdfLaTeX.
+    #[test]
+    fn textbrokenbar_typesets_a_broken_bar() {
+        let (parsed, items) = items("x \\textbrokenbar y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00A6}')),
+            "expected U+00A6 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\texttimes` is U+00D7 MULTIPLICATION SIGN, like pdfLaTeX.
+    #[test]
+    fn texttimes_typesets_a_multiplication_sign() {
+        let (parsed, items) = items("x \\texttimes y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00D7}')),
+            "expected U+00D7 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textdiv` is U+00F7 DIVISION SIGN, like pdfLaTeX.
+    #[test]
+    fn textdiv_typesets_a_division_sign() {
+        let (parsed, items) = items("x \\textdiv y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00F7}')),
+            "expected U+00F7 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textonehalf` is U+00BD VULGAR FRACTION ONE HALF, like pdfLaTeX.
+    #[test]
+    fn textonehalf_typesets_one_half() {
+        let (parsed, items) = items("x \\textonehalf y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00BD}')),
+            "expected U+00BD in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textonequarter` is U+00BC VULGAR FRACTION ONE QUARTER.
+    #[test]
+    fn textonequarter_typesets_one_quarter() {
+        let (parsed, items) = items("x \\textonequarter y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00BC}')),
+            "expected U+00BC in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textthreequarters` is U+00BE VULGAR FRACTION THREE QUARTERS.
+    #[test]
+    fn textthreequarters_typesets_three_quarters() {
+        let (parsed, items) = items("x \\textthreequarters y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00BE}')),
+            "expected U+00BE in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textperthousand` is U+2030 PER MILLE SIGN, like pdfLaTeX.
+    #[test]
+    fn textperthousand_typesets_a_per_mille_sign() {
+        let (parsed, items) = items("x \\textperthousand y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2030}')),
+            "expected U+2030 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textpertenthousand` is U+2031 PER TEN THOUSAND SIGN.
+    #[test]
+    fn textpertenthousand_typesets_a_per_ten_thousand_sign() {
+        let (parsed, items) = items("x \\textpertenthousand y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2031}')),
+            "expected U+2031 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textopenbullet` is U+25E6 WHITE BULLET, like pdfLaTeX.
+    #[test]
+    fn textopenbullet_typesets_a_white_bullet() {
+        let (parsed, items) = items("x \\textopenbullet y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{25E6}')),
+            "expected U+25E6 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textlangle` is U+2329 LEFT-POINTING ANGLE BRACKET.
+    #[test]
+    fn textlangle_typesets_a_left_angle_bracket() {
+        let (parsed, items) = items("x \\textlangle y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2329}')),
+            "expected U+2329 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textrangle` is U+232A RIGHT-POINTING ANGLE BRACKET.
+    #[test]
+    fn textrangle_typesets_a_right_angle_bracket() {
+        let (parsed, items) = items("x \\textrangle y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{232A}')),
+            "expected U+232A in {texts:?}"
         );
     }
 
@@ -14552,6 +16695,136 @@ mod tests {
         assert_eq!(size_of(&top_items, "X"), 24.88);
     }
 
+    /// Sizes from the full pipeline (`parse` → `preamble_constraints` →
+    /// layout): the only path that applies the `\documentclass`. Plain
+    /// `layout::layout` uses default constraints and never sees the class.
+    fn full_output(source: &str) -> crate::incremental::CompileOutput {
+        crate::incremental::compile_full(source, layout::LayoutConstraints::default())
+    }
+
+    fn output_size(output: &crate::incremental::CompileOutput, text: &str) -> f64 {
+        output
+            .pages
+            .iter()
+            .flat_map(|page| &page.items)
+            .find(|item| item.text == text)
+            .unwrap_or_else(|| panic!("no item {text:?}"))
+            .font_size_pt
+    }
+
+    #[test]
+    fn ams_larger_steps_one_rung_per_command() {
+        // Pure index steps on the eleven-rung ladder (0-based rungs:
+        // `\tiny` = 1, `\normalsize` = 5, `\Huge` = 10), not magstep
+        // scaling: every step moves exactly one rung and clamps at the
+        // ends. Rung 0 (`\Tiny`) folds onto `Tiny`.
+        use FontSizeLevel::*;
+        for (current, delta, expected) in [
+            (Some(Tiny), 1, Some(ScriptSize)),
+            (Some(Tiny), 3, Some(Small)),
+            (None, 1, Some(Large1)),
+            (None, -1, Some(Small)),
+            (Some(Large2), -2, None),
+            (Some(Small), 2, Some(Large1)),
+            (Some(Large3), 2, Some(Huge2)),
+            (Some(Huge2), 1, Some(Huge2)),
+            (Some(Huge2), 9, Some(Huge2)),
+            (Some(Tiny), -1, Some(Tiny)),
+            (Some(Tiny), -5, Some(Tiny)),
+            (None, 0, None),
+            (Some(Small), 0, Some(Small)),
+        ] {
+            assert_eq!(FontSizeLevel::stepped_ams(current, delta), expected, "{current:?} {delta}");
+        }
+    }
+
+    #[test]
+    fn ams_tiny_larger_three_times_lands_on_small() {
+        // The ladder walkthrough: tiny(1) → SMALL(2) → Small(3) → small(4),
+        // landing exactly on `\small` (9pt at 10pt) — with no
+        // `\usepackage{relsize}`, which an AMS class never needs.
+        let source = r"\documentclass[10pt]{amsart}\begin{document}{\tiny a \larger b \larger c \larger d}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "a"), 6.0);
+        assert_eq!(output_size(&output, "b"), 7.0);
+        assert_eq!(output_size(&output, "c"), 8.0);
+        assert_eq!(output_size(&output, "d"), 9.0);
+    }
+
+    #[test]
+    fn ams_plain_declarations_use_the_ams_tables() {
+        // All ten user-visible declarations at 10pt resolve to the AMS
+        // `\@typesizes` row, which genuinely differs from article's (e.g.
+        // `\Large`: 12pt here, 14.4pt in article).
+        let source = r"\documentclass[10pt]{amsart}\begin{document}{\tiny a \scriptsize b \footnotesize c \small d \normalsize e \large f \Large g \LARGE h \huge i \Huge j}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        for (text, size) in
+            [("a", 6.0), ("b", 7.0), ("c", 8.0), ("d", 9.0), ("e", 10.0),
+             ("f", 11.0), ("g", 12.0), ("h", 14.0), ("i", 17.0), ("j", 20.0)]
+        {
+            assert_eq!(output_size(&output, text), size, "{text}");
+        }
+    }
+
+    #[test]
+    fn ams_tables_apply_to_every_point_option_and_class() {
+        // `\tiny`, `\normalsize`, `\Large`, `\Huge` across the remaining
+        // point-size options (10pt is covered exhaustively above), spread
+        // over all three AMS classes to prove they share the ladder.
+        for (class, option, expected) in [
+            ("amsart", "8pt", [5.0, 8.0, 10.0, 14.0]),
+            ("amsart", "9pt", [5.0, 9.0, 11.0, 17.0]),
+            ("amsbook", "11pt", [7.0, 11.0, 14.0, 25.0]),
+            ("amsproc", "12pt", [8.0, 12.0, 17.0, 25.0]),
+        ] {
+            let source = format!(
+                "\\documentclass[{option}]{{{class}}}\\begin{{document}}{{\\tiny a \\normalsize e \\Large g \\Huge j}}\\end{{document}}"
+            );
+            let output = full_output(&source);
+            assert!(output.diagnostics.is_empty(), "{class} {option}: {:?}", output.diagnostics);
+            for (text, size) in ["a", "e", "g", "j"].iter().zip(expected.iter()) {
+                assert_eq!(output_size(&output, text), *size, "{class} {option} {text}");
+            }
+        }
+    }
+
+    #[test]
+    fn ams_bracket_steps_move_multiple_rungs() {
+        // `\larger[2]`/`\smaller[2]` add ±2 to the rung index (10pt).
+        let source = r"\documentclass[10pt]{amsart}\begin{document}{\normalsize n \larger[2]{X} \Large g \smaller[3]{Y}}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "X"), 12.0);
+        assert_eq!(output_size(&output, "Y"), 9.0);
+    }
+
+    #[test]
+    fn ams_relative_steps_clamp_at_both_ends() {
+        // Past `\Huge` the size holds at `\Huge` (20pt at 10pt); below
+        // `\tiny` it holds the smallest representable declaration.
+        let source = r"\documentclass[10pt]{amsart}\begin{document}{\Huge h \larger{X} \tiny t \smaller[3]{Y} \normalsize n \smaller s}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "X"), 20.0);
+        assert_eq!(output_size(&output, "Y"), 6.0);
+        assert_eq!(output_size(&output, "s"), 9.0);
+    }
+
+    #[test]
+    fn acmart_larger_stays_on_the_relsize_path() {
+        // `acmart` needs no relsize package either, but nothing shows it
+        // shares the AMS ladder: `\tiny\larger` under relsize's magstep
+        // math stays at `\tiny` (5.9999pt rounds to the closest level,
+        // itself), so three steps hold 5pt — where `amsart` walks 6/7/8/9.
+        let source = r"\documentclass[10pt]{acmart}\begin{document}{\tiny a \larger b \larger c \larger d}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "a"), 5.0);
+        assert_eq!(output_size(&output, "d"), 5.0);
+    }
+
     #[test]
     fn larger_without_an_argument_is_a_declaration_for_the_scope() {
         // The real package's declaration form: the step applies to the rest
@@ -15832,5 +18105,144 @@ mod tests {
     fn hangfrom_reports_its_missing_hang_only_once_per_document() {
         let parsed = parse(r"\hangfrom{1.}one \hangfrom{2.}two");
         assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
+    }
+    #[test]
+    fn list_items_use_the_default_label_without_a_warning() {
+        let (parsed, laid) = items(r"\begin{list}{*}{}\item Hello\end{list}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let mut found = false;
+        for block in &parsed.blocks {
+            if let Block::ListItem { level, label, .. } = block {
+                assert_eq!(*level, 1);
+                assert_eq!(label.as_ref().map(|(text, _)| text.as_str()), Some("*"));
+                found = true;
+            }
+        }
+        assert!(found, "{:?}", parsed.blocks);
+        let star = laid.iter().find(|item| item.text == "*").expect("label laid out");
+        let hello = laid.iter().find(|item| item.text == "Hello").expect("body laid out");
+        assert_eq!(star.baseline_y_pt, hello.baseline_y_pt);
+        assert!(star.x_pt < hello.x_pt, "{star:?} {hello:?}");
+    }
+
+    #[test]
+    fn list_explicit_item_label_overrides_the_default() {
+        let (parsed, _) = items(r"\begin{list}{*}{}\item[x] Hello\end{list}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        for block in &parsed.blocks {
+            if let Block::ListItem { label, item, .. } = block {
+                assert_eq!(label.as_ref().map(|(text, _)| text.as_str()), Some("x"));
+                assert!(matches!(item, Some(ItemLabel::Explicit { .. })), "{item:?}");
+                return;
+            }
+        }
+        panic!("no list item in {:?}", parsed.blocks);
+    }
+
+    #[test]
+    fn list_setlength_leftmargin_moves_the_item_text() {
+        let text_x = |source: &str| {
+            let (_, laid) = items(source);
+            laid.iter().find(|item| item.text == "Hi").expect("body laid out").x_pt
+        };
+        let narrow = text_x(r"\begin{list}{*}{\setlength{\leftmargin}{0pt}}\item Hi\end{list}");
+        let wide = text_x(r"\begin{list}{*}{\setlength{\leftmargin}{30pt}}\item Hi\end{list}");
+        assert!((wide - narrow - 30.0).abs() < 0.01, "{narrow} {wide}");
+    }
+
+    #[test]
+    fn list_setlength_labelsep_moves_the_label_but_not_the_text() {
+        let positions = |source: &str| {
+            let (_, laid) = items(source);
+            let text = laid.iter().find(|item| item.text == "Hi").expect("body laid out").x_pt;
+            let label = laid.iter().find(|item| item.text == "z").expect("label laid out").x_pt;
+            (text, label)
+        };
+        let (text_wide, label_wide) =
+            positions(r"\begin{list}{-}{\setlength{\leftmargin}{30pt}}\item[z] Hi\end{list}");
+        let (text_zero, label_zero) =
+            positions(r"\begin{list}{-}{\setlength{\leftmargin}{30pt}\setlength{\labelsep}{0pt}}\item[z] Hi\end{list}");
+        assert!((text_wide - text_zero).abs() < 0.01, "{text_wide} {text_zero}");
+        assert!((label_zero - label_wide - 6.0).abs() < 0.01, "{label_wide} {label_zero}");
+    }
+
+    #[test]
+    fn list_setlength_itemsep_widens_the_gap_between_items() {
+        let second_y = |source: &str| {
+            let (_, laid) = items(source);
+            laid.iter().filter(|item| item.text == "A" || item.text == "B").last().expect("items laid out").baseline_y_pt
+        };
+        let tight = second_y(r"\begin{list}{-}{}\item A\item B\end{list}");
+        let loose = second_y(r"\begin{list}{-}{\setlength{\itemsep}{24pt}}\item A\item B\end{list}");
+        assert!((loose - tight - 24.0).abs() < 0.01, "{tight} {loose}");
+    }
+
+    #[test]
+    fn list_nests_with_cumulative_margins_and_inner_lengths() {
+        let (parsed, laid) = items(
+            r"\begin{list}{A}{\setlength{\leftmargin}{10pt}}\item One\begin{list}{B}{\setlength{\leftmargin}{20pt}}\item Two\end{list}\end{list}",
+        );
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let levels: Vec<u8> = parsed
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::ListItem { level, .. } => Some(*level),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(levels, vec![1, 2], "{:?}", parsed.blocks);
+        let x = |text: &str| laid.iter().find(|item| item.text == text).expect("laid out").x_pt;
+        // The inner list's own decl shapes only the inner level, which still
+        // sits inside the outer level's share.
+        assert!(x("Two") > x("One"), "{:?}", laid);
+        assert!((x("Two") - x("One") - 40.0).abs() < 0.01, "{:?}", laid);
+    }
+
+    #[test]
+    fn list_empty_arguments_and_surrounding_spaces_are_valid() {
+        let (parsed, laid) = items(r"\begin{list}  {}  {  }  \item[x] Hi\end{list}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert!(laid.iter().any(|item| item.text == "Hi"), "{laid:?}");
+        // Spaces at either edge of the default label do not become part of it.
+        for source in [
+            r"\begin{list}{ *}{}\item Hi\end{list}",
+            r"\begin{list}{* }{}\item Hi\end{list}",
+        ] {
+            let (parsed, laid) = items(source);
+            assert!(parsed.diagnostics.is_empty(), "{source:?} {:?}", parsed.diagnostics);
+            assert!(laid.iter().any(|item| item.text == "*"), "{source:?} {laid:?}");
+        }
+        // An empty default label leaves a bare \item label-less, like the
+        // kernel's empty \@itemlabel: no label is drawn.
+        let (parsed, laid) = items(r"\begin{list}{}{}\item Hi\end{list}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert!(laid.iter().any(|item| item.text == "Hi"), "{laid:?}");
+    }
+
+    #[test]
+    fn list_lengths_outside_any_list_keep_their_warning() {
+        let parsed = parse(r"\documentclass{article}\begin{document}\setlength{\leftmargin}{5pt}Hi\end{document}");
+        assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
+        assert!(parsed.diagnostics[0].message.contains(
+            r"\setlength{\leftmargin} is recognised but not implemented here"
+        ));
+    }
+
+    #[test]
+    fn list_topsep_accepts_a_baselineskip_factor() {
+        let parsed = parse(
+            r"\documentclass{article}\begin{document}\begin{list}{-}{\setlength{\topsep}{0.6\baselineskip}}\item A\end{list}\end{document}",
+        );
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        for block in &parsed.blocks {
+            if let Block::ListItem { extra_gap_before_pt, extra_gap_after_pt, .. } = block {
+                // 0.6 of the 10pt class leading (12pt).
+                assert!((extra_gap_before_pt - 7.2).abs() < 1e-9, "{extra_gap_before_pt}");
+                assert!((extra_gap_after_pt - 7.2).abs() < 1e-9, "{extra_gap_after_pt}");
+                return;
+            }
+        }
+        panic!("no list item in {:?}", parsed.blocks);
     }
 }

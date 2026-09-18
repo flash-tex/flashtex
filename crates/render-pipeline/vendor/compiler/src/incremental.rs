@@ -239,10 +239,11 @@ impl Session {
         };
 
         if parsed.document_global_state {
-            let (pages, layout_diagnostics) = layout::layout_converged_with_options(
+            let (pages, layout_diagnostics) = layout::layout_converged_with_fancy(
                 &parsed.blocks,
                 constraints,
                 &parsed.cleveref,
+                &parsed.fancy,
             );
             let mut diagnostics = parsed.diagnostics;
             diagnostics.append(&mut limit_repeats(layout_diagnostics));
@@ -423,10 +424,11 @@ pub fn compile_full_project_with(
 ) -> CompileOutput {
     let parsed = parser::parse_project_with(documents, entry_path, options);
     let constraints = parsed.preamble_constraints(constraints);
-    let (pages, layout_diagnostics) = layout::layout_converged_with_options(
+    let (pages, layout_diagnostics) = layout::layout_converged_with_fancy(
         &parsed.blocks,
         constraints,
         &parsed.cleveref,
+        &parsed.fancy,
     );
     // Parser diagnostics are already bounded (`parse_project_with`); the
     // layout's are bounded on their own, so a summary is never re-counted.
@@ -508,6 +510,7 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             extra_gap_after_pt: _,
             leftmargin: _,
             widest_label: _,
+            labelsep_pt: _,
             lists,
             item,
         } => {
@@ -644,6 +647,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             Inline::CleverReference { span, .. } => map_span(span, changes, deltas)?,
             Inline::ThePage { span, .. } => map_span(span, changes, deltas)?,
             Inline::PageNumbering { span, .. } => map_span(span, changes, deltas)?,
+            Inline::PageStyle { span, .. } => map_span(span, changes, deltas)?,
             Inline::HFill { span, .. } => map_span(span, changes, deltas)?,
             Inline::HSpace { span, .. } => map_span(span, changes, deltas)?,
             Inline::Footnote {
@@ -930,6 +934,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::CleverReference { span, .. } => *span,
         Inline::ThePage { span, .. } => *span,
         Inline::PageNumbering { span, .. } => *span,
+        Inline::PageStyle { span, .. } => *span,
         Inline::HFill { span, .. } => *span,
         Inline::HSpace { span, .. } => *span,
         Inline::Footnote { span, .. } => *span,
@@ -1146,6 +1151,7 @@ mod tests {
             font_size_pt: 13.0,
             measure_pt: 320.0,
             parskip_pt: None,
+            ams_sizes: false,
         };
         let result = session.compile(text, constraints);
         eprintln!("constraint ReuseStats: {:?}", result.stats);

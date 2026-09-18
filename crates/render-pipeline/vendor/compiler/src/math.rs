@@ -844,6 +844,12 @@ pub enum Frame {
     UnderLeftArrow,
     /// amsmath `\underleftrightarrow` (1005-1006).
     UnderLeftRightArrow,
+    /// cancel package `\cancel`: forward diagonal (bottom-left to top-right).
+    Cancel,
+    /// cancel package `\bcancel`: backward diagonal (top-left to bottom-right).
+    BCancel,
+    /// cancel package `\xcancel`: both diagonals (an X through the content).
+    XCancel,
 }
 
 impl Frame {
@@ -989,6 +995,12 @@ pub struct MathPackages {
     /// `amsmath`, so this flag always arrives with `amsmath` set — see
     /// `AMSMATH_PACKAGES`, which already lists `mathtools`.
     pub mathtools: bool,
+    /// `cancel` is loaded, providing `\cancel`, `\bcancel`, `\xcancel` and
+    /// `\cancelto`.
+    ///
+    /// Base LaTeX2e does not define these names (`cancel.sty` is a standalone
+    /// package, measured as not loading amsmath).
+    pub cancel: bool,
 }
 
 /// Packages that load amsmath, so that `\usepackage{X}` alone gives amsmath's
@@ -1079,6 +1091,7 @@ impl MathPackages {
         amssymb: false,
         amsfonts: false,
         mathtools: false,
+        cancel: false,
     };
 
     /// Folds one `\documentclass` name in.
@@ -1093,6 +1106,7 @@ impl MathPackages {
     pub fn load_package(&mut self, package: &str) {
         self.amsmath |= AMSMATH_PACKAGES.contains(&package);
         self.mathtools |= package == "mathtools";
+        self.cancel |= package == "cancel";
         let amssymb = AMSSYMB_PACKAGES.contains(&package);
         self.amssymb |= amssymb;
         // `amssymb.sty` line 8 is `\RequirePackage{amsfonts}`, so anything
@@ -1264,8 +1278,13 @@ impl MathParser<'_> {
             return MathList { atoms: Vec::new() };
         }
         self.depth += 1;
-        let result = self.list_inner(stop_at_brace);
+        let mut result = self.list_inner(stop_at_brace);
         self.depth -= 1;
+        // Every multi-atom list funnels through here (braced groups, the top
+        // level, and `sub_list`'s fresh parser for grid cells and optional
+        // arguments), so one pass resolves every `\dots` against its final
+        // following atom, including atoms flattened in from sublists.
+        resolve_dots(&mut result);
         result
     }
 
@@ -1566,7 +1585,12 @@ impl MathParser<'_> {
         if let Some(atom) = self.atom() {
             let mut atoms = vec![atom];
             atoms.append(&mut self.pending);
-            MathList { atoms }
+            // The queued atoms (if any) are the rest of this same script, so
+            // they are the only followers a pending `\dots` can see here;
+            // resolving also clears the marker before the atom escapes.
+            let mut list = MathList { atoms };
+            resolve_dots(&mut list);
+            list
         } else {
             if self.argument_cut_off() {
                 return MathList { atoms: Vec::new() };
@@ -1625,6 +1649,17 @@ impl MathParser<'_> {
                     }
                     if ch == '|' {
                         return Some(symbol("‖".into(), token.span));
+                    }
+                    // `\2`: no LaTeX layer defines a control symbol made of
+                    // a digit (pdflatex: `! Undefined control sequence`),
+                    // so the backslash is a typo for the bare digit. The
+                    // digit below is still typeset; this only adds the
+                    // diagnostic the silent literal was missing.
+                    if let Some(digit) = crate::diagnostics::control_symbol_digit(&word) {
+                        self.diagnostics.push(Diagnostic::undefined_control_symbol(
+                            digit,
+                            token.span,
+                        ));
                     }
                 }
                 Some(symbol(ch.to_string(), span))
@@ -2115,7 +2150,16 @@ impl MathParser<'_> {
             | "Bigr" | "biggr" | "Biggr" | "bigm" | "Bigm" | "biggm" | "Biggm" => {
                 sized_delimiter(self.take_delimiter(&name, span), &name)
             }
-            "dots" | "ldots" | "dotsc" | "dotso" => text_atom("...".into(), span),
+            // Only bare `\dots` auto-detects its form here: `resolve_dots`
+            // rewrites the marker to the centred symbol when the following
+            // non-space atom is class `Bin` or `Rel`. Every other spelling
+            // is a fixed choice in real amsmath (amsmath.dtx): `\dotsc`
+            // ("dots with commas") and `\dotso` ("other dots") are always
+            // baseline, like `\ldots`; `\cdots`/`\dotsb`/`\dotsm`/`\dotsi`
+            // are always centred — confirmed against the pdflatex oracle
+            // (`\dotsc + x`/`\dotso + x` are CMMI10 baseline, not centred).
+            "dots" => auto_dots_atom(span),
+            "ldots" | "dotsc" | "dotso" => text_atom("...".into(), span),
             "cdots" | "dotsb" | "dotsm" | "dotsi" => symbol("⋅⋅⋅".into(), span),
             // Symbol has no U+222C/U+222D: repeated real integral glyphs.
             "iint" => symbol("∫∫".into(), span),
@@ -2270,7 +2314,18 @@ impl MathParser<'_> {
                     ams_symbol: None,
                 }
             }
-            "cfrac" => self.command_atom("frac".into(), span),
+            // amsmath.sty 912: `\cfrac[c]{num}{den}` is
+            // `{\displaystyle\frac{\strut...num...}{den}}`, i.e. size-wise
+            // exactly `\dfrac` (`\genfrac{}{}{}0`): a display-style fraction,
+            // so every nesting level stays full height instead of shrinking
+            // like `\frac`. Only the size is modelled here: the `\strut`s,
+            // the `[l]`/`[r]` alignment fills and the trailing
+            // `\kern-\nulldelimiterspace` only centre the parts.
+            "cfrac" => {
+                let numerator = self.required_group(&name, span);
+                let denominator = self.required_group(&name, span);
+                gen_fraction(numerator, denominator, /*binom=*/ false, Some(MathStyle::Display), span)
+            }
             "frac" => {
                 let numerator = self.required_group("frac", span);
                 let denominator = self.required_group("frac", span);
@@ -2373,6 +2428,26 @@ impl MathParser<'_> {
                     "underleftarrow" => Frame::UnderLeftArrow,
                     "underleftrightarrow" => Frame::UnderLeftRightArrow,
                     _ => Frame::Under,
+                };
+                MathAtom {
+                    nucleus: Nucleus::Framed { body, frame },
+                    span,
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                }
+            }
+            "cancel" | "bcancel" | "xcancel" if !self.packages.cancel => {
+                self.missing_package(&name, "cancel", span)
+            }
+            "cancel" | "bcancel" | "xcancel" => {
+                let body = self.required_group(&name, span);
+                let frame = match name.as_str() {
+                    "cancel" => Frame::Cancel,
+                    "bcancel" => Frame::BCancel,
+                    _ => Frame::XCancel,
                 };
                 MathAtom {
                     nucleus: Nucleus::Framed { body, frame },
@@ -3681,7 +3756,12 @@ impl MathParser<'_> {
         if let Some(atom) = self.atom() {
             let mut atoms = vec![atom];
             atoms.append(&mut self.pending);
-            return MathList { atoms };
+            // As in `script_argument`: the queued atoms are the only possible
+            // followers in this single-atom argument, and resolving clears a
+            // pending `\dots` marker before the atom escapes the parser.
+            let mut list = MathList { atoms };
+            resolve_dots(&mut list);
+            return list;
         }
         self.diagnostics.push(Diagnostic::error(
             format!("\\{} requires an argument", command),
@@ -4374,6 +4454,51 @@ fn text_atom(text: String, span: Span) -> MathAtom {
         class_override: None,
         width_em: None,
         ams_symbol: None,
+    }
+}
+
+/// A bare `\dots` atom whose baseline-vs-centred choice is still pending
+/// (issue #893): `resolve_dots` rewrites it once the following atom is
+/// known.
+///
+/// The pending marker is `class_override: Some(AtomClass::Inner)`, which
+/// `atom_class` maps to `Inner` -- exactly what the plain `Text("...")` it
+/// wraps derives on its own -- so spacing is identical while the choice is
+/// pending, and no other producer ever sets `Some(Inner)`. Resolution clears
+/// the marker, so a list that keeps the baseline form comes out byte-identical
+/// to the atom `text_atom` used to produce directly.
+fn auto_dots_atom(span: Span) -> MathAtom {
+    let mut atom = text_atom("...".into(), span);
+    atom.class_override = Some(AtomClass::Inner);
+    atom
+}
+
+/// Resolve pending bare-`\dots` atoms (`auto_dots_atom`) in place: a pending
+/// atom becomes the centred `\cdots` symbol when the next
+/// non-space atom's class is `Bin` or `Rel` (explicit glue classifies as
+/// nothing and is skipped), and plain baseline `\ldots` otherwise -- before
+/// `,`, before close delimiters, and at the end of the list.
+///
+/// The class read is the raw `atom_class`, not the spacing-adjusted one: TeX
+/// decides from the following token's own class (`amsmath.sty` `\mdots@@`),
+/// so a `+` that spacing later demotes still centres the dots.
+fn resolve_dots(list: &mut MathList) {
+    for i in 0..list.atoms.len() {
+        let pending = matches!(&list.atoms[i].nucleus, Nucleus::Text(text) if text == "...")
+            && list.atoms[i].class_override == Some(AtomClass::Inner);
+        if !pending {
+            continue;
+        }
+        let centred = list.atoms[i + 1..]
+            .iter()
+            .filter_map(atom_class)
+            .next()
+            .is_some_and(|class| matches!(class, AtomClass::Bin | AtomClass::Rel));
+        let atom = &mut list.atoms[i];
+        atom.class_override = None;
+        if centred {
+            atom.nucleus = Nucleus::Symbol("⋅⋅⋅".into());
+        }
     }
 }
 
@@ -6553,6 +6678,89 @@ mod parse_tests {
         assert_eq!(list.atoms.len(), 1, "{:?}", list.atoms);
         assert!(matches!(list.atoms[0].nucleus, Nucleus::Text(ref text) if text == "x"));
     }
+
+    /// Issue #893: bare `\dots` must choose the centred `\cdots` form when
+    /// the next non-space atom is class `Bin` or `Rel`, and the baseline
+    /// `\ldots` form otherwise. `\dotsc`/`\dotso` are fixed baseline in real
+    /// amsmath (pdflatex oracle: CMMI10 even before `Bin`/`Rel`) and never
+    /// move; neither do the explicit `\cdots`/`\ldots` spellings.
+    #[test]
+    fn dots_chooses_centred_before_bin_or_rel_and_baseline_otherwise() {
+        // (source, centred?): the first atom whose nucleus is a dots form
+        // must be `Symbol("⋅⋅⋅")` when centred, `Text("...")` otherwise --
+        // the two existing branches the pipeline already lays out as the
+        // centred and baseline ellipsis respectively.
+        for (source, centred) in [
+            (r"\dots = \gcd(a,b)", true),
+            (r"a_1 + \dots + a_n", true),
+            (r"x \dots \le y", true),
+            (r"a_1, \dots, a_n", false),
+            (r"\cdots = \gcd(a,b)", true),
+            (r"\ldots = \gcd(a,b)", false),
+            // Close delimiters and the end of a formula stay baseline.
+            (r"(a_1 + \dots)", false),
+            (r"a_n \dots", false),
+            // \dotsc/\dotso are fixed baseline, never context-sensitive.
+            (r"\dotsc + x", false),
+            (r"\dotso = x", false),
+            (r"\dotsc, x", false),
+            // Explicit glue between the dots and the operator is skipped.
+            (r"\dots\,+ x", true),
+            // The choice also applies inside a braced group.
+            (r"\frac{\dots + x}{y}", true),
+            (r"\frac{a, \dots, b}{y}", false),
+        ] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(source);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            fn dots_nucleus(list: &MathList) -> Option<bool> {
+                for atom in &list.atoms {
+                    match &atom.nucleus {
+                        Nucleus::Symbol(s) if s == "⋅⋅⋅" => return Some(true),
+                        Nucleus::Text(t) if t == "..." => return Some(false),
+                        Nucleus::Group(body) => {
+                            if let Some(found) = dots_nucleus(body) {
+                                return Some(found);
+                            }
+                        }
+                        Nucleus::Fraction { numerator, .. } => {
+                            if let Some(found) = dots_nucleus(numerator) {
+                                return Some(found);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                None
+            }
+            assert_eq!(
+                dots_nucleus(&list),
+                Some(centred),
+                "{source}: wrong dots form in {:?}",
+                list.atoms
+                    .iter()
+                    .map(|a| format!("{:?}", a.nucleus))
+                    .collect::<Vec<_>>()
+            );
+            // The chosen form must lay out exactly like its explicit
+            // counterpart: no new diagnostic, and the dots item keeps the
+            // same advance in both forms (only the glyph differs).
+            let before = diagnostics.len();
+            let laid = layout(&list, 12.0, &mut diagnostics);
+            assert_eq!(
+                diagnostics.len(),
+                before,
+                "{source}: layout added {diagnostics:?}"
+            );
+            assert!(
+                laid.items
+                    .iter()
+                    .any(|item| item.text == "..." || item.text == "⋅⋅⋅"),
+                "{source}: no dots item laid out"
+            );
+        }
+    }
 }
 
 /// TeX's rule for an undelimited argument: without a `{...}` group, the
@@ -6746,6 +6954,63 @@ mod unbraced_argument_tests {
         }
     }
 
+    #[test]
+    fn cfrac_is_a_display_style_genfraction_and_frac_is_untouched() {
+        // Issue #894: `\cfrac` used to alias plain `\frac`, so a continued
+        // fraction shrank at every level. amsmath.sty 912 makes it
+        // `{\displaystyle\frac{...}{...}}`: a display-style fraction, exactly
+        // `\dfrac`'s shape (`\genfrac{}{}{}0`).
+        for (source, expected) in [
+            (r"\cfrac{a}{b}", Some(MathStyle::Display)),
+            (r"\dfrac{a}{b}", Some(MathStyle::Display)),
+            (r"\tfrac{a}{b}", Some(MathStyle::Text)),
+        ] {
+            let mut diagnostics = Vec::new();
+            let list = parse_tokens(
+                &crate::lexer::tokenize(source),
+                MathPackages::KERNEL,
+                &mut diagnostics,
+            );
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "{source}: {:?}", list.atoms);
+            match &list.atoms[0].nucleus {
+                Nucleus::GenFraction {
+                    numerator,
+                    denominator,
+                    thickness_pt,
+                    left,
+                    right,
+                    style,
+                } => {
+                    assert_eq!(numerator.atoms[0].nucleus, Nucleus::Symbol("a".into()), "{source}");
+                    assert_eq!(denominator.atoms[0].nucleus, Nucleus::Symbol("b".into()), "{source}");
+                    assert_eq!(*thickness_pt, None, "{source}: a fraction rule, not a binom");
+                    assert_eq!((left.as_str(), right.as_str()), ("", ""), "{source}: no delimiters");
+                    assert_eq!(*style, expected, "{source}");
+                }
+                other => panic!("{source}: expected a generalized fraction, got {other:?}"),
+            }
+        }
+        // Plain `\frac` keeps its own nucleus: same groups, no style.
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(
+            &crate::lexer::tokenize(r"\frac{a}{b}"),
+            MathPackages::KERNEL,
+            &mut diagnostics,
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        match &list.atoms[0].nucleus {
+            Nucleus::Fraction {
+                numerator,
+                denominator,
+            } => {
+                assert_eq!(numerator.atoms[0].nucleus, Nucleus::Symbol("a".into()));
+                assert_eq!(denominator.atoms[0].nucleus, Nucleus::Symbol("b".into()));
+            }
+            other => panic!("expected a plain fraction, got {other:?}"),
+        }
+    }
+
     /// A document that loaded `amsfonts`: its `\mathbb`/`\mathfrak` alphabets
     /// exist. Base LaTeX2e defines neither.
     const AMSFONTS: MathPackages = MathPackages {
@@ -6753,6 +7018,7 @@ mod unbraced_argument_tests {
         amssymb: false,
         amsfonts: true,
         mathtools: false,
+        cancel: false,
     };
 
     #[test]
@@ -7390,6 +7656,7 @@ mod spacing_tests {
         amssymb: true,
         amsfonts: true,
         mathtools: false,
+        cancel: false,
     };
 
     fn width_with(source: &str, size: f64, packages: MathPackages) -> f64 {
@@ -7405,6 +7672,7 @@ mod spacing_tests {
         amssymb: false,
         amsfonts: false,
         mathtools: true,
+        cancel: false,
     };
 
     fn x(b: &MathBox, text: &str) -> f64 {
@@ -8176,24 +8444,28 @@ mod package_gating_tests {
         amssymb: true,
         amsfonts: true,
         mathtools: false,
+        cancel: false,
     };
     const AMSFONTS: MathPackages = MathPackages {
         amsmath: false,
         amssymb: false,
         amsfonts: true,
         mathtools: false,
+        cancel: false,
     };
     const AMSMATH: MathPackages = MathPackages {
         amsmath: true,
         amssymb: false,
         amsfonts: false,
         mathtools: false,
+        cancel: false,
     };
     const MATHTOOLS: MathPackages = MathPackages {
         amsmath: true,
         amssymb: false,
         amsfonts: false,
         mathtools: true,
+        cancel: false,
     };
 
     fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
@@ -8811,7 +9083,8 @@ mod package_gating_tests {
                 amsmath: true,
                 amssymb: false,
                 amsfonts: true,
-                mathtools: false
+                mathtools: false,
+                cancel: false,
             }
         );
         assert_eq!(
@@ -8820,7 +9093,8 @@ mod package_gating_tests {
                 amsmath: true,
                 amssymb: true,
                 amsfonts: true,
-                mathtools: false
+                mathtools: false,
+                cancel: false,
             }
         );
         assert_eq!(class("article"), MathPackages::KERNEL);
@@ -8839,6 +9113,7 @@ mod double_bar_tests {
         amssymb: false,
         amsfonts: false,
         mathtools: false,
+        cancel: false,
     };
 
     /// The glyph texts a formula lays out, in order.
@@ -9094,6 +9369,7 @@ mod lap_tests {
         amssymb: false,
         amsfonts: false,
         mathtools: true,
+        cancel: false,
     };
 
     /// `amsmath` without `mathtools`: the lap family is still undefined.
@@ -9102,6 +9378,7 @@ mod lap_tests {
         amssymb: false,
         amsfonts: false,
         mathtools: false,
+        cancel: false,
     };
 
     fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
