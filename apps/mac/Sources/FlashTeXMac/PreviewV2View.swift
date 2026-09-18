@@ -1182,7 +1182,7 @@ private struct PageV2View: View, Equatable {
         let bitmap = V2PageRasterizer.shared.image(for: prepared, pageToken: pageToken, pixelsPerPoint: Double(scale * displayScale), dark: dark)
         // A stale page keeps its label and colour: the previous frame stays on screen
         // unchanged while the next one is verified (typing must not flash the pages).
-        let label = bitmap == nil ? "page \(page.number) · v2 · rasterizing…" : "page \(page.number) · v2"
+        let label = bitmap == nil ? "page \(page.number) · rasterizing…" : "page \(page.number)"
         let labelColor: Color = dark ? DS.Preview.darkLabel : DS.Preview.lightLabel
         let pageBackground: Color = dark ? DS.Preview.darkPage : .white
         // The bitmap is the contents of a CALayer (PageBitmapLayer): CoreAnimation
