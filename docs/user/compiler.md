@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 362 text-mode and 570 math-mode command entries, 67 environments and 26 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 372 text-mode and 570 math-mode command entries, 67 environments and 27 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -514,8 +514,18 @@ Canonical sources:
 | `\newcolumn` |  | multicol: ends the current column of multicols, filling it |
 | `\raggedcolumns` |  | multicol: columns keep their natural height |
 | `\flushcolumns` |  | multicol: columns are stretched to one height (the default) |
-| `\pagestyle` | `{style}` | accepted; no headers or footers are rendered |
-| `\thispagestyle` | `{style}` | accepted; no headers or footers are rendered |
+| `\pagestyle` | `{style}` | records a page-style switch per page: fancy ships the fancyhead/fancyfoot fields, every other style renders no headers or footers |
+| `\thispagestyle` | `{style}` | records a one-page style switch: fancy ships the fancyhead/fancyfoot fields, every other style renders no headers or footers |
+| `\fancyhead` | `[pos]{...}` | fancyhdr: sets the header fields for positions L, C, R (combinable with E/O, as in [LE,RO]); empty content clears them |
+| `\fancyfoot` | `[pos]{...}` | fancyhdr: sets the footer fields for positions L, C, R (combinable with E/O, as in [LE,RO]); empty content clears them |
+| `\fancyhf` | `[pos]{...}` | fancyhdr: sets all six header and footer fields at once; empty content clears them |
+| `\lhead` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
+| `\chead` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
+| `\rhead` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
+| `\lfoot` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
+| `\cfoot` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
+| `\rfoot` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
+| `\fancypagestyle` | `{style}{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
 | `\pagenumbering` | `{style}` | resets the page counter to 1 and selects the \thepage/\pageref style (arabic, roman, Roman, alph, Alph); unknown styles fall back to arabic |
 | `\listfiles` |  | accepted no-op; there is no log stream |
 | `\centering` |  | centres the following paragraphs |
@@ -992,6 +1002,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `ulem` | `normalem` | \uline: 0.4pt rule under the argument (single-line); \sout: 0.4pt strike at 0.55ex; \emph is not redefined |
 | `soul` | `` | \so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828); \st stays unsupported |
 | `relsize` | `` | \larger/\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size |
+| `fancyhdr` | `` | \pagestyle{fancy} ships the \fancyhead/\fancyfoot fields ([LE,RO]-style positions, E/O shared one-sided) with the 0.4pt head rule; \fancyhf clears all six fields; \setlength{\headrulewidth}/\setlength{\footrulewidth}; \lhead and friends plus \fancypagestyle are diagnosed where they are used |
 | `xspace` | `` | \xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
 | `ifthen` | `` | \ifthenelse with \equal, \NOT, \AND, \OR, \isodd, \isundefined, \lengthtest and \boolean tests, and \newif conditionals with \newboolean/\setboolean; \whiledo loops are diagnosed where they are used |
 
