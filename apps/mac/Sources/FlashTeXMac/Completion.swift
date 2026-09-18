@@ -2447,6 +2447,17 @@ final class CompletingTextView: NSTextView {
     /// (SourceEditorView's `pendingClosers`). Nil outside the hosted editor,
     /// where nothing is auto-closed.
     var isPendingCloser: ((Int) -> Bool)?
+    /// An input-method composition ended without replacing the marked text
+    /// (`unmarkText`, e.g. on focus loss). A commit or cancel is a storage
+    /// edit and needs no hook; this covers the one path that posts none, so
+    /// paint held during the composition (`SyntaxPainter`, #780) is flushed.
+    var onCompositionEnded: (() -> Void)?
+
+    override func unmarkText() {
+        let wasComposing = hasMarkedText()
+        super.unmarkText()
+        if wasComposing { onCompositionEnded?() }
+    }
 
     override func mouseDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command), !event.modifierFlags.contains(.shift), event.clickCount == 1,

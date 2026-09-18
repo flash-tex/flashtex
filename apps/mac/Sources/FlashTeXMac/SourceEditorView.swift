@@ -839,6 +839,12 @@ struct SourceEditorView: NSViewRepresentable {
             hover.mathPreview = { [weak self] index in self?.mathPreview(at: index) }
             if let completing = tv as? CompletingTextView {
                 completing.commandClickHandler = { [weak self] index in self?.commandClick(at: index) ?? false }
+                // A composition that ends without a storage edit: paint what
+                // the painter held while composing (#780). One hop later, so
+                // this never runs inside `processEditing` (GH#681).
+                completing.onCompositionEnded = { [weak self] in
+                    DispatchQueue.main.async { self?.syntax.flush() }
+                }
                 // Math-mode ranking in the completion list (Completion.swift):
                 // answered from the in-sync syntax model, one line's lexing.
                 completing.mathModeAtCaret = { [weak self] index in

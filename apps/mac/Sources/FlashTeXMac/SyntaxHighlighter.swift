@@ -645,7 +645,8 @@ struct SyntaxTheme: Sendable {
 /// temporary attributes over a window around the visible text (extended on
 /// scroll); an edit repaints only the lines the highlighter re-lexed.
 /// Nothing is painted while the view has marked text (IME composition): the
-/// dirty range is kept and painted at the next flush after the commit.
+/// dirty range is kept and painted at the next flush after the commit; the
+/// painter does not poll for the composition to end (#780).
 @MainActor
 final class SyntaxPainter {
     static let key = NSAttributedString.Key.foregroundColor
@@ -777,13 +778,13 @@ final class SyntaxPainter {
     /// later flush after the commit does it).
     func flush() {
         guard enabled, !resetScheduled, let tv = textView, let dirty = pendingDirty else { return }
-        if tv.hasMarkedText() {
-            if !flushScheduled {
-                flushScheduled = true
-                DispatchQueue.main.async { [weak self] in self?.flushScheduled = false; self?.flush() }
-            }
-            return
-        }
+        // Marked text: hold the dirty range and wait to be called again. It
+        // is not re-queued here — that spun the main queue for the whole
+        // composition (#780). Every way a composition ends reaches a flush:
+        // a commit or cancel replaces the marked text (a storage edit, which
+        // schedules one), and an in-place `unmarkText` (focus loss) reports
+        // through `CompletingTextView.onCompositionEnded`.
+        if tv.hasMarkedText() { return }
         pendingDirty = nil
         guard let lm = tv.layoutManager else { return }
         // Painting only repaints the overlap of `painted` and the dirty range,
