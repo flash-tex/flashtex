@@ -85,6 +85,18 @@ jobs:
         with:
           workspaces: crates/${{ matrix.crate }}
           key: ${{ matrix.crate }}
+      - name: Install poppler (pdftotext for searchable-text tests)
+        # The render-pipeline searchable-text tests extract through
+        # `pdftotext` and fail loudly when it is missing instead of skipping
+        # silently, so both runners need Poppler installed.
+        run: |
+          if [ "${RUNNER_OS}" = "Linux" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+          elif [ "${RUNNER_OS}" = "macOS" ]; then
+            brew install poppler
+          else
+            echo "unknown runner OS: ${RUNNER_OS}"; exit 1
+          fi
       - name: cargo build --release
         working-directory: crates/${{ matrix.crate }}
         run: cargo build --release --locked ${{ matrix.features }}
