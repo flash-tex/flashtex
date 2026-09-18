@@ -37,6 +37,16 @@ pub enum ClassKind {
     /// KOMA-Script `scrbook`: like `scrreprt` but twoside with `openright`
     /// (book's shape).
     Scrbook,
+    /// `beamer.cls` (v3.x): a slide class, not a `size1x.clo` consumer.
+    /// The paper is beamer's own (128mm × 96mm 4:3 by default, changed by
+    /// the `aspectratio` class option — see [`beamer_paper_size`]), the
+    /// text block is inset 1cm left and right and spans the full paper
+    /// height (zero vertical margins; only a 4pt footskip reservation),
+    /// and the body size is
+    /// 11pt (`\baselineskip` 13.6pt). Frame pagination (`\frame`
+    /// starting a new page, `\pause`, overlays) is deliberately NOT
+    /// modelled here — only the page geometry.
+    Beamer,
 }
 
 impl ClassKind {
@@ -50,6 +60,7 @@ impl ClassKind {
             "scrartcl" | "scrarticle" => Some(ClassKind::Scrartcl),
             "scrreprt" => Some(ClassKind::Scrreprt),
             "scrbook" => Some(ClassKind::Scrbook),
+            "beamer" => Some(ClassKind::Beamer),
             _ => None,
         }
     }
@@ -62,6 +73,7 @@ impl ClassKind {
             ClassKind::Scrartcl => "scrartcl",
             ClassKind::Scrreprt => "scrreprt",
             ClassKind::Scrbook => "scrbook",
+            ClassKind::Beamer => "beamer",
         }
     }
     /// Whether the class runs KOMA's `typearea` instead of `size1x.clo`.
@@ -160,6 +172,10 @@ pub struct ClassOptions {
     /// KOMA `pagesize`: false keeps pdfTeX's engine-default media instead
     /// of setting it from the paper (like the standard classes always do).
     pub pagesize_pdf: bool,
+    /// beamer's resolved paper size from the `aspectratio` class option
+    /// (see [`beamer_paper_size`]; default 128mm × 96mm). `None` for every
+    /// other class, whose paper comes from [`Paper`] instead.
+    pub beamer_paper: Option<(Sp, Sp)>,
     /// `\@classoptionslist` in source order (geometry re-reads these).
     pub given: Vec<String>,
     /// Given options the class did not declare (`Unused global option(s)`).
@@ -173,6 +189,9 @@ impl ClassOptions {
     /// KOMA classes instead process key=value options in *given* order
     /// (later wins), with different defaults (11pt, A4).
     pub fn parse(kind: ClassKind, options: &str) -> ClassOptions {
+        if kind == ClassKind::Beamer {
+            return Self::parse_beamer(kind, options);
+        }
         if kind.is_koma() {
             return Self::parse_koma(kind, options);
         }
@@ -208,6 +227,7 @@ impl ClassOptions {
             foot_include: false,
             marginpar_include: false,
             pagesize_pdf: true,
+            beamer_paper: None,
             given: given.clone(),
             unused: Vec::new(),
         };
@@ -283,6 +303,104 @@ impl ClassOptions {
         o
     }
 
+    /// Parse a beamer `\documentclass[...]` option list.
+    ///
+    /// beamer declares its own option set: the `aspectratio=<n>` key
+    /// (resolved once into [`ClassOptions::beamer_paper`]), its font-size
+    /// options, the presentation modes, and a handful of layout keys. The
+    /// page frame never depends on any of them except `aspectratio`:
+    /// beamer ignores the standard paper/size/side options (they are not
+    /// declared, so `a4paper`, `twoside`, `landscape`, … land in `unused`
+    /// exactly like pdflatex's `Unused global option(s)`), and the body
+    /// size stays 11pt (beamer's own size files for 8/9/14/17/20pt are not
+    /// modelled; those options are accepted but change nothing).
+    fn parse_beamer(kind: ClassKind, options: &str) -> ClassOptions {
+        let given: Vec<String> = options
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let mut o = ClassOptions {
+            kind,
+            size: BaseSize::Pt11,
+            // Unused: beamer's paper comes from `aspectratio`
+            // (`beamer_paper` below), never from the standard paper keys.
+            paper: Paper::Letter,
+            landscape: false,
+            twoside: false,
+            twocolumn: false,
+            titlepage: false,
+            openright: false,
+            fleqn: false,
+            leqno: false,
+            draft: false,
+            openbib: false,
+            bcor: Sp::ZERO,
+            div: DivSpec::Default,
+            head_include: false,
+            foot_include: false,
+            marginpar_include: false,
+            pagesize_pdf: true,
+            beamer_paper: Some(beamer_paper_size(&given)),
+            given: given.clone(),
+            unused: Vec::new(),
+        };
+        for g in &given {
+            if Self::apply_beamer_option(&mut o, g) {
+                continue;
+            }
+            o.unused.push(g.clone());
+        }
+        o
+    }
+
+    /// One beamer option. Returns false when the option is unknown (→
+    /// `unused`). `aspectratio` (bare or `=value`) is always accepted here;
+    /// its dimensions were already resolved into `beamer_paper`.
+    fn apply_beamer_option(o: &mut ClassOptions, g: &str) -> bool {
+        // The `aspectratio` key in any spelling this parser resolves.
+        if g == "aspectratio" {
+            return true;
+        }
+        if let Some((key, _)) = g.split_once('=') {
+            if key.trim() == "aspectratio" {
+                return true;
+            }
+        }
+        match g {
+            "8pt" | "9pt" | "11pt" => {}
+            // Accepted (beamer's own size files), but the body metrics stay
+            // 11pt: only the default size's geometry is modelled.
+            "10pt" | "12pt" => {}
+            "14pt" | "17pt" | "20pt" => {}
+            "draft" => o.draft = true,
+            "final" => o.draft = false,
+            // Presentation modes.
+            "presentation" | "handout" | "trans" | "article" | "book" => {}
+            // Note handling.
+            "notes" | "notes=show" | "notes=hide" | "notes=only" => {}
+            "compress" => {}
+            // Vertical alignment of frames.
+            "t" | "c" | "b" => {}
+            "leqno" => o.leqno = true,
+            "fleqn" => o.fleqn = true,
+            "envcountsec" | "notheorems" | "noamsthm" => {}
+            // Passed through to the hyperref / xcolor packages.
+            "hyperref" | "xcolor" => {}
+            _ => {
+                if let Some((key, _)) = g.split_once('=') {
+                    match key.trim() {
+                        "hyperref" | "xcolor" => return true,
+                        _ => return false,
+                    }
+                } else {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     /// Parse a KOMA `\documentclass[...]` option list. Unlike the standard
     /// classes, KOMA processes options in *given* order (later wins) and
     /// defaults to 11pt on A4, oneside (`scrbook`: twoside, title page,
@@ -317,6 +435,7 @@ impl ClassOptions {
             foot_include: false,
             marginpar_include: false,
             pagesize_pdf: true,
+            beamer_paper: None,
             given: Vec::new(),
             unused: Vec::new(),
         };
@@ -638,6 +757,9 @@ impl PageParams {
 /// Compute the class's page parameters exactly as `size1x.clo`/`bk1x.clo`
 /// do (non-compatibility branches).
 pub fn class_params(o: &ClassOptions) -> PageParams {
+    if o.kind == ClassKind::Beamer {
+        return beamer_params(o);
+    }
     if o.kind == ClassKind::Letter {
         return letter_params(o);
     }
@@ -1047,6 +1169,130 @@ fn koma_modiv(a: Sp, b: Sp) -> i64 {
     let below = a.0 / d;
     let above = a.0 / (d + 1);
     if 2 * d - below < above { d } else { d + 1 }
+}
+
+/// beamer's paper size from the `aspectratio` class option.
+///
+/// beamer.cls (`\DeclareOptionBeamer{aspectratio}[43]`) maps each value to
+/// a fixed slide size; anything else (including a bare `aspectratio`, which
+/// means 43) keeps the 4:3 default. Later options win, like keyval keys.
+///
+/// | `aspectratio` | ratio | paper (mm) |
+/// |---|---|---|
+/// | 32 | 3:2 | 135 × 90 |
+/// | 43 (default) | 4:3 | 128 × 96 |
+/// | 54 | 5:4 | 125 × 100 |
+/// | 141 | √2:1 (ISO A-paper ratio) | 148.5 × 105 |
+/// | 149 | 14:9 | 140 × 90 |
+/// | 169 | 16:9 | 160 × 90 |
+/// | 1610 | 16:10 | 160 × 100 |
+///
+/// Provenance: the value set {32, 43, 54, 141, 149, 169, 1610} is beamer's
+/// documented set (beamer user guide; pandoc's beamer docs list the same
+/// seven). The 1610/169/149/54 dimensions are quoted `beamer.cls`
+/// fragments (`16.00cm`×`10.00cm`, `16.00cm`×`9.00cm`,
+/// `14.00cm`×`9.00cm`, `12.50cm`×`10.00cm`). The 43 default
+/// (128mm × 96mm), the 32 size (135mm × 90mm, exactly 3:2) and the 141
+/// size (148.5mm × 105mm, the ISO √2 ratio — NOT round centimetres) were
+/// measured against real pdflatex output (`\the\paperwidth` /
+/// `\the\paperheight`, TeX Live 2026; see CHECKIN.md).
+pub fn beamer_paper_size(given: &[String]) -> (Sp, Sp) {
+    let mut aspect: Option<u32> = None;
+    for g in given {
+        let g = g.trim();
+        if g == "aspectratio" {
+            aspect = Some(43);
+            continue;
+        }
+        if let Some((key, value)) = g.split_once('=') {
+            if key.trim() == "aspectratio" {
+                aspect = value.trim().parse::<u32>().ok();
+            }
+        }
+    }
+    let (w, h) = match aspect {
+        Some(32) => ("135mm", "90mm"),
+        Some(54) => ("125mm", "100mm"),
+        Some(141) => ("148.5mm", "105mm"),
+        Some(149) => ("140mm", "90mm"),
+        Some(169) => ("160mm", "90mm"),
+        Some(1610) => ("160mm", "100mm"),
+        // 43, bare `aspectratio`, absent, non-numeric and unlisted numbers:
+        // beamer's `\ifnum` chain matches nothing, so the default stands.
+        _ => ("128mm", "96mm"),
+    };
+    (len(w), len(h))
+}
+
+/// `beamer.cls` page geometry (presentation mode).
+///
+/// Measured against real pdflatex output (`\the\<dimen>` readings, TeX
+/// Live 2026; see CHECKIN.md): the paper is 128mm × 96mm 4:3 by default
+/// ([`beamer_paper_size`] for the `aspectratio` variants); the side
+/// margins are 1cm each (`\textwidth` = paper − 2cm,
+/// `\oddsidemargin` = `\evensidemargin` = 1cm − 1in, kept exact like
+/// `letter.cls`'s own unrounded side margin); and the vertical margins are
+/// effectively zero — slides are full-bleed top-to-bottom. `\topmargin`
+/// is −1in exactly, cancelling TeX's 1in vertical origin so the text top
+/// sits at the paper's top edge (`1in + \topmargin + \headheight +
+/// \headsep` = 0); `\headheight` and `\headsep` are 0pt; and
+/// `\paperheight − \textheight` is exactly the 4pt `\footskip` (the folio
+/// reservation), so `\textheight` = paper − 4pt with no separate bottom
+/// margin. `\marginparwidth` is 4pt. The body size is 11pt
+/// (`\baselineskip` 13.6pt, i.e. `size11.clo`'s `\normalsize`).
+///
+/// Everything else follows the 11pt article conventions (`size11.clo`):
+/// `\topskip` 11pt, `\maxdepth` half that, `\parskip` 0pt plus 1pt,
+/// `\footnotesep` 7.7pt, `\skip\footins` 10pt plus 4pt minus 2pt,
+/// `\columnsep` 10pt, `\leftmargini` 2.5em, `\labelsep` .5em, and the draft
+/// `\overfullrule`. One deliberate departure: `\parindent` is 0pt (like
+/// `letter`, the other non-article-shaped class — slides do not use
+/// first-line indentation), documented here.
+fn beamer_params(o: &ClassOptions) -> PageParams {
+    let (pw, ph) = o.beamer_paper.unwrap_or((len("128mm"), len("96mm")));
+    let fm = body_font(BaseSize::Pt11);
+    let cm = len("1cm");
+    let inch = len("1in");
+    let sidemargin = cm - inch;
+    // `2cm` parsed once, like TeX's own `{-2cm}` length scan (doubling the
+    // already-rounded `1cm` is 1sp off for some papers).
+    let textwidth = pw - len("2cm");
+    // The whole paper-minus-text gap is the 4pt footskip reservation.
+    let footskip = len("4pt");
+    let textheight = ph - footskip;
+    let leftmargini = fm.em.scaled("2.5").unwrap();
+    PageParams {
+        paperwidth: pw,
+        paperheight: ph,
+        textwidth,
+        textheight,
+        oddsidemargin: sidemargin,
+        evensidemargin: sidemargin,
+        // Exactly −1in: cancels TeX's 1in vertical origin so the text top
+        // sits at the paper's top edge (measured `\topmargin` −72.26999pt).
+        topmargin: Sp::ZERO - inch,
+        headheight: Sp::ZERO,
+        headsep: Sp::ZERO,
+        footskip,
+        topskip: Sp::pt(11),
+        baselineskip: len("13.6pt"),
+        parindent: Sp::ZERO,
+        parskip: Glue::new("0pt", "1pt", "0pt"),
+        marginparwidth: len("4pt"),
+        marginparsep: Sp::pt(10),
+        marginparpush: Sp::pt(5),
+        columnsep: Sp::pt(10),
+        columnseprule: Sp::ZERO,
+        maxdepth: Sp::pt(11).scaled(".5").unwrap(),
+        footnotesep: len("7.7pt"),
+        skip_footins: Glue::new("10pt", "4pt", "2pt"),
+        overfullrule: if o.draft { Sp::pt(5) } else { Sp::ZERO },
+        leftmargini,
+        labelsep: fm.em.scaled(".5").unwrap(),
+        mathindent: if o.fleqn { Some(leftmargini) } else { None },
+        hoffset: Sp::ZERO,
+        voffset: Sp::ZERO,
+    }
 }
 
 /// `letter.cls` (v1.3c 2024/08/12) lines 86-119, non-`\if@compatibility`

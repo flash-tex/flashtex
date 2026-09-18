@@ -151,7 +151,11 @@ fn raw_table() -> [Raw; 5] {
 /// `\setcounter{tocdepth}{2}`).
 pub fn default_depths(kind: ClassKind) -> (i32, i32) {
     match kind {
-        ClassKind::Article | ClassKind::Scrartcl => (3, 3),
+        // beamer defines `\section` / `\subsection` (navigation, TOC) but
+        // no `\chapter`, so it takes the article shape. The default depth
+        // itself is unmeasured (not page geometry); beamer numbers nothing
+        // by default through its templates regardless of the counter.
+        ClassKind::Article | ClassKind::Scrartcl | ClassKind::Beamer => (3, 3),
         // letter.cls sets neither counter, so both keep latex.ltx's own
         // zero (`\the\c@secnumdepth` and `\the\c@tocdepth` both read 0 in a
         // `letter` document, TeX Live 2025).
