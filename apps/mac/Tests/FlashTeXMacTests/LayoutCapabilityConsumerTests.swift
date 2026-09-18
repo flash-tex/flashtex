@@ -207,7 +207,10 @@ final class ShellLayoutNegotiationTests: XCTestCase {
         // bundled (apps/mac/Fonts), so the LM bold hint is honored, not substituted.
         XCTAssertEqual(model.capabilityNotes, ["capability future-v9 not accepted by the worker"])
         XCTAssertEqual(model.fontSubstitutions, [], "bundled LM must not be reported as substituted")
-        guard case .text(let t) = result.pages[0].items[0], case .rule(let r) = result.pages[0].items[1] else { return XCTFail("\(result.pages[0].items)") }
+        guard let firstPage = result.pages.first, firstPage.items.count >= 2 else {
+            return XCTFail("expected at least one page with at least two items")
+        }
+        guard case .text(let t) = firstPage.items[0], case .rule(let r) = firstPage.items[1] else { return XCTFail("\(firstPage.items)") }
         XCTAssertEqual(t.font, .init(family: "Latin Modern Roman", weight: .bold, style: .normal))
         XCTAssertEqual(r.yPt, 90); XCTAssertEqual(r.widthPt, 24)
         // The rule's own source range navigates like a text item's.

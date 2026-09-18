@@ -30,6 +30,7 @@ final class OutlineStructureTests: XCTestCase {
         XCTAssertEqual(items.filter { $0.kind == .section }.map { "\($0.command):\($0.level)" }, ["part:0", "chapter:0", "section:1"])
         let envs = items.filter { $0.kind == .environment }
         XCTAssertEqual(envs.map(\.title), ["figure", "theorem", "claim", "itemize", "table*"])
+        guard envs.count == 5 else { return XCTFail("expected five environments, got \(envs.count)") }
         XCTAssertEqual(envs[0].caption, "Loss curves over epochs")
         XCTAssertEqual(envs[0].displayTitle, "figure: Loss curves over epochs")
         XCTAssertEqual(envs[1].caption, "Main result")

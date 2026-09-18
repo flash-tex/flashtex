@@ -44,10 +44,12 @@ final class TypingBenchTests: XCTestCase {
         XCTAssertEqual(r.coalescedCount, 2, "revisions 2 and 3 were made visible by revision 4's paint")
         XCTAssertEqual(r.keystrokes.map(\.paintedByRevision), [4, 4, 4])
         XCTAssertEqual(r.keystrokes.map(\.compileMs), [1.5, 1.5, 1.5])
+        guard r.keystrokes.count > 1 else { return XCTFail("expected more than one keystroke, got \(r.keystrokes.count)") }
         XCTAssertEqual(r.keystrokes[0].delegateNs, 1_100)
         XCTAssertNil(r.keystrokes[1].delegateNs)
         XCTAssertEqual(r.paints.count, 1)
-        XCTAssertEqual(r.paints[0].resultToPaintMs, 4.996)
+        guard let firstPaint = r.paints.first else { return XCTFail("expected one paint") }
+        XCTAssertEqual(firstPaint.resultToPaintMs, 4.996)
         XCTAssertTrue(lines[0].hasPrefix("keystroke: revision 2 at 1000"), lines[0])
         XCTAssertTrue(lines.last!.hasPrefix("paint: revision 4 at 5000000 (covers 3 keystrokes"), lines.last!)
 
@@ -155,6 +157,8 @@ final class TypingBenchTests: XCTestCase {
         return window
     }
 
+    struct TimedOut: Error {}
+
     private func waitUntil(_ what: String, timeout: TimeInterval = 15, _ cond: @escaping @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -162,6 +166,7 @@ final class TypingBenchTests: XCTestCase {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
         XCTFail("timed out waiting for \(what)")
+        throw TimedOut()
     }
 
     private func runBench(script: String, intervalMs: Double, seed: String) async throws -> (TypingBenchSummary, [String], NSWindow) {
@@ -173,7 +178,7 @@ final class TypingBenchTests: XCTestCase {
         model.compile()
         try await waitUntil("first compile") { model.inFlightRevision == nil && !model.isFixture }
         let tv = try XCTUnwrap(TypingBenchDriver.findTextView(in: [window.contentView!]))
-        try await waitUntil("first paint") { TypingBench.shared.recorder.lastPaintedRevision >= model.result!.revision }
+        try await waitUntil("first paint") { model.result.map { TypingBench.shared.recorder.lastPaintedRevision >= $0.revision } ?? false }
 
         var lines: [String] = []
         TypingBench.shared.recorder.log = { lines.append($0) }
@@ -213,9 +218,12 @@ final class TypingBenchTests: XCTestCase {
         XCTAssertGreaterThan(s.paints, 0)
         XCTAssertEqual(s.documentBytesAfter - s.documentBytesBefore, script.utf8.count)
         XCTAssertEqual(s.keystrokeToPaintMs.count, s.keystrokes)
-        XCTAssertGreaterThan(s.keystrokeToPaintMs.p50Ms!, 0)
-        XCTAssertGreaterThanOrEqual(s.keystrokeToPaintMs.p99Ms!, s.keystrokeToPaintMs.p50Ms!)
-        XCTAssertGreaterThanOrEqual(s.keystrokeToPaintMs.maxMs!, s.keystrokeToPaintMs.p99Ms!)
+        let p50Ms = try XCTUnwrap(s.keystrokeToPaintMs.p50Ms)
+        let p99Ms = try XCTUnwrap(s.keystrokeToPaintMs.p99Ms)
+        let maxMs = try XCTUnwrap(s.keystrokeToPaintMs.maxMs)
+        XCTAssertGreaterThan(p50Ms, 0)
+        XCTAssertGreaterThanOrEqual(p99Ms, p50Ms)
+        XCTAssertGreaterThanOrEqual(maxMs, p99Ms)
         // Every keystroke revision has its own log line, and a paint line whose
         // revision is >= it appears after it.
         for k in s.perKeystroke {
@@ -249,7 +257,7 @@ final class TypingBenchTests: XCTestCase {
         XCTAssertTrue(lines.contains { $0.hasPrefix("paint: revision \(last.revision) at \(last.paintNs!)") })
         // Coalesced keystrokes wait for a later paint, so their latency is at least the
         // 400 ms worker delay they queued behind; none exceed two worker round trips + settle.
-        for k in s.perKeystroke where k.coalesced { XCTAssertGreaterThan(k.latencyMs!, 100) }
-        XCTAssertLessThan(s.keystrokeToPaintMs.maxMs!, 2_500)
+        for k in s.perKeystroke where k.coalesced { XCTAssertGreaterThan(try XCTUnwrap(k.latencyMs), 100) }
+        XCTAssertLessThan(try XCTUnwrap(s.keystrokeToPaintMs.maxMs), 2_500)
     }
 }

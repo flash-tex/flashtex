@@ -46,7 +46,8 @@ final class EditorFoldingTests: XCTestCase {
         let s = "\\begin{verbatim}\n\\begin{itemize}\n\\end{verbatim}\n" as NSString
         let regions = EF.regions(in: s)
         XCTAssertEqual(regions.count, 1)
-        XCTAssertEqual(regions[0].kind, .environment("verbatim"))
+        guard let firstRegion = regions.first else { return XCTFail("expected one region") }
+        XCTAssertEqual(firstRegion.kind, .environment("verbatim"))
     }
 
     func testDocumentEnvironmentIsFoldable() {
@@ -70,6 +71,7 @@ final class EditorFoldingTests: XCTestCase {
         let regions = EF.regions(in: s)
         let sections = regions.filter { if case .section = $0.kind { return true }; return false }
         XCTAssertEqual(sections.count, 3)
+        guard sections.count == 3 else { return XCTFail("expected three sections, got \(sections.count)") }
         XCTAssertEqual(s.substring(with: sections[0].header), "\\section{A}")
         XCTAssertTrue(s.substring(with: sections[0].hidden).contains("\\subsection{B}"))
         XCTAssertFalse(s.substring(with: sections[0].hidden).contains("\\section{C}"), "A stops before C")
@@ -83,15 +85,17 @@ final class EditorFoldingTests: XCTestCase {
         let s = "\\part{P}\npart body\n\\chapter{Ch}\nch body\n" as NSString
         let regions = EF.regions(in: s).filter { if case .section = $0.kind { return true }; return false }
         XCTAssertEqual(regions.count, 2)
-        XCTAssertFalse(s.substring(with: regions[0].hidden).contains("\\chapter{Ch}"))
+        guard let firstRegion = regions.first else { return XCTFail("expected at least one region") }
+        XCTAssertFalse(s.substring(with: firstRegion.hidden).contains("\\chapter{Ch}"))
     }
 
     func testSubparagraphIsTheLowestSectionLevel() {
         let s = "\\paragraph{P}\np\n\\subparagraph{S}\ns\n\\paragraph{Q}\nq\n" as NSString
         let regions = EF.regions(in: s).filter { if case .section = $0.kind { return true }; return false }
         XCTAssertEqual(regions.count, 3)
-        XCTAssertTrue(s.substring(with: regions[0].hidden).contains("\\subparagraph{S}"))
-        XCTAssertFalse(s.substring(with: regions[0].hidden).contains("\\paragraph{Q}"))
+        guard let firstRegion = regions.first else { return XCTFail("expected at least one region") }
+        XCTAssertTrue(s.substring(with: firstRegion.hidden).contains("\\subparagraph{S}"))
+        XCTAssertFalse(s.substring(with: firstRegion.hidden).contains("\\paragraph{Q}"))
     }
 
     func testCommentedBeginDoesNotFold() {
@@ -134,12 +138,14 @@ final class EditorFoldingTests: XCTestCase {
         let text = "head\n\\begin{a}\nbody\n\\end{a}\n" as NSString
         let store = EditorFoldStore()
         XCTAssertTrue(store.foldInnermost(at: 5, in: text))
-        let hiddenBefore = store.folds[0].hidden
+        guard let foldBefore = store.folds.first else { return XCTFail("expected a fold after foldInnermost") }
+        let hiddenBefore = foldBefore.hidden
         let grown = "XXXXhead\n\\begin{a}\nbody\n\\end{a}\n" as NSString
         store.applyEdit(NSRange(location: 0, length: 0), replacementLength: 4, newText: grown)
         XCTAssertEqual(store.folds.count, 1)
-        XCTAssertEqual(store.folds[0].hidden.location, hiddenBefore.location + 4)
-        XCTAssertEqual(store.folds[0].hidden.length, hiddenBefore.length)
+        guard let foldAfter = store.folds.first else { return XCTFail("expected a fold after applyEdit") }
+        XCTAssertEqual(foldAfter.hidden.location, hiddenBefore.location + 4)
+        XCTAssertEqual(foldAfter.hidden.length, hiddenBefore.length)
     }
 
     func testUnfoldCoveringRevealsATargetInsideAFold() {
@@ -198,14 +204,16 @@ final class EditorFoldingTests: XCTestCase {
         XCTAssertTrue(store.foldInnermost(at: 0, in: original as NSString))
         XCTAssertEqual(original, "\\begin{a}\nbody\n\\end{a}\n", "the source string is untouched")
         XCTAssertFalse(store.folds.isEmpty)
-        XCTAssertFalse((original as NSString).substring(with: store.folds[0].hidden).contains("…"))
+        guard let firstFold = store.folds.first else { return XCTFail("expected a fold") }
+        XCTAssertFalse((original as NSString).substring(with: firstFold.hidden).contains("…"))
     }
 
     func testVimLinewiseMotionSkipsAFold() {
         let text = "\\begin{a}\nline2\nline3\n\\end{a}\nnext\n" as NSString
         let store = EditorFoldStore()
         XCTAssertTrue(store.foldInnermost(at: 0, in: text))
-        let hidden = store.folds[0].hidden
+        guard let hiddenFold = store.folds.first else { return XCTFail("expected a fold") }
+        let hidden = hiddenFold.hidden
         let inside = hidden.location + 1
         let after = store.adjustLinewise(from: 0, to: inside)
         XCTAssertEqual(after, NSMaxRange(hidden), "j over a fold lands after it")
@@ -259,7 +267,7 @@ final class EditorFoldingTests: XCTestCase {
         XCTAssertEqual(tv.string, original, "folded characters stay in the storage")
         XCTAssertFalse(tv.string.contains("…"), "the placeholder is not in the text")
         XCTAssertEqual(tv.folds.folds.count, 1)
-        let hidden = tv.folds.folds[0].hidden
+        let hidden = try XCTUnwrap(tv.folds.folds.first).hidden
         XCTAssertTrue(tv.string.contains("secret-body"))
         tv.layoutManager?.ensureLayout(for: tv.textContainer!)
         if let lm = tv.layoutManager, lm.numberOfGlyphs > 0 {

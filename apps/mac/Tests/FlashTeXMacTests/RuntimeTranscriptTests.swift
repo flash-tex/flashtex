@@ -197,30 +197,27 @@ final class RuntimeTranscriptTests: XCTestCase {
     }
 }
 
-/// Every non-nil value `ShellModel.resultID` takes, in order (one per applied
-/// result). Observation reports a change before the new value lands, so the
-/// id is read on the following main-actor turn.
+/// Every id `ShellModel.resultID` takes, in order (one per applied result).
+///
+/// GH-680: this used to be reconstructed by observing `resultID` and reading
+/// it back on a later main-actor turn (`@Observable`'s willChange notification
+/// fires before the new value lands, so the old code deferred the read). That
+/// is lossy: if a second apply happens before the deferred read for the first
+/// one runs -- which needs no more than a delayed Task scheduling turn, far
+/// more likely under full-suite load -- both deferred reads see the *second*
+/// id, and the dedup-by-last-value check silently drops the first one. Hooking
+/// `onResultApplied` instead records the id synchronously, in the same call
+/// that sets it, so no apply can ever be missed or coalesced regardless of
+/// scheduling pressure.
 @MainActor
 private final class ResultIDChanges {
     private(set) var ids: [String] = []
-    private var stopped = false
-    private let model: ShellModel
+    private weak var model: ShellModel?
 
-    init(model: ShellModel) { self.model = model; arm() }
-    func stop() { stopped = true }
-
-    private func arm() {
-        withObservationTracking { _ = model.resultID } onChange: { [weak self] in
-            // Synchronous, before the new value lands: re-arm now (so a change
-            // on the very next turn is not missed) and read the id one turn later.
-            MainActor.assumeIsolated {
-                guard let self, !self.stopped else { return }
-                self.arm()
-                Task { @MainActor [weak self] in
-                    guard let self, let id = self.model.resultID, self.ids.last != id else { return }
-                    self.ids.append(id)
-                }
-            }
-        }
+    init(model: ShellModel) {
+        self.model = model
+        model.onResultApplied = { [weak self] id in self?.ids.append(id) }
     }
+
+    func stop() { model?.onResultApplied = nil }
 }

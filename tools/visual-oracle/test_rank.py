@@ -272,5 +272,109 @@ class WordGroupingTests(unittest.TestCase):
         self.assertEqual([(w["glyph_index"], w["glyphs"]) for w in words], [(0, 2), (3, 1)])
 
 
+class BigDelimiterAnchorTests(unittest.TestCase):
+    """A `\\bigl(` must not read as a placement error (corpus sweep F7).
+
+    Every number below is measured, from `fixtures/real-world/hw2` page 1
+    (`\\bigl(A\\cap B\\ne\\varnothing\\bigr)`) and `ps-calculus` page 2
+    (`\\Bigl[\\arctan x\\Bigr]`), pdflatex vs `flashtex-render --v2` ->
+    `flashtex-pdf-exact from-v2`:
+
+    * both sides put the delimiter's origin at x = 243.037 and `A` at
+      x = 248.037, and the delimiter's *ink* agrees to 0.09 bp, so there is
+      no placement error at all;
+    * pdfTeX emits the cmex10 variant on baseline y = 426.604, 8.836 bp
+      above the line's 435.440, because that glyph carries its own origin;
+      ours is a LatinModernMath variant on the math baseline;
+    * so the reference reads `(` and `A...` as two words and the candidate
+      reads `(A...` as one, `norm` matches them on their alphanumeric
+      content, and the word origins differ by the delimiter's advance:
+      4.996 bp for `\\big(`, 5.149 bp for `\\Big[` — the "exactly −5.000 bp"
+      and "−5.150 bp" of F7.
+    """
+
+    def _pair(self, delim_advance, ref_delim_dy):
+        """One reference page and one candidate page for `<delim>A`."""
+        x0, xa, y = 243.037, 248.037, 435.440
+        ref = pdftext.words_from_glyphs([
+            {"text": "(", "x": x0, "y_top": y - ref_delim_dy, "advance": delim_advance,
+             "size": 10.909, "font": "CMEX10", "bt": 0},
+            {"text": "A", "x": xa, "y_top": y, "advance": 8.182,
+             "size": 10.909, "font": "CMMI10", "bt": 0},
+        ])
+        cand = pdftext.words_from_glyphs([
+            {"text": "(", "x": x0, "y_top": y, "advance": delim_advance,
+             "size": 10.909, "font": "LatinModernMath-Regular", "bt": 0},
+            {"text": "A", "x": xa, "y_top": y, "advance": 8.182,
+             "size": 10.909, "font": "LatinModernMath-Regular", "bt": 0},
+        ])
+        return ref, cand
+
+    def test_the_two_sides_still_segment_the_delimiter_differently(self):
+        ref, cand = self._pair(4.996, 8.836)
+        self.assertEqual([w["text"] for w in ref], ["(", "A"])
+        self.assertEqual([w["text"] for w in cand], ["(A"])
+
+    def test_bigl_paren_measures_zero_not_minus_five(self):
+        ref, cand = self._pair(4.996, 8.836)
+        g = rank.geometry_page(ref, cand, [], top_n=4)
+        self.assertEqual(g["aligned"], 1)
+        # Anchored on the word origin this pair read dx = 243.037 - 248.037
+        # = -5.000 and dy = +8.836; anchored on `A` it reads exactly zero.
+        self.assertEqual(g["top"][0]["dx"], 0.0)
+        self.assertEqual(g["top"][0]["dy"], 0.0)
+        self.assertEqual(g["top"][0]["text"], "(A")
+        self.assertEqual(g["top"][0]["ref_text"], "A")
+        self.assertEqual(g["top"][0]["anchor"], "alnum")
+        # `reference` + (dx, dy) == `candidate`: the report stays checkable.
+        self.assertEqual(g["top"][0]["reference"], [248.037, 435.44])
+        self.assertEqual(g["top"][0]["candidate"], [248.037, 435.44])
+        self.assertEqual(g["within_0_01"], 1)
+
+    def test_Bigl_bracket_advance_is_5_149_not_a_constant(self):
+        # `\\Big[` is 5.149 bp wide where `\\big(` is 4.996: F7's "constant"
+        # was a glyph advance all along, so it must vanish here too.
+        ref, cand = self._pair(5.149, 11.952)
+        g = rank.geometry_page(ref, cand, [], top_n=4)
+        self.assertEqual(g["top"][0]["dx"], 0.0)
+        self.assertEqual(g["top"][0]["dy"], 0.0)
+
+    def test_a_real_shift_beside_the_delimiter_is_still_reported(self):
+        # The anchor must not swallow a genuine defect: move the candidate's
+        # whole group 0.75 bp right and the gate must still see it.
+        ref, cand = self._pair(4.996, 8.836)
+        for w in cand:
+            w["x"] += 0.75
+            w["x_alnum"] += 0.75
+        g = rank.geometry_page(ref, cand, [], top_n=4)
+        self.assertEqual(g["top"][0]["dx"], 0.75)
+        self.assertEqual(g["within_0_5"], 0)
+
+    def test_matching_leading_punctuation_moves_nothing(self):
+        # Both sides carry the same `(`: the anchor shifts both by the same
+        # 4.996 bp, so dx is what it always was.
+        glyphs = lambda x0: [
+            {"text": "(", "x": x0, "y_top": 100.0, "advance": 4.996, "size": 10.0, "font": "F", "bt": 0},
+            {"text": "A", "x": x0 + 4.996, "y_top": 100.0, "advance": 8.182, "size": 10.0, "font": "F", "bt": 0},
+        ]
+        ref = pdftext.words_from_glyphs(glyphs(72.0))
+        cand = pdftext.words_from_glyphs(glyphs(73.25))
+        g = rank.geometry_page(ref, cand, [], top_n=2)
+        self.assertEqual(g["top"][0]["dx"], 1.25)
+        self.assertEqual(g["top"][0]["anchor"], "alnum")
+
+    def test_a_word_with_no_alphanumeric_glyph_falls_back_to_its_origin(self):
+        # `norm` falls back to the raw text for such a word, so position has
+        # to fall back to the word origin — on both sides.
+        mk = lambda x: pdftext.words_from_glyphs([
+            {"text": "+", "x": x, "y_top": 100.0, "advance": 5.0, "size": 10.0, "font": "F", "bt": 0}])
+        ref, cand = mk(72.0), mk(72.5)
+        self.assertIsNone(ref[0]["x_alnum"])
+        g = rank.geometry_page(ref, cand, [], top_n=2)
+        self.assertEqual(g["aligned"], 1)
+        self.assertEqual(g["top"][0]["dx"], 0.5)
+        self.assertEqual(g["top"][0]["anchor"], "word")
+
+
 if __name__ == "__main__":
     unittest.main()

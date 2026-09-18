@@ -17,9 +17,13 @@ Admission is bounded: 1MiB input frames, 16 waiting operations, 8 output frames 
 at most 16MiB each. Full input queues return a correlated `error` stating the
 operation was not admitted. Drain responses before retrying that operation.
 Output overflow/stall ends the helper with delivery uncertainty; recover source
-and pending receipts before retrying writes. Normal stdin EOF drains queued
-responses for at most two seconds, then exits; it does not promise pending compile
-completion. Never interpret successful pipe writing as a durable edit receipt.
+and pending receipts before retrying writes. A stall is judged by the absence of
+forward write progress (OUTPUT_STALL_TIMEOUT, currently 10s of no stdout write
+making headway), not by how long a single large reply takes in total, so a slow
+but still-draining reader is not treated as a dead one. Normal stdin EOF drains
+queued responses for up to that same bound, then exits; it does not promise
+pending compile completion. Never interpret successful pipe writing as a durable
+edit receipt.
 
 Responses use `type:ready`, `type:result`, `type:error`, or asynchronous
 `type:update` with a null request ID. Result/error IDs correlate to requests.

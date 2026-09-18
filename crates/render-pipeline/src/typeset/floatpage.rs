@@ -296,41 +296,10 @@ fn build_wide_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatS
     let mut sub = Context::with_texts(ctx.fonts, wide, ctx.paths, ctx.texts);
     let mut sub_blocks: Vec<BuiltBlock> = Vec::new();
     let mut fb = build_box(&mut sub, &mut sub_blocks, spec, fp, p);
-    let (rec_off, math_off, block_off) = (ctx.recs.len(), ctx.maths.len(), blocks.len());
-    let fix = |b: &mut BuiltBlock| {
-        for r in b.recs.iter_mut().flatten() {
-            *r += rec_off;
-        }
-        b.cache_key = None;
-    };
-    let mut recs = std::mem::take(&mut sub.recs);
-    for r in &mut recs {
-        match r {
-            BoxRec::Math(m) => *m += math_off,
-            BoxRec::Table(t) => {
-                let mut tr = (**t).clone();
-                for piece in &mut tr.pieces {
-                    fix(&mut piece.block);
-                }
-                *t = Rc::new(tr);
-            }
-            _ => {}
-        }
-    }
-    ctx.recs.extend(recs);
-    ctx.maths.extend(std::mem::take(&mut sub.maths));
-    for b in &mut sub_blocks {
-        fix(b);
-    }
-    blocks.append(&mut sub_blocks);
+    let block_off = super::absorb(ctx, sub, sub_blocks, blocks);
     for e in &mut fb.elems {
         if let Elem::Line { block, .. } = e {
             *block += block_off;
-        }
-    }
-    for d in sub.take_diagnostics() {
-        if !ctx.diagnostics.iter().any(|x| x.code == d.code && x.message == d.message && x.sources == d.sources) {
-            ctx.diagnostics.push(d);
         }
     }
     fb
@@ -880,6 +849,7 @@ fn block_source(ctx: &Context, b: &BuiltBlock, items: impl Iterator<Item = usize
             BoxRec::ColorBox(c) => Some(c.span),
             BoxRec::Leader { .. } => None,
             BoxRec::Underline(u) => Some(u.span),
+            BoxRec::TextScript(t) => Some(t.span),
         })
         .collect()
 }

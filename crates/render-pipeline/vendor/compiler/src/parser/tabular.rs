@@ -100,6 +100,32 @@ fn is_rule_command(name: &str, booktabs: bool) -> bool {
             ))
 }
 
+/// Whether this token is an escaped `\&` — a printed ampersand — rather
+/// than the `&` that opens the next entry. `\&` lexes as the one-character
+/// word `&` whose span covers the backslash too (two bytes).
+///
+/// The width is measured on the token's own source bytes, like
+/// `parser::control_symbol_kern`: text expanded from a macro body carries
+/// the invocation's span, so a `\&` inside `\newcommand{\am}{\&}` looks
+/// three bytes wide and would silently become a column break — output
+/// identical to an unescaped `a&b`, shifting every later cell in the row.
+/// Expanded text with no definition bytes (synthesised by the engine)
+/// cannot prove it is escaped, so it separates, as a bare `&` does.
+fn is_escaped_ampersand(input: &InputToken) -> bool {
+    if !matches!(&input.token.kind, TokenKind::Word(word) if word == "&") {
+        return false;
+    }
+    let span = if input.maps_to_invocation {
+        match input.definition {
+            Some(definition) => definition,
+            None => return false,
+        }
+    } else {
+        input.token.span
+    };
+    span.end - span.start == 2
+}
+
 /// Row-scanner state carried between rows.
 #[derive(Default)]
 struct RowState {
@@ -192,11 +218,20 @@ fn block_inlines(block: Block) -> Vec<Inline> {
         | Block::Verbatim { .. }
         | Block::TableOfContents { .. }
         | Block::TitleBlock { .. }
-        | Block::VFill => Vec::new(),
+        | Block::VFill
+        | Block::Penalty { .. } => Vec::new(),
         // A `\opening`/`\closing` block inside a tabular cell cannot
         // happen: both flush the paragraph and push a block of their own,
         // and a cell only ever collects inline content.
         Block::LetterBlock { lines, .. } => lines.into_iter().flatten().collect(),
+        // Same for `tabbing`: it pushes a block of its own, so a cell
+        // never holds one; flatten live rows (a killed row's content is
+        // never output, so it contributes nothing here either).
+        Block::Tabbing { lines, .. } => lines
+            .into_iter()
+            .filter(|line| !line.killed)
+            .flat_map(|line| line.content)
+            .collect(),
     }
 }
 
@@ -517,13 +552,8 @@ impl P<'_> {
                     self.finish_row(body, &mut row, &mut entries, &mut state);
                     continue;
                 }
-                // `\&` lexes as a one-character word spanning two bytes.
                 TokenKind::Word(word)
-                    if depth == 0
-                        && word.contains('&')
-                        && !(word == "&"
-                            && !input.maps_to_invocation
-                            && span.end - span.start == 2) =>
+                    if depth == 0 && word.contains('&') && !is_escaped_ampersand(&input) =>
                 {
                     let exact = span.end - span.start == word.len();
                     for (index, piece) in word.split('&').enumerate() {
@@ -550,6 +580,7 @@ impl P<'_> {
                                 token: Token {
                                     kind: TokenKind::Word(piece.to_string()),
                                     span: piece_span,
+                                    control_symbol: input.token.control_symbol,
                                 },
                                 definition: input.definition,
                                 maps_to_invocation: input.maps_to_invocation,
@@ -714,7 +745,7 @@ impl P<'_> {
             arraystretch,
             style,
             array_package,
-            span: Span::in_document(open.document, open.start, end),
+            span: self.span_through(open, end),
             space_before,
             rule_color,
             double_rule_sep_color,
@@ -972,6 +1003,7 @@ impl P<'_> {
             Some(Token {
                 kind: TokenKind::Word(word),
                 span,
+                ..
             }) if word.starts_with('[') && word.contains(']') => {
                 let close = word.find(']').expect("checked");
                 (word[1..close].to_string(), word[close + 1..].to_string(), *span, word.len())
@@ -1211,6 +1243,7 @@ impl P<'_> {
             Some(Token {
                 kind: TokenKind::Word(word),
                 span,
+                ..
             }) if word.starts_with('[') && word.contains(']') => {
                 let close = word.find(']').expect("checked");
                 Some((
@@ -1491,10 +1524,14 @@ impl P<'_> {
         let style_depth = self.style_stack.len();
         let brace_depth = self.brace_stack.len();
         let dependency_count = self.block_dependencies.len();
+        let par_leading_count = self.block_par_leading.len();
 
         let mut blocks = Vec::new();
         let mut para = Vec::new();
         self.parse_stream(&mut blocks, &mut para);
+        // The entry's blocks are folded into the enclosing paragraph, so they
+        // must not leave leadings of their own behind.
+        self.block_par_leading.truncate(par_leading_count);
 
         while self.brace_stack.len() > brace_depth {
             let open = self.brace_stack.pop().expect("length checked");
@@ -2317,6 +2354,7 @@ fn siunitx_entry(tokens: Vec<InputToken>, column: &SiunitxColumn) -> Vec<InputTo
         token: Token {
             kind,
             span: at.token.span,
+            control_symbol: false,
         },
         definition: at.definition,
         maps_to_invocation: at.maps_to_invocation,
@@ -2350,6 +2388,7 @@ fn substitute_parameters(body: &[InputToken], arguments: &[Vec<InputToken>]) -> 
                     token: Token {
                         kind: TokenKind::Word(std::mem::take(literal)),
                         span: input.token.span,
+                        control_symbol: input.token.control_symbol,
                     },
                     definition: input.definition,
                     maps_to_invocation: input.maps_to_invocation,

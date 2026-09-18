@@ -84,8 +84,10 @@ final class RealEditLedgerTests: XCTestCase {
         let export = try await client.recoveryExport()
         XCTAssertEqual(export.pendingReceipts.count, 1)
         XCTAssertEqual(export.pendingReceipts.first?.documentBefore?.text, text)
+        let pendingReceipt = try XCTUnwrap(export.pendingReceipts.first)
+        let pendingDocumentBefore = try XCTUnwrap(pendingReceipt.documentBefore)
         let plan = try await client.recoveryImport(snapshotToken: export.snapshotToken, observations: [.prepared(edit: edit)])
-        XCTAssertEqual(plan.actions, [.replayReceipt(documentBefore: export.pendingReceipts.first!.documentBefore!, receipt: applied.receipt)])
+        XCTAssertEqual(plan.actions, [.replayReceipt(documentBefore: pendingDocumentBefore, receipt: applied.receipt)])
         XCTAssertEqual(plan.recovery.pendingReceipts.count, 1, "a replay plan never confirms by itself")
         // A stale token (state advanced meanwhile) is refused.
         _ = try await client.replaceDocument(expectedRevision: undone.revision, expectedSha256: undone.sourceSha256, text: text + "x")

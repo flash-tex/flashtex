@@ -31,8 +31,9 @@ final class ProjectDocumentsTests: XCTestCase {
         let text = "Ünïcödé — \\input{ch}\n"
         let refs = ProjectIncludes.scan(text)
         XCTAssertEqual(refs.count, 1)
-        XCTAssertEqual(refs[0].startByte, Array("Ünïcödé — ".utf8).count)
-        XCTAssertEqual(refs[0].argumentStartByte, refs[0].startByte + "\\input{".utf8.count)
+        guard let ref = refs.first else { return XCTFail("expected one reference") }
+        XCTAssertEqual(ref.startByte, Array("Ünïcödé — ".utf8).count)
+        XCTAssertEqual(ref.argumentStartByte, ref.startByte + "\\input{".utf8.count)
     }
 
     func testScanSkipsCommentsVerbVerbatimAndCommandPrefixes() {
@@ -103,12 +104,14 @@ final class ProjectDocumentsTests: XCTestCase {
         var found = p.discoverIncludes()
         XCTAssertEqual(found.map(\.resolvedPath), ["chapter.tex"])
         XCTAssertEqual(found.map(\.state), [.available])
-        XCTAssertEqual(found[0].candidates, ["chapter.tex", "chapter"])
+        guard let firstFound = found.first else { return XCTFail("expected one discovered include") }
+        XCTAssertEqual(firstFound.candidates, ["chapter.tex", "chapter"])
 
         // Open: appended after the entry, baseline recorded, listing in sync.
         let outcomes = await p.openDiscoveredIncludes()
         XCTAssertEqual(outcomes, [.opened(path: "chapter.tex")])
         XCTAssertEqual(model.documents.map(\.path), ["main.tex", "chapter.tex"])
+        guard model.documents.count == 2 else { return XCTFail("expected two documents, got \(model.documents.count)") }
         XCTAssertEqual(model.documents[1].text, "Chapter one, with caret memory.\n")
         XCTAssertEqual(p.listing.map(\.role), [.entry, .included(from: "main.tex")])
         XCTAssertEqual(p.listing.map(\.origin), [.disk, .disk])
@@ -191,6 +194,7 @@ final class ProjectDocumentsTests: XCTestCase {
         // Re-opening the discarded document reads the (unchanged) disk text again.
         let r6 = await p.openDocument("chapter.tex")
         XCTAssertEqual(r6, .opened(path: "chapter.tex"))
+        guard model.documents.count > 1 else { return XCTFail("expected more than one document after reopening, got \(model.documents.count)") }
         XCTAssertEqual(model.documents[1].text, "Chapter one, with caret memory.\n")
         XCTAssertNil(p.detachedBuffers["chapter.tex"])
     }
@@ -209,6 +213,7 @@ final class ProjectDocumentsTests: XCTestCase {
         for d in found {
             guard case .unresolvable = d.state else { return XCTFail("\(d.reference.argument) must be unresolvable: \(d.state)") }
         }
+        guard found.count == 5 else { return XCTFail("expected five discovered includes, got \(found.count)") }
         XCTAssertEqual(found[0].state, .unresolvable("path escapes the project root via '..'"))
         XCTAssertEqual(found[1].state, .unresolvable("link.tex is a symbolic link"))
         XCTAssertEqual(found[2].state, .unresolvable("no such file under the project root"))
@@ -234,6 +239,85 @@ final class ProjectDocumentsTests: XCTestCase {
         XCTAssertEqual(found.map(\.state), [.unresolvable("no project root (the entry document is not saved)")])
         guard case .refused(let why) = await model.project.openDocument("chapter.tex") else { return XCTFail() }
         XCTAssertTrue(why.contains("no project root"), why)
+    }
+
+    // MARK: silent-failure fixes (GH: tab bar / Project menu save, go-to-definition
+    // / palette / sidebar open) — `ShellModel.saveDocumentInteractive` and
+    // `.openAndSwitch` map a discarded `SaveOutcome`/`OpenOutcome` to a footer note.
+
+    /// The entry document is unsaved (no project root): `saveDocumentInteractive`
+    /// (shared by the tab bar's and Project menu's "Save <path>" items) must not
+    /// drop the refusal — it names the reason in `captureNote`.
+    func testSaveDocumentInteractiveNamesTheReasonWhenTheDocumentIsNotOpen() async {
+        let model = ShellModel()
+        model.detachWorker()
+        model.replaceProject(entryText: "\\input{chapter}\n")
+        XCTAssertNil(model.captureNote)
+        await model.saveDocumentInteractive("chapter.tex")
+        XCTAssertEqual(model.captureNote, "Save of chapter.tex failed: chapter.tex is not open")
+    }
+
+    /// The success path the tab bar's and Project menu's "Save <path>" items
+    /// now go through directly (previously they discarded the outcome entirely).
+    func testSaveDocumentInteractiveSavesAnOpenNonEntryDocument() async throws {
+        let project = try TempProject(main: "\\begin{document}\nMain.\n\\input{chapter}\n\\end{document}\n", chapter: "Chapter.\n")
+        defer { project.remove() }
+        let model = ShellModel()
+        model.detachWorker()
+        XCTAssertEqual(model.openTex(at: project.main), .opened)
+        let opened = await model.project.openDiscoveredIncludes()
+        XCTAssertEqual(opened, [.opened(path: "chapter.tex")])
+        model.project.switchDocument(to: "chapter.tex")
+        model.updateActiveText("Chapter, saved via the tab bar's context menu.\n")
+        await model.saveDocumentInteractive("chapter.tex")
+        XCTAssertEqual(model.captureNote, "Saved chapter.tex")
+        let chapterURL = project.root.appendingPathComponent("project/chapter.tex")
+        XCTAssertEqual(try String(contentsOf: chapterURL, encoding: .utf8), "Chapter, saved via the tab bar's context menu.\n")
+    }
+
+    /// `openAndSwitch` (shared by go-to-definition file targets, the command
+    /// palette's Files rows, the sidebar's closed-row click, and the Project
+    /// menu's "Open <name>" item) reports a refusal through the caller's note
+    /// instead of leaving the open silently failed.
+    func testOpenAndSwitchReportsARefusalInsteadOfDroppingIt() async {
+        let model = ShellModel()
+        model.detachWorker()
+        model.replaceProject(entryText: "\\input{chapter}\n")
+        var note: String?
+        let ok = await model.openAndSwitch("chapter.tex", role: .opened) { note = $0 }
+        XCTAssertFalse(ok)
+        XCTAssertEqual(note.map { $0.contains("no project root") }, true, note ?? "nil")
+    }
+
+    /// On success `openAndSwitch` switches the active document, the same as
+    /// the other go-to-definition branches (`reveal`).
+    func testOpenAndSwitchSwitchesToTheOpenedDocumentOnSuccess() async throws {
+        let project = try TempProject(extra: ["ch/two.tex": "Two.\n"])
+        defer { project.remove() }
+        let model = ShellModel()
+        model.detachWorker()
+        XCTAssertEqual(model.openTex(at: project.main), .opened)
+        var note: String?
+        let ok = await model.openAndSwitch("chapter.tex", role: .included(from: "main.tex")) { note = $0 }
+        XCTAssertTrue(ok)
+        XCTAssertNil(note)
+        XCTAssertEqual(model.activePath, "chapter.tex")
+    }
+
+    /// `openAndSwitch` switches to the member path the open normalized to
+    /// (`./chapter.tex` is the member `chapter.tex`), not the raw argument.
+    func testOpenAndSwitchUsesTheCanonicalPath() async throws {
+        let project = try TempProject(extra: ["ch/two.tex": "Two.\n"])
+        defer { project.remove() }
+        let model = ShellModel()
+        model.detachWorker()
+        XCTAssertEqual(model.openTex(at: project.main), .opened)
+        var note: String?
+        let ok = await model.openAndSwitch("./chapter.tex", role: .opened) { note = $0 }
+        XCTAssertTrue(ok)
+        XCTAssertNil(model.navigationNote)
+        XCTAssertNil(note)
+        XCTAssertEqual(model.activePath, "chapter.tex")
     }
 
     func testNavigationSwitchRecordsTheOutgoingCaret() throws {
@@ -288,7 +372,9 @@ final class ProjectDocumentsTests: XCTestCase {
         let r10 = await p.openDiscoveredIncludes()
         XCTAssertEqual(r10, [.opened(path: "chapter.tex")])
         XCTAssertEqual(model.documents.map(\.path), ["main.tex", "chapter.tex"])
+        guard model.documents.count == 2 else { return XCTFail("expected two documents, got \(model.documents.count)") }
         XCTAssertEqual(model.documents[1].text, "Chapter via helper.\n")
+        guard p.listing.count > 1 else { return XCTFail("expected more than one listing entry, got \(p.listing.count)") }
         XCTAssertEqual(p.listing[1].origin, .helper)
         XCTAssertEqual(p.listing[1].durableRevision, 1)
         XCTAssertEqual(model.controllerState.durable["chapter.tex"]?.revision, 1)
@@ -299,6 +385,7 @@ final class ProjectDocumentsTests: XCTestCase {
         let r11 = await p.openDocument("appendix.tex")
         XCTAssertEqual(r11, .opened(path: "appendix.tex"))
         XCTAssertEqual(model.documents.map(\.path), ["main.tex", "chapter.tex", "appendix.tex"])
+        guard p.listing.count > 2 else { return XCTFail("expected more than two listing entries, got \(p.listing.count)") }
         XCTAssertEqual(p.listing[2].origin, .helper)
         XCTAssertEqual(p.listing[2].durableRevision, 1)
         let g1 = try XCTUnwrap(p.membershipGeneration)
@@ -322,6 +409,7 @@ final class ProjectDocumentsTests: XCTestCase {
         try await waitUntil { model.result?.revision == rev && model.inFlightRevision == nil }
         XCTAssertFalse(model.previewIsStale)
         XCTAssertEqual(model.controllerState.durable["chapter.tex"]?.revision, 2)
+        guard p.listing.count > 1 else { return XCTFail("expected more than one listing entry, got \(p.listing.count)") }
         XCTAssertEqual(p.listing[1].durableRevision, 2)
         XCTAssertEqual(model.compiledDocuments["chapter.tex"], "Chapter via helper, edited.\n")
         XCTAssertTrue(p.isDirty("chapter.tex"), "durable is not saved: the disk baseline still differs")
@@ -425,7 +513,7 @@ final class ProjectDocumentsTests: XCTestCase {
         XCTAssertEqual(c.url, chapterURL)
         XCTAssertEqual(try String(contentsOf: chapterURL, encoding: .utf8), "external chapter\n")
         XCTAssertTrue(p.isDirty("chapter.tex"))
-        XCTAssertEqual(p.saveConflict, c)
+        XCTAssertEqual(p.saveConflict(for: "chapter.tex"), c)
         XCTAssertEqual(model.activeText, "Chapter one, saved twice.\n")
     }
 
@@ -498,6 +586,7 @@ final class ProjectDocumentsTests: XCTestCase {
         XCTAssertEqual(closure.nodes.map(\.from), ["main.tex", "chapter.tex", "ch/section.tex", "ch/section.tex", "chapter.tex", "main.tex"])
         XCTAssertEqual(closure.nodes.map(\.depth), [0, 1, 2, 2, 1, 0])
         XCTAssertEqual(closure.nodes.map(\.resolvedPath), ["chapter.tex", "ch/section.tex", "main.tex", "appendix.tex", nil, "appendix.tex"])
+        guard closure.nodes.count == 6 else { return XCTFail("expected six closure nodes, got \(closure.nodes.count)") }
         XCTAssertEqual(closure.nodes[2].state, .unresolvable("\\input{main} closes an include cycle: main.tex → chapter.tex → ch/section.tex → main.tex"))
         XCTAssertEqual(closure.nodes[4].state, .unresolvable("no such file under the project root"))
         XCTAssertTrue(closure.nodes[5].duplicate, "appendix reached again from main.tex is a diamond, not a cycle")
@@ -689,6 +778,7 @@ final class ProjectDocumentsTests: XCTestCase {
         let p = model.project
         let found = p.discoverIncludes()
         XCTAssertEqual(found.map(\.reference.argument), ["chapter", "missing"])
+        guard found.count > 1 else { return XCTFail("expected more than one discovered include, got \(found.count)") }
         XCTAssertEqual(found[1].state, .unresolvable("no such file under the project root"), "unchanged diagnostic path")
         XCTAssertEqual(p.implicitClosureDocuments().map(\.path), ["chapter.tex"])
     }

@@ -10,7 +10,8 @@
 //!
 //! Per fixture: the page count; every word (matched on its page by text,
 //! nearest position) within 0.5bp in x and baseline; every rule within
-//! 0.1bp. Fixtures listed in `REPORTED` (constructs not implemented yet)
+//! 0.1bp, paired one-to-one so a rule we paint with no pdflatex counterpart
+//! fails too. Fixtures listed in `REPORTED` (constructs not implemented yet)
 //! are measured and printed, not gated.
 
 mod common;
@@ -64,7 +65,7 @@ struct W {
     baseline: f64,
 }
 
-type Rules = Vec<Vec<(f64, f64, f64, f64)>>;
+type Rules = Vec<Vec<Rule>>;
 
 fn dir() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/footnotes")
@@ -142,20 +143,7 @@ fn ours(r: &flashtex_render_pipeline::Rendered) -> (Vec<W>, Rules) {
     for w in &mut out {
         w.text = w.text.replace('\u{2217}', "*");
     }
-    let rules = r
-        .v2
-        .pages
-        .iter()
-        .map(|p| {
-            p.resident_items()
-                .iter()
-                .filter_map(|it| match it {
-                    flashtex_render_pipeline::display::Item::Rule(rule) => Some((rule.x.to_bp(), rule.top.to_bp(), rule.width.to_bp(), rule.height.to_bp())),
-                    _ => None,
-                })
-                .collect()
-        })
-        .collect();
+    let rules = rules_of(r);
     (out, rules)
 }
 
@@ -232,15 +220,24 @@ fn measure(name: &str) -> Report {
             }
         }
     }
-    for (pi, wr) in want_rules.iter().enumerate() {
+    // Rules, paired one-to-one so the check is symmetric: a rule we paint
+    // with no pdflatex counterpart fails just as loudly as a pdflatex rule we
+    // never paint. Same predicate and same `RULE_TOL_BP` as before. Pages our
+    // renderer adds are walked too, so their rules cannot escape the pairing.
+    for pi in 0..want_rules.len().max(got_rules.len()) {
+        let wr = want_rules.get(pi).cloned().unwrap_or_default();
         let gr = got_rules.get(pi).cloned().unwrap_or_default();
-        for r in wr {
-            rep.rules += 1;
-            let close = |a: f64, b: f64| (a - b).abs() <= RULE_TOL_BP;
-            if gr.iter().any(|q| close(r.0, q.0) && close(r.1, q.1) && close(r.2, q.2) && close(r.3, q.3)) {
-                rep.rules_ok += 1;
-            } else if rep.fails.len() < 16 {
+        let m = match_rules(&wr, &gr, RULE_TOL_BP);
+        rep.rules += m.total();
+        rep.rules_ok += m.matched;
+        for r in &m.missing {
+            if rep.fails.len() < 16 {
                 rep.fails.push(format!("p{} rule {r:?}: ours {gr:?}", pi + 1));
+            }
+        }
+        for r in &m.extra {
+            if rep.fails.len() < 16 {
+                rep.fails.push(format!("p{} ours paints rule {r:?} with no pdflatex counterpart: pdflatex {wr:?}", pi + 1));
             }
         }
     }

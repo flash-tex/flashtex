@@ -226,8 +226,11 @@ final class AutomaticCompletionTests: XCTestCase {
             load(document)
             type(typed)
             try await waitUntil("list for \(typed)") { self.tv.session != nil }
-            XCTAssertTrue(tv.session!.items.contains { $0.label == expected },
-                          "\(typed) offers \(expected), got \(tv.session!.items.map(\.label))")
+            guard let session = tv.session else {
+                return XCTFail("\(typed): session closed between the wait and the read")
+            }
+            XCTAssertTrue(session.items.contains { $0.label == expected },
+                          "\(typed) offers \(expected), got \(session.items.map(\.label))")
             tv.close(.escape)
         }
         // `\begin{`/`\end{` offer environment names, `\usepackage{` packages.
@@ -235,8 +238,11 @@ final class AutomaticCompletionTests: XCTestCase {
             load(document)
             type(typed)
             try await waitUntil("list for \(typed)") { self.tv.session != nil }
-            XCTAssertTrue(tv.session!.items.contains { $0.label == expected },
-                          "\(typed) offers \(expected), got \(tv.session!.items.map(\.label))")
+            guard let session = tv.session else {
+                return XCTFail("\(typed): session closed between the wait and the read")
+            }
+            XCTAssertTrue(session.items.contains { $0.label == expected },
+                          "\(typed) offers \(expected), got \(session.items.map(\.label))")
             tv.close(.escape)
         }
         // `\includegraphics{` offers the project's real files.

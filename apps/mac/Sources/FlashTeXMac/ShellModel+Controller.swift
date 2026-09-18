@@ -570,6 +570,11 @@ extension ShellModel {
         guard let documentURL else { return .failed("no document URL") }
         let path = activePath
         let text = activeText
+        // Every await below may resume after File > Open replaced the project:
+        // a late reply then belongs to the old document, never the new one.
+        let generation = projectGeneration, entry = project.entryPath
+        func replaced() -> Bool { projectGeneration != generation || self.documentURL != documentURL || project.entryPath != entry }
+        let replacedFailure = DocumentFilesState.SaveResult.failed("\(documentURL.lastPathComponent) was closed while saving; nothing recorded for the open document")
         // 1. The durable source must equal the buffer.
         let deadline = Date().addingTimeInterval(timeout)
         controllerSubmitEdit()
@@ -578,6 +583,7 @@ extension ShellModel {
                controllerState.inFlight == nil { break }
             if Date() > deadline { return .failed("buffer did not become durable within \(Int(timeout)) s") }
             try? await Task.sleep(nanoseconds: 10_000_000)
+            if replaced() { return replacedFailure }
         }
         guard let durable = controllerState.durable[path] else { return .failed("no durable revision") }
         // 2. Export exactly that revision.
@@ -587,6 +593,7 @@ extension ShellModel {
         let reply: Result<[String: Any], ControllerError> = await withCheckedContinuation { cont in
             controllerState.awaiting[id] = { cont.resume(returning: $0) }
         }
+        if replaced() { return replacedFailure }
         switch reply {
         case .success(let payload):
             let sha = payload["sha256"] as? String ?? SourceDigest.sha256Hex(text)
@@ -601,6 +608,7 @@ extension ShellModel {
             // Only such a refusal is a conflict; anything else is a failure.
             guard let kind = Self.conflictKind(inExportRefusal: e.message) else { return .failed(e.message) }
             let theirs = await controllerFileStatus(path: path)?.diskSHA256
+            if replaced() { return replacedFailure }
             files.conflict = DocumentConflict(url: documentURL, kind: kind, ours: baselineSha256, theirs: theirs,
                                               size: nil, mtimeUnixMs: nil, viaHelper: true)
             return .conflict(files.conflict!)

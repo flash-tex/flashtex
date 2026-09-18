@@ -88,6 +88,7 @@ final class V2PathTests: XCTestCase {
         XCTAssertEqual(fast, slow, "the fast reader and JSONDecoder agree on path items")
         let items = slow.payload.pages[0].items
         XCTAssertEqual(items.count, 5)
+        guard items.count == 5 else { return XCTFail("expected five items, got \(items.count)") }
         guard case .path(let tri) = items[0], case .path(let dashed) = items[2], case .path(let clipped) = items[4] else { return XCTFail() }
         XCTAssertEqual(tri.op, .fill(.nonzero))
         XCTAssertEqual(tri.path, [.move(x: Self.ticks(20), y: Self.ticks(20)), .line(x: Self.ticks(80), y: Self.ticks(20)), .line(x: Self.ticks(50), y: Self.ticks(70)), .close])

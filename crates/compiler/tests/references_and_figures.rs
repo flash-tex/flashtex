@@ -296,31 +296,100 @@ fn inserting_top_section_recomputes_and_matches_full_build() {
 }
 
 #[test]
-fn figure_caption_centering_measures_the_broken_line() {
-    // Fourth review, finding 3: the caption width must come from the real
-    // emitter (`inline_box`), not a hand-mirrored walk whose catch-all
-    // swallowed `LineBreak` and summed both lines into the centred width.
-    // A two-line caption's first (longest) line is centred on its own width.
+fn figure_caption_short_explicit_break_stays_on_one_centred_line() {
+    // Fourth review, caption finding: `\@makecaption` (article.cls) measures
+    // the caption in an `\sbox` — restricted horizontal mode, so `\\` is
+    // glue, never a break — and centres the whole single line when it fits
+    // `\hsize`. pdflatex therefore sets
+    // `\caption{AAAAAAAAAAAAAAAAAAAAAAAA\\B}` (24 A's, ~263pt at 12pt, well
+    // under the 468pt measure) on ONE centred line; the old test expected
+    // two lines with the first centred on its own width, which pdflatex
+    // never produces for this input.
     use flashtex_compiler::layout::{text_width, Font, BODY_SIZE_PT, MARGIN_PT};
-    let source = "\\begin{document}\\begin{figure}\\caption{AAAAAAAAAAAAAAAAAAAAAAAA\\\\B}\\end{figure}\\end{document}";
-    let output = compile_full(source, LayoutConstraints::default());
+    let measure = LayoutConstraints::default().measure_pt;
+    for (broken, joined) in [
+        (
+            "\\begin{document}\\begin{figure}\\caption{AAAAAAAAAAAAAAAAAAAAAAAA\\\\B}\\end{figure}\\end{document}",
+            "\\begin{document}\\begin{figure}\\caption{AAAAAAAAAAAAAAAAAAAAAAAAB}\\end{figure}\\end{document}",
+        ),
+        // The sbox's `\@xnewline` unskips the glue before the break and
+        // ignores spaces after it, so a spaced break joins with no width
+        // either: `A \\ B` centres exactly like `AB`.
+        (
+            "\\begin{document}\\begin{figure}\\caption{A \\\\ B}\\end{figure}\\end{document}",
+            "\\begin{document}\\begin{figure}\\caption{AB}\\end{figure}\\end{document}",
+        ),
+    ] {
+        let output = compile_full(broken, LayoutConstraints::default());
+        assert!(output.diagnostics.is_empty(), "{broken:?}: {:?}", output.diagnostics);
+        let items = &output.pages[0].items;
+        // ONE line: every caption item shares the first baseline.
+        let y = items.first().expect("caption must lay out items").baseline_y_pt;
+        assert!(
+            items.iter().all(|item| item.baseline_y_pt == y),
+            "{broken:?} must set on one line: {items:?}"
+        );
+        assert_eq!(items.first().map(|item| item.text.as_str()), Some("Figure 1:"));
+        // The break contributes no width: the joined oracle centres the
+        // same line edges.
+        let oracle = compile_full(joined, LayoutConstraints::default());
+        assert!(oracle.diagnostics.is_empty(), "{joined:?}: {:?}", oracle.diagnostics);
+        let expected = &oracle.pages[0].items;
+        // The joined run is one item; the broken run splits it in two
+        // around the break.
+        assert_eq!(expected.len() + 1, items.len(), "{joined:?}: {expected:?}");
+        let first = items.first().expect("caption items");
+        let last = items.last().expect("caption items");
+        let oracle_first = expected.first().expect("oracle items");
+        let oracle_last = expected.last().expect("oracle items");
+        assert!(
+            (first.x_pt - oracle_first.x_pt).abs() < 0.01,
+            "left edges must match: {} vs {}",
+            first.x_pt,
+            oracle_first.x_pt
+        );
+        let right = last.x_pt + text_width(&last.text, BODY_SIZE_PT, Font::TimesRoman);
+        let oracle_right = oracle_last.x_pt
+            + text_width(&oracle_last.text, BODY_SIZE_PT, Font::TimesRoman);
+        assert!(
+            (right - oracle_right).abs() < 0.02,
+            "right edges must match: {right} vs {oracle_right}"
+        );
+        // ... and that one line is centred whole.
+        let left_gap = first.x_pt - MARGIN_PT;
+        let right_gap = (MARGIN_PT + measure) - right;
+        assert!(
+            (left_gap - right_gap).abs() < 0.03,
+            "caption line must be centred: left={left_gap} right={right_gap}"
+        );
+    }
+}
+
+#[test]
+fn figure_caption_overwide_break_opens_at_the_margin() {
+    // `\@makecaption`'s other half: a caption whose single line exceeds
+    // `\hsize` is set as a paragraph — `\\` breaks and lines wrap from the
+    // margin instead of centring.
+    let crowded = "Crowded ".repeat(30);
+    let source = format!(
+        "\\begin{{document}}\\begin{{figure}}\\caption{{{crowded}\\\\Tail}}\\end{{figure}}\\end{{document}}"
+    );
+    let output = compile_full(&source, LayoutConstraints::default());
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     let items = &output.pages[0].items;
+    let baselines: Vec<f64> = {
+        let mut ys: Vec<f64> = items.iter().map(|item| item.baseline_y_pt).collect();
+        ys.sort_by(|a, b| a.partial_cmp(b).expect("baselines"));
+        ys.dedup();
+        ys
+    };
+    assert!(baselines.len() >= 2, "over-wide caption must break: {items:?}");
     let first = items.first().expect("caption must lay out items");
-    let first_line: Vec<_> = items
-        .iter()
-        .filter(|item| item.baseline_y_pt == first.baseline_y_pt)
-        .collect();
-    assert!(first_line.len() >= 2, "caption must break: {first_line:?}");
     assert_eq!(first.text, "Figure 1:");
-    let last = first_line.last().expect("first line items");
-    let measure = LayoutConstraints::default().measure_pt;
-    let left_gap = first.x_pt - MARGIN_PT;
-    let right_gap =
-        (MARGIN_PT + measure) - (last.x_pt + text_width(&last.text, BODY_SIZE_PT, Font::TimesRoman));
     assert!(
-        (left_gap - right_gap).abs() < 0.03,
-        "first caption line must be centred: left={left_gap} right={right_gap}"
+        (first.x_pt - flashtex_compiler::layout::MARGIN_PT).abs() < 0.02,
+        "over-wide caption must open at the margin: x={}",
+        first.x_pt
     );
 }
 

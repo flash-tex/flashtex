@@ -67,7 +67,8 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(labels(math), ["\\allowdisplaybreaks[0-4]", "\\allowbreak", "\\alpha", "\\aleph"],
                        "inventory (math_symbol) order")
         XCTAssertEqual(math.map(\.detail), ["amsmath page-break permission inside displays; no material",
-                                            "\\penalty0", "math · symbol α", "math · symbol ℵ"])
+                                            "\\penalty0 · in math: zero-penalty breakpoint in a formula (\\penalty0); layout-neutral, formulas never break",
+                                            "math · symbol α", "math · symbol ℵ"])
         XCTAssertEqual(Completion.Vocabulary.symbols.count, Completion.Vocabulary.inventory.commands.filter { $0.origin == .mathSymbol && $0.renders }.count)
         XCTAssertGreaterThan(Completion.Vocabulary.entries.count, Completion.Vocabulary.symbols.count)
         // Math-only commands are marked once, by the `math ·` prefix of `Entry.detail`.
@@ -122,9 +123,10 @@ final class CompletionTests: XCTestCase {
         // plus nine text entries put it at index 11, and the 12-entry cap
         // leaves exactly one math entry (`\eqqcolon`) to satisfy it.
         XCTAssertTrue(s.dropFirst(11).allSatisfy { $0.detail.hasPrefix("math · ") }, "\(labels(s))")
-        XCTAssertEqual(s[0].kind, .environment)
-        XCTAssertEqual(s[0].detail, "closes \\begin{itemize} at byte 17")
-        XCTAssertEqual(s[0].insertText, "\\end{itemize}")
+        guard let first = s.first else { return XCTFail("expected at least one suggestion") }
+        XCTAssertEqual(first.kind, .environment)
+        XCTAssertEqual(first.detail, "closes \\begin{itemize} at byte 17")
+        XCTAssertEqual(first.insertText, "\\end{itemize}")
 
         // Once itemize is closed only document remains open; the exact `\end`
         // spelling still ranks behind the closer it would have to name.
@@ -178,6 +180,7 @@ final class CompletionTests: XCTestCase {
         // document that it does not name are still listed after it, marked.
         let s4 = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, result: nil, supported: ["newpage"])
         XCTAssertEqual(labels(s4), ["\\newpage", "\\newwidget"])
+        guard s4.count == 2 else { return XCTFail("expected two suggestions, got \(s4.count)") }
         XCTAssertEqual(s4[0].detail, "forces a page break")
         XCTAssertEqual(s4[1].detail, "not supported by the compiler")
     }
@@ -311,9 +314,9 @@ final class CompletionTests: XCTestCase {
         let text = "\\begin{document}\n  \\begin{it"
         let s = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, metadata: nil)
         XCTAssertEqual(s.map(\.label), ["itemize"])
-        XCTAssertEqual(s[0].insertText, "itemize}")
+        XCTAssertEqual(s.first?.insertText, "itemize}")
         // Templates and tab stops: SnippetTests. A list starts with its first `\item`.
-        XCTAssertEqual(s[0].snippet, .init(text: "itemize}\n  \\item \n  \\end{itemize}", caretUTF16: 17, stops: [33]))
+        XCTAssertEqual(s.first?.snippet, .init(text: "itemize}\n  \\item \n  \\end{itemize}", caretUTF16: 17, stops: [33]))
         let tabbed = "\t\\begin{eq"
         XCTAssertEqual(Completion.suggestions(in: tabbed, caretUTF16: (tabbed as NSString).length, metadata: nil).first?.snippet,
                        .init(text: "equation}\n\t\n\t\\end{equation}", caretUTF16: 11, stops: [27]))
@@ -326,8 +329,8 @@ final class CompletionTests: XCTestCase {
         let closing = "  \\begin{document}\n  \\begin{itemize}\n\\end{it"
         let c = Completion.suggestions(in: closing, caretUTF16: (closing as NSString).length, metadata: nil)
         XCTAssertEqual(c.map(\.label), ["itemize"])
-        XCTAssertEqual(c[0].insertText, "itemize}")
-        XCTAssertNil(c[0].snippet)
+        XCTAssertEqual(c.first?.insertText, "itemize}")
+        XCTAssertNil(c.first?.snippet)
         let closer = "\\begin{itemize}\n\\e"
         let e = Completion.suggestions(in: closer, caretUTF16: (closer as NSString).length, metadata: nil)
         XCTAssertEqual(e.first?.insertText, "\\end{itemize}")
@@ -338,10 +341,11 @@ final class CompletionTests: XCTestCase {
         let text = "\\section{The \\emph{Best} Idea!}\nText \\label{"
         let s = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, metadata: nil)
         XCTAssertEqual(s.map(\.label), ["sec:the-best-idea"])
-        XCTAssertEqual(s[0].insertText, "sec:the-best-idea}")
-        XCTAssertEqual(s[0].kind, .reference)
-        XCTAssertEqual(s[0].detail, "unique key for \\section{The \\emph{Best} Idea!}")
-        XCTAssertNil(s[0].snippet)
+        let first = try XCTUnwrap(s.first)
+        XCTAssertEqual(first.insertText, "sec:the-best-idea}")
+        XCTAssertEqual(first.kind, .reference)
+        XCTAssertEqual(first.detail, "unique key for \\section{The \\emph{Best} Idea!}")
+        XCTAssertNil(first.snippet)
 
         // Taken in the document and in the project index: next free suffix.
         let versions = ["main.tex": 1]
@@ -350,7 +354,8 @@ final class CompletionTests: XCTestCase {
         let taken = "\\label{sec:the-best-idea}" + text
         let u = Completion.suggestions(in: taken, caretUTF16: (taken as NSString).length, metadata: m)
         XCTAssertEqual(u.map(\.label), ["sec:the-best-idea-3"])
-        XCTAssertEqual(u[0].detail, "unique key for \\section{The \\emph{Best} Idea!} (sec:the-best-idea is taken) · checked against 1 project label · revision 5")
+        let uFirst = try XCTUnwrap(u.first)
+        XCTAssertEqual(uFirst.detail, "unique key for \\section{The \\emph{Best} Idea!} (sec:the-best-idea is taken) · checked against 1 project label · revision 5")
 
         // The nearest heading before the caret wins; headings after it do not count.
         let sub = "\\section{A}\n\\subsection{Résumé 2024}\n\\label{se"
@@ -549,6 +554,7 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(m.origin, .projectIndex(sourceVersions: versions))
         XCTAssertEqual(m.revision, 9)
         XCTAssertEqual(m.labels.map(\.name), ["sec:intro", "sec:dup", "sec:unresolved"])
+        guard m.labels.count == 3 else { return XCTFail("expected three labels, got \(m.labels.count)") }
         XCTAssertEqual(m.labels[0], .init(name: "sec:intro", definitions: 1, occurrences: 3, locationsTruncated: false, definedIn: "main.tex"))
         XCTAssertEqual(m.labels[1].definitions, 2)
         XCTAssertTrue(m.labels[1].locationsTruncated)
@@ -626,6 +632,7 @@ final class CompletionTests: XCTestCase {
         let ref = "\\label{fig:local}\\newwidget \\begin{mysteryenv} \\ref{fi"
         let refs = Completion.suggestions(in: ref, caretUTF16: (ref as NSString).length, metadata: m)
         XCTAssertEqual(labels(refs), ["fig:local", "fig:river"])
+        guard refs.count == 2 else { return XCTFail("expected two references, got \(refs.count)") }
         XCTAssertEqual(refs[0].detail, "\\label in this document — undefined when revision 5 compiled")
         XCTAssertEqual(refs[1].detail, "defined in main.tex · 2 uses · revision 5")
         XCTAssertEqual(refs[1].insertText, "fig:river}")
@@ -635,6 +642,7 @@ final class CompletionTests: XCTestCase {
         let c = Completion.suggestions(in: cite, caretUTF16: (cite as NSString).length, metadata: m)
         XCTAssertEqual(labels(c), ["local01", "knuth84", "lamport94"])
         XCTAssertTrue(c.allSatisfy { $0.kind == .citation })
+        guard c.count == 3 else { return XCTFail("expected three citations, got \(c.count)") }
         XCTAssertEqual(c[0].detail, "\\bibitem in this document")
         XCTAssertEqual(c[2].detail, "cited but not defined in a declared bibliography source · 1 use · revision 5")
         XCTAssertEqual(c[1].detail, "defined in main.tex (kind not reported by this helper) · 1 use · revision 5", "no snapshot kinds bound here")
@@ -659,6 +667,7 @@ final class CompletionTests: XCTestCase {
         let sec = "x \\sec"
         let declared = Completion.suggestions(in: sec, caretUTF16: 6, metadata: m)
         XCTAssertEqual(declared.map(\.label), ["\\sec", "\\section"])
+        guard declared.count == 2 else { return XCTFail("expected two declared commands, got \(declared.count)") }
         XCTAssertEqual(declared[1].insertText, "\\section")
         XCTAssertEqual(declared[1].detail, "declared in main.tex · revision 5 · overrides the builtin")
         XCTAssertEqual(Completion.suggestions(in: sec, caretUTF16: 6, metadata: nil).map(\.label), ["\\sec", "\\section{...}"])
@@ -668,7 +677,8 @@ final class CompletionTests: XCTestCase {
         let env = ref + "g} \\begin{myst"
         let e = Completion.suggestions(in: env, caretUTF16: (env as NSString).length, metadata: m)
         XCTAssertEqual(labels(e), ["mysteryenv"])
-        XCTAssertEqual(e[0].detail, "seen in this document — environment 'mysteryenv' is not implemented; its body is typeset as plain text")
+        guard let eFirst = e.first else { return XCTFail("expected one environment suggestion") }
+        XCTAssertEqual(eFirst.detail, "seen in this document — environment 'mysteryenv' is not implemented; its body is typeset as plain text")
     }
 
     @MainActor
@@ -758,6 +768,7 @@ final class CompletionTests: XCTestCase {
         XCTAssertNil(declared.isDeclaredBibliography("notes.bib"), "a path without a reported kind is unknown, not a .bib by name")
         let s1 = Completion.suggestions(in: text, caretUTF16: caret, metadata: declared)
         XCTAssertEqual(labels(s1), ["local", "knuth84", "lamport94", "mystery", "aaa-missing"])
+        guard s1.count == 5 else { return XCTFail("expected five suggestions, got \(s1.count)") }
         XCTAssertEqual(s1[0].detail, "\\bibitem in this document")
         XCTAssertEqual(s1[1].detail, "record in refs.bib (declared bibliography) · 2 uses · revision 9")
         XCTAssertEqual(s1[2].detail, "\\bibitem in main.tex · 2 uses · revision 9")
@@ -771,6 +782,7 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(none.declaredBibliographies, [])
         let s2 = Completion.suggestions(in: text, caretUTF16: caret, metadata: none)
         XCTAssertEqual(labels(s2), ["local", "lamport94", "knuth84", "mystery", "aaa-missing"])
+        guard s2.count == 5 else { return XCTFail("expected five suggestions, got \(s2.count)") }
         XCTAssertEqual(s2[2].detail, "\\bibitem in refs.bib · 2 uses · revision 9", "refs.bib is a LaTeX source until it is declared")
         XCTAssertEqual(s2[4].detail, "cited but not defined in a declared bibliography source (none declared: Project > Document Kinds) · 2 uses · revision 9")
 
@@ -778,6 +790,7 @@ final class CompletionTests: XCTestCase {
         XCTAssertNil(try snapshot(nil).documentKinds)
         let s3 = Completion.suggestions(in: text, caretUTF16: caret, metadata: keys)
         XCTAssertEqual(labels(s3), ["local", "lamport94", "knuth84", "mystery", "aaa-missing"])
+        guard s3.count == 5 else { return XCTFail("expected five suggestions, got \(s3.count)") }
         XCTAssertEqual(s3[1].detail, "defined in main.tex (kind not reported by this helper) · 2 uses · revision 9")
         XCTAssertEqual(s3[2].detail, "defined in refs.bib (kind not reported by this helper) · 2 uses · revision 9")
         XCTAssertEqual(s3[4].detail, "cited but not defined in a declared bibliography source · 2 uses · revision 9")
@@ -808,6 +821,7 @@ final class CompletionTests: XCTestCase {
         let versions = ["main.tex": 3, "parts/body.tex": 1]
         fetcher.request(sourceVersions: versions, editorRevision: 12, send: send)
         XCTAssertEqual(sent.map(\.type), ["complete", "complete", "complete", "snapshot"])
+        guard sent.count == 4 else { return XCTFail("expected four sent requests, got \(sent.count)") }
         XCTAssertEqual(sent.prefix(3).map { $0.payload["category"] as? String }, ["label", "citation", "command"])
         for s in sent.prefix(3) {
             XCTAssertEqual(s.payload["source_versions"] as? [String: Int], versions)
@@ -937,12 +951,13 @@ final class CompletionTests: XCTestCase {
         spin("delivery") { scheduler.statistics.delivered == 1 }
         spin("second refusal") { scheduler.statistics.refusedStale == 2 }
         XCTAssertEqual(delivered.count, 1)
-        XCTAssertEqual(delivered[0].generation, g3)
-        XCTAssertEqual(delivered[0].items.map(\.label),
+        guard let firstDelivered = delivered.first else { return XCTFail("expected one delivered outcome") }
+        XCTAssertEqual(firstDelivered.generation, g3)
+        XCTAssertEqual(firstDelivered.items.map(\.label),
                        ["\\subsection{...}", "\\subsubsection{...}", "\\subparagraph{...}", "\\substack{a \\\\ b}", "\\subset", "\\subseteq",
                         "\\subseteqq", "\\subsetneqq", "\\subsetneq"])
-        XCTAssertEqual(delivered[0].range, NSRange(location: 2, length: 4))
-        XCTAssertEqual(delivered[0].caretUTF16, 6)
+        XCTAssertEqual(firstDelivered.range, NSRange(location: 2, length: 4))
+        XCTAssertEqual(firstDelivered.caretUTF16, 6)
         XCTAssertNil(scheduler.pending)
         XCTAssertEqual(scheduler.statistics, .init(scheduled: 3, delivered: 1, refusedStale: 2, cancelled: 2))
 
@@ -1243,6 +1258,7 @@ final class CompletionTests: XCTestCase {
         let labels = items.map(\.label)
         XCTAssertEqual(labels, ["\\subsection{...}", "\\subsubsection{...}", "\\subparagraph{...}", "\\substack{a \\\\ b}", "\\sup", "\\subset", "\\subseteq",
                                 "\\supset", "\\supseteq", "\\sum", "\\succsim", "\\succcurlyeq"])
+        guard labels.count == 12 else { return XCTFail("expected 12 suggestions, got \(labels.count)") }
         let back = labels.count - 2 // where two ⇧Tab from the top land
         let popup = tv.completionPopup
         let table = popup.accessibilityTable
@@ -1650,11 +1666,13 @@ final class CompletionLiveHelperTests: XCTestCase {
         guard case .projectIndex(let versions) = metadata.origin else { return XCTFail("origin \(metadata.origin)") }
         XCTAssertEqual(versions["main.tex"], model.controllerState.durable["main.tex"]?.revision)
         XCTAssertEqual(metadata.labels.map(\.name), ["sec:intro"])
-        XCTAssertEqual(metadata.labels[0].definitions, 1)
-        XCTAssertGreaterThanOrEqual(metadata.labels[0].occurrences, 1)
-        XCTAssertEqual(metadata.labels[0].definedIn, "main.tex")
+        let label = try XCTUnwrap(metadata.labels.first)
+        XCTAssertEqual(label.definitions, 1)
+        XCTAssertGreaterThanOrEqual(label.occurrences, 1)
+        XCTAssertEqual(label.definedIn, "main.tex")
         XCTAssertEqual(metadata.citations.map(\.name), ["knuth84"])
-        XCTAssertEqual(metadata.citations[0].definitions, 1)
+        let citation = try XCTUnwrap(metadata.citations.first)
+        XCTAssertEqual(citation.definitions, 1)
         let myterm = try XCTUnwrap(metadata.commands.first { $0.name == "myterm" })
         XCTAssertEqual(myterm.definitions, 1)
         XCTAssertGreaterThanOrEqual(myterm.occurrences, 1)
@@ -1675,7 +1693,7 @@ final class CompletionLiveHelperTests: XCTestCase {
         // main.tex is a LaTeX source (the helper's snapshot says so; nothing is declared as a bibliography here).
         XCTAssertEqual(metadata.documentKinds, ["main.tex": "latex"])
         XCTAssertEqual(metadata.declaredBibliographies, [])
-        XCTAssertEqual(cites.items.first?.detail, "\\bibitem in main.tex · \(metadata.citations[0].occurrences) use\(metadata.citations[0].occurrences == 1 ? "" : "s") · revision \(cites.metadataRevision ?? -1)")
+        XCTAssertEqual(cites.items.first?.detail, "\\bibitem in main.tex · \(citation.occurrences) use\(citation.occurrences == 1 ? "" : "s") · revision \(cites.metadataRevision ?? -1)")
         let cmds = try await popupSession(tv, model: model, insert: "\\my")
         XCTAssertEqual(cmds.items.map(\.label), ["\\myterm"])
         XCTAssertEqual(cmds.items.first?.detail, "declared in main.tex · \(myterm.occurrences) use\(myterm.occurrences == 1 ? "" : "s") · revision \(cmds.metadataRevision ?? -1)")
@@ -1790,6 +1808,7 @@ final class CompletionLiveHelperTests: XCTestCase {
         XCTAssertEqual(before.declaredBibliographies, [])
         let unresolved = try await popupSession(tv, model: model, insert: "\\cite{")
         XCTAssertEqual(unresolved.items.map(\.label), ["lamport94", "knuth84"], "\\bibitem first, the cited-but-undefined key last")
+        guard unresolved.items.count == 2 else { return XCTFail("expected two items, got \(unresolved.items.count)") }
         XCTAssertEqual(unresolved.items[0].detail, "\\bibitem in this document")
         XCTAssertTrue(unresolved.items[1].detail.hasPrefix("cited but not defined in a declared bibliography source (none declared: Project > Document Kinds) · "),
                       unresolved.items[1].detail)

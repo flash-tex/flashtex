@@ -1,0 +1,12 @@
+[package]
+name = "flashtex-bibliography"
+version = "0.1.0"
+edition = "2024"
+description = "Original FlashTeX BibTeX data layer: .bib parsing, name parsing, citation resolution, and plain/alpha style layout data."
+publish = false
+
+[lib]
+name = "flashtex_bibliography"
+path = "src/lib.rs"
+
+[dependencies]

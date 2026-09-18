@@ -14,7 +14,6 @@
 //! Needs the compiler's `Parsed::block_par_leading`, so the whole file is
 //! behind the `par-leading` feature (see `Cargo.toml`): the pinned
 //! `vendor/compiler` predates that field.
-#![cfg(feature = "par-leading")]
 
 mod common;
 
@@ -65,6 +64,7 @@ const TOL: f64 = 0.02;
 /// Three lines of body text: the class's own `\baselineskip`, unchanged by
 /// anything in this lane.
 #[test]
+#[cfg_attr(not(feature = "par-leading"), ignore = "requires the par-leading feature")]
 fn body_text_keeps_the_class_leading() {
     let g = gaps(
         "Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho \
@@ -81,6 +81,7 @@ fn body_text_keeps_the_class_leading() {
 /// small's leading" fix would break, and the reason this lane does not read
 /// the sizes of the runs.
 #[test]
+#[cfg_attr(not(feature = "par-leading"), ignore = "requires the par-leading feature")]
 fn a_group_closing_before_the_paragraph_keeps_the_body_leading() {
     let g = gaps(
         "{\\small Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron \
@@ -94,6 +95,7 @@ fn a_group_closing_before_the_paragraph_keeps_the_body_leading() {
 /// `\par` inside the group: 11.955 bp in pdflatex. Before this lane the
 /// pipeline set 13.549 here — the leading never followed the declaration.
 #[test]
+#[cfg_attr(not(feature = "par-leading"), ignore = "requires the par-leading feature")]
 fn a_par_inside_the_group_takes_the_declaration_leading() {
     let g = gaps(
         "{\\small Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron \
@@ -107,6 +109,7 @@ fn a_par_inside_the_group_takes_the_declaration_leading() {
 /// `\large` the same way, in the other direction: 13.948 bp, wider than the
 /// body's 13.549.
 #[test]
+#[cfg_attr(not(feature = "par-leading"), ignore = "requires the par-leading feature")]
 fn a_larger_declaration_opens_the_leading_up() {
     let g = gaps(
         "{\\large Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron \
@@ -121,6 +124,7 @@ fn a_larger_declaration_opens_the_leading_up() {
 /// `\normalsize` long before `\par` runs, and TeX never consults the boxes it
 /// stacks. pdflatex: 13.549 bp throughout.
 #[test]
+#[cfg_attr(not(feature = "par-leading"), ignore = "requires the par-leading feature")]
 fn a_mid_paragraph_switch_does_not_move_the_baselines() {
     let g = gaps(
         "Alpha beta gamma delta {\\small epsilon zeta eta theta} iota kappa {\\Large lambda mu} nu \
@@ -135,6 +139,7 @@ fn a_mid_paragraph_switch_does_not_move_the_baselines() {
 /// so the declaration is still in force when the environment's last
 /// paragraph ends: 11.955 bp inside the `quote`.
 #[test]
+#[cfg_attr(not(feature = "par-leading"), ignore = "requires the par-leading feature")]
 fn an_environment_that_pars_before_it_closes_uses_its_own_declaration() {
     let g = gaps(
         "\\begin{quote}\\small Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu \
@@ -147,6 +152,7 @@ fn an_environment_that_pars_before_it_closes_uses_its_own_declaration() {
 
 /// The same rule through `\list`, at a third size.
 #[test]
+#[cfg_attr(not(feature = "par-leading"), ignore = "requires the par-leading feature")]
 fn a_declaration_inside_a_list_reaches_the_item_lines() {
     let g = gaps(
         "\\begin{itemize}\\footnotesize\n\\item Alpha beta gamma delta epsilon zeta eta theta iota \
@@ -168,6 +174,7 @@ fn a_declaration_inside_a_list_reaches_the_item_lines() {
 /// paragraph, whose own `\baselineskip` is what `append_to_vlist` reads
 /// when its first line is appended.
 #[test]
+#[cfg_attr(not(feature = "par-leading"), ignore = "requires the par-leading feature")]
 fn the_leading_above_the_first_line_follows_the_paragraph_too() {
     let g = gaps(
         "Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho \
@@ -194,6 +201,7 @@ fn the_leading_above_the_first_line_follows_the_paragraph_too() {
 /// pdflatex's baselines for this probe: 82.959, 102.633, 113.592, 124.551.
 /// Ours: 82.959, 102.634, 113.592, 124.551.
 #[test]
+#[cfg_attr(not(feature = "par-leading"), ignore = "requires the par-leading feature")]
 fn a_tall_box_still_falls_back_to_lineskip_at_the_new_leading() {
     let g = gaps(
         "{\\footnotesize Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi \

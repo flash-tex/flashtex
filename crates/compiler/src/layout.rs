@@ -1002,6 +1002,10 @@ impl LayoutCursor {
     /// `\normalfont[#2 points]`. Placing then rewinds to `content_end`,
     /// discarding the previous item's eagerly reserved trailing space,
     /// exactly as `hspace` already does for `\hspace{<dimen>}`.
+    ///
+    /// An empty `text` (a box-edge gap marker) still advances the cursor
+    /// but pushes no item, so a call places zero or one items — callers
+    /// that need the placed item must tolerate the empty result.
     fn place(&mut self, text: String, size: f64, span: Span, font: Font, space_before: bool) {
         if !space_before {
             self.x = self.content_end;
@@ -1969,14 +1973,36 @@ impl LayoutCursor {
                 self.x = MARGIN_PT;
             }
             Block::FigureCaption { content } => {
-                // Centre the full invisible box: every inline width counts,
-                // including a phantom's reserved geometry (see
-                // `caption_box_width`), so e.g.
-                // `\caption{A\phantom{WWWW}B}` centres A, the blank and B
-                // together rather than shifting the visible text right.
-                let width: f64 = self.caption_box_width(content, body_size);
-                self.x = MARGIN_PT + (self.constraints.measure_pt - width).max(0.0) / 2.0;
-                emit(self, content, body_size, Font::TimesRoman);
+                // `\@makecaption` (article.cls): the caption is first
+                // measured in an `\sbox` — restricted horizontal mode, so
+                // `\\` is glue, never a break — and centred whole on one
+                // line when that single line fits `\hsize`; only an
+                // over-wide caption is set as a paragraph (where `\\` does
+                // break). pdflatex therefore sets e.g.
+                // `\caption{AAAAAAAAAAAAAAAAAAAAAAAA\\B}` (~263pt at 12pt)
+                // on ONE centred line, not two: the explicit break joins
+                // with no width there (the sbox's `\@xnewline` unskips the
+                // glue before it and ignores spaces after it).
+                let flat = caption_single_line(content);
+                let single: f64 = self.caption_box_width(&flat, body_size);
+                if single <= self.constraints.measure_pt {
+                    // Fits: one centred line with the breaks joined away.
+                    self.x =
+                        MARGIN_PT + (self.constraints.measure_pt - single) / 2.0;
+                    emit(self, &flat, body_size, Font::TimesRoman);
+                } else {
+                    // Over-wide: the paragraph path — `\\` breaks and lines
+                    // wrap from the margin, as before. Centre the full
+                    // invisible box: every inline width counts, including a
+                    // phantom's reserved geometry (see `caption_box_width`),
+                    // so e.g. `\caption{A\phantom{WWWW}B}` centres A, the
+                    // blank and B together rather than shifting the visible
+                    // text right.
+                    let width: f64 = self.caption_box_width(content, body_size);
+                    self.x =
+                        MARGIN_PT + (self.constraints.measure_pt - width).max(0.0) / 2.0;
+                    emit(self, content, body_size, Font::TimesRoman);
+                }
                 self.newline(body_size);
             }
             Block::VSpace { .. } | Block::PageBreak | Block::VFill | Block::Penalty { .. } => {}
@@ -2610,6 +2636,62 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
     }
 }
 
+/// The caption run for `\@makecaption`'s one-line case (see the
+/// `FigureCaption` arm): top-level `LineBreak`s (`\\`) joined away with no
+/// width, and the space after each break cleared — the sbox's `\@xnewline`
+/// unskips the glue before the break and ignores spaces after it, so
+/// `\caption{A \\ B}` centres `AB`, not `A B`. Explicit glue nodes
+/// (`HSpace`, `Kern`, `\quad`) are real boxes, not spaces, so they stay.
+/// With no top-level break this is the content unchanged.
+fn caption_single_line(content: &[Inline]) -> Vec<Inline> {
+    if !content
+        .iter()
+        .any(|inline| matches!(inline, Inline::LineBreak { .. }))
+    {
+        return content.to_vec();
+    }
+    let mut flat = Vec::with_capacity(content.len());
+    let mut join = false;
+    for inline in content {
+        if matches!(inline, Inline::LineBreak { .. }) {
+            join = true;
+            continue;
+        }
+        let mut inline = inline.clone();
+        if join {
+            clear_space_before(&mut inline);
+            join = false;
+        }
+        flat.push(inline);
+    }
+    flat
+}
+
+/// Clear one inline's leading-space flag: every variant that carries
+/// `space_before`, including the boxed wrappers whose flag lives on the
+/// box. Variants without such a flag are left alone.
+fn clear_space_before(inline: &mut Inline) {
+    match inline {
+        Inline::Text { space_before, .. }
+        | Inline::Math { space_before, .. }
+        | Inline::Reference { space_before, .. }
+        | Inline::CleverReference { space_before, .. }
+        | Inline::ThePage { space_before, .. }
+        | Inline::Footnote { space_before, .. }
+        | Inline::Marginpar { space_before, .. }
+        | Inline::Logo { space_before, .. }
+        | Inline::Rule { space_before, .. }
+        | Inline::Phantom { space_before, .. }
+        | Inline::Verbatim { space_before, .. } => *space_before = false,
+        Inline::ColorBox(b) => b.space_before = false,
+        Inline::Underline(u) => u.space_before = false,
+        Inline::TextScript(t) => t.space_before = false,
+        Inline::Graphic(g) => g.space_before = false,
+        Inline::Transform(t) => t.space_before = false,
+        _ => {}
+    }
+}
+
 fn visit_inline_references(inlines: &[Inline], visitor: &mut impl FnMut(&str, Span)) {
     for inline in inlines {
         match inline {
@@ -2634,6 +2716,7 @@ fn visit_inline_references(inlines: &[Inline], visitor: &mut impl FnMut(&str, Sp
             // A phantom reserves geometry but still mentions its content:
             // `\phantom{\ref{missing}}` warns exactly like the bare `\ref`.
             Inline::Phantom { content, .. } => visit_inline_references(content, visitor),
+            Inline::TextScript(t) => visit_inline_references(&t.content, visitor),
             _ => {}
         }
     }
@@ -3407,6 +3490,56 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 c.content_end = c.x + width;
                 c.x += width + word_space(size, font);
             }
+            Inline::TextScript(t) => {
+                if !t.space_before {
+                    c.x = c.content_end;
+                }
+                // `\@textsuperscript` / `\@textsubscript` set the `\mbox`
+                // at the `\sf@size` of the size in effect where the command
+                // appears (real LaTeX's `\fontsize\sf@size\z@\selectfont`):
+                // a `{\large ...}` group resolves through its own
+                // declaration recorded on the command, exactly like the
+                // surrounding text does — never through the ambient `size`.
+                // Shifts use the same local size: `sup2` (text style) for
+                // superscripts, `max(sub1, h − ⅘·x-height)` for subscripts,
+                // like this layout's own footnote marks.
+                let local = t.style.size.map_or(size, |level| {
+                    size_declaration_pt(level, c.constraints.font_size_pt)
+                });
+                let mark_size = footnotes::script_mark_size(local);
+                let start_page = c.pages.len();
+                let start_item = c.pages.last().map_or(0, |page| page.items.len());
+                emit(c, &t.content, mark_size, font);
+                // Height of the just-laid-out box drives the tall-subscript
+                // branch; measured from the placed items so declarations
+                // inside the argument count too.
+                let mut box_height: f64 = 0.0;
+                for (i, page) in c.pages.iter().enumerate().skip(start_page - 1) {
+                    let from = if i == start_page - 1 {
+                        start_item.min(page.items.len())
+                    } else {
+                        0
+                    };
+                    for item in &page.items[from..] {
+                        box_height = box_height.max(font_extents(item.font, item.font_size_pt).0);
+                    }
+                }
+                let shift = if t.superscript {
+                    footnotes::superscript_raise(local)
+                } else {
+                    -footnotes::subscript_drop(local, box_height)
+                };
+                for (i, page) in c.pages.iter_mut().enumerate().skip(start_page - 1) {
+                    let from = if i == start_page - 1 {
+                        start_item.min(page.items.len())
+                    } else {
+                        0
+                    };
+                    for item in &mut page.items[from..] {
+                        item.baseline_y_pt = round2(item.baseline_y_pt - shift);
+                    }
+                }
+            }
         }
     }
 }
@@ -3428,6 +3561,38 @@ mod tests {
             .flat_map(|p| &p.items)
             .find(|item| item.span.start == start)
             .expect("expected item at source offset")
+    }
+
+    #[test]
+    fn place_empty_text_pushes_no_item_but_still_advances() {
+        // `place`'s contract since the no-empty-items change: box-edge gap
+        // markers (`box_inlines`) are zero-width runs whose only job is the
+        // cursor advance — they must never reach the page as `""` items, so
+        // a `place("")` has no item to return and callers adjusting the
+        // just-placed item (the footnote mark raise) must handle the
+        // missing item explicitly (`if let Some`, not `expect`).
+        let mut c = LayoutCursor::new(LayoutConstraints::default());
+        let span = crate::Span::new(0, 0);
+        let x_before = c.x;
+        c.place(String::new(), BODY_SIZE_PT, span, Font::TimesRoman, true);
+        assert!(
+            c.pages[0].items.is_empty(),
+            "empty text must push no item"
+        );
+        assert!(
+            c.x > x_before,
+            "empty text must still reserve its glue advance"
+        );
+        // The guarded shape every adjust-after-place caller uses: no panic
+        // on the empty page.
+        let adjusted = c
+            .pages
+            .last_mut()
+            .and_then(|page| page.items.last_mut())
+            .is_some();
+        assert!(!adjusted, "no item exists to adjust after an empty place");
+        c.place("x".to_string(), BODY_SIZE_PT, span, Font::TimesRoman, true);
+        assert_eq!(c.pages[0].items.len(), 1);
     }
 
     #[test]

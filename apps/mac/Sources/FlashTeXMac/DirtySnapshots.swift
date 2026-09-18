@@ -175,6 +175,14 @@ extension ShellModel {
         return snapshot
     }
 
+    /// `preserveDirtyText` for a discard that drops the only in-memory copy:
+    /// false when the text differs from the file and the store could not keep
+    /// it (`dirtySnapshots.lastError` says why), so the caller must not
+    /// replace the buffer (#806).
+    func preserveDiscardedText(_ text: String, at url: URL, reason: String) -> Bool {
+        preserveDirtyText(text, at: url, reason: reason) != nil || Self.diskText(at: url)?.sameBytes(as: text) == true
+    }
+
     /// Keeps every dirty member durably (entry: its URL; members: their
     /// rooted files). For the quit flow's "Don't Save" and
     /// `applicationWillTerminate` (parent hooks), and callable any time.

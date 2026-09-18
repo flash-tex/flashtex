@@ -11,6 +11,12 @@ import XCTest
 @MainActor
 final class ControlSnapshotTests: XCTestCase {
 
+    /// Pixel comparison only means something on the machine the references
+    /// were recorded on; elsewhere this skips loudly (SnapshotEnvironment.swift).
+    override func setUp() async throws {
+        try SnapshotEnvironment.requireComparableToReferences()
+    }
+
     func testControlVocabulary() {
         assertSurfaceBothAppearances(ControlGallery(), named: "controls",
                                      size: CGSize(width: 560, height: 260))

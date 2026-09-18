@@ -33,20 +33,22 @@ final class RenameSymbolTests: XCTestCase {
         XCTAssertEqual(keys.map(\.length), [1, 1, 1, 1, 1])
     }
 
-    func testRenamePlanGroupsIntoOneEditPerDocumentAndAppliesExactly() {
+    func testRenamePlanGroupsIntoOneEditPerDocumentAndAppliesExactly() throws {
         let main = "\\newcommand{\\R}{\\mathbb{R}}\n$\\R^n$ and \\Rn and \\R"
         let ch = "\\R is real; \\ref{eq:1}"
-        let plan = try! XCTUnwrap(EN.renamePlan(.command("R"), to: "Reals", in: [("main.tex", main), ("ch.tex", ch)]))
+        let plan = try XCTUnwrap(EN.renamePlan(.command("R"), to: "Reals", in: [("main.tex", main), ("ch.tex", ch)]))
         XCTAssertEqual(plan.summary, "4 occurrences in 2 files")
         XCTAssertEqual(plan.documents.map(\.path), ["main.tex", "ch.tex"])
+        guard plan.documents.count == 2 else { return XCTFail("expected two documents, got \(plan.documents.count)") }
         XCTAssertEqual(plan.documents[0].ranges.count, 3)
-        let g = try! XCTUnwrap(plan.documents[0].grouped(in: main as NSString))
+        let g = try XCTUnwrap(plan.documents[0].grouped(in: main as NSString))
         XCTAssertEqual(g.range, NSRange(location: 12, length: main.utf16.count - 12))
         XCTAssertEqual(plan.documents[0].applied(to: main as NSString), "\\newcommand{\\Reals}{\\mathbb{R}}\n$\\Reals^n$ and \\Rn and \\Reals")
         XCTAssertEqual(plan.documents[1].applied(to: ch as NSString), "\\Reals is real; \\ref{eq:1}")
         // Labels: the key everywhere, never the command names.
-        let lp = try! XCTUnwrap(EN.renamePlan(.label("eq:1"), to: "eq:main", in: [("ch.tex", ch)]))
-        XCTAssertEqual(lp.documents[0].applied(to: ch as NSString), "\\R is real; \\ref{eq:main}")
+        let lp = try XCTUnwrap(EN.renamePlan(.label("eq:1"), to: "eq:main", in: [("ch.tex", ch)]))
+        guard let lpFirst = lp.documents.first else { return XCTFail("expected one label-rename document") }
+        XCTAssertEqual(lpFirst.applied(to: ch as NSString), "\\R is real; \\ref{eq:main}")
         XCTAssertNil(EN.renamePlan(.label("nope"), to: "x", in: [("ch.tex", ch)]))
         // Name rules.
         XCTAssertEqual(EN.nameProblem("", for: .label("a")), "the new key is empty")
@@ -69,6 +71,7 @@ final class RenameSymbolTests: XCTestCase {
         let defs = EN.definitions(in: s)
         XCTAssertEqual(defs.map(\.name), ["R", "vec", "eps", "Tr", "oldsection", "thm", "lemma", "pair"])
         XCTAssertEqual(defs.map(\.line), [1, 2, 3, 4, 5, 6, 7, 8])
+        guard defs.count == 8 else { return XCTFail("expected eight definitions, got \(defs.count)") }
         XCTAssertEqual(defs[0].body, "\\mathbb{R}")
         XCTAssertEqual(defs[1].body, "\\mathbf{#1}")
         XCTAssertEqual(defs[2].body, "\\varepsilon_{#1}")

@@ -168,7 +168,7 @@ impl P<'_> {
             self.style = next;
         } else {
             let (tokens, _) = self.required_group("textcolor", span);
-            para.extend(self.inlines_from_tokens(tokens, next));
+            para.extend(self.inlines_from_tokens(tokens, next, false));
         }
     }
 

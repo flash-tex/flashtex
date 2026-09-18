@@ -134,7 +134,8 @@ final class SearchReconcileTests: XCTestCase {
 
         // The helper DID apply the group: the outcome says so and names the note.
         XCTAssertEqual(client.applyOutcomes.count, 1)
-        guard case .applied(let rev, let id, let note) = client.applyOutcomes[0].state else { return XCTFail(client.applyOutcomes[0].description) }
+        guard let firstOutcome = client.applyOutcomes.first else { return XCTFail("expected at least one apply outcome") }
+        guard case .applied(let rev, let id, let note) = firstOutcome.state else { return XCTFail(firstOutcome.description) }
         XCTAssertEqual(rev, 2)
         XCTAssertTrue(id.hasPrefix("search-replace-"))
         XCTAssertTrue(note.contains("the editor moved during the apply"), note)
@@ -183,7 +184,8 @@ final class SearchReconcileTests: XCTestCase {
         try release(f)
         await apply.value
 
-        guard case .applied(let rev, _, let note) = client.applyOutcomes[0].state else { return XCTFail(client.applyOutcomes[0].description) }
+        guard let firstOutcome = client.applyOutcomes.first else { return XCTFail("expected at least one apply outcome") }
+        guard case .applied(let rev, _, let note) = firstOutcome.state else { return XCTFail(firstOutcome.description) }
         XCTAssertEqual(rev, 2)
         XCTAssertEqual(note, "", "no moved-editor note for an unchanged buffer")
         XCTAssertTrue(model.activeText.sameBytes(as: Self.replaced), "the buffer adopted the returned document exactly")
@@ -211,7 +213,8 @@ final class SearchReconcileTests: XCTestCase {
         model.detachController()
         await apply.value
         XCTAssertEqual(client.applyOutcomes.count, 1)
-        guard case .uncertain(let why, let commandID) = client.applyOutcomes[0].state else { return XCTFail(client.applyOutcomes[0].description) }
+        guard let firstOutcome = client.applyOutcomes.first else { return XCTFail("expected at least one apply outcome") }
+        guard case .uncertain(let why, let commandID) = firstOutcome.state else { return XCTFail(firstOutcome.description) }
         XCTAssertTrue(why.hasPrefix("helper exited"), why)
         let retained = try XCTUnwrap(client.retainedCommands[commandID])
         XCTAssertEqual((retained["command"] as? [String: Any])?["command_id"] as? String, commandID)
@@ -229,7 +232,8 @@ final class SearchReconcileTests: XCTestCase {
         // twice), the current document (r3) is reconciled, the note says so.
         let editorBefore = model.editorRevision
         await client.retryUncertain(commandID: commandID)
-        guard case .applied(let rev, let id, let note) = client.applyOutcomes[0].state else { return XCTFail(client.applyOutcomes[0].description) }
+        guard let firstOutcome = client.applyOutcomes.first else { return XCTFail("expected at least one apply outcome") }
+        guard case .applied(let rev, let id, let note) = firstOutcome.state else { return XCTFail(firstOutcome.description) }
         XCTAssertEqual(id, commandID, "the retry keeps the command id")
         XCTAssertEqual(rev, 3, "replayed: the current document, no fourth revision")
         XCTAssertTrue(note.contains("(replayed: the ledger had already applied this command)"), note)

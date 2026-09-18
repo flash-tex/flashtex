@@ -372,8 +372,15 @@ final class ProjectDocuments {
     /// SHA-256 of the disk file each non-entry document was opened from (nil:
     /// no file seen), the mandatory expectation of a rooted save.
     @ObservationIgnored private var diskBaselines: [String: String?] = [:]
-    /// Explicit conflict of the last per-document save (nil once resolved by a later save).
-    private(set) var saveConflict: DocumentConflict?
+    /// Explicit conflict of each member's last save, by member path (nil once
+    /// resolved by a later save of that member): conflicts on two members never
+    /// overwrite each other (#789).
+    private(set) var saveConflicts: [String: DocumentConflict] = [:]
+
+    func saveConflict(for path: String) -> DocumentConflict? { saveConflicts[path] }
+
+    /// A replaced project inherits no member conflicts (`replaceProject`).
+    func clearSaveConflicts() { if !saveConflicts.isEmpty { saveConflicts = [:] } }
     /// Caret/selection (UTF-16) last seen in each document.
     @ObservationIgnored private(set) var carets: [String: NSRange] = [:]
     @ObservationIgnored private var armed = false
@@ -407,6 +414,7 @@ final class ProjectDocuments {
         for key in baselines.keys where !open.contains(key) { baselines.removeValue(forKey: key) }
         for key in carets.keys where !open.contains(key) { carets.removeValue(forKey: key) }
         for key in diskBaselines.keys where !open.contains(key) { diskBaselines.removeValue(forKey: key) }
+        for key in saveConflicts.keys where !open.contains(key) { saveConflicts.removeValue(forKey: key) }
     }
 
     /// Status line from another file's operation (ProjectScaffold.swift).
@@ -419,6 +427,7 @@ final class ProjectDocuments {
         baselines[newPath] = baselines.removeValue(forKey: path)
         if let disk = diskBaselines.removeValue(forKey: path) { diskBaselines[newPath] = disk }
         carets[newPath] = carets.removeValue(forKey: path)
+        saveConflicts[newPath] = saveConflicts.removeValue(forKey: path)
     }
 
     // MARK: membership view
@@ -866,6 +875,7 @@ final class ProjectDocuments {
         origins[path] = origin
         baselines[path] = text
         diskBaselines[path] = diskSHA256
+        saveConflicts[path] = nil // a fresh disk baseline supersedes it
         detachedBuffers.removeValue(forKey: path)
         model.log("project: opened \(path) (\(text.utf8.count) bytes, \(origin)) — \(model.documents.count) documents")
         // Unsaved text kept for this member by an earlier session or detach is
@@ -1015,24 +1025,33 @@ final class ProjectDocuments {
         let text = doc.text
         let expectedDisk = diskBaselines[path] ?? nil
         if model.controllerAttached {
-            guard await flushToHelper(path, timeout: timeout), let durable = model.controllerState.durable[path],
+            // A reply resuming after File > Open replaced the project belongs to
+            // the old project: never record it on the new one's same-named member.
+            let generation = model.projectGeneration
+            func replaced() -> Bool { model.projectGeneration != generation || projectRoot != root }
+            let replacedFailure = SaveOutcome.failed("\(path) was closed while saving; nothing recorded for the open project")
+            let flushed = await flushToHelper(path, timeout: timeout)
+            if replaced() { return noteSave(replacedFailure) }
+            guard flushed, let durable = model.controllerState.durable[path],
                   model.controllerState.textByDurable[path]?[durable.revision]?.sameBytes(as: text) == true else {
                 return noteSave(.failed("\(path) did not become durable within \(Int(timeout)) s"))
             }
             let reply = await helperRequest("export", ["path": path, "expected_revision": durable.revision,
                                                        "expected_sha256": durable.sha256, "expected_disk_sha256": expectedDisk ?? NSNull()])
+            if replaced() { return noteSave(replacedFailure) }
             let verdict = await Self.exportVerdict(reply, path: path, text: text) { [weak self] in await self?.diskSHA256(of: path) }
+            if replaced() { return noteSave(replacedFailure) }
             switch verdict {
             case .saved(let sha, let afterError):
                 baselines[path] = text
                 diskBaselines[path] = sha
-                saveConflict = nil
+                saveConflicts[path] = nil
                 model.snapshotSaved(url: url, text: text)
                 let how = afterError.map { " (the helper reported \"\($0)\" after the rename; the file holds exactly the exported text)" } ?? ""
                 return noteSave(.saved(path: path, sha256: sha), extra: " through the preview controller (durable r\(durable.revision))" + how)
             case .conflict(let kind, let theirs):
                 let conflict = DocumentConflict(url: url, kind: kind, ours: expectedDisk, theirs: theirs, size: nil, mtimeUnixMs: nil, viaHelper: true)
-                saveConflict = conflict
+                saveConflicts[path] = conflict
                 model.preserveDirtyText(text, at: url, reason: "save refused: file changed on disk")
                 return noteSave(.conflict(conflict))
             case .failed(let why):
@@ -1104,15 +1123,15 @@ final class ProjectDocuments {
         let text = doc.text
         let expectedDisk = diskBaselines[path] ?? nil
         let expected: ProjectFilesV1.Expected = expectedDisk.map { .hash($0) } ?? .newFile
-        switch model.files.save(url, text: text, expected: expected, force: false) {
+        switch model.files.save(url, text: text, expected: expected, force: false, recordsState: false) {
         case .saved(let sha):
             baselines[path] = text
             diskBaselines[path] = sha
-            saveConflict = nil
+            saveConflicts[path] = nil
             model.snapshotSaved(url: url, text: text)
             return noteSave(.saved(path: path, sha256: sha))
         case .conflict(let c):
-            saveConflict = c
+            saveConflicts[path] = c
             model.preserveDirtyText(text, at: url, reason: "save refused: file changed on disk")
             return noteSave(.conflict(c))
         case .failed(let why):

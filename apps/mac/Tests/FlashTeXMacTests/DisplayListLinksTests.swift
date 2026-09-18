@@ -23,6 +23,7 @@ final class DisplayListLinksTests: XCTestCase {
         let env = try RenderingV2.decode(try fixture())
         let nav = try XCTUnwrap(env.payload.navigation)
         XCTAssertEqual(nav.links.count, 6)
+        guard nav.links.count == 6 else { return XCTFail("expected six links, got \(nav.links.count)") }
         XCTAssertEqual(nav.links[0].className, "link")
         XCTAssertEqual(nav.links[0].target, .destination("section.1"))
         XCTAssertEqual(nav.links[0].source, .init(document: "main.tex", start: 120, end: 139))
