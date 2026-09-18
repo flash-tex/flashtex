@@ -27,25 +27,27 @@ drifted=0
 
 for dir in "$VENDOR"/*/; do
   name=$(basename "$dir")
-  [ -f "$dir/PIN" ] || continue
+  if [ ! -f "$dir/PIN" ]; then
+    echo "WARN  $name: no PIN file -- not checked at all"; rc=1; continue
+  fi
   pin=$(tr -d '[:space:]' < "$dir/PIN")
 
-  if ! git cat-file -e "$pin^{commit}" 2>/dev/null; then
+  if ! git cat-file -e "${pin}^{commit}" 2>/dev/null; then
     echo "FAIL  $name: PIN $pin is not a commit in this repository"; rc=1; continue
   fi
-  if ! git cat-file -e "$pin:crates/$name" 2>/dev/null; then
+  if ! git cat-file -e "${pin}:crates/${name}" 2>/dev/null; then
     echo "SKIP  $name: crates/$name does not exist at $pin"; continue
   fi
 
   # Integrity: compare the vendored tree against the archive of its PIN.
   tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-  git archive "$pin:crates/$name" | tar -x -C "$tmp" 2>/dev/null
+  git archive "${pin}:crates/${name}" | tar -x -C "$tmp" 2>/dev/null
   if diff -r -q --exclude=PIN "$tmp" "$dir" >/dev/null 2>&1; then
-    status="ok"
+    integrity="ok"
   else
     echo "FAIL  $name: vendored tree differs from its PIN ${pin:0:12} -- someone edited inside vendor/"
     diff -r -q --exclude=PIN "$tmp" "$dir" 2>&1 | head -5 | sed 's/^/        /'
-    rc=1; status="MISMATCH"
+    rc=1; integrity="MISMATCH"
   fi
   rm -rf "$tmp"; trap - EXIT
 
@@ -53,12 +55,17 @@ for dir in "$VENDOR"/*/; do
 
   # Drift: how far has the live crate moved past the pin?
   if git cat-file -e "HEAD:crates/$name" 2>/dev/null; then
-    behind=$(git rev-list --count "$pin..HEAD" -- "crates/$name" 2>/dev/null || echo "?")
+    behind=$(git rev-list --count "${pin}..HEAD" -- "crates/$name" 2>/dev/null || echo "?")
+    if ! git merge-base --is-ancestor "$pin" HEAD 2>/dev/null; then
+      echo "DIVERGED $name: pin ${pin:0:12} is NOT an ancestor of HEAD (pinned from an unmerged"
+      echo "         branch); the $behind commit(s) below are divergence, not lag"
+      drifted=$((drifted+1)); continue
+    fi
     if [ "$behind" != "0" ] && [ "$behind" != "?" ]; then
       echo "DRIFT $name: $behind commit(s) to crates/$name since pin ${pin:0:12} -- NOT in the renderer"
       drifted=$((drifted+1))
     else
-      echo "      $name: up to date with crates/$name ($status)"
+      echo "      $name: up to date with crates/$name ($integrity)"
     fi
   fi
 done
