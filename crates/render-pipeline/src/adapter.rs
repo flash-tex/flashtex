@@ -24,6 +24,7 @@ use flashtex_class_geometry::{
 
 use crate::display::Diagnostic;
 use flashtex_compiler::color::DeviceColor;
+use flashtex_paragraph_layout as pl;
 use crate::style::Stylesheet;
 use crate::RenderOptions;
 
@@ -239,6 +240,15 @@ pub enum Item {
     Underline(Box<UnderlineItem>),
     /// `\textsuperscript`/`\textsubscript` (compiler `Inline::TextScript`).
     TextScript(Box<TextScriptItem>),
+    /// A paragraph (or other horizontal list) whose assembly already passed
+    /// `pl::MAX_ITEMS`: the breaker would reject it with
+    /// `LayoutError::TooManyItems`, so assembly stops here instead of doing
+    /// any more per-word work. `span` is the list's first inline (the error's
+    /// source position); `count` is the assembly count that already exceeded
+    /// the limit. `typeset` expands this back into an over-limit
+    /// paragraph-layout list, so the failure surfaces through the exact same
+    /// `paragraph_layout_error` path as a fully assembled list.
+    Overlong { span: Span, count: usize },
     /// LaTeX's `\leavevmode`: an empty zero-width `\hbox`.
     ///
     /// Emitted only in front of a verbatim blank that would otherwise open
@@ -2527,7 +2537,7 @@ fn item_range(it: &Item, document: flashtex_compiler::DocumentId) -> Option<(usi
     let of = |s: Span| (s.document == document).then_some((s.start, s.end));
     match it {
         Item::Word(w) => of(w.span()),
-        Item::Math { span, .. } | Item::Logo { span, .. } | Item::Rule { span, .. } | Item::Footnote { span, .. } => of(*span),
+        Item::Math { span, .. } | Item::Logo { span, .. } | Item::Rule { span, .. } | Item::Footnote { span, .. } | Item::Overlong { span, .. } => of(*span),
         _ => None,
     }
 }
@@ -8775,14 +8785,14 @@ fn items_cached(
     cache: Option<&crate::incremental::RenderCache>,
 ) -> Vec<Item> {
     let Some(cache) = cache else {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     };
     // Table items nest item lists the relocation does not walk.
     if inlines.iter().any(|i| matches!(i, Inline::Tabular(_))) {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     }
     let Some(first) = inlines.first().map(inline_span) else {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     };
     let document = first.document;
     let mut start = first.start;
@@ -8790,25 +8800,25 @@ fn items_cached(
     for i in inlines {
         let s = inline_span(i);
         if s.document != document {
-            return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+            return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
         }
         start = start.min(s.start);
         end = end.max(s.end);
     }
     let Some(src) = texts.get(document.0) else {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     };
     // Macro replacement text carries the invocation's span: the spacing
     // and weight of its words come from the definition (`macro_body`), so
     // a block holding one cannot be keyed by its own bytes alone.
     if inlines.iter().any(|i| is_invocation_span(src, inline_span(i))) {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     }
     // `\\[<dimen>]` reads past the block's last span: the key covers the
     // rest of that line.
     let slice_end = src[end.min(src.len())..].find('\n').map_or(src.len(), |n| end + n + 1).max((end + 2).min(src.len()));
     let Some(slice) = src.get(start..slice_end) else {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     };
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -8961,7 +8971,7 @@ fn items_cached(
     if let Some(a) = cache.adapted(key) {
         return crate::incremental::relocate_items(&a.items, start as isize - a.base as isize);
     }
-    let items = items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
+    let items = items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     cache.insert_adapted(key, crate::incremental::AdaptedBlock { items: items.clone(), base: start });
     items
 }
@@ -8978,7 +8988,14 @@ fn items_cached(
 /// declarations were inserted from the column specification, or an amsthm
 /// theorem-like environment, whose head and body fonts the package declares
 /// and the source never spells at the head's span.
-fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Styles], labels: &Labels, size: u32, heading: bool, compiler_weight: bool) -> Vec<Item> {
+/// `bound` is whether the list being built is laid out as a paragraph (or
+/// paragraph-like block) subject to the breaker's item limit. Pure-`\hbox`
+/// content (`\colorbox`, `\underline`, `\textsuperscript`: set at natural
+/// width by `hbox_runs`, never line-broken) passes `false`, so an enormous
+/// box keeps today's slow success instead of a spurious paragraph error;
+/// everything laid out through `break_paragraph` passes `true`.
+#[allow(clippy::too_many_arguments)]
+fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Styles], labels: &Labels, size: u32, heading: bool, compiler_weight: bool, bound: bool) -> Vec<Item> {
     // `\ref`/`\pageref` become ordinary text attributed to the command's
     // bytes; `\label` becomes a zero-width marker.
     let mut resolved: Vec<std::borrow::Cow<Inline>> = Vec::with_capacity(inlines.len());
@@ -9047,7 +9064,22 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
         }
     };
 
+    // The first inline's span, for the over-long marker below.
+    let first_span = resolved.first().map(|i| inline_span(i));
     for (k, inline) in resolved.iter().enumerate() {
+        // Fail fast instead of failing slow: the breaker rejects any list
+        // past `pl::MAX_ITEMS`, and assembling further only burns
+        // superlinear work (`space_style`'s source rescan per word, shaping
+        // and the breaker itself) on a paragraph that cannot be set.
+        // `typeset` expands the marker back into an over-limit list, so this
+        // surfaces as the same `paragraph_layout_error` a full assembly
+        // would have produced — same code, same limit, same position.
+        // Lists at or under the limit never take this branch, so every
+        // paragraph that succeeds (or fails quickly) today is unaffected.
+        if bound && items.len() > pl::MAX_ITEMS {
+            let span = first_span.unwrap_or_else(|| inline_span(inline));
+            return vec![Item::Overlong { span, count: items.len() }];
+        }
         if let Some(sep) = head_sep {
             if sep.opens_the_body(inline_span(inline)) {
                 pending_head_sep.set(Some((sep.pt, sep.stretch_pt, sep.shrink_pt)));
@@ -9074,7 +9106,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                         if k > 0 {
                             note.push(Item::NoteParBreak);
                         }
-                        note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight));
+                        note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight, bound));
                     }
                     note
                 });
@@ -9101,7 +9133,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     if k > 0 {
                         note.push(Item::NoteParBreak);
                     }
-                    note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight));
+                    note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight, bound));
                 }
                 items.push(Item::Marginpar { text: note, span: *span });
                 after_control_word = end == span.end;
@@ -9120,7 +9152,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 after_control_word = false;
                 let src = text_of(span.document);
                 let lengths = crate::table::TableLengths::read(|name, base| length_at(src, name, size, span.start, base));
-                let mut items_of = |inlines: &[Inline], declared: bool| items_from_inlines_styled(texts, inlines, styles, labels, size, false, declared);
+                let mut items_of = |inlines: &[Inline], declared: bool| items_from_inlines_styled(texts, inlines, styles, labels, size, false, declared, bound);
                 let table = crate::table::from_compiler(t, lengths, declared_size(t.style.size, size), &mut items_of);
                 items.push(Item::Table(Box::new(table)));
                 prev_end = Some(span.end);
@@ -9135,7 +9167,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                let content = items_from_inlines_styled(texts, &b.content, styles, labels, size, heading, compiler_weight);
+                let content = items_from_inlines_styled(texts, &b.content, styles, labels, size, heading, compiler_weight, false);
                 items.push(Item::ColorBox(Box::new(ColorBoxItem {
                     fill: b.fill,
                     frame: b.frame,
@@ -9155,7 +9187,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                let content = items_from_inlines_styled(texts, &u.content, styles, labels, size, heading, compiler_weight);
+                let content = items_from_inlines_styled(texts, &u.content, styles, labels, size, heading, compiler_weight, false);
                 items.push(Item::Underline(Box::new(UnderlineItem {
                     thickness_pt: u.thickness_pt,
                     geom: u.geom,
@@ -9176,7 +9208,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
                 let size_cpt = declared_size(t.style.size, size);
-                let mut content = items_from_inlines_styled(texts, &t.content, styles, labels, size, heading, compiler_weight);
+                let mut content = items_from_inlines_styled(texts, &t.content, styles, labels, size, heading, compiler_weight, false);
                 // `\fontsize\sf@size` replaces the declared size the
                 // argument inherited from the command's context.
                 if size_cpt != 0 {
@@ -9231,7 +9263,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                items.extend(items_from_inlines_styled(texts, &t.content, styles, labels, size, false, compiler_weight));
+                items.extend(items_from_inlines_styled(texts, &t.content, styles, labels, size, false, compiler_weight, bound));
                 prev_end = Some(span.end);
                 prev_span = Some(span);
                 factor = 1000;
@@ -9956,7 +9988,24 @@ fn space_style(
     // of the invocation) the bytes up to an argument are the call's earlier
     // arguments, not what TeX read: `\pair{\textit{a b}}{c}`'s body space
     // before `#2` is not in `a b`'s italic. Read the call site's font.
-    if let Some(bs) = src[..pe].rfind('\\') {
+    //
+    // Only the last backslash before `pe` can open an invocation span
+    // ending there (an earlier one would leave a `\` inside the span, which
+    // `control_word_at` rejects), and such a span is `\` plus an alphabetic
+    // name, so walking back over the trailing alphabetic run finds that
+    // backslash exactly when a whole-prefix `rfind` would find one that
+    // matters — in word-length time instead of document-prefix time. A
+    // backslash followed by anything else fails `is_invocation_span` either
+    // way, so stopping at the first non-alphabetic byte changes nothing.
+    let bs = {
+        let bytes = src.as_bytes();
+        let mut k = pe.min(bytes.len());
+        while k > 0 && bytes[k - 1].is_ascii_alphabetic() {
+            k -= 1;
+        }
+        (k > 0 && bytes[k - 1] == b'\\').then(|| k - 1)
+    };
+    if let Some(bs) = bs {
         if is_invocation_span(src, Span { document: span.document, start: bs, end: pe }) {
             return style_at(intervals, bs);
         }

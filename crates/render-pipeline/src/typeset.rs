@@ -2085,6 +2085,7 @@ impl<'a> Context<'a> {
                 let span = items.iter().find_map(|i| match i {
                     AItem::Word(w) => w.segments.iter().find_map(seg_span),
                     AItem::Math { span, .. } => Some(*span),
+                    AItem::Overlong { span, .. } => Some(*span),
                     _ => None,
                 });
                 let sources = span.map(|s| vec![self.source(s)]).unwrap_or_default();
@@ -2281,6 +2282,28 @@ impl<'a> Context<'a> {
         let mut margins: Vec<(usize, Option<usize>, usize)> = Vec::new();
         for (idx, item) in items.iter().enumerate() {
             match item {
+                AItem::Overlong { .. } => {
+                    // Assembly already passed `pl::MAX_ITEMS` and stopped:
+                    // expand back into a list the breaker itself rejects, so
+                    // the failure surfaces through the ordinary
+                    // `break_paragraph` error path (same code, same limit,
+                    // same position). The leading empty box keeps the list
+                    // out of the callers' no-content early-outs, which skip
+                    // layout entirely instead of reporting it.
+                    let mut list = Vec::with_capacity(pl::MAX_ITEMS + 1);
+                    list.push(pl::Item::Box(pl::GlyphRun {
+                        font: MATH_SENTINEL,
+                        size,
+                        glyphs: Vec::new(),
+                        width: 0.0,
+                        height: 0.0,
+                        depth: 0.0,
+                        source: 0..0,
+                    }));
+                    list.extend((0..pl::MAX_ITEMS).map(|_| pl::Item::kern(0.0)));
+                    let recs = vec![None; list.len()];
+                    return (list, recs, Vec::new(), Vec::new());
+                }
                 AItem::Footnote { number, mark, span, text } => {
                     let note = text.as_ref().map(|t| {
                         self.notes.push(footnotes::NoteSrc { number: number.clone(), span: *span, items: t.clone() });
