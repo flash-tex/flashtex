@@ -109,21 +109,22 @@ enum Completion {
             var requiresClass: String? = nil
 
             /// Whether completion offers this command in a document whose
-            /// class is `documentClass` (nil when the text declares none).
+            /// class is `documentClass` — the class the document itself
+            /// declares, else the class of the project's root document
+            /// (`commandSuggestions`), else nil.
             ///
-            /// A class-scoped command is offered only where it is defined:
-            /// a document that declares its class. Universal commands are
-            /// offered everywhere. The asymmetry is deliberate — a document
-            /// with no `\documentclass` is a fragment or a snippet, and
-            /// class-scoped names are rare and beamer/letter-specific while
-            /// the names they collide with are the most-used in LaTeX
-            /// (`\fra` must mean `\frac`, `\a` must reach `\alpha`). A
-            /// fragment that really does use one still completes it from the
-            /// document's own text (`scanCommands`), and the moment the root
-            /// file declares `\documentclass{beamer}` the whole family is
-            /// offered again.
+            /// A universal command is offered everywhere; a class-scoped one
+            /// is hidden only where the class is known and *different*, so
+            /// `\fra` means `\frac` in an article and `\frametitle` in a
+            /// beamer deck's own included slide file. Nil — no class in the
+            /// text and no project root to read one from — hides nothing,
+            /// which mirrors the compiler's `Command::offered_in_class`.
+            /// Permissive is the safe reading there: two-thirds of the real
+            /// `.tex` files in the corpora declare no `\documentclass`
+            /// (included chapters and frames), and a strict rule would take
+            /// `\frametitle` away from exactly the files that use it.
             func offered(inClass documentClass: String?) -> Bool {
-                guard let requiresClass else { return true }
+                guard let requiresClass, let documentClass else { return true }
                 return requiresClass == documentClass
             }
 
@@ -632,8 +633,8 @@ enum Completion {
     /// from `text` (it is bound as-is). Prefer `suggestions(in:caretUTF16:metadata:)`
     /// with metadata the caller has already bound to the caret's revision.
     static func suggestions(in text: String, caretUTF16: Int, result: RuntimeV1.CompileResult?,
-                            supported: [String] = defaultSupported) -> [Suggestion] {
-        suggestions(in: text, caretUTF16: caretUTF16, metadata: result.map(Metadata.from), supported: supported)
+                            supported: [String] = defaultSupported, projectClass: String? = nil) -> [Suggestion] {
+        suggestions(in: text, caretUTF16: caretUTF16, metadata: result.map(Metadata.from), supported: supported, projectClass: projectClass)
     }
 
     /// `metadata` must already be bound to the revision of `text` (see
@@ -652,18 +653,24 @@ enum Completion {
     /// `bibliographyEntries` are the records of the project's `.bib` files
     /// read directly (`BibScanner.entries(for:)`, computed by the scheduler
     /// off-main when the caret is in `\cite{`), offered after the helper's keys.
+    /// `projectClass` is the `\documentclass` of the project's root document
+    /// (`ProjectDocuments.entryDocumentClass`, read on the main thread when
+    /// the list is requested): what gates class-scoped commands when `text`
+    /// itself declares no class — an included chapter or slide file. Nil, the
+    /// default, is a file with no project, which gates nothing.
     static func suggestions(in text: String, caretUTF16: Int, metadata: Metadata?,
                             supported: [String] = defaultSupported, projectFiles: [String] = [],
                             graphicsFiles: [String] = [], recentEnvironments: [String] = [],
                             declaredElsewhere: [String] = [], mathMode: Bool? = nil,
-                            bibliographyEntries: [BibScanner.Entry] = [],
+                            bibliographyEntries: [BibScanner.Entry] = [], projectClass: String? = nil,
                             cancelled: () -> Bool = { false }) -> [Suggestion] {
         guard let token = token(in: text, caretUTF16: caretUTF16), !cancelled() else { return [] }
         let out: [Suggestion]
         switch token {
         case .command(let prefix, _, _):
             out = commandSuggestions(prefix: prefix, tokenStart: token.start, text: text, metadata: metadata, supported: supported,
-                                     declaredElsewhere: declaredElsewhere, mathMode: mathMode, cancelled: cancelled)
+                                     declaredElsewhere: declaredElsewhere, mathMode: mathMode, projectClass: projectClass,
+                                     cancelled: cancelled)
         case .word(let prefix, _, _, let context):
             guard prefix.unicodeScalars.count >= 2 || context != .none else { return [] }
             switch context {
@@ -710,7 +717,7 @@ enum Completion {
 
     private static func commandSuggestions(prefix: String, tokenStart: Int, text: String, metadata: Metadata?,
                                            supported: [String], declaredElsewhere: [String], mathMode: Bool?,
-                                           cancelled: () -> Bool) -> [Suggestion] {
+                                           projectClass: String?, cancelled: () -> Bool) -> [Suggestion] {
         var out: [Suggestion] = []
         let scan = scanCommands(in: text, tokenStart: tokenStart, prefix: prefix)
         if cancelled() { return [] }
@@ -747,14 +754,17 @@ enum Completion {
                                                            uniquingKeysWith: { a, _ in a })
         let exact = supported.contains(prefix) ? [prefix] : []
         //    A class-scoped command (`Entry.requiresClass`) is filtered out of
-        //    the vocabulary unless this document declares its class, so
-        //    beamer's `\frametitle` and `\alert` cannot bury `\frac` and
-        //    `\alpha` in an article — they lead on table order, being text
-        //    entries, and no ranking within the list can undo that. The name
-        //    typed out in full is never hidden (`name == prefix`), and a
+        //    the vocabulary in a document of another class, so beamer's
+        //    `\frametitle` and `\alert` cannot bury `\frac` and `\alpha` in
+        //    an article — they lead on table order, being text entries, and
+        //    no ranking within the list can undo that. The class is the one
+        //    this text declares, else the project root's (`projectClass`: an
+        //    included chapter or slide file declares none, and its root
+        //    does), else unknown, which gates nothing (`Entry.offered`). The
+        //    name typed out in full is never hidden (`name == prefix`), and a
         //    fragment that really uses one still completes it below, from the
         //    document's own text.
-        let documentClass = documentClass(in: text)
+        let documentClass = documentClass(in: text) ?? projectClass
         func inThisClass(_ name: String) -> Bool {
             name == prefix || Vocabulary.byName[name]?.offered(inClass: documentClass) ?? true
         }
@@ -1153,11 +1163,12 @@ enum Completion {
 
     /// The class of `\documentclass[options]{class}`, or nil when the text
     /// declares none — a fragment `\input` into a root file, or a bare
-    /// snippet. Read from the open document's own text, which is where this
-    /// file learns every other structural fact about it (`scanCommands`,
-    /// `openEnvironments`, `labels`); there is no other path on the Mac side,
-    /// because the preview-controller's `document_kinds` records `latex` vs
-    /// `bibliography`, never the class.
+    /// snippet. Read from a document's own text, which is where this file
+    /// learns every other structural fact about it (`scanCommands`,
+    /// `openEnvironments`, `labels`). For an included file the project layer
+    /// runs the same scan over the root document
+    /// (`ProjectDocuments.entryDocumentClass`); the preview-controller's
+    /// `document_kinds` records `latex` vs `bibliography`, never the class.
     ///
     /// Scanning stops at the first `\begin`: `\documentclass` is a preamble
     /// statement, so a later one is prose about LaTeX rather than this
@@ -1957,6 +1968,12 @@ final class CompletionScheduler {
         /// on the main thread where the editor's syntax model is in sync; nil
         /// when no model answered (a bare text view), which filters nothing.
         var mathMode: Bool? = nil
+        /// The `\documentclass` of the project's root document
+        /// (`ProjectDocuments.entryDocumentClass`), read on the main thread
+        /// when the list is requested: gates class-scoped commands in a
+        /// file that declares no class of its own. Nil (a bare text view, a
+        /// file with no project) gates nothing.
+        var projectClass: String? = nil
     }
 
     struct Outcome: Equatable {
@@ -2048,6 +2065,7 @@ final class CompletionScheduler {
                                                                      recentEnvironments: request.recentEnvironments,
                                                                      declaredElsewhere: declaredElsewhere, mathMode: request.mathMode,
                                                                      bibliographyEntries: bibliographyEntries,
+                                                                     projectClass: request.projectClass,
                                                                      cancelled: { job.isCancelled })
             let t1 = MonotonicClock.nowNs()
             let outcome = Outcome(generation: job.generation, caretUTF16: request.caretUTF16, range: range, items: items,
@@ -2655,6 +2673,12 @@ final class CompletingTextView: NSTextView {
     /// asked on the main thread when the list is requested and read by the
     /// job off-main. A bare text view has none.
     var bibliographySources: () -> BibScanner.Sources? = { nil }
+    /// The `\documentclass` of the project's root document
+    /// (`ProjectDocuments.entryDocumentClass`), asked on the main thread when
+    /// the list is requested: what gates beamer's and letter's commands in an
+    /// included file that declares no class itself. A bare text view has no
+    /// project, and nil gates nothing.
+    var projectDocumentClass: () -> String? = { nil }
     /// Accepted commands and environments, ranked first on the next open. A
     /// bare text view keeps its own; the hosted editor installs the shared one.
     var recentlyUsed = Completion.RecentlyUsed()
@@ -3050,7 +3074,7 @@ final class CompletingTextView: NSTextView {
         guard charRange.location != NSNotFound, charRange.location >= 0, charRange.length >= 0,
               NSMaxRange(charRange) <= (text as NSString).length else { return nil }
         let items = Completion.suggestions(in: text, caretUTF16: NSMaxRange(charRange), metadata: boundMetadata,
-                                          supported: supportedCommands)
+                                          supported: supportedCommands, projectClass: projectDocumentClass())
         return items.isEmpty ? nil : items.map(\.insertText)
     }
 
@@ -3082,7 +3106,8 @@ final class CompletingTextView: NSTextView {
                                                   supported: supportedCommands, projectFiles: projectFiles,
                                                   graphicsRoot: graphicsRoot(), recentCommands: recentlyUsed.commands,
                                                   recentEnvironments: recentlyUsed.environments, otherDocuments: otherDocuments(),
-                                                  bibliography: bibliographySources(), mathMode: mathModeAtCaret(caret.location))
+                                                  bibliography: bibliographySources(), mathMode: mathModeAtCaret(caret.location),
+                                                  projectClass: projectDocumentClass())
         scheduler.schedule(request) { [weak self] outcome in
             self?.present(outcome, metadataRevision: metadata?.revision)
         }

@@ -30,7 +30,13 @@ final class CompletionAutoCloseTests: XCTestCase {
         let box: TextBox
         let pairs: Set<Character>
         var body: some View {
-            SourceEditorView(text: Binding(get: { box.text }, set: { box.text = $0 }), autoClosePairs: pairs)
+            // An article project: the hosted editor gates class-scoped
+            // commands on the root document's class
+            // (`ProjectDocuments.entryDocumentClass`), and without it beamer's
+            // text entries (`\frametitle`) would fill the `\fr` list and keep
+            // the mode filter from falling back to `\frac` (Completion.swift).
+            SourceEditorView(text: Binding(get: { box.text }, set: { box.text = $0 }), autoClosePairs: pairs,
+                             projectDocumentClass: { "article" })
         }
     }
 

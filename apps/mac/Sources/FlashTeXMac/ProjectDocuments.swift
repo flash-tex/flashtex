@@ -436,6 +436,25 @@ final class ProjectDocuments {
     /// lane maintains; `replaceProject`/fixtures also put the entry first).
     var entryPath: String { model.documents.first?.path ?? model.activePath }
 
+    /// The `\documentclass` the entry document declares
+    /// (`Completion.documentClass(in:)` over `ShellModel.entryText`), or nil
+    /// when it declares none. Completion gates beamer's and letter's commands
+    /// on it in an included file that declares no class of its own — the
+    /// chapter or slide file of a multi-file project, which is where
+    /// `\frametitle` is actually typed. Read on the main thread per list
+    /// request and cached by `ShellModel.documentsRevision`, which every
+    /// buffer edit, disk reload and project swap advances; the scan itself
+    /// stops at the entry's first `\begin`, so a miss costs the preamble.
+    var entryDocumentClass: String? {
+        let key = EntryClassKey(revision: model.documentsRevision, path: entryPath)
+        if let cached = entryClassCache, cached.key == key { return cached.value }
+        let value = Completion.documentClass(in: model.entryText)
+        entryClassCache = (key, value)
+        return value
+    }
+    private struct EntryClassKey: Equatable { var revision: Int; var path: String }
+    @ObservationIgnored private var entryClassCache: (key: EntryClassKey, value: String?)?
+
     /// Project members in `ShellModel.documents` order (entry first), with
     /// this lane's metadata and the helper's durable revision per path.
     var listing: [ProjectDocument] {

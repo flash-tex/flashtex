@@ -180,6 +180,7 @@ struct EditorPane: View {
                 userDefinition: { model.definitionSummary(forCommand: $0) }, // hover peek of \newcommand bodies (EditorNavigation.swift)
                 hoverContext: { model.editorHoverContext() }, // what \ref/\cite/\includegraphics resolve to (EditorHoverResolution.swift)
                 bibliographySources: { model.bibliographySources() }, // `\cite{` keys straight from the project's .bib files (BibScanner.swift)
+                projectDocumentClass: { model.project.entryDocumentClass }, // `\frametitle` in a beamer deck's included slide file (Completion.swift)
                 language: model.editorLanguage, // BibTeX colouring for a declared bibliography (SyntaxHighlighter.swift)
                 mathPreviewContext: { // inline math hover preview (MathHoverPreview.swift)
                     model.displayListV2?.frame.map {
