@@ -2509,6 +2509,7 @@ pub fn parse_project_with(
         natbib_limitations: std::collections::BTreeSet::new(),
         natbib_forced_numbers_reported: false,
         hangfrom_hang_indent_reported: false,
+        enquote_depth: 0,
         title: None,
         author: None,
         date: None,
@@ -2757,6 +2758,9 @@ struct P<'a> {
     natbib_forced_numbers_reported: bool,
     /// Whether `\hangfrom`'s missing hanging indent has been reported.
     hangfrom_hang_indent_reported: bool,
+    /// csquotes `\enquote` nesting depth: 0 = outer (double quotes),
+    /// 1 = first inner (single quotes), etc.
+    enquote_depth: u32,
     /// Current text style; saved on `{` and environment entry, restored on
     /// the matching `}` or `\end`.
     style: TextStyle,
@@ -3843,6 +3847,9 @@ impl P<'_> {
             // package; soul `\st` (strikethrough, GH-330's ulem-side work)
             // stays unimplemented and keeps its `unknown_command` error.
             "so" | "hl" => self.soul_command(name, span, para),
+            // csquotes `\enquote`: wraps the argument in language-appropriate
+            // quotation marks, alternating double/single on nesting.
+            "enquote" => self.enquote_command(span, para),
             // Kernel text-mode `\textsuperscript` / `\textsubscript`
             // (latex.ltx `ltmisc.dtx`): no package needed, unlike ulem's
             // commands above.
@@ -10507,6 +10514,54 @@ impl P<'_> {
         })));
     }
 
+    /// csquotes `\enquote{text}`: wraps the argument in typographic quotation
+    /// marks, alternating between double (\u{201c}\u{201d}) and single (\u{2018}\u{2019})
+    /// on each nesting level. Without `\usepackage{csquotes}` the argument is
+    /// typeset as plain text with a diagnostic, matching the soul pattern.
+    fn enquote_command(&mut self, span: Span, para: &mut Vec<Inline>) {
+        self.paragraph_started = true;
+        let space_before = self.space_precedes(self.i - 1);
+        let (tokens, argument_span) = self.required_group("enquote", span);
+        let full = span.merge(argument_span);
+        if !self.packages.iter().any(|package| package == "csquotes") {
+            self.diags.push(Diagnostic::command_error(
+                "enquote",
+                "\\enquote needs \\usepackage{csquotes}".to_string(),
+                Some(full),
+                Some("typeset the argument as plain text".into()),
+            ));
+            para.extend(self.box_inlines(tokens));
+            return;
+        }
+        // Even depth = double quotes, odd depth = single quotes.
+        let (open, close) = if self.enquote_depth % 2 == 0 {
+            ("\u{201c}", "\u{201d}") // U+201C / U+201D: left/right double quotation mark
+        } else {
+            ("\u{2018}", "\u{2019}") // U+2018 / U+2019: left/right single quotation mark
+        };
+        // Opening quote mark.
+        para.push(Inline::Text {
+            text: open.into(),
+            span,
+            style: self.style,
+            space_before,
+        });
+        // Parse the body at the next nesting level through the full parser
+        // dispatch (`box_inlines` calls `parse_stream`), so nested
+        // `\enquote` is handled by the same `command` arm recursively.
+        self.enquote_depth += 1;
+        let inner = self.box_inlines(tokens);
+        self.enquote_depth -= 1;
+        para.extend(inner);
+        // Closing quote mark.
+        para.push(Inline::Text {
+            text: close.into(),
+            span: argument_span,
+            style: self.style,
+            space_before: false,
+        });
+    }
+
     /// soul `\so{text}` (letterspacing) or `\hl{text}` (highlight). Without
     /// soul, the package commands diagnose and typeset the argument as
     /// plain text, like the ulem commands above.
@@ -12095,6 +12150,10 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // (math.rs Frame::Cancel/BCancel/XCancel); \cancelto is diagnosed
         // where used. cancel takes no package options.
         "cancel" => options.is_empty(),
+        // `\enquote` is implemented; csquotes' style/language options
+        // (`style=`, `autostyle`, ...) are not modelled, so only a bare load
+        // is silent.
+        "csquotes" => options.is_empty(),
         _ => false,
     }
 }
