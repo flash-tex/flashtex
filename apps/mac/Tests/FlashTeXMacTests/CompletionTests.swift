@@ -120,9 +120,11 @@ final class CompletionTests: XCTestCase {
         // `\enspace`/`\enskip` are dual-mode entries (like `\quad`/`\qquad`): text
         // entries whose detail states their math behaviour without a `math ·`
         // prefix, so the math-only run starts only after them: two closers
-        // plus nine text entries put it at index 11, and the 12-entry cap
-        // leaves exactly one math entry (`\eqqcolon`) to satisfy it.
-        XCTAssertTrue(s.dropFirst(11).allSatisfy { $0.detail.hasPrefix("math · ") }, "\(labels(s))")
+        // plus ten text entries (csquotes' `\enquote` last) fill the 12-entry
+        // cap, so no math entry (`\eqqcolon` would be next) survives it.
+        XCTAssertEqual(s.count, 12, "\(labels(s))")
+        XCTAssertEqual(labels(s).last, "\\enquote{text}")
+        XCTAssertTrue(s.allSatisfy { !$0.detail.hasPrefix("math · ") }, "\(labels(s))")
         guard let first = s.first else { return XCTFail("expected at least one suggestion") }
         XCTAssertEqual(first.kind, .environment)
         XCTAssertEqual(first.detail, "closes \\begin{itemize} at byte 17")
@@ -132,7 +134,7 @@ final class CompletionTests: XCTestCase {
         // spelling still ranks behind the closer it would have to name.
         let closed = text + "nd{itemize}\n\\en"
         let s2 = Completion.suggestions(in: closed, caretUTF16: (closed as NSString).length, result: nil)
-        XCTAssertEqual(labels(s2), ["\\end{document}", "\\end{env}", "\\enlargethispage*{dimension}", "\\encl{text}", "\\enspace", "\\enskip"])
+        XCTAssertEqual(labels(s2), ["\\end{document}", "\\end{env}", "\\enlargethispage*{dimension}", "\\encl{text}", "\\enspace", "\\enskip", "\\enquote{text}"])
         let typed = closed + "d"
         XCTAssertEqual(labels(Completion.suggestions(in: typed, caretUTF16: (typed as NSString).length, result: nil)), ["\\end{document}", "\\end{env}"])
 
