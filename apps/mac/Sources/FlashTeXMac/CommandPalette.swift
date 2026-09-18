@@ -85,11 +85,14 @@ enum CommandPaletteModel {
         switch command {
         case .editorPreferences:
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        case .checkForUpdates: UpdatePresenter.shared.checkForUpdatesInteractive() // UpdateChecker.swift
         case .openLaTeXFile: model.openTexPanel()
         case .newProject: model.scaffold.presentNewProject() // ProjectScaffoldViews.swift
         case .newFile: model.scaffold.presentNewFile()
+        case .moveFile: model.scaffold.presentMove(model.activePath) // ProjectMove.swift
         case .save: model.saveTexInteractive()
         case .saveAs: _ = model.saveTexAs()
+        case .showInFinder: model.showActiveDocumentInFinder() // RevealInFinder.swift
         case .openFixture: model.openFixturePanel()
         case .reloadFixture: model.reloadFixture()
         case .attachBuiltCompiler: _ = model.attachDiscoveredWorker()
@@ -130,6 +133,10 @@ enum CommandPaletteModel {
         case .goToLine: model.presentGoToLine()
         case .selectEnvironment: model.selectEnvironment()
         case .wrapInEnvironment: model.editorNavigation.wrapShown = true
+        case .boldSelection: model.wrapSelectionBold()
+        case .emphasizeSelection: model.wrapSelectionEmphasis()
+        case .underlineSelection: model.wrapSelectionUnderline()
+        case .wrapInCommand: model.editorNavigation.wrapCommandShown = true
         case .changeEnvironment: model.presentChangeEnvironment()
         case .renameSymbol: model.presentRenameSymbol()
         case .fold: EditorFoldAction.fold()

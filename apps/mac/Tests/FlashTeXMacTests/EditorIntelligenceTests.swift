@@ -58,6 +58,52 @@ final class EditorIntelligenceTests: XCTestCase {
         XCTAssertEqual(onCommand?.diagnostics, [.init(severity: .warning, message: "Overfull", lines: [])])
     }
 
+    /// The hover documents every command of the compiler's inventory through
+    /// the completion popover's resolver (`CompletionPopup.documentation`):
+    /// the hand-written `CommandDocs` line where one exists, otherwise the
+    /// inventory's own description — not only the hand-written ~120.
+    func testQuickInfoDocumentsInventoryOnlyCommandsAndEnvironments() throws {
+        typealias Docs = EditorIntelligence.CommandDocs
+        typealias V = Completion.Vocabulary
+        let inventoryOnly = V.entries.filter { Docs.documentation(for: $0.name) == nil && $0.name.allSatisfy(\.isLetter) }
+        XCTAssertGreaterThan(inventoryOnly.count, 500, "most of the inventory has no hand-written line; the hover must not go blank on it")
+        for entry in inventoryOnly.prefix(40) {
+            let info = EI.quickInfo(in: ("\\" + entry.name + " x") as NSString, at: 1)
+            XCTAssertEqual(info?.title, "\\" + entry.name)
+            let doc = try XCTUnwrap(info?.documentation, "\\\(entry.name) has no hover line")
+            XCTAssertTrue(doc.hasPrefix(entry.label + ": " + entry.description), "\\\(entry.name): \(doc)")
+            XCTAssertEqual(doc, CompletionPopup.documentation(forCommand: entry.name), "the hover and the popover disagree on \\\(entry.name)")
+            XCTAssertTrue(".!?".contains(doc.last!), "the inventory line is a sentence: \(doc)")
+        }
+        // Hand-written wins where both exist, even when the inventory's line differs.
+        let both = try XCTUnwrap(V.entries.first { entry in
+            Docs.documentation(for: entry.name).map { $0 != entry.label + ": " + entry.description + "." } == true
+        })
+        let hand = EI.quickInfo(in: ("\\" + both.name + " x") as NSString, at: 1)
+        XCTAssertEqual(hand?.documentation, Docs.documentation(for: both.name))
+        XCTAssertEqual(hand?.documentation, CompletionPopup.documentation(forCommand: both.name))
+        XCTAssertEqual(EI.quickInfo(in: "\\frac{1}{2}" as NSString, at: 2)?.documentation, "\\frac{num}{den}: a fraction.")
+        // The user's own definition still sits under the standard line, and a
+        // macro the inventory does not know still has a title and no line.
+        let user = EI.quickInfo(in: ("\\" + both.name) as NSString, at: 1, userDefinition: { _ in "\\newcommand{\\x}{y}" })
+        XCTAssertEqual(user?.detail, "User command")
+        XCTAssertEqual(user?.documentation, Docs.documentation(for: both.name)! + "\nDefined: \\newcommand{\\x}{y} — ⌘-click to go there.")
+        XCTAssertNil(EI.quickInfo(in: "\\foobar" as NSString, at: 1)?.documentation)
+
+        // Environments: the same two tiers, the starred name falling back to its base entry.
+        let envOnly = try XCTUnwrap(V.environments.first { Docs.environmentDocumentation(for: $0) == nil && !$0.hasSuffix("*") })
+        let env = EI.quickInfo(in: ("\\begin{" + envOnly + "}") as NSString, at: 7)
+        XCTAssertEqual(env?.title, envOnly); XCTAssertEqual(env?.detail, "Environment")
+        XCTAssertEqual(env?.documentation, CompletionPopup.documentation(forEnvironment: envOnly))
+        XCTAssertTrue(env?.documentation?.hasPrefix("\\begin{\(envOnly)}: " + V.environmentDescriptions[envOnly]!) == true, "\(env?.documentation ?? "nil")")
+        if V.environmentDescriptions[envOnly + "*"] == nil {
+            let starred = try XCTUnwrap(CompletionPopup.documentation(forEnvironment: envOnly + "*"))
+            XCTAssertEqual(starred, "\\begin{\(envOnly)*}" + env!.documentation!.dropFirst("\\begin{\(envOnly)}".count) + " Starred: unnumbered.")
+        }
+        XCTAssertEqual(EI.quickInfo(in: "\\begin{itemize}" as NSString, at: 7)?.documentation, "Bulleted list of \\item entries.")
+        XCTAssertNil(CompletionPopup.documentation(forEnvironment: "nosuchenv"))
+    }
+
     func testDefinitionTargets() {
         let s = "\\ref{eq:1} \\citep{knuth} \\include{ch/two} \\end{align} \\alpha x" as NSString
         XCTAssertEqual(EI.definitionTarget(in: s, at: 6), .label(key: "eq:1"))

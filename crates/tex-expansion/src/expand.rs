@@ -827,6 +827,21 @@ impl Engine {
         self.sources.push(Input::Toks(toks, 0));
     }
 
+    /// Back up tokens exactly as [`Engine::next_raw`] returned them: an
+    /// origin of `None` stays `None` (the token was read from source
+    /// text), unlike [`Engine::push_pending`], which attributes such a
+    /// token to the last read.
+    fn push_pending_as_read(&mut self, toks: Vec<Pending>) {
+        if toks.is_empty() {
+            return;
+        }
+        self.prune_exhausted();
+        if self.input_capacity_exceeded() {
+            return;
+        }
+        self.sources.push(Input::Toks(toks, 0));
+    }
+
     fn push_frozen(&mut self, tok: Token) {
         self.prune_exhausted();
         let origin = self.last_origin;
@@ -1929,26 +1944,29 @@ impl Engine {
         self.finish_assignment();
     }
 
+    /// `\futurelet\cs<t1><t2>`: `\let\cs=<t2>`, then `<t1><t2>` re-enter
+    /// the input as they were read -- each with its own invocation origin
+    /// and freeze state (#925). `<t2>` is usually the document's lookahead
+    /// (`\@ifnextchar`), read straight from source text: re-pushing both
+    /// with the origin of that last read (`push_tokens`) stamped `<t1>`
+    /// (`\@ifnch`) with no origin, so the macro call it leads to -- and
+    /// every replacement token of a `\newcommand` with an optional
+    /// argument -- was attributed to the prelude's `\@ifnch` token instead
+    /// of the document command.
     fn do_futurelet(&mut self) {
         let global = self.take_assignment_prefixes("futurelet");
         let name_tok = match self.next_raw_token() {
             Some(t) => t,
             None => return,
         };
-        let t1 = self.next_raw_token();
-        let t2 = self.next_raw_token();
+        let t1 = self.next_raw();
+        let t2 = self.next_raw();
         if let Some(t2) = &t2 {
-            let meaning = self.meaning_of_token(t2);
+            let meaning = self.meaning_of_token(&t2.tok);
             self.define_cs_token(&name_tok, meaning, global);
         }
-        let mut reinsert = Vec::new();
-        if let Some(t1) = t1 {
-            reinsert.push(t1);
-        }
-        if let Some(t2) = t2 {
-            reinsert.push(t2);
-        }
-        self.push_tokens(reinsert);
+        let reinsert: Vec<Pending> = t1.into_iter().chain(t2).collect();
+        self.push_pending_as_read(reinsert);
         self.finish_assignment();
     }
 
@@ -3180,14 +3198,25 @@ impl Engine {
             .trim()
             .to_string();
         back.extend(name_group);
-        if let Some(shared) = self.scan_through_bracket() {
+        // The counter-sharing name is an expanded context like `{name}`
+        // above (real TeX resolves it through `\csname c@...\endcsname`),
+        // so it scans with `expand` set: a `\def`-defined macro for a real
+        // counter expands before the existence check below, exactly the
+        // way the rest of the engine reads it. Kept aside before `back`
+        // takes ownership of the tokens.
+        let shared_bracket = self.scan_through_bracket(true);
+        let shared_name = shared_bracket.as_ref().map(|toks| Self::bracket_arg_text(toks));
+        if let Some(shared) = shared_bracket {
             back.extend(shared);
         }
         // The caption body is stored as a token list and only expanded
         // when a theorem heading is actually typeset, same as its `back`
         // treatment below: raw, not expanded here.
         back.extend(self.scan_through_group(false));
-        if let Some(within) = self.scan_through_bracket() {
+        // The `[within]` reset-counter name is never compared here (the
+        // compiler owns it), so it stays raw: what the user wrote is what
+        // is handed back.
+        if let Some(within) = self.scan_through_bracket(false) {
             back.extend(within);
         }
         // LaTeX's own guard idiom (`\@ifdefinable`, via `\@ifundefined`)
@@ -3220,15 +3249,35 @@ impl Engine {
             self.clear_prefixes();
             return;
         }
-        if !name.is_empty() {
+        // A counter-sharing declaration whose `shared` name is not a known
+        // theorem environment will be rejected downstream by the compiler's
+        // `parser.rs::new_theorem` ("shares the counter of undefined theorem
+        // environment"). Claim nothing here in that case: claiming
+        // `\name`/`\end{name}` now would permanently burn the name, so a
+        // later corrected retry would fail with "already defined" even
+        // though no real theorem environment exists. The declaration is
+        // still handed back below (with the shared name already expanded,
+        // so the compiler reads the same resolved text), so the compiler
+        // -- which owns the diagnostic -- reports it exactly once; no
+        // second diagnostic is emitted from this side. This check must
+        // stay the same rule as the compiler's (`theorem_names`
+        // membership here mirrors its `self.theorems` lookup, applied to
+        // the expanded name); see also the field docs in `scopes.rs`.
+        let shared_ok = shared_name.as_ref().map_or(true, |s| self.st.scopes.is_theorem_env(s));
+        if !name.is_empty() && shared_ok {
             // Claim `\name`/`\end{name}` the way `\newenvironment` claims
             // its commands, so `\begin{name}` no longer reports the
             // environment undefined and a later `\newcommand` on either
             // name is refused, as in LaTeX. Both are host commands: still
             // emitted unchanged for the typesetter, which owns the actual
             // declaration (scanned above, handed back below).
+            // Both claims are global (`\newtheorem` is a global declaration
+            // in real LaTeX), and so is the `theorem_names` registration
+            // just below: none of the three pushes a save entry, so no
+            // group close can undo them.
             self.st.scopes.assign_cs(&name, Meaning::Primitive(Primitive::Host), true);
             self.st.scopes.assign_cs(&format!("end{name}"), Meaning::Primitive(Primitive::Host), true);
+            self.st.scopes.register_theorem_env(&name);
             // A stale rejection from an earlier, now-undone collision (e.g.
             // the name was `\let` back to undefined since) must not persist
             // once this declaration succeeds. Global, matching the global
@@ -3237,11 +3286,13 @@ impl Engine {
             // declaration that is supposed to be permanent.
             self.st.scopes.set_theorem_env_rejected(&name, false, true);
         }
-        // Hand the declaration back exactly as read: the leader bypasses
-        // re-dispatch through the output queue (like a prefix carried
-        // ahead of an unmodelled command in `prefix_before_content`), and
-        // the arguments re-enter the input with spans, origins, and freeze
+        // Hand the declaration back: the leader bypasses re-dispatch
+        // through the output queue (like a prefix carried ahead of an
+        // unmodelled command in `prefix_before_content`), and the
+        // arguments re-enter the input with spans, origins, and freeze
         // flags intact, so they expand downstream exactly as before.
+        // (`{name}` and `[shared]` were scanned expanded, the way TeX
+        // itself resolves them, so what returns is the resolved text.)
         if self.prefix_pending() {
             let mut prefixes = Vec::new();
             for (on, prefix) in [
@@ -3330,9 +3381,14 @@ impl Engine {
     /// Scan `[...]` (spaces skipped ahead, as LaTeX's `\@ifnextchar`
     /// does), returning every token *including* the brackets, or `None`
     /// when no `[` follows (the lookahead, spaces included, is pushed
-    /// back). Lets a `\newtheorem` declaration be handed back untouched;
-    /// otherwise mirrors `scan_bracketed_optional`.
-    fn scan_through_bracket(&mut self) -> Option<Vec<Pending>> {
+    /// back). Lets a `\newtheorem` declaration be handed back; otherwise
+    /// mirrors `scan_bracketed_optional`. With `expand` set, the content
+    /// between the brackets is read through `next_expanding_raw` -- the
+    /// same expansion path as `scan_through_group(true)` (delimiters
+    /// themselves stay raw, exactly like its braces) -- so a
+    /// `\def`-defined macro used as the counter-sharing name resolves
+    /// before anything compares it.
+    fn scan_through_bracket(&mut self, expand: bool) -> Option<Vec<Pending>> {
         let mut out = Vec::new();
         loop {
             match self.next_raw() {
@@ -3354,9 +3410,13 @@ impl Engine {
                 }
             }
         }
+        if expand {
+            self.st.edef_depth += 1;
+        }
         let mut brace_depth = 0i32;
         loop {
-            let p = match self.next_raw() {
+            let pending = if expand { self.next_expanding_raw() } else { self.next_raw() };
+            let p = match pending {
                 Some(p) => p,
                 None => break,
             };
@@ -3376,7 +3436,38 @@ impl Engine {
                 _ => out.push(p),
             }
         }
+        if expand {
+            self.st.edef_depth -= 1;
+        }
         Some(out)
+    }
+
+    /// Trimmed text of a `scan_through_bracket` result: leading spaces and
+    /// the outer `[`/`]` delimiters are dropped. The shared-counter
+    /// bracket is scanned with `expand` set, so a `\def`-defined macro
+    /// there (e.g. a `[\base]` argument) already resolved through
+    /// `next_expanding_raw` before this text is built -- the comparison
+    /// below sees the same expanded name the rest of the engine would.
+    /// A control sequence that is still a control sequence here is simply
+    /// not expandable (undefined, or frozen by `\noexpand`), so
+    /// `display_name`'s backslash is kept, not stripped: it can never
+    /// coincide with a real (backslash-free) theorem name, and the
+    /// expanded tokens handed back downstream let the compiler's own
+    /// `parser.rs::new_theorem` read the same resolved text with its raw
+    /// token-to-text step. A truncated scan (EOF before `]`) yields
+    /// whatever body was collected.
+    fn bracket_arg_text(toks: &[Pending]) -> String {
+        let mut body = toks.iter().as_slice();
+        while matches!(body.first().map(|p| &p.tok.kind), Some(TokenKind::Char(_, CatCode::Space))) {
+            body = &body[1..];
+        }
+        if matches!(body.first().map(|p| &p.tok.kind), Some(TokenKind::Char('[', CatCode::Other))) {
+            body = &body[1..];
+        }
+        while matches!(body.last().map(|p| &p.tok.kind), Some(TokenKind::Char(']', CatCode::Other)) | Some(TokenKind::Char(_, CatCode::Space))) {
+            body = &body[..body.len() - 1];
+        }
+        body.iter().map(|p| p.tok.display_name()).collect::<String>().trim().to_string()
     }
 
     /// `\begin{name}`: LaTeX opens a group, records `\@currenvir`, then

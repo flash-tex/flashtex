@@ -119,6 +119,11 @@ final class ShellModel {
         /// applied last-first as one undo group instead of `nsRange`/`text`.
         /// Change Environment uses the two name spans so the body is not rewritten.
         var groupedEdits: [EditorKeyHandling.LineEdit] = []
+        /// UTF-16 offset (post-edit coordinates) of a closing delimiter the
+        /// edit itself placed right after the caret — `\textbf{|}` — which the
+        /// editor then tracks like an auto-inserted closer so typing `}` steps
+        /// over it (SourceEditorView.applyPendingEdit → pendingClosers).
+        var trackedCloser: Int? = nil
     }
     struct CaptureRefund: Equatable { var proposal: RuntimeV1.CaptureProposal; var anchorBefore: InsertionAnchor }
     var caretUTF16: Int = 0 {
@@ -145,6 +150,15 @@ final class ShellModel {
     @ObservationIgnored private var editTokens = 0
     func nextEditToken() -> Int { editTokens += 1; return editTokens }
     var captureNote: String?
+    /// The save confirmation last shown in `captureNote` (file, exact text,
+    /// when), so a disk-status probe that fails right after a save that landed
+    /// does not replace it with "Could not check … on disk" (#831; set through
+    /// `noteSaveConfirmation`, consulted by `noteProbeFailure`, DocumentFiles.swift).
+    @ObservationIgnored var lastSaveConfirmation: (url: URL, note: String, at: Date)?
+    /// A watcher event was dropped because a save's reply was still
+    /// outstanding after the watcher's single retry; the late reply consumes
+    /// it with one more `watcherFired` (#831; DocumentWatcher.swift).
+    @ObservationIgnored var pendingWatcherRecheck = false
     var appliedCaptureIDs: Set<String> = []
     /// Past proposal decisions with outcomes (ReviewHistory.swift); persisted
     /// under Application Support (`FLASHTEX_REVIEW_HISTORY_DIR` overrides, `off` = memory only).

@@ -16,6 +16,39 @@ array of `{path, text}`. Paths are project-relative; reject parent traversal and
 absolute paths. Unsaved text is supplied explicitly. UI must never block waiting
 for compilation and must not replace a newer preview with an older revision.
 
+Optional absolute `project_root` (FT-063, `display-list-v2-image.md` §2; the
+worker's `--project-root DIR` is the same directory, and the per-request value
+wins). It is where the producer reads the project from, so `documents` is the
+set of buffers the client has open rather than the whole project: the producer
+completes the `\input`/`\include` closure from the root through project-files'
+rooted, symlink-refusing discovery, with `documents` overlaid so an unsaved
+buffer always beats the file on disk and is what is scanned for further
+includes. Resolution is TeX's — every include path is relative to the job's
+root, never to the directory of the file naming it.
+
+A path escaping the root is **never read**. Which diagnostic says so depends on
+what stopped it, and the producer reports the accurate one: an escape that
+would otherwise have resolved to a readable file — `..`, or a symlink whose
+target is a regular file outside the root — is refused with `invalid_path` or
+`path_escapes_root`; a path that does not name an includable file at all (a
+symlink to a FIFO, socket, device or directory, or a dangling one) never
+becomes a candidate, so it is reported as the compiler's `recovered_input`
+"included file not found", with the names that were tried. Containment is the
+same either way; only the explanation differs. A genuinely missing include
+keeps the same `recovered_input` diagnostic.
+
+The read is bounded, not just the reply: discovery is costed before it runs and
+refused whole if it would read more than 256 files, more than 8 MiB in any one
+file, or more than 32 MiB in total. Refused means the compile proceeds on
+exactly the `documents` the request sent, plus an error diagnostic
+`closure_budget_exceeded` naming the limit and the file that reached it — never
+a partial closure, which would typeset a document quietly missing some of its
+includes. Documents the request carries are served from the request and cost
+nothing, so a client that sends its whole project is never refused.
+
+Without `project_root` the producer reads nothing
+from disk and `documents` is the entire project, exactly as before.
+
 `compile_result` payload: same `project_id` and `revision`; `status` is `ok`,
 `recovered`, or `failed`; `pages`, `diagnostics`, and optional `pdf_path` (null
 until a real artifact exists). `pages` contain `number` (1-based), `width_pt`,

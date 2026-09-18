@@ -5,8 +5,8 @@ import Foundation
 /// lives in, and a discoverable description. The UI can render this as an
 /// "Accessibility help" list; the test target checks it against the README.
 public enum AccessibilityCommand: String, CaseIterable, Equatable {
-    case editorPreferences
-    case openLaTeXFile, newProject, newFile, save, saveAs, openFixture, reloadFixture
+    case editorPreferences, checkForUpdates
+    case openLaTeXFile, newProject, newFile, moveFile, save, saveAs, showInFinder, openFixture, reloadFixture
     case attachBuiltCompiler, attachRenderPipeline, attachWorker, compile
     case exportPDF, printDocument, printSource
     case pinInsertionPoint, openCaptureProposal, submitSampleCapture, convertCapture, nearbyCompanion
@@ -18,6 +18,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case fold, unfold, foldAll, unfoldAll
     case goToMatching, nextDiagnostic, previousDiagnostic, nextOccurrence, previousOccurrence, copyDiagnosticsAsText, revealCaretInPreview
     case goToDefinition, goToSymbol, goToLine, selectEnvironment, wrapInEnvironment, changeEnvironment, renameSymbol
+    case boldSelection, emphasizeSelection, underlineSelection, wrapInCommand
     case selectPreviewItemSource
     case accessibilityHelp
     case durableHistory, findInProject, nextSearchMatch, renameCitation
@@ -66,6 +67,11 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          description: "Opens the New File sheet (also the sidebar's + button and the project row's context menu): a rooted .tex name, subfolders allowed, never above the project root; “Insert \\input at the caret” (on by default while the entry document is active) posts one undoable edit, then the new file opens in a tab.",
                          requires: "a saved entry document (a project root)",
                          menuItem: "New File…")
+        case .moveFile:
+            return Entry(command: self, title: "Move file", shortcuts: ["File > Move To…"], menu: "File",
+                         description: "Opens the Move to… sheet for the active document (also “Move to…” in a project row's context menu; dragging a row onto another row moves it into that row's folder, onto the tree's empty space to the project root): a rooted folder, never above the project root; every \\input, \\include, \\includegraphics, \\bibliography, \\addbibresource and \\lstinputlisting that resolved to the file is rewritten — one undoable edit per open document, closed documents of the include tree on disk. Refused for the entry document, with unsaved edits, or onto an existing file.",
+                         requires: "a saved entry document (a project root) and an active document that is not the entry",
+                         menuItem: "Move To…")
         case .save:
             return Entry(command: self, title: "Save", shortcuts: ["⌘S"], menu: "File",
                          description: "Saves the entry document as UTF-8; the editor header says “edited” while unsaved.",
@@ -74,6 +80,11 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Save As", shortcuts: ["⌘⇧S"], menu: "File",
                          description: "Saves the entry document under a new name.",
                          menuItem: "Save As…")
+        case .showInFinder:
+            return Entry(command: self, title: "Show in Finder", shortcuts: ["⌘⌥R"], menu: "File",
+                         description: "Reveals the active document's file in Finder, selected (also “Reveal in Finder” in a sidebar row's context menu; right-click the project tree's empty space for the project folder itself). Nothing happens for a file that is not on disk.",
+                         requires: "a saved entry document (a project root)",
+                         menuItem: "Show in Finder")
         case .openFixture:
             return Entry(command: self, title: "Open compile result fixture", shortcuts: ["⌘⇧O"], menu: "File",
                          description: "Loads a runtime v1 compile_result JSON into the preview; a sibling -request.json seeds the editor.",
@@ -187,8 +198,8 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Completion popup", shortcuts: ["Esc", "⌃Space"], menu: "Editor",
                          description: "Lists supported commands, \\end{…} for open environments, labels, citation keys and document words for the token at the caret; the list never takes the keyboard from the editor.")
         case .completionList:
-            return Entry(command: self, title: "Completion list keys", shortcuts: ["↑", "↓", "Tab", "⇧Tab", "Return"], menu: "Editor",
-                         description: "While the completion list is open: ↑/↓ or Tab/⇧Tab choose the candidate (wrapping; VoiceOver announces “n of m: candidate, kind, origin”), Return or Enter inserts it over the typed token, Esc closes without inserting; typing narrows the list and any other caret move closes it.",
+            return Entry(command: self, title: "Completion list keys", shortcuts: ["↑", "↓", "Tab", "⇧Tab", "Page Up", "Page Down", "Home", "End", "Return"], menu: "Editor",
+                         description: "While the completion list is open: ↑/↓ or Tab/⇧Tab choose the candidate (wrapping; VoiceOver announces “n of m: candidate, kind, origin”), Page Up/Page Down move by a screenful of rows and Home/End go to the first/last row (never wrapping), Return or Enter inserts it over the typed token, Esc closes without inserting; typing narrows the list and any other caret move closes it.",
                          requires: "an open completion list")
         case .signatureHelp:
             return Entry(command: self, title: "Signature help", shortcuts: ["⌘⇧Space"], menu: "Editor",
@@ -284,6 +295,22 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Wrap selection in environment", shortcuts: ["⌘⇧W"], menu: "Navigate",
                          description: "Asks for an environment name (suggestions: common ones, then those the document uses) and wraps the selection in \\begin{X}…\\end{X} — whole lines as an indented block, otherwise inline — as one undoable edit with the caret at the body.",
                          menuItem: "Wrap Selection in Environment…")
+        case .boldSelection:
+            return Entry(command: self, title: "Bold selection", shortcuts: ["⌘⇧B"], menu: "Edit",
+                         description: "Wraps the selection in \\textbf{…} (\\mathbf{…} when the caret is in math mode) as one undoable edit, the caret after the closing brace; with nothing selected the caret lands between the braces and the } is typed over. ⌘B is Compile.",
+                         menuItem: "Bold")
+        case .emphasizeSelection:
+            return Entry(command: self, title: "Emphasize selection", shortcuts: ["⌘I"], menu: "Edit",
+                         description: "Wraps the selection in \\emph{…} (\\mathit{…} when the caret is in math mode) as one undoable edit, the caret after the closing brace; with nothing selected the caret lands between the braces.",
+                         menuItem: "Emphasize")
+        case .underlineSelection:
+            return Entry(command: self, title: "Underline selection", shortcuts: ["⌘U"], menu: "Edit",
+                         description: "Wraps the selection in \\underline{…} as one undoable edit, the caret after the closing brace; with nothing selected the caret lands between the braces.",
+                         menuItem: "Underline")
+        case .wrapInCommand:
+            return Entry(command: self, title: "Wrap selection in command", shortcuts: ["⌘⌥W"], menu: "Edit",
+                         description: "Asks for a command name (suggestions: common text and math commands, then the macros the document defines) and wraps the selection in \\name{…} as one undoable edit; the caret lands after the closing brace, or between the braces when nothing was selected.",
+                         menuItem: "Wrap Selection in Command…")
         case .changeEnvironment:
             return Entry(command: self, title: "Change environment", shortcuts: ["⌃⌘E"], menu: "Editor",
                          description: "Opens a field prefilled with the innermost environment name around the caret; Return rewrites both the \\begin{name} and matching \\end{name} as one undoable edit, preserving a trailing star, optional arguments and any following arguments. Typing inside either name updates the partner live. Refused (beep and VoiceOver) in a verbatim body or when the pair is unbalanced.",
@@ -338,6 +365,10 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
         case .editorPreferences:
             return Entry(command: self, title: "Settings window", shortcuts: ["⌘,"], menu: "FlashTeX",
                          description: "Opens the editor preferences (the system Settings item): font family and size, wrapping, tab width and indent style, appearance, auto-close braces, completion list, Restore Defaults; Tab walks the controls top to bottom, ⌘W closes and the editor keeps the keyboard.")
+        case .checkForUpdates:
+            return Entry(command: self, title: "Check for updates", shortcuts: ["FlashTeX > Check for Updates…"], menu: "FlashTeX",
+                         description: "Asks GitHub Releases for the newest FlashTeX and shows the installed and available versions with the release notes; Download opens the release page in the browser, Skip This Version silences the background check for that version. Nothing is downloaded or installed by the app. The background check is Settings > Updates (off by default, at most once a day).",
+                         menuItem: "Check for Updates…")
         case .durableHistory:
             return Entry(command: self, title: "Durable History window", shortcuts: ["Edit > Durable History…"], menu: "Edit",
                          description: "Opens the durable undo/redo history on the helper's edit ledger: Refresh, Undo, Redo (Retry/Discard after an uncertain reply), retention gauge, then the undo and redo stacks as a list; ⌘W closes and the editor keeps the keyboard.",
@@ -528,6 +559,7 @@ public enum PanelFocusOrder {
                 Control(name: "Vim keybindings", sourceMarker: "Toggle(\"Vim keybindings\""),
                 Control(name: "Preview follows the caret", sourceMarker: "Toggle(\"Preview follows the caret\""),
                 Control(name: "Autosave", sourceMarker: "Toggle(\"Autosave\""),
+                Control(name: "Check for updates automatically", sourceMarker: "Toggle(\"Check for updates automatically\""),
                 Control(name: "Restore Defaults", sourceMarker: "Button(\"Restore Defaults\""),
               ],
               sourceFile: "EditorPreferences.swift"),

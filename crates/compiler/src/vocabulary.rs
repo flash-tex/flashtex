@@ -30,6 +30,7 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
     "underrightarrow", "underleftarrow", "underleftrightarrow", "Bbb", "bold", "dashrightarrow",
     "dasharrow", "dashleftarrow",
     "mathllap", "mathrlap", "mathclap",
+    "cancel", "bcancel", "xcancel",
 ];
 
 /// Real LaTeX2e, amsmath/amssymb and widely used package commands this
@@ -45,7 +46,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "centering", "raggedright", "raggedleft", "linespread", "vfill", "hss", "vss", "vbox",
     "makebox", "fbox", "framebox", "parbox", "raisebox", "rule", "newline",
     "clearpage", "cleardoublepage", "thispagestyle", "twocolumn", "onecolumn",
-    "indent", "phantom", "hphantom", "vphantom", "smash", "strut", "addvspace",
+    "indent", "phantom", "hphantom", "vphantom", "smash", "addvspace",
     "vskip", "kern", "enspace", "thinspace", "negthinspace", "hline", "cline",
     "multicolumn", "tabularnewline", "arraystretch",
     // Fonts and text symbols.
@@ -75,7 +76,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "underbrace", "overleftarrow", "overrightarrow", "mathcal", "mathfrak", "mathscr", "pmb",
     "limits", "nolimits", "displaylimits", "colon", "eqqcolon", "Coloneqq", "Eqqcolon",
     "vcentcolon", "dblcolon", "vdots", "ddots", "iff", "implies", "impliedby",
-    "genfrac", "operatornamewithlimits", "cancel", "bcancel", "xcancel",
+    "genfrac", "operatornamewithlimits",
     "cancelto", "numberwithin", "allowdisplaybreaks", "lvert", "rvert", "lVert",
     "rVert", "varepsilon", "vartheta", "varphi", "varrho", "varsigma", "varpi", "digamma",
     "varkappa", "hbar", "hslash", "ell", "wp", "Re", "Im", "aleph", "beth", "gimel", "emptyset",
@@ -102,7 +103,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
 #[rustfmt::skip]
 const IMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "document", "figure", "frame", "center", "flushright", "flushleft", "quote", "quotation", "itemize",
-    "enumerate", "equation", "equation*", "displaymath", "gather", "gather*", "align", "align*",
+    "enumerate", "list", "equation", "equation*", "displaymath", "gather", "gather*", "align", "align*",
     "alignat", "alignat*", "flalign", "flalign*", "eqnarray", "eqnarray*", "multline", "multline*",
     "tiny", "scriptsize", "footnotesize", "small", "normalsize",
     "large", "Large", "LARGE", "huge", "Huge",
@@ -114,7 +115,7 @@ const IMPLEMENTED_ENVIRONMENTS: &[&str] = &[
 const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "description", "table", "table*", "figure*", "tabular", "tabular*", "tabularx", "longtable",
     "verbatim", "verbatim*", "verse", "abstract", "minipage", "titlepage", "thebibliography",
-    "list", "trivlist", "picture", "math", "gathered", "multlined",
+    "trivlist", "picture", "math", "gathered", "multlined",
     "subequations", "proof", "tikzpicture", "lstlisting", "minted",
     "wrapfigure", "subfigure", "comment", "landscape", "filecontents",
 ];
@@ -314,7 +315,7 @@ pub fn command_package(name: &str) -> Option<&'static str> {
 /// (a known command with no extra package/mode hint).
 pub fn command_help(name: &str) -> Option<String> {
     if is_math_command(name) {
-        return Some(format!("wrap this in math mode: \\(\\{name}\\)"));
+        return Some(format!("\\{name} is a math command; use it in math mode"));
     }
     if let Some(package) = command_package(name) {
         return Some(format!(
@@ -492,7 +493,7 @@ mod tests {
         );
         assert_eq!(
             command_help("alpha").as_deref(),
-            Some("wrap this in math mode: \\(\\alpha\\)")
+            Some("\\alpha is a math command; use it in math mode")
         );
         assert!(command_help("maketitle").is_none(), "{:?}", command_help("maketitle"));
         assert_eq!(
@@ -517,7 +518,7 @@ mod tests {
             assert!(is_known_command(name), "{name}");
             assert_eq!(
                 command_help(name),
-                Some(format!("wrap this in math mode: \\(\\{name}\\)")),
+                Some(format!("\\{name} is a math command; use it in math mode")),
                 "{name}"
             );
             assert!(math_mode_help(name).is_none(), "{name}");

@@ -59,11 +59,73 @@ final class CompletionMathModeTests: XCTestCase {
         let text = "x \\s"
         let caret = (text as NSString).length
         let plain = Completion.suggestions(in: text, caretUTF16: caret, metadata: nil, supported: vocabulary)
-        XCTAssertEqual(labels(plain), ["\\section", "\\sum", "\\sigma", "\\subsection", "\\sqrt"], "text mode keeps table order")
+        XCTAssertEqual(labels(plain), ["\\section", "\\sum", "\\sigma", "\\subsection", "\\sqrt"],
+                       "an unknown mode keeps table order and hides nothing")
+        // A known mode is a filter (mac/intellisense-gaps-2): inside math the
+        // text-only commands are gone, in text the math-only ones are; what
+        // survives keeps the table order (math first only matters when a
+        // both-modes command shares the list).
         let math = Completion.suggestions(in: text, caretUTF16: caret, metadata: nil, supported: vocabulary, mathMode: true)
-        XCTAssertEqual(labels(math), ["\\sum", "\\sigma", "\\sqrt", "\\section", "\\subsection"],
-                       "math first, each half still in table order")
-        XCTAssertEqual(Set(labels(plain)), Set(labels(math)), "only the order changes; nothing is added or dropped")
+        XCTAssertEqual(labels(math), ["\\sum", "\\sigma", "\\sqrt"], "math mode: \\section and \\subsection are text-only")
+        let prose = Completion.suggestions(in: text, caretUTF16: caret, metadata: nil, supported: vocabulary, mathMode: false)
+        XCTAssertEqual(labels(prose), ["\\section", "\\subsection"], "text mode: the math-only commands are hidden")
+        // A both-modes command (`\textbf` has a math description) ranks after
+        // the math ones inside math and stays in text.
+        let both = ["textbf", "sum", "sigma", "section"]
+        XCTAssertEqual(labels(Completion.suggestions(in: "x \\", caretUTF16: 3, metadata: nil, supported: both, mathMode: true)),
+                       ["\\sum", "\\sigma", "\\textbf"])
+        XCTAssertEqual(labels(Completion.suggestions(in: "x \\", caretUTF16: 3, metadata: nil, supported: both, mathMode: false)),
+                       ["\\textbf", "\\section"])
+    }
+
+    func testAFilterThatWouldEmptyTheListFallsBackToWhatItHid() {
+        // `\ite` inside `$…$`: only text-only commands start with it, so the
+        // author still sees them rather than nothing.
+        let math = Completion.suggestions(in: "x \\s", caretUTF16: 4, metadata: nil, supported: ["section", "subsection"], mathMode: true)
+        XCTAssertEqual(labels(math), ["\\section", "\\subsection"])
+        let text = Completion.suggestions(in: "x \\s", caretUTF16: 4, metadata: nil, supported: ["sum", "sqrt"], mathMode: false)
+        XCTAssertEqual(labels(text), ["\\sum", "\\sqrt"])
+        // The fuzzy fallback filters the same way, with the same escape hatch:
+        // `sbs` is a subsequence of \subsection (text) and \substack (math).
+        let fuzzy = ["subsection", "substack"]
+        XCTAssertEqual(labels(Completion.suggestions(in: "x \\sbs", caretUTF16: 6, metadata: nil, supported: fuzzy, mathMode: true)), ["\\substack"])
+        XCTAssertEqual(labels(Completion.suggestions(in: "x \\sbs", caretUTF16: 6, metadata: nil, supported: fuzzy, mathMode: false)), ["\\subsection"])
+        XCTAssertEqual(labels(Completion.suggestions(in: "x \\sbs", caretUTF16: 6, metadata: nil, supported: ["subsection"], mathMode: true)), ["\\subsection"])
+        // What stays: the label/reference family and `\\` are text-mode in
+        // the inventory but belong inside equation/align.
+        for name in Completion.mathAllowedTextCommands {
+            guard let entry = Completion.Vocabulary.byName[name] else { XCTFail("\\\(name) is not in the inventory"); continue }
+            XCTAssertEqual(entry.mode, .text, name)
+            XCTAssertTrue(Completion.allows(entry, mathMode: true), name)
+        }
+        XCTAssertEqual(Completion.suggestions(in: "$\\lab", caretUTF16: 5, metadata: nil, mathMode: true).map(\.insertText), ["\\label"])
+        // Names outside the inventory (a project's `supported` list) have no mode and are never hidden.
+        XCTAssertEqual(labels(Completion.suggestions(in: "x \\my", caretUTF16: 4, metadata: nil, supported: ["mymacro"], mathMode: true)), ["\\mymacro"])
+        XCTAssertEqual(labels(Completion.suggestions(in: "x \\my", caretUTF16: 4, metadata: nil, supported: ["mymacro"], mathMode: false)), ["\\mymacro"])
+    }
+
+    func testTheRealVocabularyIsFilteredByMode() throws {
+        // Inside `$…$`: \frac is offered, \section is not; in text the reverse.
+        let mathFra = Completion.suggestions(in: "$\\fra", caretUTF16: 5, metadata: nil, mathMode: true)
+        XCTAssertEqual(mathFra.first?.label, "\\frac{num}{den}")
+        XCTAssertTrue(mathFra.allSatisfy { $0.detail.hasPrefix("math · ") }, "\(labels(mathFra))")
+        let mathSec = labels(Completion.suggestions(in: "$\\sec", caretUTF16: 5, metadata: nil, mathMode: true))
+        XCTAssertTrue(mathSec.contains("\\sec"), "\(mathSec)")
+        XCTAssertFalse(mathSec.contains("\\section"), "\(mathSec)")
+        let textSec = labels(Completion.suggestions(in: "x \\sec", caretUTF16: 6, metadata: nil, mathMode: false))
+        XCTAssertTrue(textSec.contains("\\section"), "\(textSec)")
+        XCTAssertFalse(textSec.contains("\\sec"), "\(textSec)")
+        // Text mode, `\frac` spelled out: only the math command matches, so the fallback still shows it.
+        XCTAssertEqual(labels(Completion.suggestions(in: "x \\frac", caretUTF16: 7, metadata: nil, mathMode: false)), ["\\frac"])
+        // Every row the real vocabulary offers in a known mode passes the filter, unless the fallback fired.
+        for prefix in ["a", "b", "s", "t", "m"] {
+            for mode in [true, false] {
+                let rows = Completion.suggestions(in: "x \\" + prefix, caretUTF16: 3 + prefix.count, metadata: nil, mathMode: mode)
+                let entries = rows.compactMap { Completion.Vocabulary.byName[String($0.insertText.dropFirst())] }
+                XCTAssertEqual(entries.count, rows.count, "\\\(prefix) in \(mode ? "math" : "text")")
+                XCTAssertTrue(entries.allSatisfy { Completion.allows($0, mathMode: mode) }, "\\\(prefix) in \(mode ? "math" : "text"): \(rows.map(\.label))")
+            }
+        }
     }
 
     func testTheExactlyTypedSpellingStillOutranksEverything() {
@@ -130,16 +192,16 @@ final class CompletionMathModeTests: XCTestCase {
         let tv = try XCTUnwrap(scroll.documentView as? CompletingTextView)
         window.orderFrontRegardless()
         defer { window.orderOut(nil) }
-        // Unwired (a bare text view): no, and the list keeps its plain order.
-        XCTAssertFalse(tv.mathModeAtCaret(0))
+        // Unwired (a bare text view): unknown, so the list keeps its plain order and hides nothing.
+        XCTAssertNil(tv.mathModeAtCaret(0))
         // Wired the way SourceEditorView wires it.
         tv.string = "text $x + y$ text"
         tv.mathModeAtCaret = { [weak tv] index in
-            guard let text = tv?.string as NSString? else { return false }
+            guard let text = tv?.string as NSString? else { return nil }
             return Completion.isMathMode(in: text, caretUTF16: index)
         }
-        XCTAssertTrue(tv.mathModeAtCaret(8))
-        XCTAssertFalse(tv.mathModeAtCaret(2))
-        XCTAssertFalse(tv.mathModeAtCaret(15))
+        XCTAssertEqual(tv.mathModeAtCaret(8), true)
+        XCTAssertEqual(tv.mathModeAtCaret(2), false)
+        XCTAssertEqual(tv.mathModeAtCaret(15), false)
     }
 }

@@ -261,6 +261,8 @@ pub struct Keys {
     pub showstringspaces: bool,
     pub tabsize: usize,
     pub breaklines: bool,
+    /// `breakatwhitespace`: with `breaklines`, a break only after a blank.
+    pub breakatwhitespace: bool,
     /// Keys that were given but are not modelled here, in source order and
     /// without duplicates; the limitation names them.
     pub unmodelled: Vec<String>,
@@ -291,6 +293,7 @@ impl Default for Keys {
             showstringspaces: true,
             tabsize: 8,
             breaklines: false,
+            breakatwhitespace: false,
             unmodelled: Vec::new(),
         }
     }
@@ -374,6 +377,7 @@ impl Keys {
             "language" => self.language = Some(v.to_string()),
             "showstringspaces" => self.showstringspaces = flag(value),
             "breaklines" => self.breaklines = flag(value),
+            "breakatwhitespace" => self.breakatwhitespace = flag(value),
             "tabsize" => self.tabsize = v.trim().parse().unwrap_or(8),
             // `basewidth={0.6em,0.45em}`: the first value is the fixed one.
             "basewidth" => {
@@ -578,6 +582,160 @@ fn lstset_ranges(texts: &[&str]) -> Vec<(usize, usize, usize)> {
     out
 }
 
+/// listings' `breaklines` inside a `\lstinline` (lstmisc.sty 1316-1338,
+/// listings.sty 787-791, 830-865): the package outputs the argument token
+/// by token — a run of letters (digits join whichever run is open, `_`,
+/// `@` and `$` are letters), a run of other characters, or one blank — each
+/// as an `\hbox` (`\lst@OutputToken`) followed by `\lst@discretionary`, an
+/// empty `\discretionary{}{}{}`, so the paragraph may break after any token
+/// at `\exhyphenpenalty`. A blank is `\hbox{\ }`: a box, which is why it is
+/// not discarded at the break and pdflatex's next line opens with it
+/// (`listings-manual` page 2: `--set` ends the line, ` watch.debounce_ms=50`
+/// starts the next, 5.25 pt in). A blank at the start of the argument and
+/// every blank directly after another are gobbled (`\lst@ifwhitespace`;
+/// the lost space of `flexiblecolumns` is not modelled). With
+/// `breakatwhitespace` only a blank's discretionary is set.
+///
+/// pdflatex's list for `\lstinline|ftxc build --set watch.debounce_ms=50|`
+/// (`\showlists`, 11 pt, `basicstyle=\ttfamily\small`): `\hbox x20.99487`
+/// (`ftxc`), `\discretionary`, `\hbox x5.24872` (`\glue 5.24872`),
+/// `\discretionary`, `build`, …, `--` and `set` as two boxes, …, `watch`,
+/// `.`, `debounce_ms`, `=50`, each with its discretionary.
+///
+/// The compiler gives every character of the argument the command's span,
+/// so the words to re-cut are the ones whose characters lie in it; a word's
+/// segments outside the argument (`\lstinline|x|.`'s `.`) stay as they
+/// are, adjacent to the tokens. The blanks the adapter made rigid glue
+/// (`Item::Space { no_break }`) next to those words are the argument's.
+fn break_inline(items: &mut Vec<Item>, inline: &InlineListing) {
+    let inside = |c: &CharSrc| c.document.0 == inline.document && c.start >= inline.command.0 && c.start < inline.command.1;
+    let is_inline_word = |item: &Item| matches!(item, Item::Word(w) if w.segments.iter().flat_map(|s| s.chars.iter()).any(inside));
+    if !items.iter().any(is_inline_word) {
+        return;
+    }
+    // Which items belong to the argument: its words, the rigid blanks next
+    // to them (looking past the `\leavevmode` the adapter puts before a
+    // blank that opens a line), and that `\leavevmode`.
+    let n = items.len();
+    let mut member = vec![false; n];
+    for i in 0..n {
+        member[i] = is_inline_word(&items[i]);
+    }
+    let word_at = |j: usize| j < n && is_inline_word(&items[j]);
+    for i in 0..n {
+        if let Item::Space { no_break: true, .. } = items[i] {
+            let before = i.checked_sub(1).is_some_and(word_at);
+            let mut j = i + 1;
+            if matches!(items.get(j), Some(Item::LeaveVmode)) {
+                j += 1;
+            }
+            if before || word_at(j) {
+                member[i] = true;
+            }
+        }
+    }
+    for i in 0..n {
+        if matches!(items[i], Item::LeaveVmode) && i + 1 < n && member[i + 1] && matches!(items[i + 1], Item::Space { .. }) {
+            member[i] = true;
+        }
+    }
+    let after_whitespace_only = inline.keys.breakatwhitespace;
+    let discretionary = Item::Penalty { value: EXHYPHENPENALTY, flagged: true };
+    let old = std::mem::take(items);
+    // `\lst@whitespacetrue` at `InitVarsBOL`: a leading blank is gobbled.
+    let mut whitespace = true;
+    // The style of the last token, for a blank's box.
+    let mut blank_style: Option<TextStyle> = None;
+    for (i, item) in old.into_iter().enumerate() {
+        if !member[i] {
+            items.push(item);
+            continue;
+        }
+        match item {
+            Item::Word(word) => {
+                let mut outside: Vec<Segment> = Vec::new();
+                let mut seen_inline = false;
+                let flush_outside = |outside: &mut Vec<Segment>, items: &mut Vec<Item>| {
+                    if !outside.is_empty() {
+                        items.push(Item::Word(Word { segments: std::mem::take(outside) }));
+                    }
+                };
+                for seg in word.segments {
+                    if !seg.chars.iter().any(inside) {
+                        outside.push(seg);
+                        continue;
+                    }
+                    if !seen_inline {
+                        flush_outside(&mut outside, items);
+                        seen_inline = true;
+                    }
+                    blank_style = Some(seg.style);
+                    for (text, chars) in inline_tokens(&seg.text, &seg.chars) {
+                        items.push(Item::Word(Word { segments: vec![Segment { text, chars, style: seg.style }] }));
+                        if !after_whitespace_only {
+                            items.push(discretionary.clone());
+                        }
+                        whitespace = false;
+                    }
+                }
+                flush_outside(&mut outside, items);
+            }
+            Item::Space { style, .. } => {
+                if whitespace {
+                    continue;
+                }
+                items.push(Item::SpaceBox { style: blank_style.unwrap_or(style) });
+                items.push(discretionary.clone());
+                whitespace = true;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// `\exhyphenpenalty` (latex.ltx): the charge for breaking at an empty
+/// discretionary.
+const EXHYPHENPENALTY: i32 = 50;
+
+/// listings' tokens of one run of argument characters (no blanks): runs
+/// of letters and of other characters, digits joining whichever is open
+/// (`\lst@ProcessDigit`), with each token's characters' sources.
+fn inline_tokens(text: &str, chars: &[CharSrc]) -> Vec<(String, Vec<CharSrc>)> {
+    #[derive(PartialEq, Clone, Copy)]
+    enum Kind {
+        Letter,
+        Other,
+    }
+    let kind = |c: char| {
+        if c.is_alphabetic() || matches!(c, '_' | '@' | '$') {
+            Some(Kind::Letter)
+        } else if c.is_ascii_digit() {
+            None
+        } else {
+            Some(Kind::Other)
+        }
+    };
+    let mut out: Vec<(String, Vec<CharSrc>)> = Vec::new();
+    let mut open: Option<Kind> = None;
+    for (k, c) in text.chars().enumerate() {
+        let src = chars.get(k).copied();
+        let this = kind(c);
+        let starts_new = match (open, this) {
+            (None, _) => true,
+            (Some(_), None) => false,
+            (Some(o), Some(t)) => o != t,
+        };
+        if starts_new {
+            out.push((String::new(), Vec::new()));
+            open = this.or(Some(Kind::Other));
+        }
+        let last = out.last_mut().expect("a token is open");
+        last.0.push(c);
+        last.1.extend(src);
+    }
+    out
+}
+
 /// `\thelstlisting` of every listing of `found` (meaningful for the
 /// captioned ones): listings.sty `\newcounter{lstlisting}[chapter]` and
 /// `\ifnum \c@chapter>\z@ \thechapter.\fi \@arabic\c@lstlisting`.
@@ -693,6 +851,18 @@ pub fn apply(
                             segment.style.size_cpt = size_cpt;
                         }
                     }
+                }
+            }
+        }
+    }
+    // `breaklines`: the inline's tokens become boxes with a break allowed
+    // after each (`break_inline`); this needs the size set above.
+    for inline in inlines.iter().filter(|i| i.keys.breaklines) {
+        for block in blocks.iter_mut() {
+            let Block::Paragraph { parts, .. } = block else { continue };
+            for part in parts.iter_mut() {
+                if let ParaPart::Lines(items) = part {
+                    break_inline(items, inline);
                 }
             }
         }

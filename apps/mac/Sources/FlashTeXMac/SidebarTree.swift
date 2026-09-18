@@ -38,9 +38,20 @@ struct SidebarTree: NSViewRepresentable {
     var onSelect: (String) -> Void
     /// Context menu items for a row id; empty = no menu.
     var menuItems: (String) -> [MenuItem] = { _ in [] }
+    /// Context menu for a right-click on the tree's empty space (no row under
+    /// the pointer); empty = AppKit's default (none).
+    var backgroundMenuItems: () -> [MenuItem] = { [] }
     /// Autosave name for column/expansion state; also names the tree for
     /// accessibility.
     var accessibilityLabel: String
+    /// Drag-and-drop moves (the project tree; the outline leaves these at
+    /// their defaults, so nothing there drags). `dragPath`: the rooted file a
+    /// row is dragged as, nil for rows that cannot move. `dropFolder`: the
+    /// folder dropping `path` on row `id` (nil id = the tree's empty space)
+    /// would land in, nil to refuse the drop. `onMove`: the accepted drop.
+    var dragPath: (String) -> String? = { _ in nil }
+    var dropFolder: (_ path: String, _ rowID: String?) -> String? = { _, _ in nil }
+    var onMove: (_ path: String, _ folder: String) -> Void = { _, _ in }
 
     struct MenuItem {
         var title: String
@@ -71,6 +82,10 @@ struct SidebarTree: NSViewRepresentable {
         outline.dataSource = context.coordinator
         outline.target = context.coordinator
         outline.action = #selector(Coordinator.rowClicked(_:))
+        // Row moves are local drags only (never a file promise to Finder).
+        outline.registerForDraggedTypes([Coordinator.rowPasteboardType])
+        outline.setDraggingSourceOperationMask(.move, forLocal: true)
+        outline.setDraggingSourceOperationMask([], forLocal: false)
         context.coordinator.outline = outline
 
         let scroll = NSScrollView()
@@ -168,9 +183,50 @@ struct SidebarTree: NSViewRepresentable {
             }
         }
 
+        // MARK: drag-and-drop moves
+
+        /// Private pasteboard type carrying the dragged row's rooted path.
+        static let rowPasteboardType = NSPasteboard.PasteboardType("dev.flashtex.project-tree-path")
+
+        func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
+            guard let row = row(for: item), row.selectable, let path = parent.dragPath(row.id) else { return nil }
+            let pb = NSPasteboardItem()
+            pb.setString(path, forType: Self.rowPasteboardType)
+            return pb
+        }
+
+        /// The dragged path when the drag started in this tree.
+        private func draggedPath(_ info: NSDraggingInfo) -> String? {
+            guard let source = info.draggingSource as? NSOutlineView, source === outline else { return nil }
+            return info.draggingPasteboard.string(forType: Self.rowPasteboardType)
+        }
+
+        /// The tree is flat, so a drop is always *on* a row (its folder) or on
+        /// the tree itself (the root) — never between rows; `validateDrop`
+        /// retargets AppKit's insertion-gap proposal accordingly.
+        func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int) -> NSDragOperation {
+            guard let path = draggedPath(info) else { return [] }
+            let targetID = item.flatMap { row(for: $0) }?.id
+            guard parent.dropFolder(path, targetID) != nil else { return [] }
+            outlineView.setDropItem(targetID == nil ? nil : item, dropChildIndex: NSOutlineViewDropOnItemIndex)
+            return .move
+        }
+
+        func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
+            guard let path = draggedPath(info),
+                  let folder = parent.dropFolder(path, item.flatMap { row(for: $0) }?.id) else { return false }
+            parent.onMove(path, folder)
+            return true
+        }
+
         func menu(forRowAt index: Int) -> NSMenu? {
             guard rows.indices.contains(index) else { return nil }
-            let items = parent.menuItems(rows[index].id)
+            return menu(items: parent.menuItems(rows[index].id))
+        }
+
+        func backgroundMenu() -> NSMenu? { menu(items: parent.backgroundMenuItems()) }
+
+        private func menu(items: [MenuItem]) -> NSMenu? {
             guard !items.isEmpty else { return nil }
             let menu = NSMenu()
             for item in items {
@@ -197,14 +253,15 @@ private final class MenuTrampoline: NSObject {
 }
 
 /// Outline view that asks the coordinator for a context menu at the clicked
-/// row (`NSMenu` built at click time — the AppKit path the brief requires).
+/// row, or for the tree's empty space below the rows (`NSMenu` built at click
+/// time — the AppKit path the brief requires).
 final class TreeOutlineView: NSOutlineView {
     weak var coordinator: SidebarTree.Coordinator?
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
         let index = row(at: point)
-        guard index >= 0 else { return super.menu(for: event) }
+        guard index >= 0 else { return coordinator?.backgroundMenu() ?? super.menu(for: event) }
         return coordinator?.menu(forRowAt: index) ?? super.menu(for: event)
     }
 }

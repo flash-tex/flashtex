@@ -14,12 +14,14 @@ final class ProjectScaffoldState {
         case newProject
         case newFile
         case rename(path: String)
+        case move(path: String)
         case delete(path: String)
         var id: String {
             switch self {
             case .newProject: "new-project"
             case .newFile: "new-file"
             case .rename(let p): "rename:" + p
+            case .move(let p): "move:" + p
             case .delete(let p): "delete:" + p
             }
         }
@@ -33,6 +35,8 @@ final class ProjectScaffoldState {
     var newFileName = ""
     var insertReference = true
     var renameTo = ""
+    /// Destination folder of the Move to… sheet (rooted; empty = the root).
+    var moveTo = ""
     /// Last refusal / outcome, shown in the sheet.
     var note: String?
 
@@ -77,6 +81,12 @@ final class ProjectScaffoldState {
     func presentRename(_ path: String) {
         if let why = model.project.changeRefusal(for: path) { model.navigationNote = "Cannot rename \(path): \(why)"; return }
         note = nil; renameTo = path; sheet = .rename(path: path)
+    }
+
+    /// Move to… (the keyboard route to what dragging a row does; ProjectMove.swift).
+    func presentMove(_ path: String) {
+        if let why = model.project.changeRefusal(for: path) { model.navigationNote = "Cannot move \(path): \(why)"; return }
+        note = nil; moveTo = MoveTarget.folder(of: path); sheet = .move(path: path)
     }
 
     func presentDelete(_ path: String) {
@@ -138,6 +148,13 @@ final class ProjectScaffoldState {
         }
     }
 
+    func move(_ path: String) async {
+        switch await model.project.moveDocument(path, intoFolder: moveTo) {
+        case .moved: sheet = nil; model.navigationNote = model.project.status
+        case .refused(let why): note = why
+        }
+    }
+
     func delete(_ path: String) async {
         switch await model.project.deleteDocument(path) {
         case .trashed: sheet = nil; model.navigationNote = model.project.status
@@ -170,6 +187,7 @@ struct ProjectScaffoldSheets: ViewModifier {
             case .newProject: NewProjectSheet()
             case .newFile: NewFileSheet()
             case .rename(let path): RenameSheet(path: path)
+            case .move(let path): MoveSheet(path: path)
             case .delete(let path): DeleteSheet(path: path)
             }
         }
@@ -314,6 +332,44 @@ struct RenameSheet: View {
                     .keyboardShortcut(.defaultAction)
                     .disabled({ if case .success(let p) = resolved, p != path { false } else { true } }())
                     .accessibilityIdentifier("project.rename.apply")
+            }
+        }
+        .padding(DS.Space.xl)
+        .frame(width: DS.Layout.settingsWidth)
+    }
+}
+
+/// Move to…: a folder instead of a name (the Rename sheet's shape); the
+/// caption previews the destination and how many references move with it.
+struct MoveSheet: View {
+    @Environment(ShellModel.self) var model
+    let path: String
+
+    var body: some View {
+        @Bindable var state = model.scaffold
+        let resolved = MoveTarget.resolve(path: path, intoFolder: state.moveTo)
+        let references = ReferenceRewrite.planMove(oldPath: path, newPath: (try? resolved.get()) ?? path, documents: model.documents)
+        VStack(alignment: .leading, spacing: DS.Space.l) {
+            Text("Move \(path)").font(.title2.bold())
+            TextField("Folder (empty for the project root)", text: $state.moveTo)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("project.move.folder")
+                .onSubmit { if case .success = resolved { Task { await state.move(path) } } }
+            switch resolved {
+            case .success(let p):
+                let n = references.reduce(0) { $0 + $1.count }
+                Text("Moves the file to \(p)" + (n == 0 ? "; no open document references it." : "; rewrites \(n) reference\(n == 1 ? "" : "s") in \(references.map(\.path).joined(separator: ", ")) (one undoable edit each).") + " Closed documents of the include tree are rewritten on disk.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            case .failure(let f): Text(f.text).font(.caption).foregroundStyle(DS.Colors.severityWarning)
+            }
+            if let note = state.note { Text(note).font(.callout).foregroundStyle(DS.Colors.severityWarning).fixedSize(horizontal: false, vertical: true) }
+            HStack {
+                Spacer()
+                Button("Cancel") { state.sheet = nil }.keyboardShortcut(.cancelAction)
+                Button("Move") { Task { await state.move(path) } }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled({ if case .success = resolved { false } else { true } }())
+                    .accessibilityIdentifier("project.move.apply")
             }
         }
         .padding(DS.Space.xl)

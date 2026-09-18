@@ -370,6 +370,9 @@ fn text_probe(name: &str, arguments: &str) -> String {
         // A bare `{x}` test is not a valid `\ifthenelse` test (the engine
         // reports "Missing test"), so probe the real form instead.
         "ifthenelse" => "\\ifthenelse{\\equal{a}{a}}{yes}{no}".into(),
+        // `\iftoggle` needs a declared toggle; probing it bare would
+        // report the undefined-toggle marker instead of rendering.
+        "iftoggle" => "\\newtoggle{x}\\toggletrue{x}\\iftoggle{x}{yes}{no}".into(),
         "captionof" => "\\captionof{figure}{x}".into(),
         "uline" => "\\usepackage{ulem}\\uline{x}".into(),
         "sout" => "\\usepackage{ulem}\\sout{x}".into(),
@@ -651,13 +654,13 @@ fn class_scope_matches_the_parser_gate() {
     }
 }
 
-/// The offer rule completion mirrors: a class-scoped command is offered only
-/// in a document that declares its class. A fragment with no `\documentclass`
-/// (as in the editor's prefix tests) gets the universal commands alone —
-/// scoped entries are text-mode, so leaving them in would let `\frametitle`
-/// lead `\frac` on table order in every fragment.
+/// The offer rule completion mirrors: a scoped command is hidden only when
+/// the document class is known and different. An unknown class (a fragment
+/// with no `\documentclass` and no project root to read one from) keeps
+/// today's table order untouched — the editor resolves the class from the
+/// project's root document first, so `None` is only ever a project-less file.
 #[test]
-fn offer_rule_offers_scoped_commands_only_under_their_own_class() {
+fn offer_rule_hides_scoped_commands_only_under_another_class() {
     let inventory = supported::inventory();
     let by_name = |name: &str| {
         inventory
@@ -673,19 +676,17 @@ fn offer_rule_offers_scoped_commands_only_under_their_own_class() {
             "\\frac is universal: offered under {class:?}"
         );
     }
-    assert!(
-        !opening.offered_in_class(None),
-        "an undeclared class offers the universal commands alone"
-    );
+    assert!(opening.offered_in_class(None), "unknown class gates nothing");
     assert!(
         !opening.offered_in_class(Some("article")),
         "\\opening must not be offered in an article"
     );
     assert!(opening.offered_in_class(Some("letter")));
     assert!(
-        !frametitle.offered_in_class(Some("article")) && !frametitle.offered_in_class(None),
-        "\\frametitle must not be offered outside a beamer deck"
+        !frametitle.offered_in_class(Some("article")),
+        "\\frametitle must not be offered in an article"
     );
+    assert!(frametitle.offered_in_class(None), "unknown class gates nothing");
     assert!(frametitle.offered_in_class(Some("beamer")));
 }
 

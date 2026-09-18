@@ -576,6 +576,8 @@ extension ShellModel {
                     guard let item = box.itemIndices.first else { continue }
                     return (page.number, V2Geometry.Hit(itemIndex: item, clusterIndex: nil, text: nil,
                                                         sources: [box.source], syntheticReason: nil, rect: box.bounds))
+                case .paragraph:
+                    continue // never requested here; the band is not a navigation target
                 }
             }
         }
@@ -792,6 +794,9 @@ enum V2ParityEvidence {
 /// The v2 preview pane: header, pages or the refusal, and the list's diagnostics.
 struct PreviewV2Pane: View {
     @Environment(ShellModel.self) var model
+    /// The caret's paragraph the band follows (CaretParagraphMemo): kept
+    /// across the stale frame of every keystroke so the band never flashes.
+    @State private var caretParagraph = CaretParagraphMemo()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -911,6 +916,12 @@ struct PreviewV2Pane: View {
 
     private func pages(_ frame: V2Frame, stale: Bool) -> some View {
         PreviewV2View(frame: frame, dark: model.darkPreview, stale: stale, caretPath: model.activePath, caretByte: model.caretByte,
+                      // The paragraph band: only while the preview follows the caret, and
+                      // recomputed only against a verified frame (the previous band stays on
+                      // the stale frame, exactly as the page label does).
+                      caretParagraph: CaretFollow.isEnabled
+                          ? caretParagraph.range(stale: stale, byte: model.caretByte, path: model.activePath, text: model.activeText)
+                          : nil,
                       zoom: model.previewZoom, onFitScale: { model.previewFitScale = $0 },
                       // "the pdf moves to where the changes are happening" (CaretFollow.swift)
                       follow: model.caretFollow.request, reveal: model.previewReveal,
@@ -1018,6 +1029,25 @@ private struct V2PaneHeader: View {
     }
 }
 
+/// The caret's paragraph bytes for the band, memoised across the stale
+/// frame a keystroke shows: while the next frame is verified the previous
+/// band stays exactly where it was (an edited buffer's bytes no longer match
+/// the stale frame's spans, so recomputing there would flash or drop it).
+/// A reference held as view state: mutating it inside `body` is not a state
+/// change, and nothing observes it.
+final class CaretParagraphMemo {
+    private var last: (path: String, range: Range<Int>)?
+
+    /// The paragraph to band on `path`, or nil when there is no caret.
+    func range(stale: Bool, byte: Int?, path: String, text: String) -> Range<Int>? {
+        if stale, let last, last.path == path { return last.range }
+        guard let byte else { return last?.path == path ? last?.range : nil }
+        let range = V2Geometry.paragraphBounds(containing: byte, in: text)
+        last = (path, range)
+        return range
+    }
+}
+
 /// Scrollable pages of a prepared frame, fit to the pane width.
 struct PreviewV2View: View {
     let frame: V2Frame
@@ -1025,6 +1055,10 @@ struct PreviewV2View: View {
     var stale = false
     let caretPath: String
     let caretByte: Int?
+    /// The caret's paragraph bytes to band (MathCaretHighlight.swift); nil
+    /// when the preview does not follow the caret — then no page walks its
+    /// items for it.
+    var caretParagraph: Range<Int>? = nil
     /// Zoom multiplier over the fit-to-width scale (PreviewZoom.swift).
     var zoom: CGFloat = 1
     var onFitScale: ((CGFloat) -> Void)? = nil
@@ -1042,6 +1076,16 @@ struct PreviewV2View: View {
     var onLink: ((RenderingV2.Navigation.Link) -> Void)? = nil
     let onSelect: (V2Geometry.Hit) -> Void
     @Environment(\.displayScale) private var displayScale
+
+    /// The caret marks and paragraph band for one page, gated on the page's
+    /// source bounds so pages that cannot hold either never walk their items.
+    static func caretHighlights(page: RenderingV2.Page, prepared: V2PreparedPage, byte: Int?, path: String,
+                                paragraph: Range<Int>?) -> [V2Geometry.CaretHighlight] {
+        guard let byte else { return [] }
+        let paragraph = paragraph.flatMap { prepared.mayOverlap($0, path: path) ? $0 : nil }
+        guard paragraph != nil || prepared.mayContain(byte: byte, path: path) else { return [] }
+        return V2Geometry.caretHighlights(containing: byte, path: path, in: page, paragraph: paragraph)
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -1064,8 +1108,9 @@ struct PreviewV2View: View {
                         if let page = frame.page(number: prepared.number) {
                             PageV2View(page: page, prepared: prepared, pageToken: frame.pageToken(at: index), frameRevision: frame.list.revision, expectedDraws: expectedDraws,
                                        dark: dark, stale: stale, scale: scale, displayScale: displayScale,
-                                       // Only pages whose cluster sources can contain the caret walk their clusters.
-                                       caretHighlights: caretByte.flatMap { prepared.mayContain(byte: $0, path: caretPath) ? V2Geometry.caretHighlights(containing: $0, path: caretPath, in: page) : nil } ?? [],
+                                       // Only pages whose cluster sources can contain the caret (or overlap
+                                       // its paragraph) walk their items.
+                                       caretHighlights: Self.caretHighlights(page: page, prepared: prepared, byte: caretByte, path: caretPath, paragraph: caretParagraph),
                                        navigation: navigation, onLink: onLink, onSelect: onSelect)
                                 .equatable()
                                 .id(page.number)
@@ -1182,7 +1227,7 @@ private struct PageV2View: View, Equatable {
         let bitmap = V2PageRasterizer.shared.image(for: prepared, pageToken: pageToken, pixelsPerPoint: Double(scale * displayScale), dark: dark)
         // A stale page keeps its label and colour: the previous frame stays on screen
         // unchanged while the next one is verified (typing must not flash the pages).
-        let label = bitmap == nil ? "page \(page.number) · v2 · rasterizing…" : "page \(page.number) · v2"
+        let label = bitmap == nil ? "page \(page.number) · rasterizing…" : "page \(page.number)"
         let labelColor: Color = dark ? DS.Preview.darkLabel : DS.Preview.lightLabel
         let pageBackground: Color = dark ? DS.Preview.darkPage : .white
         // The bitmap is the contents of a CALayer (PageBitmapLayer): CoreAnimation
@@ -1195,7 +1240,7 @@ private struct PageV2View: View, Equatable {
             .background(Rectangle().fill(pageBackground).shadow(radius: DS.Preview.pageShadowRadius))
             .overlay {
                 if !caretHighlights.isEmpty || hover != nil {
-                    PageV2Marks(scale: scale, caretHighlights: caretHighlights, hover: hover).equatable().allowsHitTesting(false)
+                    PageV2Marks(scale: scale, dark: dark, caretHighlights: caretHighlights, hover: hover).equatable().allowsHitTesting(false)
                 }
             }
         canvas
@@ -1309,6 +1354,8 @@ final class PageBitmapView: NSView {
 /// Caret and hover marks over a page, drawn only when there is something to mark.
 private struct PageV2Marks: View, Equatable {
     let scale: CGFloat
+    /// The page is drawn dark (the preview's own toggle): the band needs more opacity there.
+    let dark: Bool
     let caretHighlights: [V2Geometry.CaretHighlight]
     let hover: V2Geometry.Hit?
 
@@ -1319,6 +1366,14 @@ private struct PageV2Marks: View, Equatable {
 
     var body: some View {
         Canvas(rendersAsynchronously: false) { context, _ in
+            // The caret's paragraph, one faint band per row, under every caret mark.
+            for case .paragraph(let band) in caretHighlights {
+                let tint = DS.Colors.accentSelection.opacity(dark ? DS.Preview.paragraphBandOpacityDark : DS.Preview.paragraphBandOpacity)
+                let overhang = DS.Preview.paragraphBandOverhang * scale
+                for row in band.rows {
+                    context.fill(Path(roundedRect: viewRect(row).insetBy(dx: -overhang, dy: -overhang / 2), cornerRadius: DS.Space.xxs), with: .color(tint))
+                }
+            }
             // Caret highlight: exact caret bar when the compiler supplied one for
             // that byte, else the whole cluster's hit rectangles (documented fallback);
             // a caret inside a formula gets the enclosing formula box (every glyph
@@ -1338,6 +1393,8 @@ private struct PageV2Marks: View, Equatable {
                     context.fill(Path(roundedRect: outline, cornerRadius: DS.Space.xxs), with: .color(DS.Colors.accentSelection.opacity(DS.Preview.hoverHighlightOpacity)))
                     context.stroke(Path(roundedRect: outline, cornerRadius: DS.Space.xxs), with: .color(DS.Colors.accentSelection.opacity(DS.Preview.linkBoxStrokeOpacity)), lineWidth: DS.Size.hairline)
                     for r in box.rects { context.fill(Path(viewRect(r)), with: .color(DS.Colors.accentSelection.opacity(DS.Preview.linkBoxFillOpacity))) }
+                case .paragraph:
+                    break // drawn first, above
                 }
             }
             if let hover { context.fill(Path(viewRect(hover.rect).insetBy(dx: -DS.Size.hairline, dy: -DS.Size.hairline)), with: .color(DS.Colors.accentSelection.opacity(DS.Preview.caretHighlightOpacity))) }

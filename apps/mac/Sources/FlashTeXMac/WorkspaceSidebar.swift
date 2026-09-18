@@ -134,8 +134,31 @@ private struct ProjectSection: View {
                         selectedID: model.activePath,
                         onSelect: { id in select(id, listing: listing, closure: closure) },
                         menuItems: { id in menu(for: id, listing: listing) },
-                        accessibilityLabel: "Project tree")
+                        backgroundMenuItems: { backgroundMenu() },
+                        accessibilityLabel: "Project tree",
+                        dragPath: { id in dragPath(forRowID: id) },
+                        dropFolder: { path, id in dropFolder(path: path, rowID: id) },
+                        onMove: { path, folder in
+                            Task { _ = await model.project.moveDocument(path, intoFolder: folder); model.navigationNote = model.project.status } // ProjectMove.swift
+                        })
         }
+    }
+
+    /// A row drags as its file when the rename rules allow a move now (not
+    /// the entry, no unsaved edits); missing-file rows never drag.
+    private func dragPath(forRowID id: String) -> String? {
+        guard model.project.projectRoot != nil, let path = ProjectTreeMove.path(forRowID: id),
+              model.project.changeRefusal(for: path) == nil else { return nil }
+        return path
+    }
+
+    /// The flat tree's drop semantics (ProjectTreeMove): a row is its folder,
+    /// the empty space is the root; a drop that `MoveTarget` would refuse
+    /// (onto itself, into its own folder) shows no drop highlight at all.
+    private func dropFolder(path: String, rowID: String?) -> String? {
+        guard let folder = ProjectTreeMove.dropFolder(rowID: rowID),
+              case .success = MoveTarget.resolve(path: path, intoFolder: folder) else { return nil }
+        return folder
     }
 
     /// Row ids: open documents use their path; discovered/missing includes a
@@ -197,7 +220,15 @@ private struct ProjectSection: View {
 
     private func menu(for id: String, listing: [ProjectDocument]) -> [SidebarTree.MenuItem] {
         guard let doc = listing.first(where: { $0.path == id }) else {
-            return [.init(title: "New File…", action: { model.scaffold.presentNewFile() })]
+            var items: [SidebarTree.MenuItem] = [.init(title: "New File…", action: { model.scaffold.presentNewFile() })]
+            // A closed include is a real file under the root: it can move
+            // (its references are rewritten the same way) even though it is
+            // not open. Missing-file rows have nothing to move.
+            if id.hasPrefix("closed:"), let path = ProjectTreeMove.path(forRowID: id) {
+                items.append(.divider)
+                items.append(.init(title: "Move to…", action: { model.scaffold.presentMove(path) }))
+            }
+            return items
         }
         var items: [SidebarTree.MenuItem] = [.init(title: "New File…", action: { model.scaffold.presentNewFile() })]
         let path = doc.path
@@ -207,12 +238,26 @@ private struct ProjectSection: View {
         // file deleted or moved after the menu opened is a no-op, not a crash.
         if RevealInFinder.target(path: path, root: model.project.projectRoot) != nil {
             items.append(.divider)
-            items.append(.init(title: "View in Finder", action: { RevealInFinder.reveal(path: path, root: model.project.projectRoot) }))
+            items.append(.init(title: "Reveal in Finder", action: { RevealInFinder.reveal(path: path, root: model.project.projectRoot) }))
         }
         if doc.role != .entry {
             items.append(.divider)
             items.append(.init(title: "Rename…", action: { model.scaffold.presentRename(path) }))
+            items.append(.init(title: "Move to…", action: { model.scaffold.presentMove(path) })) // ProjectMove.swift; rows also drag
             items.append(.init(title: "Delete…", action: { model.scaffold.presentDelete(path) }))
+        }
+        return items
+    }
+
+    /// Right-click on the tree's empty space: the project as a whole. The tree
+    /// has no root row, so this is where the project folder itself is revealed
+    /// (#870); omitted, like the row item, while there is no project root yet.
+    private func backgroundMenu() -> [SidebarTree.MenuItem] {
+        var items: [SidebarTree.MenuItem] = [.init(title: "New File…", action: { model.scaffold.presentNewFile() })]
+        let root = model.project.projectRoot
+        if root != nil {
+            items.append(.divider)
+            items.append(.init(title: "Reveal Project in Finder", action: { RevealInFinder.revealRoot(root) }))
         }
         return items
     }

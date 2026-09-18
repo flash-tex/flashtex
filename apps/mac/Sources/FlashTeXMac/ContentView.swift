@@ -158,6 +158,7 @@ struct EditorPane: View {
                 editorRevision: model.editorRevision,
                 projectIndexMetadata: model.completionMetadata,
                 projectFiles: model.documents.map(\.path), // `\input{` completion (Completion.swift)
+                graphicsRoot: { model.project.projectRoot }, // `\includegraphics{` completion walks the saved project's directory
                 onCaretChange: { model.caretUTF16 = $0 },
                 onSelectionChange: { if model.caretLengthUTF16 != $0.length { model.caretLengthUTF16 = $0.length } }, // every keystroke reports length 0; an equal write still invalidates its readers
                 onEditApplied: { model.editApplied($0, newText: $1) },
@@ -178,6 +179,8 @@ struct EditorPane: View {
                 },
                 userDefinition: { model.definitionSummary(forCommand: $0) }, // hover peek of \newcommand bodies (EditorNavigation.swift)
                 hoverContext: { model.editorHoverContext() }, // what \ref/\cite/\includegraphics resolve to (EditorHoverResolution.swift)
+                bibliographySources: { model.bibliographySources() }, // `\cite{` keys straight from the project's .bib files (BibScanner.swift)
+                language: model.editorLanguage, // BibTeX colouring for a declared bibliography (SyntaxHighlighter.swift)
                 mathPreviewContext: { // inline math hover preview (MathHoverPreview.swift)
                     model.displayListV2?.frame.map {
                         MathHoverPreview.Context(path: model.activePath, frame: $0, previewIsStale: model.previewIsStale, dark: model.darkPreview)

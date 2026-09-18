@@ -1,0 +1,85 @@
+\documentclass{beamer}
+% Frame options: [fragile] with verbatim and lstlisting, [allowframebreaks]
+% with a list that spans two pages, the \frame{...} command form, [plain],
+% and \note{...} which must not appear in the output.
+\usepackage{listings}
+\lstset{basicstyle=\ttfamily\small}
+\setbeamertemplate{navigation symbols}{}
+
+\title{Fragile Frames}
+\author{J. Whitfield}
+\date{March 2026}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{Verbatim}
+  A fragile frame may contain verbatim material.
+\begin{verbatim}
+\begin{frame}[fragile]
+  \frametitle{Verbatim}   % needs 'fragile'
+  ...
+\end{verbatim}
+  The lines above are typeset exactly as written.
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{A listing}
+\begin{lstlisting}
+fn main() {
+    let pages = render(&document);
+    println!("{} pages", pages.len());
+}
+\end{lstlisting}
+  \note{This note is for the presenter and must not be printed.}
+\end{frame}
+
+\begin{frame}[allowframebreaks]
+  \frametitle{A long list}
+  \begin{itemize}
+    \item Item one of a list that is too long for a single frame.
+    \item Item two.
+    \item Item three.
+    \item Item four.
+    \item Item five.
+    \item Item six.
+    \item Item seven.
+    \item Item eight.
+    \item Item nine.
+    \item Item ten.
+    \item Item eleven.
+    \item Item twelve.
+    \item Item thirteen.
+    \item Item fourteen.
+    \item Item fifteen.
+    \item Item sixteen.
+    \item Item seventeen.
+    \item Item eighteen.
+    \item Item nineteen.
+    \item Item twenty, the last one, on the second page of the frame.
+  \end{itemize}
+\end{frame}
+
+\frame{
+  \frametitle{The command form}
+  This frame was written with \texttt{\textbackslash frame\{\ldots\}} rather
+  than the environment.
+}
+
+\begin{frame}[plain]
+  \frametitle{Plain}
+  A plain frame has no headline, footline or sidebars, and the text width
+  is the full paper width minus the margins.
+\end{frame}
+
+\begin{frame}
+  \frametitle{The end}
+  The last frame.
+  \note{A second note, also hidden.}
+\end{frame}
+
+\end{document}

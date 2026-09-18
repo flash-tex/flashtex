@@ -100,24 +100,24 @@ pub struct Command {
 
 impl Command {
     /// Whether completion may offer this command in a document of `class`.
-    /// A universal command is offered everywhere; a class-scoped one only
-    /// where it is defined, which means only in a document that declares its
-    /// class. `None` — a fragment `\input` into a root file, or the editor's
-    /// own prefix tests — therefore offers the universal commands alone.
+    /// A universal command is offered everywhere; a class-scoped one is
+    /// hidden only where the class is known and different. `None` is an
+    /// unknown class: with nothing to gate on, everything stays offered and
+    /// today's table order is untouched.
     ///
-    /// Offering a scoped command on an unknown class was the tempting
-    /// permissive reading, and it is the wrong one: a scoped command is a
-    /// text-mode entry, so in table order it *leads* the list, and `\fra`
-    /// would still mean `\frametitle` rather than `\frac` in every fragment.
-    /// The names at stake are asymmetric — beamer's and letter's few against
-    /// the most-used commands in LaTeX — and a fragment that really does use
-    /// one still completes it from its own text (Mac `Completion
-    /// .scanCommands`). This is the rule the Mac editor implements in
-    /// `Completion.Vocabulary.Entry.offered(inClass:)`.
+    /// Permissive on `None` is deliberate. Two-thirds of the real `.tex`
+    /// files in the corpora declare no `\documentclass` — they are the
+    /// included chapters and slide files of multi-file projects, and they use
+    /// `\frametitle` on first use — so a strict reading would take beamer's
+    /// commands away from a beamer deck's own section files. The Mac editor
+    /// (`Completion.Vocabulary.Entry.offered(inClass:)`) resolves the class
+    /// from the project's root document before it reaches this rule, so
+    /// `None` is only ever a file with no project, where hiding nothing is
+    /// the safe answer.
     pub fn offered_in_class(&self, class: Option<&str>) -> bool {
         match (self.requires_class, class) {
             (None, _) => true,
-            (Some(_), None) => false,
+            (Some(_), None) => true,
             (Some(required), Some(class)) => required == class,
         }
     }
@@ -204,14 +204,18 @@ fn requires_class(name: &str) -> Option<&'static str> {
 }
 
 /// Dispatch arms that are not `parser::BUILT_INS` entries: amsthm's
-/// `newtheorem`/`theoremstyle`, and soul's `so`/`hl`. The soul names stay
+/// `newtheorem`/`theoremstyle`, soul's `so`/`hl`, and amsmath's
+/// `text`/`boxed` in text mode (both stay user-definable: neither
+/// is a kernel command, so the expansion engine must leave them
+/// undefined exactly as for soul above). The soul names stay
 /// out of `BUILT_INS` on purpose — the expansion engine must leave them
 /// undefined so a user's own `\newcommand{\hl}`/`\newcommand{\so}` wins
 /// when soul is not loaded (neither is a kernel command); the parser arm
 /// still diagnoses a bare use without `\usepackage{soul}` and implements
 /// the built-in behavior with it. They are implemented commands, so the
 /// diagnostic vocabulary (`crate::vocabulary`) counts them as known.
-pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &["newtheorem", "theoremstyle", "so", "hl"];
+pub(crate) const TEXT_EXTRA_ARMS: &[&str] =
+    &["newtheorem", "theoremstyle", "so", "hl", "text", "boxed", "enquote"];
 
 /// Canonical commands the expansion pass executes itself (engine primitives
 /// and kernel-prelude macros of `flashtex-tex-expansion`); their effect
@@ -242,6 +246,7 @@ const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("ignorespaces", "", "skips the spaces that follow"),
     ("jobname", "", "expands to texput"),
     ("ifthenelse", "{test}{true}{false}", "the ifthen package's conditional: \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests select one branch at expansion time"),
+    ("iftoggle", "{name}{true}{false}", "the etoolbox toggle conditional: the named toggle (\\newtoggle/\\providetoggle declare it false, \\toggletrue/\\togglefalse set it) selects one branch at expansion time"),
 ];
 
 /// (name, arguments, description) for every `parser::BUILT_INS` entry that
@@ -364,7 +369,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("vspace", "{dimension}", "ends the paragraph and adds fixed vertical space"),
     ("hrule", "", "full-measure horizontal rule"),
     ("newpage", "", "forces a page break"),
-    ("pagestyle", "{style}", "accepted; no headers or footers are rendered"),
+    ("pagestyle", "{style}", "records a page-style switch per page: fancy ships the fancyhead/fancyfoot fields, every other style renders no headers or footers"),
     ("noindent", "", "accepted no-op; paragraphs are never indented"),
     ("subsubsection", "{...}", "numbered subsubsection heading; starred form unnumbered"),
     ("paragraph", "{...}", "run-in heading: bold, flush, set into the first line of the paragraph that follows it"),
@@ -415,14 +420,18 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("LaTeX", "", "latex.ltx logo: L, kern -.36em, script-size A raised to the T height, kern -.15em, \\TeX"),
     ("LaTeXe", "", "\\LaTeX, kern .15em, 2 and a text-style subscript varepsilon"),
     ("rule", "[raise]{dimension}{dimension}", "filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \\textwidth, \\linewidth, \\columnwidth"),
+    ("strut", "", "zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \\strutbox)"),
     ("uline", "{...}", "ulem underline: 0.4pt rule under the argument (single-line; needs ulem)"),
     ("underline", "{...}", "kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox"),
     ("underbar", "{...}", "kernel text underline: Rule 10 rule like \\underline but content depth zeroed (fixed position)"),
     ("sout", "{...}", "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)"),
     ("so", "{...}", "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)"),
     ("hl", "{...}", "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)"),
+    ("enquote", "{text}", "csquotes: wraps text in typographic quotation marks; nesting alternates double \\u{201c}\\u{201d} and single \\u{2018}\\u{2019} (needs csquotes)"),
     ("textsuperscript", "{...}", "kernel text superscript: argument at \\sf@size raised like a math superscript (single-line)"),
     ("textsubscript", "{...}", "kernel text subscript: argument at \\sf@size lowered like a math subscript (single-line)"),
+    ("text", "{...}", "amsmath text in text mode: outside math simply \\mbox, the argument as one unbreakable box in the current style"),
+    ("boxed", "{...}", "amsmath box in text mode: the argument with a drawn frame (\\fbox with math inside)"),
     ("thinspace", "", "text kern .16667em (math: thin muskip)"),
     ("negthinspace", "", "text kern -.16667em"),
     ("medspace", "", "text kern .2222em"),
@@ -463,8 +472,18 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("newcolumn", "", "multicol: ends the current column of multicols, filling it"),
     ("raggedcolumns", "", "multicol: columns keep their natural height"),
     ("flushcolumns", "", "multicol: columns are stretched to one height (the default)"),
-    ("thispagestyle", "{style}", "accepted; no headers or footers are rendered"),
+    ("thispagestyle", "{style}", "records a one-page style switch: fancy ships the fancyhead/fancyfoot fields, every other style renders no headers or footers"),
     ("pagenumbering", "{style}", "resets the page counter to 1 and selects the \\thepage/\\pageref style (arabic, roman, Roman, alph, Alph); unknown styles fall back to arabic"),
+    ("fancyhead", "[pos]{...}", "fancyhdr: sets the header fields for positions L, C, R (combinable with E/O, as in [LE,RO]); empty content clears them"),
+    ("fancyfoot", "[pos]{...}", "fancyhdr: sets the footer fields for positions L, C, R (combinable with E/O, as in [LE,RO]); empty content clears them"),
+    ("fancyhf", "[pos]{...}", "fancyhdr: sets all six header and footer fields at once; empty content clears them"),
+    ("lhead", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
+    ("chead", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
+    ("rhead", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
+    ("lfoot", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
+    ("cfoot", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
+    ("rfoot", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
+    ("fancypagestyle", "{style}{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
     ("centering", "", "centres the following paragraphs"),
     ("Centering", "", "centres the following paragraphs (ragged2e form)"),
     ("raggedright", "", "left-aligned following paragraphs"),
@@ -849,6 +868,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["cancel", "bcancel", "xcancel"],
+        "{body}",
+        "cancel package: diagonal line(s) through the body (forward slash, backward slash, or X)",
+        true,
+    ),
+    (
         &["dashrightarrow", "dasharrow", "dashleftarrow"],
         "",
         "amsfonts dashed arrow: two msam \\dabar@ pieces and a head in one relation",
@@ -1042,6 +1067,7 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
         "numbered list; article labels per depth, enumitem label/label*/shortlabels, start and resume",
     ),
     ("description", "list of bold \\item[term] labels"),
+    ("list", "kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep"),
     ("tabular", "table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \\extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned"),
     ("tabular*", "table of a given width"),
     ("verbatim", "literal monospaced lines"),
@@ -1113,9 +1139,19 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "tabular >{} <{} !{} m b w columns, \\newcolumntype and \\extrarowheight",
     ),
     (
+        "tabularx",
+        "",
+        "the tabularx environment and its X column, splitting the table's leftover width evenly",
+    ),
+    (
         "booktabs",
         "",
         "\\toprule, \\midrule, \\bottomrule, \\cmidrule(trim), \\addlinespace, \\specialrule, \\morecmidrules",
+    ),
+    (
+        "cancel",
+        "",
+        "\\cancel (forward diagonal), \\bcancel (backward diagonal) and \\xcancel (X) through a math expression; \\cancelto is diagnosed",
     ),
     (
         "longtable",
@@ -1178,6 +1214,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "\\larger/\\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size",
     ),
     (
+        "fancyhdr",
+        "",
+        "\\pagestyle{fancy} ships the \\fancyhead/\\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \\fancyhf clears all six fields; \\lhead and friends plus \\fancypagestyle are diagnosed where they are used",
+    ),
+    (
         "xspace",
         "",
         "\\xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)",
@@ -1186,6 +1227,16 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "ifthen",
         "",
         "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used",
+    ),
+    (
+        "csquotes",
+        "",
+        "\\enquote: typographic quotation marks, alternating double/single on nesting",
+    ),
+    (
+        "etoolbox",
+        "",
+        "toggle booleans: \\newtoggle/\\providetoggle declare a false toggle, \\toggletrue/\\togglefalse set it, \\iftoggle{name}{true}{false} selects a branch at expansion time; a duplicate \\newtoggle and any use of an undefined toggle are diagnosed where they are used and leave existing state alone. The rest of etoolbox (patching, hooks, list processing) is diagnosed where it is used",
     ),
 ];
 

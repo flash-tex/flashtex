@@ -379,5 +379,5 @@ fn preamble_scanner() {
     assert_eq!(g.package_options, "margin=1in, includehead");
     assert_eq!(g.calls, vec!["top=2cm".to_string()]);
     assert_eq!(s.pagestyle, Some(PageStyle::Headings));
-    assert!(DocumentSetup::from_preamble(r"\documentclass{beamer}").is_none());
+    assert!(DocumentSetup::from_preamble(r"\documentclass{memoir}").is_none());
 }

@@ -1,0 +1,84 @@
+\documentclass{beamer}
+% Default theme, navigation symbols left ON (beamer's default): this is the
+% "no theme chosen" deck. beamer-madrid is the same content with a theme.
+
+\title{Incremental Typesetting}
+\subtitle{Why a from-scratch engine can be fast}
+\author{J. Whitfield}
+\institute{FlashTeX corpus}
+\date{March 2026}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\begin{frame}
+  \frametitle{Outline}
+  A slide deck is a sequence of frames. Each frame is a page of paper that is
+  128\,mm wide and 96\,mm tall, typeset in a sans-serif face with no paragraph
+  indentation and a small skip between paragraphs.
+
+  This deck has six content frames after the title page. The text on this
+  page is deliberately long enough to wrap onto several lines so that the
+  line breaks inside a frame can be measured against the reference.
+\end{frame}
+
+\section{Motivation}
+
+\begin{frame}
+  \frametitle{The problem}
+  \begin{itemize}
+    \item Every keystroke re-runs the whole document.
+    \item A page that did not change is typeset again anyway.
+    \item Fonts are loaded from scratch on every run.
+    \item The result is a preview that lags the editor by seconds.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+  \frametitle{What we keep}
+  \begin{enumerate}
+    \item The token stream of every paragraph, keyed by its source span.
+    \item The shaped glyph runs of every unchanged paragraph.
+    \item The page breaks up to the first changed page.
+  \end{enumerate}
+
+  Only the paragraph under the cursor is reshaped; the rest is replayed.
+\end{frame}
+
+\section{Design}
+
+\begin{frame}
+  \frametitle{Pipeline}
+  The compiler produces a paragraph list. The renderer breaks lines with the
+  Knuth--Plass algorithm and builds pages. The exporter writes the PDF.
+
+  \begin{itemize}
+    \item compiler: tokens $\to$ paragraphs
+    \item render pipeline: paragraphs $\to$ pages
+    \item pdf: pages $\to$ bytes
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Measuring}
+  We compare word positions against pdfLaTeX at 144\,dpi. A page counts as
+  matching when every aligned word is within one point of its reference
+  position and the differing pixels are below one percent.
+
+  \begin{enumerate}
+    \item Render both documents.
+    \item Align the words by text.
+    \item Report the largest deltas first.
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Summary}
+  Caching the paragraph layer gives most of the win; caching pages gives the
+  rest. The oracle stays outside the product.
+\end{frame}
+
+\end{document}

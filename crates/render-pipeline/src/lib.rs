@@ -216,6 +216,8 @@ pub fn render_windowed(
         _ => None,
     });
     let paths: Vec<&str> = documents.iter().map(|d| d.path).collect();
+    // The sources as read, before the float and multicol masks.
+    let sources: Vec<&str> = documents.iter().map(|d| d.text).collect();
     let entry_index = documents.iter().position(|d| d.path == entry_path).unwrap_or(0);
     // Floats are numbered, and listed, in the order the `\input`/`\include`
     // tree is read, not in `documents` order.
@@ -334,6 +336,20 @@ pub fn render_windowed(
         }
         diagnostics.extend(float_diagnostics);
         let mut ctx = typeset::Context::with_texts(fonts, &doc.style, &paths, &texts);
+        // A float body's `tikzpicture` is compiled from the unmasked bytes
+        // (`typeset::Context::sources`, #884).
+        ctx.set_sources(&sources);
+        // The typesetter re-reads source bytes at the spans its blocks
+        // carry: `picture_block` compiles the `tikzpicture` body, math
+        // re-reads its atoms, `\verb` checks its typed characters. Those
+        // spans reach inside float bodies (and `multicols` bodies), whose
+        // bytes the masked `texts` above blanked -- so an in-float picture
+        // compiled to empty, rendering nothing and reserving no height
+        // (#884). The mask exists only for the compiler parse and the
+        // adapter; the typesetter needs the original bytes (same length,
+        // so every span still indexes them).
+        let original: Vec<&str> = documents.iter().map(|d| d.text).collect();
+        let mut ctx = typeset::Context::with_texts(fonts, &doc.style, &paths, &original);
         ctx.set_math_colors(doc.math_colors.clone());
         ctx.set_reading_order(labels.reading_order.clone());
         typeset::multicol::attach(&mut ctx, &multicol_scans);

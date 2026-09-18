@@ -139,6 +139,25 @@ pub struct Expansion {
 /// and "Illegal unit of measure" on whatever follows it; real enumitem
 /// stores the keyval text unexecuted, where the bare register is already a
 /// complete dimension. The star is preserved for the parser.
+///
+/// `etoolbox`'s toggle booleans (`\newtoggle`/`\providetoggle` declare a
+/// false toggle, `\toggletrue`/`\togglefalse` set it,
+/// `\iftoggle{name}{true}{false}` selects a branch) mirror etoolbox.sty's
+/// own representation: `etb@tgl@<name>` `\let` to `\@firstoftwo` (true) or
+/// `\@secondoftwo` (false), tested with the kernel's `\@ifundefined` under
+/// `\makeatletter` (so a `\relax`-valued name still counts as undefined,
+/// and `@` tokenizes as a letter). The document engine has no `\errmessage`
+/// (it exists only on the INITEX probe path), so a duplicate `\newtoggle`
+/// and any use of an undefined toggle expand to a never-defined marker
+/// (`\etb@err@toggledefined` / `\etb@err@notoggle`, the latter named after
+/// etoolbox.sty's own error site): the parser reports it as an
+/// `unknown_command` error at the use span while existing state is left
+/// alone, matching the package's error-and-continue recovery. Like the
+/// package, `\iftoggle` takes only the name: the two branches stay braced
+/// in the input so `\@firstoftwo`/`\@secondoftwo` select whole groups (a
+/// three-argument form would strip the braces and select single tokens).
+/// The definitions are `\protected`, as the package's `\newrobustcmd*`
+/// ones are, and always installed, exactly like the `ifthen` primitives.
 pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
@@ -148,6 +167,13 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\setlength#1#2{\\ifdefined#1#1 #2\\relax\\else\\flashtexsetlength{#1}{#2}\\fi}%
 \\def\\addtolength#1#2{\\ifdefined#1\\advance#1 #2\\relax\\else\\flashtexaddtolength{#1}{#2}\\fi}%
 \\def\\setlist{\\flashtexsetlist}%
+\\makeatletter
+\\protected\\def\\newtoggle#1{\\@ifundefined{etb@tgl@#1}{\\expandafter\\let\\csname etb@tgl@#1\\endcsname\\@secondoftwo}{\\etb@err@toggledefined}}%
+\\protected\\def\\providetoggle#1{\\@ifundefined{etb@tgl@#1}{\\expandafter\\let\\csname etb@tgl@#1\\endcsname\\@secondoftwo}{}}%
+\\protected\\def\\toggletrue#1{\\@ifundefined{etb@tgl@#1}{\\etb@err@notoggle}{\\expandafter\\let\\csname etb@tgl@#1\\endcsname\\@firstoftwo}}%
+\\protected\\def\\togglefalse#1{\\@ifundefined{etb@tgl@#1}{\\etb@err@notoggle}{\\expandafter\\let\\csname etb@tgl@#1\\endcsname\\@secondoftwo}}%
+\\protected\\def\\iftoggle#1{\\@ifundefined{etb@tgl@#1}{\\etb@err@notoggle\\@gobbletwo}{\\csname etb@tgl@#1\\endcsname}}%
+\\makeatother
 \\long\\def\\flashtexdeclaremathop#1#2#3{\\newcommand#2{\\operatorname#1{#3}}}%
 \\expandafter\\def\\expandafter\\DeclareMathOperator\\expandafter{\\csname @ifstar\\endcsname{\\flashtexdeclaremathop*}{\\flashtexdeclaremathop{}}}%
 \\def\\arraystretch{1}%
@@ -840,13 +866,33 @@ fn document_fonts(documents: &[SourceDocument<'_>]) -> DocumentFonts {
             };
             match name.as_str() {
                 "documentclass" if class_pt.is_none() => {
-                    let (options, _) = option_and_group_words(&tokens, index + 1);
+                    let (options, group) = option_and_group_words(&tokens, index + 1);
                     class_pt = options.split(',').find_map(|option| match option.trim() {
                         "10pt" => Some(10.0),
                         "11pt" => Some(11.0),
                         "12pt" => Some(12.0),
                         _ => None,
                     });
+                    // KOMA classes default to 11pt and take `fontsize=11pt`;
+                    // the legacy `10pt`/`11pt`/`12pt` names above already won
+                    // when present.
+                    if class_pt.is_none()
+                        && matches!(
+                            group.trim(),
+                            "scrartcl" | "scrarticle" | "scrreprt" | "scrbook"
+                        )
+                    {
+                        class_pt = options
+                            .split(',')
+                            .filter_map(|option| {
+                                option.trim().strip_prefix("fontsize=").map(str::trim)
+                            })
+                            .filter_map(|v| {
+                                v.strip_suffix("pt").unwrap_or(v).parse::<f64>().ok()
+                            })
+                            .next()
+                            .or(Some(11.0));
+                    }
                 }
                 "usepackage" => {
                     let (options, group) = option_and_group_words(&tokens, index + 1);
@@ -1948,6 +1994,38 @@ fn include(
 #[cfg(test)]
 mod tests {
     use super::after_bracket_option;
+    use super::document_fonts;
+    use crate::parser::SourceDocument;
+
+    fn class_pt_of(preamble: &str) -> f64 {
+        let doc = SourceDocument {
+            path: "main.tex",
+            text: preamble,
+        };
+        document_fonts(std::slice::from_ref(&doc)).setup.class_pt
+    }
+
+    /// KOMA classes default to 11pt and honour `fontsize=`; the legacy
+    /// size names keep working and keep winning when present.
+    #[test]
+    fn koma_document_font_size() {
+        assert_eq!(class_pt_of("\\documentclass{scrartcl}\n\\begin{document}"), 11.0);
+        assert_eq!(class_pt_of("\\documentclass{scrreprt}\n\\begin{document}"), 11.0);
+        assert_eq!(class_pt_of("\\documentclass{scrbook}\n\\begin{document}"), 11.0);
+        assert_eq!(
+            class_pt_of("\\documentclass[fontsize=12pt]{scrartcl}\n\\begin{document}"),
+            12.0
+        );
+        assert_eq!(
+            class_pt_of("\\documentclass[10pt]{scrartcl}\n\\begin{document}"),
+            10.0
+        );
+        assert_eq!(class_pt_of("\\documentclass{article}\n\\begin{document}"), 10.0);
+        assert_eq!(
+            class_pt_of("\\documentclass[11pt]{article}\n\\begin{document}"),
+            11.0
+        );
+    }
 
     /// The byte index just past the options that `after_bracket_option`
     /// finds in `text` (whose `[` follows `\begin{lstlisting}` at index 0).

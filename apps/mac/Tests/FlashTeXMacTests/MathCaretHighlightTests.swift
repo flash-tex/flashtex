@@ -154,6 +154,124 @@ final class MathCaretHighlightTests: XCTestCase {
         XCTAssertEqual(box.itemIndices, Array(2...8))
     }
 
+    // MARK: the caret's paragraph band
+
+    /// Blank-line delimited paragraphs in the source: the byte after the
+    /// previous blank line to the newline before the next one.
+    func testParagraphBoundsAreBlankLineDelimited() {
+        let tex = "\\begin{document}\nOne one\none.\n\nTwo two\n  \t\nThree.\n\\end{document}\n"
+        let one = Array(tex.utf8).firstIndex(of: UInt8(ascii: "O"))!
+        let two = Array(tex.utf8).firstIndex(of: UInt8(ascii: "T"))!
+        let three = (tex.range(of: "Three")!.lowerBound).utf16Offset(in: tex)
+        XCTAssertEqual(V2Geometry.paragraphBounds(containing: one + 3, in: tex), 0..<one + "One one\none.".utf8.count, "the first paragraph runs from the start")
+        XCTAssertEqual(V2Geometry.paragraphBounds(containing: two + 1, in: tex), two..<two + "Two two".utf8.count, "a whitespace-only line is blank")
+        XCTAssertEqual(V2Geometry.paragraphBounds(containing: three, in: tex), three..<tex.utf8.count - 1, "the last runs to the final newline")
+        XCTAssertTrue(V2Geometry.paragraphBounds(containing: two - 1, in: tex).isEmpty, "a caret on the blank line has no paragraph")
+        XCTAssertEqual(V2Geometry.paragraphBounds(containing: two - 2, in: tex), 0..<two - 2, "the caret before the newline ending `one.` is still on that line")
+        XCTAssertEqual(V2Geometry.paragraphBounds(containing: one + 7, in: tex).lowerBound, 0, "the caret at a line end belongs to that line")
+        XCTAssertEqual(V2Geometry.paragraphBounds(containing: 99_999, in: tex), tex.utf8.count..<tex.utf8.count, "out of range clamps to the empty end")
+        XCTAssertEqual(V2Geometry.paragraphBounds(containing: 2, in: "no newline at all"), 0..<17)
+    }
+
+    /// The real producer's list (`display-list-v2-window`, one paragraph per
+    /// page): the caret in the second paragraph bands exactly the second's
+    /// rows on its page and nothing on the first's.
+    func testCaretInTheSecondParagraphBandsOnlyThatParagraphsRows() throws {
+        let env = try RenderingV2.decode(try Data(contentsOf: Self.fixtures.appendingPathComponent("display-list-v2-window.json")))
+        let tex = try String(contentsOf: Self.fixtures.appendingPathComponent("display-list-v2-window.tex"), encoding: .utf8)
+        XCTAssertEqual(SourceDigest.sha256Hex(tex), env.payload.documents[0].sha256)
+        let first = try XCTUnwrap(env.payload.pages.first { $0.number == 3 && $0.resident })
+        let second = try XCTUnwrap(env.payload.pages.first { $0.number == 4 && $0.resident })
+        // The caret on the first word of the paragraph page 4 lays out.
+        guard case .glyphRun(let run) = second.items[0], let source = run.clusters[0].sources?.first else { return XCTFail() }
+        let caret = source.startByte + 3
+        let paragraph = V2Geometry.paragraphBounds(containing: caret, in: tex)
+        XCTAssertTrue(paragraph.contains(source.startByte))
+        // The fixture writes `\newpage` on the line right before the text, so it opens the paragraph.
+        let paragraphText = String(decoding: Array(tex.utf8)[paragraph], as: UTF8.self)
+        XCTAssertTrue(paragraphText.hasPrefix("\\newpage\nHello world."), paragraphText.prefix(30).description)
+        XCTAssertEqual(paragraphText.components(separatedBy: "\\newpage").count, 2, "the blank line after the text ends it before the next \\newpage")
+
+        let onFirst = V2Geometry.caretHighlights(containing: caret, path: "main.tex", in: first, paragraph: paragraph)
+        XCTAssertTrue(onFirst.isEmpty, "nothing of the first paragraph's page is in the band: \(onFirst)")
+
+        let onSecond = V2Geometry.caretHighlights(containing: caret, path: "main.tex", in: second, paragraph: paragraph)
+        XCTAssertEqual(onSecond.count, 2, "the caret's own cluster plus one band: \(onSecond)")
+        guard case .cluster = onSecond[0], case .paragraph(let band) = onSecond[1] else { return XCTFail("\(onSecond)") }
+        XCTAssertEqual(band.source, RuntimeV1.SourceRange(path: "main.tex", startByte: paragraph.lowerBound, endByte: paragraph.upperBound))
+        // Every word of the paragraph, none of the page number (it carries no source).
+        let words = second.items.filter { if case .glyphRun(let r) = $0 { return r.clusters.contains { $0.sources?.isEmpty == false } } else { return false } }
+        XCTAssertEqual(band.itemCount, words.count)
+        let wordTops = Set(words.flatMap { item -> [Int64] in guard case .glyphRun(let r) = item else { return [] }; return r.clusters.flatMap { $0.hitRects.map(\.top) } })
+        XCTAssertEqual(band.rows.count, wordTops.count, "one band per line row")
+        XCTAssertEqual(band.rows.map(\.top), band.rows.map(\.top).sorted(), "top to bottom")
+        for row in band.rows { XCTAssertTrue(wordTops.contains(row.top)); XCTAssertGreaterThan(row.width, 0) }
+        let pageNumberTop = second.items.compactMap { item -> Int64? in
+            guard case .glyphRun(let r) = item, r.clusters.allSatisfy({ $0.sources?.isEmpty ?? true }) else { return nil }
+            return r.clusters.first?.hitRects.first?.top
+        }.first
+        XCTAssertNotNil(pageNumberTop)
+        XCTAssertFalse(band.rows.contains { $0.top == pageNumberTop }, "the page number is not in the paragraph")
+
+        // Without a paragraph (the preference off) nothing changes.
+        XCTAssertEqual(V2Geometry.caretHighlights(containing: caret, path: "main.tex", in: second).count, 1)
+        // The band is gated per page on the source bounds, so the first page never walks its items.
+        let prepared = try V2Frame.prepare(env).prepared
+        XCTAssertFalse(prepared[2].mayOverlap(paragraph, path: "main.tex"))
+        XCTAssertTrue(prepared[3].mayOverlap(paragraph, path: "main.tex"))
+        XCTAssertTrue(PreviewV2View.caretHighlights(page: first, prepared: prepared[2], byte: caret, path: "main.tex", paragraph: paragraph).isEmpty)
+        XCTAssertEqual(PreviewV2View.caretHighlights(page: second, prepared: prepared[3], byte: caret, path: "main.tex", paragraph: paragraph).count, 2)
+    }
+
+    /// Two paragraphs on ONE page (synthetic, 1:1 clusters): the band merges
+    /// the second's rectangles by row — a superscript's taller box shares its
+    /// line's row — and leaves the first's rows alone.
+    func testBandRowsMergeVerticallyOverlappingRectsAndSkipTheOtherParagraph() {
+        let tex = "A a\nA a\n\nB b\nB b^2\n"
+        func cluster(_ byte: Int, x: Int64, top: Int64, h: Int64 = 100) -> RenderingV2.Cluster {
+            RenderingV2.Cluster(textStartByte: 0, textEndByte: 1, hitRects: [RenderingV2.Rect(x: x, top: top, width: 80, height: h)], carets: [],
+                                sources: [RuntimeV1.SourceRange(path: "main.tex", startByte: byte, endByte: byte + 1)])
+        }
+        func run(_ clusters: [RenderingV2.Cluster]) -> RenderingV2.Item {
+            .glyphRun(RenderingV2.GlyphRun(fontId: "f", fontSize: 10, text: "x", glyphs: [], clusters: clusters, paint: .black))
+        }
+        let b = tex.utf8.firstIndex(of: UInt8(ascii: "B"))!.utf16Offset(in: tex)
+        let page = RenderingV2.Page(number: 1, width: 10_000, height: 10_000, items: [
+            run([cluster(0, x: 100, top: 1000), cluster(2, x: 200, top: 1000)]),
+            run([cluster(4, x: 100, top: 1200), cluster(6, x: 200, top: 1200)]),
+            run([cluster(b, x: 100, top: 1600), cluster(b + 2, x: 200, top: 1600)]),
+            run([cluster(b + 4, x: 100, top: 1800), cluster(b + 6, x: 200, top: 1800), cluster(b + 8, x: 280, top: 1760, h: 70)]),
+            .rule(RenderingV2.Rule(x: 100, top: 1890, width: 260, height: 5, paint: .black, sources: [RuntimeV1.SourceRange(path: "main.tex", startByte: b + 4, endByte: b + 9)])),
+        ])
+        let paragraph = V2Geometry.paragraphBounds(containing: b + 4, in: tex) // the second row's `B`
+        XCTAssertEqual(paragraph, b..<tex.utf8.count - 1)
+        let hs = V2Geometry.caretHighlights(containing: b + 4, path: "main.tex", in: page, paragraph: paragraph)
+        guard hs.count == 2, case .paragraph(let band) = hs[1] else { return XCTFail("\(hs)") }
+        XCTAssertEqual(band.itemCount, 3)
+        XCTAssertEqual(band.rows, [
+            RenderingV2.Rect(x: 100, top: 1600, width: 180, height: 100),
+            RenderingV2.Rect(x: 100, top: 1760, width: 260, height: 140), // the superscript, the line and the rule share a row
+        ])
+        // The caret in the first paragraph bands its two rows only.
+        let firstParagraph = V2Geometry.paragraphBounds(containing: 1, in: tex)
+        let onFirst = V2Geometry.caretHighlights(containing: 1, path: "main.tex", in: page, paragraph: firstParagraph)
+        guard case .paragraph(let firstBand)? = onFirst.last else { return XCTFail("\(onFirst)") }
+        XCTAssertEqual(firstBand.rows.map(\.top), [1000, 1200])
+    }
+
+    /// The pane's memo: a stale frame keeps the previous band, a verified one
+    /// recomputes it, and a switch of document drops it.
+    func testParagraphMemoHoldsTheBandAcrossAStaleFrame() {
+        let memo = CaretParagraphMemo()
+        let text = "one\n\ntwo\n\nthree"
+        XCTAssertEqual(memo.range(stale: true, byte: 1, path: "a.tex", text: text), 0..<3, "nothing held yet: computed from the buffer (nothing to flash from)")
+        XCTAssertEqual(memo.range(stale: true, byte: 6, path: "a.tex", text: text), 0..<3, "stale: the previous band, whatever the caret did")
+        XCTAssertEqual(memo.range(stale: false, byte: 6, path: "a.tex", text: text), 5..<8, "verified: recomputed")
+        XCTAssertEqual(memo.range(stale: false, byte: nil, path: "a.tex", text: text), 5..<8, "no caret keeps the last band of the same document")
+        XCTAssertEqual(memo.range(stale: true, byte: 1, path: "b.tex", text: text), 0..<3, "another document: never the old document's band")
+        XCTAssertNil(memo.range(stale: false, byte: nil, path: "a.tex", text: text), "back without a caret: nothing of a.tex is held")
+    }
+
     func testModelReportsTheFormulaBoxUnderTheEditorCaret() throws {
         let store = V2FontStore(directories: [Self.fontsDir.path])
         guard store.fonts.contains(where: { $0.url.lastPathComponent == "latinmodern-math.otf" }) else { throw XCTSkip("bundled math font missing") }

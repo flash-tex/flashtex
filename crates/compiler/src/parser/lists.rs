@@ -47,6 +47,12 @@ pub enum ListEnvironment {
     Itemize,
     Enumerate,
     Description,
+    /// `\begin{list}{default-label}{decl}` (latex.ltx 15848-15869): the
+    /// kernel primitive `itemize`/`enumerate`/`description` are built on.
+    /// `decl` runs as ordinary body content (a group), so its `\setlength`
+    /// declarations route to the open list; the default label is kept as
+    /// the open list's template for `\item`s without `[<label>]`.
+    List,
     /// `thebibliography` (article.cls 566-577: a `\list` of `\bibitem`s).
     Bibliography,
     Quote,
@@ -60,6 +66,7 @@ impl ListEnvironment {
             "itemize" => ListEnvironment::Itemize,
             "enumerate" => ListEnvironment::Enumerate,
             "description" => ListEnvironment::Description,
+            "list" => ListEnvironment::List,
             "thebibliography" => ListEnvironment::Bibliography,
             "quote" => ListEnvironment::Quote,
             "quotation" => ListEnvironment::Quotation,
@@ -73,6 +80,7 @@ impl ListEnvironment {
             ListEnvironment::Itemize => "itemize",
             ListEnvironment::Enumerate => "enumerate",
             ListEnvironment::Description => "description",
+            ListEnvironment::List => "list",
             ListEnvironment::Bibliography => "thebibliography",
             ListEnvironment::Quote => "quote",
             ListEnvironment::Quotation => "quotation",

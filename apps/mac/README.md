@@ -973,10 +973,13 @@ explain that nothing is loaded.
 | Shortcut | Action |
 |---|---|
 | ⌘, | Settings window (editor preferences: font, wrapping, tab width, indent, appearance, auto-close brackets & math, completion list; Tab walks the controls top to bottom) |
+| FlashTeX > Check for Updates… | Check for updates: asks GitHub Releases (`flash-tex/flashtex`, `/releases/latest`) for the newest version and shows installed vs available with the release notes; Download opens the release page in the browser, Skip This Version silences the background check for that tag. Nothing is downloaded or installed by the app (#694 slice 1). Settings > Updates > *Check for updates automatically* (off by default) checks once a day after launch and only speaks up when a newer release exists |
 | ⌘O | Open LaTeX file… (becomes the `main.tex` entry document; compiles if a worker is attached) |
 | ⌘⌥N | New Project… sheet (folder, name, template: Blank article / Article with sections / Report with chapters / Homework sheet; writes `<folder>/<name>/main.tex` plus its `\input`/`\include` members, opens `main.tex` as the entry document with the include tree in the sidebar; asks before replacing existing template files) |
 | ⌘N | New File… sheet (also the sidebar's + button and the project row's context menu): a rooted `.tex` name, subfolders allowed, never above the project root; "Insert `\input` at the caret" (on by default while the entry document is active) is one undoable edit; the file opens in a tab |
+| File > Move To… | Move file: the active document into another folder of the project (also "Move to…" in a project row's context menu; dragging a row onto another row moves it into that row's folder, onto the tree's empty space to the project root). Every `\input`/`\include`/`\includegraphics`/`\bibliography`/`\addbibresource`/`\lstinputlisting` that resolved to the file is rewritten to the new rooted path — one undoable edit per open document (⌘Z there), closed documents of the include tree on disk; refused for the entry document, with unsaved edits, or onto an existing file |
 | ⌘S / ⌘⇧S | Save / Save As… (UTF-8; header shows "— edited" when dirty) |
+| ⌘⌥R | Show in Finder: the active document's file, selected (also "Reveal in Finder" in a sidebar row's context menu; right-click the project tree's empty space for "Reveal Project in Finder") |
 | Edit > Restore Discarded Buffer | Brings back the unsaved text replaced by a "Discard" decision when opening another file |
 | ⌘⇧O | Open compile result fixture… (sibling `-request.json` seeds the editor) |
 | File > Reload Fixture | Reload Fixture (developer-only, no shortcut — confirms before replacing a real/unsaved document) |
@@ -1016,7 +1019,7 @@ explain that nothing is loaded.
 | ⌘G | Next match (while the Find in Project window is key: selects the next match, wrapping, and goes there) |
 | ⌘Z | Undo (including an approved capture insertion) |
 | Esc / ⌃Space | Completion popup (supported commands, `\end{…}` for open environments, labels, citation keys, document words; never takes the keyboard from the editor) |
-| ↑ / ↓ / Tab / ⇧Tab / Return | Completion list keys, while the list is open: ↑/↓ or Tab/⇧Tab choose the candidate (wrapping; VoiceOver announces “n of m: candidate, kind, origin”), Return/Enter inserts it over the typed token, Esc closes without inserting; typing narrows the list, any other caret move closes it |
+| ↑ / ↓ / Tab / ⇧Tab / Page Up / Page Down / Home / End / Return | Completion list keys, while the list is open: ↑/↓ or Tab/⇧Tab choose the candidate (wrapping; VoiceOver announces “n of m: candidate, kind, origin”), Page Up/Page Down move by a screenful of rows and Home/End go to the first/last row (never wrapping), Return/Enter inserts it over the typed token, Esc closes without inserting; typing narrows the list, any other caret move closes it |
 | ⌘⇧Space | Signature help for the command whose argument the caret is in (also opens on `{`/`[` typed after a command name; `}`, Esc or leaving the argument closes it) |
 | ⌘/ | Toggle `% ` line comment on the selection's lines |
 | ⌘L | Go to line… (1-based line, line:column, or +N/−N relative to the caret; out-of-range numbers clamp; `:42` in the command palette jumps directly) |
@@ -1039,6 +1042,10 @@ explain that nothing is loaded.
 | ⌘⇧T | Go to symbol: fuzzy picker over every heading, environment and label of the open documents |
 | ⌘⇧A | Select environment: the innermost `\begin{X}`…`\end{X}` around the caret, again for the enclosing one (a caret on `\begin`/`\end` highlights its partner) |
 | ⌘⇧W | Wrap selection in environment… (whole lines as an indented block, otherwise inline; one undoable edit) |
+| ⌘⇧B | Bold: wrap the selection in `\textbf{…}` (`\mathbf{…}` in math mode; one undoable edit, caret after the `}`, between the braces when nothing is selected). ⌘B is Compile |
+| ⌘I | Emphasize: wrap the selection in `\emph{…}` (`\mathit{…}` in math mode) |
+| ⌘U | Underline: wrap the selection in `\underline{…}` |
+| ⌘⌥W | Wrap selection in command… (asks for a command name; common commands first, then the document's own macros) |
 | ⌃⌘E | Change environment… (innermost pair; rewrites both `\begin` and `\end` names as one undo step; typing in either name updates the partner) |
 | ⌥⇧R | Rename symbol: the `\label` key or user command under the caret across the open documents (Plan → Apply; one undoable edit per document, one guarded `apply_group` per file with the helper) |
 | ⌘⇧] / ⌘⇧[ | Next / previous diagnostic (refused if its span was edited since the compile) |

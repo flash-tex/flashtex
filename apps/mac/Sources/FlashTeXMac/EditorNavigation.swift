@@ -168,7 +168,9 @@ enum EditorNavigation {
     struct Wrap: Equatable {
         var range: NSRange
         var replacement: String
-        /// Where the caret goes: at the start of the wrapped body.
+        /// Where the caret goes: at the start of the wrapped body for an
+        /// environment; after the `}` (or between the braces when nothing
+        /// was selected) for a command.
         var selection: NSRange
     }
 
@@ -207,6 +209,27 @@ enum EditorNavigation {
         let firstIndent = (lines.first ?? "").prefix(while: blank).utf16.count
         let caret = lineStart + head.utf16.count + unit.utf16.count + firstIndent
         return Wrap(range: block, replacement: out, selection: NSRange(location: caret, length: 0))
+    }
+
+    /// ⌘⇧B / ⌘I / ⌘U / ⌘⌥W: `\command{…}` around `selection`, always
+    /// inline (a command argument is never re-flowed onto its own lines).
+    /// `foo` + `textbf` → `\textbf{foo}` with the caret after the `}`; an
+    /// empty selection → `\textbf{|}`, the caret between the braces so the
+    /// `}` can be tracked as a pending closer (EditorKeyHandling.programmaticCloser).
+    static func wrap(selection: NSRange, in text: NSString, command: String) -> Wrap {
+        let location = max(0, min(selection.location, text.length))
+        let sel = NSRange(location: location, length: max(0, min(selection.length, text.length - location)))
+        let open = "\\" + command + "{"
+        let replacement = open + text.substring(with: sel) + "}"
+        let caret = sel.length > 0 ? sel.location + replacement.utf16.count : sel.location + open.utf16.count
+        return Wrap(range: sel, replacement: replacement, selection: NSRange(location: caret, length: 0))
+    }
+
+    /// The command a text-formatting shortcut resolves to: `math` when the
+    /// caret is known to be in math mode, else `text` (nil — no syntax model
+    /// to ask — is treated as text, the safe default).
+    static func wrapCommand(text: String, math: String, mathMode: Bool?) -> String {
+        mathMode == true ? math : text
     }
 
     // MARK: symbol rename

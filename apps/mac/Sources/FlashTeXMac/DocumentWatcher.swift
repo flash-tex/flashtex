@@ -112,6 +112,13 @@ extension ShellModel {
         if let existing = objc_getAssociatedObject(self, &Self.watcherKey) as? DocumentWatcher { return existing }
         let watcher = DocumentWatcher()
         watcher.onChange = { [weak self] in self?.watcherFired(retry: true) }
+        // A check dropped while a save was in flight runs once the save's late
+        // reply has settled (#831): by then nothing is outstanding to lose.
+        files.onSaveSettledLate = { [weak self] in
+            guard let self, pendingWatcherRecheck else { return }
+            pendingWatcherRecheck = false
+            watcherFired(retry: false)
+        }
         objc_setAssociatedObject(self, &Self.watcherKey, watcher, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         return watcher
     }
@@ -120,10 +127,14 @@ extension ShellModel {
     /// the file layer restarts a helper with an unanswered request, which would
     /// lose the late receipt the reconciliation waits for (the event is often
     /// that very save landing). Retry once after the helper wait; a reply that
-    /// arrives meanwhile settles the state itself.
+    /// arrives meanwhile settles the state itself. If the reply is *still*
+    /// outstanding at the retry, the event is not dropped (#831): the check is
+    /// re-armed exactly once for when the late reply has been reconciled
+    /// (`onSaveSettledLate`), so a genuine external change made while the save
+    /// was in flight is seen without waiting for the next filesystem event.
     private func watcherFired(retry: Bool) {
         if files.helperBusy {
-            guard retry else { return }
+            guard retry else { pendingWatcherRecheck = true; return }
             let wait = max(files.helperTimeout, 0.5)
             DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
                 MainActor.assumeIsolated { self?.watcherFired(retry: false) }
