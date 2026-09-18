@@ -899,6 +899,75 @@ fn newtheorem_successful_reclaim_inside_a_group_is_global() {
     assert!(out.contains(r"\endfoo "), "{out:?}");
 }
 
+/// Issue #835: `\hspace`/`\vspace` routed through the host shims
+/// (`\flashtexhspace`/`\flashtexvspace`, as the compiler's host prelude
+/// wires them) splice a bare or factored length register to its value
+/// text, so the register never reaches the stomach as an assignment.
+const SPACE_SHIM: &str = "\\def\\hspace{\\flashtexhspace}\\def\\vspace{\\flashtexvspace}";
+
+fn space_run(src: &str) -> String {
+    run(&format!("{SPACE_SHIM}{src}"))
+}
+
+#[test]
+fn space_shim_splices_bare_register_like_the() {
+    let setup = "\\newlength{\\mylen}\\setlength{\\mylen}{1em}";
+    // A bare register behaves exactly like the already-working `\the`
+    // form, and the value is the register's fixed-point text.
+    assert_eq!(
+        space_run(&format!("{setup}\\hspace{{\\mylen}}y")),
+        space_run(&format!("{setup}\\hspace{{\\the\\mylen}}y")),
+    );
+    assert_eq!(
+        space_run(&format!("{setup}\\hspace{{\\mylen}}y")),
+        "\\relax \\flashtexhspacedone 10.0pty",
+    );
+    // `\vspace` shares the shim.
+    assert_eq!(
+        space_run(&format!("{setup}\\vspace{{\\mylen}}y")),
+        "\\relax \\flashtexvspacedone 10.0pty",
+    );
+}
+
+#[test]
+fn space_shim_splices_factor_times_register() {
+    let setup = "\\newlength{\\mylen}\\setlength{\\mylen}{1em}\
+         \\newlength{\\zerolen}\\setlength{\\zerolen}{0pt}";
+    // TeX's `<factor><internal dimen>`: the fixed-point product.
+    assert_eq!(
+        space_run(&format!("{setup}\\hspace{{2\\mylen}}y")),
+        "\\relax \\relax \\flashtexhspacedone 20.0pty",
+    );
+    // A leading `-` negates the whole value, as `scan_dimen` does.
+    assert_eq!(
+        space_run(&format!("{setup}\\hspace{{-\\mylen}}y")),
+        "\\relax \\relax \\flashtexhspacedone -10.0pty",
+    );
+    // A factor times a register set to 0pt is 0pt, with no diagnostics.
+    assert_eq!(
+        space_run(&format!("{setup}\\hspace{{2\\zerolen}}y")),
+        "\\relax \\relax \\flashtexhspacedone 0.0pty",
+    );
+}
+
+#[test]
+fn space_shim_leaves_other_arguments_untouched() {
+    // A literal dimension passes through for the main loop exactly as
+    // before (group tokens stripped by `text`).
+    assert_eq!(space_run("\\hspace{1em}y"), "\\flashtexhspacedone 1emy");
+    // The star is preserved.
+    assert_eq!(
+        space_run("\\newlength{\\mylen}\\setlength{\\mylen}{1em}\\hspace*{\\mylen}y"),
+        "\\relax \\flashtexhspacedone *10.0pty",
+    );
+    // An undeclared register is not the shim's to report: it passes
+    // through with no engine diagnostic (the host parser names it).
+    assert_eq!(
+        space_run("\\hspace{\\nosuchlen}y"),
+        "\\flashtexhspacedone \\nosuchlen y",
+    );
+}
+
 #[test]
 fn newtheorem_second_declaration_of_the_same_name_errors() {
     // Like `\newenvironment`, a repeated declaration keeps the first
