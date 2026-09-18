@@ -2686,15 +2686,26 @@ impl MathParser<'_> {
                 }
                 (None, Some(glyph)) => symbol(glyph.into(), span),
                 (None, None) => {
+                    // Issue #846: pdflatex answers "Undefined control
+                    // sequence" and typesets nothing for a command it
+                    // cannot resolve, and the text path already drops
+                    // the command the same way. Emit a zero-width,
+                    // classless atom — the same "nothing" the null
+                    // delimiter (`\big.`) and the invisible
+                    // `\flashtexcurrentlabel` marker use: it lays out
+                    // zero items at zero width, `spacing_classes`
+                    // skips it so neighbours are spaced as if adjacent,
+                    // and a following `{...}` group or `^`/`_` script
+                    // still parses normally (pdflatex keeps both).
                     self.diagnostics.push(Diagnostic::command_error(
                         &name,
                         format!("\\{} is not supported in math mode", name),
                         Some(span),
-                        Some("typeset the command literally and continued".into()),
+                        Some("skipped the command and continued".into()),
                     )
                     .with_optional_help(crate::vocabulary::math_mode_help(&name))
                     .with_label(span, "this command", true));
-                    symbol(format!("\\{}", name), span)
+                    space(0.0, span)
                 }
             },
         }
@@ -6985,6 +6996,124 @@ mod unbraced_argument_tests {
             );
             assert_eq!(list.atoms[0].nucleus, Nucleus::Bold("\\alpha".into()));
         }
+    }
+
+    #[test]
+    fn unknown_math_command_is_dropped_but_still_diagnosed() {
+        // Issue #846. In math mode pdflatex answers "Undefined control
+        // sequence" and typesets nothing. Measured with
+        // `\documentclass{article}` under TeX Live 2026
+        // (`/Library/TeX/texbin/pdflatex`, pdfTeX 1.40.29):
+        // `$\alsonotreal + 1$` extracts as `+1.`, `$\notreal{x}+1$`
+        // keeps the argument's contents (`x + 1.` — the braces are just
+        // a group), `$\notreal$` leaves empty math (`.`), and
+        // `$a \notreal b$` extracts as `ab.` (no added space). The math
+        // path used to emit the command's literal name instead; like
+        // the text path it must emit nothing while keeping the
+        // `unknown_command` diagnostic.
+        let parse = |src: &str| {
+            let mut diagnostics = Vec::new();
+            let list = parse_tokens(
+                &crate::lexer::tokenize(src),
+                MathPackages::KERNEL,
+                &mut diagnostics,
+            );
+            (list, diagnostics)
+        };
+        fn collect(atoms: &[MathAtom], out: &mut Vec<String>) {
+            for atom in atoms {
+                match &atom.nucleus {
+                    Nucleus::Symbol(s) | Nucleus::Text(s) | Nucleus::Bold(s) => {
+                        out.push(s.clone())
+                    }
+                    Nucleus::Group(body) => collect(&body.atoms, out),
+                    _ => {}
+                }
+            }
+        }
+        let rendered_text = |list: &MathList| -> Vec<String> {
+            let mut out = Vec::new();
+            collect(&list.atoms, &mut out);
+            out
+        };
+        let assert_dropped = |src: &str, name: &str| {
+            let (list, diagnostics) = parse(src);
+            assert!(
+                !rendered_text(&list).iter().any(|s| s.contains(name)),
+                "{src}: leaked literal: {:?}",
+                list.atoms
+            );
+            assert_eq!(diagnostics.len(), 1, "{src}: {diagnostics:?}");
+            let diagnostic = &diagnostics[0];
+            assert_eq!(
+                diagnostic.message,
+                format!("\\{name} is not supported in math mode"),
+                "{src}"
+            );
+            assert_eq!(
+                diagnostic.code,
+                Some(crate::diagnostics::DiagnosticCode::UnknownCommand),
+                "{src}"
+            );
+            assert_eq!(
+                diagnostic.recovery.as_deref(),
+                Some("skipped the command and continued"),
+                "{src}"
+            );
+            list
+        };
+        // The issue's repro: the name must not reach the page.
+        let list = assert_dropped(r"\alsonotreal + 1", "alsonotreal");
+        assert_eq!(rendered_text(&list), ["+", "1"]);
+        // An argument's contents are kept: pdflatex renders `x + 1.`
+        // (the braces are just a group; a single-atom group flattens,
+        // so `x` surfaces as an ordinary atom after the zero space).
+        let list = assert_dropped(r"\notreal{x}+1", "notreal");
+        assert!(
+            matches!(&list.atoms[0].nucleus, Nucleus::Space { em, .. } if *em == 0.0),
+            "{:?}",
+            list.atoms
+        );
+        assert_eq!(rendered_text(&list), ["x", "+", "1"]);
+        // Start, end, and only-content positions: no crash, no stray box.
+        assert_dropped(r"\notreal a + b", "notreal");
+        assert_dropped(r"a + b \notreal", "notreal");
+        let (only, diagnostics) = parse(r"\notreal");
+        assert!(!diagnostics.is_empty(), "only-content keeps its diagnostic");
+        let mut layout_diagnostics = Vec::new();
+        let laid = layout(&only, 10.0, &mut layout_diagnostics);
+        assert!(laid.items.is_empty(), "only-content lays out nothing: {laid:?}");
+        assert!((laid.width - 0.0).abs() < 1e-9, "only-content has no width: {laid:?}");
+        // A following script still parses and renders, as in pdflatex
+        // (`$\notreal^2$` extracts as `2.`, `$a\notreal^2$` as `a2.`):
+        // it attaches to the zero-width atom instead of being dropped
+        // with a "script marker has no preceding math atom" diagnostic.
+        for (src, want) in [(r"\notreal^2", vec!["2"]), (r"a\notreal^2", vec!["a", "2"])] {
+            let (list, diagnostics) = parse(src);
+            assert_eq!(diagnostics.len(), 1, "{src}: {diagnostics:?}");
+            assert!(
+                diagnostics[0].message.contains("is not supported in math mode"),
+                "{src}: {diagnostics:?}"
+            );
+            let mut layout_diagnostics = Vec::new();
+            let laid = layout(&list, 10.0, &mut layout_diagnostics);
+            let texts: Vec<&str> = laid.items.iter().map(|item| item.text.as_str()).collect();
+            assert_eq!(texts, want, "{src}");
+        }
+        // Spacing: dropping must neither gain nor lose space versus the
+        // command-free control (pdflatex extracts `$a \notreal b$` as `ab.`).
+        let (reference, _) = parse("a b");
+        let (dropped, _) = parse(r"a \notreal b");
+        assert_eq!(rendered_text(&dropped), rendered_text(&reference));
+        let mut diagnostics = Vec::new();
+        let reference_box = layout(&reference, 10.0, &mut diagnostics);
+        let dropped_box = layout(&dropped, 10.0, &mut diagnostics);
+        assert!(
+            (dropped_box.width - reference_box.width).abs() < 1e-9,
+            "dropped width {} != control width {}",
+            dropped_box.width,
+            reference_box.width
+        );
     }
 
     #[test]
