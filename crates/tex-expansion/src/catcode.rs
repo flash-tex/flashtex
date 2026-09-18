@@ -64,6 +64,11 @@ impl CatCodeTable {
         table[b'\\' as usize] = CatCode::Escape;
         table[b'%' as usize] = CatCode::Comment;
         table[b' ' as usize] = CatCode::Space;
+        // U+0009 TAB is whitespace (catcode 10), exactly like a space,
+        // in both text and math mode (TeXbook p. 341; plain.tex sets
+        // `\catcode`\^^I=10`). Without this a tab lexes as a printable
+        // "other" character and reaches shaping, which has no glyph.
+        table[b'\t' as usize] = CatCode::Space;
         // ^^M is the end-of-line character. ^^J (`\n`) is an ordinary
         // "other" character, as in INITEX: physical line breaks are
         // recognised by the lexer itself and stand for \endlinechar.
