@@ -1626,6 +1626,17 @@ impl MathParser<'_> {
                     if ch == '|' {
                         return Some(symbol("‖".into(), token.span));
                     }
+                    // `\2`: no LaTeX layer defines a control symbol made of
+                    // a digit (pdflatex: `! Undefined control sequence`),
+                    // so the backslash is a typo for the bare digit. The
+                    // digit below is still typeset; this only adds the
+                    // diagnostic the silent literal was missing.
+                    if let Some(digit) = crate::diagnostics::control_symbol_digit(&word) {
+                        self.diagnostics.push(Diagnostic::undefined_control_symbol(
+                            digit,
+                            token.span,
+                        ));
+                    }
                 }
                 Some(symbol(ch.to_string(), span))
             }
