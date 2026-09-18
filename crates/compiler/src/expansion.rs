@@ -158,12 +158,25 @@ pub struct Expansion {
 /// three-argument form would strip the braces and select single tokens).
 /// The definitions are `\protected`, as the package's `\newrobustcmd*`
 /// ones are, and always installed, exactly like the `ifthen` primitives.
+/// Engine identity (`iftex.sty` under pdfTeX): this compiler is
+/// pdflatex-equivalent, so `\ifxetex`/`\ifluatex` are defined false here --
+/// exactly as `iftex.sty` leaves them when neither `\XeTeXrevision` nor
+/// `\directlua` exists -- with `\ifXeTeX`/`\ifLuaTeX` let to the same
+/// switches as that package does. The `.sty` files themselves are never
+/// executed (`\usepackage{iftex}` and the legacy `ifxetex`/`ifluatex` are
+/// silent layout-neutral loads), so a guarded block
+/// (`\ifxetex\usepackage{fontspec}...\fi`) skips with no diagnostic, matching
+/// pdflatex's exit-0 behavior on the same input.
 pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
 \\let\\counterwithin\\flashtexundefined
 \\let\\counterwithout\\flashtexundefined
 \\let\\fnsymbol\\flashtexundefined
+\\newif\\ifxetex\\xetexfalse
+\\newif\\ifluatex\\luatexfalse
+\\let\\ifXeTeX\\ifxetex
+\\let\\ifLuaTeX\\ifluatex
 \\def\\setlength#1#2{\\ifdefined#1#1 #2\\relax\\else\\flashtexsetlength{#1}{#2}\\fi}%
 \\def\\addtolength#1#2{\\ifdefined#1\\advance#1 #2\\relax\\else\\flashtexaddtolength{#1}{#2}\\fi}%
 \\def\\setlist{\\flashtexsetlist}%
