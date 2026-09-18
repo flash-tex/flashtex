@@ -90,3 +90,35 @@ fn tab_at_argument_edges_and_empty_input() {
     // A trailing tab is harmless: no tab diagnostic either way.
     assert_eq!(tab_diagnostics("a\t"), Vec::<String>::new());
 }
+
+/// The behaviour #839 is actually about: a line whose only content is
+/// whitespace ends the paragraph, exactly as an empty line does.
+///
+/// The `assert_same_as_space` tests above cannot catch a regression here --
+/// they only compare tab against space, so a change that broke paragraph
+/// breaking for BOTH would keep every one of them green. This pins the
+/// absolute behaviour against the pdflatex oracle, which puts "Para two."
+/// on a new baseline for a tab-only line and for an empty line alike
+/// (measured with `pdftotext -bbox`; a single space joins them instead).
+#[test]
+fn whitespace_only_line_ends_the_paragraph() {
+    let empty_line = compile("Para one.\n\nPara two.\n");
+    let tab_line = compile("Para one.\n\t\nPara two.\n");
+    let space_run = compile("Para one.\n \nPara two.\n");
+
+    assert_eq!(
+        empty_line.blocks.len(),
+        2,
+        "control: an empty line must end the paragraph"
+    );
+    assert_eq!(
+        tab_line.blocks.len(),
+        empty_line.blocks.len(),
+        "a tab-only line must end the paragraph exactly like an empty line"
+    );
+    assert_eq!(
+        space_run.blocks.len(),
+        empty_line.blocks.len(),
+        "a space-only line must end the paragraph too"
+    );
+}

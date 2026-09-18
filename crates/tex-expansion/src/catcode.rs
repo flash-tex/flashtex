@@ -64,10 +64,17 @@ impl CatCodeTable {
         table[b'\\' as usize] = CatCode::Escape;
         table[b'%' as usize] = CatCode::Comment;
         table[b' ' as usize] = CatCode::Space;
-        // U+0009 TAB is whitespace (catcode 10), exactly like a space,
-        // in both text and math mode (TeXbook p. 341; plain.tex sets
-        // `\catcode`\^^I=10`). Without this a tab lexes as a printable
-        // "other" character and reaches shaping, which has no glyph.
+        // U+0009 TAB is whitespace (catcode 10), exactly like a space, in
+        // both text and math mode. This is NOT the TeXbook p. 341 (INITEX)
+        // value -- there TAB is 12. It becomes 10 in the *formats*:
+        // plain.tex:18 and latex.ltx:314 both carry
+        // `\catcode`\^^I=10 % ascii tab is a blank space`. Verified:
+        // `\the\catcode`\^^I` prints 10 under pdftex and pdflatex, and 12
+        // only under `pdftex -ini`. This table already models the
+        // post-format state -- {, $, &, #, ^, _ and ~ are all assigned
+        // here and are all 12 in virgin INITEX -- so TAB=10 belongs with
+        // them. Without this a tab lexes as a printable "other"
+        // character and reaches shaping, which has no glyph.
         table[b'\t' as usize] = CatCode::Space;
         // ^^M is the end-of-line character. ^^J (`\n`) is an ordinary
         // "other" character, as in INITEX: physical line breaks are
