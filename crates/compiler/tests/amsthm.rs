@@ -730,6 +730,92 @@ This generalizes to any ring.
     }
 }
 
+/// GH-852: the generated closing "∎" is spanned (empty) at the `\end{proof}`
+/// command instead of covering it, so the source gap after the proof block
+/// still holds `\end{proof}`. The render pipeline reads that gap to tell
+/// whether a following `\begin{<list>}` was read in vertical mode (which
+/// carries `\partopsep` at the list open, kept for its close); covering the
+/// `\end` hid it, and every list directly after a proof lost `\partopsep`
+/// at both boundaries (~2bp at 10pt, ~3bp at 11pt). Both a body proof and
+/// the empty case pin this; the head still opens at `\begin{proof}` (the
+/// other edge), and the `\hfill` still covers the `\end` (so edits there
+/// overlap a span of this block).
+#[test]
+fn proof_qed_span_leaves_endproof_in_the_gap_after_the_block() {
+    for body in ["Top proof text here.", ""] {
+        let source = format!(
+            "\\begin{{proof}}\n{body}\n\\end{{proof}}\n\\begin{{itemize}}\n\\item After.\n\\end{{itemize}}"
+        );
+        let parsed = parser::parse(&source);
+        // The paragraph holding the generated "∎" (an empty proof splits
+        // the head into its own paragraph on the blank line, and the mark
+        // stands alone after it).
+        let inlines = parsed
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                Block::Paragraph(inlines)
+                    if inlines.iter().any(|inline| {
+                        matches!(inline, Inline::Text { text, .. } if text == "∎")
+                    }) =>
+                {
+                    Some(inlines)
+                }
+                _ => None,
+            })
+            .expect("a paragraph must hold the proof QED mark");
+        let beginproof = source.find("\\begin{proof}").unwrap();
+        let endproof = source.find("\\end{proof}").unwrap();
+        // Other edge: the "Proof." head still opens at `\begin{proof}`.
+        let head_span = match parsed
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                Block::Paragraph(inlines) => Some(inlines),
+                _ => None,
+            })
+            .expect("proof head is a paragraph")
+            .first()
+        {
+            Some(Inline::Text { span, .. }) => *span,
+            other => panic!("proof head must be text, got {other:?}"),
+        };
+        assert!(
+            head_span.start <= beginproof && beginproof < head_span.end,
+            "head span {head_span:?} must cover \\begin{{proof}} at {beginproof}"
+        );
+        // The `\hfill` still covers the `\end`, so edits there overlap this block.
+        assert!(
+            inlines.iter().any(|inline| matches!(
+                inline,
+                Inline::HFill { span, .. }
+                if span.start <= endproof && endproof < span.end
+            )),
+            "an \\hfill span must still cover \\end{{proof}} at {endproof}"
+        );
+        // The boundary: the last inline (the generated "∎") ends where the
+        // body does, at or before the `\end`, leaving `\end{proof}` ahead in
+        // the gap (only whitespace between).
+        let (qed_text, qed_span) = match inlines.last() {
+            Some(Inline::Text { text, span, .. }) => (text, *span),
+            other => panic!("proof must end with the QED text, got {other:?}"),
+        };
+        assert_eq!(qed_text, "∎");
+        assert!(
+            qed_span.end <= endproof,
+            "QED span {qed_span:?} must end at or before \\end{{proof}} at {endproof}"
+        );
+        assert!(
+            source[qed_span.end..endproof].trim().is_empty(),
+            "only whitespace may sit between the proof block end and \\end{{proof}}"
+        );
+        assert!(
+            source[endproof..].starts_with("\\end{proof}"),
+            "the gap after the proof block must still hold \\end{{proof}}"
+        );
+    }
+}
+
 /// GH-701 regression guard: `itemize`/`quote`/`center` already carried
 /// `\large` into their contents before the fix; they still do.
 #[test]
