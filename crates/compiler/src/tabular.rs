@@ -28,6 +28,11 @@
 //! * `tabular*` distributes the leftover width over `\extracolsep{\fill}`
 //!   glue; the glue after the last column is always zero (`\tabskip\z@skip`
 //!   precedes the preamble's `\cr`).
+//! * `tabularx` (tabularx.sty) rewrites every `X` to `p{\TX@col@width}`, one
+//!   shared width for all `X` columns, then lays the table out as
+//!   `tabular*`: the `X` columns split the leftover width (the width
+//!   argument minus the fixed columns, rules and intercolumn spacing)
+//!   evenly, each wrapping like `p` (`\tabularxcolumn` defaults to `p{#1}`).
 //!
 //! The compiler's `\baselineskip` is `LINE_SPACING` times the font size (14.4pt
 //! at 12pt, where LaTeX's `size12.clo` uses 14.5pt), so the strut follows that
@@ -234,6 +239,11 @@ pub enum Align {
     Bottom(Length),
     /// array's `w{align}{width}`/`W`: the entry in `\makebox[width][align]`.
     Fixed(Length, BoxAlign),
+    /// tabularx's `X`: a top-aligned paragraph box like `p`, whose width is
+    /// the even-split share of the leftover table width computed at layout
+    /// time (a single `Align` cannot hold it: it depends on the other
+    /// columns' natural widths, known only after every entry is laid out).
+    Flexible,
 }
 
 impl Align {
@@ -243,6 +253,12 @@ impl Align {
             Align::Paragraph(w) | Align::Middle(w) | Align::Bottom(w) => Some(w),
             _ => None,
         }
+    }
+
+    /// Whether entries wrap in a paragraph box: `p`/`m`/`b`, or an `X`
+    /// whose share is fixed up at layout time.
+    pub fn is_paragraph(self) -> bool {
+        self.paragraph_width().is_some() || matches!(self, Align::Flexible)
     }
 }
 
@@ -710,6 +726,10 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
                 Align::Paragraph(width) | Align::Middle(width) | Align::Bottom(width) => {
                     Some(resolve(width, measure).max(0.0))
                 }
+                // An `X` entry is laid out at its natural width here; its
+                // share of the leftover width is unknown until every fixed
+                // column is measured, so `X` entries are re-laid out once
+                // the share is known (below).
                 _ => None,
             };
             let (mut content, last_baseline) = c.inline_box(&cell.content, size, measure_box);
@@ -738,7 +758,15 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
     let mut w = vec![vec![f64::NEG_INFINITY; n]; n];
     for cell in laid_rows.iter().flatten() {
         let last = cell.column + cell.columns - 1;
-        w[cell.column][last] = w[cell.column][last].max(cell.natural());
+        // An `X` entry takes the computed share, not its natural width, so
+        // only its `u`/`v` material (`\tabcolsep`, rules) reserves space.
+        let natural = if cell.columns == 1 && matches!(cell.align, Align::Flexible) {
+            cell.before.iter().map(Piece::width).sum::<f64>()
+                + cell.after.iter().map(Piece::width).sum::<f64>()
+        } else {
+            cell.natural()
+        };
+        w[cell.column][last] = w[cell.column][last].max(natural);
     }
     let mut widths = vec![0.0f64; n];
     let mut tabskip = vec![0.0f64; n];
@@ -757,10 +785,50 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
             }
         }
     }
-    let natural_width: f64 = widths.iter().sum::<f64>() + tabskip.iter().sum::<f64>();
+    let mut natural_width: f64 = widths.iter().sum::<f64>() + tabskip.iter().sum::<f64>();
     let box_width = match table.width {
         Some(width) => {
             let target = resolve(width, measure);
+            // tabularx: the `X` columns split the leftover width evenly.
+            // Real tabularx gives every `X` the one shared `\TX@col@width`
+            // (verified against pdflatex/TeX Live 2026 `\showbox`: equal
+            // shares even with very different `X` contents), so no content
+            // measurement enters here.
+            let flexible: Vec<usize> = (0..n)
+                .filter(|&k| {
+                    table
+                        .columns
+                        .get(k)
+                        .is_some_and(|t| matches!(t.align, Align::Flexible))
+                })
+                .collect();
+            if !flexible.is_empty() && target > natural_width {
+                let share = (target - natural_width) / flexible.len() as f64;
+                for &k in &flexible {
+                    widths[k] += share;
+                }
+                natural_width = target;
+                // Re-lay the `X` entries at the share so they wrap exactly
+                // like `p{share}` entries.
+                let mut laid = laid_rows.iter_mut();
+                for entry in &table.entries {
+                    let Entry::Row(row) = entry else {
+                        continue;
+                    };
+                    let Some(cells) = laid.next() else {
+                        break;
+                    };
+                    for (laid_cell, raw_cell) in cells.iter_mut().zip(row.cells.iter()) {
+                        if laid_cell.columns == 1 && matches!(laid_cell.align, Align::Flexible) {
+                            let (mut content, last_baseline) =
+                                c.inline_box(&raw_cell.content, size, Some(share));
+                            content.width = share;
+                            laid_cell.content = content;
+                            laid_cell.last_baseline = last_baseline;
+                        }
+                    }
+                }
+            }
             let fills = fill.iter().filter(|f| **f).count();
             if fills > 0 && target > natural_width {
                 let share = (target - natural_width) / fills as f64;
@@ -808,7 +876,7 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
                 for cell in &cells {
                     height = height.max(cell.content.ascent);
                     depth = depth.max(cell.content.descent);
-                    if cell.align.paragraph_width().is_some() {
+                    if cell.align.is_paragraph() {
                         depth = depth.max(cell.last_baseline + strut_depth);
                     }
                     for piece in cell.before.iter().chain(&cell.after) {
@@ -851,6 +919,7 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
                         | Align::Paragraph(_)
                         | Align::Middle(_)
                         | Align::Bottom(_)
+                        | Align::Flexible
                         | Align::Fixed(..) => x,
                         Align::Right => right - after_width - cell.content.width,
                         Align::Center => x + (right - after_width - x - cell.content.width) / 2.0,
@@ -1224,6 +1293,88 @@ mod tests {
         let (x0, _, width, _) = rules[0];
         close(width, 200.0);
         close(rules[1].0, x0 + 200.0 - 0.2);
+    }
+
+    #[test]
+    fn tabularx_single_x_column_takes_the_leftover_width() {
+        // pdflatex (TeX Live 2026) `\showbox` for this table: total
+        // `\hbox x200.0`, the `l` column `\hbox x22.8`, the `X` entry
+        // `\vbox x164.8` — the leftover 200 - (22.8 + 12.4) goes whole to
+        // the one `X` column. Rules take their 0.4pt (`array` package `|`);
+        // the leading rule starts at the table edge, the middle and
+        // trailing rules end at their boundaries.
+        let (items, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{tabularx}\\begin{document}\\begin{tabularx}{200pt}{|l|X|}\\hline\\hspace{10pt}&\\hspace{30pt}\\\\\\hline\\end{tabularx}\\end{document}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let rules = rules(&items);
+        let (x0, _, width, _) = rules[0];
+        close(width, 200.0);
+        close(rules[1].2, 200.0);
+        let verticals: Vec<_> = rules[2..].to_vec();
+        assert_eq!(verticals.len(), 3);
+        for ((x, _, w, _), edge) in verticals.into_iter().zip([0.0, 22.4, 199.6]) {
+            close(x, x0 + edge);
+            close(w, 0.4);
+        }
+    }
+
+    #[test]
+    fn tabularx_two_x_columns_split_the_leftover_evenly() {
+        // pdflatex `\showbox`: total `\hbox x200.0`, column boxes `x100.2`
+        // and `x99.8`, both `X` entries `\vbox x87.40001` — equal shares of
+        // 200 - (12.8 + 12.4), the intercolumn material included.
+        let (items, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{tabularx}\\begin{document}\\begin{tabularx}{200pt}{|X|X|}\\hline\\hspace{10pt}&\\hspace{30pt}\\\\\\hline\\end{tabularx}\\end{document}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let rules = rules(&items);
+        let (x0, _, width, _) = rules[0];
+        close(width, 200.0);
+        let verticals: Vec<_> = rules[2..].to_vec();
+        assert_eq!(verticals.len(), 3);
+        for ((x, _, w, _), edge) in verticals.into_iter().zip([0.0, 99.8, 199.6]) {
+            close(x, x0 + edge);
+            close(w, 0.4);
+        }
+    }
+
+    #[test]
+    fn tabularx_x_column_wraps_like_a_p_column() {
+        // pdflatex wraps the long entry (first-row box 10.15pt + 62.35pt
+        // in the `\showbox` oracle versus 10.15pt + 4.35pt single-line);
+        // here the share is (200 - 24) / 2 = 88pt, which must wrap the
+        // twelve-word entry while the one-word entry stays top-aligned.
+        let (items, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{tabularx}\\begin{document}\\begin{tabularx}[t]{200pt}{XX}a & one two three four five six seven eight nine ten eleven twelve\\end{tabularx}\\end{document}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let one = text(&items, "one");
+        let twelve = text(&items, "twelve");
+        assert!(twelve.baseline_y_pt > one.baseline_y_pt, "X entry wrapped");
+        close(text(&items, "a").baseline_y_pt, one.baseline_y_pt);
+    }
+
+    #[test]
+    fn tabularx_requires_its_width_argument_and_its_package() {
+        // Without the package the environment stays unsupported, with the
+        // same package hint real LaTeX gives.
+        let (_, diagnostics) = laid_out("\\begin{tabularx}{200pt}{XX}a&b\\end{tabularx}");
+        assert!(
+            diagnostics.iter().any(|d| d.message.contains("tabularx")),
+            "{diagnostics:?}"
+        );
+        // With the package a missing width is diagnosed exactly like
+        // `tabular*`'s: the `{XX}` group is read as the width and rejected.
+        let (_, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{tabularx}\\begin{document}\\begin{tabularx}{XX}a&b\\end{tabularx}\\end{document}",
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("tabularx width")),
+            "{diagnostics:?}"
+        );
     }
 
     #[test]

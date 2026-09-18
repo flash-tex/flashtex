@@ -12070,9 +12070,10 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
             .iter()
             .all(|option| matches!(*option, "errorshow" | "infoshow" | "balancingshow" | "markshow" | "debugshow")),
         // Table packages (parser/tabular.rs, crate::tabular): booktabs rules
-        // and spacing, longtable page-breaking tables, multirow entries and
-        // colortbl row/column/cell colours and rule colours.
-        "booktabs" | "longtable" | "multirow" | "colortbl" => options.is_empty(),
+        // and spacing, longtable page-breaking tables, multirow entries,
+        // colortbl row/column/cell colours and rule colours, and tabularx
+        // total-width tables with X columns.
+        "booktabs" | "longtable" | "multirow" | "colortbl" | "tabularx" => options.is_empty(),
         // xspace.sty takes no options; its only widely used command,
         // `\xspace`, is implemented above, so loading it is silent.
         "xspace" => options.is_empty(),
