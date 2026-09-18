@@ -286,6 +286,7 @@ fn diagnostics(text: &str) -> Vec<String> {
 fn not_supported(messages: &[String], name: &str) -> Option<String> {
     let needle = format!("\\{name} is not supported");
     let wrong_class = format!("\\{name} is defined by the letter");
+    let ams_only = format!("\\{name} is only defined by the AMS classes");
     messages
         .iter()
         // letter.cls commands are refused by their own message when the
@@ -293,8 +294,20 @@ fn not_supported(messages: &[String], name: &str) -> Option<String> {
         // not fail for any of them: an `\opening` diagnosed as "defined by
         // the letter document class" sails past a match on "\opening is not
         // supported", and the inventory row keeps claiming `renders: true`.
-        .find(|m| m.starts_with(&needle) || m.starts_with(&wrong_class))
+        // The AMS classes' `\Tiny` (GH-824) is refused the same way outside
+        // amsart/amsbook/amsproc, so its wording is matched here too.
+        .find(|m| {
+            m.starts_with(&needle) || m.starts_with(&wrong_class) || m.starts_with(&ams_only)
+        })
         .cloned()
+}
+
+/// The AMS classes' `\Tiny` (GH-824) exists only under amsart/amsbook/
+/// amsproc, like `letter`'s commands exist only under `letter`: probe it
+/// inside an AMS document. `None` for everything else.
+fn ams_probe(name: &str) -> Option<String> {
+    (name == "Tiny")
+        .then(|| "\\documentclass{amsart}\\begin{document}{\\Tiny x}\\end{document}".to_string())
 }
 
 /// A letter with everything `\opening` and `\closing` read already declared.
@@ -326,6 +339,9 @@ fn letter_probe(name: &str, arguments: &str) -> Option<String> {
 fn text_probe(name: &str, arguments: &str) -> String {
     if let Some(letter) = letter_probe(name, arguments) {
         return letter;
+    }
+    if let Some(ams) = ams_probe(name) {
+        return ams;
     }
     match name {
         "\\" => "a\\\\b".into(),
@@ -428,6 +444,12 @@ fn every_inventory_entry_compiles_without_an_unsupported_diagnostic() {
             Mode::Text if e.name == "letter" => (
                 LETTER_DOCUMENT.replace('#', ""),
                 "environment 'letter' is not implemented".to_string(),
+            ),
+            // `Tiny` is the AMS classes' own size environment (GH-824).
+            Mode::Text if e.name == "Tiny" => (
+                "\\documentclass{amsart}\\begin{document}\\begin{Tiny}a\\end{Tiny}\\end{document}"
+                    .to_string(),
+                "environment 'Tiny' is not implemented".to_string(),
             ),
             Mode::Text => (
                 format!(
