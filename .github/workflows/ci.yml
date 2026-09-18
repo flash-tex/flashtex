@@ -74,10 +74,6 @@ jobs:
           - flashtex-cli
           - preview-controller
           - project-files
-          - assistant-context
-        include:
-          - crate: assistant-context
-            features: --features grok
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -127,7 +123,6 @@ jobs:
             crates/flashtex-cli
             crates/preview-controller
             crates/project-files
-            crates/assistant-context
           key: helpers
       - name: Build every bundled helper (release)
         # Prints FLASHTEX_<NAME>=<path> lines; the app and its tests read them.

@@ -113,6 +113,8 @@ assistant sheet (⌘⌥G, toolbar, palette, `AccessibilityCommand.askGrok`),
 (`ProposalPreview` explanation states, `GrokProviderSession`, `OneShotProcess`,
 `AssistantRecoveryLog`), the Grok status pill, the Grok preferences section
 and the connection probe, the `--assistant` helper bundling, and their tests
-and fixtures. The Rust side (`crates/assistant-context` explanation and
-provider-session paths) is no longer launched by the app; it remains a
-library a third party could wrap as a helper under contract 1.
+and fixtures. The Rust side (the former `crates/assistant-context`
+explanation and provider-session library) was removed once nothing launched
+it; a third party can still supply such a helper under contract 1. The iPad
+companion keeps its bundled `review-workflow.json` fixture and the
+reviewed-proposal contract it exercises.
