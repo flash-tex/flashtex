@@ -144,6 +144,42 @@ impl Default for FancyHdr {
     }
 }
 
+/// What a titlesec `\titleformat{\section}{format}{label}{sep}{before}[after]`
+/// (titlesec.sty `\ttl@format@i`) recorded for later `\section` commands:
+/// the format chunk's face/size declarations as a [`TextStyle`] applied over
+/// the unformatted base, the format chunk's vertical space as
+/// `\@startsection`-style `\addvspace` excess over the class beforeskip, and
+/// the after-code's rule flag plus its vertical space. Only `\section` is
+/// stored (any other level is diagnosed where `\titleformat` runs); a second
+/// `\titleformat{\section}` replaces the first, as in real titlesec.
+#[derive(Debug, Clone)]
+struct SectionTitleFormat {
+    /// The format chunk's style declarations (`\scshape`, `\large`, ...)
+    /// applied over [`TextStyle::default`] — titlesec *replaces* the default
+    /// `\Large\bfseries`, so an unbold format really is unbold (measured
+    /// against pdflatex, TeX Live 2026: the heading sets in medium CMCSC at
+    /// 11.9552pt, i.e. `\large` at 11pt).
+    style: TextStyle,
+    /// Whether the heading still prints its number: false for the unstarred
+    /// empty-label shape (and for the diagnosed non-empty-label shape, whose
+    /// warning says so), true for the starred form, which keeps titlesec's
+    /// default label.
+    print_number: bool,
+    /// The format chunk's `\vspace` total as `\addvspace` excess over the
+    /// section beforeskip: `(total - beforeskip).max(0)`. The resume's
+    /// `\vspace{-4pt}` vanishes here exactly as in real LaTeX (measured: the
+    /// title sits at the same height with and without it).
+    before_extra_pt: f64,
+    /// The after-code contained `\titlerule`: draw a full-width rule (a
+    /// [`Block::Rule`]) between the heading and the after-skip. Measured:
+    /// the rule starts at the left margin on its own line below the title,
+    /// not as leaders after the title text.
+    rule: bool,
+    /// The after-code's `\vspace` total, applied additively after the rule.
+    /// Measured: `\vspace{-5pt}` pulls the body up the full 4.98pt.
+    after_pt: f64,
+}
+
 /// Split a `\fancyhead`/`\fancyfoot`/`\fancyhf` `[pos]` list (`L`, `C`,
 /// `R`, combinable with `E`/`O` and commas, as in `[LE,RO]`) into slot
 /// indices 0/1/2. The bracket splits on `,` first: a group containing `E`
@@ -1641,6 +1677,11 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "hfil",
     "hspace",
     "hskip",
+    // pdfTeX's glyph-to-Unicode primitives (see `pdf_unicode_noop`): engine
+    // assignments, always defined, so a `\newcommand` of either name must
+    // keep failing exactly as in real TeX.
+    "pdfgentounicode",
+    "pdfglyphtounicode",
     "strut",
     "footnote",
     "footnotemark",
@@ -2523,6 +2564,7 @@ pub fn parse_project_with(
         fboxsep_pt: 3.0,
         fboxrule_pt: 0.4,
         fancy: FancyHdr::default(),
+        section_title_format: None,
         length_scopes: Vec::new(),
         pending_global: false,
         latin_modern: false,
@@ -2659,6 +2701,9 @@ struct P<'a> {
     fboxrule_pt: f64,
     /// fancyhdr's six running-head fields and rule widths.
     fancy: FancyHdr,
+    /// titlesec's `\titleformat{\section}` recording (see
+    /// [`SectionTitleFormat`]), applied by [`P::section_command`].
+    section_title_format: Option<SectionTitleFormat>,
     /// Length values saved at `{`/`}` and environment boundaries.
     length_scopes: Vec<LengthScope>,
     /// A pass-through `\global` waiting for a parser-owned length assignment.
@@ -3559,6 +3604,11 @@ impl P<'_> {
             "index" | "glossary" => {
                 let _ = self.required_group(name, span);
             }
+            // pdfTeX's glyph-to-Unicode primitives (see `pdf_unicode_noop`):
+            // PDF text-extraction metadata with no visible output, accepted
+            // in the preamble (where `\input{glyphtounicode}` and
+            // `\pdfgentounicode=1` belong) and in the body alike.
+            "pdfgentounicode" | "pdfglyphtounicode" => self.pdf_unicode_noop(name, span),
             // `\today` in ordinary body text. It had no arm here, so it fell
             // through to `unsupported`, whose `debug_assert!(!BUILT_INS
             // .contains(&name))` fires because `today` *is* a built-in: a
@@ -3598,6 +3648,12 @@ impl P<'_> {
             "lhead" | "chead" | "rhead" | "lfoot" | "cfoot" | "rfoot" | "fancypagestyle" => {
                 self.fancy_later_command(name, span)
             }
+            // titlesec's `\titleformat` (see `title_format`), in the
+            // preamble -- where section setup belongs -- and in the body.
+            // Without `\usepackage{titlesec}` the command names what is
+            // missing instead of falling through to the generic preamble
+            // advice, exactly like `fancy_command` above.
+            "titleformat" => self.title_format(span),
             // Preamble or body: latex.ltx's `\twocolumn`/`\onecolumn`, which
             // both open with `\clearpage` and then set `\if@twocolumn`.
             // Which columns the page then has is the renderer's business
@@ -3860,6 +3916,10 @@ impl P<'_> {
             // the macro call is `}`, another command, or `, . ! ? ; : ' /`.
             "xspace" => self.xspace(span),
             "rule" => self.text_rule(span, para),
+            // titlesec's `\titlerule` (see `title_rule`): a rule at the
+            // current line, like `\hrulefill` in a paragraph and `\hrule`
+            // between paragraphs.
+            "titlerule" => self.title_rule(span, blocks, para),
             "strut" => self.strut(span, para),
                         // amsmath `\text{...}` in text mode is `\mbox{...}` (amsmath.dtx
             // `\ifmmode...\else\expandafter\mbox\fi`): one unbreakable box
@@ -4103,6 +4163,456 @@ impl P<'_> {
         ));
     }
 
+    /// titlesec's `\titleformat` (titlesec.sty `\ttl@format@i`):
+    /// `\titleformat{\section}{format}{label}{sep}{before}[after]` — six
+    /// arguments, the last an optional `[...]`, plus the starred
+    /// two-argument `\titleformat*{\section}{format}` form. Only `\section`
+    /// is stored (any other level keeps the `fancy_later_command` wording);
+    /// everything is consumed on every path, so an unhandled shape can never
+    /// leak its arguments onto the page as prose (before this, one
+    /// `\titleformat` produced its own diagnostic plus one per argument).
+    ///
+    /// Like soul's `\so`/`\hl`, the name stays out of `BUILT_INS` on
+    /// purpose: it is a package command, not a kernel one, so a document
+    /// that `\newcommand{\titleformat}` without loading titlesec keeps its
+    /// own definition (the expansion pass never sees the name either way).
+    /// A bare use without the package names what is missing.
+    #[inline(never)]
+    fn title_format(&mut self, span: Span) {
+        let starred = self.take_optional_star();
+        // The command group names a sectioning command (`\section`), which
+        // `paragraph_boundary_at` counts as a paragraph end, so the short
+        // reader would report a missing brace here (the `\@footnotetext`
+        // `\long` precedent: the group still closes at its real `}`, and a
+        // truly unclosed one still recovers at the paragraph end).
+        let (cmd, _) = self.required_group_bounded("titleformat", span, true);
+        let (format, _) = self.required_group("titleformat", span);
+        // The starred form takes no label, separation, before-code or
+        // after-code (titlesec.sty `\ttl@format@s`): reading five groups
+        // here would eat the document that follows it.
+        let (label, before) = if starred {
+            (Vec::new(), Vec::new())
+        } else {
+            let (label, _) = self.required_group("titleformat", span);
+            // The separation is always consumed; with an empty label real
+            // titlesec ignores it, exactly as here.
+            let _ = self.required_group("titleformat", span);
+            let (before, _) = self.required_group("titleformat", span);
+            (label, before)
+        };
+        let after = if starred {
+            None
+        } else {
+            self.titleformat_after_group()
+        };
+        if !self.packages.iter().any(|package| package == "titlesec") {
+            self.diags.push(Diagnostic::command_error(
+                "titleformat",
+                "\\titleformat needs \\usepackage{titlesec}",
+                Some(span),
+                Some("ignored the command".into()),
+            ));
+            return;
+        }
+        let target = token_text(&cmd).trim().to_string();
+        if target != "section" {
+            let what = if target.is_empty() {
+                "a sectioning command such as \\section".to_string()
+            } else {
+                format!("\\{target}")
+            };
+            self.diags.push(Diagnostic::command_error(
+                "titleformat",
+                format!("\\titleformat for {what} is recognised but not implemented"),
+                Some(span),
+                Some("ignored the command".into()),
+            ));
+            return;
+        }
+        let body = self.body_size_pt();
+        let units = self.font_setup().em_ex_sp(self.style);
+        let mut style = TextStyle::default();
+        let mut before_pt = 0.0;
+        let mut alignment: Option<String> = None;
+        let mut unhandled: Vec<String> = Vec::new();
+        let push_unhandled = |unhandled: &mut Vec<String>, name: &str| {
+            if !unhandled.iter().any(|known| known == name) {
+                unhandled.push(name.to_string());
+            }
+        };
+        let mut i = 0;
+        while i < format.len() {
+            match &format[i].token.kind {
+                TokenKind::Command(name) if style_declaration(name) => {
+                    style = apply_style(style, name, body);
+                }
+                // Headings in this layout always set flush left, so the
+                // resume's `\raggedright` is identity and stays silent;
+                // anything else cannot be rendered and is reported below.
+                TokenKind::Command(name)
+                    if matches!(
+                        name.as_str(),
+                        "centering"
+                            | "Centering"
+                            | "raggedright"
+                            | "RaggedRight"
+                            | "raggedleft"
+                            | "RaggedLeft"
+                    ) =>
+                {
+                    if alignment.is_none()
+                        && !matches!(name.as_str(), "raggedright" | "RaggedRight")
+                    {
+                        alignment = Some(name.clone());
+                    }
+                }
+                TokenKind::Command(name) if name == "vspace" || name == "vskip" => {
+                    match titleformat_glue(&format, i + 1) {
+                        Some((text, next)) => {
+                            i = next;
+                            match parse_glue_pt_current(&text, units) {
+                                Some((pt, _, _)) => before_pt += pt,
+                                None => push_unhandled(&mut unhandled, name),
+                            }
+                            continue;
+                        }
+                        None => push_unhandled(&mut unhandled, name),
+                    }
+                }
+                TokenKind::Command(name) => push_unhandled(&mut unhandled, name),
+                _ => {}
+            }
+            i += 1;
+        }
+        // A printed label (and its separation, which real titlesec ignores
+        // with an empty label, exactly as here) is out of scope: the counter
+        // still steps at `\section`, but no number is typeset.
+        if !token_text(&label).trim().is_empty() {
+            self.diags.push(Diagnostic::command_error(
+                "titleformat",
+                "\\titleformat with a non-empty label prints no section number: only the unnumbered (empty-label) shape is implemented",
+                Some(span),
+                Some("stepped the section counter but typeset no number".into()),
+            ));
+        }
+        if !token_text(&before).trim().is_empty() {
+            self.diags.push(Diagnostic::command_error(
+                "titleformat",
+                "\\titleformat before-code is recognised but not implemented",
+                Some(span),
+                Some("ignored the before-code and continued".into()),
+            ));
+        }
+        if !unhandled.is_empty() {
+            let names: Vec<String> =
+                unhandled.iter().map(|name| format!("\\{name}")).collect();
+            self.diags.push(Diagnostic::command_error(
+                "titleformat",
+                format!(
+                    "\\titleformat ignores {} in the format: not implemented",
+                    names.join(", ")
+                ),
+                Some(span),
+                Some("applied the rest of the format and continued".into()),
+            ));
+        }
+        if let Some(name) = alignment {
+            self.diags.push(Diagnostic::warning(
+                format!(
+                    "\\titleformat alignment \\{name} is not applied: section headings always set flush left"
+                ),
+                Some(span),
+                Some("set the heading flush left anyway".into()),
+            ));
+        }
+        let (rule, after_pt) = match after {
+            Some((tokens, bracket_span)) => self.scan_titleformat_after(&tokens, bracket_span),
+            None => (false, 0.0),
+        };
+        // `\@startsection`-style `\addvspace`: the format's space only adds
+        // what exceeds the class beforeskip it adjoins.
+        let beforeskip = crate::layout::heading_before_skip(1, self.body_size_pt());
+        self.section_title_format = Some(SectionTitleFormat {
+            style,
+            print_number: starred,
+            before_extra_pt: (before_pt - beforeskip).max(0.0),
+            rule,
+            after_pt,
+        });
+    }
+
+    /// The `[...]` after-code of an unstarred `\titleformat` (see
+    /// [`P::titleformat_after_group`]): the implemented subset is
+    /// `\titlerule` (a full-width rule after the heading), `\vspace{<glue>}`
+    /// (vertical space after the rule) and a black `\color` (the rule's own
+    /// colour, already the default). Anything else is reported and ignored;
+    /// returns the rule flag and the summed space.
+    fn scan_titleformat_after(&mut self, tokens: &[InputToken], span: Span) -> (bool, f64) {
+        let units = self.font_setup().em_ex_sp(self.style);
+        let blanks = |tokens: &[InputToken], mut i: usize| {
+            while matches!(
+                tokens.get(i).map(|input| &input.token.kind),
+                Some(TokenKind::Space | TokenKind::ParBreak | TokenKind::Comment)
+            ) {
+                i += 1;
+            }
+            i
+        };
+        let mut rule = false;
+        let mut after_pt = 0.0;
+        let mut thick = false;
+        let mut unhandled: Vec<String> = Vec::new();
+        let push_unhandled = |unhandled: &mut Vec<String>, name: &str| {
+            if !unhandled.iter().any(|known| known == name) {
+                unhandled.push(name.to_string());
+            }
+        };
+        let mut i = 0;
+        while i < tokens.len() {
+            match &tokens[i].token.kind {
+                TokenKind::Command(name) if name == "titlerule" => {
+                    rule = true;
+                    // A star or `[thickness]` after it is not representable
+                    // on the rule node (see `title_rule`).
+                    let next = blanks(tokens, i + 1);
+                    if matches!(
+                        tokens.get(next).map(|input| &input.token.kind),
+                        Some(TokenKind::Word(word)) if word == "*" || word.starts_with('[')
+                    ) {
+                        thick = true;
+                    }
+                }
+                TokenKind::Command(name) if name == "vspace" || name == "vskip" => {
+                    match titleformat_glue(tokens, i + 1) {
+                        Some((text, next)) => {
+                            i = next;
+                            match parse_glue_pt_current(&text, units) {
+                                Some((pt, _, _)) => after_pt += pt,
+                                None => push_unhandled(&mut unhandled, name),
+                            }
+                            continue;
+                        }
+                        None => push_unhandled(&mut unhandled, name),
+                    }
+                }
+                TokenKind::Command(name) if name == "color" || name == "textcolor" => {
+                    // `\color[model]{name}` or `\textcolor[model]{name}{text}`:
+                    // only a black rule colour is already the default (a
+                    // `[model]` other than the colour name itself still warns:
+                    // `gray{0}`-style blacks are not recognised).
+                    let mut next = blanks(tokens, i + 1);
+                    if matches!(
+                        tokens.get(next).map(|input| &input.token.kind),
+                        Some(TokenKind::Word(word)) if word.starts_with('[')
+                    ) {
+                        next += 1;
+                    }
+                    let mut groups = Vec::new();
+                    let want = if name == "color" { 1 } else { 2 };
+                    for _ in 0..want {
+                        match titleformat_glue(tokens, next) {
+                            Some((text, after_group)) => {
+                                groups.push(text);
+                                next = after_group;
+                            }
+                            None => break,
+                        }
+                    }
+                    if groups.len() == want
+                        && groups.first().is_some_and(|first| first.trim() == "black")
+                    {
+                        i = next;
+                        continue;
+                    }
+                    push_unhandled(&mut unhandled, name);
+                    i = next;
+                    continue;
+                }
+                TokenKind::Command(name) => push_unhandled(&mut unhandled, name),
+                _ => {}
+            }
+            i += 1;
+        }
+        if !unhandled.is_empty() {
+            let names: Vec<String> =
+                unhandled.iter().map(|name| format!("\\{name}")).collect();
+            self.diags.push(Diagnostic::command_error(
+                "titleformat",
+                format!(
+                    "\\titleformat after-code ignores {}: not implemented",
+                    names.join(", ")
+                ),
+                Some(span),
+                Some("ignored the after-code commands and continued".into()),
+            ));
+        }
+        if thick {
+            self.diags.push(Diagnostic::warning(
+                "\\titlerule with a star or [thickness] draws the default rule: custom widths and thicknesses are not applied",
+                Some(span),
+                Some("drew the default rule and continued".into()),
+            ));
+        }
+        (rule, after_pt)
+    }
+
+    /// The `[...]` after an unstarred `\titleformat` as tokens. This is not
+    /// `optional_bracket_argument`: that reader returns a lossy raw string
+    /// whose `{...}` groups are flattened away (its `raw` for
+    /// `[\color{black}...]` is `\colorblack...`, unusable for recognising
+    /// commands), while the after-code walk needs the real groups. The scan
+    /// mirrors it — a `]` inside a `{...}` group only closes the bracket at
+    /// depth 0, and a word holding the closing `]` keeps its tail in the
+    /// stream — but collects the bracket's tokens instead of a string.
+    fn titleformat_after_group(&mut self) -> Option<(Vec<InputToken>, Span)> {
+        self.skip_spaces();
+        let first = self.peek()?;
+        let TokenKind::Word(first_word) = &first.kind else {
+            return None;
+        };
+        if !first_word.starts_with('[') {
+            return None;
+        }
+        let start = first.span.start;
+        let document = first.span.document;
+        let mut end = first.span.end;
+        let mut out = Vec::new();
+        let mut depth = 0usize;
+        let mut found = false;
+        let mut index = self.i;
+        while index < self.t.len() {
+            let input = self.t[index].clone();
+            end = input.token.span.end;
+            match &input.token.kind {
+                TokenKind::Word(word) => {
+                    // The `[` opens the argument, so the first word's first
+                    // byte is skipped; every later word starts at byte 0.
+                    let from = usize::from(index == self.i).min(word.len());
+                    let body = &word[from..];
+                    if depth == 0 {
+                        if let Some(close) = body.find(']') {
+                            if !body[..close].is_empty() {
+                                let mut head = input.clone();
+                                head.token.kind =
+                                    TokenKind::Word(body[..close].to_string());
+                                out.push(head);
+                            }
+                            let tail = body[close + 1..].to_string();
+                            let span = input.token.span;
+                            let literal = span.end - span.start == word.len();
+                            if literal && !tail.is_empty() {
+                                end = span.start + from + close + 1;
+                            }
+                            if tail.is_empty() {
+                                self.i = index + 1;
+                            } else {
+                                if let Some(slot) = self.token_mut(index) {
+                                    if literal {
+                                        slot.token.span =
+                                            Span::in_document(span.document, end, span.end);
+                                    }
+                                    slot.token.kind = TokenKind::Word(tail);
+                                }
+                                self.i = index;
+                            }
+                            found = true;
+                            break;
+                        }
+                    }
+                    let mut rest = input.clone();
+                    rest.token.kind = TokenKind::Word(body.to_string());
+                    out.push(rest);
+                }
+                TokenKind::LBrace => {
+                    depth += 1;
+                    out.push(input);
+                }
+                TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1);
+                    out.push(input);
+                }
+                _ => out.push(input),
+            }
+            index += 1;
+        }
+        if !found {
+            self.i = index;
+        }
+        let span = Span::in_document(document, start, end);
+        if !found {
+            self.diags.push(Diagnostic::error(
+                "optional argument is missing its closing ']'",
+                Some(span),
+                Some("used the text through end of input as the option".into()),
+            )
+            .with_help("add a closing ']'"));
+        }
+        Some((out, span))
+    }
+
+    /// titlesec's `\titlerule` (titlesec.sty `\ttl@rule`): a plain horizontal
+    /// rule at the current line. Inside a paragraph it is
+    /// `\leaders\hrule\hfill` — the exact node `\hrulefill` already emits —
+    /// and between paragraphs `\ifvmode` takes `\titleline`, a full-width
+    /// rule, which is the existing [`Block::Rule`]. The star and
+    /// `[thickness]` forms draw the default rule with a warning: the rule
+    /// nodes carry no thickness.
+    #[inline(never)]
+    fn title_rule(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let starred = self.take_optional_star();
+        let bracket = self.optional_bracket_argument();
+        if !self.packages.iter().any(|package| package == "titlesec") {
+            self.diags.push(Diagnostic::command_error(
+                "titlerule",
+                "\\titlerule needs \\usepackage{titlesec}",
+                Some(span),
+                Some("ignored the command".into()),
+            ));
+            return;
+        }
+        if starred || bracket.is_some() {
+            self.diags.push(Diagnostic::warning(
+                "\\titlerule with a star or [thickness] draws the default rule: custom widths and thicknesses are not applied",
+                Some(span),
+                Some("drew the default rule and continued".into()),
+            ));
+        }
+        if para.is_empty() {
+            self.flush_paragraph(blocks, para);
+            blocks.push(Block::Rule { span });
+            self.finish_block_dependencies();
+        } else {
+            para.push(Inline::HFill {
+                span,
+                leader: FillLeader::Rule,
+            });
+        }
+    }
+
+    /// pdfTeX's glyph-to-Unicode primitives: `\pdfglyphtounicode{<name>}{<hex>}`
+    /// (the entire content of the `glyphtounicode.tex` system file, ~2,700
+    /// lines) and the `\pdfgentounicode` integer assignment. Both feed only
+    /// the embedded fonts' ToUnicode tables — copy-paste and ATS parsing —
+    /// with zero effect on visible output (measured against pdflatex, TeX
+    /// Live 2026: identical fonts, identical word boxes, identical extracted
+    /// text with and without them), so both are silent no-ops: the mapping
+    /// groups and the `=1` are consumed and nothing is typeset.
+    #[inline(never)]
+    fn pdf_unicode_noop(&mut self, name: &str, span: Span) {
+        match name {
+            "pdfgentounicode" => {
+                // The `<optional equals><number>` comes along so it cannot
+                // leak as body text; a bare `\pdfgentounicode` with no number
+                // is silent too.
+                let _ = self.integer_value();
+            }
+            _ => {
+                let _ = self.required_group(name, span);
+                let _ = self.required_group(name, span);
+            }
+        }
+    }
+
     /// `\pagenumbering{arabic|roman|...}` (see [`P::command`]).
     #[inline(never)]
     fn pagenumbering_command(&mut self, span: Span, para: &mut Vec<Inline>) {
@@ -4209,6 +4719,15 @@ impl P<'_> {
             let starred = self.take_optional_star();
             let (tokens, _) = self.required_group(name, span);
             self.flush_paragraph(blocks, para);
+            // titlesec: with `\titleformat{\section}` an empty label prints
+            // no number, but the counter still steps, so `\label`, `\ref`
+            // and within-section theorem resets keep working exactly as
+            // without the package.
+            let title_format = if level == 1 {
+                self.section_title_format.clone()
+            } else {
+                None
+            };
             let number = if starred {
                 String::new()
             } else {
@@ -4220,20 +4739,53 @@ impl P<'_> {
             if !starred {
                 self.set_current_counter(name, Some(number.clone()));
             }
-            let content = self.inlines_from_tokens(tokens, TextStyle::BOLD, false);
+            // titlesec replaces the default `\Large\bfseries` with the
+            // recorded format (an unbold format really is unbold); without a
+            // recording the base is unchanged.
+            let base = title_format.as_ref().map_or(TextStyle::BOLD, |format| format.style);
+            let content = self.inlines_from_tokens(tokens, base, false);
             if content.is_empty() {
                 // A missing/empty heading is already diagnosed where
                 // applicable and has nothing to position. Do not create an
                 // empty block: incremental block spans require real source.
                 self.current_dependencies.clear();
             } else {
+                if let Some(extra) = title_format
+                    .as_ref()
+                    .map(|format| format.before_extra_pt)
+                    .filter(|extra| *extra > 0.0)
+                {
+                    blocks.push(Block::VSpace {
+                        pt: extra,
+                        stretch_pt: 0.0,
+                        shrink_pt: 0.0,
+                    });
+                    self.finish_block_dependencies();
+                }
                 blocks.push(Block::Heading {
                     level,
-                    number,
+                    number: match title_format.as_ref() {
+                        Some(format) if !format.print_number => String::new(),
+                        _ => number,
+                    },
                     number_span: span,
                     content,
                 });
                 self.finish_block_dependencies();
+                if let Some(format) = title_format.as_ref() {
+                    if format.rule {
+                        blocks.push(Block::Rule { span });
+                        self.finish_block_dependencies();
+                    }
+                    if format.after_pt != 0.0 {
+                        blocks.push(Block::VSpace {
+                            pt: format.after_pt,
+                            stretch_pt: 0.0,
+                            shrink_pt: 0.0,
+                        });
+                        self.finish_block_dependencies();
+                    }
+                }
             }
     }
 
@@ -5171,6 +5723,16 @@ impl P<'_> {
     ) {
         let (tokens, _) = self.required_group(command, span);
         let requested = token_text(&tokens).trim().to_string();
+        // `\input{glyphtounicode}` (pdfTeX's glyph-to-Unicode table): the
+        // ~2,700-line system file is pure `\pdfglyphtounicode` metadata with
+        // zero visible effect (measured against pdflatex, TeX Live 2026:
+        // identical fonts, identical word boxes, identical extracted text),
+        // so it is a silent no-op. Matched by exact target name -- never a
+        // general kpathsea/system-file fallback, which would hide genuinely
+        // missing project files behind silence.
+        if requested == "glyphtounicode" || requested == "glyphtounicode.tex" {
+            return;
+        }
         if requested.is_empty() {
             self.diags.push(Diagnostic::error(
                 format!("\\{command} requires a non-empty project-relative path"),
@@ -12146,6 +12708,13 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // it is used instead (see `fancy_later_command`). fancyhdr.sty
         // takes no package options of its own.
         "fancyhdr" => options.is_empty(),
+        // titlesec's `\titleformat{\section}` and `\titlerule` are
+        // implemented above, so loading the package is silent; what is not
+        // modelled (other levels, printed labels, before-code, `\titlespacing`
+        // and friends) reports itself where it is used instead (see
+        // `title_format`). Only a bare load is silent: titlesec's options
+        // (`explicit`, `compact`, ...) change real output.
+        "titlesec" => options.is_empty(),
         // cancel.sty: \cancel, \bcancel, \xcancel are implemented
         // (math.rs Frame::Cancel/BCancel/XCancel); \cancelto is diagnosed
         // where used. cancel takes no package options.
@@ -12673,6 +13242,63 @@ fn control_symbol_kern(
 
 /// A dimension argument's source text with control words kept
 /// (`\textwidth`), unlike `token_text`.
+/// The `{<glue>}` (or, for the primitive `\vskip`, a bare `<glue>` word)
+/// following a spacing command inside a `\titleformat` format chunk: the
+/// group's source text and the token index just past it. `None` when neither
+/// follows. A `\vspace*` star between the command and the group is consumed.
+fn titleformat_glue(tokens: &[InputToken], mut i: usize) -> Option<(String, usize)> {
+    let skip_blanks = |i: &mut usize| {
+        while matches!(
+            tokens.get(*i).map(|input| &input.token.kind),
+            Some(TokenKind::Space | TokenKind::ParBreak | TokenKind::Comment)
+        ) {
+            *i += 1;
+        }
+    };
+    skip_blanks(&mut i);
+    if let Some(TokenKind::Word(star)) = tokens.get(i).map(|input| &input.token.kind) {
+        if star == "*" {
+            i += 1;
+            skip_blanks(&mut i);
+        }
+    }
+    match tokens.get(i).map(|input| &input.token.kind) {
+        Some(TokenKind::LBrace) => {
+            let mut depth = 0usize;
+            let mut text = String::new();
+            let mut j = i;
+            while let Some(input) = tokens.get(j) {
+                match &input.token.kind {
+                    TokenKind::LBrace => {
+                        depth += 1;
+                        if depth > 1 {
+                            text.push('{');
+                        }
+                    }
+                    TokenKind::RBrace => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some((text, j + 1));
+                        }
+                        text.push('}');
+                    }
+                    TokenKind::Word(word) => text.push_str(word),
+                    TokenKind::Command(name) => {
+                        text.push('\\');
+                        text.push_str(name);
+                    }
+                    TokenKind::Space | TokenKind::ParBreak => text.push(' '),
+                    _ => {}
+                }
+                j += 1;
+            }
+            None
+        }
+        Some(TokenKind::Word(word)) => Some((word.clone(), i + 1)),
+        _ => None,
+    }
+}
+
 fn dimen_source(tokens: &[InputToken]) -> String {
     let mut result = String::new();
     for input in tokens {

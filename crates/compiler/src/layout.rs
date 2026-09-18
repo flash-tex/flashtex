@@ -2586,7 +2586,8 @@ fn body_ex(body_size: f64) -> f64 {
 }
 
 /// `\@startsection` before-skip: 3.5ex for `\section`, 3.25ex below it.
-fn heading_before_skip(level: u8, body_size: f64) -> f64 {
+/// `pub(crate)` for titlesec's `\addvspace` excess in `parser::title_format`.
+pub(crate) fn heading_before_skip(level: u8, body_size: f64) -> f64 {
     body_ex(body_size) * if level == 1 { 3.5 } else { 3.25 }
 }
 
