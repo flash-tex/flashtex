@@ -379,6 +379,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                     seg.style.color.hash(h);
                     (seg.style.slanted, seg.style.caps, seg.style.family, seg.style.undefined).hash(h);
                     seg.style.literal.hash(h);
+                    seg.style.hidden.hash(h);
                     for c in &seg.chars {
                         (c.start.wrapping_sub(base)).hash(h);
                         (c.end.wrapping_sub(base)).hash(h);
@@ -475,6 +476,9 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 format!("{t:?}").hash(h);
             }
             Item::LeaveVmode => {}
+            Item::Overlay(mark) => {
+                format!("{mark:?}").hash(h);
+            }
         }
     }
 }
