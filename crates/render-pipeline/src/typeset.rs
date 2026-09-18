@@ -1134,6 +1134,92 @@ impl<'a> Context<'a> {
         self.text_box_shaped(seg, size, face, &[])
     }
 
+    /// Whether `seg` is the text of an `\eqref` reference: the compiler
+    /// lowers `\eqref` to plain text carrying the command's span (see
+    /// `adapter::lower_inline`), so the paragraph path shapes it like body
+    /// copy. Only the segment's first character is consulted: a normal word
+    /// glued straight onto an `\eqref` (`a\eqref{x}`) keeps the text face
+    /// for its own characters rather than taking the fallback below.
+    fn is_eqref_text(&self, seg: &adapter::Segment) -> bool {
+        let Some(first) = seg.chars.first() else { return false };
+        self.texts
+            .get(first.document.0)
+            .and_then(|t| t.get(first.start..))
+            .is_some_and(|r| r.starts_with("\\eqref"))
+    }
+
+    /// Shapes one tag/equation-number segment with a math-face fallback
+    /// (GH-805): a `\tag` label like `$\alpha$` flattens to the Unicode
+    /// character (U+03B1), which the plain text face (Latin Modern Roman)
+    /// has no glyph for, so `text_box_shaped` used to report
+    /// `missing_glyph` and draw nothing — the tag printed as an empty `()`.
+    /// When the text face cannot set a character but the math face
+    /// (`Role::Math`, the face the math pipeline itself sets such
+    /// characters in; cf. `tcrm_symbol_box`) sets the whole segment, the
+    /// segment is set in the math face instead of dropping the character
+    /// silently. The `missing_glyph` diagnostic is kept, reworded to say
+    /// where the character was set.
+    ///
+    /// Scoped to tag/number callers (`number_box`/`word_box`, `rows_block`'s
+    /// tag loop, `\eqref` paragraph text via [`Self::is_eqref_text`]): the
+    /// general paragraph path keeps today's drop-and-report behavior, and
+    /// `\item` labels keep `word_box` without the fallback. Real
+    /// math-in-tag (#441, PR #585) is untouched: this only stops the
+    /// flatten-to-text approximation from drawing nothing.
+    fn tag_text_box(&mut self, seg: &adapter::Segment, size: f64) -> Option<(pl::GlyphRun, usize)> {
+        // The coverage probe must see what `text_box` would shape, so the
+        // input-encoding filtering runs first; a character pdfLaTeX rejects
+        // never reaches the probe and can never be resurrected below.
+        let filtered = self.input_filtered(seg);
+        let (ps, cuts): (&adapter::Segment, &[usize]) = match &filtered {
+            Some((seg, cuts)) => (seg, cuts),
+            None => (seg, &[]),
+        };
+        // Verbatim and input-encoding-cut segments keep `text_box` exactly:
+        // `text_box_in` shapes with no cuts, which would kern across them.
+        if ps.style.literal || !cuts.is_empty() {
+            return self.text_box(seg, size);
+        }
+        let Some(span) = seg_span(ps) else { return None };
+        let face = self.face(ps.style, size, span);
+        let shaped = self.shaper.shape(&face, &ps.text);
+        if shaped.missing.is_empty() || shaped.refused.is_some() {
+            // Nothing missing (the common case: byte-identical to `text_box`
+            // on the original segment), or a refused script, which `text_box`
+            // already reports and which no face is attempted for.
+            return self.text_box(seg, size);
+        }
+        let r = self.fonts.resolve(self.style.family, Role::Math, size);
+        if r.substituted.is_some() {
+            return self.text_box(seg, size);
+        }
+        let math = r.face;
+        let fb = self.shaper.shape(&math, &ps.text);
+        if !fb.missing.is_empty() || fb.refused.is_some() {
+            return self.text_box(seg, size);
+        }
+        for (ch, off) in &shaped.missing {
+            let ch_src = ps
+                .chars
+                .get(ps.text[..*off].chars().count())
+                .map(|c| c.span())
+                .unwrap_or(span);
+            let src = self.source(ch_src);
+            self.report_once(
+                format!("missing:{}:{}", face.font_id, ch),
+                Diagnostic::warning(
+                    "missing_glyph",
+                    format!(
+                        "U+{:04X} '{}' has no glyph in {}; set in {} instead",
+                        *ch as u32, ch, face.name, math.name
+                    ),
+                    vec![src],
+                ),
+            );
+        }
+        self.text_box_in(ps, size, math)
+    }
+
     /// Shared tail of [`Self::text_box`]/[`Self::text_box_in`]: `cuts` are
     /// the input-encoding ligature/kern break points (empty for callers that
     /// have none, e.g. `text_box_in`'s synthetic segments).
@@ -1798,6 +1884,16 @@ impl<'a> Context<'a> {
     /// point inside a ligature (`of-fice`) needs the pre/post/no-break
     /// reconstitution and is skipped.
     fn word_items(&mut self, seg: &adapter::Segment, size: f64, hyphenate: bool) -> Vec<(pl::Item, Option<usize>)> {
+        if self.is_eqref_text(seg) {
+            // An `\eqref` label is never hyphenated (no English patterns
+            // match its parenthesised form); like a `\tag` display, a
+            // character the text face cannot set falls back to the math
+            // face (GH-805) instead of dropping silently.
+            return self
+                .tag_text_box(seg, size)
+                .map(|(run, rec)| vec![(pl::Item::Box(run), Some(rec))])
+                .unwrap_or_default();
+        }
         if !hyphenate {
             return self.whole_word(seg, size);
         }
@@ -3941,7 +4037,7 @@ impl<'a> Context<'a> {
         let text = if symbol && text == "⋅" { "·" } else { text };
         let boxed = match self.tcrm_symbol_width(text, size).filter(|_| symbol) {
             Some(width) => self.tcrm_symbol_box(text, span, size, width),
-            None => self.word_box(text, span, size, TextStyle { bold, ..TextStyle::default() }),
+            None => self.word_box(text, span, size, TextStyle { bold, ..TextStyle::default() }, false),
         };
         if let Some(nb) = &boxed {
             for (_, rec, _) in &nb.pieces {
@@ -5313,7 +5409,7 @@ impl<'a> Context<'a> {
     /// outer ones), not the T1 visible-space glyph one shaped run would use.
     /// Each word is its own text box at its offset.
     fn number_box(&mut self, text: &str, nspan: Span, size: f64) -> Option<NumberBox> {
-        self.word_box(text, nspan, size, TextStyle::default())
+        self.word_box(text, nspan, size, TextStyle::default(), true)
     }
 
     /// `text` as one `\hbox`, each word its own shaped run at its offset and
@@ -5322,7 +5418,7 @@ impl<'a> Context<'a> {
     /// whose advance is not `\fontdimen2` — 6.27 bp instead of 4.18 bp for
     /// `\bfseries` Latin Modern at 11 pt, which pushed everything after a
     /// two-word `\item[...]` label 2.1 bp right of pdflatex.
-    fn word_box(&mut self, text: &str, nspan: Span, size: f64, style: TextStyle) -> Option<NumberBox> {
+    fn word_box(&mut self, text: &str, nspan: Span, size: f64, style: TextStyle, fallback: bool) -> Option<NumberBox> {
         let space = self.space_glue(style, size, 1000).width;
         let mut pieces = Vec::new();
         let (mut x, mut height, mut depth) = (0.0f64, 0.0f64, 0.0f64);
@@ -5342,7 +5438,10 @@ impl<'a> Context<'a> {
                     .collect(),
                 style,
             };
-            let (run, rec) = self.text_box(&seg, size)?;
+            // `fallback` is the tag/number path (GH-805): a character the
+            // text face cannot set falls back to the math face instead of
+            // dropping silently. `\item` labels pass `false`.
+            let (run, rec) = if fallback { self.tag_text_box(&seg, size)? } else { self.text_box(&seg, size)? };
             height = height.max(run.height);
             depth = depth.max(run.depth);
             let w = run.width;
@@ -5704,7 +5803,9 @@ impl<'a> Context<'a> {
                         .collect(),
                     style: TextStyle::default(),
                 };
-                self.text_box(&seg, size)
+                // A tag character the text face cannot set (GH-805) falls
+                // back to the math face instead of dropping silently.
+                self.tag_text_box(&seg, size)
             }));
         }
         let tagw = |i: usize| tags[i].as_ref().map_or(0.0, |(r, _)| r.width);
