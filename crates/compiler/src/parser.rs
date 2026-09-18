@@ -6662,6 +6662,65 @@ impl P<'_> {
         blocks: &mut Vec<Block>,
         para: &mut Vec<Inline>,
     ) {
+        // TeX-style recovery: `\end{X}` names an environment that is open
+        // further down the stack, so every environment above it was left
+        // unclosed (like real LaTeX's `\begin{Y} ... ended by \end{X}`).
+        // The innermost one is named by the "does not match" diagnostic,
+        // any others in between get their own diagnostic below, and then
+        // every level down through the real target `X` is closed — each by
+        // its own name, so its paragraph, list and style state unwinds
+        // exactly as a matching `\end` would. Closing the target too is
+        // what keeps it off the end-of-input drain: without this, a
+        // `\end{document}` spent on a nested typo would leave `document`
+        // itself on the stack and report a misleading blanket
+        // "unterminated environment 'document'". A `\end{X}` with no match
+        // anywhere keeps the old behaviour below (close just the innermost
+        // environment).
+        if let Some(target) = self
+            .env_stack
+            .iter()
+            .rposition(|(open, _)| *open == environment)
+            .filter(|&target| target + 1 < self.env_stack.len())
+        {
+            let innermost = self.env_stack.last().map(|(name, _)| name.clone());
+            if let Some(open) = innermost {
+                self.diags.push(Diagnostic::error(
+                    format!(
+                        "\\end{{{}}} does not match \\begin{{{}}}",
+                        environment, open
+                    ),
+                    Some(span),
+                    Some("closed the innermost open environment".into()),
+                ));
+            }
+            for (unclosed, unclosed_span) in
+                self.env_stack[target + 1..self.env_stack.len() - 1].to_vec()
+            {
+                self.diags.push(
+                    Diagnostic::error(
+                        format!(
+                            "unterminated environment '{}' — closed by \\end{{{}}}",
+                            unclosed, environment
+                        ),
+                        Some(unclosed_span),
+                        Some("closed the environment at the mismatched \\end".into()),
+                    )
+                    .with_help(format!(
+                        "add \\end{{{unclosed}}} before \\end{{{environment}}}"
+                    )),
+                );
+            }
+            let levels: Vec<String> = self.env_stack[target..]
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect();
+            // Top-down, so the innermost level closes first; each recursive
+            // call is an exact match and runs that level's own teardown.
+            for level in levels.iter().rev() {
+                self.end_environment(span, level.clone(), blocks, para);
+            }
+            return;
+        }
         let popped = self.env_stack.pop();
         let had_open_environment = popped.is_some();
         match popped {

@@ -533,6 +533,46 @@ fn every_source_recovery_class_replies_with_positioned_output_and_mapped_diagnos
 }
 
 #[test]
+fn mismatched_end_closing_outer_environment_reports_only_the_unclosed_inner_one() {
+    // A genuine authoring typo: `\begin{question}` (a `\newtheorem`
+    // environment) is never closed. `\end{enumerate}` closes correctly and
+    // `\end{document}` ends the document. pdflatex reports exactly one
+    // error here (`\begin{question} ... ended by \end{document}`), so the
+    // specific `does not match \begin{question}` diagnostic must stand
+    // alone: a blanket `unterminated environment 'document'` would blame
+    // the whole document when only the nested environment is at fault.
+    let input = "\\documentclass{article}\n\\newtheorem{question}{Question}\n\\begin{document}\n\\begin{question}\n\\begin{enumerate}\n\\item First.\n\\end{enumerate}\n\\end{document}\n";
+    let name = "mismatched end closes outer environment";
+    let request = compile_request("main.tex", input);
+    let response = run(request.as_bytes(), name);
+    assert_eq!(response_status(&response), "recovered", "{name}: wrong status");
+    let found = diagnostics(&response);
+    assert!(
+        found.iter().any(|diagnostic| diagnostic
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|message| message
+                .contains(r"\end{document} does not match \begin{question}"))),
+        "{name}: missing the specific mismatch diagnostic; got {found:?}"
+    );
+    assert!(
+        !found.iter().any(|diagnostic| diagnostic
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|message| message.contains("unterminated environment 'document'"))),
+        "{name}: misleading blanket document diagnostic; got {found:?}"
+    );
+    let texts: Vec<&str> = items(&response)
+        .iter()
+        .filter_map(|item| item.get("text").and_then(Value::as_str))
+        .collect();
+    assert!(
+        texts.iter().any(|text| text.contains("First")),
+        "{name}: list content was lost in recovery; got {texts:?}"
+    );
+}
+
+#[test]
 fn every_wire_failure_replies_with_exact_status_and_explicit_diagnostics() {
     for case in wire_cases() {
         let response = run(&case.bytes, case.name);
