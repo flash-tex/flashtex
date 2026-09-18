@@ -86,6 +86,13 @@ struct SourceEditorView: NSViewRepresentable {
     /// the project's other open documents and a file probe
     /// (EditorHoverResolution.swift). Read once per hover, not per keystroke.
     var hoverContext: () -> EditorIntelligence.HoverContext = { .init() }
+    /// The project's `.bib` files `\cite{` completes from directly
+    /// (`BibScanner.entries(for:)`; `ShellModel.bibliographySources`). Read
+    /// once per list request, not per keystroke; nil offers only the helper's keys.
+    var bibliographySources: () -> BibScanner.Sources? = { nil }
+    /// What the buffer is coloured as (`SyntaxHighlighter.Language`): BibTeX
+    /// for a declared bibliography, LaTeX otherwise.
+    var language: SyntaxHighlighter.Language = .latex
     /// The current v2 preview, for the inline math hover preview
     /// (MathHoverPreview.swift); nil when there is no v2 frame to crop from.
     var mathPreviewContext: () -> MathHoverPreview.Context? = { nil }
@@ -126,6 +133,7 @@ struct SourceEditorView: NSViewRepresentable {
         tv.setAccessibilityHelp("LaTeX source editor. Moving the selection announces the line and column.")
         tv.string = text
         context.coordinator.syntax.enabled = syntaxHighlighting
+        context.coordinator.syntax.language = language // before attach: the first lex is already in the right language
         context.coordinator.syntax.attach(tv) // follows the storage from here on; paints the visible window
         context.coordinator.attach(scroll)
         context.coordinator.spelling.attach(tv) // LaTeX-aware spell checking (LaTeXSpellCheck.swift)
@@ -145,6 +153,7 @@ struct SourceEditorView: NSViewRepresentable {
             if syntaxHighlighting { co.syntax.reset() }
         }
         co.setLineNumbers(showLineNumbers, on: scroll)
+        co.syntax.language = language // no-op unless the document's kind changed (a .bib tab)
         if let completing = tv as? CompletingTextView {
             // Change-only: the setter rebuilds the completion metadata, and this
             // update runs on every keystroke, not only when a result arrives.
@@ -155,6 +164,7 @@ struct SourceEditorView: NSViewRepresentable {
         (tv as? CompletingTextView)?.graphicsRoot = graphicsRoot
         // The other open documents' macros complete as declared (Completion.declaredCommands); read when the list is requested.
         (tv as? CompletingTextView)?.otherDocuments = { [hoverContext] in hoverContext().otherDocuments.map(\.text) }
+        (tv as? CompletingTextView)?.bibliographySources = bibliographySources // `\cite{` from the project's .bib files (BibScanner.swift)
         if let m = projectIndexMetadata { _ = (tv as? CompletingTextView)?.accept(projectIndex: m) }
         if let edit = pendingEdit, edit.token != co.appliedEditToken {
             // While marked text exists the storage is ahead of the model by the

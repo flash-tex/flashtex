@@ -74,6 +74,11 @@ struct SyntaxHighlighter {
         case verbatim(String)
         /// Inside `\begin{comment}`.
         case commentEnvironment
+        /// A BibTeX buffer (`Language.bibtex`), never LaTeX: `depth` is the
+        /// brace depth — 0 between entries, 1 in an entry body, 2 and more
+        /// inside a braced value — and `quoted` an open `"…"` value; both
+        /// carry across lines, so a value that spans lines stays a value.
+        case bibtex(depth: Int, quoted: Bool)
 
         var isMath: Bool {
             switch self {
@@ -81,6 +86,19 @@ struct SyntaxHighlighter {
             default: false
             }
         }
+    }
+
+    /// What the buffer is. LaTeX unless the owner says the document is a
+    /// declared bibliography (`DocumentKinds`; ContentView passes it), in
+    /// which case every line is lexed as BibTeX: entry type (`command`), key
+    /// (`definition`), field names (`environment`), braced or quoted values
+    /// (`reference`, the string colour), bare numbers (`number`) and `%`
+    /// comments — the LaTeX roles and colours, nothing new to theme.
+    enum Language: Equatable, Sendable {
+        case latex, bibtex
+
+        /// Mode the first line starts in.
+        var initialMode: Mode { self == .bibtex ? .bibtex(depth: 0, quoted: false) : .text }
     }
 
     static let mathEnvironments: Set<String> = [
@@ -218,6 +236,7 @@ struct SyntaxHighlighter {
                 switch mode {
                 case .verbatim(let env): i = verbatimBody(from: i, env: env, kind: .verbatim)
                 case .commentEnvironment: i = verbatimBody(from: i, env: "comment", kind: .comment)
+                case .bibtex(let depth, let quoted): i = bibtexUnit(at: i, depth: depth, quoted: quoted)
                 default: i = codeUnit(at: i)
                 }
             }
@@ -385,6 +404,83 @@ struct SyntaxHighlighter {
             }
         }
 
+        /// One unit of a BibTeX buffer (`Mode.bibtex`): `@type{key, field =
+        /// {value}, …}`. Outside an entry `@word` is the entry type and the
+        /// token up to the first comma its key; in the body an identifier
+        /// followed by `=` is a field name and a digit run a number; a `{`
+        /// opens a braced value whose text (to the matching depth) is a
+        /// string, as is a `"…"` value. `%` starts a comment except inside a
+        /// value. Nothing here ever leaves BibTeX for a LaTeX mode.
+        mutating func bibtexUnit(at i: Int, depth: Int, quoted: Bool) -> Int {
+            let c = units[i]
+            if quoted {
+                if c == 0x22 { emit(i, i + 1, .brace); mode = .bibtex(depth: depth, quoted: false); return i + 1 }
+                if c == 0x0A { return i + 1 }
+                var j = i
+                while j < end, units[j] != 0x22, units[j] != 0x0A { j += 1 }
+                emit(i, j, .reference)
+                return j
+            }
+            if depth >= 2 {
+                switch c {
+                case 0x7B: emit(i, i + 1, .brace); mode = .bibtex(depth: depth + 1, quoted: false); return i + 1
+                case 0x7D: emit(i, i + 1, .brace); mode = .bibtex(depth: depth - 1, quoted: false); return i + 1
+                case 0x0A: return i + 1
+                default:
+                    var j = i
+                    while j < end, units[j] != 0x7B, units[j] != 0x7D, units[j] != 0x0A { j += 1 }
+                    emit(i, j, .reference)
+                    return j
+                }
+            }
+            switch c {
+            case 0x0A:
+                return i + 1
+            case 0x25: // % — a comment outside values
+                var j = i + 1
+                while j < end, units[j] != 0x0A { j += 1 }
+                emit(i, j, .comment)
+                return j
+            case 0x40 where depth == 0: // @type{key,
+                var j = i + 1
+                while j < end, Self.isLetter(units[j]) { j += 1 }
+                emit(i, j, .command)
+                var k = j
+                while k < end, Self.isSpace(units[k]) { k += 1 }
+                guard k < end, units[k] == 0x7B || units[k] == 0x28 else { return j }
+                emit(k, k + 1, .brace)
+                var m = k + 1
+                while m < end, Self.isSpace(units[m]) { m += 1 }
+                var e = m
+                while e < end, units[e] != 0x2C, units[e] != 0x7D, units[e] != 0x29, units[e] != 0x0A, !Self.isSpace(units[e]) { e += 1 }
+                emit(m, e, .definition)
+                mode = .bibtex(depth: 1, quoted: false)
+                return e
+            case 0x7B:
+                emit(i, i + 1, .brace); mode = .bibtex(depth: depth + 1, quoted: false); return i + 1
+            case 0x7D, 0x29:
+                emit(i, i + 1, .brace); mode = .bibtex(depth: max(0, depth - 1), quoted: false); return i + 1
+            case 0x22 where depth == 1:
+                emit(i, i + 1, .brace); mode = .bibtex(depth: depth, quoted: true); return i + 1
+            default:
+                if depth == 1, Self.isLetter(c) || c == 0x5F {
+                    var j = i + 1
+                    while j < end, Self.isLetter(units[j]) || Self.isDigit(units[j]) || units[j] == 0x5F || units[j] == 0x2D { j += 1 }
+                    var k = j
+                    while k < end, Self.isSpace(units[k]) { k += 1 }
+                    if k < end, units[k] == 0x3D { emit(i, j, .environment) } // `=` follows: a field name
+                    return j
+                }
+                if depth == 1, Self.isDigit(c) {
+                    var j = i + 1
+                    while j < end, Self.isDigit(units[j]) { j += 1 }
+                    emit(i, j, .number)
+                    return j
+                }
+                return i + 1
+            }
+        }
+
         /// `\newcommand{\foo}` / `\newcommand\foo` / `\newenvironment{foo}`:
         /// the defined name is `definition`.
         mutating func definedName(after e: Int) -> Int {
@@ -413,10 +509,18 @@ struct SyntaxHighlighter {
     /// one more (empty) line.
     private(set) var lineStarts: [Int] = [0]
     /// Mode at the start of each line (`count == lineStarts.count`).
-    private(set) var modes: [Mode] = [.text]
+    private(set) var modes: [Mode]
     private(set) var length = 0
     /// Lines re-lexed by the last `edit` (evidence for tests/benchmarks).
     private(set) var lastEditLinesLexed = 0
+    /// What the buffer is lexed as; fixed for the model's life
+    /// (`SyntaxPainter.language` swaps the model).
+    let language: Language
+
+    init(language: Language = .latex) {
+        self.language = language
+        modes = [language.initialMode]
+    }
 
     var lineCount: Int { lineStarts.count }
 
@@ -441,11 +545,11 @@ struct SyntaxHighlighter {
     mutating func reset(_ text: NSString) {
         length = text.length
         lineStarts = [0]
-        modes = [.text]
+        modes = [language.initialMode]
         lastEditLinesLexed = 0
         guard length > 0 else { return }
         withUnits(of: text, range: NSRange(location: 0, length: length)) { units in
-            var mode = Mode.text
+            var mode = language.initialMode
             var lineStart = 0
             var runs: [Run] = []
             for i in 0..<length where units[i] == 0x0A {
@@ -542,8 +646,8 @@ struct SyntaxHighlighter {
     }
 
     /// Full lex of `text` from a fresh model (tests; the incremental invariant).
-    static func runs(of text: NSString) -> [Run] {
-        var h = SyntaxHighlighter()
+    static func runs(of text: NSString, language: Language = .latex) -> [Run] {
+        var h = SyntaxHighlighter(language: language)
         h.reset(text)
         return h.runs(in: NSRange(location: 0, length: text.length), text: text)
     }
@@ -559,7 +663,7 @@ struct SyntaxHighlighter {
     /// is checked against this rather than being a second opinion
     /// (`CaretContextTests.testAgreesWithTheSyntaxHighlighter`).
     func mode(at utf16: Int, text: NSString) -> Mode {
-        guard text.length == length, length > 0 else { return .text }
+        guard text.length == length, length > 0 else { return language.initialMode }
         let clamped = max(0, min(utf16, length))
         let index = line(at: clamped)
         let start = lineStarts[index]
@@ -663,6 +767,16 @@ final class SyntaxPainter {
     private(set) var lastFlushCpuNs: UInt64 = 0
     private(set) var lastEditLinesLexed = 0
     var enabled = true { didSet { if !enabled { clear() } } }
+    /// What the buffer is lexed as (`SyntaxHighlighter.Language`); a change
+    /// swaps the model and re-lexes and repaints the window.
+    var language: SyntaxHighlighter.Language {
+        get { highlighter.language }
+        set {
+            guard newValue != highlighter.language else { return }
+            highlighter = SyntaxHighlighter(language: newValue)
+            reset()
+        }
+    }
     private weak var textView: NSTextView?
     private var observer: NSObjectProtocol?
     private var flushScheduled = false

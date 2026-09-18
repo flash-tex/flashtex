@@ -200,74 +200,21 @@ extension EditorIntelligence {
         }
     }
 
-    /// The BibTeX entry `@type{key, field = {value}, …}`. Values may be braced,
-    /// quoted or a bare word; nested braces are honoured.
+    /// The BibTeX entry `@type{key, field = {value}, …}`, parsed by
+    /// `BibScanner` (the same parser `\cite{` completion reads whole files
+    /// with); values may be braced, quoted or a bare word, nested braces are
+    /// honoured, and the scan stops at the key.
     static func bibEntry(forKey key: String, inBibTeX text: String) -> BibliographyEntry? {
-        let ns = text as NSString
-        var i = 0
-        while i < ns.length {
-            guard ns.character(at: i) == 0x40 else { i += 1; continue } // `@`
-            var j = i + 1
-            while j < ns.length, isLetter(ns.character(at: j)) { j += 1 }
-            let type = ns.substring(with: NSRange(location: i + 1, length: j - i - 1)).lowercased()
-            while j < ns.length, isSpace(ns.character(at: j)) { j += 1 }
-            guard j < ns.length, ns.character(at: j) == 0x7B, !["comment", "preamble", "string"].contains(type),
-                  let entryEnd = scanBalanced(in: ns, from: j, open: 0x7B, close: 0x7D) else { i += 1; continue }
-            var k = j + 1
-            while k < ns.length, isSpace(ns.character(at: k)) { k += 1 }
-            let keyStart = k
-            while k < entryEnd, ns.character(at: k) != 0x2C { k += 1 } // `,`
-            let found = ns.substring(with: NSRange(location: keyStart, length: k - keyStart)).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard found == key else { i = entryEnd + 1; continue }
-            let fields = bibFields(in: ns, from: min(k + 1, entryEnd), to: entryEnd)
-            return BibliographyEntry(
-                key: key, type: type,
-                author: fields["author"].map(plainText).map(shortenAuthors),
-                title: fields["title"].map(plainText),
-                year: fields["year"] ?? fields["date"].map { String($0.prefix(4)) },
-                source: ["journal", "journaltitle", "booktitle", "publisher", "school", "institution", "howpublished"]
-                    .compactMap { fields[$0] }.first.map(plainText),
-                raw: nil, path: nil)
-        }
-        return nil
-    }
-
-    /// `name = value` pairs of one entry body.
-    private static func bibFields(in ns: NSString, from start: Int, to end: Int) -> [String: String] {
-        var out: [String: String] = [:]
-        var i = start
-        while i < end {
-            while i < end, !isLetter(ns.character(at: i)) { i += 1 }
-            let nameStart = i
-            while i < end, isLetter(ns.character(at: i)) || ns.character(at: i) == 0x5F { i += 1 }
-            guard i > nameStart else { break }
-            let name = ns.substring(with: NSRange(location: nameStart, length: i - nameStart)).lowercased()
-            while i < end, isSpace(ns.character(at: i)) { i += 1 }
-            guard i < end, ns.character(at: i) == 0x3D else { continue } // `=`
-            i += 1
-            while i < end, isSpace(ns.character(at: i)) { i += 1 }
-            guard i < end else { break }
-            let c = ns.character(at: i)
-            var value = ""
-            if c == 0x7B, let close = scanBalanced(in: ns, from: i, open: 0x7B, close: 0x7D), close <= end {
-                value = ns.substring(with: NSRange(location: i + 1, length: close - i - 1))
-                i = close + 1
-            } else if c == 0x22 { // `"`
-                var j = i + 1
-                while j < end, ns.character(at: j) != 0x22 { j += 1 }
-                value = ns.substring(with: NSRange(location: i + 1, length: max(0, j - i - 1)))
-                i = min(j + 1, end)
-            } else {
-                let s = i
-                while i < end, ns.character(at: i) != 0x2C, !isSpace(ns.character(at: i)) { i += 1 }
-                value = ns.substring(with: NSRange(location: s, length: i - s))
-            }
-            let collapsed = value.split(whereSeparator: { $0 == "\n" || $0 == "\r" || $0 == "\t" || $0 == " " }).joined(separator: " ")
-            if out[name] == nil, !collapsed.isEmpty { out[name] = collapsed }
-            while i < end, ns.character(at: i) != 0x2C { i += 1 }
-            i += 1
-        }
-        return out
+        guard let record = BibScanner.record(forKey: key, in: text) else { return nil }
+        let fields = record.fields
+        return BibliographyEntry(
+            key: key, type: record.type,
+            author: fields["author"].map(plainText).map(shortenAuthors),
+            title: fields["title"].map(plainText),
+            year: fields["year"] ?? fields["date"].map { String($0.prefix(4)) },
+            source: ["journal", "journaltitle", "booktitle", "publisher", "school", "institution", "howpublished"]
+                .compactMap { fields[$0] }.first.map(plainText),
+            raw: nil, path: nil)
     }
 
     /// `Knuth, Donald E. and Lamport, Leslie` → `Knuth and Lamport`;
