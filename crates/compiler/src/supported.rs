@@ -126,7 +126,16 @@ pub struct Inventory {
 pub const TEXT_DIAGNOSTIC_ONLY: &[&str] = &["frac", "sqrt", "thanks", "and"];
 
 /// Dispatch arms that are not `parser::BUILT_INS` entries.
-const TEXT_EXTRA_ARMS: &[&str] = &["newtheorem", "theoremstyle"];
+///
+/// NOTE: csquotes' `enquote` is deliberately NOT in `BUILT_INS`. `\enquote`
+/// is not a kernel command, so without `\usepackage{csquotes}` the expansion
+/// engine must leave it undefined: a bare use reports like any other
+/// undefined control sequence, and a user's own `\newcommand{\enquote}` wins
+/// exactly as in real LaTeX. The parser arm is gated on the package instead.
+/// When csquotes IS loaded, expansion declares it as a host command (see
+/// `expansion::csquotes_requested`), so `\renewcommand{\enquote}` is
+/// accepted exactly as real LaTeX accepts redefining csquotes' own macro.
+const TEXT_EXTRA_ARMS: &[&str] = &["newtheorem", "theoremstyle", "enquote"];
 
 /// Canonical commands the expansion pass executes itself (engine primitives
 /// and kernel-prelude macros of `flashtex-tex-expansion`); their effect
@@ -231,6 +240,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("textrm", "{...}", "roman text"),
     ("textsf", "{...}", "sans-serif text"),
     ("textnormal", "{...}", "normal text face"),
+    ("enquote", "{text}", "csquotes quotation: the argument wrapped in ``...'' double-quote marks, single `...' marks one nesting level down"),
     ("bfseries", "", "switches to bold"),
     ("mdseries", "", "switches to medium weight"),
     ("itshape", "", "switches to italic"),
@@ -1076,6 +1086,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "ulem",
         "normalem",
         "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined",
+    ),
+    (
+        "csquotes",
+        "",
+        "\\enquote with ``...'' marks (single `...' marks one nesting level down, alternating further in); no locale/babel quote selection, no \\enquote* and no package options",
     ),
     (
         "relsize",

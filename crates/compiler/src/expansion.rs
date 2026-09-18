@@ -877,6 +877,31 @@ fn has_includes(text: &str) -> bool {
     text.contains("\\input") || text.contains("\\include")
 }
 
+/// True when any project document loads csquotes: the only thing that
+/// defines `\enquote`, a csquotes command rather than a kernel one. The
+/// expansion engine must then count `\enquote` as defined (via
+/// `declare_host_command`, exactly like every `BUILT_INS` entry), so that
+/// `\renewcommand{\enquote}` is accepted — as real LaTeX accepts it once
+/// csquotes defines the macro — while without the package the name stays
+/// undefined and `\renewcommand` reports it, also as in real LaTeX.
+/// Scanned from tokens (the same pass as [`document_fonts`]), so a
+/// commented-out `\usepackage{csquotes}` does not count.
+fn csquotes_requested(documents: &[SourceDocument<'_>]) -> bool {
+    documents.iter().enumerate().any(|(document_index, document)| {
+        let tokens = tokenize_document(document.text, DocumentId(document_index));
+        tokens.iter().enumerate().any(|(index, token)| {
+            let TokenKind::Command(name) = &token.kind else {
+                return false;
+            };
+            if name != "usepackage" {
+                return false;
+            }
+            let (_, group) = option_and_group_words(&tokens, index + 1);
+            group.split(',').map(str::trim).any(|package| package == "csquotes")
+        })
+    })
+}
+
 /// The engine stopped on the step limit or on TeX's "capacity exceeded"
 /// (input stack, main memory): the rest of the document is then typeset
 /// unexpanded from where the engine stood. A stop on the output token limit
@@ -1227,6 +1252,9 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     let limits = limits_for(total_bytes);
     let mut engine = Engine::with_limits(entry_text, limits);
     configure_with_fonts(&mut engine, document_fonts(documents));
+    if csquotes_requested(documents) {
+        engine.declare_host_command("enquote");
+    }
 
     let mut conv = Converter::new(documents, entry);
     let mut lookahead: VecDeque<(tex::Token, Option<tex::Span>)> = VecDeque::new();
@@ -1318,6 +1346,10 @@ pub struct ExpansionCache {
     old_engine_tokens: usize,
     /// The class size and font packages change the engine's `em`/`ex`.
     fonts: DocumentFonts,
+    /// Whether csquotes was loaded when the cache was built: it decides if
+    /// `\enquote` counts as defined, so adding or removing the package must
+    /// rebuild rather than reuse, exactly like a font-setup change.
+    csquotes: bool,
     /// Tokens at the end of `out` typeset unexpanded after the engine
     /// stopped (see [`Converter::resume_unexpanded`]); no marks cover them.
     recovered: usize,
@@ -1415,6 +1447,7 @@ pub fn expand_project_with_cache(
         .collect();
     let masked: &str = prepared[entry].text.as_ref();
     let fonts = document_fonts(documents);
+    let csquotes = csquotes_requested(documents);
     // The same limits as `expand_project`, which the expander applies to
     // every edit (`IncrementalExpander::edit_with_limits`).
     let limits = limits_for(documents.iter().map(|d| d.text.len()).sum());
@@ -1422,6 +1455,7 @@ pub fn expand_project_with_cache(
         !c.lent
             && c.entry_path == document.path
             && c.fonts == fonts
+            && c.csquotes == csquotes
             && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
     });
     let expansion = if reusable {
@@ -1449,8 +1483,12 @@ pub fn expand_project_with_cache(
 fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepared<'_>], limits: Limits) -> (ExpansionCache, Expansion) {
     let masked: &str = prepared[entry].text.as_ref();
     let fonts = document_fonts(documents);
+    let csquotes = csquotes_requested(documents);
     let init: Rc<dyn Fn(&mut Engine)> = Rc::new(move |engine| {
         configure_with_fonts(engine, fonts);
+        if csquotes {
+            engine.declare_host_command("enquote");
+        }
     });
     let expander = IncrementalExpander::with_host(masked, limits, CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
@@ -1476,6 +1514,7 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         last_span: conv.last_span,
         old_engine_tokens: 0,
         fonts,
+        csquotes,
         recovered: 0,
         lent: false,
     };

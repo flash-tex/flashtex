@@ -351,6 +351,9 @@ fn text_probe(name: &str, arguments: &str) -> String {
         "captionof" => "\\captionof{figure}{x}".into(),
         "uline" => "\\usepackage{ulem}\\uline{x}".into(),
         "sout" => "\\usepackage{ulem}\\sout{x}".into(),
+        // Like ulem's commands, `\\enquote` exists only once its package
+        // is loaded; a bare probe would (correctly) report it as undefined.
+        "enquote" => "\\usepackage{csquotes}\\enquote{x}".into(),
         _ => with_arguments(name, arguments, "1pt"),
     }
 }

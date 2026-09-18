@@ -1595,6 +1595,15 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "pounds",
     "dots",
     "ldots",
+    // NOTE: csquotes' `enquote` is deliberately NOT here (it lives in
+    // `supported.rs`'s `TEXT_EXTRA_ARMS` instead). `\enquote` is not a
+    // kernel command: without `\usepackage{csquotes}` the expansion engine
+    // must leave it undefined, so a bare use reports exactly like any other
+    // undefined control sequence and a user's own `\newcommand{\enquote}`
+    // is accepted, as in real LaTeX. The parser arm below is gated on the
+    // package instead. With csquotes loaded, expansion declares it as a
+    // host command (`expansion::csquotes_requested`), so
+    // `\renewcommand{\enquote}` is accepted like any other defined macro.
     "textsection",
     "textparagraph",
     "textdagger",
@@ -2185,6 +2194,7 @@ pub fn parse_project_with(
         class_size_pt: None,
         parskip_pt: None,
         packages: Vec::new(),
+        enquote_depth: 0,
         math_packages: MathPackages::KERNEL,
         font_encoding: Encoding::OT1,
         block_dependencies: Vec::new(),
@@ -2377,6 +2387,11 @@ struct P<'a> {
     class_size_pt: Option<f64>,
     parskip_pt: Option<f64>,
     packages: Vec<String>,
+    /// Open `\enquote` levels currently being typeset. Real csquotes cycles
+    /// the marks by nesting depth (babel-english: even levels double
+    /// ``...'' quotes, odd levels single `...` quotes), so the marks an
+    /// `\enquote` emits depend on how many enclose it.
+    enquote_depth: usize,
     /// The loaded packages that redefine math commands (`math::MathPackages`),
     /// folded in as `\documentclass` and `\usepackage` are read. Math parsed
     /// before the class line is parsed with the kernel's definitions, which is
@@ -3525,6 +3540,22 @@ impl P<'_> {
                 self.text_accent(text_builtins::canonical_accent_name(name), span, para)
             }
             "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
+            // csquotes `\enquote{...}`: this compiler has no
+            // locale/babel machinery, so the honest default is the same
+            // marks a literal ``` ``...'' ``` produces (see
+            // `text_enquote`, which resolves them through the very same
+            // ligature conversion as ordinary prose). The arm only runs
+            // once csquotes is loaded (`enquote` is not in `BUILT_INS`, so
+            // without the package this is `unsupported`, exactly like any
+            // other undefined control sequence: diagnosed, with the braced
+            // argument kept as plain text).
+            "enquote" => {
+                if self.csquotes_loaded() {
+                    self.text_enquote(span, para);
+                } else {
+                    self.unsupported("enquote", span);
+                }
+            }
             // ulem `\uline`/`\sout` (need the package). Kernel text-mode
             // `\underline` is latex.ltx `$\@@underline{\hbox{#1}}$` (TeXbook
             // Rule 10); math-mode `\underline`/`\underbar` are in `math.rs`.
@@ -9378,6 +9409,30 @@ impl P<'_> {
                     style,
                     space_before,
                 }),
+                // `\enquote` in a heading, caption or style argument: the
+                // marks around the argument parsed as running text, exactly
+                // the inlines `P::text_enquote` builds (math, style changes
+                // and nested `\enquote` all work there too). Without this
+                // arm the command was dropped and only its words survived.
+                TokenKind::Command(name) if name == "enquote" && self.csquotes_loaded() => {
+                    match group_tokens_at(&expanded, index + 1) {
+                        Some((inner, argument_span, after)) => {
+                            skip_until = after;
+                            content.extend(self.enquote_inlines(
+                                inner,
+                                input.token.span,
+                                argument_span,
+                                style,
+                                space_before,
+                            ));
+                        }
+                        None => self.diags.push(Diagnostic::error(
+                            "\\enquote requires a braced argument",
+                            Some(input.token.span),
+                            Some("used an empty argument and continued".into()),
+                        )),
+                    }
+                }
                 _ => {}
             }
         }
@@ -9678,6 +9733,245 @@ impl P<'_> {
         if let Some(inline) = self.symbol_inline(name, span, style, space_before) {
             para.push(inline);
         }
+    }
+
+    /// csquotes `\enquote{...}` (issue #501). Real csquotes picks
+    /// locale-appropriate marks via babel/polyglossia; this compiler has no
+    /// locale machinery, so the faithful default is whatever a literal
+    /// ``` ``...'' ``` already typesets. The two marks are resolved through
+    /// [`apply_text_ligatures`] — the exact function ordinary prose words go
+    /// through — rather than a second table of quote glyphs, and the
+    /// argument itself is parsed as ordinary inline content, so commands,
+    /// math and spacing inside it behave exactly as they do in prose.
+    /// Whether `\usepackage{csquotes}` was seen: the only thing that
+    /// defines `\enquote`, a csquotes command rather than a kernel one.
+    fn csquotes_loaded(&self) -> bool {
+        self.packages.iter().any(|package| package == "csquotes")
+    }
+
+    fn text_enquote(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        let style = self.style;
+        let (tokens, argument_span) = self.required_group("enquote", span);
+        para.extend(self.enquote_inlines(tokens, span, argument_span, style, space_before));
+    }
+
+    /// csquotes `\enquote{...}` as inlines: `tokens` are parsed with the
+    /// ordinary dispatch for running text ([`P::argument_inlines`]), so
+    /// math, style changes, macros and nested `\enquote` inside the argument
+    /// behave exactly as they do in prose. The marks are whatever the
+    /// literal quote ligatures typeset ([`apply_text_ligatures`]): double
+    /// ``` ``...'' ``` at even nesting depths, single ``` `...' ``` one
+    /// level down, alternating further in.
+    ///
+    /// Each mark merges into the text run directly adjacent to it when that
+    /// run carries the surrounding `style`: the literal marks lex as part of
+    /// their neighbour word, so they share one layout item with it and no
+    /// line break can fall between a mark and its content. A neighbour that
+    /// is not same-styled text (math, a logo, styled text) keeps a separate
+    /// mark item glued against it (`space_before: false`), as before. `span`
+    /// is the command token, `argument_span` the braced group.
+    fn enquote_inlines(
+        &mut self,
+        tokens: Vec<InputToken>,
+        span: Span,
+        argument_span: Span,
+        style: TextStyle,
+        space_before: bool,
+    ) -> Vec<Inline> {
+        // Real csquotes cycles the marks by nesting depth (babel-english:
+        // even levels double ``...'' quotes, odd levels single `...'
+        // quotes), so the marks depend on how many `\enquote`s enclose this
+        // one. The single-quote pair resolves through the same ligature
+        // conversion as a literal `` `...\' ``.
+        let (open, close) = if self.enquote_depth % 2 == 0 {
+            (apply_text_ligatures("``"), apply_text_ligatures("''"))
+        } else {
+            (apply_text_ligatures("`"), apply_text_ligatures("'"))
+        };
+        // The argument is spliced directly against the opening mark, so a
+        // leading word glues to it exactly as the literal ``` ``word'' ```
+        // lexes as a single word: `argument_inlines` marks stream-start
+        // content `space_before: true`, which would insert a spurious
+        // inter-word space. The correction mirrors `preceded_by_space`
+        // exactly (real whitespace keeps its space; a comment glues, as TeX
+        // eats the line break it comments out).
+        // Transparent grouping hides nothing: descend past opening
+        // braces, tracking depth like the group's own scanners, to the
+        // first visible token, so `\enquote{{ quoted}}` sees the space one
+        // level down exactly as the literal ``` ``{ quoted}'' ``` keeps it.
+        // (An unbalanced close is visible, as there is nothing real before
+        // it.)
+        let mut depth = 0usize;
+        let mut first_visible: Option<&TokenKind> = None;
+        for input in &tokens {
+            match &input.token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace if depth > 0 => depth -= 1,
+                kind => {
+                    first_visible = Some(kind);
+                    break;
+                }
+            }
+        }
+        let glued = !matches!(
+            first_visible,
+            Some(TokenKind::Space | TokenKind::ParBreak) | None
+        );
+        // The closing-side mirror: walk back past closing braces to the
+        // last visible token, so `\enquote{{quoted }}` sees the trailing
+        // space exactly as the literal ``` ``{quoted }'' ``` keeps it.
+        // (An unbalanced open is visible, as there is nothing real after
+        // it.) A trailing space leaves no inline of its own -- the content
+        // ends at the last word -- so without this the closing mark would
+        // glue onto that word and drop one interword space.
+        let mut depth = 0usize;
+        let mut last_visible: Option<&TokenKind> = None;
+        for input in tokens.iter().rev() {
+            match &input.token.kind {
+                TokenKind::RBrace => depth += 1,
+                TokenKind::LBrace if depth > 0 => depth -= 1,
+                kind => {
+                    last_visible = Some(kind);
+                    break;
+                }
+            }
+        }
+        let trailing_space = matches!(
+            last_visible,
+            Some(TokenKind::Space | TokenKind::ParBreak)
+        );
+        // A nested `\enquote` inside the argument must see one more open
+        // level, so the depth wraps exactly the recursive parse (and is
+        // restored before every return below).
+        self.enquote_depth += 1;
+        let mut content = self.argument_inlines(tokens, span, style);
+        self.enquote_depth -= 1;
+        if content.is_empty() {
+            // A whitespace-only argument still reserves its space: the
+            // closing mark stands apart with `space_before: true`, exactly
+            // like the literal ``` `` '' ```. A truly empty argument keeps
+            // the merged `"" ""` pair.
+            if trailing_space {
+                return vec![
+                    Inline::Text {
+                        text: open,
+                        span,
+                        style,
+                        space_before,
+                    },
+                    Inline::Text {
+                        text: close,
+                        span: argument_span,
+                        style,
+                        space_before: true,
+                    },
+                ];
+            }
+            let mut marks = open;
+            marks.push_str(&close);
+            return vec![Inline::Text {
+                text: marks,
+                span,
+                style,
+                space_before,
+            }];
+        }
+        let mut out = Vec::with_capacity(content.len() + 2);
+        if glued {
+            match content.first_mut() {
+                Some(
+                    Inline::Text {
+                        text,
+                        style: inner,
+                        space_before: before,
+                        ..
+                    },
+                ) if *inner == style => {
+                    // The merged run keeps the mark's own spacing: the
+                    // content's stream-start `true` is the splice artifact,
+                    // while `space_before` is the real source gap (or glue)
+                    // in front of `\enquote`, exactly as the literal word's
+                    // spacing.
+                    *before = space_before;
+                    text.insert_str(0, &open);
+                }
+                Some(first) => {
+                    // Any other layout-bearing first inline keeps a separate
+                    // mark item glued against it: its own stream-start
+                    // `space_before: true` is the same splice artifact the
+                    // merged run clears above, so it is cleared here too
+                    // (`\enquote{\underline{quoted}}` glues exactly like the
+                    // literal ``` ``\underline{quoted}'' ```). Inlines
+                    // without a `space_before` field (glue, breaks,
+                    // penalties) need no clearing.
+                    match first {
+                        Inline::Text { space_before: before, .. }
+                        | Inline::Math { space_before: before, .. }
+                        | Inline::Reference { space_before: before, .. }
+                        | Inline::CleverReference { space_before: before, .. }
+                        | Inline::ThePage { space_before: before, .. }
+                        | Inline::Footnote { space_before: before, .. }
+                        | Inline::Marginpar { space_before: before, .. }
+                        | Inline::Logo { space_before: before, .. }
+                        | Inline::Rule { space_before: before, .. }
+                        | Inline::Verbatim { space_before: before, .. } => {
+                            *before = false;
+                        }
+                        Inline::Underline(underline) => underline.space_before = false,
+                        Inline::ColorBox(color_box) => color_box.space_before = false,
+                        Inline::Graphic(graphic) => graphic.space_before = false,
+                        Inline::Transform(transform) => transform.space_before = false,
+                        Inline::Tabular(tabular) => tabular.space_before = false,
+                        _ => {}
+                    }
+                    out.push(Inline::Text {
+                        text: open,
+                        span,
+                        style,
+                        space_before,
+                    });
+                }
+                _ => out.push(Inline::Text {
+                    text: open,
+                    span,
+                    style,
+                    space_before,
+                }),
+            }
+        } else {
+            out.push(Inline::Text {
+                text: open,
+                span,
+                style,
+                space_before,
+            });
+        }
+        // With a trailing space the mark stands apart (`space_before:
+        // true`) instead of merging into the last run, restoring the space
+        // the literal keeps between the last word and ```'' ```. Without
+        // one the mark merges exactly as before.
+        let mut trailing = None;
+        match content.last_mut() {
+            Some(Inline::Text { text, style: inner, .. })
+                if *inner == style && !trailing_space =>
+            {
+                text.push_str(&close);
+            }
+            _ => {
+                trailing = Some(Inline::Text {
+                    text: close,
+                    span: argument_span,
+                    style,
+                    space_before: trailing_space,
+                });
+            }
+        }
+        out.extend(content);
+        if let Some(mark) = trailing {
+            out.push(mark);
+        }
+        out
     }
 
     /// A siunitx typesetting command (`crate::siunitx`): its arguments are
@@ -11003,6 +11297,11 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // `\uline` and `\sout` are implemented; `\emph` is not redefined
         // (ulem's default `ULforem`) and `\uuline` stays unsupported if used.
         "ulem" => options.iter().all(|option| *option == "normalem"),
+        // csquotes' `\enquote` is implemented with the ``` ``...'' ```
+        // marks (single ``` `...' ``` one level down); option handling
+        // (`style=`, `autostyle=`, ...) is not, so any option keeps the
+        // warning, exactly like `ulem` above.
+        "csquotes" => options.is_empty(),
         // `\larger`/`\smaller` are implemented above, so loading the
         // package is silent (same rule as `ulem`); relsize takes no options.
         "relsize" => options.is_empty(),
@@ -11399,6 +11698,44 @@ fn siunitx_bracket_at(tokens: &[InputToken], index: usize) -> Option<(String, Sp
                 }
                 raw.push_str(&piece);
             }
+        }
+    }
+    None
+}
+
+/// A braced group at `index` (after spaces) as tokens without its outer
+/// braces: (argument, span, index after `}`). The token-slice analogue of
+/// [`siunitx_group_at`], for flat passes that re-parse the argument instead
+/// of reading its raw source.
+fn group_tokens_at(tokens: &[InputToken], index: usize) -> Option<(Vec<InputToken>, Span, usize)> {
+    let mut index = index;
+    while matches!(
+        tokens.get(index).map(|t| &t.token.kind),
+        Some(TokenKind::Space | TokenKind::Comment)
+    ) {
+        index += 1;
+    }
+    let open = tokens.get(index)?;
+    if open.token.kind != TokenKind::LBrace {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (offset, input) in tokens[index..].iter().enumerate() {
+        match input.token.kind {
+            TokenKind::LBrace => depth += 1,
+            TokenKind::RBrace => {
+                depth -= 1;
+                if depth == 0 {
+                    let inner = tokens[index + 1..index + offset].to_vec();
+                    let span = if input.token.span.document == open.token.span.document {
+                        open.token.span.merge(input.token.span)
+                    } else {
+                        open.token.span
+                    };
+                    return Some((inner, span, index + offset + 1));
+                }
+            }
+            _ => {}
         }
     }
     None
@@ -12941,6 +13278,569 @@ mod tests {
                 .filter(|item| item.text == crate::math::MINUS_SIGN)
                 .count(),
             2
+        );
+    }
+
+    /// csquotes `\enquote{...}` (issue #501): with no locale/babel
+    /// machinery the marks are whatever a literal ``` ``...'' ``` already
+    /// typesets. Each pair below must lay out identically — the same glyphs
+    /// with the same spacing around them.
+    #[test]
+    fn enquote_matches_literal_double_quote_ligature() {
+        // The quotation lexes as one word in the literal source but as
+        // several inlines under `\enquote`, so item boundaries cannot
+        // coincide — what must coincide is the glyph sequence, the
+        // paragraph start, and where the run ends (any inserted or missing
+        // glue would move that end).
+        let end = |xs: &[crate::layout::TextItem]| {
+            xs.last().map(|item| {
+                let end = item.x_pt + layout::text_width(&item.text, item.font_size_pt, item.font);
+                (end * 100.0).round() / 100.0
+            })
+        };
+        for (literal, quoted) in [
+            ("Say ``quoted'' loudly.", "\\usepackage{csquotes}Say \\enquote{quoted} loudly."),
+            ("A``b''C", "\\usepackage{csquotes}A\\enquote{b}C"),
+            ("``hello world'' done.", "\\usepackage{csquotes}\\enquote{hello world} done."),
+        ] {
+            let (lit_parsed, lit_items) = items(literal);
+            assert!(
+                lit_parsed.diagnostics.is_empty(),
+                "{:?}",
+                lit_parsed.diagnostics
+            );
+            let (parsed, enq_items) = items(quoted);
+            // With csquotes loaded there is no diagnostic at all (and
+            // specifically none coded `unknown_command`) for `\\enquote`.
+            assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+            let concat = |xs: &[crate::layout::TextItem]| {
+                xs.iter().map(|item| item.text.as_str()).collect::<String>()
+            };
+            assert_eq!(concat(&enq_items), concat(&lit_items), "{quoted:?}");
+            // Same spacing: the run starts and ends at the same laid-out
+            // positions as in the literal source.
+            assert_eq!(
+                enq_items.first().map(|i| i.x_pt),
+                lit_items.first().map(|i| i.x_pt),
+                "{quoted:?}"
+            );
+            assert_eq!(end(&enq_items), end(&lit_items), "{quoted:?}");
+            assert_eq!(
+                enq_items.last().map(|i| i.baseline_y_pt),
+                lit_items.last().map(|i| i.baseline_y_pt),
+                "{quoted:?}"
+            );
+        }
+    }
+
+    /// The `\enquote` marks inherit the surrounding style, like the literal
+    /// ligature's word does.
+    #[test]
+    fn enquote_marks_follow_the_surrounding_style() {
+        let source = "\\usepackage{csquotes}{\\bfseries Say \\enquote{quoted} loudly.}";
+        let (parsed, items) = items(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert!(
+            items
+                .iter()
+                .all(|item| item.font == layout::Font::TimesBold),
+            "{:?}",
+            items
+                .iter()
+                .map(|item| (&item.text, item.font))
+                .collect::<Vec<_>>()
+        );
+        let concat: String = items.iter().map(|item| item.text.as_str()).collect();
+        assert_eq!(concat, "Say\u{201C}quoted\u{201D}loudly.");
+    }
+
+    /// Finding 1: the marks must not strand on a different line from their
+    /// content. `\noindent\hspace{460pt}\enquote{X}` leaves room for
+    /// neither the mark nor the content, so the whole `“X”` wraps onto the
+    /// next line — exactly where the literal ``X'' goes.
+    #[test]
+    fn enquote_marks_stay_with_their_content_at_the_margin() {
+        let (parsed, enq_items) = items("\\usepackage{csquotes}\\noindent\\hspace{460pt}\\enquote{X}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let (parsed, lit_items) = items("\\noindent\\hspace{460pt}``X''");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(enq_items.len(), lit_items.len(), "{enq_items:?}");
+        assert_eq!(
+            enq_items
+                .iter()
+                .map(|item| (item.x_pt, item.baseline_y_pt))
+                .collect::<Vec<_>>(),
+            lit_items
+                .iter()
+                .map(|item| (item.x_pt, item.baseline_y_pt))
+                .collect::<Vec<_>>(),
+            "{enq_items:?} vs {lit_items:?}"
+        );
+    }
+
+    /// Finding 2: the argument is running text, so `$x$` inside it is a
+    /// real formula, not a roman `x`.
+    #[test]
+    fn enquote_parses_math_in_its_argument() {
+        let parsed = parse("\\usepackage{csquotes}\\enquote{value $x$}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let mut saw_math = false;
+        for block in &parsed.blocks {
+            let Block::Paragraph(inlines) = block else {
+                continue;
+            };
+            for inline in inlines {
+                match inline {
+                    Inline::Math { list, .. } if !list.atoms.is_empty() => saw_math = true,
+                    Inline::Text { text, .. } if text == "x" => {
+                        panic!("math degraded to plain text in {inlines:?}")
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert!(saw_math, "{:?}", parsed.blocks);
+    }
+
+    /// Nested `\enquote` cycles the marks by depth, like real csquotes with
+    /// babel-english: outer double ``` ``...'' ``` quotes, single
+    /// ``` `...' ``` quotes one level down, double again further in. The
+    /// implementation used to emit double quotes at every level, and this
+    /// test's old expectation (`\u{201C}y\u{201D}` inside) pinned that bug
+    /// instead of the pdflatex behavior.
+    #[test]
+    fn enquote_nests_with_depth_cycled_marks() {
+        let end = |xs: &[crate::layout::TextItem]| {
+            xs.last().map(|item| {
+                let end = item.x_pt + layout::text_width(&item.text, item.font_size_pt, item.font);
+                (end * 100.0).round() / 100.0
+            })
+        };
+        let concat = |xs: &[crate::layout::TextItem]| {
+            xs.iter().map(|item| item.text.as_str()).collect::<String>()
+        };
+        // Two depths: the inner pair is single quotes, and lays out exactly
+        // like the literal ligature (an independent oracle: the literal goes
+        // through the lexer's ligature conversion, not `enquote_inlines`).
+        let (parsed, enq_items) =
+            items("\\usepackage{csquotes}Say \\enquote{a \\enquote{y} b} loudly.");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(
+            concat(&enq_items),
+            "Say\u{201C}a\u{2018}y\u{2019}b\u{201D}loudly."
+        );
+        let (lit_parsed, lit_items) = items("Say ``a `y' b'' loudly.");
+        assert!(
+            lit_parsed.diagnostics.is_empty(),
+            "{:?}",
+            lit_parsed.diagnostics
+        );
+        assert_eq!(concat(&enq_items), concat(&lit_items));
+        assert_eq!(end(&enq_items), end(&lit_items));
+        // Three depths: the alternation continues inward (double again).
+        let (parsed, enq_items) =
+            items("\\usepackage{csquotes}\\enquote{a \\enquote{b \\enquote{c} d} e}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(
+            concat(&enq_items),
+            "\u{201C}a\u{2018}b\u{201C}c\u{201D}d\u{2019}e\u{201D}"
+        );
+        let (lit_parsed, lit_items) = items("``a `b ``c'' d' e''");
+        assert!(
+            lit_parsed.diagnostics.is_empty(),
+            "{:?}",
+            lit_parsed.diagnostics
+        );
+        assert_eq!(concat(&enq_items), concat(&lit_items));
+        assert_eq!(end(&enq_items), end(&lit_items));
+    }
+
+    /// Finding 2: a section title keeps `\enquote`'s marks (the title's
+    /// flattened parser used to drop the command and keep only the words).
+    #[test]
+    fn section_keeps_enquote_marks() {
+        let parsed = parse("\\usepackage{csquotes}\\section{An \\enquote{example}}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let mut text = String::new();
+        for block in &parsed.blocks {
+            if let Block::Heading { content, .. } = block {
+                for inline in content {
+                    if let Inline::Text { text: word, .. } = inline {
+                        text.push_str(word);
+                    }
+                }
+            }
+        }
+        assert_eq!(text, "An\u{201C}example\u{201D}");
+    }
+
+    /// Review fix: the opening mark glues to every layout-bearing first
+    /// inline, not just text/math/verbatim/logo. `\\underline` kept its
+    /// synthetic stream-start `space_before: true`, gapping the mark.
+    #[test]
+    fn enquote_glues_opening_mark_to_underline() {
+        let parsed = parse("\\usepackage{csquotes}\\enquote{\\underline{quoted}}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph, got {:?}", parsed.blocks);
+        };
+        assert!(
+            matches!(inlines.first(), Some(Inline::Text { text, .. }) if text == "\u{201C}"),
+            "{inlines:?}"
+        );
+        let Some(Inline::Underline(underline)) = inlines.get(1) else {
+            panic!("expected an underline second, got {inlines:?}");
+        };
+        assert!(!underline.space_before, "{inlines:?}");
+        // End to end: identical layout to the literal ``\\underline{quoted}''.
+        let (_, enq_items) = items("\\usepackage{csquotes}\\enquote{\\underline{quoted}}");
+        let (lit_parsed, lit_items) = items("``\\underline{quoted}\'\'");
+        assert!(lit_parsed.diagnostics.is_empty(), "{:?}", lit_parsed.diagnostics);
+        let concat = |xs: &[crate::layout::TextItem]| {
+            xs.iter().map(|item| item.text.as_str()).collect::<String>()
+        };
+        assert_eq!(concat(&enq_items), concat(&lit_items));
+        assert_eq!(
+            enq_items.iter().map(|item| item.x_pt).collect::<Vec<_>>(),
+            lit_items.iter().map(|item| item.x_pt).collect::<Vec<_>>(),
+            "{enq_items:?} vs {lit_items:?}"
+        );
+    }
+
+    /// Review fix: glue is decided by the first visible token, not the
+    /// first raw token. `\\enquote{{ quoted}}` must keep the space the
+    /// literal ``` ``{ quoted}'' ``` keeps.
+    #[test]
+    fn enquote_keeps_space_inside_a_leading_group() {
+        let (lit_parsed, lit_items) = items("``{ quoted}\'\'");
+        assert!(lit_parsed.diagnostics.is_empty(), "{:?}", lit_parsed.diagnostics);
+        let (parsed, enq_items) = items("\\usepackage{csquotes}\\enquote{{ quoted}}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        // Same glyphs with the same spacing, mirroring
+        // `enquote_matches_literal_double_quote_ligature`: item boundaries
+        // cannot coincide (the trailing mark merges under `\\enquote`),
+        // so what must coincide is the text, the run start, and where the
+        // run ends (a lost space would move that end).
+        let concat = |xs: &[crate::layout::TextItem]| {
+            xs.iter().map(|item| item.text.as_str()).collect::<String>()
+        };
+        assert_eq!(concat(&enq_items), concat(&lit_items));
+        assert_eq!(
+            enq_items.first().map(|item| item.x_pt),
+            lit_items.first().map(|item| item.x_pt),
+        );
+        let end = |xs: &[crate::layout::TextItem]| {
+            xs.last().map(|item| {
+                let end = item.x_pt + layout::text_width(&item.text, item.font_size_pt, item.font);
+                (end * 100.0).round() / 100.0
+            })
+        };
+        assert_eq!(end(&enq_items), end(&lit_items));
+        assert_eq!(
+            enq_items.last().map(|item| item.baseline_y_pt),
+            lit_items.last().map(|item| item.baseline_y_pt),
+        );
+    }
+
+    /// Review fix: `group_tokens_at` skips comments as well as spaces.
+    /// A `%` comment between `\enquote` and its group in a heading is
+    /// normally eaten by expansion (as TeX eats it), but after expansion
+    /// stops on a runaway macro the tail is raw-lexed and the comment
+    /// survives as a token. There the quote marks were dropped with a
+    /// false "requires a braced argument" error.
+    #[test]
+    fn section_enquote_with_comment_before_argument() {
+        let parsed = parse("\\usepackage{csquotes}\\def\\x{\\x}\\x\n\\section{An \\enquote%\n{example}}");
+        assert!(
+            !parsed
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("requires a braced argument")),
+            "{:?}",
+            parsed.diagnostics
+        );
+        let mut text = String::new();
+        for block in &parsed.blocks {
+            if let Block::Heading { content, .. } = block {
+                for inline in content {
+                    if let Inline::Text { text: word, .. } = inline {
+                        text.push_str(word);
+                    }
+                }
+            }
+        }
+        assert_eq!(text, "An\u{201C}example\u{201D}");
+    }
+
+    /// Review fix, unit level: `group_tokens_at` skips a `Comment` token
+    /// on its way to the argument's opening brace, exactly like the
+    /// sibling skip-sets (`skip_spaces`, `try_skip_braced_group`).
+    #[test]
+    fn group_tokens_at_skips_comments_before_the_brace() {
+        let tokens: Vec<InputToken> = crate::lexer::tokenize_document(
+            "%note\n{example}",
+            crate::DocumentId(0),
+        )
+        .into_iter()
+        .map(|token| crate::expansion::ExpandedToken {
+            token,
+            definition: None,
+            maps_to_invocation: false,
+        })
+        .collect();
+        let (inner, _, _) =
+            group_tokens_at(&tokens, 0).expect("a comment skips to the group");
+        assert_eq!(inner.len(), 1, "{tokens:?}");
+    }
+
+    /// Review fix (round 4, finding 1): the closing-side mirror of the
+    /// leading-space fix. `\\enquote{quoted }` keeps the trailing space the
+    /// literal ``` ``quoted '' ``` keeps: the closing mark stands apart with
+    /// `space_before: true` instead of merging into the last run. Same
+    /// glyphs, same run start, same run end as the literal.
+    #[test]
+    fn enquote_keeps_a_trailing_space_before_the_closing_mark() {
+        let end = |xs: &[crate::layout::TextItem]| {
+            xs.last().map(|item| {
+                let end = item.x_pt + layout::text_width(&item.text, item.font_size_pt, item.font);
+                (end * 100.0).round() / 100.0
+            })
+        };
+        let concat = |xs: &[crate::layout::TextItem]| {
+            xs.iter().map(|item| item.text.as_str()).collect::<String>()
+        };
+        for (literal, quoted) in [
+            ("Say ``quoted '' loudly.", "\\usepackage{csquotes}Say \\enquote{quoted } loudly."),
+            ("``quoted '' done.", "\\usepackage{csquotes}\\enquote{quoted } done."),
+        ] {
+            let (lit_parsed, lit_items) = items(literal);
+            assert!(
+                lit_parsed.diagnostics.is_empty(),
+                "{:?}",
+                lit_parsed.diagnostics
+            );
+            let (parsed, enq_items) = items(quoted);
+            assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+            assert_eq!(concat(&enq_items), concat(&lit_items), "{quoted:?}");
+            assert_eq!(
+                enq_items.first().map(|item| item.x_pt),
+                lit_items.first().map(|item| item.x_pt),
+                "{quoted:?}"
+            );
+            assert_eq!(end(&enq_items), end(&lit_items), "{quoted:?}");
+            assert_eq!(
+                enq_items.last().map(|item| item.baseline_y_pt),
+                lit_items.last().map(|item| item.baseline_y_pt),
+                "{quoted:?}"
+            );
+        }
+    }
+
+    /// Review fix (round 4, finding 1): transparent grouping hides nothing
+    /// on the closing side either -- `\\enquote{{quoted }}` sees the space
+    /// one level down (walking back past the closing brace) and keeps the
+    /// mark apart with `space_before: true`.
+    #[test]
+    fn enquote_keeps_a_trailing_space_inside_a_closing_group() {
+        let parsed = parse("\\usepackage{csquotes}\\enquote{{quoted }} done.");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph, got {:?}", parsed.blocks);
+        };
+        assert!(
+            matches!(
+                &inlines[..],
+                [
+                    Inline::Text { text: open, space_before: false, .. },
+                    Inline::Text { text: close, space_before: true, .. },
+                    ..,
+                ] if open == "\u{201C}quoted" && close == "\u{201D}"
+            ),
+            "{inlines:?}"
+        );
+    }
+
+    /// Review fix (round 4, finding 1): a whitespace-only argument reserves
+    /// its space like the literal ``` `` '' ```, instead of collapsing to
+    /// the merged `"" ""` pair a truly empty argument keeps.
+    #[test]
+    fn enquote_whitespace_only_argument_reserves_the_space() {
+        let concat = |xs: &[crate::layout::TextItem]| {
+            xs.iter().map(|item| item.text.as_str()).collect::<String>()
+        };
+        let (lit_parsed, lit_items) = items("`` '' done.");
+        assert!(
+            lit_parsed.diagnostics.is_empty(),
+            "{:?}",
+            lit_parsed.diagnostics
+        );
+        let (parsed, enq_items) = items("\\usepackage{csquotes}\\enquote{ } done.");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(concat(&enq_items), concat(&lit_items));
+        let end = |xs: &[crate::layout::TextItem]| {
+            xs.last().map(|item| {
+                let end = item.x_pt + layout::text_width(&item.text, item.font_size_pt, item.font);
+                (end * 100.0).round() / 100.0
+            })
+        };
+        assert_eq!(end(&enq_items), end(&lit_items));
+        // A truly empty argument still merges the pair into one inline.
+        let parsed = parse("\\usepackage{csquotes}\\enquote{}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph, got {:?}", parsed.blocks);
+        };
+        assert_eq!(inlines.len(), 1, "{inlines:?}");
+    }
+
+    /// Review fix (round 4, finding 2): `\\usepackage{csquotes}` loads
+    /// silently, since `\\enquote` is implemented. An option this compiler
+    /// does not handle keeps the package warning, the way `ulem` gates
+    /// `normalem`.
+    #[test]
+    fn csquotes_package_loads_silently_without_options() {
+        let parsed = parse("\\usepackage{csquotes}\\enquote{x}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let parsed = parse("\\usepackage[style=american]{csquotes}\\enquote{x}");
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("recognised but not implemented")),
+            "{:?}",
+            parsed.diagnostics
+        );
+    }
+
+    /// Review fix (round 4, finding 3): `\\enquote` is a csquotes command,
+    /// not a kernel one. Without the package a bare use reports exactly like
+    /// any other undefined control sequence (an error, with the argument
+    /// kept as plain text), matching pdflatex's "Undefined control
+    /// sequence".
+    #[test]
+    fn enquote_without_csquotes_is_undefined() {
+        let parsed = parse("\\enquote{x}");
+        let messages: Vec<&str> = parsed
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("\\enquote is not supported")),
+            "{:?}",
+            parsed.diagnostics
+        );
+        assert!(
+            parsed.diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic.code,
+                Some(crate::diagnostics::DiagnosticCode::UnknownCommand)
+            )),
+            "{:?}",
+            parsed.diagnostics
+        );
+        // Plain-text fallback: the argument is still typeset.
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph, got {:?}", parsed.blocks);
+        };
+        assert!(
+            inlines
+                .iter()
+                .any(|inline| matches!(inline, Inline::Text { text, .. } if text == "x")),
+            "{inlines:?}"
+        );
+    }
+
+    /// Review fix (round 4, finding 3): without csquotes loaded a user's own
+    /// `\\newcommand{\\enquote}` is accepted, as in real LaTeX where the
+    /// name is free. With csquotes loaded the built-in still works.
+    #[test]
+    fn newcommand_enquote_without_csquotes_wins() {
+        let parsed = parse("\\newcommand{\\enquote}[1]{<#1>}\\enquote{x}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph, got {:?}", parsed.blocks);
+        };
+        let text: String = inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "<x>");
+        // The happy path still works with the package loaded.
+        let parsed = parse("\\usepackage{csquotes}\\enquote{x}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph, got {:?}", parsed.blocks);
+        };
+        let text: String = inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "\u{201C}x\u{201D}");
+    }
+
+    /// With csquotes loaded, `\renewcommand{\enquote}` works exactly like
+    /// redefining any other user-level macro: the package defines the name,
+    /// so the expansion engine counts it as defined (round 4 left it
+    /// undefined, falsely reporting `Command \enquote undefined`). Without
+    /// csquotes the name stays undefined and `\renewcommand` still reports
+    /// it — that protection is the kernel-fallback behavior, unchanged.
+    #[test]
+    fn renewcommand_enquote_with_csquotes_wins() {
+        let text_of = |parsed: &Parsed| {
+            let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+                panic!("expected a paragraph, got {:?}", parsed.blocks);
+            };
+            inlines
+                .iter()
+                .filter_map(|inline| match inline {
+                    Inline::Text { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<String>()
+        };
+        // With csquotes: silent, and the user's redefinition typesets.
+        let parsed =
+            parse("\\usepackage{csquotes}\\renewcommand{\\enquote}[1]{<#1>}\\enquote{x}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(text_of(&parsed), "<x>");
+        // With csquotes: `\newcommand` is refused, as in real LaTeX where
+        // csquotes already defines the name — and the built-in survives.
+        let parsed =
+            parse("\\usepackage{csquotes}\\newcommand{\\enquote}[1]{<#1>}\\enquote{x}");
+        assert!(
+            parsed.diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains(r"LaTeX Error: Command \enquote already defined.")),
+            "{:?}",
+            parsed.diagnostics
+        );
+        assert_eq!(text_of(&parsed), "\u{201C}x\u{201D}");
+        // Without csquotes: `\renewcommand` still reports the undefined
+        // name (the original protection holds appropriately).
+        let parsed = parse("\\renewcommand{\\enquote}[1]{<#1>}\\enquote{x}");
+        assert!(
+            parsed.diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains(r"LaTeX Error: Command \enquote undefined.")),
+            "{:?}",
+            parsed.diagnostics
+        );
+        // A commented-out `\usepackage{csquotes}` does not define anything.
+        let parsed = parse("%\\usepackage{csquotes}\n\\renewcommand{\\enquote}[1]{<#1>}\\enquote{x}");
+        assert!(
+            parsed.diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains(r"LaTeX Error: Command \enquote undefined.")),
+            "{:?}",
+            parsed.diagnostics
         );
     }
 
