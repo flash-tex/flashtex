@@ -27,6 +27,16 @@ pub enum ClassKind {
     /// are all undefined in a `letter` document (probed with
     /// `\@ifundefined`, TeX Live 2025).
     Letter,
+    /// KOMA-Script `scrartcl` (v3.49.2, TeX Live 2026): default paper A4,
+    /// default size 11pt, oneside. Geometry comes from `typearea`, not
+    /// `size1x.clo` (see [`koma_params`]).
+    Scrartcl,
+    /// KOMA-Script `scrreprt`: like `scrartcl` but with chapters and a
+    /// title page (report's shape).
+    Scrreprt,
+    /// KOMA-Script `scrbook`: like `scrreprt` but twoside with `openright`
+    /// (book's shape).
+    Scrbook,
 }
 
 impl ClassKind {
@@ -36,6 +46,10 @@ impl ClassKind {
             "report" => Some(ClassKind::Report),
             "book" => Some(ClassKind::Book),
             "letter" => Some(ClassKind::Letter),
+            // `scrarticle.cls` only forwards its options to `scrartcl`.
+            "scrartcl" | "scrarticle" => Some(ClassKind::Scrartcl),
+            "scrreprt" => Some(ClassKind::Scrreprt),
+            "scrbook" => Some(ClassKind::Scrbook),
             _ => None,
         }
     }
@@ -45,10 +59,26 @@ impl ClassKind {
             ClassKind::Report => "report",
             ClassKind::Book => "book",
             ClassKind::Letter => "letter",
+            ClassKind::Scrartcl => "scrartcl",
+            ClassKind::Scrreprt => "scrreprt",
+            ClassKind::Scrbook => "scrbook",
         }
     }
+    /// Whether the class runs KOMA's `typearea` instead of `size1x.clo`.
+    pub fn is_koma(self) -> bool {
+        matches!(
+            self,
+            ClassKind::Scrartcl | ClassKind::Scrreprt | ClassKind::Scrbook
+        )
+    }
     pub fn has_chapters(self) -> bool {
-        matches!(self, ClassKind::Report | ClassKind::Book)
+        matches!(
+            self,
+            ClassKind::Report
+                | ClassKind::Book
+                | ClassKind::Scrreprt
+                | ClassKind::Scrbook
+        )
     }
     /// Whether the class defines `\section` and friends at all. `letter.cls`
     /// does not, so a `letter` document has no heading specs to resolve.
@@ -90,6 +120,19 @@ impl Paper {
     }
 }
 
+/// KOMA `typearea`'s `DIV` (v3.49.2, TeX Live 2026, `typearea.sty`): the
+/// internal `default` (A4 table, else calculated), `calc`, `classic`, or an
+/// explicit number. Numbers below 4 are typearea's own sentinels (0 is
+/// another spelling of `default`, 1–2 calculate, 3 is classic), so they
+/// decode the same way here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DivSpec {
+    Default,
+    Calc,
+    Classic,
+    Num(u32),
+}
+
 /// Resolved class options after `\ExecuteOptions` + `\ProcessOptions`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClassOptions {
@@ -106,6 +149,17 @@ pub struct ClassOptions {
     pub leqno: bool,
     pub draft: bool,
     pub openbib: bool,
+    /// KOMA `BCOR` (binding correction; standard classes have none).
+    pub bcor: Sp,
+    /// KOMA `DIV` (standard classes have none).
+    pub div: DivSpec,
+    /// KOMA `headinclude` / `footinclude` / `mpinclude`.
+    pub head_include: bool,
+    pub foot_include: bool,
+    pub marginpar_include: bool,
+    /// KOMA `pagesize`: false keeps pdfTeX's engine-default media instead
+    /// of setting it from the paper (like the standard classes always do).
+    pub pagesize_pdf: bool,
     /// `\@classoptionslist` in source order (geometry re-reads these).
     pub given: Vec<String>,
     /// Given options the class did not declare (`Unused global option(s)`).
@@ -116,7 +170,16 @@ impl ClassOptions {
     /// Parse a `\documentclass[...]` option list. `\ProcessOptions`
     /// (unstarred) runs declared options in *declaration* order, so e.g.
     /// `landscape,a4paper` still swaps A4, and `twoside,oneside` is two-sided.
+    /// KOMA classes instead process key=value options in *given* order
+    /// (later wins), with different defaults (11pt, A4).
     pub fn parse(kind: ClassKind, options: &str) -> ClassOptions {
+        if kind.is_koma() {
+            return Self::parse_koma(kind, options);
+        }
+        Self::parse_standard(kind, options)
+    }
+
+    fn parse_standard(kind: ClassKind, options: &str) -> ClassOptions {
         let given: Vec<String> = options
             .split(',')
             .map(|s| s.trim().to_string())
@@ -139,6 +202,12 @@ impl ClassOptions {
             leqno: false,
             draft: false,
             openbib: false,
+            bcor: Sp::ZERO,
+            div: DivSpec::Default,
+            head_include: false,
+            foot_include: false,
+            marginpar_include: false,
+            pagesize_pdf: true,
             given: given.clone(),
             unused: Vec::new(),
         };
@@ -212,6 +281,240 @@ impl ClassOptions {
             .filter(|g| !declared.contains(&g.as_str()))
             .collect();
         o
+    }
+
+    /// Parse a KOMA `\documentclass[...]` option list. Unlike the standard
+    /// classes, KOMA processes options in *given* order (later wins) and
+    /// defaults to 11pt on A4, oneside (`scrbook`: twoside, title page,
+    /// `openright`). Legacy names (`a4paper`, `10pt`, `DIV12`, `BCOR5mm`)
+    /// and `key=value` (`paper=`, `fontsize=`, `DIV=`, `BCOR=`,
+    /// `headinclude=` …) both work. Options KOMA declares but that do not
+    /// move the page frame (`version`, `headings`, `captions`, …) are
+    /// accepted silently; anything else lands in `unused` exactly like
+    /// pdflatex's `Unused global option(s)`.
+    fn parse_koma(kind: ClassKind, options: &str) -> ClassOptions {
+        let given: Vec<String> = options
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let mut o = ClassOptions {
+            kind,
+            size: BaseSize::Pt11,
+            paper: Paper::A4,
+            landscape: false,
+            twoside: kind == ClassKind::Scrbook,
+            twocolumn: false,
+            titlepage: kind != ClassKind::Scrartcl,
+            openright: kind == ClassKind::Scrbook,
+            fleqn: false,
+            leqno: false,
+            draft: false,
+            openbib: false,
+            bcor: Sp::ZERO,
+            div: DivSpec::Default,
+            head_include: false,
+            foot_include: false,
+            marginpar_include: false,
+            pagesize_pdf: true,
+            given: Vec::new(),
+            unused: Vec::new(),
+        };
+        for g in given {
+            if !Self::apply_koma_option(&mut o, &g) {
+                o.unused.push(g.clone());
+            }
+            o.given.push(g);
+        }
+        o
+    }
+
+    /// One KOMA option. Returns false when the option is unknown (→
+    /// `unused`).
+    fn apply_koma_option(o: &mut ClassOptions, g: &str) -> bool {
+        // Legacy names first (also the bare `key` form of boolean keys).
+        match g {
+            "a4paper" => o.paper = Paper::A4,
+            "a5paper" => o.paper = Paper::A5,
+            "b5paper" => o.paper = Paper::B5,
+            "letterpaper" => o.paper = Paper::Letter,
+            "legalpaper" => o.paper = Paper::Legal,
+            "executivepaper" => o.paper = Paper::Executive,
+            "landscape" => o.landscape = true,
+            "portrait" => o.landscape = false,
+            "10pt" => o.size = BaseSize::Pt10,
+            "11pt" => o.size = BaseSize::Pt11,
+            "12pt" => o.size = BaseSize::Pt12,
+            "oneside" => o.twoside = false,
+            "twoside" => o.twoside = true,
+            "draft" => o.draft = true,
+            "final" => o.draft = false,
+            "titlepage" => o.titlepage = true,
+            "notitlepage" => o.titlepage = false,
+            "openright" => o.openright = true,
+            "openany" => o.openright = false,
+            "onecolumn" => o.twocolumn = false,
+            "twocolumn" => o.twocolumn = true,
+            "leqno" => o.leqno = true,
+            "fleqn" => o.fleqn = true,
+            "openbib" => o.openbib = true,
+            "headinclude" => o.head_include = true,
+            "footinclude" => o.foot_include = true,
+            "mpinclude" => o.marginpar_include = true,
+            "pagesize" => o.pagesize_pdf = true,
+            "DIVcalc" => o.div = DivSpec::Calc,
+            "DIVclassic" => o.div = DivSpec::Classic,
+            // Bare `DIV` takes the key default, `calc`.
+            "DIV" => o.div = DivSpec::Calc,
+            _ => {
+                // `key=value` before the legacy prefixes: `DIV=12` must
+                // not parse as legacy `DIV` + `=12`.
+                if let Some((key, value)) = g.split_once('=') {
+                    return Self::apply_koma_key(o, key.trim(), value.trim());
+                }
+                if let Some(n) = g.strip_prefix("DIV") {
+                    // Deprecated `DIV12`: an explicit number.
+                    return match n.parse::<u32>() {
+                        Ok(v) => {
+                            o.div = Self::div_num(v);
+                            true
+                        }
+                        Err(_) => false,
+                    };
+                }
+                if let Some(d) = g.strip_prefix("BCOR") {
+                    // Deprecated `BCOR5mm`: a bare dimension.
+                    return match Sp::parse(d) {
+                        Some(v) => {
+                            o.bcor = v;
+                            true
+                        }
+                        None => false,
+                    };
+                }
+                return false;
+            }
+        }
+        true
+    }
+
+    /// One KOMA `key=value` option. Returns false when the key or value is
+    /// unknown (→ `unused`).
+    fn apply_koma_key(o: &mut ClassOptions, key: &str, value: &str) -> bool {
+        match key {
+            "paper" => match value {
+                "a4" => o.paper = Paper::A4,
+                "a5" => o.paper = Paper::A5,
+                "b5" => o.paper = Paper::B5,
+                "letter" => o.paper = Paper::Letter,
+                "legal" => o.paper = Paper::Legal,
+                "executive" => o.paper = Paper::Executive,
+                "landscape" | "seascape" => o.landscape = true,
+                "portrait" => o.landscape = false,
+                _ => return false,
+            },
+            "fontsize" => {
+                let v = value.strip_suffix("pt").unwrap_or(value);
+                match v {
+                    "10" => o.size = BaseSize::Pt10,
+                    "11" => o.size = BaseSize::Pt11,
+                    "12" => o.size = BaseSize::Pt12,
+                    _ => return false,
+                }
+            }
+            "DIV" => match value {
+                "default" | "current" | "last" => o.div = DivSpec::Default,
+                "calc" => o.div = DivSpec::Calc,
+                "classic" => o.div = DivSpec::Classic,
+                _ => {
+                    if value.starts_with('-') {
+                        return false;
+                    }
+                    match value.parse::<u32>() {
+                        Ok(v) => o.div = Self::div_num(v),
+                        Err(_) => return false,
+                    }
+                }
+            },
+            "BCOR" => match Sp::parse(value) {
+                Some(v) => o.bcor = v,
+                None => return false,
+            },
+            "headinclude" => match Self::koma_bool(value) {
+                Some(v) => o.head_include = v,
+                None => return false,
+            },
+            "footinclude" => match Self::koma_bool(value) {
+                Some(v) => o.foot_include = v,
+                None => return false,
+            },
+            "mpinclude" => match Self::koma_bool(value) {
+                Some(v) => o.marginpar_include = v,
+                None => return false,
+            },
+            "twoside" => match value {
+                // `semi` keeps one-sided margins (`\@twosidefalse`), so for
+                // the page frame it is `oneside`.
+                "semi" => o.twoside = false,
+                _ => match Self::koma_bool(value) {
+                    Some(v) => o.twoside = v,
+                    None => return false,
+                },
+            },
+            "twocolumn" => match Self::koma_bool(value) {
+                Some(v) => o.twocolumn = v,
+                None => return false,
+            },
+            "titlepage" => match Self::koma_bool(value) {
+                Some(v) => o.titlepage = v,
+                None => return false,
+            },
+            "draft" => match Self::koma_bool(value) {
+                Some(v) => o.draft = v,
+                None => return false,
+            },
+            "open" => match value {
+                "right" => o.openright = true,
+                "any" | "left" => o.openright = false,
+                _ => return false,
+            },
+            "pagesize" => match value {
+                "false" | "no" | "off" => o.pagesize_pdf = false,
+                _ => o.pagesize_pdf = true,
+            },
+            // `parskip=false` is already the default; any real paragraph
+            // separation is not modelled, so it warns like an unknown key.
+            "parskip" => {
+                if value != "false" {
+                    return false;
+                }
+            }
+            // Declared KOMA keys that never move the page frame.
+            "version" | "numbers" | "headings" | "captions" | "toc" | "abstract" | "bibliography"
+            | "index" | "listof" | "cleardoublepage" | "chapterprefix" | "appendixprefix"
+            | "footnotes" => {}
+            _ => return false,
+        }
+        true
+    }
+
+    /// `DIV=n` with typearea's own sentinel decoding (0 is `default`,
+    /// 1–2 calculate, 3 is classic).
+    fn div_num(n: u32) -> DivSpec {
+        match n {
+            0 => DivSpec::Default,
+            1 | 2 => DivSpec::Calc,
+            3 => DivSpec::Classic,
+            _ => DivSpec::Num(n),
+        }
+    }
+
+    fn koma_bool(value: &str) -> Option<bool> {
+        match value {
+            "true" | "on" | "yes" => Some(true),
+            "false" | "off" | "no" => Some(false),
+            _ => None,
+        }
     }
 
     /// Paper after the `landscape` swap (article.cls lines 71–74).
@@ -337,6 +640,9 @@ impl PageParams {
 pub fn class_params(o: &ClassOptions) -> PageParams {
     if o.kind == ClassKind::Letter {
         return letter_params(o);
+    }
+    if o.kind.is_koma() {
+        return koma_params(o);
     }
     let bk = o.kind == ClassKind::Book;
     let size = o.size;
@@ -492,6 +798,255 @@ pub fn class_params(o: &ClassOptions) -> PageParams {
         hoffset: Sp::ZERO,
         voffset: Sp::ZERO,
     }
+}
+
+/// KOMA `typearea` (v3.49.2 `typearea.sty`, `\@typearea`): the page is split
+/// into DIV columns/rows after subtracting the binding correction; the
+/// text block keeps DIV−3 blocks horizontally (margins 1.5 + 1.5 oneside,
+/// 1 + 2 twoside) and the height rounds *up* to whole lines in what is
+/// left of the page after top (1 block) and bottom (2 blocks).
+///
+/// Every branch below was validated to the scaled point against live
+/// pdflatex (`\number` probes, TeX Live 2026): default DIV on A4 at
+/// 10/11/12pt (8/10/12), explicit `DIV=4…15`, `DIV=calc` on A4 and letter,
+/// `DIV=classic`, `BCOR`, `twoside`, `mpinclude`, `headinclude`,
+/// `footinclude`, `pagesize=false`, A4/A5/B5/letter/legal/executive and
+/// landscape. `DIV=calc` measures the "good line width" from the Computer
+/// Modern alphabet widths hardcoded below (typearea's `\ta@temp@goodwidth`
+/// with the live font); with another body font pdflatex picks a different
+/// DIV, which this model cannot see.
+pub fn koma_params(o: &ClassOptions) -> PageParams {
+    let (pw, ph) = koma_paper_size(o.paper, o.landscape);
+    let fm = body_font(o.size);
+    let inch = len("1in");
+    let baselineskip = match o.size {
+        BaseSize::Pt10 => len("12pt"),
+        BaseSize::Pt11 => len("13.6pt"),
+        BaseSize::Pt12 => len("14.5pt"),
+    };
+    let topskip = match o.size {
+        BaseSize::Pt10 => Sp::pt(10),
+        BaseSize::Pt11 => Sp::pt(11),
+        BaseSize::Pt12 => Sp::pt(12),
+    };
+    // `\typearea`: `\headheight=1.25\baselineskip`,
+    // `\headsep=1.5\baselineskip`, `\footheight=1.25\baselineskip`,
+    // `\footskip=\footheight+2.25\baselineskip`, `\marginparsep=1cc`,
+    // `\marginparpush=0.45\baselineskip`.
+    let headheight = baselineskip.scaled("1.25").unwrap();
+    let headsep = baselineskip.scaled("1.5").unwrap();
+    let footskip = headheight + baselineskip.scaled("2.25").unwrap();
+    let marginparsep = len("1cc");
+    let marginparpush = baselineskip.scaled("0.45").unwrap();
+    let div = koma_div(o, pw, ph, headheight, headsep, footskip);
+
+    let hblk = (pw - o.bcor).over(div);
+    let vblk = ph.over(div);
+    // `\@typearea` margins. `1.5\ta@hblk` is `hblk + hblk/2`, truncated,
+    // exactly like TeX's factor scan (`Sp::scaled`).
+    let half3 = hblk.scaled("1.5").unwrap();
+    let marginparwidth = if o.marginpar_include {
+        hblk - marginparsep
+    } else if o.twoside {
+        half3
+    } else {
+        hblk
+    };
+    let oddsidemargin =
+        -inch + o.bcor + if o.twoside { hblk } else { half3 };
+    let evensidemargin = if o.twoside {
+        let mut e = -inch + hblk.times(2);
+        if o.marginpar_include {
+            e = e + marginparwidth + marginparsep;
+        }
+        e
+    } else {
+        oddsidemargin
+    };
+    let mut textwidth = pw - o.bcor - hblk.times(3);
+    if o.marginpar_include {
+        textwidth = textwidth - marginparwidth - marginparsep;
+    }
+    let mut topmargin = -inch + vblk;
+    if !o.head_include {
+        topmargin = topmargin - headheight - headsep;
+    }
+    let mut room = ph - vblk.times(3);
+    if o.head_include {
+        room = room - headheight - headsep;
+    }
+    if o.foot_include {
+        room = room - footskip;
+    }
+    // `\@whiledim\textheight<\ta@temp`: rounds UP to whole lines, unlike
+    // the standard classes, which round down.
+    let mut textheight = topskip;
+    while textheight < room {
+        textheight = textheight + baselineskip;
+    }
+
+    let maxdepth = topskip.over(2);
+    let (footnotesep, skip_footins) = match o.size {
+        BaseSize::Pt10 => (len("6.65pt"), Glue::new("9pt", "4pt", "2pt")),
+        BaseSize::Pt11 => (len("7.7pt"), Glue::new("10pt", "4pt", "2pt")),
+        BaseSize::Pt12 => (len("8.4pt"), Glue::new("10.8pt", "4pt", "2pt")),
+    };
+    let leftmargini = fm
+        .em
+        .scaled(if o.twocolumn { "2" } else { "2.5" })
+        .unwrap();
+    let labelsep = fm.em.scaled("0.5").unwrap();
+
+    PageParams {
+        paperwidth: pw,
+        paperheight: ph,
+        textwidth,
+        textheight,
+        oddsidemargin,
+        evensidemargin,
+        topmargin,
+        headheight,
+        headsep,
+        footskip,
+        topskip,
+        baselineskip,
+        parindent: fm.em,
+        parskip: Glue::new("0pt", "1pt", "0pt"),
+        marginparwidth,
+        marginparsep,
+        marginparpush,
+        columnsep: Sp::pt(10),
+        columnseprule: Sp::ZERO,
+        maxdepth,
+        footnotesep,
+        skip_footins,
+        overfullrule: if o.draft { Sp::pt(5) } else { Sp::ZERO },
+        leftmargini,
+        labelsep,
+        mathindent: if o.fleqn { Some(leftmargini) } else { None },
+        hoffset: Sp::ZERO,
+        voffset: Sp::ZERO,
+    }
+}
+
+/// typearea's own paper sizes as `\number\paperwidth` / `\number\paperheight`
+/// read them out of pdflatex (TeX Live 2026): letter is 612bp by 792bp and
+/// A4/A5/B5 come from the ISO halving chain, so plain `8.5in` / `210mm`
+/// conversions are a few sp off. `landscape` swaps, like the paper key.
+fn koma_paper_size(paper: Paper, landscape: bool) -> (Sp, Sp) {
+    let (w, h) = match paper {
+        Paper::A4 => (Sp(39_158_280), Sp(55_380_996)),
+        Paper::A5 => (Sp(27_597_264), Sp(39_158_280)),
+        Paper::B5 => (Sp(32_818_368), Sp(46_617_000)),
+        Paper::Letter => (Sp(40_258_437), Sp(52_099_153)),
+        Paper::Legal => (Sp(40_258_437), Sp(66_308_014)),
+        Paper::Executive => (Sp(34_338_078), Sp(49_731_010)),
+    };
+    if landscape { (h, w) } else { (w, h) }
+}
+
+/// Resolve the DIV: the A4 default table, an explicit number, `classic`,
+/// or the good-line-width calculation.
+fn koma_div(o: &ClassOptions, pw: Sp, ph: Sp, hh: Sp, hs: Sp, fs: Sp) -> i64 {
+    match o.div {
+        DivSpec::Num(n) if n >= 4 => n as i64,
+        DivSpec::Num(3) | DivSpec::Classic => koma_classic(o, pw, ph, hh, hs, fs),
+        DivSpec::Num(1) | DivSpec::Num(2) | DivSpec::Calc => {
+            koma_calc(o, pw, ph, hh, hs, fs)
+        }
+        // `DIV=0` is another spelling of `default` (both leave `\ta@div`
+        // at zero, which takes the `\ta@divfor` table path).
+        DivSpec::Num(_) | DivSpec::Default => {
+            if !o.landscape && o.paper == Paper::A4 {
+                // `\ta@divlist` for (almost) A4.
+                match o.size {
+                    BaseSize::Pt10 => 8,
+                    BaseSize::Pt11 => 10,
+                    BaseSize::Pt12 => 12,
+                }
+            } else {
+                koma_calc(o, pw, ph, hh, hs, fs)
+            }
+        }
+    }
+}
+
+/// `DIV=classic`: fit the ISO-proportioned block, else fall back to `calc`.
+fn koma_classic(o: &ClassOptions, pw: Sp, ph: Sp, hh: Sp, hs: Sp, fs: Sp) -> i64 {
+    let mut temp = pw - o.bcor;
+    if !o.head_include {
+        temp = temp + hh + hs;
+    }
+    if !o.foot_include {
+        temp = temp + fs;
+    }
+    if temp > ph {
+        koma_calc(o, pw, ph, hh, hs, fs)
+    } else {
+        koma_modiv(ph, (ph - pw + o.bcor).over(3))
+    }
+}
+
+/// `DIV=calc` (`\ta@temp@goodwidth` + `\ta@modiv`): DIV from the good line
+/// width of the Computer Modern body font. The alphabet widths are live
+/// `\settowidth` measurements (sp) at 10/11/12pt normalsize, TeX Live 2026.
+fn koma_calc(o: &ClassOptions, pw: Sp, ph: Sp, hh: Sp, hs: Sp, fs: Sp) -> i64 {
+    let (lower, upper) = match o.size {
+        BaseSize::Pt10 => (8_361_325, 12_201_554),
+        BaseSize::Pt11 => (9_155_641, 13_360_694),
+        BaseSize::Pt12 => (9_822_288, 14_332_489),
+    };
+    let good = if Sp(lower) > Sp::pt(200) {
+        Sp(lower).scaled("2.53846").unwrap() + Sp(upper).scaled("0.11538").unwrap()
+    } else {
+        (Sp(lower).times(66) + Sp(upper).times(3)).over(26)
+    };
+    let mut temp = good;
+    if o.twocolumn {
+        temp = temp.times(2) + Sp::pt(10);
+    }
+    let mut hblk = (pw - temp).over(3);
+    if hblk < Sp::ZERO {
+        hblk = len("5mm");
+    }
+    let t = if o.marginpar_include {
+        hblk.scaled("0.75").unwrap()
+    } else {
+        hblk
+    };
+    let div = koma_modiv(pw, t);
+    // When the head runs off the top (`\topmargin < 5mm-1in`), typearea
+    // re-derives DIV from the page height instead.
+    let inch = len("1in");
+    let mut top = -inch + ph.over(div);
+    if !o.head_include {
+        top = top - hh - hs;
+    }
+    if top < len("5mm") - inch {
+        let mut ht = len("15mm");
+        if !o.head_include {
+            ht = ht + hh + hs;
+        }
+        if !o.foot_include {
+            ht = ht + fs;
+        }
+        return koma_modiv(ph, ht.over(3));
+    }
+    div
+}
+
+/// `\ta@modiv{a}{b}`: DIV from the ratio, rounded by comparing neighbours,
+/// at least 4. TeX's `\divide<dimen> by<number>` truncates, and assigning
+/// the quotient dimen to the `\ta@div` count keeps its sp value — plain
+/// truncating integer division on both sides reproduces it exactly.
+fn koma_modiv(a: Sp, b: Sp) -> i64 {
+    let d = a.0 / b.0;
+    if d < 4 {
+        return 4;
+    }
+    let below = a.0 / d;
+    let above = a.0 / (d + 1);
+    if 2 * d - below < above { d } else { d + 1 }
 }
 
 /// `letter.cls` (v1.3c 2024/08/12) lines 86-119, non-`\if@compatibility`
