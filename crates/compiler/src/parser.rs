@@ -1407,6 +1407,11 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "paragraph",
     "subparagraph",
     "tableofcontents",
+    // Beamer slide commands. Class-gated at their dispatch arms (like the
+    // letter.cls commands below): outside `beamer` they diagnose.
+    "frametitle",
+    "framesubtitle",
+    "alert",
     "index",
     "glossary",
     "textbf",
@@ -3542,6 +3547,10 @@ impl P<'_> {
             // pipeline started laying these heads out correctly.
             "paragraph" | "subparagraph" => self.run_in_heading_command(blocks, para),
             "section" | "subsection" | "subsubsection" => self.section_command(name, span, blocks, para),
+            // Beamer slide titles and alert text: real commands only under
+            // `\documentclass{beamer}` (see `beamer_command_available`).
+            "frametitle" | "framesubtitle" => self.beamer_frame_title(name, span, blocks, para),
+            "alert" => self.beamer_alert(name, span, para),
             "label" | "ref" | "pageref" | "eqref" | "thepage" => self.label_or_reference_command(name, span, para),
             "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
             | "labelcref" => self.clever_reference(name, span, para),
@@ -6412,8 +6421,10 @@ impl P<'_> {
         if kind == "begin" {
             // The bordered-box `frame` environment is consumed synchronously
             // (through its `\end`), so nothing is pushed on the environment
-            // stacks for it.
-            if environment == "frame" && self.in_body {
+            // stacks for it. Under `\documentclass{beamer}` a `frame` is a
+            // slide instead, and takes the ordinary `begin_environment` path
+            // (with a beamer branch there) so its body parses as blocks.
+            if environment == "frame" && self.in_body && !self.is_beamer_class() {
                 self.frame_environment(span, argument_span, space_before, para);
                 return;
             }
@@ -6606,6 +6617,12 @@ impl P<'_> {
                 lines: Vec::new(),
                 span: span.merge(argument_span),
             });
+        } else if environment == "frame" && self.in_body && self.is_beamer_class() {
+            // Beamer slide (issue #841): a page break plus the optional
+            // `[options]`/`{title}`/`{subtitle}`, then the shared pushes
+            // below (no "not implemented" warning). The body parses as
+            // ordinary blocks until `\end{frame}`.
+            self.beamer_frame_begin(span.merge(argument_span), blocks, para);
         } else if environment == "sloppypar" && self.in_body {
             // latex.ltx `\def\sloppypar{\par\sloppy}`.
             self.flush_paragraph(blocks, para);
@@ -6777,6 +6794,11 @@ impl P<'_> {
             // `\endmulticols` starts with `\par`.
             self.flush_paragraph(blocks, para);
         } else if environment == "figure" || self.theorems.contains_key(&environment) {
+            self.flush_paragraph(blocks, para);
+        } else if environment == "frame" {
+            // Beamer slide end: close the paragraph (the page break came at
+            // `\begin`). In other classes `\end{frame}` never arrives here:
+            // the bordered-box path consumes it synchronously.
             self.flush_paragraph(blocks, para);
         } else if environment == "tabbing" && self.in_body {
             self.end_tabbing(blocks, para);
@@ -7161,6 +7183,153 @@ impl P<'_> {
             space_before,
             highlight: None,
         })));
+    }
+
+    /// Whether `\documentclass{beamer}` is in force. Beamer redefines the
+    /// `frame` environment as a slide and provides `\frametitle`,
+    /// `\framesubtitle` and `\alert`; in any other class `frame` stays the
+    /// bordered box above and those commands are undefined.
+    fn is_beamer_class(&self) -> bool {
+        self.document_class.as_deref() == Some("beamer")
+    }
+
+    /// Whether a beamer command may run here. Modelled on
+    /// `letter_command_available`: outside `beamer` the command is undefined,
+    /// so the diagnostic names the class and the braced argument is left for
+    /// the main token loop, which keeps the author's prose on the page.
+    fn beamer_command_available(&mut self, name: &str, span: Span) -> bool {
+        if self.is_beamer_class() {
+            return true;
+        }
+        let class = self
+            .document_class
+            .clone()
+            .unwrap_or_else(|| "no \\documentclass".to_string());
+        self.diags.push(
+            Diagnostic::error(
+                format!(
+                    "\\{name} is defined by the beamer document class; this document is {class}"
+                ),
+                Some(span),
+                Some("skipped the command; any braced argument was typeset as plain text".into()),
+            )
+            .with_code(crate::diagnostics::DiagnosticCode::UnknownCommand),
+        );
+        false
+    }
+
+    /// `\begin{frame}` under `beamer` (issue #841). Emits the page break that
+    /// makes each slide its own page — a leading one ships no page, exactly
+    /// like `\newpage` with nothing queued — then reads beamer's
+    /// `[<options>]{title}{subtitle}` head (with an optional `<overlay>`
+    /// spec first) as unnumbered headings. Frame options (`fragile`,
+    /// `plain`, shrink settings) select layout variants this renderer has no
+    /// model for, and overlay specs multiply pages, which is a separate
+    /// slice: both are read and ignored, so one frame is one page with no
+    /// leaked markup. Only the head is consumed here; the body parses with
+    /// the ordinary dispatch until `\end{frame}`.
+    fn beamer_frame_begin(&mut self, open: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        self.flush_paragraph(blocks, para);
+        blocks.push(Block::PageBreak);
+        self.finish_block_dependencies();
+        let _ = self.optional_bracket_argument();
+        self.skip_beamer_overlay_spec();
+        // `{title}` then `{subtitle}`: at most two brace groups, and only
+        // when the next token opens one — body text is never consumed. A
+        // blank line ends the head, as `\@ifnextchar` stops at `\par`.
+        for level in [1u8, 2u8] {
+            self.skip_spaces();
+            if !matches!(
+                self.peek().map(|token| &token.kind),
+                Some(TokenKind::LBrace)
+            ) {
+                break;
+            }
+            let (tokens, title_span) = self.required_group("frame", open);
+            let content = self.inlines_from_tokens(tokens, TextStyle::BOLD, false);
+            if content.is_empty() {
+                self.current_dependencies.clear();
+            } else {
+                blocks.push(Block::Heading {
+                    level,
+                    number: String::new(),
+                    number_span: title_span,
+                    content,
+                });
+                self.finish_block_dependencies();
+            }
+        }
+    }
+
+    /// A beamer `<overlay>` specification (`<1->`, `<2-3>`): consumed so it
+    /// is not typeset. Only a word that opens with `<` and closes with `>`
+    /// is taken, so prose starting with `<` is left for the paragraph; a
+    /// trailing tail (`<1>text`) stays in the stream.
+    fn skip_beamer_overlay_spec(&mut self) {
+        self.skip_spaces();
+        let past = match self.peek() {
+            Some(Token {
+                kind: TokenKind::Word(word),
+                ..
+            }) if word.starts_with('<') => match word.find('>') {
+                Some(close) => close + 1,
+                None => return,
+            },
+            _ => return,
+        };
+        self.trim_word_prefix(past);
+    }
+
+    /// `\frametitle{...}` / `\framesubtitle{...}` (beamer): the slide head
+    /// as an unnumbered heading, at section / subsection size. An empty
+    /// title makes no block, like an empty `\section`.
+    fn beamer_frame_title(
+        &mut self,
+        name: &str,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        if !self.beamer_command_available(name, span) {
+            return;
+        }
+        self.skip_beamer_overlay_spec();
+        let (tokens, title_span) = self.required_group(name, span);
+        self.flush_paragraph(blocks, para);
+        let content = self.inlines_from_tokens(tokens, TextStyle::BOLD, false);
+        if content.is_empty() {
+            self.current_dependencies.clear();
+        } else {
+            blocks.push(Block::Heading {
+                level: if name == "frametitle" { 1 } else { 2 },
+                number: String::new(),
+                number_span: title_span,
+                content,
+            });
+            self.finish_block_dependencies();
+        }
+    }
+
+    /// `\alert{text}` (beamer): text in the alert colour, which the default
+    /// beamer theme sets to red. Shaped like `\textcolor`: a following group
+    /// is re-entered with the colour applied, otherwise one braced argument.
+    fn beamer_alert(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        if !self.beamer_command_available(name, span) {
+            return;
+        }
+        let next = TextStyle {
+            color: Some(DeviceColor::RED),
+            ..self.style
+        };
+        self.skip_spaces();
+        if let Some(open) = self.closed_group_start() {
+            self.i += 1;
+            self.open_group(open);
+            self.style = next;
+        } else {
+            let (tokens, _) = self.required_group(name, span);
+            para.extend(self.inlines_from_tokens(tokens, next, false));
+        }
     }
 
     /// `verbatim`, `verbatim*`, and basic `lstlisting`. The body is not read
