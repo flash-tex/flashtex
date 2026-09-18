@@ -221,6 +221,7 @@ impl P<'_> {
             fboxrule_pt: self.fboxrule_pt,
             span: span.merge(body),
             space_before,
+            highlight: None,
         })));
     }
 

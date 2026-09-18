@@ -3140,6 +3140,14 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     descender,
                     ex,
                 );
+                // Only the extra depth can grow the line: every underline
+                // geometry's rule top sits at or below the baseline except
+                // soul `\hl`'s -1.75ex, and 1.75ex is 0.75347em of the
+                // fragment's own size, which the line's nominal text ascent
+                // (>= that size at this point, always) already covers. The
+                // highlight's true 1.75ex height is carried on the box as
+                // `SoulHighlightExtents` for the render-pipeline paint path
+                // to consume instead; see GH-828.
                 c.ensure_extents(0.0, extra_depth.max(0.0));
                 if width > 0.0 && u.thickness_pt > 0.0 {
                     c.pages

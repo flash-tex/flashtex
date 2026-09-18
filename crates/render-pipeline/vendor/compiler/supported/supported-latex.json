@@ -333,6 +333,8 @@
     {"name": "textsubscript", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "kernel text subscript: argument at \\sf@size lowered like a math subscript (single-line)", "renders": true},
     {"name": "newtheorem", "mode": "text", "origin": "text_dispatch", "arguments": "{env}[counter]{name}", "description": "defines a numbered theorem-like environment (amsthm)", "renders": true},
     {"name": "theoremstyle", "mode": "text", "origin": "text_dispatch", "arguments": "{style}", "description": "selects the amsthm style for following \\newtheorem", "renders": true},
+    {"name": "so", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)", "renders": true},
+    {"name": "hl", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)", "renders": true},
     {"name": "long", "mode": "text", "origin": "expansion", "arguments": "", "description": "prefix: the following definition accepts \\par in arguments", "renders": true},
     {"name": "protected", "mode": "text", "origin": "expansion", "arguments": "", "description": "e-TeX prefix: the following macro is not expanded inside \\edef-like contexts", "renders": true},
     {"name": "providecommand", "mode": "text", "origin": "expansion", "arguments": "{\\name}[n][default]{body}", "description": "defines the macro only when \\name is undefined", "renders": true},
@@ -1027,6 +1029,7 @@
     {"name": "natbib", "silent_options": "numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak", "description": "\\citet/\\citep/\\citealt/\\citealp/\\citeauthor/\\citeyear/\\citeyearpar/\\citenum/\\citetext and the \\cite it redefines, with [Author(Year)] \\bibitem labels; sort, compress, super and openbib are diagnosed"},
     {"name": "biblatex", "silent_options": "style=numeric, sorting=none, backend=biber", "description": "basic project-relative .bib resources with numeric citations, textcite/parencite/autocite, citeauthor/citeyear, nocite and printbibliography; authoryear labels are minimal, alphabetic warns"},
     {"name": "ulem", "silent_options": "normalem", "description": "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined"},
+    {"name": "soul", "silent_options": "", "description": "\\so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \\hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828); \\st stays unsupported"},
     {"name": "relsize", "silent_options": "", "description": "\\larger/\\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size"},
     {"name": "xspace", "silent_options": "", "description": "\\xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)"},
     {"name": "ifthen", "silent_options": "", "description": "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used"}
@@ -1059,8 +1062,8 @@
       {"set": "tikz", "kind": "command", "canonical": 43, "supported": 0, "percent": 0},
       {"set": "tikz", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
-      {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 18, "percent": 7.5}
+      {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 19, "percent": 7.9}
     ],
-    "total": {"canonical": 1314, "supported": 551, "percent": 41.9}
+    "total": {"canonical": 1314, "supported": 552, "percent": 42}
   }
 }
