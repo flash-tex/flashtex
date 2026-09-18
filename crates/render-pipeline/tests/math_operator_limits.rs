@@ -174,6 +174,80 @@ fn mathrm_lim_is_an_ordinary_atom() {
     close("the Op class is worth 3mu at 12pt", op_gap - ord_gap, 1.9920);
 }
 
+/// Issue #895: `\DeclareMathOperator*` and `\operatorname*` are amsopn's
+/// `\mathop{\operator@font ...}\displaylimits` (`\nmlimits@` is `\let` to
+/// `\displaylimits`, amsopn.sty line 109), so their scripts stack over/under
+/// only in display style and sit beside the word inline -- like `\lim`, not
+/// like an unconditional `\limits`. The pipeline used to map the starred
+/// flag to `Limits::Limits` (limits in every style), centring `$\ord_m(u)$`'s
+/// `m` under `ord` instead of setting it as a subscript to its right.
+/// pdflatex (TeX Live 2026, amsopn 2022/04/08) sets the subscript beside the
+/// word inline and the limit underneath in display, for the declared starred
+/// form and for `\operatorname*` alike, while the unstarred form stays
+/// beside in both styles.
+#[test]
+fn starred_operatorname_is_beside_inline_and_underneath_in_display() {
+    if !lm_available() {
+        eprintln!("skipped: Latin Modern not available");
+        return;
+    }
+    let doc = |body: &str| {
+        format!(
+            "\\documentclass{{article}}\\usepackage{{amsmath}}\
+             \\DeclareMathOperator*{{\\ord}}{{ord}}\
+             \\DeclareMathOperator{{\\ordplain}}{{ordplain}}\
+             \\begin{{document}}{body}\\end{{document}}"
+        )
+    };
+    // Inline starred: the subscript sits to the right of the word, just
+    // below the baseline -- not centred underneath it.
+    // ("Fix: " carries no o/d/m/n/5 glyph, so the lookups below stay unique.)
+    for (body, sub) in [("Fix: $\\ord_5(2)$", "5"), ("Fix: $\\ord_m(u)$", "m"), ("Fix: $\\operatorname*{ord}_5(2)$", "5")] {
+        let g = math_glyphs(&doc(body));
+        eprintln!("{body}: {g:?}");
+        let ord = nth(&g, "o", 0);
+        let last = nth(&g, "d", 0);
+        let s = nth(&g, sub, 0);
+        assert!(
+            s.1 > last.1,
+            "{body}: the subscript starts right of the word's last letter, not centred under it: sub x {:.4}, `d` x {:.4}",
+            s.1,
+            last.1
+        );
+        assert!(
+            s.2 - ord.2 < 3.0,
+            "{body}: the subscript is just below the baseline, not stacked as a limit: drop {:.4}",
+            s.2 - ord.2
+        );
+    }
+    // Inline unstarred: beside, as before.
+    let g = math_glyphs(&doc("Fix: $\\ordplain_5(2)$"));
+    eprintln!("unstarred: {g:?}");
+    let plain = nth(&g, "o", 0);
+    let plain_last = nth(&g, "n", 0);
+    let plain_sub = nth(&g, "5", 0);
+    assert!(plain_sub.1 > plain_last.1, "unstarred subscript beside: {:.4} vs {:.4}", plain_sub.1, plain_last.1);
+    assert!(plain_sub.2 - plain.2 < 3.0, "unstarred subscript drop: {:.4}", plain_sub.2 - plain.2);
+    // Display starred: the limit stacks underneath, centred on the word.
+    // (No lead-in text: its glyphs would collide with the `o`/`d` lookup.)
+    let g = math_glyphs(&doc("\\[\\ord_5(2)\\]"));
+    eprintln!("display: {g:?}");
+    let ord = nth(&g, "o", 0);
+    let last = nth(&g, "d", 0);
+    let limit = nth(&g, "5", 0);
+    assert!(
+        limit.1 < last.1,
+        "display: the limit starts left of the word's last letter, centred under it: limit x {:.4}, `d` x {:.4}",
+        limit.1,
+        last.1
+    );
+    assert!(
+        limit.2 - ord.2 > 4.0,
+        "display: the limit stacks well below the baseline: drop {:.4}",
+        limit.2 - ord.2
+    );
+}
+
 /// The Op class also spaces an operator with no scripts at all: pdflatex sets
 /// `\[\det A\]` with `t` at x 304.1935 (advance 4.5525) and `A` at 310.7426,
 /// 1.9966 bp after the word ends.

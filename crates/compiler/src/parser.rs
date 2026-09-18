@@ -1857,6 +1857,30 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "textperiodcentered",
     "textregistered",
     "texttrademark",
+    "textdegree",
+    "textmu",
+    "textohm",
+    "textcelsius",
+    "texteuro",
+    "textyen",
+    "textwon",
+    "textcurrency",
+    "textestimated",
+    "textnumero",
+    "textrecipe",
+    "textservicemark",
+    "textbardbl",
+    "textbrokenbar",
+    "texttimes",
+    "textdiv",
+    "textonehalf",
+    "textonequarter",
+    "textthreequarters",
+    "textperthousand",
+    "textpertenthousand",
+    "textopenbullet",
+    "textlangle",
+    "textrangle",
     // `text_builtins::TEXT_ACCENTS` and the
     // `text_builtins::CAPITAL_ACCENT_ALIASES` alias names.
     "c",
@@ -3827,7 +3851,12 @@ impl P<'_> {
             | "textcopyright" | "textsterling" | "textellipsis" | "textbackslash"
             | "textasciitilde" | "textasciicircum" | "textunderscore" | "textbar" | "textless"
             | "textgreater" | "textbraceleft" | "textbraceright" | "textbullet"
-            | "textperiodcentered" | "textregistered" | "texttrademark" => {
+            | "textperiodcentered" | "textregistered" | "texttrademark" | "textdegree"
+            | "textmu" | "textohm" | "textcelsius" | "texteuro" | "textyen" | "textwon"
+            | "textcurrency" | "textestimated" | "textnumero" | "textrecipe"
+            | "textservicemark" | "textbardbl" | "textbrokenbar" | "texttimes" | "textdiv"
+            | "textonehalf" | "textonequarter" | "textthreequarters" | "textperthousand"
+            | "textpertenthousand" | "textopenbullet" | "textlangle" | "textrangle" => {
                 self.text_symbol(name, span, para)
             }
             // `text_builtins::TEXT_ACCENTS` and the
@@ -12164,6 +12193,14 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // itself where it is used instead: `\whiledo` is not implemented
         // and is diagnosed as an unknown command at its own span.
         "ifthen" => options.is_empty(),
+        // etoolbox's toggle booleans (`\newtoggle`/`\providetoggle`,
+        // `\toggletrue`/`\togglefalse`, `\iftoggle`) run in the expansion
+        // pass (see expansion's `HOST_PRELUDE`), so loading the package is
+        // silent. Everything else etoolbox ships (`\patchcmd`,
+        // `\AtEndPreamble`, list processing, robust-command variants) is
+        // not implemented and is diagnosed as an unknown command where it
+        // is used.
+        "etoolbox" => options.is_empty(),
         // natbib citation commands (crate::natbib) with the delimiter,
         // separator and citation-style options that decide the characters
         // they set. `sort`/`compress`/`super`/`longnamesfirst` are parsed but
@@ -12185,9 +12222,10 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
             .iter()
             .all(|option| matches!(*option, "errorshow" | "infoshow" | "balancingshow" | "markshow" | "debugshow")),
         // Table packages (parser/tabular.rs, crate::tabular): booktabs rules
-        // and spacing, longtable page-breaking tables, multirow entries and
-        // colortbl row/column/cell colours and rule colours.
-        "booktabs" | "longtable" | "multirow" | "colortbl" => options.is_empty(),
+        // and spacing, longtable page-breaking tables, multirow entries,
+        // colortbl row/column/cell colours and rule colours, and tabularx
+        // total-width tables with X columns.
+        "booktabs" | "longtable" | "multirow" | "colortbl" | "tabularx" => options.is_empty(),
         // xspace.sty takes no options; its only widely used command,
         // `\xspace`, is implemented above, so loading it is silent.
         "xspace" => options.is_empty(),
@@ -14593,6 +14631,294 @@ mod tests {
         assert!(
             texts.iter().any(|t| t.contains('\u{2122}')),
             "expected U+2122 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textdegree` is U+00B0 DEGREE SIGN, like pdfLaTeX.
+    #[test]
+    fn textdegree_typesets_a_degree_sign() {
+        let (parsed, items) = items("x \\textdegree y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00B0}')),
+            "expected U+00B0 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textmu` is U+00B5 MICRO SIGN, like pdfLaTeX.
+    #[test]
+    fn textmu_typesets_a_micro_sign() {
+        let (parsed, items) = items("x \\textmu y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00B5}')),
+            "expected U+00B5 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textohm` is U+2126 OHM SIGN, like pdfLaTeX.
+    #[test]
+    fn textohm_typesets_an_ohm_sign() {
+        let (parsed, items) = items("x \\textohm y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2126}')),
+            "expected U+2126 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textcelsius` is U+2103 DEGREE CELSIUS, like pdfLaTeX.
+    #[test]
+    fn textcelsius_typesets_degree_celsius() {
+        let (parsed, items) = items("x \\textcelsius y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2103}')),
+            "expected U+2103 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\texteuro` is U+20AC EURO SIGN, like pdfLaTeX.
+    #[test]
+    fn texteuro_typesets_a_euro_sign() {
+        let (parsed, items) = items("x \\texteuro y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{20AC}')),
+            "expected U+20AC in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textyen` is U+00A5 YEN SIGN, like pdfLaTeX.
+    #[test]
+    fn textyen_typesets_a_yen_sign() {
+        let (parsed, items) = items("x \\textyen y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00A5}')),
+            "expected U+00A5 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textwon` is U+20A9 WON SIGN, like pdfLaTeX.
+    #[test]
+    fn textwon_typesets_a_won_sign() {
+        let (parsed, items) = items("x \\textwon y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{20A9}')),
+            "expected U+20A9 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textcurrency` is U+00A4 CURRENCY SIGN, like pdfLaTeX.
+    #[test]
+    fn textcurrency_typesets_a_currency_sign() {
+        let (parsed, items) = items("x \\textcurrency y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00A4}')),
+            "expected U+00A4 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textestimated` is U+212E ESTIMATED SYMBOL, like pdfLaTeX.
+    #[test]
+    fn textestimated_typesets_an_estimated_symbol() {
+        let (parsed, items) = items("x \\textestimated y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{212E}')),
+            "expected U+212E in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textnumero` is U+2116 NUMERO SIGN, like pdfLaTeX.
+    #[test]
+    fn textnumero_typesets_a_numero_sign() {
+        let (parsed, items) = items("x \\textnumero y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2116}')),
+            "expected U+2116 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textrecipe` is U+211E PRESCRIPTION TAKE, like pdfLaTeX.
+    #[test]
+    fn textrecipe_typesets_a_prescription_take() {
+        let (parsed, items) = items("x \\textrecipe y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{211E}')),
+            "expected U+211E in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textservicemark` is U+2120 SERVICE MARK, like pdfLaTeX.
+    #[test]
+    fn textservicemark_typesets_a_service_mark() {
+        let (parsed, items) = items("x \\textservicemark y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2120}')),
+            "expected U+2120 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textbardbl` is U+2016 DOUBLE VERTICAL LINE, like pdfLaTeX.
+    #[test]
+    fn textbardbl_typesets_a_double_vertical_line() {
+        let (parsed, items) = items("x \\textbardbl y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2016}')),
+            "expected U+2016 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textbrokenbar` is U+00A6 BROKEN BAR, like pdfLaTeX.
+    #[test]
+    fn textbrokenbar_typesets_a_broken_bar() {
+        let (parsed, items) = items("x \\textbrokenbar y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00A6}')),
+            "expected U+00A6 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\texttimes` is U+00D7 MULTIPLICATION SIGN, like pdfLaTeX.
+    #[test]
+    fn texttimes_typesets_a_multiplication_sign() {
+        let (parsed, items) = items("x \\texttimes y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00D7}')),
+            "expected U+00D7 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textdiv` is U+00F7 DIVISION SIGN, like pdfLaTeX.
+    #[test]
+    fn textdiv_typesets_a_division_sign() {
+        let (parsed, items) = items("x \\textdiv y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00F7}')),
+            "expected U+00F7 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textonehalf` is U+00BD VULGAR FRACTION ONE HALF, like pdfLaTeX.
+    #[test]
+    fn textonehalf_typesets_one_half() {
+        let (parsed, items) = items("x \\textonehalf y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00BD}')),
+            "expected U+00BD in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textonequarter` is U+00BC VULGAR FRACTION ONE QUARTER.
+    #[test]
+    fn textonequarter_typesets_one_quarter() {
+        let (parsed, items) = items("x \\textonequarter y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00BC}')),
+            "expected U+00BC in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textthreequarters` is U+00BE VULGAR FRACTION THREE QUARTERS.
+    #[test]
+    fn textthreequarters_typesets_three_quarters() {
+        let (parsed, items) = items("x \\textthreequarters y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00BE}')),
+            "expected U+00BE in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textperthousand` is U+2030 PER MILLE SIGN, like pdfLaTeX.
+    #[test]
+    fn textperthousand_typesets_a_per_mille_sign() {
+        let (parsed, items) = items("x \\textperthousand y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2030}')),
+            "expected U+2030 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textpertenthousand` is U+2031 PER TEN THOUSAND SIGN.
+    #[test]
+    fn textpertenthousand_typesets_a_per_ten_thousand_sign() {
+        let (parsed, items) = items("x \\textpertenthousand y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2031}')),
+            "expected U+2031 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textopenbullet` is U+25E6 WHITE BULLET, like pdfLaTeX.
+    #[test]
+    fn textopenbullet_typesets_a_white_bullet() {
+        let (parsed, items) = items("x \\textopenbullet y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{25E6}')),
+            "expected U+25E6 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textlangle` is U+2329 LEFT-POINTING ANGLE BRACKET.
+    #[test]
+    fn textlangle_typesets_a_left_angle_bracket() {
+        let (parsed, items) = items("x \\textlangle y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2329}')),
+            "expected U+2329 in {texts:?}"
+        );
+    }
+
+    /// GH-837: `\textrangle` is U+232A RIGHT-POINTING ANGLE BRACKET.
+    #[test]
+    fn textrangle_typesets_a_right_angle_bracket() {
+        let (parsed, items) = items("x \\textrangle y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{232A}')),
+            "expected U+232A in {texts:?}"
         );
     }
 

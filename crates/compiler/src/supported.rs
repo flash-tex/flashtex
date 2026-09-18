@@ -226,6 +226,7 @@ const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("ignorespaces", "", "skips the spaces that follow"),
     ("jobname", "", "expands to texput"),
     ("ifthenelse", "{test}{true}{false}", "the ifthen package's conditional: \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests select one branch at expansion time"),
+    ("iftoggle", "{name}{true}{false}", "the etoolbox toggle conditional: the named toggle (\\newtoggle/\\providetoggle declare it false, \\toggletrue/\\togglefalse set it) selects one branch at expansion time"),
 ];
 
 /// (name, arguments, description) for every `parser::BUILT_INS` entry that
@@ -1115,6 +1116,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "tabular >{} <{} !{} m b w columns, \\newcolumntype and \\extrarowheight",
     ),
     (
+        "tabularx",
+        "",
+        "the tabularx environment and its X column, splitting the table's leftover width evenly",
+    ),
+    (
         "booktabs",
         "",
         "\\toprule, \\midrule, \\bottomrule, \\cmidrule(trim), \\addlinespace, \\specialrule, \\morecmidrules",
@@ -1208,6 +1214,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "calc",
         "",
         "\\setlength/\\addtolength accept +/- chains of dimensions (1pt + 2\\baselineskip); *, /, parentheses and \\widthof/\\heightof/\\depthof/\\totalheightof are not parsed",
+    ),
+    (
+        "etoolbox",
+        "",
+        "toggle booleans: \\newtoggle/\\providetoggle declare a false toggle, \\toggletrue/\\togglefalse set it, \\iftoggle{name}{true}{false} selects a branch at expansion time; a duplicate \\newtoggle and any use of an undefined toggle are diagnosed where they are used and leave existing state alone. The rest of etoolbox (patching, hooks, list processing) is diagnosed where it is used",
     ),
 ];
 
