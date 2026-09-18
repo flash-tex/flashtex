@@ -42,6 +42,10 @@ enum Completion {
         /// When set, accepting inserts this instead of `insertText` and places
         /// the caret inside it (one undoable edit).
         var snippet: Snippet? = nil
+        /// A documentation line the origin supplies itself (a `.bib` record's
+        /// title; BibScanner.swift). Nil means the pane derives one from the
+        /// kind and name (`CompletionPopup.displayedDocumentation`).
+        var documentation: String? = nil
     }
 
     /// Replacement text plus the caret position inside it, in UTF-16 units.
@@ -610,10 +614,14 @@ enum Completion {
     /// `declaredElsewhere` names the macros the project's other open documents
     /// define (`declaredCommands` over each; the scheduler computes it
     /// off-main), offered as declared like the buffer's own.
+    /// `bibliographyEntries` are the records of the project's `.bib` files
+    /// read directly (`BibScanner.entries(for:)`, computed by the scheduler
+    /// off-main when the caret is in `\cite{`), offered after the helper's keys.
     static func suggestions(in text: String, caretUTF16: Int, metadata: Metadata?,
                             supported: [String] = defaultSupported, projectFiles: [String] = [],
                             graphicsFiles: [String] = [], recentEnvironments: [String] = [],
                             declaredElsewhere: [String] = [], mathMode: Bool? = nil,
+                            bibliographyEntries: [BibScanner.Entry] = [],
                             cancelled: () -> Bool = { false }) -> [Suggestion] {
         guard let token = token(in: text, caretUTF16: caretUTF16), !cancelled() else { return [] }
         let out: [Suggestion]
@@ -630,7 +638,7 @@ enum Completion {
             case .reference:
                 out = referenceSuggestions(prefix: prefix, text: text, metadata: metadata)
             case .citation:
-                out = citationSuggestions(prefix: prefix, text: text, metadata: metadata)
+                out = citationSuggestions(prefix: prefix, text: text, metadata: metadata, bibliographyEntries: bibliographyEntries)
             case .label:
                 out = labelSuggestions(prefix: prefix, tokenStart: token.start, text: text, metadata: metadata)
             case .package:
@@ -979,7 +987,12 @@ enum Completion {
     /// helper did not report a kind for, or a cited key with no definition
     /// (which says how to declare the .bib). Declared-bibliography records
     /// rank first among the index keys, unresolved keys last.
-    private static func citationSuggestions(prefix: String, text: String, metadata: Metadata?) -> [Suggestion] {
+    /// Then the records `BibScanner` read straight from the project's `.bib`
+    /// files (`@article · refs.bib`, the title as documentation line): with
+    /// no helper attached they are the only `.bib` keys there are; with one,
+    /// the helper's row for a key wins and only gains the record's line.
+    private static func citationSuggestions(prefix: String, text: String, metadata: Metadata?,
+                                            bibliographyEntries: [BibScanner.Entry] = []) -> [Suggestion] {
         var seen = Set<String>()
         var out: [Suggestion] = []
         for key in bibitems(in: text) where matchRank(key, prefix: prefix) != nil && seen.insert(key).inserted {
@@ -994,6 +1007,16 @@ enum Completion {
             // Stable: the index's own (sorted) order within a rank.
             out += ranked.enumerated().sorted { a, b in a.element.rank != b.element.rank ? a.element.rank < b.element.rank : a.offset < b.offset }
                 .map(\.element.suggestion)
+        }
+        if !bibliographyEntries.isEmpty {
+            let byKey = Dictionary(bibliographyEntries.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+            for i in out.indices where out[i].documentation == nil {
+                if let entry = byKey[out[i].label] { out[i].documentation = entry.documentation }
+            }
+            for entry in bibliographyEntries where matchRank(entry.key, prefix: prefix) != nil && seen.insert(entry.key).inserted {
+                out.append(Suggestion(label: entry.key, insertText: entry.key + "}", kind: .citation, detail: entry.detail,
+                                      documentation: entry.documentation))
+            }
         }
         return Array(fuzzyFilter(out, prefix: prefix, key: \.label).prefix(maxSuggestions))
     }
@@ -1823,6 +1846,10 @@ final class CompletionScheduler {
         /// (`Completion.declaredCommands`; scanned by the job, and only when
         /// the caret is on a command).
         var otherDocuments: [String] = []
+        /// The project's `.bib` files (`BibScanner.Sources`): read and parsed
+        /// by the job, and only when the caret is in a `\cite{` argument.
+        /// Nil (a bare text view) reads nothing.
+        var bibliography: BibScanner.Sources? = nil
         /// Whether the caret is in math mode (`Completion.isMathMode`), decided
         /// on the main thread where the editor's syntax model is in sync; nil
         /// when no model answered (a bare text view), which filters nothing.
@@ -1899,10 +1926,13 @@ final class CompletionScheduler {
             let range = Completion.completionRange(in: request.text, caretUTF16: request.caretUTF16)
             var graphics: [String] = []
             var declaredElsewhere: [String] = []
+            var bibliographyEntries: [BibScanner.Entry] = []
             if !job.isCancelled {
                 switch Completion.token(in: request.text, caretUTF16: request.caretUTF16) {
                 case .word(_, _, _, .graphics)?:
                     if let root = request.graphicsRoot { graphics = Completion.graphicsFiles(under: root) }
+                case .word(_, _, _, .citation)?:
+                    if let sources = request.bibliography { bibliographyEntries = BibScanner.entries(for: sources, cancelled: { job.isCancelled }) }
                 case .command?:
                     declaredElsewhere = request.otherDocuments.flatMap(Completion.declaredCommands)
                 default: break
@@ -1914,6 +1944,7 @@ final class CompletionScheduler {
                                                                      projectFiles: request.projectFiles, graphicsFiles: graphics,
                                                                      recentEnvironments: request.recentEnvironments,
                                                                      declaredElsewhere: declaredElsewhere, mathMode: request.mathMode,
+                                                                     bibliographyEntries: bibliographyEntries,
                                                                      cancelled: { job.isCancelled })
             let t1 = MonotonicClock.nowNs()
             let outcome = Outcome(generation: job.generation, caretUTF16: request.caretUTF16, range: range, items: items,
@@ -2320,6 +2351,7 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
     /// description as its `detail`, so the inventory line is shown only when
     /// the detail does not (a caller-supplied suggestion, a declared name).
     static func displayedDocumentation(for s: Completion.Suggestion) -> String? {
+        if let own = s.documentation { return own } // the origin's own line (a .bib record's title)
         if let hand = handWrittenDocumentation(for: s) { return hand }
         guard let (line, description) = inventoryLine(for: s), !s.detail.contains(description) else { return nil }
         return line
@@ -2516,6 +2548,10 @@ final class CompletingTextView: NSTextView {
     /// list is requested (`ShellModel.editorHoverContext`'s texts); their
     /// macros are offered as declared. A bare text view has none.
     var otherDocuments: () -> [String] = { [] }
+    /// The project's `.bib` files for `\cite{` (`ShellModel.bibliographySources`),
+    /// asked on the main thread when the list is requested and read by the
+    /// job off-main. A bare text view has none.
+    var bibliographySources: () -> BibScanner.Sources? = { nil }
     /// Accepted commands and environments, ranked first on the next open. A
     /// bare text view keeps its own; the hosted editor installs the shared one.
     var recentlyUsed = Completion.RecentlyUsed()
@@ -2943,7 +2979,7 @@ final class CompletingTextView: NSTextView {
                                                   supported: supportedCommands, projectFiles: projectFiles,
                                                   graphicsRoot: graphicsRoot(), recentCommands: recentlyUsed.commands,
                                                   recentEnvironments: recentlyUsed.environments, otherDocuments: otherDocuments(),
-                                                  mathMode: mathModeAtCaret(caret.location))
+                                                  bibliography: bibliographySources(), mathMode: mathModeAtCaret(caret.location))
         scheduler.schedule(request) { [weak self] outcome in
             self?.present(outcome, metadataRevision: metadata?.revision)
         }
