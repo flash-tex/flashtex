@@ -7203,9 +7203,15 @@ pub fn convert_math_classed(
             }
             #[cfg(feature = "amsmath-inline")]
             N::Phantom { body, horizontal, vertical } => vec![ml::Atom::phantom(sub(body, sink), *horizontal, *vertical)],
-            // amsopn `\qopname`: `\mathop{\operator@font ...}\limits` or `\nolimits`.
+            // amsopn `\qopname`: `\mathop{\operator@font ...}\displaylimits`
+            // (starred forms) or `\nolimits`. The starred switch is
+            // `\nmlimits@`, `\let` to `\displaylimits` (amsopn.sty): limits
+            // over/under in display style, ordinary scripts beside the word
+            // in text style -- the `DisplayLimits` arm, like `\lim`, not the
+            // unconditional `Limits` arm (that one is an explicit `\limits`
+            // switch, re-read from the source for named operators).
             #[cfg(feature = "amsmath-inline")]
-            N::Operator { body, limits } => vec![ml::Atom::new(ml::AtomClass::Op, ml::Nucleus::List(sub(body, sink))).with_limits(if *limits { ml::Limits::Limits } else { ml::Limits::NoLimits })],
+            N::Operator { body, limits } => vec![ml::Atom::new(ml::AtomClass::Op, ml::Nucleus::List(sub(body, sink))).with_limits(if *limits { ml::Limits::DisplayLimits } else { ml::Limits::NoLimits })],
             #[cfg(feature = "amsmath-inline")]
             N::SubArray { rows, align } => vec![ml::Atom::subarray(rows.iter().map(|r| sub(r, sink)).collect(), *align)],
             // amsmath `\ext@arrow#1#2#3#4` kerns and `\arrowfill@` pieces:
