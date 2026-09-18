@@ -334,6 +334,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("LaTeX", "", "latex.ltx logo: L, kern -.36em, script-size A raised to the T height, kern -.15em, \\TeX"),
     ("LaTeXe", "", "\\LaTeX, kern .15em, 2 and a text-style subscript varepsilon"),
     ("rule", "[raise]{dimension}{dimension}", "filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \\textwidth, \\linewidth, \\columnwidth"),
+    ("strut", "", "zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \\strutbox)"),
     ("uline", "{...}", "ulem underline: 0.4pt rule under the argument (single-line; needs ulem)"),
     ("underline", "{...}", "kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox"),
     ("underbar", "{...}", "kernel text underline: Rule 10 rule like \\underline but content depth zeroed (fixed position)"),

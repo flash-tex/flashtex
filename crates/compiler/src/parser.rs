@@ -1494,6 +1494,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "hfil",
     "hspace",
     "hskip",
+    "strut",
     "footnote",
     "footnotemark",
     "footnotetext",
@@ -3638,6 +3639,7 @@ impl P<'_> {
             // the macro call is `}`, another command, or `, . ! ? ; : ' /`.
             "xspace" => self.xspace(span),
             "rule" => self.text_rule(span, para),
+            "strut" => self.strut(span, para),
             "frac" | "sqrt" => self.text_mode_math_command(name, span),
             other => self.unsupported(other, span),
         }
@@ -10375,6 +10377,43 @@ impl P<'_> {
         }
     }
 
+    /// `\strut`: latex.ltx's `\setbox\strutbox\hbox{\vrule
+    /// \@height.7\baselineskip \@depth.3\baselineskip \@width\z@}` copied
+    /// (`\unhcopy` in text, `\copy` in math) at the point of use — a
+    /// zero-width rule .7/.3 of the current `\baselineskip`. The
+    /// compiler's `\baselineskip` is `layout::LINE_SPACING` times the
+    /// ambient size (see `crate::tabular`'s identical `\@arstrut`), at the
+    /// size declaration in force here, like `text_rule`. A zero width
+    /// never paints (`RuleBox::painted`), but the box is real: a
+    /// paragraph holding only a strut still sets a line (issue #843).
+    fn strut(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        let body = self.body_size_pt();
+        let size = self
+            .style
+            .size
+            .map_or(body, |level| crate::layout::size_declaration_pt(level, body));
+        let baselineskip = crate::layout::LINE_SPACING * size;
+        let dimen = |pt: f64| TextDimen::parse(&format!("{pt:.4}pt"));
+        // `TextRule` carries depth as a negative raise (see `text_rule`):
+        // height .7 and depth .3 read as raise -.3 and height 1.0.
+        if let (Some(height), Some(raise)) = (
+            dimen(baselineskip),
+            dimen(-0.3 * baselineskip),
+        ) {
+            para.push(Inline::Rule {
+                rule: TextRule {
+                    raise,
+                    width: TextDimen::zero(),
+                    height,
+                },
+                span,
+                style: self.style,
+                space_before,
+            });
+        }
+    }
+
     /// `\footnote`, `\footnotemark` and `\footnotetext`, following latex.ltx:
     /// without `[<n>]`, `\footnote`/`\footnotemark` step the counter and
     /// `\footnotetext` reuses its current value; with `[<n>]` none of them
@@ -10644,7 +10683,9 @@ impl P<'_> {
             (Some(_), _) => extra_gap_before_pt,
             (None, _) => 0.0,
         };
-        let content = std::mem::take(paragraph);
+        let mut content = std::mem::take(paragraph);
+        // A paragraph of only horizontal glue still sets a line (issue #843).
+        anchor_glyphless_paragraph(&mut content, self.style);
         // A list level is "current" only once its first `\item` has been
         // seen (`count > 0`); text typed directly inside `itemize`/
         // `enumerate` before any `\item` falls back to an ordinary
@@ -12225,6 +12266,128 @@ fn cite_keys(tokens: &[InputToken]) -> Vec<String> {
 pub const INF_PENALTY: i32 = 10_000;
 /// A penalty this low forces a break (`-\@M`).
 pub const EJECT_PENALTY: i32 = -10_000;
+
+/// Whether `inline` sets a box on the horizontal list, and so starts a line
+/// on its own (issue #843). Text (even an unresolved `??` reference), math,
+/// rules, logos, boxes and image/drawing nodes all do; glue, kerns, breaks,
+/// penalties and whatsits (`\label`, `\marginpar`, `\pagenumbering`) do not.
+/// Box wrappers recurse into their content; an `\hrulefill`/`\dotfill`
+/// carries its own `\leavevmode` box through its leader, while a bare
+/// `\hfill` is only glue.
+fn inline_sets_a_box(inline: &Inline) -> bool {
+    match inline {
+        Inline::Text { text, .. } => !text.is_empty(),
+        Inline::Math { .. }
+        | Inline::MathRows { .. }
+        | Inline::Rule { .. }
+        | Inline::Logo { .. }
+        | Inline::Tabular(_)
+        | Inline::Verbatim { .. }
+        | Inline::Graphic(_)
+        | Inline::Reference { .. }
+        | Inline::CleverReference { .. }
+        | Inline::ThePage { .. }
+        | Inline::Footnote { .. } => true,
+        Inline::HFill { leader, .. } => !matches!(leader, FillLeader::None),
+        Inline::Discretionary { nobreak, .. } => !nobreak.is_empty(),
+        Inline::ColorBox(b) => b.content.iter().any(inline_sets_a_box),
+        Inline::Transform(b) => b.content.iter().any(inline_sets_a_box),
+        Inline::Underline(u) => u.content.iter().any(inline_sets_a_box),
+        Inline::TextScript(t) => t.content.iter().any(inline_sets_a_box),
+        _ => false,
+    }
+}
+
+/// Whether `inline` is horizontal material with no box of its own: the
+/// fixed and infinite glue (`\hspace`, `\hskip`, `\hfill`, `\quad`,
+/// `\enskip`) and kerns (`\,`, `\/`, `\:`, `\enspace`). Measured against
+/// pdflatex (TeX Live 2026, article): each of these alone in the body
+/// ships a one-page PDF, while an empty or comment-only body ships none.
+fn inline_is_bare_glue(inline: &Inline) -> bool {
+    matches!(
+        inline,
+        Inline::HSpace { .. }
+            | Inline::TextGlue { .. }
+            | Inline::Kern { .. }
+            | Inline::HFill {
+                leader: FillLeader::None,
+                ..
+            }
+    )
+}
+
+/// The source range of one inline, for nodes synthesised at flush time.
+fn inline_span(inline: &Inline) -> Span {
+    match inline {
+        Inline::Text { span, .. }
+        | Inline::LineBreak { span, .. }
+        | Inline::TextGlue { span, .. }
+        | Inline::Math { span, .. }
+        | Inline::MathRows { span, .. }
+        | Inline::Label { span, .. }
+        | Inline::Reference { span, .. }
+        | Inline::CleverReference { span, .. }
+        | Inline::ThePage { span, .. }
+        | Inline::PageNumbering { span, .. }
+        | Inline::HFill { span, .. }
+        | Inline::HSpace { span, .. }
+        | Inline::TabStop { span, .. }
+        | Inline::TabJump { span, .. }
+        | Inline::Footnote { span, .. }
+        | Inline::Marginpar { span, .. }
+        | Inline::Logo { span, .. }
+        | Inline::Rule { span, .. }
+        | Inline::Kern { span, .. }
+        | Inline::Verbatim { span, .. }
+        | Inline::Penalty { span, .. }
+        | Inline::PagePenalty { span, .. }
+        | Inline::Discretionary { span, .. } => *span,
+        Inline::Tabular(t) => t.span,
+        Inline::ColorBox(b) => b.span,
+        Inline::Underline(u) => u.span,
+        Inline::TextScript(t) => t.span,
+        Inline::Graphic(g) => g.span,
+        Inline::Transform(t) => t.span,
+    }
+}
+
+/// The empty-line anchor (issue #843). When a paragraph holds horizontal
+/// material but no box — `\hspace{1cm}` or `\hfill` alone are the reported
+/// cases — every downstream consumer drops it: the Core 14 layout places
+/// no item, and the render pipeline's paragraph builder needs a box to
+/// break a line, so the document ends with no pages at all. Real TeX still
+/// sets the paragraph's single line (empty, since trailing glue is dropped
+/// at the break) and ships the page; the oracle PDFs for `\hspace{1cm}`,
+/// `\hfill`, `\quad`, `\enskip`, `\hfil`, `\hskip` and `\,` alone are all
+/// one empty page with only the folio.
+///
+/// The anchor is a zero-size rule at the paragraph's start: a box, so the
+/// line is built, but one that paints nothing (`RuleBox::painted` is false
+/// for a zero width) and contributes no height or depth, matching the
+/// oracle's `(0.0+0.0)` line. It deliberately does not fire for genuinely
+/// empty or label-only paragraphs (no material), nor beside any real box.
+fn anchor_glyphless_paragraph(content: &mut Vec<Inline>, style: TextStyle) {
+    if !content.iter().any(inline_is_bare_glue) || content.iter().any(inline_sets_a_box) {
+        return;
+    }
+    let Some(first) = content.first() else {
+        return;
+    };
+    let span = inline_span(first);
+    content.insert(
+        0,
+        Inline::Rule {
+            rule: TextRule {
+                raise: TextDimen::zero(),
+                width: TextDimen::zero(),
+                height: TextDimen::zero(),
+            },
+            span,
+            style,
+            space_before: false,
+        },
+    );
+}
 
 /// The characters of the `Text` runs in `inlines`, in order (a
 /// `\discretionary` argument).
