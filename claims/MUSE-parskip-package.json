@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-muse-lead-2",
+  "branch": "muse/parskip-package",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": "usepackage{parskip}: apply parindent=0/parskip default via existing parskip_pt/parindent mechanism, currently only manual \\setlength is handled (#837 backlog, 3 docs)",
+  "started_utc": "2026-09-18T08:03:35Z",
+  "state": "claimed",
+  "task_id": "MUSE-parskip-package",
+  "updated_utc": "2026-09-18T08:03:35Z"
+}
