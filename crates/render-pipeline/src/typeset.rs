@@ -7367,12 +7367,15 @@ pub fn convert_math_classed(
                     // `\arrowfill@` pieces (`amsmath.sty` 977-979).
                     arrow_frame => {
                         use flashtex_compiler::math::ExtArrow as X;
-                        let pieces = match arrow_frame.arrow() {
-                            Some(X::Left) => ['\u{2190}', '-', '-'],
-                            Some(X::LeftRight) => ['\u{2190}', '-', '\u{2192}'],
-                            _ => ['-', '-', '\u{2192}'],
-                        };
-                        ml::Atom::over_arrow(pieces, body, arrow_frame.is_under(), 1.3 * ams_ex(sink.body_size_pt))
+                        match arrow_frame.arrow() {
+                            Some(X::Left) => ml::Atom::over_arrow(['\u{2190}', '-', '-'], body, arrow_frame.is_under(), 1.3 * ams_ex(sink.body_size_pt)),
+                            Some(X::LeftRight) => ml::Atom::over_arrow(['\u{2190}', '-', '\u{2192}'], body, arrow_frame.is_under(), 1.3 * ams_ex(sink.body_size_pt)),
+                            Some(X::Right) => ml::Atom::over_arrow(['-', '-', '\u{2192}'], body, arrow_frame.is_under(), 1.3 * ams_ex(sink.body_size_pt)),
+                            // A frame this typesetter has no drawing for yet
+                            // (the cancel package's diagonal strikes) sets its
+                            // body undecorated rather than as an arrow.
+                            None => ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(body)),
+                        }
                     }
                 }]
             }

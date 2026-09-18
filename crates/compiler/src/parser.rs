@@ -12091,6 +12091,10 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // it is used instead (see `fancy_later_command`). fancyhdr.sty
         // takes no package options of its own.
         "fancyhdr" => options.is_empty(),
+        // cancel.sty: \cancel, \bcancel, \xcancel are implemented
+        // (math.rs Frame::Cancel/BCancel/XCancel); \cancelto is diagnosed
+        // where used. cancel takes no package options.
+        "cancel" => options.is_empty(),
         _ => false,
     }
 }

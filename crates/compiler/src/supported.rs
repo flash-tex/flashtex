@@ -843,6 +843,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["cancel", "bcancel", "xcancel"],
+        "{body}",
+        "cancel package: diagonal line(s) through the body (forward slash, backward slash, or X)",
+        true,
+    ),
+    (
         &["dashrightarrow", "dasharrow", "dashleftarrow"],
         "",
         "amsfonts dashed arrow: two msam \\dabar@ pieces and a head in one relation",
@@ -1111,6 +1117,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "booktabs",
         "",
         "\\toprule, \\midrule, \\bottomrule, \\cmidrule(trim), \\addlinespace, \\specialrule, \\morecmidrules",
+    ),
+    (
+        "cancel",
+        "",
+        "\\cancel (forward diagonal), \\bcancel (backward diagonal) and \\xcancel (X) through a math expression; \\cancelto is diagnosed",
     ),
     (
         "longtable",
