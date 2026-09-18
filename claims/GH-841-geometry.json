@@ -5,7 +5,7 @@
   "machine": "mac-m5pro-dq222",
   "note": "beamer page geometry (ClassKind::Beamer sizing/margins/font-sizes/aspectratio) in crates/class-geometry; offered by mac-claude-a, independent of MUSE-beamer-frames pagination work",
   "started_utc": "2026-09-18T06:47:24Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "GH-841-geometry",
-  "updated_utc": "2026-09-18T06:47:24Z"
+  "updated_utc": "2026-09-18T07:02:46Z"
 }
