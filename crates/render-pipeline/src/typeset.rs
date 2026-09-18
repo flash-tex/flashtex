@@ -5541,6 +5541,7 @@ impl<'a> Context<'a> {
             Some(_) if separate => usize::from(left),
             _ => 0,
         };
+        let eqno_reqno_shared_line = eqno.is_some() && !separate;
         match eqno {
             Some(nb) if separate => {
                 let (nh, nd, nw) = (nb.height, nb.depth, nb.width);
@@ -5571,11 +5572,40 @@ impl<'a> Context<'a> {
         // formula's own line, flush right within the display width. Gated
         // strictly on the marker — a display without one is untouched, in
         // particular whatever the closing proof does after it.
+        //
+        // A `reqno` number combined onto the same line as the formula (not
+        // `separate`, i.e. not `\leqno` and not amsmath's own separate-line
+        // numbering) is the one case where the box does not join that line:
+        // amsthm's `\equation@qed` reqno branch is
+        // `\vtop{\ialign{\hfil#\cr\tagform@\theequation\cr\qedsymbol\cr}}`,
+        // a two-row stack (tag, then box) that *replaces* the plain tag, so
+        // the box lands on its own new line below the tag, at a normal
+        // interline distance -- never overlapping it. Verified against
+        // pdflatex (`equation` with `\qedhere`, no explicit `\leqno`): the
+        // box sits exactly one page baselineskip below the formula+tag
+        // line.
         if let Some(qspan) = qed_here {
-            let (runs, line_items, line_recs, h, _dp, natural) = &mut out_lines[formula_at];
-            let (edge, qh) = self.append_display_qed(runs, line_items, line_recs, s + z, *h, size, qspan);
-            *h = h.max(qh);
-            *natural = natural.max(edge);
+            if eqno_reqno_shared_line {
+                // A fresh line holding only the box: its `baseline_y` must
+                // equal its own declared `height` (the convention every
+                // other line in this function follows, e.g. `formula_run`'s
+                // `baseline_y: height` above), so compute the box once to
+                // learn its height, then re-stamp that height onto the runs
+                // this call already produced against a throwaway baseline.
+                let mut runs = Vec::new();
+                let mut line_items = Vec::new();
+                let mut line_recs = Vec::new();
+                let (edge, qh) = self.append_display_qed(&mut runs, &mut line_items, &mut line_recs, s + z, 0.0, size, qspan);
+                for run in &mut runs {
+                    run.baseline_y = qh;
+                }
+                out_lines.push((runs, line_items, line_recs, qh, 0.0, edge));
+            } else {
+                let (runs, line_items, line_recs, h, _dp, natural) = &mut out_lines[formula_at];
+                let (edge, qh) = self.append_display_qed(runs, line_items, line_recs, s + z, *h, size, qspan);
+                *h = h.max(qh);
+                *natural = natural.max(edge);
+            }
         }
         let mut items = Vec::new();
         let mut recs = Vec::new();
