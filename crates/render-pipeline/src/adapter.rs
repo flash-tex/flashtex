@@ -263,6 +263,17 @@ pub enum Item {
     /// pdflatex shows it: `\showbox` of `\verb*"a b-c"` opens with
     /// `.\hbox(0.0+0.0)x0.0`.
     LeaveVmode,
+    /// An explicit break point: `\penalty<value>`, or, `flagged`, an empty
+    /// `\discretionary{}{}{}` — charged `\exhyphenpenalty` (50) and
+    /// counted as a hyphenated line for `\doublehyphendemerits`. listings'
+    /// `breaklines` puts one after every token of a `\lstinline`
+    /// (lstmisc.sty `\lst@discretionary`, see `listings::break_inline`).
+    Penalty { value: i32, flagged: bool },
+    /// `\hbox{\ }`: a blank of the font in force set as a box, so it is
+    /// neither stretchable nor discarded at a line break. listings sets
+    /// every blank of a `\lstinline` this way (`\lst@outputspace`), which
+    /// is why pdflatex's next line can open with one.
+    SpaceBox { style: TextStyle },
 }
 
 /// A `\colorbox`/`\fcolorbox`: `items` set as an `\hbox` on a `fill`
@@ -9822,6 +9833,27 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 after_control_word = control_word_at(source, span.start, span.end).is_some() && !is_invocation_span(source, *span);
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
+                // A lowered `\verb`/`\lstinline` (`lower_inline`): the
+                // compiler's span is the control word alone, so the gap
+                // after it would be read from the delimited argument's own
+                // bytes -- `\verb|a b|.` got a rigid typewriter blank before
+                // the `.`, where TeX has none (the `|` ends the group and
+                // the `.` follows it directly), and `\verb|a b| y` a blank
+                // of the typewriter font where TeX reads the space token in
+                // the outer font. What was read is the whole command.
+                // (`\lstinline` is spelled over as `\verb` for the engine,
+                // and its span is those five bytes: the word is re-read
+                // from the source at the span's start.)
+                if reference_spans.contains(span) {
+                    let word_end = source.get(span.start + 1..).map_or(span.start, |r| span.start + 1 + r.bytes().take_while(u8::is_ascii_alphabetic).count());
+                    if let Some(name) = control_word_at(source, span.start, word_end).filter(|n| verb_command(n)) {
+                        if let Some(v) = verb_span(source, span.start, span.start + 1 + name.len()) {
+                            prev_end = Some(v.whole.1);
+                            prev_span = Some(Span::in_document(span.document, span.start, v.whole.1));
+                            after_control_word = false;
+                        }
+                    }
+                }
             }
             // Inlines only a re-pinned compiler emits. Every one of them is
             // a zero-width marker in the horizontal list -- a penalty, a

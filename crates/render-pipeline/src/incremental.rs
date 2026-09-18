@@ -480,6 +480,13 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 (span.end.wrapping_sub(base)).hash(h);
                 count.hash(h);
             }
+            Item::Penalty { value, flagged } => {
+                value.hash(h);
+                flagged.hash(h);
+            }
+            Item::SpaceBox { style } => {
+                style.hash(h);
+            }
         }
     }
 }
