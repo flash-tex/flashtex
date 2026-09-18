@@ -314,7 +314,7 @@ pub fn command_package(name: &str) -> Option<&'static str> {
 /// (a known command with no extra package/mode hint).
 pub fn command_help(name: &str) -> Option<String> {
     if is_math_command(name) {
-        return Some(format!("wrap this in math mode: \\(\\{name}\\)"));
+        return Some(format!("\\{name} is a math command; use it in math mode"));
     }
     if let Some(package) = command_package(name) {
         return Some(format!(
@@ -492,7 +492,7 @@ mod tests {
         );
         assert_eq!(
             command_help("alpha").as_deref(),
-            Some("wrap this in math mode: \\(\\alpha\\)")
+            Some("\\alpha is a math command; use it in math mode")
         );
         assert!(command_help("maketitle").is_none(), "{:?}", command_help("maketitle"));
         assert_eq!(
@@ -517,7 +517,7 @@ mod tests {
             assert!(is_known_command(name), "{name}");
             assert_eq!(
                 command_help(name),
-                Some(format!("wrap this in math mode: \\(\\{name}\\)")),
+                Some(format!("\\{name} is a math command; use it in math mode")),
                 "{name}"
             );
             assert!(math_mode_help(name).is_none(), "{name}");
