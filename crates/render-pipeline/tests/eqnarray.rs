@@ -59,9 +59,15 @@
 //! fall into lineskip mode sooner and only ever add `\jot` from the
 //! explicit `\noalign`. Measured against pdflatex (10pt article): a
 //! `\frac` row followed by a short row gives 15.00pt baseline-to-baseline
-//! in `eqnarray*` but 19.26pt in `align*` for the identical two rows --
-//! `typeset::eqnarray_tests` in the library covers both the short-row case
-//! this file's fixtures use and that tall-row divergence.
+//! in `eqnarray*` but 19.26pt in `align*` for the identical two rows.
+//! (Numbered `eqnarray` differs again: the `(1)`/`(2)` tags are set
+//! *inside* the `\halign` rows by latex.ltx's `\@@eqncr`, so a short row's
+//! extents are the tag box's `(7.5+2.5)pt`, which pushes more pairs into
+//! lineskip mode -- see the two pinned tests at the bottom of this file.)
+//!
+//! Tall-row/row-gap cases live in this file's own tests below.
+//! `typeset::eqnarray_tests` in the library covers horizontal column
+//! positions only -- never row baseline gaps and never a tall row.
 
 mod common;
 
@@ -69,6 +75,17 @@ use common::*;
 
 /// Gate on glyph positions.
 const TOL: f64 = 0.5;
+/// Separate, far tighter gate for row baseline gaps, in bp.
+///
+/// The pipeline reproduces the tall-row gaps below to ~1e-5 bp against
+/// pdflatex's `\showoutput` box-and-glue log (exact pt arithmetic, not glyph
+/// readout), so 0.01 bp -- the `align_tall_row.rs` precedent -- still leaves
+/// three orders of magnitude of headroom while catching the 0.056 bp pt/bp
+/// mislabelling that started issue #814, which a reused 0.5 bp gate would
+/// hide. Columns keep `TOL`: their geometry legitimately varies between the
+/// Latin Modern faces the pipeline renders and the Computer Modern faces
+/// pdflatex measures.
+const ROW_TOL: f64 = 0.01;
 /// Right edge of the text block, in bp.
 const RIGHT: f64 = 540.0;
 /// Centre of the text block, in bp.
@@ -289,9 +306,10 @@ fn long_right_hand_side_keeps_the_block_centred() {
 }
 
 /// A `\frac` row followed by a short row: the row-to-row baseline gap is
-/// `\baselineskip` (15.00 bp at 10pt), not `align`'s lineskip-mode gap
-/// (19.26 bp for the identical rows) -- `eqnarray` has no amsmath strut and
-/// does not `\openup`. Measured against pdflatex (`\showoutput`, 10pt
+/// `\baselineskip` (15.00pt = 14.9439bp at 10pt), not `align`'s
+/// lineskip-mode gap (19.26 bp for the identical rows) -- `eqnarray` has no
+/// amsmath strut and does not `\openup`. Measured against pdflatex
+/// (`\showoutput`, 10pt
 /// article): row 1 depth 6.8595, `\glue 3.0`, `\glue(\baselineskip)
 /// 0.83495`, row 2 height 4.30554, independently confirmed by rendering the
 /// same fixture to a real PDF and reading glyph baselines back out with
@@ -309,5 +327,71 @@ fn a_tall_row_still_gets_the_kernel_baselineskip_gap_not_aligns_lineskip_gap() {
     let ys = math_baselines(&words_of(&r));
     assert_eq!(ys.len(), 2, "{ys:?}");
     let gap = ys[1] - ys[0];
-    assert!((gap - 15.00).abs() <= TOL, "row baseline gap {gap:.4} bp, pdflatex 15.00 bp (align's would be 19.26 bp)");
+    // 15.00pt exactly, i.e. 14.9439bp -- not 15.00bp: the old pin wrote the
+    // pt figure into a bp assertion, the exact mislabelling behind #814.
+    assert!((gap - 14.9439).abs() <= ROW_TOL, "row baseline gap {gap:.4} bp, pdflatex 14.9439 bp (align's would be 19.26 bp)");
+}
+
+/// Short row then `\frac` row in `eqnarray*`: lineskip mode with only the
+/// explicit `\noalign{\vskip\jot}` on top of the kernel `\lineskip`.
+///
+/// Oracle: pdflatex `\showoutput` (10pt article, this file's `doc`
+/// geometry): row 1 `\hbox(4.30554+1.94444)`, `\penalty 100`,
+/// `\glue 3.0` (the `\jot` noalign), `\glue(\lineskip) 1.0`, row 2
+/// `\hbox(11.07062+6.85951)`: `12 - 1.94444 - 11.07062 < 0`, so the gap is
+/// `1.94444 + 3.0 + 1.0 + 11.07062 = 17.01506pt = 16.9515bp`, confirmed by
+/// reading the `=` glyph baselines out of a real PDF with both PyMuPDF
+/// (16.9520bp) and `pdftotext -bbox` (16.952000bp). `align*` gives
+/// 18.6009bp for the identical rows: amsmath's `\openup`d `\lineskip`
+/// (4.0pt) where the kernel has 1.0pt.
+#[test]
+fn short_row_then_frac_row_gap_matches_pdflatex() {
+    if !lm_available() {
+        eprintln!("SKIP eqnarray short-then-frac: Latin Modern not installed");
+        return;
+    }
+    let r = render_one(&doc("10pt", "\\begin{eqnarray*}\nx &=& y \\\\\na &=& \\frac{a}{b}\n\\end{eqnarray*}"));
+    assert_supported(&r);
+    let ys = math_baselines(&words_of(&r));
+    assert_eq!(ys.len(), 2, "{ys:?}");
+    let gap = ys[1] - ys[0];
+    assert!(
+        (gap - 16.9515).abs() <= ROW_TOL,
+        "short-then-frac row gap {gap:.4} bp, pdflatex 16.9515 bp (align's would be 18.6009 bp)"
+    );
+}
+
+/// `\frac` row then short row in numbered `eqnarray`: the tags widen the
+/// short row, so the pair falls into lineskip mode where the starred twin
+/// stays in baselineskip mode (15.00pt).
+///
+/// Oracle: pdflatex `\showoutput` (10pt article): row 1
+/// `\hbox(11.07062+6.85951)` (the fraction dominates its `(1)` tag),
+/// `\penalty 100`, `\glue 3.0`, `\glue(\lineskip) 1.0`, row 2
+/// `\hbox(7.5+2.5)` -- the `(2)` tag box, taller than the `x = y` content's
+/// `(4.30554+1.94444)`: `12 - 6.85951 - 7.5 < 0`, so the gap is
+/// `6.85951 + 3.0 + 1.0 + 7.5 = 18.35951pt = 18.2909bp`, confirmed by glyph
+/// readout (PyMuPDF 18.2910bp, `pdftotext -bbox` 18.291000bp).
+#[test]
+fn numbered_frac_row_then_short_row_gap_matches_pdflatex() {
+    if !lm_available() {
+        eprintln!("SKIP eqnarray numbered frac-then-short: Latin Modern not installed");
+        return;
+    }
+    let r = render_one(&doc("10pt", "\\begin{eqnarray}\na &=& \\frac{a}{b} \\\\\nx &=& y\n\\end{eqnarray}"));
+    assert_supported(&r);
+    let words = words_of(&r);
+    let ys = math_baselines(&words);
+    assert_eq!(ys.len(), 2, "{ys:?}");
+    // Both rows numbered: guards against the fixture silently going `*`,
+    // which would land at 14.9439bp instead.
+    let mut numbers: Vec<String> =
+        words.into_iter().filter(|w| w.text.starts_with('(')).map(|w| w.text).collect();
+    numbers.sort();
+    assert_eq!(numbers, ["(1)", "(2)"]);
+    let gap = ys[1] - ys[0];
+    assert!(
+        (gap - 18.2909).abs() <= ROW_TOL,
+        "numbered frac-then-short row gap {gap:.4} bp, pdflatex 18.2909 bp (starred would be 14.9439 bp)"
+    );
 }
