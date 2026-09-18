@@ -348,6 +348,9 @@ fn text_probe(name: &str, arguments: &str) -> String {
         // A bare `{x}` test is not a valid `\ifthenelse` test (the engine
         // reports "Missing test"), so probe the real form instead.
         "ifthenelse" => "\\ifthenelse{\\equal{a}{a}}{yes}{no}".into(),
+        // `\iftoggle` needs a declared toggle; probing it bare would
+        // report the undefined-toggle marker instead of rendering.
+        "iftoggle" => "\\newtoggle{x}\\toggletrue{x}\\iftoggle{x}{yes}{no}".into(),
         "captionof" => "\\captionof{figure}{x}".into(),
         "uline" => "\\usepackage{ulem}\\uline{x}".into(),
         "sout" => "\\usepackage{ulem}\\sout{x}".into(),
