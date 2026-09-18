@@ -197,9 +197,11 @@ pub fn mark_rules(kind: ClassKind, style: PageStyle, class_twoside: bool) -> Vec
         number_if_depth_above: above,
         mainmatter_only: mm,
     };
-    let book = kind == ClassKind::Book;
+    // `scrbook` has `\frontmatter` / `\mainmatter` like `book`; `scrartcl`
+    // marks like `article` (no chapters to mark).
+    let book = matches!(kind, ClassKind::Book | ClassKind::Scrbook);
     match (kind, class_twoside) {
-        (ClassKind::Article, true) => vec![
+        (ClassKind::Article | ClassKind::Scrartcl, true) => vec![
             r(
                 "section",
                 MarkTarget::Both,
@@ -217,7 +219,7 @@ pub fn mark_rules(kind: ClassKind, style: PageStyle, class_twoside: bool) -> Vec
                 false,
             ),
         ],
-        (ClassKind::Article, false) => vec![r(
+        (ClassKind::Article | ClassKind::Scrartcl, false) => vec![r(
             "section",
             MarkTarget::Right,
             true,
