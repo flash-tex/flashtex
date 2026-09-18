@@ -481,6 +481,13 @@ enum DS {
         static let hoverHighlightOpacity: Double = 0.10
         static let linkBoxFillOpacity: Double = 0.12
         static let linkBoxStrokeOpacity: Double = 0.8
+        /// The caret's paragraph band (accent over the page): fainter than
+        /// any caret mark, a touch stronger on the dark page where the accent
+        /// loses contrast against the ink.
+        static let paragraphBandOpacity: Double = 0.07
+        static let paragraphBandOpacityDark: Double = 0.11
+        /// The band overhangs its row's glyph boxes by this much, in points.
+        static let paragraphBandOverhang: CGFloat = 2
     }
 
     // MARK: motion — nothing exceeds 200 ms, nothing bounces

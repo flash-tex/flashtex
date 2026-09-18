@@ -321,6 +321,8 @@ extension ShellModel {
                     } else {
                         for r in match.hitRects { rect = union(rect, Self.points(r)) }
                     }
+                case .paragraph:
+                    break // never requested here; the band is not the caret
                 }
             }
             if let rect { return CaretFollow.Target(page: page.number, rect: rect) }

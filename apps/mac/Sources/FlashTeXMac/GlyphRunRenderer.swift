@@ -227,6 +227,11 @@ struct V2PreparedPage: @unchecked Sendable {
 
     /// Whether `byte` of `path` can match a cluster on this page.
     func mayContain(byte: Int, path: String) -> Bool { sourceBounds[path]?.contains(byte) ?? false }
+    /// Whether any byte of `range` of `path` can match an item on this page.
+    func mayOverlap(_ range: Range<Int>, path: String) -> Bool {
+        guard let b = sourceBounds[path], !range.isEmpty else { return false }
+        return range.lowerBound <= b.upperBound && b.lowerBound < range.upperBound
+    }
 
     /// The value CoreGraphics' PDF writer serializes for `v`: 7 significant
     /// digits (`%.7g`, measured on its content streams: `637.706`,
