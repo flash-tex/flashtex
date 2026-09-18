@@ -12,7 +12,11 @@ import os
 /// 1. `\end{X}` for every `\begin{X}` before the caret that is still open.
 /// 2. Commands the compiler supports (`supported`; default list below), the
 ///    one spelled exactly as typed first, then in table order.
-/// 3. Commands typed elsewhere in the document that are not in `supported`,
+/// 3. Commands the document (or another open one) defines with
+///    `\newcommand`/`\def`/`\DeclareMathOperator`/… (`declaredCommands`),
+///    marked "declared in this document" — these rank right under the exact
+///    spelling, and are never marked unsupported, whatever the index says.
+/// 4. Commands typed elsewhere in the document that are not in `supported`,
 ///    marked "not supported by this compiler version".
 /// 4. Environment names (after `\begin{`/`\end{`), labels (after `\ref{`) and
 ///    citation keys (after `\cite{`) seen in the document.
@@ -256,6 +260,10 @@ enum Completion {
         /// Text/display environments and the math grids the compiler accepts, in file order.
         static let environments: [String] = inventory.environments.map(\.name)
 
+        /// Each environment's inventory `description` (the popup's documentation line when no hand-written one exists).
+        static let environmentDescriptions: [String: String] = Dictionary(inventory.environments.map { ($0.name, $0.description) },
+                                                                         uniquingKeysWith: { a, _ in a })
+
         static let byName: [String: Entry] = Dictionary(entries.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
         static let names: [String] = entries.map(\.name)
 
@@ -287,7 +295,7 @@ enum Completion {
         /// A run of letters, with what immediately precedes it (`\begin{`, `\ref{`, …).
         case word(text: String, start: Int, end: Int, context: Context)
 
-        enum Context: Equatable { case none, beginEnvironment, endEnvironment, reference, citation, label, package, file }
+        enum Context: Equatable { case none, beginEnvironment, endEnvironment, reference, citation, label, package, file, graphics }
 
         var start: Int {
             switch self { case .command(_, let s, _), .word(_, let s, _, _): return s }
@@ -334,21 +342,35 @@ enum Completion {
     /// opener immediately before it.
     private static func context(in b: UnsafeBufferPointer<UInt8>, before start: Int) -> Token.Context {
         guard start > 0, b[start - 1] == UInt8(ascii: "{") else { return .none }
-        if endsWith(b, upTo: start, suffix: "\\begin{") { return .beginEnvironment }
-        if endsWith(b, upTo: start, suffix: "\\end{") { return .endEnvironment }
-        if endsWith(b, upTo: start, suffix: "\\label{") { return .label }
-        if endsWith(b, upTo: start, suffix: "\\ref{") || endsWith(b, upTo: start, suffix: "\\eqref{")
-            || endsWith(b, upTo: start, suffix: "\\pageref{") || endsWith(b, upTo: start, suffix: "\\autoref{") {
+        // `\includegraphics[width=2cm]{`, `\usepackage[utf8]{`, `\cite[p.~3]{`:
+        // one optional argument between the command and its brace is skipped
+        // (single-line, unnested — the shapes these commands take).
+        var end = start - 1
+        if end > 0, b[end - 1] == UInt8(ascii: "]") {
+            var j = end - 1
+            while j > 0, b[j - 1] != UInt8(ascii: "["), b[j - 1] != UInt8(ascii: "\n"), b[j - 1] != UInt8(ascii: "{"), b[j - 1] != UInt8(ascii: "}") { j -= 1 }
+            guard j > 0, b[j - 1] == UInt8(ascii: "[") else { return .none }
+            end = j - 1
+        }
+        if endsWith(b, upTo: end, suffix: "\\begin") { return .beginEnvironment }
+        if endsWith(b, upTo: end, suffix: "\\end") { return .endEnvironment }
+        if endsWith(b, upTo: end, suffix: "\\label") { return .label }
+        if endsWith(b, upTo: end, suffix: "\\ref") || endsWith(b, upTo: end, suffix: "\\eqref")
+            || endsWith(b, upTo: end, suffix: "\\pageref") || endsWith(b, upTo: end, suffix: "\\autoref") {
             return .reference
         }
-        if citationCommands.contains(where: { endsWith(b, upTo: start, suffix: "\\" + $0 + "{") }) { return .citation }
-        if endsWith(b, upTo: start, suffix: "\\usepackage{") { return .package }
-        if fileCommands.contains(where: { endsWith(b, upTo: start, suffix: "\\" + $0 + "{") }) { return .file }
+        if citationCommands.contains(where: { endsWith(b, upTo: end, suffix: "\\" + $0) }) { return .citation }
+        if endsWith(b, upTo: end, suffix: "\\usepackage") { return .package }
+        if fileCommands.contains(where: { endsWith(b, upTo: end, suffix: "\\" + $0) }) { return .file }
+        if graphicsCommands.contains(where: { endsWith(b, upTo: end, suffix: "\\" + $0) }) { return .graphics }
         return .none
     }
 
-    /// Commands whose `{` argument completes a project file path.
-    static let fileCommands = ["input", "include", "includegraphics"]
+    /// Commands whose `{` argument completes a project document path.
+    static let fileCommands = ["input", "include"]
+
+    /// Commands whose `{` argument completes an image file under the project root.
+    static let graphicsCommands = ["includegraphics"]
 
     /// Argument keys are wider than words: `eq:main`, `knuth-84`, `ch/one.tex`,
     /// `amsmath` after a comma. Scanned back from the caret over key bytes to
@@ -375,7 +397,7 @@ enum Completion {
         }
         let context = context(in: b, before: opener)
         switch context {
-        case .reference, .citation, .label, .package, .file:
+        case .reference, .citation, .label, .package, .file, .graphics:
             let text = String(decoding: b[start..<caretByte], as: UTF8.self)
             guard text.utf8.allSatisfy({ $0 < 0x80 }) || text.unicodeScalars.allSatisfy({ $0.properties.isAlphabetic }) else { return nil }
             return .word(text: text, start: start, end: caretByte, context: context)
@@ -476,6 +498,66 @@ enum Completion {
         return strong.isEmpty ? weak : strong
     }
 
+    // MARK: recently used
+
+    /// What the author accepted from the list lately, most recent first, so
+    /// `\t` offers `\textbf` above the inventory's `\tableofcontents` once it
+    /// has been chosen once. Commands are kept by name (no backslash),
+    /// environments by name; nothing else is remembered. In memory for the
+    /// app's lifetime, per editor by default (`CompletingTextView.recentlyUsed`)
+    /// and shared across documents by the hosted editor (`shared`).
+    @MainActor
+    final class RecentlyUsed {
+        static let shared = RecentlyUsed()
+        static let limit = 64
+        private(set) var commands: [String] = []
+        private(set) var environments: [String] = []
+
+        func record(_ suggestion: Suggestion) {
+            switch suggestion.kind {
+            case .command where suggestion.insertText.hasPrefix("\\"):
+                Self.push(String(suggestion.insertText.dropFirst()), onto: &commands)
+            case .environment where !suggestion.label.hasPrefix("\\"):
+                Self.push(suggestion.label, onto: &environments)
+            default:
+                break
+            }
+        }
+
+        /// Forgets everything (tests that assert the inventory's own order on
+        /// a hosted editor, which shares this store across the process).
+        func removeAll() {
+            commands = []
+            environments = []
+        }
+
+        private static func push(_ name: String, onto list: inout [String]) {
+            list.removeAll { $0 == name }
+            list.insert(name, at: 0)
+            if list.count > limit { list.removeLast(list.count - limit) }
+        }
+    }
+
+    /// `supported` with the names in `recent` (most recent first) moved to
+    /// the front; the rest keep their table order. `commandSuggestions` walks
+    /// `supported` in order, so this is what ranks recent commands first
+    /// without changing how they are matched.
+    static func prioritising(_ supported: [String], recent: [String]) -> [String] {
+        guard !recent.isEmpty else { return supported }
+        let known = Set(supported)
+        let first = recent.filter { known.contains($0) }
+        guard !first.isEmpty else { return supported }
+        let moved = Set(first)
+        return first + supported.filter { !moved.contains($0) }
+    }
+
+    /// Where Page Up/Down (`pages` of `pageSize` rows) lands from `index` in
+    /// a list of `count` rows: clamped to the ends, never wrapping.
+    static func pagedSelection(from index: Int, pages: Int, pageSize: Int, count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        return min(max(index + pages * max(1, pageSize), 0), count - 1)
+    }
+
     /// UTF-16 range the chosen suggestion replaces: the token before the caret
     /// including a leading `\`, or an empty range at the caret.
     static func completionRange(in text: String, caretUTF16: Int) -> NSRange {
@@ -521,23 +603,30 @@ enum Completion {
     /// so an off-main computation stops early; a cancelled call returns `[]`.
     /// `mathMode` says whether the caret is in math mode (`isMathMode`). The
     /// caller passes it because it can answer cheaply from the editor's own
-    /// syntax model; the default, false, keeps the plain text-mode order.
+    /// syntax model. It is a hard filter on the command list (`allows`):
+    /// true hides the inventory's text-only commands, false hides its
+    /// math-only ones, and nil — the default, a caller with no syntax model —
+    /// filters nothing and keeps the plain text-mode order.
+    /// `declaredElsewhere` names the macros the project's other open documents
+    /// define (`declaredCommands` over each; the scheduler computes it
+    /// off-main), offered as declared like the buffer's own.
     static func suggestions(in text: String, caretUTF16: Int, metadata: Metadata?,
                             supported: [String] = defaultSupported, projectFiles: [String] = [],
-                            mathMode: Bool = false,
+                            graphicsFiles: [String] = [], recentEnvironments: [String] = [],
+                            declaredElsewhere: [String] = [], mathMode: Bool? = nil,
                             cancelled: () -> Bool = { false }) -> [Suggestion] {
         guard let token = token(in: text, caretUTF16: caretUTF16), !cancelled() else { return [] }
         let out: [Suggestion]
         switch token {
         case .command(let prefix, _, _):
-            out = commandSuggestions(prefix: prefix, tokenStart: token.start, text: text,
-                                     metadata: metadata, supported: supported, mathMode: mathMode, cancelled: cancelled)
+            out = commandSuggestions(prefix: prefix, tokenStart: token.start, text: text, metadata: metadata, supported: supported,
+                                     declaredElsewhere: declaredElsewhere, mathMode: mathMode, cancelled: cancelled)
         case .word(let prefix, _, _, let context):
             guard prefix.unicodeScalars.count >= 2 || context != .none else { return [] }
             switch context {
             case .beginEnvironment, .endEnvironment:
                 out = environmentSuggestions(prefix: prefix, tokenStart: token.start, text: text,
-                                             closing: context == .endEnvironment, metadata: metadata)
+                                             closing: context == .endEnvironment, metadata: metadata, recent: recentEnvironments)
             case .reference:
                 out = referenceSuggestions(prefix: prefix, text: text, metadata: metadata)
             case .citation:
@@ -547,7 +636,9 @@ enum Completion {
             case .package:
                 out = packageSuggestions(prefix: prefix)
             case .file:
-                out = fileSuggestions(prefix: prefix, files: projectFiles)
+                out = fileSuggestions(prefix: prefix, files: projectFiles, detail: "project document")
+            case .graphics:
+                out = fileSuggestions(prefix: prefix, files: graphicsFiles, detail: "graphics file")
             case .none:
                 out = wordSuggestions(prefix: prefix, tokenStart: token.start, text: text)
             }
@@ -555,11 +646,38 @@ enum Completion {
         return cancelled() ? [] : out
     }
 
+    /// Text-mode commands of the inventory that LaTeX nevertheless takes
+    /// inside `equation`/`align`/`$…$`, so the math filter keeps them: the
+    /// label/reference family (`\label{eq:main}` lives inside the
+    /// environment it names) and `\\` (the row break of every math grid).
+    static let mathAllowedTextCommands: Set<String> = ["label", "ref", "eqref", "pageref", "\\"]
+
+    /// Whether the vocabulary entry belongs in the list at the caret's mode:
+    /// in math (`true`) the text-only commands are out, in text (`false`) the
+    /// math-only ones are, and an unknown mode (nil) hides nothing. A command
+    /// the compiler accepts in both modes (`\textbf`, `\quad`) is one text
+    /// entry carrying a math description, so it stays either way.
+    static func allows(_ entry: Vocabulary.Entry, mathMode: Bool?) -> Bool {
+        guard let mathMode else { return true }
+        switch entry.mode {
+        case .math: return mathMode
+        case .text: return !mathMode || entry.mathDescription != nil || mathAllowedTextCommands.contains(entry.name)
+        }
+    }
+
     private static func commandSuggestions(prefix: String, tokenStart: Int, text: String, metadata: Metadata?,
-                                           supported: [String], mathMode: Bool, cancelled: () -> Bool) -> [Suggestion] {
+                                           supported: [String], declaredElsewhere: [String], mathMode: Bool?,
+                                           cancelled: () -> Bool) -> [Suggestion] {
         var out: [Suggestion] = []
         let scan = scanCommands(in: text, tokenStart: tokenStart, prefix: prefix)
         if cancelled() { return [] }
+        // The author's own macros (`\newcommand{\foo}`, `\def\foo`, …; see
+        // `declaredCommands`), read from the buffer on every request so they
+        // are "declared" from the keystroke that defines them — never "not
+        // supported by the compiler" while the project index is still catching
+        // up (or absent: an unsaved buffer has no index at all).
+        let declaredHere = declaredCommands(in: text)
+        let mathFirst = mathMode == true
         // 1. Close environments still open at the caret.
         for open in scan.open.reversed() where "end".hasPrefix(prefix) {
             out.append(Suggestion(label: "\\end{\(open.name)}", insertText: "\\end{\(open.name)}", kind: .environment,
@@ -576,6 +694,11 @@ enum Completion {
         //    while the table's text-first order buries them under `\\addvspace`.
         //    The exactly-typed spelling and the project's own declarations stay
         //    on top of both, and in text mode the order is untouched.
+        //    A known mode is also a filter (`allows`): inside `$…$` the
+        //    text-only commands are hidden, in text the math-only ones are.
+        //    The hidden rows are kept aside so a list the filter would empty
+        //    falls back to them (`\ite` in math still offers `\item`) —
+        //    something is always shown.
         var offered = Set<String>()
         let declared: [String: Metadata.Item] = Dictionary((metadata?.commands ?? []).filter { $0.definitions > 0 }.map { ($0.name, $0) },
                                                            uniquingKeysWith: { a, _ in a })
@@ -583,6 +706,7 @@ enum Completion {
         /// 0 the exact spelling, 1 a project declaration, 2 a math command,
         /// 3 everything else. Only consulted when `mathMode` is on.
         var vocabulary: [(suggestion: Suggestion, rank: Int)] = []
+        var hidden: [(suggestion: Suggestion, rank: Int)] = []
         for name in exact + supported where name.hasPrefix(prefix) && offered.insert(name).inserted {
             if let item = declared[name], let metadata {
                 vocabulary.append((Suggestion(label: "\\" + name, insertText: "\\" + name, kind: .command,
@@ -590,42 +714,68 @@ enum Completion {
                                    name == prefix ? 0 : 1))
             } else {
                 let entry = Vocabulary.byName[name] ?? Vocabulary.generic(name)
-                vocabulary.append((Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail,
-                                              snippet: entry.snippet),
-                                   name == prefix ? 0 : entry.mode == .math ? 2 : 3))
+                let row = (Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail,
+                                      snippet: entry.snippet),
+                           name == prefix ? 0 : entry.mode == .math ? 2 : 3)
+                if allows(entry, mathMode: mathMode) { vocabulary.append(row) } else { hidden.append(row) }
             }
         }
-        if mathMode {
+        // The buffer's own declarations (then the other open documents') sit
+        // right under the exact spelling and above the rest of the vocabulary:
+        // with the list capped at `maxSuggestions`, a `\foo` the author just
+        // defined must not be buried under the compiler's `\f…` entries. A
+        // name the vocabulary already offers keeps its entry (`offered`), so
+        // `\renewcommand{\vec}` still shows the compiler's `\vec` row.
+        var declaredRows: [(suggestion: Suggestion, rank: Int)] = []
+        for (names, where_) in [(declaredHere, "declared in this document"), (declaredElsewhere, "declared in an open document")] {
+            for name in names where name.hasPrefix(prefix) && offered.insert(name).inserted {
+                // Once the index has answered for this revision its line is the
+                // richer one (file, use count); until then the buffer's.
+                var detail = declared[name].flatMap { item in metadata.map { item.detail(noun: "declared", revision: $0.revision) } } ?? where_
+                if let message = metadata?.diagnosticsByCommand[name] { detail += " — " + message }
+                declaredRows.append((Suggestion(label: "\\" + name, insertText: "\\" + name, kind: .command, detail: detail), 1))
+            }
+        }
+        vocabulary.insert(contentsOf: declaredRows, at: vocabulary.first?.rank == 0 ? 1 : 0)
+        func ordered(_ rows: [(suggestion: Suggestion, rank: Int)]) -> [Suggestion] {
+            guard mathFirst else { return rows.map(\.suggestion) }
             // Stable: equal ranks keep the table order they were filled in.
-            out += vocabulary.enumerated().sorted { a, b in
+            return rows.enumerated().sorted { a, b in
                 a.element.rank != b.element.rank ? a.element.rank < b.element.rank : a.offset < b.offset
             }.map(\.element.suggestion)
-        } else {
-            out += vocabulary.map(\.suggestion)
         }
+        out += ordered(vocabulary)
         if let metadata {
             for item in metadata.commands where item.name.hasPrefix(prefix) && item.name != prefix && offered.insert(item.name).inserted {
                 out.append(Suggestion(label: "\\" + item.name, insertText: "\\" + item.name, kind: .command,
                                       detail: item.detail(noun: "declared", revision: metadata.revision)))
             }
         }
-        // 3. Commands typed in the document that neither the compiler nor the
-        //    project declares, with the compiler's own diagnostic when it
-        //    named the command at this revision.
+        // 3. Commands typed in the document that neither the compiler, the
+        //    document (`declaredHere`) nor the project declares, with the
+        //    compiler's own diagnostic when it named the command at this
+        //    revision.
         for name in scan.commands where !offered.contains(name) {
             var detail = "not supported by the compiler"
             if let message = metadata?.diagnosticsByCommand[name] { detail += " — " + message }
             out.append(Suggestion(label: "\\" + name, insertText: "\\" + name, kind: .command, detail: detail))
         }
+        // The mode filter must never leave the author with nothing: an
+        // otherwise empty list shows the commands it hid.
+        if out.isEmpty { out = ordered(hidden) }
         // 4. Fuzzy fallback: when nothing starts with the prefix, vocabulary
         //    commands whose name contains the typed characters in order
-        //    (`\sbs` → `\subsection`).
+        //    (`\sbs` → `\subsection`), under the same mode filter with the
+        //    same escape hatch.
         if out.isEmpty, prefix.utf8.count >= 2 {
+            var fuzzyHidden: [Suggestion] = []
             for name in supported where out.count < maxSuggestions && !offered.contains(name) && matchRank(name, prefix: prefix) == 2 {
                 offered.insert(name)
                 let entry = Vocabulary.byName[name] ?? Vocabulary.generic(name)
-                out.append(Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail, snippet: entry.snippet))
+                let row = Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail, snippet: entry.snippet)
+                if allows(entry, mathMode: mathMode) { out.append(row) } else if fuzzyHidden.count < maxSuggestions { fuzzyHidden.append(row) }
             }
+            if out.isEmpty { out = fuzzyHidden }
         }
         return Array(out.prefix(maxSuggestions))
     }
@@ -648,9 +798,9 @@ enum Completion {
         }
     }
 
-    /// `\input{`/`\include{`/`\includegraphics{` candidates: the project's
-    /// document paths, matched on the path or its basename.
-    private static func fileSuggestions(prefix: String, files: [String]) -> [Suggestion] {
+    /// `\input{`/`\include{` (project documents) and `\includegraphics{`
+    /// (image files) candidates, matched on the path or its basename.
+    private static func fileSuggestions(prefix: String, files: [String], detail: String) -> [Suggestion] {
         var seen = Set<String>()
         let unique = files.filter { seen.insert($0).inserted }
         let matched = fuzzyFilter(unique, prefix: prefix) { path in
@@ -658,17 +808,49 @@ enum Completion {
             return matchRank(path, prefix: prefix) != nil ? path : base
         }
         return matched.prefix(maxSuggestions).map {
-            Suggestion(label: $0, insertText: $0, kind: .command, detail: "project document")
+            Suggestion(label: $0, insertText: $0, kind: .command, detail: detail)
         }
     }
 
+    /// Image files `\includegraphics{}` can read under `root`, as project-relative
+    /// paths in sorted order: graphicx's extensions (`graphicsExtensions`),
+    /// hidden entries and package contents skipped, at most `limit` files and
+    /// `visitLimit` directory entries walked so a root that is really a home
+    /// directory costs a bounded scan, not a crawl. Runs off-main (the
+    /// scheduler's job) and only when the caret is in a graphics argument.
+    static func graphicsFiles(under root: URL, limit: Int = 500, visitLimit: Int = 5000) -> [String] {
+        let extensions = Set(EditorIntelligence.graphicsExtensions)
+        guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey],
+                                                          options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
+        let base = root.standardizedFileURL.path
+        var out: [String] = []
+        var visited = 0
+        for case let url as URL in walker {
+            visited += 1
+            if visited > visitLimit || out.count >= limit { break }
+            guard extensions.contains(url.pathExtension.lowercased()),
+                  (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+            let path = url.standardizedFileURL.path
+            guard path.hasPrefix(base + "/") else { continue }
+            out.append(String(path.dropFirst(base.count + 1)))
+        }
+        return out.sorted()
+    }
+
     private static func environmentSuggestions(prefix: String, tokenStart: Int, text: String, closing: Bool,
-                                               metadata: Metadata?) -> [Suggestion] {
+                                               metadata: Metadata?, recent: [String]) -> [Suggestion] {
         var names: [String] = []
         if closing {
             names += openEnvironments(in: text, beforeByte: tokenStart).reversed().map(\.name)
         }
+        let declared = declaredEnvironments(in: text)
+        let offered = Set(knownEnvironments + declared)
+        // Recently accepted names first (the environments this author keeps
+        // opening), then the compiler's table, the document's declarations and
+        // the names it already uses.
+        names += recent.filter { offered.contains($0) }
         names += knownEnvironments
+        names += declared
         names += documentEnvironments(in: text)
         var seen = Set<String>()
         var out: [Suggestion] = []
@@ -676,7 +858,8 @@ enum Completion {
         // the (indented) middle line; closing stays the exact name.
         let indent = closing ? "" : lineIndent(in: text, beforeByte: tokenStart)
         for name in fuzzyFilter(names, prefix: prefix, key: { $0 }) where seen.insert(name).inserted {
-            var detail = knownEnvironments.contains(name) ? "supported by this compiler" : "seen in this document"
+            var detail = knownEnvironments.contains(name) ? "supported by this compiler"
+                : declared.contains(name) ? "declared in this document" : "seen in this document"
             if let message = metadata?.diagnosticsByEnvironment[name] { detail += " — " + message }
             let snippet = closing ? nil : environmentSnippet(name, indent: indent)
             out.append(Suggestion(label: name, insertText: name + "}", kind: .environment, detail: detail, snippet: snippet))
@@ -895,6 +1078,95 @@ enum Completion {
             }
         }
         return stack
+    }
+
+    /// Environments the document defines, in order: the first argument of
+    /// `\newenvironment`, `\renewenvironment`, `\newtheorem` and `\newtheorem*`
+    /// (`\newtheorem{lemma}{Lemma}` makes `lemma` an environment before it is
+    /// ever used, which is when `\begin{lem` wants it).
+    static func declaredEnvironments(in text: String) -> [String] {
+        var out: [String] = []
+        withBytes(text) { b in
+            guard let p = b.baseAddress else { return }
+            forEachCommand(in: b, upTo: b.count) { name, nameStart, arg in
+                var group = arg
+                if group == nil, bytes(name, equal: "newtheorem") {
+                    // `\newtheorem*{name}`: the star sits between the name and the brace.
+                    var j = nameStart + name.count
+                    guard j + 1 < b.count, p[j] == UInt8(ascii: "*"), p[j + 1] == UInt8(ascii: "{") else { return }
+                    j += 2
+                    let start = j
+                    while j < b.count, p[j] != UInt8(ascii: "}"), p[j] != UInt8(ascii: "{"), p[j] != backslash, p[j] != UInt8(ascii: "\n") { j += 1 }
+                    guard j < b.count, p[j] == UInt8(ascii: "}") else { return }
+                    group = UnsafeBufferPointer(start: p + start, count: j - start)
+                }
+                guard let group, !group.isEmpty,
+                      bytes(name, equal: "newtheorem") || bytes(name, equal: "newenvironment") || bytes(name, equal: "renewenvironment")
+                else { return }
+                let env = String(decoding: group, as: UTF8.self)
+                if !out.contains(env) { out.append(env) }
+            }
+        }
+        return out
+    }
+
+    /// Commands the document defines, in order: the control sequence after
+    /// `\newcommand`, `\renewcommand`, `\providecommand` (braced or bare,
+    /// starred or not), `\DeclareMathOperator[*]`, `\DeclareRobustCommand`,
+    /// the xparse `\…DocumentCommand` family, `\DeclarePairedDelimiter`,
+    /// `\def`/`\gdef`/`\edef`/`\xdef` and `\let` — the same definers
+    /// go-to-definition follows (`EditorNavigation.commandDefiners`), matched
+    /// here on bytes so the scan costs what `declaredEnvironments` does.
+    /// `\newcommand{\foo}{x}` makes `\foo` the author's macro from the
+    /// keystroke that writes it: completion offers it as declared and never
+    /// as "not supported by the compiler", before any index reply.
+    static func declaredCommands(in text: String) -> [String] {
+        var out: [String] = []
+        withBytes(text) { b in
+            guard let p = b.baseAddress else { return }
+            let table = wordByteClass
+            forEachCommand(in: b, upTo: b.count) { name, nameStart, _ in
+                guard definesCommand(name) else { return }
+                var j = nameStart + name.count
+                if j < b.count, p[j] == UInt8(ascii: "*") { j += 1 }
+                while j < b.count, p[j] == UInt8(ascii: " ") { j += 1 }
+                let braced = j < b.count && p[j] == UInt8(ascii: "{")
+                if braced { j += 1 }
+                while j < b.count, p[j] == UInt8(ascii: " ") { j += 1 }
+                guard j < b.count, p[j] == backslash else { return }
+                let start = j + 1
+                var k = start
+                while k < b.count, table[Int(p[k])] == 1 { k += 1 }
+                guard k > start else { return } // `\def\@x`, `\let\{`: not a completable control word
+                if braced {
+                    var close = k
+                    while close < b.count, p[close] == UInt8(ascii: " ") { close += 1 }
+                    guard close < b.count, p[close] == UInt8(ascii: "}") else { return }
+                }
+                let macro = String(decoding: UnsafeBufferPointer(start: p + start, count: k - start), as: UTF8.self)
+                if !out.contains(macro) { out.append(macro) }
+            }
+        }
+        return out
+    }
+
+    /// Whether a control word is one of `EditorNavigation.commandDefiners`,
+    /// compared on bytes (length first, so most words cost one comparison).
+    @inline(__always) private static func definesCommand(_ name: UnsafeBufferPointer<UInt8>) -> Bool {
+        switch name.count {
+        case 3: return bytes(name, equal: "def") || bytes(name, equal: "let")
+        case 4: return bytes(name, equal: "gdef") || bytes(name, equal: "edef") || bytes(name, equal: "xdef")
+        case 10: return bytes(name, equal: "newcommand")
+        case 11: return bytes(name, equal: "newcommandx")
+        case 12: return bytes(name, equal: "renewcommand")
+        case 14: return bytes(name, equal: "providecommand")
+        case 18: return bytes(name, equal: "NewDocumentCommand")
+        case 19: return bytes(name, equal: "DeclareMathOperator")
+        case 20: return bytes(name, equal: "DeclareRobustCommand") || bytes(name, equal: "RenewDocumentCommand")
+        case 22: return bytes(name, equal: "ProvideDocumentCommand") || bytes(name, equal: "DeclareDocumentCommand")
+            || bytes(name, equal: "DeclarePairedDelimiter")
+        default: return false
+        }
     }
 
     /// Names of environments appearing in `\begin{…}` anywhere in the document.
@@ -1537,11 +1809,24 @@ final class CompletionScheduler {
         /// Already bound to the revision of `text` (`Metadata.bound(to:)`).
         var metadata: Completion.Metadata?
         var supported: [String] = Completion.defaultSupported
-        /// Project document paths offered after `\input{`, `\include{` and `\includegraphics{`.
+        /// Project document paths offered after `\input{` and `\include{`.
         var projectFiles: [String] = []
+        /// Directory whose image files `\includegraphics{` offers; walked by
+        /// the job, and only when the caret is in that argument.
+        var graphicsRoot: URL? = nil
+        /// Recently accepted commands and environments, most recent first
+        /// (`Completion.RecentlyUsed`); they rank first.
+        var recentCommands: [String] = []
+        var recentEnvironments: [String] = []
+        /// The project's other open documents, as text: their
+        /// `\newcommand`/`\def` macros are offered as declared
+        /// (`Completion.declaredCommands`; scanned by the job, and only when
+        /// the caret is on a command).
+        var otherDocuments: [String] = []
         /// Whether the caret is in math mode (`Completion.isMathMode`), decided
-        /// on the main thread where the editor's syntax model is in sync.
-        var mathMode = false
+        /// on the main thread where the editor's syntax model is in sync; nil
+        /// when no model answered (a bare text view), which filters nothing.
+        var mathMode: Bool? = nil
     }
 
     struct Outcome: Equatable {
@@ -1612,9 +1897,23 @@ final class CompletionScheduler {
         execute { [weak self] in
             let t0 = MonotonicClock.nowNs()
             let range = Completion.completionRange(in: request.text, caretUTF16: request.caretUTF16)
+            var graphics: [String] = []
+            var declaredElsewhere: [String] = []
+            if !job.isCancelled {
+                switch Completion.token(in: request.text, caretUTF16: request.caretUTF16) {
+                case .word(_, _, _, .graphics)?:
+                    if let root = request.graphicsRoot { graphics = Completion.graphicsFiles(under: root) }
+                case .command?:
+                    declaredElsewhere = request.otherDocuments.flatMap(Completion.declaredCommands)
+                default: break
+                }
+            }
             let items = job.isCancelled ? [] : Completion.suggestions(in: request.text, caretUTF16: request.caretUTF16,
-                                                                     metadata: request.metadata, supported: request.supported,
-                                                                     projectFiles: request.projectFiles, mathMode: request.mathMode,
+                                                                     metadata: request.metadata,
+                                                                     supported: Completion.prioritising(request.supported, recent: request.recentCommands),
+                                                                     projectFiles: request.projectFiles, graphicsFiles: graphics,
+                                                                     recentEnvironments: request.recentEnvironments,
+                                                                     declaredElsewhere: declaredElsewhere, mathMode: request.mathMode,
                                                                      cancelled: { job.isCancelled })
             let t1 = MonotonicClock.nowNs()
             let outcome = Outcome(generation: job.generation, caretUTF16: request.caretUTF16, range: range, items: items,
@@ -1817,6 +2116,16 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
     /// The documentation pane's current title/body, for tests.
     var documentation: (title: String, body: String) { (docTitle.stringValue, docBody.stringValue) }
 
+    /// How many rows the list shows at once — what one Page Up/Down moves
+    /// by. Read from the table's visible height once the panel has been laid
+    /// out; before that (a session whose panel is not up yet) it is the
+    /// list's maximum, which is also its usual height.
+    var visibleRows: Int {
+        let height = table.enclosingScrollView?.documentVisibleRect.height ?? 0
+        let rows = Int(height / Self.rowHeight)
+        return rows > 0 ? rows : Completion.maxSuggestions
+    }
+
     /// Shows (or refreshes) the list under `caretRect`. While the panel is
     /// already on screen for the same parent, only what changed is touched:
     /// the rows reload only when the items differ, the frame moves only when
@@ -1937,7 +2246,7 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
 
     private func showDocumentation(for s: Completion.Suggestion) {
         var doc = Self.documentationPane(for: s)
-        if let line = Self.documentation(for: s) { doc.body = line + " " + doc.body } // CommandDocs (mac-syntax-highlight)
+        if let line = Self.displayedDocumentation(for: s) { doc.body = line + " " + doc.body } // CommandDocs (mac-syntax-highlight) or the inventory
         docTitle.stringValue = doc.title
         docBody.stringValue = doc.body
     }
@@ -1978,7 +2287,7 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         out.append(NSAttributedString(string: "  \(s.kind.badge) · \(s.detail)", attributes: [
             .font: DS.NSFonts.secondary, .foregroundColor: DS.Palette.textSecondary,
         ]))
-        if let doc = documentation(for: s) {
+        if let doc = displayedDocumentation(for: s) {
             out.append(NSAttributedString(string: " — \(doc)", attributes: [
                 .font: DS.NSFonts.secondary, .foregroundColor: DS.Palette.textTertiary,
             ]))
@@ -1986,19 +2295,98 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         return out
     }
 
-    /// One documentation line for a command or environment suggestion (nil when unknown).
+    /// One documentation line for a command or environment suggestion: the
+    /// hand-written `CommandDocs` line when there is one (it is the better
+    /// text), otherwise the compiler inventory's own description as a
+    /// sentence — so every implemented command has a line, not only the
+    /// ~90 written by hand. Nil for keys, words, and names neither knows.
     static func documentation(for s: Completion.Suggestion) -> String? {
+        handWrittenDocumentation(for: s) ?? inventoryDocumentation(for: s)
+    }
+
+    /// The same two tiers by name, for the hover (`EditorIntelligence.quickInfo`):
+    /// the hand-written line for `\name` when there is one, else the inventory's.
+    static func documentation(forCommand name: String) -> String? {
+        EditorIntelligence.CommandDocs.documentation(for: name) ?? inventoryLine(forCommand: name)?.line
+    }
+
+    /// `documentation(forCommand:)` for a `\begin{name}` (starred names included).
+    static func documentation(forEnvironment name: String) -> String? {
+        EditorIntelligence.CommandDocs.environmentDocumentation(for: name) ?? inventoryLine(forEnvironment: name)?.line
+    }
+
+    /// `documentation(for:)` unless it would only repeat the origin column:
+    /// a row/pane built from the vocabulary already carries the inventory
+    /// description as its `detail`, so the inventory line is shown only when
+    /// the detail does not (a caller-supplied suggestion, a declared name).
+    static func displayedDocumentation(for s: Completion.Suggestion) -> String? {
+        if let hand = handWrittenDocumentation(for: s) { return hand }
+        guard let (line, description) = inventoryLine(for: s), !s.detail.contains(description) else { return nil }
+        return line
+    }
+
+    /// The `CommandDocs` line (EditorIntelligence.swift), the hand-written tier.
+    static func handWrittenDocumentation(for s: Completion.Suggestion) -> String? {
         switch s.kind {
         case .command:
-            let name = s.label.hasPrefix("\\") ? String(s.label.dropFirst()) : s.label
-            return EditorIntelligence.CommandDocs.documentation(for: name)
+            return EditorIntelligence.CommandDocs.documentation(for: commandName(of: s))
         case .environment:
-            let name = s.label.replacingOccurrences(of: "\\begin{", with: "").replacingOccurrences(of: "\\end{", with: "")
-                .replacingOccurrences(of: "}", with: "")
-            return EditorIntelligence.CommandDocs.environmentDocumentation(for: name)
+            return EditorIntelligence.CommandDocs.environmentDocumentation(for: environmentName(of: s))
         case .reference, .citation, .word:
             return nil
         }
+    }
+
+    /// The inventory tier: `\section{...}: numbered section heading; starred
+    /// form unnumbered.` from the command's `description` (and, for a command
+    /// the compiler accepts in both modes, its math description), or the
+    /// environment's `description`.
+    static func inventoryDocumentation(for s: Completion.Suggestion) -> String? { inventoryLine(for: s)?.line }
+
+    private static func inventoryLine(for s: Completion.Suggestion) -> (line: String, description: String)? {
+        switch s.kind {
+        case .command: return inventoryLine(forCommand: commandName(of: s))
+        case .environment: return inventoryLine(forEnvironment: environmentName(of: s))
+        case .reference, .citation, .word: return nil
+        }
+    }
+
+    private static func inventoryLine(forCommand name: String) -> (line: String, description: String)? {
+        guard let entry = Completion.Vocabulary.byName[name] else { return nil }
+        var line = entry.label + ": " + entry.description
+        if let math = entry.mathDescription { line += "; in math: " + math }
+        return (sentence(line), entry.description)
+    }
+
+    /// The environment's own inventory entry, or — for a starred name the
+    /// inventory lists only unstarred — the base entry, marked unnumbered.
+    private static func inventoryLine(forEnvironment name: String) -> (line: String, description: String)? {
+        if let description = Completion.Vocabulary.environmentDescriptions[name] {
+            return (sentence("\\begin{\(name)}: " + description), description)
+        }
+        guard name.hasSuffix("*"), let description = Completion.Vocabulary.environmentDescriptions[String(name.dropLast())] else { return nil }
+        return (sentence("\\begin{\(name)}: " + description) + " Starred: unnumbered.", description)
+    }
+
+    private static func sentence(_ text: String) -> String {
+        text.last.map { ".!?".contains($0) } == true ? text : text + "."
+    }
+
+    /// The command a suggestion stands for, without its backslash. The label
+    /// carries the argument shape (`\section{...}`), which is why the lookup
+    /// goes through the insertion (`\section`) — a label-only suggestion (a
+    /// test's) is stripped of its shape instead.
+    private static func commandName(of s: Completion.Suggestion) -> String {
+        let bare = s.insertText.hasPrefix("\\") ? s.insertText : s.label
+        guard bare.hasPrefix("\\") else { return bare }
+        let name = String(bare.dropFirst())
+        let stem = name.prefix { $0 != "{" && $0 != "[" }
+        return stem.isEmpty ? name : String(stem) // `\{`'s name is `{`: a symbol stays whole
+    }
+
+    private static func environmentName(of s: Completion.Suggestion) -> String {
+        s.label.replacingOccurrences(of: "\\begin{", with: "").replacingOccurrences(of: "\\end{", with: "")
+            .replacingOccurrences(of: "}", with: "")
     }
 }
 
@@ -2118,13 +2506,25 @@ final class CompletingTextView: NSTextView {
         didSet { resultMetadata = compileResult.map(Completion.Metadata.from) }
     }
     var supportedCommands = Completion.defaultSupported
-    /// Project document paths for `\input{`/`\include{`/`\includegraphics{` (the owner sets them).
+    /// Project document paths for `\input{`/`\include{` (the owner sets them).
     var projectFiles: [String] = []
+    /// The project root whose image files `\includegraphics{` offers, asked
+    /// on the main thread when the list is requested; nil (a bare text view,
+    /// an unsaved buffer) offers none.
+    var graphicsRoot: () -> URL? = { nil }
+    /// The project's other open documents, asked on the main thread when the
+    /// list is requested (`ShellModel.editorHoverContext`'s texts); their
+    /// macros are offered as declared. A bare text view has none.
+    var otherDocuments: () -> [String] = { [] }
+    /// Accepted commands and environments, ranked first on the next open. A
+    /// bare text view keeps its own; the hosted editor installs the shared one.
+    var recentlyUsed = Completion.RecentlyUsed()
     /// Whether the caret is in math mode, answered by the owner from its
     /// in-sync `SyntaxHighlighter` (`SourceEditorView`), which costs one
-    /// line's lexing. Unwired — a bare text view in a test — it says no, and
-    /// the list keeps the plain text-mode order.
-    var mathModeAtCaret: (Int) -> Bool = { _ in false }
+    /// line's lexing. Unwired — a bare text view in a test — it answers nil:
+    /// the list keeps the plain text-mode order and hides nothing
+    /// (`Completion.allows`).
+    var mathModeAtCaret: (Int) -> Bool? = { _ in nil }
     /// Code folding (EditorFolding.swift): hidden ranges stay in the storage.
     let folds = EditorFoldStore()
 
@@ -2541,6 +2941,8 @@ final class CompletingTextView: NSTextView {
         let metadata = boundMetadata
         let request = CompletionScheduler.Request(text: string, caretUTF16: caret.location, metadata: metadata,
                                                   supported: supportedCommands, projectFiles: projectFiles,
+                                                  graphicsRoot: graphicsRoot(), recentCommands: recentlyUsed.commands,
+                                                  recentEnvironments: recentlyUsed.environments, otherDocuments: otherDocuments(),
                                                   mathMode: mathModeAtCaret(caret.location))
         scheduler.schedule(request) { [weak self] outcome in
             self?.present(outcome, metadataRevision: metadata?.revision)
@@ -2592,6 +2994,14 @@ final class CompletingTextView: NSTextView {
         selectCompletion(at: (s.selectedIndex + delta + s.items.count) % s.items.count)
     }
 
+    /// Page Up/Down: moves by the rows the list shows at once
+    /// (`CompletionPopup.visibleRows`), clamped to the ends — unlike ↑/↓, a
+    /// page never wraps, so a second Page Down at the bottom stays there.
+    func moveSelection(byPages pages: Int) {
+        guard let s = session, !s.items.isEmpty else { return }
+        selectCompletion(at: Completion.pagedSelection(from: s.selectedIndex, pages: pages, pageSize: popup.visibleRows, count: s.items.count))
+    }
+
     /// Drops the session's selection (to an index no item has) so tests can
     /// check that a list with nothing selected hands keys back to the editor
     /// instead of eating them. No app path produces this state today; the
@@ -2638,6 +3048,7 @@ final class CompletingTextView: NSTextView {
             insertCompletion(item.insertText, forPartialWordRange: range, movement: NSReturnTextMovement, isFinal: true)
         }
         applyingCompletion = false
+        recentlyUsed.record(item)
         scheduler.cancel()
         close(.accepted)
     }
@@ -2848,9 +3259,13 @@ final class CompletingTextView: NSTextView {
         case 125: moveSelection(by: 1) // ↓
         case 126: moveSelection(by: -1) // ↑
         case 48: moveSelection(by: event.modifierFlags.contains(.shift) ? -1 : 1) // Tab next, ⇧Tab previous (wrapping)
+        case 121: moveSelection(byPages: 1) // Page Down: a screenful of rows, stopping at the last
+        case 116: moveSelection(byPages: -1) // Page Up: a screenful up, stopping at the first
+        case 115: selectCompletion(at: 0) // Home: the first row
+        case 119: selectCompletion(at: (session?.items.count ?? 1) - 1) // End: the last row
         case 36, 76: acceptSelectedCompletion() // Return, Enter
         case 53: scheduler.cancel(); close(.escape) // Esc
-        case 123, 124, 115, 119, 116, 121: // ←, →, Home, End, Page Up/Down leave the token
+        case 123, 124: // ←, → leave the token
             close(.caretMoved)
             super.keyDown(with: event)
         default:

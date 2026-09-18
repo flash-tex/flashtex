@@ -182,6 +182,75 @@ impl Decimal {
         &self.0
     }
 
+    pub fn rounded(&self, max_frac: usize) -> Decimal {
+        let s = &self.0;
+        let (sign, body) = if let Some(rest) = s.strip_prefix('-') {
+            ("-", rest)
+        } else if let Some(rest) = s.strip_prefix('+') {
+            ("+", rest)
+        } else {
+            ("", s.as_str())
+        };
+        let (int_part, frac_part) = match body.split_once('.') {
+            Some((i, f)) => (i, f),
+            None => return self.clone(),
+        };
+        if frac_part.len() <= max_frac {
+            return self.clone();
+        }
+        if max_frac == 0 {
+            let round_up = frac_part.as_bytes()[0] >= b'5';
+            let mut int_val: u128 = int_part.parse().unwrap_or(0);
+            if round_up {
+                int_val += 1;
+            }
+            if sign.is_empty() || int_val == 0 {
+                return Decimal(format!("{int_val}"));
+            }
+            return Decimal(format!("{sign}{int_val}"));
+        }
+        let mut digits: Vec<u8> = frac_part[..max_frac].bytes().collect();
+        let round_digit = frac_part.as_bytes()[max_frac];
+        if round_digit >= b'5' {
+            let mut carry = true;
+            for d in digits.iter_mut().rev() {
+                if carry {
+                    if *d == b'9' {
+                        *d = b'0';
+                    } else {
+                        *d += 1;
+                        carry = false;
+                        break;
+                    }
+                }
+            }
+            if carry {
+                let mut int_val: u128 = int_part.parse().unwrap_or(0);
+                int_val += 1;
+                if sign.is_empty() || int_val == 0 {
+                    return Decimal(format!("{int_val}"));
+                }
+                return Decimal(format!("{sign}{int_val}"));
+            }
+        }
+        let frac_str: String = digits.iter().map(|&b| b as char).collect();
+        let trimmed = frac_str.trim_end_matches('0');
+        if trimmed.is_empty() {
+            if sign.is_empty() {
+                Decimal(int_part.to_string())
+            } else {
+                let int_val: u128 = int_part.parse().unwrap_or(0);
+                if int_val == 0 {
+                    Decimal(int_part.to_string())
+                } else {
+                    Decimal(format!("{sign}{int_part}"))
+                }
+            }
+        } else {
+            Decimal(format!("{sign}{int_part}.{trimmed}"))
+        }
+    }
+
     /// Numeric value for checks that need one (sign tests, comparisons).
     /// Never used for output.
     pub fn approx(&self) -> f64 {
@@ -2893,6 +2962,23 @@ mod tests {
         assert_eq!(ops.last(), Some(&Op::EndText));
         let s = String::from_utf8(serialize(&ops)).unwrap();
         assert!(s.contains("(\\000/\\000H) Tj"), "{s}");
+    }
+
+    #[test]
+    fn decimal_rounded() {
+        let r = |s: &str, n: usize| Decimal::new(s).unwrap().rounded(n).as_str().to_string();
+        assert_eq!(r("72", 7), "72");
+        assert_eq!(r("0.5", 7), "0.5");
+        assert_eq!(r("-0.5", 7), "-0.5");
+        assert_eq!(r("0.00000095367431640625", 7), "0.000001");
+        assert_eq!(r("83.9551677703857421875", 7), "83.9551678");
+        assert_eq!(r("11.920928955078125", 7), "11.920929");
+        assert_eq!(r("0.9999999", 5), "1");
+        assert_eq!(r("-0.9999999", 5), "-1");
+        assert_eq!(r("1.12345", 5), "1.12345");
+        assert_eq!(r("1.12345", 3), "1.123");
+        assert_eq!(r("1.12355", 3), "1.124");
+        assert_eq!(r("9.99999999", 0), "10");
     }
 
     #[test]

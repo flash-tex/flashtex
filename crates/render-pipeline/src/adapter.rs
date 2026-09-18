@@ -611,6 +611,8 @@ pub struct ListGeom {
     /// The `\item` marker text and the command's span; `None` for a later
     /// paragraph of the same item (a blank line inside the item's text).
     pub label: Option<(String, Span)>,
+    /// An explicit `\item[<label>]`'s content as items (its math, styles and spaces); `None` for a counter, symbol or template label.
+    pub label_items: Option<Vec<Item>>,
     /// The innermost list's `\parsep` (`\list` sets `\parskip\parsep`):
     /// the glue every paragraph of the item adds. Article's `\@list<i>`
     /// value for the nesting level, or an enumitem `parsep=` key.
@@ -2007,9 +2009,14 @@ pub fn adapt_cached(
                 theorem_item,
                 in_theorem,
                 list,
+                label_inlines,
                 run_in,
                 par_leading,
             } => {
+                let list = list.map(|mut geom| {
+                    geom.label_items = label_inlines.map(|content| items_for(content, false));
+                    geom
+                });
                 for inline in inlines {
                     unsupported_inlines(inline, &mut limitations);
                     if let Inline::Tabular(t) = inline {
@@ -2144,7 +2151,15 @@ pub fn adapt_cached(
                     .iter()
                     .all(|p| matches!(p, ParaPart::Lines(items) if items.iter().all(|i| matches!(i, Item::Label { .. }))));
                 if parts.is_empty() {
-                    continue;
+                    // An empty-body list item (`\item` with no text) still
+                    // carries its bullet/label -- pdflatex typesets the
+                    // marker on a line of its own.  Give it an empty Lines
+                    // part so the typesetter can prepend the label box.
+                    if list.is_some() {
+                        parts.push(ParaPart::Lines(Vec::new()));
+                    } else {
+                        continue;
+                    }
                 }
                 // `\longtable` begins with `\par` and `\endlongtable`
                 // ends with one, so the compiler always gives it a
@@ -2223,7 +2238,7 @@ pub fn adapt_cached(
                         continue;
                     }
                 }
-                if only_labels {
+                if only_labels && list.is_none() {
                     continue;
                 }
                 prev_para_end = inlines.iter().map(inline_span).last();
@@ -3253,6 +3268,9 @@ enum UnitKind<'p> {
         in_theorem: bool,
         /// A compiler `ListItem` paragraph: its `\list` geometry.
         list: Option<ListGeom>,
+        /// The explicit `\item[<label>]` content, converted into
+        /// [`ListGeom::label_items`] once the styles are at hand.
+        label_inlines: Option<&'p [Inline]>,
         /// The paragraph opens with a run-in heading (`\paragraph`,
         /// `\subparagraph`); see [`RunIn`] and [`run_in_heading_at`].
         run_in: Option<RunIn>,
@@ -3377,9 +3395,18 @@ fn split_at_page_breaks<'p>(
             }
             _ => {}
         }
+        // An empty-body `\item` has no inlines: its `\item` command's own
+        // span is the block's material, so the gap bookkeeping below (and
+        // `prev_end` for the block after it) is measured from there rather
+        // than from before the list, which would make the *next* item read
+        // the list's `\begin` and open it a second time.
+        let item_label_span = match block {
+            CBlock::ListItem { label: Some((_, span)), .. } => Some(*span),
+            _ => None,
+        };
         let first = match block {
             CBlock::Heading { number_span, .. } => Some(*number_span),
-            _ => inlines_of(block).iter().map(inline_span).next(),
+            _ => inlines_of(block).iter().map(inline_span).next().or(item_label_span),
         };
         let mut eject = std::mem::take(&mut pending_eject) || matches!((prev_end, first), (Some(p), Some(f)) if gap_has_page_break(texts, p, f));
         let mut vspace_before = std::mem::take(&mut pending_vspace);
@@ -3482,6 +3509,7 @@ fn split_at_page_breaks<'p>(
             }
         }
         let mut list = None;
+        let mut label_inlines: Option<&'p [Inline]> = None;
         if let CBlock::ListItem { level, label, item, .. } = block {
             let anchor = label.as_ref().map(|(_, span)| *span).or(first);
             if let Some(at) = anchor {
@@ -3592,10 +3620,17 @@ fn split_at_page_breaks<'p>(
                     && index.natbib_author_year
                     && label.as_ref().is_none_or(|(text, _)| text.is_empty());
                 let (margins, labelsep_pt, itemindent_pt) = list_margins(index, texts.get(at.document.0).copied().unwrap_or(""), at.start, size, natbib_bib, style.family);
+                // The explicit label's inlines; `adapt_cached` converts
+                // them to items (the styles and label table live there).
+                label_inlines = match item {
+                    Some(ItemLabel::Explicit { content, .. }) if label.is_some() && !content.is_empty() => Some(content.as_slice()),
+                    _ => None,
+                };
                 list = Some(ListGeom {
                     level: *level,
                     margins,
                     label: label.clone(),
+                    label_items: None,
                     description: env == "description",
                     nextline: list_style_nextline(&index.setlist, env, begin_keys),
                     label_symbol: matches!(item, Some(ItemLabel::Symbol { .. })),
@@ -3803,6 +3838,7 @@ fn split_at_page_breaks<'p>(
                                     theorem_item: std::mem::take(&mut theorem_item),
                                     in_theorem,
                                     list: list.clone(),
+                                    label_inlines,
                                     run_in: std::mem::take(&mut run_in),
                                     par_leading,
                                 },
@@ -3828,6 +3864,7 @@ fn split_at_page_breaks<'p>(
                             theorem_item: std::mem::take(&mut theorem_item),
                             in_theorem,
                             list: list.clone(),
+                            label_inlines,
                             run_in: std::mem::take(&mut run_in),
                             par_leading,
                         },
@@ -3854,7 +3891,7 @@ fn split_at_page_breaks<'p>(
             #[cfg(feature = "compiler-node-surface")]
             CBlock::Tabbing { .. } => unreachable!("lowered by lower_blocks"),
         }
-        if let Some(last) = inlines_of(block).iter().map(inline_span).last() {
+        if let Some(last) = inlines_of(block).iter().map(inline_span).last().or(item_label_span) {
             prev_end = Some(last);
         }
     }
