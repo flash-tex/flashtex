@@ -31,10 +31,13 @@ fn koma_classes_parse() {
     assert!(ClassKind::Scrbook.is_koma());
     assert!(!ClassKind::Article.is_koma());
     // Unknown classes still fall through to the article fallback.
-    assert_eq!(ClassKind::parse("beamer"), None);
+    assert_eq!(ClassKind::parse("memoir"), None);
     assert!(DocumentSetup::from_preamble("\\documentclass{scrartcl}\n\\begin{document}")
         .is_some());
-    assert!(DocumentSetup::from_preamble("\\documentclass{beamer}\n\\begin{document}").is_none());
+    // `beamer` is a known class with its own geometry (see
+    // `tests/beamer_geometry.rs`), not an unknown one.
+    assert_eq!(ClassKind::parse("beamer"), Some(ClassKind::Beamer));
+    assert!(DocumentSetup::from_preamble("\\documentclass{beamer}\n\\begin{document}").is_some());
 }
 
 /// `\documentclass{scrartcl}`: 11pt on A4, DIV 10. Every value is a live
