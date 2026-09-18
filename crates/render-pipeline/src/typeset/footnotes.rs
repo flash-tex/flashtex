@@ -403,7 +403,11 @@ fn note_vlist(page: &PageParams, fp: &FootnoteParams, b: &BuiltBlock, bi: usize)
 /// builder, or `None` when the document has no footnotes. Marks whose line
 /// is not in the body's vertical list (headings, captions, cells) are
 /// reported and their notes dropped.
-pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &PageParams) -> Option<Insertions> {
+///
+/// `post` is a laid-out column switch as `(first post-switch built-block
+/// index, post-switch text width)`: a note anchored at or after the split
+/// is set at the post width, like the column that carries it.
+pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &PageParams, post: Option<(usize, f64)>) -> Option<Insertions> {
     let anchors = std::mem::take(&mut ctx.note_anchors);
     if anchors.is_empty() {
         return None;
@@ -428,7 +432,7 @@ pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &Pa
         rule: RULE,
         ..Insertions::default()
     };
-    let width = ctx.style.text_width_pt;
+    let pre_width = ctx.style.text_width_pt;
     let mut seen = std::collections::HashSet::new();
     for (rec, n) in anchors {
         if !seen.insert(n) {
@@ -444,6 +448,10 @@ pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &Pa
             ));
             continue;
         };
+        let width = match post {
+            Some((split, post_width)) if bi >= split => post_width,
+            _ => pre_width,
+        };
         let Some(b) = ctx.footnote_block(n, width) else { continue };
         let nb = blocks.len();
         let v = note_vlist(page, &fp, &b, nb);
@@ -458,10 +466,27 @@ pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &Pa
 
 /// Adds each column's `\footnoterule` (a rule block per column) and note
 /// lines to the built pages.
-pub(super) fn place(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, pages: &mut [pagebuild::BuiltPage], areas: Vec<Option<InsertArea>>) {
-    let width = RULE_WIDTH_FRACTION * ctx.style.text_width_pt;
+///
+/// `post` is [`prepare`]'s switch: the rule of a column whose body lies
+/// at or after the split spans the post width's fraction. The side comes
+/// from the column's own first line (a built-block index, which column
+/// padding never moves), not from its position.
+pub(super) fn place(
+    ctx: &mut Context,
+    blocks: &mut Vec<BuiltBlock>,
+    pages: &mut [pagebuild::BuiltPage],
+    areas: Vec<Option<InsertArea>>,
+    post: Option<(usize, f64)>,
+) {
+    let pre_width = RULE_WIDTH_FRACTION * ctx.style.text_width_pt;
     for (page, area) in pages.iter_mut().zip(areas) {
         let Some(area) = area else { continue };
+        let width = match post {
+            Some((split, post_width)) if page.lines.first().is_some_and(|l| l.payload.0 >= split) => {
+                RULE_WIDTH_FRACTION * post_width
+            }
+            _ => pre_width,
+        };
         let span = area.lines.first().and_then(|l| blocks.get(l.payload.0)).and_then(|b| b.recs.iter().flatten().next().copied()).and_then(|r| match &ctx.recs[r] {
             BoxRec::Text { clusters, .. } => clusters.first().map(|c| c.span),
             _ => None,

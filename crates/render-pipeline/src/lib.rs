@@ -334,6 +334,7 @@ pub fn render_windowed(
         }
         diagnostics.extend(float_diagnostics);
         let mut ctx = typeset::Context::with_texts(fonts, &doc.style, &paths, &texts);
+        ctx.set_alt_style(doc.post_style.as_deref());
         ctx.set_math_colors(doc.math_colors.clone());
         ctx.set_reading_order(labels.reading_order.clone());
         typeset::multicol::attach(&mut ctx, &multicol_scans);

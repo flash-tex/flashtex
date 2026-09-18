@@ -841,6 +841,17 @@ pub struct Doc {
     /// `blocks`; `typeset::build_with_floats` sets them itself. `Some` with
     /// an empty vector is `\twocolumn[]`, which is a box of no height.
     pub top_material: Option<(Vec<Block>, Span)>,
+    /// A single bare `\twocolumn`/`\onecolumn` after the first material
+    /// that the page builder lays out: every page from
+    /// [`crate::columns::ColumnSwitch::block`] on uses [`Doc::post_style`]'s
+    /// frame. `None` is today plus a `twocolumn_mid_document` limitation
+    /// for every unmodelled switch.
+    pub column_switch: Option<crate::columns::ColumnSwitch>,
+    /// The stylesheet past the recorded [`Doc::column_switch`]: `style`
+    /// cloned with the post-switch frame (the command changes only the
+    /// column split, never `\parindent`/`\textwidth`/margins) and its
+    /// column width. `None` when there is no recorded switch.
+    pub post_style: Option<Box<Stylesheet>>,
 }
 
 /// Label values (`\ref`) and the pages they fell on in a previous layout
@@ -2317,22 +2328,6 @@ pub fn adapt_cached(
             .iter()
             .map(|&(s, e)| Span::in_document(flashtex_compiler::DocumentId(entry), s, e)),
     );
-    // The page frame is still one frame for the whole document, so a switch
-    // after the first material sets every `\if@twocolumn` test (and its own
-    // page break) but not the column count of the pages it opens.
-    for &(at, on) in &style.columns.unmodelled() {
-        limitations.push((
-            "twocolumn_mid_document",
-            Span::in_document(flashtex_compiler::DocumentId(entry), at, at + if on { "\\twocolumn".len() } else { "\\onecolumn".len() }),
-            format!(
-                "\\{} after the first material starts a new page, but changing the number of \
-                 page columns during a document is not implemented: the rest of the document \
-                 keeps {} column(s)",
-                if on { "twocolumn" } else { "onecolumn" },
-                if style.columns.start() { 2 } else { 1 },
-            ),
-        ));
-    }
     // `\twocolumn[<material>]` sets its argument at the full `\textwidth`
     // above both columns (`\@topnewpage`, latex.ltx 20466-20505). The
     // material is cut out of the block stream here, brackets and all, and
@@ -2460,6 +2455,38 @@ pub fn adapt_cached(
             superseded.push(Span::in_document(flashtex_compiler::DocumentId(entry), open, open));
         }
     }
+    // One post-material switch the page builder lays out (slice 1): a
+    // single bare `\twocolumn`/`\onecolumn` at a clean block boundary,
+    // with the post-switch stylesheet beside it. Everything else keeps
+    // today's limitation. Computed here, on the final block list (the
+    // `listings` inserts and the `top_material` cut above both move
+    // indices), so the recorded block index is what `typeset` will read.
+    let column_switch = column_switch_block(&blocks, source, entry, &style.columns);
+    let post_style = column_switch.and_then(|sw| {
+        let mut frame = style.class_geometry.as_deref()?.clone();
+        frame.set_twocolumn(sw.on);
+        let mut post = style.clone();
+        post.text_width_pt = crate::style::frame_pt(frame.frame.columns.first()?.width);
+        post.class_geometry = Some(Box::new(frame));
+        Some(Box::new(post))
+    });
+    let column_switch = column_switch.filter(|_| post_style.is_some());
+    // Every switch the page frame cannot follow: each one sets every
+    // `\if@twocolumn` test (and its own page break), but the pages it
+    // opens keep whatever column count the frame was built with. The
+    // recorded switch is laid out instead, so it says nothing here; the
+    // page builder reports it back itself on the paths it has to decline.
+    let recorded = column_switch.map(|sw| sw.at);
+    for &(at, on) in &style.columns.unmodelled() {
+        if recorded == Some(at) {
+            continue;
+        }
+        limitations.push((
+            "twocolumn_mid_document",
+            Span::in_document(flashtex_compiler::DocumentId(entry), at, at + if on { "\\twocolumn".len() } else { "\\onecolumn".len() }),
+            crate::columns::mid_document_message(on, style.columns.start()),
+        ));
+    }
     let page_starts = clear_page_blocks(texts, &blocks);
     // After `listings::apply`, which can insert blocks: the ranges are
     // block indices, so they are taken once the block list is final.
@@ -2477,6 +2504,8 @@ pub fn adapt_cached(
         abstract_pages,
         superseded,
         top_material,
+        column_switch,
+        post_style,
     }
 }
 
@@ -2803,6 +2832,176 @@ fn math_colors(blocks: &[flashtex_compiler::parser::Block]) -> std::collections:
         }
     }
     out
+}
+
+/// The source span of one adapter `Item`, for the items that carry one.
+/// `None` is glue, penalties and whatsits with no position of their own
+/// (`\label` included: it records a page, it sets nothing).
+fn item_source_span(item: &Item) -> Option<Span> {
+    match item {
+        Item::Word(w) => Some(w.span()),
+        Item::Math { span, .. }
+        | Item::Logo { span, .. }
+        | Item::Rule { span, .. }
+        | Item::Footnote { span, .. }
+        | Item::Marginpar { span, .. }
+        | Item::QedBox { span, .. } => Some(*span),
+        Item::Table(t) => Some(t.span),
+        Item::ColorBox(b) => Some(b.span),
+        Item::Underline(u) => Some(u.span),
+        Item::TextScript(t) => Some(t.span),
+        Item::Lap { items } => {
+            let mut spans = items.iter().filter_map(item_source_span);
+            let first = spans.next()?;
+            let last = spans.last().unwrap_or(first);
+            (first.start <= last.end).then(|| Span::in_document(first.document, first.start, last.end))
+        }
+        _ => None,
+    }
+}
+
+/// `(start, end)` of the entry-document source `block` sets, for the
+/// blocks that set material: the range the single-switch scan compares
+/// against the switch offset. `None` for page furniture (`Chrome`,
+/// `NoBreakFalse`, `ClearPage`), contents entries (whose spans point at
+/// the list sources rather than the laid-out position) and other
+/// documents' material, all of which the scan passes over transparently.
+fn block_source_range(block: &Block, entry: usize) -> Option<(usize, usize)> {
+    let document = flashtex_compiler::DocumentId(entry);
+    let in_entry = |s: Span| (s.document == document).then_some((s.start, s.end));
+    match block {
+        Block::Paragraph { parts, .. } => {
+            let mut first: Option<Span> = None;
+            let mut last: Option<Span> = None;
+            for part in parts {
+                match part {
+                    ParaPart::Lines(items) => {
+                        for s in items.iter().filter_map(item_source_span) {
+                            if s.document == document {
+                                first.get_or_insert(s);
+                                last = Some(s);
+                            }
+                        }
+                    }
+                    ParaPart::Display { span, .. } | ParaPart::Rows { span, .. } => {
+                        if span.document == document {
+                            first.get_or_insert(*span);
+                            last = Some(*span);
+                        }
+                    }
+                }
+            }
+            Some((first?.start, last?.end))
+        }
+        Block::Heading { span, .. }
+        | Block::Chapter { span, .. }
+        | Block::Part { span, .. }
+        | Block::Title { span, .. }
+        | Block::Rule { span, .. } => in_entry(*span),
+        Block::Picture { document: d, picture, .. } => (*d == document).then_some((picture.start, picture.end)),
+        Block::LongTable { table, .. } => in_entry(table.span),
+        Block::TocEntry(_) | Block::ClearPage { .. } | Block::NoBreakFalse { .. } | Block::Chrome { .. } => None,
+    }
+}
+
+/// Whether `items` hold a `\marginpar` the page builder would place from
+/// entry-document position `at` on, or from a position the scan cannot
+/// compare (another document): either rules out laying out a mid-document
+/// column switch, whose margin notes the single frame would misplace. A
+/// note strictly before the switch rides the old frame either way, so it
+/// constrains nothing.
+fn marginpar_from(items: &[Item], entry: usize, at: usize) -> bool {
+    items.iter().any(|item| match item {
+        Item::Marginpar { span, .. } => span.document.0 != entry || span.start >= at,
+        Item::Lap { items } => marginpar_from(items, entry, at),
+        Item::ColorBox(b) => marginpar_from(&b.items, entry, at),
+        Item::Underline(u) => marginpar_from(&u.items, entry, at),
+        Item::TextScript(t) => marginpar_from(&t.items, entry, at),
+        Item::Footnote { text, .. } => text.as_ref().is_some_and(|t| marginpar_from(t, entry, at)),
+        Item::Table(t) => t.entries.iter().any(|e| match e {
+            crate::table::TableEntry::Row { cells, .. } => cells.iter().any(|c| marginpar_from(&c.items, entry, at)),
+            _ => false,
+        }),
+        _ => false,
+    })
+}
+
+/// Whether `block` holds such a `\marginpar`: in paragraph and heading
+/// text, titles, contents lines and longtable cells. Displays are math;
+/// pictures are graphics; neither can carry one.
+fn block_marginpar_from(block: &Block, entry: usize, at: usize) -> bool {
+    match block {
+        Block::Paragraph { parts, .. } => parts.iter().any(|part| match part {
+            ParaPart::Lines(items) => marginpar_from(items, entry, at),
+            ParaPart::Display { .. } | ParaPart::Rows { .. } => false,
+        }),
+        Block::Heading { items, .. } | Block::Chapter { items, .. } | Block::Part { items, .. } => marginpar_from(items, entry, at),
+        Block::Title { title, authors, date, .. } => {
+            marginpar_from(title, entry, at)
+                || authors.iter().flatten().flatten().any(|i| marginpar_from(std::slice::from_ref(i), entry, at))
+                || date.as_ref().is_some_and(|d| marginpar_from(d, entry, at))
+        }
+        Block::TocEntry(e) => marginpar_from(&e.title, entry, at),
+        Block::LongTable { table, .. } => table.entries.iter().any(|e| match e {
+            crate::table::TableEntry::Row { cells, .. } => cells.iter().any(|c| marginpar_from(&c.items, entry, at)),
+            _ => false,
+        }),
+        _ => false,
+    }
+}
+
+/// The single-switch case slice 1 lays out: exactly one unmodelled switch
+/// (so it actually changes the column count), bare (a `[...]` argument is
+/// `twocolumn_top_material`'s case, explicitly out of scope), at a clean
+/// block boundary (a block spanning the offset is a mid-paragraph switch,
+/// which stays reported), opening a block the page builder already breaks
+/// before (the switch's own `\clearpage`), in a document with no margin
+/// note at or after it (those ride the frame being left).
+///
+/// Returns the first block after the switch. Anything else — a second
+/// switch, a switch that changes nothing, an argument, a mid-block
+/// offset, a missing page break or a later margin note — is `None`, and
+/// the switch keeps its `twocolumn_mid_document` limitation.
+fn column_switch_block(blocks: &[Block], source: &str, entry: usize, columns: &crate::columns::ColumnMode) -> Option<crate::columns::ColumnSwitch> {
+    let unmodelled = columns.unmodelled();
+    if unmodelled.len() != 1 {
+        return None;
+    }
+    let (at, on) = unmodelled[0];
+    let end = columns.spans().iter().find(|(s, _)| *s == at)?.1;
+    if crate::columns::optional_bracket(source, end).is_some() {
+        return None;
+    }
+    if blocks.iter().any(|b| block_marginpar_from(b, entry, at)) {
+        return None;
+    }
+    let mut found = None;
+    for (i, block) in blocks.iter().enumerate() {
+        let Some((s, e)) = block_source_range(block, entry) else { continue };
+        if s < at && at < e {
+            return None;
+        }
+        if s >= at && found.is_none() {
+            // `Chapter`/`Title` eject themselves (`\clearpage` is what the
+            // commands are); every other kind carries the switch's own
+            // `\clearpage` in `eject_before`.
+            let ejects = match block {
+                Block::Paragraph { eject_before, .. }
+                | Block::Heading { eject_before, .. }
+                | Block::Part { eject_before, .. }
+                | Block::Rule { eject_before, .. }
+                | Block::Picture { eject_before, .. }
+                | Block::LongTable { eject_before, .. } => *eject_before,
+                Block::Chapter { .. } | Block::Title { .. } => true,
+                Block::TocEntry(_) | Block::ClearPage { .. } | Block::NoBreakFalse { .. } | Block::Chrome { .. } => false,
+            };
+            if !ejects {
+                return None;
+            }
+            found = Some(i);
+        }
+    }
+    found.map(|block| crate::columns::ColumnSwitch { block, at, on })
 }
 
 /// Blocks whose `eject_before` comes from `\clearpage`/`\cleardoublepage`
