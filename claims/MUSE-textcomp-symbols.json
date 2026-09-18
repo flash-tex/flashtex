@@ -5,7 +5,7 @@
   "machine": "mac-m5pro-dq222",
   "note": "textcomp package: common TS1 text symbols (#837 backlog, 7/30 docs), map to existing glyph/Unicode support, no font-engine internals",
   "started_utc": "2026-09-18T07:55:03Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "MUSE-textcomp-symbols",
-  "updated_utc": "2026-09-18T07:55:03Z"
+  "updated_utc": "2026-09-18T08:34:15Z"
 }
