@@ -486,6 +486,7 @@ you trust.
 | ⌘⌥N | New Project… (folder, name, template; opens `main.tex` with its include tree) |
 | ⌘N | New File… (rooted `.tex` name; optional `\input` at the caret; also the sidebar's + and the project row's context menu) |
 | ⌘S / ⌘⇧S | Save / Save As… |
+| ⌘⌥R | Show in Finder (the active document; sidebar rows have *Reveal in Finder*, the tree's empty space *Reveal Project in Finder*) |
 | ⌘⇧P | Command palette |
 | ⌘B | Compile now |
 | ⌘⇧R | Attach render pipeline (Latin Modern) — the current engine |

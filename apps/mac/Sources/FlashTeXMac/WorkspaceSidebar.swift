@@ -134,6 +134,7 @@ private struct ProjectSection: View {
                         selectedID: model.activePath,
                         onSelect: { id in select(id, listing: listing, closure: closure) },
                         menuItems: { id in menu(for: id, listing: listing) },
+                        backgroundMenuItems: { backgroundMenu() },
                         accessibilityLabel: "Project tree")
         }
     }
@@ -207,12 +208,25 @@ private struct ProjectSection: View {
         // file deleted or moved after the menu opened is a no-op, not a crash.
         if RevealInFinder.target(path: path, root: model.project.projectRoot) != nil {
             items.append(.divider)
-            items.append(.init(title: "View in Finder", action: { RevealInFinder.reveal(path: path, root: model.project.projectRoot) }))
+            items.append(.init(title: "Reveal in Finder", action: { RevealInFinder.reveal(path: path, root: model.project.projectRoot) }))
         }
         if doc.role != .entry {
             items.append(.divider)
             items.append(.init(title: "Rename…", action: { model.scaffold.presentRename(path) }))
             items.append(.init(title: "Delete…", action: { model.scaffold.presentDelete(path) }))
+        }
+        return items
+    }
+
+    /// Right-click on the tree's empty space: the project as a whole. The tree
+    /// has no root row, so this is where the project folder itself is revealed
+    /// (#870); omitted, like the row item, while there is no project root yet.
+    private func backgroundMenu() -> [SidebarTree.MenuItem] {
+        var items: [SidebarTree.MenuItem] = [.init(title: "New File…", action: { model.scaffold.presentNewFile() })]
+        let root = model.project.projectRoot
+        if root != nil {
+            items.append(.divider)
+            items.append(.init(title: "Reveal Project in Finder", action: { RevealInFinder.revealRoot(root) }))
         }
         return items
     }

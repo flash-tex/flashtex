@@ -977,6 +977,7 @@ explain that nothing is loaded.
 | ⌘⌥N | New Project… sheet (folder, name, template: Blank article / Article with sections / Report with chapters / Homework sheet; writes `<folder>/<name>/main.tex` plus its `\input`/`\include` members, opens `main.tex` as the entry document with the include tree in the sidebar; asks before replacing existing template files) |
 | ⌘N | New File… sheet (also the sidebar's + button and the project row's context menu): a rooted `.tex` name, subfolders allowed, never above the project root; "Insert `\input` at the caret" (on by default while the entry document is active) is one undoable edit; the file opens in a tab |
 | ⌘S / ⌘⇧S | Save / Save As… (UTF-8; header shows "— edited" when dirty) |
+| ⌘⌥R | Show in Finder: the active document's file, selected (also "Reveal in Finder" in a sidebar row's context menu; right-click the project tree's empty space for "Reveal Project in Finder") |
 | Edit > Restore Discarded Buffer | Brings back the unsaved text replaced by a "Discard" decision when opening another file |
 | ⌘⇧O | Open compile result fixture… (sibling `-request.json` seeds the editor) |
 | File > Reload Fixture | Reload Fixture (developer-only, no shortcut — confirms before replacing a real/unsaved document) |

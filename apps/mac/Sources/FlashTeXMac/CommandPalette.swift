@@ -90,6 +90,7 @@ enum CommandPaletteModel {
         case .newFile: model.scaffold.presentNewFile()
         case .save: model.saveTexInteractive()
         case .saveAs: _ = model.saveTexAs()
+        case .showInFinder: model.showActiveDocumentInFinder() // RevealInFinder.swift
         case .openFixture: model.openFixturePanel()
         case .reloadFixture: model.reloadFixture()
         case .attachBuiltCompiler: _ = model.attachDiscoveredWorker()
