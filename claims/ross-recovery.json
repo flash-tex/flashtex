@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-muse-lead",
+  "branch": null,
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": "Ross corpus: error recovery/diagnostics quality",
+  "started_utc": "2026-09-18T01:02:21Z",
+  "state": "claimed",
+  "task_id": "ross-recovery",
+  "updated_utc": "2026-09-18T01:02:21Z"
+}
