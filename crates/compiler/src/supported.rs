@@ -1110,7 +1110,7 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "fancyhdr",
         "",
-        "\\pagestyle{fancy} ships the \\fancyhead/\\fancyfoot fields ([LE,RO]-style positions, E/O shared one-sided) with the 0.4pt head rule; \\fancyhf clears all six fields; \\setlength{\\headrulewidth}/\\setlength{\\footrulewidth}; \\lhead and friends plus \\fancypagestyle are diagnosed where they are used",
+        "\\pagestyle{fancy} ships the \\fancyhead/\\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \\fancyhf clears all six fields; \\lhead and friends plus \\fancypagestyle are diagnosed where they are used",
     ),
     (
         "xspace",
