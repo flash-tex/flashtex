@@ -602,6 +602,33 @@ pub enum Block {
         date: Vec<Item>,
         span: Span,
     },
+    /// beamer `\begin{block}{title}` and friends (compiler
+    /// `BeamerBlockBegin`, #944 Tier 3): the blocks up to the matching
+    /// [`Block::BeamerBlockEnd`] are the body. `addvspace_before` /
+    /// `vspace_before` are the glue a list closed before it (or a
+    /// `\vspace`) leaves, like [`Block::FrameEnd`]'s.
+    BeamerBlockBegin {
+        kind: flashtex_compiler::parser::BeamerBlockKind,
+        title: Vec<Item>,
+        span: Span,
+        addvspace_before: f64,
+        addvspace_flex: (f64, f64),
+        vspace_before: f64,
+    },
+    BeamerBlockEnd { span: Span, addvspace_before: f64, addvspace_flex: (f64, f64), vspace_before: f64 },
+    /// beamer `\begin{columns}[options]`: the blocks up to the matching
+    /// [`Block::ColumnsEnd`], split at each [`Block::Column`] marker, are
+    /// the columns' bodies.
+    ColumnsBegin {
+        options: flashtex_compiler::parser::BeamerColumnsOptions,
+        span: Span,
+        addvspace_before: f64,
+        addvspace_flex: (f64, f64),
+        vspace_before: f64,
+    },
+    /// `\column[align]{width}` / `\begin{column}`: `width` as written.
+    Column { width: String, align: Option<flashtex_compiler::parser::BeamerColumnAlign>, span: Span },
+    ColumnsEnd { span: Span, addvspace_before: f64, addvspace_flex: (f64, f64), vspace_before: f64 },
 }
 
 /// longtable.sty 61-67: the lengths a document may `\setlength`. `None`
@@ -920,6 +947,11 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
         // (`split_at_page_breaks`); the title is what anchors the head.
         CBlock::BeamerFrameBegin { title, .. } | CBlock::BeamerTitlePage { title, .. } => title,
         CBlock::BeamerFrameEnd { .. } => &[],
+        // Tier 3: the block title and the caption text anchor their units;
+        // the column markers are units of their own bytes.
+        CBlock::BeamerBlockBegin { title, .. } => title,
+        CBlock::BeamerCaption { content, .. } => content,
+        CBlock::BeamerBlockEnd { .. } | CBlock::BeamerColumnsBegin { .. } | CBlock::BeamerColumn { .. } | CBlock::BeamerColumnsEnd { .. } => &[],
         // Nodes a re-pinned compiler can produce that this crate has no
         // layout for yet. `Penalty` carries no content at all; `Tabbing`'s
         // rows are reached through `lower_blocks`, not this slice, exactly
@@ -1629,6 +1661,12 @@ pub fn adapt_cached(
             UnitKind::Paragraph { inlines, .. } => anchor_span(inlines.iter()),
             UnitKind::Rule { span } => Some(*span),
             UnitKind::FrameBegin { span, .. } | UnitKind::FrameEnd { span } | UnitKind::BeamerTitle { span, .. } => Some(*span),
+            UnitKind::BeamerBlockBegin { span, .. }
+            | UnitKind::BeamerBlockEnd { span }
+            | UnitKind::ColumnsBegin { span, .. }
+            | UnitKind::Column { span, .. }
+            | UnitKind::ColumnsEnd { span }
+            | UnitKind::BeamerCaption { span, .. } => Some(*span),
             UnitKind::Picture { document, picture, .. } => Some(Span::in_document(*document, picture.start, picture.end)),
         });
         let at_end = next.is_none();
@@ -2050,6 +2088,104 @@ pub fn adapt_cached(
                         institute: items_for(institute, true),
                         date: items_for(date, true),
                         span,
+                    });
+                }
+                after_heading = false;
+                prev_para_end = None;
+            }
+            // beamer Tier 3 (#944): blocks, columns and captions. Each edge
+            // carries the list-closing `\addvspace` and any `\vspace`
+            // before it, like `FrameEnd`; the body between the edges starts
+            // in vertical mode.
+            UnitKind::BeamerBlockBegin { block, span } => {
+                if let CBlock::BeamerBlockBegin { kind, title, .. } = block {
+                    blocks.push(Block::BeamerBlockBegin {
+                        kind: *kind,
+                        title: items_for(title, true),
+                        span,
+                        addvspace_before: unit.addvspace_before,
+                        addvspace_flex: unit.addvspace_flex,
+                        vspace_before,
+                    });
+                }
+                after_heading = false;
+                prev_para_end = None;
+            }
+            UnitKind::BeamerBlockEnd { span } => {
+                blocks.push(Block::BeamerBlockEnd { span, addvspace_before: unit.addvspace_before, addvspace_flex: unit.addvspace_flex, vspace_before });
+                after_heading = false;
+                prev_para_end = None;
+            }
+            UnitKind::ColumnsBegin { block, span } => {
+                if let CBlock::BeamerColumnsBegin { options, .. } = block {
+                    blocks.push(Block::ColumnsBegin {
+                        options: options.clone(),
+                        span,
+                        addvspace_before: unit.addvspace_before,
+                        addvspace_flex: unit.addvspace_flex,
+                        vspace_before,
+                    });
+                }
+                after_heading = false;
+                prev_para_end = None;
+            }
+            UnitKind::Column { block, span } => {
+                if let CBlock::BeamerColumn { width, align, .. } = block {
+                    blocks.push(Block::Column { width: width.clone(), align: *align, span });
+                }
+                after_heading = false;
+                prev_para_end = None;
+            }
+            UnitKind::ColumnsEnd { span } => {
+                blocks.push(Block::ColumnsEnd { span, addvspace_before: unit.addvspace_before, addvspace_flex: unit.addvspace_flex, vspace_before });
+                after_heading = false;
+                prev_para_end = None;
+            }
+            UnitKind::BeamerCaption { block, span } => {
+                // `beamer@makecaption` (beamerbaselocalstructure.sty 589-601)
+                // with the default `caption` template: `\insertcaptionname`
+                // + `:\ ` in the `caption name` colour (structure), the text,
+                // all `\small`; set as `\hb@xt@\hsize{\hfil ... \hfil}` when
+                // it fits one line (a centred paragraph; a longer one is
+                // `\raggedright`, which is not told apart here). The 7pt
+                // `\abovecaptionskip`/`\belowcaptionskip` are the compiler's
+                // `VSpace` blocks around it.
+                if let CBlock::BeamerCaption { kind, content, .. } = block {
+                    use flashtex_compiler::parser::FontSizeLevel;
+                    let (r, g, b) = flashtex_class_geometry::beamer::STRUCTURE_RGB;
+                    let bn = |v: f64| (v * 1e9).round() as u32;
+                    let structure = DeviceColor::from_billionths(flashtex_compiler::color::ColorSpace::Rgb, &[bn(r), bn(g), bn(b)]);
+                    let small = TextStyle { size_cpt: declared_size(Some(FontSizeLevel::Small), size), ..TextStyle::default() };
+                    let mut items = command_words(&format!("{}:", kind.name()), span);
+                    for it in &mut items {
+                        if let Item::Word(w) = it {
+                            for seg in &mut w.segments {
+                                seg.style = TextStyle { color: structure, ..small };
+                            }
+                        }
+                    }
+                    // `\ ` (control space): factor 1000 whatever the colon.
+                    items.push(Item::Space { style: small, factor: 1000, no_break: false });
+                    items.extend(items_for(content, false));
+                    blocks.push(Block::Paragraph {
+                        parts: vec![ParaPart::Lines(items)],
+                        indent: false,
+                        style: ParaStyle::Center,
+                        env_open: None,
+                        env_close: false,
+                        eject_before,
+                        vspace_before,
+                        addvspace_before: unit.addvspace_before,
+                        addvspace_flex: unit.addvspace_flex,
+                        vspace_flex: unit.vspace_flex,
+                        endlist_adjust: unit.endlist_adjust,
+                        list: None,
+                        sized: None,
+                        // The one-line caption is an `\hbox` appended to the
+                        // outer list: its interline glue is the body's
+                        // `\baselineskip`, not `\small`'s (measured: 6.656pt
+                        // = 13.6 - 6.944 under a depthless image line).
+                        leading_pt: None,
                     });
                 }
                 after_heading = false;
@@ -2907,6 +3043,7 @@ fn math_colors(blocks: &[flashtex_compiler::parser::Block]) -> std::collections:
                 walk(title, &mut out);
                 walk(subtitle, &mut out);
             }
+            CBlock::BeamerBlockBegin { title: inlines, .. } | CBlock::BeamerCaption { content: inlines, .. } => walk(inlines, &mut out),
             CBlock::BeamerTitlePage { title, subtitle, authors, institute, date, .. } => {
                 for part in [title, subtitle, authors, institute, date] {
                     walk(part, &mut out);
@@ -3400,6 +3537,29 @@ enum UnitKind<'p> {
         block: &'p CBlock,
         span: Span,
     },
+    /// beamer Tier 3 (#944): block edges, column markers, captions.
+    BeamerBlockBegin {
+        block: &'p CBlock,
+        span: Span,
+    },
+    BeamerBlockEnd {
+        span: Span,
+    },
+    ColumnsBegin {
+        block: &'p CBlock,
+        span: Span,
+    },
+    Column {
+        block: &'p CBlock,
+        span: Span,
+    },
+    ColumnsEnd {
+        span: Span,
+    },
+    BeamerCaption {
+        block: &'p CBlock,
+        span: Span,
+    },
     Picture {
         document: flashtex_compiler::DocumentId,
         picture: flashtex_vector_graphics::tikz::PictureSource,
@@ -3573,6 +3733,12 @@ fn split_at_page_breaks<'p>(
         let first = match block {
             CBlock::Heading { number_span, .. } => Some(*number_span),
             CBlock::BeamerFrameEnd { span } => Some(*span),
+            CBlock::BeamerBlockBegin { span, .. }
+            | CBlock::BeamerBlockEnd { span }
+            | CBlock::BeamerColumnsBegin { span, .. }
+            | CBlock::BeamerColumn { span, .. }
+            | CBlock::BeamerColumnsEnd { span }
+            | CBlock::BeamerCaption { span, .. } => Some(*span),
             _ => anchor_span(inlines_of(block)).or(item_label_span),
         };
         let mut eject = std::mem::take(&mut pending_eject) || matches!((prev_end, first), (Some(p), Some(f)) if gap_has_page_break(texts, p, f));
@@ -4083,6 +4249,43 @@ fn split_at_page_breaks<'p>(
                 list_vmode = false;
                 list_vmode_by_depth.clear();
             }
+            // beamer Tier 3: every edge is vertical-mode material that ends
+            // a paragraph (`\par` in the templates) and, like `\end{frame}`,
+            // takes the list-closing skip computed above.
+            CBlock::BeamerBlockBegin { span, .. }
+            | CBlock::BeamerBlockEnd { span }
+            | CBlock::BeamerColumnsBegin { span, .. }
+            | CBlock::BeamerColumn { span, .. }
+            | CBlock::BeamerColumnsEnd { span }
+            | CBlock::BeamerCaption { span, .. } => {
+                let kind = match block {
+                    CBlock::BeamerBlockBegin { .. } => UnitKind::BeamerBlockBegin { block, span: *span },
+                    CBlock::BeamerBlockEnd { .. } => UnitKind::BeamerBlockEnd { span: *span },
+                    CBlock::BeamerColumnsBegin { .. } => UnitKind::ColumnsBegin { block, span: *span },
+                    CBlock::BeamerColumn { .. } => UnitKind::Column { block, span: *span },
+                    CBlock::BeamerColumnsEnd { .. } => UnitKind::ColumnsEnd { span: *span },
+                    _ => UnitKind::BeamerCaption { block, span: *span },
+                };
+                units.push(Unit {
+                    kind,
+                    eject_before: false,
+                    vspace_before,
+                    addvspace_before,
+                    addvspace_flex,
+                    vspace_flex,
+                    endlist_adjust,
+                    limitations,
+                });
+                eject = false;
+                // Not a heading: a list that opens right after the edge takes
+                // its `\@topsep` (no `\@nbitem` absorption), like the first
+                // list of a frame.
+                prev_vmode = false;
+                prev_styled = false;
+                prev_list = false;
+                list_vmode = false;
+                list_vmode_by_depth.clear();
+            }
             CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak | CBlock::BeamerFrameBegin { .. } | CBlock::BeamerTitlePage { .. } => unreachable!("handled above"),
             CBlock::Verbatim { .. } | CBlock::TableOfContents { .. } | CBlock::TitleBlock { .. } | CBlock::VFill | CBlock::LetterBlock { .. } => unreachable!("lowered by lower_blocks"),
             // Blocks only a re-pinned compiler emits. Skipping a `Penalty`
@@ -4096,7 +4299,11 @@ fn split_at_page_breaks<'p>(
             CBlock::Tabbing { .. } => unreachable!("lowered by lower_blocks"),
         }
         let block_end = match block {
-            CBlock::BeamerFrameEnd { span } => Some(*span),
+            CBlock::BeamerFrameEnd { span }
+            | CBlock::BeamerBlockEnd { span }
+            | CBlock::BeamerColumnsBegin { span, .. }
+            | CBlock::BeamerColumn { span, .. }
+            | CBlock::BeamerColumnsEnd { span } => Some(*span),
             _ => None,
         };
         if let Some(last) = inlines_of(block).iter().map(inline_span).last().or(item_label_span).or(block_end) {
@@ -11095,6 +11302,7 @@ mod tests {
                 Block::TocEntry(..) => "E".to_string(),
                 Block::LongTable { .. } => "L".to_string(),
                 Block::FrameBegin { .. } | Block::FrameEnd { .. } | Block::BeamerTitle { .. } => "F".to_string(),
+                Block::BeamerBlockBegin { .. } | Block::BeamerBlockEnd { .. } | Block::ColumnsBegin { .. } | Block::Column { .. } | Block::ColumnsEnd { .. } => "F".to_string(),
             })
             .collect();
         // `Problem 1 \hfill \normalfont[4 points]`: one fill, no space after it.

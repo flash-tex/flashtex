@@ -179,7 +179,13 @@ pub fn render_windowed(
     let started = std::time::Instant::now();
     // FT-063: float environments are blanked (same byte length) before the
     // compiler parses the document and are laid out by `typeset::floatpage`.
-    let float_envs: Vec<Vec<floats::FloatEnv>> = documents.iter().enumerate().map(|(i, d)| floats::scan(d.text, flashtex_compiler::DocumentId(i))).collect();
+    // beamer's `figure`/`table` are not floats (`beamerbaselocalstructure.sty`
+    // 550-560: `\par\nobreak\begin{center}\nobreak ... \end{center}`): the
+    // compiler parses them as centred in-flow material with an unnumbered
+    // caption (issue #944, Tier 3), so nothing is masked in a deck.
+    let entry_doc = documents.iter().find(|d| d.path == entry_path).or(documents.first());
+    let is_beamer = entry_doc.and_then(|d| flashtex_class_geometry::DocumentSetup::from_preamble(d.text)).is_some_and(|s| s.class == flashtex_class_geometry::ClassKind::Beamer);
+    let float_envs: Vec<Vec<floats::FloatEnv>> = documents.iter().enumerate().map(|(i, d)| if is_beamer { Vec::new() } else { floats::scan(d.text, flashtex_compiler::DocumentId(i)) }).collect();
     let any_floats = float_envs.iter().any(|e| !e.is_empty());
     let masked: Vec<String> = documents.iter().zip(&float_envs).map(|(d, e)| if e.is_empty() { String::new() } else { floats::mask(d.text, e) }).collect();
     let texts: Vec<&str> = documents.iter().zip(&float_envs).zip(&masked).map(|((d, e), m)| if e.is_empty() { d.text } else { m.as_str() }).collect();

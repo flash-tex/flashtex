@@ -441,6 +441,7 @@ fn position_run(run: &pl::GlyphRun, x: f64, baseline_y: f64) -> pl::PositionedRu
 }
 
 pub mod beamer;
+pub mod beamer_blocks;
 pub mod floatpage;
 pub mod footnotes;
 pub mod marginpar;
@@ -3594,7 +3595,7 @@ impl<'a> Context<'a> {
             // `\partopsep` from vertical mode) before the first paragraph;
             // `\end{...}` adds the same after the last (`\@endparenv`).
             let env_skip = |vmode: bool| {
-                let t = ctx.style.topsep;
+                let t = ctx.style.trivlist_topsep;
                 let p = if vmode { ctx.style.partopsep } else { crate::style::Skip::default() };
                 (t.natural + p.natural, t.stretch + p.stretch, t.shrink + p.shrink)
             };
@@ -4009,6 +4010,8 @@ impl<'a> Context<'a> {
                         Block::LongTable { .. } => "longtable",
                         Block::FrameBegin { .. } | Block::FrameEnd { .. } => "a beamer frame",
                         Block::BeamerTitle { .. } => "\\titlepage",
+                        Block::BeamerBlockBegin { .. } | Block::BeamerBlockEnd { .. } => "a beamer block",
+                        Block::ColumnsBegin { .. } | Block::Column { .. } | Block::ColumnsEnd { .. } => "beamer columns",
                         Block::Paragraph { .. } | Block::Rule { .. } | Block::Picture { .. } => unreachable!(),
                     };
                     let source = vec![self.source(float)];
@@ -8981,7 +8984,14 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // closed ones, whose fills are resolved after the loop.
     let mut open_frame: Option<beamer::OpenFrame> = None;
     let mut frames: Vec<beamer::OpenFrame> = Vec::new();
+    // beamer blocks being collected (`typeset::beamer_blocks`), innermost
+    // last; and the blocks a `columns` row consumed, which the loop skips.
+    let mut open_beamer_blocks: Vec<beamer_blocks::OpenBlock> = Vec::new();
+    let mut skip_to = 0usize;
     for (doc_index, block) in doc.blocks.iter().enumerate() {
+        if doc_index < skip_to {
+            continue;
+        }
         if doc.page_starts.binary_search(&doc_index).is_ok() {
             page_start_blocks.push(blocks.len());
         }
@@ -9202,6 +9212,30 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 ctx.beamer_title_page(&mut blocks, open_frame.as_mut(), title, subtitle, authors, institute, date, *span);
                 after_heading = false;
             }
+            // beamer Tier 3 (`typeset::beamer_blocks`): a block's edges
+            // bracket ordinary blocks in this same list; a `columns` row
+            // takes its body out of the loop and sets it side by side.
+            Block::BeamerBlockBegin { kind, title, span, addvspace_before, addvspace_flex, vspace_before } => {
+                let open = ctx.beamer_block_begin(&mut blocks, *kind, title, *span, *addvspace_before, *addvspace_flex, *vspace_before);
+                open_beamer_blocks.push(open);
+                after_heading = false;
+            }
+            Block::BeamerBlockEnd { addvspace_before, addvspace_flex, vspace_before, .. } => {
+                if let Some(open) = open_beamer_blocks.pop() {
+                    ctx.beamer_block_end(&mut blocks, open, *addvspace_before, *addvspace_flex, *vspace_before);
+                }
+                after_heading = false;
+            }
+            Block::ColumnsBegin { options, span, addvspace_before, addvspace_flex, vspace_before } => {
+                let end = beamer_blocks::columns_end(&doc.blocks, doc_index + 1);
+                let columns = beamer_blocks::split_columns(&doc.blocks[doc_index + 1..end]);
+                ctx.beamer_columns(&mut blocks, options, &columns, *span, *addvspace_before, *addvspace_flex, *vspace_before);
+                skip_to = end + 1;
+                after_heading = false;
+            }
+            // Only reached for a marker outside any `columns` (the row
+            // above consumed its own): nothing to set.
+            Block::Column { .. } | Block::ColumnsEnd { .. } => {}
             // `\@starttoc`'s `\@nobreakfalse`: a heading next takes its
             // `\addvspace` again (only the excess over the list heading's
             // after-skip), and a paragraph next its normal `\clubpenalty`.

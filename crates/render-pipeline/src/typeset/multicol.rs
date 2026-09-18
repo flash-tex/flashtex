@@ -529,6 +529,11 @@ fn block_start(b: &Block) -> Option<(usize, usize)> {
         | Block::FrameBegin { span, .. }
         | Block::FrameEnd { span, .. }
         | Block::BeamerTitle { span, .. }
+        | Block::BeamerBlockBegin { span, .. }
+        | Block::BeamerBlockEnd { span, .. }
+        | Block::ColumnsBegin { span, .. }
+        | Block::Column { span, .. }
+        | Block::ColumnsEnd { span, .. }
         | Block::Rule { span, .. } => Some((span.document.0, span.start)),
         Block::TocEntry(e) => Some((e.list_span.document.0, e.list_span.start)),
         Block::Picture { document, picture, .. } => Some((document.0, picture.start)),

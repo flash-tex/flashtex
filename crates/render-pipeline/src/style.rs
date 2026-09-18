@@ -141,6 +141,12 @@ pub struct Stylesheet {
     /// `center`/`quote`-style environments.
     pub topsep: Skip,
     pub partopsep: Skip,
+    /// `\topsep` as a `\trivlist` environment (`center`, `flushleft`, a
+    /// beamer `figure`/`table`) reads it: the class size file's `\@listI`
+    /// value. Equal to `topsep` in every class but beamer, whose 3pt
+    /// `\@listi` only a `\list` executes (`class_geometry::beamer::
+    /// trivlist_topsep`).
+    pub trivlist_topsep: Skip,
     pub leftmargini_pt: f64,
     /// `\parsep` of a level-1 list (`\@listi`): `\list` sets
     /// `\parskip\parsep`, so it is the gap every `\item` paragraph adds.
@@ -284,6 +290,7 @@ impl Stylesheet {
             marginparpush_pt: if matches!(base, BaseSize::Pt12) { 7.0 } else { 5.0 },
             topsep: Skip::new(list.topsep.pt, list.topsep.plus, list.topsep.minus),
             partopsep: Skip::new(list.partopsep.pt, list.partopsep.plus, list.partopsep.minus),
+            trivlist_topsep: Skip::new(list.topsep.pt, list.topsep.plus, list.topsep.minus),
             leftmargini_pt: list.leftmargin.0,
             parsep: Skip::new(list.parsep.pt, list.parsep.plus, list.parsep.minus),
             labelsep_pt: list.labelsep.0,
@@ -388,6 +395,9 @@ impl Stylesheet {
             s.default_family = crate::nfss::FamilyKind::Sf;
             s.raggedright = true;
             s.topskip_pt = 0.0;
+            // `center` and beamer's `figure`/`table` keep the size file's
+            // `\topsep` (9pt plus 3 minus 5 at 11pt): see `trivlist_topsep`.
+            s.trivlist_topsep = glue(flashtex_class_geometry::beamer::trivlist_topsep(doc.options.size));
             s.topsep = glue(l.topsep);
             s.partopsep = glue(l.partopsep);
             s.parsep = glue(l.parsep);

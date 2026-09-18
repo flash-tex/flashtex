@@ -198,10 +198,15 @@ impl<'a> Context<'a> {
             (date, frame_pt(spec::NORMAL.size), frame_pt(spec::NORMAL.baselineskip), plain),
         ];
         for (k, (items, size, bs, style)) in boxes.iter().enumerate() {
-            if items.is_empty() {
-                continue;
-            }
-            let Some(mut b) = self.beamer_line(items, *size, *style, ParaStyle::Center, width, 0.0, *bs, span) else { continue };
+            // Every `beamercolorbox[sep=8pt]` of the template is set whether
+            // or not its content is empty: an unset `\institute` is still
+            // an `\hbox(16.0+0.0)` (the `\leavevmode` line of no height
+            // between the two `sep`s) under its `\lineskip` glue. Measured:
+            // the corpus deck `beamer-blocks-columns` (no institute) puts
+            // the title 7.53bp higher and the date 9.41bp lower than a
+            // layout that drops the box.
+            let built = if items.is_empty() { None } else { self.beamer_line(items, *size, *style, ParaStyle::Center, width, 0.0, *bs, span) };
+            let mut b = built.unwrap_or_else(|| empty_block(plain_vblock(vec![(0.0, 0.0)])));
             b.vertical.no_interline_first = true;
             b.vertical.space_before = Some((lineskip + sep, 0.0, 0.0));
             b.vertical.penalty_before = Some(pagebuild::INF_PENALTY);
