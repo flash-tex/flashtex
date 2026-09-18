@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "muse/llap-dimensions",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": "bug lane",
+  "started_utc": "2026-09-18T03:06:04Z",
+  "state": "claimed",
+  "task_id": "MUSE-llap-dimensions",
+  "updated_utc": "2026-09-18T03:06:04Z"
+}
