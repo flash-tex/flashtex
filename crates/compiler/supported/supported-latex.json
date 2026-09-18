@@ -1047,7 +1047,8 @@
     {"name": "relsize", "silent_options": "", "description": "\\larger/\\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size"},
     {"name": "fancyhdr", "silent_options": "", "description": "\\pagestyle{fancy} ships the \\fancyhead/\\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \\fancyhf clears all six fields; \\lhead and friends plus \\fancypagestyle are diagnosed where they are used"},
     {"name": "xspace", "silent_options": "", "description": "\\xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)"},
-    {"name": "ifthen", "silent_options": "", "description": "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used"}
+    {"name": "ifthen", "silent_options": "", "description": "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used"},
+    {"name": "parskip", "silent_options": "", "description": "\\parindent 0pt and \\parskip of half the class \\baselineskip (6.0pt at 10pt, 6.8pt at 11pt, 7.25pt at 12pt; the plus 2pt stretch is not modelled); package options are diagnosed"}
   ],
   "coverage": {
     "sources": [
