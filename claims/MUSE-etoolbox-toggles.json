@@ -5,7 +5,7 @@
   "machine": "mac-m1max-a",
   "note": null,
   "started_utc": "2026-09-18T13:45:15Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "MUSE-etoolbox-toggles",
-  "updated_utc": "2026-09-18T13:45:15Z"
+  "updated_utc": "2026-09-18T16:25:10Z"
 }
