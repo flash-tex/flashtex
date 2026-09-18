@@ -139,7 +139,15 @@ pub struct Expansion {
 /// and "Illegal unit of measure" on whatever follows it; real enumitem
 /// stores the keyval text unexecuted, where the bare register is already a
 /// complete dimension. The star is preserved for the parser.
-pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
+///
+/// ASCII tab is a blank space, exactly as plain.tex sets
+/// ``\\catcode`\\^^I=10`` at format build: without this a tab-only line
+/// lexes as an ordinary character (flipping the line state to mid-line, so
+/// the following line break yields a space instead of `\\par`) and the two
+/// paragraphs silently merge. The numeric form below is the same
+/// assignment (character 9 is tab).
+pub const HOST_PRELUDE: &str = "\\catcode9=10 % ascii tab is a blank space, as in plain.tex
+\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
 \\let\\counterwithin\\flashtexundefined
