@@ -199,7 +199,8 @@ pub fn mark_rules(kind: ClassKind, style: PageStyle, class_twoside: bool) -> Vec
     };
     let book = kind == ClassKind::Book;
     match (kind, class_twoside) {
-        (ClassKind::Article, true) => vec![
+        // scrartcl has no `\chapter`, so it marks like article, not book.
+        (ClassKind::Article | ClassKind::ScrArticle, true) => vec![
             r(
                 "section",
                 MarkTarget::Both,
@@ -217,7 +218,7 @@ pub fn mark_rules(kind: ClassKind, style: PageStyle, class_twoside: bool) -> Vec
                 false,
             ),
         ],
-        (ClassKind::Article, false) => vec![r(
+        (ClassKind::Article | ClassKind::ScrArticle, false) => vec![r(
             "section",
             MarkTarget::Right,
             true,

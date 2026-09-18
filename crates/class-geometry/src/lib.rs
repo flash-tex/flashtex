@@ -1,5 +1,7 @@
 //! FlashTeX original model of the LaTeX2e standard classes (`article`,
-//! `report`, `book`) and the `geometry` package.
+//! `report`, `book`), `letter`, the KOMA-Script classes (`scrartcl`,
+//! `scrreprt`, `scrbook`; paper size only so far, `typearea` pending) and the
+//! `geometry` package.
 //!
 //! [`resolve`] turns a preamble's `\documentclass`, `geometry` and
 //! `\pagestyle` into a [`ResolvedDocument`]: every page-frame length in TeX
@@ -59,7 +61,7 @@ impl DocumentSetup {
     /// Scan a LaTeX preamble (up to `\begin{document}`) for
     /// `\documentclass[..]{..}`, `\usepackage[..]{..geometry..}`,
     /// `\geometry{..}` and `\pagestyle{..}`. Returns `None` when the class
-    /// is not one of the three standard classes.
+    /// is not one of the standard classes, `letter` or KOMA-Script.
     pub fn from_preamble(source: &str) -> Option<DocumentSetup> {
         let src = strip_comments(source);
         let end = src.find("\\begin{document}").unwrap_or(src.len());
@@ -258,7 +260,13 @@ pub fn resolve(setup: &DocumentSetup) -> ResolvedDocument {
         frame: PageFrame::new(
             &params,
             flags,
-            if setup.geometry.is_some() {
+            // KOMA-Script writes its paper into `\pdfpagewidth` /
+            // `\pdfpageheight` itself (`typearea`), so the media follows the
+            // paper even without `geometry`. Every other class keeps the
+            // engine default — including `[a4paper]{article}`, whose PDF
+            // stays Letter in pdflatex (there is a regression test below
+            // pinning that near-miss).
+            if setup.geometry.is_some() || setup.class.is_koma() {
                 (params.paperwidth, params.paperheight)
             } else {
                 setup.engine_default_media

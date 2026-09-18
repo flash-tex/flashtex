@@ -27,6 +27,17 @@ pub enum ClassKind {
     /// are all undefined in a `letter` document (probed with
     /// `\@ifundefined`, TeX Live 2025).
     Letter,
+    /// KOMA-Script `scrartcl.cls` / `scrreprt.cls` / `scrbook.cls` (v3.46,
+    /// TeX Live 2026). Paper size first: KOMA defaults to A4 and writes its
+    /// paper into `\pdfpagewidth`/`\pdfpageheight`, so the PDF media follows
+    /// the paper even without `geometry` (unlike the standard classes).
+    /// The text block itself comes from `typearea`, which is not modelled
+    /// yet: [`class_params`] still uses the standard-class formulae, so the
+    /// text height/width of a KOMA document do not match pdflatex (issue
+    /// #842, second half).
+    ScrArticle,
+    ScrReport,
+    ScrBook,
 }
 
 impl ClassKind {
@@ -36,6 +47,9 @@ impl ClassKind {
             "report" => Some(ClassKind::Report),
             "book" => Some(ClassKind::Book),
             "letter" => Some(ClassKind::Letter),
+            "scrartcl" => Some(ClassKind::ScrArticle),
+            "scrreprt" => Some(ClassKind::ScrReport),
+            "scrbook" => Some(ClassKind::ScrBook),
             _ => None,
         }
     }
@@ -45,10 +59,26 @@ impl ClassKind {
             ClassKind::Report => "report",
             ClassKind::Book => "book",
             ClassKind::Letter => "letter",
+            ClassKind::ScrArticle => "scrartcl",
+            ClassKind::ScrReport => "scrreprt",
+            ClassKind::ScrBook => "scrbook",
         }
     }
     pub fn has_chapters(self) -> bool {
-        matches!(self, ClassKind::Report | ClassKind::Book)
+        matches!(
+            self,
+            ClassKind::Report | ClassKind::Book | ClassKind::ScrReport | ClassKind::ScrBook
+        )
+    }
+    /// Whether the class is KOMA-Script: A4 default paper, 11pt default
+    /// size, and — the reason this exists — the PDF media follows the paper
+    /// (`typearea` sets `\pdfpagewidth`/`\pdfpageheight`), where the
+    /// standard classes keep the engine default (see [`crate::resolve`]).
+    pub fn is_koma(self) -> bool {
+        matches!(
+            self,
+            ClassKind::ScrArticle | ClassKind::ScrReport | ClassKind::ScrBook
+        )
     }
     /// Whether the class defines `\section` and friends at all. `letter.cls`
     /// does not, so a `letter` document has no heading specs to resolve.
@@ -124,17 +154,24 @@ impl ClassOptions {
             .collect();
         // \ExecuteOptions defaults: article.cls line 111; report.cls line 117
         // (adds openany); book.cls line 119 (twoside, openright).
+        // KOMA-Script defaults (scrartcl/scrreprt/scrbook, TeX Live 2026,
+        // probed with `\f@size`, `\if@twoside`, `\if@titlepage`): A4 paper,
+        // 11pt, oneside except scrbook, no title page for scrartcl only.
+        let koma = kind.is_koma();
         let mut o = ClassOptions {
             kind,
-            size: BaseSize::Pt10,
-            paper: Paper::Letter,
+            size: if koma { BaseSize::Pt11 } else { BaseSize::Pt10 },
+            paper: if koma { Paper::A4 } else { Paper::Letter },
             landscape: false,
-            twoside: kind == ClassKind::Book,
+            twoside: matches!(kind, ClassKind::Book | ClassKind::ScrBook),
             twocolumn: false,
             // article.cls line 51 \@titlepagefalse; report.cls line 51 true.
             // letter.cls has no title page at all (no `\maketitle`).
-            titlepage: matches!(kind, ClassKind::Report | ClassKind::Book),
-            openright: kind == ClassKind::Book,
+            titlepage: matches!(
+                kind,
+                ClassKind::Report | ClassKind::Book | ClassKind::ScrReport | ClassKind::ScrBook
+            ),
+            openright: matches!(kind, ClassKind::Book | ClassKind::ScrBook),
             fleqn: false,
             leqno: false,
             draft: false,
@@ -207,9 +244,80 @@ impl ClassOptions {
                 _ => {}
             }
         }
+        if koma {
+            // KOMA-Script resolves conflicting options in source order (last
+            // wins), unlike `\ProcessOptions` declaration order: e.g.
+            // `[twoside,oneside]{scrartcl}` is one-sided and `[12pt,10pt]`
+            // is 10pt, while article keeps declaration order for both
+            // (pdflatex, TeX Live 2026). Re-apply the order-sensitive keys
+            // in source order over the declaration-order loop above.
+            //
+            // Paper size is the exception: a legacy `<size>paper` name beats
+            // `paper=<size>` in either position (`[a4paper,paper=letter]`
+            // and `[paper=letter,a4paper]` are both A4), so the two phases
+            // below collect separately and the legacy phase wins. `paper=`
+            // with an orientation value follows plain source order against
+            // `landscape`, like everything else here.
+            let mut keyed: Option<Paper> = None;
+            let mut legacy: Option<Paper> = None;
+            for g in &given {
+                let (key, val) = match g.split_once('=') {
+                    Some((k, v)) => (k.trim(), Some(v.trim())),
+                    None => (g.as_str(), None),
+                };
+                match (key, val) {
+                    ("paper", Some(v)) => match v {
+                        "a4" => keyed = Some(Paper::A4),
+                        "a5" => keyed = Some(Paper::A5),
+                        "b5" => keyed = Some(Paper::B5),
+                        "letter" => keyed = Some(Paper::Letter),
+                        "legal" => keyed = Some(Paper::Legal),
+                        "executive" => keyed = Some(Paper::Executive),
+                        "landscape" => o.landscape = true,
+                        "portrait" => o.landscape = false,
+                        _ => {}
+                    },
+                    ("fontsize", Some(v)) => {
+                        match v.strip_suffix("pt").unwrap_or(v) {
+                            "10" => o.size = BaseSize::Pt10,
+                            "11" => o.size = BaseSize::Pt11,
+                            "12" => o.size = BaseSize::Pt12,
+                            _ => {}
+                        }
+                    }
+                    ("a4paper", None) => legacy = Some(Paper::A4),
+                    ("a5paper", None) => legacy = Some(Paper::A5),
+                    ("b5paper", None) => legacy = Some(Paper::B5),
+                    ("letterpaper", None) => legacy = Some(Paper::Letter),
+                    ("legalpaper", None) => legacy = Some(Paper::Legal),
+                    ("executivepaper", None) => legacy = Some(Paper::Executive),
+                    ("10pt", None) => o.size = BaseSize::Pt10,
+                    ("11pt", None) => o.size = BaseSize::Pt11,
+                    ("12pt", None) => o.size = BaseSize::Pt12,
+                    ("landscape", None) => o.landscape = true,
+                    ("oneside", None) => o.twoside = false,
+                    ("twoside", None) => o.twoside = true,
+                    ("draft", None) => o.draft = true,
+                    ("final", None) => o.draft = false,
+                    ("titlepage", None) => o.titlepage = true,
+                    ("notitlepage", None) => o.titlepage = false,
+                    // `openright`/`openany` are not declared by scrartcl
+                    // (pdflatex warns "Unused global option(s)"), so they
+                    // must not take effect there either.
+                    ("openright", None) if kind.has_chapters() => o.openright = true,
+                    ("openany", None) if kind.has_chapters() => o.openright = false,
+                    ("onecolumn", None) => o.twocolumn = false,
+                    ("twocolumn", None) => o.twocolumn = true,
+                    _ => {}
+                }
+            }
+            if let Some(p) = legacy.or(keyed) {
+                o.paper = p;
+            }
+        }
         o.unused = given
             .into_iter()
-            .filter(|g| !declared.contains(&g.as_str()))
+            .filter(|g| !declared.contains(&g.as_str()) && !(koma && koma_declared(g)))
             .collect();
         o
     }
@@ -222,6 +330,29 @@ impl ClassOptions {
         } else {
             (w, h)
         }
+    }
+}
+
+/// Whether a raw `\documentclass` option string is a KOMA-Script key=value
+/// option this crate honours (`paper=<size|orientation>`, `fontsize=<size>`).
+/// Anything else with `=` (notably `DIV=` and `BCOR=`) stays `unused` (and
+/// hence in [`crate::ResolvedDocument::warnings`]) until `typearea` is
+/// modelled, instead of being silently accepted and ignored.
+fn koma_declared(given: &str) -> bool {
+    let (key, val) = match given.split_once('=') {
+        Some((k, v)) => (k.trim(), Some(v.trim())),
+        None => return false,
+    };
+    match (key, val) {
+        ("paper", Some(v)) => matches!(
+            v,
+            "a4" | "a5" | "b5" | "letter" | "legal" | "executive" | "landscape" | "portrait"
+        ),
+        ("fontsize", Some(v)) => matches!(
+            v.strip_suffix("pt").unwrap_or(v),
+            "10" | "11" | "12"
+        ),
+        _ => false,
     }
 }
 
@@ -338,7 +469,9 @@ pub fn class_params(o: &ClassOptions) -> PageParams {
     if o.kind == ClassKind::Letter {
         return letter_params(o);
     }
-    let bk = o.kind == ClassKind::Book;
+    // Placeholder for KOMA until `typearea` is modelled (issue #842): the
+    // chapter classes share the book formula, the rest the article formula.
+    let bk = matches!(o.kind, ClassKind::Book | ClassKind::ScrBook);
     let size = o.size;
     let fm = body_font(size);
     let (pw, ph) = o.paper_size();
