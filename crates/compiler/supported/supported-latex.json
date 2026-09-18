@@ -111,6 +111,7 @@
     {"name": "hfil", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "infinite-stretch horizontal glue (same order as \\hfill)", "renders": true},
     {"name": "hspace", "mode": "text", "origin": "text_dispatch", "arguments": "{dimension}", "description": "fixed horizontal space; starred form identical", "renders": true},
     {"name": "hskip", "mode": "text", "origin": "text_dispatch", "arguments": "<glue>", "description": "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll", "renders": true},
+    {"name": "strut", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \\strutbox)", "renders": true},
     {"name": "footnote", "mode": "text", "origin": "text_dispatch", "arguments": "[n]{...}", "description": "numbered mark and page-bottom footnote text", "renders": true},
     {"name": "footnotemark", "mode": "text", "origin": "text_dispatch", "arguments": "[n]", "description": "footnote mark only", "renders": true},
     {"name": "footnotetext", "mode": "text", "origin": "text_dispatch", "arguments": "[n]{...}", "description": "footnote text without a mark", "renders": true},
@@ -1063,7 +1064,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 201, "percent": 49},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 202, "percent": 49.3},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 21, "percent": 70},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 46, "percent": 45.1},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -1078,6 +1079,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 19, "percent": 7.9}
     ],
-    "total": {"canonical": 1314, "supported": 553, "percent": 42.1}
+    "total": {"canonical": 1314, "supported": 554, "percent": 42.2}
   }
 }
