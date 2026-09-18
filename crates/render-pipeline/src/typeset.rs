@@ -3154,7 +3154,14 @@ impl<'a> Context<'a> {
             hang_pt = hang;
             inner_margin_pt = inner;
             if let Some((text, span)) = geom.label.as_ref().filter(|_| starts_paragraph) {
-                if let Some(nb) = self.label_box(text, *span, size, geom.description || geom.label_bold, geom.label_symbol) {
+                let bold = geom.description || geom.label_bold;
+                // An explicit `\item[...]` sets its own content (math,
+                // styles); every other label is plain text or a symbol.
+                let nb = match geom.label_items.as_deref().filter(|items| !items.is_empty()) {
+                    Some(items) => self.label_box_items(items, size, bold),
+                    None => self.label_box(text, *span, size, bold, geom.label_symbol),
+                };
+                if let Some(nb) = nb {
                     let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
                     let protrude = self.item_left_protrusion(&list, &recs);
                     let box_width = if geom.llap { nb.width } else { nb.width.min(labelwidth) };
@@ -3173,6 +3180,11 @@ impl<'a> Context<'a> {
                         }
                         at = x + run.width;
                         lead.push((pl::Item::Box(run), Some(rec)));
+                    }
+                    // Glue or a kern after the label's last box is inside
+                    // the `\hbox` too.
+                    if nb.width > at {
+                        lead.push((pl::Item::kern(nb.width - at), None));
                     }
                     lead.push((pl::Item::kern(labelsep), None));
                     // enumitem `style=nextline` (`\enit@postlabel@i`'s
@@ -3438,6 +3450,11 @@ impl<'a> Context<'a> {
                 if let Some((text, span)) = &g.label {
                     text.hash(&mut h);
                     (span.end - span.start).hash(&mut h);
+                    // An explicit label's own items: its math and styles
+                    // are not in the flattened text.
+                    if let Some(items) = &g.label_items {
+                        incremental::hash_items(items, span.start, &mut h);
+                    }
                 }
                 g.parsep.natural.to_bits().hash(&mut h);
                 g.labelsep_pt.map(f64::to_bits).hash(&mut h);
@@ -3951,6 +3968,41 @@ impl<'a> Context<'a> {
         boxed
     }
 
+    /// An explicit `\item[<label>]` as `\@item` boxes it: the label's own
+    /// items (words, math, styled spans) set as one horizontal list in the
+    /// list's label style, every box at its natural position. What
+    /// [`Self::label_box`] does for a plain-text label, for content that
+    /// `word_box` cannot set (`\item[$\alpha$]`, issue #676).
+    fn label_box_items(&mut self, items: &[AItem], size: f64, bold: bool) -> Option<NumberBox> {
+        let (mut list, mut recs, _, _) = self.hlist(items, size, TextStyle { bold, ..TextStyle::default() }, ParaStyle::Plain);
+        // `hlist` ends with TeX's paragraph end (`\penalty10000
+        // \parfillskip \penalty-10000`); this is an `\hbox`, not a paragraph.
+        if matches!(list.last_chunk::<3>(), Some([pl::Item::Penalty(_), pl::Item::Glue(_), pl::Item::Penalty(_)])) {
+            list.truncate(list.len() - 3);
+            recs.truncate(recs.len().saturating_sub(3));
+        }
+        let mut pieces = Vec::new();
+        let (mut x, mut height, mut depth) = (0.0f64, 0.0f64, 0.0f64);
+        for (item, rec) in list.into_iter().zip(recs) {
+            match item {
+                pl::Item::Box(run) => {
+                    let w = run.width;
+                    if let Some(rec) = rec {
+                        height = height.max(run.height);
+                        depth = depth.max(run.depth);
+                        self.label_recs.insert(rec);
+                        pieces.push((run, rec, x));
+                    }
+                    x += w;
+                }
+                pl::Item::Glue(glue) => x += glue.width,
+                pl::Item::Kern(kern) => x += kern.width,
+                pl::Item::Penalty(_) => {}
+            }
+        }
+        (!pieces.is_empty()).then_some(NumberBox { pieces, width: x, height, depth })
+    }
+
     fn heading_block(&mut self, level: u8, items: &[AItem]) -> Option<BuiltBlock> {
         let h = self.style.heading(level);
         let (list, recs, labels, skips) = self.hlist(
@@ -4029,8 +4081,11 @@ impl<'a> Context<'a> {
         let description = list_geom.is_some_and(|g| g.description);
         let linewidth = s.text_width_pt - hang;
         let label = list_geom
-            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol)))
-            .and_then(|((text, span), bold, symbol)| self.label_box(text, *span, size, bold, symbol));
+            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol, g.label_items.as_deref())))
+            .and_then(|((text, span), bold, symbol, items)| match items.filter(|items| !items.is_empty()) {
+                Some(items) => self.label_box_items(items, size, bold),
+                None => self.label_box(text, *span, size, bold, symbol),
+            });
         let mut width = hang + if bracket { 0.6 * linewidth } else { 0.0 };
         let (mut runs, mut items, mut recs) = (Vec::new(), Vec::new(), Vec::new());
         let (mut height, mut depth) = (0.0, 0.0);
