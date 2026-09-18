@@ -3386,6 +3386,18 @@ fn split_at_page_breaks<'p>(
                 prev_vmode = true;
                 continue;
             }
+            // A paragraph holding only `\pagestyle`/`\thispagestyle`
+            // markers (compiler pin `75a2a03a`, fancyhdr #849; the old pin
+            // read the command's argument and emitted nothing). They are
+            // whatsits, no material -- TeX stays in vertical mode -- so it
+            // is no block here: the page style is read from the source by
+            // [`body_commands`], and `prev_end`/`prev_vmode` keep telling
+            // the next block what really precedes it. A preamble
+            // `\pagestyle{empty}` ahead of the document's first list made
+            // that list's `\begin` look like it was read in horizontal
+            // mode, which dropped `\partopsep` from its closing
+            // `\@topsepadd` (`nested_list_end_skips`).
+            CBlock::Paragraph(inlines) if !inlines.is_empty() && inlines.iter().all(|i| matches!(i, Inline::PageStyle { .. })) => continue,
             CBlock::Rule { span } => {
                 let eject = std::mem::take(&mut pending_eject) || prev_end.is_some_and(|p| gap_has_page_break(texts, p, *span));
                 units.push(Unit {
