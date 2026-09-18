@@ -2873,8 +2873,23 @@ impl P<'_> {
                 {
                     let span = self.t[self.i].token.span;
                     let space_before = self.space_precedes(self.i);
+                    let control_symbol = self.t[self.i].token.control_symbol;
                     self.i += 1;
                     if self.in_body && !self.document_ended {
+                        // `\2`: no LaTeX layer defines a control symbol made
+                        // of a digit (pdflatex: `! Undefined control
+                        // sequence`), so the backslash is a typo for the
+                        // bare digit. The digit is still typeset below;
+                        // this only adds the diagnostic the silent literal
+                        // was missing.
+                        if control_symbol {
+                            if let Some(digit) = crate::diagnostics::control_symbol_digit(&word)
+                            {
+                                self.diags.push(Diagnostic::undefined_control_symbol(
+                                    digit, span,
+                                ));
+                            }
+                        }
                         para.push(Inline::Text {
                             text: apply_text_ligatures(word),
                             span,
@@ -2974,6 +2989,18 @@ impl P<'_> {
                     let space_before = self.space_precedes(self.i);
                     self.i += 1;
                     if render {
+                        // Same `\0`–`\9` report as the fast path above, for
+                        // tokens that fell through the tabbing/kern arms
+                        // (e.g. inside `tabbing`, where the first arm bows
+                        // out). Exactly one of the two arms runs per token.
+                        if tok.control_symbol {
+                            if let Some(digit) = crate::diagnostics::control_symbol_digit(&word)
+                            {
+                                self.diags.push(Diagnostic::undefined_control_symbol(
+                                    digit, tok.span,
+                                ));
+                            }
+                        }
                         para.push(Inline::Text {
                             text: apply_text_ligatures(&word),
                             span: tok.span,
@@ -9424,12 +9451,27 @@ impl P<'_> {
                         });
                     }
                 }
-                TokenKind::Word(text) => content.push(Inline::Text {
-                    text: apply_text_ligatures(text),
-                    span: input.token.span,
-                    style,
-                    space_before,
-                }),
+                TokenKind::Word(text) => {
+                    // Same `\0`–`\9` report for titles, captions and other
+                    // moving arguments built here rather than in the main
+                    // loop. The kern arm above cannot match a digit, so a
+                    // control-symbol digit always reaches this arm exactly
+                    // once.
+                    if input.token.control_symbol {
+                        if let Some(digit) = crate::diagnostics::control_symbol_digit(&text) {
+                            self.diags.push(Diagnostic::undefined_control_symbol(
+                                digit,
+                                input.token.span,
+                            ));
+                        }
+                    }
+                    content.push(Inline::Text {
+                        text: apply_text_ligatures(text),
+                        span: input.token.span,
+                        style,
+                        space_before,
+                    });
+                }
                 TokenKind::LineBreak => content.push(Inline::LineBreak {
                     span: input.token.span,
                     skip_pt: None,
