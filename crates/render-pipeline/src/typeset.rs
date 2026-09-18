@@ -1586,7 +1586,7 @@ impl<'a> Context<'a> {
         let inline_breaks = if display || has_grid || !inline_math_breaks_enabled() {
             Vec::new()
         } else {
-            let glue: Vec<Option<f64>> = segments.iter().map(|(_, em)| *em).collect();
+            let glue: Vec<Option<f64>> = segments.iter().map(|(_, em, _)| *em).collect();
             let penalties = split_penalties(list, &fence, texts);
             inline_break_points(&mut laid.root, &ml_lists, &glue, &penalties, style)
         };
