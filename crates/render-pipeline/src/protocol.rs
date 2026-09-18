@@ -56,9 +56,11 @@ pub const MAX_CLOSURE_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
 
 /// Total bytes one request's closure may read off disk, across every `.tex`
 /// and `.bib` file discovery opens. A `\includegraphics` target is charged
-/// its `stat` size here too (so a fan-out of huge images still hits a
-/// bound), but never its bytes -- GH-INCLUDEGRAPHICS-READ: nothing this walk
-/// returns needs them (see `Walk::load`'s doc comment).
+/// nothing here at all -- GH-INCLUDEGRAPHICS-READ: nothing this walk returns
+/// needs its bytes (see `Walk::load`'s doc comment), so its `stat` size is
+/// not weighed and its existence is not counted. One `stat` per figure is
+/// microseconds against the millisecond reads this budget exists to bound,
+/// so a fan-out of huge images needs no bound of its own here.
 /// `MAX_CLOSURE_DOCUMENTS * MAX_CLOSURE_DOCUMENT_BYTES` is 2 GiB, which is not
 /// a bound worth having on a per-keystroke path; 32 MiB is four times the
 /// largest single document and far above any real LaTeX source closure, so
@@ -120,11 +122,15 @@ enum Load {
     Overlay(String),
     /// A `Tex` or `Bibliography` file's text, read off disk and charged.
     Disk(String),
-    /// A `Graphic` target: [`Walk::exists`]/[`Walk::escapes`] already proved
-    /// it is there and inside the root, and its `stat` size is charged, but
-    /// its bytes are never opened. See [`discover_closure`]'s doc comment for
-    /// what actually still needs them.
+    /// A `Graphic` target: [`Walk::exists`] plus the symlink-refusal check
+    /// already proved it is there and no symlink leads to it, and its `stat`
+    /// size is charged nothing -- its bytes are never opened. See
+    /// [`discover_closure`]'s doc comment for what actually still needs them.
     DiskGraphic,
+    /// The candidate itself or an ancestor component below the root is a
+    /// symlink: refused without following it, carrying the diagnostic detail
+    /// (the part after `\command{argument}: `). Never read, never charged.
+    SymlinkRefused(String),
     /// `stat`/`read` raced with an external deletion between `exists()` and
     /// here. A genuine miss is the compiler's own "not found" to raise, not
     /// this walk's (matches `MissingFile`, dropped in [`closure_from_disk`]).
@@ -148,14 +154,21 @@ enum Load {
 ///
 /// This mirrors `vendor/project-files`'s `Discovery` (`ProjectGraph::
 /// discover_with`) exactly for what render-pipeline needs -- same candidate
-/// order (`candidates`), same `exists`/symlink-escape tests, same
-/// cycle/diamond/depth rules -- built from that crate's own public path, scan
-/// and graph-kind primitives, rather than calling `discover_with` itself,
-/// because `discover_with` cannot be asked to stop at a `Graphic` target's
-/// `stat`: its `Discovery::load` always does `fs::read` of the whole file
-/// before noticing the kind it just loaded has no use for the bytes
-/// (GH-INCLUDEGRAPHICS-READ). `vendor/project-files` is pinned and read-only
-/// to this lane, so the walk moves here instead of the fix moving there --
+/// order (`candidates`), same `exists` test, same cycle/diamond/depth
+/// rules -- built from that crate's own public path, scan and graph-kind
+/// primitives, rather than calling `discover_with` itself, because
+/// `discover_with` cannot be asked to stop at a `Graphic` target's `stat`:
+/// its `Discovery::load` always does `fs::read` of the whole file before
+/// noticing the kind it just loaded has no use for the bytes
+/// (GH-INCLUDEGRAPHICS-READ). Containment differs from the vendored copy on
+/// purpose: the vendored `escapes_via_symlink` only refuses a symlink whose
+/// canonical target leaves the root, while the live `project-files` crate
+/// refuses every symlink, wherever it points -- so this walk implements
+/// that live refuse-all-symlinks rule locally (`symlink_metadata` on the
+/// target and each ancestor component, with the live diagnostic text),
+/// rather than inheriting the weaker vendored check. `vendor/project-files`
+/// is pinned and read-only to this lane, so the walk moves here instead of
+/// the fix moving there --
 /// and, as a consequence, a `.tex` file is now read only once (discovery used
 /// to cost it here, then `discover_with` reread it from warm page cache to
 /// forward it; there is only one read now, by the same walk that costs it).
@@ -173,13 +186,12 @@ enum Load {
 /// discovery was just also, redundantly, reading the same bytes and
 /// throwing them away.
 ///
-/// Containment is enforced here directly (`exists`/`escapes`), not
-/// re-verified afterward by a second, vendor-owned walk: this **is** the
-/// walk now, built from the same public path-normalization and
-/// symlink-refusing primitives `Discovery` itself is built from. GH-735's
-/// adversarial tests (an escaping `..`, an escaping symlink, an oversized or
-/// over-fanned-out closure) exercise this end to end, through
-/// [`handle_line`], and must keep passing.
+/// Containment is enforced here directly (the refuse-all-symlinks check in
+/// `Walk::load`, backstopped by `exists`/`escapes`), not re-verified
+/// afterward by a second, vendor-owned walk: this **is** the walk now.
+/// GH-735's adversarial tests (an escaping `..`, an escaping symlink, an
+/// oversized or over-fanned-out closure) plus the in-root-symlink refusal
+/// exercise this end to end, through [`handle_line`], and must keep passing.
 fn discover_closure(
     root: &std::path::Path,
     entry: &flashtex_project_files::ProjectPath,
@@ -200,12 +212,61 @@ fn discover_closure(
     }
 
     impl Walk<'_> {
-        /// `Discovery::exists`.
+        /// `Discovery::exists`, except a symlink counts as existing (wherever
+        /// it points, even nowhere): it must reach [`Walk::load`]'s refusal
+        /// with the matching diagnostic, not be reported as a missing file.
+        /// Directories never count, exactly as before.
         fn exists(&self, path: &ProjectPath) -> bool {
-            self.overlay.get(path).is_some() || path.to_os_path(self.root).is_file()
+            if self.overlay.get(path).is_some() {
+                return true;
+            }
+            match std::fs::symlink_metadata(path.to_os_path(self.root)) {
+                Ok(m) => {
+                    let file_type = m.file_type();
+                    file_type.is_file() || file_type.is_symlink()
+                }
+                Err(_) => false,
+            }
         }
 
-        /// `Discovery::escapes_via_symlink`.
+        /// The live `project-files` refuse-all-symlinks rule, checked
+        /// locally: the candidate itself or any ancestor component below the
+        /// root must not be a symlink, wherever it points -- even inside the
+        /// root. `symlink_metadata` never follows the final component, so a
+        /// symlink is refused without reading through it. Returns the
+        /// diagnostic detail (the part after `\command{argument}: `) with the
+        /// live crate's wording. Overlaid paths never touch disk and are
+        /// exempt, matching `escapes`.
+        fn symlink_refusal(&self, path: &ProjectPath) -> Option<String> {
+            if self.overlay.get(path).is_some() {
+                return None;
+            }
+            let target = path.as_str();
+            let mut prefix = String::new();
+            for component in target.split('/') {
+                if !prefix.is_empty() {
+                    prefix.push('/');
+                }
+                prefix.push_str(component);
+                match std::fs::symlink_metadata(self.root.join(&prefix)) {
+                    Ok(m) if m.file_type().is_symlink() => {
+                        return Some(if prefix == target {
+                            format!("{path} is a symbolic link; project files are read without following symlinks")
+                        } else {
+                            format!("{path}: `{prefix}` is a symbolic link; project files are read without following symlinks")
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+
+        /// Backstop for a non-symlink path whose canonical target still
+        /// leaves the root. Unreachable for normalized project-relative paths
+        /// (normalization rejects `..` and absolute paths, and every symlink
+        /// component is refused above), but kept so a path that escapes by
+        /// any other means is still refused rather than read.
         fn escapes(&self, path: &ProjectPath) -> bool {
             if self.overlay.get(path).is_some() {
                 return false;
@@ -216,9 +277,15 @@ fn discover_closure(
             }
         }
 
-        /// Charges and loads `path` of `kind`. A `Graphic` target stops at
-        /// `metadata()` -- a `stat`, never an `open` -- once its size has
-        /// been charged; every other kind is read in full, exactly as
+        /// Refuses, then charges and loads `path` of `kind`. The symlink
+        /// check runs here -- immediately before any `metadata`/`read` of the
+        /// same path, rather than in a separate earlier pass -- so a symlink
+        /// swapped in after `exists()` is still refused instead of followed;
+        /// only the microseconds between this check and the read below remain
+        /// (a fully atomic check-and-read would need the fd-rooted primitive
+        /// live `project-files` reads through). A `Graphic` target stops at
+        /// `metadata()` -- a `stat`, never an `open` -- and is charged
+        /// nothing; every other kind is read in full and charged, exactly as
         /// discovery has always done for a `.tex`/`.bib` candidate, because
         /// their content decides what happens next.
         fn load(&mut self, path: &ProjectPath, kind: FileKind) -> Load {
@@ -227,17 +294,20 @@ fn discover_closure(
                     return Load::Overlay(text.to_string());
                 }
             }
+            if let Some(detail) = self.symlink_refusal(path) {
+                return Load::SymlinkRefused(detail);
+            }
             let os = path.to_os_path(self.root);
             let len = match std::fs::metadata(&os) {
                 Ok(m) => m.len(),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Load::Missing,
                 Err(e) => return Load::Error(e.to_string()),
             };
+            if kind == FileKind::Graphic {
+                return Load::DiskGraphic; // stat only; nothing read, nothing to charge
+            }
             if !self.budget.charge(path.as_str(), len) {
                 return Load::BudgetExceeded;
-            }
-            if kind == FileKind::Graphic {
-                return Load::DiskGraphic;
             }
             match std::fs::read_to_string(&os) {
                 Ok(text) => Load::Disk(text),
@@ -300,6 +370,18 @@ fn discover_closure(
             let Some(target) = cands.iter().find(|c| self.exists(c)).cloned() else {
                 return; // no candidate exists; the compiler's "not found" to raise.
             };
+            // Refuse-all-symlinks first, so an escaping symlink is reported
+            // as a symlink (the live wording) rather than as an escape.
+            if let Some(detail) = self.symlink_refusal(&target) {
+                self.diag(
+                    from,
+                    r,
+                    true,
+                    format!("\\{}{{{}}}: {detail}", r.kind.command(), r.argument),
+                    "path_escapes_root",
+                );
+                return;
+            }
             if self.escapes(&target) {
                 self.diag(
                     from,
@@ -331,6 +413,19 @@ fn discover_closure(
                 Load::Disk(text) => self.visit_loaded(&target, kind, text, true),
                 Load::DiskGraphic => {
                     self.seen.insert(target);
+                }
+                // A symlink swapped in between the pre-check above and this
+                // read: refused here with the same per-site diagnostic (and,
+                // like the pre-check, without marking it seen, so a second
+                // reference site still gets its own diagnostic).
+                Load::SymlinkRefused(detail) => {
+                    self.diag(
+                        from,
+                        r,
+                        true,
+                        format!("\\{}{{{}}}: {detail}", r.kind.command(), r.argument),
+                        "path_escapes_root",
+                    );
                 }
                 Load::Missing | Load::BudgetExceeded => {}
                 Load::NotUtf8 => {
@@ -368,7 +463,7 @@ fn discover_closure(
         // `handle_line_inner` guarantees the entry is always one of the
         // request's own documents, so this always loads from the overlay in
         // practice; a disk fallback that fails simply finds nothing further.
-        Load::DiskGraphic | Load::Missing | Load::NotUtf8 | Load::Error(_) | Load::BudgetExceeded => {}
+        Load::DiskGraphic | Load::SymlinkRefused(_) | Load::Missing | Load::NotUtf8 | Load::Error(_) | Load::BudgetExceeded => {}
     }
     match walk.budget.exceeded {
         Some(reason) => Err(reason),

@@ -36,11 +36,16 @@ impl Project {
 
     /// Writes `text` at project-relative `path`, creating parent directories.
     fn write(&self, path: &str, text: &str) -> &Project {
+        self.write_bytes(path, text.as_bytes())
+    }
+
+    /// Writes raw `bytes` at project-relative `path`, creating parent directories.
+    fn write_bytes(&self, path: &str, bytes: &[u8]) -> &Project {
         let full = self.0.join(path);
         if let Some(parent) = full.parent() {
             std::fs::create_dir_all(parent).expect("stage a subdirectory");
         }
-        std::fs::write(&full, text).expect("write a project file");
+        std::fs::write(&full, bytes).expect("write a project file");
         self
     }
 
@@ -257,8 +262,10 @@ fn an_include_escaping_the_root_with_dot_dot_is_refused() {
 }
 
 /// A symlink pointing outside the root is refused by the same walk — the
-/// project's deliberate refuse-all-symlinks discovery, not a second rule
-/// written here.
+/// project's deliberate refuse-all-symlinks discovery (every symlink refused,
+/// wherever it points, never followed), implemented here as a local
+/// `symlink_metadata` check on the target and each ancestor component, with
+/// the live `project-files` diagnostic text.
 #[cfg(unix)]
 #[test]
 fn an_include_reached_through_a_symlink_out_of_the_root_is_refused() {
@@ -273,7 +280,39 @@ fn an_include_reached_through_a_symlink_out_of_the_root_is_refused() {
 
     let reply = reply(Some(&root), &[("main.tex", &main_tex(body))]);
     assert!(!page_text(&reply).iter().any(|t| t == "SECRETCONTENT"), "a symlink out of the root must never be read: {reply}");
-    assert!(reply.contains("symlink outside the project root"), "and the refusal must be explained: {reply}");
+    assert!(
+        reply.contains("is a symbolic link; project files are read without following symlinks"),
+        "and the refusal must be explained: {reply}"
+    );
+}
+
+/// A symlink pointing at a file *inside* the root is refused all the same:
+/// the walk never follows a symlink, so the link target's content must not
+/// be read or forwarded, even though nothing leaves the root.
+#[cfg(unix)]
+#[test]
+fn an_include_reached_through_a_symlink_inside_the_root_is_refused() {
+    let project = Project::new("symlink-in-root");
+    project.write("sections/real.tex", "REALCONTENT");
+    std::os::unix::fs::symlink(project.path().join("sections/real.tex"), project.path().join("sections/link.tex"))
+        .expect("stage the in-root symlink");
+    let body = "\\input{sections/link}\\input{sections/intro}";
+    project.write("sections/intro.tex", "INTROCONTENT");
+    project.write("main.tex", &main_tex(body));
+
+    let reply = reply(Some(project.path()), &[("main.tex", &main_tex(body))]);
+    assert!(
+        !page_text(&reply).iter().any(|t| t == "REALCONTENT"),
+        "a symlink must never be followed, even inside the root: {reply}"
+    );
+    assert!(
+        reply.contains("is a symbolic link; project files are read without following symlinks"),
+        "and the refusal must be explained: {reply}"
+    );
+    assert!(
+        page_text(&reply).iter().any(|t| t == "INTROCONTENT"),
+        "and the rest of the closure still compiles: {reply}"
+    );
 }
 
 /// A genuinely missing include keeps the compiler's diagnostic, with the
@@ -436,7 +475,10 @@ fn the_budget_never_reads_what_containment_refuses() {
 
     let reply = reply(Some(&root), &[("main.tex", &main_tex(body))]);
     assert!(!page_text(&reply).iter().any(|t| t == "SECRETCONTENT"), "never read: {reply}");
-    assert!(reply.contains("symlink outside the project root"), "refused as an escape: {reply}");
+    assert!(
+        reply.contains("is a symbolic link; project files are read without following symlinks"),
+        "refused as a symlink: {reply}"
+    );
     assert!(
         !reply.contains("closure_budget_exceeded"),
         "an escaping path costs the budget nothing — it is refused, not weighed: {reply}"
@@ -475,4 +517,56 @@ fn documents_the_request_sent_are_not_charged_to_the_read_budget() {
     let text = page_text(&reply);
     assert!(text.iter().any(|t| t == "OVERLAID0"), "and the sent buffers win: {text:?}");
     assert!(!text.iter().any(|t| t.starts_with("ONDISK")), "never the file on disk: {text:?}");
+}
+
+// -- GH-INCLUDEGRAPHICS-READ: figures cost a `stat`, never budget ---------
+
+/// A graphic larger than `MAX_CLOSURE_DOCUMENT_BYTES` must not spend the
+/// read budget: discovery only `stat`s it, so an unrelated figure cannot
+/// discard the whole `\input` closure.
+#[test]
+fn a_graphic_over_the_document_byte_limit_does_not_discard_the_closure() {
+    let project = Project::new("big-graphic");
+    let body = "\\includegraphics{figures/big}\\input{sections/intro}";
+    project.write("main.tex", &main_tex(body)).write("sections/intro.tex", "INTROCONTENT");
+    // An ordinary plot/photo size: over the 8 MiB single-document limit.
+    let big = vec![0u8; 12 * 1024 * 1024];
+    assert!(big.len() > flashtex_render_pipeline::protocol::MAX_CLOSURE_DOCUMENT_BYTES);
+    project.write_bytes("figures/big.png", &big);
+
+    let reply = reply(Some(project.path()), &[("main.tex", &main_tex(body))]);
+    assert!(
+        !reply.contains("closure_budget_exceeded"),
+        "a big figure is never read, so it cannot spend the read budget: {reply}"
+    );
+    assert!(
+        page_text(&reply).iter().any(|t| t == "INTROCONTENT"),
+        "and the rest of the closure still compiles: {reply}"
+    );
+}
+
+/// More graphics than `MAX_CLOSURE_DOCUMENTS` must not spend the read
+/// budget either: none of their bytes are ever read, so their count cannot
+/// discard the whole `\input` closure.
+#[test]
+fn hundreds_of_graphics_do_not_discard_the_closure() {
+    let project = Project::new("many-graphics");
+    let mut body = String::new();
+    for i in 0..300 {
+        body.push_str(&format!("\\includegraphics{{figures/f{i}}}"));
+        project.write(&format!("figures/f{i}.png"), "PNG?");
+    }
+    body.push_str("\\input{sections/intro}");
+    project.write("main.tex", &main_tex(&body)).write("sections/intro.tex", "INTROCONTENT");
+    assert!(300 > flashtex_render_pipeline::protocol::MAX_CLOSURE_DOCUMENTS);
+
+    let reply = reply(Some(project.path()), &[("main.tex", &main_tex(&body))]);
+    assert!(
+        !reply.contains("closure_budget_exceeded"),
+        "figures are never read, so their count cannot spend the read budget: {reply}"
+    );
+    assert!(
+        page_text(&reply).iter().any(|t| t == "INTROCONTENT"),
+        "and the rest of the closure still compiles: {reply}"
+    );
 }
