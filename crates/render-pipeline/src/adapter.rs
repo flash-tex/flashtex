@@ -3636,6 +3636,25 @@ fn split_at_page_breaks<'p>(
                     Some(ItemLabel::Explicit { content, .. }) if label.is_some() && !content.is_empty() => Some(content.as_slice()),
                     _ => None,
                 };
+                // GH-924: an item whose text holds a box argument (`\uline`,
+                // `\sout`, `\underline`, `\colorbox`) reaches here with its
+                // label text but no `item`: the compiler's `box_inlines`
+                // restores `pending_item_label` around the nested parse but
+                // not `pending_item`, which the box's own paragraph flush
+                // consumes. A labelled itemize item never has any other
+                // `item` than article's `\labelitem<i>` symbol, so read it
+                // back from the text: otherwise the bullet is set as a
+                // Latin Modern Roman word (0.7778 em) instead of `tcrm`'s
+                // 0.5 em symbol, 2.77 bp too far left.
+                let (label_symbol, label_bold) = match item {
+                    Some(ItemLabel::Symbol { bold, .. }) => (true, *bold),
+                    None if env == "itemize" => match label.as_ref().map(|(text, _)| text.as_str()) {
+                        Some("•" | "∗" | "⋅") => (true, false),
+                        Some("–") => (true, true),
+                        _ => (false, false),
+                    },
+                    _ => (false, false),
+                };
                 list = Some(ListGeom {
                     level: *level,
                     margins,
@@ -3643,8 +3662,8 @@ fn split_at_page_breaks<'p>(
                     label_items: None,
                     description: env == "description",
                     nextline: list_style_nextline(&index.setlist, env, begin_keys),
-                    label_symbol: matches!(item, Some(ItemLabel::Symbol { .. })),
-                    label_bold: matches!(item, Some(ItemLabel::Symbol { bold: true, .. })),
+                    label_symbol,
+                    label_bold,
                     llap: matches!(env, "itemize" | "enumerate"),
                     parsep: seps.parsep_skip,
                     // `\NAT@bibsetup`: `\itemindent-\leftmargin`, so the
