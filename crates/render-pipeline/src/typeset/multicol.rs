@@ -1868,6 +1868,7 @@ fn rec_span(ctx: &Context, r: usize) -> Option<Span> {
         BoxRec::Leader { .. } => None,
         BoxRec::Underline(u) => Some(u.span),
         BoxRec::TextScript(t) => Some(t.span),
+        BoxRec::Graphic(g) => Some(g.span),
     }
 }
 

@@ -225,6 +225,13 @@ pub enum Item {
     Marginpar { text: Vec<Item>, span: Span },
     /// `\colorbox`/`\fcolorbox` (compiler `Inline::ColorBox`).
     ColorBox(Box<ColorBoxItem>),
+    /// `\includegraphics[options]{path}` in running text (compiler
+    /// `Inline::Graphic`): one box on the line, sized by `typeset::Context::
+    /// graphic_box` from the file and the graphicx keys (`width=.6\textwidth`
+    /// against the enclosing box's `\textwidth`). The keys are kept as
+    /// written because their lengths resolve where the box is set (a beamer
+    /// column's `\textwidth` is the column's).
+    Graphic { options: String, path: String, span: Span },
     /// LaTeX's `\llap{...}`: `items` set at their natural width and then
     /// pulled back by exactly that width, so the line's reference point does
     /// not move and the material hangs in the left margin.
@@ -9440,9 +9447,18 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
             // transform box keeps its content set untransformed, so
             // nothing is silently dropped.
             Inline::Graphic(g) => {
-                prev_end = Some(g.span.end);
-                prev_span = Some(g.span);
+                // `\includegraphics`: `\leavevmode` then one `\hbox`, like a
+                // tabular or a `\colorbox`.
+                let span = g.span;
+                let gap = space_between(prev_end, prev_span, span, None, after_control_word);
+                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
+                items.push(Item::Graphic { options: g.options.clone(), path: g.path.clone(), span });
+                prev_end = Some(span.end);
+                prev_span = Some(span);
+                factor = 1000;
             }
             Inline::Transform(t) => {
                 let span = t.span;

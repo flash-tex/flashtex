@@ -223,7 +223,7 @@ pub fn render_windowed(
     // tree is read, not in `documents` order.
     let reading_order = adapter::reading_order(&texts, &paths, entry_index);
     let (float_numbers, float_label_values) = floats::number(&float_envs, &texts, &reading_order, float_chapters);
-    let mut image_cache = floats::ImageCache::default();
+    let image_cache = std::cell::RefCell::new(floats::ImageCache::default());
     // The compiler does not know `tikzpicture`: it reports the environment
     // and every TikZ command inside it, and the pipeline typesets the
     // picture itself (`adapter` / `tikz`). Those compiler diagnostics are
@@ -322,7 +322,7 @@ pub fn render_windowed(
             )
         }));
         let (mut float_specs, float_diagnostics) = if any_floats {
-            floats::prepare(&float_envs, &float_numbers, documents, entry_index, &texts, &doc.style, options, &labels, &mut image_cache)
+            floats::prepare(&float_envs, &float_numbers, documents, entry_index, &texts, &doc.style, options, &labels, &mut image_cache.borrow_mut())
         } else {
             (Vec::new(), Vec::new())
         };
@@ -339,6 +339,9 @@ pub fn render_windowed(
         // A float body's `tikzpicture` is compiled from the unmasked bytes
         // (`typeset::Context::sources`, #884).
         ctx.set_sources(&sources);
+        // `\includegraphics` in running text reads its file the way a float's
+        // graphic does (issue #944, Tier 3).
+        ctx.set_images(options, &image_cache);
         ctx.set_math_colors(doc.math_colors.clone());
         ctx.set_reading_order(labels.reading_order.clone());
         typeset::multicol::attach(&mut ctx, &multicol_scans);

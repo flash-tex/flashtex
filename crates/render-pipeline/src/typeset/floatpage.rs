@@ -125,7 +125,7 @@ pub enum Placeholder {
 }
 
 /// TeX's default `\vrule`/`\hrule` thickness (`\p@` / 2.5), in TeX points.
-const RULE_PT: f64 = 0.4;
+pub(crate) const RULE_PT: f64 = 0.4;
 
 #[derive(Clone, Copy)]
 struct Skip {
@@ -851,6 +851,7 @@ fn block_source(ctx: &Context, b: &BuiltBlock, items: impl Iterator<Item = usize
             BoxRec::Leader { .. } => None,
             BoxRec::Underline(u) => Some(u.span),
             BoxRec::TextScript(t) => Some(t.span),
+            BoxRec::Graphic(g) => Some(g.span),
         })
         .collect()
 }
