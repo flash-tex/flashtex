@@ -335,6 +335,8 @@
     {"name": "theoremstyle", "mode": "text", "origin": "text_dispatch", "arguments": "{style}", "description": "selects the amsthm style for following \\newtheorem", "renders": true},
     {"name": "so", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)", "renders": true},
     {"name": "hl", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)", "renders": true},
+    {"name": "text", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "amsmath text in text mode: outside math simply \\mbox, the argument as one unbreakable box in the current style", "renders": true},
+    {"name": "boxed", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "amsmath box in text mode: the argument with a drawn frame (\\fbox with math inside)", "renders": true},
     {"name": "long", "mode": "text", "origin": "expansion", "arguments": "", "description": "prefix: the following definition accepts \\par in arguments", "renders": true},
     {"name": "protected", "mode": "text", "origin": "expansion", "arguments": "", "description": "e-TeX prefix: the following macro is not expanded inside \\edef-like contexts", "renders": true},
     {"name": "providecommand", "mode": "text", "origin": "expansion", "arguments": "{\\name}[n][default]{body}", "description": "defines the macro only when \\name is undefined", "renders": true},
