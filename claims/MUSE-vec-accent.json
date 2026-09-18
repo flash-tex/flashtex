@@ -5,7 +5,7 @@
   "machine": "mac-m5pro-dq222",
   "note": "#892 visual sweep: \\vec arrow glyph-width left of letter, Commander priority-1 item",
   "started_utc": "2026-09-18T08:24:38Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "MUSE-vec-accent",
-  "updated_utc": "2026-09-18T08:24:38Z"
+  "updated_utc": "2026-09-18T09:27:26Z"
 }
