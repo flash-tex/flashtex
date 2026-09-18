@@ -524,12 +524,22 @@ pub enum Block {
     TocEntry(Box<crate::toc::TocEntry>),
     /// A `tikzpicture`, found from the source bytes (the compiler reports the
     /// environment as unknown and sets its body as text, which is dropped
-    /// here): its bounding box as one box on a line of its own, flush left
-    /// (centred inside `center`).
+    /// here): its bounding box as one box on a line of its own, indented
+    /// like the paragraph it starts (flush left inside a list item, centred
+    /// inside `center`).
     Picture {
         document: flashtex_compiler::DocumentId,
         picture: flashtex_vector_graphics::tikz::PictureSource,
         centered: bool,
+        /// The paragraph's `\parindent` decision for a picture that opens
+        /// its paragraph (see [`UnitKind::Picture`]): the box starts
+        /// `\parindent` in, exactly where an ordinary paragraph's first
+        /// line would. `false` after `\noindent`, a heading, `\end{...}`,
+        /// in a caption, a styled environment or a list item.
+        indent: bool,
+        /// A compiler `ListItem` picture's `\list` geometry: the box starts
+        /// at the hanging indent, where the item's text starts.
+        list: Option<ListGeom>,
         eject_before: bool,
         vspace_before: f64,
     },
@@ -1954,11 +1964,35 @@ pub fn adapt_cached(
                 after_heading = false;
                 prev_para_end = None;
             }
-            UnitKind::Picture { document, picture, centered } => {
+            UnitKind::Picture {
+                document,
+                picture,
+                centered,
+                initial,
+                after_env,
+                theorem_item,
+                list,
+                caption,
+                styled,
+            } => {
+                let span = Span::in_document(document, picture.start, picture.end);
+                // `\noindent` right before the picture's first material, the
+                // same check paragraphs use below: `\noindent` is entry-only,
+                // as there. A mid-paragraph picture never consumes it: the
+                // paragraph's own unit comes first and takes it.
+                let noindent = initial
+                    && noindent_at.take().is_some_and(|end| {
+                        span.document == entry_doc && source.get(end..span.start).is_some_and(|gap| gap.trim().is_empty())
+                    });
+                // The paragraph path's indent decision verbatim (a picture
+                // carries no run-in head, so that arm is empty).
+                let indent = initial && !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent;
                 blocks.push(Block::Picture {
                     document,
                     picture,
                     centered,
+                    indent,
+                    list,
                     eject_before,
                     vspace_before,
                 });
@@ -3232,6 +3266,27 @@ enum UnitKind<'p> {
         document: flashtex_compiler::DocumentId,
         picture: flashtex_vector_graphics::tikz::PictureSource,
         centered: bool,
+        /// The picture opens its paragraph (every inline before its
+        /// segment is paragraph-leading whitespace): only then does the
+        /// paragraph's `\parindent` apply. A picture after text in the
+        /// same paragraph is set on a line of its own at the margin, as
+        /// before.
+        initial: bool,
+        /// LaTeX's `\@endpe`: a picture that follows `\end{center}`/...
+        /// without a blank line continues in the same paragraph,
+        /// unindented -- the same signal paragraphs carry.
+        after_env: bool,
+        /// The picture is the `\item` of an amsthm theorem-like
+        /// environment: not indented, as a paragraph would not be.
+        theorem_item: bool,
+        /// A compiler `ListItem` picture: its `\list` geometry, for the
+        /// hanging indent instead of `\parindent`.
+        list: Option<ListGeom>,
+        /// The picture is a figure caption: never indented.
+        caption: bool,
+        /// A compiler `Styled` picture (`center`, `quote`, ...): never
+        /// `\parindent`-indented (`center` is centred instead).
+        styled: Option<ParaStyle>,
     },
 }
 
@@ -3695,11 +3750,32 @@ fn split_at_page_breaks<'p>(
                     if let Some(k) = pic {
                         let document = inline_span(&inlines[seg_start]).document;
                         if emitted_pictures.insert((document.0, k)) {
+                            // Paragraph-initial means no material before the
+                            // picture in this block: TeX skips whitespace at
+                            // a paragraph's start, so whitespace-only runs
+                            // (source indentation of `\begin{tikzpicture}`)
+                            // do not count. Anything else before it -- text,
+                            // a `\label`, glue -- means the picture continues
+                            // the paragraph and takes no `\parindent`.
+                            let initial = inlines[..seg_start]
+                                .iter()
+                                .all(|i| matches!(i, Inline::Text { text, .. } if text.trim().is_empty()));
+                            // `run_in` stays with the paragraph unit: a
+                            // `\paragraph` head is body text ahead of the
+                            // picture, which carries it.
                             units.push(Unit {
                                 kind: UnitKind::Picture {
                                     document,
                                     picture: pictures[document.0][k].clone(),
                                     centered,
+                                    initial,
+                                    after_env,
+                                    // Only the environment's first unit
+                                    // carries the `\item`, as for paragraphs.
+                                    theorem_item: std::mem::take(&mut theorem_item),
+                                    list: list.clone(),
+                                    caption,
+                                    styled,
                                 },
                                 eject_before: eject,
                                 vspace_before: std::mem::take(&mut vspace_before),
