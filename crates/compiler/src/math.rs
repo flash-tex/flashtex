@@ -2281,7 +2281,18 @@ impl MathParser<'_> {
                     ams_symbol: None,
                 }
             }
-            "cfrac" => self.command_atom("frac".into(), span),
+            // amsmath.sty 912: `\cfrac[c]{num}{den}` is
+            // `{\displaystyle\frac{\strut...num...}{den}}`, i.e. size-wise
+            // exactly `\dfrac` (`\genfrac{}{}{}0`): a display-style fraction,
+            // so every nesting level stays full height instead of shrinking
+            // like `\frac`. Only the size is modelled here: the `\strut`s,
+            // the `[l]`/`[r]` alignment fills and the trailing
+            // `\kern-\nulldelimiterspace` only centre the parts.
+            "cfrac" => {
+                let numerator = self.required_group(&name, span);
+                let denominator = self.required_group(&name, span);
+                gen_fraction(numerator, denominator, /*binom=*/ false, Some(MathStyle::Display), span)
+            }
             "frac" => {
                 let numerator = self.required_group("frac", span);
                 let denominator = self.required_group("frac", span);
@@ -6754,6 +6765,63 @@ mod unbraced_argument_tests {
                 }
                 other => panic!("{source}: expected a generalized fraction, got {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn cfrac_is_a_display_style_genfraction_and_frac_is_untouched() {
+        // Issue #894: `\cfrac` used to alias plain `\frac`, so a continued
+        // fraction shrank at every level. amsmath.sty 912 makes it
+        // `{\displaystyle\frac{...}{...}}`: a display-style fraction, exactly
+        // `\dfrac`'s shape (`\genfrac{}{}{}0`).
+        for (source, expected) in [
+            (r"\cfrac{a}{b}", Some(MathStyle::Display)),
+            (r"\dfrac{a}{b}", Some(MathStyle::Display)),
+            (r"\tfrac{a}{b}", Some(MathStyle::Text)),
+        ] {
+            let mut diagnostics = Vec::new();
+            let list = parse_tokens(
+                &crate::lexer::tokenize(source),
+                MathPackages::KERNEL,
+                &mut diagnostics,
+            );
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "{source}: {:?}", list.atoms);
+            match &list.atoms[0].nucleus {
+                Nucleus::GenFraction {
+                    numerator,
+                    denominator,
+                    thickness_pt,
+                    left,
+                    right,
+                    style,
+                } => {
+                    assert_eq!(numerator.atoms[0].nucleus, Nucleus::Symbol("a".into()), "{source}");
+                    assert_eq!(denominator.atoms[0].nucleus, Nucleus::Symbol("b".into()), "{source}");
+                    assert_eq!(*thickness_pt, None, "{source}: a fraction rule, not a binom");
+                    assert_eq!((left.as_str(), right.as_str()), ("", ""), "{source}: no delimiters");
+                    assert_eq!(*style, expected, "{source}");
+                }
+                other => panic!("{source}: expected a generalized fraction, got {other:?}"),
+            }
+        }
+        // Plain `\frac` keeps its own nucleus: same groups, no style.
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(
+            &crate::lexer::tokenize(r"\frac{a}{b}"),
+            MathPackages::KERNEL,
+            &mut diagnostics,
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        match &list.atoms[0].nucleus {
+            Nucleus::Fraction {
+                numerator,
+                denominator,
+            } => {
+                assert_eq!(numerator.atoms[0].nucleus, Nucleus::Symbol("a".into()));
+                assert_eq!(denominator.atoms[0].nucleus, Nucleus::Symbol("b".into()));
+            }
+            other => panic!("expected a plain fraction, got {other:?}"),
         }
     }
 
