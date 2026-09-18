@@ -12150,6 +12150,10 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // (math.rs Frame::Cancel/BCancel/XCancel); \cancelto is diagnosed
         // where used. cancel takes no package options.
         "cancel" => options.is_empty(),
+        // `\enquote` is implemented; csquotes' style/language options
+        // (`style=`, `autostyle`, ...) are not modelled, so only a bare load
+        // is silent.
+        "csquotes" => options.is_empty(),
         _ => false,
     }
 }
