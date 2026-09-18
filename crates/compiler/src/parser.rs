@@ -3638,6 +3638,14 @@ impl P<'_> {
             // the macro call is `}`, another command, or `, . ! ? ; : ' /`.
             "xspace" => self.xspace(span),
             "rule" => self.text_rule(span, para),
+                        // amsmath `\text{...}` in text mode is `\mbox{...}` (amsmath.dtx
+            // `\ifmmode...\else\expandafter\mbox\fi`): one unbreakable box
+            // in the current style, with no diagnostic.
+            "text" => self.text_command(span, para),
+            // amsmath `\boxed{...}` in text mode (`\fbox` with math inside):
+            // the argument boxed with a drawn frame, like the `frame`
+            // environment.
+            "boxed" => self.text_boxed(span, para),
             "frac" | "sqrt" => self.text_mode_math_command(name, span),
             other => self.unsupported(other, span),
         }
@@ -4736,6 +4744,82 @@ impl P<'_> {
             .with_help(format!("wrap it in math mode: \\(\\{name}{{...}}\\)"))
             .with_label(span, "this command", true),
         );
+    }
+
+    /// amsmath `\text{...}` in text mode: outside math it is simply
+    /// `\mbox{...}` (amsmath.dtx). The argument is parsed as a
+    /// restricted-horizontal-mode box in the current style — the same
+    /// `box_inlines` every other box argument uses — and spliced into
+    /// the paragraph, so declarations like `\Large` stay inside the box
+    /// exactly as in `\mbox`. The content already reached the page
+    /// through `unsupported`'s prose fallthrough; this arm retires the
+    /// false `unsupported_feature` error without moving a glyph. Like
+    /// `\leavevmode`, it starts the paragraph.
+    ///
+    /// Argument-edge spaces follow the engine's other box arguments
+    /// (`\textbf`, plain groups): a leading space survives on the first
+    /// inline's `space_before`; a trailing one is dropped (pdflatex
+    /// keeps it — a pre-existing engine limitation, not introduced
+    /// here).
+    fn text_command(&mut self, span: Span, para: &mut Vec<Inline>) {
+        // `\DeclareTextFontCommand`-style `\leavevmode\bgroup`.
+        self.paragraph_started = true;
+        let site_space = self.space_precedes(self.i - 1);
+        let (tokens, _) = self.required_group("text", span);
+        // An argument-edge space is real interword glue inside the box
+        // (pdflatex sets `Before\text{ after}After.` as "Before
+        // afterAfter."), so only without one does the splice convention
+        // apply: the first piece keeps the command site's `space_before`
+        // (cf. soul's `\so` below), and a missing one invents no gap
+        // (`Before\text{X}After.` stays gapless, like `{X}`).
+        let leading_space = matches!(
+            tokens.first().map(|input| &input.token.kind),
+            Some(TokenKind::Space)
+        );
+        let mut content = self.box_inlines(tokens);
+        if !leading_space {
+            match content.first_mut() {
+                Some(Inline::Text {
+                    space_before: first,
+                    ..
+                }) => *first = site_space,
+                Some(Inline::Math {
+                    space_before: first,
+                    ..
+                }) => *first = site_space,
+                Some(Inline::ColorBox(boxed)) => boxed.space_before = site_space,
+                Some(Inline::Underline(underlined)) => underlined.space_before = site_space,
+                _ => {}
+            }
+        }
+        para.extend(content);
+    }
+
+    /// amsmath `\boxed{...}` in text mode (`\fbox` with math inside):
+    /// the argument as one bordered box, exactly like the `frame`
+    /// environment — `Inline::ColorBox` with the page colour as fill
+    /// and the current colour as frame — so the rule the old
+    /// `unsupported` path silently dropped now reaches the page. An
+    /// argument that already holds `$...$` keeps its formula (the
+    /// corpus case); a bare one is boxed as text, like `\fbox`. Full
+    /// amsmath fidelity (`\displaystyle` forced around a bare
+    /// argument) is follow-up work, not this slice.
+    fn text_boxed(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        // An `\fbox` starts the paragraph, like `\mbox` above.
+        self.paragraph_started = true;
+        let (tokens, argument_span) = self.required_group("boxed", span);
+        let content = self.box_inlines(tokens);
+        para.push(Inline::ColorBox(Box::new(ColorBox {
+            fill: self.page_color.unwrap_or(DeviceColor::WHITE),
+            frame: Some(self.style.color.unwrap_or(DeviceColor::BLACK)),
+            content,
+            fboxsep_pt: self.fboxsep_pt,
+            fboxrule_pt: self.fboxrule_pt,
+            span: span.merge(argument_span),
+            space_before,
+            highlight: None,
+        })));
     }
 
     /// `\xspace` (xspace.sty) in running text: a word space unless the token
