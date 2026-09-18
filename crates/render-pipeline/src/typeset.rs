@@ -3139,7 +3139,15 @@ impl<'a> Context<'a> {
             .unwrap_or(self.style.baselineskip_pt);
         let (mut list, mut recs, labels, mut skips) = self.hlist(items, size, TextStyle::default(), style);
         if !list.iter().any(|i| matches!(i, pl::Item::Box(_))) {
-            return None;
+            // An empty-body list item (`\item` with no text before the next
+            // `\item` or `\end`) still produces a block: the bullet/label is
+            // content -- pdflatex typesets it on its own line.  The label box
+            // is prepended below, so skip the early exit when one will be
+            // added.
+            let has_label = list_geom.is_some_and(|g| g.label.is_some()) && starts_paragraph;
+            if !has_label {
+                return None;
+            }
         }
         let trailing_skip = drop_trailing_break(&mut list, &mut recs, &mut skips, style);
         // `\item`: the label box `\hskip-\labelwidth \hskip-\labelsep

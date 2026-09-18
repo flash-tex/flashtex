@@ -2151,7 +2151,15 @@ pub fn adapt_cached(
                     .iter()
                     .all(|p| matches!(p, ParaPart::Lines(items) if items.iter().all(|i| matches!(i, Item::Label { .. }))));
                 if parts.is_empty() {
-                    continue;
+                    // An empty-body list item (`\item` with no text) still
+                    // carries its bullet/label -- pdflatex typesets the
+                    // marker on a line of its own.  Give it an empty Lines
+                    // part so the typesetter can prepend the label box.
+                    if list.is_some() {
+                        parts.push(ParaPart::Lines(Vec::new()));
+                    } else {
+                        continue;
+                    }
                 }
                 // `\longtable` begins with `\par` and `\endlongtable`
                 // ends with one, so the compiler always gives it a
@@ -2230,7 +2238,7 @@ pub fn adapt_cached(
                         continue;
                     }
                 }
-                if only_labels {
+                if only_labels && list.is_none() {
                     continue;
                 }
                 prev_para_end = inlines.iter().map(inline_span).last();
@@ -3387,9 +3395,18 @@ fn split_at_page_breaks<'p>(
             }
             _ => {}
         }
+        // An empty-body `\item` has no inlines: its `\item` command's own
+        // span is the block's material, so the gap bookkeeping below (and
+        // `prev_end` for the block after it) is measured from there rather
+        // than from before the list, which would make the *next* item read
+        // the list's `\begin` and open it a second time.
+        let item_label_span = match block {
+            CBlock::ListItem { label: Some((_, span)), .. } => Some(*span),
+            _ => None,
+        };
         let first = match block {
             CBlock::Heading { number_span, .. } => Some(*number_span),
-            _ => inlines_of(block).iter().map(inline_span).next(),
+            _ => inlines_of(block).iter().map(inline_span).next().or(item_label_span),
         };
         let mut eject = std::mem::take(&mut pending_eject) || matches!((prev_end, first), (Some(p), Some(f)) if gap_has_page_break(texts, p, f));
         let mut vspace_before = std::mem::take(&mut pending_vspace);
@@ -3874,7 +3891,7 @@ fn split_at_page_breaks<'p>(
             #[cfg(feature = "compiler-node-surface")]
             CBlock::Tabbing { .. } => unreachable!("lowered by lower_blocks"),
         }
-        if let Some(last) = inlines_of(block).iter().map(inline_span).last() {
+        if let Some(last) = inlines_of(block).iter().map(inline_span).last().or(item_label_span) {
             prev_end = Some(last);
         }
     }
