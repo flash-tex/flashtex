@@ -119,6 +119,35 @@ fn renewenvironment_replaces_the_environment_expansion() {
     assert_eq!(texts(&output), ["Yo", "Bob", "?"], "{:?}", texts(&output));
 }
 
+#[test]
+fn newenvironment_declarations_stay_scoped_to_the_body() {
+    // pdflatex oracle (TeX Live 2026): `\begin` opens a group, so the
+    // begin-code's declarations stop at `\end`. Before the engine
+    // emitted the group's opening marker, `\large`/`\bfseries` fell
+    // through and "After." stayed large and bold.
+    let output = compile(concat!(
+        "\\documentclass{article}\n",
+        "\\newenvironment{bigtext}{\\large}{}\n",
+        "\\newenvironment{note}{\\bfseries}{}\n",
+        "\\begin{document}\n",
+        "Before.\n",
+        "\\begin{bigtext}\nBig body here.\n\\end{bigtext}\n",
+        "\\begin{note}\nBold body here.\n\\end{note}\n",
+        "After.\n",
+        "\\end{document}\n",
+    ));
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert!(item(&output, "Big").font_size_pt > item(&output, "Before.").font_size_pt);
+    assert_eq!(item(&output, "Bold").font, Font::TimesBold);
+    assert_eq!(item(&output, "After.").font, Font::TimesRoman);
+    assert_eq!(
+        item(&output, "After.").font_size_pt,
+        item(&output, "Before.").font_size_pt,
+        "{:?}",
+        texts(&output)
+    );
+}
+
 /// Parser-level coverage for the family switch: the run asserts below read the parsed `TextStyle`s; only the font asserts check the compiled output.
 #[test]
 fn rmfamily_restores_the_roman_family() {

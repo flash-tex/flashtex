@@ -1077,9 +1077,16 @@ impl<'d> Converter<'d> {
             TexKind::ControlSequence(name) => {
                 let real_text = at.real.map_or("", |real| conv.source_text(real));
                 match name.as_str() {
-                    // Grouping bookkeeping and `\relax` produce nothing for the
-                    // parser (LaTeX's environment groups included).
-                    "begingroup" | "endgroup" | "relax" => {}
+                    // `\relax` produces nothing for the parser. Group
+                    // boundaries open and close a parser group, so
+                    // declarations stay scoped to it: `{...}` already
+                    // arrives as braces, and `\begingroup`/`\endgroup`
+                    // — literal ones as well as the pair the engine emits
+                    // around every `\begin{...}`/`\end{...}` — arrive
+                    // here.
+                    "relax" => {}
+                    "begingroup" => conv.push(TokenKind::LBrace, at),
+                    "endgroup" => conv.push(TokenKind::RBrace, at),
                     "flashtexsetlength" => conv.push(TokenKind::Command("setlength".to_string()), at),
                     "flashtexaddtolength" => {
                         conv.push(TokenKind::Command("addtolength".to_string()), at)
