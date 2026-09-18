@@ -139,6 +139,11 @@ pub struct Expansion {
 /// and "Illegal unit of measure" on whatever follows it; real enumitem
 /// stores the keyval text unexecuted, where the bare register is already a
 /// complete dimension. The star is preserved for the parser.
+///
+/// `\hspace`/`\vspace` route through host primitives the same way (the
+/// star and `{<dimen>}` are absorbed, a bare or factored register is
+/// spliced to its current value text); real LaTeX absorbs those arguments
+/// unexpanded as macro parameters.
 pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
@@ -148,6 +153,8 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\setlength#1#2{\\ifdefined#1#1 #2\\relax\\else\\flashtexsetlength{#1}{#2}\\fi}%
 \\def\\addtolength#1#2{\\ifdefined#1\\advance#1 #2\\relax\\else\\flashtexaddtolength{#1}{#2}\\fi}%
 \\def\\setlist{\\flashtexsetlist}%
+\\def\\hspace{\\flashtexhspace}%
+\\def\\vspace{\\flashtexvspace}%
 \\long\\def\\flashtexdeclaremathop#1#2#3{\\newcommand#2{\\operatorname#1{#3}}}%
 \\expandafter\\def\\expandafter\\DeclareMathOperator\\expandafter{\\csname @ifstar\\endcsname{\\flashtexdeclaremathop*}{\\flashtexdeclaremathop{}}}%
 \\def\\arraystretch{1}%
@@ -782,6 +789,8 @@ fn configure(engine: &mut Engine) {
     engine.declare_host_assignment("flashtexsetlength");
     engine.declare_host_assignment("flashtexaddtolength");
     engine.declare_host_command("flashtexsetlistdone");
+    engine.declare_host_command("flashtexhspacedone");
+    engine.declare_host_command("flashtexvspacedone");
 }
 
 /// The expansion engine's `em`/`ex` come from the text font its tracked font
@@ -1040,6 +1049,9 @@ impl<'d> Converter<'d> {
                     }
                     // `do_flashtex_setlist`'s absorbed-and-spliced command.
                     "flashtexsetlistdone" => conv.push(TokenKind::Command("setlist".to_string()), at),
+                    // `do_flashtex_space`'s absorbed-and-spliced commands.
+                    "flashtexhspacedone" => conv.push(TokenKind::Command("hspace".to_string()), at),
+                    "flashtexvspacedone" => conv.push(TokenKind::Command("vspace".to_string()), at),
                     "flashtexbegintabular" | "flashtexbegintabularstar" | "flashtexbeginarray" => {
                         let env = match name.as_str() {
                             "flashtexbegintabular" => "tabular",

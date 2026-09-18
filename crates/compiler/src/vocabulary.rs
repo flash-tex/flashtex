@@ -43,7 +43,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "index", "glossary", "bibliography", "bibliographystyle", "bibitem", "cite", "nocite",
     // Boxes, spacing, breaking and page control.
     "centering", "raggedright", "raggedleft", "linespread", "vfill", "hss", "vss", "vbox",
-    "makebox", "fbox", "framebox", "parbox", "raisebox", "rule", "newline",
+    "makebox", "fbox", "framebox", "parbox", "raisebox", "llap", "rlap", "rule", "newline",
     "clearpage", "cleardoublepage", "thispagestyle", "twocolumn", "onecolumn",
     "indent", "phantom", "hphantom", "vphantom", "smash", "strut", "addvspace",
     "vskip", "kern", "enspace", "thinspace", "negthinspace", "hline", "cline",
