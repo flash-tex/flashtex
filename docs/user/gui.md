@@ -475,6 +475,7 @@ you trust.
 | Vim keybindings (also View › Toggle Vim Keybindings, ⌃⌘V) | off |
 | Preview follows the caret while you edit | on |
 | Capture conversion: provider (None / xAI), key in Keychain, model | xAI (no-op until a key is added) |
+| Check for updates automatically (once a day after launch; only speaks up when a newer release exists) | off |
 | Restore Defaults | |
 
 ## Keyboard shortcuts
@@ -482,10 +483,12 @@ you trust.
 | Shortcut | Action |
 |---|---|
 | ⌘, | Settings / Preferences |
+| FlashTeX › Check for Updates… | Installed vs newest GitHub release with its notes; *Download* opens the release page (nothing is installed by the app) |
 | ⌘O | Open LaTeX file… (becomes the entry document) |
 | ⌘⌥N | New Project… (folder, name, template; opens `main.tex` with its include tree) |
 | ⌘N | New File… (rooted `.tex` name; optional `\input` at the caret; also the sidebar's + and the project row's context menu) |
 | ⌘S / ⌘⇧S | Save / Save As… |
+| ⌘⌥R | Show in Finder (the active document; sidebar rows have *Reveal in Finder*, the tree's empty space *Reveal Project in Finder*) |
 | ⌘⇧P | Command palette |
 | ⌘B | Compile now |
 | ⌘⇧R | Attach render pipeline (Latin Modern) — the current engine |

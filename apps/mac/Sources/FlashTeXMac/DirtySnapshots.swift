@@ -175,12 +175,39 @@ extension ShellModel {
         return snapshot
     }
 
+    /// What became of one document's text when a discard tried to keep it.
+    enum DiscardPreservation: Equatable {
+        /// Written to the store.
+        case kept(DirtySnapshot)
+        /// Identical to the file: nothing to keep (a stale snapshot was removed).
+        case clean
+        /// Differs from the file and the store could not keep it (why).
+        case failed(String)
+    }
+
     /// `preserveDirtyText` for a discard that drops the only in-memory copy:
-    /// false when the text differs from the file and the store could not keep
-    /// it (`dirtySnapshots.lastError` says why), so the caller must not
-    /// replace the buffer (#806).
-    func preserveDiscardedText(_ text: String, at url: URL, reason: String) -> Bool {
-        preserveDirtyText(text, at: url, reason: reason) != nil || Self.diskText(at: url)?.sameBytes(as: text) == true
+    /// `.failed` when the text differs from the file and the store could not
+    /// keep it, so the caller must not replace the buffer (#806).
+    func preserveDiscardedText(_ text: String, at url: URL, reason: String) -> DiscardPreservation {
+        if let s = preserveDirtyText(text, at: url, reason: reason) { return .kept(s) }
+        if Self.diskText(at: url)?.sameBytes(as: text) == true { return .clean }
+        return .failed(dirtySnapshots.lastError ?? "snapshot store not writable")
+    }
+
+    /// One file touched by a discard attempt: the snapshot it had before, if any.
+    struct SnapshotRollback { var url: URL; var previous: DirtySnapshot? }
+
+    /// Undoes what an aborted discard wrote (#811): a discard that keeps A's
+    /// snapshot and then fails on B replaces nothing, so A's new snapshot
+    /// would be a stale "discarded" copy offered for text that was never
+    /// discarded. Each file gets back the snapshot it had before, or none.
+    func rollBackSnapshots(_ touched: [SnapshotRollback]) {
+        for t in touched.reversed() {
+            if let previous = t.previous { dirtySnapshots.write(previous) } else { dirtySnapshots.remove(for: t.url) }
+        }
+        if !touched.isEmpty {
+            FlashTeXLog.write("snapshots: withdrew \(touched.count) snapshot(s) written by an aborted discard")
+        }
     }
 
     /// Keeps every dirty member durably (entry: its URL; members: their

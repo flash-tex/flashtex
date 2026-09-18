@@ -85,11 +85,13 @@ enum CommandPaletteModel {
         switch command {
         case .editorPreferences:
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        case .checkForUpdates: UpdatePresenter.shared.checkForUpdatesInteractive() // UpdateChecker.swift
         case .openLaTeXFile: model.openTexPanel()
         case .newProject: model.scaffold.presentNewProject() // ProjectScaffoldViews.swift
         case .newFile: model.scaffold.presentNewFile()
         case .save: model.saveTexInteractive()
         case .saveAs: _ = model.saveTexAs()
+        case .showInFinder: model.showActiveDocumentInFinder() // RevealInFinder.swift
         case .openFixture: model.openFixturePanel()
         case .reloadFixture: model.reloadFixture()
         case .attachBuiltCompiler: _ = model.attachDiscoveredWorker()

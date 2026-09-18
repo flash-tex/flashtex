@@ -92,6 +92,18 @@ On the Mac:
    the Bonjour name, the listening **port** and the Mac id (fp). *Copy code*
    copies the six digits.
 
+**Rolling codes.** Each code is valid for 120 seconds; that bound is part of
+the threat model and is never extended. If a code expires while the window is
+still showing it and no companion has connected (for instance, iPadOS's
+"Allow Paste" prompt sat unanswered), the Mac replaces it in place: a fresh
+code, QR and key appear under the same attempt, the new code is announced to
+VoiceOver, and the countdown shows "code 2 of 6". A companion that pastes the
+old code afterwards is refused; use the code on screen. This repeats at most
+five times (six codes, 12 minutes), after which the attempt ends with the
+usual "code expired" message and *Show New Code* starts over. A code that
+expires while FlashTeX is not running is not replaced: after relaunch the
+window reports it expired and offers a new code.
+
 On the iPad, open **Mac link**:
 
 - **Find nearby Macs** — the Macs advertising on this network are listed by

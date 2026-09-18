@@ -603,7 +603,7 @@ final class AutosaveTests: XCTestCase {
         XCTAssertNotNil(model.files.conflict)
         let review = try XCTUnwrap(model.prepareReload())
         XCTAssertTrue(review.bufferDirty)
-        XCTAssertTrue(review.summary.contains("Unsaved edits to chapter.tex are discarded too (recoverable via File > Restore Unsaved Snapshot…)"), review.summary)
+        XCTAssertTrue(review.summary.contains("Unsaved edits to chapter.tex are discarded too (recoverable via File > Restore Unsaved Snapshot… once they are open again)"), review.summary)
         XCTAssertTrue(review.summary.contains("Edit > Restore Discarded Buffer"), review.summary)
         let outcome = await model.confirmReload(review, dirty: .discard)
         XCTAssertEqual(outcome, .opened)
@@ -664,6 +664,127 @@ final class AutosaveTests: XCTestCase {
         XCTAssertTrue(model.project.isDirty("chapter.tex"))
         XCTAssertEqual(model.documents.first(where: { $0.path == "chapter.tex" })?.text, "Chapter, edited.\n")
         XCTAssertEqual(try disk(chapter), "Chapter.\n")
+    }
+
+    // MARK: #811 — residual discard-recovery edge cases
+
+    /// The discard hint names the reopen step: File > Restore Unsaved
+    /// Snapshot… is enabled only once the member is open again under its
+    /// project, so a hint that just names the menu item points at a disabled
+    /// item.
+    func testDiscardHintSaysTheMemberMustBeOpenAgainFirst() async throws {
+        let (model, _, _, next) = try await projectWithInactiveDirtyMember("811-hint")
+        XCTAssertEqual(model.discardRecoveryRoutes, "chapter.tex via File > Restore Unsaved Snapshot… once main.tex and chapter.tex are open again")
+        XCTAssertEqual(model.openTex(at: next, dirty: .discard), .opened)
+        XCTAssertTrue(model.captureNote?.contains("once main.tex and chapter.tex are open again") == true, model.captureNote ?? "")
+        XCTAssertTrue(model.files.offeredSnapshots.isEmpty, "the new project offers nothing; the item is disabled until the old member is reopened")
+    }
+
+    /// A fixture that fails the layout-capability check (a rule item with
+    /// `rules-v1` not accepted) is rejected before the discard is consumed:
+    /// nothing replaced, no recoverable slot, no member snapshot.
+    func testFixtureRejectedByTheCapabilityCheckRecordsNoDiscard() async throws {
+        let (model, main, chapter, _) = try await projectWithInactiveDirtyMember("811-capability")
+        model.updateActiveText("\\input{chapter}\n% entry edit\n")
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: CaretSyncTests.resultURL)) as? [String: Any])
+        var payload = try XCTUnwrap(json["payload"] as? [String: Any])
+        var pages = try XCTUnwrap(payload["pages"] as? [[String: Any]])
+        var items = try XCTUnwrap(pages[0]["items"] as? [[String: Any]])
+        items.append(["kind": "rule", "x_pt": 72, "y_pt": 100, "width_pt": 200, "height_pt": 0.4])
+        pages[0]["items"] = items
+        payload["pages"] = pages
+        payload["layout_capabilities"] = nil // declares nothing, so the rule item is a violation
+        json["payload"] = payload
+        let bad = main.deletingLastPathComponent().appendingPathComponent("rule-without-capability-result.json")
+        try JSONSerialization.data(withJSONObject: json).write(to: bad)
+
+        XCTAssertEqual(model.loadFixturesReplacingProject(request: nil, result: bad, dirty: .discard), .readFailed)
+        let error = model.loadError ?? ""
+        XCTAssertTrue(error.hasPrefix("Rejected rule-without-capability-result.json:"), error)
+        XCTAssertTrue(error.contains("rules-v1"), error)
+        XCTAssertNotEqual(model.previewSource, .fixture)
+        XCTAssertEqual(model.project.entryPath, "main.tex", "nothing replaced")
+        XCTAssertNil(model.recoverableBuffer, "a rejected fixture recorded a discard")
+        XCTAssertNil(model.dirtySnapshots.read(for: main))
+        XCTAssertNil(model.dirtySnapshots.read(for: chapter))
+        XCTAssertTrue(model.project.isDirty("main.tex"))
+        XCTAssertTrue(model.project.isDirty("chapter.tex"))
+    }
+
+    /// Two dirty members: chapter.tex's snapshot is written, other.tex's
+    /// write fails. Nothing is replaced, so chapter.tex's snapshot is
+    /// withdrawn again — it gets back the snapshot it had before (an earlier
+    /// session's), or none — instead of staying as a stale "discarded" copy.
+    func testPartialSnapshotFailureRollsBackTheMembersAlreadyKept() async throws {
+        let (model, main, chapter, next) = try await projectWithInactiveDirtyMember("811-partial")
+        let other = main.deletingLastPathComponent().appendingPathComponent("other.tex")
+        try "Other.\n".write(to: other, atomically: true, encoding: .utf8)
+        let openedOther = await model.project.openDocument("other.tex")
+        XCTAssertEqual(openedOther, .opened(path: "other.tex"))
+        model.project.switchDocument(to: "other.tex")
+        model.updateActiveText("Other, edited.\n")
+        model.project.switchDocument(to: "main.tex")
+        XCTAssertEqual(model.documents.map(\.path), ["main.tex", "chapter.tex", "other.tex"], "chapter.tex is kept first")
+        // other.tex's snapshot path is a directory: its atomic write fails while the store itself is writable.
+        try FileManager.default.createDirectory(at: model.dirtySnapshots.fileURL(for: other), withIntermediateDirectories: true)
+
+        // (1) chapter.tex had a snapshot from before: the aborted discard puts it back.
+        let earlier = DirtySnapshot(file: chapter.path, text: "Chapter, from an earlier session.\n", diskSha256: nil,
+                                    savedAt: Date(timeIntervalSince1970: 1), reason: "earlier session")
+        XCTAssertNotNil(model.dirtySnapshots.write(earlier))
+        XCTAssertEqual(model.openTex(at: next, dirty: .discard), .saveFailed)
+        XCTAssertEqual(model.project.entryPath, "main.tex", "nothing replaced")
+        XCTAssertEqual(model.dirtySnapshots.read(for: chapter), earlier, "chapter.tex's new snapshot was rolled back to the earlier one")
+        XCTAssertNil(model.dirtySnapshots.read(for: other))
+        let note = model.captureNote ?? ""
+        XCTAssertTrue(note.contains("other.tex"), note)
+        XCTAssertTrue(note.contains("nothing replaced"), note)
+        XCTAssertTrue(note.contains("chapter.tex were withdrawn"), note)
+
+        // (2) chapter.tex had no snapshot: the aborted discard leaves none.
+        model.dirtySnapshots.remove(for: chapter)
+        XCTAssertEqual(model.openTex(at: next, dirty: .discard), .saveFailed)
+        XCTAssertNil(model.dirtySnapshots.read(for: chapter), "chapter.tex's snapshot from the aborted discard is stale: it was never discarded")
+        XCTAssertNil(model.recoverableBuffer)
+        XCTAssertTrue(model.project.isDirty("chapter.tex"))
+        XCTAssertTrue(model.project.isDirty("other.tex"))
+        XCTAssertEqual(model.documents.first(where: { $0.path == "chapter.tex" })?.text, "Chapter, edited.\n")
+        XCTAssertEqual(model.documents.first(where: { $0.path == "other.tex" })?.text, "Other, edited.\n")
+
+        // (3) A later edit-and-save of chapter.tex is not shadowed by a stale offer.
+        model.project.switchDocument(to: "chapter.tex")
+        model.updateActiveText("Chapter, edited again.\n")
+        guard case .saved = model.project.saveDocumentNow("chapter.tex") else { return XCTFail("save failed: \(model.project.status)") }
+        XCTAssertNil(model.dirtySnapshots.read(for: chapter))
+        XCTAssertFalse(model.files.offeredSnapshots.contains { $0.file == chapter.path })
+    }
+
+    /// A buffer with no file has no project folder, so no snapshot can be
+    /// written: the hint must not promise File > Restore Unsaved Snapshot….
+    func testDiscardingABufferWithNoFileDoesNotPromiseASnapshot() throws {
+        EditorPreferences.shared.autosave = false
+        let dir = try tempDir("811-no-folder")
+        let next = dir.appendingPathComponent("next.tex")
+        try "Next.\n".write(to: next, atomically: true, encoding: .utf8)
+        let model = ShellModel()
+        model.files.policy = .disabled(reason: "test: no helper binary")
+        privateSnapshots(model, dir)
+        model.updateActiveText("typed into the seeded buffer\n")
+        model.updateActiveText("typed into the seeded buffer, more\n")
+        XCTAssertTrue(model.hasUnsavedDocuments)
+        XCTAssertNil(model.project.projectRoot)
+
+        let routes = model.discardRecoveryRoutes
+        XCTAssertFalse(routes.contains("Restore Unsaved Snapshot"), routes)
+        XCTAssertTrue(routes.contains("Restore Discarded Buffer"), routes)
+        XCTAssertTrue(routes.contains("no snapshot is kept"), routes)
+
+        XCTAssertEqual(model.openTex(at: next, dirty: .discard), .opened)
+        let note = model.captureNote ?? ""
+        XCTAssertFalse(note.contains("Restore Unsaved Snapshot"), note)
+        XCTAssertTrue(note.contains("no snapshot is kept"), note)
+        XCTAssertEqual(model.recoverableBuffer?.text, "typed into the seeded buffer, more\n", "the session slot still has it")
+        XCTAssertEqual(model.dirtySnapshots.all(), [], "nothing to key a snapshot by")
     }
 
     // MARK: #789 — member save conflicts are recorded per path

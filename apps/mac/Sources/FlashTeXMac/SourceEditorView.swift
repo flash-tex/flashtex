@@ -41,6 +41,9 @@ struct SourceEditorView: NSViewRepresentable {
     var projectIndexMetadata: Completion.Metadata?
     /// Project document paths for `\input{`/`\include{` completion (Completion.swift).
     var projectFiles: [String] = []
+    /// The rooted project directory whose image files `\includegraphics{`
+    /// completes; read when the list is requested, not per keystroke.
+    var graphicsRoot: () -> URL? = { nil }
     var onCaretChange: (Int) -> Void = { _ in }
     var onSelectionChange: (NSRange) -> Void = { _ in }
     var onEditApplied: (ShellModel.PendingEdit, String) -> Void = { _, _ in }
@@ -128,6 +131,7 @@ struct SourceEditorView: NSViewRepresentable {
         context.coordinator.spelling.attach(tv) // LaTeX-aware spell checking (LaTeXSpellCheck.swift)
         context.coordinator.installIntelligence(on: scroll, lineNumbers: showLineNumbers)
         (tv as? CompletingTextView)?.installFolding() // EditorFolding.swift: TextKit-1 glyph hiding
+        (tv as? CompletingTextView)?.recentlyUsed = .shared // what was accepted in one document ranks first in every document
         (tv as? CompletingTextView)?.vim.exCommandHandler = { [weak coordinator = context.coordinator] in coordinator?.parent.onExCommand($0) } // VimMode.swift
         return scroll
     }
@@ -148,6 +152,9 @@ struct SourceEditorView: NSViewRepresentable {
             if completing.editorRevision != editorRevision { completing.editorRevision = editorRevision }
         }
         if let completing = tv as? CompletingTextView, completing.projectFiles != projectFiles { completing.projectFiles = projectFiles }
+        (tv as? CompletingTextView)?.graphicsRoot = graphicsRoot
+        // The other open documents' macros complete as declared (Completion.declaredCommands); read when the list is requested.
+        (tv as? CompletingTextView)?.otherDocuments = { [hoverContext] in hoverContext().otherDocuments.map(\.text) }
         if let m = projectIndexMetadata { _ = (tv as? CompletingTextView)?.accept(projectIndex: m) }
         if let edit = pendingEdit, edit.token != co.appliedEditToken {
             // While marked text exists the storage is ahead of the model by the
@@ -839,10 +846,11 @@ struct SourceEditorView: NSViewRepresentable {
             hover.mathPreview = { [weak self] index in self?.mathPreview(at: index) }
             if let completing = tv as? CompletingTextView {
                 completing.commandClickHandler = { [weak self] index in self?.commandClick(at: index) ?? false }
-                // Math-mode ranking in the completion list (Completion.swift):
-                // answered from the in-sync syntax model, one line's lexing.
+                // Math-mode ranking and filtering in the completion list
+                // (Completion.swift): answered from the in-sync syntax model,
+                // one line's lexing; nil (no model) filters nothing.
                 completing.mathModeAtCaret = { [weak self] index in
-                    guard let self, let text = self.textView?.textStorage?.string as NSString? else { return false }
+                    guard let self, let text = self.textView?.textStorage?.string as NSString? else { return nil }
                     return Completion.isMathMode(in: text, caretUTF16: index,
                                                  highlighter: self.syntax.inSync(with: text) ? self.syntax.highlighter : nil)
                 }

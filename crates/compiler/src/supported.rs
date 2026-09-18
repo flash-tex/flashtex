@@ -195,7 +195,7 @@ fn requires_class(name: &str) -> Option<&'static str> {
 /// the built-in behavior with it. They are implemented commands, so the
 /// diagnostic vocabulary (`crate::vocabulary`) counts them as known.
 pub(crate) const TEXT_EXTRA_ARMS: &[&str] =
-    &["newtheorem", "theoremstyle", "so", "hl", "text", "boxed"];
+    &["newtheorem", "theoremstyle", "so", "hl", "text", "boxed", "enquote"];
 
 /// Canonical commands the expansion pass executes itself (engine primitives
 /// and kernel-prelude macros of `flashtex-tex-expansion`); their effect
@@ -403,6 +403,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("sout", "{...}", "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)"),
     ("so", "{...}", "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)"),
     ("hl", "{...}", "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)"),
+    ("enquote", "{text}", "csquotes: wraps text in typographic quotation marks; nesting alternates double \\u{201c}\\u{201d} and single \\u{2018}\\u{2019} (needs csquotes)"),
     ("textsuperscript", "{...}", "kernel text superscript: argument at \\sf@size raised like a math superscript (single-line)"),
     ("textsubscript", "{...}", "kernel text subscript: argument at \\sf@size lowered like a math subscript (single-line)"),
     ("text", "{...}", "amsmath text in text mode: outside math simply \\mbox, the argument as one unbreakable box in the current style"),
@@ -843,6 +844,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["cancel", "bcancel", "xcancel"],
+        "{body}",
+        "cancel package: diagonal line(s) through the body (forward slash, backward slash, or X)",
+        true,
+    ),
+    (
         &["dashrightarrow", "dasharrow", "dashleftarrow"],
         "",
         "amsfonts dashed arrow: two msam \\dabar@ pieces and a head in one relation",
@@ -1113,6 +1120,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "\\toprule, \\midrule, \\bottomrule, \\cmidrule(trim), \\addlinespace, \\specialrule, \\morecmidrules",
     ),
     (
+        "cancel",
+        "",
+        "\\cancel (forward diagonal), \\bcancel (backward diagonal) and \\xcancel (X) through a math expression; \\cancelto is diagnosed",
+    ),
+    (
         "longtable",
         "",
         "the page-breaking longtable environment: \\endfirsthead, \\endhead, \\endfoot, \\endlastfoot, \\caption, \\kill, \\\\*",
@@ -1186,6 +1198,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "ifthen",
         "",
         "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used",
+    ),
+    (
+        "csquotes",
+        "",
+        "\\enquote: typographic quotation marks, alternating double/single on nesting",
     ),
 ];
 

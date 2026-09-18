@@ -69,19 +69,19 @@ fn real_pipeline_envelope_exports_glyphs_by_original_gid_at_exact_positions() {
     verify::check_structure(&out.bytes).unwrap();
     assert_eq!(
         sha256::hex(&out.bytes),
-        "bedc30983b6ccd486e861b64bf9562d6d5066bb72692cf88603934f1ceefc1db",
+        "683f687f5e537aac9a3c8393ea5f9951726628c15471b67307969fc0976e8b23",
         "the ungrouped v2 fixture must stay byte-identical"
     );
     let content = ops_text(&out.bytes, 5);
-    // 12 TeX pt = 12535902 ticks: the exact decimal, not pdfTeX's 11.9552.
+    // 12 TeX pt = 12535902 ticks: rounded from exact 11.9551677703857421875.
     assert!(
-        content.contains("/F1 11.9551677703857421875 Tf\n"),
+        content.contains("/F1 11.9551678 Tf\n"),
         "{content}"
     );
     // First glyph 'H' (LM GID 62) at origin 75497472 ticks = 72 bp exactly,
     // baseline 88033374 ticks below the top of a 830472192-tick page.
     assert!(
-        content.contains("1 0 0 1 72 708.0448322296142578125 Tm\n(\\000>) Tj\n"),
+        content.contains("1 0 0 1 72 708.0448322 Tm\n(\\000>) Tj\n"),
         "{content}"
     );
     // Every glyph carries its own Tm: 12 TeX pt is 12535902 ticks, which has
@@ -213,8 +213,9 @@ fn hand_built_envelope_joins_by_hmtx_advance_and_converts_rules_and_colour() {
     let content = ops_text(&out.bytes, 5);
     // The second H sits 1005 ticks past e's natural advance (e is 435/1000
     // wide): n = 435 - 1000 * 1005 / 12,500,000 = 434.9196, exactly.
+    // Font size 12,500,000 ticks = 11.920929 bp (rounded from exact 11.920928955078125).
     let expect = format!(
-        "BT\n/F1 11.920928955078125 Tf\n1 0 0 1 72 692 Tm\n[(\\000{h}\\000{e})434.9196(\\000{h})] TJ\nET\n72 {ry} 1.5 0.25 re\nf\nq\n0.5 0 1 rg\n/pgf@ca0.5 gs\nBT\n/F1 11.920928955078125 Tf\n1 0 0 1 72 592 Tm\n(\\000{e}) Tj\nET\nQ\n",
+        "BT\n/F1 11.920929 Tf\n1 0 0 1 72 692 Tm\n[(\\000{h}\\000{e})434.9196(\\000{h})] TJ\nET\n72 {ry} 1.5 0.25 re\nf\nq\n0.5 0 1 rg\n/pgf@ca0.5 gs\nBT\n/F1 11.920929 Tf\n1 0 0 1 72 592 Tm\n(\\000{e}) Tj\nET\nQ\n",
         h = gid_h as u8 as char,
         e = gid_e as u8 as char,
         ry = v2::bp(((792i64 << 20) - (110i64 << 20) - (1 << 18)) as i128).unwrap(),
@@ -378,12 +379,19 @@ fn assert_positions_round_trip(ops: &[Op], doc: &exact::ExactDocument, envelope_
         }
     }
     assert_eq!(positions.len(), expected.len());
+    // Coordinate rounding (#729) introduces up to 5e-8 bp per axis; allow
+    // 1e-5 bp total tolerance (still sub-micrometre).
+    let within_tol = |a: Ratio, b: Ratio| -> bool {
+        let diff = a - b;
+        // |diff| <= 1/100_000: |num| * 100_000 <= |den|
+        diff.num.abs().checked_mul(100_000).is_some_and(|lhs| lhs <= diff.den.abs())
+    };
     for (p, (gid, x, y)) in positions.iter().zip(&expected) {
         assert_eq!(p.code, *gid);
-        assert_eq!(
-            (p.x, p.y),
-            (*x, *y),
-            "glyph {gid} replays to its envelope origin"
+        assert!(
+            within_tol(p.x, *x) && within_tol(p.y, *y),
+            "glyph {gid} replays to its envelope origin\n  got  ({:?}, {:?})\n  want ({x:?}, {y:?})",
+            p.x, p.y
         );
     }
 }
