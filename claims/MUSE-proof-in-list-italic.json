@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-muse-lead-2",
+  "branch": "muse/proof-in-list-italic",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": "#897 visual sweep: proof nested in list loses italic head + most of topsep",
+  "started_utc": "2026-09-18T09:58:30Z",
+  "state": "claimed",
+  "task_id": "MUSE-proof-in-list-italic",
+  "updated_utc": "2026-09-18T09:58:30Z"
+}
