@@ -6,7 +6,7 @@ import Foundation
 /// "Accessibility help" list; the test target checks it against the README.
 public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case editorPreferences
-    case openLaTeXFile, newProject, newFile, save, saveAs, openFixture, reloadFixture
+    case openLaTeXFile, newProject, newFile, save, saveAs, showInFinder, openFixture, reloadFixture
     case attachBuiltCompiler, attachRenderPipeline, attachWorker, compile
     case exportPDF, printDocument, printSource
     case pinInsertionPoint, openCaptureProposal, submitSampleCapture, convertCapture, nearbyCompanion
@@ -74,6 +74,11 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Save As", shortcuts: ["⌘⇧S"], menu: "File",
                          description: "Saves the entry document under a new name.",
                          menuItem: "Save As…")
+        case .showInFinder:
+            return Entry(command: self, title: "Show in Finder", shortcuts: ["⌘⌥R"], menu: "File",
+                         description: "Reveals the active document's file in Finder, selected (also “Reveal in Finder” in a sidebar row's context menu; right-click the project tree's empty space for the project folder itself). Nothing happens for a file that is not on disk.",
+                         requires: "a saved entry document (a project root)",
+                         menuItem: "Show in Finder")
         case .openFixture:
             return Entry(command: self, title: "Open compile result fixture", shortcuts: ["⌘⇧O"], menu: "File",
                          description: "Loads a runtime v1 compile_result JSON into the preview; a sibling -request.json seeds the editor.",

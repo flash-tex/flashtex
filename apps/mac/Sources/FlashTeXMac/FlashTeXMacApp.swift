@@ -239,6 +239,9 @@ struct FlashTeXMacApp: App {
                     .disabled(model.files.offeredSnapshots.isEmpty)
                 Button("Save As…") { model.saveTexAs() }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
+                Button("Show in Finder") { model.showActiveDocumentInFinder() } // RevealInFinder.swift
+                    .keyboardShortcut("r", modifiers: [.command, .option]) // ⌘⇧R is Attach Render Pipeline
+                    .disabled(model.project.projectRoot == nil)
                 Divider()
                 Button("Open Compile Result Fixture…") { model.openFixturePanel() }
                     .keyboardShortcut("o", modifiers: [.command, .shift])

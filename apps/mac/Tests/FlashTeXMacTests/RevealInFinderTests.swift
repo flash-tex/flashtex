@@ -1,10 +1,11 @@
 import XCTest
 @testable import FlashTeXMac
 
-/// "View in Finder" for on-disk project documents (issue #691): availability
+/// "Reveal in Finder" for on-disk project documents (issue #691): availability
 /// (no project root, a refused rooted path, a file gone from disk) and the
 /// resolved target URL, plus that `reveal` only ever calls `NSWorkspace`
-/// through the replaceable hook when there is a real file to show.
+/// through the replaceable hook when there is a real file to show. Also the
+/// project-folder reveal and File > Show in Finder for the active document (#870).
 @MainActor
 final class RevealInFinderTests: XCTestCase {
     private struct TempProject {
@@ -95,5 +96,61 @@ final class RevealInFinderTests: XCTestCase {
         // of a missing-include row (never a real ProjectDocument to begin with).
         XCTAssertFalse(RevealInFinder.reveal(path: "main.tex", root: nil))
         XCTAssertEqual(callCount, 0, "must not crash or silently reach NSWorkspace with nothing to show")
+    }
+
+    // MARK: revealRoot(_:) — the project folder itself (#870)
+
+    func testRevealRootSelectsTheProjectFolderAndRefusesNilOrAMissingRoot() throws {
+        let project = try TempProject()
+        defer { project.remove() }
+        let root = project.root.appendingPathComponent("project").standardizedFileURL
+        var seen: [[URL]] = []
+        let previous = RevealInFinder.activateFileViewerSelecting
+        RevealInFinder.activateFileViewerSelecting = { seen.append($0) }
+        defer { RevealInFinder.activateFileViewerSelecting = previous }
+
+        XCTAssertTrue(RevealInFinder.revealRoot(root))
+        XCTAssertEqual(seen, [[root]])
+        XCTAssertFalse(RevealInFinder.revealRoot(nil), "no project root yet")
+        XCTAssertFalse(RevealInFinder.revealRoot(root.appendingPathComponent("gone")), "a folder that is not on disk")
+        XCTAssertEqual(seen.count, 1)
+    }
+
+    // MARK: File > Show in Finder (⌘⌥R) — the active document
+
+    func testShowActiveDocumentInFinderRevealsTheActiveDocumentNotTheEntry() async throws {
+        let project = try TempProject()
+        defer { project.remove() }
+        let model = ShellModel()
+        model.detachWorker()
+        XCTAssertEqual(model.openTex(at: project.main), .opened)
+        _ = await model.project.openDiscoveredIncludes() // opens chapter.tex
+        var seen: [[URL]] = []
+        let previous = RevealInFinder.activateFileViewerSelecting
+        RevealInFinder.activateFileViewerSelecting = { seen.append($0) }
+        defer { RevealInFinder.activateFileViewerSelecting = previous }
+
+        model.showActiveDocumentInFinder()
+        XCTAssertEqual(seen, [[project.root.appendingPathComponent("project/main.tex").standardizedFileURL]])
+        XCTAssertNil(model.navigationNote)
+
+        model.switchOrNote("chapter.tex")
+        XCTAssertEqual(model.activePath, "chapter.tex")
+        model.showActiveDocumentInFinder()
+        XCTAssertEqual(seen.last, [project.root.appendingPathComponent("project/chapter.tex").standardizedFileURL])
+    }
+
+    func testShowActiveDocumentInFinderNotesInsteadOfSilentlyDoingNothing() {
+        var callCount = 0
+        let previous = RevealInFinder.activateFileViewerSelecting
+        RevealInFinder.activateFileViewerSelecting = { _ in callCount += 1 }
+        defer { RevealInFinder.activateFileViewerSelecting = previous }
+        let model = ShellModel()
+        model.detachWorker()
+        model.replaceProject(entryText: "\\input{chapter}\n") // never saved: no project root
+
+        model.showActiveDocumentInFinder()
+        XCTAssertEqual(callCount, 0)
+        XCTAssertEqual(model.navigationNote, "main.tex is not on disk, so there is nothing to show in Finder.")
     }
 }
