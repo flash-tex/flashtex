@@ -553,13 +553,28 @@ extension ShellModel {
 
     /// Where each dirty document's text goes on a discard (#806): the entry's
     /// buffer to Edit > Restore Discarded Buffer (this session), each member's
-    /// snapshot to File > Restore Unsaved Snapshot….
+    /// snapshot to File > Restore Unsaved Snapshot…. That item is enabled only
+    /// once the member is open again under its project, so the hint says so
+    /// (#811). A buffer with no file (and so no project folder) is kept for
+    /// the session only, and the hint says that too rather than promising a
+    /// snapshot that was never written.
     var discardRecoveryRoutes: String {
         let dirty = project.listing.filter(\.isDirty).map(\.path)
         var routes: [String] = []
-        if dirty.contains(project.entryPath) { routes.append("\(project.entryPath) via Edit > Restore Discarded Buffer (this session)") }
-        let members = dirty.filter { $0 != project.entryPath }
-        if !members.isEmpty { routes.append("\(members.joined(separator: ", ")) via File > Restore Unsaved Snapshot…") }
+        let entry = project.entryPath
+        if dirty.contains(entry) {
+            routes.append("\(entry) via Edit > Restore Discarded Buffer (this session"
+                + (documentURL == nil ? " only: it has no file, so no snapshot is kept)" : ")"))
+        }
+        let members = dirty.filter { $0 != entry }
+        if !members.isEmpty {
+            let names = members.joined(separator: ", ")
+            if project.projectRoot != nil {
+                routes.append("\(names) via File > Restore Unsaved Snapshot… once \(entry) and \(names) are open again")
+            } else {
+                routes.append("\(names) discarded without a snapshot (no project folder)")
+            }
+        }
         return routes.joined(separator: "; ")
     }
 
@@ -603,11 +618,27 @@ extension ShellModel {
     /// A member's snapshot is its only copy once the project is replaced: if
     /// one cannot be written, nothing is kept or replaced and this returns
     /// false with a `captureNote` (#806).
+    /// A failure after earlier members were kept withdraws their snapshots
+    /// again (`rollBackSnapshots`, #811): nothing was discarded, so nothing
+    /// may be offered as discarded later.
     func keepDiscarded(_ discarding: RecoverableBuffer, reason: String, before action: String) -> Bool {
         if let root = project.projectRoot {
+            var touched: [SnapshotRollback] = []
+            var kept: [String] = []
             for doc in documents where doc.path != project.entryPath && project.isDirty(doc.path) {
-                guard preserveDiscardedText(doc.text, at: root.appendingPathComponent(doc.path), reason: reason) else {
-                    captureNote = "Could not keep the unsaved edits of \(doc.path) (\(dirtySnapshots.lastError ?? "snapshot store not writable")); nothing replaced before \(action). The text is still open in the editor."
+                let url = root.appendingPathComponent(doc.path)
+                let previous = dirtySnapshots.read(for: url)
+                switch preserveDiscardedText(doc.text, at: url, reason: reason) {
+                case .kept:
+                    touched.append(.init(url: url, previous: previous))
+                    kept.append(doc.path)
+                case .clean:
+                    touched.append(.init(url: url, previous: previous))
+                case .failed(let why):
+                    rollBackSnapshots(touched)
+                    captureNote = "Could not keep the unsaved edits of \(doc.path) (\(why)); nothing replaced before \(action)"
+                        + (kept.isEmpty ? "" : ", and the snapshots just kept for \(kept.joined(separator: ", ")) were withdrawn")
+                        + ". The text is still open in the editor."
                     return false
                 }
             }
@@ -887,7 +918,7 @@ extension ShellModel {
                 : "directly"
             var edits = entryDirty ? "Your unsaved edits are replaced (recoverable this session via Edit > Restore Discarded Buffer). " : ""
             if !discardedMembers.isEmpty {
-                edits += "Unsaved edits to \(discardedMembers.joined(separator: ", ")) are discarded too (recoverable via File > Restore Unsaved Snapshot…). "
+                edits += "Unsaved edits to \(discardedMembers.joined(separator: ", ")) are discarded too (recoverable via File > Restore Unsaved Snapshot… once they are open again). "
             }
             return "Reload \(name) \(route): \(bytesBefore) → \(bytesAfter) bytes, +\(change.added) / −\(change.removed) lines. \(edits)"
                 + "The reload is pinned to the reviewed snapshot (sha256 \(diskSha256.prefix(12))) and refused if the file changes again."
