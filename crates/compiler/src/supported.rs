@@ -194,14 +194,50 @@ fn requires_class(name: &str) -> Option<&'static str> {
 /// still diagnoses a bare use without `\usepackage{soul}` and implements
 /// the built-in behavior with it. They are implemented commands, so the
 /// diagnostic vocabulary (`crate::vocabulary`) counts them as known.
-pub(crate) const TEXT_EXTRA_ARMS: &[&str] =
-    &["newtheorem", "theoremstyle", "so", "hl", "text", "boxed", "enquote"];
+pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
+    "newtheorem",
+    "theoremstyle",
+    "so",
+    "hl",
+    "text",
+    "boxed",
+    "enquote",
+    // Table rules, spans and colours handled by the tabular row scanner
+    // (`parser::tabular`), not by a `parser::Parser::command` arm: `\hline`,
+    // `\cline` and the booktabs rules at the start of a row, `\multicolumn`,
+    // `\multirow`, `\cellcolor` and `\tabularnewline` inside an entry,
+    // `\rowcolor`, `\arrayrulecolor` and `\doublerulesepcolor` between rows,
+    // `\columncolor` in a `>{}`, and longtable's `\kill` and section ends.
+    // (`\arrayrulecolor` and `\doublerulesepcolor` also have real dispatch
+    // arms, via `parser::BUILT_INS`.) `tests/supported_latex.rs` scans the
+    // row-scanner arms so the two cannot drift.
+    "hline",
+    "cline",
+    "multicolumn",
+    "tabularnewline",
+    "toprule",
+    "midrule",
+    "bottomrule",
+    "cmidrule",
+    "addlinespace",
+    "specialrule",
+    "morecmidrules",
+    "multirow",
+    "rowcolor",
+    "cellcolor",
+    "columncolor",
+    "kill",
+    "endfirsthead",
+    "endhead",
+    "endfoot",
+    "endlastfoot",
+];
 
 /// Canonical commands the expansion pass executes itself (engine primitives
 /// and kernel-prelude macros of `flashtex-tex-expansion`); their effect
 /// reaches the parser only as expanded tokens. `\newcommand`/`\renewcommand`
 /// and `\DeclareMathOperator` keep their parser-inventory entries.
-const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
+pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("long", "", "prefix: the following definition accepts \\par in arguments"),
     ("protected", "", "e-TeX prefix: the following macro is not expanded inside \\edef-like contexts"),
     ("providecommand", "{\\name}[n][default]{body}", "defines the macro only when \\name is undefined"),
@@ -226,6 +262,13 @@ const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("ignorespaces", "", "skips the spaces that follow"),
     ("jobname", "", "expands to texput"),
     ("ifthenelse", "{test}{true}{false}", "the ifthen package's conditional: \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests select one branch at expansion time"),
+    ("arabic", "{counter}", "a counter in arabic numerals"),
+    ("roman", "{counter}", "a counter in lower-case roman numerals"),
+    ("Roman", "{counter}", "a counter in upper-case roman numerals"),
+    ("alph", "{counter}", "a counter as a lower-case letter"),
+    ("arraystretch", "", "row-stretch factor tables read at \\begin{tabular} (1 by default); set with \\renewcommand"),
+    ("newif", "{\\ifname}", "allocates a TeX conditional read with \\footrue and \\foofalse"),
+    ("verb", "|text|", "literal text up to the next delimiter character"),
 ];
 
 /// (name, arguments, description) for every `parser::BUILT_INS` entry that
@@ -259,6 +302,35 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("arrayrulecolor", "[model]{colour}", "colortbl: colour of later table rules"),
     ("doublerulesepcolor", "[model]{colour}", "colortbl: colour of the gap between double rules"),
     ("arraybackslash", "", "array no-op: \\\\ already ends the row inside p, m and b entries"),
+    // Table rules, spans and colours handled by the tabular row scanner
+    // (`parser::tabular`): recognised where TeX allows `\noalign` (at the
+    // start of a row) or inside an entry; a use outside a table is diagnosed.
+    ("hline", "", "table rule across the row, at the start of a row"),
+    ("cline", "{i-j}", "partial rule over columns i to j, at the start of a row"),
+    (
+        "multicolumn",
+        "{n}{spec}{text}",
+        "entry spanning n columns with its own column specification",
+    ),
+    ("tabularnewline", "", "ends the table row"),
+    ("toprule", "[width]", "booktabs rule at the top of the table (needs booktabs)"),
+    ("midrule", "[width]", "booktabs rule between table rows (needs booktabs)"),
+    ("bottomrule", "[width]", "booktabs rule at the bottom of the table (needs booktabs)"),
+    ("cmidrule", "[width](trim){i-j}", "booktabs partial rule over columns i to j (needs booktabs)"),
+    ("addlinespace", "[width]", "booktabs vertical space between rows (needs booktabs)"),
+    ("specialrule", "{width}{above}{below}", "booktabs rule with explicit space around it (needs booktabs)"),
+    ("morecmidrules", "", "booktabs: another \\cmidrule after the previous one (needs booktabs)"),
+    ("multirow", "[vpos]{rows}[bigstruts]{width}[vmove]{text}", "entry spanning rows (needs multirow)"),
+    ("rowcolor", "[model]{spec}", "colortbl: background colour of the next row (needs colortbl)"),
+    ("cellcolor", "[model]{spec}", "colortbl: background colour of the entry (needs colortbl)"),
+    ("columncolor", "[model]{spec}", "colortbl: colour of a column, in >{} (needs colortbl)"),
+    // longtable's sectioning: the heads and feet repeated on later pages and
+    // the killed row, which only contributes its widths (needs longtable).
+    ("kill", "", "longtable: ends the row, which then only contributes its widths (needs longtable)"),
+    ("endfirsthead", "", "longtable: ends the first-page head (needs longtable)"),
+    ("endhead", "", "longtable: ends the repeated head (needs longtable)"),
+    ("endfoot", "", "longtable: ends the repeated foot (needs longtable)"),
+    ("endlastfoot", "", "longtable: ends the last-page foot (needs longtable)"),
     ("newcommand", "{\\name}[n]{body}", "defines a macro with 0-9 arguments; rejects an existing name"),
     ("renewcommand", "{\\name}[n]{body}", "redefines an existing macro"),
     ("DeclareMathOperator", "*{\\name}{text}", "defines \\name as \\operatorname{text}; the starred form takes limits"),
@@ -548,7 +620,7 @@ const SIZE_DECLARATIONS: &[&str] = &[
 
 /// Math `command_atom` arms and list-level switches, grouped by behaviour:
 /// (names, arguments, description, renders).
-const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
+pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
     (&["color"], "[model]{expression}", "colours the rest of the math group", true),
     (&["textcolor"], "[model]{expression}{body}", "math body in a colour", true),
     (
@@ -967,7 +1039,7 @@ const CONTROL_SYMBOLS: &[(&str, Mode, &str)] = &[
 ];
 
 /// Text-level environments with a `parser::Parser::environment` arm.
-const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
+pub(crate) const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     (
         "document",
         "the typeset body; preamble content is not typeset",
@@ -1046,6 +1118,7 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("list", "kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep"),
     ("tabular", "table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \\extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned"),
     ("tabular*", "table of a given width"),
+    ("longtable", "page-breaking table with repeated heads and feet (\\endfirsthead, \\endhead, \\endfoot, \\endlastfoot), \\caption, \\kill rows and \\\\* (needs longtable)"),
     ("verbatim", "literal monospaced lines"),
     ("verbatim*", "literal monospaced lines with visible spaces"),
     ("lstlisting", "literal monospaced lines (basic listings)"),
