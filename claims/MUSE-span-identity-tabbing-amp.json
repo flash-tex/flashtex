@@ -5,7 +5,7 @@
   "machine": "mac-m5pro-dq222",
   "note": "#760 sites 3+4: is_tabbing_control and escaped \\& span-width identity bugs",
   "started_utc": "2026-09-18T10:00:32Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "MUSE-span-identity-tabbing-amp",
-  "updated_utc": "2026-09-18T10:00:32Z"
+  "updated_utc": "2026-09-18T10:22:18Z"
 }
