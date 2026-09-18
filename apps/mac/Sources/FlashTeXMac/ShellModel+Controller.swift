@@ -599,7 +599,7 @@ extension ShellModel {
             let sha = payload["sha256"] as? String ?? SourceDigest.sha256Hex(text)
             savedText = text
             files.conflict = nil
-            captureNote = "Saved \(documentURL.lastPathComponent) through the preview controller (durable r\(durable.revision))"
+            noteSaveConfirmation("Saved \(documentURL.lastPathComponent) through the preview controller (durable r\(durable.revision))", for: documentURL)
             bridgeSourceSaved(url: documentURL, text: text)
             return .saved(sha256: sha)
         case .failure(let e):

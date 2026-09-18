@@ -81,6 +81,11 @@ final class DocumentFilesState {
     private(set) var lateReplies: [String] = []
     private(set) var helperExits = 0
     private(set) var helperRestarts = 0
+    /// Runs on the main actor after a save's *late* reply (receipt, conflict or
+    /// failure) has been reconciled, i.e. once the request that kept
+    /// `helperBusy` true is no longer outstanding. The shell uses it to re-run
+    /// a file-watcher check it had to drop while the save was in flight (#831).
+    @ObservationIgnored var onSaveSettledLate: (@MainActor () -> Void)?
 
     @ObservationIgnored fileprivate var client: ProjectFilesClient?
     @ObservationIgnored private let replyQueue = DispatchQueue(label: "flashtex.project-files.replies")
@@ -306,6 +311,7 @@ final class DocumentFilesState {
                 case .failure(let f):
                     note("late reply for \(name): \(f.text); buffer kept unsaved")
                 }
+                onSaveSettledLate?()
             })
             switch outcome {
             case .reply(.saved(let receipt)):
@@ -1154,7 +1160,7 @@ extension ShellModel {
         guard let url = documentURL else { return nil }
         switch files.diskStatus(url, expectedSha256: baselineSha256) {
         case .failure(let failure):
-            captureNote = "Could not check \(url.lastPathComponent) on disk: \(failure.reason)"
+            noteProbeFailure(url, failure.reason)
             return nil
         case .success(let s):
             applyDiskState(s.state, url: url, sha256: s.sha256, bytes: s.bytes, mtimeUnixMs: s.mtimeUnixMs, viaHelper: files.usesHelper)
@@ -1173,7 +1179,7 @@ extension ShellModel {
         guard let url = documentURL else { return nil }
         guard controllerRoutesFiles(for: url) else { return checkDiskStatus() }
         guard let status = await controllerFileStatus(path: activePath) else {
-            captureNote = "Could not check \(url.lastPathComponent) on disk: the preview controller did not answer."
+            noteProbeFailure(url, "the preview controller did not answer.")
             return nil
         }
         let state: ProjectFilesV1.DiskState
@@ -1186,18 +1192,47 @@ extension ShellModel {
             // client exposes only `disk_sha256`, so fall back to the durable hash.
             if diskSha == nil, status.state == "matches_source" { diskSha = controllerState.durable[activePath]?.sha256 }
             guard let sha = diskSha else {
-                captureNote = "Could not check \(url.lastPathComponent) on disk: file_status carried no hash."
+                noteProbeFailure(url, "file_status carried no hash.")
                 return nil
             }
             state = baselineSha256 == nil ? .created : (sha == baselineSha256 ? .unchanged : .modified)
         default:
-            captureNote = "Could not check \(url.lastPathComponent) on disk: \(status.reason ?? status.state)"
+            noteProbeFailure(url, status.reason ?? status.state)
             return nil
         }
         applyDiskState(state, url: url, sha256: diskSha, bytes: nil, mtimeUnixMs: nil, viaHelper: true)
         files.noteDiskState(state)
         return state
     }
+
+    /// Shows a save confirmation and remembers it (see `lastSaveConfirmation`).
+    func noteSaveConfirmation(_ note: String, for url: URL) {
+        captureNote = note
+        lastSaveConfirmation = (url, note, Date())
+    }
+
+    /// A disk-status probe of `url` failed (helper timeout, controller silent…).
+    /// Normally that is the footer note; but when the note still shows the
+    /// confirmation of a save of the same file that landed moments ago, the
+    /// failure is only logged — the probe usually *was* that save's own write
+    /// firing the watcher, and "Could not check paper.tex on disk" would tell
+    /// the user the opposite of what happened (#831). One guard, no priorities:
+    /// any other note, another file, or a probe long after the save shows the
+    /// failure as before.
+    func noteProbeFailure(_ url: URL, _ reason: String) {
+        let failure = "Could not check \(url.lastPathComponent) on disk: \(reason)"
+        if let last = lastSaveConfirmation, last.url == url, captureNote == last.note,
+           Date().timeIntervalSince(last.at) < saveConfirmationGrace {
+            FlashTeXLog.write("files: \(failure) (keeping the save confirmation shown \(String(format: "%.1f", Date().timeIntervalSince(last.at))) s ago)")
+            return
+        }
+        captureNote = failure
+    }
+
+    /// How long after a save confirmation a failed probe of the same file stays
+    /// out of the footer: the probe itself may block for `helperTimeout`, and
+    /// the watcher retries once after `max(helperTimeout, 0.5)` s.
+    private var saveConfirmationGrace: TimeInterval { 2 * max(files.helperTimeout, 0.5) + 5 }
 
     private func applyDiskState(_ state: ProjectFilesV1.DiskState, url: URL, sha256: String?, bytes: Int?, mtimeUnixMs: Int?, viaHelper: Bool) {
         switch state {
@@ -1268,7 +1303,7 @@ extension ShellModel {
             // meanwhile keep the buffer dirty; a different open file is untouched.
             guard let self, self.documentURL == url, SourceDigest.sha256Hex(text) == sha else { return }
             self.savedText = text
-            self.captureNote = "Late confirmation: \(url.lastPathComponent) was saved" + (self.isDirty ? " (buffer edited since; still unsaved)." : ".")
+            self.noteSaveConfirmation("Late confirmation: \(url.lastPathComponent) was saved" + (self.isDirty ? " (buffer edited since; still unsaved)." : "."), for: url)
             self.bridgeSourceSaved(url: url, text: text)
         }
         var result = files.save(url, text: text, expected: expected, force: force, lateReceipt: lateReceipt)
@@ -1284,7 +1319,7 @@ extension ShellModel {
         case .saved:
             documentURL = url
             savedText = text
-            captureNote = "Saved \(url.lastPathComponent)" + (recreated ? " (recreated; it had been deleted on disk)" : "")
+            noteSaveConfirmation("Saved \(url.lastPathComponent)" + (recreated ? " (recreated; it had been deleted on disk)" : ""), for: url)
             bridgeSourceSaved(url: url, text: text)
             snapshotSaved(url: url, text: text)
             watchOpenDocument() // Save As moves the watch; a replaced inode is re-opened
