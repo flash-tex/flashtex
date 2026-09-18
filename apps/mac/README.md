@@ -1041,6 +1041,10 @@ explain that nothing is loaded.
 | ⌘⇧T | Go to symbol: fuzzy picker over every heading, environment and label of the open documents |
 | ⌘⇧A | Select environment: the innermost `\begin{X}`…`\end{X}` around the caret, again for the enclosing one (a caret on `\begin`/`\end` highlights its partner) |
 | ⌘⇧W | Wrap selection in environment… (whole lines as an indented block, otherwise inline; one undoable edit) |
+| ⌘⇧B | Bold: wrap the selection in `\textbf{…}` (`\mathbf{…}` in math mode; one undoable edit, caret after the `}`, between the braces when nothing is selected). ⌘B is Compile |
+| ⌘I | Emphasize: wrap the selection in `\emph{…}` (`\mathit{…}` in math mode) |
+| ⌘U | Underline: wrap the selection in `\underline{…}` |
+| ⌘⌥W | Wrap selection in command… (asks for a command name; common commands first, then the document's own macros) |
 | ⌃⌘E | Change environment… (innermost pair; rewrites both `\begin` and `\end` names as one undo step; typing in either name updates the partner) |
 | ⌥⇧R | Rename symbol: the `\label` key or user command under the caret across the open documents (Plan → Apply; one undoable edit per document, one guarded `apply_group` per file with the helper) |
 | ⌘⇧] / ⌘⇧[ | Next / previous diagnostic (refused if its span was edited since the compile) |

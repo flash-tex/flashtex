@@ -18,6 +18,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case fold, unfold, foldAll, unfoldAll
     case goToMatching, nextDiagnostic, previousDiagnostic, nextOccurrence, previousOccurrence, copyDiagnosticsAsText, revealCaretInPreview
     case goToDefinition, goToSymbol, goToLine, selectEnvironment, wrapInEnvironment, changeEnvironment, renameSymbol
+    case boldSelection, emphasizeSelection, underlineSelection, wrapInCommand
     case selectPreviewItemSource
     case accessibilityHelp
     case durableHistory, findInProject, nextSearchMatch, renameCitation
@@ -289,6 +290,22 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Wrap selection in environment", shortcuts: ["⌘⇧W"], menu: "Navigate",
                          description: "Asks for an environment name (suggestions: common ones, then those the document uses) and wraps the selection in \\begin{X}…\\end{X} — whole lines as an indented block, otherwise inline — as one undoable edit with the caret at the body.",
                          menuItem: "Wrap Selection in Environment…")
+        case .boldSelection:
+            return Entry(command: self, title: "Bold selection", shortcuts: ["⌘⇧B"], menu: "Edit",
+                         description: "Wraps the selection in \\textbf{…} (\\mathbf{…} when the caret is in math mode) as one undoable edit, the caret after the closing brace; with nothing selected the caret lands between the braces and the } is typed over. ⌘B is Compile.",
+                         menuItem: "Bold")
+        case .emphasizeSelection:
+            return Entry(command: self, title: "Emphasize selection", shortcuts: ["⌘I"], menu: "Edit",
+                         description: "Wraps the selection in \\emph{…} (\\mathit{…} when the caret is in math mode) as one undoable edit, the caret after the closing brace; with nothing selected the caret lands between the braces.",
+                         menuItem: "Emphasize")
+        case .underlineSelection:
+            return Entry(command: self, title: "Underline selection", shortcuts: ["⌘U"], menu: "Edit",
+                         description: "Wraps the selection in \\underline{…} as one undoable edit, the caret after the closing brace; with nothing selected the caret lands between the braces.",
+                         menuItem: "Underline")
+        case .wrapInCommand:
+            return Entry(command: self, title: "Wrap selection in command", shortcuts: ["⌘⌥W"], menu: "Edit",
+                         description: "Asks for a command name (suggestions: common text and math commands, then the macros the document defines) and wraps the selection in \\name{…} as one undoable edit; the caret lands after the closing brace, or between the braces when nothing was selected.",
+                         menuItem: "Wrap Selection in Command…")
         case .changeEnvironment:
             return Entry(command: self, title: "Change environment", shortcuts: ["⌃⌘E"], menu: "Editor",
                          description: "Opens a field prefilled with the innermost environment name around the caret; Return rewrites both the \\begin{name} and matching \\end{name} as one undoable edit, preserving a trailing star, optional arguments and any following arguments. Typing inside either name updates the partner live. Refused (beep and VoiceOver) in a verbatim body or when the pair is unbalanced.",

@@ -203,6 +203,18 @@ struct FlashTeXMacApp: App {
                     .keyboardShortcut("i", modifiers: [.control])
                 Button("Re-indent Document") { EditorIndentationAction.reindentDocument() }
                 Divider()
+                // Wrap the selection in a command (ShellModel+EditorNavigation.swift):
+                // \textbf / \emph / \underline, \mathbf / \mathit in math mode.
+                // ⌘B is Compile (File), so bold takes ⌘⇧B.
+                Button("Bold") { model.wrapSelectionBold() }
+                    .keyboardShortcut("b", modifiers: [.command, .shift])
+                Button("Emphasize") { model.wrapSelectionEmphasis() }
+                    .keyboardShortcut("i")
+                Button("Underline") { model.wrapSelectionUnderline() }
+                    .keyboardShortcut("u")
+                Button("Wrap Selection in Command…") { model.editorNavigation.wrapCommandShown = true }
+                    .keyboardShortcut("w", modifiers: [.command, .option]) // ⌘⇧W is Wrap Selection in Environment (Navigate)
+                Divider()
                 Button("Pin Insertion Point") { model.pinAnchorAtCaret() }
                     .keyboardShortcut("p", modifiers: [.command, .option]) // ⌘⇧P is the command palette (View)
                 Button("Open Capture Proposal…") { model.openProposalPanel() } // ⌘⇧I moved to View > Toggle Captures (mac-capture-fluid)

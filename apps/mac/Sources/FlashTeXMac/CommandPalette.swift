@@ -132,6 +132,10 @@ enum CommandPaletteModel {
         case .goToLine: model.presentGoToLine()
         case .selectEnvironment: model.selectEnvironment()
         case .wrapInEnvironment: model.editorNavigation.wrapShown = true
+        case .boldSelection: model.wrapSelectionBold()
+        case .emphasizeSelection: model.wrapSelectionEmphasis()
+        case .underlineSelection: model.wrapSelectionUnderline()
+        case .wrapInCommand: model.editorNavigation.wrapCommandShown = true
         case .changeEnvironment: model.presentChangeEnvironment()
         case .renameSymbol: model.presentRenameSymbol()
         case .fold: EditorFoldAction.fold()

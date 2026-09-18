@@ -114,7 +114,8 @@ final class CompletionAutoCloseTests: XCTestCase {
     }
 
     /// The invariant `pendingClosers` exists to hold: every tracked offset is
-    /// inside the buffer and holds a closing delimiter.
+    /// inside the buffer and holds a closing delimiter (or a unit of an
+    /// auto-inserted `\right…`, whose letters are typed over too).
     private func assertClosersMatchTheText(_ co: SourceEditorView.Coordinator, _ tv: NSTextView,
                                            file: StaticString = #filePath, line: UInt = #line) {
         let ns = tv.string as NSString
@@ -123,9 +124,62 @@ final class CompletionAutoCloseTests: XCTestCase {
                 XCTFail("pending closer \(offset) is outside a buffer of \(ns.length)", file: file, line: line); continue
             }
             let ch = ns.substring(with: NSRange(location: offset, length: 1))
-            XCTAssertTrue(ch.first.map(SourceEditorView.BraceMatcher.isCloser) ?? false,
+            XCTAssertTrue(ch.first.map(SourceEditorView.BraceMatcher.isCloser) ?? false || "right|.".contains(ch),
                           "pending closer \(offset) points at \(ch.debugDescription), not a closer", file: file, line: line)
         }
+    }
+
+    // MARK: `\left(` → `\right)`
+
+    /// In math mode the delimiter after `\left` pairs its `\right…` after the
+    /// caret, and typing that `\right)` by hand steps over the inserted one.
+    func testLeftDelimiterPairsItsRightInMathModeAndIsTypedOver() throws {
+        let (tv, co, _, _) = try editor(autoClosePairs: ["{", "[", "(", "$"])
+        type("$", into: tv) // auto-paired: `$|$`
+        XCTAssertEqual(tv.string, "$$")
+        type("\\left(", into: tv)
+        XCTAssertEqual(tv.string, "$\\left(\\right)$")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 7, length: 0), "the caret between the halves")
+        XCTAssertEqual(co.pendingClosers.sorted(), Array(7...14), "every unit of `\\right)` and the paired `$`")
+        assertClosersMatchTheText(co, tv)
+        type("x", into: tv)
+        XCTAssertEqual(tv.string, "$\\left(x\\right)$")
+        XCTAssertEqual(co.pendingClosers.sorted(), Array(8...15), "shifted past the typed body")
+        type("\\right)", into: tv)
+        XCTAssertEqual(tv.string, "$\\left(x\\right)$", "typed over, not duplicated")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 15, length: 0))
+        XCTAssertEqual(co.pendingClosers, [15])
+    }
+
+    func testTheOtherLeftDelimitersPairTheirPartners() throws {
+        let (tv, co, _, _) = try editor(autoClosePairs: ["{", "[", "(", "$"])
+        type("$ ", into: tv) // inline math, the paired `$` after the caret
+        XCTAssertEqual(tv.string, "$ $")
+        for (opener, closer) in [("[", "\\right]"), ("\\{", "\\right\\}"), ("|", "\\right|"), (".", "\\right.")] {
+            let before = NSString(string: tv.string) // a copy: the storage's own string is live
+            let caret = tv.selectedRange().location
+            let insert: (String) -> String = { before.replacingCharacters(in: NSRange(location: caret, length: 0), with: $0) }
+            type("\\left" + opener, into: tv)
+            XCTAssertEqual(tv.string, insert("\\left" + opener + closer), "\\left\(opener)")
+            XCTAssertEqual(tv.selectedRange().location, caret + ("\\left" + opener).utf16.count)
+            assertClosersMatchTheText(co, tv)
+            type(closer + " ", into: tv) // step over it and separate from the next case
+            XCTAssertEqual(tv.string, insert("\\left" + opener + closer + " "), "\\left\(opener): the closer was typed over")
+        }
+    }
+
+    /// `\left` is a math command: outside math the `(` pairs a plain `)` as before.
+    func testLeftDoesNotPairInTextMode() throws {
+        let (tv, co, _, _) = try editor(autoClosePairs: ["{", "[", "(", "$"])
+        type("\\left(", into: tv)
+        XCTAssertEqual(tv.string, "\\left()", "the ordinary `(` pair only")
+        XCTAssertFalse(tv.string.contains("\\right"))
+        XCTAssertEqual(co.pendingClosers, [6])
+        // Auto-close off for `(`: nothing at all.
+        let (tv2, co2, _, _) = try editor(autoClosePairs: ["{"])
+        type("$\\left(", into: tv2)
+        XCTAssertEqual(tv2.string, "$\\left(")
+        XCTAssertEqual(co2.pendingClosers, [])
     }
 
     // MARK: the reported bug
