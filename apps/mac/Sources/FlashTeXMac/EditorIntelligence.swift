@@ -167,7 +167,10 @@ enum EditorIntelligence {
         switch token {
         case .command(let name, let range)?:
             let user = userDefinition(name)
-            let doc = [CommandDocs.documentation(for: name), user.map { "Defined: " + $0 + " — ⌘-click to go there." }].compactMap { $0 }
+            // The completion popover's resolver (CompletionPopup.documentation):
+            // the hand-written line where one exists, else the compiler
+            // inventory's, so every implemented command has a hover line.
+            let doc = [CompletionPopup.documentation(forCommand: name), user.map { "Defined: " + $0 + " — ⌘-click to go there." }].compactMap { $0 }
             return QuickInfo(title: "\\" + name, detail: user != nil ? "User command" : CommandDocs.category(for: name),
                              documentation: doc.isEmpty ? nil : doc.joined(separator: "\n"), diagnostics: diagnostics, range: range)
         case .reference(let command, let key, let range)?:
@@ -209,7 +212,7 @@ enum EditorIntelligence {
             }
             return QuickInfo(title: path, detail: detail, documentation: doc, diagnostics: diagnostics, range: range)
         case .environment(let name, let range)?:
-            return QuickInfo(title: name, detail: "Environment", documentation: CommandDocs.environmentDocumentation(for: name),
+            return QuickInfo(title: name, detail: "Environment", documentation: CompletionPopup.documentation(forEnvironment: name),
                              diagnostics: diagnostics, range: range)
         case nil:
             guard let first = hits.first else { return nil }

@@ -905,6 +905,86 @@ final class CompletionTests: XCTestCase {
         XCTAssertNil(fetcher.query)
     }
 
+    /// A macro the buffer defines is the author's, from the keystroke that
+    /// defines it: offered as declared, never "not supported by the compiler",
+    /// with no compile result and no project-index reply at all.
+    func testDeclaredMacrosAreOfferedAsDeclaredBeforeAnyIndexReply() {
+        let preamble = """
+        \\newcommand{\\foo}{x}
+        \\renewcommand*{\\vec}[1]{\\mathbf{#1}}
+        \\providecommand\\brr{y}
+        \\DeclareMathOperator{\\Tr}{Tr}
+        \\DeclareMathOperator*{\\argmin}{arg\\,min}
+        \\def\\baz#1{#1}
+        \\let\\qux\\relax
+        \\NewDocumentCommand{ \\fig }{m}{#1}
+        \\newcommand{\\foo}{again}
+        \\zzunknown
+
+        """
+        XCTAssertEqual(Completion.declaredCommands(in: preamble), ["foo", "vec", "brr", "Tr", "argmin", "baz", "qux", "fig"])
+        // A definer with nothing after it, a non-letter control sequence, an
+        // unclosed brace and a `\begin{…}` are not declarations.
+        XCTAssertTrue(Completion.declaredCommands(in: "\\newcommand\n\\def\\@x{}\n\\newcommand{\\a\n\\let\\{\\}\n\\begin{foo}").isEmpty)
+
+        func offered(_ typed: String, mathMode: Bool? = nil, elsewhere: [String] = []) -> [Completion.Suggestion] {
+            let text = preamble + typed
+            return Completion.suggestions(in: text, caretUTF16: (text as NSString).length, metadata: nil,
+                                          declaredElsewhere: elsewhere, mathMode: mathMode)
+        }
+        let f = offered("\\f")
+        XCTAssertEqual(f.first?.label, "\\foo", "the author's macro sits above the compiler's \\f… entries, not beyond the cap: \(labels(f))")
+        XCTAssertEqual(f.first?.detail, "declared in this document")
+        XCTAssertEqual(f.first?.insertText, "\\foo")
+        XCTAssertEqual(f.first?.kind, .command)
+        XCTAssertEqual(f.filter { $0.label == "\\foo" }.count, 1, "declared once, although used twice")
+        XCTAssertTrue(f.contains { $0.label == "\\fig" && $0.detail == "declared in this document" }, "\(labels(f))")
+        XCTAssertFalse(f.contains { $0.detail.hasPrefix("not supported") }, "\(f.map(\.detail))")
+        XCTAssertEqual(offered("\\T").first { $0.label == "\\Tr" }?.detail, "declared in this document")
+        XCTAssertEqual(offered("\\argmi").first?.detail, "declared in this document")
+        XCTAssertEqual(offered("\\b").filter { $0.detail == "declared in this document" }.map(\.label), ["\\brr", "\\baz"])
+        XCTAssertEqual(offered("\\qu").first { $0.label == "\\qux" }?.detail, "declared in this document")
+        // In math mode too, and still under the exact spelling.
+        XCTAssertEqual(offered("$\\f", mathMode: true).first?.label, "\\foo")
+        let exact = offered("\\frac")
+        XCTAssertEqual(exact.first?.insertText, "\\frac", "the exact spelling keeps first place")
+        // A macro that shadows a compiler command keeps the compiler's row.
+        let vec = offered("\\vec")
+        XCTAssertEqual(vec.filter { $0.insertText == "\\vec" }.count, 1)
+        XCTAssertNotEqual(vec.first { $0.insertText == "\\vec" }?.detail, "declared in this document")
+        // A command the document merely uses stays marked, as before.
+        XCTAssertEqual(offered("\\zzu").first?.detail, "not supported by the compiler")
+        // Another open document's macros (the scheduler scans them) come after the buffer's.
+        let elsewhere = offered("\\f", elsewhere: ["foo", "fjord"])
+        XCTAssertEqual(elsewhere.prefix(3).map(\.label), ["\\foo", "\\fig", "\\fjord"])
+        XCTAssertEqual(elsewhere[2].detail, "declared in an open document")
+        XCTAssertEqual(elsewhere[0].detail, "declared in this document", "the buffer's own declaration wins the label")
+        // Once the index has answered for this revision, its richer line replaces the buffer's.
+        let indexed = Completion.Metadata(origin: .compileResult(projectId: "p"), revision: 1, commands: [
+            .init(name: "foo", definitions: 1, occurrences: 2, locationsTruncated: false, definedIn: "main.tex"),
+        ])
+        let text = preamble + "\\f"
+        let withIndex = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, metadata: indexed)
+        XCTAssertEqual(withIndex.first?.label, "\\foo")
+        XCTAssertEqual(withIndex.first?.detail, "declared in main.tex · 2 uses · revision 1")
+    }
+
+    /// The scheduler scans the other open documents for macros only when the
+    /// caret is on a command, and hands them to the suggestions as declared.
+    @MainActor
+    func testSchedulerOffersMacrosDeclaredInOtherOpenDocuments() {
+        let exec = ManualExecutor()
+        let scheduler = CompletionScheduler(executor: exec.run)
+        var delivered: [CompletionScheduler.Outcome] = []
+        var req = CompletionScheduler.Request(text: "\\begin{document}\n\\fj", caretUTF16: 20, metadata: nil)
+        req.otherDocuments = ["\\newcommand{\\fjord}{Fjord}\n", "\\DeclareMathOperator{\\fjop}{op}"]
+        scheduler.schedule(req) { delivered.append($0) }
+        exec.runAll()
+        spin("delivery") { scheduler.statistics.delivered == 1 }
+        XCTAssertEqual(delivered.first?.items.map(\.label), ["\\fjord", "\\fjop"])
+        XCTAssertEqual(delivered.first?.items.map(\.detail), Array(repeating: "declared in an open document", count: 2))
+    }
+
     // MARK: cancellation and stale refusal
 
     /// Holds jobs until the test runs them, so caret moves and job completion
