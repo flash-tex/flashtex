@@ -4982,6 +4982,15 @@ impl P<'_> {
             if horizontal {
                 para.push(Inline::PagePenalty { value, span });
             } else {
+                // The whatsits already sit in the vertical list *before*
+                // the penalty, so a marker-only paragraph must land ahead
+                // of it: carried past the break it would apply its
+                // `\pagestyle` one page late (#876). Inside a list the
+                // pending `\item` label belongs to the text that follows,
+                // not to the markers, so leave that case alone.
+                if !para.is_empty() && self.pending_item_label.is_none() {
+                    self.flush_paragraph(blocks, para);
+                }
                 blocks.push(Block::Penalty {
                     value,
                     fil: false,
@@ -13455,6 +13464,117 @@ mod tests {
                 parsed.blocks
             );
         }
+    }
+
+    /// pdflatex (TeX Live 2026, fancyhdr): a `\thispagestyle{plain}` or
+    /// `\pagestyle{empty}` immediately followed by `\pagebreak` affects the
+    /// page being ended, not the next one, and `\maketitle\pagebreak` keeps
+    /// the title page plain (#876). The marker is a whatsit already in the
+    /// vertical list, so it must be flushed *before* the penalty, exactly as
+    /// `\newpage` and `\clearpage` do.
+    #[test]
+    fn marker_only_paragraph_is_flushed_before_a_vertical_pagebreak() {
+        for (source, style) in [
+            ("Text.\n\n\\thispagestyle{plain}\\pagebreak\nMore.", PageStyleName::Plain),
+            ("Text.\n\n\\pagestyle{empty}\\pagebreak\nMore.", PageStyleName::Empty),
+            ("Text.\n\n\\pagestyle{empty}\\pagebreak\n\nMore.", PageStyleName::Empty),
+        ] {
+            let parsed = parse(source);
+            assert!(parsed.diagnostics.is_empty(), "{source}: {:?}", parsed.diagnostics);
+            let shape: Vec<String> = parsed
+                .blocks
+                .iter()
+                .map(|block| match block {
+                    Block::Paragraph(inlines) => {
+                        if inlines.iter().all(|i| matches!(i, Inline::PageStyle { .. })) {
+                            "marker".to_string()
+                        } else if inlines.iter().any(|i| matches!(i, Inline::PageStyle { .. })) {
+                            "text+marker".to_string()
+                        } else {
+                            "text".to_string()
+                        }
+                    }
+                    Block::Penalty { value, .. } => format!("penalty {value}"),
+                    other => format!("{other:?}"),
+                })
+                .collect();
+            assert_eq!(
+                shape,
+                ["text", "marker", "penalty -10000", "text"],
+                "{source}: {:?}",
+                parsed.blocks
+            );
+            let Some(Block::Paragraph(marker)) = parsed.blocks.get(1) else {
+                unreachable!()
+            };
+            assert!(
+                matches!(marker.as_slice(), [Inline::PageStyle { style: s, .. }] if *s == style),
+                "{source}: {marker:?}"
+            );
+        }
+        // `\label` is the same whatsit and lands the same way.
+        let parsed = parse("Before.\n\n\\label{a}\\pagebreak First.");
+        assert!(
+            matches!(
+                parsed.blocks.as_slice(),
+                [
+                    Block::Paragraph(_),
+                    Block::Paragraph(label),
+                    Block::Penalty { value: -10000, .. },
+                    Block::Paragraph(_)
+                ] if matches!(label.as_slice(), [Inline::Label { .. }])
+            ),
+            "{:?}",
+            parsed.blocks
+        );
+    }
+
+    /// `\maketitle` emits a `plain` marker for the title page; followed by
+    /// `\pagebreak` that marker stays on the title page (#876).
+    #[test]
+    fn maketitle_then_pagebreak_keeps_the_plain_marker_before_the_break() {
+        let parsed = parse("\\title{T}\\author{A}\\maketitle\\pagebreak\nBody.");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let penalty = parsed
+            .blocks
+            .iter()
+            .position(|b| matches!(b, Block::Penalty { value: -10000, .. }))
+            .unwrap_or_else(|| panic!("no vertical penalty: {:?}", parsed.blocks));
+        let marker = parsed
+            .blocks
+            .iter()
+            .position(|b| matches!(
+                b,
+                Block::Paragraph(inlines)
+                    if inlines.iter().any(|i| matches!(i, Inline::PageStyle { style: PageStyleName::Plain, .. }))
+            ))
+            .unwrap_or_else(|| panic!("no plain marker: {:?}", parsed.blocks));
+        assert!(marker < penalty, "marker at {marker}, penalty at {penalty}: {:?}", parsed.blocks);
+        // No marker rides into the body paragraph after the break.
+        assert!(
+            parsed.blocks[penalty + 1..].iter().all(|b| !matches!(
+                b,
+                Block::Paragraph(inlines) if inlines.iter().any(|i| matches!(i, Inline::PageStyle { .. }))
+            )),
+            "{:?}",
+            parsed.blocks
+        );
+    }
+
+    /// Inside a list the pending `\item` label belongs to the text after the
+    /// break, so a `\label`-only paragraph there is not flushed early.
+    #[test]
+    fn vertical_pagebreak_inside_an_item_keeps_the_item_label_with_its_text() {
+        let parsed = parse("\\begin{itemize}\\item\\label{a}\\pagebreak Text.\\end{itemize}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let labelled_text = parsed.blocks.iter().any(|b| match b {
+            Block::ListItem { content, .. } => {
+                content.iter().any(|i| matches!(i, Inline::Label { .. }))
+                    && content.iter().any(|i| matches!(i, Inline::Text { .. }))
+            }
+            _ => false,
+        });
+        assert!(labelled_text, "{:?}", parsed.blocks);
     }
 
     /// amsmath `\nobreakdash`: `\setboxz@h{--\nobreak}\unhbox\z@`. pdflatex:
