@@ -148,6 +148,16 @@ pub struct Stylesheet {
     /// `\labelsep` (article: `.5em` of `\normalsize`): the gap between a
     /// list label's right edge and the item text.
     pub labelsep_pt: f64,
+    /// `\itemsep` of a level-1 list (`\@listi`): article's equals
+    /// `\parsep`; beamer's is 3pt with `\parsep` 0.
+    pub itemsep: Skip,
+    /// `\familydefault`: the family a text run with no `\rmfamily`/
+    /// `\sffamily`/`\ttfamily` of its own is set in. `Rm` for every class
+    /// but beamer, whose `beamer.cls` selects `\sfdefault`.
+    pub default_family: crate::nfss::FamilyKind,
+    /// The class runs `\raggedright` for the whole document (beamer.cls:
+    /// `\rightskip 0pt plus 1fil`): plain paragraphs are set ragged right.
+    pub raggedright: bool,
     headings: [HeadingStyle; 5],
     /// The resolved class + geometry frame this stylesheet was built from
     /// ([`Stylesheet::from_resolved`]); `None` for [`Stylesheet::article`].
@@ -277,6 +287,9 @@ impl Stylesheet {
             leftmargini_pt: list.leftmargin.0,
             parsep: Skip::new(list.parsep.pt, list.parsep.plus, list.parsep.minus),
             labelsep_pt: list.labelsep.0,
+            itemsep: Skip::new(list.itemsep.pt, list.itemsep.plus, list.itemsep.minus),
+            default_family: crate::nfss::FamilyKind::Rm,
+            raggedright: false,
             headings: [heading(1), heading(2), heading(3), heading(4), heading(5)],
             class_geometry: None,
             columns: crate::columns::ColumnMode::default(),
@@ -361,8 +374,34 @@ impl Stylesheet {
             s.tolerance = 9999.0;
             s.emergency_stretch_pt = 3.0 * s.body_size_pt;
         }
+        if doc.options.kind == flashtex_class_geometry::ClassKind::Beamer {
+            // beamer.cls: `\usepackage{...}\renewcommand\familydefault
+            // \sfdefault` (cmss10 at 10.95 for the body), `\raggedright`,
+            // and `beamerbaselocalstructure.sty`'s list parameters
+            // (`\topsep`/`\itemsep` 3pt, `\parsep`/`\partopsep` 0,
+            // `\leftmargini` 2em). Every page is one `\vbox to\textheight`
+            // frame whose top is the paper top, so `\topskip` never acts
+            // on the page's first box: 0 here, while the class value stays
+            // 11pt in `class_geometry.params` (see `typeset::beamer`).
+            let l = flashtex_class_geometry::beamer::list_level(doc.font, 1);
+            let glue = |g: flashtex_class_geometry::Glue| Skip::new(frame_pt(g.natural), frame_pt(g.stretch), frame_pt(g.shrink));
+            s.default_family = crate::nfss::FamilyKind::Sf;
+            s.raggedright = true;
+            s.topskip_pt = 0.0;
+            s.topsep = glue(l.topsep);
+            s.partopsep = glue(l.partopsep);
+            s.parsep = glue(l.parsep);
+            s.itemsep = glue(l.itemsep);
+            s.leftmargini_pt = frame_pt(l.leftmargin);
+            s.labelsep_pt = frame_pt(l.labelsep);
+        }
         s.class_geometry = Some(Box::new(doc.clone()));
         s
+    }
+
+    /// Whether the document is a beamer slide deck (`ClassKind::Beamer`).
+    pub fn is_beamer(&self) -> bool {
+        self.class_geometry.as_ref().is_some_and(|g| g.options.kind == flashtex_class_geometry::ClassKind::Beamer)
     }
 
     /// The body family selected by the loaded packages.

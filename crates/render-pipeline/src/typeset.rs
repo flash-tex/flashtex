@@ -426,6 +426,7 @@ fn position_run(run: &pl::GlyphRun, x: f64, baseline_y: f64) -> pl::PositionedRu
     }
 }
 
+pub mod beamer;
 pub mod floatpage;
 pub mod footnotes;
 pub mod marginpar;
@@ -775,7 +776,13 @@ impl<'a> Context<'a> {
     /// warnings keyed for [`Self::report_once`].
     fn text_role(&self, style: TextStyle, size: f64) -> (Role, Vec<(String, String)>) {
         let scheme = self.style.nfss;
-        let selected = crate::nfss::select(scheme, style.key());
+        // `\familydefault`: a run that selected no family of its own takes
+        // the class default (`Rm` everywhere but beamer's `\sfdefault`).
+        let mut key = style.key();
+        if key.family == crate::nfss::FamilyKind::Rm {
+            key.family = self.style.default_family;
+        }
+        let selected = crate::nfss::select(scheme, key);
         let (terminal, sub) = crate::nfss::terminal(scheme, selected.key);
         let mut notes = Vec::new();
         for undefined in [style.undefined, selected.undefined].into_iter().flatten() {
@@ -3193,6 +3200,9 @@ impl<'a> Context<'a> {
         let fil = pl::Glue::fil();
         let margin = pl::Glue::fixed(s.leftmargini_pt);
         let (mode, left_skip, right_skip) = match style {
+            // beamer.cls runs `\raggedright` for the whole deck: a plain
+            // paragraph is set like `flushleft` (`\rightskip 0pt plus 1fil`).
+            ParaStyle::Plain if s.raggedright => (pl::BreakMode::RaggedRight, pl::Glue::fixed(0.0), pl::Glue::fixed(0.0)),
             ParaStyle::Plain => (pl::BreakMode::Justified, pl::Glue::fixed(0.0), pl::Glue::fixed(0.0)),
             ParaStyle::Center => (pl::BreakMode::Justified, fil.clone(), fil),
             ParaStyle::FlushRight => (pl::BreakMode::Justified, fil, pl::Glue::fixed(0.0)),
@@ -3890,6 +3900,8 @@ impl<'a> Context<'a> {
                         Block::Chrome { .. } => "a page-style command",
                         Block::TocEntry(_) => "a contents list",
                         Block::LongTable { .. } => "longtable",
+                        Block::FrameBegin { .. } | Block::FrameEnd { .. } => "a beamer frame",
+                        Block::BeamerTitle { .. } => "\\titlepage",
                         Block::Paragraph { .. } | Block::Rule { .. } | Block::Picture { .. } => unreachable!(),
                     };
                     let source = vec![self.source(float)];
@@ -4060,6 +4072,48 @@ impl<'a> Context<'a> {
         Some(NumberBox { width: run.width, height, depth, pieces: vec![(run, rec, 0.0)] })
     }
 
+    /// beamer's itemize label: `$\blacktriangleright$` (msam10 `I`,
+    /// `CHARWD` 0.777781em, `CHARHT` 0.54986em) raised 1.25pt, drawn with
+    /// Latin Modern Math's U+25B6 (the closest bundled outline; msam10 is
+    /// not shipped) in msam10's advance so the label box, and with it the
+    /// item text, sit where pdflatex puts them (label x 36.23bp, text x
+    /// 50.17bp on beamer-default p3).
+    fn beamer_triangle_box(&mut self, span: Span, size: f64, color: Option<flashtex_compiler::color::DeviceColor>) -> Option<NumberBox> {
+        const MSAM_TRIANGLE_WIDTH_EM: f64 = 0.777781;
+        const RAISE_PT: f64 = 1.25;
+        let width = MSAM_TRIANGLE_WIDTH_EM * size;
+        let text = "\u{25B6}";
+        let seg = adapter::Segment {
+            text: text.to_string(),
+            chars: vec![adapter::CharSrc { document: span.document, start: span.start, end: span.end }],
+            style: TextStyle { color, ..TextStyle::default() },
+        };
+        let math = self.fonts.resolve(self.style.family, Role::Math, size);
+        let (mut run, rec) = if math.substituted.is_none() { self.text_box_in(&seg, size, math.face)? } else { self.text_box(&seg, size)? };
+        // The box takes msam10's metrics (`CHARHT` 0.54986em, `CHARDP`
+        // 0.035173em), not the drawn glyph's bounds: TeX's line height
+        // comes from the TFM, and this label must not be taller than the
+        // item text (`\hbox(7.60416+0.0)` for a one-line item).
+        const MSAM_TRIANGLE_HT_EM: f64 = 0.54986;
+        const MSAM_TRIANGLE_DP_EM: f64 = 0.035173;
+        let box_height = MSAM_TRIANGLE_HT_EM * size + RAISE_PT;
+        let box_depth = (MSAM_TRIANGLE_DP_EM * size - RAISE_PT).max(0.0);
+        // The glyph's origin is the box's left edge, as msam10's `I` sits in
+        // pdflatex's label box (origin x 36.225bp on beamer-default p3); only
+        // the advance is msam10's.
+        if let ([glyph], BoxRec::Text { raise, height, depth, .. }) = (run.glyphs.as_mut_slice(), &mut self.recs[rec]) {
+            glyph.advance = width;
+            glyph.kern = 0.0;
+            run.width = width;
+            *raise = RAISE_PT;
+            *height = box_height;
+            *depth = box_depth;
+        }
+        run.height = box_height;
+        run.depth = box_depth;
+        Some(NumberBox { width: run.width, height: run.height, depth: run.depth, pieces: vec![(run, rec, 0.0)] })
+    }
+
     /// microtype's `\leftprotrusion`, which it appends to `\@item`'s
     /// `\everypar` (microtype.sty, `\MT@patch@patch\@item{\everypar{}}
     /// {\everypar{\leftprotrusion}}`): `\MT@get@prot` sets the item text's
@@ -4087,6 +4141,24 @@ impl<'a> Context<'a> {
     /// `description`), separated by interword glue at natural width.
     fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool, symbol: bool) -> Option<NumberBox> {
         let text = if symbol && text == "⋅" { "·" } else { text };
+        // beamer (`beamerinnerthemedefault.sty` 200-210): every itemize
+        // level's label is `\raise1.25pt\hbox{$\blacktriangleright$}` (msam10
+        // `I`, 0.777781em wide) and an enumerate's is `\insertenumlabel.`,
+        // both in the structure colour (`item` inherits `structure`).
+        if self.style.is_beamer() {
+            let color = Some(beamer::structure_color());
+            let boxed = if symbol {
+                self.beamer_triangle_box(span, size, color)
+            } else {
+                self.word_box(text, span, size, TextStyle { bold, color, ..TextStyle::default() }, false)
+            };
+            if let Some(nb) = &boxed {
+                for (_, rec, _) in &nb.pieces {
+                    self.label_recs.insert(*rec);
+                }
+            }
+            return boxed;
+        }
         let boxed = match self.tcrm_symbol_width(text, size).filter(|_| symbol) {
             Some(width) => self.tcrm_symbol_box(text, span, size, width),
             None => self.word_box(text, span, size, TextStyle { bold, ..TextStyle::default() }, false),
@@ -8797,6 +8869,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // in built-block indices; the `\vfil`s are resolved after the loop.
     let mut abstract_pages: Vec<(usize, usize, usize)> = Vec::new();
     let mut open_abstract: Option<usize> = None;
+    // beamer frames (`typeset::beamer`): the one being collected and the
+    // closed ones, whose fills are resolved after the loop.
+    let mut open_frame: Option<beamer::OpenFrame> = None;
+    let mut frames: Vec<beamer::OpenFrame> = Vec::new();
     for (doc_index, block) in doc.blocks.iter().enumerate() {
         if doc.page_starts.binary_search(&doc_index).is_ok() {
             page_start_blocks.push(blocks.len());
@@ -8985,6 +9061,39 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 blocks.extend(built);
                 after_heading = true;
             }
+            Block::FrameBegin { title, subtitle, align, span, .. } => {
+                // A frame still open (a missing `\end{frame}`) closes here.
+                if let Some(mut f) = open_frame.take() {
+                    f.end = Some(blocks.len().saturating_sub(1));
+                    frames.push(f);
+                }
+                page_start_blocks.push(blocks.len());
+                open_frame = Some(ctx.beamer_frame_begin(&mut blocks, title, subtitle, *align, *span));
+                after_heading = false;
+            }
+            Block::FrameEnd { addvspace_before, addvspace_flex, vspace_before, .. } => {
+                if let Some(mut f) = open_frame.take() {
+                    let last = blocks.len() - 1;
+                    let v = &mut blocks[last].vertical;
+                    // `\@endparenv`'s `\addvspace\@topsepadd` after the last
+                    // item (only its excess over the skip already there),
+                    // any `\vspace`, then the frame's bottom glue.
+                    let (n, st, sh) = v.space_after.unwrap_or((0.0, 0.0, 0.0));
+                    let mut after = if *addvspace_before > n { (*addvspace_before, addvspace_flex.0, addvspace_flex.1) } else { (n, st, sh) };
+                    after.0 += vspace_before;
+                    if after != (0.0, 0.0, 0.0) || v.space_after.is_some() {
+                        v.space_after = Some(after);
+                    }
+                    v.penalty_after = Some(pagebuild::EJECT_PENALTY);
+                    f.end = Some(last);
+                    frames.push(f);
+                }
+                after_heading = false;
+            }
+            Block::BeamerTitle { title, subtitle, authors, institute, date, span } => {
+                ctx.beamer_title_page(&mut blocks, open_frame.as_mut(), title, subtitle, authors, institute, date, *span);
+                after_heading = false;
+            }
             // `\@starttoc`'s `\@nobreakfalse`: a heading next takes its
             // `\addvspace` again (only the excess over the list heading's
             // after-skip), and a paragraph next its normal `\clubpenalty`.
@@ -9161,11 +9270,21 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     }
     let s = style;
     let params = page_params(s);
-    let vblocks: Vec<VBlock> = blocks.iter().map(|b| b.vertical.clone()).collect();
-    let list = pagebuild::vlist(&params, &vblocks);
+    if let Some(mut f) = open_frame.take() {
+        f.end = Some(blocks.len().saturating_sub(1));
+        frames.push(f);
+    }
     // Footnote blocks are appended after the body's (not in `vblocks`).
     let body_blocks = blocks.len();
     let insertions = footnotes::prepare(ctx, &mut blocks, &params);
+    // beamer: every frame's fills, once the frame's own footnotes are known
+    // (`beamer::resolve_fills`); the notes sit at the frame's foot.
+    for frame in &frames {
+        let notes = insertions.as_ref().map_or(0.0, |ins| footnotes::insert_height(ins, &params, frame.start..=frame.end.unwrap_or(frame.start)));
+        beamer::resolve_fills(s, &mut blocks, frame, notes);
+    }
+    let vblocks: Vec<VBlock> = blocks[..body_blocks].iter().map(|b| b.vertical.clone()).collect();
+    let list = pagebuild::vlist(&params, &vblocks);
     // Two-column documents: the page builder fills columns of `\textheight`
     // (`\@colht`); `\@outputdblcol` ships the first column and the second
     // side by side, the second `\columnwidth + \columnsep` to the right.

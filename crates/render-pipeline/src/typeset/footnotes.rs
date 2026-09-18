@@ -403,6 +403,32 @@ fn note_vlist(page: &PageParams, fp: &FootnoteParams, b: &BuiltBlock, bi: usize)
 /// builder, or `None` when the document has no footnotes. Marks whose line
 /// is not in the body's vertical list (headings, captions, cells) are
 /// reported and their notes dropped.
+/// The height the notes anchored in the built blocks `range` take at the
+/// foot of their column: `\skip\footins`, the `\footnoterule` kerns and
+/// rule, and every note's natural vertical list down to its last baseline
+/// (the last line's depth hangs below the column, as `\vbox to\@colht`
+/// leaves it). 0 without notes.
+pub(super) fn insert_height(ins: &Insertions, page: &PageParams, range: std::ops::RangeInclusive<usize>) -> f64 {
+    let mut notes = 0.0;
+    let mut any = false;
+    for ((bi, _), list) in &ins.after {
+        if !range.contains(bi) {
+            continue;
+        }
+        for &n in list {
+            if let Some(v) = ins.notes.get(n) {
+                let (_, h) = pagebuild::natural_layout(page, v, false);
+                notes += h;
+                any = true;
+            }
+        }
+    }
+    if !any {
+        return 0.0;
+    }
+    ins.skip.0 + ins.rule.0 + ins.rule.1 + ins.rule.2 + notes
+}
+
 pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &PageParams) -> Option<Insertions> {
     let anchors = std::mem::take(&mut ctx.note_anchors);
     if anchors.is_empty() {
@@ -419,8 +445,15 @@ pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &Pa
         }
     }
     let fp = FootnoteParams::of(ctx.style);
+    // beamer sets a frame's notes itself (`beamerbaseframesize.sty` 242-256:
+    // `\vskip\beamer@framebottomskip \footnoterule \unvbox\beamer@footins`
+    // inside the frame's `\vbox to\textheight`): no `\skip\footins` above
+    // the rule, the fill glue is all there is (measured: note text at
+    // baseline 268.14bp = `\textheight`, body at the `[c]` position the
+    // notes' height alone leaves).
+    let skip = if ctx.style.is_beamer() { (0.0, 0.0, 0.0) } else { fp.skip };
     let mut ins = Insertions {
-        skip: fp.skip,
+        skip,
         max: FOOTINS_MAX,
         split_top_skip: fp.sep,
         split_max_depth: fp.strut_depth(),

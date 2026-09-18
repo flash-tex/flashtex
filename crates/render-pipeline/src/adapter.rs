@@ -567,6 +567,34 @@ pub enum Block {
         /// referenced.
         labels: Vec<String>,
     },
+    /// beamer `\begin{frame}` (compiler `BeamerFrameBegin`, #944): the slide
+    /// head. The blocks up to the matching [`Block::FrameEnd`] are the
+    /// frame's body; the typesetter sets the run as one `\vbox
+    /// to\textheight` page (`beamerbaseframe.sty`).
+    FrameBegin {
+        title: Vec<Item>,
+        subtitle: Vec<Item>,
+        align: flashtex_class_geometry::beamer::FrameAlign,
+        /// `[plain]`: read, not modelled (the body box keeps `\textheight`).
+        plain: bool,
+        span: Span,
+    },
+    /// beamer `\end{frame}`: `addvspace_before` is the `\@endparenv` skip
+    /// of a list the frame closes (natural; `addvspace_flex` its stretch
+    /// and shrink), `vspace_before` any `\vspace` before it: both are glue
+    /// after the body's last block.
+    FrameEnd { span: Span, addvspace_before: f64, addvspace_flex: (f64, f64), vspace_before: f64 },
+    /// beamer `\titlepage` (compiler `BeamerTitlePage`): the default inner
+    /// theme's `title page` template, set by the typesetter with
+    /// `flashtex_class_geometry::beamer::title_page`'s skips.
+    BeamerTitle {
+        title: Vec<Item>,
+        subtitle: Vec<Item>,
+        authors: Vec<Item>,
+        institute: Vec<Item>,
+        date: Vec<Item>,
+        span: Span,
+    },
 }
 
 /// longtable.sty 61-67: the lengths a document may `\setlength`. `None`
@@ -881,6 +909,10 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
         // `lower_blocks` turns it into ordinary paragraphs before the block
         // walk reaches here.
         CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak | CBlock::Verbatim { .. } | CBlock::TableOfContents { .. } | CBlock::VFill | CBlock::LetterBlock { .. } => &[],
+        // beamer's frame edges and title page are units of their own
+        // (`split_at_page_breaks`); the title is what anchors the head.
+        CBlock::BeamerFrameBegin { title, .. } | CBlock::BeamerTitlePage { title, .. } => title,
+        CBlock::BeamerFrameEnd { .. } => &[],
         // Nodes a re-pinned compiler can produce that this crate has no
         // layout for yet. `Penalty` carries no content at all; `Tabbing`'s
         // rows are reached through `lower_blocks`, not this slice, exactly
@@ -1337,6 +1369,15 @@ pub fn adapt_cached(
         &class_options,
     );
     let mut resolved = flashtex_class_geometry::resolve(&setup);
+    // The class size as the class resolved it, not as the option list spells
+    // it: beamer (and the KOMA classes) default to 11pt with no `11pt` option
+    // given, and `class_size`'s 10pt fallback put beamer's 2em list margins
+    // at 20pt instead of 21.9pt.
+    let size = match resolved.options.size {
+        flashtex_class_geometry::BaseSize::Pt10 => 10,
+        flashtex_class_geometry::BaseSize::Pt11 => 11,
+        flashtex_class_geometry::BaseSize::Pt12 => 12,
+    };
     // `\twocolumn`/`\onecolumn` are commands, not class options: two-column
     // mode is state the document sets, and the class option is only its
     // starting value ([`crate::columns`]). The starting value itself is
@@ -1580,6 +1621,7 @@ pub fn adapt_cached(
             UnitKind::Heading { number_span, .. } => Some(*number_span),
             UnitKind::Paragraph { inlines, .. } => anchor_span(inlines.iter()),
             UnitKind::Rule { span } => Some(*span),
+            UnitKind::FrameBegin { span, .. } | UnitKind::FrameEnd { span } | UnitKind::BeamerTitle { span, .. } => Some(*span),
             UnitKind::Picture { document, picture, .. } => Some(Span::in_document(*document, picture.start, picture.end)),
         });
         let at_end = next.is_none();
@@ -1963,6 +2005,46 @@ pub fn adapt_cached(
                     eject_before,
                     vspace_before,
                 });
+                after_heading = false;
+                prev_para_end = None;
+            }
+            UnitKind::FrameBegin { block, span } => {
+                if let CBlock::BeamerFrameBegin { options, title, subtitle, .. } = block {
+                    use flashtex_class_geometry::beamer::FrameAlign;
+                    use flashtex_compiler::parser::BeamerFrameAlign;
+                    blocks.push(Block::FrameBegin {
+                        title: items_for(title, true),
+                        subtitle: items_for(subtitle, true),
+                        align: match options.align {
+                            BeamerFrameAlign::Top => FrameAlign::Top,
+                            BeamerFrameAlign::Center => FrameAlign::Center,
+                            BeamerFrameAlign::Bottom => FrameAlign::Bottom,
+                        },
+                        plain: options.plain,
+                        span,
+                    });
+                }
+                // The frame's body starts in vertical mode: no `\@nobreak`
+                // from a heading, no paragraph to rejoin.
+                after_heading = false;
+                prev_para_end = None;
+            }
+            UnitKind::FrameEnd { span } => {
+                blocks.push(Block::FrameEnd { span, addvspace_before: unit.addvspace_before, addvspace_flex: unit.addvspace_flex, vspace_before });
+                after_heading = false;
+                prev_para_end = None;
+            }
+            UnitKind::BeamerTitle { block, span } => {
+                if let CBlock::BeamerTitlePage { title, subtitle, authors, institute, date, .. } = block {
+                    blocks.push(Block::BeamerTitle {
+                        title: items_for(title, true),
+                        subtitle: items_for(subtitle, true),
+                        authors: items_for(authors, true),
+                        institute: items_for(institute, true),
+                        date: items_for(date, true),
+                        span,
+                    });
+                }
                 after_heading = false;
                 prev_para_end = None;
             }
@@ -2814,6 +2896,15 @@ fn math_colors(blocks: &[flashtex_compiler::parser::Block]) -> std::collections:
                 walk(authors, &mut out);
                 walk(date.as_deref().unwrap_or(&[]), &mut out);
             }
+            CBlock::BeamerFrameBegin { title, subtitle, .. } => {
+                walk(title, &mut out);
+                walk(subtitle, &mut out);
+            }
+            CBlock::BeamerTitlePage { title, subtitle, authors, institute, date, .. } => {
+                for part in [title, subtitle, authors, institute, date] {
+                    walk(part, &mut out);
+                }
+            }
             _ => {}
         }
     }
@@ -3289,6 +3380,19 @@ enum UnitKind<'p> {
     Rule {
         span: Span,
     },
+    /// beamer `\begin{frame}` / `\end{frame}` (#944).
+    FrameBegin {
+        block: &'p CBlock,
+        span: Span,
+    },
+    FrameEnd {
+        span: Span,
+    },
+    /// beamer `\titlepage`.
+    BeamerTitle {
+        block: &'p CBlock,
+        span: Span,
+    },
     Picture {
         document: flashtex_compiler::DocumentId,
         picture: flashtex_vector_graphics::tikz::PictureSource,
@@ -3414,6 +3518,40 @@ fn split_at_page_breaks<'p>(
                 prev_vmode = true;
                 continue;
             }
+            // beamer frame edges and the title page: vertical-mode material
+            // of their own (the page break is the frame's, not a
+            // `\newpage` in the gap). The `\end{frame}` closes any list
+            // still open, so the next block starts fresh.
+            // beamer's frame head and title page: vertical-mode material of
+            // their own (the page break is the frame's, not a `\newpage` in
+            // the gap). `\end{frame}` takes the ordinary path below so the
+            // list it closes gets its `\@endparenv` skip.
+            CBlock::BeamerFrameBegin { span, .. } | CBlock::BeamerTitlePage { span, .. } => {
+                let kind = match block {
+                    CBlock::BeamerFrameBegin { .. } => UnitKind::FrameBegin { block, span: *span },
+                    _ => UnitKind::BeamerTitle { block, span: *span },
+                };
+                pending_eject = false;
+                units.push(Unit {
+                    kind,
+                    eject_before: false,
+                    vspace_before: std::mem::take(&mut pending_vspace),
+                    addvspace_before: 0.0,
+                    addvspace_flex: (0.0, 0.0),
+                    vspace_flex: (0.0, 0.0),
+                    endlist_adjust: 0.0,
+                    limitations: std::mem::take(&mut pending_limitations),
+                });
+                prev_end = Some(*span);
+                // Not a heading: the first list of the body takes its
+                // `\@topsep` (no `\@nbitem` absorption).
+                prev_vmode = false;
+                prev_styled = false;
+                prev_list = false;
+                list_vmode = false;
+                list_vmode_by_depth.clear();
+                continue;
+            }
             _ => {}
         }
         // An empty-body `\item` has no inlines: its `\item` command's own
@@ -3427,6 +3565,7 @@ fn split_at_page_breaks<'p>(
         };
         let first = match block {
             CBlock::Heading { number_span, .. } => Some(*number_span),
+            CBlock::BeamerFrameEnd { span } => Some(*span),
             _ => anchor_span(inlines_of(block)).or(item_label_span),
         };
         let mut eject = std::mem::take(&mut pending_eject) || matches!((prev_end, first), (Some(p), Some(f)) if gap_has_page_break(texts, p, f));
@@ -3607,8 +3746,15 @@ fn split_at_page_breaks<'p>(
                                 // Both are `\addvspace`: the `\@topsepadd` the
                                 // closing list left behind and this `\list`'s
                                 // own `\addvspace\@topsep` keep the larger
-                                // natural skip, they are not summed.
+                                // natural skip, they are not summed -- except
+                                // under beamer, whose `\beamer@enum@`/`itemize`
+                                // put `\usebeamercolor[fg]{...}`'s colour
+                                // whatsit between the two, so `\lastskip` is
+                                // 0 at the second `\addvspace` and both
+                                // skips land (measured: adjacent lists
+                                // 19.53bp apart = 13.6pt + 3pt + 3pt).
                                 let skip = match list_end_skip.take() {
+                                    Some(end) if style.is_beamer() => (end.0 + open.0, end.1 + open.1, end.2 + open.2),
                                     Some(end) if end.0 >= open.0 => end,
                                     _ => open,
                                 };
@@ -3640,7 +3786,7 @@ fn split_at_page_breaks<'p>(
                 let natbib_bib = env == "thebibliography"
                     && index.natbib_author_year
                     && label.as_ref().is_none_or(|(text, _)| text.is_empty());
-                let (margins, labelsep_pt, itemindent_pt) = list_margins(index, texts.get(at.document.0).copied().unwrap_or(""), at.start, size, natbib_bib, style.family);
+                let (margins, labelsep_pt, itemindent_pt) = list_margins(index, texts.get(at.document.0).copied().unwrap_or(""), at.start, size, natbib_bib, style);
                 // The explicit label's inlines; `adapt_cached` converts
                 // them to items (the styles and label table live there).
                 label_inlines = match item {
@@ -3910,7 +4056,27 @@ fn split_at_page_breaks<'p>(
                     eject = false;
                 }
             }
-            CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak => unreachable!("handled above"),
+            CBlock::BeamerFrameEnd { span } => {
+                // The `\@endparenv` skip of a list the frame closes
+                // (`addvspace_before`) becomes glue after the body's last
+                // block (`typeset::beamer`); a `\newpage` in the gap is
+                // the frame's own break.
+                units.push(Unit {
+                    kind: UnitKind::FrameEnd { span: *span },
+                    eject_before: false,
+                    vspace_before,
+                    addvspace_before,
+                    addvspace_flex,
+                    vspace_flex,
+                    endlist_adjust,
+                    limitations,
+                });
+                eject = false;
+                prev_vmode = true;
+                list_vmode = false;
+                list_vmode_by_depth.clear();
+            }
+            CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak | CBlock::BeamerFrameBegin { .. } | CBlock::BeamerTitlePage { .. } => unreachable!("handled above"),
             CBlock::Verbatim { .. } | CBlock::TableOfContents { .. } | CBlock::TitleBlock { .. } | CBlock::VFill | CBlock::LetterBlock { .. } => unreachable!("lowered by lower_blocks"),
             // Blocks only a re-pinned compiler emits. Skipping a `Penalty`
             // is exactly what the old pin did (it had no such node), so page
@@ -3922,9 +4088,14 @@ fn split_at_page_breaks<'p>(
             #[cfg(feature = "compiler-node-surface")]
             CBlock::Tabbing { .. } => unreachable!("lowered by lower_blocks"),
         }
-        if let Some(last) = inlines_of(block).iter().map(inline_span).last().or(item_label_span) {
+        let block_end = match block {
+            CBlock::BeamerFrameEnd { span } => Some(*span),
+            _ => None,
+        };
+        if let Some(last) = inlines_of(block).iter().map(inline_span).last().or(item_label_span).or(block_end) {
             prev_end = Some(last);
         }
+        let _ = eject;
     }
     units
 }
@@ -5594,8 +5765,22 @@ fn list_seps_from(calls: &[(&str, &str)], env: &str, depth: usize, size: u32, st
         seps.topsep_skip = style.topsep;
         seps.partopsep_skip = style.partopsep;
         seps.parsep_skip = style.parsep;
-        seps.itemsep_skip = style.parsep;
-        seps.itemsep = style.parsep.natural;
+        seps.itemsep_skip = style.itemsep;
+        seps.itemsep = style.itemsep.natural;
+    } else if style.is_beamer() {
+        // `beamerbaselocalstructure.sty` `\@listii`/`\@listiii`.
+        if let Some(g) = style.class_geometry.as_deref() {
+            let l = flashtex_class_geometry::beamer::list_level(g.font, depth as u8);
+            let glue = |g: flashtex_class_geometry::Glue| crate::style::Skip::new(crate::style::frame_pt(g.natural), crate::style::frame_pt(g.stretch), crate::style::frame_pt(g.shrink));
+            seps.topsep_skip = glue(l.topsep);
+            seps.topsep = seps.topsep_skip.natural;
+            seps.partopsep_skip = glue(l.partopsep);
+            seps.partopsep = seps.partopsep_skip.natural;
+            seps.parsep_skip = glue(l.parsep);
+            seps.parsep = seps.parsep_skip.natural;
+            seps.itemsep_skip = glue(l.itemsep);
+            seps.itemsep = seps.itemsep_skip.natural;
+        }
     }
     let all_keys = calls.iter().filter(|(envs, _)| setlist_names(envs, env)).map(|(_, keys)| *keys).chain(std::iter::once(begin_keys));
     for keys in all_keys {
@@ -6349,14 +6534,21 @@ fn length_register(source: &str, at: usize, name: &str, size: u32, em_ex: Option
 /// `source` is read only by the `leftmargin=\<register>` arm
 /// ([`length_register`], a prefix scan guarded by that rare key); everything
 /// per-block comes from the precomputed [`SourceIndex`].
-fn list_margins(index: &SourceIndex, source: &str, at: usize, size: u32, natbib_bib: bool, family: crate::fonts::Family) -> (Vec<ListMargin>, Option<f64>, f64) {
+fn list_margins(index: &SourceIndex, source: &str, at: usize, size: u32, natbib_bib: bool, style: &Stylesheet) -> (Vec<ListMargin>, Option<f64>, f64) {
+    let family = style.family;
     let calls = &index.setlist;
     let em_ex = list_em_ex(size, family);
     // The class sets `\leftmargin<i>` while it loads, before `fontenc`, so
     // its `em` is OT1 `cmr`'s quad (Latin Modern's), not the EC font's
     // (`ecrm1095`'s quad is 0.06 pt smaller at 11 pt).
     let class_em_ex = if family == crate::fonts::Family::ComputerModern { list_em_ex(size, crate::fonts::Family::LatinModern) } else { em_ex };
-    let class_margin = |depth: usize| ListMargin::Fixed(parse_dimen_in(&format!("{}em", article_leftmargin_em(depth)), size, class_em_ex).unwrap_or(0.0));
+    // beamer: `\leftmargin<i>` is 2em at every level
+    // (`beamerbaselocalstructure.sty` 144-146).
+    let beamer = style.is_beamer();
+    let class_margin = |depth: usize| {
+        let em = if beamer { 2.0 } else { article_leftmargin_em(depth) };
+        ListMargin::Fixed(parse_dimen_in(&format!("{em}em"), size, class_em_ex).unwrap_or(0.0))
+    };
     let (mut labelsep_pt, mut itemindent_pt) = (None, 0.0);
     let margins = index
         .list_stack(at)
@@ -10886,6 +11078,7 @@ mod tests {
                 Block::NoBreakFalse { .. } => "B".to_string(),
                 Block::TocEntry(..) => "E".to_string(),
                 Block::LongTable { .. } => "L".to_string(),
+                Block::FrameBegin { .. } | Block::FrameEnd { .. } | Block::BeamerTitle { .. } => "F".to_string(),
             })
             .collect();
         // `Problem 1 \hfill \normalfont[4 points]`: one fill, no space after it.
