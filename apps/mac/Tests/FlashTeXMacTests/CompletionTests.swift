@@ -18,8 +18,12 @@ final class CompletionTests: XCTestCase {
     // MARK: triggers and prefix filtering
 
     func testBackslashTriggersCommandsAndPrefixFilters() {
+        // The fixtures of this test are an article project (`projectClass`),
+        // as `CompletionTestVocabulary` assumes: beamer's `\setbeamer…` and
+        // `\subtitle` are text entries that would otherwise take the head
+        // of the `\se`/`\sub` lists by table order.
         let text = "Hello \\se"
-        let s = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, result: nil)
+        let s = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, result: nil, projectClass: "article")
         // The label shows the argument shape; the inserted text is the command alone.
         // Text-mode entries precede math ones (table order); nothing is spelled `se`.
         // Computed from the live vocabulary (not a hand-copied snapshot) so this
@@ -31,9 +35,9 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(s.map(\.detail).suffix(2), ["math · upright operator name", "math · symbol ∖"])
 
         // The command spelled exactly as typed ranks first; the rest keep table order.
-        XCTAssertEqual(labels(Completion.suggestions(in: "x \\sec", caretUTF16: 6, result: nil)), CompletionTestVocabulary.labels(forPrefix: "sec"))
-        XCTAssertEqual(labels(Completion.suggestions(in: "x \\it", caretUTF16: 5, result: nil)), CompletionTestVocabulary.labels(forPrefix: "it"))
-        XCTAssertEqual(labels(Completion.suggestions(in: "x \\sub", caretUTF16: 6, result: nil)), CompletionTestVocabulary.labels(forPrefix: "sub"))
+        XCTAssertEqual(labels(Completion.suggestions(in: "x \\sec", caretUTF16: 6, result: nil, projectClass: "article")), CompletionTestVocabulary.labels(forPrefix: "sec"))
+        XCTAssertEqual(labels(Completion.suggestions(in: "x \\it", caretUTF16: 5, result: nil, projectClass: "article")), CompletionTestVocabulary.labels(forPrefix: "it"))
+        XCTAssertEqual(labels(Completion.suggestions(in: "x \\sub", caretUTF16: 6, result: nil, projectClass: "article")), CompletionTestVocabulary.labels(forPrefix: "sub"))
 
         // The ranking rule itself, isolated from the compiler's (growing)
         // vocabulary through the `supported:` injection seam: the name typed
@@ -162,11 +166,29 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(labels(Completion.suggestions(in: typed, caretUTF16: (typed as NSString).length, result: nil)), ["\\end{document}", "\\end{env}"])
 
         // Inside `\end{` the open environments come first, then known/seen names.
+        // Environments are class-gated like commands (`environmentOffered`):
+        // beamer's `invisibleenv` is not offered in an article project, and
+        // the same buffer in a beamer project — or with no class and no
+        // project, which gates nothing — offers it after the open `itemize`.
         let inBrace = "\\begin{document}\\begin{itemize}\\end{"
-        let env = Completion.suggestions(in: inBrace + "i", caretUTF16: (inBrace as NSString).length + 1, result: nil)
+        let env = Completion.suggestions(in: inBrace + "i", caretUTF16: (inBrace as NSString).length + 1, result: nil, projectClass: "article")
         XCTAssertEqual(labels(env), ["itemize"])
         XCTAssertEqual(env.first?.insertText, "itemize}")
         XCTAssertEqual(env.first?.kind, .environment)
+        XCTAssertEqual(Completion.Vocabulary.environmentClasses["invisibleenv"], "beamer")
+        for projectClass in ["beamer", nil] {
+            let deck = Completion.suggestions(in: inBrace + "i", caretUTF16: (inBrace as NSString).length + 1, result: nil, projectClass: projectClass)
+            XCTAssertEqual(labels(deck), ["itemize", "invisibleenv"], "project class: \(projectClass ?? "none")")
+        }
+        let declaredDeck = "\\documentclass{beamer}\n" + inBrace + "i"
+        XCTAssertEqual(labels(Completion.suggestions(in: declaredDeck, caretUTF16: (declaredDeck as NSString).length, result: nil, projectClass: "article")),
+                       ["itemize", "invisibleenv"], "the text's own class wins over the root's")
+        // `\begin{` gates the same way; the name typed out in full is never hidden.
+        let beginBlock = "\\begin{document}\\begin{bl"
+        XCTAssertFalse(labels(Completion.suggestions(in: beginBlock, caretUTF16: (beginBlock as NSString).length, result: nil, projectClass: "article")).contains("block"))
+        XCTAssertEqual(labels(Completion.suggestions(in: beginBlock, caretUTF16: (beginBlock as NSString).length, result: nil, projectClass: "beamer")).first, "block")
+        let beginBlockFull = "\\begin{document}\\begin{block"
+        XCTAssertEqual(labels(Completion.suggestions(in: beginBlockFull, caretUTF16: (beginBlockFull as NSString).length, result: nil, projectClass: "article")).first, "block")
         let beginCtx = "\\begin{itemize}\\end{itemize}\\begin{d"
         let b = Completion.suggestions(in: beginCtx, caretUTF16: (beginCtx as NSString).length, result: nil)
         // Every known environment starting with `d`, in table order (computed
@@ -260,6 +282,7 @@ final class CompletionTests: XCTestCase {
     func testCompletingTextViewUsesSubclassAndBackslashRange() throws {
         let scroll = CompletingTextView.scrollable()
         let tv = try XCTUnwrap(scroll.documentView as? CompletingTextView)
+        tv.projectDocumentClass = { "article" } // the fixture's project class, as `CompletionTestVocabulary` assumes
         tv.string = "\\begin{document}\nnaïve \\se"
         let end = (tv.string as NSString).length
         tv.setSelectedRange(NSRange(location: end, length: 0))
@@ -268,7 +291,7 @@ final class CompletionTests: XCTestCase {
         let items = tv.completions(forPartialWordRange: tv.rangeForUserCompletion, indexOfSelectedItem: &index)
         // AppKit's list carries the insert texts (no argument shapes), in the pure function's order.
         XCTAssertEqual(items, CompletionTestVocabulary.insertTexts(forPrefix: "se"))
-        XCTAssertEqual(items, Completion.suggestions(in: tv.string, caretUTF16: end, result: nil).map(\.insertText))
+        XCTAssertEqual(items, Completion.suggestions(in: tv.string, caretUTF16: end, result: nil, projectClass: "article").map(\.insertText))
         XCTAssertEqual(index, 0)
         // `\e` offers the unclosed environment first.
         tv.string = "\\begin{document}\n\\e"
@@ -1258,7 +1281,8 @@ final class CompletionTests: XCTestCase {
         let exec = ManualExecutor()
         let scheduler = CompletionScheduler(executor: exec.run)
         var delivered: [CompletionScheduler.Outcome] = []
-        let req = CompletionScheduler.Request(text: "\\begin{document} \\se", caretUTF16: 20, metadata: nil)
+        // An article project: beamer's `\subtitle` would otherwise lead the `\sub` list.
+        let req = CompletionScheduler.Request(text: "\\begin{document} \\se", caretUTF16: 20, metadata: nil, projectClass: "article")
 
         // 1. Explicit cancellation before the job ran: the job is marked, computes nothing, and is refused.
         let g1 = scheduler.schedule(req) { delivered.append($0) }
@@ -1273,7 +1297,7 @@ final class CompletionTests: XCTestCase {
 
         // 2. A newer request supersedes the pending one: only the newest outcome is delivered.
         scheduler.schedule(req) { delivered.append($0) }
-        let g3 = scheduler.schedule(.init(text: "x \\sub", caretUTF16: 6, metadata: nil)) { delivered.append($0) }
+        let g3 = scheduler.schedule(.init(text: "x \\sub", caretUTF16: 6, metadata: nil, projectClass: "article")) { delivered.append($0) }
         XCTAssertEqual(exec.jobs.count, 2)
         exec.runAll()
         spin("delivery") { scheduler.statistics.delivered == 1 }
@@ -1577,6 +1601,7 @@ final class CompletionTests: XCTestCase {
         window.orderFrontRegardless() // never makeKey
         window.makeFirstResponder(tv)
         defer { window.orderOut(nil) }
+        tv.projectDocumentClass = { "article" } // beamer's `\subtitle` would otherwise lead the list
         tv.string = "\\begin{document}\nx \\su"
         let end = (tv.string as NSString).length
         tv.setSelectedRange(NSRange(location: end, length: 0))
