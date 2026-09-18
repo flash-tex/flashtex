@@ -174,10 +174,39 @@ pub const LETTER_CLASS_COMMANDS: &[&str] = &[
     "makelabels",
 ];
 
+/// Text commands defined by `beamer.cls` alone (`beamerbaseframe.sty`,
+/// `beamerbasetitle.sty`, `beamerbasetemplates.sty`, ...): every one goes
+/// through `parser::Parser::beamer_command_available`, which diagnoses any
+/// use outside `\documentclass{beamer}`. Scoped like the letter family so
+/// completion never offers `\frametitle` over `\frac` in an article (the
+/// #855 Mac regression: `\fra`⇥ expanded to `\frametitle{}`).
+pub const BEAMER_CLASS_COMMANDS: &[&str] = &[
+    "frametitle",
+    "framesubtitle",
+    "alert",
+    "subtitle",
+    "institute",
+    "titlepage",
+    "note",
+    "usetheme",
+    "usecolortheme",
+    "usefonttheme",
+    "useinnertheme",
+    "useoutertheme",
+    "setbeamertemplate",
+    "setbeamercolor",
+    "setbeamerfont",
+    "setbeamercovered",
+    "setbeamersize",
+    "beamertemplatenavigationsymbolsempty",
+];
+
 /// The class in [`Command::requires_class`] terms, or `None` for universal.
 fn requires_class(name: &str) -> Option<&'static str> {
     if LETTER_CLASS_COMMANDS.contains(&name) {
         Some("letter")
+    } else if BEAMER_CLASS_COMMANDS.contains(&name) {
+        Some("beamer")
     } else {
         None
     }
@@ -194,8 +223,38 @@ fn requires_class(name: &str) -> Option<&'static str> {
 /// still diagnoses a bare use without `\usepackage{soul}` and implements
 /// the built-in behavior with it. They are implemented commands, so the
 /// diagnostic vocabulary (`crate::vocabulary`) counts them as known.
-pub(crate) const TEXT_EXTRA_ARMS: &[&str] =
-    &["newtheorem", "theoremstyle", "so", "hl", "text", "boxed", "enquote"];
+///
+/// beamer's whole command family ([`BEAMER_CLASS_COMMANDS`]) is here for
+/// the same reason as soul's: `\note`, `\alert`, `\subtitle`, `\institute`
+/// are common user macro names in other classes, and a document's own
+/// `\newcommand{\note}[1]{...}` must win; under beamer the arm applies.
+pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
+    "newtheorem",
+    "theoremstyle",
+    "so",
+    "hl",
+    "text",
+    "boxed",
+    "enquote",
+    "frametitle",
+    "framesubtitle",
+    "alert",
+    "subtitle",
+    "institute",
+    "titlepage",
+    "note",
+    "usetheme",
+    "usecolortheme",
+    "usefonttheme",
+    "useinnertheme",
+    "useoutertheme",
+    "setbeamertemplate",
+    "setbeamercolor",
+    "setbeamerfont",
+    "setbeamercovered",
+    "setbeamersize",
+    "beamertemplatenavigationsymbolsempty",
+];
 
 /// Canonical commands the expansion pass executes itself (engine primitives
 /// and kernel-prelude macros of `flashtex-tex-expansion`); their effect
@@ -270,9 +329,24 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("listfiles", "", "accepted no-op; there is no log stream"),
     ("section", "{...}", "numbered section heading; starred form unnumbered"),
     ("subsection", "{...}", "numbered subsection heading; starred form unnumbered"),
-    ("frametitle", "{...}", "beamer frame title, set as an unnumbered section-size heading; needs \\documentclass{beamer}"),
-    ("framesubtitle", "{...}", "beamer frame subtitle, set as an unnumbered subsection-size heading; needs \\documentclass{beamer}"),
-    ("alert", "{...}", "beamer alert text in red; needs \\documentclass{beamer}"),
+    ("frametitle", "{...}", "beamer frame title (\\Large, structure colour, in the frametitle box at the top of the slide); optional <overlay> and [short] read past; needs \\documentclass{beamer}"),
+    ("framesubtitle", "{...}", "beamer frame subtitle (\\footnotesize, under the frame title); needs \\documentclass{beamer}"),
+    ("alert", "{...}", "beamer alert text in red; an <overlay> spec is read past (shown on every slide); needs \\documentclass{beamer}"),
+    ("subtitle", "{...}", "beamer subtitle for \\titlepage; optional [short] read past; needs \\documentclass{beamer}"),
+    ("institute", "{...}", "beamer institute for \\titlepage; optional [short] read past; needs \\documentclass{beamer}"),
+    ("titlepage", "", "beamer title page (default template: centred title, subtitle, author, institute, date); needs \\documentclass{beamer}"),
+    ("note", "{...}", "beamer note: typesets nothing (notes are shown only with \\setbeameroption{show notes}); needs \\documentclass{beamer}"),
+    ("usetheme", "{...}", "accepted and read past: only beamer's default theme is modelled; needs \\documentclass{beamer}"),
+    ("usecolortheme", "{...}", "accepted and read past: only beamer's default colour theme is modelled; needs \\documentclass{beamer}"),
+    ("usefonttheme", "{...}", "accepted and read past: only beamer's default font theme is modelled; needs \\documentclass{beamer}"),
+    ("useinnertheme", "{...}", "accepted and read past: only beamer's default inner theme is modelled; needs \\documentclass{beamer}"),
+    ("useoutertheme", "{...}", "accepted and read past: only beamer's default outer theme is modelled; needs \\documentclass{beamer}"),
+    ("setbeamertemplate", "{...}{...}", "accepted and read past; \\setbeamertemplate{navigation symbols}{} is honoured by the renderer; needs \\documentclass{beamer}"),
+    ("setbeamercolor", "{...}{...}", "accepted and read past: beamer's default colours stay in force; needs \\documentclass{beamer}"),
+    ("setbeamerfont", "{...}{...}", "accepted and read past: beamer's default fonts stay in force; needs \\documentclass{beamer}"),
+    ("setbeamercovered", "{...}", "accepted and read past (overlays are not modelled yet); needs \\documentclass{beamer}"),
+    ("setbeamersize", "{...}", "accepted and read past: beamer's default text margins stay in force; needs \\documentclass{beamer}"),
+    ("beamertemplatenavigationsymbolsempty", "", "accepted; the renderer draws no navigation symbols either way yet; needs \\documentclass{beamer}"),
     ("label", "{key}", "names the current section, equation or figure number"),
     ("ref", "{key}", "number of the labelled item"),
     ("pageref", "{key}", "page number of the labelled item, in the \\pagenumbering style in force at the label"),
@@ -496,9 +570,9 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("bibitem", "[label]{key}", "entry of thebibliography; natbib's [Author(Year)] and [Author, Year] labels feed author-year citations"),
     ("bibliography", "{files}", "diagnosed: .bib input is not read"),
     ("bibliographystyle", "{style}", "diagnosed: no effect without .bib support"),
-    ("title", "{...}", "title for \\maketitle"),
-    ("author", "{...}", "author block for \\maketitle; \\and and \\thanks inside it"),
-    ("date", "{...}", "date for \\maketitle; \\today inside it"),
+    ("title", "{...}", "title for \\maketitle (beamer: and \\titlepage, with an optional [short] form read past)"),
+    ("author", "{...}", "author block for \\maketitle; \\and and \\thanks inside it (beamer: optional [short] form read past)"),
+    ("date", "{...}", "date for \\maketitle; \\today inside it (beamer: optional [short] form read past)"),
     ("maketitle", "", "article.cls title block"),
     // letter.cls. Every one of these exists only under
     // \documentclass{letter}; in any other class they are diagnosed, exactly
@@ -1017,7 +1091,7 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("figure", "numbered captions; no floating"),
     (
         "frame",
-        "rule-bordered box around its body (\\fboxsep padding, \\fboxrule rule in the current colour); under \\documentclass{beamer} a slide: one page per frame with an optional {title}{subtitle} head",
+        "rule-bordered box around its body (\\fboxsep padding, \\fboxrule rule in the current colour); under \\documentclass{beamer} a slide: one page per frame (empty frames included), the [t]/[c]/[b] body placement, a {title}{subtitle} head or \\frametitle in the body; overlay specs, [fragile], [plain] and [allowframebreaks] are read past",
     ),
     ("center", "centred paragraphs"),
     ("flushleft", "left-aligned paragraphs"),

@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 401 text-mode and 573 math-mode command entries, 68 environments and 31 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 419 text-mode and 573 math-mode command entries, 68 environments and 31 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -575,9 +575,9 @@ Canonical sources:
 | `\bibitem` | `[label]{key}` | entry of thebibliography; natbib's [Author(Year)] and [Author, Year] labels feed author-year citations |
 | `\bibliography` | `{files}` | diagnosed: .bib input is not read |
 | `\bibliographystyle` | `{style}` | diagnosed: no effect without .bib support |
-| `\title` | `{...}` | title for \maketitle |
-| `\author` | `{...}` | author block for \maketitle; \and and \thanks inside it |
-| `\date` | `{...}` | date for \maketitle; \today inside it |
+| `\title` | `{...}` | title for \maketitle (beamer: and \titlepage, with an optional [short] form read past) |
+| `\author` | `{...}` | author block for \maketitle; \and and \thanks inside it (beamer: optional [short] form read past) |
+| `\date` | `{...}` | date for \maketitle; \today inside it (beamer: optional [short] form read past) |
 | `\maketitle` |  | article.cls title block |
 | `\address` | `{lines}` | letter.cls return address (\\-separated lines), set by \opening |
 | `\signature` | `{name}` | letter.cls name under the closing; falls back to \name |
@@ -711,6 +711,24 @@ Canonical sources:
 | `\text` | `{...}` | amsmath text in text mode: outside math simply \mbox, the argument as one unbreakable box in the current style |
 | `\boxed` | `{...}` | amsmath box in text mode: the argument with a drawn frame (\fbox with math inside) |
 | `\enquote` | `{text}` | csquotes: wraps text in typographic quotation marks; nesting alternates double \u{201c}\u{201d} and single \u{2018}\u{2019} (needs csquotes) |
+| `\frametitle` | `{...}` | beamer frame title (\Large, structure colour, in the frametitle box at the top of the slide); optional <overlay> and [short] read past; needs \documentclass{beamer} |
+| `\framesubtitle` | `{...}` | beamer frame subtitle (\footnotesize, under the frame title); needs \documentclass{beamer} |
+| `\alert` | `{...}` | beamer alert text in red; an <overlay> spec is read past (shown on every slide); needs \documentclass{beamer} |
+| `\subtitle` | `{...}` | beamer subtitle for \titlepage; optional [short] read past; needs \documentclass{beamer} |
+| `\institute` | `{...}` | beamer institute for \titlepage; optional [short] read past; needs \documentclass{beamer} |
+| `\titlepage` |  | beamer title page (default template: centred title, subtitle, author, institute, date); needs \documentclass{beamer} |
+| `\note` | `{...}` | beamer note: typesets nothing (notes are shown only with \setbeameroption{show notes}); needs \documentclass{beamer} |
+| `\usetheme` | `{...}` | accepted and read past: only beamer's default theme is modelled; needs \documentclass{beamer} |
+| `\usecolortheme` | `{...}` | accepted and read past: only beamer's default colour theme is modelled; needs \documentclass{beamer} |
+| `\usefonttheme` | `{...}` | accepted and read past: only beamer's default font theme is modelled; needs \documentclass{beamer} |
+| `\useinnertheme` | `{...}` | accepted and read past: only beamer's default inner theme is modelled; needs \documentclass{beamer} |
+| `\useoutertheme` | `{...}` | accepted and read past: only beamer's default outer theme is modelled; needs \documentclass{beamer} |
+| `\setbeamertemplate` | `{...}{...}` | accepted and read past; \setbeamertemplate{navigation symbols}{} is honoured by the renderer; needs \documentclass{beamer} |
+| `\setbeamercolor` | `{...}{...}` | accepted and read past: beamer's default colours stay in force; needs \documentclass{beamer} |
+| `\setbeamerfont` | `{...}{...}` | accepted and read past: beamer's default fonts stay in force; needs \documentclass{beamer} |
+| `\setbeamercovered` | `{...}` | accepted and read past (overlays are not modelled yet); needs \documentclass{beamer} |
+| `\setbeamersize` | `{...}` | accepted and read past: beamer's default text margins stay in force; needs \documentclass{beamer} |
+| `\beamertemplatenavigationsymbolsempty` |  | accepted; the renderer draws no navigation symbols either way yet; needs \documentclass{beamer} |
 | `\\` |  | line break; an optional [length] is consumed |
 | `\-` |  | discretionary hyphen: a break point, invisible unless the line breaks there |
 | `\,` |  | text kern .16667em (\thinspace) |
@@ -957,7 +975,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `multline*` | text | multi-line display |
 | `subequations` | text | amsmath: displays inside number as the parent number plus a, b, ...; a \label right after \begin gets the parent number |
 | `figure` | text | numbered captions; no floating |
-| `frame` | text | rule-bordered box around its body (\fboxsep padding, \fboxrule rule in the current colour) |
+| `frame` | text | rule-bordered box around its body (\fboxsep padding, \fboxrule rule in the current colour); under \documentclass{beamer} a slide: one page per frame (empty frames included), the [t]/[c]/[b] body placement, a {title}{subtitle} head or \frametitle in the body; overlay specs, [fragile], [plain] and [allowframebreaks] are read past |
 | `center` | text | centred paragraphs |
 | `flushleft` | text | left-aligned paragraphs |
 | `flushright` | text | right-aligned paragraphs |

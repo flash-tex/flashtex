@@ -334,7 +334,7 @@ const BEAMER_DOCUMENT: &str = "\\documentclass{beamer}\n\\begin{document}\n\\beg
 /// frame of a beamer deck. `None` for anything that is not beamer-gated.
 fn beamer_probe(name: &str, arguments: &str) -> Option<String> {
     match name {
-        "frametitle" | "framesubtitle" | "alert" => {
+        n if supported::BEAMER_CLASS_COMMANDS.contains(&n) => {
             Some(BEAMER_DOCUMENT.replace('#', &with_arguments(name, arguments, "1pt")))
         }
         _ => None,
@@ -601,9 +601,26 @@ fn class_scope_matches_the_parser_gate() {
         .collect();
     let listed: BTreeSet<String> = supported::LETTER_CLASS_COMMANDS
         .iter()
+        .chain(supported::BEAMER_CLASS_COMMANDS)
         .map(|s| s.to_string())
         .collect();
-    assert_eq!(scoped, listed, "scope must be exactly the letter gate");
+    assert_eq!(scoped, listed, "scope must be exactly the letter and beamer gates");
+    for name in supported::BEAMER_CLASS_COMMANDS {
+        let command = inventory
+            .commands
+            .iter()
+            .find(|c| c.name == *name)
+            .unwrap_or_else(|| panic!("\\{name} is not in the inventory"));
+        assert_eq!(
+            command.requires_class,
+            Some("beamer"),
+            "\\{name} is gated on the beamer class"
+        );
+        assert!(
+            beamer_probe(name, "{}").is_some(),
+            "\\{name} must go through the parser's beamer gate"
+        );
+    }
     for name in supported::LETTER_CLASS_COMMANDS {
         let command = inventory
             .commands

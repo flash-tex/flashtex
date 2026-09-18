@@ -1039,6 +1039,91 @@ pub enum Block {
         indent_pt: f64,
         span: Span,
     },
+    /// `\begin{frame}` under `\documentclass{beamer}` (issue #841, #944):
+    /// the head of one slide. The frame's body follows as ordinary blocks
+    /// up to the matching [`Block::BeamerFrameEnd`]; the pipeline sets the
+    /// whole run as one `\vbox to\textheight` page
+    /// (`beamerbaseframe.sty`: the frametitle box, `\vskip 0pt plus 1fill`,
+    /// the body, `\vskip 0pt plus 1.5fill`). `title`/`subtitle` come from
+    /// the `{title}{subtitle}` head arguments or from `\frametitle` /
+    /// `\framesubtitle` inside the body (the parser patches this block).
+    /// `span` is the `\begin{frame}` command with its arguments.
+    BeamerFrameBegin {
+        options: BeamerFrameOptions,
+        title: Vec<Inline>,
+        subtitle: Vec<Inline>,
+        span: Span,
+    },
+    /// `\end{frame}` under beamer: closes the slide opened by the last
+    /// [`Block::BeamerFrameBegin`].
+    BeamerFrameEnd {
+        span: Span,
+    },
+    /// beamer's `\titlepage` (`beamerinnerthemedefault.sty` `title page`
+    /// template): the title, subtitle, author, institute and date, each
+    /// already-resolved inline content (empty when the preamble never set
+    /// it). Layout (the `sep=8pt` colour boxes, `\vskip1em`/`0.25em`/
+    /// `0.5em`, the `\vfill`s) lives in the render pipeline.
+    BeamerTitlePage {
+        title: Vec<Inline>,
+        subtitle: Vec<Inline>,
+        authors: Vec<Inline>,
+        institute: Vec<Inline>,
+        date: Vec<Inline>,
+        span: Span,
+    },
+}
+
+/// `\begin{frame}[<options>]` (beamerbaseframe.sty `\beamer@frameoptions`).
+/// Keys that select a layout this compiler reads but the pipeline does not
+/// model yet are still recorded so the pipeline can say so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct BeamerFrameOptions {
+    /// `t`/`c`/`b`: how the body sits in the frame (`c` is the class
+    /// default; the `t`/`c`/`b` class options are not read yet).
+    pub align: BeamerFrameAlign,
+    /// `plain`: no headline, footline or sidebars; the body box is
+    /// `\paperheight` high.
+    pub plain: bool,
+    /// `fragile` (and `fragile=singleslide`): the body is read verbatim by
+    /// beamer; here it only marks the frame.
+    pub fragile: bool,
+    /// `allowframebreaks`: the body may be split across pages.
+    pub allowframebreaks: bool,
+}
+
+/// The vertical placement of a beamer frame's body (`beamerbaseframe.sty`
+/// lines 255-278): the glue above and below the body box.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum BeamerFrameAlign {
+    /// `[t]`: `.2cm plus .5\paperheight` above, `0pt plus 1fill` below.
+    Top,
+    /// `[c]` (default): `0pt plus 1fill` above, `0pt plus 1.5fill` below.
+    #[default]
+    Center,
+    /// `[b]`: `0pt plus 1fill` above, nothing below.
+    Bottom,
+}
+
+/// `\begin{frame}[<options>]`: the comma list of beamer frame keys. Unknown
+/// keys (`label=`, `shrink`, `squeeze`, `noframenumbering`, ...) are read
+/// past; `fragile=singleslide` counts as `fragile`.
+pub fn beamer_frame_options(raw: &str) -> BeamerFrameOptions {
+    let mut options = BeamerFrameOptions::default();
+    for key in raw.split(',') {
+        let key = key.trim();
+        let name = key.split('=').next().unwrap_or("").trim();
+        match name {
+            "t" => options.align = BeamerFrameAlign::Top,
+            "c" => options.align = BeamerFrameAlign::Center,
+            "b" => options.align = BeamerFrameAlign::Bottom,
+            "plain" => options.plain = true,
+            "fragile" => options.fragile = true,
+            "allowframebreaks" => options.allowframebreaks = true,
+            _ => {}
+        }
+    }
+    options
 }
 
 /// Which `letter.cls` block a [`Block::LetterBlock`] is.
@@ -1554,11 +1639,14 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "paragraph",
     "subparagraph",
     "tableofcontents",
-    // Beamer slide commands. Class-gated at their dispatch arms (like the
-    // letter.cls commands below): outside `beamer` they diagnose.
-    "frametitle",
-    "framesubtitle",
-    "alert",
+    // NOTE: beamer's commands (`\frametitle`, `\alert`, `\note`,
+    // `\subtitle`, `\institute`, `\titlepage`, `\usetheme`, ...) are
+    // deliberately NOT here, like soul's `\so`/`\hl` below: they exist only
+    // under `\documentclass{beamer}`, and an article's own
+    // `\newcommand{\note}[1]{...}` must win exactly as in real LaTeX.
+    // They have dispatch arms and inventory entries
+    // (`supported::BEAMER_CLASS_COMMANDS`, listed in `TEXT_EXTRA_ARMS`),
+    // class-gated at the arm by `beamer_command_available`.
     "index",
     "glossary",
     "textbf",
@@ -2542,6 +2630,9 @@ pub fn parse_project_with(
         title: None,
         author: None,
         date: None,
+        subtitle: None,
+        institute: None,
+        beamer_frame: None,
         today: options.today,
         titlepage_option: false,
         twocolumn_option: false,
@@ -2845,6 +2936,14 @@ struct P<'a> {
     /// argument (`\date{}`) suppresses the date line entirely once
     /// `\maketitle` expands it.
     date: Option<(Vec<InputToken>, Span)>,
+    /// beamer's `\subtitle{...}` and `\institute{...}` (beamerbasetitle.sty),
+    /// read by `\titlepage`. The optional short forms are dropped.
+    subtitle: Option<(Vec<InputToken>, Span)>,
+    institute: Option<(Vec<InputToken>, Span)>,
+    /// The index in the body's block list of the open beamer frame's
+    /// [`Block::BeamerFrameBegin`], so `\frametitle`/`\framesubtitle` in
+    /// the body can patch its title; `None` outside a frame.
+    beamer_frame: Option<usize>,
     /// The date `\today` expands to, supplied by the caller in the compile
     /// request rather than read from the clock here (`ParseOptions::today`).
     today: TodayDate,
@@ -3498,6 +3597,14 @@ impl P<'_> {
             // this arm runs in either place, unlike the preamble catch-all
             // just below.
             "title" | "author" | "date" => self.title_block_command(name, span),
+            // beamer's `\subtitle`/`\institute` and its theme and template
+            // declarations: preamble commands like `\title`, accepted in
+            // the body too (the default theme is the one modelled; see
+            // `beamer_declaration`). Ahead of the preamble catch-all below.
+            "subtitle" | "institute" => self.beamer_title_command(name, span),
+            "usetheme" | "usecolortheme" | "usefonttheme" | "useinnertheme" | "useoutertheme"
+            | "setbeamertemplate" | "setbeamercolor" | "setbeamerfont" | "setbeamercovered"
+            | "setbeamersize" | "beamertemplatenavigationsymbolsempty" => self.beamer_declaration(name, span),
             "maketitle" => self.maketitle(span, blocks, para),
             // letter.cls's preamble declarations (lines 154-163). Each is
             // `\def`ined to empty by the class, so writing one simply
@@ -3794,6 +3901,8 @@ impl P<'_> {
             // `\documentclass{beamer}` (see `beamer_command_available`).
             "frametitle" | "framesubtitle" => self.beamer_frame_title(name, span, blocks, para),
             "alert" => self.beamer_alert(name, span, para),
+            "titlepage" => self.beamer_titlepage(span, blocks, para),
+            "note" => self.beamer_note(name, span),
             "label" | "ref" | "pageref" | "eqref" | "thepage" => self.label_or_reference_command(name, span, para),
             "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
             | "labelcref" => self.clever_reference(name, span, para),
@@ -3933,6 +4042,12 @@ impl P<'_> {
     /// `\title`, `\author` and `\date`.
     #[inline(never)]
     fn title_block_command(&mut self, name: &str, span: Span) {
+        // beamerbasetitle.sty: `\title[short]{...}`, `\author[short]{...}`,
+        // `\date[short]{...}` take an optional short form (for the
+        // headline/footline templates), which article's never do.
+        if self.is_beamer_class() {
+            let _ = self.optional_bracket_argument();
+        }
         match name {
         "title" => {
             let (tokens, argument_span) = self.required_group(name, span);
@@ -4245,6 +4360,23 @@ impl P<'_> {
                 _ => 3,
             };
             let starred = self.take_optional_star();
+            if self.is_beamer_class() {
+                // beamerbasesection.sty: `\section<mode>*[short]{title}`
+                // records the entry for the navigation bars and the table
+                // of contents and typesets **nothing** in the default theme
+                // (only an `\AtBeginSection` hook would). The counter still
+                // steps so `\thesection` reads as beamer's would.
+                self.skip_beamer_overlay_spec();
+                let _ = self.optional_bracket_argument();
+                let (_, _) = self.required_group(name, span);
+                self.flush_paragraph(blocks, para);
+                if !starred {
+                    let number = self.counters.step(name).unwrap_or_default();
+                    self.set_current_counter(name, Some(number));
+                }
+                self.current_dependencies.clear();
+                return;
+            }
             let (tokens, _) = self.required_group(name, span);
             self.flush_paragraph(blocks, para);
             let number = if starred {
@@ -7347,10 +7479,11 @@ impl P<'_> {
         } else if environment == "figure" || self.theorems.contains_key(&environment) {
             self.flush_paragraph(blocks, para);
         } else if environment == "frame" {
-            // Beamer slide end: close the paragraph (the page break came at
-            // `\begin`). In other classes `\end{frame}` never arrives here:
-            // the bordered-box path consumes it synchronously.
+            // Beamer slide end: close the paragraph and the frame. In other
+            // classes `\end{frame}` never arrives here: the bordered-box
+            // path consumes it synchronously.
             self.flush_paragraph(blocks, para);
+            self.beamer_frame_end(span, blocks);
         } else if environment == "tabbing" && self.in_body {
             self.end_tabbing(blocks, para);
         } else if environment == "proof" {
@@ -7781,26 +7914,28 @@ impl P<'_> {
         false
     }
 
-    /// `\begin{frame}` under `beamer` (issue #841). Emits the page break that
-    /// makes each slide its own page — a leading one ships no page, exactly
-    /// like `\newpage` with nothing queued — then reads beamer's
-    /// `[<options>]{title}{subtitle}` head (with an optional `<overlay>`
-    /// spec first) as unnumbered headings. Frame options (`fragile`,
-    /// `plain`, shrink settings) select layout variants this renderer has no
-    /// model for, and overlay specs multiply pages, which is a separate
-    /// slice: both are read and ignored, so one frame is one page with no
-    /// leaked markup. Only the head is consumed here; the body parses with
-    /// the ordinary dispatch until `\end{frame}`.
+    /// `\begin{frame}` under `beamer` (issue #841, #944): pushes the slide's
+    /// [`Block::BeamerFrameBegin`] after reading beamer's
+    /// `<overlay>[<options>]{title}{subtitle}` head. Overlay specs multiply
+    /// pages (a separate slice) and are read and ignored; the options are
+    /// kept (`t`/`c`/`b`/`plain`/`fragile`/`allowframebreaks`), the rest
+    /// (`label=`, `shrink`, `squeeze`, ...) read past. Only the head is
+    /// consumed here; the body parses with the ordinary dispatch until
+    /// `\end{frame}`, which pushes the matching [`Block::BeamerFrameEnd`].
     fn beamer_frame_begin(&mut self, open: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         self.flush_paragraph(blocks, para);
-        blocks.push(Block::PageBreak);
-        self.finish_block_dependencies();
-        let _ = self.optional_bracket_argument();
+        self.skip_beamer_overlay_spec();
+        let mut options = BeamerFrameOptions::default();
+        if let Some((raw, _)) = self.optional_bracket_argument() {
+            options = beamer_frame_options(&raw);
+        }
         self.skip_beamer_overlay_spec();
         // `{title}` then `{subtitle}`: at most two brace groups, and only
         // when the next token opens one — body text is never consumed. A
         // blank line ends the head, as `\@ifnextchar` stops at `\par`.
-        for level in [1u8, 2u8] {
+        let mut head: [Vec<Inline>; 2] = [Vec::new(), Vec::new()];
+        let mut span = open;
+        for slot in head.iter_mut() {
             self.skip_spaces();
             if !matches!(
                 self.peek().map(|token| &token.kind),
@@ -7809,19 +7944,26 @@ impl P<'_> {
                 break;
             }
             let (tokens, title_span) = self.required_group("frame", open);
-            let content = self.inlines_from_tokens(tokens, TextStyle::BOLD, false);
-            if content.is_empty() {
-                self.current_dependencies.clear();
-            } else {
-                blocks.push(Block::Heading {
-                    level,
-                    number: String::new(),
-                    number_span: title_span,
-                    content,
-                });
-                self.finish_block_dependencies();
-            }
+            span = span.merge(title_span);
+            *slot = self.inlines_from_tokens(tokens, TextStyle::default(), false);
         }
+        let [title, subtitle] = head;
+        self.beamer_frame = Some(blocks.len());
+        blocks.push(Block::BeamerFrameBegin {
+            options,
+            title,
+            subtitle,
+            span,
+        });
+        self.finish_block_dependencies();
+    }
+
+    /// `\end{frame}` under beamer: the [`Block::BeamerFrameEnd`] that closes
+    /// the slide (the paragraph was flushed by the caller).
+    fn beamer_frame_end(&mut self, span: Span, blocks: &mut Vec<Block>) {
+        self.beamer_frame = None;
+        blocks.push(Block::BeamerFrameEnd { span });
+        self.finish_block_dependencies();
     }
 
     /// A beamer `<overlay>` specification (`<1->`, `<2-3>`): consumed so it
@@ -7843,9 +7985,12 @@ impl P<'_> {
         self.trim_word_prefix(past);
     }
 
-    /// `\frametitle{...}` / `\framesubtitle{...}` (beamer): the slide head
-    /// as an unnumbered heading, at section / subsection size. An empty
-    /// title makes no block, like an empty `\section`.
+    /// `\frametitle<overlay>[short]{...}` / `\framesubtitle{...}` (beamer):
+    /// the slide head, stored on the open frame's [`Block::BeamerFrameBegin`]
+    /// (beamer `\gdef`s `\insertframetitle`; the frametitle template sets
+    /// it when the frame box is assembled, not where the command stands).
+    /// Outside a frame beamer errors ("Frame title must be given inside a
+    /// frame"); here the command is diagnosed and typesets nothing.
     fn beamer_frame_title(
         &mut self,
         name: &str,
@@ -7857,19 +8002,151 @@ impl P<'_> {
             return;
         }
         self.skip_beamer_overlay_spec();
-        let (tokens, title_span) = self.required_group(name, span);
+        let _ = self.optional_bracket_argument();
+        let (tokens, _) = self.required_group(name, span);
         self.flush_paragraph(blocks, para);
-        let content = self.inlines_from_tokens(tokens, TextStyle::BOLD, false);
-        if content.is_empty() {
-            self.current_dependencies.clear();
+        let content = self.inlines_from_tokens(tokens, TextStyle::default(), false);
+        self.current_dependencies.clear();
+        let open = self
+            .beamer_frame
+            .filter(|&at| matches!(blocks.get(at), Some(Block::BeamerFrameBegin { .. })));
+        match open {
+            Some(at) => {
+                if let Some(Block::BeamerFrameBegin { title, subtitle, .. }) = blocks.get_mut(at) {
+                    if name == "frametitle" {
+                        *title = content;
+                    } else {
+                        *subtitle = content;
+                    }
+                }
+            }
+            None => self.diags.push(Diagnostic::warning(
+                format!("\\{name} outside a frame (beamer: \"Frame title must be given inside a frame\")"),
+                Some(span),
+                Some("ignored the title".into()),
+            )),
+        }
+    }
+
+    /// `\subtitle[short]{...}` / `\institute[short]{...}`
+    /// (beamerbasetitle.sty): stored for `\titlepage`.
+    fn beamer_title_command(&mut self, name: &str, span: Span) {
+        if !self.beamer_command_available(name, span) {
+            return;
+        }
+        let _ = self.optional_bracket_argument();
+        let (tokens, argument_span) = self.required_group(name, span);
+        let value = Some((tokens, span.merge(argument_span)));
+        if name == "subtitle" {
+            self.subtitle = value;
         } else {
-            blocks.push(Block::Heading {
-                level: if name == "frametitle" { 1 } else { 2 },
-                number: String::new(),
-                number_span: title_span,
-                content,
-            });
-            self.finish_block_dependencies();
+            self.institute = value;
+        }
+    }
+
+    /// `\titlepage` (beamer): the [`Block::BeamerTitlePage`] of everything
+    /// the preamble declared. beamer sets the template regardless of what is
+    /// missing (an unset `\title` is simply empty), unlike article's
+    /// `\maketitle`, so nothing here is an error. `\date` defaults to
+    /// `\today` as in article.
+    fn beamer_titlepage(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        if !self.beamer_command_available("titlepage", span) {
+            return;
+        }
+        self.skip_beamer_overlay_spec();
+        self.flush_paragraph(blocks, para);
+        let field = |this: &mut Self, value: Option<(Vec<InputToken>, Span)>| -> Vec<Inline> {
+            match value {
+                Some((tokens, _)) => this.inlines_from_tokens(tokens, TextStyle::default(), false),
+                None => Vec::new(),
+            }
+        };
+        let title = field(self, self.title.clone());
+        let subtitle = field(self, self.subtitle.clone());
+        let author_tokens = self.author.clone();
+        let author_span = author_tokens.as_ref().map_or(span, |(_, s)| *s);
+        let mut authors: Vec<Inline> = Vec::new();
+        if let Some((tokens, _)) = author_tokens {
+            // `\and` in beamer's `\insertauthor` is `\quad`-separated on one
+            // line; article's per-line stacking is kept here for now.
+            for (i, group) in split_on_and(tokens).into_iter().enumerate() {
+                let inlines = self.inlines_from_tokens(group, TextStyle::default(), false);
+                if inlines.is_empty() {
+                    continue;
+                }
+                if i > 0 && !authors.is_empty() {
+                    authors.push(Inline::LineBreak {
+                        span: author_span,
+                        skip_pt: None,
+                    });
+                }
+                authors.extend(inlines);
+            }
+        }
+        let institute = field(self, self.institute.clone());
+        let date = match self.date.clone() {
+            None => vec![Inline::Text {
+                text: self.today.latex_today(),
+                span,
+                style: TextStyle::default(),
+                space_before: true,
+            }],
+            Some((tokens, _)) => self.inlines_from_tokens(tokens, TextStyle::default(), false),
+        };
+        blocks.push(Block::BeamerTitlePage {
+            title,
+            subtitle,
+            authors,
+            institute,
+            date,
+            span,
+        });
+        self.finish_block_dependencies();
+    }
+
+    /// `\note<overlay>[options]{text}` (beamer): notes are typeset only with
+    /// `\setbeameroption{show notes}`; by default the argument produces
+    /// nothing, so it is read and dropped.
+    fn beamer_note(&mut self, name: &str, span: Span) {
+        if !self.beamer_command_available(name, span) {
+            return;
+        }
+        self.skip_beamer_overlay_spec();
+        let _ = self.optional_bracket_argument();
+        self.skip_spaces();
+        if matches!(self.peek().map(|token| &token.kind), Some(TokenKind::LBrace)) {
+            let _ = self.required_group(name, span);
+        }
+    }
+
+    /// beamer's theme and template declarations (`\usetheme[opts]{name}`,
+    /// `\setbeamertemplate{name}[opt]{...}`, `\setbeamercolor{name}{spec}`,
+    /// `\setbeamerfont{name}{spec}`, `\setbeamercovered{spec}`,
+    /// `\setbeamersize{spec}`, `\beamertemplatenavigationsymbolsempty`):
+    /// read past so the deck compiles. Only the default theme is modelled;
+    /// the render pipeline reads `\setbeamertemplate{navigation symbols}{}`
+    /// back from the source.
+    fn beamer_declaration(&mut self, name: &str, span: Span) {
+        if !self.beamer_command_available(name, span) {
+            return;
+        }
+        self.skip_beamer_overlay_spec();
+        let _ = self.optional_bracket_argument();
+        let groups = match name {
+            "beamertemplatenavigationsymbolsempty" => 0,
+            "usetheme" | "usecolortheme" | "usefonttheme" | "useinnertheme" | "useoutertheme"
+            | "setbeamercovered" | "setbeamersize" => 1,
+            _ => 2,
+        };
+        for i in 0..groups {
+            if i > 0 {
+                let _ = self.optional_bracket_argument();
+            }
+            self.skip_spaces();
+            if !matches!(self.peek().map(|token| &token.kind), Some(TokenKind::LBrace)) {
+                break;
+            }
+            let _ = self.required_group(name, span);
         }
     }
 
@@ -7884,6 +8161,9 @@ impl P<'_> {
             color: Some(DeviceColor::RED),
             ..self.style
         };
+        // `\alert<2>{...}`: the overlay spec is read past (every slide
+        // shows the alert until overlays are modelled).
+        self.skip_beamer_overlay_spec();
         self.skip_spaces();
         if let Some(open) = self.closed_group_start() {
             self.i += 1;

@@ -218,6 +218,9 @@ fn block_inlines(block: Block) -> Vec<Inline> {
         | Block::Verbatim { .. }
         | Block::TableOfContents { .. }
         | Block::TitleBlock { .. }
+        | Block::BeamerFrameBegin { .. }
+        | Block::BeamerFrameEnd { .. }
+        | Block::BeamerTitlePage { .. }
         | Block::VFill
         | Block::Penalty { .. } => Vec::new(),
         // A `\opening`/`\closing` block inside a tabular cell cannot
