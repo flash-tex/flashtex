@@ -256,6 +256,10 @@ enum Completion {
         /// Text/display environments and the math grids the compiler accepts, in file order.
         static let environments: [String] = inventory.environments.map(\.name)
 
+        /// Each environment's inventory `description` (the popup's documentation line when no hand-written one exists).
+        static let environmentDescriptions: [String: String] = Dictionary(inventory.environments.map { ($0.name, $0.description) },
+                                                                         uniquingKeysWith: { a, _ in a })
+
         static let byName: [String: Entry] = Dictionary(entries.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
         static let names: [String] = entries.map(\.name)
 
@@ -543,6 +547,13 @@ enum Completion {
         return first + supported.filter { !moved.contains($0) }
     }
 
+    /// Where Page Up/Down (`pages` of `pageSize` rows) lands from `index` in
+    /// a list of `count` rows: clamped to the ends, never wrapping.
+    static func pagedSelection(from index: Int, pages: Int, pageSize: Int, count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        return min(max(index + pages * max(1, pageSize), 0), count - 1)
+    }
+
     /// UTF-16 range the chosen suggestion replaces: the token before the caret
     /// including a leading `\`, or an empty range at the caret.
     static func completionRange(in text: String, caretUTF16: Int) -> NSRange {
@@ -588,11 +599,14 @@ enum Completion {
     /// so an off-main computation stops early; a cancelled call returns `[]`.
     /// `mathMode` says whether the caret is in math mode (`isMathMode`). The
     /// caller passes it because it can answer cheaply from the editor's own
-    /// syntax model; the default, false, keeps the plain text-mode order.
+    /// syntax model. It is a hard filter on the command list (`allows`):
+    /// true hides the inventory's text-only commands, false hides its
+    /// math-only ones, and nil — the default, a caller with no syntax model —
+    /// filters nothing and keeps the plain text-mode order.
     static func suggestions(in text: String, caretUTF16: Int, metadata: Metadata?,
                             supported: [String] = defaultSupported, projectFiles: [String] = [],
                             graphicsFiles: [String] = [], recentEnvironments: [String] = [],
-                            mathMode: Bool = false,
+                            mathMode: Bool? = nil,
                             cancelled: () -> Bool = { false }) -> [Suggestion] {
         guard let token = token(in: text, caretUTF16: caretUTF16), !cancelled() else { return [] }
         let out: [Suggestion]
@@ -625,11 +639,31 @@ enum Completion {
         return cancelled() ? [] : out
     }
 
+    /// Text-mode commands of the inventory that LaTeX nevertheless takes
+    /// inside `equation`/`align`/`$…$`, so the math filter keeps them: the
+    /// label/reference family (`\label{eq:main}` lives inside the
+    /// environment it names) and `\\` (the row break of every math grid).
+    static let mathAllowedTextCommands: Set<String> = ["label", "ref", "eqref", "pageref", "\\"]
+
+    /// Whether the vocabulary entry belongs in the list at the caret's mode:
+    /// in math (`true`) the text-only commands are out, in text (`false`) the
+    /// math-only ones are, and an unknown mode (nil) hides nothing. A command
+    /// the compiler accepts in both modes (`\textbf`, `\quad`) is one text
+    /// entry carrying a math description, so it stays either way.
+    static func allows(_ entry: Vocabulary.Entry, mathMode: Bool?) -> Bool {
+        guard let mathMode else { return true }
+        switch entry.mode {
+        case .math: return mathMode
+        case .text: return !mathMode || entry.mathDescription != nil || mathAllowedTextCommands.contains(entry.name)
+        }
+    }
+
     private static func commandSuggestions(prefix: String, tokenStart: Int, text: String, metadata: Metadata?,
-                                           supported: [String], mathMode: Bool, cancelled: () -> Bool) -> [Suggestion] {
+                                           supported: [String], mathMode: Bool?, cancelled: () -> Bool) -> [Suggestion] {
         var out: [Suggestion] = []
         let scan = scanCommands(in: text, tokenStart: tokenStart, prefix: prefix)
         if cancelled() { return [] }
+        let mathFirst = mathMode == true
         // 1. Close environments still open at the caret.
         for open in scan.open.reversed() where "end".hasPrefix(prefix) {
             out.append(Suggestion(label: "\\end{\(open.name)}", insertText: "\\end{\(open.name)}", kind: .environment,
@@ -646,6 +680,11 @@ enum Completion {
         //    while the table's text-first order buries them under `\\addvspace`.
         //    The exactly-typed spelling and the project's own declarations stay
         //    on top of both, and in text mode the order is untouched.
+        //    A known mode is also a filter (`allows`): inside `$…$` the
+        //    text-only commands are hidden, in text the math-only ones are.
+        //    The hidden rows are kept aside so a list the filter would empty
+        //    falls back to them (`\ite` in math still offers `\item`) —
+        //    something is always shown.
         var offered = Set<String>()
         let declared: [String: Metadata.Item] = Dictionary((metadata?.commands ?? []).filter { $0.definitions > 0 }.map { ($0.name, $0) },
                                                            uniquingKeysWith: { a, _ in a })
@@ -653,6 +692,7 @@ enum Completion {
         /// 0 the exact spelling, 1 a project declaration, 2 a math command,
         /// 3 everything else. Only consulted when `mathMode` is on.
         var vocabulary: [(suggestion: Suggestion, rank: Int)] = []
+        var hidden: [(suggestion: Suggestion, rank: Int)] = []
         for name in exact + supported where name.hasPrefix(prefix) && offered.insert(name).inserted {
             if let item = declared[name], let metadata {
                 vocabulary.append((Suggestion(label: "\\" + name, insertText: "\\" + name, kind: .command,
@@ -660,19 +700,20 @@ enum Completion {
                                    name == prefix ? 0 : 1))
             } else {
                 let entry = Vocabulary.byName[name] ?? Vocabulary.generic(name)
-                vocabulary.append((Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail,
-                                              snippet: entry.snippet),
-                                   name == prefix ? 0 : entry.mode == .math ? 2 : 3))
+                let row = (Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail,
+                                      snippet: entry.snippet),
+                           name == prefix ? 0 : entry.mode == .math ? 2 : 3)
+                if allows(entry, mathMode: mathMode) { vocabulary.append(row) } else { hidden.append(row) }
             }
         }
-        if mathMode {
+        func ordered(_ rows: [(suggestion: Suggestion, rank: Int)]) -> [Suggestion] {
+            guard mathFirst else { return rows.map(\.suggestion) }
             // Stable: equal ranks keep the table order they were filled in.
-            out += vocabulary.enumerated().sorted { a, b in
+            return rows.enumerated().sorted { a, b in
                 a.element.rank != b.element.rank ? a.element.rank < b.element.rank : a.offset < b.offset
             }.map(\.element.suggestion)
-        } else {
-            out += vocabulary.map(\.suggestion)
         }
+        out += ordered(vocabulary)
         if let metadata {
             for item in metadata.commands where item.name.hasPrefix(prefix) && item.name != prefix && offered.insert(item.name).inserted {
                 out.append(Suggestion(label: "\\" + item.name, insertText: "\\" + item.name, kind: .command,
@@ -687,15 +728,22 @@ enum Completion {
             if let message = metadata?.diagnosticsByCommand[name] { detail += " — " + message }
             out.append(Suggestion(label: "\\" + name, insertText: "\\" + name, kind: .command, detail: detail))
         }
+        // The mode filter must never leave the author with nothing: an
+        // otherwise empty list shows the commands it hid.
+        if out.isEmpty { out = ordered(hidden) }
         // 4. Fuzzy fallback: when nothing starts with the prefix, vocabulary
         //    commands whose name contains the typed characters in order
-        //    (`\sbs` → `\subsection`).
+        //    (`\sbs` → `\subsection`), under the same mode filter with the
+        //    same escape hatch.
         if out.isEmpty, prefix.utf8.count >= 2 {
+            var fuzzyHidden: [Suggestion] = []
             for name in supported where out.count < maxSuggestions && !offered.contains(name) && matchRank(name, prefix: prefix) == 2 {
                 offered.insert(name)
                 let entry = Vocabulary.byName[name] ?? Vocabulary.generic(name)
-                out.append(Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail, snippet: entry.snippet))
+                let row = Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail, snippet: entry.snippet)
+                if allows(entry, mathMode: mathMode) { out.append(row) } else if fuzzyHidden.count < maxSuggestions { fuzzyHidden.append(row) }
             }
+            if out.isEmpty { out = fuzzyHidden }
         }
         return Array(out.prefix(maxSuggestions))
     }
@@ -1680,8 +1728,9 @@ final class CompletionScheduler {
         var recentCommands: [String] = []
         var recentEnvironments: [String] = []
         /// Whether the caret is in math mode (`Completion.isMathMode`), decided
-        /// on the main thread where the editor's syntax model is in sync.
-        var mathMode = false
+        /// on the main thread where the editor's syntax model is in sync; nil
+        /// when no model answered (a bare text view), which filters nothing.
+        var mathMode: Bool? = nil
     }
 
     struct Outcome: Equatable {
@@ -1964,6 +2013,16 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
     /// The documentation pane's current title/body, for tests.
     var documentation: (title: String, body: String) { (docTitle.stringValue, docBody.stringValue) }
 
+    /// How many rows the list shows at once — what one Page Up/Down moves
+    /// by. Read from the table's visible height once the panel has been laid
+    /// out; before that (a session whose panel is not up yet) it is the
+    /// list's maximum, which is also its usual height.
+    var visibleRows: Int {
+        let height = table.enclosingScrollView?.documentVisibleRect.height ?? 0
+        let rows = Int(height / Self.rowHeight)
+        return rows > 0 ? rows : Completion.maxSuggestions
+    }
+
     /// Shows (or refreshes) the list under `caretRect`. While the panel is
     /// already on screen for the same parent, only what changed is touched:
     /// the rows reload only when the items differ, the frame moves only when
@@ -2084,7 +2143,7 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
 
     private func showDocumentation(for s: Completion.Suggestion) {
         var doc = Self.documentationPane(for: s)
-        if let line = Self.documentation(for: s) { doc.body = line + " " + doc.body } // CommandDocs (mac-syntax-highlight)
+        if let line = Self.displayedDocumentation(for: s) { doc.body = line + " " + doc.body } // CommandDocs (mac-syntax-highlight) or the inventory
         docTitle.stringValue = doc.title
         docBody.stringValue = doc.body
     }
@@ -2125,7 +2184,7 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         out.append(NSAttributedString(string: "  \(s.kind.badge) · \(s.detail)", attributes: [
             .font: DS.NSFonts.secondary, .foregroundColor: DS.Palette.textSecondary,
         ]))
-        if let doc = documentation(for: s) {
+        if let doc = displayedDocumentation(for: s) {
             out.append(NSAttributedString(string: " — \(doc)", attributes: [
                 .font: DS.NSFonts.secondary, .foregroundColor: DS.Palette.textTertiary,
             ]))
@@ -2133,19 +2192,77 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         return out
     }
 
-    /// One documentation line for a command or environment suggestion (nil when unknown).
+    /// One documentation line for a command or environment suggestion: the
+    /// hand-written `CommandDocs` line when there is one (it is the better
+    /// text), otherwise the compiler inventory's own description as a
+    /// sentence — so every implemented command has a line, not only the
+    /// ~90 written by hand. Nil for keys, words, and names neither knows.
     static func documentation(for s: Completion.Suggestion) -> String? {
+        handWrittenDocumentation(for: s) ?? inventoryDocumentation(for: s)
+    }
+
+    /// `documentation(for:)` unless it would only repeat the origin column:
+    /// a row/pane built from the vocabulary already carries the inventory
+    /// description as its `detail`, so the inventory line is shown only when
+    /// the detail does not (a caller-supplied suggestion, a declared name).
+    static func displayedDocumentation(for s: Completion.Suggestion) -> String? {
+        if let hand = handWrittenDocumentation(for: s) { return hand }
+        guard let (line, description) = inventoryLine(for: s), !s.detail.contains(description) else { return nil }
+        return line
+    }
+
+    /// The `CommandDocs` line (EditorIntelligence.swift), the hand-written tier.
+    static func handWrittenDocumentation(for s: Completion.Suggestion) -> String? {
         switch s.kind {
         case .command:
-            let name = s.label.hasPrefix("\\") ? String(s.label.dropFirst()) : s.label
-            return EditorIntelligence.CommandDocs.documentation(for: name)
+            return EditorIntelligence.CommandDocs.documentation(for: commandName(of: s))
         case .environment:
-            let name = s.label.replacingOccurrences(of: "\\begin{", with: "").replacingOccurrences(of: "\\end{", with: "")
-                .replacingOccurrences(of: "}", with: "")
-            return EditorIntelligence.CommandDocs.environmentDocumentation(for: name)
+            return EditorIntelligence.CommandDocs.environmentDocumentation(for: environmentName(of: s))
         case .reference, .citation, .word:
             return nil
         }
+    }
+
+    /// The inventory tier: `\section{...}: numbered section heading; starred
+    /// form unnumbered.` from the command's `description` (and, for a command
+    /// the compiler accepts in both modes, its math description), or the
+    /// environment's `description`.
+    static func inventoryDocumentation(for s: Completion.Suggestion) -> String? { inventoryLine(for: s)?.line }
+
+    private static func inventoryLine(for s: Completion.Suggestion) -> (line: String, description: String)? {
+        switch s.kind {
+        case .command:
+            guard let entry = Completion.Vocabulary.byName[commandName(of: s)] else { return nil }
+            var line = entry.label + ": " + entry.description
+            if let math = entry.mathDescription { line += "; in math: " + math }
+            return (sentence(line), entry.description)
+        case .environment:
+            guard let description = Completion.Vocabulary.environmentDescriptions[environmentName(of: s)] else { return nil }
+            return (sentence("\\begin{\(environmentName(of: s))}: " + description), description)
+        case .reference, .citation, .word:
+            return nil
+        }
+    }
+
+    private static func sentence(_ text: String) -> String {
+        text.last.map { ".!?".contains($0) } == true ? text : text + "."
+    }
+
+    /// The command a suggestion stands for, without its backslash. The label
+    /// carries the argument shape (`\section{...}`), which is why the lookup
+    /// goes through the insertion (`\section`) — a label-only suggestion (a
+    /// test's) is stripped of its shape instead.
+    private static func commandName(of s: Completion.Suggestion) -> String {
+        let bare = s.insertText.hasPrefix("\\") ? s.insertText : s.label
+        guard bare.hasPrefix("\\") else { return bare }
+        let name = String(bare.dropFirst())
+        let stem = name.prefix { $0 != "{" && $0 != "[" }
+        return stem.isEmpty ? name : String(stem) // `\{`'s name is `{`: a symbol stays whole
+    }
+
+    private static func environmentName(of s: Completion.Suggestion) -> String {
+        s.label.replacingOccurrences(of: "\\begin{", with: "").replacingOccurrences(of: "\\end{", with: "")
+            .replacingOccurrences(of: "}", with: "")
     }
 }
 
@@ -2276,9 +2393,10 @@ final class CompletingTextView: NSTextView {
     var recentlyUsed = Completion.RecentlyUsed()
     /// Whether the caret is in math mode, answered by the owner from its
     /// in-sync `SyntaxHighlighter` (`SourceEditorView`), which costs one
-    /// line's lexing. Unwired — a bare text view in a test — it says no, and
-    /// the list keeps the plain text-mode order.
-    var mathModeAtCaret: (Int) -> Bool = { _ in false }
+    /// line's lexing. Unwired — a bare text view in a test — it answers nil:
+    /// the list keeps the plain text-mode order and hides nothing
+    /// (`Completion.allows`).
+    var mathModeAtCaret: (Int) -> Bool? = { _ in nil }
     /// Code folding (EditorFolding.swift): hidden ranges stay in the storage.
     let folds = EditorFoldStore()
 
@@ -2748,6 +2866,14 @@ final class CompletingTextView: NSTextView {
         selectCompletion(at: (s.selectedIndex + delta + s.items.count) % s.items.count)
     }
 
+    /// Page Up/Down: moves by the rows the list shows at once
+    /// (`CompletionPopup.visibleRows`), clamped to the ends — unlike ↑/↓, a
+    /// page never wraps, so a second Page Down at the bottom stays there.
+    func moveSelection(byPages pages: Int) {
+        guard let s = session, !s.items.isEmpty else { return }
+        selectCompletion(at: Completion.pagedSelection(from: s.selectedIndex, pages: pages, pageSize: popup.visibleRows, count: s.items.count))
+    }
+
     /// Drops the session's selection (to an index no item has) so tests can
     /// check that a list with nothing selected hands keys back to the editor
     /// instead of eating them. No app path produces this state today; the
@@ -3005,9 +3131,13 @@ final class CompletingTextView: NSTextView {
         case 125: moveSelection(by: 1) // ↓
         case 126: moveSelection(by: -1) // ↑
         case 48: moveSelection(by: event.modifierFlags.contains(.shift) ? -1 : 1) // Tab next, ⇧Tab previous (wrapping)
+        case 121: moveSelection(byPages: 1) // Page Down: a screenful of rows, stopping at the last
+        case 116: moveSelection(byPages: -1) // Page Up: a screenful up, stopping at the first
+        case 115: selectCompletion(at: 0) // Home: the first row
+        case 119: selectCompletion(at: (session?.items.count ?? 1) - 1) // End: the last row
         case 36, 76: acceptSelectedCompletion() // Return, Enter
         case 53: scheduler.cancel(); close(.escape) // Esc
-        case 123, 124, 115, 119, 116, 121: // ←, →, Home, End, Page Up/Down leave the token
+        case 123, 124: // ←, → leave the token
             close(.caretMoved)
             super.keyDown(with: event)
         default:

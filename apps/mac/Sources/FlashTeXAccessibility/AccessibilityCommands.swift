@@ -187,8 +187,8 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Completion popup", shortcuts: ["Esc", "⌃Space"], menu: "Editor",
                          description: "Lists supported commands, \\end{…} for open environments, labels, citation keys and document words for the token at the caret; the list never takes the keyboard from the editor.")
         case .completionList:
-            return Entry(command: self, title: "Completion list keys", shortcuts: ["↑", "↓", "Tab", "⇧Tab", "Return"], menu: "Editor",
-                         description: "While the completion list is open: ↑/↓ or Tab/⇧Tab choose the candidate (wrapping; VoiceOver announces “n of m: candidate, kind, origin”), Return or Enter inserts it over the typed token, Esc closes without inserting; typing narrows the list and any other caret move closes it.",
+            return Entry(command: self, title: "Completion list keys", shortcuts: ["↑", "↓", "Tab", "⇧Tab", "Page Up", "Page Down", "Home", "End", "Return"], menu: "Editor",
+                         description: "While the completion list is open: ↑/↓ or Tab/⇧Tab choose the candidate (wrapping; VoiceOver announces “n of m: candidate, kind, origin”), Page Up/Page Down move by a screenful of rows and Home/End go to the first/last row (never wrapping), Return or Enter inserts it over the typed token, Esc closes without inserting; typing narrows the list and any other caret move closes it.",
                          requires: "an open completion list")
         case .signatureHelp:
             return Entry(command: self, title: "Signature help", shortcuts: ["⌘⇧Space"], menu: "Editor",

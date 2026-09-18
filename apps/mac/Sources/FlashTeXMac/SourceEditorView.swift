@@ -844,10 +844,11 @@ struct SourceEditorView: NSViewRepresentable {
             hover.mathPreview = { [weak self] index in self?.mathPreview(at: index) }
             if let completing = tv as? CompletingTextView {
                 completing.commandClickHandler = { [weak self] index in self?.commandClick(at: index) ?? false }
-                // Math-mode ranking in the completion list (Completion.swift):
-                // answered from the in-sync syntax model, one line's lexing.
+                // Math-mode ranking and filtering in the completion list
+                // (Completion.swift): answered from the in-sync syntax model,
+                // one line's lexing; nil (no model) filters nothing.
                 completing.mathModeAtCaret = { [weak self] index in
-                    guard let self, let text = self.textView?.textStorage?.string as NSString? else { return false }
+                    guard let self, let text = self.textView?.textStorage?.string as NSString? else { return nil }
                     return Completion.isMathMode(in: text, caretUTF16: index,
                                                  highlighter: self.syntax.inSync(with: text) ? self.syntax.highlighter : nil)
                 }

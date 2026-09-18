@@ -1544,6 +1544,182 @@ final class CompletionTests: XCTestCase {
             _ = Completion.suggestions(in: commandText, caretUTF16: caret + 3, result: nil)
         }
     }
+
+    func testPagedSelectionMovesByAPageAndClampsAtTheEnds() {
+        // 12 rows, 5 visible: down 0 → 5 → 10 → 11 → 11; up 11 → 6 → 1 → 0 → 0.
+        var i = 0
+        var down: [Int] = []
+        for _ in 0..<4 { i = Completion.pagedSelection(from: i, pages: 1, pageSize: 5, count: 12); down.append(i) }
+        XCTAssertEqual(down, [5, 10, 11, 11])
+        var up: [Int] = []
+        for _ in 0..<4 { i = Completion.pagedSelection(from: i, pages: -1, pageSize: 5, count: 12); up.append(i) }
+        XCTAssertEqual(up, [6, 1, 0, 0])
+        XCTAssertEqual(Completion.pagedSelection(from: 3, pages: 1, pageSize: 0, count: 12), 4, "a page is never smaller than one row")
+        XCTAssertEqual(Completion.pagedSelection(from: 0, pages: 1, pageSize: 5, count: 0), 0)
+        XCTAssertEqual(Completion.pagedSelection(from: 2, pages: 1, pageSize: 20, count: 3), 2, "a page wider than the list lands on the last row")
+    }
+
+    /// Page Up / Page Down / Home / End walk the open list without touching
+    /// the text or the caret: a page is the rows the popup shows at once
+    /// (`CompletionPopup.visibleRows`), the ends clamp instead of wrapping,
+    /// Home/End go to the first/last row, the chosen row is scrolled into
+    /// view, and Return still inserts what was walked to.
+    @MainActor
+    func testPageAndHomeEndKeysWalkTheListThroughTheRealTextView() async throws {
+        HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let scroll = CompletingTextView.scrollable()
+        scroll.frame = window.contentView!.bounds
+        window.contentView!.addSubview(scroll)
+        let tv = try XCTUnwrap(scroll.documentView as? CompletingTextView)
+        window.orderFrontRegardless() // never makeKey: the test must not steal focus
+        window.makeFirstResponder(tv)
+        defer { window.orderOut(nil) }
+        tv.string = "\\begin{document}\nx \\su"
+        let end = (tv.string as NSString).length
+        tv.setSelectedRange(NSRange(location: end, length: 0))
+        key(tv, " ", code: 49, flags: .control)
+        try await waitUntil("popup") { tv.session != nil }
+        let items = try XCTUnwrap(tv.session?.items)
+        let last = items.count - 1
+        XCTAssertEqual(items.count, Completion.maxSuggestions, "`\\su` fills the list")
+        let popup = tv.completionPopup
+        let page = popup.visibleRows
+        XCTAssertTrue((1...Completion.maxSuggestions).contains(page), "\(page)")
+        XCTAssertEqual(Completion.pagedSelection(from: 0, pages: 1, pageSize: page, count: items.count), min(page, last))
+
+        // Page Down: one page, then the end, then it stays there (no wrap).
+        key(tv, "\u{F72D}", code: 121)
+        XCTAssertEqual(tv.session?.selectedIndex, min(page, last))
+        key(tv, "\u{F72D}", code: 121); key(tv, "\u{F72D}", code: 121); key(tv, "\u{F72D}", code: 121)
+        XCTAssertEqual(tv.session?.selectedIndex, last)
+        XCTAssertEqual(popup.selectedRow, last)
+        XCTAssertTrue(popup.accessibilityTable.rows(in: popup.accessibilityTable.visibleRect).contains(last), "the chosen row is scrolled into view")
+        // Page Up: one page back from the end, then the top, then it stays.
+        key(tv, "\u{F72C}", code: 116)
+        XCTAssertEqual(tv.session?.selectedIndex, max(last - page, 0))
+        key(tv, "\u{F72C}", code: 116); key(tv, "\u{F72C}", code: 116); key(tv, "\u{F72C}", code: 116)
+        XCTAssertEqual(tv.session?.selectedIndex, 0)
+        // End / Home.
+        key(tv, "\u{F72B}", code: 119)
+        XCTAssertEqual(tv.session?.selectedIndex, last)
+        key(tv, "\u{F72B}", code: 119)
+        XCTAssertEqual(tv.session?.selectedIndex, last, "End at the end stays")
+        key(tv, "\u{F729}", code: 115)
+        XCTAssertEqual(tv.session?.selectedIndex, 0)
+        XCTAssertEqual(popup.selectedRow, 0)
+        // Throughout: the list stayed open, the text and caret were untouched, the editor kept the keyboard.
+        XCTAssertNotNil(tv.session)
+        XCTAssertEqual(tv.string, "\\begin{document}\nx \\su")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: end, length: 0))
+        XCTAssertTrue(window.firstResponder === tv)
+        // ↓ still wraps as before, and Return inserts what End walked to.
+        key(tv, "\u{F700}", code: 126)
+        XCTAssertEqual(tv.session?.selectedIndex, last, "↑ from the top still wraps")
+        key(tv, "\r", code: 36)
+        XCTAssertEqual(tv.string, "\\begin{document}\nx " + items[last].insertText)
+        XCTAssertNil(tv.session)
+        // With no list open, the keys are the editor's own again: nothing is inserted and no list opens.
+        let inserted = tv.string
+        for (chars, code) in [("\u{F72B}", UInt16(119)), ("\u{F729}", 115), ("\u{F72D}", 121), ("\u{F72C}", 116)] { key(tv, chars, code: code) }
+        XCTAssertEqual(tv.string, inserted)
+        XCTAssertNil(tv.session)
+    }
+
+    /// Every implemented command has a documentation line: the hand-written
+    /// `CommandDocs` line where one exists (it wins), otherwise the inventory's
+    /// `description` as a sentence. The row and the pane show the inventory
+    /// line only when the origin column does not already carry it.
+    func testEveryInventoryCommandHasADocumentationLineAndHandWrittenOnesWin() throws {
+        typealias Docs = EditorIntelligence.CommandDocs
+        var handWritten = 0
+        var inventory = 0
+        for name in Completion.Vocabulary.names {
+            let entry = try XCTUnwrap(Completion.Vocabulary.byName[name])
+            let s = Completion.Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail)
+            let line = try XCTUnwrap(CompletionPopup.documentation(for: s), "\\\(name) has no documentation line")
+            if let hand = Docs.documentation(for: name) {
+                handWritten += 1
+                XCTAssertEqual(line, hand, "\\\(name): the hand-written line wins")
+            } else {
+                inventory += 1
+                XCTAssertEqual(line, CompletionPopup.inventoryDocumentation(for: s))
+                XCTAssertTrue(line.hasPrefix(entry.label + ": "), line)
+                XCTAssertTrue(line.contains(entry.description), line)
+                XCTAssertTrue(line.hasSuffix("."), line)
+                // The vocabulary row's origin column already says it, so the row does not repeat it…
+                XCTAssertNil(CompletionPopup.displayedDocumentation(for: s), "\\\(name)")
+                XCTAssertFalse(CompletionPopup.attributed(s).string.contains(" — " + line), "\\\(name)")
+            }
+        }
+        print("completion documentation: \(handWritten) hand-written + \(inventory) from the inventory = \(handWritten + inventory) of \(Completion.Vocabulary.names.count) commands")
+        XCTAssertEqual(handWritten + inventory, Completion.Vocabulary.names.count)
+        XCTAssertGreaterThan(inventory, handWritten, "the inventory tier is what gives full coverage")
+        // A concrete one with no hand-written line, as `commandSuggestions` builds it.
+        let textsl = try XCTUnwrap(Completion.suggestions(in: "x \\textsl", caretUTF16: 9, metadata: nil).first)
+        XCTAssertEqual(textsl.insertText, "\\textsl")
+        XCTAssertNil(Docs.documentation(for: "textsl"))
+        let description = try XCTUnwrap(Completion.Vocabulary.byName["textsl"]?.description)
+        XCTAssertEqual(CompletionPopup.documentation(for: textsl), "\\textsl{...}: " + description + ".")
+        XCTAssertEqual(CompletionPopup.documentation(for: textsl), "\\textsl{...}: slanted text (typeset as italic).")
+        // …but a caller-supplied suggestion whose detail says something else does show it.
+        let bare = Completion.Suggestion(label: "\\textsl", insertText: "\\textsl", kind: .command, detail: "supported by this compiler")
+        XCTAssertEqual(CompletionPopup.displayedDocumentation(for: bare), CompletionPopup.documentation(for: textsl))
+        XCTAssertTrue(CompletionPopup.attributed(bare).string.contains(" — \\textsl{...}: slanted text"))
+        // A both-modes command carries its math behaviour too.
+        let numrange = Completion.Suggestion(label: "\\numrange", insertText: "\\numrange", kind: .command, detail: "x")
+        XCTAssertNil(Docs.documentation(for: "numrange"))
+        XCTAssertNotNil(Completion.Vocabulary.byName["numrange"]?.mathDescription)
+        XCTAssertTrue(try XCTUnwrap(CompletionPopup.documentation(for: numrange)).contains("; in math: "), CompletionPopup.documentation(for: numrange) ?? "")
+        // The hand-written line is found through the label's argument shape
+        // (`\section{...}`), which used to defeat the lookup.
+        let section = try XCTUnwrap(Completion.suggestions(in: "x \\section", caretUTF16: 10, metadata: nil).first)
+        XCTAssertEqual(section.label, "\\section{...}")
+        XCTAssertEqual(CompletionPopup.documentation(for: section), Docs.table["section"])
+        XCTAssertTrue(CompletionPopup.attributed(section).string.contains(" — \\section{title}: a numbered section heading."))
+        // Environments: the hand-written line, else the inventory's.
+        let itemize = Completion.Suggestion(label: "itemize", insertText: "itemize}", kind: .environment, detail: "supported by this compiler")
+        XCTAssertEqual(CompletionPopup.documentation(for: itemize), "Bulleted list of \\item entries.")
+        for name in Completion.knownEnvironments where Docs.environmentDocumentation(for: name) == nil {
+            let s = Completion.Suggestion(label: name, insertText: name + "}", kind: .environment, detail: "supported by this compiler")
+            let line = try XCTUnwrap(CompletionPopup.documentation(for: s), name)
+            XCTAssertTrue(line.hasPrefix("\\begin{\(name)}: "), line)
+        }
+        XCTAssertNil(CompletionPopup.documentation(for: Completion.Suggestion(label: "figures/a.pdf", insertText: "figures/a.pdf", kind: .command, detail: "graphics file")))
+    }
+
+    /// The pane under the list shows the line for the chosen row through the
+    /// real popup: the hand-written one leads for `\section`; a command with
+    /// none still reads its inventory description.
+    @MainActor
+    func testTheDocumentationPaneReadsTheLineForTheChosenRow() async throws {
+        HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let scroll = CompletingTextView.scrollable()
+        scroll.frame = window.contentView!.bounds
+        window.contentView!.addSubview(scroll)
+        let tv = try XCTUnwrap(scroll.documentView as? CompletingTextView)
+        window.orderFrontRegardless() // never makeKey: the test must not steal focus
+        window.makeFirstResponder(tv)
+        defer { window.orderOut(nil) }
+        tv.string = "x \\section"
+        tv.setSelectedRange(NSRange(location: 10, length: 0))
+        key(tv, " ", code: 49, flags: .control)
+        try await waitUntil("popup") { tv.session != nil }
+        XCTAssertEqual(tv.session?.selected?.insertText, "\\section")
+        let pane = tv.completionPopup.documentation
+        XCTAssertEqual(pane.title, "\\section{...}{…}")
+        XCTAssertTrue(pane.body.hasPrefix("\\section{title}: a numbered section heading. \\section* is unnumbered. Command · "), pane.body)
+        key(tv, "\u{1B}", code: 53)
+        tv.string = "x \\textsl"
+        tv.setSelectedRange(NSRange(location: 9, length: 0))
+        key(tv, " ", code: 49, flags: .control)
+        try await waitUntil("popup 2") { tv.session != nil }
+        XCTAssertEqual(tv.session?.selected?.insertText, "\\textsl")
+        let description = try XCTUnwrap(Completion.Vocabulary.byName["textsl"]?.description)
+        XCTAssertTrue(tv.completionPopup.documentation.body.contains(description), tv.completionPopup.documentation.body)
+        key(tv, "\u{1B}", code: 53)
+    }
 }
 
 // MARK: - End to end against the real preview-controller helper
