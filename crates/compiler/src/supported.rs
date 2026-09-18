@@ -1204,6 +1204,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "",
         "\\enquote: typographic quotation marks, alternating double/single on nesting",
     ),
+    (
+        "calc",
+        "",
+        "\\setlength/\\addtolength accept +/- chains of dimensions (1pt + 2\\baselineskip); *, /, parentheses and \\widthof/\\heightof/\\depthof/\\totalheightof are not parsed",
+    ),
 ];
 
 /// The vendored coverage denominator.
