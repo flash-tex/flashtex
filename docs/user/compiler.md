@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 362 text-mode and 570 math-mode command entries, 67 environments and 26 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 365 text-mode and 570 math-mode command entries, 67 environments and 26 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -362,6 +362,9 @@ Canonical sources:
 | `\paragraph` | `{...}` | run-in heading: bold, flush, set into the first line of the paragraph that follows it |
 | `\subparagraph` | `{...}` | run-in heading indented by \parindent, set into the first line of the paragraph that follows it |
 | `\tableofcontents` |  | article contents list from the previous layout pass |
+| `\frametitle` | `{...}` | beamer frame title, set as an unnumbered section-size heading; needs \documentclass{beamer} |
+| `\framesubtitle` | `{...}` | beamer frame subtitle, set as an unnumbered subsection-size heading; needs \documentclass{beamer} |
+| `\alert` | `{...}` | beamer alert text in red; needs \documentclass{beamer} |
 | `\index` | `{entry}` | makeidx index entry (\|modifier, @sort key and !subentry live inside the braces): accepted, never typeset (no indexing backend) |
 | `\glossary` | `{entry}` | glossary entry: accepted, never typeset (no glossary backend) |
 | `\textbf` | `{...}` | bold text |
@@ -915,7 +918,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `multline*` | text | multi-line display |
 | `subequations` | text | amsmath: displays inside number as the parent number plus a, b, ...; a \label right after \begin gets the parent number |
 | `figure` | text | numbered captions; no floating |
-| `frame` | text | rule-bordered box around its body (\fboxsep padding, \fboxrule rule in the current colour) |
+| `frame` | text | rule-bordered box around its body (\fboxsep padding, \fboxrule rule in the current colour); under \documentclass{beamer} a slide: one page per frame with an optional {title}{subtitle} head |
 | `center` | text | centred paragraphs |
 | `flushleft` | text | left-aligned paragraphs |
 | `flushright` | text | right-aligned paragraphs |

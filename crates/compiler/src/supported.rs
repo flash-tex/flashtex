@@ -207,6 +207,9 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("listfiles", "", "accepted no-op; there is no log stream"),
     ("section", "{...}", "numbered section heading; starred form unnumbered"),
     ("subsection", "{...}", "numbered subsection heading; starred form unnumbered"),
+    ("frametitle", "{...}", "beamer frame title, set as an unnumbered section-size heading; needs \\documentclass{beamer}"),
+    ("framesubtitle", "{...}", "beamer frame subtitle, set as an unnumbered subsection-size heading; needs \\documentclass{beamer}"),
+    ("alert", "{...}", "beamer alert text in red; needs \\documentclass{beamer}"),
     ("label", "{key}", "names the current section, equation or figure number"),
     ("ref", "{key}", "number of the labelled item"),
     ("pageref", "{key}", "page number of the labelled item, in the \\pagenumbering style in force at the label"),
@@ -931,7 +934,7 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("figure", "numbered captions; no floating"),
     (
         "frame",
-        "rule-bordered box around its body (\\fboxsep padding, \\fboxrule rule in the current colour)",
+        "rule-bordered box around its body (\\fboxsep padding, \\fboxrule rule in the current colour); under \\documentclass{beamer} a slide: one page per frame with an optional {title}{subtitle} head",
     ),
     ("center", "centred paragraphs"),
     ("flushleft", "left-aligned paragraphs"),
