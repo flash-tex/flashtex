@@ -151,12 +151,12 @@ fn raw_table() -> [Raw; 5] {
 /// `\setcounter{tocdepth}{2}`).
 pub fn default_depths(kind: ClassKind) -> (i32, i32) {
     match kind {
-        ClassKind::Article => (3, 3),
+        ClassKind::Article | ClassKind::Scrartcl => (3, 3),
         // letter.cls sets neither counter, so both keep latex.ltx's own
         // zero (`\the\c@secnumdepth` and `\the\c@tocdepth` both read 0 in a
         // `letter` document, TeX Live 2025).
         ClassKind::Letter => (0, 0),
-        ClassKind::Report | ClassKind::Book => (2, 2),
+        ClassKind::Report | ClassKind::Book | ClassKind::Scrreprt | ClassKind::Scrbook => (2, 2),
     }
 }
 
