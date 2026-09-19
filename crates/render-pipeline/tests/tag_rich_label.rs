@@ -23,11 +23,13 @@
 //! FlashTeX before this change set `(2)` and `(3)` in their place (the
 //! counter keeps stepping), and said nothing.
 //!
-//! What this file pins is that the silent substitution is gone. The rich
-//! label is set as its text (the same flattening the compiler uses for
-//! `\eqref` to the tag) and the approximation is reported. It is *not* yet
-//! amsmath's `\maketag@@@` box, so its position is ~1.3 bp from pdflatex's,
-//! against 0.005 bp for the plain control below; PR #585 sets it exactly.
+//! What this file pins is that the silent substitution is gone, and (since
+//! PR #585's placement landed) that the rich label is set as amsmath's
+//! `\maketag@@@` box: its text in the body face, its `$x^2$` as math with
+//! a real superscript, flush to the right margin where pdflatex puts it --
+//! within 0.5 bp, like the plain control -- with nothing to report. (Before
+//! that it was set as the flattened text `(hi x²)`, 1.3 bp off, under a
+//! `math_limitation` note.)
 #![cfg(feature = "compiler-node-surface")]
 
 mod common;
@@ -84,37 +86,52 @@ fn a_rich_tag_is_never_silently_replaced_by_the_automatic_number() {
         numbers.is_empty(),
         "automatic equation numbers {numbers:?} were set for \\tag'ged displays: {words:?}"
     );
-    // The label's own text reaches the page.
+    // The label's own text reaches the page, and its math is math: `x` in
+    // math italic, `2` a raised script (its own run), not the Unicode `²`.
     assert!(words.iter().any(|w| w == "(hi"), "\\tag{{hi $x^2$}} lost its text: {words:?}");
-    assert!(words.iter().any(|w| w.starts_with('x') && w.ends_with(')')), "\\tag{{hi $x^2$}} lost its math: {words:?}");
-    assert!(words.iter().any(|w| w == "(x\u{b2})"), "\\tag{{$x^2$}} lost its label: {words:?}");
+    assert!(words.iter().filter(|w| *w == "x").count() >= 2, "\\tag{{$x^2$}} / \\tag{{hi $x^2$}} lost their math: {words:?}");
+    assert!(!words.iter().any(|w| w.contains('\u{b2}')), "a tag's superscript was flattened to a text character: {words:?}");
 }
 
-/// Whatever is not set exactly is *said*. A silent approximation is the
-/// failure mode this test exists for, so the diagnostic is as much of the
-/// contract as the glyphs are.
+/// Set exactly: every tag word where pdflatex puts it (the header's PyMuPDF
+/// origins, within 0.5 bp), with the superscript `2` on its own raised
+/// baseline. `(x2)` is `(` + `x` + `2` + `)` here because the math box
+/// paints each glyph as its own run.
 #[test]
-fn a_rich_tag_reports_that_its_math_is_set_as_text() {
+fn a_rich_tag_is_set_where_pdflatex_sets_it() {
+    if !lm_available() {
+        return;
+    }
+    let r = render_one(THREE_TAGS);
+    let words = words_of(&r);
+    let at = |text: &str, x: f64| {
+        words
+            .iter()
+            .find(|w| w.text == text && (w.x - x).abs() <= 0.5)
+            .unwrap_or_else(|| panic!("{text:?} not within 0.5 bp of x={x}: {words:?}"))
+    };
+    // `\tag{$x^2$}`: pdflatex `(` at 459.564, `x` at 463.438, `2` at 469.136.
+    let open = at("(", 459.564);
+    let x = at("x", 463.438);
+    let two = at("2", 469.136);
+    assert!((x.baseline - open.baseline).abs() < 0.01, "x off the tag's baseline");
+    assert!((open.baseline - two.baseline - 3.616).abs() <= 0.5, "superscript not raised (pdflatex: 3.616 bp)");
+    // `\tag{hi $x^2$}`: pdflatex `(hi` at 447.949, `x` at 463.444.
+    at("(hi", 447.949);
+    at("x", 463.444);
+}
+
+/// Whatever is not set exactly is *said* -- and a rich tag now is set
+/// exactly, so there is nothing to say: the `math_limitation` note the
+/// approximation carried is gone, and no other tag note took its place.
+#[test]
+fn a_rich_tag_reports_no_limitation() {
     if !lm_available() {
         return;
     }
     let r = render_one(THREE_TAGS);
     let notes = tag_limitations(&r);
-    assert_eq!(notes.len(), 2, "one note per rich tag, none for the plain one: {notes:?}");
-    for note in &notes {
-        assert!(note.contains("#441"), "{note:?}");
-    }
-    assert!(notes.iter().any(|n| n.contains("(hi x\u{b2})")), "{notes:?}");
-    assert!(notes.iter().any(|n| n.contains("(x\u{b2})")), "{notes:?}");
-    // The note is anchored at the `\tag`, not at the whole display.
-    let at = r
-        .v2
-        .diagnostics
-        .iter()
-        .find(|d| d.code == "math_limitation" && d.message.contains("(hi x\u{b2})"))
-        .and_then(|d| d.sources.first())
-        .map(|s| THREE_TAGS[s.start_byte..].starts_with("\\tag{hi $x^2$}"));
-    assert_eq!(at, Some(true), "the note is not at its own \\tag");
+    assert!(notes.is_empty(), "rich tags are set as math; nothing to report: {notes:?}");
 }
 
 /// Control: a plain `\tag{hi}` is untouched by all of this — set exactly
