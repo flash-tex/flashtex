@@ -966,6 +966,13 @@ fn extra_symbol_slot(ch: char) -> Option<u8> {
     match ch {
         NOT_SLASH => Some(0x36),
         '\u{22A5}' => Some(0x3F),
+        // `\mapsto` = `\mapstochar\rightarrow` (fontmath.ltx 340-341). cmsy
+        // "37 (`\mapstochar`) is 0 wide with "21's height and depth
+        // (lmsy10.tfm: CHARWD 0, CHARHT 0.366875, CHARDP -0.133125 for both),
+        // so pdfTeX's box for the pair is `\rightarrow`'s, 1.000003em; the
+        // ink is Latin Modern Math's own U+21A6 (`otf_gid` looks the outline
+        // up by the character, not the slot). See `typeset::symbol_atoms`.
+        '\u{21A6}' => Some(0x21),
         // `\varnothing`'s box is still cmsy10's `\emptyset` slot 0x3B (the
         // compiler forces only the advance, `MathAtom.width_em`; see
         // `symbol_family_glyph`); the outline is painted from New Computer

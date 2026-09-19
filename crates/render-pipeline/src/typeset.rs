@@ -9833,6 +9833,15 @@ fn symbol_atoms(c: char, width_em: Option<f64>) -> Vec<ml::Atom> {
         // (`TexMathMetrics`/`MathFonts`), which paint both from cmsy10's
         // `\emptyset` slot but only force this one's advance and outline.
         '\u{2205}' if width_em.is_some() => vec![ml::Atom::symbol(crate::mathfont::VARNOTHING_SENTINEL)],
+        // `\mapsto` is `\mapstochar\rightarrow` (fontmath.ltx 340-341), two
+        // adjacent `\mathrel`s: cmsy "37 has zero width and exactly the
+        // arrow's height/depth, so the pair is one relation with cmsy "21's
+        // box (`mathtex::extra_symbol_slot`). math-layout's `default_class`
+        // has no row for U+21A6, which made it an Ord painted from Latin
+        // Modern Math's 0.977em glyph with no `\thickmuskip` either side:
+        // `$x \mapsto |x|$` came out 6.3pt narrower than pdfTeX's and moved
+        // a line break (inline-math p.2, `\tracingparagraphs` @@21 vs @@22).
+        '\u{21A6}' => vec![ml::Atom::rel(c)],
         _ => match long_arrow_pieces(c) {
             Some(pieces) => vec![long_arrow(pieces)],
             None => vec![ml::Atom::symbol(c)],
