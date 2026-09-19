@@ -51,6 +51,15 @@ fn mystyle_defines_commands_for_the_document() {
     assert_eq!((at.document, &main[at.start..at.end]), (DocumentId(0), "\\usepackage"));
     assert_eq!(parsed.class_file, None);
     assert_eq!(parsed.packages, Vec::<String>::new(), "a project package is not a parser package");
+    // The replacement sites are the two package macros, in the package
+    // file (`\emphx`'s `\textbf{` and `}` around its argument are two
+    // runs); the pass-through `\documentclass` is no expansion.
+    let sites: Vec<(DocumentId, &str)> = parsed
+        .expansions
+        .iter()
+        .map(|site| (site.definition.document, &main[site.invocation.start..site.invocation.end]))
+        .collect();
+    assert_eq!(sites, [(DocumentId(1), "\\hello"), (DocumentId(1), "\\emphx"), (DocumentId(1), "\\emphx")]);
 }
 
 /// The same document without the file: the warning names the search.
