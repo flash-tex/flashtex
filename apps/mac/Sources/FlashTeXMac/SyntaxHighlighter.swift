@@ -838,7 +838,8 @@ struct SyntaxTheme: Sendable {
 /// temporary attributes over a window around the visible text (extended on
 /// scroll); an edit repaints only the lines the highlighter re-lexed.
 /// Nothing is painted while the view has marked text (IME composition): the
-/// dirty range is kept and painted at the next flush after the commit.
+/// dirty range is kept and painted at the next flush after the commit,
+/// cancel or unmark (GH#780).
 @MainActor
 final class SyntaxPainter {
     static let key = NSAttributedString.Key.foregroundColor
@@ -852,6 +853,9 @@ final class SyntaxPainter {
     /// Evidence: paint passes, runs painted, thread CPU of the last edit.
     private(set) var paints = 0
     private(set) var runsPainted = 0
+    /// Evidence: flushes that found marked text and kept the dirty range
+    /// instead of painting (GH#780: stays bounded — nothing re-schedules).
+    private(set) var deferredFlushes = 0
     private(set) var lastEditCpuNs: UInt64 = 0
     private(set) var lastFlushCpuNs: UInt64 = 0
     private(set) var lastEditLinesLexed = 0
@@ -976,15 +980,15 @@ final class SyntaxPainter {
         }
     }
 
-    /// Repaints the pending dirty range (unless marked text exists; then a
-    /// later flush after the commit does it).
+    /// Repaints the pending dirty range (unless marked text exists; then the
+    /// dirty range is kept and the flush scheduled by the composition's
+    /// teardown edit paints it — every way a composition ends runs through
+    /// `storageEdited`, so nothing here re-schedules: re-queueing ran once
+    /// per main-queue turn for as long as the composition lasted (GH#780).
     func flush() {
         guard enabled, !resetScheduled, let tv = textView, let dirty = pendingDirty else { return }
         if tv.hasMarkedText() {
-            if !flushScheduled {
-                flushScheduled = true
-                DispatchQueue.main.async { [weak self] in self?.flushScheduled = false; self?.flush() }
-            }
+            deferredFlushes += 1
             return
         }
         pendingDirty = nil
