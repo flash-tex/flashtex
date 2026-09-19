@@ -24,11 +24,13 @@ const SUFFIX: &str = " are recognised but not implemented";
 
 /// Packages whose effect on the output this crate produces. `fontspec`'s
 /// font selection is `crate::fontspec` (named families from the installed
-/// fonts), so its load is no longer "not implemented".
+/// fonts), so its load is no longer "not implemented"; `unicode-math`
+/// selects the OpenType math font the same way (`\setmathfont`, or Latin
+/// Modern Math by default).
 pub fn implemented_by_pipeline(package: &str) -> bool {
     matches!(
         package,
-        "amsmath" | "amssymb" | "amsfonts" | "lmodern" | "microtype" | "geometry" | "graphicx" | "tikz" | "float" | "fontspec"
+        "amsmath" | "amssymb" | "amsfonts" | "lmodern" | "microtype" | "geometry" | "graphicx" | "tikz" | "float" | "fontspec" | "unicode-math"
     )
 }
 

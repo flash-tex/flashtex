@@ -79,6 +79,16 @@ impl Core14 {
             Core14::Symbol => &g::SYMBOL_KERNS,
         }
     }
+
+    /// Unicode distinguishes the mathematical DIVIDES relation from the
+    /// ASCII vertical bar, while Adobe Symbol exposes both semantics through
+    /// its single `verticalbar` glyph at code 0x7C.
+    fn afm_char(self, ch: char) -> char {
+        match (self, ch) {
+            (Core14::Symbol, '\u{2223}') => '|',
+            _ => ch,
+        }
+    }
 }
 
 /// A Core 14 face. Cheap to construct; holds only static tables.
@@ -139,6 +149,7 @@ impl Core14Face {
 
     /// Unkerned advance of `ch` in 1/1000 em, `None` if the face lacks it.
     pub fn width_units(&self, ch: char) -> Option<u16> {
+        let ch = self.which.afm_char(ch);
         let t = self.which.widths();
         t.binary_search_by_key(&(ch as u32), |(cp, _)| *cp)
             .ok()
@@ -195,6 +206,7 @@ impl Face for Core14Face {
     }
 
     fn glyph_id(&self, ch: char) -> Option<GlyphId> {
+        let ch = self.which.afm_char(ch);
         self.which
             .widths()
             .binary_search_by_key(&(ch as u32), |(cp, _)| *cp)

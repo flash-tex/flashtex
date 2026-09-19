@@ -347,7 +347,9 @@ impl MathRec {
         }
         match &self.metrics {
             MathProvider::Tex(t) => t.extensible_piece(g.font_id, g.gid as u8, g.ch).is_some(),
-            MathProvider::Otf(_) => false,
+            // An OpenType assembly part math-layout stacked for a delimiter
+            // taller than every variant (`MathFontMetrics::delimiter_assembly`).
+            MathProvider::Otf(o) => g.font_id == ml::FontId(0) && o.is_assembly_part(g.ch, g.gid),
         }
     }
 
@@ -401,8 +403,7 @@ impl MathProvider {
             MathProvider::Tex(_) if g.font_id == crate::mathtex::OTF_FALLBACK_FONT => Some((self.otf().face().clone(), g.gid)),
             MathProvider::Tex(_) if g.font_id == crate::mathtex::OTF_FALLBACK_BB_FONT => self.otf().bb_face().map(|f| (f.clone(), g.gid)),
             MathProvider::Tex(t) => t.otf_glyph(g.font_id, g.gid as u8, g.ch),
-            MathProvider::Otf(o) if g.font_id == crate::mathfont::BB_FONT => o.bb_face().map(|f| (f.clone(), g.gid)),
-            MathProvider::Otf(o) => Some((o.face().clone(), g.gid)),
+            MathProvider::Otf(o) => o.face_of(g.font_id).map(|f| (f, g.gid)),
         }
     }
 }
@@ -1011,6 +1012,15 @@ impl<'a> Context<'a> {
         if self.math_unavailable {
             return None;
         }
+        // The document's own OpenType math font (`\setmathfont`,
+        // `unicode-math`, the manifest's `[fonts] math`); a family that
+        // cannot be used is reported and math stays on TeX's metrics.
+        if self.style.fontspec.math.is_some() {
+            if let Some(provider) = self.named_math_provider(span, self.style.body_size_pt) {
+                self.math_fonts = Some(provider.clone());
+                return Some(provider);
+            }
+        }
         let r = self.fonts.resolve(self.style.family, Role::Math, self.style.body_size_pt);
         let sizes = MathSizes {
             text: self.style.body_size_pt,
@@ -1082,6 +1092,116 @@ impl<'a> Context<'a> {
         }
     }
 
+    /// The document's own OpenType math font (`fontspec::Settings::math`)
+    /// as a provider for text at `text_pt`: the family's face through the
+    /// discovery index (the bundled Latin Modern Math when the index lacks
+    /// it), unicode-math's script sizes (the face's percentages), and the
+    /// text faces of the text math alphabets from the document's text family
+    /// (`MathFonts::with_text_alphabets`). `None`, reported once, when the
+    /// family is not installed or has no `MATH` table; math then stays on
+    /// TeX's metrics exactly as without the selection.
+    fn named_math_provider(&mut self, span: Span, text_pt: f64) -> Option<MathProvider> {
+        use crate::fontspec::{MathSource, UNICODE_MATH_DEFAULT};
+        use crate::mathfont::TextAlphabet;
+        let sel = self.style.fontspec.math.clone()?;
+        let what = match sel.source {
+            MathSource::SetMathFont => format!("\\setmathfont{{{}}}", sel.family),
+            MathSource::Manifest => format!("[fonts] math = \"{}\"", sel.family),
+            MathSource::UnicodeMath => format!("\\usepackage{{unicode-math}} ({})", sel.family),
+        };
+        let index = self.fonts.index();
+        let found = index.find_match(&sel.family, 400, false).map(|m| m.file.clone());
+        let bundled_default = flashtex_font_discovery::normalize(&sel.family) == flashtex_font_discovery::normalize(UNICODE_MATH_DEFAULT);
+        let face: Rc<LoadedFace> = match found {
+            Some(file) if file.info.has_math => match self.fonts.load_file(&file) {
+                Ok(face) => face,
+                Err(reason) => {
+                    let src = self.source(span);
+                    self.report_once(
+                        format!("mathfont:{}", sel.family),
+                        Diagnostic::warning("math_font_unavailable", format!("{what}: {reason}; math is set with TeX's metrics instead"), vec![src]),
+                    );
+                    return None;
+                }
+            },
+            Some(file) => {
+                let src = self.source(span);
+                self.report_once(
+                    format!("mathfont:{}", sel.family),
+                    Diagnostic::warning(
+                        "math_font_unavailable",
+                        format!(
+                            "{what}: {} has no OpenType MATH table, so it cannot set mathematics; math is set with TeX's metrics instead (flashtex-render --list-math-fonts names the usable families)",
+                            file.info.full_name
+                        ),
+                        vec![src],
+                    ),
+                );
+                return None;
+            }
+            None if bundled_default => {
+                let r = self.fonts.resolve(Family::LatinModern, Role::Math, text_pt);
+                if let Some(reason) = r.substituted {
+                    let src = self.source(span);
+                    self.report_once(
+                        format!("mathfont:{}", sel.family),
+                        Diagnostic::warning("math_font_unavailable", format!("{what}: {reason}; math is set with TeX's metrics instead"), vec![src]),
+                    );
+                    return None;
+                }
+                r.face
+            }
+            None => {
+                let src = self.source(span);
+                let dirs: Vec<String> = index.dirs().iter().map(|d| d.display().to_string()).collect();
+                self.report_once(
+                    format!("mathfont:{}", sel.family),
+                    Diagnostic::warning(
+                        "math_font_unavailable",
+                        format!(
+                            "{what}: font family \"{}\" not found among the {} faces indexed in {}; math is set with TeX's metrics instead (flashtex-render --list-math-fonts names the installed MATH families)",
+                            sel.family,
+                            index.files().len(),
+                            dirs.join(", ")
+                        ),
+                        vec![src],
+                    ),
+                );
+                return None;
+            }
+        };
+        let Some(constants) = face.math().map(|t| *t.constants()) else {
+            let src = self.source(span);
+            self.report_once(
+                format!("mathfont:{}", sel.family),
+                Diagnostic::warning("math_font_unavailable", format!("{what}: {} has no OpenType MATH table; math is set with TeX's metrics instead", face.name), vec![src]),
+            );
+            return None;
+        };
+        let sizes = MathSizes::unicode_math(text_pt, &constants);
+        let Some(m) = MathFonts::named(face.clone(), sizes) else {
+            let src = self.source(span);
+            self.report_once(
+                format!("mathfont:{}", sel.family),
+                Diagnostic::warning("math_font_unavailable", format!("{what}: {} has no OpenType MATH table; math is set with TeX's metrics instead", face.name), vec![src]),
+            );
+            return None;
+        };
+        // unicode-math sets `\mathbf`/`\mathsf`/`\mathit`/`\mathtt` (and
+        // `\mathrm`) from the text fonts: the document's text family at the
+        // three math sizes, when it has an OpenType program to draw from.
+        let mut faces = Vec::new();
+        for alphabet in TextAlphabet::ALL {
+            for (i, at) in [sizes.text, sizes.script, sizes.script_script].into_iter().enumerate() {
+                let r = self.fonts.resolve(self.style.family, Role::Font(alphabet.key()), at);
+                if r.substituted.is_none() && r.family_missing.is_none() && r.face.otf().is_some() {
+                    faces.push((alphabet, i, r.face));
+                }
+            }
+        }
+        Some(MathProvider::Otf(Rc::new(m.with_text_alphabets(faces))))
+    }
+
     /// The math provider for text at `size`: the body's, except at the
     /// class's `\footnotesize` below it, where LaTeX selects the math fonts
     /// of that size (`\DeclareMathSizes`: 8/6/5 pt in a 10pt class, 10/7/5 in
@@ -1090,6 +1210,19 @@ impl<'a> Context<'a> {
     /// metrics and is reported once.
     fn math_fonts_at(&mut self, span: Span, size: f64) -> Option<MathProvider> {
         let body = self.math_fonts(span)?;
+        // A document's own OpenType math font follows every text size, as
+        // unicode-math declares math sizes from the current `\f@size`.
+        if let MathProvider::Otf(o) = &body {
+            if o.is_named() && (size - self.style.body_size_pt).abs() >= 0.01 {
+                let key = (size * 100.0).round() as u32;
+                if let Some(sized) = self.math_fonts_sized.get(&key) {
+                    return Some(sized.clone().unwrap_or(body));
+                }
+                let sized = self.named_math_provider(span, size);
+                self.math_fonts_sized.insert(key, sized.clone());
+                return Some(sized.unwrap_or(body));
+            }
+        }
         let note_size = footnotes::FootnoteParams::of(self.style).size;
         if (size - self.style.body_size_pt).abs() < 0.01 || (size - note_size).abs() > 0.01 || !matches!(body, MathProvider::Tex(_)) {
             return Some(body);
@@ -12340,6 +12473,27 @@ fn vertical_assemblies(glyphs: &[ml::PositionedGlyph], m: &MathRec) -> (BTreeMap
                 break;
             }
             j += 1;
+        }
+        if let MathProvider::Otf(o) = &m.metrics {
+            // math-layout stacked the face's own parts (each with its origin
+            // at its rise above the bottom, its ink running up to its full
+            // advance): one cluster of the glyphs exactly where they are.
+            let face = o.face();
+            let ink = |p: &ml::PositionedGlyph| {
+                let b = face.bounds(crate::ids::GlyphId(p.gid), Some(p.ch));
+                if b.empty {
+                    (p.baseline_y, p.baseline_y)
+                } else {
+                    (p.baseline_y - face.pt(i64::from(b.y_max), p.size), p.baseline_y - face.pt(i64::from(b.y_min), p.size))
+                }
+            };
+            let top = glyphs[i..j].iter().map(|p| ink(p).0).fold(f64::INFINITY, f64::min);
+            let bottom = glyphs[i..j].iter().map(|p| ink(p).1).fold(f64::NEG_INFINITY, f64::max);
+            let parts = glyphs[i..j].iter().map(|p| (p.gid, bottom - p.baseline_y)).collect();
+            runs.insert(i, VerticalAssembly { parts, top, bottom });
+            swallowed[i + 1..j].fill(true);
+            i = j;
+            continue;
         }
         // The stack runs top to bottom, so the run's box is the first
         // piece's top edge down to the last piece's bottom edge.
