@@ -75,6 +75,7 @@ jobs:
           - preview-controller
           - project-files
           - project-manifest
+          - font-discovery
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
