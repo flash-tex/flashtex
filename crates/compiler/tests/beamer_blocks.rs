@@ -185,3 +185,33 @@ fn outside_beamer_the_block_environments_name_the_class() {
     let b = blocks(src);
     assert!(b.iter().any(|b| matches!(b, Block::FigureCaption { content } if text_of(content).starts_with("Table 1:"))), "{b:?}");
 }
+
+/// An environment opening directly after `\begin{frame}` (or after a real
+/// `{title}`) is the body, not a title: the expansion pass emits the
+/// environment's group brace ahead of every `\begin{...}` (#950), and the
+/// head's optional `{title}{subtitle}` scan must not read that brace as a
+/// literal one. Likewise `\onslide<2->` directly before an environment
+/// stays the bare running-marker form.
+#[test]
+fn environment_group_is_not_an_optional_title_argument() {
+    let src = deck("\\begin{itemize}\n\\item A\n\\end{itemize}");
+    assert!(messages(&src).is_empty(), "{:?}", messages(&src));
+    let b = blocks(&src);
+    let Block::BeamerFrameBegin { title, subtitle, .. } = &b[0] else { panic!("{:?}", b[0]) };
+    assert!(title.is_empty() && subtitle.is_empty(), "{title:?} {subtitle:?}");
+    assert_eq!(shape(&b), ["frame", "item", "/frame"]);
+
+    // A real title, then the environment as the body.
+    let src = "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}{Title}\\begin{block}{B}\nx\n\\end{block}\n\\end{frame}\n\\end{document}\n";
+    assert!(messages(src).is_empty(), "{:?}", messages(src));
+    let b = blocks(src);
+    let Block::BeamerFrameBegin { title, subtitle, .. } = &b[0] else { panic!("{:?}", b[0]) };
+    assert_eq!(text_of(title), "Title");
+    assert!(subtitle.is_empty(), "{subtitle:?}");
+    assert_eq!(shape(&b), ["frame", "block", "para", "/block", "/frame"]);
+
+    // `\onslide<2->` ahead of an environment: the marker form, no
+    // "missing closing brace" diagnostic.
+    let src = deck("\\onslide<2->\\begin{itemize}\n\\item A\n\\end{itemize}");
+    assert!(messages(&src).is_empty(), "{:?}", messages(&src));
+}

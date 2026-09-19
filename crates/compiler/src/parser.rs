@@ -7142,6 +7142,14 @@ impl P<'_> {
         if term.is_empty() {
             return None;
         }
+        // The leading multiple first: `parse_dimen_pt_current` accepts
+        // `<factor>\baselineskip` as an (unvalued) `FACTOR_LENGTHS`
+        // reference (#863), which would shadow the real leading value.
+        if baselineskip_ok {
+            if let Some(pt) = self.baselineskip_multiple(term) {
+                return Some(Ok(pt));
+            }
+        }
         if let Some(dimen) = parse_dimen_pt_current(term, units) {
             if is_length_reference(term) {
                 return match self.resolve_known_length_ref(term) {
@@ -7150,11 +7158,6 @@ impl P<'_> {
                 };
             }
             return Some(Ok(dimen));
-        }
-        if baselineskip_ok {
-            if let Some(pt) = self.baselineskip_multiple(term) {
-                return Some(Ok(pt));
-            }
         }
         None
     }
@@ -7196,20 +7199,22 @@ impl P<'_> {
             }
             return;
         }
-        let dimen = parse_dimen_pt_current(raw, units);
         // A list length read inside the list it shapes also accepts
         // `<factor>\baselineskip` (the corpus sets `\topsep` to
         // `0.6\baselineskip`), resolved exactly like `\enlargethispage`
         // rather than through the length-reference path below, which does
-        // not know `\baselineskip`. Anywhere else the historic error below
+        // not know `\baselineskip`'s value. Tried before the plain parse:
+        // `parse_dimen_pt_current` accepts `<factor>\baselineskip` as an
+        // (unvalued) `FACTOR_LENGTHS` reference (#863), which would shadow
+        // the real leading value. Anywhere else the historic error below
         // applies unchanged.
-        let fallback = if dimen.is_none() && is_list_length(target) && !in_preamble && in_list {
+        let fallback = if is_list_length(target) && !in_preamble && in_list {
             self.baselineskip_multiple(raw)
         } else {
             None
         };
-        let dimen = dimen.or(fallback);
         let via_baselineskip = fallback.is_some();
+        let dimen = fallback.or_else(|| parse_dimen_pt_current(raw, units));
         let Some(pt) = dimen else {
             let who = if command.is_empty() {
                 format!("\\{target}")
@@ -9645,6 +9650,14 @@ impl P<'_> {
         self.beamer_frame_head(open, blocks, para, true);
     }
 
+    /// Whether the next token is a literal `{` (an optional braced
+    /// argument follows), as opposed to the group an environment's
+    /// `\begin` opens (see `environment_group_open_at`).
+    fn next_opens_literal_group(&self) -> bool {
+        matches!(self.peek().map(|token| &token.kind), Some(TokenKind::LBrace))
+            && !environment_group_open_at(&self.t, self.i)
+    }
+
     /// The shared head of `\begin{frame}` and `\frame`: the pause counter
     /// reset, `<overlay>[options]<default overlay>` and, for the
     /// environment (`with_titles`), the `{title}{subtitle}` groups.
@@ -9669,10 +9682,7 @@ impl P<'_> {
         if with_titles {
             for slot in head.iter_mut() {
                 self.skip_spaces();
-                if !matches!(
-                    self.peek().map(|token| &token.kind),
-                    Some(TokenKind::LBrace)
-                ) {
+                if !self.next_opens_literal_group() {
                     break;
                 }
                 let (tokens, title_span) = self.required_group("frame", open);
@@ -9805,7 +9815,7 @@ impl P<'_> {
         }
         let leading = self.take_beamer_overlay_spec();
         self.skip_spaces();
-        let opens_group = matches!(self.peek().map(|token| &token.kind), Some(TokenKind::LBrace));
+        let opens_group = self.next_opens_literal_group();
         if name == "onslide" && !opens_group {
             // `\beamer@noargsonslide`: covered from here to the next
             // `\onslide` (or `\pause`), shown from there when the
@@ -10156,7 +10166,7 @@ impl P<'_> {
         self.skip_beamer_overlay_spec();
         let _ = self.optional_bracket_argument();
         self.skip_spaces();
-        if matches!(self.peek().map(|token| &token.kind), Some(TokenKind::LBrace)) {
+        if self.next_opens_literal_group() {
             let _ = self.required_group(name, span);
         }
     }
@@ -10185,7 +10195,7 @@ impl P<'_> {
                 let _ = self.optional_bracket_argument();
             }
             self.skip_spaces();
-            if !matches!(self.peek().map(|token| &token.kind), Some(TokenKind::LBrace)) {
+            if !self.next_opens_literal_group() {
                 break;
             }
             let (tokens, _) = self.required_group(name, span);
@@ -16299,6 +16309,21 @@ fn environment_end_at(
 
 /// The environment name of a complete `\begin{name}` / `\end{name}` at
 /// `index`, if the token there is one.
+/// Whether the token at `index` is the group an environment's `\begin`
+/// opens: the expansion pass emits `\begingroup` (a brace here) directly
+/// ahead of every reconstituted `\begin{name}` (#950), so an optional
+/// `{...}` argument scan (`\@ifnextchar\bgroup`) must not read it as a
+/// literal `{` the source wrote. A literal `{` ahead of an environment
+/// is followed by that environment's own brace, never by `\begin` itself.
+fn environment_group_open_at(tokens: &[InputToken], index: usize) -> bool {
+    matches!(tokens.get(index).map(|input| &input.token.kind), Some(TokenKind::LBrace))
+        && matches!(
+            tokens.get(index + 1).map(|input| &input.token.kind),
+            Some(TokenKind::Command(name)) if name == "begin"
+        )
+        && environment_name_at(tokens, index + 1).is_some()
+}
+
 fn environment_name_at(tokens: &[InputToken], index: usize) -> Option<&str> {
     let command = tokens.get(index)?;
     if !matches!(&command.token.kind, TokenKind::Command(name) if name == "begin" || name == "end")
