@@ -126,7 +126,24 @@ extension ShellModel {
         panel.selection = group.id
         panel.occurrence[group.id] = k
         let index = group.occurrences[k]
-        navigate(to: EditorDiagnostics.occurrence(k, of: group, in: diags))
+        let source = EditorDiagnostics.occurrence(k, of: group, in: diags)
+        // A problem inside a package input that is not open (a `.sty` next
+        // to the entry, a `texinputs` mount, a resolved package): open it
+        // first — read-only when it has no rooted file — then select the
+        // span (ShellModel+PackageNavigation.swift).
+        if let source, !documents.contains(where: { $0.path == source.path }), packageInputs.contains(where: { $0.path == source.path }) {
+            Task { @MainActor [weak self] in
+                guard let self, await self.openPackageInput(at: source.path) else { return }
+                self.navigate(to: source)
+                self.noteOccurrence(k, of: group, in: diags, index: index)
+            }
+            return
+        }
+        navigate(to: source)
+        noteOccurrence(k, of: group, in: diags, index: index)
+    }
+
+    private func noteOccurrence(_ k: Int, of group: EditorDiagnostics.Group, in diags: [RuntimeV1.Diagnostic], index: Int) {
         if let result, let id = EditorDiagnostics.identity(resultID: resultID, index: index, in: result) {
             currentDiagnosticID = id.key
         }
@@ -346,6 +363,34 @@ struct DiagnosticsListView: View {
                 } else if let fix = MissingIncludeFix.quickFix(for: d, projectRoot: model.project.projectRoot) { // ProjectScaffold.swift
                     InlineActionButton(title: "Create \(fix.path)") { Task { _ = await model.project.createMissingInclude(fix.argument, from: fix.from); model.navigationNote = model.project.status } }
                         .help("Create the empty file \(fix.path) under the project root and open it as included from \(fix.from)")
+                }
+                // The compiler's missing-package diagnostic (`packages X are
+                // recognised but not implemented`, `no project file found:
+                // looked for X.sty`): write X.sty from the template next to
+                // the entry, or ask the consent sheet to fetch it
+                // (ProjectPackages.swift). Alongside the compiler's own fix
+                // (remove the \usepackage), never instead of it.
+                let missing = ProjectPackagesState.missingPackages(for: d, projectRoot: model.project.projectRoot)
+                if missing.count == 1, let name = missing.first {
+                    InlineActionButton(title: "Create \(name).sty") { Task { await model.createPackageFile(named: name) } }
+                        .help("Write \(name).sty next to \(model.project.entryPath) from the package template and open it; the next compile loads it")
+                        .accessibilityIdentifier("problems.package.create")
+                    InlineActionButton(title: "Fetch \(name)…") { model.projectPackages.presentFetch([name]) }
+                        .help("Ask to fetch \(name) from CTAN into the package cache (nothing is fetched until you agree in the sheet)")
+                        .accessibilityIdentifier("problems.package.fetch")
+                } else if missing.count > 1 {
+                    Menu("\(missing.count) missing packages") {
+                        ForEach(missing, id: \.self) { name in
+                            Button("Create \(name).sty next to \(model.project.entryPath)") { Task { await model.createPackageFile(named: name) } }
+                            Button("Fetch \(name) from CTAN…") { model.projectPackages.presentFetch([name]) }
+                        }
+                        Divider()
+                        Button("Fetch all \(missing.count)…") { model.projectPackages.presentFetch(missing) }
+                    }
+                    .menuStyle(.borderlessButton).fixedSize()
+                    .font(DS.Fonts.secondary)
+                    .help("Create each package from the template next to the entry, or ask the consent sheet to fetch it")
+                    .accessibilityIdentifier("problems.package.menu")
                 }
                 if g.count > 1 {
                     Menu("\(g.count) places") {

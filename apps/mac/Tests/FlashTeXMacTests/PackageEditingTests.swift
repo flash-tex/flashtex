@@ -308,6 +308,150 @@ final class PackageEditingTests: XCTestCase {
         XCTAssertEqual(m.navigationNote, "\\section has no \\newcommand/\\def/\\DeclareMathOperator definition in the open documents or the project's packages (a standard command).")
     }
 
+    // MARK: diagnostics inside a package
+
+    /// `main.tex` loads `mystyle.sty`; the compiler reports two problems at
+    /// package lines, each with the "loaded here" label at the `\usepackage`.
+    private static let mainLoading = "\\documentclass{article}\n\\usepackage{mystyle}\n\\begin{document}\nx\n\\end{document}\n"
+    private static let styWithProblems = "\\ProvidesPackage{mystyle}\n\\RequirePackage{nosuch}\n\\foo\n"
+    private static func packageResult() -> RuntimeV1.CompileResult {
+        let load = RuntimeV1.SourceRange(path: "main.tex", startByte: 24, endByte: 44) // `\usepackage{mystyle}`
+        let d1 = RuntimeV1.Diagnostic(severity: .error, message: "\\foo is not supported by this compiler version",
+                                      source: .init(path: "mystyle.sty", startByte: 50, endByte: 54), recovery: nil, code: "unknown_command",
+                                      labels: [.init(source: .init(path: "mystyle.sty", startByte: 50, endByte: 54), text: "", primary: true),
+                                               .init(source: load, text: "mystyle.sty is loaded here", primary: false)])
+        let d2 = RuntimeV1.Diagnostic(severity: .warning, message: "packages nosuch are recognised but not implemented",
+                                      source: .init(path: "mystyle.sty", startByte: 26, endByte: 49), recovery: nil, code: "unsupported_feature",
+                                      labels: [.init(source: load, text: "mystyle.sty is loaded here", primary: false)],
+                                      notes: ["no project file found: looked for nosuch.sty, nosuch.cls"])
+        return RuntimeV1.CompileResult(projectId: "p", revision: 1, status: .recovered, pages: [], diagnostics: [d1, d2], pdfPath: nil)
+    }
+
+    func testAProblemInsideAPackageMarksTheUsepackageThatLoadedIt() {
+        let result = Self.packageResult()
+        // The package buffer draws the two primary marks, nothing else.
+        let sty = EditorDiagnostics.report(for: result, resultID: "r", path: "mystyle.sty", compiledText: Self.styWithProblems, currentText: Self.styWithProblems)
+        XCTAssertEqual(sty.marks.map(\.message), ["\\foo is not supported by this compiler version", "packages nosuch are recognised but not implemented"])
+        XCTAssertEqual(sty.marks.map(\.nsRange), [NSRange(location: 50, length: 4), NSRange(location: 26, length: 23)])
+        // The document buffer draws one secondary mark at the `\usepackage`, the worst severity, counting both.
+        let main = EditorDiagnostics.report(for: result, resultID: "r", path: "main.tex", compiledText: Self.mainLoading, currentText: Self.mainLoading)
+        XCTAssertEqual(main.marks.count, 1)
+        let hint = try! XCTUnwrap(main.marks.first)
+        XCTAssertEqual(hint.message, "mystyle.sty: 2 problems — loaded here")
+        XCTAssertEqual(hint.severity, .error)
+        XCTAssertEqual((Self.mainLoading as NSString).substring(with: hint.nsRange), "\\usepackage{mystyle}")
+        XCTAssertFalse(hint.hasFix)
+        XCTAssertEqual(hint.identity.source.path, "main.tex", "its own identity: never the package buffer's mark")
+        XCTAssertNotEqual(hint.id, sty.marks[0].id)
+        XCTAssertFalse(EditorDiagnostics.isGap(hint.message), "a red or orange dot in the gutter, not a grey tick")
+        // Rebased like a primary mark: an edit above shifts it, an edit inside drops it.
+        let shifted = "% note\n" + Self.mainLoading
+        let after = EditorDiagnostics.report(for: result, resultID: "r", path: "main.tex", compiledText: Self.mainLoading, currentText: shifted)
+        XCTAssertEqual((shifted as NSString).substring(with: try! XCTUnwrap(after.marks.first).nsRange), "\\usepackage{mystyle}")
+        let edited = Self.mainLoading.replacingOccurrences(of: "{mystyle}", with: "{mystylez}")
+        XCTAssertTrue(EditorDiagnostics.report(for: result, resultID: "r", path: "main.tex", compiledText: Self.mainLoading, currentText: edited).marks.isEmpty)
+        // A label pointing at another document, or a non-package source, marks nothing here.
+        let other = RuntimeV1.Diagnostic(severity: .error, message: "x", source: .init(path: "ch.tex", startByte: 0, endByte: 1), recovery: nil,
+                                         labels: [.init(source: .init(path: "main.tex", startByte: 24, endByte: 44), text: "included here", primary: false)])
+        let plain = RuntimeV1.CompileResult(projectId: "p", revision: 1, status: .ok, pages: [], diagnostics: [other], pdfPath: nil)
+        XCTAssertTrue(EditorDiagnostics.report(for: plain, resultID: "r", path: "main.tex", compiledText: nil, currentText: Self.mainLoading).marks.isEmpty)
+    }
+
+    private func loadedProject(_ tmp: URL) throws -> ShellModel {
+        let entry = tmp.appendingPathComponent("main.tex")
+        try Self.mainLoading.write(to: entry, atomically: true, encoding: .utf8)
+        try Self.styWithProblems.write(to: tmp.appendingPathComponent("mystyle.sty"), atomically: true, encoding: .utf8)
+        let m = ShellModel()
+        m.detachWorker()
+        m.files.policy = .disabled(reason: "test: hermetic (direct writes)")
+        m.manifest.reader = { _, _ in
+            let json = """
+            {"path":null,"exists":false,"manifest_dir":null,
+             "manifest":{"project":{"entry":"main.tex","texinputs":[],"output":null},"fonts":{"text":null,"math":null,"mono":null,"sans":null},
+                         "packages":{"source":"ctan","fetch":"ask","pin":{},"path":{}},"library":null},
+             "warnings":[],"texinputs":[],"diagnostics":[],"template":"",
+             "files":[{"path":"mystyle.sty","kind":"package","texinput":null,"origin":null,"text":\(Self.json(Self.styWithProblems)),"sha256":"a","bytes":1}]}
+            """
+            return .success(try! JSONDecoder().decode(ProjectFilesV1.Manifest.self, from: Data(json.utf8)))
+        }
+        XCTAssertEqual(m.openTex(at: entry), .opened)
+        return m
+    }
+
+    func testAProblemsRowForAPackagePathOpensThatFileAtTheSpan() async throws {
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("pkg-editor-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let m = try loadedProject(tmp)
+        m.result = Self.packageResult()
+        m.setCompiledDocuments(["main.tex": Self.mainLoading, "mystyle.sty": Self.styWithProblems])
+        // The document's gutter carries the hint; the package is not open yet.
+        XCTAssertEqual(m.editorMarks.map(\.message), ["mystyle.sty: 2 problems — loaded here"])
+        XCTAssertEqual(m.documents.map(\.path), ["main.tex"])
+        // The row: "mystyle.sty line 3" — the compiled text is known — and Go to source opens it there.
+        let groups = EditorDiagnostics.groups(of: m.displayedDiagnostics, documentOrder: m.documents.map(\.path))
+        XCTAssertEqual(EditorDiagnostics.occurrenceLabel(0, of: groups[0], in: m.displayedDiagnostics, texts: m.compiledDocuments), "1 of 1: mystyle.sty line 3")
+        let panel = DiagnosticsPanelState()
+        m.goToOccurrence(0, of: groups[0], panel: panel)
+        try await settle { m.activePath == "mystyle.sty" }
+        XCTAssertEqual(m.documents.map(\.path), ["main.tex", "mystyle.sty"])
+        XCTAssertEqual((m.activeText as NSString).substring(with: try XCTUnwrap(m.selection?.nsRange)), "\\foo")
+        XCTAssertEqual(m.editorMarks.map(\.nsRange), [NSRange(location: 50, length: 4), NSRange(location: 26, length: 23)], "in the package buffer: its own two marks")
+        XCTAssertTrue(m.navigationNote?.hasPrefix("\\foo is not supported by this compiler version") == true, m.navigationNote ?? "")
+        XCTAssertEqual(m.editorLanguage, .package)
+    }
+
+    // MARK: the missing-package quick fixes
+
+    func testMissingPackageQuickFixesCreateTheStyOrAskTheConsentSheet() async throws {
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("pkg-editor-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let m = try loadedProject(tmp)
+        let d = RuntimeV1.Diagnostic(severity: .warning, message: "packages cancel, siunitx are recognised but not implemented",
+                                     source: .init(path: "main.tex", startByte: 24, endByte: 44), recovery: nil, code: "unsupported_feature",
+                                     suggestion: "", notes: ["no project file found: looked for cancel.sty, cancel.cls"])
+        // Both names are offered; mystyle (present) would not be.
+        XCTAssertEqual(ProjectPackagesState.missingPackages(for: d, projectRoot: m.project.projectRoot), ["cancel", "siunitx"])
+        XCTAssertEqual(ProjectPackagesState.missingPackages(for: d, projectRoot: nil), [], "no root, nothing to write")
+        let present = RuntimeV1.Diagnostic(severity: .warning, message: "packages mystyle are recognised but not implemented", source: nil, recovery: nil)
+        XCTAssertEqual(ProjectPackagesState.missingPackages(for: present, projectRoot: m.project.projectRoot), [], "the file exists: no create")
+        // Create: the template lands next to the entry, opened and active; the fix is gone.
+        let created = await m.createPackageFile(named: "cancel")
+        XCTAssertEqual(created, .created(path: "cancel.sty"))
+        let written = try String(contentsOf: tmp.appendingPathComponent("cancel.sty"), encoding: .utf8)
+        XCTAssertTrue(written.hasPrefix("\\NeedsTeXFormat{LaTeX2e}\n\\ProvidesPackage{cancel}["), written)
+        XCTAssertEqual(m.activePath, "cancel.sty")
+        XCTAssertEqual(m.navigationNote, "Created cancel.sty from the package template; the next compile loads it for \\usepackage{cancel}")
+        XCTAssertEqual(ProjectPackagesState.missingPackages(for: d, projectRoot: m.project.projectRoot), ["siunitx"])
+        // Again: refused, never overwritten.
+        let again = await m.createPackageFile(named: "cancel")
+        XCTAssertEqual(again, .refused("cannot create cancel.sty: it is already open"))
+        XCTAssertEqual(try String(contentsOf: tmp.appendingPathComponent("cancel.sty"), encoding: .utf8), written)
+        let evil = await m.createPackageFile(named: "../evil")
+        XCTAssertEqual(evil, .refused("../evil is not a package name"))
+        // Fetch…: exactly that name goes to the helper without consent; the sheet shows the offer.
+        let state = m.projectPackages
+        var asked: [(names: [String], consent: Bool)] = []
+        state.resolver = { _, names, consent in
+            asked.append((names, consent))
+            let rows = names.map { "{\"name\":\"\($0)\",\"status\":\"needs_consent\",\"version\":\"1.0\",\"source_url\":\"https://mirrors.ctan.org/macros/latex/contrib/\($0)/\",\"would_fetch\":[\"\($0).sty\"]}" }
+            let json = "{\"cache\":\"/tmp/cache\",\"policy\":{\"source\":\"ctan\",\"fetch\":\"ask\"},\"diagnostics\":[],\"packages\":[\(rows.joined(separator: ","))]}"
+            return .success(try! JSONDecoder().decode(ProjectFilesV1.ResolvePackages.self, from: Data(json.utf8)))
+        }
+        state.presentFetch(["siunitx"])
+        try await settle { state.shown }
+        XCTAssertEqual(asked.map(\.names), [["siunitx"]])
+        XCTAssertEqual(asked.first?.consent, false, "nothing is fetched until the sheet's Fetch")
+        XCTAssertEqual(state.offers.map(\.name), ["siunitx"])
+        // Not now, then Fetch… again: the declined name is asked about again (a row click is explicit).
+        state.notNow()
+        XCTAssertFalse(state.shown)
+        state.presentFetch(["siunitx"])
+        try await settle { state.shown }
+        XCTAssertEqual(asked.count, 2)
+    }
+
     private static func json(_ s: String) -> String {
         String(data: try! JSONEncoder().encode(s), encoding: .utf8)!
     }

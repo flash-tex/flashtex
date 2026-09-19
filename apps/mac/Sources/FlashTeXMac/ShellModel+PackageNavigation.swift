@@ -101,6 +101,29 @@ extension ShellModel {
         return await openPackageInput(input)
     }
 
+    /// "Create name.sty" on the Problems row of the compiler's missing-package
+    /// diagnostic: writes `<root>/name.sty` with the package template
+    /// (`PackageTemplate`, through the rooted create — an existing file is
+    /// refused, never overwritten), opens it as a member and switches to
+    /// it; the next compile resolves `\usepackage{name}` to it.
+    @discardableResult
+    func createPackageFile(named name: String) async -> ProjectDocuments.CreateOutcome {
+        guard ProjectPackagesState.isPackageName(name) else {
+            let outcome = ProjectDocuments.CreateOutcome.refused("\(name) is not a package name")
+            navigationNote = "\(name) is not a package name"
+            return outcome
+        }
+        let outcome = await project.createDocument(name + ".sty", role: .opened)
+        switch outcome {
+        case .created(let path):
+            project.switchDocument(to: path)
+            navigationNote = "Created \(path) from the package template; the next compile loads it for \\usepackage{\(name)}"
+        case .refused(let why):
+            navigationNote = why
+        }
+        return outcome
+    }
+
     /// ⌘-click / ⌃⌘J on a macro a package defines: opens the file (read-only
     /// when virtual) and selects the definition, like `reveal` does for an
     /// open document.
