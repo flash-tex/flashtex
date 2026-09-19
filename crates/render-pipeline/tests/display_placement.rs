@@ -34,6 +34,14 @@
 //! `\textup{\tagform@{..}}` does: 53 checks that `\textbf{B} $y_1$` keeps
 //! its bold piece and its subscript in the reference, and that a `\tag*`
 //! label is referenced in parentheses.
+//!
+//! 54 and 55 are page breaks decided by a display's penalties under
+//! `\flushbottom`: the penultimate line before a display carries
+//! `\displaywidowpenalty` (50; `$$` calls `line_break(display_widow_penalty)`,
+//! §1145), and `\@afterheading`'s `\clubpenalty\@M` outlives the display
+//! because `resume_after_display` never runs `\everypar` (§1200). With
+//! `\widowpenalty` at the first and the class's 150 at the second, page 1
+//! ends one line early (54) or one line late (55).
 
 mod common;
 
@@ -85,6 +93,14 @@ const PASSING: &[&str] = &[
     "48-cm-math-roman-boxes-11pt",
     "49-cm-math-roman-boxes-12pt",
     "50-lm-math-roman-boxes",
+    // A display's penalties at a `\flushbottom` page break: 54's page 1
+    // ends with the penultimate line before the display (its break costs
+    // `\displaywidowpenalty` 50, not `\widowpenalty` 150, TeX §1145), 55's
+    // with the display itself (`\@afterheading`'s `\clubpenalty\@M` still
+    // in force for the first line after it, §1200). Both are the
+    // article-twocolumn column break (`fixtures/real-world`).
+    "54-display-widow-page-break",
+    "55-heading-club-through-display",
 ];
 
 /// Rich tags and `\text` with math (#441): the compiler's `TextRun`

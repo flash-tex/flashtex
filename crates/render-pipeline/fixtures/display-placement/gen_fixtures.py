@@ -165,6 +165,45 @@ F["53-eqref-rich-tags"] = doc(
     + eq("e = f \\tag{\\textbf{B} $y_1$}\\label{e:c}") + "\nand\n"
     + "\\begin{align}\n g &= h \\tag{$\\ast$}\\label{e:d}\\\\\n i &= j \\label{e:e}\n\\end{align}\n"
     + "See \\eqref{e:a}, \\eqref{e:b} and \\eqref{e:c}; \\emph{then} \\eqref{e:d} and \\eqref{e:e}.")
+# A display's penalties at a `\\flushbottom` page break (TeX §890, §1145,
+# §1200). `$$` breaks the lines before it with
+# `line_break(display_widow_penalty)`, so the penultimate line of the part
+# before a display costs `\\displaywidowpenalty` (50), not `\\widowpenalty`
+# (150): 54 puts that line exactly at the foot of page 1 (b=0, c=50) with the
+# break one line up at b=78 (13 pt of `\\parskip` stretch, 12 pt short), so
+# pdflatex ends the page with the penultimate line; with 150 it would end one
+# line earlier. And `\\everypar` runs only from `new_graf`, never from
+# `resume_after_display`, so `\\@afterheading`'s `\\clubpenalty\\@M` holds
+# for every part of the paragraph after a heading: in 55 the first line after
+# the display fits the page (b=0) but its break is illegal (10000), so
+# pdflatex ends the page with the display (b=892) instead; with the class's
+# 150 it would keep that line. Both are the article-twocolumn column-1 case
+# (`fixtures/real-world/article-twocolumn`, `\\tracingpages`: `p=50 c=50` at
+# "ural height h, depth d ..." and `\\penalty 10100` after "where q is the
+# insertion penalty"). 54's page 1 is exactly full, so `\\flushbottom` as a
+# command is enough; 55's page 1 is 19 pt short and its glue is set at 2.07,
+# and the pipeline reads `\\flushbottom` from the class options only
+# (`style.rs`: `\\if@twoside\\else\\raggedbottom\\fi`), so it takes the
+# `twoside` option instead.
+_FILL3 = FILL + "Filler text that runs across several lines so that the page is mostly full before the display we"
+_FILL4 = _FILL3 + " care about arrives at the page break, and one more clause to reach a fourth line here."
+_PRE = ("The part of the paragraph before the display has four lines, so its third line is the "
+        "penultimate one and carries the widow penalty that the display hands to the line breaker; "
+        "this sentence keeps going until the fourth line has begun and the equation can follow it "
+        "on the very next line of the page.")
+F["54-display-widow-page-break"] = doc(
+    "\n\n".join([_FILL4] * 4 + [_FILL3] * 9
+                 + [_PRE + "\n" + eq("a + b = c") + "\nlast line of the paragraph after the display.\n\nA closing paragraph."]),
+    pre="\\flushbottom")
+F["55-heading-club-through-display"] = doc(
+    " ".join([_FILL3] * 13) + "\n\n\\section*{A heading}\n"
+    + "The paragraph after the heading keeps the club penalty the heading set, "
+    + "through the display and into the lines after it; this pre-display part runs to a second line.\n"
+    + eq("a + b = c") + "\n"
+    + "The first line after the display cannot end the page: the club penalty is still ten thousand. "
+    + "So the page ends after the display instead, and this line and the next two go to page two, "
+    + "as the reference shows, with one more line to make four.\n\nA closing paragraph.",
+    opts="twoside")
 
 
 def main():

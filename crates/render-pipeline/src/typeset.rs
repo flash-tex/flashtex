@@ -451,6 +451,17 @@ struct ParaState {
 /// LaTeX/plain penalties (article defaults).
 const CLUB_PENALTY: i32 = 150;
 const WIDOW_PENALTY: i32 = 150;
+/// `\displaywidowpenalty` (latex.ltx: `\displaywidowpenalty 50`): what
+/// `line_break` is handed as `final_widow_penalty` when a display
+/// interrupts the paragraph (`init_math`, TeX §1145), so the penultimate
+/// line of the part *before* a display costs 50 where `\par`'s
+/// `\widowpenalty` costs 150 (§890). Measured on
+/// `fixtures/real-world/article-twocolumn`: pdflatex's `\tracingpages`
+/// shows `p=50` at the break after "ural height h, depth d and the
+/// penalty p following it. A" — the line before `\begin{equation}` —
+/// and takes it (`c=50`); with 150 the column ends one line earlier
+/// (`c=115`) and every baseline of page 1 moves.
+const DISPLAY_WIDOW_PENALTY: i32 = 50;
 const SEC_PENALTY: i32 = -300;
 /// `\brokenpenalty` (latex.ltx: `\brokenpenalty 100`), added to the penalty
 /// after a line the paragraph broke at a discretionary (TeX §890).
@@ -4450,13 +4461,29 @@ impl<'a> Context<'a> {
                 g.hidden.hash(&mut h);
                 h.finish()
             });
-            for part in parts {
+            for (part_index, part) in parts.iter().enumerate() {
+                // A display follows this part: `$$` breaks the lines so far
+                // with `line_break(display_widow_penalty)` (§1145).
+                let display_follows = matches!(parts.get(part_index + 1), Some(ParaPart::Display { .. } | ParaPart::Rows { .. }));
                 match part {
                     ParaPart::Lines(items) => {
                         // TeX discards the space token right after a
                         // display's closing `$$` (§1200 resume_after_display).
                         let items = if !first && matches!(items.first(), Some(AItem::Space { .. })) { &items[1..] } else { &items[..] };
-                        let (ind, starts, ah) = (*indent && first, first, st.after_heading && first);
+                        // `\@afterheading`'s `\everypar` sets `\clubpenalty
+                        // \@M` when the paragraph starts and `\everypar`
+                        // runs only from `new_graf`, never from
+                        // `resume_after_display` (§1200), so the value holds
+                        // for every part of the paragraph: the first line
+                        // after a display gets `\clubpenalty` too (§890,
+                        // `cur_line = prev_graf + 1` is true at the start of
+                        // every `line_break` call) and after a heading that
+                        // is 10000. pdflatex on article-twocolumn: the line
+                        // "where q is the insertion penalty..." after the
+                        // equation of the paragraph following `\section{Page
+                        // builder}` is followed by `\penalty 10100` (10000
+                        // plus `\brokenpenalty`).
+                        let (ind, starts, ah) = (*indent && first, first, st.after_heading);
                         let sized_fp = sized.map_or(0, |s| {
                             let mut h = std::collections::hash_map::DefaultHasher::new();
                             s.size_pt.to_bits().hash(&mut h);
@@ -4489,6 +4516,9 @@ impl<'a> Context<'a> {
                             pre_display = b.block.lines.lines.last().map(|l| l.natural_width + 2.0 * quad);
                             if std::mem::take(&mut eject) {
                                 b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                            }
+                            if display_follows {
+                                b.vertical.widow_penalty = DISPLAY_WIDOW_PENALTY;
                             }
                             add_skip(&mut b.vertical, std::mem::take(&mut vspace), std::mem::take(&mut flex));
                             add_skip_before(&mut b.vertical, env_before.take());
