@@ -106,7 +106,7 @@ const IMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "enumerate", "list", "equation", "equation*", "displaymath", "gather", "gather*", "align", "align*",
     "alignat", "alignat*", "flalign", "flalign*", "eqnarray", "eqnarray*", "multline", "multline*",
     "tiny", "scriptsize", "footnotesize", "small", "normalsize",
-    "large", "Large", "LARGE", "huge", "Huge",
+    "large", "Large", "LARGE", "huge", "Huge", "alltt",
     "tabbing",
 ];
 

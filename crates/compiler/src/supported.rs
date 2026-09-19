@@ -1224,6 +1224,7 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("tabular*", "table of a given width"),
     ("verbatim", "literal monospaced lines"),
     ("verbatim*", "literal monospaced lines with visible spaces"),
+    ("alltt", "monospaced lines with significant spaces and line breaks; commands and groups remain active"),
     ("lstlisting", "literal monospaced lines (basic listings)"),
     ("comment", "body discarded unread, even invalid commands inside (comment package)"),
     ("proof", "amsthm proof with a closing square"),
@@ -1243,6 +1244,11 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
 
 /// Packages `parser::package_matches_layout` accepts without a warning.
 const PACKAGES: &[(&str, &str, &str)] = &[
+    (
+        "alltt",
+        "",
+        "typewriter lines preserve spaces and line breaks while commands and groups remain active",
+    ),
     (
         "inputenc",
         "utf8",

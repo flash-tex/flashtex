@@ -180,6 +180,14 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\tabular{\\flashtexbegintabular\\expandafter{\\arraystretch}}%
 \\expandafter\\def\\csname tabular*\\endcsname{\\flashtexbegintabularstar\\expandafter{\\arraystretch}}%
 \\def\\array{\\flashtexbeginarray\\expandafter{\\arraystretch}}%
+\\begingroup\\catcode32=13\\relax
+\\gdef\\flashtexallttspaceinit{\\catcode32=13\\relax\\def {\\flashtexallttspace}}%
+\\endgroup
+\\begingroup\\catcode13=13\\relax
+\\gdef\\flashtexallttlineinit{\\catcode13=13\\relax\\def^^M{\\flashtexallttnewline}}%
+\\endgroup
+\\def\\alltt{\\flashtexbeginalltt\\catcode37=12\\relax\\catcode35=12\\relax\\catcode36=12\\relax\\catcode38=12\\relax\\catcode94=12\\relax\\catcode95=12\\relax\\catcode126=12\\relax\\flashtexallttspaceinit\\flashtexallttlineinit}%
+\\def\\endalltt{\\flashtexendalltt}%
 \\long\\def\\flashtexaddtobeginhook#1#2{\\begingroup\\csname toks@\\endcsname\\expandafter{#1\\flashtexatbeginstart#2\\flashtexatbeginend}\\xdef#1{\\the\\csname toks@\\endcsname}\\endgroup}%
 \\long\\def\\AtBeginDocument#1{\\expandafter\\flashtexaddtobeginhook\\csname @begindocumenthook\\endcsname{#1}}%
 \\makeatletter
@@ -808,6 +816,14 @@ fn configure(engine: &mut Engine) {
     engine.declare_host_assignment("flashtexsetlength");
     engine.declare_host_assignment("flashtexaddtolength");
     engine.declare_host_command("flashtexsetlistdone");
+    for name in [
+        "flashtexbeginalltt",
+        "flashtexendalltt",
+        "flashtexallttspace",
+        "flashtexallttnewline",
+    ] {
+        engine.declare_host_command(name);
+    }
 }
 
 /// The expansion engine's `em`/`ex` come from the text font its tracked font
@@ -1101,6 +1117,10 @@ impl<'d> Converter<'d> {
                         conv.stretch = Some(((begin.span.document.0, begin.span.start), 0, String::new()));
                         conv.push_environment("begin", env, begin);
                     }
+                    "flashtexbeginalltt" => conv.push_environment("begin", "alltt", at),
+                    "flashtexendalltt" => conv.push_environment("end", "alltt", at),
+                    "flashtexallttspace" => conv.push(TokenKind::Word(" ".to_string()), at),
+                    "flashtexallttnewline" => conv.push(TokenKind::LineBreak, at),
                     // `\AtBeginDocument` hook output: the host prelude wraps
                     // every chunk queued before `\begin{document}` in these
                     // markers. The engine runs the hook ahead of the real

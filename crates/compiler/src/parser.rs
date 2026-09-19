@@ -1018,6 +1018,29 @@ pub enum Block {
         lines: Vec<VerbatimLine>,
         span: Span,
     },
+    /// `alltt`'s trivlist body: fixed source lines with ordinary compiler
+    /// inline parsing, so commands and groups remain live inside Courier
+    /// text. `vmode` records whether `\begin{alltt}` followed a paragraph;
+    /// `\trivlist` adds `\partopsep` only when it starts in vertical mode.
+    Alltt {
+        lines: Vec<Vec<Inline>>,
+        vmode: bool,
+        span: Span,
+        /// The enclosing `quote`/`quotation`/`verse` style, if any (captured
+        /// like `Block::Styled`'s own `style`; an enclosing centering
+        /// declaration is never kept: alltt cancels it). Layout applies it
+        /// to `left_edge()` so the body sits at the enclosing quote's
+        /// margin (`alltt.sty` sets `\leftskip\@totalleftmargin`).
+        style: Option<ParagraphStyle>,
+        /// The enclosing `\list` level driving the hanging-indent margin
+        /// (like `Block::ListItem`'s `level`), with its `\setlist`
+        /// `leftmargin` effect (`leftmargin`) and `thebibliography`
+        /// widest-label override (`widest_label`). `None` outside a list
+        /// item's context, where the body starts at the page margin.
+        level: Option<u8>,
+        leftmargin: ListLeftMargin,
+        widest_label: Option<String>,
+    },
     /// `\tableofcontents`: the article.cls contents list, built from the
     /// numbered headings of the previous layout pass (see
     /// `layout::layout_converged`). `span` is the command.
@@ -1342,6 +1365,16 @@ pub enum LetterPart {
 pub struct TabbingLine {
     pub content: Vec<Inline>,
     pub killed: bool,
+}
+
+/// One open `alltt` environment. The paragraph buffer is the current source
+/// line until an active endline marker drains it here.
+#[derive(Debug, Clone)]
+struct AllttFrame {
+    lines: Vec<Vec<Inline>>,
+    span: Span,
+    vmode: bool,
+    initial_newline: bool,
 }
 
 /// verse's `\\` (`\@centercr`, latex.ltx `\@xcentercr`/`\@icentercr`).
@@ -2867,6 +2900,7 @@ pub fn parse_project_with(
         pending_item: None,
         pending_line_break: None,
         tabbing_stack: Vec::new(),
+        alltt_stack: Vec::new(),
         paragraph_styles: Vec::new(),
         document_global_state: false,
         cleveref: crate::xref::CleverefConfig::default(),
@@ -3139,6 +3173,9 @@ struct P<'a> {
     /// `\kill` and blank lines drain it into a [`TabbingLine`], and
     /// `\end{tabbing}` drains the last row and pushes [`Block::Tabbing`].
     tabbing_stack: Vec<TabbingFrame>,
+    /// Open `alltt` environments. Their active endline markers drain the
+    /// shared paragraph buffer into one fixed source line at a time.
+    alltt_stack: Vec<AllttFrame>,
     paragraph_styles: Vec<ParagraphStyle>,
     document_global_state: bool,
     cleveref: crate::xref::CleverefConfig,
@@ -3433,11 +3470,94 @@ impl P<'_> {
             .is_some_and(|text| text.contains('\n'))
     }
 
+    fn alltt_active(&self) -> bool {
+        !self.alltt_stack.is_empty()
+    }
+
+    fn word_text(&self, text: &str) -> String {
+        if self.alltt_active() {
+            text.to_string()
+        } else {
+            apply_text_ligatures(text)
+        }
+    }
+
+    /// Drain one physical `alltt` source line. The first endline after the
+    /// environment opener is the line ending swallowed by alltt's usual
+    /// source layout; later empty lines remain real blank output lines.
+    fn alltt_line_break(&mut self, para: &mut Vec<Inline>) {
+        let Some(frame) = self.alltt_stack.last_mut() else {
+            return;
+        };
+        if frame.initial_newline && para.is_empty() {
+            frame.initial_newline = false;
+            return;
+        }
+        frame.initial_newline = false;
+        frame.lines.push(std::mem::take(para));
+    }
+
+    fn finish_alltt(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let Some(mut frame) = self.alltt_stack.pop() else {
+            return;
+        };
+        if !para.is_empty() {
+            frame.lines.push(std::mem::take(para));
+        }
+        if frame.lines.is_empty() {
+            frame.lines.push(Vec::new());
+        }
+        // The enclosing quote/list margin, captured the same way
+        // `flush_list_item` captures it for `Styled`/`ListItem` siblings so
+        // the alltt body sits at the same x (`alltt.sty`'s
+        // `\leftskip\@totalleftmargin`).
+        let style = self
+            .paragraph_styles
+            .last()
+            .filter(|style| **style == ParagraphStyle::Quote)
+            .copied();
+        let in_quote = self.pending_item_label.is_none()
+            && self
+                .list_frames
+                .last()
+                .is_some_and(|frame| frame.environment.is_quote_like());
+        let level = self
+            .list_stack
+            .last()
+            .filter(|list| list.count > 0 && !in_quote)
+            .map(|_| self.list_stack.len() as u8);
+        let leftmargin = match self.list_stack.last() {
+            Some(OpenList { spacing, .. }) => match spacing.leftmargin {
+                LeftMarginSetting::Explicit(pt) => ListLeftMargin::Explicit(pt),
+                LeftMarginSetting::Unset | LeftMarginSetting::Widest => ListLeftMargin::Default,
+            },
+            None => ListLeftMargin::Default,
+        };
+        let widest_label = self.list_stack.last().and_then(|list| {
+            (list.kind == "thebibliography")
+                .then(|| list.template.clone())
+                .flatten()
+        });
+        blocks.push(Block::Alltt {
+            lines: frame.lines,
+            vmode: frame.vmode,
+            span: frame.span,
+            style,
+            level,
+            leftmargin,
+            widest_label,
+        });
+        self.finish_block_dependencies();
+    }
+
     fn document(&mut self) -> Vec<Block> {
         let mut blocks = Vec::new();
         let mut para = Vec::new();
 
         self.parse_stream(&mut blocks, &mut para);
+        while self.alltt_active() {
+            self.finish_alltt(&mut blocks, &mut para);
+        }
         self.flush_paragraph(&mut blocks, &mut para);
         blocks
     }
@@ -3518,7 +3638,7 @@ impl P<'_> {
                             }
                         }
                         para.push(Inline::Text {
-                            text: apply_text_ligatures(word),
+                            text: self.word_text(word),
                             span,
                             style: self.style,
                             space_before,
@@ -3535,7 +3655,9 @@ impl P<'_> {
                 TokenKind::ParBreak => {
                     self.i += 1;
                     if render {
-                        if self.tabbing_active() {
+                        if self.alltt_active() {
+                            self.alltt_line_break(para);
+                        } else if self.tabbing_active() {
                             // A blank line ends the row, like `\\`.
                             self.end_tabbing_line(false, para);
                         } else {
@@ -3629,7 +3751,7 @@ impl P<'_> {
                             }
                         }
                         para.push(Inline::Text {
-                            text: apply_text_ligatures(&word),
+                            text: self.word_text(&word),
                             span: tok.span,
                             style: self.style,
                             space_before,
@@ -3638,6 +3760,10 @@ impl P<'_> {
                 }
                 TokenKind::LineBreak => {
                     self.i += 1;
+                    if render && self.alltt_active() && self.source_has_newline(tok.span) {
+                        self.alltt_line_break(para);
+                        continue;
+                    }
                     if render && self.tabbing_active() {
                         // `\\` ends the row back at the left margin (a new
                         // row always starts there, never at a tab stop).
@@ -4293,6 +4419,7 @@ impl P<'_> {
             "footnote" | "footnotemark" | "footnotetext" => self.footnote(name, span, para),
             "fnsymbol" => self.fnsymbol_command(span, para),
             "marginpar" => self.marginpar(span, para),
+            "par" if self.alltt_active() => self.alltt_line_break(para),
             "par" => self.flush_paragraph(blocks, para),
             "bigskip" | "medskip" | "smallskip" | "vspace" | "hrule" | "newpage" | "clearpage"
             | "cleardoublepage" | "pagebreak" | "nopagebreak" | "vfill" | "columnbreak" | "newcolumn"
@@ -7525,6 +7652,7 @@ impl P<'_> {
                     | "huge"
                     | "Huge"
             );
+        let alltt_env = environment == "alltt" && self.in_body;
         self.env_alignments.push(self.declared_alignment);
         self.env_obeylines.push(self.obeylines);
         self.parameter_scopes.push(Vec::new());
@@ -7541,6 +7669,15 @@ impl P<'_> {
             self.beamer_environment_begin(&environment, span, argument_span, blocks, para);
         } else if matches!(environment.as_str(), "figure" | "table") && self.in_body {
             self.flush_paragraph(blocks, para);
+        } else if alltt_env {
+            let vmode = para.is_empty();
+            self.flush_paragraph(blocks, para);
+            self.alltt_stack.push(AllttFrame {
+                lines: Vec::new(),
+                span: span.merge(argument_span),
+                vmode,
+                initial_newline: true,
+            });
         } else if let (Some(style), true) = (paragraph_style(&environment), self.in_body) {
             self.flush_paragraph(blocks, para);
             self.paragraph_styles.push(style);
@@ -7757,6 +7894,17 @@ impl P<'_> {
         // `begin_theorem` below.
         if size_env {
             self.style = apply_style(self.style, &environment, self.body_size_pt());
+        } else if alltt_env {
+            self.style = TextStyle {
+                bold: false,
+                italic: false,
+                slanted: false,
+                small_caps: false,
+                family: TextFamily::Mono,
+                size: self.style.size,
+                color: self.style.color,
+            };
+            self.obeylines = true;
         }
         if self.in_body {
             if let Some(theorem) = self.theorems.get(&environment).cloned() {
@@ -7787,6 +7935,9 @@ impl P<'_> {
         // own diagnostic from the end-of-input sweep, which reads as though
         // more of the document were broken than actually is.
         let mut document_closed_over_open = false;
+        let matched_environment = popped
+            .as_ref()
+            .is_some_and(|(open, _)| open == &environment);
         match popped {
             Some((open, _)) if open == environment => {}
             Some((open, _)) => {
@@ -7846,7 +7997,9 @@ impl P<'_> {
         if environment == "sloppypar" && self.in_body {
             self.flush_paragraph(blocks, para);
         }
-        if paragraph_style(&environment).is_some() && self.in_body {
+        if environment == "alltt" && self.in_body && matched_environment {
+            self.finish_alltt(blocks, para);
+        } else if paragraph_style(&environment).is_some() && self.in_body {
             self.flush_paragraph(blocks, para);
             self.paragraph_styles.pop();
         } else if matches!(
@@ -7911,6 +8064,17 @@ impl P<'_> {
                     for block in &mut blocks[start..] {
                         if let Block::ListItem {
                             level: item_level,
+                            leftmargin,
+                            ..
+                        } = block
+                        {
+                            if *item_level == level && matches!(leftmargin, ListLeftMargin::Default)
+                            {
+                                *leftmargin = ListLeftMargin::Widest(labels.clone());
+                            }
+                        }
+                        if let Block::Alltt {
+                            level: Some(item_level),
                             leftmargin,
                             ..
                         } = block
@@ -11328,7 +11492,7 @@ impl P<'_> {
                         }
                     }
                     content.push(Inline::Text {
-                        text: apply_text_ligatures(text),
+                        text: self.word_text(&text),
                         span: input.token.span,
                         style,
                         space_before,
@@ -13603,6 +13767,9 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         .filter(|option| !option.is_empty())
         .collect();
     match package {
+        // alltt's catcode changes are installed by the expansion prelude;
+        // its compiler block supplies the trivlist spacing and inline layout.
+        "alltt" => options.is_empty(),
         // Source text is decoded as UTF-8 already.
         "inputenc" => options.iter().all(|option| *option == "utf8"),
         // Text glyphs are mapped from Unicode, which is what T1 approximates.
