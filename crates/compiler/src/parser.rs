@@ -494,6 +494,9 @@ pub enum Inline {
     /// their own raise: the render pipeline mirrors its footnote-mark
     /// shift, this crate's Core 14 layout its own mark raise.
     TextScript(Box<TextScript>),
+    /// Text-mode `\phantom`/`\hphantom`/`\vphantom` (see [`Phantom`]): an
+    /// invisible box sized from the argument's typeset extent.
+    Phantom(Box<Phantom>),
     /// `\includegraphics` in running text: an image box (see
     /// `crate::graphics`). Figures and tables re-derive their graphics from
     /// the source instead.
@@ -830,6 +833,26 @@ pub struct SoulHighlightExtents {
     /// How far past the content on each side the fill reaches, in TeX
     /// points ([`SOUL_HIGHLIGHT_SIDE_PT`]).
     pub side_pt: f64,
+}
+
+/// A text-mode `\phantom{...}` / `\hphantom{...}` / `\vphantom{...}`
+/// wrapper (`Inline::Phantom`, latex.ltx `\ph@nt`): `content` is the braced
+/// argument parsed as an `\hbox` (commands inside work, like `\underline`'s),
+/// kept so each layout can measure the argument's real typeset extent in its
+/// own metrics. `horizontal` keeps the width (`false` for `\vphantom`),
+/// `vertical` keeps the height and depth (`false` for `\hphantom`) —
+/// exactly the flags on math's `Nucleus::Phantom`, which this mirrors.
+/// Nothing is ever painted. The fragment does not break across lines (real
+/// LaTeX boxes it with `\mbox`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Phantom {
+    pub content: Vec<Inline>,
+    pub horizontal: bool,
+    pub vertical: bool,
+    /// From the command through the argument's closing brace.
+    pub span: Span,
+    /// See `Inline::Text::space_before`.
+    pub space_before: bool,
 }
 
 /// A `\textsuperscript{...}` / `\textsubscript{...}` wrapper
@@ -2189,6 +2212,9 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "LaTeX",
     "LaTeXe",
     "rule",
+    "phantom",
+    "hphantom",
+    "vphantom",
     "thinspace",
     "negthinspace",
     "medspace",
@@ -4483,6 +4509,11 @@ impl P<'_> {
             "xspace" => self.xspace(span),
             "rule" => self.text_rule(span, para),
             "strut" => self.strut(span, para),
+            // Kernel text-mode `\phantom`/`\hphantom`/`\vphantom`
+            // (latex.ltx `\ph@nt`): the argument as an invisible hbox.
+            // Math mode has its own reader and `Nucleus::Phantom`
+            // (`math.rs`); this arm covers text mode only.
+            "phantom" | "hphantom" | "vphantom" => self.text_phantom(name, span, para),
                         // amsmath `\text{...}` in text mode is `\mbox{...}` (amsmath.dtx
             // `\ifmmode...\else\expandafter\mbox\fi`): one unbreakable box
             // in the current style, with no diagnostic.
@@ -12836,6 +12867,29 @@ impl P<'_> {
         }
     }
 
+    /// Kernel text-mode `\phantom{...}` / `\hphantom{...}` /
+    /// `\vphantom{...}` (latex.ltx `\ph@nt`): always supported, no package
+    /// needed. The argument is parsed as an `\hbox` so commands inside it
+    /// work, and kept on the node (see [`Phantom`]) so each layout measures
+    /// the argument's real typeset extent in its own metrics: the full box
+    /// (`\phantom`), only its width (`\hphantom`: zero height and depth) or
+    /// only its height and depth (`\vphantom`: zero width). Nothing is
+    /// painted. Like `\mbox`, an hbox starts the paragraph.
+    fn text_phantom(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        // `\leavevmode`: an hbox starts the paragraph.
+        self.paragraph_started = true;
+        let space_before = self.space_precedes(self.i - 1);
+        let (tokens, argument_span) = self.required_group(name, span);
+        let content = self.box_inlines(tokens);
+        para.push(Inline::Phantom(Box::new(Phantom {
+            content,
+            horizontal: name != "vphantom",
+            vertical: name != "hphantom",
+            span: span.merge(argument_span),
+            space_before,
+        })));
+    }
+
     /// `\footnote`, `\footnotemark` and `\footnotetext`, following latex.ltx:
     /// without `[<n>]`, `\footnote`/`\footnotemark` step the counter and
     /// `\footnotetext` reuses its current value; with `[<n>]` none of them
@@ -14808,6 +14862,7 @@ fn inline_span(inline: &Inline) -> Span {
         Inline::ColorBox(b) => b.span,
         Inline::Underline(u) => u.span,
         Inline::TextScript(t) => t.span,
+        Inline::Phantom(p) => p.span,
         Inline::Graphic(g) => g.span,
         Inline::Transform(t) => t.span,
     }

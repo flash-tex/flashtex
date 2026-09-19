@@ -323,7 +323,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 428 text-mode and 574 math-mode command entries, 81 environments and 32 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 431 text-mode and 574 math-mode command entries, 81 environments and 32 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -623,6 +623,9 @@ Canonical sources:
 | `\LaTeX` |  | latex.ltx logo: L, kern -.36em, script-size A raised to the T height, kern -.15em, \TeX |
 | `\LaTeXe` |  | \LaTeX, kern .15em, 2 and a text-style subscript varepsilon |
 | `\rule` | `[raise]{dimension}{dimension}` | filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \textwidth, \linewidth, \columnwidth |
+| `\phantom` | `{...}` | kernel invisible box: the argument's full width, height and depth, paints nothing (single-line; also in math) |
+| `\hphantom` | `{...}` | kernel invisible box: the argument's width only, zero height and depth (single-line; also in math) |
+| `\vphantom` | `{...}` | kernel invisible box: the argument's height and depth only, zero width (single-line; also in math) |
 | `\thinspace` |  | text kern .16667em (math: thin muskip) |
 | `\negthinspace` |  | text kern -.16667em |
 | `\medspace` |  | text kern .2222em |

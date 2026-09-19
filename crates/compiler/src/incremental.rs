@@ -760,6 +760,10 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 map_span(&mut u.span, changes, deltas)?;
                 shift_inlines(&mut u.content, changes, deltas)?;
             }
+            Inline::Phantom(p) => {
+                map_span(&mut p.span, changes, deltas)?;
+                shift_inlines(&mut p.content, changes, deltas)?;
+            }
             Inline::TextScript(t) => {
                 map_span(&mut t.span, changes, deltas)?;
                 shift_inlines(&mut t.content, changes, deltas)?;
@@ -1004,6 +1008,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::ColorBox(b) => b.span,
         Inline::Underline(u) => u.span,
         Inline::TextScript(t) => t.span,
+        Inline::Phantom(p) => p.span,
         Inline::Graphic(graphic) => graphic.span,
         Inline::Transform(transform) => transform.span,
         Inline::Logo { span, .. } | Inline::Rule { span, .. } | Inline::Kern { span, .. } => *span,
