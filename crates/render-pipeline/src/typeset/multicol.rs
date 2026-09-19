@@ -529,6 +529,7 @@ fn block_start(b: &Block) -> Option<(usize, usize)> {
         | Block::FrameBegin { span, .. }
         | Block::FrameEnd { span, .. }
         | Block::BeamerTitle { span, .. }
+        | Block::BeamerToc { span, .. }
         | Block::BeamerBlockBegin { span, .. }
         | Block::BeamerBlockEnd { span, .. }
         | Block::ColumnsBegin { span, .. }

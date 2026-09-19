@@ -115,6 +115,13 @@ pub struct Stylesheet {
     /// Whether math family 0 (`operators`) is Latin Modern's `rm-lmr*`
     /// instead of the kernel's `cmr*`; see [`math_roman_lm`].
     pub math_roman_lm: bool,
+    /// The class loads `amsmath` itself (beamer, `beamerbasetheorems.sty`
+    /// 15-18, unless its `noamsthm` option): amsmath's definitions are in
+    /// force without a `\usepackage` naming it.
+    pub class_loads_amsmath: bool,
+    /// The class loads `amssymb` itself (beamer, `beamerbasefont.sty`
+    /// 20-21, unless `noamssymb`): the msam/msbm symbol fonts are there.
+    pub class_loads_amssymb: bool,
     pub script_size_pt: f64,
     pub scriptscript_size_pt: f64,
     pub tolerance: f64,
@@ -284,6 +291,8 @@ impl Stylesheet {
             fleqn: false,
             cmex_designs: false,
             math_roman_lm: false,
+            class_loads_amsmath: false,
+            class_loads_amssymb: false,
             script_size_pt: script,
             scriptscript_size_pt: scriptscript,
             tolerance: 200.0,

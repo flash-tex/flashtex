@@ -128,8 +128,17 @@ fn block_has_markers(block: &Block) -> bool {
 }
 
 /// Replaces every beamer frame of `blocks` (a `FrameBegin`..`FrameEnd`
-/// run) by one copy per slide, each filtered for its slide. A frame with
-/// one slide and no marker is left untouched.
+/// run) by one copy per slide it is set on, each filtered for its slide.
+/// A frame with one slide and no marker is left untouched.
+///
+/// The slides are beamer's frame loop (`beamerbaseframe.sty` 523-541
+/// `\beamer@doseveralframes`): slide 1, 2, ... for as long as the frame's
+/// own `<spec>` (`\beamer@whichframes`, decoded at every slide) or -- on a
+/// slide it selects, where the body runs -- the body names a later slide;
+/// a slide the frame specification does not select is skipped
+/// (`\beamer@doifnotinframe` is empty). Measured (pdflatex, the
+/// `fixtures/real-world/beamer-polish` deck): `\begin{frame}<2->` over
+/// `\item<1->`/`<2->`/`<3->` gives two pages, slides 2 and 3.
 pub fn expand_frames(blocks: &mut Vec<Block>) {
     if !blocks.iter().any(|b| matches!(b, Block::FrameBegin { .. })) {
         return;
@@ -138,7 +147,7 @@ pub fn expand_frames(blocks: &mut Vec<Block>) {
     let mut out: Vec<Block> = Vec::with_capacity(old.len());
     let mut i = 0;
     while i < old.len() {
-        let Block::FrameBegin { slides, .. } = &old[i] else {
+        let Block::FrameBegin { slides, spec, .. } = &old[i] else {
             out.push(old[i].clone());
             i += 1;
             continue;
@@ -147,12 +156,24 @@ pub fn expand_frames(blocks: &mut Vec<Block>) {
             .find(|&j| matches!(old[j], Block::FrameEnd { .. } | Block::FrameBegin { .. }))
             .map_or(old.len() - 1, |j| if matches!(old[j], Block::FrameEnd { .. }) { j } else { j - 1 });
         let frame = &old[i..=end];
-        let n = (*slides).max(1);
-        if n == 1 && !frame.iter().any(block_has_markers) {
+        let body_max = (*slides).max(1);
+        if spec.all && body_max == 1 && !frame.iter().any(block_has_markers) {
             out.extend_from_slice(frame);
         } else {
-            for slide in 1..=n {
-                out.extend(slide_view(frame, slide));
+            let frame_max = spec.max_slide();
+            let mut slide = 1;
+            let mut first = true;
+            loop {
+                let shown = spec.contains(slide);
+                if shown {
+                    out.extend(slide_view(frame, slide, first));
+                    first = false;
+                }
+                let another = frame_max > slide || (shown && body_max > slide);
+                if !another {
+                    break;
+                }
+                slide += 1;
             }
         }
         i = end + 1;
@@ -160,15 +181,17 @@ pub fn expand_frames(blocks: &mut Vec<Block>) {
     *blocks = out;
 }
 
-/// The frame's blocks as slide `slide` sets them.
-fn slide_view(frame: &[Block], slide: u32) -> Vec<Block> {
+/// The frame's blocks as slide `slide` sets them; `first` when no earlier
+/// slide of the frame was set (the copy that steps `framenumber`).
+fn slide_view(frame: &[Block], slide: u32, first: bool) -> Vec<Block> {
     let mut state = State::new(slide);
     let mut out = Vec::with_capacity(frame.len());
     for block in frame {
         let mut block = block.clone();
         let keep = match &mut block {
-            Block::FrameBegin { slide: s, .. } => {
+            Block::FrameBegin { slide: s, first_slide, .. } => {
                 *s = slide;
+                *first_slide = first;
                 true
             }
             Block::Paragraph { parts, list, .. } => {
@@ -203,6 +226,7 @@ fn slide_view(frame: &[Block], slide: u32) -> Vec<Block> {
                         } else {
                             keep = true;
                             geom.hidden = at.covered();
+                            geom.alerted = at.alerted();
                         }
                     }
                 }
@@ -354,6 +378,10 @@ mod tests {
     }
 
     fn frame(slides: u32, body: Vec<Block>) -> Vec<Block> {
+        frame_with_spec(slides, OverlaySpec::all(), body)
+    }
+
+    fn frame_with_spec(slides: u32, spec: OverlaySpec, body: Vec<Block>) -> Vec<Block> {
         let mut v = vec![Block::FrameBegin {
             title: Vec::new(),
             subtitle: Vec::new(),
@@ -362,11 +390,45 @@ mod tests {
             allowframebreaks: false,
             slides,
             slide: 1,
+            spec,
+            first_slide: true,
             span: Span::new(0, 0),
         }];
         v.extend(body);
         v.push(Block::FrameEnd { span: Span::new(0, 0), addvspace_before: 0.0, addvspace_flex: (0.0, 0.0), vspace_before: 0.0 });
         v
+    }
+
+    /// `\begin{frame}<2->` over `\item<1->`/`<2->`/`<3->` (probe deck
+    /// `beamer-polish`, pdflatex: 2 pages, slides 2 and 3; the first set
+    /// slide steps the frame number); `<0>` sets no slide; `<1-2>` over a
+    /// body naming slide 3 stops after slide 2; `<3>` over a plain body
+    /// sets slide 3 alone.
+    #[test]
+    fn frame_specification_selects_the_slides_set() {
+        let spec = |raw: &str| OverlaySpec::parse(raw, &mut 1);
+        let body = || vec![para(vec![begin(OverlayKind::Cover, "3-"), word("late"), AItem::Overlay(OverlayMark::End)])];
+        let slides_of = |blocks: &[Block]| -> Vec<(u32, bool)> {
+            blocks
+                .iter()
+                .filter_map(|b| match b {
+                    Block::FrameBegin { slide, first_slide, .. } => Some((*slide, *first_slide)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let mut blocks = frame_with_spec(3, spec("2-"), body());
+        expand_frames(&mut blocks);
+        assert_eq!(slides_of(&blocks), vec![(2, true), (3, false)]);
+        let mut blocks = frame_with_spec(3, spec("0"), body());
+        expand_frames(&mut blocks);
+        assert!(blocks.is_empty(), "{blocks:?}");
+        let mut blocks = frame_with_spec(3, spec("1-2"), body());
+        expand_frames(&mut blocks);
+        assert_eq!(slides_of(&blocks), vec![(1, true), (2, false)]);
+        let mut blocks = frame_with_spec(1, spec("3"), vec![para(vec![word("x")])]);
+        expand_frames(&mut blocks);
+        assert_eq!(slides_of(&blocks), vec![(3, true)]);
     }
 
     fn words(block: &Block) -> Vec<(String, bool, bool)> {

@@ -438,19 +438,25 @@ impl<'a> Context<'a> {
                 sub.set_images(o, c);
             }
             sub.set_math_colors(self.math_colors.clone());
+            // The column is a `minipage`: its `\footnote`s are
+            // `\@mpfootnotetext`'s, set at the column's foot.
+            sub.minipage_notes = true;
             let mut sub_blocks: Vec<BuiltBlock> = Vec::new();
             sub.beamer_body(body, &mut sub_blocks, span, *align == ColumnAlign::TopBaseline);
-            if !sub.notes.is_empty() {
-                let src = vec![sub.source(span)];
-                sub.notes.clear();
-                sub.note_anchors.clear();
-                sub.emit(None, Diagnostic::warning("beamer_column_footnote", "a \\footnote inside a beamer column is a minipage footnote (set at the column's foot), which is not placed yet; the mark is set and the note text is omitted", src));
-            }
             // `\endminipage`: `\par\unskip` drops the glue the body ends
             // with (a block's `\smallskipamount`); the box then ends in
             // its last line and that line's depth is the box's.
             if let Some(last) = sub_blocks.last_mut() {
                 last.vertical.space_after = None;
+            }
+            // `\ifvoid\@mpfootins\else \vskip\skip\@mpfootins \footnoterule
+            // \unvbox\@mpfootins \fi` (latex.ltx `\endminipage`): the
+            // notes close the box, so its depth is the last note's.
+            if !sub.notes.is_empty() {
+                let notes: Vec<usize> = (0..sub.notes.len()).collect();
+                sub.minipage_foot(&mut sub_blocks, &notes, frame_pt(widths[i]), span);
+                sub.notes.clear();
+                sub.note_anchors.clear();
             }
             let (height, last_depth, first_height) = vbox_extent(&p, &sub_blocks);
             let (h, d) = spec::column_box(*align, sp(height + last_depth), sp(first_height), sp(last_depth));

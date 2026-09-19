@@ -596,6 +596,11 @@ pub struct Context<'a> {
     multicol: multicol::State,
     /// Footnote marks are `\rlap`ped (article/report/book `\maketitle`).
     rlap_marks: bool,
+    /// Footnotes are a `minipage`'s (`\@mpfootnotetext`, a beamer column):
+    /// marks are `\thempfootnote`, `{\itshape\@alph\c@mpfootnote}` counted
+    /// from this context's first note, and the notes are set at the box's
+    /// foot ([`footnotes::MinipageNotes`]), not the column's.
+    pub(super) minipage_notes: bool,
     /// Math providers for text sizes other than the body's (footnotes), by
     /// size in centipoints; `None` when that size's metrics are missing.
     math_fonts_sized: BTreeMap<u32, Option<MathProvider>>,
@@ -680,12 +685,14 @@ impl<'a> Context<'a> {
             maths: Vec::new(),
             math_fonts: None,
             math_unavailable: false,
-            ams_symbol_fonts: texts
-                .iter()
-                .any(|t| crate::adapter::package_options(t, "amssymb").is_some() || crate::adapter::package_options(t, "amsfonts").is_some()),
-            amsmath_loaded: texts
-                .iter()
-                .any(|t| crate::adapter::package_options(t, "amsmath").is_some()),
+            ams_symbol_fonts: style.class_loads_amssymb
+                || texts
+                    .iter()
+                    .any(|t| crate::adapter::package_options(t, "amssymb").is_some() || crate::adapter::package_options(t, "amsfonts").is_some()),
+            amsmath_loaded: style.class_loads_amsmath
+                || texts
+                    .iter()
+                    .any(|t| crate::adapter::package_options(t, "amsmath").is_some()),
             reported: BTreeSet::new(),
             capture: None,
             path_rcs: std::cell::RefCell::new(BTreeMap::new()),
@@ -702,6 +709,7 @@ impl<'a> Context<'a> {
             parbox: false,
             multicol: multicol::State::default(),
             rlap_marks: false,
+            minipage_notes: false,
             math_fonts_sized: BTreeMap::new(),
             named_ids: style.fontspec.families.iter().map(|spec| fonts.intern_named(spec)).collect(),
             named_scales: BTreeMap::new(),
@@ -1878,6 +1886,7 @@ impl<'a> Context<'a> {
         sink.amsfonts = self.ams_symbol_fonts;
         sink.amsmath = self.amsmath_loaded;
         sink.display = display;
+        sink.sans_math = self.style.class_geometry.as_ref().is_some_and(|g| g.beamer_sans_math);
         let texts = self.texts;
         let fence = |sp: &Span| fence_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // The atom's own class when the pinned compiler exposes it, and the
@@ -2924,6 +2933,10 @@ impl<'a> Context<'a> {
                     return (list, recs, Vec::new(), Vec::new());
                 }
                 AItem::Footnote { number, mark, span, text } => {
+                    // `\thempfootnote`: `\@alph\c@mpfootnote`, the counter
+                    // stepped per note of the minipage (beamer column).
+                    let number = if self.minipage_notes { footnotes::alph(self.notes.len() + 1) } else { number.clone() };
+                    let number = &number;
                     let note = text.as_ref().map(|t| {
                         self.notes.push(footnotes::NoteSrc { number: number.clone(), span: *span, items: t.clone() });
                         self.notes.len() - 1
@@ -4126,7 +4139,7 @@ impl<'a> Context<'a> {
                 // styles); every other label is plain text or a symbol.
                 let nb = match geom.label_items.as_deref().filter(|items| !items.is_empty()) {
                     Some(items) => self.label_box_items(items, size, bold, geom.hidden),
-                    None => self.label_box(text, *span, size, bold, geom.label_symbol, geom.hidden),
+                    None => self.label_box(text, *span, size, bold, geom.label_symbol, geom.hidden, geom.alerted, geom.level),
                 };
                 if let Some(nb) = nb {
                     let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
@@ -4739,6 +4752,7 @@ impl<'a> Context<'a> {
                         Block::LongTable { .. } => "longtable",
                         Block::FrameBegin { .. } | Block::FrameEnd { .. } => "a beamer frame",
                         Block::BeamerTitle { .. } => "\\titlepage",
+                        Block::BeamerToc { .. } => "\\tableofcontents",
                         Block::BeamerBlockBegin { .. } | Block::BeamerBlockEnd { .. } => "a beamer block",
                         Block::ColumnsBegin { .. } | Block::Column { .. } | Block::ColumnsEnd { .. } => "beamer columns",
                         Block::Paragraph { .. } | Block::Rule { .. } | Block::Picture { .. } => unreachable!(),
@@ -4912,14 +4926,19 @@ impl<'a> Context<'a> {
     }
 
     /// beamer's itemize label: `$\blacktriangleright$` (msam10 `I`,
-    /// `CHARWD` 0.777781em, `CHARHT` 0.54986em) raised 1.25pt, drawn with
+    /// `CHARWD` 0.777781em, `CHARHT` 0.54986em) raised `raise_pt` --
+    /// 1.25pt for `itemize item`, 1.5pt for `itemize subitem` and
+    /// `subsubitem` (`beamerinnerthemedefault.sty` 200-202) -- drawn with
     /// Latin Modern Math's U+25B6 (the closest bundled outline; msam10 is
     /// not shipped) in msam10's advance so the label box, and with it the
     /// item text, sit where pdflatex puts them (label x 36.23bp, text x
-    /// 50.17bp on beamer-default p3).
-    fn beamer_triangle_box(&mut self, span: Span, size: f64, color: Option<flashtex_compiler::color::DeviceColor>, hidden: bool) -> Option<NumberBox> {
+    /// 50.17bp on beamer-default p3; a level-2 label at x 58.78bp in the
+    /// `\small` body's 9.96pt, its `\hbox(6.9986+0.0)` = 0.54986 x 10 +
+    /// 1.5, on the `beamer-polish` probe deck's p2).
+    fn beamer_triangle_box(&mut self, span: Span, size: f64, color: Option<flashtex_compiler::color::DeviceColor>, hidden: bool, raise_pt: f64) -> Option<NumberBox> {
         const MSAM_TRIANGLE_WIDTH_EM: f64 = 0.777781;
-        const RAISE_PT: f64 = 1.25;
+        #[allow(non_snake_case)]
+        let RAISE_PT: f64 = raise_pt;
         let width = MSAM_TRIANGLE_WIDTH_EM * size;
         let text = "\u{25B6}";
         let seg = adapter::Segment {
@@ -4978,20 +4997,25 @@ impl<'a> Context<'a> {
     /// the `\item` command's bytes: the words of `text` in the
     /// list's label style (`\descriptionlabel`'s `\bfseries` for a
     /// `description`), separated by interword glue at natural width.
-    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool, symbol: bool, hidden: bool) -> Option<NumberBox> {
+    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool, symbol: bool, hidden: bool, alerted: bool, level: u8) -> Option<NumberBox> {
         let text = if symbol && text == "⋅" { "·" } else { text };
         // beamer (`beamerinnerthemedefault.sty` 200-210): every itemize
         // level's label is `\raise1.25pt\hbox{$\blacktriangleright$}` (msam10
         // `I`, 0.777781em wide) and an enumerate's is `\insertenumlabel.`,
         // both in the structure colour (`item` inherits `structure`). A
-        // covered item's label (`hidden`) is set and not painted.
+        // covered item's label (`hidden`) is set and not painted; an
+        // alerted item's (`\item<1-| alert@2>` on slide 2: the label is
+        // set inside the `alertenv`, whose `alerted text` colour the
+        // `itemize item` colour's `parent=structure` lookup yields) is
+        // red. Measured (probe deck `beamer-polish` p7): the label `I`
+        // is written after `1 0 0 rg`.
         if self.style.is_beamer() {
-            let color = Some(beamer::structure_color());
+            let color = Some(if alerted { crate::overlay::alert_color() } else { beamer::structure_color() });
             let ball = self.beamer_theme().ball_items;
             let boxed = if symbol && ball {
                 Some(self.beamer_ball_item(span, hidden))
             } else if symbol {
-                self.beamer_triangle_box(span, size, color, hidden)
+                self.beamer_triangle_box(span, size, color, hidden, if level >= 2 { 1.5 } else { 1.25 })
             } else if ball {
                 self.beamer_ball_number(text, span, hidden)
             } else {
@@ -5129,10 +5153,10 @@ impl<'a> Context<'a> {
         let description = list_geom.is_some_and(|g| g.description);
         let linewidth = s.text_width_pt - hang;
         let label = list_geom
-            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol, g.label_items.as_deref(), g.hidden)))
-            .and_then(|((text, span), bold, symbol, items, hidden)| match items.filter(|items| !items.is_empty()) {
+            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol, g.label_items.as_deref(), g.hidden, g.alerted, g.level)))
+            .and_then(|((text, span), bold, symbol, items, hidden, alerted, level)| match items.filter(|items| !items.is_empty()) {
                 Some(items) => self.label_box_items(items, size, bold, hidden),
-                None => self.label_box(text, *span, size, bold, symbol, hidden),
+                None => self.label_box(text, *span, size, bold, symbol, hidden, alerted, level),
             });
         let mut width = hang + if bracket { 0.6 * linewidth } else { 0.0 };
         let (mut runs, mut items, mut recs) = (Vec::new(), Vec::new(), Vec::new());
@@ -8096,7 +8120,14 @@ pub fn convert_math_classed(
     // Open fences: (left delimiter, atoms converted since it, its span).
     let mut stack: Vec<(Option<char>, Vec<ml::Atom>, Span)> = Vec::new();
     let mut atoms = Vec::new();
-    for a in &list.atoms {
+    let merged;
+    let list_atoms: &[flashtex_compiler::math::MathAtom] = if sink.sans_math {
+        merged = sans_letter_runs(&list.atoms);
+        &merged
+    } else {
+        &list.atoms
+    };
+    for a in list_atoms {
         let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class, op_limits, text_italic, text_split, ellipsis);
         let mut out: Vec<ml::Atom> = match &a.nucleus {
             // `\ldots`/`\cdots` and the amsmath spellings: TeX's
@@ -8168,6 +8199,11 @@ pub fn convert_math_classed(
                     Some((head, tail)) => {
                         let parts = vec![sink.atom_corrected(head), ml::Atom::glue(3.0, 0.0), sink.atom_corrected(tail)];
                         ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(ml::MathList::new(parts)))
+                    }
+                    // beamer sans math: `\operator@font` is
+                    // `\mathgroup\symoperators` = `OT1/cmss/m/n`.
+                    None if text_italic(&a.span) && sink.sans_math && text.bytes().all(|b| b.is_ascii_alphanumeric()) => {
+                        sink.atom_in(text, crate::nfss::FontKey::new(crate::nfss::FamilyKind::Sf, crate::nfss::Series::M, crate::nfss::Shape::N))
                     }
                     None if text_italic(&a.span) => sink.atom_corrected(text),
                     None => sink.atom(text),
@@ -8339,6 +8375,29 @@ pub fn convert_math_classed(
             // correction); fraktur and any other character stay symbols.
             // A single character stays a math character (TeX §1186 unpacks
             // the one-Ord group): `TexMathMetrics` boxes it from the TFM.
+            // beamer sans math (`beamerbasefont.sty` 222-223 and 260-320:
+            // `pureletters` is `OT1/cmss/m/it`, `numbers` `OT1/cmss/m/n`,
+            // every letter and digit `\DeclareMathSymbol`ed into them; 207
+            // moves `operators` to `OT1/cmss`): a run of letters (one atom
+            // per letter in the compiler's list, joined by
+            // `sans_letter_runs`) is a text-font run in the sans oblique
+            // shape, kerned within and corrected at its end (§752); a digit
+            // or an operator-family character (`+`, `=`, `(`, `)`, `[`,
+            // `]`, `/`, `!`, `?`, `:`, `;`) a run in the sans upright shape
+            // of the character's own class. Measured (probe deck
+            // `beamer-polish` p3): `x` 56.343 → `+` 64.799 → `y` 75.706 → `=`
+            // 84.958 → `2z` 96.465 at the baseline 103.798; `f` 131.403 and
+            // `(x)` 137.104; `\alpha` stays CMMI10 at 166.174.
+            N::Symbol(s) if sink.sans_math && class(a).is_none() && a.ams_symbol.is_none() && !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphabetic()) => {
+                use crate::nfss::{FamilyKind, FontKey, Series, Shape};
+                vec![sink.atom_in(s, FontKey::new(FamilyKind::Sf, Series::M, Shape::It))]
+            }
+            N::Symbol(s) if sink.sans_math && class(a).is_none() && a.ams_symbol.is_none() && fence(&a.span).is_none() && sans_operator_class(s).is_some() => {
+                use crate::nfss::{FamilyKind, FontKey, Series, Shape};
+                let mut atom = sink.atom_in(s, FontKey::new(FamilyKind::Sf, Series::M, Shape::N));
+                atom.class = sans_operator_class(s).expect("checked by the guard");
+                vec![atom]
+            }
             N::Symbol(s) if s.chars().count() > 1 && s.chars().any(|c| crate::mathalpha::classify(c).is_some_and(|(al, _)| al.text_key().is_some())) => {
                 let mut parts: Vec<ml::Atom> = Vec::new();
                 let mut run = String::new();
@@ -9466,6 +9525,66 @@ fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<S
 /// otherwise, including for plain `\emptyset`'s identical U+2205); read here
 /// instead of re-scanning the source at the atom's span for the control
 /// word, like [`class_override_of`].
+/// beamer sans math: the class of a one-character symbol whose font is the
+/// `operators` or `numbers` family (`fontmath.ltx` 100-160 `\DeclareMathSymbol`s
+/// into `operators`; `beamerbasefont.sty` 260-270 `numbers`), i.e. one set
+/// from `OT1/cmss/m/n` under beamer. `None` for every other character:
+/// those keep their math font (`letters` for `,`, `.`, `<`, `>`, `symbols`
+/// for `-`, `*`, `|`, ...).
+fn sans_operator_class(s: &str) -> Option<ml::AtomClass> {
+    let mut chars = s.chars();
+    let (Some(c), None) = (chars.next(), chars.next()) else { return None };
+    Some(match c {
+        '0'..='9' | '/' => ml::AtomClass::Ord,
+        '+' => ml::AtomClass::Bin,
+        '=' | ':' => ml::AtomClass::Rel,
+        '(' | '[' => ml::AtomClass::Open,
+        ')' | ']' | '!' | '?' => ml::AtomClass::Close,
+        ';' => ml::AtomClass::Punct,
+        _ => return None,
+    })
+}
+
+/// beamer sans math: consecutive plain letter atoms (`d` `x` of `\,dx`)
+/// joined into one `Symbol("dx")`, as TeX's `make_ord` (§752-753) joins
+/// consecutive characters of one text font into a kerned, ligatured run
+/// with a single italic correction at its end. An atom with scripts, a
+/// forced class, an AMS symbol or a forced width ends a run and is left
+/// alone.
+fn sans_letter_runs(atoms: &[flashtex_compiler::math::MathAtom]) -> Vec<flashtex_compiler::math::MathAtom> {
+    use flashtex_compiler::math::Nucleus as N;
+    let plain_letter = |a: &flashtex_compiler::math::MathAtom| -> Option<char> {
+        let N::Symbol(s) = &a.nucleus else { return None };
+        let mut chars = s.chars();
+        match (chars.next(), chars.next()) {
+            (Some(c), None) if c.is_ascii_alphabetic() && a.superscript.is_none() && a.subscript.is_none() && a.class_override.is_none() && a.width_em.is_none() && a.ams_symbol.is_none() => Some(c),
+            _ => None,
+        }
+    };
+    let mut out: Vec<flashtex_compiler::math::MathAtom> = Vec::with_capacity(atoms.len());
+    let mut run_open = false;
+    for a in atoms {
+        match plain_letter(a) {
+            Some(c) if run_open => {
+                let last = out.last_mut().expect("a run is open");
+                if let N::Symbol(s) = &mut last.nucleus {
+                    s.push(c);
+                }
+                last.span = last.span.merge(a.span);
+            }
+            Some(_) => {
+                out.push(a.clone());
+                run_open = true;
+            }
+            None => {
+                out.push(a.clone());
+                run_open = false;
+            }
+        }
+    }
+    out
+}
+
 fn symbol_atoms(c: char, width_em: Option<f64>) -> Vec<ml::Atom> {
     match c {
         // The compiler spells \cdot as U+00B7; the Bin class and cmsy slot
@@ -10164,14 +10283,14 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 blocks.extend(built);
                 after_heading = true;
             }
-            Block::FrameBegin { title, subtitle, align, plain, allowframebreaks, slide, span, .. } => {
+            Block::FrameBegin { title, subtitle, align, plain, allowframebreaks, first_slide, span, .. } => {
                 // A frame still open (a missing `\end{frame}`) closes here.
                 if let Some(mut f) = open_frame.take() {
                     f.end = Some(blocks.len().saturating_sub(1));
                     frames.push(f);
                 }
                 page_start_blocks.push(blocks.len());
-                let head = beamer::FrameHead { title, subtitle, align: *align, plain: *plain, allowframebreaks: *allowframebreaks, first_slide: *slide == 1, span: *span };
+                let head = beamer::FrameHead { title, subtitle, align: *align, plain: *plain, allowframebreaks: *allowframebreaks, first_slide: *first_slide, span: *span };
                 open_frame = Some(ctx.beamer_frame_begin(&mut blocks, &head));
                 after_heading = false;
             }
@@ -10209,6 +10328,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             }
             Block::BeamerTitle { title, subtitle, authors, institute, date, span } => {
                 ctx.beamer_title_page(&mut blocks, open_frame.as_mut(), title, subtitle, authors, institute, date, *span);
+                after_heading = false;
+            }
+            Block::BeamerToc { entries, span } => {
+                ctx.beamer_toc(&mut blocks, open_frame.as_mut(), entries, *span);
                 after_heading = false;
             }
             // beamer Tier 3 (`typeset::beamer_blocks`): a block's edges

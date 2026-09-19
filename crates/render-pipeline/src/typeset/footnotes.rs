@@ -90,6 +90,14 @@ impl FootnoteParams {
     }
 }
 
+/// `\@alph`: `a`..`z` for 1..26 (LaTeX errors beyond; the number is kept).
+pub fn alph(n: usize) -> String {
+    match n {
+        1..=26 => char::from(b'a' + (n as u8 - 1)).to_string(),
+        _ => n.to_string(),
+    }
+}
+
 /// `\sf@size` for a text size: fontmath.ltx's `\DeclareMathSizes` table
 /// (the nearest entry; 70% of other sizes).
 pub fn script_size(size: f64) -> f64 {
@@ -254,10 +262,14 @@ impl<'a> Context<'a> {
     /// box, `\scriptspace` included in its width.
     pub(super) fn footnote_mark(&mut self, number: &str, span: Span, size: f64) -> Option<(pl::GlyphRun, usize)> {
         let sf = script_size(size);
+        // A minipage's mark is `{\itshape\@alph\c@mpfootnote}`. Measured
+        // (probe deck `beamer-polish` p13, a column's `\footnote`): the
+        // mark `a` in CMSSI8 at 7.97pt in the text, at 5.98pt in the note.
+        let italic = self.minipage_notes;
         let seg = adapter::Segment {
             text: number.to_string(),
             chars: number.chars().map(|_| adapter::CharSrc { document: span.document, start: span.start, end: span.end }).collect(),
-            style: TextStyle { size_cpt: (sf * 100.0).round() as u16, ..TextStyle::default() },
+            style: TextStyle { size_cpt: (sf * 100.0).round() as u16, italic, ..TextStyle::default() },
         };
         let (mut run, rec) = self.text_box(&seg, sf)?;
         if let Some((w, h, d)) = ts1_mark_box(number, sf) {
@@ -348,6 +360,42 @@ impl<'a> Context<'a> {
             depth_after: pagebuild::DepthAfter::default(),
         };
         Some(BuiltBlock { block: pl::ParagraphBlock::body(lines), items: list, recs, vertical, labels, cache_key: None })
+    }
+
+    /// `\endminipage`'s foot (latex.ltx): `\vskip\skip\@mpfootins` (=
+    /// `\skip\footins`, `beamerbasemisc.sty` 132), `\footnoterule`
+    /// (`\kern-3pt \hrule width .4\columnwidth \kern2.6pt`; beamer's
+    /// `beamerbaseframecomponents.sty` 388 is the same) and the notes,
+    /// appended to `blocks` as the box's last material. An `\hrule` takes
+    /// no interline glue and leaves `\prevdepth` ignored, so the first
+    /// note's line follows the `\kern2.6pt` directly, its height at least
+    /// `\footnotesep`. Measured (probe deck `beamer-polish` p13, a
+    /// `\footnote` in a `.5\textwidth` column at an 11pt base): the note's
+    /// baseline 17.634bp = 17.70pt under the column's last line, which has
+    /// no depth: 10 − 3 + 0.4 + 2.6 + 7.7.
+    pub fn minipage_foot(&mut self, blocks: &mut Vec<BuiltBlock>, notes: &[usize], width: f64, span: Span) {
+        let fp = FootnoteParams::of(self.style);
+        let mut rule = self.rule_block_sized(span, RULE_WIDTH_FRACTION * width, RULE.1, 0.0);
+        rule.vertical.no_interline_first = true;
+        rule.vertical.space_before = Some((fp.skip.0 + RULE.0, fp.skip.1, fp.skip.2));
+        rule.vertical.no_interline_after = true;
+        rule.vertical.space_after = Some((RULE.2, 0.0, 0.0));
+        rule.vertical.penalty_before = Some(pagebuild::INF_PENALTY);
+        rule.vertical.penalty_after = Some(pagebuild::INF_PENALTY);
+        let mut built: Vec<BuiltBlock> = Vec::new();
+        for &n in notes {
+            if let Some(b) = self.footnote_block(n, width) {
+                built.push(b);
+            }
+        }
+        if built.is_empty() {
+            return;
+        }
+        blocks.push(rule);
+        if let Some(first) = built.first_mut() {
+            first.vertical.no_interline_first = true;
+        }
+        blocks.extend(built);
     }
 
     /// The notes of a `minipage` `width` wide (see [`MinipageNotes`]): the
