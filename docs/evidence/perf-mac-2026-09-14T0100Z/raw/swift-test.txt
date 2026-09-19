@@ -1,0 +1,18 @@
+# branch: swift test (FLASHTEX_NO_ACTIVATE=1 FLASHTEX_KEYCHAIN_OFF=1 FLASHTEX_REVIEW_HISTORY_DIR=off FLASHTEX_RENDER=<branch flashtex-render>)
+	 Executed 1058 tests, with 123 tests skipped and 1 failure (0 unexpected) in 197.007 (197.134) seconds
+failed:
+  Test Case '-[FlashTeXMacTests.PreviewTextCacheTests testProducerFaceSwitchNeverServesALineBuiltWithTheOldFace]' failed (0.004 seconds).
+  /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae3a7aa52e6610e8f/apps/mac/Tests/FlashTeXMacTests/PreviewTextCacheTests.swift:226: error: -[FlashTeXMacTests.PreviewTextCacheTests testProducerFaceSwitchNeverServesALineBuiltWithTheOldFace] : XCTAssertEqual failed: ("4") is not equal to ("3")
+exit=1
+
+# branch: swift test --filter PreviewTextCacheTests (the one failure, alone)
+  11 tests, 0 failures (testProducerFaceSwitchNeverServesALineBuiltWithTheOldFace passed)
+
+# branch: swift test --filter FlashTeXProtocolTests
+  Executed 38 tests, with 0 failures (0 unexpected)
+
+# control (origin/main eea975c3): swift test (same env, control flashtex-render)
+	 Executed 1050 tests, with 135 tests skipped and 1 failure (0 unexpected) in 173.105 (173.239) seconds
+failed:
+  Test Case '-[FlashTeXMacTests.PreviewTextCacheTests testProducerFaceSwitchNeverServesALineBuiltWithTheOldFace]' failed (0.517 seconds).
+exit=1

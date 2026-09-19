@@ -83,8 +83,9 @@ impl Paint {
 }
 
 /// Negotiated display-list proposals: image items (FT-063), device
-/// colours (`display-list-v2-device-color`), and structured diagnostics
-/// (`display-list-v2-diagnostics`).
+/// colours (`display-list-v2-device-color`), structured diagnostics
+/// (`display-list-v2-diagnostics`), and the compact cluster encoding
+/// (`display-list-v2-compact`, `crate::display_list_compact`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Wire {
     pub images: bool,
@@ -93,6 +94,10 @@ pub struct Wire {
     /// `display-list-v2-diagnostics`). Labels/notes/help wait for a
     /// vendor/compiler re-pin past #346.
     pub diagnostics: bool,
+    /// Glyph runs in the compact cluster encoding; the payload carries
+    /// `cluster_encoding: "compact-1"`. Never set unless the request listed
+    /// the capability.
+    pub compact: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -822,12 +827,16 @@ impl DisplayList {
     /// serialising a line it would then throw away (the exact check still
     /// runs on the serialised line when the estimate is under the limit).
     pub fn estimated_json_bytes(&self) -> usize {
-        self.estimated_json_bytes_for(Wire { images: true, device_color: true, diagnostics: true })
+        self.estimated_json_bytes_wire(Wire { images: true, device_color: true, diagnostics: true, compact: false })
     }
 
     /// [`estimated_json_bytes`](Self::estimated_json_bytes) under a negotiated
-    /// [`Wire`]: `suggestion` is charged only when it would be serialised.
-    pub fn estimated_json_bytes_for(&self, wire: Wire) -> usize {
+    /// [`Wire`]: `suggestion` is charged only when it would be serialised, and
+    /// a compact glyph run is estimated at 56 bytes per glyph and 48 per
+    /// cluster (the typical override-free cluster is 3 bytes; the exact check
+    /// on the serialised line still decides).
+    pub fn estimated_json_bytes_wire(&self, wire: Wire) -> usize {
+        let (per_glyph, per_cluster) = if wire.compact { (56, 48) } else { (120, 280) };
         let mut n = 512 + self.fonts.len() * 400 + self.documents.len() * 200;
         for d in &self.diagnostics {
             n += 160 + d.message.len() + d.sources.len() * 80;
@@ -841,7 +850,7 @@ impl DisplayList {
             // line is smaller than this bound, never larger.
             for it in p.items().into_iter().flatten() {
                 n += match it {
-                    Item::GlyphRun(r) => 220 + 2 * r.text.len() + 120 * r.glyphs.len() + 280 * r.clusters.len(),
+                    Item::GlyphRun(r) => 220 + 2 * r.text.len() + per_glyph * r.glyphs.len() + per_cluster * r.clusters.len(),
                     Item::Rule(_) => 240,
                     Item::Path(p) => {
                         #[cfg(feature = "tikz-patterns")]
@@ -880,7 +889,7 @@ impl DisplayList {
 
     /// `images`: whether image items are serialised (adds `image`).
     pub fn required_features_with(&self, images: bool) -> Vec<&'static str> {
-        self.required_features_wire(Wire { images, device_color: false, diagnostics: false })
+        self.required_features_wire(Wire { images, device_color: false, diagnostics: false, compact: false })
     }
 
     /// `device-color` is listed when negotiated and some paint carries one.
@@ -940,7 +949,7 @@ impl DisplayList {
     /// [`to_json`](Self::to_json); `images` also serialises image items
     /// and lists the `image` feature (negotiated `display-list-v2-images`).
     pub fn to_json_with(&self, id: &str, images: bool) -> Value {
-        self.to_json_wire(id, Wire { images, device_color: false, diagnostics: false })
+        self.to_json_wire(id, Wire { images, device_color: false, diagnostics: false, compact: false })
     }
 
     /// [`to_json_with`](Self::to_json_with) with every negotiated proposal.
@@ -1027,7 +1036,7 @@ impl DisplayList {
     /// `json::write(&self.to_json_with(id, images))` written directly:
     /// `images` also serialises image items and lists the `image` feature.
     pub fn write_json_with(&self, id: &str, images: bool) -> String {
-        self.write_json_wire(id, Wire { images, device_color: false, diagnostics: false })
+        self.write_json_wire(id, Wire { images, device_color: false, diagnostics: false, compact: false })
     }
 
     /// [`write_json_with`](Self::write_json_with) with every negotiated proposal.
@@ -1056,10 +1065,14 @@ impl DisplayList {
     }
 
     fn write_envelope(&self, id: &str, wire: Wire, mut page: impl FnMut(&mut String, usize, &Page)) -> String {
-        let mut o = String::with_capacity(self.estimated_json_bytes());
+        let mut o = String::with_capacity(self.estimated_json_bytes_wire(wire));
         o.push_str("{\"id\":");
         json::write_string_into(id, &mut o);
-        o.push_str(",\"payload\":{\"color_space\":\"srgb\",\"coordinate_unit\":\"bp_2pow20\",\"diagnostics\":");
+        o.push_str(",\"payload\":{");
+        if wire.compact {
+            o.push_str(crate::display_list_compact::ENCODING_KEY_BYTES);
+        }
+        o.push_str("\"color_space\":\"srgb\",\"coordinate_unit\":\"bp_2pow20\",\"diagnostics\":");
         write_diagnostics(&mut o, &self.diagnostics, wire);
         o.push_str(",\"documents\":");
         write_documents(&mut o, &self.documents);
@@ -1110,6 +1123,12 @@ pub const FULL_LINE_FRAME_BYTES: usize = "{\"id\":".len()
     + ",\"render_format\":\"display-list-v2\",\"required_features\":".len()
     + ",\"revision\":".len()
     + ",\"text_extraction\":\"cluster-actualtext\"},\"protocol_version\":2,\"type\":\"display_list\"}".len();
+
+/// [`FULL_LINE_FRAME_BYTES`] for `wire`: the compact encoding adds its
+/// `cluster_encoding` key to the fixed framing (`display-list-v2-compact`).
+pub fn full_line_frame_bytes(wire: Wire) -> usize {
+    FULL_LINE_FRAME_BYTES + if wire.compact { crate::display_list_compact::ENCODING_KEY_BYTES.len() } else { 0 }
+}
 
 /// The `diagnostics` array of the full line (also carried complete by a delta).
 pub(crate) fn write_diagnostics(o: &mut String, diagnostics: &[Diagnostic], wire: Wire) {
@@ -1373,6 +1392,11 @@ pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
         sep(o, i);
         match it {
             Item::Image(img) => write_image(o, img),
+            // display-list-v2-compact: the compact cluster encoding, only
+            // when negotiated (`Wire::compact`); the full form is untouched.
+            Item::GlyphRun(r) if wire.compact => {
+                crate::display_list_compact::write_glyph_run(o, r, &|o| write_paint(o, &r.paint, wire.device_color));
+            }
             Item::GlyphRun(r) => {
                 o.push_str("{\"clusters\":[");
                 for (j, c) in r.clusters.iter().enumerate() {
@@ -2225,8 +2249,8 @@ mod tests {
         let stripped = diag_list(None);
         let off_bytes = with.write_json_wire("r1", off);
         assert_eq!(off_bytes, stripped.write_json_wire("r1", off));
-        assert_eq!(with.estimated_json_bytes_for(off), stripped.estimated_json_bytes_for(off), "old-client estimate must match a suggestion-stripped list");
-        assert!(with.estimated_json_bytes_for(on) > stripped.estimated_json_bytes_for(on));
+        assert_eq!(with.estimated_json_bytes_wire(off), stripped.estimated_json_bytes_wire(off), "old-client estimate must match a suggestion-stripped list");
+        assert!(with.estimated_json_bytes_wire(on) > stripped.estimated_json_bytes_wire(on));
     }
 
     #[test]

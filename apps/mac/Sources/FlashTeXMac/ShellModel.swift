@@ -1193,6 +1193,10 @@ final class ShellModel {
         var displayListWindow: RuntimeV1.CompileRequest.DisplayListWindow?
         if previewV2, capabilities.contains(V2Live.capability) {
             if DisplayListDelta.v2OnlyEnabled { sent.append(DisplayListDelta.v2OnlyCapability) }
+            // Compact clusters (carets/hit_rects derived on this side) — the
+            // producer echoes it only with a v2 sibling (DisplayListCompactSupport.swift).
+            // Composes with everything below: it is only an encoding choice.
+            if DisplayListCompact.enabled { sent.append(DisplayListCompact.capability) }
             if let window = v2WindowDesired(capabilities: capabilities) {
                 // display-list-v2-window (§7): mutually exclusive with -delta
                 // in r1 — a windowed producer cannot digest pages it has not

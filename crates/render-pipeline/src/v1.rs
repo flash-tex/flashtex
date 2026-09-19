@@ -59,6 +59,11 @@ pub const CAP_V2_ONLY: &str = "display-list-v2-only";
 /// not materialise. The consumer reads `-delta`'s absence from the echo as
 /// the decline it is and does not send `display_list_base`.
 pub const CAP_WINDOW: &str = "display-list-v2-window";
+/// PROPOSAL (`protocol/proposals/display-list-v2-compact.md`): the sibling's
+/// glyph runs use the compact cluster encoding (`crate::display_list_compact`).
+/// Negotiated only next to `display-list-v2`; echoed only on the replies
+/// that actually carry a sibling line.
+pub const CAP_COMPACT: &str = crate::display_list_compact::CAP;
 
 /// `display-list-v2` and every capability this producer only honours next
 /// to it. `-images` / `-device-color` / `-diagnostics` / `-delta` / `-only`
@@ -68,7 +73,7 @@ pub const CAP_WINDOW: &str = "display-list-v2-window";
 pub fn is_display_list_family(cap: &str) -> bool {
     matches!(
         cap,
-        CAP_DISPLAY_LIST | CAP_IMAGES | CAP_DEVICE_COLOR | CAP_DIAGNOSTICS | CAP_DELTA | CAP_V2_ONLY | CAP_WINDOW
+        CAP_DISPLAY_LIST | CAP_IMAGES | CAP_DEVICE_COLOR | CAP_DIAGNOSTICS | CAP_DELTA | CAP_V2_ONLY | CAP_WINDOW | CAP_COMPACT
     )
 }
 
@@ -84,6 +89,7 @@ pub struct Capabilities {
     pub delta: bool,
     pub v2_only: bool,
     pub window: bool,
+    pub compact: bool,
 }
 
 impl Capabilities {
@@ -134,6 +140,10 @@ impl Capabilities {
                 }
                 CAP_V2_ONLY if !caps.v2_only && requested.iter().any(|c| c == CAP_DISPLAY_LIST) => {
                     caps.v2_only = true;
+                    accepted.push(r.clone());
+                }
+                CAP_COMPACT if !caps.compact && requested.iter().any(|c| c == CAP_DISPLAY_LIST) => {
+                    caps.compact = true;
                     accepted.push(r.clone());
                 }
                 _ => {}

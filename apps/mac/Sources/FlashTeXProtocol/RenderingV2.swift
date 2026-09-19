@@ -679,6 +679,11 @@ public enum RenderingV2 {
         public var fonts: [FontResource]
         public var pages: [Page]
         public var diagnostics: [Diagnostic]
+        /// `display-list-v2-compact`: the cluster encoding the line was written
+        /// in (`compact-1`), nil for the frozen full encoding. Decoded clusters
+        /// are the same values either way (DisplayListCompact.swift); the field
+        /// is kept so a base's encoding is known to the delta consumer.
+        public var clusterEncoding: String?
         /// Present only when a producer that accepted `linksCapability` emits it.
         /// Decode is tolerant of absence; painting does not depend on it.
         public var navigation: Navigation?
@@ -690,16 +695,17 @@ public enum RenderingV2 {
         enum CodingKeys: String, CodingKey {
             case renderFormat = "render_format", coordinateUnit = "coordinate_unit", colorSpace = "color_space", textExtraction = "text_extraction"
             case projectId = "project_id", revision, requiredFeatures = "required_features", documents, fonts, pages, diagnostics, navigation, window
+            case clusterEncoding = "cluster_encoding"
         }
         public init(renderFormat: String = RenderingV2.renderFormat, coordinateUnit: String = RenderingV2.coordinateUnit,
                     colorSpace: String = RenderingV2.colorSpace, textExtraction: String = RenderingV2.textExtraction,
                     projectId: String, revision: Int, requiredFeatures: [String], documents: [DocumentResource],
-                    fonts: [FontResource], pages: [Page], diagnostics: [Diagnostic], navigation: Navigation? = nil,
-                    window: Window? = nil) {
+                    fonts: [FontResource], pages: [Page], diagnostics: [Diagnostic], clusterEncoding: String? = nil,
+                    navigation: Navigation? = nil, window: Window? = nil) {
             self.renderFormat = renderFormat; self.coordinateUnit = coordinateUnit; self.colorSpace = colorSpace; self.textExtraction = textExtraction
             self.projectId = projectId; self.revision = revision; self.requiredFeatures = requiredFeatures; self.documents = documents
-            self.fonts = fonts; self.pages = pages; self.diagnostics = diagnostics; self.navigation = navigation
-            self.window = window
+            self.fonts = fonts; self.pages = pages; self.diagnostics = diagnostics; self.clusterEncoding = clusterEncoding
+            self.navigation = navigation; self.window = window
         }
         public func font(id: String) -> FontResource? { fonts.first { $0.fontId == id } }
     }
@@ -814,6 +820,9 @@ public enum RenderingV2 {
         guard list.coordinateUnit == coordinateUnit else { throw fail("unsupported_coordinate_unit", "coordinate_unit '\(list.coordinateUnit)' is not \(coordinateUnit)") }
         guard list.colorSpace == colorSpace else { throw fail("unsupported_color_space", "color_space '\(list.colorSpace)' is not \(colorSpace)") }
         guard list.textExtraction == textExtraction else { throw fail("unsupported_text_extraction", "text_extraction '\(list.textExtraction)' is not \(textExtraction)") }
+        if let encoding = list.clusterEncoding, !DisplayListCompact.knownEncodings.contains(encoding) {
+            throw fail("unsupported_feature", "cluster_encoding '\(encoding)' is not supported by this consumer (known: \(DisplayListCompact.knownEncodings.sorted().joined(separator: ", ")))")
+        }
         guard !list.requiredFeatures.isEmpty else { throw fail("invalid_display_list", "required_features must list at least one feature") }
         for f in list.requiredFeatures where !knownFeatures.contains(f) {
             throw fail("unsupported_feature", "required feature '\(f)' is not supported by this consumer")

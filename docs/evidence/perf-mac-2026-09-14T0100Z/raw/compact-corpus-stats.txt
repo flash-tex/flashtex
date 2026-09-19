@@ -1,0 +1,12 @@
+article-twocolumn/main.tex: full 1272790 B, compact 358976 B (28.2%); runs 633 clusters 3078 | overrides c 0 e 167 h 0 hv 548 l 10 s 109 ts 0 explicit 0 end_carets 613
+cv/main.tex: full 515083 B, compact 140305 B (27.2%); runs 234 clusters 1254 | overrides c 0 e 46 h 0 hv 239 l 3 s 21 ts 0 explicit 0 end_carets 232
+hw1/HW1.tex: full 1152028 B, compact 356211 B (30.9%); runs 679 clusters 2742 | overrides c 0 e 478 h 0 hv 522 l 3 s 282 ts 0 explicit 0 end_carets 510
+hw2/HW2.tex: full 1029988 B, compact 340587 B (33.1%); runs 684 clusters 2412 | overrides c 0 e 541 h 0 hv 465 l 8 s 268 ts 0 explicit 0 end_carets 434
+inline-math/main.tex: full 1317878 B, compact 544233 B (41.3%); runs 1271 clusters 2913 | overrides c 0 e 1504 h 0 hv 667 l 7 s 575 ts 0 explicit 0 end_carets 344
+input-bibliography/main.tex: full 1012974 B, compact 290293 B (28.7%); runs 518 clusters 2407 | overrides c 0 e 151 h 0 hv 406 l 6 s 87 ts 0 explicit 0 end_carets 490
+lecture-notes/main.tex: full 857391 B, compact 295799 B (34.5%); runs 605 clusters 1986 | overrides c 0 e 690 h 0 hv 388 l 2 s 378 ts 0 explicit 0 end_carets 338
+letter/main.tex: full 471196 B, compact 129767 B (27.5%); runs 219 clusters 1149 | overrides c 0 e 0 h 0 hv 277 l 0 s 0 ts 0 explicit 0 end_carets 219
+math-sheet/main.tex: full 472667 B, compact 206053 B (43.6%); runs 468 clusters 1029 | overrides c 0 e 714 h 0 hv 278 l 1 s 305 ts 0 explicit 0 end_carets 64
+unicode-accents/main.tex: full 421576 B, compact 118341 B (28.1%); runs 195 clusters 1013 | overrides c 0 e 120 h 2 hv 116 l 13 s 89 ts 0 explicit 0 end_carets 195
+tikz: full 12711 B, compact 5120 B (40.3%); runs 6 clusters 26 | overrides c 0 e 5 h 0 hv 0 l 0 s 3 ts 0 explicit 0 end_carets 6
+compact: 38 deltas (11433275 B) and 22 full lines (125556863 B fresh total) over 60 edits; 335 relocated pages verified

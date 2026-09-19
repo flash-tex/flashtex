@@ -1,0 +1,89 @@
+# branch: cargo test -p flashtex-render-pipeline --release --no-fail-fast (crates/render-pipeline)
+     Running unittests src/lib.rs (target/release/deps/flashtex_render_pipeline-21bd380d6a889ee6)
+test result: ok. 79 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running unittests src/bin/flashtex-render.rs (target/release/deps/flashtex_render-332bf469664fb472)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/bin/flashtex-tikz-pdf.rs (target/release/deps/flashtex_tikz_pdf-7cb87ccd5953361f)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/amsmath_inline.rs (target/release/deps/amsmath_inline-d3005d5759493de3)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+     Running tests/amssymb_braces.rs (target/release/deps/amssymb_braces-274fd67d8b0ced7d)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/bundled_typewriter.rs (target/release/deps/bundled_typewriter-edc8bf5707f93374)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+     Running tests/class_geometry_frame.rs (target/release/deps/class_geometry_frame-1946fff6d56c1a65)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/cli_e2e.rs (target/release/deps/cli_e2e-515ea42b1d6265ef)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+     Running tests/display_list_compact.rs (target/release/deps/display_list_compact-696167aa2a9ad94c)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.41s
+     Running tests/display_list_delta.rs (target/release/deps/display_list_delta-c0a8b992f95442c6)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.81s
+     Running tests/display_math.rs (target/release/deps/display_math-0e446f0a9943bc05)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+     Running tests/display_placement.rs (target/release/deps/display_placement-af26fd7b98f6ce25)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+     Running tests/enumitem_keys_oracle.rs (target/release/deps/enumitem_keys_oracle-215a89ddf6fde570)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/floats_oracle.rs (target/release/deps/floats_oracle-d1cd56df7c381a1f)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests/font_families_oracle.rs (target/release/deps/font_families_oracle-995069c866f997b3)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+     Running tests/footnotes_oracle.rs (target/release/deps/footnotes_oracle-2d1b0258ad919738)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+     Running tests/golden_v1.rs (target/release/deps/golden_v1-e84d6d77f955adbb)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/heading_macros.rs (target/release/deps/heading_macros-f18af4ad79057773)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/incremental.rs (target/release/deps/incremental-a50953f105ef8926)
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 142.24s
+     Running tests/inline_math_breaks.rs (target/release/deps/inline_math_breaks-41d25b7a8af3afa6)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+     Running tests/input_order_oracle.rs (target/release/deps/input_order_oracle-9e3094b35c2634cb)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/latex_structure.rs (target/release/deps/latex_structure-d60ce582647d4184)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+     Running tests/list_items.rs (target/release/deps/list_items-0eb6d435e6c2bd59)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests/math_glyph_spans.rs (target/release/deps/math_glyph_spans-15f2f1b0382ba0b4)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/math_grids.rs (target/release/deps/math_grids-9555f89f0ea62c37)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+     Running tests/math_spacers.rs (target/release/deps/math_spacers-e166a05ca070e8a3)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+     Running tests/math_symbols.rs (target/release/deps/math_symbols-0086d8a3f5ddaa5d)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+     Running tests/math_text.rs (target/release/deps/math_text-3f7ac32ef8b93c57)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/metrics_provenance.rs (target/release/deps/metrics_provenance-57434d1efa24bd71)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/microtype_fixtures.rs (target/release/deps/microtype_fixtures-901a5bb9b1bb9921)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/multicol_oracle.rs (target/release/deps/multicol_oracle-adcca646b8cec009)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+     Running tests/page_frame.rs (target/release/deps/page_frame-2ce078edab67bbd3)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.51s
+     Running tests/paragraph_guard.rs (target/release/deps/paragraph_guard-b9b6961c1a13a7c2)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests/paragraph_styles.rs (target/release/deps/paragraph_styles-1361c1c32568e75e)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/request_date.rs (target/release/deps/request_date-b691b58f41209b71)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/siunitx_oracle.rs (target/release/deps/siunitx_oracle-778954ecac829164)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+     Running tests/tabular_oracle.rs (target/release/deps/tabular_oracle-405f1697a57b73b8)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+     Running tests/thebibliography_oracle.rs (target/release/deps/thebibliography_oracle-0e16463dea02abb4)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/theorem_items.rs (target/release/deps/theorem_items-f303771bc647587f)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/tikz_pipeline.rs (target/release/deps/tikz_pipeline-42e667950941f9d0)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/toc_oracle.rs (target/release/deps/toc_oracle-ed52883d1c7673c4)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s
+     Running tests/v2_and_math.rs (target/release/deps/v2_and_math-167ab7d90d9ae3bb)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+     Running tests/xcolor_oracle.rs (target/release/deps/xcolor_oracle-8d87910bf9b7b7fd)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0

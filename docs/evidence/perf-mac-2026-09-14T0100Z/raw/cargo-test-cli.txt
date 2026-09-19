@@ -1,0 +1,51 @@
+# control: origin/main eea975c3, cargo test -p flashtex-cli --release (crates/flashtex-cli)
+     Running unittests src/main.rs (target/release/deps/flashtex-e71fc051c05c09cf)
+test requestdate::tests::a_malformed_explicit_date_is_an_error_not_a_fallback ... ok
+test requestdate::tests::an_explicit_date_beats_source_date_epoch_and_the_clock ... ok
+test requestdate::tests::source_date_epoch_overrides_the_clock ... ok
+test requestdate::tests::a_malformed_source_date_epoch_is_an_error_not_a_silent_fallback ... ok
+test requestdate::tests::source_date_epoch_zero_pins_the_epoch_whatever_the_clock_says ... ok
+test requestdate::tests::without_any_override_the_clock_wins ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/cli.rs (target/release/deps/cli-f0a3dd6cdbfc7e5a)
+test version_names_the_crate_and_the_git_revision ... ok
+test an_include_cannot_escape_the_project_root ... ok
+test worker_speaks_runtime_v1_on_stdin_stdout ... ok
+test supported_json_parses_and_carries_coverage ... ok
+test a_missing_include_is_reported_and_the_build_still_writes ... ok
+test usage_errors_exit_2 ... ok
+test check_json_has_the_stable_schema_and_writes_nothing ... ok
+test multi_file_project_resolves_inputs_from_the_project_root ... FAILED
+test hw2_builds_three_pages_through_the_exact_route ... ok
+test hw1_builds_three_pages_through_the_exact_route ... ok
+test bundled_share_layout_resolves_fonts_without_host_tex ... ok
+test watch_rebuilds_when_an_included_file_changes ... ok
+thread 'multi_file_project_resolves_inputs_from_the_project_root' (35132914) panicked at tests/cli.rs:142:5:
+test result: FAILED. 11 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.48s
+exit=101
+
+# branch: cargo test -p flashtex-cli --release (crates/flashtex-cli)
+     Running unittests src/main.rs (target/release/deps/flashtex-4a77e2ac55d54050)
+test requestdate::tests::a_malformed_explicit_date_is_an_error_not_a_fallback ... ok
+test requestdate::tests::an_explicit_date_beats_source_date_epoch_and_the_clock ... ok
+test requestdate::tests::a_malformed_source_date_epoch_is_an_error_not_a_silent_fallback ... ok
+test requestdate::tests::source_date_epoch_overrides_the_clock ... ok
+test requestdate::tests::source_date_epoch_zero_pins_the_epoch_whatever_the_clock_says ... ok
+test requestdate::tests::without_any_override_the_clock_wins ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/cli.rs (target/release/deps/cli-1c17f1f384371d83)
+test version_names_the_crate_and_the_git_revision ... ok
+test an_include_cannot_escape_the_project_root ... ok
+test worker_speaks_runtime_v1_on_stdin_stdout ... ok
+test supported_json_parses_and_carries_coverage ... ok
+test a_missing_include_is_reported_and_the_build_still_writes ... ok
+test usage_errors_exit_2 ... ok
+test check_json_has_the_stable_schema_and_writes_nothing ... ok
+test multi_file_project_resolves_inputs_from_the_project_root ... FAILED
+test hw1_builds_three_pages_through_the_exact_route ... ok
+test hw2_builds_three_pages_through_the_exact_route ... ok
+test bundled_share_layout_resolves_fonts_without_host_tex ... ok
+test watch_rebuilds_when_an_included_file_changes ... ok
+thread 'multi_file_project_resolves_inputs_from_the_project_root' (35105213) panicked at tests/cli.rs:142:5:
+test result: FAILED. 11 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.48s
+exit=101
