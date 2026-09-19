@@ -60,6 +60,40 @@ public enum RuntimeV1 {
         /// Optional; omitted from the wire when nil, and an omitted date
         /// compiles as the Unix epoch exactly as before. Old workers ignore it.
         public var date: String?
+        /// The project manifest's `[fonts]` table (`flashtex.toml`,
+        /// docs/user/project-manifest.md): the installed family each slot
+        /// defaults to when the document names none (`fonts`; the worker's
+        /// `RenderOptions::fonts`). Optional; omitted from the wire when nil
+        /// or when it names nothing, so a project without one sends the
+        /// unchanged request. Old workers ignore it.
+        public var fonts: Fonts?
+
+        /// `payload.fonts`: family names by role; a nil member is not sent.
+        public struct Fonts: Codable, Equatable {
+            public var text: String?
+            public var math: String?
+            public var mono: String?
+            public var sans: String?
+            public init(text: String? = nil, math: String? = nil, mono: String? = nil, sans: String? = nil) {
+                self.text = text; self.math = math; self.mono = mono; self.sans = sans
+            }
+            public var isEmpty: Bool { text == nil && math == nil && mono == nil && sans == nil }
+            enum CodingKeys: String, CodingKey { case text, math, mono, sans }
+            public init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                text = try c.decodeIfPresent(String.self, forKey: .text)
+                math = try c.decodeIfPresent(String.self, forKey: .math)
+                mono = try c.decodeIfPresent(String.self, forKey: .mono)
+                sans = try c.decodeIfPresent(String.self, forKey: .sans)
+            }
+            public func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                if let text { try c.encode(text, forKey: .text) }
+                if let math { try c.encode(math, forKey: .math) }
+                if let mono { try c.encode(mono, forKey: .mono) }
+                if let sans { try c.encode(sans, forKey: .sans) }
+            }
+        }
 
         public struct DisplayListBase: Codable, Equatable {
             public var requestId: String
@@ -96,11 +130,12 @@ public enum RuntimeV1 {
             case displayListWindow = "display_list_window"
             case projectRoot = "project_root"
             case date
+            case fonts
         }
         public init(projectId: String, revision: Int, entryPath: String, documents: [Document],
                     layoutCapabilities: [String]? = nil, displayListBase: DisplayListBase? = nil,
                     displayListWindow: DisplayListWindow? = nil, projectRoot: String? = nil,
-                    date: String? = nil) {
+                    date: String? = nil, fonts: Fonts? = nil) {
             self.projectId = projectId; self.revision = revision
             self.entryPath = entryPath; self.documents = documents
             self.layoutCapabilities = layoutCapabilities
@@ -108,6 +143,7 @@ public enum RuntimeV1 {
             self.displayListWindow = displayListWindow
             self.projectRoot = projectRoot
             self.date = date
+            self.fonts = fonts
         }
 
         public init(from decoder: Decoder) throws {
@@ -123,6 +159,7 @@ public enum RuntimeV1 {
             projectRoot = try c.decodeIfPresent(String.self, forKey: .projectRoot)
             date = try c.decodeIfPresent(String.self, forKey: .date)
             if let date { try RuntimeV1.validateDate(date) }
+            fonts = try c.decodeIfPresent(Fonts.self, forKey: .fonts)
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -142,6 +179,7 @@ public enum RuntimeV1 {
                 try RuntimeV1.validateDate(date)
                 try c.encode(date, forKey: .date)
             }
+            if let fonts, !fonts.isEmpty { try c.encode(fonts, forKey: .fonts) }
         }
     }
 

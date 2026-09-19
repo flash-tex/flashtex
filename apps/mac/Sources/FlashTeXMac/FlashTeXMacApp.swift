@@ -253,6 +253,9 @@ struct FlashTeXMacApp: App {
                 // commented template next to the entry and opens it.
                 Button("Create flashtex.toml…") { Task { await model.manifest.createManifestInteractive() } }
                     .disabled(model.project.projectRoot == nil || model.manifest.exists)
+                // The project's `[fonts]` table as a sheet (ProjectFonts.swift).
+                Button("Project Fonts…") { model.projectFonts.present() }
+                    .disabled(model.project.projectRoot == nil)
                 Button("Save") { model.saveTexInteractive() }
                     .keyboardShortcut("s")
                 Button("Resolve On-Disk Conflict…") { model.resolveConflictPanel() }

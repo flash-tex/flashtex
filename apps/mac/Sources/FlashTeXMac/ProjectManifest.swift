@@ -113,11 +113,16 @@ final class ProjectManifest {
             watcher.stop()
             return
         }
+        let fontsBefore = requestFonts
         switch read(root: root, entry: model.project.entryPath) {
         case .success(let m):
             snapshot = m
             snapshotRoot = root
             refreshes += 1
+            // `[fonts]` changed (the Fonts sheet, an outside edit of the
+            // file): the preview follows -- the controller learns the new
+            // table, the direct route sends it with the next request.
+            if requestFonts != fontsBefore { model.manifestFontsDidChange() }
             let inputs = m.files.count
             status = m.exists
                 ? "\(m.path ?? Self.fileName): \(inputs) package input\(inputs == 1 ? "" : "s")"
@@ -147,6 +152,29 @@ final class ProjectManifest {
     func packageInputs() -> [ProjectDocuments.ImplicitDocument] {
         guard let snapshot, snapshotRoot == model.project.projectRoot else { return [] }
         return snapshot.files.map { ProjectDocuments.ImplicitDocument(path: $0.path, text: $0.text) }
+    }
+
+    /// The manifest's `[fonts]` for the current root: what the compile
+    /// request carries as `payload.fonts` (ShellModel.compile, the
+    /// controller's launch config) and the Fonts sheet starts from
+    /// (ProjectFonts.swift). Nil when nothing is named.
+    var requestFonts: RuntimeV1.CompileRequest.Fonts? {
+        guard let snapshot, snapshotRoot == model.project.projectRoot else { return nil }
+        let f = snapshot.manifest.fonts
+        let fonts = RuntimeV1.CompileRequest.Fonts(text: f.text, math: f.math, mono: f.mono, sans: f.sans)
+        return fonts.isEmpty ? nil : fonts
+    }
+
+    /// `requestFonts` as the preview controller's config and
+    /// `configure_fonts` take it: family names by role, absent roles left out.
+    var fontsByRole: [String: String] {
+        guard let f = requestFonts else { return [:] }
+        var out: [String: String] = [:]
+        if let t = f.text { out["text"] = t }
+        if let m = f.math { out["math"] = m }
+        if let m = f.mono { out["mono"] = m }
+        if let s = f.sans { out["sans"] = s }
+        return out
     }
 
     /// Sidebar rows for the package inputs (open members are filtered by the sidebar).

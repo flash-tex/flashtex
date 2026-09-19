@@ -3624,22 +3624,35 @@ final class CompletingTextView: NSTextView {
 enum InstalledFonts {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var cached: (URL, [String])?
+    nonisolated(unsafe) private static var cachedMath: (URL, [String])?
 
     nonisolated static func families(renderPipeline: URL?) -> [String] {
         guard let tool = renderPipeline else { return [] }
         lock.lock(); defer { lock.unlock() }
         if let (url, names) = cached, url == tool { return names }
-        let names = list(tool: tool)
+        let names = list(tool: tool, flag: "--list-fonts")
         cached = (tool, names)
+        return names
+    }
+
+    /// The families with a face carrying an OpenType `MATH` table
+    /// (`--list-math-fonts`): what the Fonts sheet's Math row offers
+    /// (ProjectFonts.swift). Same caching as `families`.
+    nonisolated static func mathFamilies(renderPipeline: URL?) -> [String] {
+        guard let tool = renderPipeline else { return [] }
+        lock.lock(); defer { lock.unlock() }
+        if let (url, names) = cachedMath, url == tool { return names }
+        let names = list(tool: tool, flag: "--list-math-fonts")
+        cachedMath = (tool, names)
         return names
     }
 
     /// Runs the tool with a bounded wait; an unresponsive or failing tool
     /// yields an empty list (and is retried next time).
-    private nonisolated static func list(tool: URL, timeout: TimeInterval = 10) -> [String] {
+    private nonisolated static func list(tool: URL, flag: String, timeout: TimeInterval = 10) -> [String] {
         let p = Process()
         p.executableURL = tool
-        p.arguments = ["--list-fonts"]
+        p.arguments = [flag]
         let stdout = Pipe()
         p.standardOutput = stdout
         p.standardError = FileHandle.nullDevice
