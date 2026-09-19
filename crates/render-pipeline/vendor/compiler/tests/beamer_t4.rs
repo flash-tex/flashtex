@@ -145,3 +145,19 @@ fn short_forms_with_blanks() {
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
     assert_eq!(text_of(&parsed.beamer.unwrap().short_author), "A. Person and B. Other");
 }
+
+/// Inside a frame beamer restores the kernel's `\frame{<text>}` (an
+/// `\fbox` with `\fboxsep` 0): a boxed inline, no new page, no diagnostic.
+#[test]
+fn frame_inside_a_frame_is_the_kernel_box() {
+    let src = deck("\\begin{frame}\nA \\frame{boxed} word.\n\\end{frame}");
+    let parsed = parse(&src);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let frames = parsed.blocks.iter().filter(|b| matches!(b, Block::BeamerFrameBegin { .. })).count();
+    assert_eq!(frames, 1);
+    let boxed = parsed.blocks.iter().any(|b| match b {
+        Block::Paragraph(inlines) => inlines.iter().any(|i| matches!(i, Inline::ColorBox(cb) if cb.fboxsep_pt == 0.0 && text_of(&cb.content) == "boxed")),
+        _ => false,
+    });
+    assert!(boxed, "{:?}", parsed.blocks);
+}
