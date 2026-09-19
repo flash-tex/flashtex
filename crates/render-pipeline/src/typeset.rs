@@ -3364,13 +3364,13 @@ impl<'a> Context<'a> {
                     }
                     push(&mut out, &mut recs, pl::Item::penalty(pl::FORCED_BREAK), None);
                 }
-                AItem::Quad { em, style } => {
+                AItem::Quad { em, plus_em, minus_em, style } => {
                     // `em` is `\fontdimen6` of the font current where the
                     // glue is read: `{\Large a\hspace{2em}b}` is two quads
                     // of the `\Large` face, `{\bfseries a\quad b}` of the bold.
                     let style = merge_base(*style, base);
                     let quad = self.text_params(style, style.size_or(size)).quad;
-                    push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fixed(em * quad)), None);
+                    push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::finite(em * quad, plus_em * quad, minus_em * quad)), None);
                 }
                 AItem::HFill { fill, leader, style } => {
                     // `\hfill` is second-order glue: it beats the line's
@@ -4405,6 +4405,15 @@ impl<'a> Context<'a> {
         // `\leftmargin` in (article.cls `\description`).
         if list_geom.is_some_and(|g| g.description) && starts_paragraph {
             params.parindent -= inner_margin_pt;
+        }
+        // `thebibliography` (article.cls 1.4n lines 576-580, natbib.sty 1074-1075)
+        // follows its `\list` with `\sloppy`: `\tolerance 9999`,
+        // `\emergencystretch 3em`, `\hfuzz .5pt`. `\pretolerance` stays 100,
+        // so pdfTeX's first pass is unchanged.
+        if list_geom.is_some_and(|g| g.bibliography) {
+            params.tolerance = 9999.0;
+            params.emergency_stretch = 3.0 * self.text_params(TextStyle::default(), size).quad;
+            params.hfuzz = 0.5;
         }
         let lines = self.break_paragraph(&list, &params, items, Some(&recs))?;
         self.report_overfull(&lines, &list, &recs);
