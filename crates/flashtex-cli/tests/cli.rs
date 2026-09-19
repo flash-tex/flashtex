@@ -1096,3 +1096,172 @@ fn timing_prints_labeled_wall_times() {
     assert!(!stderr(&plain).contains("flashtex: timing:"), "{}", stderr(&plain));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// MARK: packages (docs/user/project-manifest.md `[packages]`, crates/package-resolver)
+
+/// A project whose manifest points `source` at an on-disk archive in the
+/// CTAN layout (`file://`), so the whole fetch path runs without a socket.
+/// The cache is `FLASHTEX_PACKAGE_CACHE` under the same temp dir.
+fn packages_project(name: &str, fetch: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let dir = tmp(name);
+    let archive = dir.join("archive");
+    let pkg = archive.join("macros/latex/contrib/mypkg");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(pkg.join("index.html"), "<html><a href=\"../\">up</a><a href=\"mypkg.sty\">mypkg.sty</a><a href=\"mypkg.pdf\">doc</a></html>").unwrap();
+    std::fs::write(pkg.join("mypkg.sty"), "\\ProvidesPackage{mypkg}\n\\newcommand\\hello{Hello from mypkg}\n").unwrap();
+    std::fs::write(pkg.join("mypkg.pdf"), "%PDF").unwrap();
+    let cache = dir.join("cache");
+    let project = dir.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(project.join("main.tex"), "\\documentclass{article}\n\\usepackage{mypkg}\n\\usepackage{amsmath}\n\\begin{document}\nHi.\n\\end{document}\n").unwrap();
+    std::fs::write(
+        project.join("flashtex.toml"),
+        format!("[project]\nentry = \"main.tex\"\n\n[packages]\nsource = \"file://{}\"\nfetch = \"{fetch}\"\n", archive.display()),
+    )
+    .unwrap();
+    (dir, project, cache)
+}
+
+fn run_packages(cache: &Path, args: &[&str]) -> Output {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex"));
+    c.env_remove("FLASHTEX_FONT_DIRS").env_remove("FLASHTEX_LM_DIR").env("FLASHTEX_TFM_DIRS", tfm_dir()).env("FLASHTEX_PACKAGE_CACHE", cache);
+    c.args(args);
+    c.output().expect("flashtex runs")
+}
+
+fn documents(report: &flashtex_compiler::json::Value) -> Vec<String> {
+    report.get("documents").unwrap().as_arr().unwrap().iter().map(|d| d.as_str().unwrap().to_string()).collect()
+}
+
+fn codes(report: &flashtex_compiler::json::Value) -> Vec<String> {
+    report.get("diagnostics").unwrap().as_arr().unwrap().iter().map(|d| d.get("code").unwrap().as_str().unwrap().to_string()).collect()
+}
+
+#[test]
+fn packages_are_fetched_from_the_manifests_source_into_the_cache_and_join_the_document_set() {
+    let (dir, project, cache) = packages_project("packages-always", "always");
+    let fonts = fonts_dir();
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    let report = json(&stdout(&o));
+    assert_eq!(documents(&report), ["main.tex", "packages/mypkg/mypkg.sty"], "after the closure; amsmath is modelled and never resolved");
+    assert!(!codes(&report).iter().any(|c| c.starts_with("package")), "{err}");
+    assert!(err.contains("fetched mypkg "), "{err}");
+    let versions: Vec<_> = std::fs::read_dir(cache.join("mypkg")).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    assert_eq!(versions.len(), 1, "{versions:?}");
+    assert!(cache.join("mypkg").join(&versions[0]).join("manifest.json").is_file());
+    assert!(cache.join("mypkg").join(&versions[0]).join("mypkg.sty").is_file());
+    assert!(!cache.join("mypkg").join(&versions[0]).join("mypkg.pdf").exists(), "only package files are fetched");
+
+    // Cached now: `never` still delivers it, and the archive can go away.
+    std::fs::remove_dir_all(dir.join("archive")).unwrap();
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json", "--fetch", "never"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert_eq!(documents(&json(&stdout(&o))), ["main.tex", "packages/mypkg/mypkg.sty"]);
+
+    // `packages list` names it; `clear mypkg` removes it; then `never` reports it.
+    let o = run_packages(&cache, &["packages", "list", "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let listed = json(&stdout(&o));
+    assert_eq!(listed.get("schema").and_then(|v| v.as_str()), Some("flashtex-packages/1"));
+    let first = &listed.get("packages").unwrap().as_arr().unwrap()[0];
+    assert_eq!(first.get("name").and_then(|v| v.as_str()), Some("mypkg"));
+    assert_eq!(first.get("version").and_then(|v| v.as_str()), Some(versions[0].as_str()));
+    let o = run_packages(&cache, &["packages", "clear", "mypkg"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(stdout(&o).contains("removed 1 cached version"), "{}", stdout(&o));
+    assert!(!cache.join("mypkg").exists());
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json", "--fetch", "never"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&stdout(&o));
+    assert_eq!(documents(&report), ["main.tex"]);
+    assert!(codes(&report).contains(&"package_unavailable".to_string()), "{:?}", codes(&report));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ask_without_a_terminal_is_never_with_a_diagnostic_and_write_pins_records_a_fetch() {
+    let (dir, project, cache) = packages_project("packages-ask", "ask");
+    let fonts = fonts_dir();
+    // stdin/stderr are pipes here: `ask` fetches nothing and says how to.
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&stdout(&o));
+    assert_eq!(documents(&report), ["main.tex"]);
+    let fetch_diag = report.get("diagnostics").unwrap().as_arr().unwrap().iter().find(|d| d.get("code").unwrap().as_str() == Some("package_fetch")).expect("package_fetch diagnostic");
+    assert!(fetch_diag.get("message").unwrap().as_str().unwrap().contains("flashtex packages fetch mypkg"), "{fetch_diag:?}");
+    assert!(!cache.join("mypkg").exists(), "ask fetched nothing");
+    assert_eq!(run_packages(&cache, &["check", project.to_str().unwrap(), "--write-pins"]).status.code(), Some(2), "check never writes");
+
+    // `build --fetch always --write-pins` fetches and records the pin; the rest of the manifest is untouched.
+    let before = std::fs::read_to_string(project.join("flashtex.toml")).unwrap();
+    let o = run_packages(&cache, &["build", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--fetch", "always", "--write-pins"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert!(err.contains("recorded 1 pin in"), "{err}");
+    let after = std::fs::read_to_string(project.join("flashtex.toml")).unwrap();
+    assert!(after.starts_with(&before), "the pin line is appended to the table:\n{after}");
+    let version = std::fs::read_dir(cache.join("mypkg")).unwrap().next().unwrap().unwrap().file_name().into_string().unwrap();
+    assert!(after.contains(&format!("pin = {{ mypkg = \"{version}\" }}")), "{after}");
+    assert!(project.join("main.pdf").is_file());
+    // A second build changes nothing (cached, pin satisfied, manifest identical).
+    let o = run_packages(&cache, &["build", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--write-pins", "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(!stderr(&o).contains("recorded"), "{}", stderr(&o));
+    assert_eq!(std::fs::read_to_string(project.join("flashtex.toml")).unwrap(), after);
+    assert_eq!(documents(&json(&stdout(&o))), ["main.tex", "packages/mypkg/mypkg.sty"]);
+    // A pin the cache cannot satisfy is a diagnostic, and with `never` no fetch.
+    std::fs::write(project.join("flashtex.toml"), after.replace(&version, "000000000000")).unwrap();
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json", "--fetch", "never"]);
+    let report = json(&stdout(&o));
+    assert_eq!(documents(&report), ["main.tex"]);
+    assert!(codes(&report).contains(&"package_unavailable".to_string()));
+    // `packages fetch <name> <dir>` is its own consent and honours the manifest's source.
+    std::fs::write(project.join("flashtex.toml"), after.replace(&format!("pin = {{ mypkg = \"{version}\" }}\n"), "")).unwrap();
+    let o = run_packages(&cache, &["packages", "clear"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let o = run_packages(&cache, &["packages", "fetch", "mypkg", project.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(stdout(&o).contains(&format!("fetched mypkg {version} from file://")), "{}", stdout(&o));
+    let o = run_packages(&cache, &["packages", "fetch", "nosuch", project.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(stderr(&o).contains("404"), "{}", stderr(&o));
+    assert_eq!(run_packages(&cache, &["packages"]).status.code(), Some(2));
+    assert_eq!(run_packages(&cache, &["packages", "frob"]).status.code(), Some(2));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_local_library_resolves_first_and_no_manifest_resolves_nothing() {
+    let dir = tmp("packages-library");
+    let lib = dir.join("mylib");
+    let project = dir.join("project");
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(lib.join("flashtex.toml"), "[library]\nname = \"mylib\"\n").unwrap();
+    std::fs::write(lib.join("mylib.sty"), "\\ProvidesPackage{mylib}\n").unwrap();
+    std::fs::write(lib.join("extra.def"), "%\n").unwrap();
+    std::fs::write(project.join("main.tex"), "\\documentclass{article}\n\\usepackage{mylib}\n\\begin{document}\nHi.\n\\end{document}\n").unwrap();
+    let cache = dir.join("cache");
+    let fonts = fonts_dir();
+    // No manifest: nothing is resolved, nothing is said, no cache appears.
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&stdout(&o));
+    assert_eq!(documents(&report), ["main.tex"]);
+    assert!(!codes(&report).iter().any(|c| c.starts_with("package")), "{:?}", codes(&report));
+    assert!(!cache.exists());
+    // With `--fetch never` and still no manifest, the cache is consulted but nothing is fetched.
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json", "--fetch", "never"]);
+    assert!(codes(&json(&stdout(&o))).contains(&"package_unavailable".to_string()));
+    // A manifest naming the library: its files arrive at packages/mylib/…, source untouched.
+    std::fs::write(project.join("flashtex.toml"), "[packages]\nsource = \"none\"\npath = { mylib = \"../mylib\", broken = \"../nowhere\" }\n").unwrap();
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&stdout(&o));
+    assert_eq!(documents(&report), ["main.tex", "packages/mylib/extra.def", "packages/mylib/mylib.sty"]);
+    assert_eq!(codes(&report).iter().filter(|c| c.starts_with("package") || c.starts_with("manifest")).cloned().collect::<Vec<_>>(), ["manifest_packages_path"]);
+    assert!(!cache.exists(), "a library is never copied into the cache");
+    let _ = std::fs::remove_dir_all(&dir);
+}

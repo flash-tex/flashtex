@@ -2,10 +2,11 @@
 //!
 //! ```text
 //! flashtex build [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
-//!                [--v2 out.json] [--timing] [--strict] [--json] [-j N]
+//!                [--v2 out.json] [--timing] [--strict] [--json] [-j N] [--fetch ask|always|never] [--write-pins]
 //! flashtex check [<main.tex>|<dir>] [--json] [--strict] [--fix] [--dry-run] [--project-root DIR] [--font-dir DIR]...
 //! flashtex watch [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
 //! flashtex manifest init [<main.tex>|<dir>] [--force] | show [<main.tex>|<dir>] [--json]
+//! flashtex packages list [--json] | fetch <name>... [<main.tex>|<dir>] | clear [<name>]
 //! flashtex supported [--json|--md|--coverage]
 //! flashtex worker [--font-dir DIR]... [--project-root DIR] [--v2 out.json] [--pdf out.pdf] [--timing]
 //! flashtex fonts [--font-dir DIR]... [--json]
@@ -26,10 +27,15 @@
 //! `flashtex.toml` names it (`[project] entry`), or the directory's only
 //! `.tex` file is it. A manifest also adds `texinputs` directories to the
 //! closure and may set the output directory (docs/user/project-manifest.md);
-//! without one, nothing differs from naming the file.
+//! without one, nothing differs from naming the file. With one, the packages
+//! the documents ask for that nothing supplies are resolved from its local
+//! libraries, the per-user package cache and — under `[packages] fetch` /
+//! `--fetch` — CTAN (`packages.rs`); the CLI never prompts or fetches unless
+//! a manifest or `--fetch` says so.
 
 mod compile;
 mod fix;
+mod packages;
 mod project;
 mod report;
 mod requestdate;
@@ -51,13 +57,16 @@ flashtex — the FlashTeX LaTeX engine
 usage:
   flashtex build [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
                  [--font ROLE=NAME]... [--v2 out.json] [--timing] [--verbose]
-                 [--strict] [--json] [-j N]
+                 [--strict] [--json] [-j N] [--fetch ask|always|never] [--write-pins]
   flashtex check [<main.tex>|<dir>] [--json] [--strict] [--fix] [--dry-run]
-                 [--project-root DIR] [--font-dir DIR]...
+                 [--project-root DIR] [--font-dir DIR]... [--fetch ask|always|never]
   flashtex watch [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
-                 [--interval MS] [--timing]
+                 [--interval MS] [--timing] [--fetch ask|always|never] [--write-pins]
   flashtex manifest init [<main.tex>|<dir>] [--force]
   flashtex manifest show [<main.tex>|<dir>] [--json]
+  flashtex packages list [--json]
+  flashtex packages fetch <name>... [<main.tex>|<dir>]
+  flashtex packages clear [<name>]
   flashtex supported [--json|--md|--coverage]
   flashtex worker [--font-dir DIR]... [--project-root DIR] [--v2 out.json]
                   [--pdf out.pdf] [--timing]
@@ -73,6 +82,8 @@ commands:
   watch      rebuild whenever a file of the project closure changes; Ctrl-C stops
   manifest   `init` writes a commented flashtex.toml next to the entry; `show`
              prints the manifest that governs the entry (defaults when absent)
+  packages   the per-user package cache: `list` it, `fetch` a package from the
+             project's source (the manifest's, else CTAN), `clear` it or one package
   supported  the implemented-LaTeX inventory and coverage of the linked compiler
   worker     the runtime-v1 JSON Lines worker the IDE speaks (stdin/stdout)
   fonts      the font and TFM directories this binary resolves, in search order
@@ -105,10 +116,19 @@ options:
   --class-options OPTS class options assumed when the source has no \\documentclass
                        (default `12pt`)
   --secnumdepth N      section numbering depth when the source does not set it
+  --fetch POLICY       ask, always or never: whether a package that is not in the
+                       project, a library or the cache may be fetched from the
+                       manifest's `[packages] source` (default: the manifest's
+                       `fetch`; without a manifest nothing is resolved). `ask`
+                       prompts once per package on a terminal and is `never`
+                       with a diagnostic otherwise
+  --write-pins         (build/watch) record each fetched version in the manifest's
+                       `[packages] pin` table (a build never rewrites it otherwise)
 
 exit status: 0 rendered (ok/recovered), 1 failed (or recovered with --strict),
              2 usage error / unreadable input
-environment: FLASHTEX_FONT_DIRS, FLASHTEX_TFM_DIRS, FLASHTEX_LM_DIR (colon separated)
+environment: FLASHTEX_FONT_DIRS, FLASHTEX_TFM_DIRS, FLASHTEX_LM_DIR (colon separated),
+             FLASHTEX_PACKAGE_CACHE (the package cache directory)
 entry:       a .tex file, or a directory whose flashtex.toml names `[project] entry`
              (or that holds exactly one .tex file); omitted means the current directory
 ";
@@ -140,6 +160,7 @@ fn main() {
         Some("check") => run(&args[1..], Mode::Check),
         Some("watch") => run(&args[1..], Mode::Watch),
         Some("manifest") => manifest(&args[1..]),
+        Some("packages") => packages_cmd(&args[1..]),
         Some("supported") => supported(&args[1..]),
         Some("worker") => worker(&args[1..]),
         Some("fonts") => fonts_cmd(&args[1..]),
@@ -181,6 +202,8 @@ struct Common {
     dry_run: bool,
     interval_ms: u64,
     render: RenderOptions,
+    /// `--fetch` / `--write-pins` (packages.rs).
+    packages: packages::Options,
 }
 
 fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
@@ -200,6 +223,7 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
         dry_run: false,
         interval_ms: 250,
         render: RenderOptions::default(),
+        packages: packages::Options::default(),
     };
     let mut main: Option<PathBuf> = None;
     let mut explicit_date: Option<String> = None;
@@ -271,6 +295,16 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
                     r => return Err(format!("{a} role must be text, sans, mono or math, got {r:?}")),
                 }
             }
+            "--fetch" => {
+                use flashtex_project_manifest::FetchPolicy;
+                c.packages.fetch = Some(match value(&mut i, a)?.as_str() {
+                    "ask" => FetchPolicy::Ask,
+                    "always" => FetchPolicy::Always,
+                    "never" => FetchPolicy::Never,
+                    v => return Err(format!("--fetch is ask, always or never, got {v:?}")),
+                });
+            }
+            "--write-pins" => c.packages.write_pins = true,
             "--secnumdepth" => {
                 let n = value(&mut i, a)?;
                 c.render.default_secnumdepth = n.parse::<u8>().map_err(|_| format!("{a} needs a small number, got {n:?}"))?;
@@ -288,6 +322,9 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
     c.main = main;
     if mode == Mode::Check && (c.output.is_some() || c.v2.is_some()) {
         return Err("`check` writes no output files; use `build` for -o/--v2".into());
+    }
+    if mode == Mode::Check && c.packages.write_pins {
+        return Err("`check` writes nothing, the manifest included; use `build --write-pins`".into());
     }
     if c.dry_run && !c.fix {
         return Err("`--dry-run` needs `--fix`".into());
@@ -333,7 +370,7 @@ fn run(args: &[String], mode: Mode) -> i32 {
 fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<i32, String> {
     let started = Instant::now();
     let input = project::resolve(c.main.as_deref())?;
-    let mut project = project::load(&input, c.project_root.as_deref())?;
+    let mut project = load_with_packages(c, &input)?;
     let mut outcome = compile::compile(&project, fonts, &c.render, revision);
     let mut outputs: Vec<(&str, PathBuf)> = Vec::new();
     let mut pdf_ms = 0.0;
@@ -473,7 +510,7 @@ fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<
         let _ = writeln!(err, "{}", fix::summary_line(applied.issues, applied.files, applied.skipped.len()));
         if !c.dry_run {
             let re_started = Instant::now();
-            project = project::load(&input, c.project_root.as_deref())?;
+            project = load_with_packages(c, &input)?;
             outcome = compile::compile(&project, fonts, &c.render, revision);
             total_ms = re_started.elapsed().as_secs_f64() * 1000.0;
             let shown = match style {
@@ -613,6 +650,171 @@ fn clone_common(c: &Common) -> Common {
         dry_run: c.dry_run,
         interval_ms: c.interval_ms,
         render: c.render.clone(),
+        packages: c.packages.clone(),
+    }
+}
+
+/// `project::load` plus package resolution (packages.rs) when a manifest
+/// or `--fetch` asks for it: the resolved files join the document set after
+/// the `texinputs` files, resolver diagnostics join the project's, and
+/// `--write-pins` records what was fetched. Without a manifest and without
+/// `--fetch` this is exactly `project::load`.
+fn load_with_packages(c: &Common, input: &project::Input) -> Result<project::Project, String> {
+    let mut project = project::load(input, c.project_root.as_deref())?;
+    if !c.packages.applies(&project) {
+        return Ok(project);
+    }
+    let outcome = packages::resolve(&project, input, &c.packages, &mut packages::prompt);
+    if c.packages.write_pins {
+        match packages::write_pins(&project, &outcome.pins) {
+            Ok(Some(path)) => eprintln!("flashtex: recorded {} pin{} in {}", outcome.pins.len(), plural(outcome.pins.len()), path.display()),
+            Ok(None) => {}
+            Err(e) => eprintln!("flashtex: --write-pins: {e}"),
+        }
+    }
+    project.documents.extend(outcome.documents);
+    project.diagnostics.extend(outcome.diagnostics);
+    Ok(project)
+}
+
+/// `packages list [--json]` prints the cache; `packages fetch <name>...
+/// [<entry>|<dir>]` fetches each name from the project's source (the
+/// manifest governing the entry or the current directory; CTAN without
+/// one) — the command is the consent, so `fetch = "ask"`/`"never"` do not
+/// apply, `source = "none"` still does; `packages clear [<name>]` removes
+/// one package or the whole cache.
+fn packages_cmd(args: &[String]) -> i32 {
+    use flashtex_package_resolver::{cache, http::HttpFetcher, Policy, Resolution, Resolver};
+    let (sub, rest) = match args.first().map(String::as_str) {
+        Some(s @ ("list" | "fetch" | "clear")) => (s, &args[1..]),
+        Some(other) => return usage_error(&format!("packages: unknown subcommand {other:?} (use list, fetch or clear)")),
+        None => return usage_error("packages needs a subcommand: list, fetch or clear"),
+    };
+    let Some(root) = flashtex_package_resolver::default_cache_root() else {
+        eprintln!("flashtex: no package cache: set {} (no home directory is known)", flashtex_package_resolver::CACHE_ENV);
+        return EXIT_FAILED;
+    };
+    let store = cache::Store::new(&root);
+    match sub {
+        "list" => {
+            let json_out = match rest {
+                [] => false,
+                [j] if j == "--json" => true,
+                _ => return usage_error("packages list takes only --json"),
+            };
+            let entries = match store.list() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("flashtex: {e}");
+                    return EXIT_FAILED;
+                }
+            };
+            if json_out {
+                use flashtex_compiler::json::{self, Value};
+                let mut o = Value::obj();
+                o.set("schema", json::str_("flashtex-packages/1"));
+                o.set("cache", json::str_(root.display().to_string()));
+                o.set(
+                    "packages",
+                    Value::Arr(
+                        entries
+                            .iter()
+                            .map(|e| {
+                                let mut p = Value::obj();
+                                p.set("name", json::str_(e.name.clone()));
+                                p.set("version", json::str_(e.version.clone()));
+                                p.set("source_url", json::str_(e.source_url.clone()));
+                                p.set("fetched_utc", json::str_(e.fetched_utc.clone()));
+                                p.set("dir", json::str_(e.dir.display().to_string()));
+                                p.set("files", Value::Arr(e.files.iter().map(|f| json::str_(f.name.clone())).collect()));
+                                p
+                            })
+                            .collect(),
+                    ),
+                );
+                println!("{}", json::write(&o));
+            } else {
+                println!("# package cache: {}", root.display());
+                if entries.is_empty() {
+                    println!("# empty");
+                }
+                for e in &entries {
+                    println!("{} {}  {}  ({}; {})", e.name, e.version, e.files.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(" "), e.source_url, e.fetched_utc);
+                }
+            }
+            EXIT_OK
+        }
+        "clear" => {
+            let name = match rest {
+                [] => None,
+                [n] => Some(n.as_str()),
+                _ => return usage_error("packages clear takes at most one package name"),
+            };
+            match store.clear(name) {
+                Ok(n) => {
+                    println!("removed {n} cached version{} from {}", plural(n), root.display());
+                    EXIT_OK
+                }
+                Err(e) => {
+                    eprintln!("flashtex: {e}");
+                    EXIT_FAILED
+                }
+            }
+        }
+        _ => {
+            // fetch <name>... [<entry>|<dir>]: names are what is not a path
+            // to something that exists (a package name is never a file here).
+            let (target, names): (Option<PathBuf>, Vec<&str>) = {
+                let mut target = None;
+                let mut names = Vec::new();
+                for a in rest {
+                    if a.starts_with('-') {
+                        return usage_error(&format!("packages fetch: unknown option {a:?}"));
+                    }
+                    if Path::new(a).exists() && (a.contains('/') || a.ends_with(".tex") || Path::new(a).is_dir()) {
+                        if target.replace(PathBuf::from(a)).is_some() {
+                            return usage_error("packages fetch takes at most one entry file or directory");
+                        }
+                    } else {
+                        names.push(a.as_str());
+                    }
+                }
+                (target, names)
+            };
+            if names.is_empty() {
+                return usage_error("packages fetch needs at least one package name");
+            }
+            // The manifest governing the target (or the current directory);
+            // none, or an unusable one, means CTAN with no pins.
+            let input = project::resolve(target.as_deref()).ok();
+            let packages = input.as_ref().map(|i| i.manifest.manifest.packages.clone()).unwrap_or_default();
+            let fetcher = match HttpFetcher::new() {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("flashtex: {e}");
+                    return EXIT_FAILED;
+                }
+            };
+            let resolver = Resolver::new(&root, &fetcher);
+            let mut code = EXIT_OK;
+            for name in names {
+                let policy = Policy::for_package(&packages, name);
+                match resolver.fetch(name, &policy) {
+                    Resolution::Fetched { version, files, source_url, .. } => {
+                        println!("fetched {name} {version} from {source_url}: {}", files.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(" "));
+                    }
+                    Resolution::NotAvailable { reason, .. } => {
+                        eprintln!("flashtex: {name}: {reason}");
+                        code = EXIT_FAILED;
+                    }
+                    other => {
+                        eprintln!("flashtex: {name}: unexpected answer {other:?}");
+                        code = EXIT_FAILED;
+                    }
+                }
+            }
+            code
+        }
     }
 }
 

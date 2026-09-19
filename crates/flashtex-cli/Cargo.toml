@@ -27,3 +27,7 @@ flashtex-compiler = { path = "../render-pipeline/vendor/compiler" }
 # the engine does; the reads it implies go through the vendored rooted
 # primitives above.
 flashtex-project-manifest = { path = "../project-manifest" }
+# Package resolution (docs/user/project-manifest.md `[packages]`): local
+# libraries, the per-user cache and consent-gated fetches. The one place
+# the CLI may touch the network, and only under `--fetch`/the manifest.
+flashtex-package-resolver = { path = "../package-resolver" }
