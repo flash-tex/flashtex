@@ -152,11 +152,11 @@ impl TexMathMetrics {
     }
 
     /// The metrics `\DeclareMathSizes` selects for text at `text_pt`: the
-    /// three class sizes (10, 10.95, 12) plus 8 pt, which is
-    /// `\footnotesize` of the 10pt class and 8/6/5 pt with cmr/cmmi/cmsy 8,
-    /// 6 and 5. `None` for a size whose TFMs math-layout does not embed --
-    /// 9 pt, the 11pt class's `\footnotesize`, needs cmr9/cmmi9/cmsy9.
-    /// `cmex_designs` and `roman_lm` are as in [`TexMathMetrics::new`].
+    /// three class sizes (10, 10.95, 12) plus the two `\footnotesize`s, 8 pt
+    /// (10pt class; fontmath.ltx 78: 8/6/5) and 9 pt (11pt class; line 79:
+    /// 9/6/5), with the cmr/cmmi/cmsy designs of those sizes. `None` for any
+    /// other size. `cmex_designs` and `roman_lm` are as in
+    /// [`TexMathMetrics::new`].
     pub fn at_text_size(text_pt: f64, cmex_designs: bool, roman_lm: bool, otf: Rc<MathFonts>, fonts: &FontSet) -> Option<TexMathMetrics> {
         let close = |at: f64| (text_pt - at).abs() < 0.01;
         let (cm, roman_names) = if close(10.0) {
@@ -191,6 +191,44 @@ impl TexMathMetrics {
                     ],
                 },
                 ["rm-lmr8", "rm-lmr6", "rm-lmr5"],
+            )
+        } else if close(9.0) {
+            (
+                // fontmath.ltx 79: \DeclareMathSizes{9}{9}{6}{5}, the 11pt
+                // class's `\footnotesize` (size11.clo). Without this branch
+                // a footnote's `$T$` was boxed from cmmi10 at 10.95pt
+                // (6.40pt + 1.52pt italic correction against cmmi9's
+                // 5.40pt + 1.28pt), 2.4pt over two symbols on lab-report
+                // p.1's footnote: enough to push `assumes` to the next line
+                // (`\tracingparagraphs` @@2 b=41 vs @@1 b=100).
+                CmMathMetrics {
+                    sizes: [9.0, 6.0, 5.0],
+                    extension: cm::ExtensionSizing::Fixed,
+                    families: [
+                        [&cm_tfm::CMR9, &cm_tfm::CMR6, &cm_tfm::CMR5],
+                        [&cm_tfm::CMMI9, &cm_tfm::CMMI6, &cm_tfm::CMMI5],
+                        [&cm_tfm::CMSY9, &cm_tfm::CMSY6, &cm_tfm::CMSY5],
+                    ],
+                },
+                ["rm-lmr9", "rm-lmr6", "rm-lmr5"],
+            )
+        } else if close(7.0) || close(6.0) || close(5.0) {
+            // fontmath.ltx 75-77: \DeclareMathSizes{5}{5}{5}{5}, {6}{6}{5}{5},
+            // {7}{7}{5}{5}: `\tiny`/`\scriptsize` of the three classes.
+            let (r, i, s, name) = if close(7.0) {
+                (&cm_tfm::CMR7, &cm_tfm::CMMI7, &cm_tfm::CMSY7, "rm-lmr7")
+            } else if close(6.0) {
+                (&cm_tfm::CMR6, &cm_tfm::CMMI6, &cm_tfm::CMSY6, "rm-lmr6")
+            } else {
+                (&cm_tfm::CMR5, &cm_tfm::CMMI5, &cm_tfm::CMSY5, "rm-lmr5")
+            };
+            (
+                CmMathMetrics {
+                    sizes: [text_pt.round(), 5.0, 5.0],
+                    extension: cm::ExtensionSizing::Fixed,
+                    families: [[r, &cm_tfm::CMR5, &cm_tfm::CMR5], [i, &cm_tfm::CMMI5, &cm_tfm::CMMI5], [s, &cm_tfm::CMSY5, &cm_tfm::CMSY5]],
+                },
+                [name, "rm-lmr5", "rm-lmr5"],
             )
         } else {
             return None;

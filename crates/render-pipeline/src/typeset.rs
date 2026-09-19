@@ -1210,12 +1210,18 @@ impl<'a> Context<'a> {
         Some(MathProvider::Otf(Rc::new(m.with_text_alphabets(faces))))
     }
 
-    /// The math provider for text at `size`: the body's, except at the
-    /// class's `\footnotesize` below it, where LaTeX selects the math fonts
-    /// of that size (`\DeclareMathSizes`: 8/6/5 pt in a 10pt class, 10/7/5 in
-    /// a 12pt class). A size whose TeX metrics are not available (9 pt, the
-    /// 11pt class's notes: cmmi9/cmsy9 are not embedded) keeps the body's
-    /// metrics and is reported once.
+    /// The math provider for text at `size`: the body's at the body size,
+    /// else the math fonts LaTeX selects for that size (fontmath.ltx 75-82,
+    /// `\DeclareMathSizes`: 5/5/5, 6/5/5, 7/5/5, 8/6/5, 9/6/5, 10/7/5,
+    /// 10.95/8/6, 12/8/6), which `TexMathMetrics::at_text_size` boxes from
+    /// the cmr/cmmi/cmsy designs of those sizes. That covers every size
+    /// switch up to `\large` in the three classes: `\footnotesize` notes,
+    /// the `\small` abstract of the 11pt class (10 pt, where the body's
+    /// 10.95 pt metrics made `$g \approx$` and siunitx's `9.79 m s^-2` 9.5%
+    /// too wide and moved a line break, lab-report p.1) and `\large`.
+    /// A size with no TeX metrics keeps the body's; below the body size
+    /// that is reported once (above it -- headings -- it is the long-standing
+    /// approximation and stays silent).
     fn math_fonts_at(&mut self, span: Span, size: f64) -> Option<MathProvider> {
         let body = self.math_fonts(span)?;
         // A document's own OpenType math font follows every text size, as
@@ -1231,15 +1237,17 @@ impl<'a> Context<'a> {
                 return Some(sized.unwrap_or(body));
             }
         }
-        let note_size = footnotes::FootnoteParams::of(self.style).size;
-        if (size - self.style.body_size_pt).abs() < 0.01 || (size - note_size).abs() > 0.01 || !matches!(body, MathProvider::Tex(_)) {
+        if (size - self.style.body_size_pt).abs() < 0.01 || !matches!(body, MathProvider::Tex(_)) {
             return Some(body);
         }
         let key = (size * 100.0).round() as u32;
         if let Some(sized) = self.math_fonts_sized.get(&key) {
             return Some(sized.clone().unwrap_or(body));
         }
-        let (script, script_script) = match (size * 100.0).round() as u32 {
+        // The script sizes of fontmath.ltx 75-82 for the text sizes
+        // `at_text_size` accepts; the OpenType program's sizes follow them.
+        let (script, script_script) = match key {
+            500..=700 => (5.0, 5.0),
             800 | 900 => (6.0, 5.0),
             1000 => (7.0, 5.0),
             _ => (8.0, 6.0),
@@ -1250,9 +1258,9 @@ impl<'a> Context<'a> {
             .and_then(|m| TexMathMetrics::at_text_size(size, self.style.cmex_designs, self.style.math_roman_lm, m, self.fonts))
             .filter(TexMathMetrics::roman_available)
             .map(|t| MathProvider::Tex(Rc::new(t)));
-        if sized.is_none() {
+        if sized.is_none() && size < self.style.body_size_pt {
             let src = self.source(span);
-            let msg = format!("math at {size}pt (\\footnotesize) is laid out with the {}pt math metrics: TeX's math fonts for that size are not available", self.style.body_size_pt);
+            let msg = format!("math at {size}pt is laid out with the {}pt math metrics: TeX's math fonts for that size are not available", self.style.body_size_pt);
             self.report_once(format!("mathlim:{msg}"), Diagnostic::warning("math_limitation", msg, vec![src]));
         }
         self.math_fonts_sized.insert(key, sized.clone());
