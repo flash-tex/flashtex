@@ -66,6 +66,10 @@ final class PreviewControllerClient {
         /// helper never infers a kind from an extension, and declarations
         /// must be supplied on every launch (DocumentKinds.swift persists them).
         var bibliographyPaths: [String] = []
+        /// The manifest's `[fonts]` by role (`text`, `math`, `mono`, `sans`;
+        /// ProjectManifest.swift), forwarded by the helper as `payload.fonts`
+        /// on every compile request; empty sends nothing.
+        var fonts: [String: String] = [:]
 
         func json() -> JSONObject {
             var o: JSONObject = ["session_id": sessionID, "project_id": projectID, "entry_path": entryPath]
@@ -75,6 +79,7 @@ final class PreviewControllerClient {
             if let compilerPath { o["compiler_path"] = compilerPath.path }
             if let compilerMaxFrameBytes { o["compiler_max_frame_bytes"] = compilerMaxFrameBytes }
             if !bibliographyPaths.isEmpty { o["bibliography_paths"] = bibliographyPaths }
+            if !fonts.isEmpty { o["fonts"] = fonts }
             // Evidence only: the helper's own per-phase stderr timings (display
             // transport profile, optional-output serialization), logged as
             // `controller: {...}` lines. Off unless FLASHTEX_CONTROLLER_DIAGNOSTIC_TIMINGS=1.
@@ -245,6 +250,13 @@ final class PreviewControllerClient {
 
     func configureLayout(capabilities: [String]) throws -> String {
         try send("configure_layout", ["layout_capabilities": capabilities, "renderer_support_confirmed": true])
+    }
+
+    /// `configure_fonts`: the manifest's `[fonts]` changed (the Fonts sheet,
+    /// an edit of flashtex.toml); every later request carries it and the
+    /// durable source recompiles. Empty clears it.
+    func configureFonts(_ fonts: [String: String]) throws -> String {
+        try send("configure_fonts", ["fonts": fonts.isEmpty ? NSNull() : fonts])
     }
 
     /// `configure_display_candidates` (crates/preview-controller/docs/display-forwarding.md):

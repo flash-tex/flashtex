@@ -75,6 +75,39 @@ A missing Latin Modern face is an **error
 diagnostic** with Times metrics substituted, never a silent fallback; a
 missing math face reports `math_font_unavailable` and typesets no math.
 
+### Named families (`\setmainfont`, the manifest's `[fonts]`)
+
+Any font installed on the machine or shipped in the project's `fonts/`
+directory can be the text, sans or mono family (`fonts::Family::Named`,
+`fontspec.rs`; `docs/proposals/packages-fonts-manifest.md` §S4). The
+document says so with fontspec's commands, read from the source bytes —
+`\setmainfont[opts]{Family}`, `\setsansfont`, `\setmonofont`,
+`\newfontfamily\cmd[opts]{Family}`, `\fontspec[opts]{Family}` (local to its
+group), `\defaultfontfeatures`, `\addfontfeature` — or the caller does with
+`RenderOptions::fonts` (`FontSettings { text, sans, mono, math }`, the
+`flashtex.toml` `[fonts]` table). Precedence: a local `\fontspec`/switch
+group, then a document `\setmainfont`, then the manifest, then the class
+font. Families are found through `flashtex-font-discovery` (a zero-dependency
+sibling by path, like class-geometry): `FLASHTEX_FONT_DIRS`, the project's
+`fonts/`, then the OS font directories, scanned lazily on the first named
+lookup — a document naming no font never scans anything and renders
+byte-identically to before (`scripts/render-corpus-v2.sh`). Matching is
+typst's: case-insensitive family, nearest weight, nearest style; a missing
+weight or style takes the nearest face with a `font_face_substituted`
+warning, a missing family takes Latin Modern with `font_family_unavailable`.
+Metrics come from the face's own tables (advances, `GPOS`/`kern`, `GSUB`
+`liga`; interword glue as XeTeX sets it from the space glyph), never a TFM;
+`glyf` (TrueType, `.ttc` members by face index) and `CFF ` faces both load.
+A character the named face lacks is set in Latin Modern for that run with
+one `missing_glyph` note per (font, character). Options honoured: `Scale=`
+(factor, `MatchLowercase`, `MatchUppercase`), `BoldFont`/`ItalicFont`/
+`BoldItalicFont`/`UprightFont`, `Ligatures=TeX`, `Numbers=OldStyle` (the
+face's GSUB `onum`, applied after shaping); `\scshape` applies the face's
+`smcp` the same way, or notes once that the face has none. Math
+under a named family stays Latin Modern Math: `\setmathfont` is read and
+noted, and specified in `docs/proposals/font-system-math.md`.
+`flashtex-render --list-fonts` prints the families the index offers.
+
 ## `flashtex-render` (runtime-v1 worker)
 
 Reads `compile` envelopes on stdin (JSON Lines), answers one `compile_result`

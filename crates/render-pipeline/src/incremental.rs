@@ -380,6 +380,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                     (seg.style.slanted, seg.style.caps, seg.style.family, seg.style.undefined).hash(h);
                     seg.style.literal.hash(h);
                     seg.style.hidden.hash(h);
+                    seg.style.named.hash(h);
                     for c in &seg.chars {
                         (c.start.wrapping_sub(base)).hash(h);
                         (c.end.wrapping_sub(base)).hash(h);
@@ -391,6 +392,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 style.italic.hash(h);
                 (style.slanted, style.caps, style.family, style.undefined).hash(h);
                 style.literal.hash(h);
+                style.named.hash(h);
                 factor.hash(h);
                 no_break.hash(h);
             }
@@ -498,6 +500,9 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
             }
             Item::SpaceBox { style } => {
                 style.hash(h);
+            }
+            Item::Listing(mark) => {
+                format!("{mark:?}").hash(h);
             }
         }
     }

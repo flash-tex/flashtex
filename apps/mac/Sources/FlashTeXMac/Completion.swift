@@ -46,6 +46,10 @@ enum Completion {
         /// title; BibScanner.swift). Nil means the pane derives one from the
         /// kind and name (`CompletionPopup.displayedDocumentation`).
         var documentation: String? = nil
+        /// An installed font family (`\setmainfont{` and its kin): the row
+        /// sets its label and a sample in that family (ProjectFonts.swift
+        /// `FontSamples`), when the app has a face for it.
+        var sampleFamily: String? = nil
     }
 
     /// Replacement text plus the caret position inside it, in UTF-16 units.
@@ -356,7 +360,7 @@ enum Completion {
         /// A run of letters, with what immediately precedes it (`\begin{`, `\ref{`, …).
         case word(text: String, start: Int, end: Int, context: Context)
 
-        enum Context: Equatable { case none, beginEnvironment, endEnvironment, reference, citation, label, package, file, graphics }
+        enum Context: Equatable { case none, beginEnvironment, endEnvironment, reference, citation, label, package, file, graphics, font }
 
         var start: Int {
             switch self { case .command(_, let s, _), .word(_, let s, _, _): return s }
@@ -424,6 +428,7 @@ enum Completion {
         if endsWith(b, upTo: end, suffix: "\\usepackage") { return .package }
         if fileCommands.contains(where: { endsWith(b, upTo: end, suffix: "\\" + $0) }) { return .file }
         if graphicsCommands.contains(where: { endsWith(b, upTo: end, suffix: "\\" + $0) }) { return .graphics }
+        if fontCommands.contains(where: { endsWith(b, upTo: end, suffix: "\\" + $0) }) { return .font }
         return .none
     }
 
@@ -432,6 +437,11 @@ enum Completion {
 
     /// Commands whose `{` argument completes an image file under the project root.
     static let graphicsCommands = ["includegraphics"]
+
+    /// fontspec commands whose `{` argument is an installed font family
+    /// (`crates/render-pipeline/src/fontspec.rs`); `\newfontfamily\cmd{` is
+    /// not here because the bytes before its brace are the switch's name.
+    static let fontCommands = ["setmainfont", "setsansfont", "setmonofont", "setmathfont", "setromanfont", "fontspec"]
 
     /// Argument keys are wider than words: `eq:main`, `knuth-84`, `ch/one.tex`,
     /// `amsmath` after a comma. Scanned back from the caret over key bytes to
@@ -458,7 +468,7 @@ enum Completion {
         }
         let context = context(in: b, before: opener)
         switch context {
-        case .reference, .citation, .label, .package, .file, .graphics:
+        case .reference, .citation, .label, .package, .file, .graphics, .font:
             let text = String(decoding: b[start..<caretByte], as: UTF8.self)
             guard text.utf8.allSatisfy({ $0 < 0x80 }) || text.unicodeScalars.allSatisfy({ $0.properties.isAlphabetic }) else { return nil }
             return .word(text: text, start: start, end: caretByte, context: context)
@@ -682,12 +692,16 @@ enum Completion {
     /// `indentUnit` and `environmentRules` shape the environment skeletons
     /// (`environmentSnippet`): whether the body is indented, and what its
     /// first line starts with (EnvironmentEditingRules.swift).
+    /// `fontFamilies` are the installed families `\setmainfont{` offers
+    /// (`InstalledFonts.families`, listed by the job off-main and only when
+    /// the caret is in that argument).
     static func suggestions(in text: String, caretUTF16: Int, metadata: Metadata?,
                             supported: [String] = defaultSupported, projectFiles: [String] = [],
                             graphicsFiles: [String] = [], recentEnvironments: [String] = [],
                             declaredElsewhere: [String] = [], mathMode: Bool? = nil,
                             bibliographyEntries: [BibScanner.Entry] = [], projectClass: String? = nil,
                             indentUnit: String = "", environmentRules: EnvironmentEditingRules = .conventional,
+                            fontFamilies: [String] = [],
                             cancelled: () -> Bool = { false }) -> [Suggestion] {
         guard let token = token(in: text, caretUTF16: caretUTF16), !cancelled() else { return [] }
         let out: [Suggestion]
@@ -716,11 +730,23 @@ enum Completion {
                 out = fileSuggestions(prefix: prefix, files: projectFiles, detail: "project document")
             case .graphics:
                 out = fileSuggestions(prefix: prefix, files: graphicsFiles, detail: "graphics file")
+            case .font:
+                out = fontSuggestions(prefix: prefix, families: fontFamilies)
             case .none:
                 out = wordSuggestions(prefix: prefix, tokenStart: token.start, text: text)
             }
         }
         return cancelled() ? [] : out
+    }
+
+    /// `\setmainfont{` candidates: the installed families, matched on the
+    /// typed prefix. A family with spaces (`Times New Roman`) completes from
+    /// its first word; the whole name is inserted.
+    private static func fontSuggestions(prefix: String, families: [String]) -> [Suggestion] {
+        let names = fuzzyFilter(families, prefix: prefix) { $0 }
+        return names.prefix(maxSuggestions).map {
+            Suggestion(label: $0, insertText: $0, kind: .command, detail: "installed font family", sampleFamily: $0)
+        }
     }
 
     /// Text-mode commands of the inventory that LaTeX nevertheless takes
@@ -2025,6 +2051,11 @@ final class CompletionScheduler {
         /// environment skeletons are built with them.
         var indentUnit: String = ""
         var environmentRules: EnvironmentEditingRules = .conventional
+        /// The built `flashtex-render` (`ShellModel.locateRenderPipeline`),
+        /// asked on the main thread: its `--list-fonts` is what
+        /// `\setmainfont{` offers, run by the job off-main once per launch
+        /// (`InstalledFonts`). Nil offers no families.
+        var renderPipeline: URL? = nil
     }
 
     struct Outcome: Equatable {
@@ -2096,12 +2127,15 @@ final class CompletionScheduler {
             let t0 = MonotonicClock.nowNs()
             let range = Completion.completionRange(in: request.text, caretUTF16: request.caretUTF16)
             var graphics: [String] = []
+            var fontFamilies: [String] = []
             var declaredElsewhere: [String] = []
             var bibliographyEntries: [BibScanner.Entry] = []
             if !job.isCancelled {
                 switch Completion.token(in: request.text, caretUTF16: request.caretUTF16) {
                 case .word(_, _, _, .graphics)?:
                     if let root = request.graphicsRoot { graphics = Completion.graphicsFiles(under: root) }
+                case .word(_, _, _, .font)?:
+                    fontFamilies = InstalledFonts.families(renderPipeline: request.renderPipeline)
                 case .word(_, _, _, .citation)?:
                     if let sources = request.bibliography { bibliographyEntries = BibScanner.entries(for: sources, cancelled: { job.isCancelled }) }
                 case .command?:
@@ -2119,6 +2153,7 @@ final class CompletionScheduler {
                                                                      projectClass: request.projectClass,
                                                                      indentUnit: request.indentUnit,
                                                                      environmentRules: request.environmentRules,
+                                                                     fontFamilies: fontFamilies,
                                                                      cancelled: { job.isCancelled })
             let t1 = MonotonicClock.nowNs()
             let outcome = Outcome(generation: job.generation, caretUTF16: request.caretUTF16, range: range, items: items,
@@ -2492,6 +2527,12 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         out.append(NSAttributedString(string: "  \(s.kind.badge) · \(s.detail)", attributes: [
             .font: DS.NSFonts.secondary, .foregroundColor: DS.Palette.textSecondary,
         ]))
+        // A font family: the sample line in that family (ProjectFonts.swift).
+        if let family = s.sampleFamily, let font = FontSamples.nsFont(family: family, size: 12) {
+            out.append(NSAttributedString(string: " — " + ProjectFontsState.sampleText, attributes: [
+                .font: font, .foregroundColor: DS.Palette.textSecondary,
+            ]))
+        }
         if let doc = displayedDocumentation(for: s) {
             out.append(NSAttributedString(string: " — \(doc)", attributes: [
                 .font: DS.NSFonts.secondary, .foregroundColor: DS.Palette.textTertiary,
@@ -2635,8 +2676,20 @@ final class CompletionRowView: NSView {
     func configure(_ s: Completion.Suggestion) {
         icon.image = NSImage(systemSymbolName: s.kind.symbolName, accessibilityDescription: nil)
         icon.contentTintColor = s.kind.tint
-        label.stringValue = s.label
-        detail.stringValue = "\(s.kind.badge) · \(s.detail)"
+        // A font family draws its name and the sample in its own face
+        // (ProjectFonts.swift `FontSamples`); every other row keeps the
+        // editor's monospaced face. `stringValue` resets an attributed value.
+        if let family = s.sampleFamily, let font = FontSamples.nsFont(family: family, size: 12) {
+            label.attributedStringValue = NSAttributedString(string: s.label, attributes: [.font: font, .foregroundColor: NSColor.labelColor])
+            let sample = NSMutableAttributedString(string: ProjectFontsState.sampleText + "  ", attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor])
+            sample.append(NSAttributedString(string: "\(s.kind.badge) · \(s.detail)", attributes: [.font: DS.NSFonts.secondary, .foregroundColor: NSColor.secondaryLabelColor]))
+            detail.attributedStringValue = sample
+        } else {
+            label.font = DS.NSFonts.monoCandidate
+            label.stringValue = s.label
+            detail.font = DS.NSFonts.secondary
+            detail.stringValue = "\(s.kind.badge) · \(s.detail)"
+        }
         setAccessibilityLabel(CompletionPopup.spokenLabel(s)) // FlashTeXAccessibility
     }
 }
@@ -2718,6 +2771,10 @@ final class CompletingTextView: NSTextView {
     /// on the main thread when the list is requested; nil (a bare text view,
     /// an unsaved buffer) offers none.
     var graphicsRoot: () -> URL? = { nil }
+    /// The built `flashtex-render` whose `--list-fonts` fills `\setmainfont{`
+    /// (`InstalledFonts`), asked on the main thread when the list is
+    /// requested; nil (a bare text view) offers no families.
+    var renderPipeline: () -> URL? = { nil }
     /// The project's other open documents, asked on the main thread when the
     /// list is requested (`ShellModel.editorHoverContext`'s texts); their
     /// macros are offered as declared. A bare text view has none.
@@ -3164,7 +3221,8 @@ final class CompletingTextView: NSTextView {
                                                   bibliography: bibliographySources(), mathMode: mathModeAtCaret(caret.location),
                                                   projectClass: projectDocumentClass(),
                                                   indentUnit: EditorPreferences.shared.indentString,
-                                                  environmentRules: EditorPreferences.shared.environmentRules)
+                                                  environmentRules: EditorPreferences.shared.environmentRules,
+                                                  renderPipeline: renderPipeline())
         scheduler.schedule(request) { [weak self] outcome in
             self?.present(outcome, metadataRevision: metadata?.revision)
         }
@@ -3573,5 +3631,71 @@ final class CompletingTextView: NSTextView {
         if ok, session != nil { scheduler.cancel(); close(.resignedFirstResponder) }
         if ok { cancelAutomaticCompletion(); hideSignatureHelp() }
         return ok
+    }
+}
+
+/// The installed font families `\setmainfont{` completes with, as the
+/// engine's own index sees them (`flashtex-render --list-fonts`, over
+/// `crates/font-discovery`): the same names the document resolves against,
+/// so what the list offers is what the render finds. AppKit's font panel
+/// would list Core Text's view of the machine instead, which differs for
+/// project-local and `FLASHTEX_FONT_DIRS` fonts. Listed once per launch
+/// (~30 ms warm, ~250 ms cold) by the completion job, off-main, the first
+/// time the caret is in a font argument; nil or a missing binary offers
+/// nothing.
+enum InstalledFonts {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var cached: (URL, [String])?
+    nonisolated(unsafe) private static var cachedMath: (URL, [String])?
+
+    nonisolated static func families(renderPipeline: URL?) -> [String] {
+        guard let tool = renderPipeline else { return [] }
+        lock.lock(); defer { lock.unlock() }
+        if let (url, names) = cached, url == tool { return names }
+        let names = list(tool: tool, flag: "--list-fonts")
+        cached = (tool, names)
+        return names
+    }
+
+    /// The families with a face carrying an OpenType `MATH` table
+    /// (`--list-math-fonts`): what the Fonts sheet's Math row offers
+    /// (ProjectFonts.swift). Same caching as `families`.
+    nonisolated static func mathFamilies(renderPipeline: URL?) -> [String] {
+        guard let tool = renderPipeline else { return [] }
+        lock.lock(); defer { lock.unlock() }
+        if let (url, names) = cachedMath, url == tool { return names }
+        let names = list(tool: tool, flag: "--list-math-fonts")
+        cachedMath = (tool, names)
+        return names
+    }
+
+    /// Runs the tool with a bounded wait; an unresponsive or failing tool
+    /// yields an empty list (and is retried next time).
+    private nonisolated static func list(tool: URL, flag: String, timeout: TimeInterval = 10) -> [String] {
+        let p = Process()
+        p.executableURL = tool
+        p.arguments = [flag]
+        let stdout = Pipe()
+        p.standardOutput = stdout
+        p.standardError = FileHandle.nullDevice
+        // The drain publishes under a lock: the bounded waits below can
+        // expire while it is still reading (see ExactPDFExport.run).
+        let drained = Drained()
+        let group = DispatchGroup()
+        group.enter(); DispatchQueue.global().async { drained.put(stdout.fileHandleForReading.readDataToEndOfFile()); group.leave() }
+        do { try p.run() } catch { return [] }
+        let waiter = DispatchGroup()
+        waiter.enter(); DispatchQueue.global().async { p.waitUntilExit(); waiter.leave() }
+        if waiter.wait(timeout: .now() + timeout) == .timedOut { p.terminate() }
+        if group.wait(timeout: .now() + 5) == .timedOut, p.isRunning { kill(p.processIdentifier, SIGKILL) }
+        guard !p.isRunning, p.terminationStatus == 0 else { return [] }
+        return String(decoding: drained.read(), as: UTF8.self).split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+    }
+
+    private final class Drained: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+        func put(_ d: Data) { lock.lock(); data = d; lock.unlock() }
+        func read() -> Data { lock.lock(); defer { lock.unlock() }; return data }
     }
 }

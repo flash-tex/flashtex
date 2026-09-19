@@ -473,8 +473,7 @@ enum EditorIntelligence {
         /// name listed here must leave the list once the compiler renders it.
         static let beyondCompiler: Set<String> = [
             "chapter", "part", "autoref",
-            "def", "newline", "hline", "toprule", "midrule",
-            "bottomrule", "multicolumn", "verb", "%", "$", "&", "#", "_", "{", "}",
+            "def", "newline", "%", "$", "&", "#", "_", "{", "}",
             "geometry", "onehalfspacing", "doublespacing",
         ]
         static let environmentsBeyondCompiler: Set<String> = [

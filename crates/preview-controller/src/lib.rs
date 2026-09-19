@@ -9,7 +9,7 @@ pub use metadata_edit::{
 pub mod experimental_delivery;
 pub mod file_project;
 mod historical;
-use flashtex_document_runtime::{Document as InputDocument, Event, Limits, Request, Session};
+use flashtex_document_runtime::{Document as InputDocument, Event, Limits, Request, RequestFonts, Session};
 use flashtex_edit_ledger::history::{GroupedEdit, HistoryMove, HistoryResult, HistoryStatus};
 use flashtex_edit_ledger::{AppliedReceipt, AppliedTransaction, Document, PreparedEdit, Store};
 use flashtex_project_index::{ProjectIndex, VersionSnapshot};
@@ -92,6 +92,9 @@ pub struct Controller {
     /// Canonical project directory forwarded to every compiler session
     /// (`payload.project_root`); `None` for store-backed projects.
     project_root: Option<String>,
+    /// The manifest's `[fonts]` forwarded to every compiler session
+    /// (`payload.fonts`), including across `restart`; `None` sends no field.
+    fonts: Option<RequestFonts>,
 }
 /// Canonicalizes a project root for forwarding to the producer: it must be an
 /// absolute, existing, UTF-8 directory whose path is already canonical, so a
@@ -155,6 +158,32 @@ impl Controller {
     }
     pub fn project_root(&self) -> Option<&str> {
         self.project_root.as_deref()
+    }
+    /// The manifest's `[fonts]` (`flashtex.toml`) every later compile request
+    /// carries as `payload.fonts`, including across `restart`. `None` (or a
+    /// table naming nothing) restores the unchanged legacy request. Applies
+    /// to the next submission; `configure_fonts` also recompiles.
+    pub fn set_fonts(&mut self, fonts: Option<RequestFonts>) {
+        let fonts = fonts.filter(|f| !f.is_empty());
+        if let Some(runtime) = self.runtime.as_mut() {
+            runtime.set_fonts(fonts.clone());
+        }
+        self.fonts = fonts;
+    }
+    pub fn fonts(&self) -> Option<&RequestFonts> {
+        self.fonts.as_ref()
+    }
+    /// `set_fonts` followed by a compile of the current durable source: a
+    /// font change alters the output of unchanged text, so the retained
+    /// preview and historical bindings are invalidated like a layout change.
+    pub fn configure_fonts(&mut self, fonts: Option<RequestFonts>) -> Result<(), String> {
+        if self.closed {
+            return Err("project closed".into());
+        }
+        self.set_fonts(fonts);
+        self.historical.invalidate();
+        self.submitted = None;
+        self.compile_current()
     }
     /// All stores must already contain initialized durable documents. Ownership of
     /// their exclusive locks transfers here. No source is imported or overwritten.
@@ -231,6 +260,7 @@ impl Controller {
             submitted: None,
             closed: false,
             project_root: None,
+            fonts: None,
         })
     }
     pub fn index(&self) -> &ProjectIndex {
@@ -692,6 +722,7 @@ impl Controller {
             .retain(|cap| cap != "display-list-v2");
         runtime.set_completed_snapshots_enabled(self.historical.enabled)?;
         runtime.set_project_root(self.project_root.clone())?;
+        runtime.set_fonts(self.fonts.clone());
         self.replace_membership(&expected, &documents, None)?;
         self.runtime = Some(runtime);
         self.submitted = None;

@@ -6,6 +6,7 @@ your task; do not load the entire repository history into every prompt.
 | Need | Authoritative location | Writer |
 |---|---|---|
 | End-user guides (install, Mac app, iPad companion, CLI tools, supported LaTeX) | [docs/user/README.md](user/README.md) | mac-user-docs (parent mac-claude-a) |
+| The project manifest `flashtex.toml` (S2 of the packages/fonts direction): keys, defaults, what each tool does with it | [docs/user/project-manifest.md](user/project-manifest.md) | mac-claude-a (lane-manifest) |
 | Required collaboration behavior | [AGENTS.md](../AGENTS.md) | Integration owner with user direction |
 | Agent onboarding: start prompt, coordination CLI, where handoffs live (formerly the root README's "Working with agents") | [docs/agents/README.md](agents/README.md) | Integration owner |
 | Command, dispatch, reporting, integration | [ORCHESTRATION.md](../ORCHESTRATION.md) | Commander |
@@ -81,6 +82,10 @@ latency. Every consumer must retain source/project/revision and resource identit
   positioning, clipping and unhinted path consumers. No automatic wire activation.
 - `crates/pdf/README.md`: original runtime-v1 PDF export; its font fallback and rule
   conventions remain explicit fidelity blockers.
+- `crates/project-manifest` (`src/lib.rs` docs): the optional `flashtex.toml`, typed with
+  defaults, unknown keys as warnings, `texinputs` classified lexically and never read
+  there; `crates/project-files` (`README.md`, "Package inputs") lists and reads them
+  through its rooted handles and serves them to the app (`manifest` helper operation).
 - `docs/contracts/runtime-v1.md` and `docs/contracts/transfer-v1.md`: production
   message contracts. `docs/contracts/rendering-v2-proposal.md` is a proposal, not permission
   to change existing clients without negotiation and migration tests.

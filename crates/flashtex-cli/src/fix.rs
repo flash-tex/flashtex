@@ -330,6 +330,7 @@ mod tests {
 
     fn project_at(root: PathBuf, docs: Vec<(&str, &str)>) -> Project {
         Project {
+            entry_file: root.join(docs[0].0),
             root,
             entry: docs[0].0.to_string(),
             documents: docs
@@ -338,6 +339,10 @@ mod tests {
                 .collect(),
             diagnostics: Vec::new(),
             files: docs.iter().map(|(p, _)| (*p).to_string()).collect(),
+            outside_files: Vec::new(),
+            manifest: None,
+            output_dir: None,
+            fonts: Default::default(),
         }
     }
 

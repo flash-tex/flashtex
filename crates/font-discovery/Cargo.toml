@@ -1,0 +1,15 @@
+[package]
+name = "flashtex-font-discovery"
+version = "0.1.0"
+edition = "2021"
+description = "Original FlashTeX index of the fonts installed on a machine: scans OTF/TTF/TTC files for their name, OS/2 and MATH tables and answers typst-style family/weight/style lookups. Platform-free apart from one per-OS directory list."
+publish = false
+
+[lib]
+name = "flashtex_font_discovery"
+path = "src/lib.rs"
+
+# No dependencies: like class-geometry, this crate is depended on by path
+# from render-pipeline (not vendored), so a `git archive` of that directory
+# plus this one builds.
+[dependencies]

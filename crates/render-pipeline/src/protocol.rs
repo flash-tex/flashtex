@@ -648,6 +648,33 @@ pub fn handle_line_with(line: &str, fonts: &FontSet, options: &RenderOptions, ca
     reply
 }
 
+/// `payload.fonts` decoded: an object whose `text`/`math`/`mono`/`sans`
+/// members are family names (strings) or null; any other shape, member or
+/// type is the error the reply carries. `Ok(None)` is an object naming no
+/// family (`{}`), which means the class fonts, the same as no field.
+fn request_fonts(v: &Value) -> Result<Option<crate::FontSettings>, String> {
+    let Value::Obj(members) = v else {
+        return Err("compile payload 'fonts' must be an object with string members text, math, mono, sans".into());
+    };
+    let mut fonts = crate::FontSettings::default();
+    for (key, value) in members {
+        let slot = match key.as_str() {
+            "text" => &mut fonts.text,
+            "math" => &mut fonts.math,
+            "mono" => &mut fonts.mono,
+            "sans" => &mut fonts.sans,
+            other => return Err(format!("compile payload 'fonts' has an unknown member {other:?}; expected text, math, mono, sans")),
+        };
+        *slot = match value {
+            Value::Null => None,
+            Value::Str(s) if s.trim().is_empty() => None,
+            Value::Str(s) => Some(s.clone()),
+            _ => return Err(format!("compile payload 'fonts.{key}' must be a family name (string) or null")),
+        };
+    }
+    Ok((fonts != crate::FontSettings::default()).then_some(fonts))
+}
+
 fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache: Option<&RenderCache>, delta_state: Option<&DeltaState>) -> Reply {
     let err = |id: &str, code: &str, msg: &str| Reply {
         line: json::write(&error_envelope(id, code, msg)),
@@ -844,11 +871,35 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
             }
         }
     };
+    // `payload.fonts` -- the project manifest's `[fonts]` table
+    // (`docs/proposals/packages-fonts-manifest.md` §2.4, `RenderOptions::fonts`):
+    // `{"text","math","mono","sans"}`, each an installed family name or
+    // absent/null. The caller (the app, the CLI, the preview controller)
+    // reads `flashtex.toml`; this worker never opens it, so the same request
+    // bytes render the same page whatever is on disk. Absent leaves
+    // `options.fonts` exactly as the worker was started with -- byte-identical
+    // to before the field existed. Malformed is an error, never a silent
+    // fall-back to the class fonts.
+    let request_fonts = match payload.get("fonts") {
+        None => None,
+        Some(v) => match request_fonts(v) {
+            Ok(fonts) => Some(fonts),
+            Err(message) => {
+                return Reply {
+                    line: json::write(&failed(&id, &project_id, revision, &message, None)),
+                    extra_lines: Vec::new(),
+                    rendered: None,
+                    id,
+                };
+            }
+        },
+    };
     let with_request_fields;
-    let options = if request_root.is_some() || request_date.is_some() {
+    let options = if request_root.is_some() || request_date.is_some() || request_fonts.is_some() {
         with_request_fields = RenderOptions {
             project_root: request_root.or_else(|| options.project_root.clone()),
             today: request_date.unwrap_or(options.today),
+            fonts: request_fonts.map_or_else(|| options.fonts.clone(), |f| f),
             ..options.clone()
         };
         &with_request_fields

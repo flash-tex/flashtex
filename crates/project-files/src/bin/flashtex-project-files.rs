@@ -18,6 +18,32 @@
 //!   "sha256","mtime_unix_ms"}}` or `{"outcome":"conflict","conflict":{"path",
 //!   "kind":"modified_externally"|"deleted_externally"|"already_exists"|
 //!   "modified_during_save","ours"?,"theirs"?,"mtime_unix_ms"?,"size"?}}`
+//! - `{"id","operation":"manifest","entry"?}` → payload `{"path"?,"exists",
+//!   "manifest_dir"?,"manifest":{"project":{"entry","texinputs","output"},
+//!   "fonts":{"text","math","mono","sans"},"packages":{"source","fetch","pin",
+//!   "path"},"library"?},"warnings":[{"key","message"}],"texinputs":[{"index",
+//!   "raw","location":"inside"|"outside"|"invalid","dir"?,"path"?,"reason"?}],
+//!   "files":[{"path","kind":"package"|"class"|"tex"|"bibliography","texinput"?,
+//!   "origin"?,"text","sha256","bytes"}],"diagnostics":[{"key","message"}],
+//!   "template"}`: the `flashtex.toml` that governs `--root` (found by walking
+//!   up from it, `Manifest::locate`) or the defaults when there is none, its
+//!   classified `texinputs`, and the package inputs — the root's own
+//!   `.sty`/`.cls`/`.def`/`.clo` files and every document-kind file of each
+//!   `texinputs` directory (`graph::texinput_files`; an outside directory's
+//!   files carry the virtual `texinputs/<i>/<name>` path and their real
+//!   `origin`), each with its text so the consumer needs no second request.
+//!   `template` is the commented manifest the consumer may save as
+//!   `flashtex.toml` for `entry` (default `main.tex`); a `save` with
+//!   `"expected":"new"` writes it under the same rules as any file.
+//! - `{"id","operation":"set_fonts","fonts":{"text"?,"math"?,"mono"?,"sans"?},
+//!   "entry"?}` → payload `{"path","exists","changed","text"?}`: the text of the
+//!   governing manifest (or of the template for `entry` when there is none)
+//!   with its `[fonts]` table replaced by `fonts` (`Manifest::with_fonts`,
+//!   the only TOML writer; everything else in the file is kept byte for
+//!   byte), for the consumer to `save` at `path` -- this operation writes
+//!   nothing. `changed` is false, and `text` absent, when there is no
+//!   manifest and `fonts` names nothing: nothing to write. A member that is
+//!   not a string, or an unknown member, is `invalid_request`.
 //!
 //! Errors are `{"id","error":{"code","message"}}` with codes `invalid_request`,
 //! `invalid_path`, `refused` (symlink component, escape, not a regular file,
@@ -33,9 +59,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use flashtex_project_files::json::Json;
 use flashtex_project_files::{
-    DEFAULT_READ_LIMIT, Expected, ProjectPath, ProjectRoot, SaveConflictKind, SaveError,
-    sha256_from_hex, sha256_to_hex,
+    DEFAULT_READ_LIMIT, DiagnosticKind, Expected, ProjectPath, ProjectRoot, SaveConflictKind,
+    SaveError, sha256_from_hex, sha256_to_hex, texinput_files,
 };
+use flashtex_project_manifest::{Manifest, TexInputLocation, outside_virtual_dir};
 
 /// Same bound as the Mac `LineProcessClient` / transfer-v1 (12 MiB).
 const MAX_LINE_BYTES: usize = 12 * 1024 * 1024;
@@ -212,6 +239,205 @@ fn save(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
     Ok(payload)
 }
 
+/// `manifest`: see the module documentation. Reads exactly one file above
+/// the root (the manifest itself, through `Manifest::locate`) and the
+/// package inputs through rooted handles; a manifest that is not TOML is a
+/// `manifest_syntax` error, everything else it says wrong is a warning.
+fn manifest(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
+    let entry = match req.get("entry") {
+        None | Some(Json::Null) => "main.tex".to_string(),
+        Some(v) => v
+            .as_str()
+            .ok_or_else(|| fail("invalid_request", "entry must be a string"))?
+            .to_string(),
+    };
+    let found = Manifest::locate(root.path());
+    let loaded = match &found {
+        Some(path) => Manifest::load(path).map_err(|e| fail("manifest_syntax", e.to_string()))?,
+        None => Default::default(),
+    };
+    let manifest_dir = found.as_deref().and_then(|p| p.parent()).unwrap_or(root.path());
+    let m = &loaded.manifest;
+    let (files, diagnostics) = texinput_files(root, m, manifest_dir);
+
+    let opt = |v: &Option<String>| v.clone().map_or(Json::Null, Json::from);
+    let map = |m: &std::collections::BTreeMap<String, String>| {
+        let mut o = Json::object();
+        for (k, v) in m {
+            o.insert(k, v.as_str());
+        }
+        o
+    };
+    let mut project = Json::object();
+    project
+        .insert("entry", opt(&m.project.entry))
+        .insert("texinputs", m.project.texinputs.iter().map(|t| Json::from(t.as_str())).collect::<Vec<_>>())
+        .insert("output", opt(&m.project.output));
+    let mut fonts = Json::object();
+    fonts
+        .insert("text", opt(&m.fonts.text))
+        .insert("math", opt(&m.fonts.math))
+        .insert("mono", opt(&m.fonts.mono))
+        .insert("sans", opt(&m.fonts.sans));
+    let mut packages = Json::object();
+    packages
+        .insert("source", m.packages.source.as_str())
+        .insert("fetch", m.packages.fetch.as_str())
+        .insert("pin", map(&m.packages.pin))
+        .insert("path", map(&m.packages.path));
+    let library = m.library.as_ref().map_or(Json::Null, |l| {
+        let mut o = Json::object();
+        o.insert("name", l.name.as_str());
+        o
+    });
+    let mut manifest = Json::object();
+    manifest
+        .insert("project", project)
+        .insert("fonts", fonts)
+        .insert("packages", packages)
+        .insert("library", library);
+
+    let warnings: Vec<Json> = loaded
+        .warnings
+        .iter()
+        .map(|w| {
+            let mut o = Json::object();
+            o.insert("key", w.key.as_str()).insert("message", w.message.as_str());
+            o
+        })
+        .collect();
+    let texinputs: Vec<Json> = m
+        .texinputs(manifest_dir)
+        .iter()
+        .map(|t| {
+            let mut o = Json::object();
+            o.insert("index", t.index as u64).insert("raw", t.raw.as_str());
+            match &t.location {
+                TexInputLocation::Inside(d) => {
+                    o.insert("location", "inside").insert("dir", d.as_str());
+                }
+                TexInputLocation::Outside(p) => {
+                    o.insert("location", "outside")
+                        .insert("dir", outside_virtual_dir(t.index))
+                        .insert("path", p.to_string_lossy().into_owned());
+                }
+                TexInputLocation::Invalid(why) => {
+                    o.insert("location", "invalid").insert("reason", why.as_str());
+                }
+            }
+            o
+        })
+        .collect();
+    let files: Vec<Json> = files
+        .iter()
+        .filter_map(|f| {
+            // A package input that is not UTF-8 is not a document the
+            // compiler can read; `diagnostics` does not repeat it because
+            // the consumer sees the file is simply absent from `files`.
+            let text = f.file.text.as_ref()?;
+            let mut o = Json::object();
+            o.insert("path", f.file.path.as_str())
+                .insert("kind", f.file.kind.as_str())
+                .insert("texinput", f.texinput.map_or(Json::Null, |i| Json::from(i as u64)))
+                .insert("origin", f.file.origin.as_ref().map_or(Json::Null, |p| Json::from(p.to_string_lossy().into_owned())))
+                .insert("text", text.as_str())
+                .insert("sha256", sha256_to_hex(&f.file.sha256))
+                .insert("bytes", f.file.bytes);
+            Some(o)
+        })
+        .collect();
+    let diagnostics: Vec<Json> = diagnostics
+        .iter()
+        .map(|d| {
+            let mut o = Json::object();
+            let key = match &d.kind {
+                DiagnosticKind::Manifest { key } => key.as_str(),
+                _ => "project",
+            };
+            o.insert("key", key).insert("message", d.message.as_str());
+            o
+        })
+        .collect();
+
+    let mut payload = Json::object();
+    payload
+        .insert("path", found.as_ref().map_or(Json::Null, |p| Json::from(p.to_string_lossy().into_owned())))
+        .insert("exists", found.is_some())
+        .insert("manifest_dir", found.as_ref().map_or(Json::Null, |_| Json::from(manifest_dir.to_string_lossy().into_owned())))
+        .insert("manifest", manifest)
+        .insert("warnings", warnings)
+        .insert("texinputs", texinputs)
+        .insert("files", files)
+        .insert("diagnostics", diagnostics)
+        .insert("template", Manifest::template(&entry));
+    Ok(payload)
+}
+
+/// `set_fonts`: see the module documentation. Reads the governing manifest
+/// (or takes the template) and answers with the rewritten text; the
+/// consumer saves it through `save`, so the rooted rules apply to the write.
+fn set_fonts(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
+    let entry = match req.get("entry") {
+        None | Some(Json::Null) => "main.tex".to_string(),
+        Some(v) => v
+            .as_str()
+            .ok_or_else(|| fail("invalid_request", "entry must be a string"))?
+            .to_string(),
+    };
+    let mut fonts = flashtex_project_manifest::Fonts::default();
+    match req.get("fonts") {
+        None | Some(Json::Null) => {}
+        Some(Json::Object(members)) => {
+            for (key, value) in members {
+                let slot = match key.as_str() {
+                    "text" => &mut fonts.text,
+                    "math" => &mut fonts.math,
+                    "mono" => &mut fonts.mono,
+                    "sans" => &mut fonts.sans,
+                    other => return Err(fail("invalid_request", format!("fonts has an unknown member {other:?}; expected text, math, mono, sans"))),
+                };
+                *slot = match value {
+                    Json::Null => None,
+                    Json::String(s) if s.trim().is_empty() => None,
+                    Json::String(s) => Some(s.clone()),
+                    _ => return Err(fail("invalid_request", format!("fonts.{key} must be a family name (string) or null"))),
+                };
+            }
+        }
+        Some(_) => return Err(fail("invalid_request", "fonts must be an object of family names by role")),
+    }
+    let found = Manifest::locate(root.path());
+    let (path, exists, current) = match &found {
+        Some(path) => {
+            let text = std::fs::read_to_string(path).map_err(|e| fail("io", format!("{}: {e}", path.display())))?;
+            (path.clone(), true, text)
+        }
+        None => (root.path().join(flashtex_project_manifest::FILE_NAME), false, Manifest::template(&entry)),
+    };
+    let mut payload = Json::object();
+    payload
+        .insert("path", path.to_string_lossy().into_owned())
+        .insert("exists", exists);
+    if !exists && fonts.is_empty() {
+        payload.insert("changed", false);
+        return Ok(payload);
+    }
+    let text = Manifest::with_fonts(&current, &fonts);
+    // The rewrite must read back as what was asked, or the file stays as it is.
+    match Manifest::parse(&text) {
+        Ok(parsed) if parsed.manifest.fonts == fonts => {}
+        Ok(parsed) => {
+            return Err(fail(
+                "manifest_rewrite",
+                format!("the rewritten {} does not read back the requested fonts (got {:?}); not written", path.display(), parsed.manifest.fonts),
+            ))
+        }
+        Err(e) => return Err(fail("manifest_syntax", format!("{}: {e}", path.display()))),
+    }
+    payload.insert("changed", text != current).insert("text", text);
+    Ok(payload)
+}
+
 fn handle(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
     match string_field(req, "operation")? {
         "ping" => {
@@ -224,6 +450,8 @@ fn handle(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
         "read" => read(root, req),
         "status" => status(root, req),
         "save" => save(root, req),
+        "manifest" => manifest(root, req),
+        "set_fonts" => set_fonts(root, req),
         other => Err(fail(
             "unsupported_operation",
             format!("unknown operation {other:?}"),

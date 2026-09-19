@@ -20,6 +20,7 @@ pub mod delta;
 pub mod display;
 pub mod floats;
 pub mod fonts;
+pub mod fontspec;
 pub mod graphics;
 pub mod ids;
 pub mod incremental;
@@ -111,6 +112,36 @@ pub struct RenderOptions {
     /// `amsmath-inline`, which went default after its own re-pin.
     /// `--no-default-features` still builds against the epoch-only path.
     pub today: TodayDate,
+    /// The project manifest's `[fonts]` table (`flashtex.toml`,
+    /// `docs/proposals/packages-fonts-manifest.md` §S2): the named families
+    /// the text, sans and mono slots default to when the document itself
+    /// sets none (`fontspec::apply`: a document `\setmainfont` overrides
+    /// `text`, a local `\fontspec` group overrides both). `math` is carried
+    /// for the math half (`docs/proposals/font-system-math.md`) and is not
+    /// read yet. `None`, the default, changes nothing: the class fonts
+    /// apply exactly as before the field existed. Filled per request from
+    /// the runtime-v1 payload's optional `fonts` object (`protocol.rs`:
+    /// `{"text","math","mono","sans"}`, sent by the Mac app, the preview
+    /// controller and `flashtex build` from `flashtex.toml`); a request
+    /// without it keeps the value the worker was started with.
+    /// `flashtex-render` has no flag for it.
+    pub fonts: Option<FontSettings>,
+}
+
+/// The manifest's `[fonts]` table, family names as the index matches them
+/// (`flashtex_font_discovery::FontIndex::find`: case-insensitive, by
+/// typographic family, then legacy family, full or PostScript name).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FontSettings {
+    /// `text = "Libertinus Serif"`: `\rmdefault`.
+    pub text: Option<String>,
+    /// `sans = "..."`: `\sfdefault`.
+    pub sans: Option<String>,
+    /// `mono = "JetBrains Mono"`: `\ttdefault`.
+    pub mono: Option<String>,
+    /// `math = "Libertinus Math"`: reserved for `math-layout`'s OpenType
+    /// `MATH` path; ignored by this crate today.
+    pub math: Option<String>,
 }
 
 impl Default for RenderOptions {
@@ -121,6 +152,7 @@ impl Default for RenderOptions {
             default_secnumdepth: 2,
             project_root: None,
             today: TodayDate::EPOCH,
+            fonts: None,
         }
     }
 }
@@ -178,6 +210,10 @@ pub fn render_windowed(
     window: Option<PageWindow>,
 ) -> Rendered {
     let started = std::time::Instant::now();
+    // Named families are discovered in the project's `fonts/` directory
+    // before the machine's (`fontspec`); a change of project drops the
+    // index. No directory is read until a document names a font.
+    fonts.set_project_root(options.project_root.as_deref());
     // FT-063: float environments are blanked (same byte length) before the
     // compiler parses the document and are laid out by `typeset::floatpage`.
     // beamer's `figure`/`table` are not floats (`beamerbaselocalstructure.sty`
@@ -357,6 +393,9 @@ pub fn render_windowed(
         // so every span still indexes them).
         let original: Vec<&str> = documents.iter().map(|d| d.text).collect();
         let mut ctx = typeset::Context::with_texts(fonts, &doc.style, &paths, &original);
+        // One laid-out `\twocolumn`/`\onecolumn` switch: the post-switch
+        // stylesheet the page builder swaps to (`adapter::Doc::post_style`).
+        ctx.set_alt_style(doc.post_style.as_deref());
         // `\includegraphics` in running text reads its file the way a float's
         // graphic does (issue #944, Tier 3).
         ctx.set_images(options, &image_cache);

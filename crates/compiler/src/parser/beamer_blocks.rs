@@ -87,7 +87,7 @@ impl P<'_> {
                 }
                 self.beamer_block_overlays.push(has_overlay);
                 self.flush_paragraph(blocks, para);
-                let title = self.inlines_from_tokens(tokens, TextStyle::default(), false);
+                let title = self.inlines_from_tokens(tokens, TextStyle::default());
                 blocks.push(Block::BeamerBlockBegin {
                     kind,
                     title,
@@ -256,7 +256,7 @@ impl P<'_> {
         self.finish_block_dependencies();
         // `\usebeamerfont{caption}` is `\small` for the whole template.
         let small = TextStyle { size: Some(FontSizeLevel::Small), ..self.style };
-        let content = self.inlines_from_tokens(tokens, small, false);
+        let content = self.inlines_from_tokens(tokens, small);
         blocks.push(Block::BeamerCaption {
             kind,
             content,

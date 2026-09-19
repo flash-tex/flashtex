@@ -105,9 +105,32 @@ impl Shaped {
 /// edited for hours never grows it without bound).
 pub const SHAPER_CACHE_LIMIT: usize = 200_000;
 
+/// What a shaping request asks for beyond the face's defaults, as bits of
+/// the cache key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct ShapeFlags(pub u8);
+
+impl ShapeFlags {
+    pub const NONE: ShapeFlags = ShapeFlags(0);
+    /// Ligatures and kerns off: verbatim's regime (`crate::tfm::literal_run`).
+    pub const LITERAL: ShapeFlags = ShapeFlags(1);
+    /// `GSUB` `smcp`: a named family's `\scshape` (fontspec `Letters=SmallCaps`).
+    pub const SMALL_CAPS: ShapeFlags = ShapeFlags(2);
+    /// `GSUB` `onum`: fontspec `Numbers=OldStyle`.
+    pub const OLDSTYLE_NUMS: ShapeFlags = ShapeFlags(4);
+
+    pub fn contains(self, other: ShapeFlags) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    pub fn with(self, other: ShapeFlags) -> ShapeFlags {
+        ShapeFlags(self.0 | other.0)
+    }
+}
+
 #[derive(Default)]
 pub struct Shaper {
-    cache: RefCell<HashMap<(Rc<str>, String, bool), Rc<Shaped>>>,
+    cache: RefCell<HashMap<(Rc<str>, String, ShapeFlags), Rc<Shaped>>>,
 }
 
 impl Shaper {
@@ -117,14 +140,22 @@ impl Shaper {
 
     /// Shapes `text` in `face` with kerning and ligatures on.
     pub fn shape(&self, face: &Rc<LoadedFace>, text: &str) -> Rc<Shaped> {
-        self.shape_with(face, text, false)
+        self.shape_with(face, text, ShapeFlags::NONE)
     }
 
     /// Shapes `text` with ligatures and kerns **off**: verbatim's regime
     /// (`crate::tfm::literal_run`). A separate cache entry, because the same
     /// face and text shape differently under it.
     pub fn shape_literal(&self, face: &Rc<LoadedFace>, text: &str) -> Rc<Shaped> {
-        self.shape_with(face, text, true)
+        self.shape_with(face, text, ShapeFlags::LITERAL)
+    }
+
+    /// [`Shaper::shape`] with explicit flags: literal, and the `GSUB`
+    /// single-substitution features a named family's run asks for (applied
+    /// after font-engine's shaping on the OpenType path only; a TFM-shaped
+    /// face has no such features).
+    pub fn shape_flags(&self, face: &Rc<LoadedFace>, text: &str, flags: ShapeFlags) -> Rc<Shaped> {
+        self.shape_with(face, text, flags)
     }
 
     /// Shapes `text` with kerning and ligatures on, but restarts the
@@ -135,21 +166,26 @@ impl Shaper {
     /// cached) on their own and joined. When they disagree on metrics (one
     /// piece left the TFM for the font program), the text is shaped whole.
     pub fn shape_cut(&self, face: &Rc<LoadedFace>, text: &str, cuts: &[usize]) -> Rc<Shaped> {
+        self.shape_cut_flags(face, text, cuts, ShapeFlags::NONE)
+    }
+
+    /// [`Shaper::shape_cut`] with [`ShapeFlags`] on every piece.
+    pub fn shape_cut_flags(&self, face: &Rc<LoadedFace>, text: &str, cuts: &[usize], flags: ShapeFlags) -> Rc<Shaped> {
         let mut bounds: Vec<usize> = cuts.iter().copied().filter(|&b| b > 0 && b < text.len() && text.is_char_boundary(b)).collect();
         bounds.sort_unstable();
         bounds.dedup();
         if bounds.is_empty() {
-            return self.shape(face, text);
+            return self.shape_with(face, text, flags);
         }
         let starts = std::iter::once(0).chain(bounds.iter().copied());
         let ends = bounds.iter().copied().chain(std::iter::once(text.len()));
-        let parts: Vec<(usize, Rc<Shaped>)> = starts.zip(ends).map(|(a, b)| (a, self.shape(face, &text[a..b]))).collect();
+        let parts: Vec<(usize, Rc<Shaped>)> = starts.zip(ends).map(|(a, b)| (a, self.shape_with(face, &text[a..b], flags))).collect();
         let (_, first) = &parts[0];
         let uniform = parts.iter().all(|(_, p)| {
             p.units_per_em == first.units_per_em && p.tfm_metrics == first.tfm_metrics && p.refused.is_none() && p.tfm_error.is_none()
         });
         if !uniform {
-            return self.shape(face, text);
+            return self.shape_with(face, text, flags);
         }
         let mut joined = Shaped {
             face: face.clone(),
@@ -178,15 +214,15 @@ impl Shaper {
         Rc::new(joined)
     }
 
-    fn shape_with(&self, face: &Rc<LoadedFace>, text: &str, literal: bool) -> Rc<Shaped> {
+    fn shape_with(&self, face: &Rc<LoadedFace>, text: &str, flags: ShapeFlags) -> Rc<Shaped> {
         // Keyed by the face's metrics identity, not its wire `font_id`: one
         // OpenType program is laid out with different TFMs (`ec-lmr10` for
         // `lmodern`, `ecrm1095`/`ecrm1000` for T1 `cmr`).
-        let key = (face.shape_key.clone(), text.to_string(), literal);
+        let key = (face.shape_key.clone(), text.to_string(), flags);
         if let Some(hit) = self.cache.borrow().get(&key) {
             return hit.clone();
         }
-        let shaped = Rc::new(shape_uncached(face, text, literal));
+        let shaped = Rc::new(shape_uncached(face, text, flags));
         let mut cache = self.cache.borrow_mut();
         if cache.len() >= SHAPER_CACHE_LIMIT {
             cache.clear();
@@ -204,19 +240,20 @@ impl Shaper {
     }
 }
 
-fn shape_uncached(face: &Rc<LoadedFace>, text: &str, literal: bool) -> Shaped {
+fn shape_uncached(face: &Rc<LoadedFace>, text: &str, flags: ShapeFlags) -> Shaped {
+    let literal = flags.contains(ShapeFlags::LITERAL);
     if let Some(tfm) = &face.tfm {
         match shape_tfm(face, tfm, text, literal) {
             Ok(Some(s)) => return s,
             Ok(None) => {}
             Err(e) => {
-                let mut s = shape_otf(face, text, literal);
+                let mut s = shape_otf(face, text, flags);
                 s.tfm_error = Some(e.to_string());
                 return s;
             }
         }
     }
-    shape_otf(face, text, literal)
+    shape_otf(face, text, flags)
 }
 
 /// TFM shaping; `Ok(None)` when a character has no T1 slot (the caller then
@@ -372,8 +409,19 @@ fn shape_tfm(face: &Rc<LoadedFace>, tfm: &Tfm, text: &str, literal: bool) -> Res
     }))
 }
 
-fn shape_otf(face: &Rc<LoadedFace>, text: &str, literal: bool) -> Shaped {
+fn shape_otf(face: &Rc<LoadedFace>, text: &str, flags: ShapeFlags) -> Shaped {
+    let literal = flags.contains(ShapeFlags::LITERAL);
     let f = face.face();
+    // The single-substitution features asked for, applied to each shaped
+    // glyph below, after font-engine's cmap/liga/kern pass. A full shaper
+    // runs `smcp`/`onum` before `kern`; here the pair kern stays the base
+    // pair's and the advance becomes the substitute's own `hmtx`, which is
+    // what changes visibly (the kern difference is within a unit or two).
+    let maps: Vec<Rc<std::collections::BTreeMap<u16, u16>>> = [(ShapeFlags::SMALL_CAPS, b"smcp"), (ShapeFlags::OLDSTYLE_NUMS, b"onum")]
+        .into_iter()
+        .filter(|(flag, _)| flags.contains(*flag))
+        .filter_map(|(_, tag)| face.feature_map(tag))
+        .collect();
     // Verbatim: no GSUB `liga`, no f-ligature cmap fallback, no pair
     // kerning. Mark composition stays on — it is not a ligature, and a
     // verbatim run reaching this path at all means the text left T1.
@@ -394,16 +442,26 @@ fn shape_otf(face: &Rc<LoadedFace>, text: &str, literal: bool) -> Shaped {
                         .iter()
                         .map(|g| {
                             let ch = c.text.chars().next();
-                            let b = face.bounds(g.gid, ch);
+                            let mut gid = g.gid;
+                            let mut advance = g.advance;
+                            for map in &maps {
+                                if let Some(&sub) = map.get(&gid.0) {
+                                    let old = f.advance(gid).unwrap_or(0);
+                                    let new = f.advance(GlyphId(sub)).unwrap_or(old);
+                                    advance += i32::from(new) - i32::from(old);
+                                    gid = GlyphId(sub);
+                                }
+                            }
+                            let b = face.bounds(gid, ch);
                             SGlyph {
-                                gid: g.gid,
-                                advance: g.advance,
+                                gid,
+                                advance,
                                 italic: 0,
                                 x_offset: g.x_offset,
                                 y_offset: g.y_offset,
                                 y_max: if b.empty { 0 } else { b.y_max },
                                 y_min: if b.empty { 0 } else { b.y_min },
-                                x_max: if b.empty { g.advance } else { b.x_max },
+                                x_max: if b.empty { advance } else { b.x_max },
                                 empty: b.empty,
                                 tfm_code: None,
                                 tfm_kern: 0,
@@ -461,12 +519,12 @@ mod tests {
         let face = fonts.resolve(Family::LatinModern, Role::Text { bold: false, italic: false }, 10.0).face;
         let shaper = Shaper::new();
         // The OpenType path (GSUB/GPOS), bypassing the TFM.
-        let s = Rc::new(shape_otf(&face, "office", false));
+        let s = Rc::new(shape_otf(&face, "office", ShapeFlags::NONE));
         // "ffi" is one cluster covering bytes 1..4.
         let lig = s.clusters.iter().find(|c| c.text == "ffi").expect("ffi ligature cluster");
         assert_eq!(lig.text_range, 1..4);
         assert_eq!(lig.glyphs.len(), 1);
-        let av = Rc::new(shape_otf(&face, "AV", false));
+        let av = Rc::new(shape_otf(&face, "AV", ShapeFlags::NONE));
         let plain: i64 = av.clusters.iter().flat_map(|c| c.glyphs.iter()).map(|g| i64::from(g.advance)).sum();
         // font-engine README: "AV" shaped at 10pt is 13.89pt -> 1389 units (kerned).
         assert_eq!(plain, 1389);

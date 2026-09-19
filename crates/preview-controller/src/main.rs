@@ -1,5 +1,5 @@
 //! Local stdio adapter. Native callers must put pipe IO on a dedicated worker.
-use flashtex_document_runtime::{Event, Limits};
+use flashtex_document_runtime::{Event, Limits, RequestFonts};
 use flashtex_edit_ledger::{AppliedReceipt, PreparedEdit, Store};
 use flashtex_preview_controller::completed_protocol::{SubmissionBindings, CAPABILITY};
 use flashtex_preview_controller::file_project::{DiskState, FileProject};
@@ -132,6 +132,17 @@ fn emit_with_limit(tx: &output_delivery::Sender, stopped: &AtomicBool, value: Va
         stopped.store(true, Ordering::SeqCst);
     }
 }
+/// A `fonts` member of the launch config or of `configure_fonts`: an object
+/// of family names by role, or absent/null for none.
+fn request_fonts(value: Option<&Value>) -> Result<Option<RequestFonts>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(v @ Value::Object(_)) => serde_json::from_value::<RequestFonts>(v.clone())
+            .map(Some)
+            .map_err(|e| format!("fonts must be an object of family names by role (text, sans, mono, math): {e}")),
+        Some(_) => Err("fonts must be an object of family names by role (text, sans, mono, math)".into()),
+    }
+}
 fn failure(session: &str, id: Value, reason: impl AsRef<str>) -> Value {
     json!({"protocol_version":1,"session_id":session,"id":id,"type":"error","payload":{"message":reason.as_ref()}})
 }
@@ -200,6 +211,9 @@ fn run(config: Value) -> Result<(), String> {
     if let Some(files) = file_project.as_ref() {
         controller.set_project_root(Some(files.root()))?;
     }
+    // The manifest's `[fonts]` the shell read (`flashtex.toml`), forwarded
+    // as `payload.fonts`; absent or null sends the unchanged legacy request.
+    controller.set_fonts(request_fonts(config.get("fonts"))?);
     let compiler_error = compiler.as_ref().and_then(|path| {
         let command = producer_command(path, &limits, controller.project_root());
         controller.restart(command, limits.clone()).err()
@@ -950,6 +964,13 @@ fn handle(
         }
         "compile" => {
             controller.compile_current()?;
+            Ok(json!({"submitted":true}))
+        }
+        // `{"fonts":{"text","sans","mono","math"}|null}`: the manifest's
+        // `[fonts]` changed (the Fonts sheet, an edit of flashtex.toml);
+        // every later request carries it and the current source recompiles.
+        "configure_fonts" => {
+            controller.configure_fonts(request_fonts(p.get("fonts"))?)?;
             Ok(json!({"submitted":true}))
         }
         "restart" => {

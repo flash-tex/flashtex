@@ -74,6 +74,8 @@ jobs:
           - flashtex-cli
           - preview-controller
           - project-files
+          - project-manifest
+          - font-discovery
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -123,6 +125,7 @@ jobs:
             crates/flashtex-cli
             crates/preview-controller
             crates/project-files
+            crates/project-manifest
           key: helpers
       - name: Build every bundled helper (release)
         # Prints FLASHTEX_<NAME>=<path> lines; the app and its tests read them.

@@ -10,12 +10,25 @@
 //! `FontSearch`); nothing is scanned or substituted silently — a missing
 //! Latin Modern file is a diagnostic and a `.notdef`-free failure, not a
 //! silent Times.
+//!
+//! **Named families** ([`Family::Named`]) are the third kind: any font
+//! installed on the machine or shipped with the project, selected by
+//! fontspec's `\setmainfont{Helvetica}` and friends (`crate::fontspec`) or
+//! the manifest's `[fonts]` table (`RenderOptions::fonts`). They are found
+//! through `flashtex_font_discovery`'s index (built lazily, on the first
+//! named lookup, so a document that names no font never scans a
+//! directory), loaded from their real file and face index, and shaped by
+//! font-engine from the OpenType tables alone (`hmtx`, `GPOS`/`kern`,
+//! `GSUB`): **no TFM**. A missing weight or style takes the nearest face
+//! and says so; a missing family takes Latin Modern and says so; nothing
+//! is substituted silently.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use flashtex_font_discovery::{FontFile, FontIndex};
 use flashtex_font_engine::core14::{Core14, Core14Face};
 use flashtex_font_engine::math::MathTable;
 use flashtex_font_engine::resolve::FontSearch;
@@ -104,6 +117,84 @@ pub enum Family {
     /// ...) laid out with the Latin Modern outlines, which draw the same
     /// Computer Modern designs. Math is unchanged (Latin Modern Math).
     ComputerModern,
+    /// An installed font family named by the document or the manifest
+    /// (`\setmainfont{Helvetica}`, `[fonts] text = "..."`), interned on the
+    /// [`FontSet`] ([`FontSet::intern_named`]) and resolved through the
+    /// discovery index. Math under a named family stays Latin Modern Math
+    /// until `\setmathfont` lands (`docs/proposals/font-system-math.md`).
+    Named(NamedId),
+}
+
+/// The interned identity of a [`NamedSpec`] on one [`FontSet`]: stable for
+/// the set's lifetime, equal for equal specs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct NamedId(pub u16);
+
+/// fontspec's `Scale=` option: a factor, or match the main font's
+/// lowercase (x-height) or uppercase (cap height) size (fontspec §4.3).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Scale {
+    Factor(f64),
+    MatchLowercase,
+    MatchUppercase,
+}
+
+impl Default for Scale {
+    fn default() -> Self {
+        Scale::Factor(1.0)
+    }
+}
+
+/// A named family and the fontspec options this pipeline honours for it
+/// (`\setmainfont[opts]{Family}`, `\newfontfamily\cmd[opts]{Family}`,
+/// `\fontspec[opts]{Family}`; `crate::fontspec` parses them).
+///
+/// `bold_font`/`italic_font`/`bold_italic_font` are fontspec's explicit
+/// face names for the shapes (`BoldFont=Helvetica Neue Medium`); when
+/// absent the family's own nearest face is used. `tex_ligatures` is
+/// `Ligatures=TeX` (on by default for `\setmainfont`, as fontspec does):
+/// `--`/`---`/quotes are the TeX ligatures the adapter already forms.
+/// `oldstyle_numbers` is `Numbers=OldStyle`: the face's GSUB `onum`
+/// substitutions, applied after shaping (`crate::shape::ShapeFlags`), as
+/// `\scshape` applies its `smcp`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NamedSpec {
+    pub family: String,
+    pub scale: Scale,
+    pub upright_font: Option<String>,
+    pub bold_font: Option<String>,
+    pub italic_font: Option<String>,
+    pub bold_italic_font: Option<String>,
+    pub oldstyle_numbers: bool,
+    pub tex_ligatures: bool,
+}
+
+impl NamedSpec {
+    pub fn new(family: &str) -> NamedSpec {
+        NamedSpec {
+            family: family.trim().to_string(),
+            scale: Scale::default(),
+            upright_font: None,
+            bold_font: None,
+            italic_font: None,
+            bold_italic_font: None,
+            oldstyle_numbers: false,
+            tex_ligatures: true,
+        }
+    }
+}
+
+/// A named face resolved for one series/shape: the face, and what was
+/// substituted on the way (reported once each by the typesetter).
+#[derive(Clone)]
+pub struct NamedResolution {
+    pub face: Rc<LoadedFace>,
+    /// The nearest weight or style was taken (`Georgia has no 600 weight;
+    /// Georgia Bold (700) used`).
+    pub substituted: Option<String>,
+    /// Small caps were requested; the face is the upright one because GSUB
+    /// `smcp` is not applied by the shaper.
+    pub caps_note: Option<String>,
 }
 
 /// Which typographic role a face plays; selects the design.
@@ -609,6 +700,51 @@ pub fn ot1_math_symbol_box(ch: char, bold: bool, size_pt: f64) -> Option<(f64, f
     Some((w * size_pt, h * size_pt, d * size_pt))
 }
 
+/// The `\fontdimen`s XeTeX gives a native (OpenType) font, which is what
+/// fontspec's interword glue is under XeLaTeX (xetex.web, `read_font_info`
+/// for a native font, and `XeTeX_ext.c`): `\fontdimen2` (space) is the
+/// advance of U+0020, stretch is half of it, shrink and extra space a
+/// third, the x-height is the `OS/2` `sxHeight` (the `x` glyph's height
+/// when the font does not declare it) and the quad is one em. As em
+/// fractions, so [`crate::params::TextParams::at`] scales them to the
+/// (possibly `Scale=`d) size. A font with no space glyph gets TeX's
+/// nominal third of an em.
+pub fn opentype_params(face: &LoadedFace) -> crate::params::TextParams {
+    let upem = f64::from(face.units_per_em.max(1));
+    let space = face
+        .face()
+        .glyph_id(' ')
+        .and_then(|g| face.face().advance(g).ok())
+        .map_or(1.0 / 3.0, |a| f64::from(a) / upem);
+    crate::params::TextParams {
+        space,
+        stretch: space / 2.0,
+        shrink: space / 3.0,
+        x_height: height_em(face, true),
+        quad: 1.0,
+        extra_space: space / 3.0,
+    }
+}
+
+/// The x-height (`lowercase`) or cap height of a face in em: the `OS/2`
+/// value when the font declares it, else the bounds of `x`/`H` (what
+/// fontspec's `Scale=MatchLowercase`/`MatchUppercase` measure through
+/// `\fontcharht`), else 0.
+pub fn height_em(face: &LoadedFace, lowercase: bool) -> f64 {
+    let upem = f64::from(face.units_per_em.max(1));
+    let m = face.face().vertical_metrics();
+    let declared = if lowercase { m.x_height_declared.then_some(m.x_height) } else { m.cap_height_declared.then_some(m.cap_height) };
+    if let Some(v) = declared.filter(|v| *v > 0) {
+        return f64::from(v) / upem;
+    }
+    let ch = if lowercase { 'x' } else { 'H' };
+    face.face()
+        .glyph_id(ch)
+        .map(|g| face.bounds(g, Some(ch)))
+        .filter(|b| !b.empty)
+        .map_or(0.0, |b| f64::from(b.y_max) / upem)
+}
+
 /// Glyph extents in font units: `[x_min, y_min, x_max, y_max]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Bounds {
@@ -621,9 +757,11 @@ pub struct Bounds {
 }
 
 pub enum FaceKind {
-    /// An OpenType program parsed by font-engine plus this crate's CFF
-    /// charstring reader for glyph bounds.
-    Otf { face: TrueTypeFace, cff: Cff },
+    /// An OpenType program parsed by font-engine plus, for `CFF ` outlines,
+    /// this crate's charstring reader for glyph bounds. `cff` is `None` for
+    /// a `glyf` face (a system TrueType font selected by name), whose
+    /// bounds come from each glyph's `glyf` header instead.
+    Otf { face: TrueTypeFace, cff: Option<Cff> },
     Core14(Core14Face),
 }
 
@@ -650,6 +788,12 @@ pub struct LoadedFace {
     /// `core14-afm` (metrics only, no program).
     pub format: &'static str,
     pub path: Option<PathBuf>,
+    /// The face within a `.ttc` collection (0 for a single-face file and
+    /// for every face the explicit-file-name path loads). Published on the
+    /// wire as `fonts[].face_index`; for a member other than the first the
+    /// `font_id` is font-engine's content hash (bytes ‖ index) so two faces
+    /// of one collection never share an id.
+    pub face_index: u32,
     /// The TeX metrics pdfTeX lays this face out with (`ec-lm*.tfm`), when
     /// found; shaping then takes widths/kerns/ligatures/heights from here.
     pub tfm: Option<Rc<Tfm>>,
@@ -664,6 +808,9 @@ pub struct LoadedFace {
     /// Modern (`ec-lm*`) TFM was attached instead (reported once).
     pub metrics_fallback: Option<String>,
     bounds_cache: RefCell<BTreeMap<u16, Bounds>>,
+    /// `GSUB` single-substitution maps by feature tag (`smcp`, `onum`),
+    /// parsed on first request; `None` when the face has no such feature.
+    feature_maps: RefCell<BTreeMap<[u8; 4], Option<Rc<BTreeMap<u16, u16>>>>>,
 }
 
 impl LoadedFace {
@@ -699,6 +846,24 @@ impl LoadedFace {
         flashtex_paragraph_layout::FontId(self.sha256)
     }
 
+    /// The face's `GSUB` single substitutions for feature `tag` (glyph ->
+    /// glyph): `smcp` for small capitals, `onum` for old-style figures.
+    /// `None` when the face has no `GSUB` or no such feature (or is a Core
+    /// 14 metric set), so a caller can say the feature is not applied.
+    pub fn feature_map(&self, tag: &[u8; 4]) -> Option<Rc<BTreeMap<u16, u16>>> {
+        if let Some(m) = self.feature_maps.borrow().get(tag) {
+            return m.clone();
+        }
+        let map = self
+            .otf()
+            .and_then(|f| f.table(b"GSUB"))
+            .and_then(|g| crate::mathfont::single_substitutions(g, tag).ok())
+            .filter(|m| !m.is_empty())
+            .map(Rc::new);
+        self.feature_maps.borrow_mut().insert(*tag, map.clone());
+        map
+    }
+
     /// Glyph extents in font units. CFF faces use the real charstring
     /// bounds; Core 14 faces (no outlines available) use class-based
     /// approximations from the AFM header, stated in README.
@@ -708,10 +873,19 @@ impl LoadedFace {
         }
         let b = match &self.kind {
             FaceKind::Otf { face, cff } => {
-                let bb = face
-                    .cff_table()
-                    .and_then(|t| cff.glyph_bbox(t, gid.0).ok())
-                    .and_then(|(bb, _)| cff::round_bbox(bb));
+                let bb = match cff {
+                    Some(cff) => face
+                        .cff_table()
+                        .and_then(|t| cff.glyph_bbox(t, gid.0).ok())
+                        .and_then(|(bb, _)| cff::round_bbox(bb)),
+                    // `glyf`: every non-empty glyph, simple or composite,
+                    // opens with numberOfContours, xMin, yMin, xMax, yMax
+                    // (OpenType 1.9 §5.3.2); an empty glyph has no data.
+                    None => face.glyph_data(gid).ok().filter(|g| g.len() >= 10).map(|g| {
+                        let at = |i: usize| i32::from(i16::from_be_bytes([g[i], g[i + 1]]));
+                        [at(2), at(4), at(6), at(8)]
+                    }),
+                };
                 match bb {
                     Some([x0, y0, x1, y1]) => Bounds {
                         x_min: x0,
@@ -775,6 +949,19 @@ pub struct FontSet {
     /// Shaped words, keyed by (face, text); shaping is size-independent and
     /// a keystroke changes one word, so this outlives requests. Bounded.
     shaper: crate::shape::Shaper,
+    /// The directories the discovery index scans for named families
+    /// (`flashtex_font_discovery::scan_dirs`), and the index itself, built
+    /// on the first named lookup and kept for the set's lifetime. A
+    /// document that names no font never touches it.
+    index_dirs: RefCell<Vec<PathBuf>>,
+    /// `with_index_dirs` was called: the list is the caller's and
+    /// `set_project_root` leaves it alone (hermetic tests, explicit CLIs).
+    index_dirs_explicit: bool,
+    index: RefCell<Option<Rc<FontIndex>>>,
+    /// Interned named-family specs, by [`NamedId`].
+    named: RefCell<Vec<NamedSpec>>,
+    /// Named faces resolved so far, by (id, bold, italic).
+    named_faces: RefCell<BTreeMap<(u16, bool, bool), Result<NamedResolution, String>>>,
 }
 
 pub struct Resolved {
@@ -787,6 +974,17 @@ pub struct Resolved {
     /// (no Latin Modern design exists, or its file is not installed) while
     /// the metrics are the requested ones; the caller reports it once.
     pub note: Option<String>,
+    /// Set when a named family ([`Family::Named`]) was not found in the
+    /// index (or its file failed to load): the face is Latin Modern's for
+    /// the same shape, and the caller reports this once as a warning
+    /// naming the family and the directories searched.
+    pub family_missing: Option<String>,
+}
+
+impl Resolved {
+    fn plain(face: Rc<LoadedFace>) -> Resolved {
+        Resolved { face, substituted: None, note: None, family_missing: None }
+    }
 }
 
 impl FontSet {
@@ -853,12 +1051,73 @@ impl FontSet {
             required_flat: RefCell::new(false),
             tfms: RefCell::new(BTreeMap::new()),
             shaper: crate::shape::Shaper::new(),
+            // Named families: the override directories, then the OS
+            // defaults (`scan_dirs`); a project's `fonts/` is added per
+            // render by `set_project_root`. Scanned lazily.
+            index_dirs: RefCell::new(flashtex_font_discovery::scan_dirs(None)),
+            index_dirs_explicit: false,
+            index: RefCell::new(None),
+            named: RefCell::new(Vec::new()),
+            named_faces: RefCell::new(BTreeMap::new()),
         }
     }
 
     /// The shaping cache shared by every request on this font set.
     pub fn shaper(&self) -> &crate::shape::Shaper {
         &self.shaper
+    }
+
+    /// Replaces the directories named families are discovered in (tests
+    /// and hermetic callers; the default is `scan_dirs(None)`). Drops any
+    /// index and named faces already built.
+    pub fn with_index_dirs(mut self, dirs: Vec<PathBuf>) -> FontSet {
+        *self.index_dirs.borrow_mut() = dirs;
+        self.index_dirs_explicit = true;
+        *self.index.borrow_mut() = None;
+        self.named_faces.borrow_mut().clear();
+        self
+    }
+
+    /// Adds the project's own `fonts/` directory (when it exists) ahead of
+    /// the OS defaults, the way `flashtex_font_discovery::scan_dirs` composes
+    /// it. Called by `render` with `RenderOptions::project_root`; a change
+    /// of project drops the index so the new project's fonts are seen. A
+    /// set built with an explicit directory list keeps it.
+    pub fn set_project_root(&self, root: Option<&Path>) {
+        if self.index_dirs_explicit {
+            return;
+        }
+        let dirs = flashtex_font_discovery::scan_dirs(root);
+        if *self.index_dirs.borrow() != dirs {
+            *self.index_dirs.borrow_mut() = dirs;
+            *self.index.borrow_mut() = None;
+            self.named_faces.borrow_mut().clear();
+        }
+    }
+
+    /// The discovery index, scanned on first use.
+    pub fn index(&self) -> Rc<FontIndex> {
+        if let Some(i) = &*self.index.borrow() {
+            return i.clone();
+        }
+        let index = Rc::new(FontIndex::scan(&self.index_dirs.borrow()));
+        *self.index.borrow_mut() = Some(index.clone());
+        index
+    }
+
+    /// Interns a named-family spec: the same spec gets the same id.
+    pub fn intern_named(&self, spec: &NamedSpec) -> NamedId {
+        let mut named = self.named.borrow_mut();
+        if let Some(i) = named.iter().position(|s| s == spec) {
+            return NamedId(i as u16);
+        }
+        named.push(spec.clone());
+        NamedId((named.len() - 1) as u16)
+    }
+
+    /// The spec behind an id (`None` for an id this set never issued).
+    pub fn named_spec(&self, id: NamedId) -> Option<NamedSpec> {
+        self.named.borrow().get(usize::from(id.0)).cloned()
     }
 
     /// The `texmf-dist` roots implied by the TFM directories
@@ -1007,11 +1266,10 @@ impl FontSet {
     pub fn resolve(&self, family: Family, role: Role, size_pt: f64) -> Resolved {
         let key = role.key();
         if family == Family::Times && key.is_some() {
-            return Resolved {
-                face: self.core14(Self::core14_for(role)),
-                substituted: None,
-                note: None,
-            };
+            return Resolved::plain(self.core14(Self::core14_for(role)));
+        }
+        if let (Family::Named(id), Some(key)) = (family, key) {
+            return self.resolve_named(id, key, size_pt);
         }
         let file = Self::latin_modern_file(role, size_pt);
         let note = key.and_then(|k| latin_modern_outline(k, size_pt).1).map(|n| format!("{file}: {n}"));
@@ -1021,7 +1279,7 @@ impl FontSet {
             None => self.otf(&file),
         };
         let reason = match loaded {
-            Ok(f) => return Resolved { face: f, substituted: None, note },
+            Ok(f) => return Resolved { note, ..Resolved::plain(f) },
             Err(reason) => reason,
         };
         if let Some(key) = key {
@@ -1031,21 +1289,172 @@ impl FontSet {
                 let metrics = ec.clone().or_else(|| latin_modern_tfm(file.trim_end_matches(".otf")));
                 if let Ok(face) = self.otf_with_tfm(&roman_file, metrics.as_deref()) {
                     return Resolved {
-                        face,
-                        substituted: None,
                         note: Some(format!(
                             "{file}: {reason}; outlines drawn from {roman_file} with the {} metrics",
                             metrics.as_deref().unwrap_or("OpenType")
                         )),
+                        ..Resolved::plain(face)
                     };
                 }
             }
         }
         Resolved {
-            face: self.core14(Self::core14_for(role)),
             substituted: Some(format!("{file}: {reason}")),
-            note: None,
+            ..Resolved::plain(self.core14(Self::core14_for(role)))
         }
+    }
+
+    /// A named family for an NFSS shape: the family's face at weight 700
+    /// (`bx`/`b`) or 400 and the shape's slant, through the index, or the
+    /// explicit `BoldFont=`/`ItalicFont=`/`BoldItalicFont=` name when the
+    /// spec gives one (fontspec §4.1: those name a font, matched here by
+    /// family, full or PostScript name). Small caps are not applied (GSUB
+    /// `smcp` is not in the shaper): the same-weight upright or slanted
+    /// face is used and the note says so. A family the index does not
+    /// have falls back to Latin Modern's face for the same shape with
+    /// [`Resolved::family_missing`] set.
+    fn resolve_named(&self, id: NamedId, key: FontKey, size_pt: f64) -> Resolved {
+        let latin_modern = |this: &FontSet| this.resolve(Family::LatinModern, Role::Font(key), size_pt);
+        let Some(spec) = self.named_spec(id) else {
+            return Resolved { family_missing: Some(format!("named family #{} was never interned on this font set", id.0)), ..latin_modern(self) };
+        };
+        let (bold, italic) = (key.bold(), key.slanted());
+        let cache_key = (id.0, bold, italic);
+        let cached = self.named_faces.borrow().get(&cache_key).cloned();
+        let result = match cached {
+            Some(r) => r,
+            None => {
+                let r = self.load_named(&spec, bold, italic);
+                self.named_faces.borrow_mut().insert(cache_key, r.clone());
+                r
+            }
+        };
+        match result {
+            Ok(r) => {
+                // Small caps are the face's own `smcp` substitutions
+                // (`crate::shape`, `ShapeFlags::SMALL_CAPS`); a face without
+                // the feature sets the full-size letters and says so.
+                let caps = (matches!(key.shape, Shape::Sc | Shape::Scit | Shape::Scsl) && r.face.feature_map(b"smcp").is_none()).then(|| {
+                    format!(
+                        "{}: \\scshape asks for small caps but {} has no GSUB `smcp` feature; the {} face is used as is",
+                        spec.family,
+                        r.face.name,
+                        if italic { "italic" } else { "upright" }
+                    )
+                });
+                // Both notes go through `note`; the typesetter keys its
+                // once-only report on the text, so each is reported once.
+                let note = match (r.substituted, caps) {
+                    (Some(s), Some(c)) => Some(format!("{s}; {c}")),
+                    (s, c) => s.or(c),
+                };
+                Resolved { note, ..Resolved::plain(r.face) }
+            }
+            Err(reason) => Resolved { family_missing: Some(reason), ..latin_modern(self) },
+        }
+    }
+
+    /// Finds and loads the face of `spec` for a weight and slant.
+    fn load_named(&self, spec: &NamedSpec, bold: bool, italic: bool) -> Result<NamedResolution, String> {
+        let index = self.index();
+        let weight = if bold { 700 } else { 400 };
+        let explicit = match (bold, italic) {
+            (true, true) => spec.bold_italic_font.as_deref(),
+            (true, false) => spec.bold_font.as_deref(),
+            (false, true) => spec.italic_font.as_deref(),
+            (false, false) => spec.upright_font.as_deref(),
+        };
+        let (m, explicit_name) = match explicit.and_then(|name| index.find_match(name, weight, italic).map(|m| (m, Some(name)))) {
+            Some(found) => found,
+            None => {
+                let m = index.find_match(&spec.family, weight, italic).ok_or_else(|| {
+                    format!(
+                        "font family \"{}\" not found among the {} faces indexed in {}",
+                        spec.family,
+                        index.files().len(),
+                        index.dirs().iter().map(|d| d.display().to_string()).collect::<Vec<_>>().join(", ")
+                    )
+                })?;
+                (m, None)
+            }
+        };
+        let face = self.load_file(m.file)?;
+        let substituted = if m.exact() {
+            None
+        } else {
+            let asked = match (bold, italic) {
+                (true, true) => "bold italic (700)",
+                (true, false) => "bold (700)",
+                (false, true) => "italic (400)",
+                (false, false) => "regular (400)",
+            };
+            Some(format!(
+                "{}: no {asked} face{}; {} (weight {}{}) used",
+                spec.family,
+                explicit_name.map(|n| format!(" named \"{n}\"")).unwrap_or_default(),
+                m.file.info.full_name,
+                m.file.info.weight,
+                if m.file.info.italic { ", italic" } else { "" }
+            ))
+        };
+        Ok(NamedResolution { face, substituted, caps_note: None })
+    }
+
+    /// Loads one indexed file/face (once; later calls return the same
+    /// `Rc`). Both outline formats are accepted: `CFF ` faces get this
+    /// crate's charstring bounds, `glyf` faces their glyph headers.
+    pub fn load_file(&self, file: &FontFile) -> Result<Rc<LoadedFace>, String> {
+        let name = file.display_name();
+        if let Some(existing) = self.by_name(&name) {
+            return Ok(existing);
+        }
+        let key = format!("{}#{}", file.path.display(), file.face_index);
+        if let Some(reason) = self.failures.borrow().get(&key) {
+            return Err(reason.clone());
+        }
+        let fail = |reason: String| -> String {
+            self.failures.borrow_mut().insert(key.clone(), reason.clone());
+            reason
+        };
+        let face = flashtex_font_engine::load_from_path_index(&file.path, file.face_index).map_err(|e| fail(format!("{}: {e}", file.path.display())))?;
+        let (format, cff) = match face.outlines() {
+            Outlines::Cff => {
+                let table = face.cff_table().ok_or_else(|| fail("OTTO face without CFF table".into()))?;
+                let cff = Cff::parse(table).map_err(|e| fail(format!("CFF: {e}")))?;
+                if cff.num_glyphs() != usize::from(face.num_glyphs()) {
+                    return Err(fail(format!("CFF has {} charstrings but maxp says {}", cff.num_glyphs(), face.num_glyphs())));
+                }
+                ("opentype-cff", Some(cff))
+            }
+            Outlines::Glyf => ("static-truetype", None),
+        };
+        // The wire id is the raw file's digest for face 0 (what every
+        // explicit-file face publishes); another member of a collection
+        // takes font-engine's bytes ‖ index hash so the two never collide.
+        let sha = if file.face_index == 0 { sha256::digest(face.program()) } else { face.id().content_sha256 };
+        let engine_id = sha256::hex(&face.id().content_sha256);
+        let loaded = LoadedFace {
+            font_id: Rc::from(sha256::hex(&sha)),
+            engine_id,
+            name: name.clone(),
+            sha256: sha,
+            byte_length: face.program().len() as u64,
+            units_per_em: u32::from(face.units_per_em()),
+            glyph_count: u32::from(face.num_glyphs()),
+            postscript_name: face.postscript_name().to_string(),
+            format,
+            path: Some(file.path.clone()),
+            face_index: file.face_index,
+            kind: FaceKind::Otf { face, cff },
+            tfm: None,
+            tfm_missing: None,
+            tfm_status: TfmStatus::Missing("named family: OpenType metrics by design".into()),
+            shape_key: Rc::from(sha256::hex(&sha)),
+            metrics_fallback: None,
+            bounds_cache: RefCell::new(BTreeMap::new()),
+            feature_maps: RefCell::new(BTreeMap::new()),
+        };
+        Ok(self.insert(name, loaded))
     }
 
     fn core14(&self, which: Core14) -> Rc<LoadedFace> {
@@ -1071,6 +1480,7 @@ impl FontSet {
             postscript_name: f.postscript_name().to_string(),
             format: "core14-afm",
             path: None,
+            face_index: 0,
             kind: FaceKind::Core14(f),
             tfm: None,
             tfm_missing: None,
@@ -1078,6 +1488,7 @@ impl FontSet {
             shape_key: Rc::from(sha256::hex(&sha)),
             metrics_fallback: None,
             bounds_cache: RefCell::new(BTreeMap::new()),
+            feature_maps: RefCell::new(BTreeMap::new()),
         };
         self.insert(name, loaded)
     }
@@ -1181,7 +1592,8 @@ impl FontSet {
             postscript_name: face.postscript_name().to_string(),
             format,
             path: Some(path),
-            kind: FaceKind::Otf { face, cff },
+            face_index: 0,
+            kind: FaceKind::Otf { face, cff: Some(cff) },
             tfm,
             tfm_missing,
             tfm_status,
@@ -1191,6 +1603,7 @@ impl FontSet {
             },
             metrics_fallback,
             bounds_cache: RefCell::new(BTreeMap::new()),
+            feature_maps: RefCell::new(BTreeMap::new()),
         };
         Ok(self.insert(name, loaded))
     }

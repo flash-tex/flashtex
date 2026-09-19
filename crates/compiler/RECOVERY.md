@@ -857,14 +857,13 @@ Status: `recovered`
 
 Diagnostics:
 
-- `\bogus is not supported in math mode` — recovery: `typeset the command literally and continued`; byte range: `11..17`
+- `\bogus is not supported in math mode` — recovery: `skipped the command and continued`; byte range: `11..17`
 
 Positioned text items:
 
 - `Visible` — byte range `0..7`
 - `x` — byte range `9..10`
 - `+` — byte range `10..11`
-- `\bogus` — byte range `11..17`
 - `Tail.` — byte range `19..24`
 
 ## missing math argument

@@ -136,6 +136,51 @@ fn arms(text: &str) -> BTreeSet<String> {
     out
 }
 
+/// Command names the tabular row scanner (`src/parser/tabular.rs`) handles
+/// itself, outside `Parser::command`: the rule arms (`is_rule_command`),
+/// the longtable/colortbl arms (`is_table_command`), the cell strippers
+/// (`strip_cell_commands`, `extract_column_color`) and the `command == ".."`
+/// guards of the row loop (`\multicolumn`, `\tabularnewline`; `\begin` and
+/// `\end` only track nesting depth there and are inventoried with the
+/// parser arms). Scanned from the source like the parser arms above, so a
+/// new row-scanner command without an inventory entry fails here.
+fn table_commands(text: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    // `is_rule_command` and the `is_table_command` gate are free functions;
+    // the cell strippers are methods, whose own closing brace is indented
+    // one level. (The gate's arms mirror `table_command`, which consumes
+    // what the gate admits, so scanning the gate covers both.)
+    for (start, end) in [
+        ("fn is_rule_command(", "\n}\n"),
+        ("fn is_table_command(", "\n}\n"),
+        ("fn strip_cell_commands(", "\n    }\n"),
+        ("fn extract_column_color(", "\n    }\n"),
+    ] {
+        out.extend(quoted(region(text, start, end), false));
+    }
+    // `command == "multicolumn"` guards of the row loop. (`begin`/`end`
+    // only track nesting depth there and are inventoried with the parser
+    // arms, as are the other guards this scan picks up.) Only the row
+    // loop names its token `command`; the `name == ".."` checks elsewhere
+    // (environment and column-spec dispatch) are inventoried separately.
+    for line in text.lines() {
+        let mut rest = line;
+        while let Some(found) = rest.find("command == \"") {
+            rest = &rest[found + "command == \"".len()..];
+            if let Some(end) = rest.find('"') {
+                let name = &rest[..end];
+                if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphabetic()) {
+                    out.insert(name.to_string());
+                }
+                rest = &rest[end..];
+            } else {
+                break;
+            }
+        }
+    }
+    out
+}
+
 fn quoted(text: &str, allow_star: bool) -> BTreeSet<String> {
     text.split('"')
         .skip(1)
@@ -178,6 +223,13 @@ fn text_inventory_equals_the_parser_arms() {
             "{diagnostic_only} arm moved"
         );
     }
+    // Table rules, spans and colours never reach `Parser::command`: the
+    // tabular row scanner (`src/parser/tabular.rs`) consumes them first.
+    // They are inventoried with the text commands (see `TEXT_EXTRA_ARMS`),
+    // so the expected set scans those arms too.
+    expected.extend(table_commands(&read(
+        crate_dir().join("src/parser/tabular.rs"),
+    )));
     // Expansion-pass commands are executed by `crate::expansion`'s engine and
     // never reach a parser arm; the behaviour probes below still compile each
     // one and require that it is not diagnosed as unsupported.
@@ -225,6 +277,16 @@ fn environment_and_package_inventory_equals_the_parser_arms() {
     // `thebibliography`'s arm sets its heading text, not an environment name.
     expected.remove("References");
     expected.extend(arms(region(&parser, "fn paragraph_style(", "\n}\n")));
+    // `longtable` has no arm in `environment`: `package_table_environment`
+    // in `src/parser/tabular.rs` takes it when the package is loaded.
+    expected.extend(quoted(
+        region(
+            &read(crate_dir().join("src/parser/tabular.rs")),
+            "fn package_table_environment(",
+            "\n    }\n",
+        ),
+        true,
+    ));
     let inventory = supported::inventory();
     let actual: BTreeSet<String> = inventory
         .environments
@@ -378,6 +440,33 @@ fn text_probe(name: &str, arguments: &str) -> String {
         "sout" => "\\usepackage{ulem}\\sout{x}".into(),
         "so" => "\\usepackage{soul}\\so{x}".into(),
         "hl" => "\\usepackage{soul}\\hl{x}".into(),
+        // Table rules, spans and colours only exist inside a table: probe
+        // each where TeX allows it, with the package that defines it.
+        "hline" => "\\begin{tabular}{cc}a&b\\\\\\hline c&d\\end{tabular}".into(),
+        "cline" => "\\begin{tabular}{cc}a&b\\\\\\cline{1-2}c&d\\end{tabular}".into(),
+        "multicolumn" => "\\begin{tabular}{cc}\\multicolumn{2}{c}{x}\\\\a&b\\end{tabular}".into(),
+        "tabularnewline" => "\\begin{tabular}{cc}a&b\\tabularnewline c&d\\end{tabular}".into(),
+        "toprule" | "midrule" | "bottomrule" => format!(
+            "\\usepackage{{booktabs}}\\begin{{tabular}}{{cc}}\\{name} a&b\\\\c&d\\\\\\bottomrule\\end{{tabular}}"
+        ),
+        "cmidrule" => "\\usepackage{booktabs}\\begin{tabular}{cc}\\toprule a&b\\\\\\cmidrule{1-1}c&d\\end{tabular}".into(),
+        "addlinespace" => "\\usepackage{booktabs}\\begin{tabular}{cc}a&b\\\\\\addlinespace c&d\\end{tabular}".into(),
+        "specialrule" => "\\usepackage{booktabs}\\begin{tabular}{cc}a&b\\\\\\specialrule{1pt}{0pt}{0pt}c&d\\end{tabular}".into(),
+        "morecmidrules" => "\\usepackage{booktabs}\\begin{tabular}{cc}a&b\\\\\\cmidrule{1-1}\\morecmidrules\\cmidrule{2-2}c&d\\end{tabular}".into(),
+        "multirow" => "\\usepackage{multirow}\\begin{tabular}{cc}\\multirow{2}{*}{x}&b\\\\c&d\\end{tabular}".into(),
+        "rowcolor" => "\\usepackage{colortbl}\\begin{tabular}{cc}\\rowcolor{red}a&b\\\\c&d\\end{tabular}".into(),
+        "cellcolor" => "\\usepackage{colortbl}\\begin{tabular}{cc}\\cellcolor{red}x&b\\\\c&d\\end{tabular}".into(),
+        "columncolor" => "\\usepackage{colortbl}\\begin{tabular}{>{\\columncolor{red}}cc}a&b\\\\c&d\\end{tabular}".into(),
+        "kill" => "\\usepackage{longtable}\\begin{longtable}{cc}a&b\\\\\\kill c&d\\end{longtable}".into(),
+        "endfirsthead" | "endhead" | "endfoot" | "endlastfoot" => format!(
+            "\\usepackage{{longtable}}\\begin{{longtable}}{{cc}}a&b\\\\\\{name}c&d\\end{{longtable}}"
+        ),
+        // Expansion-pass commands need their real argument shape.
+        "arabic" | "roman" | "Roman" | "alph" => {
+            format!("\\section{{S}}\\{name}{{section}}")
+        }
+        "newif" => "\\newif\\iffoo\\footrue\\iffoo x\\fi".into(),
+        "verb" => "x\\verb|y|z".into(),
         _ => with_arguments(name, arguments, "1pt"),
     }
 }
@@ -474,6 +563,18 @@ fn every_inventory_entry_compiles_without_an_unsupported_diagnostic() {
             Mode::Text if supported::BEAMER_OVERLAY_ENVIRONMENTS.contains(&e.name) => (
                 BEAMER_DOCUMENT.replace('#', &format!("\\begin{{{0}}}<2>a\\end{{{0}}}", e.name)),
                 format!("environment '{}' is not implemented", e.name),
+            ),
+            // `longtable` exists only with its package and takes a column
+            // specification, like `tabular`.
+            Mode::Text if e.name == "longtable" => (
+                "\\usepackage{longtable}\\begin{longtable}{cc}a&b\\end{longtable}".into(),
+                "environment 'longtable' is not implemented".to_string(),
+            ),
+            // `tabularx` likewise exists only with its package, and takes a
+            // target width before the column specification (#901).
+            Mode::Text if e.name == "tabularx" => (
+                "\\usepackage{tabularx}\\begin{tabularx}{\\linewidth}{cX}a&b\\end{tabularx}".into(),
+                "environment 'tabularx' is not implemented".to_string(),
             ),
             Mode::Text => (
                 format!(

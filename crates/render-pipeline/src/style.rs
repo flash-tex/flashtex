@@ -184,6 +184,14 @@ pub struct Stylesheet {
     /// stylesheet built without a document, or a document outside the
     /// pdfLaTeX `utf8` world). The adapter sets it.
     pub input: Option<crate::inputenc::InputSetup>,
+    /// Named font families the document or the manifest selected
+    /// (`crate::fontspec`): the specs, and which of them each family slot
+    /// (`\rmdefault`/`\sfdefault`/`\ttdefault`) defaults to. They are
+    /// layered over [`Stylesheet::family`], which stays the class family
+    /// (Latin Modern / Times / Computer Modern) every class-level metric
+    /// -- `em`/`ex` of preamble lengths, math -- is still read from. Empty
+    /// for a document that names no font.
+    pub fontspec: crate::fontspec::Settings,
 }
 
 impl Stylesheet {
@@ -248,6 +256,10 @@ impl Stylesheet {
             nfss: match family {
                 Family::LatinModern => crate::nfss::Scheme::LmT1,
                 Family::ComputerModern | Family::Times => crate::nfss::Scheme::CmT1,
+                // Never the stylesheet's own family (named families are
+                // layered over it, see `fontspec`); the T1 scheme is the
+                // encoding-neutral choice should one arrive here.
+                Family::Named(_) => crate::nfss::Scheme::LmT1,
             },
             base,
             page_width_pt: page.paper_width.0,
@@ -302,6 +314,7 @@ impl Stylesheet {
             columns: crate::columns::ColumnMode::default(),
             microtype: None,
             input: None,
+            fontspec: crate::fontspec::Settings::default(),
         }
     }
 

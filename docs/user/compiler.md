@@ -52,10 +52,12 @@ Any editor or CI can drive that same JSON Lines protocol directly — see
 ## Subcommands
 
 ```
-flashtex build <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
-               [--v2 out.json] [--timing] [--verbose] [--strict] [--json] [-j N]
-flashtex check <main.tex> [--json] [--strict] [--project-root DIR] [--font-dir DIR]...
-flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
+flashtex build [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
+               [--font ROLE=NAME]... [--v2 out.json] [--timing] [--verbose] [--strict] [--json] [-j N]
+flashtex check [<main.tex>|<dir>] [--json] [--strict] [--project-root DIR] [--font-dir DIR]...
+flashtex watch [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
+flashtex manifest init [<main.tex>|<dir>] [--force]
+flashtex manifest show [<main.tex>|<dir>] [--json]
 flashtex supported [--json|--md|--coverage]
 flashtex worker [--font-dir DIR]... [--project-root DIR] [--v2 out.json] [--pdf out.pdf] [--timing]
 flashtex fonts [--font-dir DIR]... [--json]
@@ -65,8 +67,12 @@ flashtex --version | --help
 
 ### `build`
 
-Typesets a project and writes a PDF. The entry file's directory is the
-**project root** unless `--project-root` says otherwise; every `\input` and
+Typesets a project and writes a PDF. The entry is a `.tex` file, a
+directory, or nothing (the current directory): a directory needs a
+[`flashtex.toml`](project-manifest.md) naming `[project] entry`, or exactly
+one `.tex` file in it — two or none is a usage error, never a guess. The
+entry file's directory is the **project root** — the manifest's directory
+when there is one — unless `--project-root` says otherwise; every `\input` and
 `\include` is resolved from that root (project-relative, `.tex` appended when
 missing), read through a rooted directory handle so no include can reach
 outside the root through `..` or a symlink, and cycles and missing files are
@@ -82,8 +88,8 @@ output as *File › Export PDF* in the app. The file is written atomically
 
 | Flag | Meaning | Default |
 |---|---|---|
-| `-o`, `--output FILE` | The PDF to write | `<main>.pdf` next to the entry file |
-| `--project-root DIR` | Root that includes and images resolve under; the entry must be inside it | the entry file's directory |
+| `-o`, `--output FILE` | The PDF to write | `<main>.pdf` next to the entry file, or in the manifest's `[project] output` directory when set |
+| `--project-root DIR` | Root that includes and images resolve under; the entry must be inside it | the manifest's directory, else the entry file's |
 | `--font-dir DIR` | Extra font directory, probed first (repeatable) | — |
 | `--v2 FILE` | Also write the rendering-v2 `display_list` envelope (images included) — the input of `flashtex-pdf-exact from-v2` and of *File › Open Display List (v2)…* | off |
 | `--timing` | One line on stderr: `render N ms (P passes), pdf N ms, total N ms` | off |
@@ -93,6 +99,7 @@ output as *File › Export PDF* in the app. The file is written atomically
 | `-j`, `--jobs N` | Accepted for build-system compatibility; the engine is single-threaded | — |
 | `--class-options OPTS` | Class options assumed when the source has no `\documentclass` (body-only input) | `12pt` |
 | `--secnumdepth N` | Section numbering depth when the source does not set the counter | `2` |
+| `--font ROLE=NAME` | The installed family for a role — `text`, `sans`, `mono` or `math` (repeatable). Outranks the manifest's [`[fonts]`](project-manifest.md#keys) table for that role; the document's own `\setmainfont` still wins | the manifest, else the class fonts |
 
 ### `check`
 
@@ -108,6 +115,19 @@ picked up) every `--interval` milliseconds (default 250, minimum 20) and
 rebuilds when a size or modification time changes, printing which files
 changed, the rebuild number and the timing line each time. Ctrl-C stops it;
 because outputs are written atomically nothing is left half-written.
+
+### `manifest`
+
+`flashtex manifest init [<main.tex>|<dir>] [--force]` writes the commented
+[`flashtex.toml`](project-manifest.md) template next to the entry (naming
+the actual entry: the file given, or the directory's only `.tex`), refusing
+to overwrite an existing one unless `--force`. `flashtex manifest show
+[<main.tex>|<dir>] [--json]` prints the manifest that governs the entry —
+the defaults when there is none — with each `texinputs` entry classified
+(`inside` the root, `outside` and mounted at `texinputs/<i>/`, or
+`invalid` with the reason) and every warning; `--json` is the
+`flashtex-manifest/1` document (`entry`, `path`, `exists`, `manifest`,
+`texinputs`, `warnings`).
 
 ### `supported`
 
@@ -217,7 +237,11 @@ paper/
 `flashtex build paper/main.tex` uses `paper/` as the root, sends `main.tex`
 plus both sections to the engine (entry first, depth-first order — the
 `documents` list of the report and of the `--v2` envelope), and attributes
-each diagnostic to the file it came from. `--project-root` may be a parent
+each diagnostic to the file it came from. A [`flashtex.toml`](project-manifest.md)
+in `paper/` can name the entry (so `flashtex build paper` works) and add
+`texinputs` directories whose `.sty`/`.cls`/`.tex`/`.bib`/`.def`/`.clo`
+files follow the closure in the `documents` list; without one, nothing
+changes. `--project-root` may be a parent
 directory when the entry lives in a subfolder (`flashtex build
 --project-root . paper/main.tex`); a path that escapes the root, a cycle or a
 missing file is an error diagnostic (`path_escapes_root`, `include_cycle`,
@@ -300,7 +324,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 442 text-mode and 573 math-mode command entries, 80 environments and 31 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 477 text-mode and 574 math-mode command entries, 85 environments and 39 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -308,7 +332,7 @@ Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test
 
 | Canonical set | Commands supported | Environments supported |
 | --- | ---: | ---: |
-| kernel | 218/410 (53.2%) | 22/30 (73.3%) |
+| kernel | 222/410 (54.1%) | 22/30 (73.3%) |
 | amsmath | 46/102 (45.1%) | 17/21 (81.0%) |
 | amssymb | 225/229 (98.3%) | none defined |
 | enumitem | 1/17 (5.9%) | none defined |
@@ -318,7 +342,7 @@ Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test
 | tikz | 0/43 (0.0%) | 0/2 (0.0%) |
 | xcolor | 14/71 (19.7%) | none defined |
 | siunitx | 20/240 (8.3%) | none defined |
-| **total** | **572/1314 (43.5%)** | |
+| **total** | **576/1314 (43.8%)** | |
 
 Generated by `flashtex-compiler --supported coverage` against `crates/compiler/supported/canonical-latex.tsv` (LaTeX2e reference-manual index and package sources, each name confirmed by pdfLaTeX; TeX Live 2026). The total row counts commands and environments together. Supported means handled without an unsupported diagnostic, not typographic parity.
 
@@ -447,8 +471,11 @@ Canonical sources:
 | `\hrulefill` |  | \hfill filled with a 0.4pt baseline rule (latex.ltx \leaders\hrule\hfill) |
 | `\dotfill` |  | \hfill filled with dots in 0.44em boxes, centred (latex.ltx \cleaders) |
 | `\hfil` |  | infinite-stretch horizontal glue (same order as \hfill) |
+| `\qedhere` |  | amsthm end-of-proof box on this line, flush right; the automatic box at \end{proof} is suppressed |
 | `\hspace` | `{dimension}` | fixed horizontal space; starred form identical |
 | `\hskip` | `<glue>` | TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll |
+| `\pdfgentounicode` |  | pdfTeX glyph-to-Unicode switch: accepted no-op, copy-paste metadata with no visible output |
+| `\pdfglyphtounicode` | `{name}{hex}` | pdfTeX glyph-to-Unicode mapping: accepted no-op, copy-paste metadata with no visible output |
 | `\strut` |  | zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \strutbox) |
 | `\footnote` | `[n]{...}` | numbered mark and page-bottom footnote text |
 | `\footnotemark` | `[n]` | footnote mark only |
@@ -520,12 +547,12 @@ Canonical sources:
 | `\fancyhead` | `[pos]{...}` | fancyhdr: sets the header fields for positions L, C, R (combinable with E/O, as in [LE,RO]); empty content clears them |
 | `\fancyfoot` | `[pos]{...}` | fancyhdr: sets the footer fields for positions L, C, R (combinable with E/O, as in [LE,RO]); empty content clears them |
 | `\fancyhf` | `[pos]{...}` | fancyhdr: sets all six header and footer fields at once; empty content clears them |
-| `\lhead` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
-| `\chead` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
-| `\rhead` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
-| `\lfoot` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
-| `\cfoot` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
-| `\rfoot` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
+| `\lhead` | `[even]{...}` | fancyhdr: sets the left header field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
+| `\chead` | `[even]{...}` | fancyhdr: sets the centre header field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
+| `\rhead` | `[even]{...}` | fancyhdr: sets the right header field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
+| `\lfoot` | `[even]{...}` | fancyhdr: sets the left footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
+| `\cfoot` | `[even]{...}` | fancyhdr: sets the centre footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
+| `\rfoot` | `[even]{...}` | fancyhdr: sets the right footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
 | `\fancypagestyle` | `{style}{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
 | `\pagenumbering` | `{style}` | resets the page counter to 1 and selects the \thepage/\pageref style (arabic, roman, Roman, alph, Alph); unknown styles fall back to arabic |
 | `\listfiles` |  | accepted no-op; there is no log stream |
@@ -599,6 +626,9 @@ Canonical sources:
 | `\LaTeX` |  | latex.ltx logo: L, kern -.36em, script-size A raised to the T height, kern -.15em, \TeX |
 | `\LaTeXe` |  | \LaTeX, kern .15em, 2 and a text-style subscript varepsilon |
 | `\rule` | `[raise]{dimension}{dimension}` | filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \textwidth, \linewidth, \columnwidth |
+| `\phantom` | `{...}` | kernel invisible box: the argument's full width, height and depth, paints nothing (single-line; also in math) |
+| `\hphantom` | `{...}` | kernel invisible box: the argument's width only, zero height and depth (single-line; also in math) |
+| `\vphantom` | `{...}` | kernel invisible box: the argument's height and depth only, zero width (single-line; also in math) |
 | `\thinspace` |  | text kern .16667em (math: thin muskip) |
 | `\negthinspace` |  | text kern -.16667em |
 | `\medspace` |  | text kern .2222em |
@@ -737,6 +767,28 @@ Canonical sources:
 | `\setbeamersize` | `{...}` | accepted and read past: beamer's default text margins stay in force; needs \documentclass{beamer} |
 | `\beamertemplatenavigationsymbolsempty` |  | beamer: removes the navigation symbol strip the renderer draws at the bottom right of every non-plain frame page; needs \documentclass{beamer} |
 | `\column` | `{width}` | beamer column inside columns: a minipage of the given width (.5\textwidth, 4cm) set beside the others; optional [c\|t\|T\|b] alignment; needs \documentclass{beamer} |
+| `\titleformat` | `{\section}{format}{label}{sep}{before}[after]` | titlesec: \section headings take the format's face and size (an empty label prints no number); a \titlerule after-code draws the full-width rule; other levels are diagnosed (needs titlesec) |
+| `\titlerule` |  | titlesec: a rule filling the rest of the line, or the full text width between paragraphs (needs titlesec) |
+| `\hline` |  | table rule across the row, at the start of a row |
+| `\cline` | `{i-j}` | partial rule over columns i to j, at the start of a row |
+| `\multicolumn` | `{n}{spec}{text}` | entry spanning n columns with its own column specification |
+| `\tabularnewline` |  | ends the table row |
+| `\toprule` | `[width]` | booktabs rule at the top of the table (needs booktabs) |
+| `\midrule` | `[width]` | booktabs rule between table rows (needs booktabs) |
+| `\bottomrule` | `[width]` | booktabs rule at the bottom of the table (needs booktabs) |
+| `\cmidrule` | `[width](trim){i-j}` | booktabs partial rule over columns i to j (needs booktabs) |
+| `\addlinespace` | `[width]` | booktabs vertical space between rows (needs booktabs) |
+| `\specialrule` | `{width}{above}{below}` | booktabs rule with explicit space around it (needs booktabs) |
+| `\morecmidrules` |  | booktabs: another \cmidrule after the previous one (needs booktabs) |
+| `\multirow` | `[vpos]{rows}[bigstruts]{width}[vmove]{text}` | entry spanning rows (needs multirow) |
+| `\rowcolor` | `[model]{spec}` | colortbl: background colour of the next row (needs colortbl) |
+| `\cellcolor` | `[model]{spec}` | colortbl: background colour of the entry (needs colortbl) |
+| `\columncolor` | `[model]{spec}` | colortbl: colour of a column, in >{} (needs colortbl) |
+| `\kill` |  | longtable: ends the row, which then only contributes its widths (needs longtable) |
+| `\endfirsthead` |  | longtable: ends the first-page head (needs longtable) |
+| `\endhead` |  | longtable: ends the repeated head (needs longtable) |
+| `\endfoot` |  | longtable: ends the repeated foot (needs longtable) |
+| `\endlastfoot` |  | longtable: ends the last-page foot (needs longtable) |
 | `\\` |  | line break; an optional [length] is consumed |
 | `\-` |  | discretionary hyphen: a break point, invisible unless the line breaks there |
 | `\,` |  | text kern .16667em (\thinspace) |
@@ -773,6 +825,13 @@ Canonical sources:
 | `\ignorespaces` |  | skips the spaces that follow |
 | `\jobname` |  | expands to texput |
 | `\ifthenelse` | `{test}{true}{false}` | the ifthen package's conditional: \equal, \NOT, \AND, \OR, \isodd, \isundefined, \lengthtest and \boolean tests select one branch at expansion time |
+| `\arabic` | `{counter}` | a counter in arabic numerals |
+| `\roman` | `{counter}` | a counter in lower-case roman numerals |
+| `\Roman` | `{counter}` | a counter in upper-case roman numerals |
+| `\alph` | `{counter}` | a counter as a lower-case letter |
+| `\arraystretch` |  | row-stretch factor tables read at \begin{tabular} (1 by default); set with \renewcommand |
+| `\newif` | `{\ifname}` | allocates a TeX conditional read with \footrue and \foofalse |
+| `\verb` | `\|text\|` | literal text up to the next delimiter character |
 | `\iftoggle` | `{name}{true}{false}` | the etoolbox toggle conditional: the named toggle (\newtoggle/\providetoggle declare it false, \toggletrue/\togglefalse set it) selects one branch at expansion time |
 | `\RequirePackage` | `[options]{a,b}[version]` | loads project .sty files through the expansion engine (once each, with LaTeX's option clash check); built-in and missing packages reach the parser as \usepackage |
 | `\RequirePackageWithOptions` | `{package}` | \RequirePackage with the current package's options |
@@ -965,6 +1024,7 @@ Canonical sources:
 | `\notag` |  | accepted without effect |
 | `\middle` |  | accepted without effect |
 | `\tag` | `{label}` | (label) two quads after the display; starred form without parentheses |
+| `\qedhere` |  | amsthm end-of-proof box for this display line, set flush right by the render pipeline |
 | `\begin` | `{env}` | opens a math grid environment |
 
 ### Math symbols
@@ -1011,6 +1071,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `invisibleenv` | text | beamer <overlay> environment: the body is covered on the slides the spec selects; needs \documentclass{beamer} |
 | `alertenv` | text | beamer <overlay> environment: the body in the alert colour on the slides the spec selects; needs \documentclass{beamer} |
 | `actionenv` | text | beamer <overlay> environment: with a plain spec, uncoverenv; needs \documentclass{beamer} |
+| `tcolorbox` | text | tcolorbox with colback/colframe only, sized to its content like \fcolorbox (0.5mm rule, 1mm padding, black!5!white fill, black!75!white frame); other keys warn and are ignored, corners stay square, no title, one-line bodies only |
 | `center` | text | centred paragraphs |
 | `flushleft` | text | left-aligned paragraphs |
 | `flushright` | text | right-aligned paragraphs |
@@ -1036,12 +1097,16 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `list` | text | kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep |
 | `tabular` | text | table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned |
 | `tabular*` | text | table of a given width |
+| `tabularx` | text | table of a given width whose X columns share the leftover width evenly (needs tabularx) |
+| `longtable` | text | page-breaking table with repeated heads and feet (\endfirsthead, \endhead, \endfoot, \endlastfoot), \caption, \kill rows and \\* (needs longtable) |
 | `verbatim` | text | literal monospaced lines |
 | `verbatim*` | text | literal monospaced lines with visible spaces |
+| `alltt` | text | monospaced lines with significant spaces and line breaks; commands and groups remain active |
 | `lstlisting` | text | literal monospaced lines (basic listings) |
 | `comment` | text | body discarded unread, even invalid commands inside (comment package) |
 | `proof` | text | amsthm proof with a closing square |
 | `thebibliography` | text | References section with numbered \bibitem entries |
+| `mcitethebibliography` | text | References section like thebibliography (mciteplus; its sublist grouping is not applied) |
 | `multicols` | text | multicol {n}[preface][premulticols]: balanced columns, laid out by the render pipeline |
 | `multicols*` | text | multicol {n}[preface][premulticols]: unbalanced columns, laid out by the render pipeline |
 | `array` | math | math grid, centred cells |
@@ -1064,6 +1129,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 
 | Package | Options | Why it is silent |
 | --- | --- | --- |
+| `alltt` | `` | typewriter lines preserve spaces and line breaks while commands and groups remain active |
 | `inputenc` | `utf8` | source text is already decoded as UTF-8 |
 | `fontenc` | `T1` | text glyphs are mapped from Unicode |
 | `hyperref` | `colorlinks, hidelinks, bookmarks, bookmarksopen, bookmarksnumbered, linktoc, breaklinks, unicode, pageanchor, hyperfootnotes, pdfstartview, pdfpagemode` | loading hyperref moves no glyph (measured against pdflatex, TeX Live 2025: the same document with and without it is 1062 words on 4 pages, 0 moved), and the link-colour, border, outline, viewer and pdf* metadata keys are accepted with it; \url, \href and \nolinkurl are typeset, while the PDF links, bookmarks and link colours still missing are reported once by their own diagnostic; backref and pagebackref add bibliography text and keep warning |
@@ -1090,11 +1156,18 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `ulem` | `normalem` | \uline: 0.4pt rule under the argument (single-line); \sout: 0.4pt strike at 0.55ex; \emph is not redefined |
 | `soul` | `` | \so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828); \st stays unsupported |
 | `relsize` | `` | \larger/\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size |
-| `fancyhdr` | `` | \pagestyle{fancy} ships the \fancyhead/\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \fancyhf clears all six fields; \lhead and friends plus \fancypagestyle are diagnosed where they are used |
+| `fancyhdr` | `` | \pagestyle{fancy} ships the \fancyhead/\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \fancyhf clears all six fields; \lhead/\chead/\rhead and \lfoot/\cfoot/\rfoot set one field each (an optional even-page group is ignored one-sided); \fancypagestyle is diagnosed where it is used |
+| `titlesec` | `` | \titleformat{\section} headings take the format's face and size (unnumbered with an empty label) with the \titlerule after-code rule; other levels, printed labels, before-code and shapes beyond the implemented subset are diagnosed where they are used |
+| `tcolorbox` | `` | the tcolorbox environment with colback/colframe only (see the tcolorbox environment); every other key and every library option is diagnosed |
 | `xspace` | `` | \xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
 | `ifthen` | `` | \ifthenelse with \equal, \NOT, \AND, \OR, \isodd, \isundefined, \lengthtest and \boolean tests, and \newif conditionals with \newboolean/\setboolean; \whiledo loops are diagnosed where they are used |
 | `csquotes` | `` | \enquote: typographic quotation marks, alternating double/single on nesting |
+| `calc` | `` | \setlength/\addtolength accept +/- chains of dimensions (1pt + 2\baselineskip); *, /, parentheses and \widthof/\heightof/\depthof/\totalheightof are not parsed |
 | `etoolbox` | `` | toggle booleans: \newtoggle/\providetoggle declare a false toggle, \toggletrue/\togglefalse set it, \iftoggle{name}{true}{false} selects a branch at expansion time; a duplicate \newtoggle and any use of an undefined toggle are diagnosed where they are used and leave existing state alone. The rest of etoolbox (patching, hooks, list processing) is diagnosed where it is used |
+| `iftex` | `` | \ifxetex and \ifluatex (with the \ifXeTeX/\ifLuaTeX aliases) are false, as iftex.sty sets them under pdflatex, so engine-guarded blocks skip |
+| `ifxetex` | `` | legacy shim for iftex's \ifxetex switch, false here as under pdflatex |
+| `ifluatex` | `` | legacy shim for iftex's \ifluatex switch, false here as under pdflatex |
+| `parskip` | `` | \parindent 0pt and \parskip of half the class \baselineskip (6.0pt at 10pt, 6.8pt at 11pt, 7.25pt at 12pt; the plus 2pt stretch is not modelled); package options are diagnosed |
 
 Any other package, or these packages with other options, is recorded and reported as recognised but not implemented.
 

@@ -117,6 +117,20 @@ The owner's words, verbatim, are the requirement:
 
 ### S2 — `flashtex.toml` manifest (Fable / general, app + project layer)
 
+**Status (2026-09-19): shipped on `lane/manifest`** — `crates/project-manifest`
+(parser, warnings, `locate`, template), the CLI (`build|check|watch` on a
+directory, `texinputs` in the closure, `output`, `manifest init|show`),
+`crates/project-files` (`Package`/`Class` kinds, `texinput_files`, the
+helper's `manifest` operation) and the Mac app (open a folder, package rows,
+package inputs in the compile request, Create flashtex.toml…, TOML
+colouring). User doc: [docs/user/project-manifest.md](../user/project-manifest.md).
+Delivery to S1: the `.sty`/`.cls` files are in the compiler's document set
+by project-relative path, after the entry closure — the entry's own
+directory first, then each `texinputs` directory in manifest order (an
+outside directory at `texinputs/<i>/<file>`); no manifest → the entry's
+own `.sty`/`.cls` files still arrive. `[fonts]`/`[packages]` are parsed
+and shown; their effect is S4/S3.
+
 ```toml
 [project]
 entry = "main.tex"          # default: the file the user opened / the only .tex

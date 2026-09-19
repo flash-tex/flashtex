@@ -60,6 +60,14 @@ pub enum ListEnvironment {
     Verse,
 }
 
+/// Bibliography list environments: the kernel `thebibliography`
+/// (article.cls 566-577: a `\list` of `\bibitem`s) and mciteplus's
+/// `mcitethebibliography`, which wraps plain `\bibitem`s the same way (its
+/// sublist machinery is out of scope, but the entries resolve identically).
+pub fn is_bibliography_environment(name: &str) -> bool {
+    matches!(name, "thebibliography" | "mcitethebibliography")
+}
+
 impl ListEnvironment {
     pub fn from_name(name: &str) -> Option<ListEnvironment> {
         Some(match name {

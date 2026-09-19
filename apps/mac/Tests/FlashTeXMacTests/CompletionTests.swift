@@ -70,11 +70,13 @@ final class CompletionTests: XCTestCase {
         // An article project, like `\fr` below: beamer's `\alert` is a text
         // entry that would otherwise lead the list by table order.
         let math = Completion.suggestions(in: "$\\al", caretUTF16: 4, result: nil, projectClass: "article")
-        XCTAssertEqual(labels(math), ["\\allowdisplaybreaks[0-4]", "\\allowbreak", "\\alpha", "\\aleph"],
+        // `\alph{counter}` joined the inventory with #940 (the counter
+        // representations) and sorts with the text entries, before the symbols.
+        XCTAssertEqual(labels(math), ["\\allowdisplaybreaks[0-4]", "\\allowbreak", "\\alph{counter}", "\\alpha", "\\aleph"],
                        "inventory (math_symbol) order")
-        XCTAssertEqual(math.map(\.detail), ["amsmath page-break permission inside displays; no material",
-                                            "\\penalty0 · in math: zero-penalty breakpoint in a formula (\\penalty0); layout-neutral, formulas never break",
-                                            "math · symbol α", "math · symbol ℵ"])
+        XCTAssertEqual(math.map(\.detail).suffix(2), ["math · symbol α", "math · symbol ℵ"])
+        XCTAssertEqual(math.map(\.detail).prefix(2), ["amsmath page-break permission inside displays; no material",
+                                            "\\penalty0 · in math: zero-penalty breakpoint in a formula (\\penalty0); layout-neutral, formulas never break"])
         XCTAssertEqual(Completion.Vocabulary.symbols.count, Completion.Vocabulary.inventory.commands.filter { $0.origin == .mathSymbol && $0.renders }.count)
         XCTAssertGreaterThan(Completion.Vocabulary.entries.count, Completion.Vocabulary.symbols.count)
         // Math-only commands are marked once, by the `math ·` prefix of `Entry.detail`.
@@ -161,9 +163,12 @@ final class CompletionTests: XCTestCase {
         // spelling still ranks behind the closer it would have to name.
         let closed = text + "nd{itemize}\n\\en"
         let s2 = Completion.suggestions(in: closed, caretUTF16: (closed as NSString).length, result: nil)
-        XCTAssertEqual(labels(s2), ["\\end{document}", "\\end{env}", "\\enlargethispage*{dimension}", "\\encl{text}", "\\enspace", "\\enskip", "\\enquote{text}"])
+        // longtable's `\endfirsthead`/`\endhead`/`\endfoot`/`\endlastfoot`
+        // (inventoried with #940) match `\en` too and follow the closers.
+        XCTAssertEqual(labels(s2).prefix(7), ["\\end{document}", "\\end{env}", "\\enlargethispage*{dimension}", "\\encl{text}", "\\enspace", "\\enskip", "\\enquote{text}"])
         let typed = closed + "d"
-        XCTAssertEqual(labels(Completion.suggestions(in: typed, caretUTF16: (typed as NSString).length, result: nil)), ["\\end{document}", "\\end{env}"])
+        XCTAssertEqual(labels(Completion.suggestions(in: typed, caretUTF16: (typed as NSString).length, result: nil)),
+                       ["\\end{document}", "\\end{env}", "\\endfirsthead", "\\endhead", "\\endfoot", "\\endlastfoot"])
 
         // Inside `\end{` the open environments come first, then known/seen names.
         // Environments are class-gated like commands (`environmentOffered`):
@@ -2549,5 +2554,25 @@ final class CompletionLiveHelperTests: XCTestCase {
         try await waitUntil("empty outcome") { tv.lastOutcome?.caretUTF16 == short }
         XCTAssertEqual(tv.lastOutcome?.items, [])
         XCTAssertNil(tv.session)
+    }
+
+    func testFontArgumentsOfferInstalledFamilies() {
+        // `\setmainfont{`, `\fontspec[opts]{` and friends complete against the
+        // families the job listed (the engine's index, `InstalledFonts`); the
+        // prefix is fuzzy-matched and the whole family name is inserted.
+        let families = ["Georgia", "Helvetica", "Helvetica Neue", "Latin Modern Roman", "Times New Roman"]
+        for typed in ["\\setmainfont{Hel", "\\setsansfont{Hel", "\\setmonofont{Hel", "\\setmathfont{Hel", "\\fontspec[Scale=0.9]{Hel"] {
+            let s = Completion.suggestions(in: typed, caretUTF16: (typed as NSString).length, metadata: nil, fontFamilies: families)
+            XCTAssertEqual(s.map(\.label), ["Helvetica", "Helvetica Neue"], typed)
+            XCTAssertEqual(s.first?.detail, "installed font family", typed)
+            XCTAssertEqual(s.first?.insertText, "Helvetica", typed)
+        }
+        let empty = "\\setmainfont{"
+        XCTAssertEqual(Completion.suggestions(in: empty, caretUTF16: (empty as NSString).length, metadata: nil, fontFamilies: families).map(\.label), families)
+        // Without a listing (no built worker) the argument offers nothing, and
+        // an ordinary command's argument is not a font argument.
+        XCTAssertEqual(Completion.suggestions(in: empty, caretUTF16: (empty as NSString).length, metadata: nil), [])
+        let other = "\\textbf{Hel"
+        XCTAssertFalse(Completion.suggestions(in: other, caretUTF16: (other as NSString).length, metadata: nil, fontFamilies: families).map(\.label).contains("Helvetica"))
     }
 }

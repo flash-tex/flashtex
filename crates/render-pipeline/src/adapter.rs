@@ -69,6 +69,12 @@ pub struct TextStyle {
     /// `\setbeamercovered{invisible}`, the default; pdflatex moves the
     /// covered text 2000 bp off the page (`\pgfsys@begininvisible`).
     pub hidden: bool,
+    /// A named font family in force locally (`\fontspec{..}`, a
+    /// `\newfontfamily` switch, a body `\setmainfont`): an index into
+    /// `Stylesheet::fontspec.families`, set by `crate::fontspec::apply`.
+    /// `None` leaves the family slot's default (a preamble `\setmainfont`,
+    /// the manifest, or the class font) to decide.
+    pub named: Option<u16>,
 }
 
 impl TextStyle {
@@ -289,13 +295,45 @@ pub enum Item {
     /// `\discretionary{}{}{}` — charged `\exhyphenpenalty` (50) and
     /// counted as a hyphenated line for `\doublehyphendemerits`. listings'
     /// `breaklines` puts one after every token of a `\lstinline`
-    /// (lstmisc.sty `\lst@discretionary`, see `listings::break_inline`).
+    /// (lstmisc.sty `\lst@discretionary`, see `listings::set_inline`).
     Penalty { value: i32, flagged: bool },
     /// `\hbox{\ }`: a blank of the font in force set as a box, so it is
     /// neither stretchable nor discarded at a line break. listings sets
     /// every blank of a `\lstinline` this way (`\lst@outputspace`), which
     /// is why pdflatex's next line can open with one.
     SpaceBox { style: TextStyle },
+    /// listings' column bookkeeping around the boxes of a `\lstinline`
+    /// (see [`ListingMark`] and `listings::set_inline`): no material of its
+    /// own, but the kern boxes `\lst@lostspace` turns into.
+    Listing(ListingMark),
+}
+
+/// The steps of listings' `\lst@lostspace` bookkeeping inside a
+/// `\lstinline` (listings.sty 555-570, 572-586, 830-865), which
+/// `typeset::hlist` replays with the glyph widths it has and
+/// `listings::set_inline` explains. Under `flexiblecolumns` a token keeps
+/// its natural width, but every character is booked at `\lst@width` and
+/// the running difference — negative under a typewriter face — comes out
+/// as kern boxes wherever it is positive.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ListingMark {
+    /// `\lst@Init`: the lost space is 0 and `\lst@width` is `width_em`
+    /// quads (`basewidth`'s flexible value) of the `basicstyle` face,
+    /// `style`.
+    Begin { style: TextStyle, width_em: f64 },
+    /// `\lst@UseLostSpace` before a token's or blank's box: a kern box of
+    /// the lost space when it is positive, which is then 0.
+    LostSpace,
+    /// `\lst@CalcLostSpaceAndOutput` after a box of `columns` characters:
+    /// the lost space grows by `columns` times `\lst@width` less the box's
+    /// width; positive, it pads the box by that, half on each side
+    /// (`[c]` of `columns=[c]fixed`, `\lst@InsertHalfLostSpace`,
+    /// `\lst@InsertLostSpace`), and is 0 again.
+    Columns { columns: u32 },
+    /// A blank gobbled after another or at the start of the argument
+    /// (`\lst@AppendSpecialSpace`): no box, one `\lst@width` more of lost
+    /// space.
+    GobbledBlank,
 }
 
 /// beamer overlay markers (see [`Item::Overlay`]).
@@ -391,6 +429,10 @@ pub struct RowPart {
     pub cells: Vec<MathList>,
     pub number: Option<(String, Span)>,
     pub span: Span,
+    /// amsthm `\qedhere` stripped from this row's cells (`strip_qedhere`):
+    /// the box is set on this row's own line, flush right. `None` without
+    /// one; the span is the command, for the rules' provenance.
+    pub qed_here: Option<Span>,
     /// `\intertext` paragraphs set before this row (feature
     /// `amsmath-inline`; always empty otherwise).
     pub intertext: Vec<IntertextPart>,
@@ -431,6 +473,10 @@ pub enum ParaPart {
         span: Span,
         number: Option<(String, Span)>,
         bracket: bool,
+        /// amsthm `\qedhere` stripped from `list` (`strip_qedhere`): the box
+        /// is set on the display's own line, flush right. `None` without
+        /// one; the span is the command, for the rules' provenance.
+        qed_here: Option<Span>,
     },
 }
 
@@ -971,6 +1017,17 @@ pub struct Doc {
     /// `blocks`; `typeset::build_with_floats` sets them itself. `Some` with
     /// an empty vector is `\twocolumn[]`, which is a box of no height.
     pub top_material: Option<(Vec<Block>, Span)>,
+    /// A single bare `\twocolumn`/`\onecolumn` after the first material
+    /// that the page builder lays out: every page from
+    /// [`crate::columns::ColumnSwitch::block`] on uses [`Doc::post_style`]'s
+    /// frame. `None` is today plus a `twocolumn_mid_document` limitation
+    /// for every unmodelled switch.
+    pub column_switch: Option<crate::columns::ColumnSwitch>,
+    /// The stylesheet past the recorded [`Doc::column_switch`]: `style`
+    /// cloned with the post-switch frame (the command changes only the
+    /// column split, never `\parindent`/`\textwidth`/margins) and its
+    /// column width. `None` when there is no recorded switch.
+    pub post_style: Option<Box<Stylesheet>>,
     /// beamer (compiler `Parsed::beamer`): the theme's footline fields.
     pub beamer: Option<BeamerDeck>,
 }
@@ -1764,6 +1821,11 @@ pub fn adapt_cached(
     // Last source span of the previous paragraph block (None after a
     // heading or rule), for rejoining a display with its paragraph.
     let mut prev_para_end: Option<Span> = None;
+    // amsthm `\qedhere` in a display or alignment row claims the proof's
+    // box even when the automatic pair lands in a later paragraph (the
+    // `equation`/align environments flush before `\end{proof}`). A new
+    // proof opens a new claim window; consuming the pair clears it.
+    let mut pending_qed_claim = false;
     // The documents an entry `\input`/`\include` command reads (nested reads
     // included), from the reading order: a file whose body is only floats
     // has no unit to lay its `\chapter` out before.
@@ -2401,7 +2463,22 @@ pub fn adapt_cached(
                 // is in the source bytes at the head's span (which is the
                 // `\begin` command), so the weights come from the compiler's
                 // own scoping inside a theorem-like environment.
+                //
+                // A paragraph opening a proof starts a new `\qedhere` claim
+                // window (a pending display claim belongs to the proof that
+                // held the display); a display or alignment-row marker in
+                // this paragraph claims the box for the proof's end,
+                // wherever the automatic pair lands.
+                if inlines.first().map(inline_span).is_some_and(|s| {
+                    texts.get(s.document.0).and_then(|t| t.get(s.start..)).is_some_and(|r| r.starts_with("\\begin{proof}"))
+                }) {
+                    pending_qed_claim = false;
+                }
+                pending_qed_claim |= paragraph_claims_qed(inlines, texts);
                 let mut items = items_for_weighted(inlines, in_theorem);
+                if pending_qed_claim && truncate_auto_pair(&mut items, texts) {
+                    pending_qed_claim = false;
+                }
                 // `\paragraph`/`\subparagraph`: `{\normalfont\normalsize
                 // \bfseries <title>}` then `\hskip 1em`, run into this
                 // paragraph's first line. The compiler set the title as
@@ -2425,7 +2502,17 @@ pub fn adapt_cached(
                             if let Some((rows_span, row)) = math_row_of(inlines, span) {
                                 let rows_rest = texts.get(rows_span.document.0).and_then(|t| t.get(rows_span.start..)).unwrap_or("");
                                 let mut tag = None;
-                                let cells: Vec<MathList> = row.cells.iter().map(|c| strip_tag(texts, c, &mut tag, &mut limitations)).collect();
+                                let mut qed_here = None;
+                                let cells: Vec<MathList> = row
+                                    .cells
+                                    .iter()
+                                    .map(|c| {
+                                        let tagged = strip_tag(texts, c, &mut tag, &mut limitations);
+                                        let (stripped, qed) = strip_qedhere(texts, tagged);
+                                        qed_here = qed_here.or(qed);
+                                        stripped
+                                    })
+                                    .collect();
                                 let number = match tag {
                                     Some(t) => Some((t, row.span)),
                                     None => row.number.clone().map(|n| (format!("({n})"), row.span)),
@@ -2443,7 +2530,7 @@ pub fn adapt_cached(
                                     .collect();
                                 #[cfg(not(feature = "amsmath-inline"))]
                                 let intertext = Vec::new();
-                                let part = RowPart { cells, number, span: row.span, intertext };
+                                let part = RowPart { cells, number, span: row.span, intertext, qed_here };
                                 match parts.last_mut() {
                                     Some(ParaPart::Rows { span: s, rows, .. }) if *s == rows_span => rows.push(part),
                                     _ => parts.push(ParaPart::Rows {
@@ -2470,11 +2557,13 @@ pub fn adapt_cached(
                                     .map(|(n, s)| (format!("({n})"), s)),
                             };
                             let bracket = !amsmath && (rest.starts_with("\\[") || rest.starts_with("\\begin{displaymath}"));
+                            let (list, qed_here) = strip_qedhere(texts, list);
                             parts.push(ParaPart::Display {
                                 list,
                                 span,
                                 number,
                                 bracket,
+                                qed_here,
                             });
                         }
                         other => current.push(other),
@@ -2696,6 +2785,13 @@ pub fn adapt_cached(
     // `quotation`) is read from the source bytes here, before the
     // `env_close` pass below derives the closing skips from the styles.
     let mut superseded = crate::abstractenv::apply(texts, &mut blocks, &style);
+    // fontspec's `\setmainfont`/`\fontspec`/`\newfontfamily` (and the
+    // manifest's `[fonts]`): the named families, read from the source the
+    // same way, marked on the runs they cover. A document naming no font
+    // returns at once with the blocks untouched.
+    let fontspec = crate::fontspec::apply(texts, entry, &mut blocks, &mut style, options);
+    superseded.extend(fontspec.superseded);
+    limitations.extend(fontspec.limitations);
     // `\twocolumn`/`\onecolumn` are set here, from the source, the same way:
     // the pinned `vendor/compiler` reports them as unknown commands.
     superseded.extend(
@@ -2705,22 +2801,6 @@ pub fn adapt_cached(
             .iter()
             .map(|&(s, e)| Span::in_document(flashtex_compiler::DocumentId(entry), s, e)),
     );
-    // The page frame is still one frame for the whole document, so a switch
-    // after the first material sets every `\if@twocolumn` test (and its own
-    // page break) but not the column count of the pages it opens.
-    for &(at, on) in &style.columns.unmodelled() {
-        limitations.push((
-            "twocolumn_mid_document",
-            Span::in_document(flashtex_compiler::DocumentId(entry), at, at + if on { "\\twocolumn".len() } else { "\\onecolumn".len() }),
-            format!(
-                "\\{} after the first material starts a new page, but changing the number of \
-                 page columns during a document is not implemented: the rest of the document \
-                 keeps {} column(s)",
-                if on { "twocolumn" } else { "onecolumn" },
-                if style.columns.start() { 2 } else { 1 },
-            ),
-        ));
-    }
     // `\twocolumn[<material>]` sets its argument at the full `\textwidth`
     // above both columns (`\@topnewpage`, latex.ltx 20466-20505). The
     // material is cut out of the block stream here, brackets and all, and
@@ -2857,6 +2937,38 @@ pub fn adapt_cached(
         short_institute: items_for(&d.short_institute, false),
         short_date: items_for(&d.short_date, false),
     });
+    // One post-material switch the page builder lays out (slice 1): a
+    // single bare `\twocolumn`/`\onecolumn` at a clean block boundary,
+    // with the post-switch stylesheet beside it. Everything else keeps
+    // today's limitation. Computed here, on the final block list (the
+    // `listings` inserts and the `top_material` cut above both move
+    // indices), so the recorded block index is what `typeset` will read.
+    let column_switch = column_switch_block(&blocks, source, entry, &style.columns);
+    let post_style = column_switch.and_then(|sw| {
+        let mut frame = style.class_geometry.as_deref()?.clone();
+        frame.set_twocolumn(sw.on);
+        let mut post = style.clone();
+        post.text_width_pt = crate::style::frame_pt(frame.frame.columns.first()?.width);
+        post.class_geometry = Some(Box::new(frame));
+        Some(Box::new(post))
+    });
+    let column_switch = column_switch.filter(|_| post_style.is_some());
+    // Every switch the page frame cannot follow: each one sets every
+    // `\if@twocolumn` test (and its own page break), but the pages it
+    // opens keep whatever column count the frame was built with. The
+    // recorded switch is laid out instead, so it says nothing here; the
+    // page builder reports it back itself on the paths it has to decline.
+    let recorded = column_switch.map(|sw| sw.at);
+    for &(at, on) in &style.columns.unmodelled() {
+        if recorded == Some(at) {
+            continue;
+        }
+        limitations.push((
+            "twocolumn_mid_document",
+            Span::in_document(flashtex_compiler::DocumentId(entry), at, at + if on { "\\twocolumn".len() } else { "\\onecolumn".len() }),
+            crate::columns::mid_document_message(on, style.columns.start()),
+        ));
+    }
     let page_starts = clear_page_blocks(texts, &blocks);
     // After `listings::apply`, which can insert blocks: the ranges are
     // block indices, so they are taken once the block list is final.
@@ -2875,6 +2987,8 @@ pub fn adapt_cached(
         superseded,
         top_material,
         beamer,
+        column_switch,
+        post_style,
     }
 }
 
@@ -3213,6 +3327,194 @@ fn math_colors(blocks: &[flashtex_compiler::parser::Block]) -> std::collections:
     out
 }
 
+/// The source span of one adapter `Item`, for the items that carry one.
+/// `None` is glue, penalties and whatsits with no position of their own
+/// (`\label` included: it records a page, it sets nothing).
+fn item_source_span(item: &Item) -> Option<Span> {
+    match item {
+        Item::Word(w) => Some(w.span()),
+        Item::Math { span, .. }
+        | Item::Logo { span, .. }
+        | Item::Rule { span, .. }
+        | Item::Footnote { span, .. }
+        | Item::Marginpar { span, .. }
+        | Item::QedBox { span, .. } => Some(*span),
+        Item::Table(t) => Some(t.span),
+        Item::ColorBox(b) => Some(b.span),
+        Item::Underline(u) => Some(u.span),
+        Item::TextScript(t) => Some(t.span),
+        Item::Lap { items } => {
+            let mut spans = items.iter().filter_map(item_source_span);
+            let first = spans.next()?;
+            let last = spans.last().unwrap_or(first);
+            (first.start <= last.end).then(|| Span::in_document(first.document, first.start, last.end))
+        }
+        _ => None,
+    }
+}
+
+/// `(start, end)` of the entry-document source `block` sets, for the
+/// blocks that set material: the range the single-switch scan compares
+/// against the switch offset. `None` for page furniture (`Chrome`,
+/// `NoBreakFalse`, `ClearPage`), contents entries (whose spans point at
+/// the list sources rather than the laid-out position) and other
+/// documents' material, all of which the scan passes over transparently.
+fn block_source_range(block: &Block, entry: usize) -> Option<(usize, usize)> {
+    let document = flashtex_compiler::DocumentId(entry);
+    let in_entry = |s: Span| (s.document == document).then_some((s.start, s.end));
+    match block {
+        Block::Paragraph { parts, .. } => {
+            let mut first: Option<Span> = None;
+            let mut last: Option<Span> = None;
+            for part in parts {
+                match part {
+                    ParaPart::Lines(items) => {
+                        for s in items.iter().filter_map(item_source_span) {
+                            if s.document == document {
+                                first.get_or_insert(s);
+                                last = Some(s);
+                            }
+                        }
+                    }
+                    ParaPart::Display { span, .. } | ParaPart::Rows { span, .. } => {
+                        if span.document == document {
+                            first.get_or_insert(*span);
+                            last = Some(*span);
+                        }
+                    }
+                }
+            }
+            Some((first?.start, last?.end))
+        }
+        Block::Heading { span, .. }
+        | Block::Chapter { span, .. }
+        | Block::Part { span, .. }
+        | Block::Title { span, .. }
+        | Block::Rule { span, .. } => in_entry(*span),
+        Block::Picture { document: d, picture, .. } => (*d == document).then_some((picture.start, picture.end)),
+        Block::LongTable { table, .. } => in_entry(table.span),
+        Block::TocEntry(_) | Block::ClearPage { .. } | Block::NoBreakFalse { .. } | Block::Chrome { .. } => None,
+        // beamer's frame, block and columns furniture (no `\twocolumn` in a
+        // deck): passed over like the page furniture above.
+        Block::FrameBegin { .. }
+        | Block::FrameEnd { .. }
+        | Block::BeamerTitle { .. }
+        | Block::BeamerBlockBegin { .. }
+        | Block::BeamerBlockEnd { .. }
+        | Block::ColumnsBegin { .. }
+        | Block::Column { .. }
+        | Block::ColumnsEnd { .. } => None,
+    }
+}
+
+/// Whether `items` hold a `\marginpar` the page builder would place from
+/// entry-document position `at` on, or from a position the scan cannot
+/// compare (another document): either rules out laying out a mid-document
+/// column switch, whose margin notes the single frame would misplace. A
+/// note strictly before the switch rides the old frame either way, so it
+/// constrains nothing.
+fn marginpar_from(items: &[Item], entry: usize, at: usize) -> bool {
+    items.iter().any(|item| match item {
+        Item::Marginpar { span, .. } => span.document.0 != entry || span.start >= at,
+        Item::Lap { items } => marginpar_from(items, entry, at),
+        Item::ColorBox(b) => marginpar_from(&b.items, entry, at),
+        Item::Underline(u) => marginpar_from(&u.items, entry, at),
+        Item::TextScript(t) => marginpar_from(&t.items, entry, at),
+        Item::Footnote { text, .. } => text.as_ref().is_some_and(|t| marginpar_from(t, entry, at)),
+        Item::Table(t) => t.entries.iter().any(|e| match e {
+            crate::table::TableEntry::Row { cells, .. } => cells.iter().any(|c| marginpar_from(&c.items, entry, at)),
+            _ => false,
+        }),
+        _ => false,
+    })
+}
+
+/// Whether `block` holds such a `\marginpar`: in paragraph and heading
+/// text, titles, contents lines and longtable cells. Displays are math;
+/// pictures are graphics; neither can carry one.
+fn block_marginpar_from(block: &Block, entry: usize, at: usize) -> bool {
+    match block {
+        Block::Paragraph { parts, .. } => parts.iter().any(|part| match part {
+            ParaPart::Lines(items) => marginpar_from(items, entry, at),
+            ParaPart::Display { .. } | ParaPart::Rows { .. } => false,
+        }),
+        Block::Heading { items, .. } | Block::Chapter { items, .. } | Block::Part { items, .. } => marginpar_from(items, entry, at),
+        Block::Title { title, authors, date, .. } => {
+            marginpar_from(title, entry, at)
+                || authors.iter().flatten().flatten().any(|i| marginpar_from(std::slice::from_ref(i), entry, at))
+                || date.as_ref().is_some_and(|d| marginpar_from(d, entry, at))
+        }
+        Block::TocEntry(e) => marginpar_from(&e.title, entry, at),
+        Block::LongTable { table, .. } => table.entries.iter().any(|e| match e {
+            crate::table::TableEntry::Row { cells, .. } => cells.iter().any(|c| marginpar_from(&c.items, entry, at)),
+            _ => false,
+        }),
+        _ => false,
+    }
+}
+
+/// The single-switch case slice 1 lays out: exactly one unmodelled switch
+/// (so it actually changes the column count), bare (a `[...]` argument is
+/// `twocolumn_top_material`'s case, explicitly out of scope), at a clean
+/// block boundary (a block spanning the offset is a mid-paragraph switch,
+/// which stays reported), opening a block the page builder already breaks
+/// before (the switch's own `\clearpage`), in a document with no margin
+/// note at or after it (those ride the frame being left).
+///
+/// Returns the first block after the switch. Anything else — a second
+/// switch, a switch that changes nothing, an argument, a mid-block
+/// offset, a missing page break or a later margin note — is `None`, and
+/// the switch keeps its `twocolumn_mid_document` limitation.
+fn column_switch_block(blocks: &[Block], source: &str, entry: usize, columns: &crate::columns::ColumnMode) -> Option<crate::columns::ColumnSwitch> {
+    let unmodelled = columns.unmodelled();
+    if unmodelled.len() != 1 {
+        return None;
+    }
+    let (at, on) = unmodelled[0];
+    let end = columns.spans().iter().find(|(s, _)| *s == at)?.1;
+    if crate::columns::optional_bracket(source, end).is_some() {
+        return None;
+    }
+    if blocks.iter().any(|b| block_marginpar_from(b, entry, at)) {
+        return None;
+    }
+    let mut found = None;
+    for (i, block) in blocks.iter().enumerate() {
+        let Some((s, e)) = block_source_range(block, entry) else { continue };
+        if s < at && at < e {
+            return None;
+        }
+        if s >= at && found.is_none() {
+            // `Chapter`/`Title` eject themselves (`\clearpage` is what the
+            // commands are); every other kind carries the switch's own
+            // `\clearpage` in `eject_before`.
+            let ejects = match block {
+                Block::Paragraph { eject_before, .. }
+                | Block::Heading { eject_before, .. }
+                | Block::Part { eject_before, .. }
+                | Block::Rule { eject_before, .. }
+                | Block::Picture { eject_before, .. }
+                | Block::LongTable { eject_before, .. } => *eject_before,
+                Block::Chapter { .. } | Block::Title { .. } => true,
+                Block::TocEntry(_) | Block::ClearPage { .. } | Block::NoBreakFalse { .. } | Block::Chrome { .. } => false,
+                Block::FrameBegin { .. }
+                | Block::FrameEnd { .. }
+                | Block::BeamerTitle { .. }
+                | Block::BeamerBlockBegin { .. }
+                | Block::BeamerBlockEnd { .. }
+                | Block::ColumnsBegin { .. }
+                | Block::Column { .. }
+                | Block::ColumnsEnd { .. } => false,
+            };
+            if !ejects {
+                return None;
+            }
+            found = Some(i);
+        }
+    }
+    found.map(|block| crate::columns::ColumnSwitch { block, at, on })
+}
+
 /// Blocks whose `eject_before` comes from `\clearpage`/`\cleardoublepage`
 /// (the page-break command nearest before the block): in two-column mode
 /// those end the page, `\newpage`/`\pagebreak` only the column (latex.ltx
@@ -3345,7 +3647,9 @@ fn unsupported_inlines(inline: &Inline, out: &mut Vec<(&'static str, Span, Strin
             // suppressed (`style_intervals`, `TextStyle::literal`), so
             // there is nothing to report. Measured against pdflatex at
             // 12 pt T1: `\verb"ftxc --version"` 86.4289 pt, the oracle's
-            // 86.4289 pt.
+            // 86.4289 pt. (`\lstinline` is then re-set the way listings
+            // does it — the `basicstyle` face, one box per token, the
+            // column bookkeeping — by `listings::apply`.)
             //
             // `\verb*`'s visible-space glyph is the one remaining
             // difference, and it is not a geometry one: the compiler's
@@ -4602,6 +4906,93 @@ fn strip_eqno(texts: &[&str], list: MathList, display: Span) -> (MathList, Optio
     let mut atoms = list.atoms;
     atoms.truncate(i);
     (MathList { atoms }, Some((body.to_string(), Span::in_document(display.document, start, end))))
+}
+
+/// Whether `atom` is amsthm `\qedhere`'s marker: a literal `\qedhere`
+/// symbol whose span opens the command in source (both must hold, so a
+/// coincidental span never eats formula content).
+fn is_qedhere_marker(texts: &[&str], atom: &flashtex_compiler::math::MathAtom) -> bool {
+    use flashtex_compiler::math::Nucleus;
+    matches!(&atom.nucleus, Nucleus::Symbol(s) if s == "\\qedhere")
+        && texts
+            .get(atom.span.document.0)
+            .and_then(|t| t.get(atom.span.start..))
+            .is_some_and(|r| r.starts_with("\\qedhere"))
+}
+
+/// Whether `list` holds such a marker atom: the command's span when so.
+fn qedhere_at(texts: &[&str], list: &MathList) -> Option<Span> {
+    list.atoms.iter().find_map(|a| is_qedhere_marker(texts, a).then_some(a.span))
+}
+
+/// `list` without amsthm `\qedhere`'s atoms, and the command's span when
+/// one was stripped, so the caller sets the end-of-proof box on the
+/// display's own line, flush right, instead of the automatic box after it
+/// (which is suppressed once the box is claimed).
+///
+/// The compiler leaves `\qedhere` as a literal `\qedhere` symbol atom (as
+/// it does `\tag`'s atoms for `strip_tag` above).
+fn strip_qedhere(texts: &[&str], list: MathList) -> (MathList, Option<Span>) {
+    if qedhere_at(texts, &list).is_none() {
+        return (list, None);
+    }
+    let mut found = None;
+    let atoms: Vec<_> = list
+        .atoms
+        .into_iter()
+        .filter(|a| {
+            if is_qedhere_marker(texts, &a) {
+                found = found.or(Some(a.span));
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+    (MathList { atoms }, found)
+}
+
+/// Whether any display or alignment row in these inlines carries a
+/// `\qedhere` marker: amsthm's claim on the proof's box, which suppresses
+/// the automatic pair even when it lands in a later paragraph (the
+/// `equation`/align environments flush before `\end{proof}`). Text
+/// `\qedhere` needs no such cross-paragraph claim: it shares its
+/// paragraph with the pair it suppresses.
+fn paragraph_claims_qed(inlines: &[Inline], texts: &[&str]) -> bool {
+    inlines.iter().any(|inline| match inline {
+        Inline::Math { list, display: true, .. } => qedhere_at(texts, list).is_some(),
+        Inline::MathRows { rows, .. } => rows
+            .iter()
+            .any(|row| row.cells.iter().any(|cell| qedhere_at(texts, cell).is_some())),
+        _ => false,
+    })
+}
+
+/// Retracts a trailing automatic end-of-proof pair — an `HFill` and a
+/// `QedBox` whose span opens `\end{proof}` in source, with a possible
+/// interword gap before the fill (TeX deletes trailing glue at `\par`
+/// anyway) — once a `\qedhere` claim is pending: true when one was
+/// removed. Only the automatic pair matches: a box the claim placed
+/// itself spans `\qedhere`, never `\end{proof}`.
+fn truncate_auto_pair(items: &mut Vec<Item>, texts: &[&str]) -> bool {
+    let is_auto = |item: &Item| {
+        matches!(item, Item::QedBox { span, .. }
+            if texts
+                .get(span.document.0)
+                .and_then(|t| t.get(span.start..))
+                .is_some_and(|r| r.starts_with("\\end{proof}")))
+    };
+    if !items.last().is_some_and(is_auto) {
+        return false;
+    }
+    items.pop();
+    if matches!(items.last(), Some(Item::HFill { .. })) {
+        items.pop();
+    }
+    if matches!(items.last(), Some(Item::Space { .. })) {
+        items.pop();
+    }
+    true
 }
 
 /// Whether the source between two consecutive pieces of material keeps TeX
@@ -7026,7 +7417,10 @@ fn list_em_ex(size: u32, family: crate::fonts::Family) -> Option<(f64, f64)> {
             Some((font.quad.0, font.x_height.0))
         }
         crate::fonts::Family::ComputerModern => ec_em_ex(size, family),
-        crate::fonts::Family::Times => None,
+        // The stylesheet's family is the class family the preamble's
+        // lengths were evaluated in; a named family is layered over it
+        // (`Stylesheet::fontspec`) and never reaches here.
+        crate::fonts::Family::Times | crate::fonts::Family::Named(_) => None,
     }
 }
 
@@ -9722,6 +10116,13 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
     let mut items: Vec<Item> = Vec::new();
     let mut prev_end: Option<usize> = None;
     let mut prev_span: Option<Span> = None;
+    // amsthm `\qedhere` under the pinned compiler leaves no inline (it is
+    // reported as unknown), so the gap scan below synthesises the box and
+    // this records that the automatic end-of-proof box is suppressed.
+    let mut qedhere_used = false;
+    // `items.len()` before the current `Inline::HFill`'s additions, so the
+    // suppressed automatic pair below can retract them exactly.
+    let mut hfill_start = None;
     let mut factor = 1000u32;
     let mut pending_accent: Option<(char, CharSrc)> = None;
     // The compiler's size declaration in force at the previous text
@@ -9811,6 +10212,45 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             if sep.opens_the_body(inline_span(inline)) {
                 pending_head_sep.set(Some((sep.pt, sep.stretch_pt, sep.shrink_pt)));
                 head_sep = None;
+            }
+        }
+        // amsthm `\qedhere` under the pinned compiler: it reports the
+        // command as unknown and emits no inline, so without this the box
+        // would never be placed and the automatic end-of-proof box would
+        // still follow. The command's own bytes sit in the gap between the
+        // surrounding inlines; when one is found, the same fill + box the
+        // automatic mark uses are emitted at exactly this position (the
+        // current end of `items`), and the automatic pair is suppressed
+        // when it arrives below. A compiler that emits the pair itself
+        // (with the command's bytes as the pair's own span) leaves no such
+        // gap, so this never double-fires after a re-pin.
+        let here = inline_span(inline);
+        if let (Some(pe), Some(ps)) = (prev_end, prev_span) {
+            if ps.document == here.document && pe <= here.start {
+                let gap_found = text_of(here.document)
+                    .get(pe..here.start)
+                    .and_then(|gap| find_command(gap, "qedhere"))
+                    .map(|at| (pe + at, pe + at + "\\qedhere".len()));
+                if let Some((qs, qe)) = gap_found {
+                    let qspan = Span::in_document(here.document, qs, qe);
+                    let gap = space_between(prev_end, prev_span, qspan, Some("\\qedhere"), after_control_word);
+                    let mut gap_style = space_style(texts, styles, prev_end, qspan, TextStyle::default());
+                    gap_style.size_cpt = space_size(texts, prev_end, qspan, prev_size_cpt, 0);
+                    push_gap(&mut items, gap, gap_style, factor);
+                    let mut fill_style = style_at(styles_of(here.document), qs);
+                    fill_style.size_cpt = space_size(texts, prev_end, qspan, prev_size_cpt, 0);
+                    items.push(Item::HFill { fill: true, leader: FillLeader::None, style: fill_style });
+                    let mut qed_style = style_at(styles_of(here.document), qs);
+                    qed_style.size_cpt = fill_style.size_cpt;
+                    prev_size_cpt = qed_style.size_cpt;
+                    items.push(Item::QedBox { style: qed_style, span: qspan });
+                    prev_end = Some(qe);
+                    prev_span = Some(qspan);
+                    factor = 1000;
+                    pending_accent = None;
+                    after_control_word = true;
+                    qedhere_used = true;
+                }
             }
         }
         match &**inline {
@@ -10008,6 +10448,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 factor = 1000;
             }
             Inline::HFill { span, .. } | Inline::HSpace { span, .. } | Inline::TextGlue { span, .. } => {
+                hfill_start = Some(items.len());
                 // Explicit horizontal glue: the interword space read before
                 // it stays (TeX keeps both glue nodes). `TextGlue` is the
                 // compiler's text-mode `\quad`/`\qquad` (`em` ems of the
@@ -10242,6 +10683,22 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     })
                     && matches!(items.last(), Some(Item::HFill { leader: FillLeader::None, .. })) =>
             {
+                if qedhere_used {
+                    // amsthm's `\popQED`: the gap scan above already placed
+                    // the box at `\qedhere`, so this automatic end-of-proof
+                    // pair is suppressed — retracted exactly, gap glue and
+                    // fill with it.
+                    if let Some(start) = hfill_start {
+                        items.truncate(start);
+                    }
+                    prev_end = Some(span.end);
+                    prev_span = Some(*span);
+                    factor = 1000;
+                    pending_accent = None;
+                    after_control_word = false;
+                    hfill_start = None;
+                    continue;
+                }
                 let Inline::Text { style: compiler_style, .. } = &**inline else { unreachable!() };
                 let mut style = style_at(styles_of(span.document), span.start);
                 style.size_cpt = declared_size(compiler_style.size, size);
@@ -11792,12 +12249,23 @@ mod tests {
     /// marks the run mono (`parser::Inline::Verbatim`, `Block::Verbatim`)
     /// but the pipeline re-derives the family from the source, and these
     /// were in none of its tables.
+    ///
+    /// `\lstinline` is not `\verb`: listings sets it in the `basicstyle`
+    /// face, and the default `basicstyle={}` changes nothing, so the face
+    /// around the command stays (`listings::apply`). pdflatex (11 pt
+    /// article, `\usepackage{listings}`, no `\lstset`): `A \lstinline|xy|
+    /// B` sets `xy` in `SFRM1095`, `\textsf{sans \lstinline|s| here}` sets
+    /// `s` in `SFSS1095`; with `\lstset{basicstyle=\ttfamily\small}` the
+    /// `listings-manual` reference sets its inlines in `SFTT1000`.
     #[test]
     fn verbatim_constructs_are_set_in_the_typewriter_family() {
         assert_eq!(families(&items("A \\verb|x| B")), "rtr");
         assert_eq!(families(&items("A \\verb*|x| B")), "rtr");
-        assert_eq!(families(&items("A \\lstinline|x| B")), "rtr");
-        assert_eq!(families(&items("A \\lstinline[language=C]|x| B")), "rtr");
+        assert_eq!(families(&items("A \\lstinline|x| B")), "rrr");
+        assert_eq!(families(&items("A \\lstinline[language=C]|x| B")), "rrr");
+        assert_eq!(families(&items("A \\lstinline[basicstyle=\\ttfamily]|x| B")), "rtr");
+        assert_eq!(families(&items("\\lstset{basicstyle=\\ttfamily\\small}\nA \\lstinline|x| B")), "rtr");
+        assert_eq!(families(&items("\\textsf{A \\lstinline|x| B}")), "sss");
         assert_eq!(families(&items("\\begin{verbatim}\nx\n\\end{verbatim}")), "t");
         assert_eq!(families(&items("\\begin{lstlisting}[language=C]\nx\n\\end{lstlisting}")), "t");
     }

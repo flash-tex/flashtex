@@ -35,90 +35,76 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
 
 /// Real LaTeX2e, amsmath/amssymb and widely used package commands this
 /// compiler does not implement.
+///
+/// A name here must not be implemented anywhere: `parser::BUILT_INS`, the
+/// tabular row scanner (`parser::tabular`), the math tables, the amssymb
+/// inventory and the expansion pass all count — `implemented_commands` is
+/// the check, and the unit test below enforces the disjointness.
+/// Deliberately kept although handled elsewhere: `\chapter` (a class-gated
+/// parser arm; article-class use must report unsupported, not unknown),
+/// `\relax` (consumed silently by the expansion pass and glue parsing) and
+/// `\makeatletter` (consumed silently by the engine prelude).
 #[rustfmt::skip]
 const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // LaTeX2e document structure and front matter.
-    "part", "chapter", "subsubsection", "appendix", "maketitle",
-    "title", "author", "date", "thanks", "and", "today", "tableofcontents", "listoffigures",
-    "listoftables", "abstractname", "footnote", "footnotemark", "footnotetext",
-    "index", "glossary", "bibliography", "bibliographystyle", "bibitem", "cite", "nocite",
+    "part", "chapter", "appendix", "abstractname", "listoffigures",
+    "listoftables", "addvspace",
     // Boxes, spacing, breaking and page control.
-    "centering", "raggedright", "raggedleft", "linespread", "vfill", "hss", "vss", "vbox",
-    "makebox", "fbox", "framebox", "parbox", "raisebox", "rule", "newline",
-    "clearpage", "cleardoublepage", "thispagestyle", "twocolumn", "onecolumn",
-    "indent", "phantom", "hphantom", "vphantom", "smash", "addvspace",
-    "vskip", "kern", "enspace", "thinspace", "negthinspace", "hline", "cline",
-    "multicolumn", "tabularnewline", "arraystretch",
+    "makebox", "fbox", "framebox", "parbox", "raisebox", "linespread",
+    "vskip", "kern", "hss", "vss", "vbox", "newline", "smash",
     // Fonts and text symbols.
-    "underbar", "LaTeX",
-    "LaTeXe", "TeX", "dag", "ddag", "S", "P", "copyright", "pounds", "textbackslash",
-    "textasciitilde", "textasciicircum", "textbar", "textless", "textgreater", "textendash",
-    "textemdash", "textquoteleft", "textquoteright",
-    "textquotedblleft", "textquotedblright", "ldots", "slash", "selectfont", "fontsize",
-    "fontfamily", "usefont",
+    "selectfont", "fontsize", "fontfamily", "usefont",
+    "textemdash", "textendash", "textquoteleft", "textquoteright",
+    "textquotedblleft", "textquotedblright", "slash",
     // Definitions, counters and programming.
-    "def", "edef", "gdef", "let", "providecommand", "newenvironment", "renewenvironment",
-    "newtheorem", "newcounter", "setcounter", "addtocounter", "stepcounter", "refstepcounter",
-    "value", "arabic", "roman", "Roman", "alph", "Alph", "fnsymbol", "the", "makeatletter",
-    "makeatother", "newif", "relax", "expandafter", "csname", "endcsname",
-    "newlength", "settowidth", "DeclareMathOperator", "ensuremath", "protect",
-    "verb", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "lstset", "RequirePackage",
-    "PassOptionsToPackage", "AtBeginDocument",
+    "def", "edef", "gdef", "let", "the", "makeatletter", "relax",
+    "expandafter", "csname", "endcsname", "ensuremath", "protect",
+    "RequirePackage", "PassOptionsToPackage",
     // Cross-references and links.
-    "eqref", "autoref", "nameref", "url", "href", "hyperref", "hyperlink",
-    "hypertarget", "cite", "parencite", "textcite", "autocite", "citep", "citet", "citeauthor", "citeyear", "nocite", "addbibresource", "printbibliography",
+    "autoref", "nameref", "hyperref", "hyperlink", "hypertarget",
     // Colour and graphics packages.
     "tikz",
-    "usetikzlibrary", "draw", "node", "fill", "path", "scalebox", "resizebox", "rotatebox",
+    "usetikzlibrary", "draw", "node", "fill", "path",
     "subcaption", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
-    "intertext", "shortintertext", "substack", "xrightarrow", "xleftarrow", "overbrace",
-    "underbrace", "overleftarrow", "overrightarrow", "mathcal", "mathfrak", "mathscr", "pmb",
-    "limits", "nolimits", "displaylimits", "colon", "eqqcolon", "Coloneqq", "Eqqcolon",
-    "vcentcolon", "dblcolon", "vdots", "ddots", "iff", "implies", "impliedby",
-    "genfrac", "operatornamewithlimits",
-    "cancelto", "numberwithin", "allowdisplaybreaks", "lvert", "rvert", "lVert",
-    "rVert", "varepsilon", "vartheta", "varphi", "varrho", "varsigma", "varpi", "digamma",
-    "varkappa", "hbar", "hslash", "ell", "wp", "Re", "Im", "aleph", "beth", "gimel", "emptyset",
-    "varnothing", "nabla", "partial", "infty", "forall", "exists", "nexists", "neg", "lnot", "top",
-    "bot", "angle", "measuredangle", "triangle", "square", "blacksquare",
-    "clubsuit", "diamondsuit", "heartsuit", "spadesuit", "flat", "natural", "sharp", "prime",
-    "backprime", "surd", "mathstrut", "not", "neq", "ne", "leq", "le", "geq", "ge", "ll", "gg",
-    "leqslant", "geqslant", "approx", "cong", "equiv", "sim", "simeq", "propto", "subset", "supset",
-    "subseteq", "supseteq", "subsetneq", "supsetneq", "in", "ni", "notin", "cup", "cap", "bigcup",
-    "bigcap", "setminus", "wedge", "vee", "bigwedge", "bigvee", "oplus", "otimes", "bigoplus",
-    "bigotimes", "ominus", "oslash", "odot", "bigcirc", "times", "div", "cdot", "circ", "bullet", "star", "ast", "pm", "mp", "sum",
-    "prod", "coprod", "int", "oint", "to", "gets", "mapsto", "rightarrow", "leftarrow",
-    "leftrightarrow", "Rightarrow", "Leftarrow", "Leftrightarrow", "longrightarrow",
-    "longleftarrow", "Longrightarrow", "Longleftarrow", "longmapsto", "hookrightarrow",
-    "hookleftarrow", "uparrow", "downarrow", "nearrow", "searrow", "mid", "nmid", "parallel",
-    "perp", "vdash", "dashv", "models", "langle", "rangle", "lceil", "rceil", "lfloor", "rfloor",
-    "backslash", "vert", "Vert", "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta",
-    "theta", "iota", "kappa", "lambda", "mu", "nu", "xi", "pi", "rho", "sigma", "tau", "upsilon",
-    "phi", "chi", "psi", "omega", "Gamma", "Delta", "Theta", "Lambda", "Xi", "Pi", "Sigma",
-    "Upsilon", "Phi", "Psi", "Omega",
-];
-
-/// Environments this compiler implements outside math mode.
-#[rustfmt::skip]
-const IMPLEMENTED_ENVIRONMENTS: &[&str] = &[
-    "document", "figure", "table", "frame", "block", "alertblock", "exampleblock", "columns", "column", "center", "flushright", "flushleft", "quote", "quotation", "itemize",
-    "enumerate", "list", "equation", "equation*", "displaymath", "gather", "gather*", "align", "align*",
-    "alignat", "alignat*", "flalign", "flalign*", "eqnarray", "eqnarray*", "multline", "multline*",
-    "tiny", "scriptsize", "footnotesize", "small", "normalsize",
-    "large", "Large", "LARGE", "huge", "Huge",
-    "tabbing",
+    "mathscr", "pmb", "displaylimits", "cancelto",
+    "Vert", "vert", "backslash", "neg", "lnot",
+    "coprod", "bigcap", "bigcup", "bigvee", "bigwedge", "bigoplus", "bigotimes",
+    "hookleftarrow", "longmapsto", "nearrow", "searrow",
+    "star", "bullet", "flat", "natural", "sharp",
+    "clubsuit", "diamondsuit", "heartsuit", "spadesuit",
+    "surd", "mathstrut", "varrho",
+    // The geometry package is implemented; its `\geometry` command is not.
+    "geometry",
+    // fontspec (XeLaTeX/LuaLaTeX-only): recognised so unguarded use reports
+    // `unsupported_feature` naming the package instead of an unknown-command
+    // typo hunt. A block guarded by `\ifxetex`/`\ifluatex` (false here, as
+    // under pdflatex) never reaches this diagnostic.
+    "setmainfont", "setsansfont", "setmonofont", "newfontfamily", "fontspec",
+    "defaultfontfeatures", "addfontfeature",
 ];
 
 /// Real LaTeX2e / amsmath / common-package environments not implemented.
+///
+/// A name here must not be implemented anywhere: `supported::TEXT_ENVIRONMENTS`
+/// and the math grids both count. `tabular`, `longtable` and friends used to
+/// be listed here while the parser implemented them; the unit test below
+/// enforces the disjointness now.
 #[rustfmt::skip]
 const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
-    "description", "table*", "figure*", "tabular", "tabular*", "tabularx", "longtable",
-    "verbatim", "verbatim*", "verse", "abstract", "minipage", "titlepage", "thebibliography",
-    "trivlist", "picture", "math", "gathered", "multlined",
-    "subequations", "proof", "tikzpicture", "lstlisting", "minted",
-    "wrapfigure", "subfigure", "comment", "landscape", "filecontents",
+    "table*", "figure*",
+    "abstract", "minipage", "titlepage",
+    "trivlist", "picture", "math", "multlined",
+    "tikzpicture", "minted",
+    "wrapfigure", "subfigure", "landscape", "filecontents",
 ];
+
+/// Commands handled by name outside every table above: amsmath's
+/// `\intertext`/`\shortintertext`, consumed with their braced argument by the
+/// multi-row display environments (`parser.rs `multirow_environment`), never
+/// by inline math. Kept out of [`MATH_COMMANDS`] on purpose: that list's unit
+/// test compiles each entry in inline `$...$`, where these two do not belong.
+const MATH_DISPLAY_COMMANDS: &[&str] = &["intertext", "shortintertext"];
 
 fn implemented_commands() -> impl Iterator<Item = &'static str> {
     BUILT_INS
@@ -130,6 +116,17 @@ fn implemented_commands() -> impl Iterator<Item = &'static str> {
         .chain(crate::amssymb::command_names())
         .chain(OPERATOR_NAMES.iter().copied())
         .chain(DELIMITER_COMMANDS.iter().copied())
+        // Math structures (`supported::MATH_STRUCTURES`: `\genfrac`,
+        // `\substack`, `\phantom`, ...) and expansion-pass commands
+        // (`supported::EXPANSION_COMMANDS`): implemented, so a use outside
+        // their context reports unsupported, never an unknown-command typo.
+        .chain(
+            crate::supported::MATH_STRUCTURES
+                .iter()
+                .flat_map(|(names, ..)| names.iter().copied()),
+        )
+        .chain(crate::supported::expansion_command_names())
+        .chain(MATH_DISPLAY_COMMANDS.iter().copied())
 }
 
 pub fn is_known_command(name: &str) -> bool {
@@ -152,9 +149,9 @@ pub fn is_listed_as_unimplemented(name: &str) -> bool {
 }
 
 pub fn is_known_environment(name: &str) -> bool {
-    IMPLEMENTED_ENVIRONMENTS
+    crate::supported::TEXT_ENVIRONMENTS
         .iter()
-        .copied()
+        .map(|(name, _)| *name)
         .chain(GRID_ENVIRONMENTS.iter().map(|(name, ..)| *name))
         .chain(KNOWN_UNIMPLEMENTED_ENVIRONMENTS.iter().copied())
         .any(|known| known == name)
@@ -305,6 +302,8 @@ pub fn command_package(name: &str) -> Option<&'static str> {
         "autoref" | "nameref" | "url" | "href" | "hyperref" | "hyperlink" | "hypertarget"
         | "hypersetup" => Some("hyperref"),
         "geometry" => Some("geometry"),
+        "setmainfont" | "setsansfont" | "setmonofont" | "newfontfamily" | "fontspec"
+        | "defaultfontfeatures" | "addfontfeature" => Some("fontspec"),
         _ => None,
     }
 }
@@ -345,6 +344,10 @@ pub fn math_mode_help(name: &str) -> Option<String> {
 
 /// `= help:` for an unimplemented environment. Only when a package name is
 /// extra information; the diagnostic already says the body is plain text.
+///
+/// `longtable` stays here although the environment is implemented: without
+/// `\usepackage{longtable}` there is nothing to run, and the help names the
+/// missing package rather than claiming the compiler cannot do it at all.
 pub fn environment_help(name: &str) -> Option<String> {
     let package = match name {
         "tikzpicture" => Some("tikz"),
@@ -357,9 +360,7 @@ pub fn environment_help(name: &str) -> Option<String> {
         "landscape" => Some("lscape"),
         _ => None,
     };
-    package.map(|p| {
-        format!("environment '{name}' needs the {p} package, which this compiler does not implement")
-    })
+    package.map(|p| format!("environment '{name}' needs \\usepackage{{{p}}}"))
 }
 
 /// Optimal string alignment distance: Levenshtein plus adjacent transposition,
@@ -527,8 +528,39 @@ mod tests {
         assert!(environment_help("tabbing").is_none());
         assert_eq!(
             environment_help("tikzpicture").as_deref(),
-            Some("environment 'tikzpicture' needs the tikz package, which this compiler does not implement")
+            Some("environment 'tikzpicture' needs \\usepackage{tikz}")
         );
+    }
+
+    /// Neither "not implemented" list may name an implemented command: the
+    /// inventory (and the backlog rankings built from it) must agree with
+    /// the parser. Implemented means anything `implemented_commands` knows
+    /// plus every inventoried environment; the deliberately kept entries
+    /// (`\chapter`, `\relax`, `\makeatletter`, `\geometry`) are covered by
+    /// their own arms or silent handling, never by these lists.
+    #[test]
+    fn unimplemented_lists_name_nothing_implemented() {
+        for name in KNOWN_UNIMPLEMENTED_COMMANDS {
+            assert!(
+                !implemented_commands().any(|known| known == *name),
+                "\\{name} is implemented but listed as unimplemented"
+            );
+        }
+        let implemented_envs: Vec<&str> = crate::supported::TEXT_ENVIRONMENTS
+            .iter()
+            .map(|(name, _)| *name)
+            .chain(
+                crate::math::GRID_ENVIRONMENTS
+                    .iter()
+                    .map(|(name, ..)| *name),
+            )
+            .collect();
+        for name in KNOWN_UNIMPLEMENTED_ENVIRONMENTS {
+            assert!(
+                !implemented_envs.contains(name),
+                "environment '{name}' is implemented but listed as unimplemented"
+            );
+        }
     }
 
     /// `MATH_COMMANDS` is hand-kept beside `math.rs`'s dispatch; an entry the

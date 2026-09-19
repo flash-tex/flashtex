@@ -514,6 +514,12 @@ pub struct Laid {
 pub struct Context<'a> {
     fonts: &'a FontSet,
     style: &'a Stylesheet,
+    /// A second stylesheet the build swaps to past a mid-document column
+    /// switch (`adapter::Doc::post_style`): `swap_style` exchanges it with
+    /// `style`, so every width, frame and tolerance the block builders
+    /// read follows the switch with no lifetime cost (both borrows live
+    /// in `'a`, only the slots move).
+    alt_style: Option<&'a Stylesheet>,
     paths: &'a [&'a str],
     /// Document sources (indexed like `paths`), read only to re-derive what
     /// the compiler's math list flattens (`\left`/`\right` fences).
@@ -592,6 +598,12 @@ pub struct Context<'a> {
     /// Math providers for text sizes other than the body's (footnotes), by
     /// size in centipoints; `None` when that size's metrics are missing.
     math_fonts_sized: BTreeMap<u32, Option<MathProvider>>,
+    /// The document's named families (`Stylesheet::fontspec.families`, by
+    /// index) interned on the font set, and each one's resolved `Scale=`
+    /// factor once a face of it has been loaded (`MatchLowercase` needs the
+    /// face's x-height).
+    named_ids: Vec<crate::fonts::NamedId>,
+    named_scales: BTreeMap<u16, f64>,
     /// LaTeX's `\@parboxrestore` is in force: the material is being set in
     /// a box of its own (a float body), not in the page's text. It sets
     /// `\parindent` and `\parskip` to zero and ends with `\sloppy`
@@ -623,6 +635,23 @@ impl<'a> Context<'a> {
         self.math_colors = colors;
     }
 
+    /// Carries the post-switch stylesheet (`adapter::Doc::post_style`) for
+    /// a build that lays out a mid-document column switch.
+    pub fn set_alt_style(&mut self, style: Option<&'a Stylesheet>) {
+        self.alt_style = style;
+    }
+
+    /// Exchanges the active stylesheet with the carried one, twice restoring
+    /// it: block builders between the two calls read the post-switch frame.
+    /// `false` when no second stylesheet is carried: the caller lays out
+    /// without the switch instead.
+    fn swap_style(&mut self) -> bool {
+        let Some(mut alt) = self.alt_style.take() else { return false };
+        std::mem::swap(&mut self.style, &mut alt);
+        self.alt_style = Some(alt);
+        true
+    }
+
     /// The unmasked document sources (see [`Context::sources`]): the
     /// request's documents as read, before `floats::mask` blanked the float
     /// environments the compiler must not see.
@@ -640,6 +669,7 @@ impl<'a> Context<'a> {
         Context {
             fonts,
             style,
+            alt_style: None,
             paths,
             texts,
             sources: texts,
@@ -672,6 +702,8 @@ impl<'a> Context<'a> {
             multicol: multicol::State::default(),
             rlap_marks: false,
             math_fonts_sized: BTreeMap::new(),
+            named_ids: style.fontspec.families.iter().map(|spec| fonts.intern_named(spec)).collect(),
+            named_scales: BTreeMap::new(),
         }
     }
 
@@ -786,7 +818,102 @@ impl<'a> Context<'a> {
         self.emit(Some(key), d);
     }
 
+    /// The named family a text style is set in, if any: the run's own
+    /// (`TextStyle::named`, a local `\fontspec`/switch) else the slot
+    /// default for its family kind after `\familydefault` (a preamble
+    /// `\setmainfont`, the manifest). `None` is the class font.
+    fn named_index(&self, style: TextStyle) -> Option<u16> {
+        let fs = &self.style.fontspec;
+        if fs.is_empty() {
+            return None;
+        }
+        style.named.or_else(|| {
+            let kind = if style.family == crate::nfss::FamilyKind::Rm { self.style.default_family } else { style.family };
+            fs.slot(kind)
+        })
+    }
+
+    /// The face of a run in a named family, with its diagnostics: the
+    /// family missing (a warning, Latin Modern's face for the shape is
+    /// used), a nearest weight/style or small caps not applied (a note).
+    /// NFSS substitution does not apply -- the family has whatever faces it
+    /// has -- so only the key's series and shape are read.
+    fn named_face(&mut self, index: u16, style: TextStyle, size: f64, span: Span) -> Rc<LoadedFace> {
+        let Some(&id) = self.named_ids.get(usize::from(index)) else {
+            return self.class_face(style, size, span);
+        };
+        let key = style.key();
+        let r = self.fonts.resolve(Family::Named(id), Role::Font(key), size);
+        let family = self.style.fontspec.families.get(usize::from(index)).map(|s| s.family.clone()).unwrap_or_default();
+        if let Some(reason) = &r.family_missing {
+            let src = self.source(span);
+            self.report_once(
+                format!("family:{family}"),
+                Diagnostic::warning("font_family_unavailable", format!("{reason}; Latin Modern is used for \"{family}\""), vec![src]),
+            );
+        }
+        if let Some(note) = &r.note {
+            let src = self.source(span);
+            self.report_once(format!("named:{note}"), Diagnostic::warning("font_face_substituted", note.clone(), vec![src]));
+        }
+        r.face
+    }
+
     fn face(&mut self, style: TextStyle, size: f64, span: Span) -> Rc<LoadedFace> {
+        match self.named_index(style) {
+            Some(index) => self.named_face(index, style, size, span),
+            None => self.class_face(style, size, span),
+        }
+    }
+
+    /// `Scale=` of the run's named family (1 for the class font): a
+    /// factor, or the ratio that matches the family's x-height
+    /// (`MatchLowercase`) or cap height (`MatchUppercase`) to the main
+    /// font's, as fontspec computes it (`fontspec-code-load.dtx`,
+    /// `\__fontspec_calc_scale:`). The main font is the text slot's named
+    /// family when there is one, else the class font.
+    fn named_scale(&mut self, style: TextStyle, size: f64, span: Span) -> f64 {
+        let Some(index) = self.named_index(style) else { return 1.0 };
+        if let Some(s) = self.named_scales.get(&index) {
+            return *s;
+        }
+        let scale = match self.style.fontspec.families.get(usize::from(index)).map(|s| s.scale) {
+            Some(crate::fonts::Scale::Factor(f)) => f,
+            Some(which @ (crate::fonts::Scale::MatchLowercase | crate::fonts::Scale::MatchUppercase)) => {
+                let lowercase = which == crate::fonts::Scale::MatchLowercase;
+                let upright = TextStyle { named: Some(index), ..TextStyle::default() };
+                let this = self.named_face(index, upright, size, span);
+                let main = match self.style.fontspec.text {
+                    Some(t) if t != index => self.named_face(t, TextStyle { named: Some(t), ..TextStyle::default() }, size, span),
+                    _ => self.class_face(TextStyle::default(), size, span),
+                };
+                let (a, b) = (crate::fonts::height_em(&this, lowercase), crate::fonts::height_em(&main, lowercase));
+                if a > 0.0 && b > 0.0 { b / a } else { 1.0 }
+            }
+            None => 1.0,
+        };
+        self.named_scales.insert(index, scale);
+        scale
+    }
+
+    /// The `GSUB` features a run in a named family asks the shaper for:
+    /// `smcp` under `\scshape` (the family has no small-caps design of its
+    /// own, as Latin Modern has `lmromancaps`) and `onum` under
+    /// `Numbers=OldStyle`. Nothing for the class fonts.
+    fn named_flags(&self, style: TextStyle) -> crate::shape::ShapeFlags {
+        use crate::shape::ShapeFlags;
+        let Some(index) = self.named_index(style) else { return ShapeFlags::NONE };
+        let mut flags = ShapeFlags::NONE;
+        if style.caps {
+            flags = flags.with(ShapeFlags::SMALL_CAPS);
+        }
+        if self.style.fontspec.families.get(usize::from(index)).is_some_and(|s| s.oldstyle_numbers) {
+            flags = flags.with(ShapeFlags::OLDSTYLE_NUMS);
+        }
+        flags
+    }
+
+    fn class_face(&mut self, style: TextStyle, size: f64, span: Span) -> Rc<LoadedFace> {
         let (role, notes) = self.text_role(style, size);
         let r = self.fonts.resolve(self.style.family, role, size);
         for (key, message) in notes {
@@ -994,6 +1121,20 @@ impl<'a> Context<'a> {
     /// `\fontdimen`s of the face for `style` at `size`: the face's TFM
     /// when it has one (exact fixwords), else the transcribed table.
     fn text_params(&self, style: TextStyle, size: f64) -> params::TextParamsPt {
+        // A named family: XeTeX's parameters for a native font, off the
+        // face itself, at the scaled size (`fonts::opentype_params`). The
+        // scale is whatever `named_scale` has computed for the family; a
+        // `MatchLowercase` family whose face has not been loaded yet
+        // (parameters asked before any of its text was set) is at 1.
+        if let Some(index) = self.named_index(style) {
+            if let Some(&id) = self.named_ids.get(usize::from(index)) {
+                let r = self.fonts.resolve(Family::Named(id), Role::Font(style.key()), size);
+                if r.family_missing.is_none() {
+                    let scale = self.named_scales.get(&index).copied().unwrap_or(1.0);
+                    return crate::fonts::opentype_params(&r.face).at(size * scale);
+                }
+            }
+        }
         let r = self.fonts.resolve(self.style.family, self.text_role(style, size).0, size);
         if let (None, Some(tfm)) = (&r.substituted, &r.face.tfm) {
             let dim = |n: usize| tfm.param(n).map_or(0.0, |v| crate::tfm::Tfm::pt(v, size));
@@ -1117,6 +1258,54 @@ impl<'a> Context<'a> {
         out.push(self.qed_rule(size, span, RULE_PT, height, 0.0));
         out.push((pl::Item::kern(pad), None));
         out
+    }
+
+    /// Appends [`Context::qed_items`] flush against `right` on a line whose
+    /// baseline is `baseline`: amsthm `\qedhere` in a display (or one
+    /// alignment row), set with the running-text mark's own boxes, so the
+    /// two are identical. Returns the right edge (always `right`) and the
+    /// box height, so the caller widens a short line and raises it when
+    /// the box sticks up past a short formula.
+    fn append_display_qed(
+        &mut self,
+        runs: &mut Vec<pl::PositionedRun>,
+        line_items: &mut Vec<pl::Item>,
+        line_recs: &mut Vec<Option<usize>>,
+        right: f64,
+        baseline: f64,
+        size: f64,
+        span: Span,
+    ) -> (f64, f64) {
+        let style = TextStyle::default();
+        let quad = self.text_params(style, size).quad;
+        let mut x = right - 0.77778 * quad;
+        for (item, rec) in self.qed_items(style, size, span) {
+            match item {
+                pl::Item::Box(run) => {
+                    let w = run.width;
+                    runs.push(pl::PositionedRun {
+                        x,
+                        baseline_y: baseline,
+                        width: w,
+                        font: run.font,
+                        size: run.size,
+                        glyphs: Vec::new(),
+                        source: run.source.clone(),
+                        is_hyphen: false,
+                    });
+                    x += w;
+                    line_items.push(pl::Item::Box(run));
+                    line_recs.push(rec);
+                }
+                pl::Item::Kern(k) => {
+                    x += k.width;
+                    line_items.push(pl::Item::Kern(k));
+                    line_recs.push(rec);
+                }
+                _ => {}
+            }
+        }
+        (right, 0.675 * quad)
     }
 
     /// `\TeX`/`\LaTeX`/`\LaTeXe` (compiler `Inline::Logo`): one box per glyph
@@ -1327,14 +1516,20 @@ impl<'a> Context<'a> {
     /// have none, e.g. `text_box_in`'s synthetic segments).
     fn text_box_shaped(&mut self, seg: &adapter::Segment, size: f64, face: Rc<LoadedFace>, cuts: &[usize]) -> Option<(pl::GlyphRun, usize)> {
         let span = seg_span(seg)?;
+        // fontspec `Scale=`: the family is loaded at the scaled size, as
+        // `\fontspec` does through `\fontsize`'s `[<scale>]` in the font
+        // name. The class font's scale is 1 and nothing here changes.
+        let size = size * self.named_scale(seg.style, size, span);
         // Verbatim runs the font's ligature/kern program not at all
-        // (`\@noligs`); every other run runs it as TeX does.
-        let shaped = if seg.style.literal {
-            self.shaper.shape_literal(&face, &seg.text)
-        } else if !cuts.is_empty() {
-            self.shaper.shape_cut(&face, &seg.text, cuts)
+        // (`\@noligs`); every other run runs it as TeX does. A named
+        // family's run adds its `GSUB` features (small caps, old-style
+        // figures); the class fonts have their own small-caps designs and
+        // ask for nothing.
+        let flags = self.named_flags(seg.style).with(if seg.style.literal { crate::shape::ShapeFlags::LITERAL } else { crate::shape::ShapeFlags::NONE });
+        let shaped = if !cuts.is_empty() {
+            self.shaper.shape_cut_flags(&face, &seg.text, cuts, flags)
         } else {
-            self.shaper.shape(&face, &seg.text)
+            self.shaper.shape_flags(&face, &seg.text, flags)
         };
         if let Some(e) = &shaped.tfm_error {
             let src = self.source(span);
@@ -2016,6 +2211,9 @@ impl<'a> Context<'a> {
         if let Some(items) = self.ot1_math_symbol_items(seg, size) {
             return items;
         }
+        if let Some(items) = self.named_fallback_items(seg, size) {
+            return items;
+        }
         if !hyphenate {
             return self.whole_word(seg, size);
         }
@@ -2041,8 +2239,12 @@ impl<'a> Context<'a> {
         }
         let Some(span) = seg_span(seg) else { return Vec::new() };
         let face = self.face(seg.style, size, span);
+        // Measurements below are at the face's scaled size (`Scale=`);
+        // `text_box` applies the same scale to the fragments it sets.
+        let scaled = size * self.named_scale(seg.style, size, span);
+        let flags = self.named_flags(seg.style);
         let shaper = self.shaper;
-        let shaped = shaper.shape(&face, text);
+        let shaped = shaper.shape_flags(&face, text, flags);
         if shaped.refused.is_some() {
             return self.whole_word(seg, size);
         }
@@ -2061,15 +2263,15 @@ impl<'a> Context<'a> {
         // width by the face's 1000 units instead put the tail of a word like
         // `ellipsis\dots` (U+2026 has no T1 slot, `ellip` does) 12676 pt to
         // the left of the page, and every later word on its line with it.
-        let width_pt = |t: &str| shaper.shape(&face, t).width_pt(size);
+        let width_pt = |t: &str| shaper.shape_flags(&face, t, flags).width_pt(scaled);
         // Whole minus parts, with the exact integer subtraction kept for the
         // usual case where all three came back in the same units.
         let residual_pt = |whole: &str, head: &str, tail: &str| {
-            let (w, h, t) = (shaper.shape(&face, whole), shaper.shape(&face, head), shaper.shape(&face, tail));
+            let (w, h, t) = (shaper.shape_flags(&face, whole, flags), shaper.shape_flags(&face, head, flags), shaper.shape_flags(&face, tail, flags));
             if w.units_per_em == h.units_per_em && h.units_per_em == t.units_per_em {
-                size * (w.width_units - h.width_units - t.width_units) as f64 / w.units_per_em as f64
+                scaled * (w.width_units - h.width_units - t.width_units) as f64 / w.units_per_em as f64
             } else {
-                w.width_pt(size) - h.width_pt(size) - t.width_pt(size)
+                w.width_pt(scaled) - h.width_pt(scaled) - t.width_pt(scaled)
             }
         };
         // Byte offset -> char index, for the fragments' `chars`.
@@ -2151,6 +2353,63 @@ impl<'a> Context<'a> {
 
     fn whole_word(&mut self, seg: &adapter::Segment, size: f64) -> Vec<(pl::Item, Option<usize>)> {
         self.text_box(seg, size).map(|(run, rec)| vec![(pl::Item::Box(run), Some(rec))]).unwrap_or_default()
+    }
+
+    /// A word in a named family whose face lacks a glyph for some of its
+    /// characters: the runs it can set stay in it, the others are set in
+    /// Latin Modern's face for the same shape (the class fallback, which
+    /// draws every T1 character), joined as one unbreakable word, with one
+    /// `missing_glyph` warning per (font, character) saying where the
+    /// character went. Nothing is dropped: fontspec on XeTeX would set
+    /// `.notdef` boxes here, and typst falls back per glyph the same way.
+    /// `None` when the word is not in a named family or has no gap, so the
+    /// ordinary path (hyphenation included) runs.
+    fn named_fallback_items(&mut self, seg: &adapter::Segment, size: f64) -> Option<Vec<(pl::Item, Option<usize>)>> {
+        let index = self.named_index(seg.style)?;
+        let span = seg_span(seg)?;
+        let face = self.named_face(index, seg.style, size, span);
+        let has = |ch: char| face.face().glyph_id(ch).is_some() || ch == '\u{2026}' && face.face().glyph_id('.').is_some();
+        if seg.text.chars().all(has) {
+            return None;
+        }
+        let fallback = self.class_face(seg.style, size, span);
+        // Split into maximal runs of set-here / set-in-fallback characters.
+        let mut runs: Vec<(bool, usize, usize)> = Vec::new();
+        for (i, ch) in seg.text.chars().enumerate() {
+            let present = has(ch);
+            match runs.last_mut() {
+                Some((p, _, end)) if *p == present => *end = i + 1,
+                _ => runs.push((present, i, i + 1)),
+            }
+        }
+        let char_byte: Vec<usize> = seg.text.char_indices().map(|(b, _)| b).chain(std::iter::once(seg.text.len())).collect();
+        let mut out = Vec::new();
+        for (k, (present, a, b)) in runs.into_iter().enumerate() {
+            let frag = adapter::Segment { text: seg.text[char_byte[a]..char_byte[b]].to_string(), chars: seg.chars[a..b].to_vec(), style: seg.style };
+            let placed = if present {
+                self.text_box(&frag, size)
+            } else {
+                for ch in frag.text.chars() {
+                    let src = self.source(frag.chars.first().map(|c| c.span()).unwrap_or(span));
+                    self.report_once(
+                        format!("missing:{}:{}", face.font_id, ch),
+                        Diagnostic::warning(
+                            "missing_glyph",
+                            format!("U+{:04X} '{}' has no glyph in {}; set in {} instead", ch as u32, ch, face.name, fallback.name),
+                            vec![src],
+                        ),
+                    );
+                }
+                self.text_box_in(&frag, size, fallback.clone())
+            };
+            if let Some((run, rec)) = placed {
+                if k > 0 {
+                    self.mark_continues(rec);
+                }
+                out.push((pl::Item::Box(run), Some(rec)));
+            }
+        }
+        Some(out)
     }
 
     /// Which of `seg`'s characters an OT1 document sets from a math font
@@ -2411,7 +2670,9 @@ impl<'a> Context<'a> {
                 scheme.family_name(crate::nfss::FamilyKind::Sf),
                 scheme.family_name(crate::nfss::FamilyKind::Tt),
             )),
-            Family::Times => None,
+            // microtype ships no configuration for Times here, nor for an
+            // arbitrary named family (mt-*.cfg files are per TeX font).
+            Family::Times | Family::Named(_) => None,
         };
         let resolved = match (families, face.tfm.clone()) {
             (Some((rm, sf, tt)), Some(tfm)) => {
@@ -2499,6 +2760,12 @@ impl<'a> Context<'a> {
         // mark, so the record is always `None` here and resolves to the
         // box before the call below).
         let mut margins: Vec<(usize, Option<usize>, usize)> = Vec::new();
+        // listings' `\lst@lostspace` and `\lst@width` (pt) inside a
+        // `\lstinline`, and where the box being booked starts in `out`
+        // (`AItem::Listing`, `listings::set_inline`).
+        let mut lst_lost = 0.0f64;
+        let mut lst_width = 0.0f64;
+        let mut lst_start = 0usize;
         for (idx, item) in items.iter().enumerate() {
             match item {
                 AItem::Overlong { .. } => {
@@ -2564,10 +2831,14 @@ impl<'a> Context<'a> {
                     // ends the search with no hyphens).
                     let after_glue = matches!(out.last(), Some(pl::Item::Glue(_)));
                     let joined = matches!(items.get(idx + 1), Some(AItem::Word(_) | AItem::Math { .. }));
+                    // A `\lstinline` token is an `\hbox` of its own
+                    // (`\lst@OutputToken`): never hyphenated, whatever its face.
+                    let boxed = matches!(items.get(idx + 1), Some(AItem::Listing(_)));
                     // The typewriter families declare `\hyphenchar\font=-1`
                     // (`ot1cmtt.fd`, `t1cmtt.fd`, `t1lmtt.fd`): no hyphens.
                     let hyphenate = after_glue
                         && !joined
+                        && !boxed
                         && w.segments.len() == 1
                         && merge_style(base, w.segments[0].style).family != crate::nfss::FamilyKind::Tt;
                     for seg in &w.segments {
@@ -2691,6 +2962,59 @@ impl<'a> Context<'a> {
                     self.recs.push(BoxRec::Rule { width, height: 0.0, bottom: 0.0, span: Span::new(0, 0), color: None });
                     let blank = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height: 0.0, depth: 0.0, source: 0..0 };
                     push(&mut out, &mut recs, pl::Item::Box(blank), Some(self.recs.len() - 1));
+                }
+                AItem::Listing(mark) => {
+                    // `\lst@Kern`: `\hbox{{\lst@currstyle{\kern#1}}}`, a box
+                    // of no height or depth (record as for `SpaceBox`).
+                    let kern_box = |this: &mut Self, width: f64| {
+                        this.recs.push(BoxRec::Rule { width, height: 0.0, bottom: 0.0, span: Span::new(0, 0), color: None });
+                        let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height: 0.0, depth: 0.0, source: 0..0 };
+                        (pl::Item::Box(run), Some(this.recs.len() - 1))
+                    };
+                    match mark {
+                        adapter::ListingMark::Begin { style, width_em } => {
+                            // `\lst@width` is set at `InitVars`, after the
+                            // `Init` hook applied `\lst@basicstyle`: the
+                            // quad is that face's (listings.sty 550, 1385).
+                            let style = merge_style(base, *style);
+                            lst_width = width_em * self.text_params(style, style.size_or(size)).quad;
+                            lst_lost = 0.0;
+                        }
+                        adapter::ListingMark::LostSpace => {
+                            if lst_lost > 0.0 {
+                                let (item, rec) = kern_box(self, lst_lost);
+                                push(&mut out, &mut recs, item, rec);
+                                lst_lost = 0.0;
+                            }
+                            lst_start = out.len();
+                        }
+                        adapter::ListingMark::Columns { columns } => {
+                            let wd: f64 = out[lst_start..]
+                                .iter()
+                                .map(|i| match i {
+                                    pl::Item::Box(run) => run.width,
+                                    pl::Item::Glue(glue) => glue.width,
+                                    pl::Item::Kern(kern) => kern.width,
+                                    pl::Item::Penalty(_) => 0.0,
+                                })
+                                .sum();
+                            lst_lost += f64::from(*columns) * lst_width - wd;
+                            if lst_lost > 0.0 {
+                                // `.5\lst@lostspace` before the box, the rest
+                                // after it, inside the same `\hbox`.
+                                let half = lst_lost / 2.0;
+                                let (item, rec) = kern_box(self, half);
+                                out.insert(lst_start, item);
+                                recs.insert(lst_start, rec);
+                                let (item, rec) = kern_box(self, lst_lost - half);
+                                push(&mut out, &mut recs, item, rec);
+                                lst_lost = 0.0;
+                            }
+                        }
+                        adapter::ListingMark::GobbledBlank => {
+                            lst_lost += lst_width;
+                        }
+                    }
                 }
                 AItem::LineBreak { skip_pt } => {
                     if fills {
@@ -2845,9 +3169,38 @@ impl<'a> Context<'a> {
         }
         // TeX's paragraph end: drop trailing glue, then
         // \penalty10000 \parfillskip \penalty-10000.
+        let had_horizontal = out
+            .iter()
+            .any(|i| matches!(i, pl::Item::Glue(_) | pl::Item::Kern(_)));
         while matches!(out.last(), Some(pl::Item::Glue(_))) {
             out.pop();
             recs.pop();
+        }
+        // TeX §1091 (`new_graf`): horizontal glue or kerns in vertical mode
+        // start a paragraph, and a paragraph with no boxes still breaks to
+        // one line — pdflatex ships a page for a body holding only
+        // `\hspace{1cm}`, `\hfill`, `\quad`, `\,`, `~` or `\ `. Without an
+        // undiscardable node the breaker sees only the paragraph-end triple
+        // and yields no lines, so `paragraph_block` drops the paragraph and
+        // the build fails with "display list has no pages". The empty hbox
+        // is the same anchor `AItem::LeaveVmode` uses (and `\hrulefill`
+        // relies on through the adapter): zero size, so paragraphs that
+        // already hold a box never reach this and lay out byte-identically.
+        // Whatsits alone (`\label`, penalties, `\/` with no box before it)
+        // leave no glue or kern behind, so genuinely empty paragraphs still
+        // contribute nothing.
+        if had_horizontal && !out.iter().any(|i| matches!(i, pl::Item::Box(_))) {
+            self.recs.push(BoxRec::Rule { width: 0.0, height: 0.0, bottom: 0.0, span: Span::new(0, 0), color: None });
+            let run = pl::GlyphRun {
+                font: MATH_SENTINEL,
+                size,
+                glyphs: Vec::new(),
+                width: 0.0,
+                height: 0.0,
+                depth: 0.0,
+                source: 0..0,
+            };
+            push(&mut out, &mut recs, pl::Item::Box(run), Some(self.recs.len() - 1));
         }
         push(&mut out, &mut recs, pl::Item::penalty(pl::INFINITE_PENALTY), None);
         push(&mut out, &mut recs, pl::Item::Glue(if fills { pl::Glue::fil() } else { pl::Glue::fixed(0.0) }), None);
@@ -4065,6 +4418,7 @@ impl<'a> Context<'a> {
                         span,
                         number,
                         bracket,
+                        qed_here,
                     } => {
                         // TeX §1145: a display that opens a paragraph whose
                         // list is still empty sets no line — after a
@@ -4106,7 +4460,8 @@ impl<'a> Context<'a> {
                         };
                         let pd = pre_display;
                         let st = *style;
-                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.display_block(list, *span, pd, number.as_ref(), st, geom)) {
+                        let qh = *qed_here;
+                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.display_block(list, *span, pd, number.as_ref(), st, geom, qh)) {
                             if let Some((ej, vs, env)) = empty_start {
                                 let parskip = geom.map_or(ctx.style.parskip, |g| g.parsep);
                                 if ej {
@@ -6018,6 +6373,7 @@ impl<'a> Context<'a> {
     /// right (`\eqno`). `style` and `list_geom` give the paragraph's
     /// `\parshape` (§1149): the display is centred in `\displaywidth`
     /// (`\linewidth`) starting `\displayindent` (`\@totalleftmargin`) in.
+    #[allow(clippy::too_many_arguments)]
     fn display_block(
         &mut self,
         list: &flashtex_compiler::math::MathList,
@@ -6026,6 +6382,7 @@ impl<'a> Context<'a> {
         number: Option<&(String, Span)>,
         style: ParaStyle,
         list_geom: Option<&ListGeom>,
+        qed_here: Option<Span>,
     ) -> Option<BuiltBlock> {
         let rec = self.math_box(list, span, true, self.style.body_size_pt)?;
         let BoxRec::Math(mi) = &self.recs[rec] else { unreachable!() };
@@ -6172,6 +6529,13 @@ impl<'a> Context<'a> {
             }
             (runs, items, recs)
         };
+        // The formula's own line, for `\qedhere` below: with a number on a
+        // line of its own it is the other one (`\leqno` puts the number
+        // first), else the single combined line.
+        let formula_at = match &eqno {
+            Some(_) if separate => usize::from(left),
+            _ => 0,
+        };
         match eqno {
             Some(nb) if separate => {
                 let (nh, nd, nw) = (nb.height, nb.depth, nb.width);
@@ -6197,6 +6561,16 @@ impl<'a> Context<'a> {
                 out_lines.push((runs, line_items, line_recs, height, depth, s + width));
             }
             None => out_lines.push((vec![formula_run], vec![pl::Item::Box(run)], vec![Some(rec)], height, depth, s + width)),
+        }
+        // amsthm `\qedhere` (adapter `strip_qedhere`): the open box on the
+        // formula's own line, flush right within the display width. Gated
+        // strictly on the marker — a display without one is untouched, in
+        // particular whatever the closing proof does after it.
+        if let Some(qspan) = qed_here {
+            let (runs, line_items, line_recs, h, _dp, natural) = &mut out_lines[formula_at];
+            let (edge, qh) = self.append_display_qed(runs, line_items, line_recs, s + z, *h, size, qspan);
+            *h = h.max(qh);
+            *natural = natural.max(edge);
         }
         let mut items = Vec::new();
         let mut recs = Vec::new();
@@ -6679,6 +7053,14 @@ impl<'a> Context<'a> {
                 items.push(pl::Item::Box(nrun.clone()));
                 recs.push(Some(*nrec));
             }
+            // amsthm `\qedhere` on this row (adapter `strip_qedhere`): the
+            // box on the row's own line, flush right within the display
+            // width, on baseline 0 like every other row run.
+            if let Some(qspan) = rows[ri].qed_here {
+                let (edge, qh) = self.append_display_qed(&mut runs, &mut items, &mut recs, dw, 0.0, size, qspan);
+                h = h.max(qh);
+                natural = natural.max(edge);
+            }
             if natural > dw + 1e-6 {
                 let src = self.source(rows[ri].span);
                 self.emit(None, Diagnostic::warning("overfull_display", format!("display row is {:.2}pt wider than the text width", natural - dw), vec![src]));
@@ -7017,6 +7399,7 @@ fn merge_style(base: TextStyle, s: TextStyle) -> TextStyle {
         undefined: s.undefined.or(base.undefined),
         color: s.color.or(base.color),
         hidden: s.hidden || base.hidden,
+        named: s.named.or(base.named),
     }
 }
 
@@ -7034,6 +7417,7 @@ fn merge_base(style: TextStyle, base: TextStyle) -> TextStyle {
         undefined: style.undefined.or(base.undefined),
         color: style.color.or(base.color),
         hidden: style.hidden || base.hidden,
+        named: style.named.or(base.named),
     }
 }
 
@@ -7100,7 +7484,8 @@ impl flashtex_compiler::text_builtins::LogoMetrics for TfmLogoMetrics {
 
 pub(crate) fn design_size(family: Family, size: f64) -> u32 {
     match family {
-        Family::Times => 10,
+        // A named OpenType family has one design, like Times.
+        Family::Times | Family::Named(_) => 10,
         Family::LatinModern | Family::ComputerModern => {
             if size < 8.5 {
                 8
@@ -9304,6 +9689,36 @@ fn add_skip(v: &mut pagebuild::VBlock, pt: f64, flex: (f64, f64)) {
     });
 }
 
+/// Whether `doc` can reach `open_right`'s `\cleardoublepage` blanks: a
+/// non-article class with a chapter, part or double clearpage. Those pad
+/// whole pages assuming one column count, which a mid-document switch
+/// would change underneath them, so the switch stays reported there.
+fn chapterish(doc: &Doc) -> bool {
+    let non_article = doc.style.class_geometry.as_deref().is_some_and(|g| {
+        !matches!(g.options.kind, flashtex_class_geometry::ClassKind::Article)
+    });
+    non_article
+        && doc.blocks.iter().any(|b| {
+            matches!(
+                b,
+                Block::Chapter { .. } | Block::Part { .. } | Block::ClearPage { double: true, .. }
+            )
+        })
+}
+
+/// Reports a recorded column switch back as the `twocolumn_mid_document`
+/// limitation: same code, span and text the adapter pass emits for every
+/// switch the page builder does not lay out.
+fn decline_switch(ctx: &mut Context, doc: &Doc, sw: &crate::columns::ColumnSwitch) {
+    let len = if sw.on { "\\twocolumn".len() } else { "\\onecolumn".len() };
+    let at = sw.at;
+    ctx.diagnostics.push(Diagnostic::warning(
+        "twocolumn_mid_document",
+        crate::columns::mid_document_message(sw.on, doc.style.columns.start()),
+        vec![ctx.source(Span::in_document(DocumentId(doc.style.columns.document()), at, at + len))],
+    ));
+}
+
 /// Lays out every block of `doc` onto pages. With `cache`, blocks whose
 /// items, flags and style match an earlier build are reused (see
 /// `incremental`); the result is identical either way.
@@ -9315,7 +9730,28 @@ pub fn build(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCache>) -> Laid 
 /// ([`floatpage`]); without floats the page builder is unchanged.
 pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCache>, floats: &[floatpage::FloatSpec]) -> Laid {
     if let Some(outer) = multicol::outer_doc(ctx, doc, floats) {
+        // The outer document rewrites block indices, so a recorded switch
+        // does not survive it: report it back and lay out without it.
+        if let Some(sw) = doc.column_switch {
+            decline_switch(ctx, doc, &sw);
+        }
         return build_with_floats(ctx, &outer, cache, floats);
+    }
+    // A recorded single switch is laid out unless a path that assumes one
+    // column count for the whole document stands in the way: floats
+    // (`floatpage` paginates whole pages at once), the `\@topnewpage` box
+    // (it shortens whole pages), or chapterish pages (whole-page blanks).
+    // Anything declined here is reported back as the limitation the
+    // adapter pass skipped for the recorded switch.
+    let mut switch = doc.column_switch;
+    if let Some(sw) = switch {
+        let declined = !floats.is_empty()
+            || doc.top_material.as_ref().is_some_and(|(body, _)| !body.is_empty())
+            || chapterish(doc);
+        if declined {
+            decline_switch(ctx, doc, &sw);
+            switch = None;
+        }
     }
     let mut blocks: Vec<BuiltBlock> = Vec::new();
     let style: &Stylesheet = ctx.style;
@@ -9330,6 +9766,16 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // Blocks after a class command's `\clearpage` (book matter commands).
     let mut clears: Vec<usize> = Vec::new();
     let n_columns = geo.map_or(1, |g| g.frame.columns.len().max(1));
+    // Past a laid-out switch the frame (and the column count the loop's
+    // two-column arms read) is the post-switch one; before it, this one.
+    // `usize::MAX` without a switch, so every block reads the pre-switch
+    // value exactly as before.
+    let switch_at = switch.map(|sw| sw.block).unwrap_or(usize::MAX);
+    let post_columns = doc
+        .post_style
+        .as_deref()
+        .and_then(|p| p.class_geometry.as_deref())
+        .map_or(n_columns, |g| g.frame.columns.len().max(1));
     // `\twocolumn[\@maketitle]` (`\@topnewpage`): its first block, its lines
     // placed in the box, and the box height plus `\dbltextfloatsep` that
     // both columns of the first page lose.
@@ -9353,8 +9799,16 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // (`\@topsepadd` keeps `\partopsep` for the closing skip too).
     let mut env_vmode = false;
     let quad = ctx.text_params(TextStyle::default(), ctx.style.body_size_pt).quad;
-    let style_fp = if cache.is_some() { incremental::style_fingerprint(ctx.style) } else { 0 };
-    let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp, tag, items, flags);
+    // The cache fingerprint follows the active stylesheet: past the switch
+    // the same items break at another width, so they key differently.
+    let style_fp = std::cell::Cell::new(if cache.is_some() { incremental::style_fingerprint(ctx.style) } else { 0 });
+    let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp.get(), tag, items, flags);
+    // First built-block index past the switch: every box at or after it
+    // belongs to a post-switch page. `swapped` records the `swap_style`
+    // below actually firing, so the restore afterwards cannot run on a
+    // switch whose block never comes up.
+    let mut built_split = 0usize;
+    let mut swapped = false;
     // Two-column documents: blocks that start a page (`\clearpage`,
     // `\chapter`, `\part`) rather than a column, and blocks set across the
     // text width (`\onecolumn` material), by built-block index.
@@ -9378,6 +9832,17 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     for (doc_index, block) in doc.blocks.iter().enumerate() {
         if doc_index < skip_to {
             continue;
+        }
+        // Past the switch the loop's column-count arms (`wide_blocks`,
+        // titles) read the post-switch frame's count; the line widths
+        // already follow it through `ctx.style` below.
+        let n_columns = if doc_index < switch_at { n_columns } else { post_columns };
+        if switch.is_some_and(|sw| sw.block == doc_index) {
+            built_split = blocks.len();
+            swapped = ctx.swap_style();
+            if swapped {
+                style_fp.set(incremental::style_fingerprint(ctx.style));
+            }
         }
         if doc.page_starts.binary_search(&doc_index).is_ok() {
             page_start_blocks.push(blocks.len());
@@ -9699,7 +10164,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             }
             Block::Paragraph { .. } => {
                 let mut st = ParaState { after_heading, env_vmode, env_skips: None };
-                ctx.build_paragraph(&mut blocks, block, &mut st, cache, style_fp, quad);
+                ctx.build_paragraph(&mut blocks, block, &mut st, cache, style_fp.get(), quad);
                 (after_heading, env_vmode) = (st.after_heading, st.env_vmode);
             }
             Block::Rule {
@@ -9794,13 +10259,43 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             });
         }
     }
+    // Past the switch the builders read the post-switch stylesheet; back
+    // to the document's own for everything below, which lays out whole
+    // pages (or is told the post width explicitly).
+    if swapped {
+        ctx.swap_style();
+    }
+    // The adapter records a block that exists, so the loop above always
+    // reaches it — but if it ever did not, or no post stylesheet was
+    // carried, the switch must stay reported rather than silently
+    // switching nothing.
+    if !swapped {
+        if let Some(sw) = switch.take() {
+            decline_switch(ctx, doc, &sw);
+        }
+    }
+    // The switch's `\clearpage` breaks the page before the first post
+    // column. Its penalty rides the first post block's own `penalty_before`
+    // into the vertical list — unless that block sets nothing, in which
+    // case the penalty never reaches the list: move it to the first post
+    // block that does (overwriting whatever stood there is faithful, the
+    // `\clearpage` having already ended the page; and when nothing after
+    // the switch sets anything there is no post page to open).
+    if swapped {
+        if let Some(j) = (built_split..blocks.len()).find(|&j| !blocks[j].vertical.lines.is_empty()) {
+            blocks[j].vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+        }
+    }
     // `\twocolumn` begins with `\clearpage`: column material after
     // full-width material starts a page (`\onecolumn`'s own `\clearpage`
     // comes with the `\chapter*` heading of the list).
-    if n_columns > 1 && !wide_blocks.is_empty() {
+    if !wide_blocks.is_empty() {
         for i in 1..blocks.len() {
             let wide = |b: usize| wide_blocks.binary_search(&b).is_ok();
-            if wide(i - 1) && !wide(i) {
+            // Without a switch `built_split` is 0 and `post_columns` is
+            // `n_columns`, so this reads exactly as before.
+            let cols = if i < built_split { n_columns } else { post_columns };
+            if cols > 1 && wide(i - 1) && !wide(i) {
                 blocks[i].vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
                 page_start_blocks.push(i);
             }
@@ -9819,7 +10314,14 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     }
     // Footnote blocks are appended after the body's (not in `vblocks`).
     let body_blocks = blocks.len();
-    let insertions = footnotes::prepare(ctx, &mut blocks, &params);
+    // Notes and rules past a laid-out switch are set at the post width;
+    // without one every note reads the document width as before.
+    let footnote_split = switch.and_then(|_| {
+        doc.post_style
+            .as_deref()
+            .map(|p| (built_split, p.text_width_pt))
+    });
+    let insertions = footnotes::prepare(ctx, &mut blocks, &params, footnote_split);
     // beamer: every frame's fills, once the frame's own footnotes are known
     // (`beamer::resolve_fills`); the notes sit at the frame's foot.
     for frame in &frames {
@@ -9889,7 +10391,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             Some(ins) => {
                 let regions = pagebuild::resolve_regions(&list, &longtables);
                 let (mut pages, areas) = pagebuild::break_pages_inserts_regions(&params, &list, short_pages, short, ins, &regions);
-                footnotes::place(ctx, &mut blocks, &mut pages, areas);
+                footnotes::place(ctx, &mut blocks, &mut pages, areas, footnote_split);
                 (pages, Vec::new(), Vec::new())
             }
             None => {
@@ -9902,7 +10404,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
         let (mut pages, images, labels, areas) =
             floatpage::paginate(ctx, &mut blocks, &params, &list, floats, &regions, body_blocks, insertions.as_ref(), short_cols, short, columns);
         if insertions.is_some() {
-            footnotes::place(ctx, &mut blocks, &mut pages, areas);
+            footnotes::place(ctx, &mut blocks, &mut pages, areas, footnote_split);
         }
         (pages, images, labels)
     };
@@ -9991,33 +10493,113 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // page builder put in a later column moves to the next page.
     let mut aligned: Vec<usize> = Vec::new();
     page_start_blocks.extend(clears.iter().copied());
-    if columns > 1 && !(page_start_blocks.is_empty() && wide_blocks.is_empty()) {
-        let flags = |list: &[usize]| {
-            let mut v = vec![false; blocks.len()];
-            for &b in list {
-                if let Some(f) = v.get_mut(b) {
-                    *f = true;
-                }
+    // First page-builder column at or after the switch's first built
+    // block. Empty padding columns carry no lines, so inserting them
+    // never moves this boundary's meaning, only its position: recompute
+    // it after every padding pass.
+    let switch_col = |built: &[pagebuild::BuiltPage]| {
+        built
+            .iter()
+            .position(|bp| bp.lines.iter().any(|l| l.payload.0 >= built_split))
+            .unwrap_or(built.len())
+    };
+    let flags = |list: &[usize]| {
+        let mut v = vec![false; blocks.len()];
+        for &b in list {
+            if let Some(f) = v.get_mut(b) {
+                *f = true;
             }
-            v
-        };
-        aligned = align_columns(&mut built, columns, &flags(&page_start_blocks), &flags(&wide_blocks));
+        }
+        v
+    };
+    if switch.is_some() {
+        // Each side pads within itself: pre-switch columns group
+        // `n_columns` per page, post-switch ones `post_columns`.
+        let gated = !(page_start_blocks.is_empty() && wide_blocks.is_empty());
+        if gated && n_columns > 1 {
+            let split = switch_col(&built);
+            let len = built.len();
+            aligned.extend(align_columns(&mut built, 0..len.min(split), n_columns, &flags(&page_start_blocks), &flags(&wide_blocks)).into_iter());
+        }
+        if gated && post_columns > 1 {
+            let split = switch_col(&built);
+            let len = built.len();
+            aligned.extend(align_columns(&mut built, split..len, post_columns, &flags(&page_start_blocks), &flags(&wide_blocks)).into_iter());
+        }
+    } else if columns > 1 && !(page_start_blocks.is_empty() && wide_blocks.is_empty()) {
+        let len = built.len();
+        aligned = align_columns(&mut built, 0..len, columns, &flags(&page_start_blocks), &flags(&wide_blocks));
     }
     let mut blank_pages: Vec<usize> = Vec::new();
-    let counters = geo.map_or_else(Vec::new, |g| {
+    // Whole-page blanks still assume one column count (unreachable with a
+    // laid-out switch, whose documents decline it above), and they mutate
+    // `built`, so they run before the grouping below.
+    if let Some(g) = geo {
         if g.flags.twoside && !chapter_starts.is_empty() {
             blank_pages = open_right(&mut built, &chapter_starts, blocks.len(), &events, g.numbering, columns);
         }
-        page_counters(&built, columns, blocks.len(), &events, g.numbering)
+    }
+    // Chunk, page and frame of every page: pre-switch columns group
+    // `n_columns` per page under the document frame, post-switch ones
+    // `post_columns` under the post-switch frame. Without a switch every
+    // column groups `columns` per page under the one frame, as before.
+    let (page_of, page_start, page_frames): (Vec<usize>, Vec<usize>, Vec<Option<&flashtex_class_geometry::ResolvedDocument>>) = if switch.is_some() {
+        let split = switch_col(&built);
+        // The boundary chunk opens post-switch material: by the EJECT the
+        // transfer guarantees above, nothing pre-switch shares it.
+        debug_assert!(
+            built.get(split).is_none_or(|bp| bp.lines.iter().all(|l| l.payload.0 >= built_split)),
+            "post-switch material shares a column with pre-switch material"
+        );
+        let post_geo = doc.post_style.as_deref().and_then(|p| p.class_geometry.as_deref());
+        let mut page_of = Vec::with_capacity(built.len());
+        let mut page_start = Vec::new();
+        let mut page_frames = Vec::new();
+        let mut ci = 0usize;
+        while ci < split {
+            page_start.push(ci);
+            page_frames.push(geo);
+            for _ in 0..n_columns {
+                if ci >= split {
+                    break;
+                }
+                page_of.push(page_start.len() - 1);
+                ci += 1;
+            }
+        }
+        while ci < built.len() {
+            page_start.push(ci);
+            page_frames.push(post_geo);
+            for _ in 0..post_columns {
+                if ci >= built.len() {
+                    break;
+                }
+                page_of.push(page_start.len() - 1);
+                ci += 1;
+            }
+        }
+        (page_of, page_start, page_frames)
+    } else {
+        let (page_of, n_pages) = uniform_pages(built.len(), columns);
+        (
+            page_of,
+            (0..n_pages).map(|pi| pi * columns.max(1)).collect(),
+            vec![geo; n_pages],
+        )
+    };
+    let n_pages = page_start.len();
+    let counters = geo.map_or_else(Vec::new, |g| {
+        page_counters(&built, &page_of, n_pages, blocks.len(), &events, g.numbering)
     });
     let mut pages = pl::Pages {
-        pages: Vec::with_capacity(built.len().div_ceil(columns)),
+        pages: Vec::with_capacity(n_pages),
         overflow: Vec::new(),
         text_height: s.text_height_pt,
     };
     let mut line_dx: Vec<Vec<f64>> = Vec::with_capacity(pages.pages.capacity());
     for (ci, bp) in built.iter().enumerate() {
-        let (pi, col) = (ci / columns, ci % columns);
+        let pi = page_of[ci];
+        let col = ci - page_start[pi];
         let number = pi as u32 + 1;
         if col == 0 {
             pages.pages.push(pl::Page {
@@ -10031,8 +10613,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
         }
         // `\@themargin` of this page (0 on odd and one-sided pages: the
         // blocks are assembled at `\oddsidemargin`) plus the column offset.
+        // Past a laid-out switch the offset comes from the post-switch
+        // frame, whose first column sits where the old text block did.
         let counter = counters.get(pi).map_or(i64::from(number), |c| c.0);
-        let dx = geo.map_or(0.0, |g| crate::style::frame_pt(g.frame.text_left(counter)) - s.text_x_pt + crate::style::frame_pt(g.frame.columns[col].offset));
+        let dx = page_frames[pi].map_or(0.0, |g| crate::style::frame_pt(g.frame.text_left(counter)) - s.text_x_pt + crate::style::frame_pt(g.frame.columns[col].offset));
         let page = pages.pages.last_mut().expect("pushed above");
         let dxs = line_dx.last_mut().expect("pushed above");
         for placed in &bp.lines {
@@ -10068,8 +10652,14 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
         }
     }
     multicol::shift(ctx, &mut pages, &mut line_dx, &blocks);
-    if let Some(g) = geo {
-        page_chrome(ctx, g, &mut blocks, &mut pages, &mut line_dx, &events, &counters);
+    // One frame per page: without a switch every entry is the document
+    // frame. A page without one (impossible with a laid-out switch, which
+    // needs class geometry on both sides) skips the chrome as a
+    // geometry-less document does.
+    let chrome_frames: Vec<&flashtex_class_geometry::ResolvedDocument> =
+        page_frames.iter().filter_map(|f| *f).collect();
+    if chrome_frames.len() == n_pages {
+        page_chrome(ctx, &chrome_frames, &mut blocks, &mut pages, &mut line_dx, &events, &counters);
     }
     // beamer: the theme's frametitle bars, footline boxes and rounded
     // title box on every frame page (`typeset::beamer::page_chrome`).
@@ -10092,7 +10682,11 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 ci += 1;
             }
         }
-        ((ci / columns) as u32 + 1, ci % columns)
+        // Without a switch this reads `(ci / columns, ci % columns),
+        // exactly as before; with one the page and the within-page column
+        // come from the grouping above.
+        let pi = page_of.get(ci).copied().unwrap_or(n_pages.saturating_sub(1));
+        (pi as u32 + 1, ci.saturating_sub(page_start.get(pi).copied().unwrap_or(0)))
     };
     let images: Vec<(u32, display::Item)> = images
         .into_iter()
@@ -10185,16 +10779,30 @@ const SENTENCE_SPACE_MARK: char = '\u{2002}';
 /// numbering at the start, `\pagenumbering` resets to 1, `\setcounter{page}`
 /// sets, each shipout steps. Events belong to the page holding the next
 /// block (as in [`page_chrome`]).
-fn page_counters(built: &[pagebuild::BuiltPage], columns: usize, n_blocks: usize, events: &[(usize, adapter::ChromeEvent, Span)], numbering: flashtex_class_geometry::Numbering) -> Vec<(i64, flashtex_class_geometry::Numbering)> {
-    let n_pages = built.len().div_ceil(columns.max(1));
+/// Chunk-to-page mapping (and page count) for a uniform column count:
+/// every `columns` page-builder columns make a page.
+fn uniform_pages(n_chunks: usize, columns: usize) -> (Vec<usize>, usize) {
+    let columns = columns.max(1);
+    let n_pages = n_chunks.div_ceil(columns);
+    ((0..n_chunks).map(|ci| ci / columns).collect(), n_pages)
+}
+
+fn page_counters(
+    built: &[pagebuild::BuiltPage],
+    page_of: &[usize],
+    n_pages: usize,
+    n_blocks: usize,
+    events: &[(usize, adapter::ChromeEvent, Span)],
+    numbering: flashtex_class_geometry::Numbering,
+) -> Vec<(i64, flashtex_class_geometry::Numbering)> {
     if n_pages == 0 {
         return Vec::new();
     }
     let mut first_page: Vec<Option<usize>> = vec![None; n_blocks];
-    for (ci, bp) in built.iter().enumerate() {
+    for (bp, &pi) in built.iter().zip(page_of.iter()) {
         for l in &bp.lines {
             if let Some(slot) = first_page.get_mut(l.payload.0) {
-                slot.get_or_insert(ci / columns.max(1));
+                slot.get_or_insert(pi);
             }
         }
     }
@@ -10240,7 +10848,8 @@ fn open_right(built: &mut Vec<pagebuild::BuiltPage>, chapter_starts: &[(usize, u
             // `\ifodd\c@page` is tested before the counter commands issued
             // after the clear (book `\mainmatter`'s `\pagenumbering{arabic}`).
             let before: Vec<(usize, adapter::ChromeEvent, Span)> = events.iter().enumerate().filter(|(i, (b, _, _))| !(*b == block && *i >= cut)).map(|(_, e)| e.clone()).collect();
-            if page_counters(built, columns, n_blocks, &before, numbering)[k / columns].0 % 2 == 0 {
+            let (page_of, n_pages) = uniform_pages(built.len(), columns);
+            if page_counters(built, &page_of, n_pages, n_blocks, &before, numbering)[k / columns].0 % 2 == 0 {
                 for _ in 0..columns {
                     built.insert(k, pagebuild::BuiltPage::default());
                     inserted.push(k);
@@ -10260,19 +10869,23 @@ fn open_right(built: &mut Vec<pagebuild::BuiltPage>, chapter_starts: &[(usize, u
 /// Inserts empty columns so such a column is a page's first and the column
 /// after `\onecolumn` material starts the next page; returns the inserted
 /// indices (in the final list, ascending).
-fn align_columns(built: &mut Vec<pagebuild::BuiltPage>, columns: usize, page_start: &[bool], wide: &[bool]) -> Vec<usize> {
+fn align_columns(built: &mut Vec<pagebuild::BuiltPage>, range: std::ops::Range<usize>, columns: usize, page_start: &[bool], wide: &[bool]) -> Vec<usize> {
     let flag = |v: &[bool], b: usize| v.get(b).copied().unwrap_or(false);
     let mut inserted = Vec::new();
     let mut prev_wide = false;
-    let mut k = 0;
-    while k < built.len() {
+    // Page phase is relative to the range: each side of a laid-out switch
+    // starts a fresh page at the range start.
+    let mut k = range.start;
+    let mut end = range.end.min(built.len());
+    while k < end {
         let starts = built[k].lines.first().is_some_and(|l| flag(page_start, l.payload.0));
         let has_wide = built[k].lines.iter().any(|l| flag(wide, l.payload.0));
-        if (starts || has_wide || prev_wide) && k % columns != 0 {
-            while k % columns != 0 {
+        if (starts || has_wide || prev_wide) && (k - range.start) % columns != 0 {
+            while (k - range.start) % columns != 0 {
                 built.insert(k, pagebuild::BuiltPage::default());
                 inserted.push(k);
                 k += 1;
+                end += 1;
             }
         }
         prev_wide = has_wide;
@@ -10307,7 +10920,7 @@ fn provenance_of(span: Span, source_of: &dyn Fn(Span) -> SourceRange) -> Provena
 /// only for its page), `\leftmark` from the page's last mark and
 /// `\rightmark` from its first (`\botmark`/`\firstmark`, the previous
 /// page's last mark when the page has none).
-fn page_chrome(ctx: &mut Context, g: &flashtex_class_geometry::ResolvedDocument, blocks: &mut Vec<BuiltBlock>, pages: &mut pl::Pages, line_dx: &mut [Vec<f64>], events: &[(usize, adapter::ChromeEvent, Span)], counters: &[(i64, flashtex_class_geometry::Numbering)]) {
+fn page_chrome(ctx: &mut Context, frames: &[&flashtex_class_geometry::ResolvedDocument], blocks: &mut Vec<BuiltBlock>, pages: &mut pl::Pages, line_dx: &mut [Vec<f64>], events: &[(usize, adapter::ChromeEvent, Span)], counters: &[(i64, flashtex_class_geometry::Numbering)]) {
     use crate::style::frame_pt;
     use adapter::ChromeEvent;
     use flashtex_class_geometry::Field;
@@ -10332,13 +10945,18 @@ fn page_chrome(ctx: &mut Context, g: &flashtex_class_geometry::ResolvedDocument,
     // document becomes synthetic provenance (`source: null` in runtime-v1)
     // instead of claiming document 0, byte 0.
     let span = NO_SOURCE_SPAN;
-    let frame = &g.frame;
-    let width = frame_pt(frame.text_width);
     let text_x = ctx.style.text_x_pt;
-    let mut macros = g.style_macros;
+    // Without a switch every page reads the same frame; past one each page
+    // reads its own (the running heads are frame-width, the separator rule
+    // column-geometry). The macro seed is one document's either way.
+    let Some(first_frame) = frames.first() else { return };
+    let mut macros = first_frame.style_macros;
     let mut top = (String::new(), String::new());
     let mut current = top.clone();
     for pi in 0..n_pages {
+        let g = frames[pi];
+        let frame = &g.frame;
+        let width = frame_pt(frame.text_width);
         let (number, numbering) = counters.get(pi).copied().unwrap_or((pi as i64 + 1, g.numbering));
         let mut this = None;
         let mut first: Option<(String, String)> = None;
@@ -10786,7 +11404,7 @@ pub fn assemble_windowed(
             sha256: f.font_id.to_string(),
             byte_length: f.byte_length,
             format: f.format.to_string(),
-            face_index: 0,
+            face_index: f.face_index,
             units_per_em: f.units_per_em,
             glyph_count: f.glyph_count,
             postscript_name: f.postscript_name.clone(),
@@ -11918,6 +12536,21 @@ fn math_items(
             ('\u{23DE}', 0x7B) | ('\u{23DF}', 0x7D) => (g.x + g.width - face_adv, face_adv),
             ('\u{23DE}' | '\u{23DF}', _) => (g.x, face_adv),
             _ if ams.is_some_and(|a| a.name == "dashrightarrow@") => (g.x + g.width - face_adv, adv),
+            // `\vec` (`plain.tex`: `\mathaccent"017E`, cmmi `"7E`) is a
+            // spacing accent in TeX but paints as U+20D7, a Unicode
+            // *combining* mark: its ink lies entirely to the LEFT of its
+            // own origin -- Latin Modern Math puts `uni20D7` at x in
+            // [-472, -56]/1000em (centre -264), while the cmmi10 arrow it
+            // stands for inks [182, 625]/1000em (centre 403.5). Painted at
+            // the TeX box's origin the arrow lands ~2/3em too far left.
+            //
+            // So shift the painted outline to put the combining ink's
+            // centre where the spacing accent's ink centre sits:
+            // (403.5 + 264)/1000 = 0.6675em. This moves no box: the
+            // accent keeps its TeX origin for hit-testing and the TFM
+            // advance, so layout (already exact against pdflatex
+            // `\showbox`) is untouched -- paint only.
+            ('\u{20D7}', 0x7E) => (g.x + 0.6675 * g.size, adv),
             // `\not` (`fontmath.ltx` 432: `\mathchar"3236`, cmsy `"36`) is a
             // zero-width overlay. TeX boxes it empty and the slash strikes
             // the relation that *follows* it, which is why `\neq` is exactly

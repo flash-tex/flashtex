@@ -1,0 +1,18 @@
+[package]
+name = "flashtex-project-manifest"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "The optional flashtex.toml project manifest: entry, texinputs, output, fonts and package policy. Platform-free, no network."
+
+[lib]
+name = "flashtex_project_manifest"
+path = "src/lib.rs"
+
+# `toml` is the only dependency: the parser and the value printer. The crate
+# never touches the network and reads exactly one file (`Manifest::load`);
+# every path it resolves is lexical, so it links into the engine-side CLI
+# and the Mac helper alike.
+[dependencies]
+toml = "0.9"

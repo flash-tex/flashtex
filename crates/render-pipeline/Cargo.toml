@@ -159,3 +159,7 @@ flashtex-tex-text-encoding = { path = "vendor/tex-text-encoding" }
 # not a vendor mirror: a `git archive` of this directory alone must also
 # archive `crates/class-geometry` (zero dependencies) next to it.
 flashtex-class-geometry = { path = "../class-geometry" }
+# The installed-font index behind named families (`\setmainfont`,
+# `[fonts]` in the manifest). Same arrangement as class-geometry: a
+# zero-dependency sibling by path, archived next to this directory.
+flashtex-font-discovery = { path = "../font-discovery" }
