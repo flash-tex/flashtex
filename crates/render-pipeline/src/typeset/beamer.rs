@@ -913,12 +913,12 @@ pub(super) fn page_chrome(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, pages
                         }
                         let (block, width, _, _) = ctx.hbox_block(&items, size);
                         // `center`: `leftskip`/`rightskip` `0pt plus1fill`.
-                        Some((block, x0 + (w - width) / 2.0))
+                        vec![(block, x0 + (w - width) / 2.0)]
                     }
                     spec::FootContent::Title => {
                         let items = recolored(&deck.short_title, fg);
                         let (block, width, _, _) = ctx.hbox_block(&items, size);
-                        Some((block, x0 + (w - width) / 2.0))
+                        vec![(block, x0 + (w - width) / 2.0)]
                     }
                     spec::FootContent::DateFrameNumber => {
                         // `\hfill\insertshortdate{}\hfill<n \,/\, N>`, the
@@ -936,21 +936,15 @@ pub(super) fn page_chrome(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, pages
                             ]
                         };
                         let (_, box_width, _, _) = ctx.hbox_block(&counter(total_frames), size);
-                        let (num_block, num_width, nh, nd) = ctx.hbox_block(&counter(number), size);
+                        let (num_block, num_width, _, _) = ctx.hbox_block(&counter(number), size);
                         let date_items = recolored(&deck.short_date, fg);
                         let (date_block, date_width, _, _) = ctx.hbox_block(&date_items, size);
                         let (left, right) = (x0 + frame_pt(fb.leftskip), x0 + w - frame_pt(fb.rightskip));
                         let fill = ((right - left) - date_width - box_width) / 2.0;
-                        let date_x = left + fill;
-                        let num_x = right - num_width;
-                        let placed = pl::PlacedLine { paragraph: blocks.len(), line: 0, baseline_y: baseline, height: nh, depth: nd };
-                        pages.pages[pi].lines.push(placed);
-                        line_dx[pi].push(num_x - text_x);
-                        blocks.push(num_block);
-                        Some((date_block, date_x))
+                        vec![(date_block, left + fill), (num_block, right - num_width)]
                     }
                 };
-                if let Some((block, x)) = line {
+                for (block, x) in line {
                     back.push((block, baseline, x - text_x));
                 }
                 x0 += w;
