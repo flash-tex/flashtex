@@ -171,11 +171,13 @@ pub enum Item {
     /// `\vadjust{\vskip <dimen>}` after the line, or `\vskip` after the
     /// paragraph under `\@centercr`).
     LineBreak { skip_pt: f64 },
-    /// Fixed horizontal glue of `em` ems of the current font (`\quad`
-    /// after a section number). `style` is the font in force where the glue
-    /// is read (its size and series pick the quad, `\fontdimen6`); the
+    /// Horizontal glue of `em` ems of the current font, stretching
+    /// `plus_em` and shrinking `minus_em` ems (`\quad` after a section
+    /// number: rigid; `\newblock`, `\hskip .11em \@plus.33em \@minus.07em`,
+    /// article.cls 584). `style` is the font in force where the glue is
+    /// read (its size and series pick the quad, `\fontdimen6`); the
     /// default keeps the block's.
-    Quad { em: f64, style: TextStyle },
+    Quad { em: f64, plus_em: f64, minus_em: f64, style: TextStyle },
     /// `\label{key}`: no material; records where the key's page is.
     Label { key: String },
     /// `\/` after a `\textit`/`\emph`/`\textbf` argument (LaTeX's
@@ -916,6 +918,13 @@ pub struct ListGeom {
     /// (added to [`Self::itemindent_em`]): the item's first line, and its
     /// label, start this much further in.
     pub itemindent_pt: f64,
+    /// The list is `thebibliography` (article.cls, natbib alike), whose
+    /// `\list` is followed by `\sloppy` and `\sfcode`\.\@m`: the entries
+    /// are broken at `\tolerance 9999` with `\emergencystretch 3em`
+    /// (`Context::paragraph_block`), and a `.` leaves the space factor at
+    /// 1000, so `Knuth. The` gets an ordinary interword space
+    /// ([`bibliography_space_factors`]).
+    pub bibliography: bool,
 }
 
 /// One list level's `\leftmargin`.
@@ -2324,7 +2333,7 @@ pub fn adapt_cached(
                         })
                         .collect();
                     push_segment(&mut items, number.to_string(), chars, TextStyle::default());
-                    items.push(Item::Quad { em: 1.0, style: TextStyle::default() });
+                    items.push(Item::Quad { em: 1.0, plus_em: 0.0, minus_em: 0.0, style: TextStyle::default() });
                 }
                 let content_items = items_for(content, true);
                 if toc_active {
@@ -2631,6 +2640,9 @@ pub fn adapt_cached(
                 }
                 pending_qed_claim |= paragraph_claims_qed(inlines, texts);
                 let mut items = items_for_weighted(inlines, in_theorem);
+                if list.as_ref().is_some_and(|l| l.bibliography) {
+                    bibliography_space_factors(&mut items);
+                }
                 if pending_qed_claim && truncate_auto_pair(&mut items, texts) {
                     pending_qed_claim = false;
                 }
@@ -4771,6 +4783,7 @@ fn split_at_page_breaks<'p>(
                     itemindent_pt,
                     hidden: false,
                     alerted: false,
+                    bibliography: env == "thebibliography",
                 });
             }
         }
@@ -9879,7 +9892,7 @@ fn apply_run_in_heading(items: &mut [Item], run_in: &RunIn, em: f64, bold: bool)
     }
     // The interword space right after the title is `\@xsect`'s `\hskip -#5`.
     if let Some(Item::Space { .. }) = items.get(title) {
-        items[title] = Item::Quad { em, style: TextStyle::default() };
+        items[title] = Item::Quad { em, plus_em: 0.0, minus_em: 0.0, style: TextStyle::default() };
     }
 }
 
@@ -10234,6 +10247,44 @@ fn gap_has_space(gap: &str) -> bool {
 /// not take effect while the factor is below 1000 (after an uppercase
 /// letter "A." keeps 1000), which is why the update runs per character.
 pub fn space_factor(ch: char, previous: u32) -> u32 {
+    space_factor_with(ch, previous, 3000)
+}
+
+/// article.cls's `thebibliography` (natbib's alike) runs `\sfcode`\.\@m`
+/// after its `\list`: a period leaves the space factor at 1000, so the
+/// space after `Knuth.` or `TeXbook.` in an entry is `\fontdimen2` with
+/// the ordinary stretch and shrink, no `\fontdimen7` (1.3 pt at 12 pt;
+/// two of them pushed `Practice` to the next line of input-bibliography's
+/// entry [2], `\tracingparagraphs` @@1 b=99 in pdfTeX's first pass).
+/// `?`, `!` and the rest keep plain.tex's codes. Only a factor the
+/// ordinary table raised above 1000 is revisited, so a control space
+/// (`\ `, factor 1000 by construction) is untouched.
+pub fn bibliography_space_factors(items: &mut [Item]) {
+    let mut word_factor: Option<u32> = None;
+    for item in items.iter_mut() {
+        match item {
+            Item::Word(w) => {
+                let mut factor = 1000u32;
+                for ch in w.segments.iter().flat_map(|s| s.text.chars()) {
+                    factor = space_factor_with(ch, factor, 1000);
+                }
+                word_factor = Some(factor);
+            }
+            Item::Space { factor, .. } => {
+                if let Some(f) = word_factor.take() {
+                    if *factor > 1000 {
+                        *factor = f.min(*factor);
+                    }
+                }
+            }
+            _ => word_factor = None,
+        }
+    }
+}
+
+/// [`space_factor`] with the `\sfcode` of `.` (and of `…`, which ends in
+/// one) as `period_code`: plain.tex's 3000, or 1000 under `\sfcode`\.\@m`.
+fn space_factor_with(ch: char, previous: u32, period_code: u32) -> u32 {
     let code = match ch {
         // `…` is `\textellipsis`, whose last character is a period
         // (`.\kern\fontdimen3\font` three times), so it leaves the period's
@@ -10241,7 +10292,8 @@ pub fn space_factor(ch: char, previous: u32) -> u32 {
         // `ellipsis… here` with a 5.213 bp space at 12 pt
         // (`\fontdimen2 + \fontdimen7`), not the 3.902 bp of `\fontdimen2`
         // alone.
-        '.' | '?' | '!' | '\u{2026}' => 3000,
+        '.' | '\u{2026}' => period_code,
+        '?' | '!' => 3000,
         ':' => 2000,
         ';' => 1500,
         ',' => 1250,
@@ -10575,11 +10627,20 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
         let (def_src, before) = foreign(inv).unwrap_or((source, inv.start));
         macro_body(def_src, name, before)
     };
+    // `\newblock` read in the gap (article.cls 584: `\hskip .11em
+    // \@plus.33em \@minus.07em`; the compiler lowers the control word to a
+    // space token, so only the source bytes still show it). The glue
+    // follows the interword space the gap's whitespace gives, as in
+    // pdfTeX's list (`Liang.  \OT1/cmr/m/it/10.95 Word`: two glues).
+    let pending_newblock = std::cell::Cell::new(false);
     let mut space_between = |prev_end: Option<usize>, prev_span: Option<Span>, span: Span, text: Option<&str>, after_control_word: bool| -> bool {
         let src = text_of(span.document);
         let mut c = cursor.get();
         let gap = token_gap(src, prev_end, prev_span, span, text, &mut c, &foreign);
         cursor.set(c);
+        if gap.as_deref().is_some_and(|g| find_command(g, "newblock").is_some()) {
+            pending_newblock.set(true);
+        }
         match gap {
             None => false,
             Some(gap) if after_control_word => gap_has_space_after_control_word(&gap),
@@ -10609,6 +10670,9 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
         }
         if space {
             items.push(Item::Space { style, factor, no_break: false });
+        }
+        if pending_newblock.take() {
+            items.push(Item::Quad { em: 0.11, plus_em: 0.33, minus_em: 0.07, style });
         }
     };
 
@@ -10928,10 +10992,10 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     // size. An `\hspace{<n>em}` read from the source is set
                     // as `<n>` quads of the font in force, like `\quad`.
                     Inline::HSpace { pt, span, .. } => match hspace_ems(text_of(span.document), *span) {
-                        Some(em) => (Item::Quad { em, style: quad_style() }, "\\hspace"),
+                        Some(em) => (Item::Quad { em, plus_em: 0.0, minus_em: 0.0, style: quad_style() }, "\\hspace"),
                         None => (Item::HSpace { pt: *pt, stretch_pt: 0.0, shrink_pt: 0.0 }, "\\hspace"),
                     },
-                    Inline::TextGlue { em, .. } => (Item::Quad { em: *em, style: quad_style() }, if *em >= 2.0 { "\\qquad" } else { "\\quad" }),
+                    Inline::TextGlue { em, .. } => (Item::Quad { em: *em, plus_em: 0.0, minus_em: 0.0, style: quad_style() }, if *em >= 2.0 { "\\qquad" } else { "\\quad" }),
                     // `\hrulefill` and `\dotfill` (compiler `FillLeader`, #320)
                     // are `\leavevmode\leaders<box>\hfill\kern\z@`: the glue is
                     // exactly `\hfill`, so it is set here like any other, and

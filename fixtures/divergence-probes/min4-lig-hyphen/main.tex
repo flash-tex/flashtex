@@ -1,0 +1,17 @@
+\documentclass[10pt,twocolumn]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=0.75in,columnsep=0.25in]{geometry}
+\setlength{\parindent}{0pt}
+\sloppy
+\begin{document}
+\pagestyle{empty}
+
+Consider a clickstream aggregation job that groups events by user session
+identifier. During a flash sale, a small number of promotional sessions
+generate an outsized share of events, and any static hash-based partitioning
+scheme routes a disproportionate volume of traffic to whichever worker owns
+those hot keys. An adaptive scheme instead detects the emerging
+concentration of traffic and redistributes the hot keys before the
+imbalance manifests as elevated tail latency, without operator
+intervention or a job restart.
+\end{document}

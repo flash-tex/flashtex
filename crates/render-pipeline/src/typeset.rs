@@ -137,6 +137,13 @@ pub enum BoxRec {
     /// A box painted as vector paths (`display::Item::Path`): beamer's
     /// navigation symbols and `items[ball]` discs (`typeset::beamer`).
     Paths(Rc<PathsRec>),
+    /// The record at a discretionary penalty whose break falls inside a
+    /// ligature (`Context::word_items`, `traf-fic`): `pre` is the
+    /// [`BoxRec::Text`] of the pre-break text (`f-`), set at the end of the
+    /// line that breaks there, `post` that of the post-break text (`fi`),
+    /// set at the start of the next line. A plain hyphenation point keeps a
+    /// bare [`BoxRec::Text`] for its hyphen at the penalty.
+    Discretionary { pre: usize, post: usize },
 }
 
 /// The paths of a [`BoxRec::Paths`] box, in points from the box's
@@ -1221,12 +1228,18 @@ impl<'a> Context<'a> {
         Some(MathProvider::Otf(Rc::new(m.with_text_alphabets(faces))))
     }
 
-    /// The math provider for text at `size`: the body's, except at the
-    /// class's `\footnotesize` below it, where LaTeX selects the math fonts
-    /// of that size (`\DeclareMathSizes`: 8/6/5 pt in a 10pt class, 10/7/5 in
-    /// a 12pt class). A size whose TeX metrics are not available (9 pt, the
-    /// 11pt class's notes: cmmi9/cmsy9 are not embedded) keeps the body's
-    /// metrics and is reported once.
+    /// The math provider for text at `size`: the body's at the body size,
+    /// else the math fonts LaTeX selects for that size (fontmath.ltx 75-82,
+    /// `\DeclareMathSizes`: 5/5/5, 6/5/5, 7/5/5, 8/6/5, 9/6/5, 10/7/5,
+    /// 10.95/8/6, 12/8/6), which `TexMathMetrics::at_text_size` boxes from
+    /// the cmr/cmmi/cmsy designs of those sizes. That covers every size
+    /// switch up to `\large` in the three classes: `\footnotesize` notes,
+    /// the `\small` abstract of the 11pt class (10 pt, where the body's
+    /// 10.95 pt metrics made `$g \approx$` and siunitx's `9.79 m s^-2` 9.5%
+    /// too wide and moved a line break, lab-report p.1) and `\large`.
+    /// A size with no TeX metrics keeps the body's; below the body size
+    /// that is reported once (above it -- headings -- it is the long-standing
+    /// approximation and stays silent).
     fn math_fonts_at(&mut self, span: Span, size: f64) -> Option<MathProvider> {
         let body = self.math_fonts(span)?;
         // A document's own OpenType math font follows every text size, as
@@ -1242,15 +1255,17 @@ impl<'a> Context<'a> {
                 return Some(sized.unwrap_or(body));
             }
         }
-        let note_size = footnotes::FootnoteParams::of(self.style).size;
-        if (size - self.style.body_size_pt).abs() < 0.01 || (size - note_size).abs() > 0.01 || !matches!(body, MathProvider::Tex(_)) {
+        if (size - self.style.body_size_pt).abs() < 0.01 || !matches!(body, MathProvider::Tex(_)) {
             return Some(body);
         }
         let key = (size * 100.0).round() as u32;
         if let Some(sized) = self.math_fonts_sized.get(&key) {
             return Some(sized.clone().unwrap_or(body));
         }
-        let (script, script_script) = match (size * 100.0).round() as u32 {
+        // The script sizes of fontmath.ltx 75-82 for the text sizes
+        // `at_text_size` accepts; the OpenType program's sizes follow them.
+        let (script, script_script) = match key {
+            500..=700 => (5.0, 5.0),
             800 | 900 => (6.0, 5.0),
             1000 => (7.0, 5.0),
             _ => (8.0, 6.0),
@@ -1261,9 +1276,9 @@ impl<'a> Context<'a> {
             .and_then(|m| TexMathMetrics::at_text_size(size, self.style.cmex_designs, self.style.math_roman_lm, m, self.fonts))
             .filter(TexMathMetrics::roman_available)
             .map(|t| MathProvider::Tex(Rc::new(t)));
-        if sized.is_none() {
+        if sized.is_none() && size < self.style.body_size_pt {
             let src = self.source(span);
-            let msg = format!("math at {size}pt (\\footnotesize) is laid out with the {}pt math metrics: TeX's math fonts for that size are not available", self.style.body_size_pt);
+            let msg = format!("math at {size}pt is laid out with the {}pt math metrics: TeX's math fonts for that size are not available", self.style.body_size_pt);
             self.report_once(format!("mathlim:{msg}"), Diagnostic::warning("math_limitation", msg, vec![src]));
         }
         self.math_fonts_sized.insert(key, sized.clone());
@@ -2402,7 +2417,15 @@ impl<'a> Context<'a> {
             return self.whole_word(seg, size);
         }
         let boundaries: BTreeSet<usize> = shaped.clusters.iter().map(|c| c.text_range.start).collect();
-        points.retain(|(o, _)| *o > 0 && *o < text.len() && boundaries.contains(o));
+        // A Liang point strictly inside a cluster of the whole-word shaping
+        // is inside a ligature (`traf|fic`: the `ffi` glyph): TeX breaks
+        // there with the discretionary its reconstitution builds (§903-918,
+        // `\discretionary replacing 1 {f-}{fi}` before the `ffi` node), so
+        // the point is kept with its cluster and gets pre-break, post-break
+        // and no-break texts below. An explicit-hyphen point is never
+        // inside a ligature (the dash ligatures end at the hyphen).
+        let ligature_of = |o: usize| shaped.clusters.iter().find(|c| c.text_range.start < o && o < c.text_range.end).map(|c| c.text_range.clone());
+        points.retain(|(o, auto)| *o > 0 && *o < text.len() && (boundaries.contains(o) || (*auto && ligature_of(*o).is_some())));
         if points.is_empty() {
             return self.whole_word(seg, size);
         }
@@ -2433,74 +2456,140 @@ impl<'a> Context<'a> {
             char_index[bi] = ci;
         }
         char_index[text.len()] = seg.chars.len();
-        let mut cuts: Vec<usize> = Vec::with_capacity(points.len() + 2);
-        cuts.push(0);
-        cuts.extend(points.iter().map(|p| p.0));
-        cuts.push(text.len());
+        // The word as TeX's hyphenated list: fragments between the points,
+        // each point a flagged penalty. A fragment after the first continues
+        // the run before it on the line (`mark_continues`), so an unbroken
+        // word paints as one glyph run. `pos` is the byte the next fragment
+        // starts at.
+        let hyphen_char = |ch_at: usize| seg.chars[char_index[ch_at] - 1];
         let mut out = Vec::new();
-        for k in 1..cuts.len() {
-            let (a, b) = (cuts[k - 1], cuts[k]);
-            if k > 1 {
-                let (at, automatic) = points[k - 2];
-                let prev = cuts[k - 2];
-                let pre_break = if automatic {
-                    // The hyphen glyph of the run's face, provenance the
-                    // letter it follows, cluster the empty range at the
-                    // break (like the crate's own automatic points).
-                    let hyphen = adapter::Segment {
-                        text: "-".to_string(),
-                        chars: vec![seg.chars[char_index[at] - 1]],
+        let mut pos = 0usize;
+        let mut first = true;
+        // Pushes the fragment `text[a..b]` as a box (nothing for an empty
+        // range) and returns whether it was pushed.
+        let fragment = |this: &mut Self, out: &mut Vec<(pl::Item, Option<usize>)>, a: usize, b: usize, first: &mut bool| -> bool {
+            if a >= b {
+                return false;
+            }
+            let frag = adapter::Segment { text: text[a..b].to_string(), chars: seg.chars[char_index[a]..char_index[b]].to_vec(), style: seg.style };
+            let Some((run, rec)) = this.text_box(&frag, size) else { return false };
+            if !*first {
+                this.mark_continues(rec);
+            }
+            *first = false;
+            out.push((pl::Item::Box(run), Some(rec)));
+            true
+        };
+        for (pi, &(at, automatic)) in points.iter().enumerate() {
+            let next = points.get(pi + 1).map_or(text.len(), |p| p.0);
+            match ligature_of(at).filter(|_| automatic) {
+                None => {
+                    fragment(self, &mut out, pos, at, &mut first);
+                    let pre_break = if automatic {
+                        // The hyphen glyph of the run's face, provenance the
+                        // letter it follows, cluster the empty range at the
+                        // break (like the crate's own automatic points).
+                        let hyphen = adapter::Segment { text: "-".to_string(), chars: vec![hyphen_char(at)], style: seg.style };
+                        self.text_box(&hyphen, size).map(|(mut run, rec)| {
+                            self.mark_continues(rec);
+                            let adv = width_pt(&format!("{}-", &text[pos..at])) - width_pt(&text[pos..at]);
+                            let doc_at = seg.chars[char_index[at]].start;
+                            for g in &mut run.glyphs {
+                                g.cluster = doc_at..doc_at;
+                            }
+                            if let Some(last) = run.glyphs.last_mut() {
+                                last.advance += adv - run.width;
+                            }
+                            run.width = adv;
+                            run.source = doc_at..doc_at;
+                            (run, rec)
+                        })
+                    } else {
+                        None
+                    };
+                    let (pre_break, rec) = match pre_break {
+                        Some((run, rec)) => (Some(run), Some(rec)),
+                        None => (None, None),
+                    };
+                    out.push((
+                        pl::Item::Penalty(pl::Penalty {
+                            value: if automatic { HYPHEN_PENALTY } else { EX_HYPHEN_PENALTY },
+                            flagged: true,
+                            pre_break,
+                            automatic,
+                            post_break: None,
+                            replace_count: 0,
+                        }),
+                        rec,
+                    ));
+                    // The font kern across the point, kept as a kern after
+                    // the penalty so an unbroken word keeps its width and a
+                    // broken one drops it (§903-918).
+                    let kern = residual_pt(&text[pos..next], &text[pos..at], &text[at..next]);
+                    if kern != 0.0 {
+                        out.push((pl::Item::kern(kern), None));
+                    }
+                    pos = at;
+                }
+                Some(lig) => {
+                    // `tra` [kern] `\discretionary replacing 1 {f-}{fi}` `ffi`
+                    // [kern] `c`: the pre-break text is the ligature's
+                    // letters before the point plus the hyphen, shaped
+                    // together (a letter-hyphen kern included), the
+                    // post-break text its letters after the point (a
+                    // ligature again when the font has one), and the
+                    // no-break text the whole ligature, the one item the
+                    // penalty replaces.
+                    fragment(self, &mut out, pos, lig.start, &mut first);
+                    let kern = residual_pt(&text[pos..lig.end], &text[pos..lig.start], &text[lig.start..lig.end]);
+                    if kern != 0.0 && pos < lig.start {
+                        out.push((pl::Item::kern(kern), None));
+                    }
+                    let doc_at = seg.chars[char_index[at]].start;
+                    let pre_seg = adapter::Segment {
+                        text: format!("{}-", &text[lig.start..at]),
+                        chars: seg.chars[char_index[lig.start]..char_index[at]].iter().copied().chain(std::iter::once(hyphen_char(at))).collect(),
                         style: seg.style,
                     };
-                    self.text_box(&hyphen, size).map(|(mut run, rec)| {
+                    let post_seg = adapter::Segment { text: text[at..lig.end].to_string(), chars: seg.chars[char_index[at]..char_index[lig.end]].to_vec(), style: seg.style };
+                    let pre = self.text_box(&pre_seg, size).map(|(mut run, rec)| {
                         self.mark_continues(rec);
-                        let adv = width_pt(&format!("{}-", &text[prev..at])) - width_pt(&text[prev..at]);
-                        let doc_at = seg.chars[char_index[at]].start;
-                        for g in &mut run.glyphs {
-                            g.cluster = doc_at..doc_at;
-                        }
                         if let Some(last) = run.glyphs.last_mut() {
-                            last.advance += adv - run.width;
+                            last.cluster = doc_at..doc_at;
                         }
-                        run.width = adv;
-                        run.source = doc_at..doc_at;
+                        run.source.end = run.source.end.max(doc_at);
                         (run, rec)
-                    })
-                } else {
-                    None
-                };
-                let (pre_break, rec) = match pre_break {
-                    Some((run, rec)) => (Some(run), Some(rec)),
-                    None => (None, None),
-                };
-                out.push((
-                    pl::Item::Penalty(pl::Penalty {
-                        value: if automatic { HYPHEN_PENALTY } else { EX_HYPHEN_PENALTY },
-                        flagged: true,
-                        pre_break,
-                        automatic,
-                        post_break: None,
-                        replace_count: 0,
-                    }),
-                    rec,
-                ));
-                let kern = residual_pt(&text[prev..b], &text[prev..at], &text[at..b]);
-                if kern != 0.0 {
-                    out.push((pl::Item::kern(kern), None));
+                    });
+                    let post = self.text_box(&post_seg, size);
+                    let (pre_break, post_break, rec) = match (pre, post) {
+                        (Some((pre_run, pre_rec)), Some((post_run, post_rec))) => {
+                            self.recs.push(BoxRec::Discretionary { pre: pre_rec, post: post_rec });
+                            (Some(pre_run), Some(post_run), Some(self.recs.len() - 1))
+                        }
+                        // The face cannot set a part: no break here.
+                        _ => (None, None, None),
+                    };
+                    // The penalty goes in front of the ligature box it
+                    // replaces, and only when that box exists: `replace_count`
+                    // counts items, so a penalty with nothing behind it would
+                    // swallow whatever came next.
+                    let at_penalty = out.len();
+                    let replaced = fragment(self, &mut out, lig.start, lig.end, &mut first);
+                    if let (true, Some(pre_break), Some(post_break)) = (replaced, pre_break, post_break) {
+                        out.insert(
+                            at_penalty,
+                            (pl::Item::Penalty(pl::Penalty { value: HYPHEN_PENALTY, flagged: true, pre_break: Some(pre_break), automatic: true, post_break: Some(post_break), replace_count: 1 }), rec),
+                        );
+                    }
+                    let kern = residual_pt(&text[lig.start..next], &text[lig.start..lig.end], &text[lig.end..next]);
+                    if kern != 0.0 && lig.end < next {
+                        out.push((pl::Item::kern(kern), None));
+                    }
+                    pos = lig.end;
                 }
-            }
-            let frag = adapter::Segment {
-                text: text[a..b].to_string(),
-                chars: seg.chars[char_index[a]..char_index[b]].to_vec(),
-                style: seg.style,
-            };
-            if let Some((run, rec)) = self.text_box(&frag, size) {
-                if k > 1 {
-                    self.mark_continues(rec);
-                }
-                out.push((pl::Item::Box(run), Some(rec)));
             }
         }
+        fragment(self, &mut out, pos, text.len(), &mut first);
         out
     }
 
@@ -2710,6 +2799,9 @@ impl<'a> Context<'a> {
                 pl::layout_paragraph_microtype(list, &params, &mt).map(|(lines, _)| lines)
             }
         };
+        if trace_paragraphs_enabled() {
+            self.trace_paragraph(list, params, recs, result.as_ref().ok());
+        }
         match result {
             Ok(lines) => Some(lines),
             Err(e) => {
@@ -2726,6 +2818,103 @@ impl<'a> Context<'a> {
         }
     }
 
+    /// `FLASHTEX_TRACE_PARAGRAPHS=1`: dumps the horizontal list handed to
+    /// the breaker and the breaks it chose, on stderr, in the spirit of
+    /// `\tracingparagraphs` (TeXbook ch. 14, tex.web §846): one item per
+    /// line with its index, so a diff against pdflatex's feasible-break log
+    /// finds the first node that differs. Widths are in points; a box shows
+    /// the text of its `BoxRec` (or `[math]`/`[rule]`), a penalty its value,
+    /// hyphenation flag and discretionary parts, glue its stretch/shrink.
+    fn trace_paragraph(&self, list: &[pl::Item], params: &pl::LineBreakParams, recs: Option<&[Option<usize>]>, lines: Option<&pl::Lines>) {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "@paragraph hsize={:.5} pretolerance={} tolerance={} emergencystretch={:.3} parindent={:.5} leftskip={:.3} rightskip={:.3}+{:.3} linepenalty={} adjdemerits={} mode={:?}",
+            params.line_width,
+            params.pretolerance,
+            params.tolerance,
+            params.emergency_stretch,
+            params.parindent,
+            params.left_skip.width,
+            params.right_skip.width,
+            params.right_skip.stretch,
+            params.line_penalty,
+            params.adj_demerits,
+            params.mode
+        );
+        let order = |o: pl::GlueOrder| match o {
+            pl::GlueOrder::Finite => "",
+            pl::GlueOrder::Fil => "fil",
+            pl::GlueOrder::Fill => "fill",
+            pl::GlueOrder::Filll => "filll",
+        };
+        let text_of = |i: usize, run: &pl::GlyphRun| -> String {
+            let rec = recs.and_then(|r| r.get(i).copied().flatten());
+            match rec.map(|r| &self.recs[r]) {
+                Some(BoxRec::Text { text, .. }) => format!("{text:?}"),
+                Some(BoxRec::Math(_)) => "[math]".to_string(),
+                Some(BoxRec::Rule { .. }) => "[rule]".to_string(),
+                Some(_) => "[box]".to_string(),
+                None if run.font == MATH_SENTINEL && run.glyphs.is_empty() => "[empty]".to_string(),
+                None => format!("[{} glyphs]", run.glyphs.len()),
+            }
+        };
+        for (i, item) in list.iter().enumerate() {
+            match item {
+                pl::Item::Box(run) => {
+                    let _ = writeln!(out, "  {i:4} box  w={:.5} h={:.3} d={:.3} {}", run.width, run.height, run.depth, text_of(i, run));
+                }
+                pl::Item::Glue(g) => {
+                    let _ = writeln!(out, "  {i:4} glue w={:.5} plus {:.5}{} minus {:.5}{}", g.width, g.stretch, order(g.stretch_order), g.shrink, order(g.shrink_order));
+                }
+                pl::Item::Penalty(p) => {
+                    let mut s = format!("  {i:4} pen  p={}", p.value);
+                    if p.flagged {
+                        s.push_str(" flagged");
+                    }
+                    if p.automatic {
+                        s.push_str(" auto");
+                    }
+                    if let Some(pre) = &p.pre_break {
+                        let _ = write!(s, " pre=w{:.5}", pre.width);
+                    }
+                    if let Some(post) = &p.post_break {
+                        let _ = write!(s, " post=w{:.5}", post.width);
+                    }
+                    if p.replace_count > 0 {
+                        let _ = write!(s, " replace={}", p.replace_count);
+                    }
+                    let _ = writeln!(out, "{s}");
+                }
+                pl::Item::Kern(k) => {
+                    let _ = writeln!(out, "  {i:4} kern w={:.5}", k.width);
+                }
+            }
+        }
+        if let Some(lines) = lines {
+            let _ = writeln!(out, "@result pass={} lines={} demerits={:.0}", lines.stats.pass, lines.stats.lines, lines.stats.total_demerits);
+            for (line, brk) in lines.lines.iter().zip(&lines.breaks) {
+                let _ = writeln!(
+                    out,
+                    "@line {} items={}..{} break@{} ratio={:.4} b={:.0} fit={:?} t={:.0}{}",
+                    line.index + 1,
+                    line.items.start,
+                    line.items.end,
+                    brk.item,
+                    brk.ratio,
+                    brk.badness,
+                    brk.fitness,
+                    brk.demerits,
+                    if brk.hyphenated { " -" } else { "" }
+                );
+            }
+        } else {
+            let _ = writeln!(out, "@result error");
+        }
+        eprint!("{out}");
+    }
+
     /// The microtype side of a horizontal list: each text box's (and
     /// discretionary hyphen's) TFM codes, sp widths and in-run kerns with its
     /// font's resolved pdfTeX parameters, and which kerns are font kerns (the
@@ -2738,8 +2927,16 @@ impl<'a> Context<'a> {
             match item {
                 pl::Item::Box(run) => mi.run = rec.filter(|r| !self.label_recs.contains(r)).and_then(|r| self.micro_run(r, run)),
                 pl::Item::Penalty(p) => {
+                    // A ligature discretionary's record names both texts.
+                    let (pre_rec, post_rec) = match rec.map(|r| &self.recs[r]) {
+                        Some(BoxRec::Discretionary { pre, post }) => (Some(*pre), Some(*post)),
+                        _ => (rec, None),
+                    };
                     if let Some(pre) = &p.pre_break {
-                        mi.pre_break = rec.and_then(|r| self.micro_run(r, pre));
+                        mi.pre_break = pre_rec.and_then(|r| self.micro_run(r, pre));
+                    }
+                    if let Some(post) = &p.post_break {
+                        mi.post_break = post_rec.and_then(|r| self.micro_run(r, post));
                     }
                 }
                 pl::Item::Kern(_) => {
@@ -3182,13 +3379,13 @@ impl<'a> Context<'a> {
                     }
                     push(&mut out, &mut recs, pl::Item::penalty(pl::FORCED_BREAK), None);
                 }
-                AItem::Quad { em, style } => {
+                AItem::Quad { em, plus_em, minus_em, style } => {
                     // `em` is `\fontdimen6` of the font current where the
                     // glue is read: `{\Large a\hspace{2em}b}` is two quads
                     // of the `\Large` face, `{\bfseries a\quad b}` of the bold.
                     let style = merge_base(*style, base);
                     let quad = self.text_params(style, style.size_or(size)).quad;
-                    push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fixed(em * quad)), None);
+                    push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::finite(em * quad, plus_em * quad, minus_em * quad)), None);
                 }
                 AItem::HFill { fill, leader, style } => {
                     // `\hfill` is second-order glue: it beats the line's
@@ -4223,6 +4420,15 @@ impl<'a> Context<'a> {
         // `\leftmargin` in (article.cls `\description`).
         if list_geom.is_some_and(|g| g.description) && starts_paragraph {
             params.parindent -= inner_margin_pt;
+        }
+        // `thebibliography` (article.cls 1.4n lines 576-580, natbib.sty 1074-1075)
+        // follows its `\list` with `\sloppy`: `\tolerance 9999`,
+        // `\emergencystretch 3em`, `\hfuzz .5pt`. `\pretolerance` stays 100,
+        // so pdfTeX's first pass is unchanged.
+        if list_geom.is_some_and(|g| g.bibliography) {
+            params.tolerance = 9999.0;
+            params.emergency_stretch = 3.0 * self.text_params(TextStyle::default(), size).quad;
+            params.hfuzz = 0.5;
         }
         let lines = self.break_paragraph(&list, &params, items, Some(&recs))?;
         self.report_overfull(&lines, &list, &recs);
@@ -7795,6 +8001,7 @@ impl<'a> Context<'a> {
                     BoxRec::TextScript(t) => Some(t.span),
                     BoxRec::Graphic(g) => Some(g.span),
                     BoxRec::Paths(p) => Some(p.span),
+                    BoxRec::Discretionary { .. } => None,
                 })
                 .next();
             let _ = list;
@@ -8041,6 +8248,13 @@ pub(crate) fn design_size(family: Family, size: f64) -> u32 {
             }
         }
     }
+}
+
+/// `FLASHTEX_TRACE_PARAGRAPHS` set to anything but `0`/empty enables
+/// [`Context::trace_paragraph`].
+fn trace_paragraphs_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FLASHTEX_TRACE_PARAGRAPHS").map(|v| !v.is_empty() && v != "0").unwrap_or(false))
 }
 
 fn seg_span(seg: &adapter::Segment) -> Option<Span> {
@@ -10015,6 +10229,15 @@ fn symbol_atoms(c: char, width_em: Option<f64>) -> Vec<ml::Atom> {
         // (`TexMathMetrics`/`MathFonts`), which paint both from cmsy10's
         // `\emptyset` slot but only force this one's advance and outline.
         '\u{2205}' if width_em.is_some() => vec![ml::Atom::symbol(crate::mathfont::VARNOTHING_SENTINEL)],
+        // `\mapsto` is `\mapstochar\rightarrow` (fontmath.ltx 340-341), two
+        // adjacent `\mathrel`s: cmsy "37 has zero width and exactly the
+        // arrow's height/depth, so the pair is one relation with cmsy "21's
+        // box (`mathtex::extra_symbol_slot`). math-layout's `default_class`
+        // has no row for U+21A6, which made it an Ord painted from Latin
+        // Modern Math's 0.977em glyph with no `\thickmuskip` either side:
+        // `$x \mapsto |x|$` came out 6.3pt narrower than pdfTeX's and moved
+        // a line break (inline-math p.2, `\tracingparagraphs` @@21 vs @@22).
+        '\u{21A6}' => vec![ml::Atom::rel(c)],
         _ => match long_arrow_pieces(c) {
             Some(pieces) => vec![long_arrow(pieces)],
             None => vec![ml::Atom::symbol(c)],
@@ -11414,6 +11637,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     BoxRec::TextScript(t) => Some(t.span),
                     BoxRec::Graphic(g) => Some(g.span),
                     BoxRec::Paths(p) => Some(p.span),
+                    BoxRec::Discretionary { .. } => None,
             });
         let src = span.map(|sp| vec![ctx.source(sp)]).unwrap_or_default();
         ctx.diagnostics.push(Diagnostic::warning(
@@ -11978,6 +12202,7 @@ pub fn assemble_windowed(
                     BoxRec::TextScript(t) => Some(t.span),
                     BoxRec::Graphic(g) => Some(g.span),
                     BoxRec::Paths(p) => Some(p.span),
+                    BoxRec::Discretionary { .. } => None,
                     BoxRec::Text { .. } => None,
                 });
                 unmapped_diags.push(Diagnostic::warning(
@@ -12193,12 +12418,27 @@ fn assemble_block(
             .filter(|i| matches!(block.items.get(*i), Some(pl::Item::Box(_))))
             .filter_map(|i| block.recs.get(i).copied().flatten())
             .collect();
+        // A break inside a ligature (`BoxRec::Discretionary`): the previous
+        // line's break penalty carries post-break text, which the breaker
+        // places first on this line (tex.web §881), before any box.
+        let post_rec = post_break_rec(block, recs, line);
         let mut bi = 0usize;
-        for run in &line.runs {
+        for (ri, run) in line.runs.iter().enumerate() {
             // A discretionary hyphen is the pre-break text of the penalty
             // the line breaks at; its box record sits at that item.
             let rec = if run.is_hyphen {
-                block.block.lines.breaks.get(line.index).and_then(|b| block.recs.get(b.item).copied().flatten())
+                block
+                    .block
+                    .lines
+                    .breaks
+                    .get(line.index)
+                    .and_then(|b| block.recs.get(b.item).copied().flatten())
+                    .map(|r| match recs.get(r) {
+                        Some(BoxRec::Discretionary { pre, .. }) => *pre,
+                        _ => r,
+                    })
+            } else if ri == 0 && post_rec.is_some() {
+                post_rec
             } else {
                 let r = boxes.get(bi).copied();
                 bi += 1;
@@ -12445,7 +12685,8 @@ fn assemble_block(
                         provenance,
                     }));
                 }
-                BoxRec::Leader { .. } => {}
+                // Resolved to its `pre`/`post` text record above.
+                BoxRec::Leader { .. } | BoxRec::Discretionary { .. } => {}
                 BoxRec::Paths(p) => {
                     let provenance = provenance_of(p.span, source_of);
                     let x0 = local.x;
@@ -12544,6 +12785,23 @@ fn line_glue_width(g: &pl::Glue, line: &pl::Line, order: Option<pl::GlueOrder>) 
     }
 }
 
+/// The text record of the post-break run that starts `line`, when the
+/// break ending the previous line is a penalty with post-break text (a
+/// hyphenation point inside a ligature, `BoxRec::Discretionary`). The
+/// breaker places that run first on the line (`set_line`, tex.web §881);
+/// it belongs to no item of `line.items`.
+fn post_break_rec(block: &BuiltBlock, recs: &[BoxRec], line: &pl::Line) -> Option<usize> {
+    let prev = block.block.lines.breaks.get(line.index.checked_sub(1)?)?;
+    match block.items.get(prev.item) {
+        Some(pl::Item::Penalty(p)) if p.post_break.is_some() => {}
+        _ => return None,
+    }
+    match recs.get(block.recs.get(prev.item).copied().flatten()?) {
+        Some(BoxRec::Discretionary { post, .. }) => Some(*post),
+        _ => None,
+    }
+}
+
 fn append_leaders(
     block: &BuiltBlock,
     line: &pl::Line,
@@ -12553,7 +12811,10 @@ fn append_leaders(
     used: &mut BTreeMap<Rc<str>, Rc<LoadedFace>>,
 ) {
     let Some(first_box) = line.items.clone().find(|i| matches!(block.items.get(*i), Some(pl::Item::Box(_)))) else { return };
-    let Some(first_run) = line.runs.iter().position(|r| !r.is_hyphen) else { return };
+    // A post-break run (a ligature discretionary's `fi`) is the line's first
+    // run and pairs with no item of `line.items`.
+    let skip = usize::from(post_break_rec(block, recs, line).is_some());
+    let Some(first_run) = line.runs.iter().enumerate().position(|(i, r)| i >= skip && !r.is_hyphen) else { return };
     let order = line_stretch_order(&block.items, line.items.clone());
     let prefix = line.items.start..first_box;
     let prefix_width: f64 = prefix

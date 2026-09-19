@@ -853,6 +853,7 @@ fn block_source(ctx: &Context, b: &BuiltBlock, items: impl Iterator<Item = usize
             BoxRec::TextScript(t) => Some(t.span),
             BoxRec::Graphic(g) => Some(g.span),
             BoxRec::Paths(p) => Some(p.span),
+            BoxRec::Discretionary { .. } => None,
         })
         .collect()
 }
