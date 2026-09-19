@@ -1100,3 +1100,315 @@ fn actual_text_groups_adjacent_cross_font_runs_without_changing_tounicode() {
     assert_eq!(extracted, "⟹=→");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---------------------------------------------------------------------------
+// TrueType collections (issue #954): `\setmainfont{Helvetica}` resolves to a
+// face inside `/System/Library/Fonts/Helvetica.ttc`, published with its
+// `face_index`. These tests use this Mac's own collections and skip (loudly)
+// where a file is absent; no Apple font is committed.
+
+/// One collection member a test envelope shows text in.
+struct Member {
+    path: PathBuf,
+    face_index: u32,
+    text: &'static str,
+}
+
+/// The producer's identity for a collection member: face 0 is
+/// SHA-256(bytes), every other member SHA-256(bytes ‖ face_index)
+/// (`crates/render-pipeline/src/fonts.rs`).
+fn member_sha(bytes: &[u8], face_index: u32) -> String {
+    if face_index == 0 {
+        return sha256::hex(bytes);
+    }
+    let mut hashed = bytes.to_vec();
+    hashed.extend_from_slice(&face_index.to_be_bytes());
+    sha256::hex(&hashed)
+}
+
+/// A one-page envelope with one glyph run per member, each at a font size
+/// of `unitsPerEm * 4096` ticks so hmtx advances scale to whole ticks and
+/// `/W` stays the font's own. Returns the envelope and, per member, the
+/// loaded face, its font id and the glyph ids shown.
+fn collection_envelope(members: &[Member]) -> (String, Vec<(TrueTypeFont, String, Vec<u16>)>) {
+    let mut fonts = Vec::new();
+    let mut runs = Vec::new();
+    let mut loaded = Vec::new();
+    for (i, m) in members.iter().enumerate() {
+        let bytes = std::fs::read(&m.path).unwrap();
+        let font = TrueTypeFont::load_face(&m.path, m.face_index).unwrap();
+        let sha = member_sha(&bytes, m.face_index);
+        let format = match font.outlines {
+            flashtex_pdf::truetype::Outlines::Cff => "opentype-cff",
+            flashtex_pdf::truetype::Outlines::TrueType => "static-truetype",
+        };
+        fonts.push(format!(
+            r#"{{"font_id":"{sha}","sha256":"{sha}","byte_length":{},"format":"{format}","face_index":{},"units_per_em":{},"glyph_count":{},"postscript_name":"{}"}}"#,
+            bytes.len(),
+            m.face_index,
+            font.units_per_em,
+            font.num_glyphs(),
+            font.postscript_name
+        ));
+        let size = i64::from(font.units_per_em) << 12;
+        let mut gids = Vec::new();
+        let mut glyphs = Vec::new();
+        let mut clusters = Vec::new();
+        let mut x: i64 = 72 << 20;
+        for (k, (b, c)) in m.text.char_indices().enumerate() {
+            let gid = font
+                .glyph_id(c)
+                .unwrap_or_else(|| panic!("{}: no glyph for {c:?}", font.postscript_name));
+            let adv = i64::from(font.advance(gid)) << 12;
+            glyphs.push(format!(
+                r#"{{"gid":{gid},"origin_x":{x},"baseline_y":{y},"advance_x":{adv},"advance_y":0,"cluster":{k}}}"#,
+                y = (100 + 40 * i as i64) << 20
+            ));
+            clusters.push(format!(
+                r#"{{"text_start_byte":{b},"text_end_byte":{}}}"#,
+                b + c.len_utf8()
+            ));
+            gids.push(gid);
+            x += adv;
+        }
+        runs.push(format!(
+            r#"{{"kind":"glyph_run","font_id":"{sha}","font_size":{size},"text":"{}","paint":{{"r":0,"g":0,"b":0,"a":1}},"glyphs":[{}],"clusters":[{}]}}"#,
+            m.text,
+            glyphs.join(","),
+            clusters.join(",")
+        ));
+        loaded.push((font, sha, gids));
+    }
+    let envelope = format!(
+        r#"{{"protocol_version":2,"id":"t","type":"display_list","payload":{{"render_format":"display-list-v2","coordinate_unit":"bp_2pow20","color_space":"srgb","fonts":[{}],"pages":[{{"number":1,"width":{},"height":{},"items":[{}]}}],"diagnostics":[]}}}}"#,
+        fonts.join(","),
+        612i64 << 20,
+        792i64 << 20,
+        runs.join(",")
+    );
+    (envelope, loaded)
+}
+
+/// `qpdf --check` over the file when qpdf is installed (Homebrew's
+/// `/opt/homebrew/bin/qpdf` or on `PATH`); `None` when it is not.
+fn qpdf_check(pdf: &Path) -> Option<Result<(), String>> {
+    for exe in ["/opt/homebrew/bin/qpdf", "qpdf"] {
+        let Ok(output) = std::process::Command::new(exe).arg("--check").arg(pdf).output() else {
+            continue;
+        };
+        return Some(if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        });
+    }
+    None
+}
+
+/// Exports `members` into one PDF and checks every face is embedded as its
+/// own standalone program with the member's widths; returns the bytes and
+/// the report.
+fn export_collection(tag: &str, members: &[Member], options: &V2Options) -> (Vec<u8>, v2::V2Report) {
+    let (envelope, loaded) = collection_envelope(members);
+    let (doc, report) = v2::from_v2(&envelope, options).unwrap();
+    assert_eq!(report.fonts.len(), members.len());
+    assert!(
+        !report.notes.iter().any(|n| n.contains("deviation")),
+        "{:?}",
+        report.notes
+    );
+    let out = exact::render_exact(&doc).unwrap();
+    verify::check_structure(&out.bytes).unwrap();
+    let file = PdfFile::parse(&out.bytes).unwrap();
+    let page = file.pages().unwrap()[0];
+    let page_fonts = file.page_fonts(page);
+    let mut programs: Vec<Vec<u8>> = Vec::new();
+    for (i, (m, (font, sha, gids))) in members.iter().zip(&loaded).enumerate() {
+        let note = &report.fonts[i];
+        assert_eq!(note.font_id, *sha);
+        assert_eq!(note.path.file_name(), m.path.file_name(), "{note:?}");
+        assert_eq!(note.face_index, m.face_index);
+        assert_eq!(
+            note.hash_form,
+            if m.face_index == 0 { HashForm::Bytes } else { HashForm::BytesAndFaceIndex }
+        );
+        let re = flashtex_pdf::compare::font_from_dict(&file, page_fonts[note.resource.as_str()])
+            .unwrap();
+        let cid = match (&re, font.outlines) {
+            (exact::ExactFont::CidTrueType(c), flashtex_pdf::truetype::Outlines::TrueType) => c,
+            (exact::ExactFont::CidCff(c), flashtex_pdf::truetype::Outlines::Cff) => c,
+            other => panic!("{}: unexpected font kind {other:?}", font.postscript_name),
+        };
+        // Subset-tagged with the member's own PostScript name (a whole CFF
+        // program keeps the bare name, as for a single-face file).
+        let name = cid.base_font.strip_suffix(&font.postscript_name).unwrap_or_else(|| {
+            panic!("{}: /BaseFont {}", font.postscript_name, cid.base_font)
+        });
+        if note.outcome != SubsetOutcome::CffWhole {
+            assert_eq!(name.len(), 7, "{}", cid.base_font);
+            assert!(name.ends_with('+') && name[..6].bytes().all(|b| b.is_ascii_uppercase()));
+        }
+        // `/W` is the member's hmtx in 1000/em.
+        for gid in gids {
+            let want = exact::Decimal::from_ratio(
+                i128::from(font.advance(*gid)) * 1000,
+                u128::from(font.units_per_em),
+                12,
+            )
+            .unwrap();
+            assert_eq!(cid.widths[gid], want, "{} gid {gid}", font.postscript_name);
+        }
+        let program = cid.program.bytes().to_vec();
+        match font.outlines {
+            flashtex_pdf::truetype::Outlines::TrueType => {
+                // A standalone single-face sfnt with verifiable checksums,
+                // the member's metrics kept in place.
+                flashtex_pdf::truetype::verify_checksums(&program).unwrap();
+                let back = TrueTypeFont::parse(program.clone()).unwrap();
+                assert_eq!((back.num_faces, back.face_index), (1, 0));
+                assert_eq!(back.units_per_em, font.units_per_em);
+                for gid in gids {
+                    assert_eq!(back.advance(*gid), font.advance(*gid));
+                }
+            }
+            flashtex_pdf::truetype::Outlines::Cff => {
+                let back = flashtex_pdf::cff::CffFont::parse(&program).unwrap();
+                assert!(back.glyph_count() > 0);
+            }
+        }
+        assert!(
+            !programs.contains(&program),
+            "{}: same program as another member",
+            font.postscript_name
+        );
+        programs.push(program);
+    }
+    // Deterministic.
+    assert_eq!(exact::render_exact(&doc).unwrap().bytes, out.bytes);
+    let dir = std::env::temp_dir().join(format!("flashtex-pdf-ttc-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pdf = dir.join(format!("{tag}.pdf"));
+    std::fs::write(&pdf, &out.bytes).unwrap();
+    match qpdf_check(&pdf) {
+        Some(Ok(())) => eprintln!("qpdf --check {}: ok", pdf.display()),
+        Some(Err(e)) => panic!("qpdf --check {}: {e}", pdf.display()),
+        None => eprintln!("note: qpdf not installed; structure checked by flashtex_pdf::verify only"),
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    (out.bytes, report)
+}
+
+const HELVETICA: &str = "/System/Library/Fonts/Helvetica.ttc";
+const MENLO: &str = "/System/Library/Fonts/Menlo.ttc";
+/// A CFF-flavoured collection macOS ships (Kohinoor Devanagari, `OTTO`
+/// members).
+const KOHINOOR: &str = "/System/Library/Fonts/Kohinoor.ttc";
+
+/// Helvetica.ttc faces 0 and 1 (`Helvetica`, `Helvetica-Bold`; `fc-scan`
+/// order) in one document: two fonts with distinct ids, each embedded as
+/// its own `/FontFile2` subset with its own widths. The collection is found
+/// through the operating-system directories without `--font-dir`.
+#[test]
+fn helvetica_ttc_faces_0_and_1_embed_as_two_distinct_truetype_fonts() {
+    let path = PathBuf::from(HELVETICA);
+    if !path.is_file() {
+        eprintln!("skipped: {HELVETICA} is not on this machine");
+        return;
+    }
+    let regular = TrueTypeFont::load_face(&path, 0).unwrap();
+    let bold = TrueTypeFont::load_face(&path, 1).unwrap();
+    assert_eq!(regular.postscript_name, "Helvetica");
+    assert_eq!(bold.postscript_name, "Helvetica-Bold");
+    assert_eq!(regular.num_faces, bold.num_faces);
+    assert!(regular.num_faces >= 2);
+    let members = [
+        Member { path: path.clone(), face_index: 0, text: "Hello Typography, AVAST!" },
+        Member { path: path.clone(), face_index: 1, text: "Hello Typography, AVAST!" },
+    ];
+    let (_, report) = export_collection("helvetica", &members, &V2Options::default());
+    assert_eq!(report.fonts[0].postscript_name, "Helvetica");
+    assert_eq!(report.fonts[1].postscript_name, "Helvetica-Bold");
+    assert_eq!(report.fonts[0].outcome, SubsetOutcome::TrueTypeIdentity);
+    assert_eq!(report.fonts[1].outcome, SubsetOutcome::TrueTypeIdentity);
+    // Bold is wider (`H` alone is 1479 in both; the word is not): the widths
+    // really are per member.
+    let width = |f: &TrueTypeFont| -> u32 {
+        "Hello Typography, AVAST!"
+            .chars()
+            .map(|c| u32::from(f.advance(f.glyph_id(c).unwrap())))
+            .sum()
+    };
+    assert!(width(&bold) > width(&regular));
+}
+
+/// Menlo.ttc (TrueType, `Menlo-Bold` is face 1) through an explicit
+/// `--font-dir`.
+#[test]
+fn menlo_ttc_member_embeds_through_an_explicit_font_dir() {
+    let path = PathBuf::from(MENLO);
+    if !path.is_file() {
+        eprintln!("skipped: {MENLO} is not on this machine");
+        return;
+    }
+    let members = [
+        Member { path: path.clone(), face_index: 1, text: "fn main() {}" },
+        Member { path: path.clone(), face_index: 0, text: "let x = 1;" },
+    ];
+    let options = V2Options {
+        font_dirs: vec![PathBuf::from("/System/Library/Fonts")],
+    };
+    let (_, report) = export_collection("menlo", &members, &options);
+    assert_eq!(report.fonts[0].postscript_name, "Menlo-Bold");
+    assert_eq!(report.fonts[1].postscript_name, "Menlo-Regular");
+    assert_eq!(report.fonts[0].path, path);
+}
+
+/// A CFF-flavoured collection: the member's `CFF ` table is embedded as
+/// `/FontFile3` `/CIDFontType0C`, subset when the CFF subsetter can.
+#[test]
+fn cff_flavoured_collection_member_embeds_as_cid_font_type0c() {
+    let path = PathBuf::from(KOHINOOR);
+    if !path.is_file() {
+        eprintln!("skipped: {KOHINOOR} is not on this machine");
+        return;
+    }
+    let face = TrueTypeFont::load_face(&path, 1).unwrap();
+    assert_eq!(face.outlines, flashtex_pdf::truetype::Outlines::Cff);
+    // Devanagari letters when the face maps them (it does), else Latin.
+    let text = if face.glyph_id('क').is_some() { "कखग" } else { "ABC" };
+    let members = [
+        Member { path: path.clone(), face_index: 1, text },
+        Member { path: path.clone(), face_index: 0, text },
+    ];
+    let (_, report) = export_collection("kohinoor", &members, &V2Options::default());
+    assert_ne!(report.fonts[0].postscript_name, report.fonts[1].postscript_name);
+    for f in &report.fonts {
+        eprintln!("{} face {}: {:?}, {} program bytes", f.postscript_name, f.face_index, f.outcome, f.program_bytes);
+        assert!(
+            matches!(f.outcome, SubsetOutcome::CffSubset | SubsetOutcome::CffWhole),
+            "{f:?}"
+        );
+    }
+}
+
+/// A member index the collection does not have, or a face index on a
+/// single-face file, is an error naming the file, never a silent face 0.
+#[test]
+fn collection_face_out_of_range_is_refused() {
+    let path = PathBuf::from(HELVETICA);
+    if !path.is_file() {
+        eprintln!("skipped: {HELVETICA} is not on this machine");
+        return;
+    }
+    let n = TrueTypeFont::load_face(&path, 0).unwrap().num_faces;
+    let e = TrueTypeFont::load_face(&path, n).unwrap_err();
+    assert!(e.contains("Helvetica.ttc") && e.contains("collection has"), "{e}");
+    if let Some(lm) = lm12() {
+        let e = TrueTypeFont::load_face(&lm, 1).unwrap_err();
+        assert!(e.contains("single-face"), "{e}");
+    }
+}
