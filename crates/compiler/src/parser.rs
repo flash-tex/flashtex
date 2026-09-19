@@ -6299,6 +6299,83 @@ impl P<'_> {
         Some(scale * base)
     }
 
+    /// A `calc`-style `+`/`-` chain of dimension terms, summed left to right
+    /// (`\setlength{\itemsep}{1pt + 2\baselineskip}`). Returns `None` when
+    /// `raw` holds a single term, so the historic single-dimen path handles
+    /// it untouched, and when any term does not resolve on its own (the
+    /// caller then reports the historic diagnostic for the whole value).
+    /// `Ok` is the summed length; `Err` means every term parsed but one
+    /// names page geometry the render pipeline applies from the source, and
+    /// the caller reports the same "unsupported length expression" warning a
+    /// lone length reference gets.
+    fn calc_chain_pt_current(
+        &self,
+        raw: &str,
+        units: (i64, i64),
+        baselineskip_ok: bool,
+    ) -> Option<Result<f64, ()>> {
+        let raw = raw.trim();
+        // Operator positions: every `+`/`-` past the first character. A
+        // leading sign belongs to the first term, so `{-0.5in}` stays a
+        // single term and never reaches here as a chain.
+        let ops: Vec<usize> = raw
+            .char_indices()
+            .filter(|(i, c)| *i > 0 && (*c == '+' || *c == '-'))
+            .map(|(i, _)| i)
+            .collect();
+        if ops.is_empty() {
+            return None;
+        }
+        let mut total = 0.0;
+        let mut start = 0;
+        let mut sign = 1.0;
+        for &op in &ops {
+            let term = raw[start..op].trim();
+            match self.calc_chain_term_pt_current(term, units, baselineskip_ok)? {
+                Ok(pt) => total += sign * pt,
+                Err(()) => return Some(Err(())),
+            }
+            sign = if raw[op..].starts_with('+') { 1.0 } else { -1.0 };
+            start = op + 1;
+        }
+        match self.calc_chain_term_pt_current(raw[start..].trim(), units, baselineskip_ok)? {
+            Ok(pt) => total += sign * pt,
+            Err(()) => return Some(Err(())),
+        }
+        Some(Ok(total))
+    }
+
+    /// One term of a `calc` chain, resolved exactly as it would be on its
+    /// own: a plain dimension, a `<factor>\baselineskip` multiple where the
+    /// single-dimen path accepts one, or a known length reference. `None`
+    /// rejects the term (and with it the chain); `Err` marks an unresolvable
+    /// page-geometry reference (see [`Self::calc_chain_pt_current`]).
+    fn calc_chain_term_pt_current(
+        &self,
+        term: &str,
+        units: (i64, i64),
+        baselineskip_ok: bool,
+    ) -> Option<Result<f64, ()>> {
+        if term.is_empty() {
+            return None;
+        }
+        if let Some(dimen) = parse_dimen_pt_current(term, units) {
+            if is_length_reference(term) {
+                return match self.resolve_known_length_ref(term) {
+                    Some(value) => Some(Ok(value)),
+                    None => Some(Err(())),
+                };
+            }
+            return Some(Ok(dimen));
+        }
+        if baselineskip_ok {
+            if let Some(pt) = self.baselineskip_multiple(term) {
+                return Some(Ok(pt));
+            }
+        }
+        None
+    }
+
     fn apply_length_value(
         &mut self,
         command: &str,
@@ -6310,7 +6387,33 @@ impl P<'_> {
     ) {
         let in_preamble = self.has_document && !self.in_body;
         let in_list = !self.list_stack.is_empty();
-        let dimen = parse_dimen_pt_current(raw, self.font_setup().em_ex_sp(self.style));
+        let units = self.font_setup().em_ex_sp(self.style);
+        // A `calc` `+`/`-` chain (`1pt + 2\baselineskip`) sums its terms
+        // before the single-dimen path below runs. A lone dimension has no
+        // operator, so the common case falls through byte-for-byte as before;
+        // anything no term resolves (`*`, `/`, parentheses, `\widthof`, box
+        // primitives) likewise keeps the historic diagnostic below.
+        if let Some(chain) =
+            self.calc_chain_pt_current(raw, units, is_list_length(target) && !in_preamble && in_list)
+        {
+            match chain {
+                Ok(pt) => {
+                    self.apply_computed_length(command, target, raw, pt, span, add, global, in_preamble, in_list)
+                }
+                Err(()) => {
+                    // A term names page geometry the render pipeline applies
+                    // from the source: the same warning a lone length
+                    // reference reports, not the dimension error below.
+                    self.diags.push(Diagnostic::warning(
+                        "unsupported length expression",
+                        Some(span),
+                        Some("ignored the length assignment".into()),
+                    ));
+                }
+            }
+            return;
+        }
+        let dimen = parse_dimen_pt_current(raw, units);
         // A list length read inside the list it shapes also accepts
         // `<factor>\baselineskip` (the corpus sets `\topsep` to
         // `0.6\baselineskip`), resolved exactly like `\enlargethispage`
@@ -6357,6 +6460,26 @@ impl P<'_> {
         } else {
             pt
         };
+        self.apply_computed_length(command, target, raw, pt, span, add, global, in_preamble, in_list);
+    }
+
+    /// Stores an already-resolved length on its target: the tail of
+    /// [`Self::apply_length_value`] shared with `calc` `+`/`-` chains, which
+    /// resolve their own terms and arrive here with the summed value. `raw`
+    /// is the original argument text, re-read only by the `emergencystretch`
+    /// arm (a chain never re-parses there: it falls back to `pt`).
+    fn apply_computed_length(
+        &mut self,
+        command: &str,
+        target: &str,
+        raw: &str,
+        pt: f64,
+        span: Span,
+        add: bool,
+        global: bool,
+        in_preamble: bool,
+        in_list: bool,
+    ) {
         match target {
             // Read by `\colorbox`/`\fcolorbox`; scoped by `length_scopes`.
             "fboxsep" => {
@@ -14136,6 +14259,12 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // (`style=`, `autostyle`, ...) are not modelled, so only a bare load
         // is silent.
         "csquotes" => options.is_empty(),
+        // calc.sty's `+`/`-` dimension chains in `\setlength`/`\addtolength`
+        // are implemented above, so loading the package is silent (same rule
+        // as `ifthen`); calc.sty takes no options. `*`, `/`, parentheses and
+        // `\widthof`/`\heightof`/`\depthof`/`\totalheightof` are not parsed:
+        // they keep the length argument's own diagnostic where they are used.
+        "calc" => options.is_empty(),
         _ => false,
     }
 }
