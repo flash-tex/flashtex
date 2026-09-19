@@ -1,0 +1,58 @@
+article-twocolumn
+  render article-twocolumn: recovered exit 0 0.449s; from-v2 exit 0
+beamer-blocks-columns
+  render beamer-blocks-columns: ok exit 0 0.035s; from-v2 exit 0
+beamer-default
+  render beamer-default: recovered exit 0 0.06s; from-v2 exit 1
+beamer-fragile
+  render beamer-fragile: recovered exit 0 0.029s; from-v2 exit 0
+beamer-madrid
+  render beamer-madrid: recovered exit 0 0.059s; from-v2 exit 1
+beamer-overlays
+  render beamer-overlays: ok exit 0 0.029s; from-v2 exit 0
+beamer-polish
+  render beamer-polish: recovered exit 0 0.065s; from-v2 exit 0
+conf-paper
+  render conf-paper: recovered exit 0 0.099s; from-v2 exit 0
+cv
+  render cv: recovered exit 0 0.069s; from-v2 exit 0
+enumitem-worksheet
+  render enumitem-worksheet: recovered exit 0 0.066s; from-v2 exit 0
+hw1
+  render hw1: recovered exit 0 0.098s; from-v2 exit 0
+hw2
+  render hw2: recovered exit 0 0.079s; from-v2 exit 0
+hyperref-toc
+  render hyperref-toc: recovered exit 0 0.108s; from-v2 exit 0
+inline-math
+  render inline-math: recovered exit 0 0.067s; from-v2 exit 0
+input-bibliography
+  render input-bibliography: recovered exit 0 0.076s; from-v2 exit 0
+lab-report
+  render lab-report: recovered exit 0 0.086s; from-v2 exit 0
+lecture-notes
+  render lecture-notes: recovered exit 0 0.074s; from-v2 exit 0
+letter
+  render letter: ok exit 0 0.018s; from-v2 exit 0
+listings-manual
+  render listings-manual: recovered exit 0 0.063s; from-v2 exit 0
+lmodern-report
+  render lmodern-report: recovered exit 0 0.1s; from-v2 exit 0
+math-sheet
+  render math-sheet: recovered exit 0 0.069s; from-v2 exit 0
+natbib-review
+  render natbib-review: recovered exit 0 0.101s; from-v2 exit 0
+plain-article
+  render plain-article: recovered exit 0 0.082s; from-v2 exit 0
+ps-calculus
+  render ps-calculus: recovered exit 0 0.081s; from-v2 exit 0
+siunitx-tables
+  render siunitx-tables: recovered exit 0 0.085s; from-v2 exit 0
+thesis-chapter
+  render thesis-chapter: recovered exit 0 0.131s; from-v2 exit 0
+twelvept-plain
+  render twelvept-plain: recovered exit 0 0.09s; from-v2 exit 0
+unicode-accents
+  render unicode-accents: recovered exit 0 0.025s; from-v2 exit 0
+font environment: zero font-FAILURE diagnostics in every fixture
+report: /Users/jay3332/.claude/jobs/5da2ba19/tmp/vo-now/report.md
