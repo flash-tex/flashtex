@@ -50,6 +50,14 @@ final class ShellModel {
     /// the app; exists because reconstructing `resultID`'s full history from
     /// observation alone is racy (see the call site in `handle(_:)`, GH-680).
     @ObservationIgnored var onResultApplied: ((String) -> Void)?
+    /// Test-only: fires synchronously, once per applied result, right after
+    /// `bindLayout` has bound this reply's negotiation. Carries the applied
+    /// revision and the now-current negotiation, so a test can record the
+    /// `(revision, negotiation)` pair atomically. Reading `negotiation`
+    /// through the earlier `onResultApplied` hook (or via a deferred
+    /// observation read) would see the *previous* reply's negotiation, and
+    /// deferred reads can additionally coalesce two rapid replies (GH-680).
+    @ObservationIgnored var onResultBound: ((Int, LayoutNegotiation) -> Void)?
     var fixtureURL: URL?
     var loadError: String?
     var selection: Selection?
@@ -1333,6 +1341,10 @@ final class ShellModel {
             if previewSource != source { previewSource = source }
             if historicalPreview != nil { historicalPreview = nil }
             bindLayout(of: incoming, requested: sent.layoutCapabilities)
+            // Test-only, synchronous, after binding: `negotiation` now
+            // reflects THIS reply (it still held the previous reply's value
+            // at the `onResultApplied` call above).
+            onResultBound?(incoming.revision, negotiation)
             compiledDocuments = Dictionary(uniqueKeysWithValues: sent.documents.map { ($0.path, $0.text) })
             retainMarksAfterResultBound() // ShellModel+DiagnosticRetention.swift
             fetchExplanations(for: incoming, id: env.id, documents: sent.documents)
