@@ -7692,6 +7692,15 @@ impl P<'_> {
             // The declaration itself is applied after the style save
             // below, so the `\end` restore sees the surrounding style.
         } else if self.in_body {
+            // `abstract` deliberately lands here (issue #953): the render
+            // pipeline owns the environment's typesetting
+            // (`render-pipeline/src/abstractenv.rs` — the `\small` centred
+            // head and `quotation` body, the `titlepage` page, the
+            // two-column `\section*` form) and derives it from the source
+            // and these plain paragraphs. It supersedes this warning where
+            // it sets the environment and keeps it where the class has no
+            // `abstract` (`book`) or the form is not set. A compiler-side
+            // head block or paragraph style would be typeset twice there.
             self.diags.push(Diagnostic::environment_warning(
                 &environment,
                 format!(
