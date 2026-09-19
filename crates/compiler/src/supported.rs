@@ -150,6 +150,12 @@ pub struct Inventory {
     pub packages: Vec<Package>,
 }
 
+/// The packages `parser::package_matches_layout` accepts silently (the
+/// `PACKAGES` table's names), for `crate::packages`' built-in check.
+pub fn layout_neutral_packages() -> impl Iterator<Item = &'static str> {
+    PACKAGES.iter().map(|(name, _, _)| *name)
+}
+
 /// Text commands that have a dispatch arm but only ever emit a diagnostic.
 ///
 /// `thanks` and `and` are meaningful only inside a `\title`/`\author`/`\date`
@@ -384,6 +390,25 @@ pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("newif", "{\\ifname}", "allocates a TeX conditional read with \\footrue and \\foofalse"),
     ("verb", "|text|", "literal text up to the next delimiter character"),
     ("iftoggle", "{name}{true}{false}", "the etoolbox toggle conditional: the named toggle (\\newtoggle/\\providetoggle declare it false, \\toggletrue/\\togglefalse set it) selects one branch at expansion time"),
+    // The package/class kernel (`flashtex-tex-expansion`'s `latex_packages.rs`,
+    // `crate::packages`): what a project `.sty`/`.cls` runs. `\usepackage`
+    // and `\documentclass` keep their parser entries: the parser still
+    // receives the built-in and missing names.
+    ("RequirePackage", "[options]{a,b}[version]", "loads project .sty files through the expansion engine (once each, with LaTeX's option clash check); built-in and missing packages reach the parser as \\usepackage"),
+    ("RequirePackageWithOptions", "{package}", "\\RequirePackage with the current package's options"),
+    ("LoadClass", "[options]{class}[version]", "in a project .cls: loads a project class file, or gives the document the standard class's page model as \\documentclass[options]{class}"),
+    ("LoadClassWithOptions", "{class}", "\\LoadClass with the current class's options"),
+    ("DeclareOption", "{option}{code}", "in a project .sty/.cls: declares an option (\\DeclareOption* the handler for undeclared ones, with \\CurrentOption)"),
+    ("CurrentOption", "", "the option being processed, in a \\DeclareOption* handler"),
+    ("ProcessOptions", "", "runs the declared options the class and the \\usepackage gave (\\ProcessOptions* in the order given); an undeclared package option is LaTeX's error, an undeclared class option is ignored"),
+    ("ExecuteOptions", "{a,b}", "runs declared options as defaults"),
+    ("OptionNotUsed", "", "in a class's \\DeclareOption*: records the option as unused"),
+    ("PassOptionsToPackage", "{options}{package}", "queues options for a later \\usepackage of that package"),
+    ("PassOptionsToClass", "{options}{class}", "queues options for a later \\LoadClass of that class"),
+    ("AtEndOfPackage", "{code}", "runs code when the current .sty file ends"),
+    ("AtEndOfClass", "{code}", "runs code when the current .cls file ends"),
+    ("typeout", "{text}", "accepted no-op; there is no terminal"),
+    ("wlog", "{text}", "accepted no-op; there is no log stream"),
 ];
 
 /// Names of [`EXPANSION_COMMANDS`]: the expansion pass executes these, so the
@@ -1925,6 +1950,20 @@ pub fn render_json(inventory: &Inventory) -> String {
         })
         .collect();
     out.push_str(&lines.join(",\n"));
+    // Package and class names never read from a project `.sty`/`.cls`
+    // (`crate::packages`, proposal S1): the typesetter's own model wins.
+    out.push_str("\n  ],\n  \"built_in_packages\": [\n");
+    let lines: Vec<String> = crate::packages::BUILT_IN_PACKAGES
+        .iter()
+        .map(|(name, why)| format!("    {{\"name\": {}, \"why\": {}}}", json_str(name), json_str(why)))
+        .collect();
+    out.push_str(&lines.join(",\n"));
+    out.push_str("\n  ],\n  \"built_in_classes\": [\n");
+    let lines: Vec<String> = crate::packages::BUILT_IN_CLASSES
+        .iter()
+        .map(|(name, why)| format!("    {{\"name\": {}, \"why\": {}}}", json_str(name), json_str(why)))
+        .collect();
+    out.push_str(&lines.join(",\n"));
     out.push_str("\n  ],\n  \"coverage\": {\n    \"sources\": [\n");
     let lines: Vec<String> = canonical_sources()
         .iter()
@@ -2123,6 +2162,24 @@ pub fn render_markdown(inventory: &Inventory) -> String {
         "\nAny other package, or these packages with other options, is recorded and reported \
          as recognised but not implemented.\n",
     );
+    out.push_str(
+        "\n### Project `.sty` and `.cls` files\n\n`\\usepackage{name}`, `\\RequirePackage`, `\\documentclass` and \
+         `\\LoadClass` read `name.sty`/`name.cls` from the project (next to the entry document, then at the \
+         project root) and run it through the expansion engine: `\\ProvidesPackage`, `\\DeclareOption`, \
+         `\\ProcessOptions`, `\\PassOptionsToPackage`, `\\RequirePackage`, `\\LoadClass`, `\\AtEndOfPackage`, \
+         the `\\@if...` queries and the `\\Package...`/`\\Class...` messages behave as in latex.ltx, and `@` is a \
+         letter while the file is read. A class file's `\\LoadClass{article|report|book|letter|beamer}` gives the \
+         document that class's page model; a class with no `\\LoadClass` gets `article`'s with a warning. The \
+         packages and classes below are modelled by the typesetter and are never read from a project file, even \
+         when one of that name exists:\n\n| Built-in package | Why its file is not executed |\n| --- | --- |\n",
+    );
+    for (name, why) in crate::packages::BUILT_IN_PACKAGES {
+        out.push_str(&format!("| `{name}` | {} |\n", md_cell(why)));
+    }
+    out.push_str("\n| Built-in class | Page model |\n| --- | --- |\n");
+    for (name, why) in crate::packages::BUILT_IN_CLASSES {
+        out.push_str(&format!("| `{name}` | {} |\n", md_cell(why)));
+    }
     out.push_str(DOC_END);
     out.push('\n');
     out

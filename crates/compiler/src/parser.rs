@@ -1911,8 +1911,20 @@ pub struct MacroDependency {
 pub struct Parsed {
     pub blocks: Vec<Block>,
     pub diagnostics: Vec<Diagnostic>,
-    /// The argument of the first valid `\documentclass`, if present.
+    /// The argument of the first valid `\documentclass`, if present. When
+    /// the document's class is a project `.cls` file (see [`Parsed::class_file`]),
+    /// this is the standard class it `\LoadClass`es -- what the expansion
+    /// pass hands the parser -- or `article` when it loads none.
     pub document_class: Option<String>,
+    /// The `[options]` of that `\documentclass`, verbatim; for a project
+    /// class, the options its `\LoadClass` passed on.
+    pub class_options: Option<String>,
+    /// The project `.cls` file `\documentclass` was read from, if any: the
+    /// render pipeline applies its `\setlength`s ahead of the preamble's.
+    pub class_file: Option<DocumentId>,
+    /// Every project `.sty`/`.cls` the expansion pass read, with the span
+    /// of the command that loaded it (see `expansion::Expansion::package_files`).
+    pub package_files: Vec<(DocumentId, Span)>,
     /// Body size from the `\documentclass` point-size option
     /// (`10pt`/`11pt`/`12pt`, plus `8pt`/`9pt` for the AMS classes).
     pub class_size_pt: Option<f64>,
@@ -2905,6 +2917,7 @@ pub fn parse_project_with(
             diagnostics: Vec::new(),
             arraystretch: HashMap::new(),
             current_label_by_marker: HashMap::new(),
+            package_files: Vec::new(),
         }
     } else {
         expansion::expand_project_cached(documents, entry)
@@ -2952,6 +2965,7 @@ pub fn parse_project_with(
         in_body: !has_document,
         document_ended: false,
         document_class: None,
+        class_options: None,
         seen_documentclass: false,
         class_size_pt: None,
         parskip_pt: None,
@@ -3080,6 +3094,19 @@ pub fn parse_project_with(
         .with_help(format!("add \\end{{{name}}}")));
     }
 
+    // A diagnostic inside a project package or class file names the
+    // command that loaded it, as LaTeX's log prints the file it is reading.
+    for (package, loaded_at) in &expanded.package_files {
+        let path = documents[package.0].path;
+        let path = path.rsplit('/').next().unwrap_or(path);
+        for diagnostic in &mut p.diags {
+            if diagnostic.span.is_some_and(|s| s.document == *package) && !diagnostic.labels.iter().any(|l| l.span == *loaded_at) {
+                *diagnostic = std::mem::replace(diagnostic, Diagnostic::error("", None, None))
+                    .with_label(*loaded_at, format!("{path} is loaded here"), false);
+            }
+        }
+    }
+    let class_file = expanded.package_files.iter().map(|(id, _)| *id).find(|id| documents[id.0].path.ends_with(".cls"));
     // Issue #907: one early diagnostic naming the non-LaTeX2e format, in
     // place of the downstream symptom flood. Gated on positive
     // identification above — a normal document keeps every diagnostic.
@@ -3099,6 +3126,9 @@ pub fn parse_project_with(
         blocks,
         diagnostics: crate::diagnostics::limit_repeats(p.diags),
         document_class: p.document_class,
+        class_options: p.class_options,
+        class_file,
+        package_files: expanded.package_files,
         class_size_pt: p.class_size_pt,
         parskip_pt: p.parskip_pt,
         packages: p.packages,
@@ -3201,6 +3231,8 @@ struct P<'a> {
     in_body: bool,
     document_ended: bool,
     document_class: Option<String>,
+    /// The `[options]` of the recorded `\documentclass`, verbatim.
+    class_options: Option<String>,
     /// Whether `\documentclass` has been seen at all — even with an empty
     /// argument that records no class name. `\DocumentMetadata` must come
     /// before `\documentclass` regardless, so that position check reads
@@ -6696,6 +6728,7 @@ impl P<'_> {
                 self.counters = crate::xref::Counters::report();
             }
             self.document_class = Some(class);
+            self.class_options = options.as_ref().map(|(options, _)| options.clone());
         }
         if self.class_size_pt.is_none()
             && self.document_class.as_deref().is_some_and(is_ams_size_class)
@@ -7655,7 +7688,7 @@ impl P<'_> {
         if packages.is_empty() {
             return;
         }
-        self.diags.push(Diagnostic::warning(
+        let mut diagnostic = Diagnostic::warning(
             format!(
                 "packages {} are recognised but not implemented",
                 packages.join(", ")
@@ -7665,7 +7698,18 @@ impl P<'_> {
         )
         .with_help(
             "remove that \\usepackage if you do not need it; its commands are still diagnosed when used",
-        ));
+        );
+        // A name the typesetter has no model for was looked for as a
+        // project file before it got here (`crate::packages`): say where.
+        let searched: Vec<String> = packages
+            .iter()
+            .filter(|package| !crate::packages::is_built_in(package, "sty"))
+            .map(|package| crate::packages::search_description(self.entry_path, package, "sty"))
+            .collect();
+        if !searched.is_empty() {
+            diagnostic = diagnostic.with_note(format!("no project file found: looked for {}", searched.join(", ")));
+        }
+        self.diags.push(diagnostic);
     }
 
     fn clever_reference(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {

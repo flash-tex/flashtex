@@ -597,6 +597,8 @@ pub struct FlowState {
     content_end: f64,
     /// See `LayoutCursor::closed_line_skip`.
     closed_line_skip: Option<f64>,
+    /// See `LayoutCursor::closed_after_alltt`.
+    closed_after_alltt: bool,
     /// See `LayoutCursor::eject_after_line`.
     eject_after_line: bool,
 }
@@ -611,6 +613,7 @@ impl FlowState {
             && self.trailing_line_items == other.trailing_line_items
             && self.content_end.to_bits() == other.content_end.to_bits()
             && self.closed_line_skip.map(f64::to_bits) == other.closed_line_skip.map(f64::to_bits)
+            && self.closed_after_alltt == other.closed_after_alltt
             && self.eject_after_line == other.eject_after_line
     }
 }
@@ -684,6 +687,18 @@ impl TabbingUndo {
         c.collected_labels = self.collected_labels;
         c.footnotes.rollback(self.footnotes);
     }
+}
+
+/// Scratch hbox state for [`LayoutCursor::measure_phantom`]: the same `x` /
+/// `content_end` pair `place` keeps (the pen, and the pen without the
+/// eagerly reserved trailing inter-word space), plus the running ascent and
+/// descent maxima (`ensure_extents` folded by hand, since no line is open).
+#[derive(Default)]
+struct PhantomBox {
+    x: f64,
+    content_end: f64,
+    ascent: f64,
+    descent: f64,
 }
 
 /// Resumable layout cursor shared by clean and incremental compilation.
@@ -764,10 +779,18 @@ pub struct LayoutCursor {
     /// and its own `\addvspace`-style gap only adds what exceeds this skip.
     /// Cleared by `newline`.
     closed_line_skip: Option<f64>,
+    /// The pending `closed_line_skip` was laid down by a `Block::Alltt`
+    /// (`\@endparenv`'s `\@topsepadd`): the next block's exit gap uses the
+    /// alltt entry's `\parskip` convention (`unwrap_or(0.0)`) instead of the
+    /// ordinary paragraph gap. Set and consumed together with
+    /// `closed_line_skip`, so it needs no handling of its own elsewhere.
+    closed_after_alltt: bool,
     /// A forced `Inline::PagePenalty` (`\pagebreak` inside a paragraph,
     /// `\vadjust{\penalty-\@M}`) was set on the current line: the page ends
     /// after that line, when the next one starts.
     eject_after_line: bool,
+    /// `alltt` source lines are unbreakable, like `verbatim` lines.
+    no_wrap: bool,
 }
 
 impl LayoutCursor {
@@ -835,7 +858,9 @@ impl LayoutCursor {
             list_margin_pt: 0.0,
             footnotes: footnotes::FootnoteState::default(),
             closed_line_skip: None,
+            closed_after_alltt: false,
             eject_after_line: false,
+            no_wrap: false,
         }
     }
 
@@ -943,6 +968,7 @@ impl LayoutCursor {
     fn newline(&mut self, size: f64) {
         self.line_spaces.clear();
         self.closed_line_skip = None;
+        self.closed_after_alltt = false;
         self.resolve_hfill();
         self.align_current_line();
         self.footnotes
@@ -1078,7 +1104,7 @@ impl LayoutCursor {
             self.x = self.content_end;
         }
         let (w, span) = shaped_width(&text, size, font, span, &mut self.diagnostics);
-        if self.x > self.left_edge() && self.x + w > self.right_edge() {
+        if !self.no_wrap && self.x > self.left_edge() && self.x + w > self.right_edge() {
             self.wrap_line(size);
         }
         self.note_space();
@@ -1121,7 +1147,7 @@ impl LayoutCursor {
         let metrics = Core14LogoMetrics { font, size };
         let built = tb::layout_logo(logo, &metrics);
         let width = tb::sp_to_pt(built.width);
-        if self.x > self.left_edge() && self.x + width > self.right_edge() {
+        if !self.no_wrap && self.x > self.left_edge() && self.x + width > self.right_edge() {
             self.wrap_line(size);
         }
         self.note_space();
@@ -1189,7 +1215,7 @@ impl LayoutCursor {
         };
         let b = rule.resolve(&cx);
         let width = tb::sp_to_pt(b.width);
-        if self.x > self.left_edge() && self.x + width > self.right_edge() {
+        if !self.no_wrap && self.x > self.left_edge() && self.x + width > self.right_edge() {
             self.wrap_line(size);
         }
         self.note_space();
@@ -1219,6 +1245,457 @@ impl LayoutCursor {
         self.x += width + word_space(size, font);
     }
 
+    /// Natural (width, ascent, descent, trailing space) of `inlines` set as
+    /// one unbreakable hbox at `size` in `font`: what `emit` would advance
+    /// and ensure if the content were typeset visibly, with no item reaching
+    /// the page. Each arm mirrors its `emit` counterpart's width and extents
+    /// arithmetic (including its diagnostics), so a `\phantom` reserves
+    /// exactly the argument's real typeset extent in this layout's own
+    /// metrics. The trailing space is the scratch pen past its content end
+    /// (the last piece's inter-word reservation, as `place` leaves it), so
+    /// the caller advances exactly as if the content had been spliced.
+    ///
+    /// Deliberate approximations (all outside an hbox's natural geometry,
+    /// all documented): infinite glue (`\hfill`, `\hskip..plus..fil`)
+    /// measures its natural width 0 without queueing a fill mark; `\\` and
+    /// penalties inside the box are ignored (a real hbox never breaks);
+    /// display rows measure 0; a footnote contributes its mark only, its
+    /// page-bottom text is not laid out; references use the same fallback
+    /// text `emit` uses when unresolved.
+    fn measure_phantom(
+        &mut self,
+        inlines: &[Inline],
+        size: f64,
+        font: Font,
+    ) -> (f64, f64, f64, f64) {
+        let mut m = PhantomBox::default();
+        self.measure_into(&mut m, inlines, size, font);
+        (m.content_end, m.ascent, m.descent, m.x - m.content_end)
+    }
+
+    /// One arm of [`LayoutCursor::measure_phantom`]: fold `inline` into the
+    /// scratch hbox `m`, mirroring the matching `emit` arm.
+    fn measure_into(&mut self, m: &mut PhantomBox, inlines: &[Inline], size: f64, font: Font) {
+        for inline in inlines {
+            match inline {
+                Inline::Text {
+                    text,
+                    span,
+                    style,
+                    space_before,
+                } => {
+                    let text_size = style.size.map_or(size, |level| {
+                        size_declaration_pt(level, self.constraints.font_size_pt)
+                    });
+                    if !space_before {
+                        m.x = m.content_end;
+                    }
+                    let text_font = style_font(*style);
+                    let (w, _) =
+                        shaped_width(text, text_size, text_font, *span, &mut self.diagnostics);
+                    m.ascent = m.ascent.max(text_size);
+                    m.descent = m.descent.max(text_size * (LINE_SPACING - 1.0));
+                    m.content_end = m.x + w;
+                    m.x += w + word_space(text_size, text_font);
+                }
+                Inline::LineBreak { .. } => {}
+                Inline::Penalty { .. } | Inline::PagePenalty { .. } => {}
+                Inline::Discretionary {
+                    nobreak, span, style, ..
+                } => {
+                    if !nobreak.is_empty() {
+                        let text_size = style.size.map_or(size, |level| {
+                            size_declaration_pt(level, self.constraints.font_size_pt)
+                        });
+                        let text_font = style_font(*style);
+                        let (w, _) = shaped_width(
+                            nobreak,
+                            text_size,
+                            text_font,
+                            *span,
+                            &mut self.diagnostics,
+                        );
+                        m.ascent = m.ascent.max(text_size);
+                        m.descent = m.descent.max(text_size * (LINE_SPACING - 1.0));
+                        m.content_end = m.x + w;
+                        m.x += w + word_space(text_size, text_font);
+                    }
+                }
+                Inline::TextGlue { em, .. } => {
+                    m.x += em * size;
+                }
+                Inline::Math {
+                    list,
+                    space_before,
+                    ..
+                } => {
+                    if !space_before {
+                        m.x = m.content_end;
+                    }
+                    let b = math::layout(list, size, &mut self.diagnostics);
+                    m.ascent = m.ascent.max(b.ascent);
+                    m.descent = m.descent.max(b.descent);
+                    m.content_end = m.x + b.width;
+                    m.x += b.width + word_space(size, Font::TimesRoman);
+                }
+                // A display has no natural hbox width; `box_inlines` already
+                // drops display blocks, so only an inline-held row table can
+                // arrive here, and it measures nothing.
+                Inline::MathRows { .. } => {}
+                // Zero-width markers: no extent inside a phantom's hbox.
+                Inline::Label { .. }
+                | Inline::PageNumbering { .. }
+                | Inline::PageStyle { .. }
+                | Inline::OverlayBegin { .. }
+                | Inline::OverlayEnd { .. }
+                | Inline::Onslide { .. } => {}
+                Inline::ThePage { span, space_before } => {
+                    let text = self.page_style.format(self.page_value);
+                    if !space_before {
+                        m.x = m.content_end;
+                    }
+                    let (w, _) =
+                        shaped_width(&text, size, font, *span, &mut self.diagnostics);
+                    m.ascent = m.ascent.max(size);
+                    m.descent = m.descent.max(size * (LINE_SPACING - 1.0));
+                    m.content_end = m.x + w;
+                    m.x += w + word_space(size, font);
+                }
+                Inline::Reference {
+                    key,
+                    page,
+                    equation,
+                    span,
+                    space_before,
+                } => {
+                    let text = match self.resolved_labels.get(key) {
+                        Some(value) => {
+                            let text = if *page {
+                                value.page_text.clone()
+                            } else {
+                                value.number.clone()
+                            };
+                            if *equation {
+                                format!("({text})")
+                            } else {
+                                text
+                            }
+                        }
+                        None if *equation => "(??)".to_string(),
+                        None => "??".to_string(),
+                    };
+                    // An undefined key typesets bold, like `emit`.
+                    let text_font = if self.resolved_labels.contains_key(key) {
+                        font
+                    } else {
+                        Font::TimesBold
+                    };
+                    if !space_before {
+                        m.x = m.content_end;
+                    }
+                    let (w, _) =
+                        shaped_width(&text, size, text_font, *span, &mut self.diagnostics);
+                    m.ascent = m.ascent.max(size);
+                    m.descent = m.descent.max(size * (LINE_SPACING - 1.0));
+                    m.content_end = m.x + w;
+                    m.x += w + word_space(size, text_font);
+                }
+                Inline::CleverReference {
+                    keys,
+                    page,
+                    range,
+                    label_only,
+                    capitalise,
+                    span,
+                    space_before,
+                    ..
+                } => {
+                    let (text, unresolved) = clever_reference_text(
+                        keys,
+                        &self.resolved_labels,
+                        &self.cleveref,
+                        *page,
+                        *range,
+                        *label_only,
+                        *capitalise,
+                    );
+                    let text_font = if unresolved { Font::TimesBold } else { font };
+                    if !space_before {
+                        m.x = m.content_end;
+                    }
+                    let (w, _) =
+                        shaped_width(&text, size, text_font, *span, &mut self.diagnostics);
+                    m.ascent = m.ascent.max(size);
+                    m.descent = m.descent.max(size * (LINE_SPACING - 1.0));
+                    m.content_end = m.x + w;
+                    m.x += w + word_space(size, text_font);
+                }
+                Inline::HFill { .. } => {}
+                Inline::HSpace {
+                    pt,
+                    space_before_pt,
+                    space_after_pt,
+                    ..
+                } => {
+                    m.x = m.content_end + space_before_pt + pt + space_after_pt;
+                    m.content_end = m.x;
+                }
+                Inline::TabStop { .. } | Inline::TabJump { .. } => {}
+                Inline::Footnote {
+                    number,
+                    span,
+                    mark,
+                    space_before,
+                    ..
+                } => {
+                    // The running-text mark only; the page-bottom note text
+                    // has no inline geometry (see the method docs).
+                    if *mark {
+                        let body = self.constraints.font_size_pt;
+                        let mark_size = footnotes::script_mark_size(body);
+                        if !space_before {
+                            m.x = m.content_end;
+                        }
+                        let (w, _) = shaped_width(
+                            number,
+                            mark_size,
+                            Font::TimesRoman,
+                            *span,
+                            &mut self.diagnostics,
+                        );
+                        m.ascent = m.ascent.max(
+                            mark_size + footnotes::superscript_raise(body),
+                        );
+                        m.descent = m.descent.max(mark_size * (LINE_SPACING - 1.0));
+                        m.content_end = m.x + w;
+                        m.x += w + word_space(mark_size, Font::TimesRoman);
+                    }
+                }
+                Inline::Marginpar { .. } => {}
+                Inline::Tabular(table) => {
+                    let body = self.constraints.font_size_pt;
+                    let table_size = table.style.size.map_or(size, |level| {
+                        size_declaration_pt(level, body)
+                    });
+                    if !table.space_before {
+                        m.x = m.content_end;
+                    }
+                    let b = crate::tabular::layout(self, table, table_size);
+                    m.ascent = m.ascent.max(b.ascent);
+                    m.descent = m.descent.max(b.descent);
+                    m.content_end = m.x + b.width;
+                    m.x += b.width + word_space(size, Font::TimesRoman);
+                }
+                Inline::Verbatim {
+                    text,
+                    span,
+                    space_before,
+                } => {
+                    if !space_before {
+                        m.x = m.content_end;
+                    }
+                    let (w, _) = shaped_width(
+                        text,
+                        size,
+                        Font::Courier,
+                        *span,
+                        &mut self.diagnostics,
+                    );
+                    m.ascent = m.ascent.max(size);
+                    m.descent = m.descent.max(size * (LINE_SPACING - 1.0));
+                    m.content_end = m.x + w;
+                    m.x += w + word_space(size, Font::Courier);
+                }
+                // Transparent wrappers (`emit` splices them): thread the same
+                // scratch box, so widths and extents fold in exactly as if
+                // the content stood alone.
+                Inline::ColorBox(b) => self.measure_into(m, &b.content, size, font),
+                Inline::Transform(b) => {
+                    self.diagnostics.push(
+                        Diagnostic::warning(
+                            "graphics transforms are not applied by this layout",
+                            Some(b.span),
+                            Some("set the content untransformed".into()),
+                        )
+                        .with_code(crate::diagnostics::DiagnosticCode::UnsupportedFeature),
+                    );
+                    self.measure_into(m, &b.content, size, font);
+                }
+                Inline::Logo {
+                    logo,
+                    span,
+                    style,
+                    space_before,
+                } => {
+                    use crate::text_builtins::{self as tb, LogoFont};
+                    let text_size = style.size.map_or(size, |level| {
+                        size_declaration_pt(level, self.constraints.font_size_pt)
+                    });
+                    if !space_before {
+                        m.x = m.content_end;
+                    }
+                    let metrics = Core14LogoMetrics {
+                        font: style_font(*style),
+                        size: text_size,
+                    };
+                    let built = tb::layout_logo(*logo, &metrics);
+                    let width = tb::sp_to_pt(built.width);
+                    let ascent = built
+                        .glyphs
+                        .iter()
+                        .map(|g| {
+                            tb::sp_to_pt(g.raise) + metrics.cap_pt(metrics.size_of(g.font))
+                        })
+                        .fold(text_size, f64::max);
+                    let descent = built
+                        .glyphs
+                        .iter()
+                        .map(|g| -tb::sp_to_pt(g.raise))
+                        .fold(text_size * (LINE_SPACING - 1.0), f64::max);
+                    for glyph in &built.glyphs {
+                        let glyph_font = if glyph.font == LogoFont::MathItalic {
+                            Font::Symbol
+                        } else {
+                            metrics.font
+                        };
+                        let glyph_size = metrics.size_of(glyph.font);
+                        let text = glyph.ch.to_string();
+                        let _ = shaped_width(
+                            &text,
+                            glyph_size,
+                            glyph_font,
+                            *span,
+                            &mut self.diagnostics,
+                        );
+                    }
+                    m.ascent = m.ascent.max(ascent);
+                    m.descent = m.descent.max(descent);
+                    m.content_end = m.x + width;
+                    m.x += width + word_space(text_size, metrics.font);
+                }
+                Inline::Kern { amount, style, .. } => {
+                    use crate::text_builtins::{self as tb};
+                    let text_size = style.size.map_or(size, |level| {
+                        size_declaration_pt(level, self.constraints.font_size_pt)
+                    });
+                    let cx = crate::text_builtins::DimenContext {
+                        quad: crate::text_builtins::pt_to_sp(text_size),
+                        ..Default::default()
+                    };
+                    let pt = tb::sp_to_pt(amount.resolve(&cx));
+                    m.x = m.content_end + pt;
+                    m.content_end = m.x;
+                }
+                Inline::Rule {
+                    rule,
+                    space_before,
+                    ..
+                } => {
+                    use crate::text_builtins::{self as tb};
+                    if !space_before {
+                        m.x = m.content_end;
+                    }
+                    // The same context `place_rule` resolves in: the arm's
+                    // size and font, not the rule's own style.
+                    let cx = tb::DimenContext {
+                        quad: tb::pt_to_sp(size),
+                        x_height: tb::pt_to_sp(x_height_pt(font, size)),
+                        text_width: tb::pt_to_sp(self.constraints.measure_pt),
+                        line_width: tb::pt_to_sp(self.right_edge() - self.left_edge()),
+                        column_width: tb::pt_to_sp(self.constraints.measure_pt),
+                    };
+                    let b = rule.resolve(&cx);
+                    let width = tb::sp_to_pt(b.width);
+                    m.ascent = m.ascent.max(tb::sp_to_pt(b.height));
+                    m.descent = m.descent.max(tb::sp_to_pt(b.depth));
+                    m.content_end = m.x + width;
+                    m.x += width + word_space(size, font);
+                }
+                Inline::Underline(u) => {
+                    let (width, height, depth, trailing) =
+                        self.measure_phantom(&u.content, size, font);
+                    if !u.space_before {
+                        m.x = m.content_end;
+                    }
+                    // The content's own box depth, as `emit` rebuilds it:
+                    // what the content added beyond the nominal line, or the
+                    // descender depth below it.
+                    let box_depth = match u.geom {
+                        UnderlineGeom::Underbar => 0.0,
+                        _ => (depth - size * (LINE_SPACING - 1.0))
+                            .max(0.0)
+                            .max(content_descender_depth(&u.content, size)),
+                    };
+                    let descender = 0.25 * size;
+                    let ex = CMR_EX_PER_EM * size;
+                    let (_, extra_depth) = u.geom.rule_top_and_depth(
+                        u.thickness_pt,
+                        box_depth,
+                        descender,
+                        ex,
+                    );
+                    // The rule never raises the line above the content (see
+                    // `emit`); only its extra depth can grow it.
+                    m.ascent = m.ascent.max(height);
+                    m.descent = m.descent.max(depth.max(extra_depth.max(0.0)));
+                    m.content_end = m.x + width;
+                    m.x += width + trailing;
+                }
+                Inline::TextScript(t) => {
+                    let local = t.style.size.map_or(size, |level| {
+                        size_declaration_pt(level, self.constraints.font_size_pt)
+                    });
+                    let mark_size = footnotes::script_mark_size(local);
+                    let (width, height, depth, trailing) =
+                        self.measure_phantom(&t.content, mark_size, font);
+                    if !t.space_before {
+                        m.x = m.content_end;
+                    }
+                    // The script-size box shifted like `emit` shifts the
+                    // placed items: up for a superscript, down past `sub1`
+                    // for a tall subscript box.
+                    let shift = if t.superscript {
+                        footnotes::superscript_raise(local)
+                    } else {
+                        -footnotes::subscript_drop(local, height)
+                    };
+                    m.ascent = m.ascent.max((height + shift).max(0.0));
+                    m.descent = m.descent.max((depth - shift).max(0.0));
+                    m.content_end = m.x + width;
+                    m.x += width + trailing;
+                }
+                Inline::Phantom(p) => {
+                    let (mut width, mut ascent, mut descent, trailing) =
+                        self.measure_phantom(&p.content, size, font);
+                    if !p.horizontal {
+                        width = 0.0;
+                    }
+                    if !p.vertical {
+                        ascent = 0.0;
+                        descent = 0.0;
+                    }
+                    if !p.space_before {
+                        m.x = m.content_end;
+                    }
+                    m.ascent = m.ascent.max(ascent);
+                    m.descent = m.descent.max(descent);
+                    m.content_end = m.x + width;
+                    m.x += width + trailing;
+                }
+                Inline::Graphic(g) => {
+                    self.diagnostics.push(
+                        Diagnostic::warning(
+                            "\\includegraphics: this layout does not load or draw images",
+                            Some(g.span),
+                            Some("left no space for the image".into()),
+                        )
+                        .with_code(crate::diagnostics::DiagnosticCode::UnsupportedFeature),
+                    );
+                }
+            }
+        }
+    }
+
     /// Explicit horizontal glue (`\quad`/`\qquad` in text mode): no glyph is
     /// placed, so there is nothing to draw, only `x` to advance. Mirrors TeX's
     /// discardable glue at a line break: if the glue would overflow the
@@ -1226,7 +1703,7 @@ impl LayoutCursor {
     /// carried onto the new line.
     fn text_glue(&mut self, em: f64, size: f64) {
         let width = em * size;
-        if self.x > self.left_edge() && self.x + width > self.right_edge() {
+        if !self.no_wrap && self.x > self.left_edge() && self.x + width > self.right_edge() {
             self.wrap_line(size);
             return;
         }
@@ -1253,7 +1730,7 @@ impl LayoutCursor {
         if !space_before {
             self.x = self.content_end;
         }
-        if self.x > self.left_edge() && self.x + b.width > self.right_edge() {
+        if !self.no_wrap && self.x > self.left_edge() && self.x + b.width > self.right_edge() {
             self.wrap_line(size);
         }
         self.note_space();
@@ -1601,6 +2078,9 @@ impl LayoutCursor {
             .closed_line_skip
             .take()
             .filter(|_| self.state().trailing_line_items == 0);
+        // Consumed together with `closed`: only the guarded arms below ever
+        // observe it, and `newline` clears both, so no stale flag survives.
+        let closed_after_alltt = std::mem::take(&mut self.closed_after_alltt);
         let parskip = self.constraints.parskip_pt.unwrap_or(PARAGRAPH_GAP_PT);
         // Lists reset `\parskip` to `\parsep`, so a document's custom
         // `\parskip` never reaches its items. Without one, the fixed
@@ -1618,6 +2098,9 @@ impl LayoutCursor {
                 if closed.is_some() =>
             {
                 let gap = match block {
+                    Block::Paragraph(_) | Block::Tabbing { .. } if closed_after_alltt => {
+                        self.constraints.parskip_pt.unwrap_or(0.0)
+                    }
                     Block::Paragraph(_) | Block::Tabbing { .. } => parskip,
                     // A `\\` that ended a centred paragraph is `\@centercr`,
                     // which cancels the next paragraph's `\parskip`.
@@ -1754,6 +2237,22 @@ impl LayoutCursor {
                         self.constraints.parskip_pt.unwrap_or(PARAGRAPH_GAP_PT)
                             + VERBATIM_TOPSEP_PT,
                     );
+                }
+            }
+            Block::Alltt { vmode, .. } => {
+                let topsep = alltt_topsep_pt(body_size);
+                let opening = topsep
+                    + if *vmode {
+                        alltt_partopsep_pt(body_size)
+                    } else {
+                        0.0
+                    }
+                    + self.constraints.parskip_pt.unwrap_or(0.0);
+                if let Some(skip) = closed {
+                    self.vertical_gap((opening - skip).max(0.0));
+                } else if !self.first_block {
+                    self.newline(body_size);
+                    self.vertical_gap(opening);
                 }
             }
             Block::TitleBlock { .. } => {
@@ -2247,6 +2746,61 @@ impl LayoutCursor {
                     }
                 }
             }
+            Block::Alltt {
+                lines,
+                vmode,
+                style,
+                level,
+                leftmargin,
+                widest_label,
+                ..
+            } => {
+                // `alltt.sty` sets `\leftskip\@totalleftmargin`: apply the
+                // enclosing quote indent (like `Block::Styled`) and list
+                // margin (like `Block::ListItem`) captured at parse time, so
+                // the body sits at the enclosing list's margin. Any enclosing
+                // centering is deliberately not applied: alltt cancels it.
+                self.style = *style;
+                self.list_margin_pt = match level {
+                    Some(depth) => match widest_label {
+                        Some(text) => {
+                            glyph_width(&bib::label_bracket(text), body_size, Font::TimesRoman)
+                                + LIST_LABELSEP_EM * body_size
+                        }
+                        None => {
+                            let override_pt = list_leftmargin_override_pt(leftmargin, body_size);
+                            list_margin_pt(*depth, body_size, override_pt)
+                        }
+                    },
+                    None => 0.0,
+                };
+                self.x = self.left_edge();
+                self.content_end = self.x;
+                self.no_wrap = true;
+                for (index, line) in lines.iter().enumerate() {
+                    emit(self, line, body_size, Font::Courier);
+                    if index + 1 < lines.len() {
+                        self.newline(body_size);
+                    }
+                }
+                self.no_wrap = false;
+                self.style = None;
+                self.list_margin_pt = 0.0;
+                self.newline(body_size);
+                // `\@endparenv`'s closing skip is `\@topsepadd`: `topsep`,
+                // plus `partopsep` when entered in vertical mode (mirroring
+                // the entry arm in `prepare_block`). Reported as a
+                // closed-line skip so the next block starts on this baseline.
+                let closing = alltt_topsep_pt(body_size)
+                    + if *vmode {
+                        alltt_partopsep_pt(body_size)
+                    } else {
+                        0.0
+                    };
+                self.vertical_gap(closing);
+                self.closed_line_skip = Some(closing);
+                self.closed_after_alltt = true;
+            }
         }
         // A block is the incremental cache unit. Resolve its final line before
         // collecting the placed fragment so a reused block never depends on
@@ -2383,6 +2937,7 @@ impl LayoutCursor {
             trailing_line_items: self.pages[page_index].items.len() - self.line_start,
             content_end: self.content_end,
             closed_line_skip: self.closed_line_skip,
+            closed_after_alltt: self.closed_after_alltt,
             eject_after_line: self.eject_after_line,
         }
     }
@@ -2417,6 +2972,7 @@ impl LayoutCursor {
         self.x = end.x;
         self.content_end = end.content_end;
         self.closed_line_skip = end.closed_line_skip;
+        self.closed_after_alltt = end.closed_after_alltt;
         self.eject_after_line = end.eject_after_line;
         self.y = end.y;
         self.line_ascent = end.line_ascent;
@@ -2692,6 +3248,22 @@ fn list_parsep_pt(body_size: f64) -> f64 {
     }
 }
 
+/// `size1x.clo`'s article `\topsep` and `\partopsep` values used by
+/// `alltt`'s underlying `\trivlist`.
+fn alltt_topsep_pt(body_size: f64) -> f64 {
+    if body_size <= 10.5 {
+        8.0
+    } else if body_size <= 11.5 {
+        9.0
+    } else {
+        10.0
+    }
+}
+
+fn alltt_partopsep_pt(body_size: f64) -> f64 {
+    if body_size <= 10.5 { 2.0 } else { 3.0 }
+}
+
 /// One `ex` of the body font (cmr10's x-height is 0.4306em), the unit
 /// `article.cls`'s `\@startsection` skips are written in.
 fn body_ex(body_size: f64) -> f64 {
@@ -2699,7 +3271,8 @@ fn body_ex(body_size: f64) -> f64 {
 }
 
 /// `\@startsection` before-skip: 3.5ex for `\section`, 3.25ex below it.
-fn heading_before_skip(level: u8, body_size: f64) -> f64 {
+/// `pub(crate)` for titlesec's `\addvspace` excess in `parser::title_format`.
+pub(crate) fn heading_before_skip(level: u8, body_size: f64) -> f64 {
     body_ex(body_size) * if level == 1 { 3.5 } else { 3.25 }
 }
 
@@ -3101,6 +3674,11 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
             Block::Tabbing { lines, .. } => {
                 for line in lines {
                     visit_inline_references(&line.content, visitor);
+                }
+            }
+            Block::Alltt { lines, .. } => {
+                for line in lines {
+                    visit_inline_references(line, visitor);
                 }
             }
             Block::VSpace { .. }
@@ -3770,6 +4348,35 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     }
                 }
             }
+            Inline::Phantom(p) => {
+                // Text-mode `\phantom`/`\hphantom`/`\vphantom`: an hbox that
+                // paints nothing. The content is measured, never emitted, so
+                // no glyph reaches the page; the advance and the line extents
+                // are exactly what the visible content would take (compare
+                // `place_rule`, whose unpainted strut arm this mirrors).
+                if !p.space_before {
+                    c.x = c.content_end;
+                }
+                let (mut width, mut ascent, mut descent, trailing) =
+                    c.measure_phantom(&p.content, size, font);
+                if !p.horizontal {
+                    width = 0.0;
+                }
+                if !p.vertical {
+                    ascent = 0.0;
+                    descent = 0.0;
+                }
+                if c.x > c.left_edge() && c.x + width > c.right_edge() {
+                    c.wrap_line(size);
+                }
+                c.note_space();
+                c.ensure_extents(ascent, descent);
+                c.content_end = c.x + width;
+                // The content's own trailing reservation, exactly as if the
+                // content had been spliced (`\mbox`): for plain text this is
+                // one inter-word space, which the next spaced item keeps.
+                c.x += width + trailing;
+            }
         }
     }
 }
@@ -3850,6 +4457,12 @@ mod tests {
 
     #[test]
     fn unknown_command_and_unclosed_shift_recover_without_losing_content() {
+        // Issue #846 changed the recovery contract: pdflatex answers
+        // "Undefined control sequence" and typesets nothing for a
+        // command it cannot resolve, so the literal `\unknown` name no
+        // longer reaches the page. "Without losing content" now means
+        // the surrounding `x+` still renders and both diagnostics (the
+        // unknown command and the unclosed `$`) are still reported.
         let source = "$x+\\unknown";
         let (parsed, pages) = laid_out(source);
         let messages: Vec<_> = parsed
@@ -3861,9 +4474,13 @@ mod tests {
         assert!(messages
             .iter()
             .any(|m| m.contains("missing its closing '$'")));
+        assert!(!pages.iter().flat_map(|p| &p.items).any(|i| i.text.contains("unknown")));
         assert!(pages
             .iter()
-            .any(|p| p.items.iter().any(|i| i.text == "\\unknown")));
+            .any(|p| p.items.iter().any(|i| i.text == "x")));
+        assert!(pages
+            .iter()
+            .any(|p| p.items.iter().any(|i| i.text == "+")));
     }
 
     #[test]

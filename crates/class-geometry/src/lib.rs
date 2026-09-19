@@ -77,10 +77,27 @@ impl DocumentSetup {
     /// is not one of the standard classes, `letter`, `beamer`, or KOMA's
     /// `scrartcl` / `scrreprt` / `scrbook`.
     pub fn from_preamble(source: &str) -> Option<DocumentSetup> {
+        Self::scan_preamble(source, None)
+    }
+
+    /// [`from_preamble`](Self::from_preamble) for a document whose
+    /// `\documentclass` names a project `.cls` file: the compiler has
+    /// already read that file and reports the standard class it
+    /// `\LoadClass`es (or `article`) with the options it passed on, so the
+    /// class line in `source` is not parsed and `class`/`class_options`
+    /// stand in for it. The rest of the preamble scan (`geometry`,
+    /// `\pagestyle`, beamer templates) is unchanged.
+    pub fn from_preamble_with_class(source: &str, class: ClassKind, class_options: &str) -> DocumentSetup {
+        Self::scan_preamble(source, Some(DocumentSetup::new(class, class_options)))
+            .expect("a given class always yields a setup")
+    }
+
+    fn scan_preamble(source: &str, given: Option<DocumentSetup>) -> Option<DocumentSetup> {
         let src = strip_comments(source);
         let end = src.find("\\begin{document}").unwrap_or(src.len());
         let pre = &src[..end];
-        let mut setup: Option<DocumentSetup> = None;
+        let class_given = given.is_some();
+        let mut setup: Option<DocumentSetup> = given;
         let mut i = 0;
         while let Some(off) = pre[i..].find('\\') {
             let at = i + off + 1;
@@ -92,10 +109,11 @@ impl DocumentSetup {
             let opt = read_group(pre, &mut j, '[', ']');
             let arg = read_group(pre, &mut j, '{', '}');
             match (name.as_str(), arg) {
-                ("documentclass", Some(a)) => {
+                ("documentclass", Some(a)) if !class_given => {
                     let kind = ClassKind::parse(&a)?;
                     setup = Some(DocumentSetup::new(kind, &opt.unwrap_or_default()));
                 }
+                ("documentclass", Some(_)) => {}
                 ("usepackage" | "RequirePackage", Some(a)) => {
                     if let Some(s) = setup.as_mut() {
                         if a.split(',').any(|p| p.trim() == "geometry") {

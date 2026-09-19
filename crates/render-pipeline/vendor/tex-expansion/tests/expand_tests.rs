@@ -908,3 +908,97 @@ fn newtheorem_second_declaration_of_the_same_name_errors() {
     assert_eq!(messages, ["LaTeX Error: Command \\thm already defined."], "{messages:?}");
     assert!(text(&r.tokens).contains("\\newtheorem "), "{:?}", r.tokens);
 }
+
+#[test]
+fn newtheorem_failed_shared_counter_leaves_the_name_claimable() {
+    // `\newtheorem{widget}[nonexistent]{Widget}` shares the counter of an
+    // undeclared environment, so the compiler's `parser.rs::new_theorem`
+    // rejects it -- but expansion must not claim `\widget`/`\endwidget`
+    // first. The failed declaration burns nothing: a corrected retry on
+    // the next line succeeds with no "already defined" error and the
+    // environment is usable. Expansion itself stays silent here (no second
+    // diagnostic); the one diagnostic for the bad `shared` counter comes
+    // from the compiler, which owns that check.
+    let r = expand_str(
+        "\\newtheorem{widget}[nonexistent]{Widget}\n\\newtheorem{widget}{Widget}\\begin{widget}Hi\\end{widget}",
+    );
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    let out = text(&r.tokens);
+    assert!(out.contains("Hi"), "{out:?}");
+    assert!(out.contains(r"\widget "), "{out:?}");
+    assert!(out.contains(r"\endwidget "), "{out:?}");
+}
+
+#[test]
+fn newtheorem_shared_counter_control_sequence_does_not_falsely_match_a_name() {
+    // `bracket_arg_text` must not strip the backslash off a control
+    // sequence in `[shared]`: `scan_through_bracket` reads with `next_raw`
+    // (no expansion), so `[\base]` stays the literal token `\base`, and the
+    // compiler's own `parser.rs::new_theorem` never re-expands its bracket
+    // argument either -- both sides must compare the same raw
+    // representation. Before this fix, stripping the backslash turned
+    // `\base` into the string "base", which coincidentally matched the
+    // *name* of an unrelated, already-declared theorem environment
+    // (`\newtheorem{base}{Base}`), letting a declaration through that both
+    // pdflatex and the compiler's own check reject. `\def\base{notcounter}`
+    // is part of the reported repro; this check does not depend on macro
+    // expansion of `\base` (neither side performs it), only on the two
+    // sides agreeing about what `[\base]`'s raw text is.
+    let r = expand_str(
+        "\\newtheorem{base}{Base}\\def\\base{notcounter}\\newtheorem{alias}[\\base]{Alias}\n\\newtheorem{alias}{Alias}\\begin{alias}Hi\\end{alias}",
+    );
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    let out = text(&r.tokens);
+    assert!(out.contains("Hi"), "{out:?}");
+    assert!(out.contains(r"\alias "), "{out:?}");
+    assert!(out.contains(r"\endalias "), "{out:?}");
+}
+
+#[test]
+fn newtheorem_shared_counter_macro_is_expanded_before_the_existence_check() {
+    // The `[shared]` counter name is an expanded context like the `{name}`
+    // argument (`scan_through_group(true)`): `\base`, a `\def`-defined
+    // macro for the real counter `thm`, must expand to `thm` before the
+    // existence check, so this declaration claims `\cor` exactly like a
+    // literal `[thm]` would -- not the raw token text `\base`, which
+    // matches no declared environment. The expanded name is also what is
+    // handed downstream, so the compiler's own raw read of the bracket
+    // agrees with this check instead of rejecting it.
+    let r = expand_str(
+        r"\newtheorem{thm}{Theorem}\def\base{thm}\newtheorem{cor}[\base]{Corollary}\begin{cor}Hi\end{cor}",
+    );
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    let out = text(&r.tokens);
+    assert!(out.contains("Hi"), "{out:?}");
+    assert!(out.contains("[thm]"), "{out:?}");
+    assert!(out.contains(r"\cor "), "{out:?}");
+    assert!(out.contains(r"\endcor "), "{out:?}");
+}
+
+#[test]
+fn newtheorem_valid_shared_counter_still_declares() {
+    // A counter-sharing declaration that refers to an earlier, successful
+    // `\newtheorem` keeps working exactly as before: both names are
+    // claimed and the shared-counter environment is usable.
+    let r = expand_str(
+        r"\newtheorem{first}{First}\newtheorem{second}[first]{Second}\begin{second}Hi\end{second}",
+    );
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    let out = text(&r.tokens);
+    assert!(out.contains("Hi"), "{out:?}");
+    assert!(out.contains(r"\second "), "{out:?}");
+    assert!(out.contains(r"\endsecond "), "{out:?}");
+}
+
+#[test]
+fn newtheorem_declaration_inside_a_group_is_globally_visible() {
+    // `\newtheorem` is a global declaration in real LaTeX (like
+    // `\newcommand`): a declaration inside a group stays visible and usable
+    // after the group closes.
+    let r = expand_str(r"{\newtheorem{x}{X}}\begin{x}Hi\end{x}");
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    let out = text(&r.tokens);
+    assert!(out.contains("Hi"), "{out:?}");
+    assert!(out.contains(r"\x "), "{out:?}");
+    assert!(out.contains(r"\endx "), "{out:?}");
+}

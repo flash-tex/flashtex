@@ -41,13 +41,20 @@
 //! - **Tables.** `\arraystretch` is read where LaTeX reads it, at
 //!   `\begin{tabular}`: a host prelude makes the engine emit its value there
 //!   (see [`HOST_PRELUDE`]), recorded in [`Expansion::arraystretch`].
+//! - **Packages and classes.** `\usepackage`/`\RequirePackage`/
+//!   `\documentclass`/`\LoadClass` read project `.sty`/`.cls` documents
+//!   through the engine's package reader ([`crate::packages::reader`]);
+//!   their tokens carry the file's own [`DocumentId`], and the loading
+//!   command's span is recorded in [`Expansion::package_files`]. Names the
+//!   reader declines (built-in models, missing files) reach the parser as
+//!   before.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
-use flashtex_tex_expansion::{self as tex, CatCode, Edit, Engine, IncrementalExpander, Limits, TokenKind as TexKind};
+use flashtex_tex_expansion::{self as tex, CatCode, Edit, Engine, IncrementalExpander, Limits, OpenedFile, PackageReader, TokenKind as TexKind};
 
 use crate::diagnostics::Diagnostic;
 use crate::lexer::{tokenize_document, Token, TokenKind};
@@ -93,6 +100,9 @@ pub struct Expansion {
     /// otherwise never hear about it), keyed by the pushed
     /// `flashtexcurrentlabel` token's own span.
     pub current_label_by_marker: HashMap<(usize, usize), String>,
+    /// Every project `.sty`/`.cls` the engine read, with the span of the
+    /// `\usepackage`/`\documentclass`/... that loaded it, in loading order.
+    pub package_files: Vec<(DocumentId, Span)>,
 }
 
 /// Host definitions run before the document. `\DeclareMathOperator` is
@@ -158,12 +168,25 @@ pub struct Expansion {
 /// three-argument form would strip the braces and select single tokens).
 /// The definitions are `\protected`, as the package's `\newrobustcmd*`
 /// ones are, and always installed, exactly like the `ifthen` primitives.
+/// Engine identity (`iftex.sty` under pdfTeX): this compiler is
+/// pdflatex-equivalent, so `\ifxetex`/`\ifluatex` are defined false here --
+/// exactly as `iftex.sty` leaves them when neither `\XeTeXrevision` nor
+/// `\directlua` exists -- with `\ifXeTeX`/`\ifLuaTeX` let to the same
+/// switches as that package does. The `.sty` files themselves are never
+/// executed (`\usepackage{iftex}` and the legacy `ifxetex`/`ifluatex` are
+/// silent layout-neutral loads), so a guarded block
+/// (`\ifxetex\usepackage{fontspec}...\fi`) skips with no diagnostic, matching
+/// pdflatex's exit-0 behavior on the same input.
 pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
 \\let\\counterwithin\\flashtexundefined
 \\let\\counterwithout\\flashtexundefined
 \\let\\fnsymbol\\flashtexundefined
+\\newif\\ifxetex\\xetexfalse
+\\newif\\ifluatex\\luatexfalse
+\\let\\ifXeTeX\\ifxetex
+\\let\\ifLuaTeX\\ifluatex
 \\def\\setlength#1#2{\\ifdefined#1#1 #2\\relax\\else\\flashtexsetlength{#1}{#2}\\fi}%
 \\def\\addtolength#1#2{\\ifdefined#1\\advance#1 #2\\relax\\else\\flashtexaddtolength{#1}{#2}\\fi}%
 \\def\\setlist{\\flashtexsetlist}%
@@ -180,6 +203,14 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\tabular{\\flashtexbegintabular\\expandafter{\\arraystretch}}%
 \\expandafter\\def\\csname tabular*\\endcsname{\\flashtexbegintabularstar\\expandafter{\\arraystretch}}%
 \\def\\array{\\flashtexbeginarray\\expandafter{\\arraystretch}}%
+\\begingroup\\catcode32=13\\relax
+\\gdef\\flashtexallttspaceinit{\\catcode32=13\\relax\\def {\\flashtexallttspace}}%
+\\endgroup
+\\begingroup\\catcode13=13\\relax
+\\gdef\\flashtexallttlineinit{\\catcode13=13\\relax\\def^^M{\\flashtexallttnewline}}%
+\\endgroup
+\\def\\alltt{\\flashtexbeginalltt\\catcode37=12\\relax\\catcode35=12\\relax\\catcode36=12\\relax\\catcode38=12\\relax\\catcode94=12\\relax\\catcode95=12\\relax\\catcode126=12\\relax\\flashtexallttspaceinit\\flashtexallttlineinit}%
+\\def\\endalltt{\\flashtexendalltt}%
 \\long\\def\\flashtexaddtobeginhook#1#2{\\begingroup\\csname toks@\\endcsname\\expandafter{#1\\flashtexatbeginstart#2\\flashtexatbeginend}\\xdef#1{\\the\\csname toks@\\endcsname}\\endgroup}%
 \\long\\def\\AtBeginDocument#1{\\expandafter\\flashtexaddtobeginhook\\csname @begindocumenthook\\endcsname{#1}}%
 \\makeatletter
@@ -484,6 +515,11 @@ struct Converter<'d> {
     /// [`include`]; each entry is kept trimmed and, when suffixed, stripped
     /// of one trailing `.tex`, mirroring `\include`'s own lookup.
     includeonly: Option<HashSet<String>>,
+    /// Some project document literally loads biblatex (`\usepackage` or
+    /// `\RequirePackage` naming it): gates the `\printbibliography` `.bbl`
+    /// fallback. A raw-token scan like [`document_fonts`]; a
+    /// macro-generated `\usepackage` is missed, like there.
+    biblatex: bool,
     /// Set once the converter emits `\begin{document}` (see [`push`]): what
     /// [`in_preamble`] reads to gate preamble-only `\includeonly`.
     document_begun: bool,
@@ -526,6 +562,8 @@ struct Converter<'d> {
     /// Every `\@currentlabel` record in production order, with its marker's
     /// engine token index (kept and spliced like `stretch_log`).
     current_label_log: Vec<(usize, (usize, usize), String)>,
+    /// Package files mapped so far (see [`Expansion::package_files`]).
+    package_files: Vec<(DocumentId, Span)>,
 }
 
 struct PendingWord {
@@ -808,12 +846,22 @@ fn configure(engine: &mut Engine) {
     engine.declare_host_assignment("flashtexsetlength");
     engine.declare_host_assignment("flashtexaddtolength");
     engine.declare_host_command("flashtexsetlistdone");
+    for name in [
+        "flashtexbeginalltt",
+        "flashtexendalltt",
+        "flashtexallttspace",
+        "flashtexallttnewline",
+    ] {
+        engine.declare_host_command(name);
+    }
 }
 
 /// The expansion engine's `em`/`ex` come from the text font its tracked font
-/// commands select ([`crate::font_units`]).
-fn configure_with_fonts(engine: &mut Engine, fonts: DocumentFonts) {
+/// commands select ([`crate::font_units`]); its `\usepackage` files from
+/// the project's package reader.
+fn configure_with_fonts(engine: &mut Engine, fonts: DocumentFonts, reader: PackageReader) {
     configure(engine);
+    engine.set_package_reader(reader);
     for (name, switch) in crate::font_units::font_switches() {
         engine.declare_font_switch(name, switch);
     }
@@ -853,19 +901,34 @@ fn option_and_group_words(tokens: &[Token], index: usize) -> (String, String) {
     (options.trim_matches(|c| matches!(c, '[' | ']')).to_string(), group)
 }
 
-fn document_fonts(documents: &[SourceDocument<'_>]) -> DocumentFonts {
+/// `entry` is scanned first: its `\documentclass` size option wins over a
+/// project class file's `\LoadClass[11pt]{article}` (as article.cls's
+/// declaration order makes the later size win), whatever the document
+/// order. Package and class files of built-in names are never loaded, so
+/// they are not scanned.
+fn document_fonts(documents: &[SourceDocument<'_>], entry: usize) -> DocumentFonts {
     let mut class_pt = None;
     let mut t1 = false;
     let mut latin_modern = false;
     let mut preamble_latin_modern = false;
-    for (document_index, document) in documents.iter().enumerate() {
+    let order = std::iter::once(entry).chain((0..documents.len()).filter(|i| *i != entry));
+    for document_index in order {
+        let Some(document) = documents.get(document_index) else {
+            continue;
+        };
+        if let Some((stem, ext)) = document.path.rsplit_once('.').filter(|(_, ext)| matches!(*ext, "sty" | "cls")) {
+            let name = stem.rsplit('/').next().unwrap_or(stem);
+            if crate::packages::is_built_in(name, ext) {
+                continue;
+            }
+        }
         let tokens = tokenize_document(document.text, DocumentId(document_index));
         for (index, token) in tokens.iter().enumerate() {
             let TokenKind::Command(name) = &token.kind else {
                 continue;
             };
             match name.as_str() {
-                "documentclass" if class_pt.is_none() => {
+                "documentclass" | "LoadClass" if class_pt.is_none() => {
                     let (options, group) = option_and_group_words(&tokens, index + 1);
                     class_pt = options.split(',').find_map(|option| match option.trim() {
                         "10pt" => Some(10.0),
@@ -894,7 +957,7 @@ fn document_fonts(documents: &[SourceDocument<'_>]) -> DocumentFonts {
                             .or(Some(11.0));
                     }
                 }
-                "usepackage" => {
+                "usepackage" | "RequirePackage" => {
                     let (options, group) = option_and_group_words(&tokens, index + 1);
                     for package in group.split(',').map(str::trim) {
                         match package {
@@ -919,8 +982,28 @@ fn document_fonts(documents: &[SourceDocument<'_>]) -> DocumentFonts {
     }
 }
 
+/// The engine's reader for the project's `.sty`/`.cls` documents, serving
+/// the prepared text (see [`Prepared`]) of each, as `include` does.
+fn package_reader(documents: &[SourceDocument<'_>], prepared: &[Prepared<'_>]) -> PackageReader {
+    let files = documents
+        .iter()
+        .zip(prepared)
+        .filter(|(d, _)| crate::packages::is_package_file(d.path))
+        .map(|(d, p)| (d.path.to_string(), p.text.to_string()))
+        .collect();
+    crate::packages::reader(files)
+}
+
 fn has_includes(text: &str) -> bool {
-    text.contains("\\input") || text.contains("\\include")
+    // `\bibliography` also matches `\bibliographystyle` (and `\include`
+    // already matches `\includeonly`/`\includegraphics`): the superset only
+    // sends more documents down the full path, never the cache, which is the
+    // safe direction — a `.bbl` input makes expansion depend on another
+    // project document, exactly like `\input` does.
+    text.contains("\\input")
+        || text.contains("\\include")
+        || text.contains("\\bibliography")
+        || text.contains("\\printbibliography")
 }
 
 /// The engine stopped on the step limit or on TeX's "capacity exceeded"
@@ -944,6 +1027,15 @@ enum Flow {
     Include(String, Placement),
     /// A source-level `\includeonly`: its braced list is still to be read.
     IncludeOnly(Placement),
+    /// A source-level `\bibliography`: its braced database list is still to
+    /// be read; the main loop turns it into `.bbl` inputs (see
+    /// [`bibliography`]) or passes the command back for the parser's
+    /// missing-bibliography diagnostic.
+    Bibliography(Placement),
+    /// A source-level `\printbibliography`: its optional bracket argument is
+    /// still to be read; the main loop inputs the job's `.bbl` when biblatex
+    /// is loaded and the project carries it.
+    PrintBibliography(Placement),
 }
 
 impl<'d> Converter<'d> {
@@ -952,6 +1044,7 @@ impl<'d> Converter<'d> {
             documents,
             document_by_path: documents.iter().enumerate().map(|(i, d)| (d.path, i)).collect(),
             includeonly: None,
+            biblatex: uses_biblatex(documents),
             document_begun: false,
             source_documents: HashMap::from([(0, Some(entry))]),
             entry,
@@ -970,6 +1063,25 @@ impl<'d> Converter<'d> {
             current_label_index: 0,
             stretch_log: Vec::new(),
             current_label_log: Vec::new(),
+            package_files: Vec::new(),
+        }
+    }
+
+    /// Give the tokens of a `.sty`/`.cls` the engine opened their document:
+    /// the file is resolved by the same rule the reader used
+    /// (`crate::packages::resolve`), so the name the engine reports maps to
+    /// the document whose text it read. The loading command's span is kept
+    /// for the parser's "loaded here" label.
+    fn map_opened(&mut self, file: &OpenedFile) {
+        if self.source_documents.contains_key(&file.source_id) {
+            return;
+        }
+        let (name, ext) = file.name.rsplit_once('.').unwrap_or((&file.name, ""));
+        let index = crate::packages::resolve(self.documents, name, ext);
+        self.source_documents.insert(file.source_id, index);
+        if let Some(index) = index {
+            let at = self.span(file.loaded_at).unwrap_or(self.last_span);
+            self.package_files.push((DocumentId(index), at));
         }
     }
 
@@ -1080,6 +1192,15 @@ impl<'d> Converter<'d> {
                     // Grouping bookkeeping and `\relax` produce nothing for the
                     // parser (LaTeX's environment groups included).
                     "begingroup" | "endgroup" | "relax" => {}
+                    // `\newblock`, the block separator every `.bst` style
+                    // emits between an entry's author/title/journal blocks
+                    // (the standard classes define it as a small horizontal
+                    // space): an interword space. Mapped here, not in the
+                    // parser, so it never reaches the supported-command
+                    // inventory — it is spacing, not a feature. A package
+                    // that redefines `\newblock` is expanded by the engine
+                    // first, so its definition still wins.
+                    "newblock" => conv.push(TokenKind::Space, at),
                     "flashtexsetlength" => conv.push(TokenKind::Command("setlength".to_string()), at),
                     "flashtexaddtolength" => {
                         conv.push(TokenKind::Command("addtolength".to_string()), at)
@@ -1101,6 +1222,10 @@ impl<'d> Converter<'d> {
                         conv.stretch = Some(((begin.span.document.0, begin.span.start), 0, String::new()));
                         conv.push_environment("begin", env, begin);
                     }
+                    "flashtexbeginalltt" => conv.push_environment("begin", "alltt", at),
+                    "flashtexendalltt" => conv.push_environment("end", "alltt", at),
+                    "flashtexallttspace" => conv.push(TokenKind::Word(" ".to_string()), at),
+                    "flashtexallttnewline" => conv.push(TokenKind::LineBreak, at),
                     // `\AtBeginDocument` hook output: the host prelude wraps
                     // every chunk queued before `\begin{document}` in these
                     // markers. The engine runs the hook ahead of the real
@@ -1160,6 +1285,12 @@ impl<'d> Converter<'d> {
                         .is_some_and(|real| prepared[real.document.0].verb_markers.contains(&real.start)) => {}
                     "input" | "include" if origin.is_none() && real_text == format!("\\{name}") => {
                         return Flow::Include(name.clone(), at);
+                    }
+                    "bibliography" if origin.is_none() && real_text == "\\bibliography" => {
+                        return Flow::Bibliography(at);
+                    }
+                    "printbibliography" if origin.is_none() && real_text == "\\printbibliography" => {
+                        return Flow::PrintBibliography(at);
                     }
                     "includeonly" if origin.is_none() && real_text == "\\includeonly" => {
                         return Flow::IncludeOnly(at);
@@ -1272,10 +1403,13 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     let entry_text: &str = prepared.get(entry).map_or("", |p| p.text.as_ref());
     let limits = limits_for(total_bytes);
     let mut engine = Engine::with_limits(entry_text, limits);
-    configure_with_fonts(&mut engine, document_fonts(documents));
+    configure_with_fonts(&mut engine, document_fonts(documents, entry), package_reader(documents, &prepared));
 
     let mut conv = Converter::new(documents, entry);
     let mut lookahead: VecDeque<(tex::Token, Option<tex::Span>)> = VecDeque::new();
+    // Package files the engine has opened so far (`map_opened` is cheap,
+    // so every pull checks the count).
+    let mut opened = 0usize;
     // Engine tokens taken so far. The output token limit is the incremental
     // expander's (`IncrementalExpander`'s run loop): the token that goes past
     // it is still converted, then the run stops with the same diagnostic and
@@ -1295,6 +1429,12 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
             }
         };
         let Some((token, origin)) = next else { break };
+        if engine.opened_package_files().len() > opened {
+            for file in &engine.opened_package_files()[opened..] {
+                conv.map_opened(file);
+            }
+            opened = engine.opened_package_files().len();
+        }
         match conv.convert_token(&prepared, &token, origin) {
             Flow::Next => continue,
             Flow::Include(name, at) => {
@@ -1318,6 +1458,29 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
                 }
                 record_includeonly(&mut conv, path.trim(), at.span);
             }
+            Flow::Bibliography(at) => {
+                // Read the braced database list through the engine.
+                let (taken, arg, ok) = read_braced_argument(&mut engine);
+                pulled += taken.len() as u64;
+                if !ok {
+                    conv.push(TokenKind::Command("bibliography".to_string()), at);
+                    lookahead.extend(taken);
+                    continue;
+                }
+                let entry = conv.entry;
+                if !bibliography(&mut conv, &mut engine, &prepared, entry, arg.trim(), at.span) {
+                    // No `.bbl` for any name: hand the whole command back so
+                    // the parser's missing-bibliography diagnostic fires
+                    // exactly as before.
+                    conv.push(TokenKind::Command("bibliography".to_string()), at);
+                    lookahead.extend(taken);
+                }
+            }
+            Flow::PrintBibliography(at) => {
+                if !print_bibliography(&mut conv, &mut engine, &prepared, &mut pulled, at.span) {
+                    conv.push(TokenKind::Command("printbibliography".to_string()), at);
+                }
+            }
         }
     }
     conv.drain_atbegin();
@@ -1329,9 +1492,18 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
             }
         }
     }
+    for file in &engine.opened_package_files()[opened..] {
+        conv.map_opened(file);
+    }
     let diagnostics = engine.diagnostics().to_vec();
     conv.map_diagnostics(&diagnostics);
-    Expansion { tokens: Rc::new(conv.out), diagnostics: conv.diagnostics, arraystretch: conv.arraystretch, current_label_by_marker: conv.current_label_by_marker }
+    Expansion {
+        tokens: Rc::new(conv.out),
+        diagnostics: conv.diagnostics,
+        arraystretch: conv.arraystretch,
+        current_label_by_marker: conv.current_label_by_marker,
+        package_files: conv.package_files,
+    }
 }
 
 /// A converter state with nothing pending, recorded while converting: after
@@ -1364,6 +1536,9 @@ pub struct ExpansionCache {
     old_engine_tokens: usize,
     /// The class size and font packages change the engine's `em`/`ex`.
     fonts: DocumentFonts,
+    /// The project's `.sty`/`.cls` texts the expander read: an edit to one
+    /// of them is not an edit of the entry, so the cache is rebuilt instead.
+    package_texts: Vec<(String, String)>,
     /// Tokens at the end of `out` typeset unexpanded after the engine
     /// stopped (see [`Converter::resume_unexpanded`]); no marks cover them.
     recovered: usize,
@@ -1460,7 +1635,7 @@ pub fn expand_project_with_cache(
         .map(|(index, d)| if index == entry { prepare(d.text, DocumentId(index)) } else { Prepared::plain(d.text) })
         .collect();
     let masked: &str = prepared[entry].text.as_ref();
-    let fonts = document_fonts(documents);
+    let fonts = document_fonts(documents, entry);
     // The same limits as `expand_project`, which the expander applies to
     // every edit (`IncrementalExpander::edit_with_limits`).
     let limits = limits_for(documents.iter().map(|d| d.text.len()).sum());
@@ -1469,6 +1644,7 @@ pub fn expand_project_with_cache(
             && c.entry_path == document.path
             && c.fonts == fonts
             && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
+            && c.package_texts == crate::packages::package_texts(documents)
     });
     let expansion = if reusable {
         update_cache(cache.as_mut().expect("checked"), documents, entry, &prepared, limits)
@@ -1494,12 +1670,16 @@ pub fn expand_project_with_cache(
 
 fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepared<'_>], limits: Limits) -> (ExpansionCache, Expansion) {
     let masked: &str = prepared[entry].text.as_ref();
-    let fonts = document_fonts(documents);
+    let fonts = document_fonts(documents, entry);
+    let reader = package_reader(documents, prepared);
     let init: Rc<dyn Fn(&mut Engine)> = Rc::new(move |engine| {
-        configure_with_fonts(engine, fonts);
+        configure_with_fonts(engine, fonts, reader.clone());
     });
     let expander = IncrementalExpander::with_host(masked, limits, CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
+    for file in expander.opened_package_files() {
+        conv.map_opened(file);
+    }
     let mut marks = vec![Mark { index: 0, out_len: 0, last_span: conv.last_span }];
     // One allocation for the converted stream: growing it by doubling frees
     // a chain of blocks as large as the stream (hundreds of MB on a runaway
@@ -1522,6 +1702,7 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         last_span: conv.last_span,
         old_engine_tokens: 0,
         fonts,
+        package_texts: crate::packages::package_texts(documents),
         recovered: 0,
         lent: false,
     };
@@ -1596,11 +1777,17 @@ fn convert_range(
         }
         conv.index = k;
         // Includes never reach this path (`has_includes` sends their
-        // documents through the full expansion above); pass both commands
-        // through untouched so the parser, not the cache, reports them.
+        // documents through the full expansion above, and it covers
+        // `\bibliography`/`\printbibliography` for the same reason); pass
+        // the commands through untouched so the parser, not the cache,
+        // reports them.
         match conv.convert_token(prepared, &tokens[k], origins[k]) {
             Flow::Include(name, at) => conv.push(TokenKind::Command(name), at),
             Flow::IncludeOnly(at) => conv.push(TokenKind::Command("includeonly".to_string()), at),
+            Flow::Bibliography(at) => conv.push(TokenKind::Command("bibliography".to_string()), at),
+            Flow::PrintBibliography(at) => {
+                conv.push(TokenKind::Command("printbibliography".to_string()), at);
+            }
             Flow::Next => {}
         }
     }
@@ -1631,6 +1818,9 @@ fn update_cache(
     if changes.old.is_empty() && changes.new.is_empty() && cache.masked.len() == masked.len() {
         if cache.expander.limits() == limits {
             let mut conv = Converter::new(documents, entry);
+            for file in cache.expander.opened_package_files() {
+                conv.map_opened(file);
+            }
             conv.out = Vec::new();
             conv.last_span = cache.last_span;
             conv.stretch_log = cache.stretch_log.clone();
@@ -1678,6 +1868,9 @@ fn update_cache(
     };
 
     let mut conv = Converter::new(documents, entry);
+    for file in cache.expander.opened_package_files() {
+        conv.map_opened(file);
+    }
     conv.out = out;
     conv.last_span = restart.last_span;
     // Records whose marker precedes the restart point are unchanged; later
@@ -1785,6 +1978,7 @@ fn finish_diagnostics(cache: &ExpansionCache, mut conv: Converter<'_>) -> Expans
         diagnostics: conv.diagnostics,
         arraystretch: conv.arraystretch,
         current_label_by_marker: conv.current_label_by_marker,
+        package_files: conv.package_files,
     }
 }
 
@@ -1905,6 +2099,228 @@ fn include_allowed(allowed: &HashSet<String>, requested: &str) -> bool {
     }
 }
 
+/// True when any project document literally loads biblatex: a raw-token
+/// scan for `\usepackage`/`\RequirePackage` naming it, mirroring how
+/// [`document_fonts`] reads the preamble (a macro-generated `\usepackage`
+/// is missed, like there).
+fn uses_biblatex(documents: &[SourceDocument<'_>]) -> bool {
+    for (index, document) in documents.iter().enumerate() {
+        let tokens = tokenize_document(document.text, DocumentId(index));
+        let mut i = 0;
+        while i < tokens.len() {
+            let TokenKind::Command(name) = &tokens[i].kind else {
+                i += 1;
+                continue;
+            };
+            if name != "usepackage" && name != "RequirePackage" {
+                i += 1;
+                continue;
+            }
+            let mut cursor = i + 1;
+            if let Some((_, after)) = crate::bib::optional_bracket_text(&tokens, cursor) {
+                cursor = after;
+            }
+            match crate::bib::group_text(&tokens, cursor) {
+                Some((packages, after)) => {
+                    if packages
+                        .split(',')
+                        .map(str::trim)
+                        .any(|package| package == "biblatex")
+                    {
+                        return true;
+                    }
+                    i = after;
+                }
+                None => i = cursor,
+            }
+        }
+    }
+    false
+}
+
+/// The job's own `.bbl` next to the entry document (`main.tex` →
+/// `main.bbl`): biber names its output after the job, and real LaTeX's
+/// `\bibliography` inputs exactly that file whatever its argument says
+/// (latex.ltx `\@input@{\jobname.bbl}`). `None` for a pathless entry.
+fn job_bbl_path(entry_path: &str) -> Option<String> {
+    let (dir, base) = match entry_path.rfind('/') {
+        Some(i) => (&entry_path[..=i], &entry_path[i + 1..]),
+        None => ("", entry_path),
+    };
+    let stem = match base.rfind('.') {
+        Some(i) => &base[..i],
+        None => base,
+    };
+    if stem.is_empty() {
+        return None;
+    }
+    Some(format!("{dir}{stem}.bbl"))
+}
+
+/// One `\bibliography` name against the project's `.bbl` documents:
+/// `{name}.bbl` first, then the literal name — the same two-way match
+/// [`include`] performs with `.tex`. Unsafe paths never resolve, and a
+/// `.bib` database never resolves either: inputting one as TeX would
+/// typeset its `@article` records as body text (seen on a real document
+/// writing `\bibliography{main.bib}` next to `main.bib`).
+fn resolve_bbl(conv: &Converter<'_>, name: &str) -> Option<usize> {
+    if !path_is_safe(name) {
+        return None;
+    }
+    if name.ends_with(".bbl") {
+        return conv.document_by_path.get(name).copied();
+    }
+    // `\bibliography{main.bib}` names the database, not the prebuilt file:
+    // look next to it, never *at* it.
+    let base = name.strip_suffix(".bib").unwrap_or(name);
+    let appended = format!("{base}.bbl");
+    if let Some(index) = conv.document_by_path.get(appended.as_str()).copied() {
+        return Some(index);
+    }
+    // The literal name, unless it is a `.bib` database.
+    if base == name {
+        if let Some(index) = conv.document_by_path.get(name).copied() {
+            let is_bib = conv
+                .documents
+                .get(index)
+                .map(|document| document.path.ends_with(".bib"))
+                .unwrap_or(true);
+            if !is_bib {
+                return Some(index);
+            }
+        }
+    }
+    None
+}
+
+/// Consume `\bibliography{databases}` by inputting the project's pre-built
+/// `.bbl` files through [`include`], so the `thebibliography` they carry
+/// reaches the parser macro-expanded and `bib::prescan` resolves `\cite`
+/// against its `\bibitem`s. Every comma-separated name must resolve to a
+/// `.bbl` of its own; otherwise the job's own `.bbl` is tried (see
+/// [`job_bbl_path`]). Returns false when neither rule finds a file, and the
+/// caller hands the command back for the parser's missing-bibliography
+/// diagnostic, unchanged.
+fn bibliography(
+    conv: &mut Converter<'_>,
+    engine: &mut Engine,
+    prepared: &[Prepared<'_>],
+    entry: usize,
+    arg: &str,
+    span: Span,
+) -> bool {
+    let names: Vec<&str> = arg
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect();
+    let mut resolved = Vec::with_capacity(names.len());
+    let mut all = !names.is_empty();
+    for name in names {
+        match resolve_bbl(conv, name) {
+            Some(index) => resolved.push(index),
+            None => {
+                all = false;
+                break;
+            }
+        }
+    }
+    if all {
+        for index in resolved {
+            let path = conv.documents[index].path.to_string();
+            include(conv, engine, prepared, "bibliography", &path, span);
+        }
+        return true;
+    }
+    let entry_path = conv.documents.get(entry).map(|d| d.path).unwrap_or("");
+    if let Some(path) = job_bbl_path(entry_path) {
+        if conv.document_by_path.contains_key(path.as_str()) {
+            include(conv, engine, prepared, "bibliography", &path, span);
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether `\printbibliography`'s optional `[...]` literally follows the
+/// command in its own source: spaces and `%` comments, then `[`, read from
+/// the command token's own span — no engine pull, so nothing executes (a
+/// peek through the engine would run whatever follows, e.g. an end-of-file
+/// `\end{document}`, before the `.bbl` is input). A bracket donated past an
+/// `\input` boundary, or by a macro, is missed and the parser typesets it
+/// as text; both are degenerate placements real documents never use.
+fn bracket_follows(prepared: &[Prepared<'_>], span: Span) -> bool {
+    let Some(text) = prepared.get(span.document.0).map(|p| p.text.as_ref()) else {
+        return false;
+    };
+    let Some(mut rest) = text.get(span.end..) else {
+        return false;
+    };
+    loop {
+        rest = rest.trim_start_matches([' ', '\t', '\n', '\r']);
+        if let Some(after) = rest.strip_prefix('%') {
+            rest = match after.find('\n') {
+                Some(i) => &after[i + 1..],
+                None => return false,
+            };
+        } else {
+            break;
+        }
+    }
+    rest.starts_with('[')
+}
+
+/// Consume one `[...]` through the engine, dropping it: call only after
+/// [`bracket_follows`] saw the `[`, so the pulls start at the bracket and
+/// nothing else executes. A `]` inside a brace group does not end the scan,
+/// mirroring the parser's bracket argument.
+fn consume_bracket(engine: &mut Engine, pulled: &mut u64) {
+    let mut depth = 0usize;
+    while let Some((token, _)) = engine.next_content_token_with_origin() {
+        *pulled += 1;
+        match &token.kind {
+            TexKind::Char(_, CatCode::BeginGroup) => depth += 1,
+            TexKind::Char(_, CatCode::EndGroup) if depth > 0 => depth -= 1,
+            TexKind::Char(']', _) | TexKind::ActiveChar(']') if depth == 0 => break,
+            _ => {}
+        }
+    }
+}
+
+/// Consume `\printbibliography` by inputting the job's `.bbl` (see
+/// [`job_bbl_path`]) when the project loads biblatex and carries that file:
+/// real biblatex typesets exactly biber's output, and a BibTeX-style `.bbl`
+/// is the `thebibliography` the parser already renders — its own
+/// `References` heading replaces biblatex's, so the swallowed command's
+/// optional `[title=...]` is read and dropped here. Without biblatex, or
+/// without the file, returns false and the command passes through to the
+/// parser's own diagnostic. A resolvable `.bib` database keeps working
+/// through the existing biblatex path whenever no `.bbl` is present.
+fn print_bibliography(
+    conv: &mut Converter<'_>,
+    engine: &mut Engine,
+    prepared: &[Prepared<'_>],
+    pulled: &mut u64,
+    span: Span,
+) -> bool {
+    if !conv.biblatex {
+        return false;
+    }
+    let entry = conv.entry;
+    let entry_path = conv.documents.get(entry).map(|d| d.path).unwrap_or("");
+    let Some(path) = job_bbl_path(entry_path) else {
+        return false;
+    };
+    if !conv.document_by_path.contains_key(path.as_str()) {
+        return false;
+    }
+    if bracket_follows(prepared, span) {
+        consume_bracket(engine, pulled);
+    }
+    include(conv, engine, prepared, "printbibliography", &path, span);
+    true
+}
+
 fn include(
     conv: &mut Converter<'_>,
     engine: &mut Engine,
@@ -1922,6 +2338,16 @@ fn include(
             format!("\\{command} requires a non-empty project-relative path"),
             "skipped the empty include and continued",
         );
+    }
+    // `\input{glyphtounicode}` (pdfTeX's glyph-to-Unicode table): the
+    // ~2,700-line system file is pure `\pdfglyphtounicode` metadata with zero
+    // visible effect (measured against pdflatex, TeX Live 2026), so it is a
+    // silent no-op. Matched by exact target name -- never a general
+    // kpathsea/system-file fallback. (The parser's own `include` carries the
+    // same exemption for the tokens that reach it.)
+    let target = requested.trim();
+    if target == "glyphtounicode" || target == "glyphtounicode.tex" {
+        return;
     }
     if !path_is_safe(requested) {
         return skip(
@@ -2002,7 +2428,7 @@ mod tests {
             path: "main.tex",
             text: preamble,
         };
-        document_fonts(std::slice::from_ref(&doc)).setup.class_pt
+        document_fonts(std::slice::from_ref(&doc), 0).setup.class_pt
     }
 
     /// KOMA classes default to 11pt and honour `fontsize=`; the legacy

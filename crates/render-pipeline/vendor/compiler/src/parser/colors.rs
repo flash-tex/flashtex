@@ -8,7 +8,7 @@
 //! `Inline::ColorBox`, and colours inside math become
 //! `Inline::Math::color_ranges`.
 
-use super::{token_text, Block, ColorBox, Inline, InputToken, TextStyle, P};
+use super::{environment_end_at, environment_name_at, token_text, Block, ColorBox, Inline, InputToken, TextStyle, P};
 use crate::color::{ColorError, Colors, DeviceColor};
 use crate::diagnostics::Diagnostic;
 use crate::lexer::{Token, TokenKind};
@@ -25,6 +25,10 @@ impl P<'_> {
             }
             // After xcolor, color.sty is already "loaded" (`ver@color.sty`).
             "color" if self.colors.is_none() => self.colors = Some(Colors::color_sty(options).0),
+            // tcolorbox.sty requires xcolor itself, so without an explicit
+            // colour package the xcolor defaults apply: `colback=yellow!10`
+            // resolves exactly as it does under real tcolorbox.
+            "tcolorbox" if self.colors.is_none() => self.colors = Some(Colors::xcolor("", None).0),
             _ => {}
         }
     }
@@ -168,7 +172,7 @@ impl P<'_> {
             self.style = next;
         } else {
             let (tokens, _) = self.required_group("textcolor", span);
-            para.extend(self.inlines_from_tokens(tokens, next, false));
+            para.extend(self.inlines_from_tokens(tokens, next));
         }
     }
 
@@ -223,6 +227,150 @@ impl P<'_> {
             space_before,
             highlight: None,
         })));
+    }
+
+    /// tcolorbox.sty's own geometry defaults (TeX Live 2026, `size=normal`,
+    /// the reset value every box starts from): `boxrule=0.5mm` and
+    /// `boxsep=1mm`, in TeX points. The `size=normal` extras
+    /// (`left=4mm`, `right=4mm`, `top=2mm`, `bottom=2mm`), the full
+    /// `\linewidth` width and the rounded corners belong to the block-level
+    /// follow-up: this slice's box carries `boxsep` alone as its padding, so
+    /// its content sits that much closer to the frame than real tcolorbox
+    /// puts it (4mm horizontally, 2mm vertically — see `tcolorbox_environment`).
+    const TCB_BOXRULE_PT: f64 = 0.5 * 72.27 / 25.4;
+    /// See [`P::TCB_BOXRULE_PT`].
+    const TCB_BOXSEP_PT: f64 = 72.27 / 25.4;
+
+    /// `\begin{tcolorbox}[key=value,...] body \end{tcolorbox}` (slice 1): an
+    /// `\fcolorbox` in environment form with tcolorbox's own defaults. Only
+    /// `colback`/`colframe` are honoured, resolved through
+    /// `self.resolve_color` exactly like `\colorbox`'s colours (tcolorbox
+    /// declares both as `.colorlet`, i.e. xcolor expressions); every other
+    /// key — `title` (a second region, deferred), `boxrule`, `sharp corners`,
+    /// watermarks, libraries — warns once and is ignored. The box is flushed
+    /// onto its own paragraph, but its content is `box_inlines`' flattened
+    /// single-line run: bodies longer than one line over- rather than
+    /// re-flow (the block-level follow-up), exactly like `\colorbox`.
+    pub(super) fn tcolorbox_environment(
+        &mut self,
+        open: Span,
+        argument_span: Span,
+        space_before: bool,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        if !self.packages.iter().any(|package| package == "tcolorbox") {
+            self.diags.push(Diagnostic::environment_warning(
+                "tcolorbox",
+                "\\begin{tcolorbox} needs \\usepackage{tcolorbox}",
+                Some(open.merge(argument_span)),
+                Some("rendered the box anyway".into()),
+            ));
+        }
+        let begin_span = open.merge(argument_span);
+        let (fill, frame) = self.tcolorbox_options(begin_span);
+        // The body runs to the matching `\end{tcolorbox}`; nested boxes nest,
+        // exactly like the bordered-box `frame` environment.
+        let mut depth = 1usize;
+        let mut cursor = self.i;
+        let mut end = None;
+        while cursor < self.t.len() {
+            let is_begin =
+                matches!(&self.t[cursor].token.kind, TokenKind::Command(name) if name == "begin");
+            let is_end = !is_begin
+                && matches!(&self.t[cursor].token.kind, TokenKind::Command(name) if name == "end");
+            if (is_begin || is_end) && environment_name_at(&self.t, cursor) == Some("tcolorbox") {
+                if is_end {
+                    if depth == 1 {
+                        if let Some(found) = environment_end_at(&self.t, cursor, "tcolorbox") {
+                            end = Some(found);
+                            break;
+                        }
+                    } else {
+                        depth -= 1;
+                    }
+                } else {
+                    depth += 1;
+                }
+            }
+            cursor += 1;
+        }
+        let (body, end_span, after) = match end {
+            Some((after, end_span)) => (self.t[self.i..cursor].to_vec(), end_span, after),
+            None => {
+                self.diags.push(Diagnostic::error(
+                    "unterminated environment 'tcolorbox' — no matching \\end",
+                    Some(open),
+                    Some("boxed the rest of the input".into()),
+                ));
+                (self.t[self.i..].to_vec(), open, self.t.len())
+            }
+        };
+        self.i = after;
+        let content = self.box_inlines(body);
+        // A display box, not an in-paragraph one: the paragraphs around it
+        // close before and open after, so the box is its own paragraph.
+        self.flush_paragraph(blocks, para);
+        para.push(Inline::ColorBox(Box::new(ColorBox {
+            fill,
+            frame: Some(frame),
+            content,
+            fboxsep_pt: Self::TCB_BOXSEP_PT,
+            fboxrule_pt: Self::TCB_BOXRULE_PT,
+            span: begin_span.merge(end_span),
+            space_before,
+            highlight: None,
+        })));
+        self.flush_paragraph(blocks, para);
+    }
+
+    /// The `[key=value,...]` of `\begin{tcolorbox}`: `(colback, colframe)`.
+    /// Defaults are tcolorbox.sty's own reset values (`colback=black!5!white`,
+    /// `colframe=black!75!white`); anything unresolvable falls back to plain
+    /// white/black, and any other key warns once and is ignored.
+    fn tcolorbox_options(&mut self, span: Span) -> (DeviceColor, DeviceColor) {
+        let current = self.style.color;
+        let mut fill = self
+            .resolve_color("tcolorbox", None, "black!5!white", span, current)
+            .unwrap_or(DeviceColor::WHITE);
+        let mut frame = self
+            .resolve_color("tcolorbox", None, "black!75!white", span, current)
+            .unwrap_or(DeviceColor::BLACK);
+        let Some((options, options_span)) = self.optional_bracket_argument() else {
+            return (fill, frame);
+        };
+        let mut unknown = Vec::new();
+        for (key, value) in tcolorbox_option_pairs(&options) {
+            let Some(value) = value else {
+                unknown.push(key);
+                continue;
+            };
+            match key.as_str() {
+                // No `[model]`: `.colorlet` takes a bare xcolor expression.
+                "colback" => {
+                    fill = self
+                        .resolve_color("tcolorbox", None, &value, options_span, current)
+                        .unwrap_or(DeviceColor::BLACK)
+                }
+                "colframe" => {
+                    frame = self
+                        .resolve_color("tcolorbox", None, &value, options_span, current)
+                        .unwrap_or(DeviceColor::BLACK)
+                }
+                _ => unknown.push(key),
+            }
+        }
+        if !unknown.is_empty() {
+            self.diags.push(Diagnostic::warning(
+                format!(
+                    "tcolorbox keys {} are not implemented; rendered the box with colback/colframe only",
+                    unknown.join(", ")
+                ),
+                Some(options_span),
+                Some("ignored the other keys".into()),
+            ));
+        }
+        (fill, frame)
     }
 
     /// A box argument parsed with the ordinary dispatch as one group in the
@@ -401,4 +549,70 @@ fn color_argument_tokens(tokens: &[Token], mut i: usize) -> Option<(usize, Optio
         }
     }
     None
+}
+
+/// The `key=value` pairs of a `\begin{tcolorbox}[...]` option list: entries
+/// split at top-level commas, each split at its first top-level `=`. Braces
+/// and brackets nest, so `colback=[rgb]{1,0,0}` and `title={a, b}` stay one
+/// entry each, and a backslash skips the character after it — the same shape
+/// as `listings_key_names` (parser.rs), which keeps names only.
+fn tcolorbox_option_pairs(list: &str) -> Vec<(String, Option<String>)> {
+    let mut out = Vec::new();
+    let bytes = list.as_bytes();
+    let (mut start, mut depth, mut i) = (0usize, 0i32, 0usize);
+    // `entry` runs `start..i` split out of the loop's tail copy below.
+    let entry = |out: &mut Vec<(String, Option<String>)>, piece: &str| {
+        let piece = piece.trim();
+        if piece.is_empty() {
+            return;
+        }
+        match piece.split_once('=') {
+            Some((key, value)) => {
+                out.push((key.trim().to_string(), Some(value.trim().to_string())))
+            }
+            None => out.push((piece.to_string(), None)),
+        }
+    };
+    while i <= bytes.len() {
+        let end = i == bytes.len();
+        match if end { b',' } else { bytes[i] } {
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' if depth > 0 => depth -= 1,
+            b'\\' => i += 1,
+            b',' if depth == 0 => {
+                entry(&mut out, &list[start..i]);
+                start = i + 1;
+            }
+            b'=' if depth == 0 => {
+                // Split the entry at its FIRST top-level `=`: the value runs
+                // to the entry's end, so swallow to the closing comma here.
+                let key = list[start..i].trim().to_string();
+                let mut j = i + 1;
+                let mut inner = depth;
+                while j <= bytes.len() {
+                    let done = j == bytes.len();
+                    match if done { b',' } else { bytes[j] } {
+                        b'{' | b'[' => inner += 1,
+                        b'}' | b']' if inner > depth => inner -= 1,
+                        b'\\' => j += 1,
+                        b',' if inner == depth => break,
+                        _ => {}
+                    }
+                    j += 1;
+                }
+                let value = list[i + 1..j].trim().to_string();
+                if !key.is_empty() {
+                    out.push((key, Some(value)));
+                }
+                start = j + 1;
+                i = j;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    // `start` can sit one past the end when the last entry carried a value
+    // (the `=` arm consumes through the closing comma, real or implied).
+    entry(&mut out, list.get(start..).unwrap_or(""));
+    out
 }

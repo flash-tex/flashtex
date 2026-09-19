@@ -150,6 +150,12 @@ pub struct Inventory {
     pub packages: Vec<Package>,
 }
 
+/// The packages `parser::package_matches_layout` accepts silently (the
+/// `PACKAGES` table's names), for `crate::packages`' built-in check.
+pub fn layout_neutral_packages() -> impl Iterator<Item = &'static str> {
+    PACKAGES.iter().map(|(name, _, _)| *name)
+}
+
 /// Text commands that have a dispatch arm but only ever emit a diagnostic.
 ///
 /// `thanks` and `and` are meaningful only inside a `\title`/`\author`/`\date`
@@ -314,13 +320,44 @@ pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "setbeamersize",
     "beamertemplatenavigationsymbolsempty",
     "column",
+    "titleformat",
+    "titlerule",
+    // Table rules, spans and colours handled by the tabular row scanner
+    // (`parser::tabular`), not by a `parser::Parser::command` arm: `\hline`,
+    // `\cline` and the booktabs rules at the start of a row, `\multicolumn`,
+    // `\multirow`, `\cellcolor` and `\tabularnewline` inside an entry,
+    // `\rowcolor`, `\arrayrulecolor` and `\doublerulesepcolor` between rows,
+    // `\columncolor` in a `>{}`, and longtable's `\kill` and section ends.
+    // (`\arrayrulecolor` and `\doublerulesepcolor` also have real dispatch
+    // arms, via `parser::BUILT_INS`.) `tests/supported_latex.rs` scans the
+    // row-scanner arms so the two cannot drift.
+    "hline",
+    "cline",
+    "multicolumn",
+    "tabularnewline",
+    "toprule",
+    "midrule",
+    "bottomrule",
+    "cmidrule",
+    "addlinespace",
+    "specialrule",
+    "morecmidrules",
+    "multirow",
+    "rowcolor",
+    "cellcolor",
+    "columncolor",
+    "kill",
+    "endfirsthead",
+    "endhead",
+    "endfoot",
+    "endlastfoot",
 ];
 
 /// Canonical commands the expansion pass executes itself (engine primitives
 /// and kernel-prelude macros of `flashtex-tex-expansion`); their effect
 /// reaches the parser only as expanded tokens. `\newcommand`/`\renewcommand`
 /// and `\DeclareMathOperator` keep their parser-inventory entries.
-const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
+pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("long", "", "prefix: the following definition accepts \\par in arguments"),
     ("protected", "", "e-TeX prefix: the following macro is not expanded inside \\edef-like contexts"),
     ("providecommand", "{\\name}[n][default]{body}", "defines the macro only when \\name is undefined"),
@@ -345,8 +382,42 @@ const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("ignorespaces", "", "skips the spaces that follow"),
     ("jobname", "", "expands to texput"),
     ("ifthenelse", "{test}{true}{false}", "the ifthen package's conditional: \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests select one branch at expansion time"),
+    ("arabic", "{counter}", "a counter in arabic numerals"),
+    ("roman", "{counter}", "a counter in lower-case roman numerals"),
+    ("Roman", "{counter}", "a counter in upper-case roman numerals"),
+    ("alph", "{counter}", "a counter as a lower-case letter"),
+    ("arraystretch", "", "row-stretch factor tables read at \\begin{tabular} (1 by default); set with \\renewcommand"),
+    ("newif", "{\\ifname}", "allocates a TeX conditional read with \\footrue and \\foofalse"),
+    ("verb", "|text|", "literal text up to the next delimiter character"),
     ("iftoggle", "{name}{true}{false}", "the etoolbox toggle conditional: the named toggle (\\newtoggle/\\providetoggle declare it false, \\toggletrue/\\togglefalse set it) selects one branch at expansion time"),
+    // The package/class kernel (`flashtex-tex-expansion`'s `latex_packages.rs`,
+    // `crate::packages`): what a project `.sty`/`.cls` runs. `\usepackage`
+    // and `\documentclass` keep their parser entries: the parser still
+    // receives the built-in and missing names.
+    ("RequirePackage", "[options]{a,b}[version]", "loads project .sty files through the expansion engine (once each, with LaTeX's option clash check); built-in and missing packages reach the parser as \\usepackage"),
+    ("RequirePackageWithOptions", "{package}", "\\RequirePackage with the current package's options"),
+    ("LoadClass", "[options]{class}[version]", "in a project .cls: loads a project class file, or gives the document the standard class's page model as \\documentclass[options]{class}"),
+    ("LoadClassWithOptions", "{class}", "\\LoadClass with the current class's options"),
+    ("DeclareOption", "{option}{code}", "in a project .sty/.cls: declares an option (\\DeclareOption* the handler for undeclared ones, with \\CurrentOption)"),
+    ("CurrentOption", "", "the option being processed, in a \\DeclareOption* handler"),
+    ("ProcessOptions", "", "runs the declared options the class and the \\usepackage gave (\\ProcessOptions* in the order given); an undeclared package option is LaTeX's error, an undeclared class option is ignored"),
+    ("ExecuteOptions", "{a,b}", "runs declared options as defaults"),
+    ("OptionNotUsed", "", "in a class's \\DeclareOption*: records the option as unused"),
+    ("PassOptionsToPackage", "{options}{package}", "queues options for a later \\usepackage of that package"),
+    ("PassOptionsToClass", "{options}{class}", "queues options for a later \\LoadClass of that class"),
+    ("AtEndOfPackage", "{code}", "runs code when the current .sty file ends"),
+    ("AtEndOfClass", "{code}", "runs code when the current .cls file ends"),
+    ("typeout", "{text}", "accepted no-op; there is no terminal"),
+    ("wlog", "{text}", "accepted no-op; there is no log stream"),
 ];
+
+/// Names of [`EXPANSION_COMMANDS`]: the expansion pass executes these, so the
+/// diagnostic vocabulary counts them as implemented (known) commands even
+/// though no parser dispatch arm names them. In particular they must not be
+/// re-added to `KNOWN_UNIMPLEMENTED_COMMANDS` (issue #715).
+pub(crate) fn expansion_command_names() -> impl Iterator<Item = &'static str> {
+    EXPANSION_COMMANDS.iter().map(|(name, ..)| *name)
+}
 
 /// (name, arguments, description) for every `parser::BUILT_INS` entry that
 /// renders, plus the lexer's `\\`.
@@ -379,6 +450,35 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("arrayrulecolor", "[model]{colour}", "colortbl: colour of later table rules"),
     ("doublerulesepcolor", "[model]{colour}", "colortbl: colour of the gap between double rules"),
     ("arraybackslash", "", "array no-op: \\\\ already ends the row inside p, m and b entries"),
+    // Table rules, spans and colours handled by the tabular row scanner
+    // (`parser::tabular`): recognised where TeX allows `\noalign` (at the
+    // start of a row) or inside an entry; a use outside a table is diagnosed.
+    ("hline", "", "table rule across the row, at the start of a row"),
+    ("cline", "{i-j}", "partial rule over columns i to j, at the start of a row"),
+    (
+        "multicolumn",
+        "{n}{spec}{text}",
+        "entry spanning n columns with its own column specification",
+    ),
+    ("tabularnewline", "", "ends the table row"),
+    ("toprule", "[width]", "booktabs rule at the top of the table (needs booktabs)"),
+    ("midrule", "[width]", "booktabs rule between table rows (needs booktabs)"),
+    ("bottomrule", "[width]", "booktabs rule at the bottom of the table (needs booktabs)"),
+    ("cmidrule", "[width](trim){i-j}", "booktabs partial rule over columns i to j (needs booktabs)"),
+    ("addlinespace", "[width]", "booktabs vertical space between rows (needs booktabs)"),
+    ("specialrule", "{width}{above}{below}", "booktabs rule with explicit space around it (needs booktabs)"),
+    ("morecmidrules", "", "booktabs: another \\cmidrule after the previous one (needs booktabs)"),
+    ("multirow", "[vpos]{rows}[bigstruts]{width}[vmove]{text}", "entry spanning rows (needs multirow)"),
+    ("rowcolor", "[model]{spec}", "colortbl: background colour of the next row (needs colortbl)"),
+    ("cellcolor", "[model]{spec}", "colortbl: background colour of the entry (needs colortbl)"),
+    ("columncolor", "[model]{spec}", "colortbl: colour of a column, in >{} (needs colortbl)"),
+    // longtable's sectioning: the heads and feet repeated on later pages and
+    // the killed row, which only contributes its widths (needs longtable).
+    ("kill", "", "longtable: ends the row, which then only contributes its widths (needs longtable)"),
+    ("endfirsthead", "", "longtable: ends the first-page head (needs longtable)"),
+    ("endhead", "", "longtable: ends the repeated head (needs longtable)"),
+    ("endfoot", "", "longtable: ends the repeated foot (needs longtable)"),
+    ("endlastfoot", "", "longtable: ends the last-page foot (needs longtable)"),
     ("newcommand", "{\\name}[n]{body}", "defines a macro with 0-9 arguments; rejects an existing name"),
     ("renewcommand", "{\\name}[n]{body}", "redefines an existing macro"),
     ("DeclareMathOperator", "*{\\name}{text}", "defines \\name as \\operatorname{text}; the starred form takes limits"),
@@ -481,6 +581,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("hrulefill", "", "\\hfill filled with a 0.4pt baseline rule (latex.ltx \\leaders\\hrule\\hfill)"),
     ("dotfill", "", "\\hfill filled with dots in 0.44em boxes, centred (latex.ltx \\cleaders)"),
     ("hfil", "", "infinite-stretch horizontal glue (same order as \\hfill)"),
+    ("qedhere", "", "amsthm end-of-proof box on this line, flush right; the automatic box at \\end{proof} is suppressed"),
     ("hspace", "{dimension}", "fixed horizontal space; starred form identical"),
     ("hskip", "<glue>", "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll"),
     ("quad", "", "1em of horizontal space"),
@@ -543,6 +644,9 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("LaTeXe", "", "\\LaTeX, kern .15em, 2 and a text-style subscript varepsilon"),
     ("rule", "[raise]{dimension}{dimension}", "filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \\textwidth, \\linewidth, \\columnwidth"),
     ("strut", "", "zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \\strutbox)"),
+    ("phantom", "{...}", "kernel invisible box: the argument's full width, height and depth, paints nothing (single-line; also in math)"),
+    ("hphantom", "{...}", "kernel invisible box: the argument's width only, zero height and depth (single-line; also in math)"),
+    ("vphantom", "{...}", "kernel invisible box: the argument's height and depth only, zero width (single-line; also in math)"),
     ("uline", "{...}", "ulem underline: 0.4pt rule under the argument (single-line; needs ulem)"),
     ("underline", "{...}", "kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox"),
     ("underbar", "{...}", "kernel text underline: Rule 10 rule like \\underline but content depth zeroed (fixed position)"),
@@ -550,6 +654,10 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("so", "{...}", "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)"),
     ("hl", "{...}", "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)"),
     ("enquote", "{text}", "csquotes: wraps text in typographic quotation marks; nesting alternates double \\u{201c}\\u{201d} and single \\u{2018}\\u{2019} (needs csquotes)"),
+    ("titleformat", "{\\section}{format}{label}{sep}{before}[after]", "titlesec: \\section headings take the format's face and size (an empty label prints no number); a \\titlerule after-code draws the full-width rule; other levels are diagnosed (needs titlesec)"),
+    ("titlerule", "", "titlesec: a rule filling the rest of the line, or the full text width between paragraphs (needs titlesec)"),
+    ("pdfgentounicode", "", "pdfTeX glyph-to-Unicode switch: accepted no-op, copy-paste metadata with no visible output"),
+    ("pdfglyphtounicode", "{name}{hex}", "pdfTeX glyph-to-Unicode mapping: accepted no-op, copy-paste metadata with no visible output"),
     ("textsuperscript", "{...}", "kernel text superscript: argument at \\sf@size raised like a math superscript (single-line)"),
     ("textsubscript", "{...}", "kernel text subscript: argument at \\sf@size lowered like a math subscript (single-line)"),
     ("text", "{...}", "amsmath text in text mode: outside math simply \\mbox, the argument as one unbreakable box in the current style"),
@@ -599,12 +707,12 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("fancyhead", "[pos]{...}", "fancyhdr: sets the header fields for positions L, C, R (combinable with E/O, as in [LE,RO]); empty content clears them"),
     ("fancyfoot", "[pos]{...}", "fancyhdr: sets the footer fields for positions L, C, R (combinable with E/O, as in [LE,RO]); empty content clears them"),
     ("fancyhf", "[pos]{...}", "fancyhdr: sets all six header and footer fields at once; empty content clears them"),
-    ("lhead", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
-    ("chead", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
-    ("rhead", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
-    ("lfoot", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
-    ("cfoot", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
-    ("rfoot", "{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
+    ("lhead", "[even]{...}", "fancyhdr: sets the left header field (the optional even-page group is consumed and ignored one-sided); empty content clears it"),
+    ("chead", "[even]{...}", "fancyhdr: sets the centre header field (the optional even-page group is consumed and ignored one-sided); empty content clears it"),
+    ("rhead", "[even]{...}", "fancyhdr: sets the right header field (the optional even-page group is consumed and ignored one-sided); empty content clears it"),
+    ("lfoot", "[even]{...}", "fancyhdr: sets the left footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it"),
+    ("cfoot", "[even]{...}", "fancyhdr: sets the centre footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it"),
+    ("rfoot", "[even]{...}", "fancyhdr: sets the right footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it"),
     ("fancypagestyle", "{style}{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
     ("centering", "", "centres the following paragraphs"),
     ("Centering", "", "centres the following paragraphs (ragged2e form)"),
@@ -694,7 +802,7 @@ const SIZE_DECLARATIONS: &[&str] = &[
 
 /// Math `command_atom` arms and list-level switches, grouped by behaviour:
 /// (names, arguments, description, renders).
-const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
+pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
     (&["color"], "[model]{expression}", "colours the rest of the math group", true),
     (&["textcolor"], "[model]{expression}{body}", "math body in a colour", true),
     (
@@ -1082,6 +1190,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         "(label) two quads after the display; starred form without parentheses",
         true,
     ),
+    (
+        &["qedhere"],
+        "",
+        "amsthm end-of-proof box for this display line, set flush right by the render pipeline",
+        true,
+    ),
     (&["begin"], "{env}", "opens a math grid environment", true),
 ];
 
@@ -1113,7 +1227,7 @@ const CONTROL_SYMBOLS: &[(&str, Mode, &str)] = &[
 ];
 
 /// Text-level environments with a `parser::Parser::environment` arm.
-const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
+pub(crate) const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     (
         "document",
         "the typeset body; preamble content is not typeset",
@@ -1191,6 +1305,10 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
         "actionenv",
         "beamer <overlay> environment: with a plain spec, uncoverenv; needs \\documentclass{beamer}",
     ),
+    (
+        "tcolorbox",
+        "tcolorbox with colback/colframe only, sized to its content like \\fcolorbox (0.5mm rule, 1mm padding, black!5!white fill, black!75!white frame); other keys warn and are ignored, corners stay square, no title, one-line bodies only",
+    ),
     ("center", "centred paragraphs"),
     ("flushleft", "left-aligned paragraphs"),
     ("flushright", "right-aligned paragraphs"),
@@ -1222,14 +1340,21 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("list", "kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep"),
     ("tabular", "table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \\extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned"),
     ("tabular*", "table of a given width"),
+    ("tabularx", "table of a given width whose X columns share the leftover width evenly (needs tabularx)"),
+    ("longtable", "page-breaking table with repeated heads and feet (\\endfirsthead, \\endhead, \\endfoot, \\endlastfoot), \\caption, \\kill rows and \\\\* (needs longtable)"),
     ("verbatim", "literal monospaced lines"),
     ("verbatim*", "literal monospaced lines with visible spaces"),
+    ("alltt", "monospaced lines with significant spaces and line breaks; commands and groups remain active"),
     ("lstlisting", "literal monospaced lines (basic listings)"),
     ("comment", "body discarded unread, even invalid commands inside (comment package)"),
     ("proof", "amsthm proof with a closing square"),
     (
         "thebibliography",
         "References section with numbered \\bibitem entries",
+    ),
+    (
+        "mcitethebibliography",
+        "References section like thebibliography (mciteplus; its sublist grouping is not applied)",
     ),
     (
         "multicols",
@@ -1243,6 +1368,11 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
 
 /// Packages `parser::package_matches_layout` accepts without a warning.
 const PACKAGES: &[(&str, &str, &str)] = &[
+    (
+        "alltt",
+        "",
+        "typewriter lines preserve spaces and line breaks while commands and groups remain active",
+    ),
     (
         "inputenc",
         "utf8",
@@ -1368,7 +1498,17 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "fancyhdr",
         "",
-        "\\pagestyle{fancy} ships the \\fancyhead/\\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \\fancyhf clears all six fields; \\lhead and friends plus \\fancypagestyle are diagnosed where they are used",
+        "\\pagestyle{fancy} ships the \\fancyhead/\\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \\fancyhf clears all six fields; \\lhead/\\chead/\\rhead and \\lfoot/\\cfoot/\\rfoot set one field each (an optional even-page group is ignored one-sided); \\fancypagestyle is diagnosed where it is used",
+    ),
+    (
+        "titlesec",
+        "",
+        "\\titleformat{\\section} headings take the format's face and size (unnumbered with an empty label) with the \\titlerule after-code rule; other levels, printed labels, before-code and shapes beyond the implemented subset are diagnosed where they are used",
+    ),
+    (
+        "tcolorbox",
+        "",
+        "the tcolorbox environment with colback/colframe only (see the tcolorbox environment); every other key and every library option is diagnosed",
     ),
     (
         "xspace",
@@ -1386,9 +1526,34 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "\\enquote: typographic quotation marks, alternating double/single on nesting",
     ),
     (
+        "calc",
+        "",
+        "\\setlength/\\addtolength accept +/- chains of dimensions (1pt + 2\\baselineskip); *, /, parentheses and \\widthof/\\heightof/\\depthof/\\totalheightof are not parsed",
+    ),
+    (
         "etoolbox",
         "",
         "toggle booleans: \\newtoggle/\\providetoggle declare a false toggle, \\toggletrue/\\togglefalse set it, \\iftoggle{name}{true}{false} selects a branch at expansion time; a duplicate \\newtoggle and any use of an undefined toggle are diagnosed where they are used and leave existing state alone. The rest of etoolbox (patching, hooks, list processing) is diagnosed where it is used",
+    ),
+    (
+        "iftex",
+        "",
+        "\\ifxetex and \\ifluatex (with the \\ifXeTeX/\\ifLuaTeX aliases) are false, as iftex.sty sets them under pdflatex, so engine-guarded blocks skip",
+    ),
+    (
+        "ifxetex",
+        "",
+        "legacy shim for iftex's \\ifxetex switch, false here as under pdflatex",
+    ),
+    (
+        "ifluatex",
+        "",
+        "legacy shim for iftex's \\ifluatex switch, false here as under pdflatex",
+    ),
+    (
+        "parskip",
+        "",
+        "\\parindent 0pt and \\parskip of half the class \\baselineskip (6.0pt at 10pt, 6.8pt at 11pt, 7.25pt at 12pt; the plus 2pt stretch is not modelled); package options are diagnosed",
     ),
 ];
 
@@ -1785,6 +1950,20 @@ pub fn render_json(inventory: &Inventory) -> String {
         })
         .collect();
     out.push_str(&lines.join(",\n"));
+    // Package and class names never read from a project `.sty`/`.cls`
+    // (`crate::packages`, proposal S1): the typesetter's own model wins.
+    out.push_str("\n  ],\n  \"built_in_packages\": [\n");
+    let lines: Vec<String> = crate::packages::BUILT_IN_PACKAGES
+        .iter()
+        .map(|(name, why)| format!("    {{\"name\": {}, \"why\": {}}}", json_str(name), json_str(why)))
+        .collect();
+    out.push_str(&lines.join(",\n"));
+    out.push_str("\n  ],\n  \"built_in_classes\": [\n");
+    let lines: Vec<String> = crate::packages::BUILT_IN_CLASSES
+        .iter()
+        .map(|(name, why)| format!("    {{\"name\": {}, \"why\": {}}}", json_str(name), json_str(why)))
+        .collect();
+    out.push_str(&lines.join(",\n"));
     out.push_str("\n  ],\n  \"coverage\": {\n    \"sources\": [\n");
     let lines: Vec<String> = canonical_sources()
         .iter()
@@ -1983,6 +2162,24 @@ pub fn render_markdown(inventory: &Inventory) -> String {
         "\nAny other package, or these packages with other options, is recorded and reported \
          as recognised but not implemented.\n",
     );
+    out.push_str(
+        "\n### Project `.sty` and `.cls` files\n\n`\\usepackage{name}`, `\\RequirePackage`, `\\documentclass` and \
+         `\\LoadClass` read `name.sty`/`name.cls` from the project (next to the entry document, then at the \
+         project root) and run it through the expansion engine: `\\ProvidesPackage`, `\\DeclareOption`, \
+         `\\ProcessOptions`, `\\PassOptionsToPackage`, `\\RequirePackage`, `\\LoadClass`, `\\AtEndOfPackage`, \
+         the `\\@if...` queries and the `\\Package...`/`\\Class...` messages behave as in latex.ltx, and `@` is a \
+         letter while the file is read. A class file's `\\LoadClass{article|report|book|letter|beamer}` gives the \
+         document that class's page model; a class with no `\\LoadClass` gets `article`'s with a warning. The \
+         packages and classes below are modelled by the typesetter and are never read from a project file, even \
+         when one of that name exists:\n\n| Built-in package | Why its file is not executed |\n| --- | --- |\n",
+    );
+    for (name, why) in crate::packages::BUILT_IN_PACKAGES {
+        out.push_str(&format!("| `{name}` | {} |\n", md_cell(why)));
+    }
+    out.push_str("\n| Built-in class | Page model |\n| --- | --- |\n");
+    for (name, why) in crate::packages::BUILT_IN_CLASSES {
+        out.push_str(&format!("| `{name}` | {} |\n", md_cell(why)));
+    }
     out.push_str(DOC_END);
     out.push('\n');
     out

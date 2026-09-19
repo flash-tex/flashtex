@@ -225,6 +225,16 @@ fn slide_view(frame: &[Block], slide: u32) -> Vec<Block> {
 /// Applies `state` to `items` in order: markers update it and are removed,
 /// omitted material is dropped, covered and alerted material restyled.
 /// `first_material` receives the state at the first item that is no marker.
+/// Text-mode `\phantom`: every glyph run in `items` is set, measured and
+/// broken like visible text but not painted -- the same `hidden` flag
+/// beamer's covered material uses. The walk is `restyle`'s under a state
+/// that covers everything (`\onslide` false selects no slide).
+pub fn hide_items(items: &mut Vec<AItem>) {
+    let mut state = State { slide: 1, onslide: false, stack: Vec::new() };
+    let mut first = None;
+    transform_items(items, &mut state, &mut first);
+}
+
 fn transform_items(items: &mut Vec<AItem>, state: &mut State, first_material: &mut Option<State>) {
     let taken = std::mem::take(items);
     for mut item in taken {

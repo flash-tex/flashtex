@@ -30,6 +30,7 @@
 //! `examples/bench_incremental.rs` measures keystroke latency on a 500 KB
 //! synthetic document.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::error::{Diagnostic, Limits};
@@ -73,6 +74,7 @@ fn identity_bound(pending: &[Shift]) -> u32 {
     pending.iter().map(|s| s.edit_start.min(u32::MAX as usize) as u32).min().unwrap_or(u32::MAX)
 }
 use crate::expand::{Checkpoint, Engine, LabelRecord, State};
+use crate::latex_packages::OpenedFile;
 use crate::span::Span;
 use crate::token::Token;
 
@@ -125,6 +127,12 @@ pub struct IncrementalExpander {
     checkpoint_interval: usize,
     /// How the last run ended (see [`RunEnd`]).
     end: RunEnd,
+    /// Every `.sty`/`.cls` file a run opened, by source id
+    /// (`Engine::opened_package_files`). Source ids are assigned from the
+    /// checkpointed `next_source_id`, so a re-run from a checkpoint gives
+    /// the same file the same id, and a reused suffix's files are the ones
+    /// the earlier run recorded.
+    opened_packages: BTreeMap<u32, OpenedFile>,
 }
 
 /// How a run ended. The step limit and the output token limit count from
@@ -194,6 +202,7 @@ impl IncrementalExpander {
             limits,
             checkpoint_interval: checkpoint_interval.max(1),
             end: RunEnd::default(),
+            opened_packages: BTreeMap::new(),
         };
         me.full_run();
         me
@@ -234,6 +243,18 @@ impl IncrementalExpander {
         self.end.input
     }
 
+    /// The `.sty`/`.cls` files the current token stream was produced with
+    /// (see [`Engine::opened_package_files`]), in source-id order.
+    pub fn opened_package_files(&self) -> impl Iterator<Item = &OpenedFile> {
+        self.opened_packages.values()
+    }
+
+    fn record_opened(&mut self, engine: &Engine) {
+        for file in engine.opened_package_files() {
+            self.opened_packages.insert(file.source_id, file.clone());
+        }
+    }
+
     fn full_run(&mut self) {
         let src: Rc<str> = Rc::from(self.source.as_str());
         let mut engine = Engine::with_limits(&self.source, self.limits);
@@ -252,6 +273,8 @@ impl IncrementalExpander {
         let mut last_cp = 0usize;
         let output_limit = self.drive(&mut engine, &mut last_cp, None).is_err();
         self.end = RunEnd::of(&engine, output_limit);
+        self.opened_packages.clear();
+        self.record_opened(&engine);
         self.diagnostics = engine.take_diagnostics();
         self.labels = engine.take_labels();
     }
@@ -408,6 +431,7 @@ impl IncrementalExpander {
         };
         let converged = run.unwrap_or(None);
         self.end = RunEnd::of(&engine, run.is_err());
+        self.record_opened(&engine);
         let tokens_expanded = self.tokens.len() - prefix_reused;
         let mut stats = EditStats {
             restarted_from: cp.pos,
@@ -489,6 +513,7 @@ impl IncrementalExpander {
                     last_origin: old.last_origin,
                     peak_memory: old.peak_memory.max(engine_peak),
                     metrics: old.metrics,
+                    package_reader: old.package_reader,
                     out_len: (old.out_len as isize + out_offset) as usize,
                     diag_len: (old.diag_len as isize + diag_offset) as usize,
                     label_len: (old.label_len as isize + label_offset) as usize,

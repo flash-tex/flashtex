@@ -225,6 +225,22 @@ pub enum Primitive {
     Verb,
     /// Internal: stop reading all input (`\end{document}`).
     StopInput,
+    /// `\usepackage`, `\RequirePackage`, `\documentclass`, `\LoadClass`
+    /// (see `latex_packages.rs`).
+    LoadFiles(crate::latex_packages::LoadKind),
+    /// Internal: `\flashtex@inputfile{name}{ext}` reads a `.sty`/`.cls`
+    /// through the host's package reader.
+    InputPackageFile,
+    /// Internal: `\flashtex@emit{tokens}` hands tokens to the output as a
+    /// pass-through.
+    EmitPassThrough,
+    /// Internal: `\flashtex@latex@error{text}` records a LaTeX error.
+    LatexError,
+    /// Internal: `\flashtex@latex@warning{text}` records a LaTeX warning.
+    LatexWarning,
+    /// `\NeedsTeXFormat`, `\ProvidesPackage`, `\ProvidesClass`,
+    /// `\ProvidesFile` (see `latex_packages.rs`).
+    PreambleDeclaration(crate::latex_packages::Declaration),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -581,6 +597,15 @@ pub struct Scopes {
     frames: Frames,
     /// See `SaveItem::RejectedTheoremEnv`.
     rejected_theorem_envs: HashSet<String>,
+    /// Names successfully declared by `\newtheorem` (`crate::expand`'s
+    /// `do_newtheorem`). This set is deliberately *global*: `\newtheorem`
+    /// is a global declaration in real LaTeX (like `\newcommand`), and
+    /// `do_newtheorem` claims `\name`/`\end<name>` with
+    /// `assign_cs(..., true)`, which pushes no save entry -- so this set
+    /// pushes none either, and a group close never undoes a registration.
+    /// Keep the membership rule in sync with the compiler's
+    /// `parser.rs::new_theorem`, which owns the shared-counter diagnostic.
+    theorem_names: HashSet<String>,
 }
 
 impl Scopes {
@@ -603,6 +628,7 @@ impl Scopes {
             toks: CowMap::new(1),
             frames: Frames(Rc::new(vec![Rc::new(Frame::new())])),
             rejected_theorem_envs: HashSet::new(),
+            theorem_names: HashSet::new(),
         }
     }
 
@@ -710,6 +736,21 @@ impl Scopes {
 
     pub fn is_rejected_theorem_env(&self, name: &str) -> bool {
         self.rejected_theorem_envs.contains(name)
+    }
+
+    /// Has `name` been successfully declared by `\newtheorem`? Mirrors the
+    /// compiler's `parser.rs::new_theorem` lookup (`self.theorems.get(&shared)`)
+    /// -- same trimmed-string set-membership idea, so the two rules cannot
+    /// silently diverge: a shared counter unknown here is unknown there too.
+    pub fn is_theorem_env(&self, name: &str) -> bool {
+        self.theorem_names.contains(name)
+    }
+
+    /// Record a successful `\newtheorem{name}` declaration. Always global
+    /// (no save entry is pushed), matching the global `assign_cs` claims
+    /// `do_newtheorem` makes for `\name`/`\end<name>` alongside it.
+    pub fn register_theorem_env(&mut self, name: &str) {
+        self.theorem_names.insert(name.to_string());
     }
 
     pub fn assign_active(&mut self, c: char, meaning: Meaning, global: bool) {
@@ -1069,6 +1110,7 @@ impl Scopes {
             toks,
             frames,
             rejected_theorem_envs: self.rejected_theorem_envs.clone(),
+            theorem_names: self.theorem_names.clone(),
         })
     }
 
@@ -1078,11 +1120,12 @@ impl Scopes {
     /// skipped outright, so the cost follows what changed since the two
     /// states diverged.
     pub fn eq_mapped(&self, new: &Scopes, f: &dyn Fn(Span) -> Option<Span>, identity_bound: u32) -> bool {
-        let Scopes { cs, active, cat_table, uccode, lccode, int_params, count, dimen, skip, toks, frames, rejected_theorem_envs } = self;
+        let Scopes { cs, active, cat_table, uccode, lccode, int_params, count, dimen, skip, toks, frames, rejected_theorem_envs, theorem_names } = self;
         let meaning = |a: &Meaning, b: &Meaning| meaning_eq_mapped(a, b, f);
         int_params == &new.int_params
             && cat_table == &new.cat_table
             && rejected_theorem_envs == &new.rejected_theorem_envs
+            && theorem_names == &new.theorem_names
             && frames.0.len() == new.frames.0.len()
             && count == &new.count
             && dimen == &new.dimen

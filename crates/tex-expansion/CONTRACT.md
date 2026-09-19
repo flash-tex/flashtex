@@ -287,3 +287,40 @@ additive, default behaviour unchanged, oracle/unit/incremental suites green:
   invocation being expanded, or at the last token read from source text
   when look-ahead dropped the invocation origin.
 
+
+## Package and class files (`src/latex_packages.rs`, S1 of `docs/proposals/packages-fonts-manifest.md`)
+
+`\usepackage`, `\RequirePackage`, `\documentclass` and `\LoadClass` are
+primitives that read `[options]{names}[version]` as ltclass.dtx's
+`\@fileswith@pti@ns` does and ask the host's **package reader**
+(`Engine::set_package_reader(Rc<dyn Fn(name, ext) -> Option<String>>)`) for
+each `name.sty`/`name.cls`. The rest of ltclass.dtx runs in TeX, copied
+from latex.ltx (`\@onefilewithoptions`, `\@pushfilename`/`\@popfilename`
+with the catcode of `@` saved and restored, `\ProvidesPackage/Class/File`,
+`\NeedsTeXFormat`, `\DeclareOption(*)`, `\ProcessOptions(*)`,
+`\ExecuteOptions`, `\PassOptionsToPackage/Class`, `\CurrentOption`,
+`\OptionNotUsed`, `\@ifpackageloaded/with/later` and the `IfPackage…TF`
+family, `\AtEndOfPackage/Class`, `\RequirePackageWithOptions`,
+`\LoadClassWithOptions`, the option-clash and unknown-option errors,
+`\Package…`/`\Class…` messages). `\endinput` ends the file.
+
+- A name the reader **declines** (`None`) is *passed through*: `\ver@`/`\opt@`
+  are still recorded, and the original tokens, command included, are
+  emitted with their exact spans -- the stream is byte-identical to the
+  pre-kernel pass-through when nothing is loaded. Only a list that mixes
+  loaded and declined names, or a name with `\PassOptionsToPackage`d
+  options, is re-spelt one command per name with the options folded in.
+  `\RequirePackage`/`\LoadClass` pass through as `\usepackage`/
+  `\documentclass`. Without a reader everything is declined.
+- A loaded file's tokens carry a source id of their own
+  (`Engine::opened_package_files() -> &[OpenedFile { source_id, name,
+  loaded_at }]`; `IncrementalExpander::opened_package_files()` is the union
+  over runs). The reader is part of the checkpoint, so restored engines
+  read files too (`tests/latex_packages_tests.rs`, incremental case).
+- A `.cls` that `\LoadClass`es a declined class emits `\documentclass
+  [passed,explicit]{base}`; one that names no base class emits
+  `\documentclass[opts]{article}` plus one `LaTeX Warning`.
+- LaTeX's errors/warnings from the kernel and from `\PackageError` & co.
+  are diagnostics with latex.ltx's texts; `\PackageInfo`/`\typeout` are
+  silent. `\@currpath`, `\IfFileExists`, `\InputIfFileExists` and the
+  file hooks are not modelled.
