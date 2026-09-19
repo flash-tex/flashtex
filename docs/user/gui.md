@@ -186,8 +186,14 @@ without leaving the app, or open an existing `.tex` file.
   it touches; a caret or single-line selection: just inserts the indent
   unit) and **⇧Tab** always outdents the touched line(s), except while the
   completion list or a snippet's placeholders are active, when Tab/⇧Tab mean
-  those instead; Return keeps the indentation, indents inside a new
-  `\begin{env}` and adds `\end{env}`, and continues a list with a new `\item`;
+  those instead; Return keeps the indentation and, after `\begin{env}`,
+  follows the environment's rule (Settings › Environments): one indent
+  level deeper unless the rule says flat (`document` by default), the
+  body's line text (`\item ` in `itemize`/`enumerate`, `\item[] ` in
+  `description`, `\bibitem{} ` in `thebibliography`), then `\end{env}`;
+  Return on an entry line repeats that text (a bare `\item` line just
+  breaks). The `\begin{` completion skeletons, Wrap in Environment and
+  Re-indent follow the same rules;
   **⌘/** comments or uncomments the selected lines with `%`; the bracket or
   `$` pair around the caret is highlighted.
 - **Hover**: rest the pointer on a token for about half a second to see what
@@ -497,6 +503,7 @@ you trust.
 | Show completion list (off disables both automatic-while-typing and explicit ⌃Space / Esc completion) | on |
 | Vim keybindings (also View › Toggle Vim Keybindings, ⌃⌘V) | off |
 | Preview follows the caret while you edit | on |
+| Environments tab: indent inside environments the table does not name; per environment, whether the body is indented and what each new line starts with (add your own rows; *Conventional Rules* restores the shipped set) | everything indented except `document`; `\item ` in lists |
 | Capture conversion: provider (None / xAI), key in Keychain, model | xAI (no-op until a key is added) |
 | Check for updates automatically (once a day after launch; only speaks up when a newer release exists) | off |
 | Restore Defaults | |
