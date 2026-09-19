@@ -1489,6 +1489,17 @@ pub struct TextStyle {
     /// `layout::size_declaration_pt`, against the layout's own body size
     /// rather than here, since that is the one authoritative value.
     pub size: Option<FontSizeLevel>,
+    /// The AMS classes' (`amsart`, `amsbook`, `amsproc`) own `\Tiny` rung
+    /// (GH-824): true only together with `size == Some(FontSizeLevel::Tiny)`,
+    /// meaning rung 0 rather than rung 1 (`\tiny` itself). Set solely by
+    /// the AMS `\smaller` path landing on rung 0 (see
+    /// `FontSizeLevel::stepped_ams`); every absolute size declaration and
+    /// every relsize-magstep step clears it, and it rides the ordinary
+    /// group/environment style stack like the rest of `TextStyle`, so
+    /// groups save and restore it for free. Only ever set for AMS classes
+    /// and only read when `layout::LayoutConstraints::ams_sizes` holds, so
+    /// non-AMS classes are unaffected by construction.
+    pub ams_tiny: bool,
     /// The text colour (`\color`, `\textcolor`), scoped like the face.
     /// `None` is the page's default colour: pdfTeX writes no operator.
     /// `Some` carries the exact operator values (`crate::color`).
@@ -1631,16 +1642,36 @@ impl FontSizeLevel {
     /// (`\Huge`). There is no magstep math and no closest-value search at
     /// all, unlike `stepped` above: e.g. `\tiny\larger\larger\larger` walks
     /// tiny(1) → SMALL(2) → Small(3) → small(4), landing exactly on
-    /// `\small`. Rung 0 has no `FontSizeLevel` and folds onto `Tiny` (see
-    /// `crate::layout::ams_rung_level`), so stepping below `\tiny` holds
-    /// the smallest representable declaration.
-    pub fn stepped_ams(current: Option<FontSizeLevel>, delta: i32) -> Option<FontSizeLevel> {
+    /// `\small`.
+    ///
+    /// Rung 0 (`\Tiny`) has no `FontSizeLevel` of its own (GH-824), so the
+    /// rung-0 state travels alongside the level: `current_tiny` reports
+    /// whether the incoming state is rung 0 (set only by a previous call
+    /// landing there), and the return pairs the level with the new rung-0
+    /// bit — `(Some(Tiny), true)` exactly when the clamped rung is 0.
+    /// Stepping up from rung 0 returns to `(Some(Tiny), false)` (rung 1,
+    /// `\tiny` itself). The pure-level mapping in
+    /// `crate::layout::ams_rung_level` (where rung 0 folds onto `Tiny`) is
+    /// unchanged; this is the rung-exact stepping built on top of it.
+    pub fn stepped_ams(
+        current: Option<FontSizeLevel>,
+        current_tiny: bool,
+        delta: i32,
+    ) -> (Option<FontSizeLevel>, bool) {
         if delta == 0 {
-            return current;
+            return (current, current_tiny);
         }
-        let rung = crate::layout::ams_rung(current) as i32 + delta;
-        let rung = rung.clamp(0, crate::layout::AMS_RUNG_COUNT as i32 - 1) as usize;
-        crate::layout::ams_rung_level(rung)
+        let base = if current_tiny {
+            0
+        } else {
+            crate::layout::ams_rung(current)
+        };
+        let rung = (base as i32 + delta).clamp(0, crate::layout::AMS_RUNG_COUNT as i32 - 1) as usize;
+        if rung == 0 {
+            (Some(FontSizeLevel::Tiny), true)
+        } else {
+            (crate::layout::ams_rung_level(rung), false)
+        }
     }
 
     /// Position of a level in real `relsize.sty`'s scan order
@@ -1680,6 +1711,7 @@ impl TextStyle {
         small_caps: false,
         family: TextFamily::Roman,
         size: None,
+        ams_tiny: false,
         color: None,
     };
 }
@@ -1860,6 +1892,28 @@ fn apply_style(style: TextStyle, name: &str, body_size_pt: f64) -> TextStyle {
         "larger" => next.size = FontSizeLevel::stepped(next.size, 1, body_size_pt),
         "smaller" => next.size = FontSizeLevel::stepped(next.size, -1, body_size_pt),
         _ => {}
+    }
+    // Every size arm above re-selects a runged level, so it drops the AMS
+    // `\Tiny` rung (GH-824): absolute declarations re-select their own
+    // rung, and the relsize-magstep steps cannot address rung 0 at all
+    // (only the AMS ladder path in `relative_size_command` ever sets
+    // `ams_tiny`). Every other command preserves the incoming state.
+    if matches!(
+        name,
+        "tiny"
+            | "scriptsize"
+            | "footnotesize"
+            | "small"
+            | "normalsize"
+            | "large"
+            | "Large"
+            | "LARGE"
+            | "huge"
+            | "Huge"
+            | "larger"
+            | "smaller"
+    ) {
+        next.ams_tiny = false;
     }
     // Font commands (`\normalfont`, `\bf`) never change the colour.
     next.color = style.color;
@@ -6019,14 +6073,16 @@ impl P<'_> {
         // Only the AMS ladder classes step on their own `\@typesizes`
         // ladder (`stepped_ams`); `acmart` stays on the relsize-magstep
         // path (see `is_ams_size_class`).
-        next.size = if self
+        if self
             .document_class
             .as_deref()
             .is_some_and(is_ams_size_class)
         {
-            FontSizeLevel::stepped_ams(next.size, delta)
+            let (level, tiny) = FontSizeLevel::stepped_ams(next.size, next.ams_tiny, delta);
+            next.size = level;
+            next.ams_tiny = tiny;
         } else {
-            FontSizeLevel::stepped(next.size, delta, self.body_size_pt())
+            next.size = FontSizeLevel::stepped(next.size, delta, self.body_size_pt());
         };
         self.style = next;
     }
@@ -8816,6 +8872,7 @@ impl P<'_> {
                 small_caps: false,
                 family: TextFamily::Mono,
                 size: self.style.size,
+                ams_tiny: self.style.ams_tiny,
                 color: self.style.color,
             };
             self.obeylines = true;
@@ -9218,8 +9275,10 @@ impl P<'_> {
         // ambient size is merged in here at the call site. `number_style`
         // below derives from `head_style` via `..head_style` and inherits it.
         let ambient_size = self.style.size;
+        let ambient_tiny = self.style.ams_tiny;
         let head_style = TextStyle {
             size: ambient_size,
+            ams_tiny: ambient_tiny,
             ..def.style.head_style()
         };
         // `\thmnumber{...\@upn{#2}}`: the number is `\textup`, so a
@@ -9296,6 +9355,7 @@ impl P<'_> {
                     // ambient size like the head does.
                     style: TextStyle {
                         size: ambient_size,
+                        ams_tiny: ambient_tiny,
                         ..TextStyle::default()
                     },
                     space_before: false,
@@ -9314,6 +9374,7 @@ impl P<'_> {
         });
         self.style = TextStyle {
             size: ambient_size,
+            ams_tiny: ambient_tiny,
             ..def.style.body_style()
         };
     }
@@ -9329,6 +9390,7 @@ impl P<'_> {
         // Like `begin_theorem` above: an enclosing size group stays in
         // effect for the heading and the body.
         let ambient_size = self.style.size;
+        let ambient_tiny = self.style.ams_tiny;
         let heading = self
             .optional_bracket_argument()
             .map(|(text, _)| text.trim().to_string())
@@ -9340,12 +9402,14 @@ impl P<'_> {
             style: TextStyle {
                 italic: true,
                 size: ambient_size,
+                ams_tiny: ambient_tiny,
                 ..TextStyle::default()
             },
             space_before: true,
         });
         self.style = TextStyle {
             size: ambient_size,
+            ams_tiny: ambient_tiny,
             ..TextStyle::default()
         };
     }
@@ -13630,7 +13694,8 @@ impl P<'_> {
     /// so the outer size declaration must not leak into the argument:
     /// `{\large a\textsuperscript{b}}` sets `b` at the `\sf@size` of
     /// `\large`, not at `\large` itself. The declaration is therefore
-    /// cleared (only `size`; family/series/shape/colour still inherit)
+    /// cleared (only `size` and the AMS `\Tiny` rung bit;
+    /// family/series/shape/colour still inherit)
     /// while the argument parses — an explicit declaration *inside* the
     /// argument still takes effect, exactly like `\mbox` contents.
     fn text_script(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
@@ -13639,8 +13704,10 @@ impl P<'_> {
         let full = span.merge(argument_span);
         let style = self.style;
         let outer_size = std::mem::replace(&mut self.style.size, None);
+        let outer_tiny = std::mem::replace(&mut self.style.ams_tiny, false);
         let content = self.box_inlines(tokens);
         self.style.size = outer_size;
+        self.style.ams_tiny = outer_tiny;
         para.push(Inline::TextScript(Box::new(TextScript {
             content,
             superscript: name == "textsuperscript",
@@ -19530,24 +19597,35 @@ mod tests {
         // Pure index steps on the eleven-rung ladder (0-based rungs:
         // `\tiny` = 1, `\normalsize` = 5, `\Huge` = 10), not magstep
         // scaling: every step moves exactly one rung and clamps at the
-        // ends. Rung 0 (`\Tiny`) folds onto `Tiny`.
+        // ends. Rung 0 (`\Tiny`) is represented for real (GH-824): the
+        // step pairs the level with the rung-0 bit, so stepping below
+        // `\tiny` yields `(Some(Tiny), true)` and stepping back up
+        // returns to `(Some(Tiny), false)`.
         use FontSizeLevel::*;
-        for (current, delta, expected) in [
-            (Some(Tiny), 1, Some(ScriptSize)),
-            (Some(Tiny), 3, Some(Small)),
-            (None, 1, Some(Large1)),
-            (None, -1, Some(Small)),
-            (Some(Large2), -2, None),
-            (Some(Small), 2, Some(Large1)),
-            (Some(Large3), 2, Some(Huge2)),
-            (Some(Huge2), 1, Some(Huge2)),
-            (Some(Huge2), 9, Some(Huge2)),
-            (Some(Tiny), -1, Some(Tiny)),
-            (Some(Tiny), -5, Some(Tiny)),
-            (None, 0, None),
-            (Some(Small), 0, Some(Small)),
+        for (current, tiny, delta, expected, expected_tiny) in [
+            (Some(Tiny), false, 1, Some(ScriptSize), false),
+            (Some(Tiny), false, 3, Some(Small), false),
+            (None, false, 1, Some(Large1), false),
+            (None, false, -1, Some(Small), false),
+            (Some(Large2), false, -2, None, false),
+            (Some(Small), false, 2, Some(Large1), false),
+            (Some(Large3), false, 2, Some(Huge2), false),
+            (Some(Huge2), false, 1, Some(Huge2), false),
+            (Some(Huge2), false, 9, Some(Huge2), false),
+            (Some(Tiny), false, -1, Some(Tiny), true),
+            (Some(Tiny), false, -5, Some(Tiny), true),
+            (Some(Tiny), true, 1, Some(Tiny), false),
+            (Some(Tiny), true, -1, Some(Tiny), true),
+            (Some(Tiny), true, 2, Some(ScriptSize), false),
+            (None, false, 0, None, false),
+            (Some(Small), false, 0, Some(Small), false),
+            (Some(Tiny), true, 0, Some(Tiny), true),
         ] {
-            assert_eq!(FontSizeLevel::stepped_ams(current, delta), expected, "{current:?} {delta}");
+            assert_eq!(
+                FontSizeLevel::stepped_ams(current, tiny, delta),
+                (expected, expected_tiny),
+                "{current:?} {tiny} {delta}"
+            );
         }
     }
 
@@ -19626,17 +19704,72 @@ mod tests {
         let output = full_output(source);
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
         assert_eq!(output_size(&output, "X"), 20.74);
-        // Known remaining gap (tracked separately, not this fix): pdflatex
-        // holds at `\Tiny` (5pt) below `\tiny`, but rung 0 has no
-        // `FontSizeLevel` yet and folds onto `\tiny` (6pt) in
-        // `ams_rung_level`, so three steps down from `\tiny` still land on
-        // `\tiny` itself rather than the AMS classes' own lower `\Tiny`
-        // rung. Fixing it needs a real state slot for rung 0 (a new
-        // `FontSizeLevel` variant or an AMS-specific rung field), which
-        // touches ~80 call sites across this crate -- deliberately not
-        // done in the same change as the table-value fix above.
-        assert_eq!(output_size(&output, "Y"), 6.0);
+        // Three steps down from `\tiny` clamp at rung 0: pdflatex's
+        // `\Tiny` (5pt), now represented for real (GH-824) via the
+        // rung-0 bit rather than folding onto `\tiny` (6pt).
+        assert_eq!(output_size(&output, "Y"), 5.0);
         assert_eq!(output_size(&output, "s"), 9.0);
+    }
+
+    #[test]
+    fn ams_tiny_smaller_reaches_the_tiny_rung() {
+        // GH-824: stepping below `\tiny` reaches the AMS classes'
+        // genuinely smaller `\Tiny` rung (rung 0) instead of folding back
+        // onto `\tiny` itself. 10pt values verified against a real pdflatex
+        // `\f@size` dump (TeX Live 2026): `\tiny` = 6pt, `\Tiny` = 5pt.
+        for class in ["amsart", "amsbook", "amsproc"] {
+            let source = format!(
+                "\\documentclass[10pt]{{{class}}}\\begin{{document}}{{\\tiny a \\smaller b}}\\end{{document}}"
+            );
+            let output = full_output(&source);
+            assert!(output.diagnostics.is_empty(), "{class}: {:?}", output.diagnostics);
+            assert_eq!(output_size(&output, "a"), 6.0, "{class}");
+            assert_eq!(output_size(&output, "b"), 5.0, "{class}");
+        }
+    }
+
+    #[test]
+    fn ams_larger_from_the_tiny_rung_returns_to_tiny() {
+        // Round-trip across the bottom rung: `\tiny \smaller \larger`
+        // lands back on `\tiny` (rung 1), and multi-step walks pass
+        // through rung 0 with the same clamp arithmetic as every rung.
+        let source = r"\documentclass[10pt]{amsart}\begin{document}{\tiny a \smaller b \larger c \smaller[3]{d} \larger[3]{e}}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "a"), 6.0);
+        assert_eq!(output_size(&output, "b"), 5.0);
+        assert_eq!(output_size(&output, "c"), 6.0);
+        // Three down from rung 1 clamps at rung 0 (`\Tiny`, 5pt); three up
+        // from rung 0 lands on rung 3 (`\footnotesize`, 8pt).
+        assert_eq!(output_size(&output, "d"), 5.0);
+        assert_eq!(output_size(&output, "e"), 8.0);
+    }
+
+    #[test]
+    fn ams_tiny_rung_is_scoped_and_reset_like_other_sizes() {
+        // The rung-0 state rides the ordinary style stack: a group's close
+        // restores the enclosing size, and an absolute `\tiny` re-selects
+        // rung 1 rather than staying on `\Tiny`.
+        let source = r"\documentclass[10pt]{amsart}\begin{document}{\tiny\smaller x}n{\tiny\smaller a \tiny b}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "x"), 5.0);
+        assert_eq!(output_size(&output, "n"), 10.0);
+        assert_eq!(output_size(&output, "a"), 5.0);
+        assert_eq!(output_size(&output, "b"), 6.0);
+    }
+
+    #[test]
+    fn article_tiny_smaller_keeps_its_relsize_value() {
+        // Non-AMS classes have no `\Tiny` rung at all: `\tiny\smaller`
+        // keeps its long-standing relsize closest-match value (holding at
+        // `\tiny`, 5pt in the 10pt class) rather than reaching for an AMS
+        // rung.
+        let source = r"\documentclass[10pt]{article}\usepackage{relsize}\begin{document}{\tiny a \smaller b}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "a"), 5.0);
+        assert_eq!(output_size(&output, "b"), 5.0);
     }
 
     #[test]
