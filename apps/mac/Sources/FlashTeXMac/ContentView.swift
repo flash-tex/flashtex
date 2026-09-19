@@ -56,6 +56,7 @@ struct ContentView: View {
         }
         .sheet(isPresented: $model.commandPaletteShown) { CommandPalette().environment(model) }
         .sheet(isPresented: Binding(get: { model.projectFonts.shown }, set: { model.projectFonts.shown = $0 })) { ProjectFontsSheet().environment(model) } // File > Project Fonts… (ProjectFonts.swift)
+        .sheet(isPresented: Binding(get: { model.projectPackages.shown }, set: { model.projectPackages.shown = $0 })) { ProjectPackagesSheet().environment(model) } // the package consent sheet (ProjectPackages.swift)
         .modifier(EditorNavigationSheets()) // Rename / Wrap / Change Environment… / Go to Symbol… / Go to Line (ShellModel+EditorNavigation.swift)
     }
 }

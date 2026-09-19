@@ -196,7 +196,7 @@ struct ProjectSection: View {
         // `texinputs`, with the class/style icon. One outside the root is
         // shown where it comes from but cannot be opened as a member.
         let openPaths = Set(listing.map(\.path))
-        for p in packages where !openPaths.contains(p.path) {
+        for p in packages where !openPaths.contains(p.path) && p.source == nil {
             let style = FileTypeStyle.of(path: p.path)
             rows.append(SidebarTree.Row(
                 id: "package:\(p.path)",
@@ -206,6 +206,22 @@ struct ProjectSection: View {
                 dimmed: true,
                 tooltip: p.tooltip,
                 accessibilityLabel: p.spoken))
+        }
+        // Resolved packages (ProjectPackages.swift) under one caption row:
+        // not project files, so never openable; the tooltip says where each
+        // came from.
+        let resolved = packages.filter { $0.source != nil }
+        if !resolved.isEmpty {
+            rows.append(SidebarTree.Row(
+                id: "packages:group", icon: "shippingbox", iconColor: DS.Palette.textTertiary, title: "Packages", dimmed: true,
+                tooltip: "Packages resolved from local libraries and the package cache (File › Fetch Missing Packages…)",
+                accessibilityLabel: "Packages, \(resolved.count) resolved file\(resolved.count == 1 ? "" : "s")", selectable: false))
+            for p in resolved {
+                let style = FileTypeStyle.of(path: p.path)
+                rows.append(SidebarTree.Row(
+                    id: "package:\(p.path)", icon: style.systemImage, iconColor: style.nsColor, title: p.path, dimmed: true, indent: 1,
+                    tooltip: p.tooltip, accessibilityLabel: p.spoken))
+            }
         }
         for n in closure.nodes {
             guard case .unresolvable(let why) = n.state, why.hasPrefix("no such file") else { continue }
@@ -229,6 +245,10 @@ struct ProjectSection: View {
             Task { await model.openAndSwitch(name, role: .included(from: from)) { model.captureNote = $0 } }
         } else if id.hasPrefix("package:") {
             let path = String(id.dropFirst("package:".count))
+            if let row = model.projectPackages.rows.first(where: { $0.path == path }), let source = row.source {
+                model.captureNote = "\(path) comes from \(source); it is compiled from there and is not a project file"
+                return
+            }
             if let row = model.manifest.rows.first(where: { $0.path == path }), let origin = row.origin {
                 model.captureNote = "\(path) is \(origin), outside the project root; it is compiled from there but cannot be opened as a project member"
                 return

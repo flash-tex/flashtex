@@ -38,7 +38,10 @@ final class ShellModel {
     var result: RuntimeV1.CompileResult? {
         didSet {
             refreshToolbarMirrors()
-            if result != nil { caretFollow.note(.recompile) } // CaretFollow.swift: the preview moved on, re-aim at the caret
+            if result != nil {
+                caretFollow.note(.recompile) // CaretFollow.swift: the preview moved on, re-aim at the caret
+                projectPackages.noteCompileResult() // ProjectPackages.swift: packages the compiler could not find
+            }
         }
     }
     var resultID: String?
@@ -346,11 +349,16 @@ final class ShellModel {
         /// `fonts` this request carried (the manifest's `[fonts]`,
         /// ProjectManifest.swift); nil when it named nothing.
         var fonts: RuntimeV1.CompileRequest.Fonts?
+        /// The resolved-packages revision (ProjectPackages.swift) the
+        /// request's documents were assembled at.
+        var packagesRevision = 0
     }
     private(set) var inFlightRequests: [String: InFlight] = [:]
     /// `fonts` the applied result was requested with: a manifest change
     /// with unchanged buffers must re-request (`compile()`), like a window.
     private(set) var fontsApplied: RuntimeV1.CompileRequest.Fonts?
+    /// `ProjectPackagesState.revision` of the applied result (a newly resolved package recompiles).
+    private(set) var packagesApplied = 0
     /// `display-list-v2-delta`: the live v2 frame currently published, as the
     /// producer may relocate it (DisplayListDelta.swift). Set only when a live
     /// frame is published after full validation; cleared by any refusal,
@@ -1180,8 +1188,8 @@ final class ShellModel {
             log("layout capability switch while \(latestID) is in flight: re-requesting revision \(editorRevision) under \(LayoutNegotiation.describe(capabilities))")
         } else if let current = result, previewSource != .fixture, current.revision == editorRevision,
                   negotiation.requested == capabilities, previewV2 || !v1PagesElided,
-                  !v2WindowResendNeeded, fontsApplied == manifest.requestFonts {
-            return // buffers, capability set, window and fonts unchanged since the applied result
+                  !v2WindowResendNeeded, fontsApplied == manifest.requestFonts, packagesApplied == projectPackages.revision {
+            return // buffers, capability set, window, fonts and resolved packages unchanged since the applied result
         }
         let id = "mac-\(nextRequestID)"
         nextRequestID += 1
@@ -1238,7 +1246,7 @@ final class ShellModel {
             try worker.send(request, id: id)
             inFlightRequests[id] = InFlight(projectId: request.projectId, revision: request.revision,
                                             documents: sendDocuments, sentAt: Date(), layoutCapabilities: sent,
-                                            window: displayListWindow, fonts: request.fonts)
+                                            window: displayListWindow, fonts: request.fonts, packagesRevision: projectPackages.revision)
             latestRequestID = id
             inFlightRevision = editorRevision
             workerStatus = "compiling revision \(editorRevision) (\(id))…"
@@ -1342,6 +1350,7 @@ final class ShellModel {
             // and re-request the same buffers under the now-desired window.
             let windowRetry = v2WindowNote(applied: incoming, sentWindow: sent.window)
             fontsApplied = sent.fonts
+            packagesApplied = sent.packagesRevision
             if compileQueued {
                 compileQueued = false
                 compile() // no-op when buffers and capability set are unchanged

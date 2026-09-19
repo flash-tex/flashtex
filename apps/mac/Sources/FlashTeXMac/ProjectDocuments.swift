@@ -658,6 +658,13 @@ final class ProjectDocuments {
         for input in model.manifest.packageInputs() where !open.contains(input.path) && !listed.contains(input.path) {
             out.append(input)
         }
+        // Resolved packages (ProjectPackages.swift): a local library's or
+        // the package cache's files at packages/<name>/<file>, last, so a
+        // project file of the same name still wins.
+        let taken = Set(out.map(\.path)).union(open)
+        for doc in model.projectPackages.documents() where !taken.contains(doc.path) {
+            out.append(doc)
+        }
         return out
     }
 

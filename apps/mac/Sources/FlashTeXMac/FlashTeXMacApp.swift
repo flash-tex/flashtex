@@ -256,6 +256,10 @@ struct FlashTeXMacApp: App {
                 // The project's `[fonts]` table as a sheet (ProjectFonts.swift).
                 Button("Project Fonts…") { model.projectFonts.present() }
                     .disabled(model.project.projectRoot == nil)
+                // Packages the compiler could not find (ProjectPackages.swift):
+                // the consent sheet, on demand; it also appears after a compile.
+                Button("Fetch Missing Packages…") { model.projectPackages.present() }
+                    .disabled(model.project.projectRoot == nil)
                 Button("Save") { model.saveTexInteractive() }
                     .keyboardShortcut("s")
                 Button("Resolve On-Disk Conflict…") { model.resolveConflictPanel() }

@@ -136,7 +136,7 @@ final class ShellChrome {
         set(\.listing, model.project.listing)
         set(\.entryPath, model.project.entryPath)
         set(\.closure, model.project.discoverClosure())
-        set(\.packageInputs, model.manifest.rows)
+        set(\.packageInputs, model.manifest.rows + model.projectPackages.rows) // ProjectPackages.swift: resolved packages, after the project's own
         return again
     }
 }

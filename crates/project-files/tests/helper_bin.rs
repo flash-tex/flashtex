@@ -354,3 +354,109 @@ fn set_fonts_rewrites_the_fonts_table_and_writes_nothing_itself() {
     assert_eq!(p.get("changed"), Some(&Json::Bool(false)));
     assert_eq!(p.get("text").and_then(Json::as_str), Some(original));
 }
+
+/// `resolve_packages` / `set_packages` over the wire: a manifest whose
+/// `source` is an on-disk archive (`file://`, the CTAN layout) and a local
+/// library, the cache under `FLASHTEX_PACKAGE_CACHE`. `ask` answers
+/// `needs_consent` and stores nothing; `consent` fetches; then the cache
+/// serves it; the library resolves first; `set_packages` rewrites the
+/// policy without writing.
+#[test]
+fn resolve_packages_and_set_packages_over_the_wire() {
+    let tmp = common::TempDir::new("helper-packages");
+    let base = tmp.root();
+    let archive = base.join("archive/macros/latex/contrib/mypkg");
+    std::fs::create_dir_all(&archive).unwrap();
+    std::fs::write(archive.join("index.html"), "<a href=\"mypkg.sty\">s</a><a href=\"mypkg.pdf\">p</a>").unwrap();
+    std::fs::write(archive.join("mypkg.sty"), "\\ProvidesPackage{mypkg}\n").unwrap();
+    let lib = base.join("mylib");
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("flashtex.toml"), "[library]\nname = \"mylib\"\n").unwrap();
+    std::fs::write(lib.join("mylib.sty"), "%lib\n").unwrap();
+    let root = base.join("project");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("main.tex"), "\\usepackage{mypkg}\n").unwrap();
+    std::fs::write(
+        root.join("flashtex.toml"),
+        format!("[project]\nentry = \"main.tex\"\n\n[packages]\nsource = \"file://{}\"\nfetch = \"ask\"\npath = {{ mylib = \"../mylib\" }}\n", base.join("archive").display()),
+    )
+    .unwrap();
+    let cache = base.join("cache");
+    let run_cached = |requests: &[&str]| -> Vec<Json> {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-project-files"))
+            .arg("--root")
+            .arg(&root)
+            .env("FLASHTEX_PACKAGE_CACHE", &cache)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn helper");
+        {
+            let mut stdin = child.stdin.take().unwrap();
+            for r in requests {
+                writeln!(stdin, "{r}").unwrap();
+            }
+        }
+        let stdout = child.stdout.take().unwrap();
+        let replies: Vec<Json> = BufReader::new(stdout).lines().map(|l| Json::parse(&l.unwrap()).expect("reply is JSON")).collect();
+        assert!(child.wait().unwrap().success());
+        replies
+    };
+    let arr = |j: &Json, key: &str| -> Vec<Json> {
+        match j.get(key) {
+            Some(Json::Array(a)) => a.clone(),
+            other => panic!("{key}: {other:?}"),
+        }
+    };
+    let replies = run_cached(&[
+        r#"{"id":"1","operation":"resolve_packages","names":["mypkg","mylib","nosuch"]}"#,
+        r#"{"id":"2","operation":"resolve_packages","names":["../x"]}"#,
+        r#"{"id":"3","operation":"resolve_packages","names":"mypkg"}"#,
+    ]);
+    let p = payload(&replies[0], "1");
+    assert_eq!(p.get("cache").and_then(Json::as_str), Some(cache.to_str().unwrap()));
+    assert_eq!(p.get("policy").unwrap().get("fetch").and_then(Json::as_str), Some("ask"));
+    let packages = arr(p, "packages");
+    assert_eq!(packages[0].get("status").and_then(Json::as_str), Some("needs_consent"));
+    assert_eq!(packages[0].get("version"), Some(&Json::Null), "a file:// registry states no version");
+    assert!(packages[0].get("source_url").unwrap().as_str().unwrap().ends_with("/macros/latex/contrib/mypkg/"));
+    assert_eq!(arr(&packages[0], "would_fetch"), vec![Json::from("mypkg.sty")]);
+    assert_eq!(packages[1].get("status").and_then(Json::as_str), Some("cached"));
+    assert_eq!(packages[1].get("from").and_then(Json::as_str), Some("library"));
+    let files = arr(&packages[1], "files");
+    assert_eq!(files[0].get("path").and_then(Json::as_str), Some("packages/mylib/mylib.sty"));
+    assert_eq!(files[0].get("text").and_then(Json::as_str), Some("%lib\n"));
+    assert_eq!(files[0].get("sha256").and_then(Json::as_str), Some(sha256_hex(b"%lib\n").as_str()));
+    assert_eq!(packages[2].get("status").and_then(Json::as_str), Some("not_available"));
+    assert!(packages[2].get("reason").unwrap().as_str().unwrap().contains("404"));
+    assert!(!cache.exists(), "ask stores nothing");
+    assert_eq!(error_code(&replies[1], "2"), "invalid_request");
+    assert_eq!(error_code(&replies[2], "3"), "invalid_request");
+
+    // Consent fetches into the cache; the next resolve is served from it.
+    let replies = run_cached(&[
+        r#"{"id":"1","operation":"resolve_packages","names":["mypkg"],"consent":true}"#,
+        r#"{"id":"2","operation":"resolve_packages","names":["mypkg"]}"#,
+        r#"{"id":"3","operation":"set_packages","fetch":"never","pin":{"mypkg":"abc"}}"#,
+        r#"{"id":"4","operation":"set_packages"}"#,
+        r#"{"id":"5","operation":"set_packages","fetch":"sometimes"}"#,
+    ]);
+    let fetched = &arr(payload(&replies[0], "1"), "packages")[0];
+    assert_eq!(fetched.get("status").and_then(Json::as_str), Some("fetched"));
+    let version = fetched.get("version").and_then(Json::as_str).unwrap().to_string();
+    assert_eq!(version.len(), 12);
+    assert_eq!(arr(fetched, "files")[0].get("path").and_then(Json::as_str), Some("packages/mypkg/mypkg.sty"));
+    assert!(cache.join("mypkg").join(&version).join("manifest.json").is_file());
+    let cached = &arr(payload(&replies[1], "2"), "packages")[0];
+    assert_eq!(cached.get("status").and_then(Json::as_str), Some("cached"));
+    assert_eq!(cached.get("from").and_then(Json::as_str), Some("cache"));
+    let set = payload(&replies[2], "3");
+    assert_eq!(set.get("exists"), Some(&Json::Bool(true)));
+    assert_eq!(set.get("changed"), Some(&Json::Bool(true)));
+    let text = set.get("text").and_then(Json::as_str).unwrap();
+    assert!(text.contains("fetch = \"never\"") && text.contains("pin = { mypkg = \"abc\" }") && text.contains("path = { mylib = \"../mylib\" }"), "{text}");
+    assert_eq!(std::fs::read_to_string(root.join("flashtex.toml")).unwrap().contains("never"), false, "set_packages writes nothing");
+    assert_eq!(error_code(&replies[3], "4"), "invalid_request");
+    assert_eq!(error_code(&replies[4], "5"), "invalid_request");
+}

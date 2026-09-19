@@ -45,6 +45,28 @@
 //!   manifest and `fonts` names nothing: nothing to write. A member that is
 //!   not a string, or an unknown member, is `invalid_request`.
 //!
+//! - `{"id","operation":"resolve_packages","names":[…],"consent"?:bool,
+//!   "entry"?}` → payload `{"cache":dir|null,"policy":{"source","fetch"},
+//!   "diagnostics":[{"key","message"}],"packages":[{"name","status":
+//!   "cached"|"fetched"|"needs_consent"|"not_available","version"?,
+//!   "source_url"?,"from"?:"library"|"cache","would_fetch"?:[…],"reason"?,
+//!   "files"?:[{"path","text","sha256","bytes"}]}]}`: each name resolved
+//!   through `flashtex_package_resolver` under the governing manifest's
+//!   `[packages]` policy — a local library (`path`), then the per-user cache,
+//!   then the source. Without `consent` a `fetch = "ask"` package is
+//!   `needs_consent` describing what would be fetched from where (one
+//!   metadata request, no file); with `"consent":true` — the consumer showed
+//!   its sheet and the user said yes — it is fetched into the cache. `always`
+//!   fetches either way (the manifest is the remembered consent); `never`
+//!   and `source = "none"` stop at the cache. Files carry the document-set
+//!   path `packages/<name>/<file>`. `diagnostics` are `packages.path.<key>`
+//!   problems. A name that is not a package name is `invalid_request`.
+//! - `{"id","operation":"set_packages","fetch"?:"ask"|"always"|"never",
+//!   "pin"?:{name:version},"entry"?}` → payload `{"path","exists","changed",
+//!   "text"?}`: like `set_fonts`, the governing manifest's text (or the
+//!   template) with the named `[packages]` keys rewritten
+//!   (`Manifest::with_packages`), for the consumer to `save`. Nothing written.
+//!
 //! Errors are `{"id","error":{"code","message"}}` with codes `invalid_request`,
 //! `invalid_path`, `refused` (symlink component, escape, not a regular file,
 //! too large, lock held, unsupported target), `invalid_utf8`, `io`,
@@ -438,6 +460,170 @@ fn set_fonts(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
     Ok(payload)
 }
 
+/// The manifest governing `root` and its directory, for the package operations.
+fn governing_manifest(root: &ProjectRoot) -> Result<(Option<PathBuf>, flashtex_project_manifest::Loaded, PathBuf), Failure> {
+    let found = Manifest::locate(root.path());
+    let loaded = match &found {
+        Some(path) => Manifest::load(path).map_err(|e| fail("manifest_syntax", e.to_string()))?,
+        None => Default::default(),
+    };
+    let manifest_dir = found.as_deref().and_then(|p| p.parent()).unwrap_or(root.path()).to_path_buf();
+    Ok((found, loaded, manifest_dir))
+}
+
+/// `resolve_packages`: see the module documentation.
+fn resolve_packages(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
+    use flashtex_package_resolver::{library, virtual_path, Policy, Provenance, Resolution, Resolver};
+    let names: Vec<String> = match req.get("names") {
+        Some(Json::Array(items)) => items
+            .iter()
+            .map(|n| n.as_str().map(str::to_string).ok_or_else(|| fail("invalid_request", "names must be strings")))
+            .collect::<Result<_, _>>()?,
+        _ => return Err(fail("invalid_request", "names must be an array of package names")),
+    };
+    if let Some(bad) = names.iter().find(|n| !flashtex_package_resolver::is_valid_name(n)) {
+        return Err(fail("invalid_request", format!("{bad:?} is not a package name")));
+    }
+    let consent = match req.get("consent") {
+        None | Some(Json::Null) => false,
+        Some(Json::Bool(b)) => *b,
+        Some(_) => return Err(fail("invalid_request", "consent must be a boolean")),
+    };
+    let (_, loaded, manifest_dir) = governing_manifest(root)?;
+    let packages = &loaded.manifest.packages;
+    let mut payload = Json::object();
+    let mut policy = Json::object();
+    policy.insert("source", packages.source.as_str()).insert("fetch", packages.fetch.as_str());
+    payload.insert("policy", policy);
+    let (libraries, library_diagnostics) = library::load_all(&loaded.manifest, &manifest_dir);
+    let diagnostics: Vec<Json> = library_diagnostics
+        .iter()
+        .map(|m| {
+            let mut o = Json::object();
+            let key = m.split_once(" = ").map_or("packages.path", |(k, _)| k);
+            o.insert("key", key).insert("message", m.as_str());
+            o
+        })
+        .collect();
+    payload.insert("diagnostics", diagnostics);
+    let cache_root = flashtex_package_resolver::default_cache_root();
+    payload.insert("cache", cache_root.as_ref().map_or(Json::Null, |p| Json::from(p.to_string_lossy().into_owned())));
+    let fetcher = flashtex_package_resolver::http::HttpFetcher::new().map_err(|e| fail("io", e))?;
+    let resolver = cache_root.map(|c| Resolver::new(c, &fetcher).with_libraries(libraries));
+    let entries: Vec<Json> = names
+        .iter()
+        .map(|name| {
+            let mut o = Json::object();
+            o.insert("name", name.as_str());
+            let Some(resolver) = &resolver else {
+                o.insert("status", "not_available").insert("reason", format!("no package cache: set {} (no home directory is known)", flashtex_package_resolver::CACHE_ENV));
+                return o;
+            };
+            let policy = Policy::for_package(packages, name);
+            let resolution = if consent { resolver.resolve_with_consent(name, &policy) } else { resolver.resolve(name, &policy) };
+            let files_json = |mount: &str, files: &[flashtex_package_resolver::ResolvedFile]| {
+                files
+                    .iter()
+                    .map(|f| {
+                        let mut j = Json::object();
+                        j.insert("path", virtual_path(mount, &f.name))
+                            .insert("text", f.text.as_str())
+                            .insert("sha256", flashtex_project_files::sha256_hex(f.text.as_bytes()))
+                            .insert("bytes", f.text.len() as u64);
+                        j
+                    })
+                    .collect::<Vec<_>>()
+            };
+            match resolution {
+                Resolution::Cached { version, files, from, .. } => {
+                    let (label, mount) = match &from {
+                        Provenance::Library { name: lib, .. } => ("library", lib.clone()),
+                        Provenance::Cache => ("cache", name.clone()),
+                    };
+                    o.insert("status", "cached").insert("version", version).insert("from", label).insert("files", files_json(&mount, &files));
+                }
+                Resolution::Fetched { version, files, source_url, .. } => {
+                    o.insert("status", "fetched").insert("version", version).insert("source_url", source_url).insert("files", files_json(name, &files));
+                }
+                Resolution::NeedsConsent { version, source_url, would_fetch, .. } => {
+                    o.insert("status", "needs_consent")
+                        .insert("version", version.map_or(Json::Null, Json::from))
+                        .insert("source_url", source_url)
+                        .insert("would_fetch", would_fetch.into_iter().map(Json::from).collect::<Vec<_>>());
+                }
+                Resolution::NotAvailable { reason, .. } => {
+                    o.insert("status", "not_available").insert("reason", reason);
+                }
+            }
+            o
+        })
+        .collect();
+    payload.insert("packages", entries);
+    Ok(payload)
+}
+
+/// `set_packages`: see the module documentation. The counterpart of
+/// `set_fonts` for the `[packages]` keys the consent sheet writes.
+fn set_packages(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
+    use flashtex_project_manifest::FetchPolicy;
+    let entry = match req.get("entry") {
+        None | Some(Json::Null) => "main.tex".to_string(),
+        Some(v) => v.as_str().ok_or_else(|| fail("invalid_request", "entry must be a string"))?.to_string(),
+    };
+    let fetch = match req.get("fetch") {
+        None | Some(Json::Null) => None,
+        Some(Json::String(s)) => Some(match s.as_str() {
+            "ask" => FetchPolicy::Ask,
+            "always" => FetchPolicy::Always,
+            "never" => FetchPolicy::Never,
+            other => return Err(fail("invalid_request", format!("fetch must be ask, always or never, got {other:?}"))),
+        }),
+        Some(_) => return Err(fail("invalid_request", "fetch must be a string")),
+    };
+    let pin = match req.get("pin") {
+        None | Some(Json::Null) => None,
+        Some(Json::Object(members)) => {
+            let mut map = std::collections::BTreeMap::new();
+            for (k, v) in members {
+                let v = v.as_str().ok_or_else(|| fail("invalid_request", format!("pin.{k} must be a version string")))?;
+                if !flashtex_package_resolver::is_valid_name(k) {
+                    return Err(fail("invalid_request", format!("{k:?} is not a package name")));
+                }
+                map.insert(k.clone(), v.to_string());
+            }
+            Some(map)
+        }
+        Some(_) => return Err(fail("invalid_request", "pin must be an object of versions by package name")),
+    };
+    if fetch.is_none() && pin.is_none() {
+        return Err(fail("invalid_request", "set_packages needs fetch and/or pin"));
+    }
+    let (found, _, _) = governing_manifest(root)?;
+    let (path, exists, current) = match &found {
+        Some(path) => {
+            let text = std::fs::read_to_string(path).map_err(|e| fail("io", format!("{}: {e}", path.display())))?;
+            (path.clone(), true, text)
+        }
+        None => (root.path().join(flashtex_project_manifest::FILE_NAME), false, Manifest::template(&entry)),
+    };
+    let text = Manifest::with_packages(&current, fetch, pin.as_ref());
+    match Manifest::parse(&text) {
+        Ok(parsed) => {
+            if fetch.is_some_and(|f| parsed.manifest.packages.fetch != f) || pin.as_ref().is_some_and(|p| &parsed.manifest.packages.pin != p) {
+                return Err(fail("manifest_rewrite", format!("the rewritten {} does not read back the requested policy; not written", path.display())));
+            }
+        }
+        Err(e) => return Err(fail("manifest_syntax", format!("{}: {e}", path.display()))),
+    }
+    let mut payload = Json::object();
+    payload
+        .insert("path", path.to_string_lossy().into_owned())
+        .insert("exists", exists)
+        .insert("changed", text != current)
+        .insert("text", text);
+    Ok(payload)
+}
+
 fn handle(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
     match string_field(req, "operation")? {
         "ping" => {
@@ -452,6 +638,8 @@ fn handle(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
         "save" => save(root, req),
         "manifest" => manifest(root, req),
         "set_fonts" => set_fonts(root, req),
+        "resolve_packages" => resolve_packages(root, req),
+        "set_packages" => set_packages(root, req),
         other => Err(fail(
             "unsupported_operation",
             format!("unknown operation {other:?}"),

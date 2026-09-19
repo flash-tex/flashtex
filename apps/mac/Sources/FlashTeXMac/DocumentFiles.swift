@@ -89,6 +89,11 @@ final class DocumentFilesState {
 
     @ObservationIgnored fileprivate var client: ProjectFilesClient?
     @ObservationIgnored private let replyQueue = DispatchQueue(label: "flashtex.project-files.replies")
+    /// A second helper process for package resolution (ProjectPackages.swift),
+    /// bound to the same root but never shared with reads and saves: the
+    /// helper answers in request order and a fetch may take seconds, so it
+    /// must never sit in front of a save. Launched on first use.
+    @ObservationIgnored private var packagesClient: ProjectFilesClient?
 
     enum Outcome<T> {
         case reply(T)
@@ -283,6 +288,81 @@ final class DocumentFilesState {
     /// The helper's `set_fonts`: the manifest text with its `[fonts]` table
     /// replaced (ProjectFonts.swift saves it through `save`). Same helper
     /// binding and bounded wait as `manifest(for:entry:)`.
+    /// `resolve_packages` on the dedicated packages helper (see
+    /// `packagesClient`), awaited off the main thread: up to 30 s for a
+    /// description, 120 s when `consent` fetches.
+    func resolvePackages(for root: URL, names: [String], consent: Bool, entry: String) async -> Result<ProjectFilesV1.ResolvePackages, ProjectManifest.Failure> {
+        switch acquirePackagesClient(for: root) {
+        case .direct(let reason):
+            note(reason)
+            return .failure(.init("packages are resolved by the project-files helper, which is not available: \(reason)"))
+        case .unavailable(let reason):
+            return .failure(.init(reason))
+        case .client(let client):
+            do {
+                return .success(try await client.resolvePackages(names: names, consent: consent, entry: entry, timeout: consent ? 120 : 30))
+            } catch let f as LineProcessFailure {
+                note("helper resolve_packages failed: \(f.text)")
+                return .failure(.init(f.text))
+            } catch {
+                return .failure(.init(error.localizedDescription))
+            }
+        }
+    }
+
+    /// `set_packages`: the manifest's text with `fetch` and/or `pin`
+    /// rewritten, for the caller to `save` (like `setFonts`).
+    func setPackages(for root: URL, entry: String, fetch: String?, pin: [String: String]?) -> Result<ProjectFilesV1.SetPackages, ProjectManifest.Failure> {
+        switch acquire(for: root.appendingPathComponent(ProjectManifest.fileName)) {
+        case .direct(let reason):
+            note(reason)
+            return .failure(.init("flashtex.toml is written by the project-files helper, which is not available: \(reason)"))
+        case .unavailable(let reason):
+            return .failure(.init(reason))
+        case .client(let client):
+            let outcome: Outcome<ProjectFilesV1.SetPackages> = roundTrip({ done in
+                client.send({ ProjectFilesV1.SetPackagesRequest(id: $0, entry: entry, fetch: fetch, pin: pin) }, as: ProjectFilesV1.SetPackages.self, completion: done)
+            }, late: { [weak self] result in
+                self?.lateReplies.append("set_packages: \(Self.describe(result))")
+                self?.note("late reply to set_packages arrived after \(String(format: "%.1f", self?.helperTimeout ?? 0)) s; ignored")
+            })
+            switch outcome {
+            case .reply(let m): return .success(m)
+            case .failed(let f):
+                note("helper set_packages failed: \(f.text)")
+                return .failure(.init(f.text))
+            case .timedOut(let t):
+                note("helper did not answer set_packages within \(String(format: "%.1f", t)) s")
+                return .failure(.init("no reply from the project-files helper within \(String(format: "%.1f", t)) s"))
+            }
+        }
+    }
+
+    /// `acquire` for the packages helper: the same binary and root rules,
+    /// its own process, restarted only when the binary or root changed or
+    /// it exited (an outstanding request is a fetch still running).
+    private func acquirePackagesClient(for root: URL) -> Acquired {
+        if case .disabled(let reason) = policy { return .direct(reason) }
+        guard let (exe, args) = executable() else {
+            return .direct("no flashtex-project-files helper (set FLASHTEX_PROJECT_FILES or build crates/project-files)")
+        }
+        let bound = Self.root(for: root.appendingPathComponent(ProjectManifest.fileName))
+        if let packagesClient {
+            if packagesClient.isRunning, packagesClient.executable == exe, packagesClient.arguments == args, packagesClient.root == bound { return .client(packagesClient) }
+            packagesClient.terminate()
+            self.packagesClient = nil
+        }
+        do {
+            let client = try ProjectFilesClient(executable: exe, arguments: args, root: bound, queue: replyQueue) { event in
+                if case .stderr(let s) = event { FlashTeXLog.write("packages helper stderr: " + s.trimmingCharacters(in: .newlines)) }
+            }
+            packagesClient = client
+            return .client(client)
+        } catch {
+            return .unavailable("helper \(exe.lastPathComponent) failed to launch: \(error.localizedDescription)")
+        }
+    }
+
     func setFonts(for root: URL, entry: String, fonts: [String: String]) -> Result<ProjectFilesV1.SetFonts, ProjectManifest.Failure> {
         switch acquire(for: root.appendingPathComponent(ProjectManifest.fileName)) {
         case .direct(let reason):

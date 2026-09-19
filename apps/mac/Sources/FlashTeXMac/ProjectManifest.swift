@@ -55,16 +55,24 @@ final class ProjectManifest {
         var texinput: Int?
         /// The real file when `path` is a virtual `texinputs/<i>/…` mount.
         var origin: String?
+        /// A resolved package (ProjectPackages.swift): where it came from
+        /// ("the package cache, fetched 2.2 from CTAN", "the local library
+        /// mylib"). Such a row lives under the sidebar's Packages group and
+        /// cannot be opened as a member.
+        var source: String?
 
         var tooltip: String {
             let what = kind == "class" ? "document class" : kind == "package" ? "package" : kind
+            if let source { return "\(what) from \(source) — compiled from there; not a project file" }
             let from = texinput.map { "texinputs[\($0)] of flashtex.toml" } ?? "next to the entry document"
             if let origin { return "\(what) from \(from): \(origin) — compiled from there, outside the project root" }
             return "\(what) from \(from) — click to open"
         }
 
         var spoken: String {
-            "\(path), \(kind == "class" ? "document class" : kind), not open, " + (origin == nil ? "activate to open" : "outside the project root")
+            let what = kind == "class" ? "document class" : kind
+            if let source { return "\(path), \(what), resolved from \(source)" }
+            return "\(path), \(what), not open, " + (origin == nil ? "activate to open" : "outside the project root")
         }
     }
 
