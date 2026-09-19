@@ -321,3 +321,64 @@ fn overlay_commands_are_class_gated() {
     }));
     let _ = OverlayKind::Cover;
 }
+
+/// Action specifications (`beamerbasedecode.sty` `\beamer@decodeaction`,
+/// `beamerbaseoverlay.sty` 99-111): `\item<1-| alert@2>` is the item in
+/// an `uncoverenv<1->` holding an `alertenv<2>`, `\item<2-| alert@3>`
+/// likewise; the frame counts the action's slides. Oracle: the probe deck
+/// `fixtures/real-world/beamer-polish` (frame "Actions") sets 3 pages.
+#[test]
+fn action_specifications_nest_inside_the_item() {
+    let (slides, s) = stream(&frame(
+        "\\begin{itemize}\n\\item<1-| alert@2> A.\n\\item<2-| alert@3> B.\n\\item<3-> C.\n\\end{itemize}",
+    ));
+    assert_eq!(slides, 3);
+    assert_eq!(
+        s,
+        vec!["<BEGIN Cover 1-> <BEGIN Alert 2> A. <END> <END>", "<BEGIN Cover 2-> <BEGIN Alert 3> B. <END> <END>", "<BEGIN Cover 3-> C. <END>"]
+    );
+    // The action alone names the frame's last slide.
+    let (slides, s) = stream(&frame("\\begin{itemize}\n\\item<alert@4> A.\n\\end{itemize}"));
+    assert_eq!(slides, 4);
+    assert_eq!(s, vec!["<BEGIN Cover *> <BEGIN Alert 4> A. <END> <END>"]);
+    // `[<+-| alert@+>]` as the list default: each item's `+` reads the
+    // counter once for both entries.
+    let (slides, s) = stream(&frame("\\begin{itemize}[<+-| alert@+>]\n\\item A.\n\\item B.\n\\end{itemize}"));
+    assert_eq!(slides, 2);
+    assert_eq!(s, vec!["<BEGIN Cover 1-> <BEGIN Alert 1> A. <END> <END>", "<BEGIN Cover 2-> <BEGIN Alert 2> B. <END> <END>"]);
+}
+
+/// `\temporal<2>{before}{during}{after}` (`beamerbaseoverlay.sty`
+/// 135-138): three `\only`s -- `before` on slide 1, `during` on 2, `after`
+/// from 3 -- and the frame sets at least the slides the specification
+/// names (2 here; the probe deck's frame reaches 3 through its items).
+#[test]
+fn temporal_is_three_onlys() {
+    let (slides, s) = stream(&frame("\\temporal<2>{Before.}{During.}{After.}"));
+    assert_eq!(slides, 2);
+    assert_eq!(s, vec!["<BEGIN Only 1> Before. <END> <BEGIN Only 2> During. <END> <BEGIN Only 3-> After. <END>"]);
+    let (slides, s) = stream(&frame("\\temporal<2,5>{b}{d}{a}"));
+    assert_eq!(slides, 5);
+    assert_eq!(s, vec!["<BEGIN Only 1,3-4> b <END> <BEGIN Only 2,5> d <END> <BEGIN Only 6-> a <END>"]);
+}
+
+/// `\begin{frame}<spec>` (`\beamer@whichframes`, `beamerbaseframe.sty`
+/// 446, 523-541): the specification is kept on the block and does not
+/// raise the body's slide count -- the pipeline runs the frame loop
+/// (`<2->` over items naming slide 3: pages for slides 2 and 3 only; the
+/// probe deck's 13 pages). `[options]<default>` after the options is
+/// still read past.
+#[test]
+fn frame_level_specification_is_kept() {
+    let text = deck("\\begin{frame}<2->\n\\begin{itemize}\\item<1-> A\\item<2-> B\\item<3-> C\\end{itemize}\n\\end{frame}\n\\begin{frame}<0>[t]<1->\n\\frametitle{Hidden}\nX\n\\end{frame}\n\\begin{frame}\nY\n\\end{frame}");
+    let heads: Vec<(String, u32)> = blocks(&text)
+        .iter()
+        .filter_map(|b| match b {
+            Block::BeamerFrameBegin { spec, slides, .. } => Some((spec_text(spec), *slides)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(heads, vec![("2-".to_string(), 3), ("0".to_string(), 1), ("*".to_string(), 1)]);
+    let (_, s) = stream(&text);
+    assert!(s.iter().all(|line| !line.contains('<') || line.starts_with("<BEGIN")), "{s:?}");
+}

@@ -2226,7 +2226,7 @@ impl LayoutCursor {
                     self.force_page_break();
                 }
             }
-            Block::BeamerFrameEnd { .. } => {}
+            Block::BeamerFrameEnd { .. } | Block::BeamerSection { .. } => {}
             Block::BeamerTitlePage { .. } => {
                 if !self.first_block {
                     self.newline(body_size);
@@ -2672,7 +2672,7 @@ impl LayoutCursor {
                     self.newline(size);
                 }
             }
-            Block::BeamerFrameEnd { .. } => {}
+            Block::BeamerFrameEnd { .. } | Block::BeamerSection { .. } => {}
             Block::BeamerBlockBegin { title, .. } => {
                 if !title.is_empty() {
                     let size = heading_size(2, body_size);
@@ -3687,7 +3687,7 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
                 visit_inline_references(title, visitor);
                 visit_inline_references(subtitle, visitor);
             }
-            Block::BeamerFrameEnd { .. } => {}
+            Block::BeamerFrameEnd { .. } | Block::BeamerSection { .. } => {}
             Block::BeamerBlockBegin { title: content, .. } | Block::BeamerCaption { content, .. } => {
                 visit_inline_references(content, visitor)
             }
