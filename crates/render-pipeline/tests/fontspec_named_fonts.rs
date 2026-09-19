@@ -222,7 +222,7 @@ fn a_document_naming_no_font_is_byte_identical_whatever_the_index_holds() {
     let s = Staged::new("untouched", &LM_ALL);
     let staged = render_with(text, &s.fonts(), &RenderOptions::default());
     let empty = render_with(text, &FontSet::with_default_dirs(&[]).with_index_dirs(vec![PathBuf::from("/nonexistent/flashtex-fonts")]), &RenderOptions::default());
-    let wire = flashtex_render_pipeline::display::Wire { images: false, device_color: false, diagnostics: true };
+    let wire = flashtex_render_pipeline::display::Wire { images: false, device_color: false, diagnostics: true, links: false };
     let a = ambient.v2.write_json_wire("x", wire);
     assert_eq!(a, staged.v2.write_json_wire("x", wire));
     assert_eq!(a, empty.v2.write_json_wire("x", wire));

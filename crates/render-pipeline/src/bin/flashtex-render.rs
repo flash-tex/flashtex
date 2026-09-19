@@ -49,6 +49,10 @@ struct Outputs {
     /// measure `\includegraphics` output must ask for it, exactly as a
     /// runtime-v1 client asks by negotiating the capability.
     images: bool,
+    /// `--links`: `--v2` carries the `navigation` object
+    /// (`display-list-v2-links`). Off by default, so every existing caller's
+    /// bytes are unchanged.
+    links: bool,
 }
 
 impl Outputs {
@@ -57,7 +61,7 @@ impl Outputs {
             eprintln!("flashtex-render: {id} rendered in {:.2} ms", r.elapsed_ms);
         }
         if let Some(p) = &self.v2 {
-            let wire = flashtex_render_pipeline::display::Wire { images: self.images, device_color: self.device_color, diagnostics: false };
+            let wire = flashtex_render_pipeline::display::Wire { images: self.images, device_color: self.device_color, diagnostics: false, links: self.links };
             let text = r.v2.write_json_wire(id, wire);
             if let Err(e) = std::fs::write(p, text) {
                 eprintln!("flashtex-render: cannot write {}: {e}", p.display());
@@ -94,6 +98,7 @@ fn main() {
         timing: false,
         device_color: false,
         images: false,
+        links: false,
     };
     let mut dirs: Vec<PathBuf> = Vec::new();
     let mut options = RenderOptions::default();
@@ -163,9 +168,11 @@ fn main() {
                 }
                 return;
             }
+            "--links" => outputs.links = true,
             "-h" | "--help" => {
-                eprintln!("usage: flashtex-render [--tex main.tex] [--v2 out.json] [--pdf out.pdf] [--font-dir DIR]... [--class-options OPTS] [--secnumdepth N] [--date YYYY-MM-DD] [--timing] [--device-color] [--images] [--list-fonts] [--list-math-fonts]");
+                eprintln!("usage: flashtex-render [--tex main.tex] [--v2 out.json] [--pdf out.pdf] [--font-dir DIR]... [--class-options OPTS] [--secnumdepth N] [--date YYYY-MM-DD] [--timing] [--device-color] [--images] [--links] [--list-fonts] [--list-math-fonts]");
                 eprintln!("  --images: --v2 also serialises image items (display-list-v2-images); off by default");
+            eprintln!("  --links: --v2 also carries the navigation object (display-list-v2-links); off by default");
                 eprintln!("  --date: what \\today renders (default 1970-01-01); a request's own payload.date wins");
                 eprintln!("  --list-fonts: print the installed font families named fonts resolve against, one per line, and exit");
                 eprintln!("  --list-math-fonts: the same list restricted to families with an OpenType MATH table");

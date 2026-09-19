@@ -859,6 +859,7 @@ mod tests {
             diagnostics: vec![d],
             window: None,
             document_features: None,
+            navigation: None,
         }
     }
 
@@ -909,6 +910,7 @@ mod tests {
             diagnostics: vec![d],
             window: None,
             document_features: None,
+            navigation: None,
         }
     }
 

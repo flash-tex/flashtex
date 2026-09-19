@@ -59,16 +59,34 @@ pub const CAP_V2_ONLY: &str = "display-list-v2-only";
 /// not materialise. The consumer reads `-delta`'s absence from the echo as
 /// the decline it is and does not send `display_list_base`.
 pub const CAP_WINDOW: &str = "display-list-v2-window";
+/// PROPOSAL (`protocol/proposals/display-list-v2-links.md`): the
+/// `display_list` line gains one top-level `navigation` object carrying the
+/// document's `\url`/`\href` link rectangles. Negotiated only next to
+/// `display-list-v2`; echoed whenever accepted, which is the signal the Mac
+/// consumer gates on (`DisplayListLinks.effective`).
+///
+/// Accepting it **declines** `display-list-v2-delta`, exactly as `-window`
+/// does and for the same reason: the `display_list_delta` line carries its
+/// own header and has no `navigation`, so a consumer reconstructing a frame
+/// from base + delta would silently lose every link.
+pub const CAP_LINKS: &str = "display-list-v2-links";
 
 /// `display-list-v2` and every capability this producer only honours next
 /// to it. `-images` / `-device-color` / `-diagnostics` / `-delta` / `-only`
-/// are accepted only with `display-list-v2` (`negotiate`); declining the
-/// parent must drop them too so a reply never echoes a dependent alone.
-/// `display-list-v2-links` is not negotiated here.
+/// / `-links` are accepted only with `display-list-v2` (`negotiate`);
+/// declining the parent must drop them too so a reply never echoes a
+/// dependent alone.
 pub fn is_display_list_family(cap: &str) -> bool {
     matches!(
         cap,
-        CAP_DISPLAY_LIST | CAP_IMAGES | CAP_DEVICE_COLOR | CAP_DIAGNOSTICS | CAP_DELTA | CAP_V2_ONLY | CAP_WINDOW
+        CAP_DISPLAY_LIST
+            | CAP_IMAGES
+            | CAP_DEVICE_COLOR
+            | CAP_DIAGNOSTICS
+            | CAP_DELTA
+            | CAP_V2_ONLY
+            | CAP_WINDOW
+            | CAP_LINKS
     )
 }
 
@@ -84,6 +102,7 @@ pub struct Capabilities {
     pub delta: bool,
     pub v2_only: bool,
     pub window: bool,
+    pub links: bool,
 }
 
 impl Capabilities {
@@ -98,6 +117,10 @@ impl Capabilities {
         // the request-order walk reaches `-delta`.
         let with_display_list = requested.iter().any(|c| c == CAP_DISPLAY_LIST);
         let windowing = with_display_list && requested.iter().any(|c| c == CAP_WINDOW);
+        // `-links` also declines `-delta`: the delta line has no
+        // `navigation`, so a frame rebuilt from base + delta would have no
+        // links at all (`CAP_LINKS`).
+        let linking = with_display_list && requested.iter().any(|c| c == CAP_LINKS);
         for r in requested {
             match r.as_str() {
                 CAP_RULES if !caps.rules => {
@@ -124,8 +147,12 @@ impl Capabilities {
                     caps.diagnostics = true;
                     accepted.push(r.clone());
                 }
-                CAP_DELTA if !caps.delta && with_display_list && !windowing => {
+                CAP_DELTA if !caps.delta && with_display_list && !windowing && !linking => {
                     caps.delta = true;
+                    accepted.push(r.clone());
+                }
+                CAP_LINKS if !caps.links && with_display_list => {
+                    caps.links = true;
                     accepted.push(r.clone());
                 }
                 CAP_WINDOW if !caps.window && with_display_list => {
