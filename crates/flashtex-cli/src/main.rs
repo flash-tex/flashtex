@@ -1,10 +1,11 @@
 //! `flashtex`: the FlashTeX engine on the command line.
 //!
 //! ```text
-//! flashtex build <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
+//! flashtex build [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
 //!                [--v2 out.json] [--timing] [--strict] [--json] [-j N]
-//! flashtex check <main.tex> [--json] [--strict] [--fix] [--dry-run] [--project-root DIR] [--font-dir DIR]...
-//! flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
+//! flashtex check [<main.tex>|<dir>] [--json] [--strict] [--fix] [--dry-run] [--project-root DIR] [--font-dir DIR]...
+//! flashtex watch [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
+//! flashtex manifest init [<main.tex>|<dir>] [--force] | show [<main.tex>|<dir>] [--json]
 //! flashtex supported [--json|--md|--coverage]
 //! flashtex worker [--font-dir DIR]... [--project-root DIR] [--v2 out.json] [--pdf out.pdf] [--timing]
 //! flashtex fonts [--font-dir DIR]... [--json]
@@ -20,6 +21,12 @@
 //! Diagnostics go to stderr, rustc-style with a source excerpt when stderr
 //! is a terminal and as `file:line:col: severity[code] message` otherwise
 //! (`--diagnostics`), then one summary line. See docs/user/compiler.md.
+//!
+//! The entry may be a directory (or omitted for the current one): then a
+//! `flashtex.toml` names it (`[project] entry`), or the directory's only
+//! `.tex` file is it. A manifest also adds `texinputs` directories to the
+//! closure and may set the output directory (docs/user/project-manifest.md);
+//! without one, nothing differs from naming the file.
 
 mod compile;
 mod fix;
@@ -42,12 +49,14 @@ const USAGE: &str = "\
 flashtex — the FlashTeX LaTeX engine
 
 usage:
-  flashtex build <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
+  flashtex build [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
                  [--v2 out.json] [--timing] [--verbose] [--strict] [--json] [-j N]
-  flashtex check <main.tex> [--json] [--strict] [--fix] [--dry-run]
+  flashtex check [<main.tex>|<dir>] [--json] [--strict] [--fix] [--dry-run]
                  [--project-root DIR] [--font-dir DIR]...
-  flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
+  flashtex watch [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
                  [--interval MS] [--timing]
+  flashtex manifest init [<main.tex>|<dir>] [--force]
+  flashtex manifest show [<main.tex>|<dir>] [--json]
   flashtex supported [--json|--md|--coverage]
   flashtex worker [--font-dir DIR]... [--project-root DIR] [--v2 out.json]
                   [--pdf out.pdf] [--timing]
@@ -61,15 +70,19 @@ commands:
   check      diagnostics only, no output files (`--json`: flashtex-check/1;
              `--fix` applies suggestions in place, `--dry-run` prints the diff)
   watch      rebuild whenever a file of the project closure changes; Ctrl-C stops
+  manifest   `init` writes a commented flashtex.toml next to the entry; `show`
+             prints the manifest that governs the entry (defaults when absent)
   supported  the implemented-LaTeX inventory and coverage of the linked compiler
   worker     the runtime-v1 JSON Lines worker the IDE speaks (stdin/stdout)
   fonts      the font and TFM directories this binary resolves, in search order
   install-cli symlink this binary into DIR (default /usr/local/bin)
 
 options:
-  -o, --output FILE    the PDF to write (default: <main>.pdf next to the entry)
+  -o, --output FILE    the PDF to write (default: <main>.pdf next to the entry, or
+                       in the manifest's `[project] output` directory when set)
   --project-root DIR   the directory includes and images resolve under (default:
-                       the entry file's directory); nothing outside it is read
+                       the manifest's directory, else the entry file's); nothing
+                       outside it is read except the manifest's `texinputs`
   --font-dir DIR       an extra font directory, probed first (repeatable)
   --v2 FILE            also write the rendering-v2 display list envelope
   --timing             print render/PDF/total wall time to stderr
@@ -92,6 +105,8 @@ options:
 exit status: 0 rendered (ok/recovered), 1 failed (or recovered with --strict),
              2 usage error / unreadable input
 environment: FLASHTEX_FONT_DIRS, FLASHTEX_TFM_DIRS, FLASHTEX_LM_DIR (colon separated)
+entry:       a .tex file, or a directory whose flashtex.toml names `[project] entry`
+             (or that holds exactly one .tex file); omitted means the current directory
 ";
 
 /// `flashtex --version`: the release version and the Git revision it was
@@ -120,6 +135,7 @@ fn main() {
         Some("build") => run(&args[1..], Mode::Build),
         Some("check") => run(&args[1..], Mode::Check),
         Some("watch") => run(&args[1..], Mode::Watch),
+        Some("manifest") => manifest(&args[1..]),
         Some("supported") => supported(&args[1..]),
         Some("worker") => worker(&args[1..]),
         Some("fonts") => fonts_cmd(&args[1..]),
@@ -143,7 +159,8 @@ enum Mode {
 
 /// Options shared by build/check/watch.
 struct Common {
-    main: PathBuf,
+    /// The entry file or directory as typed; `None` is the current directory.
+    main: Option<PathBuf>,
     output: Option<PathBuf>,
     project_root: Option<PathBuf>,
     font_dirs: Vec<PathBuf>,
@@ -164,7 +181,7 @@ struct Common {
 
 fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
     let mut c = Common {
-        main: PathBuf::new(),
+        main: None,
         output: None,
         project_root: None,
         font_dirs: Vec::new(),
@@ -246,7 +263,7 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
         }
         i += 1;
     }
-    c.main = main.ok_or("an entry file is required (`flashtex build main.tex`)")?;
+    c.main = main;
     if mode == Mode::Check && (c.output.is_some() || c.v2.is_some()) {
         return Err("`check` writes no output files; use `build` for -o/--v2".into());
     }
@@ -293,15 +310,25 @@ fn run(args: &[String], mode: Mode) -> i32 {
 /// One build (or check). `Err` is a usage-level failure (exit 2).
 fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<i32, String> {
     let started = Instant::now();
-    let mut project = project::load(&c.main, c.project_root.as_deref())?;
+    let input = project::resolve(c.main.as_deref())?;
+    let mut project = project::load(&input, c.project_root.as_deref())?;
     let mut outcome = compile::compile(&project, fonts, &c.render, revision);
     let mut outputs: Vec<(&str, PathBuf)> = Vec::new();
     let mut pdf_ms = 0.0;
     let mut pdf_notes: Vec<String> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
     if mode != Mode::Check {
-        let pdf_path = c.output.clone().unwrap_or_else(|| compile::default_pdf_path(&c.main));
+        let pdf_path = c.output.clone().unwrap_or_else(|| default_pdf_path(&project));
         if outcome.status != "failed" {
+            // The manifest's output directory is created on demand; an
+            // explicit `-o` is the user's own path and is left alone, as before.
+            if c.output.is_none() {
+                if let Some(dir) = project.output_dir.as_deref() {
+                    if let Err(e) = std::fs::create_dir_all(dir) {
+                        failures.push(format!("cannot create output directory {}: {e}", dir.display()));
+                    }
+                }
+            }
             let t = Instant::now();
             match compile::exact_pdf(&outcome, fonts, &project.root) {
                 Ok(pdf) => {
@@ -403,7 +430,7 @@ fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<
         let _ = writeln!(err, "{}", fix::summary_line(applied.issues, applied.files, applied.skipped.len()));
         if !c.dry_run {
             let re_started = Instant::now();
-            project = project::load(&c.main, c.project_root.as_deref())?;
+            project = project::load(&input, c.project_root.as_deref())?;
             outcome = compile::compile(&project, fonts, &c.render, revision);
             total_ms = re_started.elapsed().as_secs_f64() * 1000.0;
             let shown = match style {
@@ -457,6 +484,19 @@ fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<
     })
 }
 
+/// `<entry stem>.pdf` in the manifest's output directory when it sets one,
+/// else next to the entry as the user named it (byte-identical to the
+/// pre-manifest CLI when there is no manifest).
+fn default_pdf_path(project: &project::Project) -> PathBuf {
+    match &project.output_dir {
+        Some(dir) => {
+            let stem = Path::new(&project.entry).file_stem().and_then(|s| s.to_str()).unwrap_or("main");
+            dir.join(format!("{stem}.pdf"))
+        }
+        None => compile::default_pdf_path(&project.entry_file),
+    }
+}
+
 fn plural(n: usize) -> &'static str {
     if n == 1 {
         ""
@@ -473,11 +513,11 @@ fn plural(n: usize) -> &'static str {
 /// torn PDF behind.
 fn watch(c: &Common, fonts: &FontSet) -> i32 {
     let mut revision = 1u64;
-    let mut snapshot = match project_snapshot(c) {
+    let (mut snapshot, root) = match project_snapshot(c) {
         Ok(s) => s,
         Err(e) => return usage_error(&e),
     };
-    eprintln!("flashtex: watching {} file{} under {} (every {} ms; Ctrl-C stops)", snapshot.len(), plural(snapshot.len()), root_label(c), c.interval_ms);
+    eprintln!("flashtex: watching {} file{} under {} (every {} ms; Ctrl-C stops)", snapshot.len(), plural(snapshot.len()), root_label(c, &root), c.interval_ms);
     let timed = Common { timing: true, ..clone_common(c) };
     if let Err(e) = build_once(&timed, fonts, Mode::Build, revision) {
         eprintln!("flashtex: {e}");
@@ -485,7 +525,7 @@ fn watch(c: &Common, fonts: &FontSet) -> i32 {
     loop {
         std::thread::sleep(std::time::Duration::from_millis(c.interval_ms));
         let now = match project_snapshot(c) {
-            Ok(s) => s,
+            Ok((s, _)) => s,
             Err(e) => {
                 eprintln!("flashtex: {e}");
                 continue;
@@ -533,24 +573,208 @@ fn clone_common(c: &Common) -> Common {
     }
 }
 
-fn root_label(c: &Common) -> String {
+/// The root as the user would recognise it: what they typed when they
+/// typed a path, else the resolved one (a manifest's directory).
+fn root_label(c: &Common, resolved: &Path) -> String {
     c.project_root
         .clone()
-        .or_else(|| c.main.parent().map(Path::to_path_buf))
-        .map_or_else(|| ".".into(), |p| p.display().to_string())
+        .or_else(|| c.main.as_deref().filter(|m| m.is_file()).and_then(|m| m.parent().map(Path::to_path_buf)))
+        .map_or_else(|| resolved.display().to_string(), |p| p.display().to_string())
 }
 
-/// `(project-relative path, (length, mtime))` for every file in the closure.
-fn project_snapshot(c: &Common) -> Result<Vec<(String, (u64, Option<std::time::SystemTime>))>, String> {
-    let project = project::load(&c.main, c.project_root.as_deref())?;
-    Ok(project
-        .files
-        .iter()
-        .map(|p| {
-            let meta = std::fs::metadata(project.root.join(p)).ok();
-            (p.clone(), (meta.as_ref().map_or(0, |m| m.len()), meta.and_then(|m| m.modified().ok())))
-        })
-        .collect())
+/// `(path, (length, mtime))` for every file in the closure — project-relative
+/// for files under the root, absolute for the manifest and its outside
+/// `texinputs` files — and the root they were resolved under.
+fn project_snapshot(c: &Common) -> Result<(Vec<(String, (u64, Option<std::time::SystemTime>))>, PathBuf), String> {
+    let input = project::resolve(c.main.as_deref())?;
+    let project = project::load(&input, c.project_root.as_deref())?;
+    let stat = |p: &Path| {
+        let meta = std::fs::metadata(p).ok();
+        (meta.as_ref().map_or(0, |m| m.len()), meta.and_then(|m| m.modified().ok()))
+    };
+    let mut files: Vec<(String, (u64, Option<std::time::SystemTime>))> =
+        project.files.iter().map(|p| (p.clone(), stat(&project.root.join(p)))).collect();
+    files.extend(project.outside_files.iter().map(|p| (p.display().to_string(), stat(p))));
+    Ok((files, project.root))
+}
+
+/// `manifest init [<entry>|<dir>] [--force]` writes the commented template
+/// next to the entry (refusing to overwrite unless `--force`); `manifest
+/// show [<entry>|<dir>] [--json]` prints the manifest that governs the
+/// entry — the defaults when there is none — and its warnings.
+fn manifest(args: &[String]) -> i32 {
+    use flashtex_project_manifest::{Manifest, TexInputLocation, FILE_NAME};
+    let (sub, rest) = match args.first().map(String::as_str) {
+        Some(s @ ("init" | "show")) => (s, &args[1..]),
+        Some(other) => return usage_error(&format!("manifest: unknown subcommand {other:?} (use init or show)")),
+        None => return usage_error("manifest needs a subcommand: init or show"),
+    };
+    let mut target: Option<PathBuf> = None;
+    let mut force = false;
+    let mut json_out = false;
+    for a in rest {
+        match a.as_str() {
+            "--force" if sub == "init" => force = true,
+            "--json" if sub == "show" => json_out = true,
+            s if s.starts_with('-') => return usage_error(&format!("manifest {sub}: unknown option {s:?}")),
+            s => {
+                if target.replace(PathBuf::from(s)).is_some() {
+                    return usage_error("manifest takes at most one entry file or directory");
+                }
+            }
+        }
+    }
+    if sub == "init" {
+        // The template names the actual entry: the file given, or the
+        // directory's only .tex (the resolver's rule), else `main.tex`.
+        let given = target.clone().unwrap_or_else(|| PathBuf::from("."));
+        let (dir, entry) = if given.is_file() {
+            let dir = given.parent().map(Path::to_path_buf).filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| PathBuf::from("."));
+            (dir, given.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "main.tex".into()))
+        } else if given.is_dir() {
+            let entry = project::resolve(Some(&given))
+                .ok()
+                .and_then(|i| i.entry.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| "main.tex".into());
+            (given, entry)
+        } else {
+            return usage_error(&format!("{} is neither a file nor a directory", given.display()));
+        };
+        let path = dir.join(FILE_NAME);
+        if force {
+            if let Err(e) = std::fs::remove_file(&path) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("flashtex: cannot replace {}: {e}", path.display());
+                    return EXIT_FAILED;
+                }
+            }
+        }
+        return match Manifest::write_template(&path, &entry) {
+            Ok(()) => {
+                println!("wrote {} (entry {entry:?})", path.display());
+                EXIT_OK
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                eprintln!("flashtex: {} exists; `--force` replaces it", path.display());
+                EXIT_FAILED
+            }
+            Err(e) => {
+                eprintln!("flashtex: cannot write {}: {e}", path.display());
+                EXIT_FAILED
+            }
+        };
+    }
+    let input = match project::resolve(target.as_deref()) {
+        Ok(i) => i,
+        Err(e) => return usage_error(&e),
+    };
+    let m = &input.manifest.manifest;
+    let mdir = input.manifest_dir.clone().or_else(|| input.entry.parent().map(Path::to_path_buf)).unwrap_or_default();
+    let texinputs = m.texinputs(&mdir);
+    if json_out {
+        use flashtex_compiler::json::{self, Value};
+        let opt = |v: &Option<String>| v.clone().map_or(Value::Null, json::str_);
+        let map = |m: &std::collections::BTreeMap<String, String>| {
+            let mut o = Value::obj();
+            for (k, v) in m {
+                o.set(k, json::str_(v.clone()));
+            }
+            o
+        };
+        let mut o = Value::obj();
+        o.set("schema", json::str_("flashtex-manifest/1"));
+        o.set("entry", json::str_(input.entry.display().to_string()));
+        o.set("path", input.manifest.found.as_ref().map_or(Value::Null, |p| json::str_(p.display().to_string())));
+        o.set("exists", Value::Bool(input.manifest.found.is_some()));
+        let mut project = Value::obj();
+        project.set("entry", opt(&m.project.entry));
+        project.set("texinputs", Value::Arr(m.project.texinputs.iter().map(|t| json::str_(t.clone())).collect()));
+        project.set("output", opt(&m.project.output));
+        let mut fonts = Value::obj();
+        for (k, v) in [("text", &m.fonts.text), ("math", &m.fonts.math), ("mono", &m.fonts.mono), ("sans", &m.fonts.sans)] {
+            fonts.set(k, opt(v));
+        }
+        let mut packages = Value::obj();
+        packages.set("source", json::str_(m.packages.source.as_str().to_string()));
+        packages.set("fetch", json::str_(m.packages.fetch.as_str().to_string()));
+        packages.set("pin", map(&m.packages.pin));
+        packages.set("path", map(&m.packages.path));
+        let library = m.library.as_ref().map_or(Value::Null, |l| {
+            let mut o = Value::obj();
+            o.set("name", json::str_(l.name.clone()));
+            o
+        });
+        let mut manifest = Value::obj();
+        manifest.set("project", project);
+        manifest.set("fonts", fonts);
+        manifest.set("packages", packages);
+        manifest.set("library", library);
+        o.set("manifest", manifest);
+        o.set(
+            "texinputs",
+            Value::Arr(
+                texinputs
+                    .iter()
+                    .map(|t| {
+                        let mut e = Value::obj();
+                        e.set("index", json::num(t.index as f64));
+                        e.set("raw", json::str_(t.raw.clone()));
+                        match &t.location {
+                            TexInputLocation::Inside(d) => {
+                                e.set("location", json::str_("inside"));
+                                e.set("dir", json::str_(d.clone()));
+                            }
+                            TexInputLocation::Outside(p) => {
+                                e.set("location", json::str_("outside"));
+                                e.set("dir", json::str_(flashtex_project_manifest::outside_virtual_dir(t.index)));
+                                e.set("path", json::str_(p.display().to_string()));
+                            }
+                            TexInputLocation::Invalid(why) => {
+                                e.set("location", json::str_("invalid"));
+                                e.set("reason", json::str_(why.clone()));
+                            }
+                        }
+                        e
+                    })
+                    .collect(),
+            ),
+        );
+        o.set(
+            "warnings",
+            Value::Arr(
+                input
+                    .manifest
+                    .warnings
+                    .iter()
+                    .map(|w| {
+                        let mut e = Value::obj();
+                        e.set("key", json::str_(w.key.clone()));
+                        e.set("message", json::str_(w.message.clone()));
+                        e
+                    })
+                    .collect(),
+            ),
+        );
+        println!("{}", json::write(&o));
+    } else {
+        match &input.manifest.found {
+            Some(p) => println!("# {}", p.display()),
+            None => println!("# no {FILE_NAME} governs {} (defaults shown)", input.entry.display()),
+        }
+        println!("# entry: {}", input.entry.display());
+        for t in &texinputs {
+            match &t.location {
+                TexInputLocation::Inside(d) => println!("# texinputs[{}] = {:?}: {d}/ under the project root", t.index, t.raw),
+                TexInputLocation::Outside(p) => println!("# texinputs[{}] = {:?}: {} (outside the root; mounted at texinputs/{}/)", t.index, t.raw, p.display(), t.index),
+                TexInputLocation::Invalid(why) => println!("# texinputs[{}] = {:?}: ignored, {why}", t.index, t.raw),
+            }
+        }
+        print!("{}", m.to_toml());
+        for w in &input.manifest.warnings {
+            eprintln!("flashtex: warning: {FILE_NAME}: {w}");
+        }
+    }
+    EXIT_OK
 }
 
 /// `supported`: the inventory of the compiler linked into this binary

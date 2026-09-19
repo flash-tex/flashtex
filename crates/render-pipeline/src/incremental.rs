@@ -501,6 +501,9 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
             Item::SpaceBox { style } => {
                 style.hash(h);
             }
+            Item::Listing(mark) => {
+                format!("{mark:?}").hash(h);
+            }
         }
     }
 }

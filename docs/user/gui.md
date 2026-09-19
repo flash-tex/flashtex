@@ -101,9 +101,12 @@ without leaving the app, or open an existing `.tex` file.
 
 ### Opening and working in a project
 
-- **Open** a file with *File › Open LaTeX File…* (⌘O). It becomes the
-  **entry document** (sent to the engine as `main.tex`, whatever its real
-  name) and its folder becomes the project root. If the current buffer is
+- **Open** a file with *File › Open LaTeX File…* (⌘O).
+  It becomes the **entry document** (sent to the engine as `main.tex`,
+  whatever its real name) and its folder becomes the project root. Open a
+  **folder** instead and its [`flashtex.toml`](project-manifest.md) names
+  the entry (`[project] entry`); without one, the folder's only `.tex` file
+  is it — two or none is refused, naming them. If the current buffer is
   unsaved you are asked to Save / Discard / Cancel; a discarded buffer can be
   brought back with *Edit › Restore Discarded Buffer* until you quit.
 - **`\input{…}` and `\include{…}`** are scanned lexically (no macro
@@ -119,6 +122,14 @@ without leaving the app, or open an existing `.tex` file.
   closing it reverts to reading disk. On the helper route (below), an include
   still needs an explicit open: the durable helper compiles only its own
   ledger membership.
+- **Packages and classes.** The `.sty`/`.cls`/`.def`/`.clo` files next to
+  the entry, and every file under the manifest's `texinputs` directories,
+  show in the Project tree as greyed rows with the class/style icon and go
+  out with every compile on the direct route, so the engine can read a
+  project-local `\usepackage{mystyle}`. Click one to open it. *File ›
+  Create flashtex.toml…* writes the commented manifest template next to
+  the entry and opens it (coloured as plain text with comments). See
+  [the project manifest](project-manifest.md).
 - **Saving** (⌘S) is compare-and-replace: if the file changed on disk since
   it was read, you get *File › Resolve On-Disk Conflict…* with **Overwrite /
   Reload / Keep Editing** instead of a silent overwrite. FlashTeX also watches
@@ -186,8 +197,14 @@ without leaving the app, or open an existing `.tex` file.
   it touches; a caret or single-line selection: just inserts the indent
   unit) and **⇧Tab** always outdents the touched line(s), except while the
   completion list or a snippet's placeholders are active, when Tab/⇧Tab mean
-  those instead; Return keeps the indentation, indents inside a new
-  `\begin{env}` and adds `\end{env}`, and continues a list with a new `\item`;
+  those instead; Return keeps the indentation and, after `\begin{env}`,
+  follows the environment's rule (Settings › Environments): one indent
+  level deeper unless the rule says flat (`document` by default), the
+  body's line text (`\item ` in `itemize`/`enumerate`, `\item[] ` in
+  `description`, `\bibitem{} ` in `thebibliography`), then `\end{env}`;
+  Return on an entry line repeats that text (a bare `\item` line just
+  breaks). The `\begin{` completion skeletons, Wrap in Environment and
+  Re-indent follow the same rules;
   **⌘/** comments or uncomments the selected lines with `%`; the bracket or
   `$` pair around the caret is highlighted.
 - **Hover**: rest the pointer on a token for about half a second to see what
@@ -497,6 +514,7 @@ you trust.
 | Show completion list (off disables both automatic-while-typing and explicit ⌃Space / Esc completion) | on |
 | Vim keybindings (also View › Toggle Vim Keybindings, ⌃⌘V) | off |
 | Preview follows the caret while you edit | on |
+| Environments tab: indent inside environments the table does not name; per environment, whether the body is indented and what each new line starts with (add your own rows; *Conventional Rules* restores the shipped set) | everything indented except `document`; `\item ` in lists |
 | Capture conversion: provider (None / xAI), key in Keychain, model | xAI (no-op until a key is added) |
 | Check for updates automatically (once a day after launch; only speaks up when a newer release exists) | off |
 | Restore Defaults | |

@@ -650,6 +650,14 @@ final class ProjectDocuments {
             out.append(ImplicitDocument(path: path, text: text))
         }
         rearmImplicitWatchers(urls)
+        // The package inputs (ProjectManifest.swift): the root's own
+        // `.sty`/`.cls` files and the manifest's `texinputs`, after the
+        // closure, as the helper last read them — the compiler's
+        // `\usepackage` resolver finds `name.sty` here by path.
+        let listed = Set(out.map(\.path))
+        for input in model.manifest.packageInputs() where !open.contains(input.path) && !listed.contains(input.path) {
+            out.append(input)
+        }
         return out
     }
 

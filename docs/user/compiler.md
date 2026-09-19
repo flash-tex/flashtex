@@ -52,10 +52,12 @@ Any editor or CI can drive that same JSON Lines protocol directly — see
 ## Subcommands
 
 ```
-flashtex build <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
+flashtex build [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
                [--v2 out.json] [--timing] [--verbose] [--strict] [--json] [-j N]
-flashtex check <main.tex> [--json] [--strict] [--project-root DIR] [--font-dir DIR]...
-flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
+flashtex check [<main.tex>|<dir>] [--json] [--strict] [--project-root DIR] [--font-dir DIR]...
+flashtex watch [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
+flashtex manifest init [<main.tex>|<dir>] [--force]
+flashtex manifest show [<main.tex>|<dir>] [--json]
 flashtex supported [--json|--md|--coverage]
 flashtex worker [--font-dir DIR]... [--project-root DIR] [--v2 out.json] [--pdf out.pdf] [--timing]
 flashtex fonts [--font-dir DIR]... [--json]
@@ -65,8 +67,12 @@ flashtex --version | --help
 
 ### `build`
 
-Typesets a project and writes a PDF. The entry file's directory is the
-**project root** unless `--project-root` says otherwise; every `\input` and
+Typesets a project and writes a PDF. The entry is a `.tex` file, a
+directory, or nothing (the current directory): a directory needs a
+[`flashtex.toml`](project-manifest.md) naming `[project] entry`, or exactly
+one `.tex` file in it — two or none is a usage error, never a guess. The
+entry file's directory is the **project root** — the manifest's directory
+when there is one — unless `--project-root` says otherwise; every `\input` and
 `\include` is resolved from that root (project-relative, `.tex` appended when
 missing), read through a rooted directory handle so no include can reach
 outside the root through `..` or a symlink, and cycles and missing files are
@@ -82,8 +88,8 @@ output as *File › Export PDF* in the app. The file is written atomically
 
 | Flag | Meaning | Default |
 |---|---|---|
-| `-o`, `--output FILE` | The PDF to write | `<main>.pdf` next to the entry file |
-| `--project-root DIR` | Root that includes and images resolve under; the entry must be inside it | the entry file's directory |
+| `-o`, `--output FILE` | The PDF to write | `<main>.pdf` next to the entry file, or in the manifest's `[project] output` directory when set |
+| `--project-root DIR` | Root that includes and images resolve under; the entry must be inside it | the manifest's directory, else the entry file's |
 | `--font-dir DIR` | Extra font directory, probed first (repeatable) | — |
 | `--v2 FILE` | Also write the rendering-v2 `display_list` envelope (images included) — the input of `flashtex-pdf-exact from-v2` and of *File › Open Display List (v2)…* | off |
 | `--timing` | One line on stderr: `render N ms (P passes), pdf N ms, total N ms` | off |
@@ -108,6 +114,19 @@ picked up) every `--interval` milliseconds (default 250, minimum 20) and
 rebuilds when a size or modification time changes, printing which files
 changed, the rebuild number and the timing line each time. Ctrl-C stops it;
 because outputs are written atomically nothing is left half-written.
+
+### `manifest`
+
+`flashtex manifest init [<main.tex>|<dir>] [--force]` writes the commented
+[`flashtex.toml`](project-manifest.md) template next to the entry (naming
+the actual entry: the file given, or the directory's only `.tex`), refusing
+to overwrite an existing one unless `--force`. `flashtex manifest show
+[<main.tex>|<dir>] [--json]` prints the manifest that governs the entry —
+the defaults when there is none — with each `texinputs` entry classified
+(`inside` the root, `outside` and mounted at `texinputs/<i>/`, or
+`invalid` with the reason) and every warning; `--json` is the
+`flashtex-manifest/1` document (`entry`, `path`, `exists`, `manifest`,
+`texinputs`, `warnings`).
 
 ### `supported`
 
@@ -217,7 +236,11 @@ paper/
 `flashtex build paper/main.tex` uses `paper/` as the root, sends `main.tex`
 plus both sections to the engine (entry first, depth-first order — the
 `documents` list of the report and of the `--v2` envelope), and attributes
-each diagnostic to the file it came from. `--project-root` may be a parent
+each diagnostic to the file it came from. A [`flashtex.toml`](project-manifest.md)
+in `paper/` can name the entry (so `flashtex build paper` works) and add
+`texinputs` directories whose `.sty`/`.cls`/`.tex`/`.bib`/`.def`/`.clo`
+files follow the closure in the `documents` list; without one, nothing
+changes. `--project-root` may be a parent
 directory when the entry lives in a subfolder (`flashtex build
 --project-root . paper/main.tex`); a path that escapes the root, a cycle or a
 missing file is an error diagnostic (`path_escapes_root`, `include_cycle`,

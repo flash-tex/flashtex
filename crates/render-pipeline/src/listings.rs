@@ -98,7 +98,7 @@
 use flashtex_compiler::text_builtins::{DimenUnit, PhysicalUnit, TextDimen};
 use flashtex_compiler::{DocumentId, Span};
 
-use crate::adapter::{Block, CharSrc, Item, Labels, ParaPart, ParaStyle, Segment, SizedPara, TextStyle, Word};
+use crate::adapter::{Block, CharSrc, Item, Labels, ListingMark, ParaPart, ParaStyle, Segment, SizedPara, TextStyle, Word};
 use crate::nfss::FamilyKind;
 use crate::style::{Skip, Stylesheet};
 
@@ -109,8 +109,9 @@ const FRAMERULE_PT: f64 = 0.4;
 /// `\lst@Key{framesep}{3pt}` (lstmisc.sty 1371).
 const FRAMESEP_PT: f64 = 3.0;
 /// `\lst@Key{basewidth}{0.6em,0.45em}` (listings.sty 533); the first value
-/// is the fixed-column one.
+/// is the fixed-column one, the second the flexible one.
 const BASEWIDTH_EM: f64 = 0.6;
+const BASEWIDTH_FLEXIBLE_EM: f64 = 0.45;
 /// `\lst@Key{abovecaptionskip}`/`{belowcaptionskip}`: `\smallskipamount`.
 const CAPTIONSKIP: Skip = Skip { natural: 3.0, stretch: 1.0, shrink: 1.0 };
 /// `\lst@Key{aboveskip}\medskipamount` / `{belowskip}\medskipamount`
@@ -246,6 +247,9 @@ pub struct Keys {
     pub framerule_pt: f64,
     pub framesep_pt: f64,
     pub basewidth_em: f64,
+    /// `basewidth`'s second value: the column width under `flexiblecolumns`
+    /// (every `\lstinline`), the unit of `\lst@lostspace`.
+    pub basewidth_flexible_em: f64,
     pub xleftmargin_pt: f64,
     pub xrightmargin_pt: f64,
     pub aboveskip: Skip,
@@ -281,6 +285,7 @@ impl Default for Keys {
             framerule_pt: FRAMERULE_PT,
             framesep_pt: FRAMESEP_PT,
             basewidth_em: BASEWIDTH_EM,
+            basewidth_flexible_em: BASEWIDTH_FLEXIBLE_EM,
             xleftmargin_pt: 0.0,
             xrightmargin_pt: 0.0,
             aboveskip: MEDSKIP,
@@ -379,13 +384,22 @@ impl Keys {
             "breaklines" => self.breaklines = flag(value),
             "breakatwhitespace" => self.breakatwhitespace = flag(value),
             "tabsize" => self.tabsize = v.trim().parse().unwrap_or(8),
-            // `basewidth={0.6em,0.45em}`: the first value is the fixed one.
+            // `basewidth={0.6em,0.45em}`: the fixed value, then the flexible
+            // one, which is the fixed one again when only one is given
+            // (listings.sty 535-536).
             "basewidth" => {
-                let fixed = v.split(',').next().unwrap_or(v);
-                if let Some(em) = dimen_em(fixed) {
-                    self.basewidth_em = em;
-                } else {
-                    self.note_unmodelled("basewidth");
+                let mut values = v.split(',');
+                let fixed = values.next().unwrap_or(v);
+                match (dimen_em(fixed), values.next().map(dimen_em)) {
+                    (Some(em), None) => {
+                        self.basewidth_em = em;
+                        self.basewidth_flexible_em = em;
+                    }
+                    (Some(em), Some(Some(flexible))) => {
+                        self.basewidth_em = em;
+                        self.basewidth_flexible_em = flexible;
+                    }
+                    _ => self.note_unmodelled("basewidth"),
                 }
             }
             // Recognised, deliberately not applied: this module sets
@@ -582,32 +596,62 @@ fn lstset_ranges(texts: &[&str]) -> Vec<(usize, usize, usize)> {
     out
 }
 
-/// listings' `breaklines` inside a `\lstinline` (lstmisc.sty 1316-1338,
-/// listings.sty 787-791, 830-865): the package outputs the argument token
-/// by token — a run of letters (digits join whichever run is open, `_`,
-/// `@` and `$` are letters), a run of other characters, or one blank — each
-/// as an `\hbox` (`\lst@OutputToken`) followed by `\lst@discretionary`, an
+/// How listings sets the argument of a `\lstinline` (listings.sty 555-570,
+/// 572-586, 787-791, 830-865; lstmisc.sty 1316-1338): token by token — a
+/// run of letters (digits join whichever run is open, `_`, `@` and `$` are
+/// letters), a run of other characters, or one blank — each as an `\hbox`
+/// (`\lst@OutputToken`). A blank is `\hbox{\ }`: a box, so it is neither
+/// stretched nor discarded at a line break, which is why pdflatex's next
+/// line can open with one (`listings-manual` page 2: `--set` ends the line,
+/// ` watch.debounce_ms=50` starts the next, 5.25 pt in).
+///
+/// Columns. `\lstinline` forces `flexiblecolumns`, under which every token
+/// keeps its natural width but the package still books each character at
+/// `\lst@width` — `basewidth`'s second value, 0.45 em of the `basicstyle`
+/// face — in `\lst@lostspace` (`\lst@CalcLostSpaceAndOutput`: `+=
+/// length*width - wd`), a dimen that goes negative under a typewriter face
+/// (0.525 em per character) and positive under a proportional one. When
+/// it is positive after a token, the default `[c]` position pads the
+/// token's box by it, half on each side (`\lst@InsertHalfLostSpace`,
+/// `\lst@InsertLostSpace`), and it is 0 again. A blank at the start of the
+/// argument and every blank directly after another set no box at all: the
+/// package adds one `\lst@width` to the lost space instead
+/// (`\lst@AppendSpecialSpace`, `\lst@ifwhitespace`) and, before the next
+/// token, sets whatever is positive as a kern box (`\lst@UseLostSpace`)
+/// followed by an empty `\discretionary` — with or without `breaklines`
+/// (`\lst@ifgobbledws` calls `\lst@@discretionary` itself). The
+/// bookkeeping needs the glyph widths, so the tokens are marked here
+/// ([`Item::Listing`]) and `typeset::hlist` keeps the dimen.
+///
+/// Breaks. With `breaklines`, `\lst@discretionary` follows every box: an
 /// empty `\discretionary{}{}{}`, so the paragraph may break after any token
-/// at `\exhyphenpenalty`. A blank is `\hbox{\ }`: a box, which is why it is
-/// not discarded at the break and pdflatex's next line opens with it
-/// (`listings-manual` page 2: `--set` ends the line, ` watch.debounce_ms=50`
-/// starts the next, 5.25 pt in). A blank at the start of the argument and
-/// every blank directly after another are gobbled (`\lst@ifwhitespace`;
-/// the lost space of `flexiblecolumns` is not modelled). With
-/// `breakatwhitespace` only a blank's discretionary is set.
+/// at `\exhyphenpenalty`; with `breakatwhitespace` only after a blank's.
+/// Without it the argument is one unbreakable run (the boxes still stand).
 ///
 /// pdflatex's list for `\lstinline|ftxc build --set watch.debounce_ms=50|`
 /// (`\showlists`, 11 pt, `basicstyle=\ttfamily\small`): `\hbox x20.99487`
 /// (`ftxc`), `\discretionary`, `\hbox x5.24872` (`\glue 5.24872`),
 /// `\discretionary`, `build`, …, `--` and `set` as two boxes, …, `watch`,
-/// `.`, `debounce_ms`, `=50`, each with its discretionary.
+/// `.`, `debounce_ms`, `=50`, each with its discretionary. And for
+/// `\lstinline| x1  y2 --3 |` (same preamble, word origins in bp from
+/// `pdftext.py`): `x1` 4.707 bp after the glue before the command (the
+/// leading blank's 0.45 em = 4.72498 pt kern), `y2` 18.827 bp after `x1`
+/// (10.49744 + 5.24872 + a 3.15376 pt kern: the doubled blank's 4.72498
+/// less the 1.57122 the two boxes before it ran over), `--3` 15.679 bp
+/// after `y2`, and the `,` after the trailing blank's box. Under
+/// `basicstyle=\small` (roman, `\lst@width` 4.49887 pt): `il il  fi(a) x`
+/// sets `il` 13.49661 pt apart (each 5.5542 padded to 8.99774 pt, the blank
+/// 3.33252 to 4.49887) and `fi` 17.99548 pt after the second `il` (its
+/// 8.99774, the blank's 4.49887, the doubled blank's 4.49887 pt kern), `(`
+/// 7.58365 pt after `fi`'s origin (8.99774 − 1.72177 + 0.30768 of `(`'s
+/// own padding).
 ///
 /// The compiler gives every character of the argument the command's span,
 /// so the words to re-cut are the ones whose characters lie in it; a word's
 /// segments outside the argument (`\lstinline|x|.`'s `.`) stay as they
 /// are, adjacent to the tokens. The blanks the adapter made rigid glue
 /// (`Item::Space { no_break }`) next to those words are the argument's.
-fn break_inline(items: &mut Vec<Item>, inline: &InlineListing) {
+fn set_inline(items: &mut Vec<Item>, inline: &InlineListing) {
     let inside = |c: &CharSrc| c.document.0 == inline.document && c.start >= inline.command.0 && c.start < inline.command.1;
     let is_inline_word = |item: &Item| matches!(item, Item::Word(w) if w.segments.iter().flat_map(|s| s.chars.iter()).any(inside));
     if !items.iter().any(is_inline_word) {
@@ -639,17 +683,32 @@ fn break_inline(items: &mut Vec<Item>, inline: &InlineListing) {
             member[i] = true;
         }
     }
+    // The `basicstyle` face every box of the argument is set in, from its
+    // first segment (`apply` sized it): `\lst@width` and the blanks' boxes
+    // are of that face too.
+    let Some(style) = items.iter().find_map(|item| match item {
+        Item::Word(w) => w.segments.iter().find(|s| s.chars.iter().any(inside)).map(|s| s.style),
+        _ => None,
+    }) else {
+        return;
+    };
+    let breaklines = inline.keys.breaklines;
     let after_whitespace_only = inline.keys.breakatwhitespace;
     let discretionary = Item::Penalty { value: EXHYPHENPENALTY, flagged: true };
     let old = std::mem::take(items);
     // `\lst@whitespacetrue` at `InitVarsBOL`: a leading blank is gobbled.
     let mut whitespace = true;
-    // The style of the last token, for a blank's box.
-    let mut blank_style: Option<TextStyle> = None;
+    // `\lst@ifgobbledws`: a gobbled blank's discretionary is pending.
+    let mut gobbled = false;
+    let mut begun = false;
     for (i, item) in old.into_iter().enumerate() {
         if !member[i] {
             items.push(item);
             continue;
+        }
+        if !begun {
+            items.push(Item::Listing(ListingMark::Begin { style, width_em: inline.keys.basewidth_flexible_em }));
+            begun = true;
         }
         match item {
             Item::Word(word) => {
@@ -669,10 +728,15 @@ fn break_inline(items: &mut Vec<Item>, inline: &InlineListing) {
                         flush_outside(&mut outside, items);
                         seen_inline = true;
                     }
-                    blank_style = Some(seg.style);
                     for (text, chars) in inline_tokens(&seg.text, &seg.chars) {
+                        let columns = text.chars().count() as u32;
+                        items.push(Item::Listing(ListingMark::LostSpace));
+                        if std::mem::take(&mut gobbled) {
+                            items.push(discretionary.clone());
+                        }
                         items.push(Item::Word(Word { segments: vec![Segment { text, chars, style: seg.style }] }));
-                        if !after_whitespace_only {
+                        items.push(Item::Listing(ListingMark::Columns { columns }));
+                        if breaklines && !after_whitespace_only {
                             items.push(discretionary.clone());
                         }
                         whitespace = false;
@@ -680,12 +744,18 @@ fn break_inline(items: &mut Vec<Item>, inline: &InlineListing) {
                 }
                 flush_outside(&mut outside, items);
             }
-            Item::Space { style, .. } => {
+            Item::Space { .. } => {
                 if whitespace {
+                    items.push(Item::Listing(ListingMark::GobbledBlank));
+                    gobbled = true;
                     continue;
                 }
-                items.push(Item::SpaceBox { style: blank_style.unwrap_or(style) });
-                items.push(discretionary.clone());
+                items.push(Item::Listing(ListingMark::LostSpace));
+                items.push(Item::SpaceBox { style });
+                items.push(Item::Listing(ListingMark::Columns { columns: 1 }));
+                if breaklines {
+                    items.push(discretionary.clone());
+                }
                 whitespace = true;
             }
             _ => {}
@@ -829,40 +899,66 @@ pub fn apply(
     let (found, inlines) = scan(texts);
     let numbers = numbers(&found, chapter_starts);
     // `\lstinline` is `\lst@Init` in text style: its characters are set in
-    // the `basicstyle` face too, which is why the reference's
-    // `\lstinline|ftxc build --watch|` is `SFTT1000` (10 pt) inside a
-    // 10.95 pt paragraph. The compiler already sets it literal and
-    // typewriter; only the size is the package's.
+    // the `basicstyle` face (the `Init` hook runs `\lst@basicstyle`,
+    // listings.sty 1385), which is why the reference's `\lstinline|ftxc
+    // build --watch|` is `SFTT1000` (10 pt) inside a 10.95 pt paragraph.
+    // Nothing else changes the font: a `basicstyle` naming no family keeps
+    // the one in force around the command (`\lstinline[basicstyle=\small]`
+    // in a roman paragraph sets `SFRM1000`), and the compiler's typewriter
+    // (it lowers the command to `\verb`) is only right when the keys ask
+    // for it. Tokens of a proportional face keep their ligatures and kerns
+    // (pdflatex: `fi` as `(ligature fi)`, `To` with `\kern-0.83313`); the
+    // typewriter faces have none, so `literal` is moot there and stays.
     for inline in &inlines {
-        let size_cpt = (size_of(style, inline.keys.basicstyle).0 * 100.0).round() as u16;
-        if inline.keys.basicstyle.size.is_none() {
-            continue;
-        }
+        let decl = inline.keys.basicstyle;
+        let size_cpt = decl.size.map(|_| (size_of(style, decl).0 * 100.0).round() as u16);
+        let inside = |c: &CharSrc| c.document.0 == inline.document && c.start >= inline.command.0 && c.start < inline.command.1;
         for block in blocks.iter_mut() {
             let Block::Paragraph { parts, .. } = block else { continue };
             for part in parts.iter_mut() {
                 let ParaPart::Lines(items) = part else { continue };
+                let is_inline = |item: &Item| matches!(item, Item::Word(w) if w.segments.iter().any(|s| s.chars.iter().any(inside)));
+                let Some(first) = items.iter().position(is_inline) else { continue };
+                // The family in force around the command: the nearest
+                // text before it (else after it), else the paragraph's.
+                let family = decl.family.unwrap_or_else(|| {
+                    let outside = |item: &Item| match item {
+                        Item::Word(w) => w.segments.iter().find(|s| !s.chars.iter().any(inside)).map(|s| s.style.family),
+                        _ => None,
+                    };
+                    items[..first].iter().rev().find_map(outside).or_else(|| items[first..].iter().find_map(outside)).unwrap_or_default()
+                });
                 for item in items.iter_mut() {
                     let Item::Word(word) = item else { continue };
                     for segment in &mut word.segments {
-                        if segment.chars.iter().any(|c| {
-                            c.document.0 == inline.document && c.start >= inline.command.0 && c.start < inline.command.1
-                        }) {
+                        if !segment.chars.iter().any(inside) {
+                            continue;
+                        }
+                        if let Some(size_cpt) = size_cpt {
                             segment.style.size_cpt = size_cpt;
+                        }
+                        segment.style.family = family;
+                        segment.style.literal = family == FamilyKind::Tt;
+                        if decl.bold {
+                            segment.style.bold = true;
+                        }
+                        if decl.italic {
+                            segment.style.italic = true;
                         }
                     }
                 }
             }
         }
     }
-    // `breaklines`: the inline's tokens become boxes with a break allowed
-    // after each (`break_inline`); this needs the size set above.
-    for inline in inlines.iter().filter(|i| i.keys.breaklines) {
+    // The argument becomes listings' boxes — one per token and blank, with
+    // the column bookkeeping and, under `breaklines`, a break allowed after
+    // each (`set_inline`); this needs the size set above.
+    for inline in &inlines {
         for block in blocks.iter_mut() {
             let Block::Paragraph { parts, .. } = block else { continue };
             for part in parts.iter_mut() {
                 if let ParaPart::Lines(items) = part {
-                    break_inline(items, inline);
+                    set_inline(items, inline);
                 }
             }
         }

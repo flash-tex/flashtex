@@ -206,6 +206,8 @@ pub fn report_json(project: &Project, outcome: &Outcome, outputs: &[(&str, &Path
     o.set("schema", json::str_("flashtex-check/1"));
     o.set("entry", json::str_(project.entry.clone()));
     o.set("project_root", json::str_(project.root.display().to_string()));
+    // The `flashtex.toml` that governed the build, `null` without one.
+    o.set("manifest", project.manifest.as_ref().map_or(Value::Null, |p| json::str_(p.display().to_string())));
     o.set("status", json::str_(outcome.status));
     o.set("pages", json::num(outcome.pages as f64));
     o.set("documents", Value::Arr(project.documents.iter().map(|d| json::str_(d.path.clone())).collect()));

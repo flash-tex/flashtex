@@ -487,6 +487,22 @@ impl ProjectRoot {
         }
     }
 
+    /// Names of the entries of the project directory `dir` (`None`: the
+    /// root itself), listed from its pinned descriptor reached by the same
+    /// symlink-refusing walk every read uses. A missing directory is
+    /// `Ok(None)`. The walk stops at the directory *containing* its
+    /// argument, so `dir` is walked as the parent of a placeholder leaf.
+    pub(crate) fn list_dir(
+        &self,
+        dir: Option<&ProjectPath>,
+    ) -> Result<Option<Vec<Vec<u8>>>, SaveError> {
+        let Some(dir) = dir else {
+            return Ok(Some(sys::list_dir(&self.dir)?));
+        };
+        let placeholder = dir.with_appended_leaf("x");
+        self.list_parent_of(&placeholder)
+    }
+
     /// Names of the entries of the project directory containing `child`,
     /// listed from its pinned descriptor. A missing directory is `Ok(None)`.
     pub(crate) fn list_parent_of(

@@ -22,3 +22,8 @@ flashtex-render-pipeline = { path = "../render-pipeline" }
 flashtex-pdf = { path = "../render-pipeline/vendor/pdf" }
 flashtex-project-files = { path = "../render-pipeline/vendor/project-files" }
 flashtex-compiler = { path = "../render-pipeline/vendor/compiler" }
+# The optional `flashtex.toml` (docs/user/project-manifest.md): entry,
+# texinputs, output. Platform-free and network-free, so it links here like
+# the engine does; the reads it implies go through the vendored rooted
+# primitives above.
+flashtex-project-manifest = { path = "../project-manifest" }

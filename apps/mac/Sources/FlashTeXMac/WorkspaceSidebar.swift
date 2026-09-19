@@ -104,7 +104,7 @@ struct ToolWindowHeader<Trailing: View>: View {
 /// Open members (entry first) plus every `\input`/`\include` the entry
 /// references that is not open yet (bounded discovery, ProjectDocuments.swift),
 /// and creatable missing includes.
-private struct ProjectSection: View {
+struct ProjectSection: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {
@@ -114,6 +114,7 @@ private struct ProjectSection: View {
         let listing = model.chrome.listing
         let kinds = model.documentKinds
         let closure = model.chrome.closure
+        let packages = model.chrome.packageInputs
         VStack(spacing: 0) {
             ToolWindowHeader(title: "Project", icon: "folder") {
                 Text("\(listing.count)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
@@ -130,7 +131,7 @@ private struct ProjectSection: View {
                 .accessibilityLabel("New file")
                 .accessibilityIdentifier("project.newfile")
             }
-            SidebarTree(rows: Self.rows(listing: listing, kinds: kinds, closure: closure, activePath: model.activePath),
+            SidebarTree(rows: Self.rows(listing: listing, kinds: kinds, closure: closure, packages: packages, activePath: model.activePath),
                         selectedID: model.activePath,
                         onSelect: { id in select(id, listing: listing, closure: closure) },
                         menuItems: { id in menu(for: id, listing: listing) },
@@ -161,10 +162,11 @@ private struct ProjectSection: View {
         return folder
     }
 
-    /// Row ids: open documents use their path; discovered/missing includes a
-    /// prefixed reference so they never collide with an open path.
-    static func rows(listing: [ProjectDocument], kinds: DocumentKinds,
-                     closure: ProjectDocuments.Closure, activePath: String) -> [SidebarTree.Row] {
+    /// Row ids: open documents use their path; discovered/missing includes
+    /// and package inputs a prefixed reference so they never collide with
+    /// an open path.
+    static func rows(listing: [ProjectDocument], kinds: DocumentKinds, closure: ProjectDocuments.Closure,
+                     packages: [ProjectManifest.Row] = [], activePath: String) -> [SidebarTree.Row] {
         var rows: [SidebarTree.Row] = listing.map { doc in
             let style = FileTypeStyle.of(path: doc.path, entry: doc.role == .entry,
                                          bibliography: kinds.kind(of: doc.path) == .bibliography)
@@ -189,6 +191,22 @@ private struct ProjectSection: View {
                 tooltip: "\\\(n.reference.kind.rawValue){\(n.reference.argument)} from \(n.from) — click to open",
                 accessibilityLabel: "\(name), not open, included from \(n.from); activate to open"))
         }
+        // Package inputs (ProjectManifest.swift) that are not open: the
+        // `.sty`/`.cls` files next to the entry and under the manifest's
+        // `texinputs`, with the class/style icon. One outside the root is
+        // shown where it comes from but cannot be opened as a member.
+        let openPaths = Set(listing.map(\.path))
+        for p in packages where !openPaths.contains(p.path) {
+            let style = FileTypeStyle.of(path: p.path)
+            rows.append(SidebarTree.Row(
+                id: "package:\(p.path)",
+                icon: style.systemImage,
+                iconColor: style.nsColor,
+                title: p.path,
+                dimmed: true,
+                tooltip: p.tooltip,
+                accessibilityLabel: p.spoken))
+        }
         for n in closure.nodes {
             guard case .unresolvable(let why) = n.state, why.hasPrefix("no such file") else { continue }
             let name = MissingIncludeFix.path(for: n.reference.argument) ?? n.reference.argument
@@ -209,6 +227,13 @@ private struct ProjectSection: View {
             let name = String(id.dropFirst("closed:".count))
             let from = closure.nodes.first { ($0.resolvedPath ?? $0.reference.argument) == name && $0.state == .available }?.from ?? model.chrome.entryPath
             Task { await model.openAndSwitch(name, role: .included(from: from)) { model.captureNote = $0 } }
+        } else if id.hasPrefix("package:") {
+            let path = String(id.dropFirst("package:".count))
+            if let row = model.manifest.rows.first(where: { $0.path == path }), let origin = row.origin {
+                model.captureNote = "\(path) is \(origin), outside the project root; it is compiled from there but cannot be opened as a project member"
+                return
+            }
+            Task { await model.openAndSwitch(path, role: .opened) { model.captureNote = $0 } }
         } else if id.hasPrefix("missing:") {
             let parts = id.dropFirst("missing:".count).split(separator: ":", maxSplits: 1).map(String.init)
             guard parts.count == 2 else { return }
@@ -256,6 +281,9 @@ private struct ProjectSection: View {
         var items: [SidebarTree.MenuItem] = [.init(title: "New File…", action: { model.scaffold.presentNewFile() })]
         let root = model.project.projectRoot
         if root != nil {
+            if !model.manifest.exists {
+                items.append(.init(title: "Create flashtex.toml…", action: { Task { await model.manifest.createManifestInteractive() } })) // ProjectManifest.swift
+            }
             items.append(.divider)
             items.append(.init(title: "Reveal Project in Finder", action: { RevealInFinder.revealRoot(root) }))
         }
