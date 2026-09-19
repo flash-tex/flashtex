@@ -350,6 +350,14 @@ const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("iftoggle", "{name}{true}{false}", "the etoolbox toggle conditional: the named toggle (\\newtoggle/\\providetoggle declare it false, \\toggletrue/\\togglefalse set it) selects one branch at expansion time"),
 ];
 
+/// Names of [`EXPANSION_COMMANDS`]: the expansion pass executes these, so the
+/// diagnostic vocabulary counts them as implemented (known) commands even
+/// though no parser dispatch arm names them. In particular they must not be
+/// re-added to `KNOWN_UNIMPLEMENTED_COMMANDS` (issue #715).
+pub(crate) fn expansion_command_names() -> impl Iterator<Item = &'static str> {
+    EXPANSION_COMMANDS.iter().map(|(name, ..)| *name)
+}
+
 /// (name, arguments, description) for every `parser::BUILT_INS` entry that
 /// renders, plus the lexer's `\\`.
 const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
