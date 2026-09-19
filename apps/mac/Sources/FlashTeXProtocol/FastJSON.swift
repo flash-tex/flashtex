@@ -119,7 +119,7 @@ public struct FastJSON {
     private mutating func parseCompileResult() throws -> RuntimeV1.CompileResult {
         var projectId: String?, revision: Int?, status: RuntimeV1.Status?
         var pages: [RuntimeV1.Page]?, diagnostics: [RuntimeV1.Diagnostic]?
-        var pdfPath: String?, layoutCapabilities: [String]?
+        var pdfPath: String?, layoutCapabilities: [String]?, metadata: RuntimeV1.Metadata?
         try parseObject { key, p in
             switch key {
             case "project_id": projectId = try p.parseString()
@@ -134,6 +134,10 @@ public struct FastJSON {
             case "layout_capabilities":
                 if p.peekNull() { try p.parseNull(); layoutCapabilities = nil }
                 else { layoutCapabilities = try p.parseArray { try $0.parseString() } }
+            case "metadata":
+                // Read, not skipped: the fast path is the app's real decode
+                // path, so dropping the section here would drop it everywhere.
+                if p.peekNull() { try p.parseNull() } else { metadata = try p.parseMetadata() }
             default: try p.skipValue(depth: 2)
             }
         }
@@ -144,7 +148,126 @@ public struct FastJSON {
         guard let diagnostics else { throw error("missing diagnostics") }
         if let caps = layoutCapabilities { try RuntimeV1.LayoutCapabilities.validate(caps) }
         return RuntimeV1.CompileResult(projectId: projectId, revision: revision, status: status, pages: pages,
-                                       diagnostics: diagnostics, pdfPath: pdfPath, layoutCapabilities: layoutCapabilities)
+                                       diagnostics: diagnostics, pdfPath: pdfPath, layoutCapabilities: layoutCapabilities,
+                                       metadata: metadata)
+    }
+
+    // MARK: metadata (`RuntimeV1.Metadata`, same values as its Codable path)
+
+    private mutating func parseMetadata() throws -> RuntimeV1.Metadata {
+        var packages: [RuntimeV1.PackageRecord] = []
+        try parseObject { key, p in
+            switch key {
+            case "packages":
+                if p.peekNull() { try p.parseNull() } else { packages = try p.parseArray { try $0.parsePackageRecord() } }
+            default: try p.skipValue(depth: 3) // unknown sections are ignored
+            }
+        }
+        return RuntimeV1.Metadata(packages: packages)
+    }
+
+    private mutating func parsePackageRecord() throws -> RuntimeV1.PackageRecord {
+        var path: String?, kind: RuntimeV1.PackageRecord.Kind?, provides: RuntimeV1.PackageRecord.Provides?
+        var loadedBy: RuntimeV1.Span?, options: [RuntimeV1.PackageRecord.DeclaredOption] = []
+        var definitions: [RuntimeV1.PackageRecord.Definition] = []
+        try parseObject { key, p in
+            switch key {
+            case "path": path = try p.parseString()
+            case "kind":
+                let s = try p.parseString()
+                guard let k = RuntimeV1.PackageRecord.Kind(rawValue: s) else { throw p.error("unknown package kind \(s)") }
+                kind = k
+            case "provides":
+                if p.peekNull() { try p.parseNull() } else { provides = try p.parseProvides() }
+            case "loaded_by": loadedBy = try p.parseSpan()
+            case "options_declared":
+                if p.peekNull() { try p.parseNull() } else { options = try p.parseArray { try $0.parseDeclaredOption() } }
+            case "definitions":
+                if p.peekNull() { try p.parseNull() } else { definitions = try p.parseArray { try $0.parsePackageDefinition() } }
+            default: try p.skipValue(depth: 5)
+            }
+        }
+        guard let path else { throw error("package missing path") }
+        guard let kind else { throw error("package missing kind") }
+        guard let loadedBy else { throw error("package missing loaded_by") }
+        return .init(path: path, kind: kind, provides: provides, loadedBy: loadedBy, optionsDeclared: options, definitions: definitions)
+    }
+
+    private mutating func parseProvides() throws -> RuntimeV1.PackageRecord.Provides {
+        var name: String?, date: String?, version: String?, description: String?, span: RuntimeV1.Span?
+        try parseObject { key, p in
+            switch key {
+            case "name": name = try p.parseString()
+            case "date": date = try p.parseOptionalString()
+            case "version": version = try p.parseOptionalString()
+            case "description": description = try p.parseOptionalString()
+            case "span": span = try p.parseSpan()
+            default: try p.skipValue(depth: 6)
+            }
+        }
+        guard let name else { throw error("provides missing name") }
+        guard let span else { throw error("provides missing span") }
+        return .init(name: name, date: date, version: version, description: description, span: span)
+    }
+
+    private mutating func parseDeclaredOption() throws -> RuntimeV1.PackageRecord.DeclaredOption {
+        var name: String?, span: RuntimeV1.Span?
+        try parseObject { key, p in
+            switch key {
+            case "name": name = try p.parseString()
+            case "span": span = try p.parseSpan()
+            default: try p.skipValue(depth: 7)
+            }
+        }
+        guard let name else { throw error("option missing name") }
+        guard let span else { throw error("option missing span") }
+        return .init(name: name, span: span)
+    }
+
+    private mutating func parsePackageDefinition() throws -> RuntimeV1.PackageRecord.Definition {
+        var name: String?, kind: String?, definer: String?, arity: Int?, optionalDefault: String?
+        var signature: String?, span: RuntimeV1.Span?, overrides: Bool?, title: String?, within: String?
+        try parseObject { key, p in
+            switch key {
+            case "name": name = try p.parseString()
+            case "kind": kind = try p.parseString()
+            case "definer": definer = try p.parseString()
+            case "arity": arity = try p.parseInt()
+            case "optional_default": optionalDefault = try p.parseOptionalString()
+            case "signature": signature = try p.parseString()
+            case "span": span = try p.parseSpan()
+            case "overrides": overrides = try p.parseBool()
+            case "title": title = try p.parseOptionalString()
+            case "within": within = try p.parseOptionalString()
+            default: try p.skipValue(depth: 7)
+            }
+        }
+        guard let name else { throw error("definition missing name") }
+        guard let kind else { throw error("definition missing kind") }
+        guard let definer else { throw error("definition missing definer") }
+        guard let arity else { throw error("definition missing arity") }
+        guard let signature else { throw error("definition missing signature") }
+        guard let span else { throw error("definition missing span") }
+        guard let overrides else { throw error("definition missing overrides") }
+        return .init(name: name, kind: kind, definer: definer, arity: arity, optionalDefault: optionalDefault,
+                     signature: signature, span: span, overrides: overrides, title: title, within: within)
+    }
+
+    /// `{path, start, end}` -- a metadata span (`RuntimeV1.Span`).
+    private mutating func parseSpan() throws -> RuntimeV1.Span {
+        var path: String?, start: Int?, end: Int?
+        try parseObject { key, p in
+            switch key {
+            case "path": path = try p.parseString()
+            case "start": start = try p.parseInt()
+            case "end": end = try p.parseInt()
+            default: try p.skipValue(depth: 8)
+            }
+        }
+        guard let path else { throw error("span missing path") }
+        guard let start else { throw error("span missing start") }
+        guard let end else { throw error("span missing end") }
+        return RuntimeV1.Span(path: path, start: start, end: end)
     }
 
     private mutating func parsePage() throws -> RuntimeV1.Page {

@@ -918,7 +918,7 @@ enum Completion {
         // files' ("declared in mystyle.sty", with the shape).
         var rows: [(name: String, where_: String, snippet: Snippet?)] = declaredHere.map { ($0.name, "declared in this document", $0.snippet) }
         rows += declaredElsewhere.map { ($0, "declared in an open document", nil) }
-        rows += packageDeclarations.filter { $0.declaration.kind == .command }.map { ($0.declaration.name, "declared in \($0.file)", $0.declaration.snippet) }
+        rows += packageDeclarations.filter { $0.declaration.kind == .command }.map { ($0.declaration.name, $0.detail, $0.declaration.snippet) }
         for row in rows where row.name.hasPrefix(prefix) && offered.insert(row.name).inserted {
             let name = row.name
             // Once the index has answered for this revision its line is the
@@ -1082,7 +1082,7 @@ enum Completion {
         let declared = declaredEnvironments(in: text)
         // The project's package and class files' `\newenvironment`/`\newtheorem`s
         // ("declared in mystyle.sty"), after the buffer's own.
-        let fromPackages = Dictionary(packageEnvironments.map { ($0.declaration.name, $0.file) }, uniquingKeysWith: { a, _ in a })
+        let fromPackages = Dictionary(packageEnvironments.map { ($0.declaration.name, $0.detail) }, uniquingKeysWith: { a, _ in a })
         let known = knownEnvironments.filter { $0 == prefix || Vocabulary.environmentOffered($0, inClass: documentClass) }
         let offered = Set(known + declared + fromPackages.keys)
         // Recently accepted names first (the environments this author keeps
@@ -1101,7 +1101,7 @@ enum Completion {
         for name in fuzzyFilter(names, prefix: prefix, key: { $0 }) where seen.insert(name).inserted {
             var detail = knownEnvironments.contains(name) ? "supported by this compiler"
                 : declared.contains(name) ? "declared in this document"
-                : fromPackages[name].map { "declared in \($0)" } ?? "seen in this document"
+                : fromPackages[name] ?? "seen in this document"
             if let message = metadata?.diagnosticsByEnvironment[name] { detail += " — " + message }
             let snippet = closing ? nil : environmentSnippet(name, indent: indent, unit: indentUnit, rules: rules)
             out.append(Suggestion(label: name, insertText: name + "}", kind: .environment, detail: detail, snippet: snippet))
@@ -1605,26 +1605,71 @@ enum Completion {
     }
 
     /// One declaration of a package or class file, with the file it came
-    /// from (`ProjectManifest.packageDisplayName`: `mystyle.sty`).
+    /// from (`ProjectManifest.packageDisplayName`: `mystyle.sty`) and, when
+    /// the engine reported the file's `\ProvidesPackage`, its description.
     struct PackageDeclaration: Equatable {
         var declaration: Declaration
         var file: String
         var path: String
+        var description: String? = nil
+
+        /// The completion row's detail: `declared in mystyle.sty — my macros`.
+        var detail: String { "declared in \(file)" + (description.map { " — \($0)" } ?? "") }
     }
 
-    /// Every declaration of every package document, in document then source
-    /// order, one per (kind, name) across them all (the first file wins, as
-    /// LaTeX's first definition does for `\newcommand`).
-    static func packageDeclarations(in documents: [SourceDocument]) -> [PackageDeclaration] {
+    /// Every declaration of every package document, one per (kind, name)
+    /// across them all (the first file wins, as LaTeX's first definition
+    /// does for `\newcommand`).
+    ///
+    /// With `records` -- the compile result's `metadata.packages`
+    /// (`Metadata.packages`) -- the rows are the engine's own definitions,
+    /// in loading then definition order: a `macro`, `conditional`,
+    /// `math_operator`, `length` or `register` is a command, an
+    /// `environment` or `theorem` an environment (a `counter` names no
+    /// control sequence and is skipped); the argument shape is the engine's
+    /// `arity`, less the optional first parameter when the definer declared
+    /// one; `definer` is as given. Without records (a bare text view, an
+    /// older producer, no result yet) the documents are scanned lexically
+    /// (`declarations`), in document then source order.
+    static func packageDeclarations(in documents: [SourceDocument], records: [RuntimeV1.PackageRecord]? = nil) -> [PackageDeclaration] {
         var seen = Set<String>()
         var out: [PackageDeclaration] = []
-        for doc in documents {
-            let file = ProjectManifest.packageDisplayName(doc.path)
-            for d in declarations(in: doc.text) where seen.insert((d.kind == .command ? "c:" : "e:") + d.name).inserted {
-                out.append(PackageDeclaration(declaration: d, file: file, path: doc.path))
+        func add(_ d: Declaration, file: String, path: String, description: String?) {
+            if seen.insert((d.kind == .command ? "c:" : "e:") + d.name).inserted {
+                out.append(PackageDeclaration(declaration: d, file: file, path: path, description: description))
             }
         }
+        if let records {
+            for record in records {
+                let file = ProjectManifest.packageDisplayName(record.path)
+                for d in record.definitions {
+                    guard let declaration = declaration(of: d) else { continue }
+                    add(declaration, file: file, path: record.path, description: record.provides?.description)
+                }
+            }
+            return out
+        }
+        for doc in documents {
+            let file = ProjectManifest.packageDisplayName(doc.path)
+            for d in declarations(in: doc.text) { add(d, file: file, path: doc.path, description: nil) }
+        }
         return out
+    }
+
+    /// The engine's definition as a `Declaration`, or nil for a kind that
+    /// names no command or environment (`counter`) or an unknown one.
+    static func declaration(of d: RuntimeV1.PackageRecord.Definition) -> Declaration? {
+        let kind: Declaration.Kind
+        switch d.kind {
+        case "macro", "conditional", "math_operator", "length", "register": kind = .command
+        case "environment", "theorem": kind = .environment
+        default: return nil
+        }
+        // A LaTeX definer's `[default]`, or an xparse specification whose
+        // first argument is optional (`o m`, `O{x} m`): the first parameter
+        // is the optional one, not counted as mandatory.
+        let optional = d.optionalDefault != nil || d.signature.first.map { $0 == "o" || $0 == "O" } == true
+        return Declaration(name: d.name, kind: kind, mandatory: max(0, d.arity - (optional ? 1 : 0)), optional: optional, definer: d.definer)
     }
 
     /// Whether a control word is one of `EditorNavigation.commandDefiners`,
@@ -1880,6 +1925,12 @@ enum Completion {
         var diagnosticsByEnvironment: [String: String] = [:]
         /// Keys from `undefined reference 'key'` diagnostics.
         var unresolvedReferences: Set<String> = []
+        /// The result's `metadata.packages`: what each project `.sty`/`.cls`
+        /// defined, with the engine's spans (`RuntimeV1.PackageRecord`).
+        /// Empty when the producer sent none (no package files, an older
+        /// producer): `packageDeclarations(in:records:)` then scans the
+        /// package texts instead.
+        var packages: [RuntimeV1.PackageRecord] = []
         /// Some cap in `Limits` dropped data.
         var truncated = false
         /// Document kinds exactly as the helper's `snapshot` reported them
@@ -1911,10 +1962,11 @@ enum Completion {
             return self
         }
 
-        /// Vocabulary from the compiler's own result: only the revision and its
-        /// diagnostics carry completion information in runtime-v1.
+        /// Vocabulary from the compiler's own result: the revision, its
+        /// diagnostics and its `metadata.packages`.
         static func from(_ result: RuntimeV1.CompileResult) -> Metadata {
             var m = Metadata(origin: .compileResult(projectId: result.projectId), revision: result.revision)
+            m.packages = result.metadata?.packages ?? []
             var used = 0
             for d in result.diagnostics {
                 guard used < Limits.maxDiagnostics else { m.truncated = true; break }
@@ -2005,6 +2057,7 @@ enum Completion {
             m.diagnosticsByCommand.merge(other.diagnosticsByCommand) { mine, _ in mine }
             m.diagnosticsByEnvironment.merge(other.diagnosticsByEnvironment) { mine, _ in mine }
             m.unresolvedReferences.formUnion(other.unresolvedReferences)
+            if m.packages.isEmpty { m.packages = other.packages } // only the compile result carries them
             m.truncated = truncated || other.truncated
             switch (documentKinds, other.documentKinds) {
             case (nil, let k?): m.documentKinds = k
@@ -2341,6 +2394,12 @@ final class CompletionScheduler {
         /// job, and only when the caret is on a command or an environment
         /// name).
         var packageDocuments: [Completion.SourceDocument] = []
+        /// The last compile result's `metadata.packages`
+        /// (`CompletingTextView.compileResult`): when present, the rows come
+        /// from the engine's own definitions and `packageDocuments` are not
+        /// scanned (`Completion.packageDeclarations(in:records:)`). Nil when
+        /// the result carried none.
+        var packageRecords: [RuntimeV1.PackageRecord]? = nil
     }
 
     struct Outcome: Equatable {
@@ -2426,9 +2485,9 @@ final class CompletionScheduler {
                     if let sources = request.bibliography { bibliographyEntries = BibScanner.entries(for: sources, cancelled: { job.isCancelled }) }
                 case .command?:
                     declaredElsewhere = request.otherDocuments.flatMap(Completion.declaredCommands)
-                    packageDeclarations = Completion.packageDeclarations(in: request.packageDocuments)
+                    packageDeclarations = Completion.packageDeclarations(in: request.packageDocuments, records: request.packageRecords)
                 case .word(_, _, _, .beginEnvironment)?, .word(_, _, _, .endEnvironment)?:
-                    packageDeclarations = Completion.packageDeclarations(in: request.packageDocuments)
+                    packageDeclarations = Completion.packageDeclarations(in: request.packageDocuments, records: request.packageRecords)
                 default: break
                 }
             }
@@ -3522,7 +3581,7 @@ final class CompletingTextView: NSTextView {
         lastCaret = caret
         let metadata = boundMetadata
         let packageContext = packageContextAtCaret(caret.location)
-        let request = CompletionScheduler.Request(text: string, caretUTF16: caret.location, metadata: metadata,
+        var request = CompletionScheduler.Request(text: string, caretUTF16: caret.location, metadata: metadata,
                                                   supported: supportedCommands, projectFiles: projectFiles,
                                                   graphicsRoot: graphicsRoot(), recentCommands: recentlyUsed.commands,
                                                   recentEnvironments: recentlyUsed.environments, otherDocuments: otherDocuments(),
@@ -3533,6 +3592,9 @@ final class CompletingTextView: NSTextView {
                                                   renderPipeline: renderPipeline(),
                                                   packageMode: packageContext.packageMode, atLetter: packageContext.atLetter,
                                                   projectPackageFiles: projectPackageFiles(), packageDocuments: packageDocuments())
+        // The engine's definitions when the last result carried them, whatever
+        // its revision: names and shapes do not move with document edits.
+        request.packageRecords = compileResult?.metadata?.packages
         scheduler.schedule(request) { [weak self] outcome in
             self?.present(outcome, metadataRevision: metadata?.revision)
         }

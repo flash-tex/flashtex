@@ -569,6 +569,125 @@ public enum RuntimeV1 {
         }
     }
 
+    /// `payload.metadata`: sections a client uses for editor intelligence,
+    /// not for drawing pages (`docs/contracts/runtime-v1.md` "Optional
+    /// `metadata` object"). Absent -- never null -- when no section has
+    /// anything to say; unknown sections are ignored. Every span in it is a
+    /// `Span` (`{path, start, end}`), UTF-8 byte offsets into the request's
+    /// revision like `SourceRange`, spelled `start`/`end` on the wire.
+    public struct Metadata: Codable, Equatable {
+        /// One entry per project `.sty`/`.cls` the expansion pass read, in
+        /// loading order. Empty only when the section was present but empty.
+        public var packages: [PackageRecord]
+
+        enum CodingKeys: String, CodingKey { case packages }
+        public init(packages: [PackageRecord]) { self.packages = packages }
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            packages = try c.decodeIfPresent([PackageRecord].self, forKey: .packages) ?? []
+        }
+    }
+
+    /// A `metadata` span: `{path, start, end}` -- the same UTF-8 byte
+    /// offsets as `SourceRange`, under the metadata section's key names.
+    public struct Span: Codable, Equatable {
+        public var path: String
+        public var start: Int
+        public var end: Int
+        public init(path: String, start: Int, end: Int) { self.path = path; self.start = start; self.end = end }
+        /// The same span as a `SourceRange`, for `String.nsRange(utf8Bytes:)`.
+        public var sourceRange: SourceRange { SourceRange(path: path, startByte: start, endByte: end) }
+    }
+
+    /// `metadata.packages[]`: what one project package or class file
+    /// defined while the compiler loaded it, with the engine's byte spans.
+    public struct PackageRecord: Codable, Equatable {
+        /// `package` (`.sty`) or `class` (`.cls`).
+        public enum Kind: String, Codable { case package, `class` }
+
+        /// `\ProvidesPackage{name}[date version description]`; the bracket
+        /// parts are nil when it does not follow that layout.
+        public struct Provides: Codable, Equatable {
+            public var name: String
+            public var date: String?
+            public var version: String?
+            public var description: String?
+            public var span: Span
+            public init(name: String, date: String? = nil, version: String? = nil, description: String? = nil, span: Span) {
+                self.name = name; self.date = date; self.version = version; self.description = description; self.span = span
+            }
+        }
+
+        /// One `\DeclareOption` (`*` for `\DeclareOption*`), with the span
+        /// of the whole declaration.
+        public struct DeclaredOption: Codable, Equatable {
+            public var name: String
+            public var span: Span
+            public init(name: String, span: Span) { self.name = name; self.span = span }
+        }
+
+        /// One definition the file made at its outermost level. `kind` is
+        /// `macro`, `environment`, `conditional`, `counter`, `length`,
+        /// `register`, `theorem` or `math_operator`; unknown values are kept
+        /// as they came (a newer engine's kinds are ignored, never fatal).
+        /// `definer` is the defining command without its backslash; `arity`
+        /// counts parameters; `optionalDefault` is the `[default]` of a LaTeX
+        /// definer's optional first parameter; `signature` is the parameter
+        /// shape as written (`[2][x]`, `#1\stop`, `O{x} m`); `span` is the
+        /// whole defining statement; `overrides` says the name had a meaning
+        /// before. A `theorem` adds `title` and `within`.
+        public struct Definition: Codable, Equatable {
+            public var name: String
+            public var kind: String
+            public var definer: String
+            public var arity: Int
+            public var optionalDefault: String?
+            public var signature: String
+            public var span: Span
+            public var overrides: Bool
+            public var title: String?
+            public var within: String?
+
+            enum CodingKeys: String, CodingKey {
+                case name, kind, definer, arity, optionalDefault = "optional_default", signature, span, overrides, title, within
+            }
+            public init(name: String, kind: String, definer: String, arity: Int, optionalDefault: String? = nil,
+                        signature: String, span: Span, overrides: Bool = false, title: String? = nil, within: String? = nil) {
+                self.name = name; self.kind = kind; self.definer = definer; self.arity = arity
+                self.optionalDefault = optionalDefault; self.signature = signature; self.span = span
+                self.overrides = overrides; self.title = title; self.within = within
+            }
+        }
+
+        public var path: String
+        public var kind: Kind
+        public var provides: Provides?
+        /// The `\usepackage`/`\RequirePackage`/`\documentclass`/`\LoadClass`
+        /// command that loaded the file (in the loading package's document
+        /// for a nested load).
+        public var loadedBy: Span
+        public var optionsDeclared: [DeclaredOption]
+        public var definitions: [Definition]
+
+        enum CodingKeys: String, CodingKey {
+            case path, kind, provides, loadedBy = "loaded_by", optionsDeclared = "options_declared", definitions
+        }
+        public init(path: String, kind: Kind, provides: Provides? = nil, loadedBy: Span,
+                    optionsDeclared: [DeclaredOption] = [], definitions: [Definition]) {
+            self.path = path; self.kind = kind; self.provides = provides; self.loadedBy = loadedBy
+            self.optionsDeclared = optionsDeclared; self.definitions = definitions
+        }
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            path = try c.decode(String.self, forKey: .path)
+            kind = try c.decode(Kind.self, forKey: .kind)
+            provides = try c.decodeIfPresent(Provides.self, forKey: .provides)
+            loadedBy = try c.decode(Span.self, forKey: .loadedBy)
+            optionsDeclared = try c.decodeIfPresent([DeclaredOption].self, forKey: .optionsDeclared) ?? []
+            definitions = try c.decodeIfPresent([Definition].self, forKey: .definitions) ?? []
+        }
+    }
+
     public struct CompileResult: Codable, Equatable {
         public var projectId: String
         public var revision: Int
@@ -579,16 +698,22 @@ public enum RuntimeV1 {
         /// Capabilities the producer accepted for this result (a subset of the
         /// request's `layout_capabilities`). Nil/omitted means none.
         public var layoutCapabilities: [String]?
+        /// Editor-intelligence sections (`metadata.packages`); nil when the
+        /// producer had nothing to say (a project without package files, an
+        /// older producer).
+        public var metadata: Metadata?
 
         enum CodingKeys: String, CodingKey {
             case projectId = "project_id", revision, status, pages, diagnostics
-            case pdfPath = "pdf_path", layoutCapabilities = "layout_capabilities"
+            case pdfPath = "pdf_path", layoutCapabilities = "layout_capabilities", metadata
         }
         public init(projectId: String, revision: Int, status: Status, pages: [Page],
-                    diagnostics: [Diagnostic], pdfPath: String?, layoutCapabilities: [String]? = nil) {
+                    diagnostics: [Diagnostic], pdfPath: String?, layoutCapabilities: [String]? = nil,
+                    metadata: Metadata? = nil) {
             self.projectId = projectId; self.revision = revision; self.status = status
             self.pages = pages; self.diagnostics = diagnostics; self.pdfPath = pdfPath
             self.layoutCapabilities = layoutCapabilities
+            self.metadata = metadata
         }
 
         public init(from decoder: Decoder) throws {
@@ -601,6 +726,7 @@ public enum RuntimeV1 {
             pdfPath = try c.decodeIfPresent(String.self, forKey: .pdfPath)
             layoutCapabilities = try c.decodeIfPresent([String].self, forKey: .layoutCapabilities)
             if let caps = layoutCapabilities { try LayoutCapabilities.validate(caps) }
+            metadata = try c.decodeIfPresent(Metadata.self, forKey: .metadata)
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -615,6 +741,7 @@ public enum RuntimeV1 {
                 try LayoutCapabilities.validate(caps)
                 try c.encode(caps, forKey: .layoutCapabilities)
             }
+            if let metadata { try c.encode(metadata, forKey: .metadata) } // absent, never null
         }
     }
 

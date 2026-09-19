@@ -9,11 +9,16 @@ import SwiftUI
 /// `texinputs/<i>/…` or `packages/<name>/…` path read-only with a banner
 /// saying where it comes from (`ProjectDocuments.openVirtual`).
 ///
-/// Everything here works from the package inputs' text, as the compiler's
-/// own `\usepackage` resolver reads them (ProjectManifest.packageInputs,
-/// ProjectPackagesState.documents): the compile result carries no
-/// definition spans for a package macro yet, so the definitions are found
-/// by the same lexical scan the open documents use (EditorNavigation).
+/// The compile result's `metadata.packages` (`RuntimeV1.PackageRecord`,
+/// `docs/contracts/runtime-v1.md`) is what a package defined as the engine
+/// loaded it, with the definition's byte span in the file: Go to Definition
+/// and the hover peek read it first (`packageDefinition`), completion rows
+/// come from it (`Completion.packageDeclarations(in:records:)`). The package
+/// inputs' text, as the compiler's own `\usepackage` resolver reads it
+/// (ProjectManifest.packageInputs, ProjectPackagesState.documents), remains
+/// the fallback: no result yet, an older producer, or a name the engine did
+/// not record is found by the same lexical scan the open documents use
+/// (EditorNavigation).
 extension ShellModel {
     /// One package input beyond the open members: its text and, when it
     /// has no file under the project root, where it really comes from.
@@ -62,13 +67,41 @@ extension ShellModel {
         var definition: EditorNavigation.Definition
     }
 
-    /// The first `\newcommand`/`\def`/… of `\name` (or `\newenvironment` of
-    /// `name`) in the package inputs, after `definition(ofCommand:)` found
-    /// none in the open documents.
+    /// The definition of `\name` (or of environment `name`) in the package
+    /// inputs, after `definition(ofCommand:)` found none in the open
+    /// documents: the engine's own (`enginePackageDefinition`), else the
+    /// first `\newcommand`/`\def`/… (`\newenvironment`/`\newtheorem`) the
+    /// lexical scan finds in the inputs' text.
     func packageDefinition(ofCommand name: String, environment: Bool = false) -> PackageDefinition? {
+        if let hit = enginePackageDefinition(ofCommand: name, environment: environment) { return hit }
         for input in packageInputs {
             if let d = EditorNavigation.definition(of: name, in: input.text as NSString, environment: environment) {
                 return PackageDefinition(input: input, definition: d)
+            }
+        }
+        return nil
+    }
+
+    /// `result.metadata.packages` lookup: the first definition of `name` of
+    /// the asked kind (`Completion.declaration(of:)`) in a file that is a
+    /// package input, its span -- UTF-8 bytes into the text the compiler
+    /// read -- converted to UTF-16 against the input's text. Nil when the
+    /// result carries no record for the name, or when the input's text has
+    /// changed since it was compiled (`compiledDocuments`): the engine's
+    /// offsets then no longer index the text, and the lexical scan takes
+    /// over. `via` is the engine's definer; the summary has no body (the
+    /// selection shows the whole statement).
+    private func enginePackageDefinition(ofCommand name: String, environment: Bool) -> PackageDefinition? {
+        guard let records = result?.metadata?.packages, !records.isEmpty else { return nil }
+        let inputs = packageInputs
+        for record in records {
+            guard let input = inputs.first(where: { $0.path == record.path }) else { continue }
+            if let compiled = compiledDocuments[record.path], compiled != input.text { continue }
+            for d in record.definitions where d.name == name {
+                guard let declaration = Completion.declaration(of: d), (declaration.kind == .environment) == environment else { continue }
+                guard let range = input.text.nsRange(utf8Bytes: d.span.sourceRange),
+                      let line = EditorDiagnostics.lineNumber(ofByte: d.span.start, in: input.text) else { continue }
+                return PackageDefinition(input: input, definition: EditorNavigation.Definition(name: name, via: d.definer, range: range, body: nil, line: line))
             }
         }
         return nil
