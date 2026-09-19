@@ -27,12 +27,23 @@
 //! - Fonts are content-addressed (`font_id` = SHA-256 of the program) and
 //!   the envelope carries no path, so the bytes are resolved by hashing
 //!   candidate files (`--font-dir`, `FLASHTEX_FONT_DIRS`, `FLASHTEX_LM_DIR`,
-//!   the TeX Live Latin Modern directories) whose size matches, then
+//!   the TeX Live Latin Modern directories, then the operating system's
+//!   font directories, the same list `flashtex-font-discovery` indexes for
+//!   `\setmainfont{Family}`) whose size matches, then
 //!   embedded through [`ExactFont::cid_from_opentype`] (CFF: GID-preserving
 //!   CID-keyed subset; TrueType: glyph order kept). `format` is accepted as
 //!   `opentype-cff` (the pipeline's documented deviation from the schema
 //!   token) or `static-truetype`; `core14-afm` has no bytes and is refused
 //!   when a run uses it.
+//! - A face inside a TrueType collection (`.ttc`/`.otc`: macOS's Helvetica,
+//!   Menlo, Kohinoor, …) is identified by the file plus `face_index`: the
+//!   producer publishes face 0 under SHA-256(bytes) and every other member
+//!   under SHA-256(bytes ‖ face_index), so two members of one file are two
+//!   fonts with distinct ids. The member's own table directory is parsed
+//!   ([`TrueTypeFont::load_face`]) and embedded like a single-face file of
+//!   the same flavour: `/FontFile2` for `glyf` members, `/FontFile3`
+//!   `/CIDFontType0C` for CFF members. Each embedded program is a standalone
+//!   font (the subset writes its own sfnt), never the collection.
 //! - `rule` items become `Op::rule`. Black is the
 //!   default fill, any other opaque sRGB colour is written as `rg` with each
 //!   component rounded to [`COLOR_DECIMAL_DIGITS`] (xcolor's precision:
@@ -139,6 +150,8 @@ pub struct FontNote {
     pub font_id: String,
     pub postscript_name: String,
     pub path: PathBuf,
+    /// The face within `path`: 0 unless `path` is a collection.
+    pub face_index: u32,
     pub hash_form: HashForm,
     pub glyphs: usize,
     pub outcome: SubsetOutcome,
@@ -667,15 +680,30 @@ struct FontEntry {
 /// How a font file matched the envelope's `sha256`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HashForm {
-    /// SHA-256 over the file bytes (rendering-core's validator, the contract).
+    /// SHA-256 over the file bytes (rendering-core's validator, the contract
+    /// for a single-face file and for face 0 of a collection).
     Bytes,
     /// SHA-256 over the file bytes followed by the big-endian `u32` face index
-    /// (font-engine's `content_sha256`, what `flashtex-render` emits today).
+    /// (font-engine's `content_sha256`). This is how `flashtex-render`
+    /// identifies a collection member other than face 0, so that the
+    /// members of one `.ttc` never share an id; for face 0 it is an older
+    /// producer form, still accepted and reported.
     BytesAndFaceIndex,
 }
 
-/// Finds a file with the given SHA-256 among the candidate directories,
-/// hashing only files whose size matches. Both hash forms are tried.
+/// How deep a font directory is walked below each listed root
+/// (`/usr/share/fonts/truetype/dejavu` is depth 2 under `/usr/share/fonts`;
+/// the same bound as `flashtex-font-discovery`).
+const MAX_DEPTH: usize = 6;
+/// Most font files whose size is compared per resolution, so a
+/// `FLASHTEX_FONT_DIRS` pointed at a home directory stays a bounded walk.
+const MAX_FILES: usize = 20_000;
+
+/// Finds a file with the given SHA-256 among the candidate directories
+/// (each walked to [`MAX_DEPTH`], files before subdirectories, both in
+/// sorted order), hashing only `.otf`/`.ttf`/`.ttc`/`.otc` files whose size
+/// matches. Both hash forms are tried; the first match wins, and since
+/// equal hashes mean equal bytes the choice cannot change the output.
 pub fn resolve_font(
     dirs: &[PathBuf],
     sha: &str,
@@ -683,26 +711,39 @@ pub fn resolve_font(
     face_index: u32,
 ) -> Option<(PathBuf, HashForm)> {
     let mut seen = BTreeSet::new();
-    for dir in dirs {
-        let Ok(entries) = std::fs::read_dir(dir) else {
+    let mut budget = MAX_FILES;
+    let mut stack: Vec<(PathBuf, usize)> = dirs.iter().rev().map(|d| (d.clone(), 0)).collect();
+    while let Some((dir, depth)) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
         let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
         paths.sort();
+        let mut subdirs = Vec::new();
         for p in paths {
             if !seen.insert(p.clone()) {
+                continue;
+            }
+            let Ok(meta) = std::fs::metadata(&p) else {
+                continue;
+            };
+            if meta.is_dir() {
+                if depth < MAX_DEPTH {
+                    subdirs.push(p);
+                }
                 continue;
             }
             let ext = p
                 .extension()
                 .and_then(|e| e.to_str())
                 .map(|e| e.to_ascii_lowercase());
-            if !matches!(ext.as_deref(), Some("otf" | "ttf")) {
+            if !matches!(ext.as_deref(), Some("otf" | "ttf" | "ttc" | "otc")) {
                 continue;
             }
-            let Ok(meta) = std::fs::metadata(&p) else {
-                continue;
-            };
+            if budget == 0 {
+                return None;
+            }
+            budget -= 1;
             if meta.len() != byte_length {
                 continue;
             }
@@ -716,12 +757,52 @@ pub fn resolve_font(
                 }
             }
         }
+        // Pushed in reverse so the sorted order is kept when popping.
+        stack.extend(subdirs.into_iter().rev().map(|d| (d, depth + 1)));
     }
     None
 }
 
-/// The font directories to probe: `options.font_dirs`, then the environment
-/// and the defaults.
+/// The operating system's font directories, where a `\setmainfont{Family}`
+/// face lives (`/System/Library/Fonts/Helvetica.ttc`): the list
+/// `flashtex-font-discovery::default_dirs` indexes, in its order (the
+/// user's own directory first, as the OS resolves it). This crate has no
+/// dependencies and no `cfg(target_os)`, so every platform's entries are
+/// listed and a directory that does not exist is simply skipped; the
+/// `$HOME`/`%WINDIR%`/`%LOCALAPPDATA%` entries need their variable set.
+pub fn system_font_dirs() -> Vec<PathBuf> {
+    let var = |k: &str| {
+        std::env::var_os(k)
+            .map(PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty())
+    };
+    let mut dirs = Vec::new();
+    if let Some(home) = var("HOME") {
+        dirs.push(home.join("Library/Fonts"));
+    }
+    dirs.push(PathBuf::from("/Library/Fonts"));
+    dirs.push(PathBuf::from("/System/Library/Fonts"));
+    dirs.push(PathBuf::from("/System/Library/Fonts/Supplemental"));
+    if let Some(home) = var("HOME") {
+        dirs.push(home.join(".fonts"));
+        dirs.push(home.join(".local/share/fonts"));
+    }
+    dirs.push(PathBuf::from("/usr/share/fonts"));
+    dirs.push(PathBuf::from("/usr/local/share/fonts"));
+    if let Some(windir) = var("WINDIR") {
+        dirs.push(windir.join("Fonts"));
+    }
+    if let Some(local) = var("LOCALAPPDATA") {
+        dirs.push(local.join("Microsoft/Windows/Fonts"));
+    }
+    dirs
+}
+
+/// The font directories to probe: `options.font_dirs`, then the environment,
+/// the Latin Modern defaults and the operating system's font directories
+/// ([`system_font_dirs`], last: a bundled or TeX Live copy of a font wins
+/// over an installed one with the same bytes, which changes only the
+/// reported path).
 pub fn font_dirs(options: &V2Options) -> Vec<PathBuf> {
     let mut dirs = options.font_dirs.clone();
     if let Ok(v) = std::env::var("FLASHTEX_FONT_DIRS") {
@@ -733,6 +814,7 @@ pub fn font_dirs(options: &V2Options) -> Vec<PathBuf> {
         dirs.push(PathBuf::from(v));
     }
     dirs.extend(DEFAULT_FONT_DIRS.iter().map(PathBuf::from));
+    dirs.extend(system_font_dirs());
     dirs
 }
 
@@ -1204,12 +1286,12 @@ pub fn from_v2_rooted(
             continue;
         };
         let entry = &fonts[font_id];
-        if entry.face_index != 0 {
-            return Err(format!(
-                "font {}: face_index {} is not 0 (collections are not supported)",
+        let face_index = u32::try_from(entry.face_index).map_err(|_| {
+            format!(
+                "font {}: face_index {} is not a u32",
                 entry.postscript_name, entry.face_index
-            ));
-        }
+            )
+        })?;
         if !matches!(entry.format.as_str(), "opentype-cff" | "static-truetype") {
             return Err(format!(
                 "font {}: format {:?} is not opentype-cff or static-truetype",
@@ -1222,33 +1304,43 @@ pub fn from_v2_rooted(
                 entry.postscript_name
             ));
         }
-        let (path, hash_form) = resolve_font(
-            &dirs,
-            &entry.sha256,
-            entry.byte_length,
-            entry.face_index as u32,
-        )
-        .ok_or_else(|| {
-            format!(
-                "font {} (sha256 {}, {} bytes) was not found in {} director{}: {}",
-                entry.postscript_name,
-                entry.sha256,
-                entry.byte_length,
-                dirs.len(),
-                if dirs.len() == 1 { "y" } else { "ies" },
-                dirs.iter()
-                    .map(|d| d.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        })?;
-        if hash_form == HashForm::BytesAndFaceIndex {
+        let (path, hash_form) = resolve_font(&dirs, &entry.sha256, entry.byte_length, face_index)
+            .ok_or_else(|| {
+                format!(
+                    "font {} (sha256 {}, {} bytes{}) was not found in {} director{}: {}",
+                    entry.postscript_name,
+                    entry.sha256,
+                    entry.byte_length,
+                    if face_index == 0 {
+                        String::new()
+                    } else {
+                        format!(", collection face {face_index}")
+                    },
+                    dirs.len(),
+                    if dirs.len() == 1 { "y" } else { "ies" },
+                    dirs.iter()
+                        .map(|d| d.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?;
+        // Face 0 is published under SHA-256(bytes); the bytes ‖ index form
+        // is the producer's identity for every other collection member and
+        // only a deviation for face 0.
+        if hash_form == HashForm::BytesAndFaceIndex && face_index == 0 {
             report.notes.push(format!(
                 "font {}: sha256 matched SHA-256(bytes || face_index), font-engine's content hash, not SHA-256(bytes) as rendering-core's validator requires (render-pipeline deviation)",
                 entry.postscript_name
             ));
         }
-        let font = TrueTypeFont::load(&path)?;
+        let font = TrueTypeFont::load_face(&path, face_index)?;
+        let where_ = |path: &Path| {
+            if font.num_faces == 1 {
+                path.display().to_string()
+            } else {
+                format!("{} face {face_index}", path.display())
+            }
+        };
         if u64::from(font.num_glyphs()) != entry.glyph_count
             || u64::from(font.units_per_em) != entry.units_per_em
         {
@@ -1257,7 +1349,7 @@ pub fn from_v2_rooted(
                 entry.postscript_name,
                 entry.glyph_count,
                 entry.units_per_em,
-                path.display(),
+                where_(&path),
                 font.num_glyphs(),
                 font.units_per_em
             ));
@@ -1268,8 +1360,10 @@ pub fn from_v2_rooted(
         };
         if entry.format != expected_format {
             return Err(format!(
-                "font {}: envelope format {:?} but the file has {expected_format} outlines",
-                entry.postscript_name, entry.format
+                "font {}: envelope format {:?} but {} has {expected_format} outlines",
+                entry.postscript_name,
+                entry.format,
+                where_(&path)
             ));
         }
         let mut to_unicode = u.to_unicode.clone();
@@ -1300,6 +1394,7 @@ pub fn from_v2_rooted(
             font_id: font_id.clone(),
             postscript_name: entry.postscript_name.clone(),
             path: path.clone(),
+            face_index,
             hash_form,
             glyphs: u.gids.len(),
             outcome,
