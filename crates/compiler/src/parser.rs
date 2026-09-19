@@ -1650,6 +1650,42 @@ pub(crate) fn style_declaration(name: &str) -> bool {
     )
 }
 
+/// The plain text of an `\item[<label>]` (GH-676): the label's words, with a
+/// space wherever the source had one, and any nested `$…$` flattened to its
+/// characters.
+///
+/// `ItemLabel::text` is what `\ref` to the item resolves to and what a
+/// consumer that has not yet learned to set `content` draws, so a formula has
+/// to contribute its symbols — `\item[$\alpha$]` used to yield the empty
+/// string, which is why the label vanished from the page entirely.
+/// `source` is the document text `content`'s spans point into, when
+/// available: [`crate::math::append_math_reference_text`] (the same
+/// exhaustive flattener `\eqref`'s tag text and `\tag`'s own label use)
+/// falls back to a composite atom's raw source text (fractions, radicals,
+/// matrices, ...) when it has no single rendered glyph, exactly like those
+/// callers, instead of the narrower flattening this used to do by hand
+/// (which silently dropped most math nuclei -- `\sqrt`, `\dfrac`, ... --
+/// leaving the label text empty).
+fn label_plain_text(content: &[Inline], source: Option<&str>) -> String {
+    let mut text = String::new();
+    for inline in content {
+        let (space_before, math) = match inline {
+            Inline::Text { space_before, .. } => (*space_before, None),
+            Inline::Math { list, space_before, .. } => (*space_before, Some(list)),
+            _ => continue,
+        };
+        if space_before && !text.is_empty() {
+            text.push(' ');
+        }
+        match (inline, math) {
+            (Inline::Text { text: word, .. }, _) => text.push_str(word),
+            (_, Some(list)) => crate::math::append_math_reference_text(&mut text, list, source),
+            _ => {}
+        }
+    }
+    text
+}
+
 /// The style after applying one style command or declaration to `style`.
 /// `body_size_pt` is the document's own body size (`class_size_pt`, i.e.
 /// the 10/11/12pt class table selector); only the relative `\larger` /
@@ -3794,7 +3830,7 @@ impl P<'_> {
             style: TextStyle::default(),
             space_before: true,
         }];
-        content.extend(self.inlines_from_tokens(tokens, TextStyle::default(), false));
+        content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
         blocks.push(Block::FigureCaption { content });
         self.finish_block_dependencies();
     }
@@ -3944,7 +3980,7 @@ impl P<'_> {
                     Some(TokenKind::Space)
                 );
                 let style = self.style;
-                para.extend(self.inlines_from_tokens(tokens, style, false));
+                para.extend(self.inlines_from_tokens(tokens, style));
                 if trailing_space {
                     para.push(Inline::Text {
                         text: " ".to_string(),
@@ -4693,7 +4729,7 @@ impl P<'_> {
             if !starred {
                 self.set_current_counter(name, Some(number.clone()));
             }
-            let content = self.inlines_from_tokens(tokens, TextStyle::BOLD, false);
+            let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
             if content.is_empty() {
                 // A missing/empty heading is already diagnosed where
                 // applicable and has nothing to position. Do not create an
@@ -4883,7 +4919,7 @@ impl P<'_> {
                             Some("typeset the caption text as an ordinary paragraph".into()),
                         ));
                         let style = self.style;
-                        para.extend(self.inlines_from_tokens(tokens, style, false));
+                        para.extend(self.inlines_from_tokens(tokens, style));
                     }
                     Some((kind, label)) => self.push_float_caption(kind, label, tokens, span, blocks, para),
                 }
@@ -4920,7 +4956,7 @@ impl P<'_> {
                         ));
                     }
                     let style = self.style;
-                    para.extend(self.inlines_from_tokens(tokens, style, false));
+                    para.extend(self.inlines_from_tokens(tokens, style));
                 }
             }
             _ => unreachable!("\\{name} is not in this command family"),
@@ -5057,7 +5093,7 @@ impl P<'_> {
             let (text_tokens, text_span) = self.required_group(name, span.merge(url_span));
             self.note_links_unclickable(span.merge(text_span));
             let style = self.style;
-            para.extend(self.inlines_from_tokens(text_tokens, style, false));
+            para.extend(self.inlines_from_tokens(text_tokens, style));
         }
             _ => unreachable!("\\{name} is not in this command family"),
         }
@@ -5148,7 +5184,7 @@ impl P<'_> {
             self.style = next;
         } else {
             let (tokens, _) = self.required_group(name, span);
-            para.extend(self.inlines_from_tokens(tokens, next, false));
+            para.extend(self.inlines_from_tokens(tokens, next));
         }
     }
 
@@ -5243,9 +5279,9 @@ impl P<'_> {
             let (post, _) = self.required_group(name, span);
             let (nobreak, last) = self.required_group(name, span);
             let style = self.style;
-            let pre = plain_inline_text(&self.inlines_from_tokens(pre, style, false));
-            let post = plain_inline_text(&self.inlines_from_tokens(post, style, false));
-            let nobreak = plain_inline_text(&self.inlines_from_tokens(nobreak, style, false));
+            let pre = plain_inline_text(&self.inlines_from_tokens(pre, style));
+            let post = plain_inline_text(&self.inlines_from_tokens(post, style));
+            let nobreak = plain_inline_text(&self.inlines_from_tokens(nobreak, style));
             para.push(Inline::Discretionary {
                 pre,
                 post,
@@ -7006,7 +7042,7 @@ impl P<'_> {
             let close = if depth == 0 { j - 1 } else { j };
             let argument = tokens[open + 1..close].to_vec();
             let before = std::mem::take(&mut segment);
-            out.extend(self.inlines_from_tokens(before, style, false));
+            out.extend(self.inlines_from_tokens(before, style));
             self.document_global_state = true;
             self.footnote_counter += 1;
             let number = match fnsymbol(self.footnote_counter) {
@@ -7033,7 +7069,7 @@ impl P<'_> {
             });
             i = j;
         }
-        out.extend(self.inlines_from_tokens(segment, style, false));
+        out.extend(self.inlines_from_tokens(segment, style));
         out
     }
 
@@ -7060,7 +7096,7 @@ impl P<'_> {
             self.footnote_counter = 0;
             self.set_current_counter("chapter", Some(number));
         }
-        let content = self.inlines_from_tokens(tokens, TextStyle::BOLD, false);
+        let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
         if content.is_empty() {
             self.current_dependencies.clear();
         } else {
@@ -7121,7 +7157,7 @@ impl P<'_> {
     /// empty, and the box then holds nothing for that line.
     fn letter_date_inlines(&mut self, span: Span) -> Vec<Inline> {
         match self.date.clone() {
-            Some((tokens, _)) => self.inlines_from_tokens(tokens, TextStyle::default(), false),
+            Some((tokens, _)) => self.inlines_from_tokens(tokens, TextStyle::default()),
             None => vec![Inline::Text {
                 text: self.today.latex_today(),
                 span,
@@ -7163,7 +7199,7 @@ impl P<'_> {
         let mut lines: Vec<Vec<Inline>> = Vec::new();
         let mut gaps: Vec<f64> = Vec::new();
         if let Some((address, _)) = self.letter.address.clone() {
-            let address = self.inlines_from_tokens(address, TextStyle::default(), false);
+            let address = self.inlines_from_tokens(address, TextStyle::default());
             let address = split_at_line_breaks(address);
             let last = address.len().saturating_sub(1);
             for (index, line) in address.into_iter().enumerate() {
@@ -7191,7 +7227,7 @@ impl P<'_> {
             .letter
             .recipient
             .clone()
-            .map(|(tokens, _)| self.inlines_from_tokens(tokens, TextStyle::default(), false))
+            .map(|(tokens, _)| self.inlines_from_tokens(tokens, TextStyle::default()))
             .unwrap_or_default();
         let recipient_span = self
             .letter
@@ -7213,7 +7249,7 @@ impl P<'_> {
 
         // 5. the salutation: an ordinary paragraph, so it justifies and
         // wraps like the body that follows it.
-        let content = self.inlines_from_tokens(tokens, TextStyle::default(), false);
+        let content = self.inlines_from_tokens(tokens, TextStyle::default());
         if !content.is_empty() {
             blocks.push(Block::Paragraph(content));
             self.finish_block_dependencies();
@@ -7236,7 +7272,7 @@ impl P<'_> {
         let (tokens, argument_span) = self.required_group("closing", span);
         let full = span.merge(argument_span);
         let parskip = letter_parskip_pt(self.class_size_pt);
-        let closing = self.inlines_from_tokens(tokens, TextStyle::default(), false);
+        let closing = self.inlines_from_tokens(tokens, TextStyle::default());
         let mut lines = split_at_line_breaks(closing);
         let mut gaps = vec![0.0; lines.len()];
         // `\ifx\@empty\fromsig \fromname \else \fromsig \fi`.
@@ -7246,7 +7282,7 @@ impl P<'_> {
             .clone()
             .or_else(|| self.letter.name.clone());
         if let Some((signature, _)) = signature {
-            let signature = self.inlines_from_tokens(signature, TextStyle::default(), false);
+            let signature = self.inlines_from_tokens(signature, TextStyle::default());
             let signature = split_at_line_breaks(signature);
             if let Some(last) = gaps.last_mut() {
                 *last = letter_signature_gap_pt(self.class_size_pt);
@@ -7308,7 +7344,7 @@ impl P<'_> {
             style: TextStyle::default(),
             space_before: false,
         }];
-        content.extend(self.inlines_from_tokens(tokens, TextStyle::default(), false));
+        content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
         blocks.push(Block::Paragraph(content));
         self.finish_block_dependencies();
     }
@@ -7554,11 +7590,7 @@ impl P<'_> {
             // the matching end, the one deliberate deviation.
             self.flush_paragraph(blocks, para);
             let (default_tokens, default_span) = self.required_group("list", span);
-            let default_label = inline_text(&self.inlines_from_tokens(
-                default_tokens,
-                self.style,
-                false,
-            ));
+            let default_label = inline_text(&self.inlines_from_tokens(default_tokens, self.style));
             let begin_span = span.merge(argument_span).merge(default_span);
             self.open_list(&environment, None, begin_span, blocks.len());
             if !default_label.is_empty() {
@@ -8380,7 +8412,7 @@ impl P<'_> {
                 }
                 let (tokens, title_span) = self.required_group("frame", open);
                 span = span.merge(title_span);
-                *slot = self.inlines_from_tokens(tokens, TextStyle::default(), false);
+                *slot = self.inlines_from_tokens(tokens, TextStyle::default());
             }
         }
         let [title, subtitle] = head;
@@ -8538,7 +8570,7 @@ impl P<'_> {
             None => self.take_beamer_overlay_spec().map_or_else(OverlaySpec::all, |(spec, _)| spec),
         };
         let style = self.style;
-        let content = self.inlines_from_tokens(tokens, style, false);
+        let content = self.inlines_from_tokens(tokens, style);
         para.push(Inline::OverlayBegin { spec, kind, span });
         para.extend(content);
         para.push(Inline::OverlayEnd { span });
@@ -8669,7 +8701,7 @@ impl P<'_> {
         let _ = self.optional_bracket_argument();
         let (tokens, _) = self.required_group(name, span);
         self.flush_paragraph(blocks, para);
-        let content = self.inlines_from_tokens(tokens, TextStyle::default(), false);
+        let content = self.inlines_from_tokens(tokens, TextStyle::default());
         self.current_dependencies.clear();
         let open = self
             .beamer_frame
@@ -8775,7 +8807,7 @@ impl P<'_> {
         let taken = [self.short_title.take(), self.short_author.take(), self.short_institute.take(), self.short_date.take()];
         let mut field = |tokens: Option<Vec<InputToken>>| -> Vec<Inline> {
             match tokens {
-                Some(tokens) => self.inlines_from_tokens(tokens, TextStyle::default(), false),
+                Some(tokens) => self.inlines_from_tokens(tokens, TextStyle::default()),
                 None => Vec::new(),
             }
         };
@@ -8802,7 +8834,7 @@ impl P<'_> {
         self.flush_paragraph(blocks, para);
         let field = |this: &mut Self, value: Option<(Vec<InputToken>, Span)>| -> Vec<Inline> {
             match value {
-                Some((tokens, _)) => this.inlines_from_tokens(tokens, TextStyle::default(), false),
+                Some((tokens, _)) => this.inlines_from_tokens(tokens, TextStyle::default()),
                 None => Vec::new(),
             }
         };
@@ -8815,7 +8847,7 @@ impl P<'_> {
             // `\and` in beamer's `\insertauthor` is `\quad`-separated on one
             // line; article's per-line stacking is kept here for now.
             for (i, group) in split_on_and(tokens).into_iter().enumerate() {
-                let inlines = self.inlines_from_tokens(group, TextStyle::default(), false);
+                let inlines = self.inlines_from_tokens(group, TextStyle::default());
                 if inlines.is_empty() {
                     continue;
                 }
@@ -8836,7 +8868,7 @@ impl P<'_> {
                 style: TextStyle::default(),
                 space_before: true,
             }],
-            Some((tokens, _)) => self.inlines_from_tokens(tokens, TextStyle::default(), false),
+            Some((tokens, _)) => self.inlines_from_tokens(tokens, TextStyle::default()),
         };
         blocks.push(Block::BeamerTitlePage {
             title,
@@ -8931,7 +8963,7 @@ impl P<'_> {
             } else {
                 let (tokens, _) = self.required_group(name, span);
                 let style = self.style;
-                let content = self.inlines_from_tokens(tokens, style, false);
+                let content = self.inlines_from_tokens(tokens, style);
                 para.push(Inline::OverlayBegin { spec, kind: crate::overlay::OverlayKind::Alert, span });
                 para.extend(content);
                 para.push(Inline::OverlayEnd { span });
@@ -8945,7 +8977,7 @@ impl P<'_> {
             self.style = next;
         } else {
             let (tokens, _) = self.required_group(name, span);
-            para.extend(self.inlines_from_tokens(tokens, next, false));
+            para.extend(self.inlines_from_tokens(tokens, next));
         }
     }
 
@@ -9387,7 +9419,7 @@ impl P<'_> {
                 {
                     self.i += 1;
                     let (tokens, argument_span) = self.required_group(command, token.span);
-                    let content = self.inlines_from_tokens(tokens, TextStyle::default(), true);
+                    let content = self.inlines_from_tokens_reporting(tokens, TextStyle::default(), false, true);
                     // `\ifvmode\else\\\@empty\fi`: a row holding material is
                     // ended first; right after `\\` the text joins the next row.
                     let blank = |t: &Token| {
@@ -10986,10 +11018,33 @@ impl P<'_> {
         }
     }
 
-    fn inlines_from_tokens(
+    fn inlines_from_tokens(&mut self, tokens: Vec<InputToken>, base: TextStyle) -> Vec<Inline> {
+        self.inlines_from_tokens_reporting(tokens, base, false, false)
+    }
+
+    /// The flattened-token text run behind headings, captions, style
+    /// arguments and `\item[<label>]`.
+    ///
+    /// `report_unsupported` is the `\item` label's mode (GH-676): every
+    /// token this pass cannot set becomes a diagnostic instead of vanishing,
+    /// because a label is short enough that a silent drop leaves nothing at
+    /// all on the page (`\item[$\alpha$]` used to produce no label run and no
+    /// diagnostic). Headings and captions keep the older lenient behaviour —
+    /// they carry `\label`, `\protect`, `\footnotemark` and friends that are
+    /// correctly ignored here, and reporting those would flood.
+    ///
+    /// `if_display_context` is `\intertext`/`\shortintertext`'s mode: it
+    /// reports amsmath's `\if@display` conditional (which stays true inside
+    /// the surrounding display's `\noalign`) to `flat_math`; every other
+    /// caller passes `false`.
+    ///
+    /// Nested math (`$…$`, `\(…\)`) is read in **both** modes: a math shift
+    /// is unambiguous wherever it appears, and stripping it was never right.
+    fn inlines_from_tokens_reporting(
         &mut self,
         mut tokens: Vec<InputToken>,
         base: TextStyle,
+        report_unsupported: bool,
         if_display_context: bool,
     ) -> Vec<Inline> {
         // `\xspace` from a macro body inside a heading, caption or style
@@ -11005,6 +11060,10 @@ impl P<'_> {
         }
         self.t = outer_tokens;
         self.i = outer_index;
+        // Held behind an `Rc` so the nested-math arm below can point
+        // `self.t` at this very run and reuse `dollar_math`/`paren_math`
+        // (and through them `math::parse_tokens`) without copying it.
+        let expanded = std::rc::Rc::new(expanded);
 
         let mut content = Vec::new();
         let mut style = base;
@@ -11354,7 +11413,17 @@ impl P<'_> {
                 // (`\[...\]`) inside a heading, caption, style argument or
                 // `\intertext`: without this the delimiters fell through to
                 // the catch-all below and the formula typeset as plain text.
-                TokenKind::MathShift | TokenKind::InlineMathOpen | TokenKind::DisplayMathOpen => {
+                // `!report_unsupported` keeps this out of an `\item` label's
+                // own way: that pass handles inline math itself (below, via
+                // `dollar_math`/`paren_math`) and rejects display math
+                // outright (further below), matching real pdflatex, which
+                // allows `\[..\]` in a heading (verified: `\section{Heading
+                // \[x\] end}` compiles clean) but not in an `\item` label's
+                // restricted horizontal mode ("Bad math environment
+                // delimiter").
+                TokenKind::MathShift | TokenKind::InlineMathOpen | TokenKind::DisplayMathOpen
+                    if !report_unsupported =>
+                {
                     skip_until = self.flat_math(
                         &expanded,
                         index,
@@ -11396,10 +11465,217 @@ impl P<'_> {
                     style,
                     space_before,
                 }),
+                // `$…$` and `\(…\)` are real inline math here, exactly as in
+                // body text: `\item[this is $2x$]`, `\section{A $2x$ B}`.
+                // Before GH-676 the delimiters were dropped and the formula
+                // was set as roman words ("this is2x"), or — when every piece
+                // was a math-only command, `\item[$\alpha$]` — nothing at all
+                // reached the page and no diagnostic said so.
+                //
+                // `dollar_math`/`paren_math` read from `self.t`/`self.i`, so
+                // point those at this run for the formula and restore them
+                // after. `self.style` carries the colour `finish_math` stamps
+                // on `Inline::Math`, so it follows the run's current style.
+                TokenKind::MathShift | TokenKind::InlineMathOpen => {
+                    let outer_tokens =
+                        std::mem::replace(&mut self.t, std::rc::Rc::clone(&expanded));
+                    let outer_index = std::mem::replace(&mut self.i, index);
+                    let outer_style = std::mem::replace(&mut self.style, style);
+                    if matches!(input.token.kind, TokenKind::MathShift) {
+                        self.dollar_math(input.token.span, &mut content);
+                    } else {
+                        self.paren_math(input.token.span, &mut content);
+                    }
+                    skip_until = self.i;
+                    self.t = outer_tokens;
+                    self.i = outer_index;
+                    self.style = outer_style;
+                }
+                // A stray closer or script marker: the same two diagnostics
+                // the main token loop raises for them in body text.
+                TokenKind::InlineMathClose if report_unsupported => {
+                    self.diags.push(Diagnostic::error(
+                        "stray \\) has no matching \\(",
+                        Some(input.token.span),
+                        Some("ignored the stray inline-math delimiter".into()),
+                    ));
+                }
+                // `\[`/`\]` (display math) inside a label: real pdflatex
+                // rejects it outright ("Bad math environment delimiter",
+                // `\[`'s own kernel definition tests `\ifmmode` and errors
+                // in restricted horizontal mode, which an `\item` label
+                // argument is). This pass has no display-math handling to
+                // fall back to, so match that rejection rather than
+                // silently accepting the delimiter and dropping it.
+                TokenKind::DisplayMathOpen | TokenKind::DisplayMathClose if report_unsupported => {
+                    self.diags.push(Diagnostic::error(
+                        "Bad math environment delimiter",
+                        Some(input.token.span),
+                        Some("display math is not allowed inside an \\item label".into()),
+                    ));
+                }
+                TokenKind::Superscript | TokenKind::Subscript if report_unsupported => {
+                    self.diags.push(
+                        Diagnostic::error(
+                            "math script marker used outside math mode",
+                            Some(input.token.span),
+                            Some("ignored the script marker and continued".into()),
+                        )
+                        .with_help("wrap the marked atom in math mode: \\(x^{...}\\)"),
+                    );
+                }
+                // `\label` inside a label registers exactly like it does in
+                // running text, so a later `\ref`/`\pageref` to it resolves
+                // instead of printing "??" -- redirect `self.t`/`self.i` the
+                // same way `dollar_math`/`paren_math` above do, so
+                // `label_or_reference_command`'s own `self.required_group`
+                // reads from this run.
+                TokenKind::Command(name) if report_unsupported && name == "label" => {
+                    let outer_tokens = std::mem::replace(&mut self.t, std::rc::Rc::clone(&expanded));
+                    let outer_index = std::mem::replace(&mut self.i, index + 1);
+                    self.label_or_reference_command(name, input.token.span, &mut content);
+                    skip_until = self.i;
+                    self.t = outer_tokens;
+                    self.i = outer_index;
+                }
+                // `\index`/`\glossary` set nothing visible in this compiler
+                // (no index/glossary back-end exists to register into), so a
+                // label swallows each with its argument -- the lenient
+                // heading pass does the same.
+                TokenKind::Command(name) if report_unsupported && matches!(name.as_str(), "index" | "glossary") => {
+                    match siunitx_group_at(&expanded, index + 1) {
+                        Some((_, _, after)) => skip_until = after,
+                        None => self.diags.push(Diagnostic::error(
+                            format!("\\{name} requires an argument"),
+                            Some(input.token.span),
+                            Some("rendered nothing for the command".into()),
+                        )),
+                    }
+                }
+                // `\protect` never reaches this pass from source (expansion
+                // strips it), but a macro body can still carry one: it marks
+                // the next command robust, sets nothing itself, and is
+                // ignored — again like the heading pass.
+                TokenKind::Command(name) if report_unsupported && name == "protect" => {}
+                // `\cite` in the kernel form sets the same run running text
+                // builds (`bib::cite_inlines`), including its
+                // undefined-citation warning — so `\item[\cite{k}]` reads
+                // exactly as `\cite{k}` does in a paragraph. natbib and
+                // biblatex redefine `\cite`, and this pass does not replay
+                // those styles; there the honest warning below applies.
+                TokenKind::Command(name) if report_unsupported && name == "cite" => {
+                    if self.biblatex.enabled() || self.bibliography.natbib().is_some() {
+                        self.not_set_in_label(name, input.token.span);
+                    } else {
+                        self.document_global_state = true;
+                        let mut next = index + 1;
+                        let mut span = input.token.span;
+                        let mut note = None;
+                        if let Some((raw, raw_span, after)) =
+                            siunitx_bracket_at(&expanded, next)
+                        {
+                            next = after;
+                            if raw_span.document == span.document {
+                                span = span.merge(raw_span);
+                            }
+                            note = Some(raw);
+                        }
+                        match siunitx_group_at(&expanded, next) {
+                            Some((raw, argument_span, after)) => {
+                                next = after;
+                                if argument_span.document == span.document {
+                                    span = span.merge(argument_span);
+                                }
+                                // `cite_keys` over the group's text, as the
+                                // main loop splits it (`\@for` parity).
+                                let keys: Vec<String> = raw
+                                    .split(',')
+                                    .map(str::trim)
+                                    .filter(|key| !key.is_empty())
+                                    .map(str::to_string)
+                                    .collect();
+                                if keys.is_empty() {
+                                    self.diags.push(Diagnostic::warning(
+                                        "\\cite was given an empty key list",
+                                        Some(span),
+                                        Some("rendered nothing for the empty citation".into()),
+                                    ));
+                                } else {
+                                    content.extend(bib::cite_inlines(
+                                        &keys,
+                                        note,
+                                        &self.bibliography,
+                                        span,
+                                        &mut self.diags,
+                                    ));
+                                }
+                            }
+                            None => self.diags.push(Diagnostic::error(
+                                "\\cite requires an argument",
+                                Some(input.token.span),
+                                Some("rendered nothing for the citation".into()),
+                            )),
+                        }
+                        skip_until = next;
+                    }
+                }
+                // Never drop a label's content in silence. A name the
+                // compiler does not know is reported as unsupported, as
+                // before; a real built-in this pass cannot set yet gets
+                // the honest warning instead — see `not_set_in_label`.
+                TokenKind::Command(name) if report_unsupported => {
+                    if BUILT_INS.contains(&name.as_str()) {
+                        self.not_set_in_label(name, input.token.span);
+                    } else {
+                        self.unsupported_in_text_run(name, input.token.span);
+                    }
+                }
                 _ => {}
             }
         }
         content
+    }
+
+    /// A command that a flattened text run (an `\item` label) cannot set.
+    /// `unsupported` cannot be reused: it consumes a following group from
+    /// `self.t`, and this pass has already flattened its tokens.
+    /// A genuine built-in this flattened pass cannot set yet
+    /// (`\footnote`, `\underline`, `\url`, ...): the compiler supports
+    /// the command — just not inside an `\item` label — so the diagnostic
+    /// says exactly that instead of claiming the command is unknown. The
+    /// command itself is skipped; a following braced group still typesets
+    /// as text, as in the unknown-command case, so nothing vanishes
+    /// without a diagnostic either way.
+    fn not_set_in_label(&mut self, name: &str, span: Span) {
+        if !self.first_command_report(span, name, false) {
+            return;
+        }
+        self.diags.push(
+            Diagnostic::warning(
+                format!("\\{name} inside an \\item label is not set yet"),
+                Some(span),
+                Some("skipped the command; the rest of the label was typeset".into()),
+            )
+            .with_optional_help(vocabulary::command_help(name))
+            .with_label(span, "this command", true),
+        );
+    }
+
+    fn unsupported_in_text_run(&mut self, name: &str, span: Span) {
+        debug_assert!(!BUILT_INS.contains(&name));
+        if !self.first_command_report(span, name, false) {
+            return;
+        }
+        self.diags.push(
+            Diagnostic::command_error(
+                name,
+                format!("\\{name} is not supported by this compiler version"),
+                Some(span),
+                Some("skipped the command; the rest of the label was typeset".into()),
+            )
+            .with_optional_help(vocabulary::command_help(name))
+            .with_label(span, "this command", true),
+        );
     }
 
     /// Inline or display math inside `inlines_from_tokens` (a heading, a
@@ -12811,8 +13087,13 @@ impl P<'_> {
             } else {
                 TextStyle::default()
             };
-            let content = self.inlines_from_tokens(tokens, base, false);
-            let text = inline_text(&content);
+            // The label's mode: nothing in `[...]` is dropped in silence
+            // (GH-676). A label is a handful of tokens, so the flood the
+            // lenient heading/caption mode avoids cannot happen here. Not
+            // an `\intertext` context, so `if_display_context` is false.
+            let content = self.inlines_from_tokens_reporting(tokens, base, true, false);
+            let source = self.documents.get(arg_span.document.0).map(|doc| doc.text);
+            let text = label_plain_text(&content, source);
             ItemLabel::Explicit {
                 content,
                 text,
