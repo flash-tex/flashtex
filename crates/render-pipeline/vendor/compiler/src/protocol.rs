@@ -820,7 +820,60 @@ fn compile(id: &str, payload: &Value) -> Value {
     );
     p.set("pdf_path", Value::Null);
     add_accepted_capabilities(&mut p, &capabilities);
+    if let Some(metadata) = metadata_json(&output.packages, &paths) {
+        p.set("metadata", metadata);
+    }
     result_envelope(id, p)
+}
+
+/// The optional `metadata` object of a `compile_result` payload: sections a
+/// client uses for editor intelligence rather than for drawing pages.
+/// Absent (never null) when no section has anything to say, so replies for
+/// a project without project package files are byte-identical to before
+/// the object existed; consumers must tolerate its absence and unknown
+/// sections. Every span is `{path, start, end}`: the project-relative path
+/// and zero-based, end-exclusive UTF-8 byte offsets, as `source` objects
+/// elsewhere in the payload (spelled `start`/`end` here).
+///
+/// `metadata.packages`: one entry per project `.sty`/`.cls` the expansion
+/// pass read, in loading order (`crate::package_definitions`):
+///
+/// ```json
+/// {"path": "mystyle.sty", "kind": "package" | "class",
+///  "provides": {"name", "date", "version", "description", "span"} | null,
+///  "loaded_by": {"path": "main.tex", "start": 24, "end": 35},
+///  "options_declared": [{"name": "draft" | "*", "span": {...}}],
+///  "definitions": [{"name": "emphx", "kind": "macro", "definer": "newcommand",
+///                   "arity": 1, "optional_default": null | "x", "signature": "[1]",
+///                   "span": {...}, "overrides": false,
+///                   "title": "Theorem", "within": "section" | null   // "theorem" only
+///                  }]}
+/// ```
+///
+/// `provides` is the file's `\ProvidesPackage`/`\ProvidesClass` (the
+/// bracket split as `YYYY/MM/DD vX.Y description` when it follows that
+/// layout; `date`/`version`/`description` are null otherwise). `loaded_by`
+/// is the `\usepackage`/`\RequirePackage`/`\documentclass`/`\LoadClass`
+/// command that loaded the file, in the entry document or in another
+/// package file for a nested load (the chain follows `loaded_by` from
+/// entry to entry). A definition's `kind` is `macro`, `environment`,
+/// `conditional` (each of the three names a `\newif` creates), `counter`,
+/// `length`, `register`, `theorem` or `math_operator`; `definer` is the
+/// command that made it without its backslash (`newcommand`, `def`, `let`,
+/// `NewDocumentCommand`, ...); `arity` counts parameters (a `\let` reports
+/// the copied macro's); `signature` is the parameter shape as written
+/// (`[2][x]`, a `\def` parameter text such as `#1\stop`, an xparse
+/// specification such as `O{x} m`); `span` is the whole defining statement
+/// in the package file, prefixes included; `overrides` says the name had a
+/// meaning before. Only definitions made at the file's outermost level are
+/// listed -- not those a macro body, an option's code or a hook makes.
+fn metadata_json(packages: &[crate::package_definitions::PackageRecord], paths: &[&str]) -> Option<Value> {
+    if packages.is_empty() {
+        return None;
+    }
+    let mut metadata = Value::obj();
+    metadata.set("packages", crate::package_definitions::to_json(packages, paths));
+    Some(metadata)
 }
 
 /// Largest reply this compiler will emit, matching the documented runtime frame.

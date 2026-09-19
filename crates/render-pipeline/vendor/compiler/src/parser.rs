@@ -1489,6 +1489,17 @@ pub struct TextStyle {
     /// `layout::size_declaration_pt`, against the layout's own body size
     /// rather than here, since that is the one authoritative value.
     pub size: Option<FontSizeLevel>,
+    /// The AMS classes' (`amsart`, `amsbook`, `amsproc`) own `\Tiny` rung
+    /// (GH-824): true only together with `size == Some(FontSizeLevel::Tiny)`,
+    /// meaning rung 0 rather than rung 1 (`\tiny` itself). Set solely by
+    /// the AMS `\smaller` path landing on rung 0 (see
+    /// `FontSizeLevel::stepped_ams`); every absolute size declaration and
+    /// every relsize-magstep step clears it, and it rides the ordinary
+    /// group/environment style stack like the rest of `TextStyle`, so
+    /// groups save and restore it for free. Only ever set for AMS classes
+    /// and only read when `layout::LayoutConstraints::ams_sizes` holds, so
+    /// non-AMS classes are unaffected by construction.
+    pub ams_tiny: bool,
     /// The text colour (`\color`, `\textcolor`), scoped like the face.
     /// `None` is the page's default colour: pdfTeX writes no operator.
     /// `Some` carries the exact operator values (`crate::color`).
@@ -1631,16 +1642,36 @@ impl FontSizeLevel {
     /// (`\Huge`). There is no magstep math and no closest-value search at
     /// all, unlike `stepped` above: e.g. `\tiny\larger\larger\larger` walks
     /// tiny(1) → SMALL(2) → Small(3) → small(4), landing exactly on
-    /// `\small`. Rung 0 has no `FontSizeLevel` and folds onto `Tiny` (see
-    /// `crate::layout::ams_rung_level`), so stepping below `\tiny` holds
-    /// the smallest representable declaration.
-    pub fn stepped_ams(current: Option<FontSizeLevel>, delta: i32) -> Option<FontSizeLevel> {
+    /// `\small`.
+    ///
+    /// Rung 0 (`\Tiny`) has no `FontSizeLevel` of its own (GH-824), so the
+    /// rung-0 state travels alongside the level: `current_tiny` reports
+    /// whether the incoming state is rung 0 (set only by a previous call
+    /// landing there), and the return pairs the level with the new rung-0
+    /// bit — `(Some(Tiny), true)` exactly when the clamped rung is 0.
+    /// Stepping up from rung 0 returns to `(Some(Tiny), false)` (rung 1,
+    /// `\tiny` itself). The pure-level mapping in
+    /// `crate::layout::ams_rung_level` (where rung 0 folds onto `Tiny`) is
+    /// unchanged; this is the rung-exact stepping built on top of it.
+    pub fn stepped_ams(
+        current: Option<FontSizeLevel>,
+        current_tiny: bool,
+        delta: i32,
+    ) -> (Option<FontSizeLevel>, bool) {
         if delta == 0 {
-            return current;
+            return (current, current_tiny);
         }
-        let rung = crate::layout::ams_rung(current) as i32 + delta;
-        let rung = rung.clamp(0, crate::layout::AMS_RUNG_COUNT as i32 - 1) as usize;
-        crate::layout::ams_rung_level(rung)
+        let base = if current_tiny {
+            0
+        } else {
+            crate::layout::ams_rung(current)
+        };
+        let rung = (base as i32 + delta).clamp(0, crate::layout::AMS_RUNG_COUNT as i32 - 1) as usize;
+        if rung == 0 {
+            (Some(FontSizeLevel::Tiny), true)
+        } else {
+            (crate::layout::ams_rung_level(rung), false)
+        }
     }
 
     /// Position of a level in real `relsize.sty`'s scan order
@@ -1680,6 +1711,7 @@ impl TextStyle {
         small_caps: false,
         family: TextFamily::Roman,
         size: None,
+        ams_tiny: false,
         color: None,
     };
 }
@@ -1861,6 +1893,28 @@ fn apply_style(style: TextStyle, name: &str, body_size_pt: f64) -> TextStyle {
         "smaller" => next.size = FontSizeLevel::stepped(next.size, -1, body_size_pt),
         _ => {}
     }
+    // Every size arm above re-selects a runged level, so it drops the AMS
+    // `\Tiny` rung (GH-824): absolute declarations re-select their own
+    // rung, and the relsize-magstep steps cannot address rung 0 at all
+    // (only the AMS ladder path in `relative_size_command` ever sets
+    // `ams_tiny`). Every other command preserves the incoming state.
+    if matches!(
+        name,
+        "tiny"
+            | "scriptsize"
+            | "footnotesize"
+            | "small"
+            | "normalsize"
+            | "large"
+            | "Large"
+            | "LARGE"
+            | "huge"
+            | "Huge"
+            | "larger"
+            | "smaller"
+    ) {
+        next.ams_tiny = false;
+    }
     // Font commands (`\normalfont`, `\bf`) never change the colour.
     next.color = style.color;
     next
@@ -1925,6 +1979,9 @@ pub struct Parsed {
     /// Every project `.sty`/`.cls` the expansion pass read, with the span
     /// of the command that loaded it (see `expansion::Expansion::package_files`).
     pub package_files: Vec<(DocumentId, Span)>,
+    /// What each of those files defined, in the same order
+    /// (`crate::package_definitions`; the runtime-v1 `metadata.packages`).
+    pub package_definitions: Vec<crate::package_definitions::PackageRecord>,
     /// Body size from the `\documentclass` point-size option
     /// (`10pt`/`11pt`/`12pt`, plus `8pt`/`9pt` for the AMS classes).
     pub class_size_pt: Option<f64>,
@@ -2434,6 +2491,49 @@ fn is_preamble_length(name: &str) -> bool {
     PREAMBLE_LENGTHS.contains(&name)
 }
 
+/// Length names TeX accepts a `<factor>` over (`0.6\baselineskip`,
+/// `2\parindent`, `-.5\textwidth`) beyond [`PREAMBLE_LENGTHS`]:
+/// the engine's TeX dimen/skip parameters (modelled in tex-expansion but
+/// left undefined in LaTeX mode, so they reach this parser as text), the
+/// LaTeX list lengths, and the kernel zero registers. Muglue parameters
+/// (`\thinmuskip`, ...) are deliberately absent: they are not valid where
+/// a dimension is expected, so they keep erroring.
+///
+/// Measured against live pdflatex (TeX Live 2026, 11pt article, 1 page):
+/// `0.6\baselineskip` is 8.16008pt, `2\parindent` is 34.0pt,
+/// `-.5\textwidth` is -180.0pt. This compiler owns none of those values
+/// (page geometry is applied by the render pipeline from the source; see
+/// `parse_dimen_pt_at`), so a factor over any of them parses to zero —
+/// the same convention the preamble lengths already used — and the
+/// `setlength` path additionally warns `unsupported length expression`
+/// rather than pretending the value is 0pt. A name outside this closed
+/// set (an undeclared register) still fails to parse, so `\hspace` keeps
+/// reporting it by name.
+const FACTOR_LENGTHS: &[&str] = &[
+    // TeX skip parameters.
+    "parskip", "baselineskip", "lineskip", "abovedisplayskip", "belowdisplayskip",
+    "abovedisplayshortskip", "belowdisplayshortskip", "leftskip", "rightskip", "topskip",
+    "splittopskip", "tabskip", "spaceskip", "xspaceskip", "parfillskip",
+    // TeX dimen parameters.
+    "parindent", "mathsurround", "lineskiplimit", "maxdepth", "splitmaxdepth", "boxmaxdepth",
+    "hfuzz", "vfuzz", "delimitershortfall", "nulldelimiterspace", "scriptspace",
+    "predisplaysize", "displaywidth", "displayindent", "overfullrule", "hangindent",
+    "hoffset", "voffset", "emergencystretch", "vsize", "pdfpagewidth", "pdfpageheight",
+    "pdfhorigin", "pdfvorigin",
+    // LaTeX list, box and table lengths.
+    "topsep", "partopsep", "itemsep", "parsep", "labelsep", "labelwidth", "labelindent",
+    "leftmargin", "rightmargin", "itemindent", "listparindent", "footnotesep", "fboxsep",
+    "fboxrule", "tabcolsep", "arrayrulewidth", "doublerulesep", "extrarowheight",
+    // The kernel zero registers.
+    "z@", "z@skip",
+];
+
+fn is_length_name(name: &str) -> bool {
+    is_preamble_length(name)
+        || matches!(name, "linewidth" | "columnwidth" | "hsize")
+        || FACTOR_LENGTHS.contains(&name)
+}
+
 /// Lengths a `\begin{list}` decl assigns (`\setlength{\leftmargin}{...}`):
 /// read on the innermost open list rather than warned about. Anything else
 /// list-shaped (`\parsep`, `\itemindent`, ...) keeps the historic warning.
@@ -2454,7 +2554,7 @@ fn length_reference_parts(raw: &str) -> Option<(f64, &str)> {
     if let Some(bs) = s.find('\\') {
         let (factor, rest) = s.split_at(bs);
         let name = rest[1..].trim();
-        if !is_preamble_length(name) && !matches!(name, "linewidth" | "columnwidth" | "hsize") {
+        if !is_length_name(name) {
             return None;
         }
         let f = factor.trim();
@@ -2519,9 +2619,12 @@ fn parse_dimen_pt_with_units(text: &str, em_pt: f64, ex_pt: f64) -> Option<f64> 
     if let Some(bs) = text.find('\\') {
         let (factor, rest) = text.split_at(bs);
         let name = rest[1..].trim();
-        if !is_preamble_length(name) && !matches!(name, "linewidth" | "columnwidth" | "hsize") {
+        if !is_length_name(name) {
             return None;
         }
+        // A bare factor with no length (`0.6`) never reaches this branch
+        // (no backslash), and an empty-or-numeric factor is required here:
+        // `0.6\baselineskip` parses, `0.6` and `x\baselineskip` do not.
         let factor = factor.trim();
         if !factor.is_empty() {
             let _: f64 = factor.parse().ok()?;
@@ -2529,7 +2632,7 @@ fn parse_dimen_pt_with_units(text: &str, em_pt: f64, ex_pt: f64) -> Option<f64> 
         return Some(0.0);
     }
     let stripped = text.trim_start_matches('\\');
-    if is_preamble_length(stripped) {
+    if is_length_name(stripped) {
         return Some(0.0);
     }
     let unit_len = text
@@ -2918,6 +3021,7 @@ pub fn parse_project_with(
             arraystretch: HashMap::new(),
             current_label_by_marker: HashMap::new(),
             package_files: Vec::new(),
+            package_records: Vec::new(),
         }
     } else {
         expansion::expand_project_cached(documents, entry)
@@ -3077,6 +3181,17 @@ pub fn parse_project_with(
     let beamer = p.beamer_deck();
 
     while let Some(open) = p.brace_stack.pop() {
+        // Environment groups open from `\begin` (closed by the matching
+        // `\end`): an unclosed one is already accounted for — by the
+        // single mismatch diagnostic when `\end{document}` closed over
+        // it, or by the unterminated-environment sweep below — so it must
+        // not earn a second diagnostic here. Only real `{` groups (and a
+        // literal `\begingroup`, whose span names it) report: the
+        // environment opener carries the `\begin` span itself.
+        let source = &p.documents[open.document.0].text;
+        if source.get(open.start..open.end) == Some("\\begin") {
+            continue;
+        }
         p.diags.push(Diagnostic::error(
             "unmatched '{' — group never closed",
             Some(open),
@@ -3095,16 +3210,12 @@ pub fn parse_project_with(
     }
 
     // A diagnostic inside a project package or class file names the
-    // command that loaded it, as LaTeX's log prints the file it is reading.
-    for (package, loaded_at) in &expanded.package_files {
-        let path = documents[package.0].path;
-        let path = path.rsplit('/').next().unwrap_or(path);
-        for diagnostic in &mut p.diags {
-            if diagnostic.span.is_some_and(|s| s.document == *package) && !diagnostic.labels.iter().any(|l| l.span == *loaded_at) {
-                *diagnostic = std::mem::replace(diagnostic, Diagnostic::error("", None, None))
-                    .with_label(*loaded_at, format!("{path} is loaded here"), false);
-            }
-        }
+    // command that loaded it -- and, for a file another package loaded,
+    // that package's loader too -- as LaTeX's log prints the files it is
+    // reading (`crate::package_definitions::label_load_chain`).
+    {
+        let paths: Vec<&str> = documents.iter().map(|d| d.path).collect();
+        crate::package_definitions::label_load_chain(&mut p.diags, &expanded.package_files, &paths);
     }
     let class_file = expanded.package_files.iter().map(|(id, _)| *id).find(|id| documents[id.0].path.ends_with(".cls"));
     // Issue #907: one early diagnostic naming the non-LaTeX2e format, in
@@ -3129,6 +3240,7 @@ pub fn parse_project_with(
         class_options: p.class_options,
         class_file,
         package_files: expanded.package_files,
+        package_definitions: expanded.package_records,
         class_size_pt: p.class_size_pt,
         parskip_pt: p.parskip_pt,
         packages: p.packages,
@@ -4473,7 +4585,12 @@ impl P<'_> {
                 let (tokens, argument) = self.required_group(name, span);
                 let body = self.latex_body_pt();
                 let raw = dimen_source(&tokens);
-                match parse_dimen_pt_at(&raw, body).or_else(|| self.baselineskip_multiple(&raw)) {
+                // The leading multiple first: `parse_dimen_pt_at` accepts
+                // `<factor>\baselineskip` as an (unvalued) length reference,
+                // which would shadow the real leading value below.
+                match self
+                    .baselineskip_multiple(&raw)
+                    .or_else(|| parse_dimen_pt_at(&raw, body)) {
                     Some(pt) => self.assign_parameter(
                         BreakParameter::EnlargeThisPage { pt, shrink },
                         span.merge(argument),
@@ -6019,14 +6136,16 @@ impl P<'_> {
         // Only the AMS ladder classes step on their own `\@typesizes`
         // ladder (`stepped_ams`); `acmart` stays on the relsize-magstep
         // path (see `is_ams_size_class`).
-        next.size = if self
+        if self
             .document_class
             .as_deref()
             .is_some_and(is_ams_size_class)
         {
-            FontSizeLevel::stepped_ams(next.size, delta)
+            let (level, tiny) = FontSizeLevel::stepped_ams(next.size, next.ams_tiny, delta);
+            next.size = level;
+            next.ams_tiny = tiny;
         } else {
-            FontSizeLevel::stepped(next.size, delta, self.body_size_pt())
+            next.size = FontSizeLevel::stepped(next.size, delta, self.body_size_pt());
         };
         self.style = next;
     }
@@ -6166,7 +6285,9 @@ impl P<'_> {
             // before the first cell item.
             let space_before = !para.is_empty() && self.space_precedes(self.i - 1);
             let (tokens, argument_span) = self.required_group(name, span);
-            let raw = token_text(&tokens);
+            // `dimen_source`, not `token_text`: the backslash matters, so
+            // `<factor>\<length>` (`2\parindent`) still parses (issue #835).
+            let raw = dimen_source(&tokens);
             let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
             match parse_dimen_pt_current(&raw, self.font_setup().em_ex_sp(self.style)) {
                 Some(pt) => {
@@ -6324,7 +6445,8 @@ impl P<'_> {
             // a missing argument instead of reading the dimension after it.
             let _starred = self.take_optional_star();
             let (tokens, argument_span) = self.required_group(name, span);
-            let raw = token_text(&tokens);
+            // `dimen_source`, not `token_text`: see `hspace` above.
+            let raw = dimen_source(&tokens);
             let units = self.font_setup().em_ex_sp(self.style);
             match parse_glue_pt_current(&raw, units) {
                 Some((pt, stretch_pt, shrink_pt)) => {
@@ -7021,6 +7143,14 @@ impl P<'_> {
         if term.is_empty() {
             return None;
         }
+        // The leading multiple first: `parse_dimen_pt_current` accepts
+        // `<factor>\baselineskip` as an (unvalued) `FACTOR_LENGTHS`
+        // reference (#863), which would shadow the real leading value.
+        if baselineskip_ok {
+            if let Some(pt) = self.baselineskip_multiple(term) {
+                return Some(Ok(pt));
+            }
+        }
         if let Some(dimen) = parse_dimen_pt_current(term, units) {
             if is_length_reference(term) {
                 return match self.resolve_known_length_ref(term) {
@@ -7029,11 +7159,6 @@ impl P<'_> {
                 };
             }
             return Some(Ok(dimen));
-        }
-        if baselineskip_ok {
-            if let Some(pt) = self.baselineskip_multiple(term) {
-                return Some(Ok(pt));
-            }
         }
         None
     }
@@ -7075,20 +7200,22 @@ impl P<'_> {
             }
             return;
         }
-        let dimen = parse_dimen_pt_current(raw, units);
         // A list length read inside the list it shapes also accepts
         // `<factor>\baselineskip` (the corpus sets `\topsep` to
         // `0.6\baselineskip`), resolved exactly like `\enlargethispage`
         // rather than through the length-reference path below, which does
-        // not know `\baselineskip`. Anywhere else the historic error below
+        // not know `\baselineskip`'s value. Tried before the plain parse:
+        // `parse_dimen_pt_current` accepts `<factor>\baselineskip` as an
+        // (unvalued) `FACTOR_LENGTHS` reference (#863), which would shadow
+        // the real leading value. Anywhere else the historic error below
         // applies unchanged.
-        let fallback = if dimen.is_none() && is_list_length(target) && !in_preamble && in_list {
+        let fallback = if is_list_length(target) && !in_preamble && in_list {
             self.baselineskip_multiple(raw)
         } else {
             None
         };
-        let dimen = dimen.or(fallback);
         let via_baselineskip = fallback.is_some();
+        let dimen = fallback.or_else(|| parse_dimen_pt_current(raw, units));
         let Some(pt) = dimen else {
             let who = if command.is_empty() {
                 format!("\\{target}")
@@ -8816,6 +8943,7 @@ impl P<'_> {
                 small_caps: false,
                 family: TextFamily::Mono,
                 size: self.style.size,
+                ams_tiny: self.style.ams_tiny,
                 color: self.style.color,
             };
             self.obeylines = true;
@@ -9218,8 +9346,10 @@ impl P<'_> {
         // ambient size is merged in here at the call site. `number_style`
         // below derives from `head_style` via `..head_style` and inherits it.
         let ambient_size = self.style.size;
+        let ambient_tiny = self.style.ams_tiny;
         let head_style = TextStyle {
             size: ambient_size,
+            ams_tiny: ambient_tiny,
             ..def.style.head_style()
         };
         // `\thmnumber{...\@upn{#2}}`: the number is `\textup`, so a
@@ -9296,6 +9426,7 @@ impl P<'_> {
                     // ambient size like the head does.
                     style: TextStyle {
                         size: ambient_size,
+                        ams_tiny: ambient_tiny,
                         ..TextStyle::default()
                     },
                     space_before: false,
@@ -9314,6 +9445,7 @@ impl P<'_> {
         });
         self.style = TextStyle {
             size: ambient_size,
+            ams_tiny: ambient_tiny,
             ..def.style.body_style()
         };
     }
@@ -9329,6 +9461,7 @@ impl P<'_> {
         // Like `begin_theorem` above: an enclosing size group stays in
         // effect for the heading and the body.
         let ambient_size = self.style.size;
+        let ambient_tiny = self.style.ams_tiny;
         let heading = self
             .optional_bracket_argument()
             .map(|(text, _)| text.trim().to_string())
@@ -9340,12 +9473,14 @@ impl P<'_> {
             style: TextStyle {
                 italic: true,
                 size: ambient_size,
+                ams_tiny: ambient_tiny,
                 ..TextStyle::default()
             },
             space_before: true,
         });
         self.style = TextStyle {
             size: ambient_size,
+            ams_tiny: ambient_tiny,
             ..TextStyle::default()
         };
     }
@@ -9516,6 +9651,14 @@ impl P<'_> {
         self.beamer_frame_head(open, blocks, para, true);
     }
 
+    /// Whether the next token is a literal `{` (an optional braced
+    /// argument follows), as opposed to the group an environment's
+    /// `\begin` opens (see `environment_group_open_at`).
+    fn next_opens_literal_group(&self) -> bool {
+        matches!(self.peek().map(|token| &token.kind), Some(TokenKind::LBrace))
+            && !environment_group_open_at(&self.t, self.i)
+    }
+
     /// The shared head of `\begin{frame}` and `\frame`: the pause counter
     /// reset, `<overlay>[options]<default overlay>` and, for the
     /// environment (`with_titles`), the `{title}{subtitle}` groups.
@@ -9540,10 +9683,7 @@ impl P<'_> {
         if with_titles {
             for slot in head.iter_mut() {
                 self.skip_spaces();
-                if !matches!(
-                    self.peek().map(|token| &token.kind),
-                    Some(TokenKind::LBrace)
-                ) {
+                if !self.next_opens_literal_group() {
                     break;
                 }
                 let (tokens, title_span) = self.required_group("frame", open);
@@ -9676,7 +9816,7 @@ impl P<'_> {
         }
         let leading = self.take_beamer_overlay_spec();
         self.skip_spaces();
-        let opens_group = matches!(self.peek().map(|token| &token.kind), Some(TokenKind::LBrace));
+        let opens_group = self.next_opens_literal_group();
         if name == "onslide" && !opens_group {
             // `\beamer@noargsonslide`: covered from here to the next
             // `\onslide` (or `\pause`), shown from there when the
@@ -10027,7 +10167,7 @@ impl P<'_> {
         self.skip_beamer_overlay_spec();
         let _ = self.optional_bracket_argument();
         self.skip_spaces();
-        if matches!(self.peek().map(|token| &token.kind), Some(TokenKind::LBrace)) {
+        if self.next_opens_literal_group() {
             let _ = self.required_group(name, span);
         }
     }
@@ -10056,7 +10196,7 @@ impl P<'_> {
                 let _ = self.optional_bracket_argument();
             }
             self.skip_spaces();
-            if !matches!(self.peek().map(|token| &token.kind), Some(TokenKind::LBrace)) {
+            if !self.next_opens_literal_group() {
                 break;
             }
             let (tokens, _) = self.required_group(name, span);
@@ -10185,17 +10325,50 @@ impl P<'_> {
                 Some("closed the verbatim block at end of input".into()),
             ));
         }
+        // The body (strictly before the end tag), then the reconstituted
+        // end tag itself. The range alone would also swallow the
+        // environment's trailing group-close (its span sits on `\\end`),
+        // leaving the `\\begin` group unclosed.
         while self.i < self.t.len()
             && self.t[self.i].token.span.document == document
-            && self.t[self.i].token.span.start < tag_end
+            && self.t[self.i].token.span.start < content_end
         {
             self.i += 1;
+        }
+        if found && !self.consume_end_tag(name) {
+            while self.i < self.t.len()
+                && self.t[self.i].token.span.document == document
+                && self.t[self.i].token.span.start < tag_end
+            {
+                self.i += 1;
+            }
         }
         blocks.push(Block::Verbatim {
             lines,
             span: Span::in_document(document, open.start, tag_end),
         });
         self.finish_block_dependencies();
+    }
+
+    /// Consume a reconstituted `\\end{name}` (the four tokens the
+    /// expansion pass emits for one: `end`, `{`, `name`, `}`) at the
+    /// cursor, leaving whatever follows — the environment's trailing
+    /// group-close — for the main loop. Returns false when the cursor is
+    /// not on such a tag (e.g. `\\endname` was redefined, so the end
+    /// never reconstituted); the caller then falls back to its
+    /// source-text range, exactly as before.
+    fn consume_end_tag(&mut self, name: &str) -> bool {
+        let kinds = |i: usize| self.t.get(i).map(|input| &input.token.kind);
+        let is_end = matches!(kinds(self.i), Some(TokenKind::Command(cmd)) if cmd == "end");
+        let is_open = matches!(kinds(self.i + 1), Some(TokenKind::LBrace));
+        let is_name = matches!(kinds(self.i + 2), Some(TokenKind::Word(word)) if word == name);
+        let is_close = matches!(kinds(self.i + 3), Some(TokenKind::RBrace));
+        if is_end && is_open && is_name && is_close {
+            self.i += 4;
+            true
+        } else {
+            false
+        }
     }
 
     /// The `comment` package's `comment` environment: the entire body
@@ -10224,12 +10397,12 @@ impl P<'_> {
         let source = self.documents[document.0].text;
         let content_start = argument_span.end;
         let end_tag = "\\end{comment}";
-        let (tag_end, found) = match source[content_start..].find(end_tag) {
+        let (tag_start, tag_end, found) = match source[content_start..].find(end_tag) {
             Some(offset) => {
                 let tag_start = content_start + offset;
-                (tag_start + end_tag.len(), true)
+                (tag_start, tag_start + end_tag.len(), true)
             }
-            None => (source.len(), false),
+            None => (source.len(), source.len(), false),
         };
         if !found {
             self.diags.push(Diagnostic::error(
@@ -10238,11 +10411,22 @@ impl P<'_> {
                 Some("discarded the comment body to end of input".into()),
             ));
         }
+        // The body (strictly before the end tag), then the reconstituted
+        // end tag itself, leaving the environment's trailing group-close
+        // for the main loop (see `verbatim_environment`).
         while self.i < self.t.len()
             && self.t[self.i].token.span.document == document
-            && self.t[self.i].token.span.start < tag_end
+            && self.t[self.i].token.span.start < tag_start
         {
             self.i += 1;
+        }
+        if found && !self.consume_end_tag("comment") {
+            while self.i < self.t.len()
+                && self.t[self.i].token.span.document == document
+                && self.t[self.i].token.span.start < tag_end
+            {
+                self.i += 1;
+            }
         }
     }
 
@@ -13630,7 +13814,8 @@ impl P<'_> {
     /// so the outer size declaration must not leak into the argument:
     /// `{\large a\textsuperscript{b}}` sets `b` at the `\sf@size` of
     /// `\large`, not at `\large` itself. The declaration is therefore
-    /// cleared (only `size`; family/series/shape/colour still inherit)
+    /// cleared (only `size` and the AMS `\Tiny` rung bit;
+    /// family/series/shape/colour still inherit)
     /// while the argument parses — an explicit declaration *inside* the
     /// argument still takes effect, exactly like `\mbox` contents.
     fn text_script(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
@@ -13639,8 +13824,10 @@ impl P<'_> {
         let full = span.merge(argument_span);
         let style = self.style;
         let outer_size = std::mem::replace(&mut self.style.size, None);
+        let outer_tiny = std::mem::replace(&mut self.style.ams_tiny, false);
         let content = self.box_inlines(tokens);
         self.style.size = outer_size;
+        self.style.ams_tiny = outer_tiny;
         para.push(Inline::TextScript(Box::new(TextScript {
             content,
             superscript: name == "textsuperscript",
@@ -16123,6 +16310,21 @@ fn environment_end_at(
 
 /// The environment name of a complete `\begin{name}` / `\end{name}` at
 /// `index`, if the token there is one.
+/// Whether the token at `index` is the group an environment's `\begin`
+/// opens: the expansion pass emits `\begingroup` (a brace here) directly
+/// ahead of every reconstituted `\begin{name}` (#950), so an optional
+/// `{...}` argument scan (`\@ifnextchar\bgroup`) must not read it as a
+/// literal `{` the source wrote. A literal `{` ahead of an environment
+/// is followed by that environment's own brace, never by `\begin` itself.
+fn environment_group_open_at(tokens: &[InputToken], index: usize) -> bool {
+    matches!(tokens.get(index).map(|input| &input.token.kind), Some(TokenKind::LBrace))
+        && matches!(
+            tokens.get(index + 1).map(|input| &input.token.kind),
+            Some(TokenKind::Command(name)) if name == "begin"
+        )
+        && environment_name_at(tokens, index + 1).is_some()
+}
+
 fn environment_name_at(tokens: &[InputToken], index: usize) -> Option<&str> {
     let command = tokens.get(index)?;
     if !matches!(&command.token.kind, TokenKind::Command(name) if name == "begin" || name == "end")
@@ -16155,6 +16357,14 @@ fn environment_name_at(tokens: &[InputToken], index: usize) -> Option<&str> {
 fn paragraph_boundary_at(tokens: &[InputToken], index: usize) -> bool {
     match tokens.get(index).map(|input| &input.token.kind) {
         Some(TokenKind::ParBreak) => true,
+        // An environment boundary (`\\begin`/`\\end`) arrives with its
+        // group already opened ahead of it (see the expansion pass): the
+        // boundary is that brace, not the command after it. Without this
+        // a runaway scan would step onto the brace first and read it as
+        // an ordinary group open (notably inside math, where `{` opens a
+        // math group).
+        Some(TokenKind::LBrace) => environment_name_at(tokens, index + 1)
+            .is_some_and(|environment| !math::is_math_environment(environment)),
         Some(TokenKind::Command(name)) => match name.as_str() {
             "par" | "item" | "section" | "subsection" => true,
             "begin" | "end" => environment_name_at(tokens, index)
@@ -19530,24 +19740,35 @@ mod tests {
         // Pure index steps on the eleven-rung ladder (0-based rungs:
         // `\tiny` = 1, `\normalsize` = 5, `\Huge` = 10), not magstep
         // scaling: every step moves exactly one rung and clamps at the
-        // ends. Rung 0 (`\Tiny`) folds onto `Tiny`.
+        // ends. Rung 0 (`\Tiny`) is represented for real (GH-824): the
+        // step pairs the level with the rung-0 bit, so stepping below
+        // `\tiny` yields `(Some(Tiny), true)` and stepping back up
+        // returns to `(Some(Tiny), false)`.
         use FontSizeLevel::*;
-        for (current, delta, expected) in [
-            (Some(Tiny), 1, Some(ScriptSize)),
-            (Some(Tiny), 3, Some(Small)),
-            (None, 1, Some(Large1)),
-            (None, -1, Some(Small)),
-            (Some(Large2), -2, None),
-            (Some(Small), 2, Some(Large1)),
-            (Some(Large3), 2, Some(Huge2)),
-            (Some(Huge2), 1, Some(Huge2)),
-            (Some(Huge2), 9, Some(Huge2)),
-            (Some(Tiny), -1, Some(Tiny)),
-            (Some(Tiny), -5, Some(Tiny)),
-            (None, 0, None),
-            (Some(Small), 0, Some(Small)),
+        for (current, tiny, delta, expected, expected_tiny) in [
+            (Some(Tiny), false, 1, Some(ScriptSize), false),
+            (Some(Tiny), false, 3, Some(Small), false),
+            (None, false, 1, Some(Large1), false),
+            (None, false, -1, Some(Small), false),
+            (Some(Large2), false, -2, None, false),
+            (Some(Small), false, 2, Some(Large1), false),
+            (Some(Large3), false, 2, Some(Huge2), false),
+            (Some(Huge2), false, 1, Some(Huge2), false),
+            (Some(Huge2), false, 9, Some(Huge2), false),
+            (Some(Tiny), false, -1, Some(Tiny), true),
+            (Some(Tiny), false, -5, Some(Tiny), true),
+            (Some(Tiny), true, 1, Some(Tiny), false),
+            (Some(Tiny), true, -1, Some(Tiny), true),
+            (Some(Tiny), true, 2, Some(ScriptSize), false),
+            (None, false, 0, None, false),
+            (Some(Small), false, 0, Some(Small), false),
+            (Some(Tiny), true, 0, Some(Tiny), true),
         ] {
-            assert_eq!(FontSizeLevel::stepped_ams(current, delta), expected, "{current:?} {delta}");
+            assert_eq!(
+                FontSizeLevel::stepped_ams(current, tiny, delta),
+                (expected, expected_tiny),
+                "{current:?} {tiny} {delta}"
+            );
         }
     }
 
@@ -19573,9 +19794,11 @@ mod tests {
         let source = r"\documentclass[10pt]{amsart}\begin{document}{\tiny a \scriptsize b \footnotesize c \small d \normalsize e \large f \Large g \LARGE h \huge i \Huge j}\end{document}";
         let output = full_output(source);
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        // Verified against a real pdflatex `\f@size` dump, not the
+        // `\@xipt`-family macro names' literal digits.
         for (text, size) in
             [("a", 6.0), ("b", 7.0), ("c", 8.0), ("d", 9.0), ("e", 10.0),
-             ("f", 11.0), ("g", 12.0), ("h", 14.0), ("i", 17.0), ("j", 20.0)]
+             ("f", 10.95), ("g", 12.0), ("h", 14.4), ("i", 17.28), ("j", 20.74)]
         {
             assert_eq!(output_size(&output, text), size, "{text}");
         }
@@ -19587,10 +19810,13 @@ mod tests {
         // point-size options (10pt is covered exhaustively above), spread
         // over all three AMS classes to prove they share the ladder.
         for (class, option, expected) in [
-            ("amsart", "8pt", [5.0, 8.0, 10.0, 14.0]),
-            ("amsart", "9pt", [5.0, 9.0, 11.0, 17.0]),
-            ("amsbook", "11pt", [7.0, 11.0, 14.0, 25.0]),
-            ("amsproc", "12pt", [8.0, 12.0, 17.0, 25.0]),
+            ("amsart", "8pt", [5.0, 8.0, 10.0, 14.4]),
+            ("amsart", "9pt", [5.0, 9.0, 10.95, 17.28]),
+            // `e` (`\normalsize`) stays 11.0: it resolves through the
+            // existing, separately-documented 11pt body-size approximation
+            // (real 10.95), not through the AMS ladder table at all.
+            ("amsbook", "11pt", [7.0, 11.0, 14.4, 24.88]),
+            ("amsproc", "12pt", [8.0, 12.0, 17.28, 24.88]),
         ] {
             let source = format!(
                 "\\documentclass[{option}]{{{class}}}\\begin{{document}}{{\\tiny a \\normalsize e \\Large g \\Huge j}}\\end{{document}}"
@@ -19615,14 +19841,78 @@ mod tests {
 
     #[test]
     fn ams_relative_steps_clamp_at_both_ends() {
-        // Past `\Huge` the size holds at `\Huge` (20pt at 10pt); below
-        // `\tiny` it holds the smallest representable declaration.
+        // Past `\Huge` the size holds at `\Huge` (20.74pt at 10pt, verified
+        // against a real pdflatex `\f@size` dump).
         let source = r"\documentclass[10pt]{amsart}\begin{document}{\Huge h \larger{X} \tiny t \smaller[3]{Y} \normalsize n \smaller s}\end{document}";
         let output = full_output(source);
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-        assert_eq!(output_size(&output, "X"), 20.0);
-        assert_eq!(output_size(&output, "Y"), 6.0);
+        assert_eq!(output_size(&output, "X"), 20.74);
+        // Three steps down from `\tiny` clamp at rung 0: pdflatex's
+        // `\Tiny` (5pt), now represented for real (GH-824) via the
+        // rung-0 bit rather than folding onto `\tiny` (6pt).
+        assert_eq!(output_size(&output, "Y"), 5.0);
         assert_eq!(output_size(&output, "s"), 9.0);
+    }
+
+    #[test]
+    fn ams_tiny_smaller_reaches_the_tiny_rung() {
+        // GH-824: stepping below `\tiny` reaches the AMS classes'
+        // genuinely smaller `\Tiny` rung (rung 0) instead of folding back
+        // onto `\tiny` itself. 10pt values verified against a real pdflatex
+        // `\f@size` dump (TeX Live 2026): `\tiny` = 6pt, `\Tiny` = 5pt.
+        for class in ["amsart", "amsbook", "amsproc"] {
+            let source = format!(
+                "\\documentclass[10pt]{{{class}}}\\begin{{document}}{{\\tiny a \\smaller b}}\\end{{document}}"
+            );
+            let output = full_output(&source);
+            assert!(output.diagnostics.is_empty(), "{class}: {:?}", output.diagnostics);
+            assert_eq!(output_size(&output, "a"), 6.0, "{class}");
+            assert_eq!(output_size(&output, "b"), 5.0, "{class}");
+        }
+    }
+
+    #[test]
+    fn ams_larger_from_the_tiny_rung_returns_to_tiny() {
+        // Round-trip across the bottom rung: `\tiny \smaller \larger`
+        // lands back on `\tiny` (rung 1), and multi-step walks pass
+        // through rung 0 with the same clamp arithmetic as every rung.
+        let source = r"\documentclass[10pt]{amsart}\begin{document}{\tiny a \smaller b \larger c \smaller[3]{d} \larger[3]{e}}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "a"), 6.0);
+        assert_eq!(output_size(&output, "b"), 5.0);
+        assert_eq!(output_size(&output, "c"), 6.0);
+        // Three down from rung 1 clamps at rung 0 (`\Tiny`, 5pt); three up
+        // from rung 0 lands on rung 3 (`\footnotesize`, 8pt).
+        assert_eq!(output_size(&output, "d"), 5.0);
+        assert_eq!(output_size(&output, "e"), 8.0);
+    }
+
+    #[test]
+    fn ams_tiny_rung_is_scoped_and_reset_like_other_sizes() {
+        // The rung-0 state rides the ordinary style stack: a group's close
+        // restores the enclosing size, and an absolute `\tiny` re-selects
+        // rung 1 rather than staying on `\Tiny`.
+        let source = r"\documentclass[10pt]{amsart}\begin{document}{\tiny\smaller x}n{\tiny\smaller a \tiny b}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "x"), 5.0);
+        assert_eq!(output_size(&output, "n"), 10.0);
+        assert_eq!(output_size(&output, "a"), 5.0);
+        assert_eq!(output_size(&output, "b"), 6.0);
+    }
+
+    #[test]
+    fn article_tiny_smaller_keeps_its_relsize_value() {
+        // Non-AMS classes have no `\Tiny` rung at all: `\tiny\smaller`
+        // keeps its long-standing relsize closest-match value (holding at
+        // `\tiny`, 5pt in the 10pt class) rather than reaching for an AMS
+        // rung.
+        let source = r"\documentclass[10pt]{article}\usepackage{relsize}\begin{document}{\tiny a \smaller b}\end{document}";
+        let output = full_output(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output_size(&output, "a"), 5.0);
+        assert_eq!(output_size(&output, "b"), 5.0);
     }
 
     #[test]

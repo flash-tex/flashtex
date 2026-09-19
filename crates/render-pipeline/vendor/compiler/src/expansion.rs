@@ -103,6 +103,9 @@ pub struct Expansion {
     /// Every project `.sty`/`.cls` the engine read, with the span of the
     /// `\usepackage`/`\documentclass`/... that loaded it, in loading order.
     pub package_files: Vec<(DocumentId, Span)>,
+    /// The same files with what each defined (`crate::package_definitions`),
+    /// parallel to `package_files`.
+    pub package_records: Vec<crate::package_definitions::PackageRecord>,
 }
 
 /// Host definitions run before the document. `\DeclareMathOperator` is
@@ -177,6 +180,10 @@ pub struct Expansion {
 /// silent layout-neutral loads), so a guarded block
 /// (`\ifxetex\usepackage{fontspec}...\fi`) skips with no diagnostic, matching
 /// pdflatex's exit-0 behavior on the same input.
+/// `\hspace`/`\vspace` route through host primitives the same way (the
+/// star and `{<dimen>}` are absorbed, a bare or factored register is
+/// spliced to its current value text); real LaTeX absorbs those arguments
+/// unexpanded as macro parameters.
 pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
@@ -197,6 +204,8 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\protected\\def\\togglefalse#1{\\@ifundefined{etb@tgl@#1}{\\etb@err@notoggle}{\\expandafter\\let\\csname etb@tgl@#1\\endcsname\\@secondoftwo}}%
 \\protected\\def\\iftoggle#1{\\@ifundefined{etb@tgl@#1}{\\etb@err@notoggle\\@gobbletwo}{\\csname etb@tgl@#1\\endcsname}}%
 \\makeatother
+\\def\\hspace{\\flashtexhspace}%
+\\def\\vspace{\\flashtexvspace}%
 \\long\\def\\flashtexdeclaremathop#1#2#3{\\newcommand#2{\\operatorname#1{#3}}}%
 \\expandafter\\def\\expandafter\\DeclareMathOperator\\expandafter{\\csname @ifstar\\endcsname{\\flashtexdeclaremathop*}{\\flashtexdeclaremathop{}}}%
 \\def\\arraystretch{1}%
@@ -564,6 +573,9 @@ struct Converter<'d> {
     current_label_log: Vec<(usize, (usize, usize), String)>,
     /// Package files mapped so far (see [`Expansion::package_files`]).
     package_files: Vec<(DocumentId, Span)>,
+    /// The same, with each file's engine source id: what
+    /// [`Converter::package_records`] pairs with the engine's final records.
+    package_sites: Vec<(u32, DocumentId, Span)>,
 }
 
 struct PendingWord {
@@ -854,6 +866,8 @@ fn configure(engine: &mut Engine) {
     ] {
         engine.declare_host_command(name);
     }
+    engine.declare_host_command("flashtexhspacedone");
+    engine.declare_host_command("flashtexvspacedone");
 }
 
 /// The expansion engine's `em`/`ex` come from the text font its tracked font
@@ -1064,6 +1078,7 @@ impl<'d> Converter<'d> {
             stretch_log: Vec::new(),
             current_label_log: Vec::new(),
             package_files: Vec::new(),
+            package_sites: Vec::new(),
         }
     }
 
@@ -1082,7 +1097,24 @@ impl<'d> Converter<'d> {
         if let Some(index) = index {
             let at = self.span(file.loaded_at).unwrap_or(self.last_span);
             self.package_files.push((DocumentId(index), at));
+            self.package_sites.push((file.source_id, DocumentId(index), at));
         }
+    }
+
+    /// [`Expansion::package_records`] from the engine's opened files once
+    /// the run is over: a file is mapped when it opens
+    /// ([`Converter::map_opened`]), but what it defined is complete only
+    /// when it has been read to the end.
+    fn package_records<'f>(&self, files: impl Iterator<Item = &'f OpenedFile>) -> Vec<crate::package_definitions::PackageRecord> {
+        let files: HashMap<u32, &OpenedFile> = files.map(|file| (file.source_id, file)).collect();
+        self.package_sites
+            .iter()
+            .filter_map(|(source_id, document, at)| {
+                let file = files.get(source_id)?;
+                let path = self.documents[document.0].path;
+                Some(crate::package_definitions::PackageRecord::from_opened(file, *document, *at, path, &|span| self.span(span)))
+            })
+            .collect()
     }
 
     /// No partially built word, `\arraystretch` capture, `\@currentlabel`
@@ -1189,9 +1221,16 @@ impl<'d> Converter<'d> {
             TexKind::ControlSequence(name) => {
                 let real_text = at.real.map_or("", |real| conv.source_text(real));
                 match name.as_str() {
-                    // Grouping bookkeeping and `\relax` produce nothing for the
-                    // parser (LaTeX's environment groups included).
-                    "begingroup" | "endgroup" | "relax" => {}
+                    // `\relax` produces nothing for the parser. Group
+                    // boundaries open and close a parser group, so
+                    // declarations stay scoped to it: `{...}` already
+                    // arrives as braces, and `\begingroup`/`\endgroup`
+                    // — literal ones as well as the pair the engine emits
+                    // around every `\begin{...}`/`\end{...}` — arrive
+                    // here.
+                    "relax" => {}
+                    "begingroup" => conv.push(TokenKind::LBrace, at),
+                    "endgroup" => conv.push(TokenKind::RBrace, at),
                     // `\newblock`, the block separator every `.bst` style
                     // emits between an entry's author/title/journal blocks
                     // (the standard classes define it as a small horizontal
@@ -1207,6 +1246,9 @@ impl<'d> Converter<'d> {
                     }
                     // `do_flashtex_setlist`'s absorbed-and-spliced command.
                     "flashtexsetlistdone" => conv.push(TokenKind::Command("setlist".to_string()), at),
+                    // `do_flashtex_space`'s absorbed-and-spliced commands.
+                    "flashtexhspacedone" => conv.push(TokenKind::Command("hspace".to_string()), at),
+                    "flashtexvspacedone" => conv.push(TokenKind::Command("vspace".to_string()), at),
                     "flashtexbegintabular" | "flashtexbegintabularstar" | "flashtexbeginarray" => {
                         let env = match name.as_str() {
                             "flashtexbegintabular" => "tabular",
@@ -1497,12 +1539,14 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     }
     let diagnostics = engine.diagnostics().to_vec();
     conv.map_diagnostics(&diagnostics);
+    let package_records = conv.package_records(engine.opened_package_files().iter());
     Expansion {
         tokens: Rc::new(conv.out),
         diagnostics: conv.diagnostics,
         arraystretch: conv.arraystretch,
         current_label_by_marker: conv.current_label_by_marker,
         package_files: conv.package_files,
+        package_records,
     }
 }
 
@@ -1973,12 +2017,14 @@ fn stretch_map(log: &[(usize, (usize, usize), String)]) -> HashMap<(usize, usize
 fn finish_diagnostics(cache: &ExpansionCache, mut conv: Converter<'_>) -> Expansion {
     conv.last_span = cache.last_span;
     conv.map_diagnostics(cache.expander.diagnostics());
+    let package_records = conv.package_records(cache.expander.opened_package_files());
     Expansion {
         tokens: Rc::new(Vec::new()),
         diagnostics: conv.diagnostics,
         arraystretch: conv.arraystretch,
         current_label_by_marker: conv.current_label_by_marker,
         package_files: conv.package_files,
+        package_records,
     }
 }
 

@@ -344,6 +344,54 @@ fn newenvironment_expands_begin_end() {
 }
 
 #[test]
+fn newenvironment_with_argument_substitutes() {
+    assert_eq!(
+        run(r"\newenvironment{greet}[1]{Hello #1: }{!}\begin{greet}{World}body\end{greet}"),
+        "Hello World: body!"
+    );
+}
+
+#[test]
+fn renewenvironment_replaces_begin_and_end_code() {
+    assert_eq!(
+        run(r"\newenvironment{shout}{Hi }{!}\renewenvironment{shout}{Yo }{?}\begin{shout}Bob\end{shout}"),
+        "Yo Bob?"
+    );
+}
+
+#[test]
+fn begin_end_emit_balanced_group_markers() {
+    // `\end` already reaches the output as `\endgroup`; `\begin` must
+    // emit the matching `\begingroup`, or an environment whose begin/end
+    // code expands inline (every `\newenvironment`) leaves no scope
+    // behind for the typesetter.
+    let src = r"\newenvironment{myenv}{[BEGIN]}{[END]}\begin{myenv}content\end{myenv}";
+    let r = expand_str(src);
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    assert_eq!(
+        tokens_to_display_string(&r.tokens),
+        "\\begingroup [BEGIN]content[END]\\endgroup "
+    );
+    // The markers carry the `\begin`/`\end` spans, not the definition's.
+    let span_text = |t: &Token| &src[t.span.start as usize..t.span.end as usize];
+    assert_eq!(span_text(&r.tokens[0]), "\\begin");
+    assert_eq!(span_text(&r.tokens[r.tokens.len() - 1]), "\\end");
+}
+
+#[test]
+fn undefined_begin_end_emit_balanced_group_markers() {
+    // Environments the engine passes through (`quote` here) get the same
+    // pair: the opener is new, the closer was already emitted.
+    let r = expand_str(r"\begin{quote}X\end{quote}");
+    assert_eq!(tokens_to_display_string(&r.tokens), "\\begingroup \\quote X\\endquote \\endgroup ");
+    assert!(
+        r.diagnostics.iter().any(|d| d.message.contains("passed through")),
+        "{:?}",
+        r.diagnostics
+    );
+}
+
+#[test]
 fn newcounter_and_setcounter_stepcounter() {
     assert_eq!(run(r"\newcounter{foo}\setcounter{foo}{5}\arabic{foo}"), "5");
     assert_eq!(run(r"\newcounter{foo}\stepcounter{foo}\stepcounter{foo}\arabic{foo}"), "2");
@@ -863,6 +911,21 @@ fn newtheorem_let_to_relax_guard_still_declares() {
     assert!(out.contains(r"\endthm "), "{out:?}");
 }
 
+/// ltdefns.dtx `\@ifdefinable` goes through `\@ifundefined`, so a name
+/// `\csname` has just made `\relax` is free: the
+/// `\expandafter\newcommand\csname name\endcsname` idiom defines it, as
+/// does `\newcommand` after `\let\name\relax`; `\relax` itself stays
+/// refused (`\@qrelax`).
+#[test]
+fn newcommand_defines_a_relax_valued_name() {
+    let r = expand_str(r"\expandafter\newcommand\csname foo\endcsname{F}\let\bar\relax\newcommand\bar{B}\foo\bar");
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    assert_eq!(text(&r.tokens), "FB");
+    let r = expand_str(r"\newcommand\relax{x}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["LaTeX Error: Command \\relax already defined."]);
+}
+
 #[test]
 fn newtheorem_relax_itself_is_never_definable() {
     // `\relax`'s own meaning is trivially `Relax`, the same value the
@@ -897,6 +960,75 @@ fn newtheorem_successful_reclaim_inside_a_group_is_global() {
     let out = text(&r.tokens);
     assert!(out.contains(r"\foo "), "{out:?}");
     assert!(out.contains(r"\endfoo "), "{out:?}");
+}
+
+/// Issue #835: `\hspace`/`\vspace` routed through the host shims
+/// (`\flashtexhspace`/`\flashtexvspace`, as the compiler's host prelude
+/// wires them) splice a bare or factored length register to its value
+/// text, so the register never reaches the stomach as an assignment.
+const SPACE_SHIM: &str = "\\def\\hspace{\\flashtexhspace}\\def\\vspace{\\flashtexvspace}";
+
+fn space_run(src: &str) -> String {
+    run(&format!("{SPACE_SHIM}{src}"))
+}
+
+#[test]
+fn space_shim_splices_bare_register_like_the() {
+    let setup = "\\newlength{\\mylen}\\setlength{\\mylen}{1em}";
+    // A bare register behaves exactly like the already-working `\the`
+    // form, and the value is the register's fixed-point text.
+    assert_eq!(
+        space_run(&format!("{setup}\\hspace{{\\mylen}}y")),
+        space_run(&format!("{setup}\\hspace{{\\the\\mylen}}y")),
+    );
+    assert_eq!(
+        space_run(&format!("{setup}\\hspace{{\\mylen}}y")),
+        "\\relax \\flashtexhspacedone 10.0pty",
+    );
+    // `\vspace` shares the shim.
+    assert_eq!(
+        space_run(&format!("{setup}\\vspace{{\\mylen}}y")),
+        "\\relax \\flashtexvspacedone 10.0pty",
+    );
+}
+
+#[test]
+fn space_shim_splices_factor_times_register() {
+    let setup = "\\newlength{\\mylen}\\setlength{\\mylen}{1em}\
+         \\newlength{\\zerolen}\\setlength{\\zerolen}{0pt}";
+    // TeX's `<factor><internal dimen>`: the fixed-point product.
+    assert_eq!(
+        space_run(&format!("{setup}\\hspace{{2\\mylen}}y")),
+        "\\relax \\relax \\flashtexhspacedone 20.0pty",
+    );
+    // A leading `-` negates the whole value, as `scan_dimen` does.
+    assert_eq!(
+        space_run(&format!("{setup}\\hspace{{-\\mylen}}y")),
+        "\\relax \\relax \\flashtexhspacedone -10.0pty",
+    );
+    // A factor times a register set to 0pt is 0pt, with no diagnostics.
+    assert_eq!(
+        space_run(&format!("{setup}\\hspace{{2\\zerolen}}y")),
+        "\\relax \\relax \\flashtexhspacedone 0.0pty",
+    );
+}
+
+#[test]
+fn space_shim_leaves_other_arguments_untouched() {
+    // A literal dimension passes through for the main loop exactly as
+    // before (group tokens stripped by `text`).
+    assert_eq!(space_run("\\hspace{1em}y"), "\\flashtexhspacedone 1emy");
+    // The star is preserved.
+    assert_eq!(
+        space_run("\\newlength{\\mylen}\\setlength{\\mylen}{1em}\\hspace*{\\mylen}y"),
+        "\\relax \\flashtexhspacedone *10.0pty",
+    );
+    // An undeclared register is not the shim's to report: it passes
+    // through with no engine diagnostic (the host parser names it).
+    assert_eq!(
+        space_run("\\hspace{\\nosuchlen}y"),
+        "\\flashtexhspacedone \\nosuchlen y",
+    );
 }
 
 #[test]

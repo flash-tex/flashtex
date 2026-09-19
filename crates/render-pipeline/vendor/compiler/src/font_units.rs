@@ -207,6 +207,9 @@ impl EngineFontMetrics {
             size: level
                 .checked_sub(1)
                 .and_then(|i| SIZE_LEVELS.get(i).copied()),
+            // The expansion engine's size codes address only the nine
+            // document-visible levels, never the AMS `\Tiny` rung (GH-824).
+            ams_tiny: false,
             color: None,
         };
         let latin_modern = if font & BODY != 0 {

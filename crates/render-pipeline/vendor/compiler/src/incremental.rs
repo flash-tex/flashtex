@@ -38,6 +38,9 @@ pub struct CompileOutput {
     pub blocks: Vec<Block>,
     pub diagnostics: Vec<Diagnostic>,
     pub pages: Vec<Page>,
+    /// What each project `.sty`/`.cls` defined
+    /// (`crate::package_definitions`; the runtime-v1 `metadata.packages`).
+    pub packages: Vec<crate::package_definitions::PackageRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -253,6 +256,7 @@ impl Session {
                 blocks: parsed.blocks,
                 diagnostics,
                 pages,
+                packages: parsed.package_definitions,
             };
             let revision = self.previous.insert(Revision {
                 options: *options,
@@ -380,6 +384,7 @@ impl Session {
             blocks: parsed.blocks,
             diagnostics,
             pages,
+            packages: parsed.package_definitions,
         };
         let revision = self.previous.insert(Revision {
             options: *options,
@@ -438,6 +443,7 @@ pub fn compile_full_project_with(
         blocks: parsed.blocks,
         diagnostics,
         pages,
+        packages: parsed.package_definitions,
     }
 }
 

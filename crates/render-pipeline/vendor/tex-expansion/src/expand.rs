@@ -20,6 +20,7 @@ use crate::error::{Diagnostic, Limits};
 use crate::latex_packages::{Declaration, LoadKind, OpenedFile, PackageReader, PACKAGES_PRELUDE};
 use crate::lexer::{Lexer, State as LexState};
 use crate::macro_def::{BodyPart, MacroDef, MacroFlags, ParamPart};
+use crate::package_defs::{DefinitionCapture, DefinitionKind, PackageDefinition};
 use crate::prelude::PRELUDE;
 use crate::registers::{absolute_unit_sp_per_unit, scale_decimal, scale_internal_dimen, DefaultFontMetrics, FontMetrics, FontSwitch, Glue};
 use crate::scopes::{IntParam, Meaning, Primitive, RegisterKind, Scopes};
@@ -366,6 +367,8 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("define@key", Primitive::DefineKey),
     ("setkeys", Primitive::SetKeys),
     ("flashtexsetlist", Primitive::FlashtexSetlist),
+    ("flashtexhspace", Primitive::FlashtexHspace),
+    ("flashtexvspace", Primitive::FlashtexVspace),
     ("verb", Primitive::Verb),
     ("flashtex@stop", Primitive::StopInput),
     // The package/class kernel (`latex_packages.rs`).
@@ -501,7 +504,14 @@ pub struct Engine {
     pub(crate) last_origin: Option<Span>,
     /// Span of the last token read from source text (the document or an
     /// `\input` file; preludes run in engines of their own).
-    last_text_span: Option<Span>,
+    pub(crate) last_text_span: Option<Span>,
+    /// The first `\global`/`\long`/`\outer`/`\protected` of the pending
+    /// prefix run, where a recorded package definition's statement starts.
+    /// Cleared with the prefixes.
+    pub(crate) prefix_start: Option<Span>,
+    /// A definer read from a package file at its outermost level is
+    /// running: what it defines is recorded (`package_defs.rs`).
+    pub(crate) capture: Option<DefinitionCapture>,
 }
 
 impl Engine {
@@ -547,6 +557,8 @@ impl Engine {
             opened_packages: Vec::new(),
             last_origin: None,
             last_text_span: None,
+            prefix_start: None,
+            capture: None,
         }
     }
 
@@ -1370,6 +1382,13 @@ impl Engine {
     }
 
     fn dispatch(&mut self, tok: Token, meaning: Meaning) -> Step {
+        // A definer read from a project package file records what it
+        // defines (`package_defs.rs`); nothing to do until one is open.
+        if !self.opened_packages.is_empty() {
+            if let Some(step) = self.record_package_definer(&tok, &meaning) {
+                return step;
+            }
+        }
         match meaning {
             Meaning::Macro(def) => {
                 self.call_macro(&tok, &def);
@@ -1601,7 +1620,16 @@ impl Engine {
         }
     }
 
+    /// The first prefix of a run starts the statement a recorded package
+    /// definition spans (`package_defs.rs`).
+    fn note_prefix(&mut self, tok: &Token) {
+        if !self.prefix_pending() {
+            self.prefix_start = Some(tok.span);
+        }
+    }
+
     fn take_prefixes(&mut self) -> (bool, MacroFlags) {
+        self.prefix_start = None;
         let global = self.st.pending_global;
         let flags = MacroFlags {
             long: self.st.pending_long,
@@ -1651,6 +1679,15 @@ impl Engine {
                 _ => BodyPart::Literal(t),
             })
             .collect();
+        if self.capture.is_some() {
+            if let Some(name) = definable_name(&name_tok) {
+                let mut record = PackageDefinition::new(name, DefinitionKind::Macro);
+                record.overrides = !matches!(self.meaning_of_token(&name_tok), Meaning::Undefined);
+                record.arity = arity;
+                record.signature = self.param_text(&params);
+                self.note_definition(record);
+            }
+        }
         let def = Rc::new(MacroDef { params, body, flags, arity });
         self.define_cs_token(&name_tok, Meaning::Macro(def), global);
         self.finish_assignment();
@@ -1977,6 +2014,19 @@ impl Engine {
             None => return,
         };
         let meaning = self.meaning_of_token(&rhs);
+        if self.capture.is_some() {
+            if let Some(name) = definable_name(&name_tok) {
+                let mut record = PackageDefinition::new(name, DefinitionKind::Macro);
+                record.overrides = !matches!(self.meaning_of_token(&name_tok), Meaning::Undefined);
+                // The copied meaning's shape, when it is a macro's: what
+                // `\let\foo\bar` lets `\foo` take.
+                let (arity, signature, default) = self.latex_shape(&meaning);
+                record.arity = arity;
+                record.signature = signature;
+                record.optional_default = default;
+                self.note_definition(record);
+            }
+        }
         self.define_cs_token(&name_tok, meaning, global);
         self.finish_assignment();
     }
@@ -2120,7 +2170,7 @@ impl Engine {
 
     // ---- primitive handling --------------------------------------------
 
-    fn handle_primitive(&mut self, tok: Token, p: Primitive) -> Step {
+    pub(crate) fn handle_primitive(&mut self, tok: Token, p: Primitive) -> Step {
         use Primitive::*;
         if self.prefix_pending()
             && matches!(p, Par | Begingroup | Endgroup | Aftergroup | Afterassignment | Ignorespaces | Uppercase | Lowercase | Endcsname)
@@ -2147,18 +2197,22 @@ impl Engine {
                 Step::Continue
             }
             Global => {
+                self.note_prefix(&tok);
                 self.st.pending_global = true;
                 Step::Continue
             }
             Long => {
+                self.note_prefix(&tok);
                 self.st.pending_long = true;
                 Step::Continue
             }
             Outer => {
+                self.note_prefix(&tok);
                 self.st.pending_outer = true;
                 Step::Continue
             }
             Protected => {
+                self.note_prefix(&tok);
                 self.st.pending_protected = true;
                 Step::Continue
             }
@@ -2585,6 +2639,14 @@ impl Engine {
                     if matches!(p, NewLength) && !matches!(self.meaning_of_token(&nt), Meaning::Undefined) {
                         self.err(format!("LaTeX Error: Command {} already defined.", self.cs_display(&nt)), tok.span);
                     } else {
+                        if self.capture.is_some() {
+                            if let Some(name) = definable_name(&nt) {
+                                let kind = if matches!(p, NewLength) { DefinitionKind::Length } else { DefinitionKind::Register };
+                                let mut record = PackageDefinition::new(name, kind);
+                                record.overrides = !matches!(self.meaning_of_token(&nt), Meaning::Undefined);
+                                self.note_definition(record);
+                            }
+                        }
                         let idx = self.alloc_register();
                         self.define_cs_token(&nt, Meaning::RegisterAlias(kind, idx), true);
                     }
@@ -2800,6 +2862,14 @@ impl Engine {
                 self.do_flashtex_setlist(tok);
                 Step::Continue
             }
+            FlashtexHspace => {
+                self.do_flashtex_space(tok, "flashtexhspacedone");
+                Step::Continue
+            }
+            FlashtexVspace => {
+                self.do_flashtex_space(tok, "flashtexvspacedone");
+                Step::Continue
+            }
         }
     }
 
@@ -2993,6 +3063,11 @@ impl Engine {
             self.err(format!("LaTeX Error: Command \\c@{name} already defined."), span);
             return;
         }
+        if self.capture.is_some() {
+            let mut record = PackageDefinition::new(name.clone(), DefinitionKind::Counter);
+            record.within = within.clone();
+            self.note_definition(record);
+        }
         let idx = self.alloc_register();
         self.st.scopes.assign_cs(&format!("c@{name}"), Meaning::RegisterAlias(RegisterKind::Count, idx), true);
         self.st.scopes.set_count(idx, 0, true);
@@ -3025,7 +3100,16 @@ impl Engine {
         if !valid_name {
             self.err("Missing control sequence inserted.", span);
         }
-        let already_defined = valid_name && !matches!(self.meaning_of_token(&name_tok), Meaning::Undefined);
+        // ltdefns.dtx `\@ifdefinable`: the name is free when `\@ifundefined`
+        // says so, which counts a `\relax`-valued name as undefined -- the
+        // `\expandafter\newcommand\csname name\endcsname` idiom, where
+        // `\csname` has just made the name `\relax`, defines it -- except
+        // `\relax` itself (`\@qrelax`), which is never definable.
+        let already_defined = valid_name
+            && match &name_tok.kind {
+                TokenKind::ControlSequence(name) => name == "relax" || !self.st.scopes.is_undefined_or_relax(name),
+                _ => !matches!(self.meaning_of_token(&name_tok), Meaning::Undefined),
+            };
         match kind {
             _ if !valid_name => {}
             Primitive::NewCommand if already_defined => {
@@ -3085,6 +3169,16 @@ impl Engine {
         // errors but still defines.
         if matches!(kind, Primitive::ProvideCommand | Primitive::NewCommand) && already_defined {
             return;
+        }
+        if self.capture.is_some() {
+            if let Some(name) = definable_name(&name_tok) {
+                let mut record = PackageDefinition::new(name, DefinitionKind::Macro);
+                record.overrides = already_defined;
+                record.arity = arity;
+                record.optional_default = default.as_ref().map(|toks| self.detokenize(toks));
+                record.signature = latex_signature(nargs, record.optional_default.as_deref());
+                self.note_definition(record);
+            }
         }
         if matches!(kind, Primitive::DeclareRobustCommand) {
             // \DeclareRobustCommand\foo: \foo -> \protect\foo<space>, the
@@ -3191,6 +3285,14 @@ impl Engine {
             return;
         }
         let arity = nargs.unwrap_or(0).clamp(0, 9) as u8;
+        if self.capture.is_some() {
+            let mut record = PackageDefinition::new(name.clone(), DefinitionKind::Environment);
+            record.overrides = exists;
+            record.arity = arity;
+            record.optional_default = default.as_ref().map(|toks| self.detokenize(toks));
+            record.signature = latex_signature(nargs, record.optional_default.as_deref());
+            self.note_definition(record);
+        }
         let to_body = |toks: Vec<Token>| -> Vec<BodyPart> {
             toks.into_iter()
                 .map(|t| match t.kind {
@@ -3277,11 +3379,15 @@ impl Engine {
         // The caption body is stored as a token list and only expanded
         // when a theorem heading is actually typeset, same as its `back`
         // treatment below: raw, not expanded here.
-        back.extend(self.scan_through_group(false));
+        let caption = self.scan_through_group(false);
+        let title = self.capture.is_some().then(|| Self::group_arg_text(&caption));
+        back.extend(caption);
         // The `[within]` reset-counter name is never compared here (the
         // compiler owns it), so it stays raw: what the user wrote is what
         // is handed back.
-        if let Some(within) = self.scan_through_bracket(false) {
+        let within = self.scan_through_bracket(false);
+        let within_name = within.as_ref().map(|toks| Self::bracket_arg_text(toks));
+        if let Some(within) = within {
             back.extend(within);
         }
         // LaTeX's own guard idiom (`\@ifdefinable`, via `\@ifundefined`)
@@ -3330,6 +3436,20 @@ impl Engine {
         // the expanded name); see also the field docs in `scopes.rs`.
         let shared_ok = shared_name.as_ref().map_or(true, |s| self.st.scopes.is_theorem_env(s));
         if !name.is_empty() && shared_ok {
+            if let Some(title) = title {
+                let mut record = PackageDefinition::new(name.clone(), DefinitionKind::Theorem);
+                record.title = Some(title);
+                record.within = within_name;
+                record.signature = shared_name.as_ref().map(|shared| format!("[{shared}]")).unwrap_or_default();
+                // Every argument is handed back below, so the statement's
+                // end is the last non-space argument token's, told here.
+                let end = back
+                    .iter()
+                    .rev()
+                    .find(|p| p.origin.is_none() && p.tok.span.source_id == span.source_id && !matches!(p.tok.kind, TokenKind::Char(_, CatCode::Space)))
+                    .map(|p| p.tok.span.end);
+                self.note_definition_ending_at(record, end);
+            }
             // Claim `\name`/`\end{name}` the way `\newenvironment` claims
             // its commands, so `\begin{name}` no longer reports the
             // environment undefined and a later `\newcommand` on either
@@ -3507,6 +3627,23 @@ impl Engine {
         Some(out)
     }
 
+    /// The text inside a scanned `{...}` group (`scan_through_group`),
+    /// braces and surrounding spaces dropped, tokens spelt as `\string`
+    /// would print them.
+    fn group_arg_text(toks: &[Pending]) -> String {
+        let mut body = toks;
+        while matches!(body.first().map(|p| &p.tok.kind), Some(TokenKind::Char(_, CatCode::Space))) {
+            body = &body[1..];
+        }
+        if matches!(body.first().map(|p| &p.tok.kind), Some(TokenKind::Char(_, CatCode::BeginGroup))) {
+            body = &body[1..];
+        }
+        if matches!(body.last().map(|p| &p.tok.kind), Some(TokenKind::Char(_, CatCode::EndGroup))) {
+            body = &body[..body.len() - 1];
+        }
+        body.iter().map(|p| p.tok.display_name()).collect::<String>().trim().to_string()
+    }
+
     /// Trimmed text of a `scan_through_bracket` result: leading spaces and
     /// the outer `[`/`]` delimiters are dropped. The shared-counter
     /// bracket is scanned with `expand` set, so a `\def`-defined macro
@@ -3572,6 +3709,17 @@ impl Engine {
             self.warn(format!("Environment {} undefined (passed through to the typesetter).", shown_name(&name)), tok.span);
         }
         self.st.scopes.push_group();
+        // The group opened here closes when `\end` runs, which already
+        // reaches the output as `\endgroup` (see `do_end`): emit the
+        // matching `\begingroup` so the stream stays group-balanced.
+        // `{...}` and literal `\begingroup` already emit their own
+        // boundaries (see `maybe_handle_brace` and the `Begingroup`
+        // arm); without this marker a `\newenvironment` whose
+        // begin/end code expands inline leaves no scope behind, and
+        // its declarations leak past `\end` downstream. Queued for
+        // output, not pushed to the input: re-executing it would open
+        // a second group.
+        self.emit_queue.push(Token::new(TokenKind::ControlSequence("begingroup".into()), tok.span));
         let cur = Meaning::Macro(Rc::new(MacroDef::simple(chars_as_other(&name, Span::synthetic()))));
         self.st.scopes.assign_cs("@currenvir", cur, false);
         self.push_tokens(vec![Token::new(TokenKind::ControlSequence(name), tok.span)]);
@@ -3615,7 +3763,10 @@ impl Engine {
         }
         self.push_tokens(vec![
             Token::new(TokenKind::ControlSequence(format!("end{name}")), tok.span),
-            Token::synthetic(TokenKind::ControlSequence("endgroup".into())),
+            // The `\end` span (like `\end{name}` above), so the
+            // `\endgroup` the `Endgroup` arm emits into the output
+            // carries the source position of the `\end` it closes.
+            Token::new(TokenKind::ControlSequence("endgroup".into()), tok.span),
         ]);
     }
 
@@ -4028,6 +4179,194 @@ impl Engine {
             }
             _ => None,
         }
+    }
+
+    /// `\hspace`/`\hspace*` (or `\vspace`), reached through the host
+    /// prelude shim (a direct alias, so the invocation span survives as
+    /// this call's origin undisturbed by any lookahead). The star and the
+    /// `{<dimen>}` are absorbed with one expansion pass but nothing is
+    /// executed, then the reconstructed command is pushed back for the
+    /// main loop under `done_name` (mapped back to the real command by
+    /// the host converter): pushing back the real command would re-enter
+    /// this shim's own macro forever.
+    ///
+    /// Without this, a bare length register in the argument
+    /// (`\hspace{\mylen}`) reaches the stomach as a register assignment,
+    /// whose dimension scan reports "Missing number" and "Illegal unit of
+    /// measure" on the closing brace; real `\hspace` absorbs its argument
+    /// unexpanded as a macro parameter, where the bare register is
+    /// already a complete dimension. When the absorbed group is exactly
+    /// `[<factor>]<register>`, the register's current value — times the
+    /// factor, in fixed point exactly as `scan_dimen` computes it — is
+    /// spliced as decimal text, making `\hspace{\mylen}` behave exactly
+    /// like the already-working `\hspace{\the\mylen}`. Anything else
+    /// (including an undeclared register, or a missing/unclosed group)
+    /// is pushed back verbatim, so the main loop and the parser report
+    /// those exactly as they would without this shim. The shim itself
+    /// never reports: a group it cannot splice is not its error to own.
+    fn do_flashtex_space(&mut self, tok: Token, done_name: &'static str) {
+        let at = self.last_origin.unwrap_or(tok.span);
+        let synth = |kind: TokenKind| Pending {
+            tok: Token::new(kind, at),
+            frozen: false,
+            origin: Some(at),
+        };
+        let mut out = vec![synth(TokenKind::ControlSequence(done_name.into()))];
+        // A `*` directly after the command (spaces skipped, as
+        // `\@ifstar` does) is re-emitted so the host parser sees the star
+        // exactly as it did before.
+        self.skip_spaces();
+        if matches!(self.peek_one().map(|t| t.kind), Some(TokenKind::Char('*', _))) {
+            self.next_raw_token();
+            out.push(synth(TokenKind::Char('*', CatCode::Other)));
+        }
+        // The `{<dimen>}`. Without one, hand the command (and any star)
+        // back untouched so the parser reports the missing brace exactly
+        // as it would without this shim.
+        self.skip_spaces();
+        if !matches!(
+            self.peek_one().map(|t| t.kind),
+            Some(TokenKind::Char(_, CatCode::BeginGroup))
+        ) {
+            self.push_pending(out);
+            return;
+        }
+        let open = Pending { tok: self.next_raw_token().unwrap(), frozen: false, origin: None };
+        let mut inner: Vec<Pending> = Vec::new();
+        let mut depth = 0i32;
+        while let Some(p) = self.next_expanding_raw() {
+            match &p.tok.kind {
+                TokenKind::Char(_, CatCode::BeginGroup) => {
+                    depth += 1;
+                    inner.push(p);
+                }
+                TokenKind::Char(_, CatCode::EndGroup) => {
+                    inner.push(p);
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1;
+                }
+                _ => inner.push(p),
+            }
+        }
+        if let Some((text, span, origin)) = self.space_register_text(&inner) {
+            out.push(synth(TokenKind::Char('{', CatCode::BeginGroup)));
+            for t in chars_as_other(&text, span) {
+                out.push(Pending { tok: t, frozen: false, origin });
+            }
+            out.push(synth(TokenKind::Char('}', CatCode::EndGroup)));
+        } else {
+            out.push(open);
+            out.extend(inner);
+        }
+        // End of input inside the group pushes back without a synthesized
+        // `}`; the parser closes at end of input as it would without the
+        // shim.
+        self.push_pending(out);
+    }
+
+    /// The spliced value text for [`Engine::do_flashtex_space`] when the
+    /// absorbed `{<dimen>}` tokens (with the closing brace still attached)
+    /// are exactly `[<factor>]<register>` modulo whitespace (a dimen/skip
+    /// register alias, through `\let`), or `None` for anything else. A
+    /// bare register splices its `\the`-style text (the whole glue for a
+    /// skip, so `\vspace` keeps its stretch); a `<factor>` splices the
+    /// fixed-point product, as `scan_dimen` computes `<factor><internal
+    /// dimen>` (a skip coerces to its natural width there). Span and
+    /// origin are the register token's own, so diagnostics on the spliced
+    /// text map back to it.
+    fn space_register_text(&self, inner: &[Pending]) -> Option<(String, Span, Option<Span>)> {
+        let mut i = 0;
+        let skip_spaces = |i: &mut usize| {
+            while matches!(
+                inner.get(*i).map(|p| &p.tok.kind),
+                Some(TokenKind::Char(_, CatCode::Space))
+            ) {
+                *i += 1;
+            }
+        };
+        skip_spaces(&mut i);
+        // TeX's optional signs (`scan_dimen`): each `-` flips the sign.
+        let mut neg = false;
+        loop {
+            match inner.get(i).map(|p| &p.tok.kind) {
+                Some(TokenKind::Char('+', _)) => i += 1,
+                Some(TokenKind::Char('-', _)) => {
+                    neg = !neg;
+                    i += 1;
+                }
+                _ => break,
+            }
+            skip_spaces(&mut i);
+        }
+        // The `<number>`: digits with one optional `.`/`,` fraction, all
+        // as character tokens (whatever their catcodes).
+        let mut int_part = String::new();
+        while let Some(TokenKind::Char(c, _)) = inner.get(i).map(|p| &p.tok.kind) {
+            if !c.is_ascii_digit() {
+                break;
+            }
+            int_part.push(*c);
+            i += 1;
+        }
+        let mut frac = String::new();
+        if matches!(
+            inner.get(i).map(|p| &p.tok.kind),
+            Some(TokenKind::Char('.', _)) | Some(TokenKind::Char(',', _))
+        ) {
+            i += 1;
+            while let Some(TokenKind::Char(c, _)) = inner.get(i).map(|p| &p.tok.kind) {
+                if !c.is_ascii_digit() {
+                    break;
+                }
+                frac.push(*c);
+                i += 1;
+            }
+        }
+        let has_factor = !int_part.is_empty() || !frac.is_empty();
+        skip_spaces(&mut i);
+        let reg = inner.get(i)?;
+        let (value, glue) = match strip_let(self.meaning_of_token(&reg.tok)) {
+            Meaning::RegisterAlias(RegisterKind::Dimen, idx) => (self.st.scopes.dimen(idx), None),
+            Meaning::RegisterAlias(RegisterKind::Skip, idx) => {
+                let g = self.st.scopes.skip(idx);
+                (g.value, Some(g))
+            }
+            _ => return None,
+        };
+        i += 1;
+        skip_spaces(&mut i);
+        // Exactly `[<factor>]<register>`: anything else (a second token,
+        // let alone `plus`/`minus` glue) is left for the main loop. The
+        // tail is the absorbed closing brace, or nothing at end of input.
+        match inner.get(i).map(|p| &p.tok.kind) {
+            Some(TokenKind::Char(_, CatCode::EndGroup)) if i + 1 == inner.len() => {}
+            None if i == inner.len() => {}
+            _ => return None,
+        }
+        let (span, origin) = (reg.tok.span, reg.origin);
+        if !has_factor {
+            // No digits: `scan_dimen`'s register shortcut, where a leading
+            // `-` negates the whole value (every part of a glue).
+            let text = match glue {
+                Some(g) if neg => glue_to_string(Glue {
+                    value: -g.value,
+                    stretch: -g.stretch,
+                    shrink: -g.shrink,
+                    ..g
+                }),
+                Some(g) => glue_to_string(g),
+                None => format!("{}pt", print_scaled(if neg { -value } else { value })),
+            };
+            return Some((text, span, origin));
+        }
+        let (n, _) = parse_clamped(&int_part, 10);
+        let mut scaled = scale_internal_dimen(n, &frac, value);
+        if neg {
+            scaled = -scaled;
+        }
+        Some((format!("{}pt", print_scaled(scaled)), span, origin))
     }
 
     fn expect_equals(&mut self) {
@@ -5158,6 +5497,14 @@ impl Engine {
         let if_name = format!("if{base}");
         let true_name = format!("{base}true");
         let false_name = format!("{base}false");
+        if self.capture.is_some() {
+            let overrides = self.st.scopes.is_defined(&if_name);
+            for name in [&if_name, &true_name, &false_name] {
+                let mut record = PackageDefinition::new(name.clone(), DefinitionKind::Conditional);
+                record.overrides = overrides;
+                self.note_definition(record);
+            }
+        }
         // \iffoo := \iffalse initially; \footrue/\foofalse re-\let it
         // globally, exactly like plain.tex's \newif.
         self.st.scopes.assign_cs(&if_name, Meaning::Primitive(Primitive::Iffalse), global);
@@ -5791,6 +6138,8 @@ fn primitive_name(p: Primitive) -> &'static str {
         DefineKey => "define@key",
         SetKeys => "setkeys",
         FlashtexSetlist => "flashtexsetlist",
+        FlashtexHspace => "flashtexhspace",
+        FlashtexVspace => "flashtexvspace",
         Verb => "verb",
         LoadFiles(kind) => kind.name(),
         InputPackageFile => "flashtex@inputfile",
@@ -5915,6 +6264,29 @@ fn body_equal(a: &[BodyPart], b: &[BodyPart]) -> bool {
             (BodyPart::Param(n1), BodyPart::Param(n2)) => n1 == n2,
             _ => false,
         })
+}
+
+/// The name a definition records for its target token: a control
+/// sequence's name, an active character itself; nothing for a character
+/// TeX would refuse ("Missing control sequence inserted").
+fn definable_name(tok: &Token) -> Option<String> {
+    match &tok.kind {
+        TokenKind::ControlSequence(name) => Some(name.clone()),
+        TokenKind::ActiveChar(c) => Some(c.to_string()),
+        _ => None,
+    }
+}
+
+/// `[n][default]` as a `\newcommand`/`\newenvironment` wrote it.
+fn latex_signature(nargs: Option<i64>, default: Option<&str>) -> String {
+    let mut s = String::new();
+    if let Some(n) = nargs {
+        s.push_str(&format!("[{n}]"));
+    }
+    if let Some(default) = default {
+        s.push_str(&format!("[{default}]"));
+    }
+    s
 }
 
 /// Fold `#` (catcode 6) characters in a raw macro-body token list into
@@ -6171,7 +6543,8 @@ fn is_format_level(p: Primitive) -> bool {
             | NewEnvironment | RenewEnvironment | NewTheorem | Begin | End | NewCounter | SetCounter | AddToCounter | StepCounter
             | RefStepCounter | AddToReset | RemoveFromReset | CounterWithin | CounterWithout | Label | Value | Arabic
             | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol | NewLength | SetToWidth | SetToHeight
-            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | Verb | StopInput | LoadFiles(_) | InputPackageFile
+            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | FlashtexHspace | FlashtexVspace
+            | Verb | StopInput | LoadFiles(_) | InputPackageFile
             | EmitPassThrough | LatexError | LatexWarning | PreambleDeclaration(_)
     )
 }

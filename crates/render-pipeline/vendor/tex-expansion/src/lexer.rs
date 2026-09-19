@@ -390,6 +390,11 @@ impl Lexer {
         self.source_id
     }
 
+    /// The text being tokenized.
+    pub(crate) fn text(&self) -> &str {
+        &self.src
+    }
+
     pub fn byte_pos(&self) -> usize {
         self.pos
     }
