@@ -344,6 +344,54 @@ fn newenvironment_expands_begin_end() {
 }
 
 #[test]
+fn newenvironment_with_argument_substitutes() {
+    assert_eq!(
+        run(r"\newenvironment{greet}[1]{Hello #1: }{!}\begin{greet}{World}body\end{greet}"),
+        "Hello World: body!"
+    );
+}
+
+#[test]
+fn renewenvironment_replaces_begin_and_end_code() {
+    assert_eq!(
+        run(r"\newenvironment{shout}{Hi }{!}\renewenvironment{shout}{Yo }{?}\begin{shout}Bob\end{shout}"),
+        "Yo Bob?"
+    );
+}
+
+#[test]
+fn begin_end_emit_balanced_group_markers() {
+    // `\end` already reaches the output as `\endgroup`; `\begin` must
+    // emit the matching `\begingroup`, or an environment whose begin/end
+    // code expands inline (every `\newenvironment`) leaves no scope
+    // behind for the typesetter.
+    let src = r"\newenvironment{myenv}{[BEGIN]}{[END]}\begin{myenv}content\end{myenv}";
+    let r = expand_str(src);
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    assert_eq!(
+        tokens_to_display_string(&r.tokens),
+        "\\begingroup [BEGIN]content[END]\\endgroup "
+    );
+    // The markers carry the `\begin`/`\end` spans, not the definition's.
+    let span_text = |t: &Token| &src[t.span.start as usize..t.span.end as usize];
+    assert_eq!(span_text(&r.tokens[0]), "\\begin");
+    assert_eq!(span_text(&r.tokens[r.tokens.len() - 1]), "\\end");
+}
+
+#[test]
+fn undefined_begin_end_emit_balanced_group_markers() {
+    // Environments the engine passes through (`quote` here) get the same
+    // pair: the opener is new, the closer was already emitted.
+    let r = expand_str(r"\begin{quote}X\end{quote}");
+    assert_eq!(tokens_to_display_string(&r.tokens), "\\begingroup \\quote X\\endquote \\endgroup ");
+    assert!(
+        r.diagnostics.iter().any(|d| d.message.contains("passed through")),
+        "{:?}",
+        r.diagnostics
+    );
+}
+
+#[test]
 fn newcounter_and_setcounter_stepcounter() {
     assert_eq!(run(r"\newcounter{foo}\setcounter{foo}{5}\arabic{foo}"), "5");
     assert_eq!(run(r"\newcounter{foo}\stepcounter{foo}\stepcounter{foo}\arabic{foo}"), "2");

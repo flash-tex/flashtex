@@ -3177,6 +3177,17 @@ pub fn parse_project_with(
     let beamer = p.beamer_deck();
 
     while let Some(open) = p.brace_stack.pop() {
+        // Environment groups open from `\begin` (closed by the matching
+        // `\end`): an unclosed one is already accounted for — by the
+        // single mismatch diagnostic when `\end{document}` closed over
+        // it, or by the unterminated-environment sweep below — so it must
+        // not earn a second diagnostic here. Only real `{` groups (and a
+        // literal `\begingroup`, whose span names it) report: the
+        // environment opener carries the `\begin` span itself.
+        let source = &p.documents[open.document.0].text;
+        if source.get(open.start..open.end) == Some("\\begin") {
+            continue;
+        }
         p.diags.push(Diagnostic::error(
             "unmatched '{' — group never closed",
             Some(open),
@@ -10303,17 +10314,50 @@ impl P<'_> {
                 Some("closed the verbatim block at end of input".into()),
             ));
         }
+        // The body (strictly before the end tag), then the reconstituted
+        // end tag itself. The range alone would also swallow the
+        // environment's trailing group-close (its span sits on `\\end`),
+        // leaving the `\\begin` group unclosed.
         while self.i < self.t.len()
             && self.t[self.i].token.span.document == document
-            && self.t[self.i].token.span.start < tag_end
+            && self.t[self.i].token.span.start < content_end
         {
             self.i += 1;
+        }
+        if found && !self.consume_end_tag(name) {
+            while self.i < self.t.len()
+                && self.t[self.i].token.span.document == document
+                && self.t[self.i].token.span.start < tag_end
+            {
+                self.i += 1;
+            }
         }
         blocks.push(Block::Verbatim {
             lines,
             span: Span::in_document(document, open.start, tag_end),
         });
         self.finish_block_dependencies();
+    }
+
+    /// Consume a reconstituted `\\end{name}` (the four tokens the
+    /// expansion pass emits for one: `end`, `{`, `name`, `}`) at the
+    /// cursor, leaving whatever follows — the environment's trailing
+    /// group-close — for the main loop. Returns false when the cursor is
+    /// not on such a tag (e.g. `\\endname` was redefined, so the end
+    /// never reconstituted); the caller then falls back to its
+    /// source-text range, exactly as before.
+    fn consume_end_tag(&mut self, name: &str) -> bool {
+        let kinds = |i: usize| self.t.get(i).map(|input| &input.token.kind);
+        let is_end = matches!(kinds(self.i), Some(TokenKind::Command(cmd)) if cmd == "end");
+        let is_open = matches!(kinds(self.i + 1), Some(TokenKind::LBrace));
+        let is_name = matches!(kinds(self.i + 2), Some(TokenKind::Word(word)) if word == name);
+        let is_close = matches!(kinds(self.i + 3), Some(TokenKind::RBrace));
+        if is_end && is_open && is_name && is_close {
+            self.i += 4;
+            true
+        } else {
+            false
+        }
     }
 
     /// The `comment` package's `comment` environment: the entire body
@@ -10342,12 +10386,12 @@ impl P<'_> {
         let source = self.documents[document.0].text;
         let content_start = argument_span.end;
         let end_tag = "\\end{comment}";
-        let (tag_end, found) = match source[content_start..].find(end_tag) {
+        let (tag_start, tag_end, found) = match source[content_start..].find(end_tag) {
             Some(offset) => {
                 let tag_start = content_start + offset;
-                (tag_start + end_tag.len(), true)
+                (tag_start, tag_start + end_tag.len(), true)
             }
-            None => (source.len(), false),
+            None => (source.len(), source.len(), false),
         };
         if !found {
             self.diags.push(Diagnostic::error(
@@ -10356,11 +10400,22 @@ impl P<'_> {
                 Some("discarded the comment body to end of input".into()),
             ));
         }
+        // The body (strictly before the end tag), then the reconstituted
+        // end tag itself, leaving the environment's trailing group-close
+        // for the main loop (see `verbatim_environment`).
         while self.i < self.t.len()
             && self.t[self.i].token.span.document == document
-            && self.t[self.i].token.span.start < tag_end
+            && self.t[self.i].token.span.start < tag_start
         {
             self.i += 1;
+        }
+        if found && !self.consume_end_tag("comment") {
+            while self.i < self.t.len()
+                && self.t[self.i].token.span.document == document
+                && self.t[self.i].token.span.start < tag_end
+            {
+                self.i += 1;
+            }
         }
     }
 
@@ -16276,6 +16331,14 @@ fn environment_name_at(tokens: &[InputToken], index: usize) -> Option<&str> {
 fn paragraph_boundary_at(tokens: &[InputToken], index: usize) -> bool {
     match tokens.get(index).map(|input| &input.token.kind) {
         Some(TokenKind::ParBreak) => true,
+        // An environment boundary (`\\begin`/`\\end`) arrives with its
+        // group already opened ahead of it (see the expansion pass): the
+        // boundary is that brace, not the command after it. Without this
+        // a runaway scan would step onto the brace first and read it as
+        // an ordinary group open (notably inside math, where `{` opens a
+        // math group).
+        Some(TokenKind::LBrace) => environment_name_at(tokens, index + 1)
+            .is_some_and(|environment| !math::is_math_environment(environment)),
         Some(TokenKind::Command(name)) => match name.as_str() {
             "par" | "item" | "section" | "subsection" => true,
             "begin" | "end" => environment_name_at(tokens, index)

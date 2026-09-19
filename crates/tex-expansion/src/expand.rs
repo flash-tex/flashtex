@@ -3582,6 +3582,17 @@ impl Engine {
             self.warn(format!("Environment {} undefined (passed through to the typesetter).", shown_name(&name)), tok.span);
         }
         self.st.scopes.push_group();
+        // The group opened here closes when `\end` runs, which already
+        // reaches the output as `\endgroup` (see `do_end`): emit the
+        // matching `\begingroup` so the stream stays group-balanced.
+        // `{...}` and literal `\begingroup` already emit their own
+        // boundaries (see `maybe_handle_brace` and the `Begingroup`
+        // arm); without this marker a `\newenvironment` whose
+        // begin/end code expands inline leaves no scope behind, and
+        // its declarations leak past `\end` downstream. Queued for
+        // output, not pushed to the input: re-executing it would open
+        // a second group.
+        self.emit_queue.push(Token::new(TokenKind::ControlSequence("begingroup".into()), tok.span));
         let cur = Meaning::Macro(Rc::new(MacroDef::simple(chars_as_other(&name, Span::synthetic()))));
         self.st.scopes.assign_cs("@currenvir", cur, false);
         self.push_tokens(vec![Token::new(TokenKind::ControlSequence(name), tok.span)]);
@@ -3625,7 +3636,10 @@ impl Engine {
         }
         self.push_tokens(vec![
             Token::new(TokenKind::ControlSequence(format!("end{name}")), tok.span),
-            Token::synthetic(TokenKind::ControlSequence("endgroup".into())),
+            // The `\end` span (like `\end{name}` above), so the
+            // `\endgroup` the `Endgroup` arm emits into the output
+            // carries the source position of the `\end` it closes.
+            Token::new(TokenKind::ControlSequence("endgroup".into()), tok.span),
         ]);
     }
 
