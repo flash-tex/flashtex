@@ -76,6 +76,14 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{2113}', 417),  // \ell
     ('\u{210F}', 576),  // \hbar
     ('\u{2218}', 412),  // \circ
+    // fontmath.ltx 276-277 (`\mathbin`, cmsy "7A/"79) and 507-508
+    // (`\mathord`, cmsy "7B/"78; `\P`/`\S` reach them through `\ifmmode`,
+    // latex.ltx 10084-10085). A `\tag*{$\dagger$}` label (#441) is the
+    // common use.
+    ('\u{2020}', 444),  // \dagger
+    ('\u{2021}', 444),  // \ddagger
+    ('\u{00A7}', 444),  // \mathsection / \S
+    ('\u{00B6}', 611),  // \mathparagraph / \P
     ('\u{2225}', 500),  // \parallel
     ('\u{2016}', 398),  // \| / \Vert / \lVert / \rVert
     ('\u{2224}', 388),  // \nmid
@@ -211,8 +219,9 @@ mod tests {
         assert_eq!(double_struck('A'), Some('\u{1D538}'));
         assert_eq!(double_struck('a'), None);
         assert_eq!(double_struck('1'), None);
-        // Total entry count: 85 on main plus `\diamond`'s U+22C4 (issue #591).
-        assert_eq!(ADVANCES.len(), 86);
+        // Total entry count: 85 on main plus `\diamond`'s U+22C4 (issue #591)
+        // and the four cmsy marks `\dagger`/`\ddagger`/`\S`/`\P` (#441).
+        assert_eq!(ADVANCES.len(), 90);
     }
 
     #[test]
