@@ -694,6 +694,8 @@ enum FileTypeStyle {
     case texEntry
     case bibliography
     case classOrStyle
+    /// The project manifest, `flashtex.toml` (ProjectManifest.swift).
+    case manifest
     case pdf
     case image
     case generated
@@ -707,7 +709,8 @@ enum FileTypeStyle {
         switch ext {
         case "tex", "ltx": return entry ? .texEntry : .tex
         case "bib": return .bibliography
-        case "cls", "sty": return .classOrStyle
+        case "cls", "sty", "def", "clo": return .classOrStyle
+        case "toml": return .manifest
         case "pdf": return .pdf
         case "png", "jpg", "jpeg", "gif", "tiff", "svg", "eps": return .image
         case "aux", "log", "out", "toc", "lof", "lot", "bbl", "blg", "fls", "gz", "synctex":
@@ -722,6 +725,7 @@ enum FileTypeStyle {
         case .texEntry: return "doc.text.fill"
         case .bibliography: return "books.vertical"
         case .classOrStyle: return "curlybraces.square"
+        case .manifest: return "doc.badge.gearshape"
         case .pdf: return "doc.richtext"
         case .image: return "photo"
         case .generated: return "gearshape"
@@ -737,6 +741,7 @@ enum FileTypeStyle {
         case .tex, .texEntry: return DS.Palette.typeBlue
         case .bibliography: return DS.Palette.typePurple
         case .classOrStyle: return DS.Palette.typeTeal
+        case .manifest: return DS.Palette.typeGray
         case .pdf: return DS.Palette.typeRed
         case .image: return DS.Palette.typeGreen
         case .generated: return DS.Palette.typeGray
