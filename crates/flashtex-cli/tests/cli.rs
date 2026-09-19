@@ -369,7 +369,127 @@ fn usage_errors_exit_2() {
     assert_eq!(run(&["build", "/nonexistent/main.tex"]).status.code(), Some(2));
     assert_eq!(run(&["build", "a.tex", "--bogus"]).status.code(), Some(2));
     assert_eq!(run(&["--help"]).status.code(), Some(0));
-    assert!(stdout(&run(&["--help"])).contains("flashtex build <main.tex>"));
+    assert!(stdout(&run(&["--help"])).contains("flashtex build [<main.tex>|<dir>]"));
+    // A directory with no entry and no manifest is a usage error too, and
+    // so is one with several candidates: the CLI never guesses.
+    let dir = tmp("usage-dir");
+    assert_eq!(run(&["build", dir.to_str().unwrap()]).status.code(), Some(2));
+    write_tex(&dir, "a.tex", alpah_source());
+    write_tex(&dir, "b.tex", alpah_source());
+    let o = run(&["build", dir.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(2));
+    assert!(stderr(&o).contains("2 .tex files (a.tex, b.tex)"), "{}", stderr(&o));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// docs/user/project-manifest.md: a `flashtex.toml` names the entry when
+/// a directory (or nothing) is given, makes the manifest's directory the
+/// project root, appends every `.sty`/`.cls`/… file of each `texinputs`
+/// directory to the document set — real paths inside the root, the
+/// virtual `texinputs/<i>/` for an explicit outside directory — warns
+/// about what it does not understand, and sends the PDF to `output`.
+#[test]
+fn a_manifest_names_the_entry_adds_texinputs_and_sets_the_output_dir() {
+    let dir = tmp("manifest");
+    let proj = dir.join("proj");
+    write_tex(&dir, "proj/paper/main.tex", "\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n");
+    write_tex(&dir, "proj/styles/mystyle.sty", "\\newcommand{\\hello}{Hi}\n");
+    write_tex(&dir, "proj/styles/README.md", "not a document\n");
+    write_tex(&dir, "shared/shared.sty", "\\def\\shared{1}\n");
+    write_tex(&dir, "shared/myclass.cls", "\\LoadClass{article}\n");
+    write_tex(&dir, "shared/notes.txt", "not a document\n");
+    write_tex(
+        &dir,
+        "proj/flashtex.toml",
+        "[project]\nentry = \"paper/main.tex\"\ntexinputs = [\"styles\", \"../shared\", \"/abs\"]\noutput = \"build\"\n[fonts]\nserif = \"x\"\n",
+    );
+    let fonts = fonts_dir();
+    let o = run(&["build", proj.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    let report = json(&stdout(&o));
+    assert_eq!(report.get("entry").and_then(|v| v.as_str()), Some("paper/main.tex"));
+    let canonical = proj.canonicalize().unwrap();
+    assert_eq!(report.get("project_root").and_then(|v| v.as_str()), Some(canonical.to_str().unwrap()), "the manifest's directory is the root");
+    assert_eq!(report.get("manifest").and_then(|v| v.as_str()), Some(canonical.join("flashtex.toml").to_str().unwrap()));
+    let docs: Vec<&str> = report.get("documents").unwrap().as_arr().unwrap().iter().map(|d| d.as_str().unwrap()).collect();
+    assert_eq!(docs, vec!["paper/main.tex", "styles/mystyle.sty", "texinputs/1/myclass.cls", "texinputs/1/shared.sty"], "entry closure first, then texinputs in manifest order, sorted within a directory, documents only");
+    let codes: Vec<String> = report
+        .get("diagnostics")
+        .unwrap()
+        .as_arr()
+        .unwrap()
+        .iter()
+        .map(|d| format!("{}:{}", d.get("code").unwrap().as_str().unwrap(), d.get("message").unwrap().as_str().unwrap()))
+        .collect();
+    assert!(codes.iter().any(|c| c.starts_with("manifest_unknown_key:fonts.serif")), "{codes:?}");
+    assert!(codes.iter().any(|c| c.starts_with("manifest_texinputs:project.texinputs[2] = \"/abs\"")), "{codes:?}");
+    let pdf = report.get("outputs").unwrap().get("pdf").unwrap().as_str().unwrap();
+    assert_eq!(Path::new(pdf), canonical.join("build/main.pdf"), "[project] output, created on demand");
+    assert!(pdf_pages(&std::fs::read(pdf).unwrap()) >= 1);
+    assert!(!proj.join("paper/main.pdf").exists(), "nothing lands next to the entry when output is set");
+
+    // No argument at all, from a subdirectory of the project: same build.
+    let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex"));
+    c.env_remove("FLASHTEX_FONT_DIRS").env_remove("FLASHTEX_LM_DIR").env("FLASHTEX_TFM_DIRS", tfm_dir());
+    c.current_dir(proj.join("paper")).args(["build", "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    let o = c.output().unwrap();
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert_eq!(json(&stdout(&o)).get("entry").and_then(|v| v.as_str()), Some("paper/main.tex"));
+
+    // `manifest show --json` is the resolved manifest plus the classified texinputs.
+    let o = run(&["manifest", "show", proj.to_str().unwrap(), "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let shown = json(&stdout(&o));
+    assert_eq!(shown.get("schema").and_then(|v| v.as_str()), Some("flashtex-manifest/1"));
+    assert_eq!(shown.get("exists"), Some(&flashtex_compiler::json::Value::Bool(true)));
+    let locations: Vec<&str> = shown.get("texinputs").unwrap().as_arr().unwrap().iter().map(|t| t.get("location").unwrap().as_str().unwrap()).collect();
+    assert_eq!(locations, vec!["inside", "outside", "invalid"]);
+    assert_eq!(shown.get("texinputs").unwrap().as_arr().unwrap()[1].get("dir").and_then(|v| v.as_str()), Some("texinputs/1"));
+    assert_eq!(shown.get("warnings").unwrap().as_arr().unwrap()[0].get("key").and_then(|v| v.as_str()), Some("fonts.serif"));
+    let o = run(&["manifest", "show", proj.to_str().unwrap()]);
+    assert!(stdout(&o).contains("entry = \"paper/main.tex\"") && stdout(&o).contains("fetch = \"ask\""), "{}", stdout(&o));
+    assert!(stderr(&o).contains("fonts.serif: unknown key"), "{}", stderr(&o));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `manifest init` writes the commented template naming the actual entry
+/// and refuses to overwrite without `--force`; a directory holding exactly
+/// one `.tex` file needs no manifest to build, and without one the PDF
+/// lands next to the entry exactly as when the file is named.
+#[test]
+fn manifest_init_writes_the_template_and_a_lone_tex_file_is_the_entry() {
+    let dir = tmp("manifest-init");
+    write_tex(&dir, "thesis.tex", alpah_source());
+    let fonts = fonts_dir();
+    let o = run(&["build", dir.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(dir.join("thesis.pdf").is_file(), "no manifest: next to the entry");
+    let o = run(&["manifest", "show", dir.to_str().unwrap(), "--json"]);
+    let shown = json(&stdout(&o));
+    assert_eq!(shown.get("exists"), Some(&flashtex_compiler::json::Value::Bool(false)));
+    assert_eq!(shown.get("manifest").unwrap().get("packages").unwrap().get("fetch").and_then(|v| v.as_str()), Some("ask"), "defaults when absent");
+
+    let o = run(&["manifest", "init", dir.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let text = std::fs::read_to_string(dir.join("flashtex.toml")).unwrap();
+    assert!(text.contains("entry = \"thesis.tex\""), "{text}");
+    for key in ["texinputs = ", "# output = ", "# text = ", "# math = ", "source = ", "fetch = ", "pin = ", "path = ", "# name = "] {
+        assert!(text.contains(key), "template lacks {key}: {text}");
+    }
+    let o = run(&["manifest", "init", dir.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(stderr(&o).contains("--force"));
+    assert_eq!(run(&["manifest", "init", dir.to_str().unwrap(), "--force"]).status.code(), Some(0));
+    // The template governs the build it was written for, with no warnings.
+    let o = run(&["build", dir.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&stdout(&o));
+    assert_eq!(report.get("entry").and_then(|v| v.as_str()), Some("thesis.tex"));
+    assert!(!report.get("diagnostics").unwrap().as_arr().unwrap().iter().any(|d| d.get("code").unwrap().as_str().unwrap().starts_with("manifest")));
+    assert_eq!(run(&["manifest"]).status.code(), Some(2));
+    assert_eq!(run(&["manifest", "frob"]).status.code(), Some(2));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
