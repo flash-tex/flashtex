@@ -70,11 +70,13 @@ final class CompletionTests: XCTestCase {
         // An article project, like `\fr` below: beamer's `\alert` is a text
         // entry that would otherwise lead the list by table order.
         let math = Completion.suggestions(in: "$\\al", caretUTF16: 4, result: nil, projectClass: "article")
-        XCTAssertEqual(labels(math), ["\\allowdisplaybreaks[0-4]", "\\allowbreak", "\\alpha", "\\aleph"],
+        // `\alph{counter}` joined the inventory with #940 (the counter
+        // representations) and sorts with the text entries, before the symbols.
+        XCTAssertEqual(labels(math), ["\\allowdisplaybreaks[0-4]", "\\allowbreak", "\\alph{counter}", "\\alpha", "\\aleph"],
                        "inventory (math_symbol) order")
-        XCTAssertEqual(math.map(\.detail), ["amsmath page-break permission inside displays; no material",
-                                            "\\penalty0 · in math: zero-penalty breakpoint in a formula (\\penalty0); layout-neutral, formulas never break",
-                                            "math · symbol α", "math · symbol ℵ"])
+        XCTAssertEqual(math.map(\.detail).suffix(2), ["math · symbol α", "math · symbol ℵ"])
+        XCTAssertEqual(math.map(\.detail).prefix(2), ["amsmath page-break permission inside displays; no material",
+                                            "\\penalty0 · in math: zero-penalty breakpoint in a formula (\\penalty0); layout-neutral, formulas never break"])
         XCTAssertEqual(Completion.Vocabulary.symbols.count, Completion.Vocabulary.inventory.commands.filter { $0.origin == .mathSymbol && $0.renders }.count)
         XCTAssertGreaterThan(Completion.Vocabulary.entries.count, Completion.Vocabulary.symbols.count)
         // Math-only commands are marked once, by the `math ·` prefix of `Entry.detail`.
@@ -161,9 +163,12 @@ final class CompletionTests: XCTestCase {
         // spelling still ranks behind the closer it would have to name.
         let closed = text + "nd{itemize}\n\\en"
         let s2 = Completion.suggestions(in: closed, caretUTF16: (closed as NSString).length, result: nil)
-        XCTAssertEqual(labels(s2), ["\\end{document}", "\\end{env}", "\\enlargethispage*{dimension}", "\\encl{text}", "\\enspace", "\\enskip", "\\enquote{text}"])
+        // longtable's `\endfirsthead`/`\endhead`/`\endfoot`/`\endlastfoot`
+        // (inventoried with #940) match `\en` too and follow the closers.
+        XCTAssertEqual(labels(s2).prefix(7), ["\\end{document}", "\\end{env}", "\\enlargethispage*{dimension}", "\\encl{text}", "\\enspace", "\\enskip", "\\enquote{text}"])
         let typed = closed + "d"
-        XCTAssertEqual(labels(Completion.suggestions(in: typed, caretUTF16: (typed as NSString).length, result: nil)), ["\\end{document}", "\\end{env}"])
+        XCTAssertEqual(labels(Completion.suggestions(in: typed, caretUTF16: (typed as NSString).length, result: nil)),
+                       ["\\end{document}", "\\end{env}", "\\endfirsthead", "\\endhead", "\\endfoot", "\\endlastfoot"])
 
         // Inside `\end{` the open environments come first, then known/seen names.
         // Environments are class-gated like commands (`environmentOffered`):
