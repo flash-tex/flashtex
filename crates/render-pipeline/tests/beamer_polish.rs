@@ -335,3 +335,49 @@ fn transparent_covered_material_is_painted_mixed_with_the_background() {
     let mixed = discs.iter().filter(|p| near(p.paint.r, 0.2394 * 0.15 + 0.85, 0.001) && near(p.paint.b, 0.5554 * 0.15 + 0.85, 0.001)).count();
     assert_eq!((full, mixed), (1, 1), "{:?}", discs.iter().map(|p| rgb(p)).collect::<Vec<_>>());
 }
+
+/// Every item of a deck carries either a real source range (a path the
+/// display list declares) or synthetic provenance: the navigation-symbol
+/// strip, the theme's bars and footline boxes are page chrome built on
+/// `NO_SOURCE_SPAN`, and the Mac app's validator refuses a display list
+/// whose item names `path: ""` ("source path '' is not a declared
+/// document") — which is what every beamer deck did until the `Paths`,
+/// `Rule`, `ColorBox`, `Underline` and `Graphic` boxes went through
+/// `provenance_of` like the rest (owner report, 2026-09-19: "display list
+/// refused for beamer").
+#[test]
+fn page_chrome_is_synthetic_never_an_empty_source_path() {
+    if !lm_available() {
+        return;
+    }
+    use flashtex_render_pipeline::display::Provenance;
+    let r = render_one(&default_deck());
+    let declared: Vec<&str> = r.v2.documents.iter().map(|d| d.path.as_str()).collect();
+    let mut synthetic = 0;
+    for (page, p) in r.v2.pages.iter().enumerate() {
+        for (i, it) in p.resident_items().iter().enumerate() {
+            let provs: Vec<&Provenance> = match it {
+                Item::GlyphRun(g) => g.clusters.iter().map(|c| &c.provenance).collect(),
+                Item::Rule(rule) => vec![&rule.provenance],
+                Item::Path(path) => vec![&path.provenance],
+                Item::Image(img) => vec![&img.provenance],
+            };
+            for prov in provs {
+                match prov {
+                    Provenance::Synthetic(_) => synthetic += 1,
+                    other => {
+                        for s in other.sources() {
+                            assert!(
+                                declared.iter().any(|d| *d == &*s.path),
+                                "page {} item {i}: source path {:?} is not a declared document ({declared:?})",
+                                page + 1,
+                                s.path
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(synthetic >= 7 * 14, "the six navigation symbols (14 paint operations) on each of 7 pages are synthetic: {synthetic}");
+}
