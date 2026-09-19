@@ -47,12 +47,24 @@ python3 -m unittest discover -s tools/visual-oracle -p 'test_*.py' -v   # 8 pure
    face change — so grouping by run made one siunitx `S` cell three words
    against the reference's one. There is one definition of a word in this
    tool and both sides use it.
-5. **Alignment** per page: `difflib.SequenceMatcher` on normalised word text.
-   For every aligned pair `dx`, `dy` (candidate − reference, bp; 1 bp =
-   1.00375 TeX pt). Per page: aligned / unaligned counts, median shift, mean
-   and max |dx| / |dy|, words within 0.01 bp and 0.5 bp, *reflowed* words
-   (|dx| > 50 bp = the word sits on another line), and the `--top` largest
-   deltas with word, both positions, both fonts, source span and excerpt.
+5. **Alignment** per page: `difflib.SequenceMatcher` on normalised word text,
+   then `reanchor_pairs` repairs repeated-token mispairs — text-only LCS
+   alignment has no notion of position, so a page with many identical short
+   tokens (a table of contents' section/page numbers, list counters) can pair
+   a candidate token with a same-text reference token on another line while
+   the two tokens' true, close partners sit unaligned on both sides. For
+   every pair whose measured points (`pair_points`) disagree by more than
+   50 bp in x or 0.6 line heights in y, `reanchor_pairs` looks for an
+   unpaired same-text word within that threshold on each side and, per text,
+   greedily re-pairs the nearest ones; a pair with no such neighbour (a
+   genuine reflow, or a duplicate the two sides can't reconcile) is left
+   exactly as difflib found it, so `aligned`/`unaligned` stay honest and a
+   real line-break difference still reports as reflowed. For every aligned
+   pair `dx`, `dy` (candidate − reference, bp; 1 bp = 1.00375 TeX pt). Per
+   page: aligned / unaligned counts, median shift, mean and max |dx| / |dy|,
+   words within 0.01 bp and 0.5 bp, *reflowed* words (|dx| > 50 bp = the word
+   sits on another line), and the `--top` largest deltas with word, both
+   positions, both fonts, source span and excerpt.
 6. **Pixels**: reference and candidate PDFs rasterised at 144 dpi to 8-bit
    grey (`pdftoppm`, else Ghostscript — this Mac has `gs` 10.08.0) and
    compared with the real-world-corpus comparator (differing pixels, max
@@ -122,7 +134,8 @@ python3 tools/visual-oracle/cumulative.py --fixtures <dir-of-probe-fixtures> --o
 It reuses this tool's producer route, `pdftext` reference reader, word grouper,
 `difflib` alignment and `rank.pair_points` anchoring unchanged — there is still
 one definition of a word, one alignment and one measured point in this
-directory. What it adds:
+directory (it calls `rank.align_words` directly, not `rank.geometry_page`, so
+it does not run `rank.reanchor_pairs`'s repeated-token repair). What it adds:
 
 1. aligned word pairs are bucketed into **reference lines**, giving each page a
    `dy` profile;

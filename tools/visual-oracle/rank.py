@@ -13,10 +13,19 @@ For every fixture and page the harness reports
             word, origin of the first glyph, baseline from the page top, in
             bp) aligned by text (difflib) against the reference PDF's word
             positions, which `pdftext.py` replays from the content stream with
-            the fonts' own /Widths. Per page: aligned/unaligned counts, the
-            median shift, mean and max |dx|/|dy|, and the N largest positional
-            deltas with the candidate word's source span (path:start-end) and
-            an excerpt of the .tex source;
+            the fonts' own /Widths, then repaired by position
+            (`reanchor_pairs`): text-only alignment has no notion of
+            position, so a page with many identical short tokens (a table of
+            contents' section/page numbers) can pair a candidate token with a
+            same-text reference token on another line while the two tokens'
+            true, close partners sit unaligned on both sides; any such pair
+            with an unpaired same-text neighbour within 50 bp / 0.6 line
+            heights is re-paired to it, and a pair with no such neighbour (a
+            genuine reflow) is left as difflib found it. Per page:
+            aligned/unaligned counts, the median shift, mean and max
+            |dx|/|dy|, and the N largest positional deltas with the candidate
+            word's source span (path:start-end) and an excerpt of the .tex
+            source;
   pixels    differing pixels at 144 dpi between the two rasters (Ghostscript
             or pdftoppm, whichever exists; the report names it), reusing the
             real-world-corpus comparator;
@@ -63,6 +72,7 @@ DPI = corpus.DPI
 Q = float(2 ** 20)  # bp_2pow20 -> bp
 
 REFLOW_DX = 50.0  # |dx| in bp beyond which an aligned word is counted as moved to another line
+ANCHOR_DY_LINE_FACTOR = 0.6  # of the page's estimated line height; see reanchor_pairs
 DEFAULT_TEXBIN = corpus.DEFAULT_TEXBIN
 
 # pdflatex-lm preamble of tests/visual-corpus/harness (origin/agent/mac-visual-oracle/reference-raster),
@@ -250,8 +260,130 @@ def pair_points(ref_word, cand_word):
     return anchor(ref_word), anchor(cand_word)
 
 
+def _line_height(words):
+    """A rough estimate of this page's line height (bp), used only to scale
+    `reanchor_pairs`'s vertical threshold. TeX's default `\\baselineskip` is
+    about 1.2x the font size; a page with no usable `size` (an empty page, or
+    a synthetic test fixture) falls back to a plain 10 pt document's 12 bp."""
+    sizes = [w["size"] for w in words if w.get("size")]
+    if not sizes:
+        return 12.0
+    return statistics.median(sizes) * 1.2
+
+
+def reanchor_pairs(ref_words, cand_words, pairs, ref_free, cand_free, dx_threshold, dy_threshold):
+    """Fix difflib's blind pairing of interchangeable repeated short tokens.
+
+    `align_words` aligns on text alone (a difflib longest-common-subsequence
+    over the normalised word strings); it has no notion of position. On a
+    table of contents, page numbers and section numbers are short, heavily
+    repeated tokens (`2`, `3`, ...) interleaved with titles the two sides may
+    segment or order slightly differently, and the LCS then has many
+    equally-valid alignments to choose from. It can pair a candidate token
+    with a same-text reference token several lines away while the two
+    tokens' true, adjacent partners are left out of `pairs` entirely (in
+    `ref_free`/`cand_free`) — this is what made `hyperref-toc` page 1 read as
+    a −446 bp/+13.57 bp outlier when every one of its 505 words was in fact
+    within 0.02 bp of the reference (docs/evidence/visual-oracle-
+    2026-09-19T210411Z, rank 2): the trailing `2` of one TOC line (the page
+    number, x=534.6) was paired with the leading `2` of the next line's
+    section number (x=88.3, one line down).
+
+    This runs after `align_words` and repairs exactly that: for every pair
+    whose measured points (`pair_points`) disagree by more than
+    `dx_threshold` in x or `dy_threshold` in y ("bad"), gather every
+    same-normalised-text word that is either the ref/cand half of another bad
+    pair, or sits unpaired in `ref_free`/`cand_free`. Within each such
+    text-keyed group, greedily match ref/cand words nearest first, accepting
+    only matches within (dx_threshold, dy_threshold) — a small per-text
+    nearest-position assignment, not a free-for-all reshuffle.
+
+    A bad pair whose original two words find no better within-threshold
+    partner is left exactly as it was: this is what keeps a genuine reflow
+    (the same word moved to another line because a line break differs, with
+    no duplicate nearby to anchor it) reported as reflowed rather than
+    silently dropped. A word that *is* freed by another word claiming its old
+    partner, but itself finds no new partner, becomes unaligned — a leftover
+    duplicate the two sides could not reconcile, not a placement claim.
+
+    Untouched: any pair that was already within threshold, and any word whose
+    text does not appear in a bad pair. Returns (pairs, ref_free, cand_free),
+    same shapes as the inputs.
+    """
+    def bad(i, j):
+        (rx, ry), (cx, cy) = pair_points(ref_words[i], cand_words[j])
+        return abs(cx - rx) > dx_threshold or abs(cy - ry) > dy_threshold
+
+    bad_pairs = [(i, j) for i, j in pairs if bad(i, j)]
+    if not bad_pairs:
+        return list(pairs), list(ref_free), list(cand_free)
+
+    texts = {norm(ref_words[i]["text"]) for i, _ in bad_pairs}
+    group_i = {t: [] for t in texts}
+    group_j = {t: [] for t in texts}
+    for i, j in bad_pairs:
+        t = norm(ref_words[i]["text"])
+        group_i[t].append(i)
+        group_j[t].append(j)
+    for i in ref_free:
+        t = norm(ref_words[i]["text"])
+        if t in group_i:
+            group_i[t].append(i)
+    for j in cand_free:
+        t = norm(cand_words[j]["text"])
+        if t in group_j:
+            group_j[t].append(j)
+
+    # Greedy nearest-position matching per text group, closest pair first,
+    # accepting only within-threshold matches. `resolved_j` is kept as the
+    # exact inverse of `resolved_i`: both are filled together below.
+    resolved_i, resolved_j = {}, {}
+    for t in texts:
+        scored = []
+        for i in group_i[t]:
+            for j in group_j[t]:
+                (rx, ry), (cx, cy) = pair_points(ref_words[i], cand_words[j])
+                dx, dy = cx - rx, cy - ry
+                if abs(dx) <= dx_threshold and abs(dy) <= dy_threshold:
+                    scored.append((abs(dx) + abs(dy), i, j))
+        scored.sort(key=lambda s: s[0])
+        for _, i, j in scored:
+            if i in resolved_i or j in resolved_j:
+                continue
+            resolved_i[i] = j
+            resolved_j[j] = i
+
+    new_pairs = []
+    new_ref_free = set(ref_free) - set(resolved_i)
+    new_cand_free = set(cand_free) - set(resolved_j)
+    for i, j in pairs:
+        if i in resolved_i or j in resolved_j:
+            # This pair's ref and/or cand half moved to a better partner
+            # (added below); whichever half did *not* find one of its own is
+            # now a leftover duplicate with no partner — unaligned, not
+            # silently re-paired with the old one that just left it.
+            if i in resolved_i and j not in resolved_j:
+                new_cand_free.add(j)
+            if j in resolved_j and i not in resolved_i:
+                new_ref_free.add(i)
+            continue
+        new_pairs.append((i, j))  # neither half found a better match: unchanged (e.g. a genuine reflow)
+    for i, j in resolved_i.items():
+        new_pairs.append((i, j))
+    new_pairs.sort()
+    return new_pairs, sorted(new_ref_free), sorted(new_cand_free)
+
+
 def geometry_page(ref_words, cand_words, diags, top_n):
-    pairs, ref_un, cand_un = align_words(ref_words, cand_words)
+    pairs, _, _ = align_words(ref_words, cand_words)
+    paired_i = {i for i, _ in pairs}
+    paired_j = {j for _, j in pairs}
+    ref_free = [i for i in range(len(ref_words)) if i not in paired_i]
+    cand_free = [j for j in range(len(cand_words)) if j not in paired_j]
+    dy_threshold = ANCHOR_DY_LINE_FACTOR * _line_height(ref_words + cand_words)
+    pairs, ref_free, cand_free = reanchor_pairs(ref_words, cand_words, pairs, ref_free, cand_free,
+                                                REFLOW_DX, dy_threshold)
+    ref_un, cand_un = len(ref_words) - len(pairs), len(cand_words) - len(pairs)
     rec = {"reference_words": len(ref_words), "candidate_words": len(cand_words), "aligned": len(pairs),
            "reference_unaligned": ref_un, "candidate_unaligned": cand_un}
     if not pairs:
