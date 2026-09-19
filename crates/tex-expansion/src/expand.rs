@@ -366,6 +366,8 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("define@key", Primitive::DefineKey),
     ("setkeys", Primitive::SetKeys),
     ("flashtexsetlist", Primitive::FlashtexSetlist),
+    ("flashtexhspace", Primitive::FlashtexHspace),
+    ("flashtexvspace", Primitive::FlashtexVspace),
     ("verb", Primitive::Verb),
     ("flashtex@stop", Primitive::StopInput),
     // The package/class kernel (`latex_packages.rs`).
@@ -2800,6 +2802,14 @@ impl Engine {
                 self.do_flashtex_setlist(tok);
                 Step::Continue
             }
+            FlashtexHspace => {
+                self.do_flashtex_space(tok, "flashtexhspacedone");
+                Step::Continue
+            }
+            FlashtexVspace => {
+                self.do_flashtex_space(tok, "flashtexvspacedone");
+                Step::Continue
+            }
         }
     }
 
@@ -4028,6 +4038,194 @@ impl Engine {
             }
             _ => None,
         }
+    }
+
+    /// `\hspace`/`\hspace*` (or `\vspace`), reached through the host
+    /// prelude shim (a direct alias, so the invocation span survives as
+    /// this call's origin undisturbed by any lookahead). The star and the
+    /// `{<dimen>}` are absorbed with one expansion pass but nothing is
+    /// executed, then the reconstructed command is pushed back for the
+    /// main loop under `done_name` (mapped back to the real command by
+    /// the host converter): pushing back the real command would re-enter
+    /// this shim's own macro forever.
+    ///
+    /// Without this, a bare length register in the argument
+    /// (`\hspace{\mylen}`) reaches the stomach as a register assignment,
+    /// whose dimension scan reports "Missing number" and "Illegal unit of
+    /// measure" on the closing brace; real `\hspace` absorbs its argument
+    /// unexpanded as a macro parameter, where the bare register is
+    /// already a complete dimension. When the absorbed group is exactly
+    /// `[<factor>]<register>`, the register's current value — times the
+    /// factor, in fixed point exactly as `scan_dimen` computes it — is
+    /// spliced as decimal text, making `\hspace{\mylen}` behave exactly
+    /// like the already-working `\hspace{\the\mylen}`. Anything else
+    /// (including an undeclared register, or a missing/unclosed group)
+    /// is pushed back verbatim, so the main loop and the parser report
+    /// those exactly as they would without this shim. The shim itself
+    /// never reports: a group it cannot splice is not its error to own.
+    fn do_flashtex_space(&mut self, tok: Token, done_name: &'static str) {
+        let at = self.last_origin.unwrap_or(tok.span);
+        let synth = |kind: TokenKind| Pending {
+            tok: Token::new(kind, at),
+            frozen: false,
+            origin: Some(at),
+        };
+        let mut out = vec![synth(TokenKind::ControlSequence(done_name.into()))];
+        // A `*` directly after the command (spaces skipped, as
+        // `\@ifstar` does) is re-emitted so the host parser sees the star
+        // exactly as it did before.
+        self.skip_spaces();
+        if matches!(self.peek_one().map(|t| t.kind), Some(TokenKind::Char('*', _))) {
+            self.next_raw_token();
+            out.push(synth(TokenKind::Char('*', CatCode::Other)));
+        }
+        // The `{<dimen>}`. Without one, hand the command (and any star)
+        // back untouched so the parser reports the missing brace exactly
+        // as it would without this shim.
+        self.skip_spaces();
+        if !matches!(
+            self.peek_one().map(|t| t.kind),
+            Some(TokenKind::Char(_, CatCode::BeginGroup))
+        ) {
+            self.push_pending(out);
+            return;
+        }
+        let open = Pending { tok: self.next_raw_token().unwrap(), frozen: false, origin: None };
+        let mut inner: Vec<Pending> = Vec::new();
+        let mut depth = 0i32;
+        while let Some(p) = self.next_expanding_raw() {
+            match &p.tok.kind {
+                TokenKind::Char(_, CatCode::BeginGroup) => {
+                    depth += 1;
+                    inner.push(p);
+                }
+                TokenKind::Char(_, CatCode::EndGroup) => {
+                    inner.push(p);
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1;
+                }
+                _ => inner.push(p),
+            }
+        }
+        if let Some((text, span, origin)) = self.space_register_text(&inner) {
+            out.push(synth(TokenKind::Char('{', CatCode::BeginGroup)));
+            for t in chars_as_other(&text, span) {
+                out.push(Pending { tok: t, frozen: false, origin });
+            }
+            out.push(synth(TokenKind::Char('}', CatCode::EndGroup)));
+        } else {
+            out.push(open);
+            out.extend(inner);
+        }
+        // End of input inside the group pushes back without a synthesized
+        // `}`; the parser closes at end of input as it would without the
+        // shim.
+        self.push_pending(out);
+    }
+
+    /// The spliced value text for [`Engine::do_flashtex_space`] when the
+    /// absorbed `{<dimen>}` tokens (with the closing brace still attached)
+    /// are exactly `[<factor>]<register>` modulo whitespace (a dimen/skip
+    /// register alias, through `\let`), or `None` for anything else. A
+    /// bare register splices its `\the`-style text (the whole glue for a
+    /// skip, so `\vspace` keeps its stretch); a `<factor>` splices the
+    /// fixed-point product, as `scan_dimen` computes `<factor><internal
+    /// dimen>` (a skip coerces to its natural width there). Span and
+    /// origin are the register token's own, so diagnostics on the spliced
+    /// text map back to it.
+    fn space_register_text(&self, inner: &[Pending]) -> Option<(String, Span, Option<Span>)> {
+        let mut i = 0;
+        let skip_spaces = |i: &mut usize| {
+            while matches!(
+                inner.get(*i).map(|p| &p.tok.kind),
+                Some(TokenKind::Char(_, CatCode::Space))
+            ) {
+                *i += 1;
+            }
+        };
+        skip_spaces(&mut i);
+        // TeX's optional signs (`scan_dimen`): each `-` flips the sign.
+        let mut neg = false;
+        loop {
+            match inner.get(i).map(|p| &p.tok.kind) {
+                Some(TokenKind::Char('+', _)) => i += 1,
+                Some(TokenKind::Char('-', _)) => {
+                    neg = !neg;
+                    i += 1;
+                }
+                _ => break,
+            }
+            skip_spaces(&mut i);
+        }
+        // The `<number>`: digits with one optional `.`/`,` fraction, all
+        // as character tokens (whatever their catcodes).
+        let mut int_part = String::new();
+        while let Some(TokenKind::Char(c, _)) = inner.get(i).map(|p| &p.tok.kind) {
+            if !c.is_ascii_digit() {
+                break;
+            }
+            int_part.push(*c);
+            i += 1;
+        }
+        let mut frac = String::new();
+        if matches!(
+            inner.get(i).map(|p| &p.tok.kind),
+            Some(TokenKind::Char('.', _)) | Some(TokenKind::Char(',', _))
+        ) {
+            i += 1;
+            while let Some(TokenKind::Char(c, _)) = inner.get(i).map(|p| &p.tok.kind) {
+                if !c.is_ascii_digit() {
+                    break;
+                }
+                frac.push(*c);
+                i += 1;
+            }
+        }
+        let has_factor = !int_part.is_empty() || !frac.is_empty();
+        skip_spaces(&mut i);
+        let reg = inner.get(i)?;
+        let (value, glue) = match strip_let(self.meaning_of_token(&reg.tok)) {
+            Meaning::RegisterAlias(RegisterKind::Dimen, idx) => (self.st.scopes.dimen(idx), None),
+            Meaning::RegisterAlias(RegisterKind::Skip, idx) => {
+                let g = self.st.scopes.skip(idx);
+                (g.value, Some(g))
+            }
+            _ => return None,
+        };
+        i += 1;
+        skip_spaces(&mut i);
+        // Exactly `[<factor>]<register>`: anything else (a second token,
+        // let alone `plus`/`minus` glue) is left for the main loop. The
+        // tail is the absorbed closing brace, or nothing at end of input.
+        match inner.get(i).map(|p| &p.tok.kind) {
+            Some(TokenKind::Char(_, CatCode::EndGroup)) if i + 1 == inner.len() => {}
+            None if i == inner.len() => {}
+            _ => return None,
+        }
+        let (span, origin) = (reg.tok.span, reg.origin);
+        if !has_factor {
+            // No digits: `scan_dimen`'s register shortcut, where a leading
+            // `-` negates the whole value (every part of a glue).
+            let text = match glue {
+                Some(g) if neg => glue_to_string(Glue {
+                    value: -g.value,
+                    stretch: -g.stretch,
+                    shrink: -g.shrink,
+                    ..g
+                }),
+                Some(g) => glue_to_string(g),
+                None => format!("{}pt", print_scaled(if neg { -value } else { value })),
+            };
+            return Some((text, span, origin));
+        }
+        let (n, _) = parse_clamped(&int_part, 10);
+        let mut scaled = scale_internal_dimen(n, &frac, value);
+        if neg {
+            scaled = -scaled;
+        }
+        Some((format!("{}pt", print_scaled(scaled)), span, origin))
     }
 
     fn expect_equals(&mut self) {
@@ -5791,6 +5989,8 @@ fn primitive_name(p: Primitive) -> &'static str {
         DefineKey => "define@key",
         SetKeys => "setkeys",
         FlashtexSetlist => "flashtexsetlist",
+        FlashtexHspace => "flashtexhspace",
+        FlashtexVspace => "flashtexvspace",
         Verb => "verb",
         LoadFiles(kind) => kind.name(),
         InputPackageFile => "flashtex@inputfile",
@@ -6171,7 +6371,8 @@ fn is_format_level(p: Primitive) -> bool {
             | NewEnvironment | RenewEnvironment | NewTheorem | Begin | End | NewCounter | SetCounter | AddToCounter | StepCounter
             | RefStepCounter | AddToReset | RemoveFromReset | CounterWithin | CounterWithout | Label | Value | Arabic
             | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol | NewLength | SetToWidth | SetToHeight
-            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | Verb | StopInput | LoadFiles(_) | InputPackageFile
+            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | FlashtexHspace | FlashtexVspace
+            | Verb | StopInput | LoadFiles(_) | InputPackageFile
             | EmitPassThrough | LatexError | LatexWarning | PreambleDeclaration(_)
     )
 }

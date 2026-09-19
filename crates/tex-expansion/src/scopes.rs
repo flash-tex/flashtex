@@ -221,6 +221,16 @@ pub enum Primitive {
     /// stores the keyval text unexecuted and assigns it later, where a
     /// bare register is a complete `<internal dimen>` that takes no unit).
     FlashtexSetlist,
+    /// Host pass-through for `\hspace`/`\hspace*`: absorbs the star and
+    /// the `{<dimen>}` the way `\expanded` absorbs its body, splices a
+    /// bare dimen/skip register (or `<factor><register>`) to its current
+    /// value text, and pushes the reconstructed command back for the main
+    /// loop, so the register never reaches the stomach as a register
+    /// assignment (real `\hspace` absorbs its argument unexpanded as a
+    /// macro parameter, where the bare register is already complete).
+    FlashtexHspace,
+    /// Host pass-through for `\vspace`/`\vspace*`: like [`FlashtexHspace`].
+    FlashtexVspace,
     /// `\verb` (reads raw characters from the source).
     Verb,
     /// Internal: stop reading all input (`\end{document}`).

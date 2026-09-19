@@ -2488,6 +2488,49 @@ fn is_preamble_length(name: &str) -> bool {
     PREAMBLE_LENGTHS.contains(&name)
 }
 
+/// Length names TeX accepts a `<factor>` over (`0.6\baselineskip`,
+/// `2\parindent`, `-.5\textwidth`) beyond [`PREAMBLE_LENGTHS`]:
+/// the engine's TeX dimen/skip parameters (modelled in tex-expansion but
+/// left undefined in LaTeX mode, so they reach this parser as text), the
+/// LaTeX list lengths, and the kernel zero registers. Muglue parameters
+/// (`\thinmuskip`, ...) are deliberately absent: they are not valid where
+/// a dimension is expected, so they keep erroring.
+///
+/// Measured against live pdflatex (TeX Live 2026, 11pt article, 1 page):
+/// `0.6\baselineskip` is 8.16008pt, `2\parindent` is 34.0pt,
+/// `-.5\textwidth` is -180.0pt. This compiler owns none of those values
+/// (page geometry is applied by the render pipeline from the source; see
+/// `parse_dimen_pt_at`), so a factor over any of them parses to zero —
+/// the same convention the preamble lengths already used — and the
+/// `setlength` path additionally warns `unsupported length expression`
+/// rather than pretending the value is 0pt. A name outside this closed
+/// set (an undeclared register) still fails to parse, so `\hspace` keeps
+/// reporting it by name.
+const FACTOR_LENGTHS: &[&str] = &[
+    // TeX skip parameters.
+    "parskip", "baselineskip", "lineskip", "abovedisplayskip", "belowdisplayskip",
+    "abovedisplayshortskip", "belowdisplayshortskip", "leftskip", "rightskip", "topskip",
+    "splittopskip", "tabskip", "spaceskip", "xspaceskip", "parfillskip",
+    // TeX dimen parameters.
+    "parindent", "mathsurround", "lineskiplimit", "maxdepth", "splitmaxdepth", "boxmaxdepth",
+    "hfuzz", "vfuzz", "delimitershortfall", "nulldelimiterspace", "scriptspace",
+    "predisplaysize", "displaywidth", "displayindent", "overfullrule", "hangindent",
+    "hoffset", "voffset", "emergencystretch", "vsize", "pdfpagewidth", "pdfpageheight",
+    "pdfhorigin", "pdfvorigin",
+    // LaTeX list, box and table lengths.
+    "topsep", "partopsep", "itemsep", "parsep", "labelsep", "labelwidth", "labelindent",
+    "leftmargin", "rightmargin", "itemindent", "listparindent", "footnotesep", "fboxsep",
+    "fboxrule", "tabcolsep", "arrayrulewidth", "doublerulesep", "extrarowheight",
+    // The kernel zero registers.
+    "z@", "z@skip",
+];
+
+fn is_length_name(name: &str) -> bool {
+    is_preamble_length(name)
+        || matches!(name, "linewidth" | "columnwidth" | "hsize")
+        || FACTOR_LENGTHS.contains(&name)
+}
+
 /// Lengths a `\begin{list}` decl assigns (`\setlength{\leftmargin}{...}`):
 /// read on the innermost open list rather than warned about. Anything else
 /// list-shaped (`\parsep`, `\itemindent`, ...) keeps the historic warning.
@@ -2508,7 +2551,7 @@ fn length_reference_parts(raw: &str) -> Option<(f64, &str)> {
     if let Some(bs) = s.find('\\') {
         let (factor, rest) = s.split_at(bs);
         let name = rest[1..].trim();
-        if !is_preamble_length(name) && !matches!(name, "linewidth" | "columnwidth" | "hsize") {
+        if !is_length_name(name) {
             return None;
         }
         let f = factor.trim();
@@ -2573,9 +2616,12 @@ fn parse_dimen_pt_with_units(text: &str, em_pt: f64, ex_pt: f64) -> Option<f64> 
     if let Some(bs) = text.find('\\') {
         let (factor, rest) = text.split_at(bs);
         let name = rest[1..].trim();
-        if !is_preamble_length(name) && !matches!(name, "linewidth" | "columnwidth" | "hsize") {
+        if !is_length_name(name) {
             return None;
         }
+        // A bare factor with no length (`0.6`) never reaches this branch
+        // (no backslash), and an empty-or-numeric factor is required here:
+        // `0.6\baselineskip` parses, `0.6` and `x\baselineskip` do not.
         let factor = factor.trim();
         if !factor.is_empty() {
             let _: f64 = factor.parse().ok()?;
@@ -2583,7 +2629,7 @@ fn parse_dimen_pt_with_units(text: &str, em_pt: f64, ex_pt: f64) -> Option<f64> 
         return Some(0.0);
     }
     let stripped = text.trim_start_matches('\\');
-    if is_preamble_length(stripped) {
+    if is_length_name(stripped) {
         return Some(0.0);
     }
     let unit_len = text
@@ -4527,7 +4573,12 @@ impl P<'_> {
                 let (tokens, argument) = self.required_group(name, span);
                 let body = self.latex_body_pt();
                 let raw = dimen_source(&tokens);
-                match parse_dimen_pt_at(&raw, body).or_else(|| self.baselineskip_multiple(&raw)) {
+                // The leading multiple first: `parse_dimen_pt_at` accepts
+                // `<factor>\baselineskip` as an (unvalued) length reference,
+                // which would shadow the real leading value below.
+                match self
+                    .baselineskip_multiple(&raw)
+                    .or_else(|| parse_dimen_pt_at(&raw, body)) {
                     Some(pt) => self.assign_parameter(
                         BreakParameter::EnlargeThisPage { pt, shrink },
                         span.merge(argument),
@@ -6222,7 +6273,9 @@ impl P<'_> {
             // before the first cell item.
             let space_before = !para.is_empty() && self.space_precedes(self.i - 1);
             let (tokens, argument_span) = self.required_group(name, span);
-            let raw = token_text(&tokens);
+            // `dimen_source`, not `token_text`: the backslash matters, so
+            // `<factor>\<length>` (`2\parindent`) still parses (issue #835).
+            let raw = dimen_source(&tokens);
             let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
             match parse_dimen_pt_current(&raw, self.font_setup().em_ex_sp(self.style)) {
                 Some(pt) => {
@@ -6380,7 +6433,8 @@ impl P<'_> {
             // a missing argument instead of reading the dimension after it.
             let _starred = self.take_optional_star();
             let (tokens, argument_span) = self.required_group(name, span);
-            let raw = token_text(&tokens);
+            // `dimen_source`, not `token_text`: see `hspace` above.
+            let raw = dimen_source(&tokens);
             let units = self.font_setup().em_ex_sp(self.style);
             match parse_glue_pt_current(&raw, units) {
                 Some((pt, stretch_pt, shrink_pt)) => {
