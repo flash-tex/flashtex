@@ -10,6 +10,7 @@ Pencil sketches and photos into reviewed LaTeX/TikZ insertions.
 | **This page** | Requirements, installing, a 5-minute first document, a multi-file project from scratch in 4 steps |
 | [The Mac app](gui.md) | Workspace, projects and multi-file documents, editing and IntelliSense, compiling, the preview, the Problems panel and quick fixes, PDF export, capture conversion, the Nearby companion, Preferences, all keyboard shortcuts |
 | [FlashTeXPad for iPad](ipad.md) | What the capture companion does, building it on a device, pairing, sending a capture, limits |
+| [The project manifest](project-manifest.md) | `flashtex.toml`: opening a folder, `texinputs` directories of `.sty`/`.cls` files, the output directory, fonts and package policy; every key, every default, and the promise that no manifest changes nothing |
 | [Command-line tools](compiler.md) | `flashtex-render`, `flashtex-compiler`, `flashtex-pdf`/`flashtex-pdf-exact`, fonts and metrics, building from source, **supported LaTeX**, diagnostic codes |
 
 ## Requirements

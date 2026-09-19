@@ -101,9 +101,12 @@ without leaving the app, or open an existing `.tex` file.
 
 ### Opening and working in a project
 
-- **Open** a file with *File › Open LaTeX File…* (⌘O). It becomes the
-  **entry document** (sent to the engine as `main.tex`, whatever its real
-  name) and its folder becomes the project root. If the current buffer is
+- **Open** a file with *File › Open LaTeX File or Project Folder…* (⌘O).
+  It becomes the **entry document** (sent to the engine as `main.tex`,
+  whatever its real name) and its folder becomes the project root. Open a
+  **folder** instead and its [`flashtex.toml`](project-manifest.md) names
+  the entry (`[project] entry`); without one, the folder's only `.tex` file
+  is it — two or none is refused, naming them. If the current buffer is
   unsaved you are asked to Save / Discard / Cancel; a discarded buffer can be
   brought back with *Edit › Restore Discarded Buffer* until you quit.
 - **`\input{…}` and `\include{…}`** are scanned lexically (no macro
@@ -119,6 +122,14 @@ without leaving the app, or open an existing `.tex` file.
   closing it reverts to reading disk. On the helper route (below), an include
   still needs an explicit open: the durable helper compiles only its own
   ledger membership.
+- **Packages and classes.** The `.sty`/`.cls`/`.def`/`.clo` files next to
+  the entry, and every file under the manifest's `texinputs` directories,
+  show in the Project tree as greyed rows with the class/style icon and go
+  out with every compile on the direct route, so the engine can read a
+  project-local `\usepackage{mystyle}`. Click one to open it. *File ›
+  Create flashtex.toml…* writes the commented manifest template next to
+  the entry and opens it (coloured as plain text with comments). See
+  [the project manifest](project-manifest.md).
 - **Saving** (⌘S) is compare-and-replace: if the file changed on disk since
   it was read, you get *File › Resolve On-Disk Conflict…* with **Overwrite /
   Reload / Keep Editing** instead of a silent overwrite. FlashTeX also watches
