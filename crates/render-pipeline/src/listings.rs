@@ -1016,6 +1016,7 @@ pub fn apply(
                 parindent_em: None,
                 vspace_after_em: 0.0,
                 close_skip: None,
+                strut: true,
             });
             for part in parts.iter_mut() {
                 if let ParaPart::Lines(items) = part {
@@ -1048,6 +1049,11 @@ pub fn apply(
                 *vspace_flex = (vspace_flex.0 + listing.keys.belowskip.stretch, vspace_flex.1 + listing.keys.belowskip.shrink);
             }
             Some(Block::Heading { vspace_before, .. }) => *vspace_before += below,
+            // A listing closing a beamer frame (`[fragile]`): the skip is
+            // still glue in the frame's `\vbox to\textheight`, under the
+            // body's bottom fill. Measured (beamer-fragile p3): dropping it
+            // put the listing 3.49bp too low (0.4 x 6pt + the lost depth).
+            Some(Block::FrameEnd { vspace_before, .. }) => *vspace_before += below,
             _ => {}
         }
         if let Some(block) = caption_items {
@@ -1204,6 +1210,8 @@ fn caption_block(texts: &[&str], labels: &Labels, listing: &Listing, number: &st
             parindent_em: None,
             vspace_after_em: 0.0,
             close_skip: None,
+            // The caption line is ordinary text.
+            strut: false,
         }),
     }
 }

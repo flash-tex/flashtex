@@ -626,8 +626,12 @@ pub enum Block {
         title: Vec<Item>,
         subtitle: Vec<Item>,
         align: flashtex_class_geometry::beamer::FrameAlign,
-        /// `[plain]`: read, not modelled (the body box keeps `\textheight`).
+        /// `[plain]`: no headline/footline on the page and the frame's exit
+        /// code `\vspace*{-\footheight}` (`class_geometry::beamer::plain_frame`).
         plain: bool,
+        /// `[allowframebreaks]`: the body is `\vsplit` over as many pages as
+        /// it needs (`class_geometry::beamer::autobreak`).
+        allowframebreaks: bool,
         /// The frame's slide count (compiler `BeamerFrameBegin::slides`);
         /// after `crate::overlay::expand_frames` the frame appears once
         /// per slide and `slide` says which.
@@ -850,6 +854,13 @@ pub struct SizedPara {
     /// 4pt at a 10pt base rather than `\normalsize`'s 8pt). `None` keeps
     /// the class's.
     pub close_skip: Option<crate::style::Skip>,
+    /// Every line is at least `\strutbox`-tall (`.7`/`.3\baselineskip` of
+    /// the size): listings' code lines (measured `\hbox(8.39996+3.60004)`
+    /// for `\small` code whose glyphs reach 7.5/2.5pt). Only the last
+    /// line's depth shows in an ordinary flow (interline glue absorbs the
+    /// rest), but inside beamer's `\vbox to\textheight` it is part of the
+    /// frame's natural height.
+    pub strut: bool,
 }
 
 /// The size declaration in force when a paragraph's `\par` ran, which is the
@@ -957,6 +968,19 @@ pub struct Doc {
     /// `blocks`; `typeset::build_with_floats` sets them itself. `Some` with
     /// an empty vector is `\twocolumn[]`, which is a box of no height.
     pub top_material: Option<(Vec<Block>, Span)>,
+    /// beamer (compiler `Parsed::beamer`): the theme's footline fields.
+    pub beamer: Option<BeamerDeck>,
+}
+
+/// The short title-block forms a beamer theme's footline sets (compiler
+/// `parser::BeamerDeck`, as items); the theme itself is read from the
+/// preamble by `flashtex_class_geometry` (`Stylesheet::class_geometry`).
+#[derive(Debug, Clone, Default)]
+pub struct BeamerDeck {
+    pub short_title: Vec<Item>,
+    pub short_author: Vec<Item>,
+    pub short_institute: Vec<Item>,
+    pub short_date: Vec<Item>,
 }
 
 /// Label values (`\ref`) and the pages they fell on in a previous layout
@@ -2118,6 +2142,7 @@ pub fn adapt_cached(
                             BeamerFrameAlign::Bottom => FrameAlign::Bottom,
                         },
                         plain: options.plain,
+                        allowframebreaks: options.allowframebreaks,
                         slides: *slides,
                         slide: 1,
                         span,
@@ -2757,6 +2782,12 @@ pub fn adapt_cached(
     // beamer: a frame with overlays is set once per slide
     // (`crate::overlay`), before the block-index tables below are taken.
     crate::overlay::expand_frames(&mut blocks);
+    let beamer = parsed.beamer.as_ref().map(|d| BeamerDeck {
+        short_title: items_for(&d.short_title, false),
+        short_author: items_for(&d.short_author, false),
+        short_institute: items_for(&d.short_institute, false),
+        short_date: items_for(&d.short_date, false),
+    });
     let page_starts = clear_page_blocks(texts, &blocks);
     // After `listings::apply`, which can insert blocks: the ranges are
     // block indices, so they are taken once the block list is final.
@@ -2774,6 +2805,7 @@ pub fn adapt_cached(
         abstract_pages,
         superseded,
         top_material,
+        beamer,
     }
 }
 

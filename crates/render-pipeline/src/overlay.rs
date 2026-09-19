@@ -337,6 +337,7 @@ mod tests {
             subtitle: Vec::new(),
             align: flashtex_class_geometry::beamer::FrameAlign::Center,
             plain: false,
+            allowframebreaks: false,
             slides,
             slide: 1,
             span: Span::new(0, 0),

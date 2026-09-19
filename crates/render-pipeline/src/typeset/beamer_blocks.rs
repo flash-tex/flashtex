@@ -1,5 +1,7 @@
 //! beamer blocks and columns (issue #944, Tier 3), for the **default**
-//! theme; the numbers are `flashtex_class_geometry::beamer`'s. The
+//! theme (and, Tier 4, the rounded blocks of the Madrid theme:
+//! [`Context::rounded_block_begin`]); the numbers are
+//! `flashtex_class_geometry::beamer`'s. The
 //! in-flow `figure`/`table` and their captions need nothing here: the
 //! compiler makes them `center` paragraphs (with beamer's 9pt `\topsep`,
 //! `Stylesheet::trivlist_topsep`) and the adapter sets the caption line.
@@ -81,6 +83,31 @@ pub struct OpenBlock {
     /// Built-block index of the body box's `\vbox{}` (its `space_before`
     /// is patched with the interline glue once the body is known).
     pub body_at: usize,
+    /// Index into `Context::rounded_blocks` under the rounded inner theme.
+    pub rounded: Option<usize>,
+}
+
+/// A block set as a `beamerboxesrounded` (`beamerbaseboxes.sty` 36-252
+/// through `blocks` `[rounded]`, `beamerbaseauxtemplates.sty` 765-796):
+/// what the page chrome needs to paint its two rectangles (the rounded
+/// corners and the shadow are not modelled). Measured (pdflatex,
+/// `\showoutput`, Madrid, a two-line block): `\vbox(48.19664)` =
+/// `4bp + head(8.33331 + 1.5) − 1 + 6 − 0.5 + body(2 + lines + dp + 0.5)
+/// + 4bp`; the head fill runs from 3bp above the head box's top to 2pt
+/// below its baseline, the lower fill from the body box's top to 3bp
+/// below its baseline, a 2pt gradient between them (cut at the head's
+/// `+2pt` here).
+#[derive(Debug, Clone)]
+pub struct RoundedBlockRec {
+    /// Built-block index of the title line (the head box).
+    pub title_at: usize,
+    /// `\bmb@temp` of the head: `max(depth, 1.5pt)` — how far the head
+    /// box's baseline sits under the title baseline.
+    pub head_raise: f64,
+    /// Built-block index of the body's last block, once `\end{block}` came.
+    pub last_at: Option<usize>,
+    pub title_bg: spec::Rgb,
+    pub body_bg: spec::Rgb,
 }
 
 /// TeX's interline glue before a box of `height` (§679): `\baselineskip -
@@ -167,6 +194,9 @@ impl<'a> Context<'a> {
     /// are the glue of a list the block follows (see [`edge_glue`]).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn beamer_block_begin(&mut self, blocks: &mut Vec<BuiltBlock>, kind: BeamerBlockKind, title: &[AItem], span: Span, addvspace: f64, flex: (f64, f64), vspace: f64) -> OpenBlock {
+        if let Some(rounded) = self.beamer_theme().blocks {
+            return self.rounded_block_begin(blocks, kind, title, span, addvspace, flex, vspace, &rounded);
+        }
         let p = page_params(self.style);
         let b = spec::block();
         let mut before = edge_glue(blocks, addvspace, flex, vspace);
@@ -209,7 +239,97 @@ impl<'a> Context<'a> {
         top.penalty_before = Some(pagebuild::INF_PENALTY);
         let body_at = blocks.len();
         blocks.push(empty_block(top));
-        OpenBlock { body_at }
+        OpenBlock { body_at, rounded: None }
+    }
+
+    /// `block begin` `[rounded]` (`beamerbaseauxtemplates.sty` 765-771):
+    /// `\par\vskip\medskipamount` then a `beamerboxesrounded` whose head
+    /// is the `\large` title (`\raggedright`, `block title` colours: white
+    /// on the theme's title bg) and whose lower minipage holds the body.
+    /// The box (`beamerbaseboxes.sty`): `\vskip4bp`, the head `\hbox`
+    /// (the title box raised `max(dp, 1.5pt)`, depth 0), `\vskip-1pt`, the
+    /// 6pt transition strip, `\vskip-0.5pt`, the body minipage (`\vskip2pt`
+    /// then the body, its first line without interline glue, raised `dp +
+    /// 0.5pt`), `\vskip4bp minus 2bp` (`shadow=true`); as one box it takes
+    /// `\lineskip` glue before it. Measured (Madrid, `\showoutput`): title
+    /// head `\hbox(9.83331+0)` for an 8.33331pt title, body `\hbox(25.83333)`
+    /// for two 13.6pt lines ending in a 2.12917pt depth.
+    #[allow(clippy::too_many_arguments)]
+    fn rounded_block_begin(&mut self, blocks: &mut Vec<BuiltBlock>, kind: BeamerBlockKind, title: &[AItem], span: Span, addvspace: f64, flex: (f64, f64), vspace: f64, rounded: &spec::RoundedBlocks) -> OpenBlock {
+        let p = page_params(self.style);
+        let b = spec::block();
+        let bp = |v: f64| v * 72.27 / 72.0;
+        let (title_bg, body_bg) = match kind {
+            BeamerBlockKind::Plain => (rounded.title_bg, rounded.body_bg),
+            BeamerBlockKind::Alert => (rounded.alert_title_bg, rounded.alert_body_bg),
+            BeamerBlockKind::Example => (rounded.example_title_bg, rounded.example_body_bg),
+        };
+        let mut before = edge_glue(blocks, addvspace, flex, vspace);
+        before.0 += frame_pt(b.before.natural);
+        before.1 += frame_pt(b.before.stretch);
+        before.2 += frame_pt(b.before.shrink);
+        // The rounded box is taller than `\baselineskip`: `\lineskip`
+        // before it (nothing after a rule or a box start).
+        before.0 += interline(&p, prev_depth(blocks), 1000.0);
+        let (size, bs) = (frame_pt(spec::BLOCK_TITLE.size), frame_pt(spec::BLOCK_TITLE.baselineskip));
+        let fg = super::beamer::rgb_color(rounded.title_fg);
+        let style = TextStyle { color: Some(fg), ..TextStyle::default() };
+        let width = self.style.text_width_pt;
+        let title: Vec<AItem> = title
+            .iter()
+            .cloned()
+            .map(|item| match item {
+                AItem::Word(mut w) => {
+                    for seg in &mut w.segments {
+                        seg.style.color = Some(fg);
+                    }
+                    AItem::Word(w)
+                }
+                other => other,
+            })
+            .collect();
+        let mut head_raise = 1.5;
+        let title_at = blocks.len();
+        match self.beamer_line(&title, size, style, ParaStyle::FlushLeft, width, 0.0, bs, span) {
+            Some(mut t) => {
+                // `\vskip4bp` is folded into the first line's height; the
+                // last line's depth becomes the head box's raise.
+                if let Some(first) = t.vertical.lines.first_mut() {
+                    first.0 += bp(4.0);
+                }
+                if let Some(last) = t.vertical.lines.last_mut() {
+                    head_raise = last.1.max(1.5);
+                    last.1 = head_raise;
+                }
+                t.vertical.no_interline_first = true;
+                t.vertical.baselineskip = Some(bs);
+                t.vertical.penalty_before = None;
+                t.vertical.parskip = None;
+                add_before(&mut t.vertical, before);
+                t.vertical.penalty_after = Some(pagebuild::INF_PENALTY);
+                blocks.push(t);
+            }
+            None => {
+                // An empty head: `\hbox{}` of height 1.5pt, no transition.
+                let mut e = plain_vblock(vec![(bp(4.0) + 1.5, 0.0)]);
+                e.no_interline_first = true;
+                add_before(&mut e, before);
+                e.penalty_after = Some(pagebuild::INF_PENALTY);
+                blocks.push(empty_block(e));
+                head_raise = 0.0;
+            }
+        }
+        // `\vskip-1pt`, the 6pt transition, `\vskip-0.5pt`, the minipage's
+        // `\vskip2pt`: 6.5pt from the head box's bottom to the body's first
+        // line, which carries no interline glue (`rounded_block_end`).
+        let mut top = plain_vblock(vec![(0.0, 0.0)]);
+        top.no_interline_first = true;
+        top.space_before = Some((6.5, 0.0, 0.0));
+        top.penalty_before = Some(pagebuild::INF_PENALTY);
+        let body_at = blocks.len();
+        blocks.push(empty_block(top));
+        self.rounded_blocks.push(RoundedBlockRec { title_at, head_raise, last_at: None, title_bg, body_bg });
+        OpenBlock { body_at, rounded: Some(self.rounded_blocks.len() - 1) }
     }
 
     /// `\end{block}`: the interline glue between the title box and the
@@ -217,6 +337,32 @@ impl<'a> Context<'a> {
     /// the `\smallskipamount` after it, on top of the `\@endparenv` skip of
     /// a list the body ends with.
     pub(super) fn beamer_block_end(&mut self, blocks: &mut Vec<BuiltBlock>, open: OpenBlock, addvspace: f64, flex: (f64, f64), vspace: f64) {
+        if let Some(rec) = open.rounded {
+            // The body's first line has no interline glue (a fresh
+            // `\vbox`); after its last line: the raise `0.5pt`, `\vskip4bp
+            // minus 2bp`, then `\vskip\smallskipamount`.
+            if let Some(first) = blocks.iter_mut().skip(open.body_at + 1).find(|b| !b.vertical.lines.is_empty()) {
+                first.vertical.no_interline_first = true;
+                first.vertical.parskip = None;
+            }
+            let b = spec::block();
+            let mut after = edge_glue(blocks, addvspace, flex, vspace);
+            after.0 += 0.5 + 4.0 * 72.27 / 72.0 + frame_pt(b.after.natural);
+            after.1 += frame_pt(b.after.stretch);
+            after.2 += 2.0 * 72.27 / 72.0 + frame_pt(b.after.shrink);
+            if let Some(last) = blocks.last_mut() {
+                let v = &mut last.vertical;
+                v.space_after = Some(match v.space_after {
+                    Some((n, s, k)) => (n + after.0, s + after.1, k + after.2),
+                    None => after,
+                });
+            }
+            let last_at = (open.body_at..blocks.len()).rev().find(|&i| !blocks[i].vertical.lines.is_empty()).unwrap_or(open.body_at);
+            if let Some(r) = self.rounded_blocks.get_mut(rec) {
+                r.last_at = Some(last_at);
+            }
+            return;
+        }
         let p = page_params(self.style);
         let b = spec::block();
         if open.body_at < blocks.len() {

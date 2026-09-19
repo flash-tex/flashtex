@@ -108,7 +108,9 @@ pub enum BoxRec {
     /// baseline (depth 0), painted as a display-list rule.
     /// `\rule` boxes set `bottom` (the painted part's bottom above the
     /// baseline); nothing is painted when `width` or `height` is not positive.
-    Rule { width: f64, height: f64, bottom: f64, span: Span },
+    /// `color` paints the rule in a colour (a beamer theme's filled bars);
+    /// `None` is black.
+    Rule { width: f64, height: f64, bottom: f64, span: Span, color: Option<flashtex_compiler::color::DeviceColor> },
     /// A leader attached to horizontal fill glue. It is painted after line
     /// breaking, when the glue's final width is known.
     Leader {
@@ -523,6 +525,9 @@ pub struct Context<'a> {
     /// of the line itself) and they take no part in the line's font
     /// stretch/shrink.
     label_recs: BTreeSet<usize>,
+    /// beamer blocks set as `beamerboxesrounded` (the Madrid theme), painted
+    /// as page chrome once the pages are built (`beamer::page_chrome`).
+    pub(crate) rounded_blocks: Vec<beamer_blocks::RoundedBlockRec>,
     /// Footnote texts met while building horizontal lists, and for each
     /// the box record its `\insert` follows (the mark, or the box before
     /// `\footnotetext`): see [`footnotes`].
@@ -612,6 +617,7 @@ impl<'a> Context<'a> {
             microtype_fonts: BTreeMap::new(),
             math_colors: Default::default(),
             label_recs: BTreeSet::new(),
+            rounded_blocks: Vec::new(),
             images: None,
             notes: Vec::new(),
             note_anchors: Vec::new(),
@@ -1001,6 +1007,7 @@ impl<'a> Context<'a> {
             height: paint_height,
             bottom: sp_to_pt(b.rule_bottom),
             span,
+            color: None,
         });
         let run = pl::GlyphRun {
             font: MATH_SENTINEL,
@@ -1018,7 +1025,7 @@ impl<'a> Context<'a> {
     /// painted rectangle is `height` tall and sits `bottom` above the
     /// baseline.
     fn qed_rule(&mut self, size: f64, span: Span, width: f64, height: f64, bottom: f64) -> (pl::Item, Option<usize>) {
-        self.recs.push(BoxRec::Rule { width, height, bottom, span });
+        self.recs.push(BoxRec::Rule { width, height, bottom, span, color: None });
         let run = pl::GlyphRun {
             font: MATH_SENTINEL,
             size,
@@ -2453,7 +2460,7 @@ impl<'a> Context<'a> {
                         .sum();
                     // The anchor: a box of no size, so the pull-back kern
                     // behind it survives a line break (see `Item::Lap`).
-                    self.recs.push(BoxRec::Rule { width: 0.0, height: 0.0, bottom: 0.0, span: Span::new(0, 0) });
+                    self.recs.push(BoxRec::Rule { width: 0.0, height: 0.0, bottom: 0.0, span: Span::new(0, 0), color: None });
                     let anchor = pl::GlyphRun {
                         font: MATH_SENTINEL,
                         size,
@@ -2479,7 +2486,7 @@ impl<'a> Context<'a> {
                     // Every box needs a record (see `NoteParBreak`), so it
                     // is a rule of no width, height or depth: nothing is
                     // shipped for it.
-                    self.recs.push(BoxRec::Rule { width: 0.0, height: 0.0, bottom: 0.0, span: Span::new(0, 0) });
+                    self.recs.push(BoxRec::Rule { width: 0.0, height: 0.0, bottom: 0.0, span: Span::new(0, 0), color: None });
                     let run = pl::GlyphRun {
                         font: MATH_SENTINEL,
                         size,
@@ -2505,7 +2512,7 @@ impl<'a> Context<'a> {
                     // a rule of no height ships nothing (see `NoteParBreak`).
                     let style = merge_style(base, *style);
                     let width = self.space_glue(style, style.size_or(size), 1000).width;
-                    self.recs.push(BoxRec::Rule { width, height: 0.0, bottom: 0.0, span: Span::new(0, 0) });
+                    self.recs.push(BoxRec::Rule { width, height: 0.0, bottom: 0.0, span: Span::new(0, 0), color: None });
                     let blank = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height: 0.0, depth: 0.0, source: 0..0 };
                     push(&mut out, &mut recs, pl::Item::Box(blank), Some(self.recs.len() - 1));
                 }
@@ -2590,7 +2597,7 @@ impl<'a> Context<'a> {
                     // A rule of no height: every box needs a record, and
                     // pdfTeX ships no rule whose height plus depth is 0.
                     let quad = self.text_params(base, size).quad;
-                    self.recs.push(BoxRec::Rule { width: quad, height: 0.0, bottom: 0.0, span: Span::new(0, 0) });
+                    self.recs.push(BoxRec::Rule { width: quad, height: 0.0, bottom: 0.0, span: Span::new(0, 0), color: None });
                     let indent = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width: quad, height: 0.0, depth: 0.0, source: 0..0 };
                     push(&mut out, &mut recs, pl::Item::Box(indent), Some(self.recs.len() - 1));
                 }
@@ -3549,8 +3556,16 @@ impl<'a> Context<'a> {
         };
         // `\list` sets `\parskip\parsep`: an item paragraph adds `\parsep`.
         let parskip = self.parskip_of(list_geom);
+        let mut extents = line_extents(&lines);
+        if sized.is_some_and(|s| s.strut) {
+            let bs = leading.or(sized.map(|s| s.baselineskip_pt)).unwrap_or(self.style.baselineskip_pt);
+            for (h, d) in &mut extents {
+                *h = h.max(0.7 * bs);
+                *d = d.max(0.3 * bs);
+            }
+        }
         let vertical = VBlock {
-            lines: line_extents(&lines),
+            lines: extents,
             penalty_before: None,
             space_before: None,
             parskip: starts_paragraph.then(|| skip_tuple(parskip)),
@@ -4308,8 +4323,17 @@ impl<'a> Context<'a> {
         // covered item's label (`hidden`) is set and not painted.
         if self.style.is_beamer() {
             let color = Some(beamer::structure_color());
-            let boxed = if symbol {
+            let ball = self.beamer_theme().ball_items;
+            let boxed = if symbol && ball {
+                // `items[ball]` (Madrid): the label is `\raise0.2pt` of the
+                // `bigsphere` pgf shading, a radial gradient this pipeline
+                // does not draw; its box keeps the label's place.
+                let ex = crate::style::frame_pt(flashtex_class_geometry::beamer::SANS_BODY_EX);
+                Some(NumberBox { width: 2.0 * ex, height: 1.8 * ex + 0.2, depth: 0.0, pieces: Vec::new() })
+            } else if symbol {
                 self.beamer_triangle_box(span, size, color, hidden)
+            } else if ball {
+                self.beamer_ball_number(text, span, hidden)
             } else {
                 self.word_box(text, span, size, TextStyle { bold, color, hidden, ..TextStyle::default() }, false)
             };
@@ -4568,7 +4592,13 @@ impl<'a> Context<'a> {
     /// A rule `width` x `height` whose bottom sits on the line's baseline,
     /// `x` from the line's left edge.
     fn rule_block_sized(&mut self, span: Span, width: f64, height: f64, x: f64) -> BuiltBlock {
-        self.recs.push(BoxRec::Rule { width, height, bottom: 0.0, span });
+        self.rule_block_colored(span, width, height, x, None)
+    }
+
+    /// [`Self::rule_block_sized`] painted in `color` (`None`: black): a
+    /// beamer theme's filled frametitle bar and footline boxes.
+    pub(super) fn rule_block_colored(&mut self, span: Span, width: f64, height: f64, x: f64, color: Option<flashtex_compiler::color::DeviceColor>) -> BuiltBlock {
+        self.recs.push(BoxRec::Rule { width, height, bottom: 0.0, span, color });
         let rec = self.recs.len() - 1;
         let run = pl::GlyphRun {
             font: MATH_SENTINEL,
@@ -9330,14 +9360,15 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 blocks.extend(built);
                 after_heading = true;
             }
-            Block::FrameBegin { title, subtitle, align, span, .. } => {
+            Block::FrameBegin { title, subtitle, align, plain, allowframebreaks, slide, span, .. } => {
                 // A frame still open (a missing `\end{frame}`) closes here.
                 if let Some(mut f) = open_frame.take() {
                     f.end = Some(blocks.len().saturating_sub(1));
                     frames.push(f);
                 }
                 page_start_blocks.push(blocks.len());
-                open_frame = Some(ctx.beamer_frame_begin(&mut blocks, title, subtitle, *align, *span));
+                let head = beamer::FrameHead { title, subtitle, align: *align, plain: *plain, allowframebreaks: *allowframebreaks, first_slide: *slide == 1, span: *span };
+                open_frame = Some(ctx.beamer_frame_begin(&mut blocks, &head));
                 after_heading = false;
             }
             Block::FrameEnd { addvspace_before, addvspace_flex, vspace_before, .. } => {
@@ -9355,7 +9386,20 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     }
                     v.penalty_after = Some(pagebuild::EJECT_PENALTY);
                     f.end = Some(last);
-                    frames.push(f);
+                    // `[plain]`: no interline glue before the body's first
+                    // line; `[allowframebreaks]`: the body split over pages.
+                    Context::beamer_plain_body(&mut blocks, &f);
+                    if f.autobreak.is_some() {
+                        let split = ctx.autobreak_split(&mut blocks, f);
+                        for (k, nf) in split.into_iter().enumerate() {
+                            if k > 0 {
+                                page_start_blocks.push(nf.start);
+                            }
+                            frames.push(nf);
+                        }
+                    } else {
+                        frames.push(f);
+                    }
                 }
                 after_heading = false;
             }
@@ -9820,6 +9864,11 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     multicol::shift(ctx, &mut pages, &mut line_dx, &blocks);
     if let Some(g) = geo {
         page_chrome(ctx, g, &mut blocks, &mut pages, &mut line_dx, &events, &counters);
+    }
+    // beamer: the theme's frametitle bars, footline boxes and rounded
+    // title box on every frame page (`typeset::beamer::page_chrome`).
+    if s.is_beamer() {
+        beamer::page_chrome(ctx, &mut blocks, &mut pages, &mut line_dx, &frames, doc.beamer.as_ref());
     }
     // Margin notes ride the calling line's page: placed after page breaking
     // (and the chrome above) so each note lands on the page its line
@@ -10819,7 +10868,7 @@ fn assemble_block(
                     }));
                 }
                 BoxRec::Leader { .. } => {}
-                BoxRec::Rule { width, height, bottom, span } => {
+                BoxRec::Rule { width, height, bottom, span, color } => {
                     // Line-local like text: the rule's bottom is `bottom`
                     // above the baseline (0 for `\hrule`); a strut paints
                     // nothing.
@@ -10831,7 +10880,7 @@ fn assemble_block(
                         top: Tick::from_tex_pt(-(bottom + height)),
                         width: Tick::from_tex_pt(*width).max(Tick(1)),
                         height: Tick::from_tex_pt(*height).max(Tick(1)),
-                        paint: Paint::BLACK,
+                        paint: Paint::of(*color),
                         provenance: provenance_of(*span, source_of),
                     }));
                 }

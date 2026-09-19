@@ -1,0 +1,324 @@
+//! beamer Tier 4 (issue #944): frame options (`\frame{...}`, `[plain]`,
+//! `[fragile]`, `[allowframebreaks]`) and the Madrid theme, against
+//! pdflatex.
+//!
+//! Oracle: pdflatex 3.141592653-2.6-1.40.29 (TeX Live 2026), the pinned
+//! `reference.pdf` of `fixtures/real-world/beamer-fragile` and
+//! `fixtures/real-world/beamer-madrid` (corpus PR #943), positions read
+//! back with `tools/visual-oracle/pdftext.py` (bp from the paper's
+//! top-left corner, baseline of the word's first glyph) and the filled
+//! rectangles from the content streams (`re f`). Every number below is one
+//! of those readings; the bodies are the fixtures' own frames.
+//!
+//! Needs the bundled Latin Modern faces and their metrics
+//! (`FLASHTEX_FONT_DIRS=apps/mac/Fonts`, `FLASHTEX_TFM_DIRS` at TeX Live's
+//! `lm`/`ec`/`amsfonts/symbols` TFMs), like every oracle test in this crate.
+
+mod common;
+
+use common::{lm_available, render_one, rules_of, words_of, Word};
+use flashtex_render_pipeline::display::Item;
+use flashtex_render_pipeline::Rendered;
+
+/// Some run reading exactly `text` on `page` sits within `tol` bp of
+/// `(x, baseline)` (a deck repeats words: the footline's author is on the
+/// title page too, a listing has several `}`).
+fn at(words: &[Word], page: u32, text: &str, x: f64, baseline: f64, tol: f64) {
+    let same: Vec<&Word> = words.iter().filter(|w| w.page == page && w.text == text).collect();
+    assert!(!same.is_empty(), "no word {text:?} on page {page}: {:?}", words.iter().filter(|w| w.page == page).map(|w| &w.text).collect::<Vec<_>>());
+    let hit = same.iter().any(|w| (w.x - x).abs() <= tol && (w.baseline - baseline).abs() <= tol);
+    assert!(
+        hit,
+        "page {page} {text:?}: ours {:?}, pdflatex ({x:.3}, {baseline:.3}), tolerance {tol}",
+        same.iter().map(|w| (w.x, w.baseline)).collect::<Vec<_>>()
+    );
+}
+
+/// The paint of the run reading `text` on `page` nearest `baseline`.
+fn run_paint(r: &Rendered, page: u32, text: &str, baseline: f64) -> (f64, f64, f64) {
+    let mut best: Option<(f64, (f64, f64, f64))> = None;
+    for p in &r.v2.pages {
+        if p.number != page {
+            continue;
+        }
+        for it in p.resident_items() {
+            if let Item::GlyphRun(run) = it {
+                if run.text == text {
+                    let d = (run.glyphs[0].baseline_y.to_bp() - baseline).abs();
+                    if best.is_none_or(|(b, _)| d < b) {
+                        best = Some((d, (run.paint.r, run.paint.g, run.paint.b)));
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(_, p)| p).unwrap_or_else(|| panic!("no run {text:?} on page {page}"))
+}
+
+/// The filled rectangle of `page` (1-based) at `(x, top, width, height)`
+/// within `tol` bp, painted `rgb`.
+fn rect(r: &Rendered, page: usize, x: f64, top: f64, width: f64, height: f64, rgb: (f64, f64, f64), tol: f64) {
+    let p = &r.v2.pages[page - 1];
+    let found = p.resident_items().iter().any(|it| match it {
+        Item::Rule(rule) => {
+            (rule.x.to_bp() - x).abs() <= tol
+                && (rule.top.to_bp() - top).abs() <= tol
+                && (rule.width.to_bp() - width).abs() <= tol
+                && (rule.height.to_bp() - height).abs() <= tol
+                && (rule.paint.r - rgb.0).abs() < 1e-6
+                && (rule.paint.g - rgb.1).abs() < 1e-6
+                && (rule.paint.b - rgb.2).abs() < 1e-6
+        }
+        _ => false,
+    });
+    assert!(found, "page {page}: no rule at ({x}, {top}) {width}x{height} in {rgb:?}; rules: {:?}", rules_of(r)[page - 1]);
+}
+
+fn fragile_deck() -> String {
+    std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/real-world/beamer-fragile/main.tex")).expect("corpus deck")
+}
+
+fn madrid_deck() -> String {
+    std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/real-world/beamer-madrid/main.tex")).expect("corpus deck")
+}
+
+// ---------------------------------------------------------------------------
+// beamer-fragile: 8 pages.
+
+#[test]
+fn fragile_deck_has_eight_pages_and_no_note_text() {
+    if !lm_available() {
+        return;
+    }
+    let r = render_one(&fragile_deck());
+    assert_eq!(r.v2.pages.len(), 8, "pdflatex ships 8 pages");
+    let w = words_of(&r);
+    for leak in ["presenter", "hidden", "hidden."] {
+        assert!(!w.iter().any(|x| x.text == leak), "{leak:?} was typeset: {:?}", w.iter().map(|x| &x.text).collect::<Vec<_>>());
+    }
+}
+
+/// `[fragile]` with `verbatim`: the code lines are typeset as in an
+/// article (cmtt10 at 10.95pt, `\verbatim@font`), at the frame's `[c]`
+/// position.
+#[test]
+fn fragile_verbatim_lines_sit_where_pdflatex_puts_them() {
+    if !lm_available() {
+        return;
+    }
+    let w = words_of(&render_one(&fragile_deck()));
+    at(&w, 2, "Verbatim", 8.504, 21.057, 0.5);
+    at(&w, 2, "A", 28.346, 99.358, 0.5);
+    at(&w, 2, "\\begin{frame}[fragile]", 28.346, 121.874, 0.5);
+    at(&w, 2, "needs", 188.710, 135.423, 0.5);
+    at(&w, 2, "...", 39.801, 148.972, 0.5);
+    at(&w, 2, "written.", 205.008, 171.488, 0.5);
+}
+
+/// `[fragile]` with `lstlisting` (`basicstyle=\ttfamily\small`): cmtt10 at
+/// 10pt on 12pt, the listing's `\medskipamount` above and below inside the
+/// frame's `\vbox to\textheight`, every code line `\strutbox`-tall.
+#[test]
+fn fragile_listing_lines_sit_where_pdflatex_puts_them() {
+    if !lm_available() {
+        return;
+    }
+    let w = words_of(&render_one(&fragile_deck()));
+    at(&w, 3, "listing", 22.463, 21.057, 0.5);
+    at(&w, 3, "f", 29.044, 113.517, 0.5);
+    at(&w, 3, "l", 54.237, 125.472, 0.5);
+    at(&w, 3, "}", 28.870, 149.382, 0.5);
+}
+
+/// `[allowframebreaks]`: the 20-item list breaks after item 14 at
+/// `0.95\textheight`; both pages carry the title with its ` I` / ` II`
+/// continuation suffix and the finite autobreak glue (item pitch 16.63bp:
+/// the `\itemsep` `plus 2pt` stretched by 0.04607).
+#[test]
+fn allowframebreaks_splits_the_list_after_item_fourteen() {
+    if !lm_available() {
+        return;
+    }
+    let w = words_of(&render_one(&fragile_deck()));
+    at(&w, 4, "I", 73.454, 21.057, 0.5);
+    at(&w, 4, "one", 74.282, 44.432, 0.5);
+    at(&w, 4, "two.", 74.282, 61.062, 0.5);
+    at(&w, 4, "twelve.", 74.282, 227.360, 0.5);
+    at(&w, 4, "fourteen.", 74.282, 260.619, 0.5);
+    assert!(!w.iter().any(|x| x.page == 4 && x.text == "fifteen."), "item 15 belongs to the second page");
+    at(&w, 5, "II", 73.454, 21.057, 0.5);
+    at(&w, 5, "fifteen.", 74.282, 91.514, 0.5);
+    at(&w, 5, "twenty,", 74.282, 179.254, 0.5);
+    assert!(!w.iter().any(|x| x.page == 6 && x.text == "twenty,"), "the list ends on the second page");
+}
+
+/// `\frame{...}`: a page of its own, laid out like the environment.
+#[test]
+fn frame_command_form_is_its_own_page() {
+    if !lm_available() {
+        return;
+    }
+    let w = words_of(&render_one(&fragile_deck()));
+    at(&w, 6, "command", 36.211, 21.057, 0.5);
+    at(&w, 6, "This", 28.346, 123.639, 0.5);
+    at(&w, 6, "environment.", 28.346, 137.188, 0.5);
+}
+
+/// `[plain]`: the exit code's `\vspace*{-\footheight}` (4pt in the default
+/// theme) widens the `[c]` free height and the body's first line has no
+/// interline glue: 120.80 against 123.64 for the same two lines on an
+/// ordinary frame.
+#[test]
+fn plain_frame_body_sits_higher() {
+    if !lm_available() {
+        return;
+    }
+    let w = words_of(&render_one(&fragile_deck()));
+    at(&w, 7, "Plain", 8.504, 21.057, 0.5);
+    at(&w, 7, "A", 28.346, 120.800, 0.5);
+    at(&w, 7, "margins.", 209.919, 134.350, 0.5);
+    at(&w, 8, "frame.", 69.502, 129.059, 0.5);
+}
+
+// ---------------------------------------------------------------------------
+// beamer-madrid: 7 pages.
+
+#[test]
+fn madrid_deck_has_seven_pages() {
+    if !lm_available() {
+        return;
+    }
+    let r = render_one(&madrid_deck());
+    assert_eq!(r.v2.pages.len(), 7);
+}
+
+/// The infolines footline on every page: three `.333333\paperwidth` boxes
+/// `ht=2.25ex dp=1ex` at `\tiny` (8.634bp) on the paper's bottom edge in
+/// the whale palette (tertiary / secondary / primary), the short author
+/// `(institute)` and the short title centred, the date and `n / N` between
+/// `2ex` skips, all at baseline 269.469.
+#[test]
+fn madrid_footline_boxes_and_text() {
+    if !lm_available() {
+        return;
+    }
+    let r = render_one(&madrid_deck());
+    let w = words_of(&r);
+    for page in 1..=7 {
+        rect(&r, page, 0.0, 263.492, 120.943, 8.634, (0.1, 0.1, 0.35), 0.5);
+        rect(&r, page, 120.943, 263.492, 120.943, 8.634, (0.15, 0.15, 0.525), 0.5);
+        rect(&r, page, 241.886, 263.492, 120.943, 8.634, (0.2, 0.2, 0.7), 0.5);
+        let page = page as u32;
+        at(&w, page, "Whitfield", 31.441, 269.469, 0.5);
+        at(&w, page, "(FlashTeX)", 59.781, 269.469, 0.5);
+        at(&w, page, "Incremental", 165.983, 269.469, 0.5);
+        at(&w, page, "March", 280.782, 269.469, 0.5);
+        at(&w, page, "2026", 299.589, 269.469, 0.5);
+        at(&w, page, &page.to_string(), 345.868, 269.469, 0.5);
+        at(&w, page, "/", 350.108, 269.469, 0.5);
+        at(&w, page, "7", 354.342, 269.469, 0.5);
+        assert_eq!(run_paint(&r, page, "Whitfield", 269.469), (1.0, 1.0, 1.0), "footline text is white");
+    }
+}
+
+/// The frametitle bar: `\paperwidth` x 27.569bp from the page top in the
+/// structure colour, the title in white at baseline 20.061 (no `\lineskip`
+/// before the colour box); the body at the 1em margin (x 10.909) with
+/// `\textheight` 260.48pt.
+#[test]
+fn madrid_frametitle_bar_and_body() {
+    if !lm_available() {
+        return;
+    }
+    let r = render_one(&madrid_deck());
+    let w = words_of(&r);
+    for page in 2..=7 {
+        rect(&r, page, 0.0, 0.0, 362.835, 27.569, (0.2, 0.2, 0.7), 0.5);
+    }
+    at(&w, 2, "Outline", 8.504, 20.061, 0.5);
+    assert_eq!(run_paint(&r, 2, "Outline", 20.061), (1.0, 1.0, 1.0));
+    at(&w, 2, "A", 10.909, 102.163, 0.5);
+    at(&w, 2, "reference.", 244.911, 169.909, 0.5);
+    // p3: the itemize (ball labels: the number-less items keep their
+    // text at 2em) and p4's enumerate numbers in white `\tiny`.
+    at(&w, 3, "Every", 32.727, 110.013, 0.5);
+    at(&w, 3, "seconds.", 244.758, 159.627, 0.5);
+    at(&w, 4, "1", 20.837, 109.521, 0.5);
+    at(&w, 4, "3", 20.836, 142.597, 0.5);
+    at(&w, 4, "The", 32.727, 111.209, 0.5);
+    at(&w, 7, "Caching", 10.909, 123.841, 0.5);
+}
+
+/// The rounded inner theme's title page: the `title` colour box inside a
+/// `beamerboxesrounded` (painted 59.758..113.832bp from the top, 6.909..
+/// 355.926 across; here a rectangle, the 4bp corner radius and the shadow
+/// not modelled), the title and subtitle in white and 2.23bp higher than
+/// under the default template, the author 4.49bp lower.
+#[test]
+fn madrid_title_page_rounded_box() {
+    if !lm_available() {
+        return;
+    }
+    let r = render_one(&madrid_deck());
+    let w = words_of(&r);
+    rect(&r, 1, 6.909, 59.758, 349.021, 54.074, (0.2, 0.2, 0.7), 0.5);
+    at(&w, 1, "Incremental", 111.113, 83.181, 0.5);
+    at(&w, 1, "Why", 92.660, 100.242, 0.5);
+    at(&w, 1, "J.", 154.796, 142.283, 0.5);
+    at(&w, 1, "FlashTeX", 152.164, 164.754, 0.5);
+    at(&w, 1, "March", 154.342, 190.816, 0.5);
+    assert_eq!(run_paint(&r, 1, "Incremental", 83.181), (1.0, 1.0, 1.0));
+    assert_eq!(run_paint(&r, 1, "Why", 100.242), (1.0, 1.0, 1.0));
+    assert_eq!(run_paint(&r, 1, "J.", 142.283), (0.0, 0.0, 0.0));
+}
+
+/// `[plain]` under Madrid: no footline on that page (`\thispagestyle
+/// {empty}`), the frametitle bar still painted, and the exit code's
+/// `-\footheight` is the theme's 12.66663pt.
+#[test]
+fn madrid_plain_frame_has_no_footline() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{beamer}\n\\usetheme{Madrid}\n\\title[T]{T}\\author[A]{A}\\date{D}\n\\begin{document}\n\\begin{frame}[plain]\n\\frametitle{Plain}\nOne line.\n\\end{frame}\n\\begin{frame}\n\\frametitle{Full}\nOne line.\n\\end{frame}\n\\end{document}\n";
+    let r = render_one(src);
+    assert_eq!(r.v2.pages.len(), 2);
+    let rules = rules_of(&r);
+    assert_eq!(rules[0].len(), 1, "the bar only: {:?}", rules[0]);
+    assert_eq!(rules[1].len(), 4, "the bar and three footline boxes: {:?}", rules[1]);
+    let w = words_of(&r);
+    assert!(!w.iter().any(|x| x.page == 1 && x.text == "1"), "no frame number on the plain page");
+    at(&w, 2, "2", 345.868, 269.469, 0.5);
+}
+
+/// Madrid's rounded blocks (`blocks[rounded][shadow=true]`, orchid
+/// colours): the `\large` white title on the block-title bg, the body on
+/// its 10% tint, the box `\lineskip` + `\medskipamount` under the
+/// previous material and `\smallskipamount` after. Measured with
+/// pdflatex on the probe below (`\showoutput`: `\vbox(48.19664)`,
+/// `\vbox(32.46747)`, `\vbox(33.30078)`; the fills from the content
+/// stream: head 72.583..87.372bp, body ..118.600, x 6.909, 349.021
+/// wide). Drawn as two rectangles meeting at the 2pt gradient's middle;
+/// the 4bp corner radius and the shadow are not modelled.
+#[test]
+fn madrid_rounded_blocks() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{beamer}\n\\usetheme{Madrid}\n\\begin{document}\n\\begin{frame}\n  \\frametitle{Blocks}\n  \\begin{block}{Plain block}\n    The body of the block, which wraps onto a second line when it is long enough.\n  \\end{block}\n  \\begin{alertblock}{Alert}\n    One line.\n  \\end{alertblock}\n  \\begin{exampleblock}{Example}\n    Another line.\n  \\end{exampleblock}\n\\end{frame}\n\\end{document}\n";
+    let r = render_one(src);
+    let w = words_of(&r);
+    at(&w, 1, "Plain", 10.909, 83.885, 0.5);
+    at(&w, 1, "The", 10.909, 99.431, 0.5);
+    at(&w, 1, "enough.", 10.909, 112.980, 0.5);
+    at(&w, 1, "Alert", 10.909, 141.864, 0.5);
+    at(&w, 1, "One", 10.909, 157.410, 0.5);
+    at(&w, 1, "Example", 10.909, 184.173, 0.5);
+    at(&w, 1, "Another", 10.909, 200.549, 0.5);
+    assert_eq!(run_paint(&r, 1, "Plain", 83.885), (1.0, 1.0, 1.0));
+    assert_eq!(run_paint(&r, 1, "The", 99.431), (0.0, 0.0, 0.0));
+    rect(&r, 1, 6.909, 72.583, 349.021, 87.372 - 72.583, (0.15, 0.15, 0.525), 0.5);
+    rect(&r, 1, 6.909, 87.372, 349.021, 118.600 - 87.372, (0.915, 0.915, 0.9525), 0.5);
+    rect(&r, 1, 6.909, 130.562, 349.021, 145.351 - 130.562, (0.75, 0.0, 0.0), 0.5);
+    rect(&r, 1, 6.909, 172.871, 349.021, 188.490 - 172.871, (0.0, 0.375, 0.0), 0.5);
+}

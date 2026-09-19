@@ -358,6 +358,7 @@ pub fn apply(texts: &[&str], blocks: &mut Vec<Block>, style: &Stylesheet) -> Vec
                 parindent_em: Some(LISTPARINDENT_EM),
                 vspace_after_em: 0.0,
                 close_skip: Some(small.topsepadd()),
+                strut: false,
             });
         }
         let mut head = head_block(texts, document, range, &small);
@@ -669,6 +670,7 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
             // `\end{center}` is a `\trivlist`: `\@topsepadd` is whatever
             // `\topsep`/`\partopsep` hold, which `\small` has not touched.
             close_skip: None,
+            strut: false,
         }),
         // The head's leading travels on its `SizedPara`, which resizes the
         // whole paragraph; nothing here is a compiler-observed `\par`.
