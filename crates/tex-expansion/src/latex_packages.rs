@@ -601,6 +601,10 @@ impl Engine {
         // The command itself, renamed for the parser when it is one it does
         // not model (`\RequirePackage` is `\usepackage` to it).
         let command = Token::new(TokenKind::ControlSequence(kind.pass_through_name().into()), tok.span);
+        // The command's own invocation origin (`None` when it was read from
+        // a source text): what its pass-through tokens keep, so the host
+        // places them exactly as it did before this kernel existed.
+        let command_origin = self.last_origin;
         let mut taken: Vec<Pending> = Vec::new();
         // `\@ifnextchar[`: spaces before the bracket are skipped.
         let options = self.take_bracketed(&mut taken);
@@ -621,7 +625,9 @@ impl Engine {
         let found: Vec<bool> = names.iter().map(|name| self.package_file_exists(name, ext)).collect();
         let passed: Vec<bool> = names.iter().map(|name| self.st.scopes.is_defined(&format!("opt@{name}.{ext}"))).collect();
         let at = tok.span;
-        let synth = |kind: TokenKind| Pending { tok: Token::new(kind, at), frozen: false, origin: None };
+        // Kernel tokens are attributed to the loading command: a diagnostic
+        // raised by the kernel code, and the file's `loaded_at`, point at it.
+        let synth = |kind: TokenKind| Pending { tok: Token::new(kind, at), frozen: false, origin: Some(at) };
         let cs = |name: &str| synth(TokenKind::ControlSequence(name.into()));
         let group = |inner: &[Pending]| -> Vec<Pending> {
             let mut out = vec![synth(TokenKind::Char('{', CatCode::BeginGroup))];
@@ -660,19 +666,23 @@ impl Engine {
                 queue.push(cs(kind.extension_macro()));
                 if !verbatim {
                     queue.push(cs("flashtex@passthrough"));
-                    queue.push(Pending { tok: command.clone(), frozen: false, origin: None });
+                    queue.push(Pending { tok: command.clone(), frozen: false, origin: Some(at) });
                     queue.extend(group(&name_tokens));
                     queue.push(cs(kind.extension_macro()));
                 }
             }
         }
         if verbatim {
-            // Everything read, exactly as read, behind the command.
-            queue.push(cs("flashtex@emit"));
-            queue.push(synth(TokenKind::Char('{', CatCode::BeginGroup)));
-            queue.push(Pending { tok: command, frozen: false, origin: None });
+            // Everything read, exactly as read, behind the command. The
+            // group's own tokens carry the command's origin: the last one
+            // read before the emission decides what the emitted tokens
+            // are attributed to.
+            let passed = |kind: TokenKind| Pending { tok: Token::new(kind, at), frozen: false, origin: command_origin };
+            queue.push(passed(TokenKind::ControlSequence("flashtex@emit".into())));
+            queue.push(passed(TokenKind::Char('{', CatCode::BeginGroup)));
+            queue.push(Pending { tok: command, frozen: false, origin: command_origin });
             queue.extend(taken);
-            queue.push(synth(TokenKind::Char('}', CatCode::EndGroup)));
+            queue.push(passed(TokenKind::Char('}', CatCode::EndGroup)));
         }
         if kind == LoadKind::DocumentClass {
             // After the class (and whatever it `\LoadClass`es) has been
@@ -680,16 +690,8 @@ impl Engine {
             // `article`'s page model, with a warning saying so.
             for name in &names {
                 queue.push(cs("flashtex@classfallback"));
-                queue.push(Pending { tok: Token::new(TokenKind::ControlSequence("documentclass".into()), at), frozen: false, origin: None });
+                queue.push(Pending { tok: Token::new(TokenKind::ControlSequence("documentclass".into()), at), frozen: false, origin: Some(at) });
                 queue.extend(group(&name.chars().map(|c| synth(name_char(c))).collect::<Vec<_>>()));
-            }
-        }
-        // The queue's origin is the loading command: a diagnostic raised
-        // by the kernel code below, and the file's `loaded_at`, point at
-        // it.
-        for p in &mut queue {
-            if p.origin.is_none() {
-                p.origin = Some(at);
             }
         }
         self.push_pending_as_read(queue);

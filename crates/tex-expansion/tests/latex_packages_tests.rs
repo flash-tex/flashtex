@@ -56,15 +56,23 @@ fn a_project_sty_defines_commands_for_the_document() {
 fn a_declined_package_passes_through_with_its_own_tokens() {
     let src = "\\documentclass[11pt]{article}\n\\usepackage[fleqn]{amsmath}\n\\begin{document}x\\end{document}";
     let mut engine = engine_with(src, &[]);
-    let tokens = engine.run();
+    let mut tokens = Vec::new();
+    let mut origins = Vec::new();
+    while let Some((token, origin)) = engine.next_content_token_with_origin() {
+        tokens.push(token);
+        origins.push(origin);
+    }
     // Every token of the two commands is emitted, with the exact span it
-    // was read from: what the typesetting layer saw before the kernel
-    // existed.
+    // was read from and no invocation origin: what the typesetting layer
+    // saw before the kernel existed.
     let preamble_end = src.find("\\begin").unwrap() as u32;
     let preamble: Vec<&Token> = tokens
         .iter()
-        .filter(|t| t.span.source_id == 0 && t.span.start < preamble_end)
-        .filter(|t| !matches!(&t.kind, TokenKind::ControlSequence(n) if n == "relax"))
+        .zip(&origins)
+        .filter(|(t, _)| t.span.source_id == 0 && t.span.start < preamble_end)
+        .filter(|(t, _)| !matches!(&t.kind, TokenKind::ControlSequence(n) if n == "relax"))
+        .inspect(|(t, origin)| assert_eq!(**origin, None, "{t:?}"))
+        .map(|(t, _)| t)
         .collect();
     for t in &preamble {
         let bytes = &src[t.span.start as usize..t.span.end as usize];
