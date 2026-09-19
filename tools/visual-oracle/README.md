@@ -104,3 +104,63 @@ python3 -m unittest discover -s tools/visual-oracle -p 'test_*.py' -v   # 8 pure
   Type 3 / CID fonts and non-Flate filters are reported in `notes`, not read.
 - Ghostscript anti-aliases; pixel counts are the secondary key only.
 - Owners are triage pointers, not verdicts.
+
+## Companion: `cumulative.py` — ranking by blast radius
+
+`rank.py` ranks *pages* by their single largest delta. `cumulative.py` ranks
+*divergences* by how many baselines each one displaces, because the two answers
+differ: GH-706 was 1.99 bp per list boundary and moved every baseline below it
+on 17 fixtures, while GH-717 was 5.06 pt and moved one glyph stack in one
+matrix.
+
+```sh
+python3 tools/visual-oracle/cumulative.py                       # -> docs/evidence/corpus-fidelity-<UTC>/
+python3 tools/visual-oracle/cumulative.py --only hw1 --only cv
+python3 tools/visual-oracle/cumulative.py --fixtures <dir-of-probe-fixtures> --out <dir>
+```
+
+It reuses this tool's producer route, `pdftext` reference reader, word grouper,
+`difflib` alignment and `rank.pair_points` anchoring unchanged — there is still
+one definition of a word, one alignment and one measured point in this
+directory. What it adds:
+
+1. aligned word pairs are bucketed into **reference lines**, giving each page a
+   `dy` profile;
+2. every change in that profile is classified **cumulative** (the median `dy`
+   below it differs from the median above: its cost is the step times the lines
+   below it) or **local** (the page comes back: its cost is one line);
+3. each step is labelled with the LaTeX construct standing between the two
+   lines in the source, so one cause groups its witnesses across fixtures
+   instead of arriving as one finding per fixture;
+4. lines whose own words disagree about `dy` — which is what happens around
+   cmex big operators, where the reference PDF has no usable text for `\int`
+   and a neighbouring limit can pair across the display — are reported as **low
+   confidence** and left out of the ranking;
+5. every page's **glue set** is read back from pdfTeX's `\tracingoutput`, and a
+   step on a page with a finite-order set is flagged `cause_not_localised` and
+   kept out of the ranking's line counts.
+
+### Why (5) exists
+
+TeX scales every shrinkable skip on a page by one page-global ratio to make the
+material fit `\textheight`. If the two producers' natural page heights differ
+*anywhere* — including below the line being looked at — their ratios differ and
+every baseline separates in proportion to the shrinkable glue above it. That
+glue is `\abovedisplayskip`, `\topsep`, `\itemsep`, `\parskip` and the
+`\@startsection` skips, so such a page manufactures a step at every display,
+list and heading, each sized by that construct's own shrink and none of them
+caused by it. Ranking those steps by position credited 704 of one sweep's 1031
+displaced baselines to the wrong construct and produced two whole findings that
+did not exist.
+
+The **reference** ratio is pdfTeX's own, from a re-run under `\tracingoutput`
+that is first verified to reproduce the pinned reference PDF (byte-identical, or
+every extracted baseline within 0.05 bp). `--texbin` points at another pdflatex;
+`--no-glue-set` skips the pass and flags every step, because an unmeasured glue
+set is not a zero one. The **candidate** ratio is not reported: `render-pipeline`
+computes it in `pagebuild::glue_set` and discards it, and the v2 display list
+carries only the fixed page size, so the engine's `overfull_vbox` diagnostic is
+reported in its place rather than a number being invented.
+
+First report: `docs/evidence/corpus-fidelity-2026-09-16T1130Z/` (GH-66).
+Tests: `python3 -m unittest discover -s tools/visual-oracle -p 'test_*.py'`.
