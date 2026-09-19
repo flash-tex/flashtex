@@ -794,12 +794,16 @@ impl MathFonts {
     }
 
     /// The character a math symbol the compiler spells in ASCII is set
-    /// as when this provider lays the formula out (unicode-math's
-    /// `\mathcode`s): the hyphen-minus is the minus sign, `*` the asterisk
-    /// operator; everything else is [`MathFonts::math_char`]. The TeX
-    /// provider never comes through here for these two (their cmsy slots
-    /// are mapped in `TexMathMetrics::otf_gid`).
-    fn laid_out_char(ch: char) -> char {
+    /// as when the document's own math font lays the formula out
+    /// (unicode-math's `\mathcode`s): the hyphen-minus is the minus sign,
+    /// `*` the asterisk operator, the accents their combining marks;
+    /// everything else, and everything for the TeX route's fallback
+    /// glyphs and the no-TFM provider (which keep the glyphs they always
+    /// painted: `x_i^*` draws the ASCII asterisk), is [`MathFonts::math_char`].
+    fn laid_out_char(&self, ch: char) -> char {
+        if !self.named {
+            return Self::math_char(ch);
+        }
         match ch {
             '-' => '\u{2212}',
             '*' => '\u{2217}',
@@ -823,7 +827,7 @@ impl MathFonts {
     }
 
     fn base_gid(&self, ch: char) -> Option<u16> {
-        let drawn = Self::laid_out_char(ch);
+        let drawn = self.laid_out_char(ch);
         let g = self.face.face().glyph_id(drawn).or_else(|| self.face.face().glyph_id(ch));
         if g.is_none() {
             self.missing.borrow_mut().push(ch);
@@ -886,7 +890,7 @@ impl MathFontMetrics for MathFonts {
         }
         let gid = self.base_gid(ch)?;
         let gid = if self.named { self.script_gid(gid, size) } else { gid };
-        Some(self.glyph_for(gid, Self::laid_out_char(ch), self.sizes.at(size)))
+        Some(self.glyph_for(gid, self.laid_out_char(ch), self.sizes.at(size)))
     }
 
     /// Rule 13 in display style: the first variant at least
