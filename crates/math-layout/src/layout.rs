@@ -8,7 +8,7 @@ use crate::boxes::{BoxKind, Child, Flex, MathBox};
 use crate::mathlist::{
     Atom, AtomClass, BigSizing, LeftScripts, Limits, MathList, Nucleus, TextPiece, TextStyle,
 };
-use crate::metrics::{Extensible, Glyph, MathFontMetrics, MathParams};
+use crate::metrics::{Assembly, Extensible, Glyph, KernCorner, MathFontMetrics, MathParams};
 use crate::metrics::{MathChar, OrdPair};
 use crate::source::SourceTag;
 use crate::spacing::{Space, between};
@@ -394,9 +394,13 @@ impl Engine<'_> {
         // The nucleus, TeX's `delta` (italic correction still to be applied),
         // and whether the nucleus is a bare character (Rule 18a).
         let (unpacked_nucleus, unpacked_tag) = unpacked(&atom.nucleus);
+        // The character the nucleus is, for an OpenType face's cut-in kerns
+        // between it and a one-character script (`make_scripts`).
+        let mut nucleus_glyph: Option<Glyph> = None;
         let (nucleus, delta, is_char) = match unpacked_nucleus {
             Nucleus::Symbol(ch) => match self.glyph(*ch, style) {
                 Some(g) => {
+                    nucleus_glyph = Some(g);
                     let b = MathBox::glyph(&g);
                     let italic = if text_font_pair { 0.0 } else { g.italic };
                     if atom.subscript.is_none() && italic != 0.0 {
@@ -409,6 +413,7 @@ impl Engine<'_> {
             },
             Nucleus::TextChar(ch) => match self.text_char(*ch, style) {
                 Some(g) => {
+                    nucleus_glyph = Some(g);
                     let b = MathBox::glyph(&g);
                     let italic = if text_font_pair { 0.0 } else { g.italic };
                     if atom.subscript.is_none() && italic != 0.0 {
@@ -529,7 +534,7 @@ impl Engine<'_> {
         };
         let mut nucleus = nucleus;
         nucleus.inherit_tag(unpacked_tag);
-        self.make_scripts(nucleus, delta, is_char, atom, style)
+        self.make_scripts(nucleus, delta, is_char, nucleus_glyph, atom, style)
     }
 
     /// `make_math_accent` when the atom has scripts and its base is one
@@ -692,23 +697,44 @@ impl Engine<'_> {
     }
 
     /// Rule 9 and `make_over`: `overbar(x, 3θ, θ)` with x in cramped style.
+    /// An OpenType face supplies the three lengths itself (LuaTeX
+    /// `make_over`: `overbar(x, Umathoverbarvgap, Umathoverbarrule,
+    /// Umathoverbarkern)`).
     fn make_over(&mut self, body: &MathList, style: Style) -> MathBox {
         let theta = self.params(style).default_rule_thickness;
         let x = self.clean_box(body, style.cramped());
+        if let Some(e) = self.m.opentype_extras(style.size_class()) {
+            return overbar_kerned(
+                x,
+                e.overbar_vertical_gap,
+                e.overbar_rule_thickness,
+                e.overbar_extra_ascender,
+            );
+        }
         overbar(x, 3.0 * theta, theta)
     }
 
-    /// Rule 10 and `make_under`: x, kern 3θ, rule θ, and θ of extra depth.
+    /// Rule 10 and `make_under`: x, kern 3θ, rule θ, and θ of extra depth
+    /// (an OpenType face: `UnderbarVerticalGap`, `UnderbarRuleThickness`,
+    /// `UnderbarExtraDescender`, LuaTeX `make_under`).
     fn make_under(&mut self, body: &MathList, style: Style) -> MathBox {
         let theta = self.params(style).default_rule_thickness;
         let x = self.clean_box(body, style);
+        let (gap, rule, extra) = match self.m.opentype_extras(style.size_class()) {
+            Some(e) => (
+                e.underbar_vertical_gap,
+                e.underbar_rule_thickness,
+                e.underbar_extra_descender,
+            ),
+            None => (3.0 * theta, theta, theta),
+        };
         let w = x.width;
-        let rule_dy = x.depth + 3.0 * theta + theta;
+        let rule_dy = x.depth + gap + rule;
         MathBox {
             tag: SourceTag::NONE,
             width: w,
             height: x.height,
-            depth: x.depth + 3.0 * theta + theta + theta,
+            depth: x.depth + gap + rule + extra,
             kind: BoxKind::VBox(vec![
                 Child {
                     dx: 0.0,
@@ -718,7 +744,7 @@ impl Engine<'_> {
                 Child {
                     dx: 0.0,
                     dy: rule_dy,
-                    content: MathBox::rule(w, theta, 0.0),
+                    content: MathBox::rule(w, rule, 0.0),
                 },
             ]),
         }
@@ -750,7 +776,22 @@ impl Engine<'_> {
                         // clean_box of a char includes its italic correction;
                         // it is removed again when a subscript must tuck under.
                         let keep_italic = !(atom.subscript.is_some() && !limits);
-                        let mut x = if keep_italic && g.italic != 0.0 {
+                        let otf = self.m.opentype_extras(style.size_class()).is_some();
+                        let mut x = if otf && !limits {
+                            // An OpenType face (LuaTeX `make_op`, its default
+                            // `\mathnolimitsmode`): the operator keeps its
+                            // advance and never the correction kern, a
+                            // superscript starts at the advance and a
+                            // subscript δ to the left of it -- measured on
+                            // Latin Modern Math `\int_0^1` in display style
+                            // (advance 9.99 pt, δ 5.91): `1` at 9.99, `0` at
+                            // 4.08 -- where TeX82 sets them at 15.9 and 9.99.
+                            if atom.subscript.is_some() && g.italic != 0.0 {
+                                MathBox::hlist(vec![MathBox::glyph(&g), MathBox::kern(-g.italic)])
+                            } else {
+                                MathBox::glyph(&g)
+                            }
+                        } else if keep_italic && g.italic != 0.0 {
                             MathBox::hlist(vec![MathBox::glyph(&g), MathBox::kern(g.italic)])
                         } else {
                             MathBox::glyph(&g)
@@ -823,7 +864,7 @@ impl Engine<'_> {
             delimiter_tags: [SourceTag::NONE; 2],
             left_scripts: None,
         };
-        let left_box = self.make_scripts(strut, 0.0, false, &carrier, style);
+        let left_box = self.make_scripts(strut, 0.0, false, None, &carrier, style);
         // `\@mathmeasure6\displaystyle{#3\nolimits#2}`.
         let right = bare(atom.superscript.clone(), atom.subscript.clone());
         let right_box = self.make_op(&right, style);
@@ -842,7 +883,7 @@ impl Engine<'_> {
     ) -> MathBox {
         let p = self.params(style);
         if !limits {
-            return self.make_scripts(nucleus, delta, false, atom, style);
+            return self.make_scripts(nucleus, delta, false, None, atom, style);
         }
         // Rule 13a: limits above and below, centred, italic-shifted by δ/2.
         let x = atom
@@ -1125,12 +1166,23 @@ impl Engine<'_> {
         }
     }
 
-    /// Rule 18 and `make_scripts`.
+    /// Rule 18 and `make_scripts`. `nucleus_glyph` is the character the
+    /// nucleus is, when it is one, for an OpenType face's cut-in kerns.
+    ///
+    /// With an OpenType face the four clearances Appendix G derives from
+    /// σ₅ and ξ₈ are the face's own constants (`SubscriptTopMax`,
+    /// `SuperscriptBottomMin`, `SubSuperscriptGapMin`,
+    /// `SuperscriptBottomMaxWithSubscript`), `\scriptspace` is
+    /// `SpaceAfterScript`, and a one-character script next to a character
+    /// nucleus is kerned by the `MathKernInfo` staircases, as LuaTeX does
+    /// (`mlist.c` `make_scripts`/`find_math_kern`; the manual's "Super- and
+    /// subscripts").
     fn make_scripts(
         &mut self,
         nucleus: MathBox,
         delta: f64,
         is_char: bool,
+        nucleus_glyph: Option<Glyph>,
         atom: &Atom,
         style: Style,
     ) -> MathBox {
@@ -1139,6 +1191,38 @@ impl Engine<'_> {
         }
         let p = self.params(style);
         let t = self.params(style.sup());
+        let e = self.m.opentype_extras(style.size_class());
+        let script_space = e.map_or(p.script_space, |e| e.space_after_script);
+        let sub_top_max = e.map_or(p.x_height.abs() * 4.0 / 5.0, |e| e.subscript_top_max);
+        let sup_bottom_min = e.map_or(p.x_height.abs() / 4.0, |e| e.superscript_bottom_min);
+        let sub_sup_gap_min = e.map_or(4.0 * p.default_rule_thickness, |e| {
+            e.sub_superscript_gap_min
+        });
+        let sup_bottom_max_with_sub = e.map_or(p.x_height.abs() * 4.0 / 5.0, |e| {
+            e.superscript_bottom_max_with_subscript
+        });
+        // The character a script is, when the nucleus is one too and the
+        // face has cut-in kerns to read: a list of exactly one unscripted
+        // character (what `clean_box` would hand back as a lone glyph).
+        let script_glyph = |this: &Self, list: &MathList, st: Style| -> Option<Glyph> {
+            if e.is_none() || nucleus_glyph.is_none() {
+                return None;
+            }
+            match list.atoms.as_slice() {
+                [a] if a.superscript.is_none()
+                    && a.subscript.is_none()
+                    && a.left_scripts.is_none()
+                    && a.class != AtomClass::Op =>
+                {
+                    match unpacked(&a.nucleus).0 {
+                        Nucleus::Symbol(ch) => this.m.glyph(*ch, st.size_class()),
+                        Nucleus::TextChar(ch) => this.m.text_glyph(*ch, st.size_class()),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        };
         let (mut shift_up, mut shift_down) = if is_char {
             (0.0, 0.0)
         } else {
@@ -1146,16 +1230,27 @@ impl Engine<'_> {
         };
         let Some(sup) = &atom.superscript else {
             // Rule 18b: subscript only.
-            let mut x = self.clean_box(atom.subscript.as_ref().unwrap(), style.sub());
-            x.width += p.script_space;
+            let sub = atom.subscript.as_ref().unwrap();
+            let sub_glyph = script_glyph(self, sub, style.sub());
+            let mut x = self.clean_box(sub, style.sub());
+            x.width += script_space;
             shift_down = shift_down.max(p.sub1);
-            let clr = x.height - p.x_height.abs() * 4.0 / 5.0;
+            let clr = x.height - sub_top_max;
             shift_down = shift_down.max(clr);
+            let kern = self.sub_kern(nucleus_glyph.as_ref(), sub_glyph.as_ref(), shift_down);
+            if kern != 0.0 {
+                return MathBox::hbox(vec![
+                    (0.0, nucleus),
+                    (0.0, MathBox::kern(kern)),
+                    (shift_down, x),
+                ]);
+            }
             return MathBox::hbox(vec![(0.0, nucleus), (shift_down, x)]);
         };
         // Rule 18c: superscript.
+        let sup_glyph = script_glyph(self, sup, style.sup());
         let mut x = self.clean_box(sup, style.sup());
-        x.width += p.script_space;
+        x.width += script_space;
         let clr = if style.cramped {
             p.sup3
         } else if style.is_display() {
@@ -1164,37 +1259,48 @@ impl Engine<'_> {
             p.sup2
         };
         shift_up = shift_up.max(clr);
-        let clr = x.depth + p.x_height.abs() / 4.0;
+        let clr = x.depth + sup_bottom_min;
         shift_up = shift_up.max(clr);
         let Some(sub) = &atom.subscript else {
+            let kern = self.sup_kern(nucleus_glyph.as_ref(), sup_glyph.as_ref(), shift_up);
+            if kern != 0.0 {
+                return MathBox::hbox(vec![
+                    (0.0, nucleus),
+                    (0.0, MathBox::kern(kern)),
+                    (-shift_up, x),
+                ]);
+            }
             return MathBox::hbox(vec![(0.0, nucleus), (-shift_up, x)]);
         };
         // Rule 18d/e: both scripts.
+        let sub_glyph = script_glyph(self, sub, style.sub());
         let mut y = self.clean_box(sub, style.sub());
-        y.width += p.script_space;
+        y.width += script_space;
         shift_down = shift_down.max(p.sub2);
-        let clr = 4.0 * p.default_rule_thickness - ((shift_up - x.depth) - (y.height - shift_down));
+        let clr = sub_sup_gap_min - ((shift_up - x.depth) - (y.height - shift_down));
         if clr > 0.0 {
             shift_down += clr;
-            let clr = p.x_height.abs() * 4.0 / 5.0 - (shift_up - x.depth);
+            let clr = sup_bottom_max_with_sub - (shift_up - x.depth);
             if clr > 0.0 {
                 shift_up += clr;
                 shift_down -= clr;
             }
         }
-        let width = (x.width + delta).max(y.width);
+        let sup_kern = self.sup_kern(nucleus_glyph.as_ref(), sup_glyph.as_ref(), shift_up);
+        let sub_kern = self.sub_kern(nucleus_glyph.as_ref(), sub_glyph.as_ref(), shift_down);
+        let width = (x.width + delta + sup_kern).max(y.width + sub_kern);
         let height = x.height + shift_up;
         let depth = y.depth + shift_down;
         let scripts = MathBox {
             tag: SourceTag::NONE,
             kind: BoxKind::VBox(vec![
                 Child {
-                    dx: delta,
+                    dx: delta + sup_kern,
                     dy: -shift_up,
                     content: x,
                 },
                 Child {
-                    dx: 0.0,
+                    dx: sub_kern,
                     dy: shift_down,
                     content: y,
                 },
@@ -1204,6 +1310,41 @@ impl Engine<'_> {
             depth,
         };
         MathBox::hbox(vec![(0.0, nucleus), (0.0, scripts)])
+    }
+
+    /// LuaTeX `find_math_kern` for a superscript `sup` raised `shift_up`
+    /// on the character `nucleus`: the base's top-right and the script's
+    /// bottom-left staircases are read at the base's top and at the
+    /// script's bottom (both measured from the base's baseline, as LuaTeX
+    /// does), and the smaller of the two sums is the kern. 0 unless both
+    /// glyphs are known.
+    fn sup_kern(&self, nucleus: Option<&Glyph>, sup: Option<&Glyph>, shift_up: f64) -> f64 {
+        let (Some(n), Some(s)) = (nucleus, sup) else {
+            return 0.0;
+        };
+        let top = n.height;
+        let bottom = shift_up - s.depth;
+        let at = |h: f64| {
+            self.m.math_kern(n, KernCorner::TopRight, h)
+                + self.m.math_kern(s, KernCorner::BottomLeft, h)
+        };
+        at(top).min(at(bottom))
+    }
+
+    /// The subscript counterpart of [`Self::sup_kern`]: the base's
+    /// bottom-right and the script's top-left staircases at the script's
+    /// top and at the base's bottom.
+    fn sub_kern(&self, nucleus: Option<&Glyph>, sub: Option<&Glyph>, shift_down: f64) -> f64 {
+        let (Some(n), Some(s)) = (nucleus, sub) else {
+            return 0.0;
+        };
+        let top = s.height - shift_down;
+        let bottom = -n.depth;
+        let at = |h: f64| {
+            self.m.math_kern(n, KernCorner::BottomRight, h)
+                + self.m.math_kern(s, KernCorner::TopLeft, h)
+        };
+        at(top).min(at(bottom))
     }
 
     /// Rule 15 and `make_fraction`, with null delimiters on both sides.
@@ -1219,12 +1360,23 @@ impl Engine<'_> {
         let theta = thickness.unwrap_or(p.default_rule_thickness);
         let mut x = self.clean_box(num, style.num());
         let mut z = self.clean_box(den, style.denom());
+        // An OpenType face: the stack shifts and every clearance are the
+        // face's constants rather than multiples of ξ₈ (LuaTeX
+        // `make_fraction`: `Umathstacknumup`/`Umathstackdenomdown`,
+        // `Umathstackvgap`, `Umathfractionnumvgap`/`Umathfractiondenomvgap`).
+        let e = self.m.opentype_extras(style.size_class());
         let (mut u, mut v) = if style.is_display() {
-            (p.num1, p.denom1)
+            match (theta == 0.0, e) {
+                (true, Some(e)) => (
+                    e.stack_top_display_style_shift_up,
+                    e.stack_bottom_display_style_shift_down,
+                ),
+                _ => (p.num1, p.denom1),
+            }
         } else if theta != 0.0 {
             (p.num2, p.denom2)
         } else {
-            (p.num3, p.denom2)
+            (p.num3, e.map_or(p.denom2, |e| e.stack_bottom_shift_down))
         };
         if x.width < z.width {
             x = x.rebox(z.width);
@@ -1233,21 +1385,35 @@ impl Engine<'_> {
         }
         let a = p.axis_height;
         if theta == 0.0 {
-            let clr = if style.is_display() { 7.0 } else { 3.0 } * p.default_rule_thickness;
+            let clr = match e {
+                Some(e) if style.is_display() => e.stack_display_style_gap_min,
+                Some(e) => e.stack_gap_min,
+                None => (if style.is_display() { 7.0 } else { 3.0 }) * p.default_rule_thickness,
+            };
             let delta = (clr - ((u - x.depth) - (z.height - v))) / 2.0;
             if delta > 0.0 {
                 u += delta;
                 v += delta;
             }
         } else {
-            let clr = if style.is_display() {
-                3.0 * theta
-            } else {
-                theta
+            let (clr_num, clr_den) = match e {
+                Some(e) if style.is_display() => (
+                    e.fraction_num_display_style_gap_min,
+                    e.fraction_denom_display_style_gap_min,
+                ),
+                Some(e) => (e.fraction_numerator_gap_min, e.fraction_denominator_gap_min),
+                None => {
+                    let clr = if style.is_display() {
+                        3.0 * theta
+                    } else {
+                        theta
+                    };
+                    (clr, clr)
+                }
             };
             let delta = theta / 2.0;
-            let delta1 = clr - ((u - x.depth) - (a + delta));
-            let delta2 = clr - ((a - delta) - (z.height - v));
+            let delta1 = clr_num - ((u - x.depth) - (a + delta));
+            let delta2 = clr_den - ((a - delta) - (z.height - v));
             if delta1 > 0.0 {
                 u += delta1;
             }
@@ -1419,11 +1585,13 @@ impl Engine<'_> {
     }
 
     /// `var_delimiter` without its final axis shift: the first glyph in
-    /// `sizes` at least `wanted` tall, else the largest (reported).
+    /// `sizes` at least `wanted` tall, else the extensible recipe or the
+    /// OpenType assembly, else the largest (reported).
     fn var_delimiter(
         &mut self,
         sizes: &[Glyph],
         extensible: Option<Extensible>,
+        assembly: Option<Assembly>,
         wanted: f64,
         on_missing: impl FnOnce(f64, f64) -> Limitation,
     ) -> Option<MathBox> {
@@ -1442,6 +1610,11 @@ impl Engine<'_> {
         if let Some(recipe) = extensible {
             return Some(stack_extensible(&recipe, wanted));
         }
+        if let Some(a) = assembly
+            && let Some(b) = stack_assembly(&a, wanted)
+        {
+            return Some(b);
+        }
         let chosen = sizes.last()?;
         self.limitations
             .push(on_missing(wanted, chosen.total_height()));
@@ -1455,6 +1628,9 @@ impl Engine<'_> {
         degree: Option<&MathList>,
         style: Style,
     ) -> MathBox {
+        if let Some(e) = self.m.opentype_extras(style.size_class()) {
+            return self.make_radical_opentype(radicand, degree, style, &e);
+        }
         let z = self.make_sqrt(radicand, style);
         let Some(degree) = degree else {
             return z;
@@ -1473,6 +1649,94 @@ impl Engine<'_> {
         ])
     }
 
+    /// Rule 11 for an OpenType face, as LuaTeX's `make_radical` sets it
+    /// when the face defines `Umathradicalrule`: the rule is
+    /// `RadicalRuleThickness` thick (not the sign's height), the clearance
+    /// `RadicalVerticalGap`/`RadicalDisplayStyleVerticalGap`, the kern
+    /// above the rule `RadicalExtraAscender`; the sign is re-boxed so its
+    /// ink top meets the rule's top -- moved down by its height less the
+    /// rule thickness, that much added to its depth -- before Rule 11's
+    /// centring clearance `delta` is worked out from the new depth
+    /// (measured on Latin Modern Math: `\sqrt{\frac{a}{b}}` in display
+    /// style takes the 24 pt sign, 14.5 pt tall above its origin, and sets
+    /// it with its origin 0.55 pt above the baseline and the rule's bottom
+    /// at 14.65). A degree is set in scriptscript style between
+    /// `RadicalKernBeforeDegree` and `RadicalKernAfterDegree`, its baseline
+    /// `RadicalDegreeBottomRaisePercent` of the sign's total height above
+    /// the sign's bottom (`\sqrt[3]{x}`: the `3` at 3.605 pt with the sign
+    /// spanning −2.395..7.605).
+    fn make_radical_opentype(
+        &mut self,
+        radicand: &MathList,
+        degree: Option<&MathList>,
+        style: Style,
+        e: &crate::metrics::OpenTypeExtras,
+    ) -> MathBox {
+        let size = style.size_class();
+        let x = self.clean_box(radicand, style.cramped());
+        let theta = e.radical_rule_thickness;
+        let mut clr = if style.is_display() {
+            e.radical_display_style_vertical_gap
+        } else {
+            e.radical_vertical_gap
+        };
+        let wanted = x.height + x.depth + clr + theta;
+        let sizes = self.m.radical_sizes(size);
+        let ext = self.m.radical_extensible(size);
+        let assembly = self.m.radical_assembly(size);
+        let Some(y) = self.var_delimiter(&sizes, ext, assembly, wanted, |wanted, used| {
+            Limitation::RadicalTooSmall { wanted, used }
+        }) else {
+            self.limitations.push(Limitation::MissingGlyph('\u{221A}'));
+            return x;
+        };
+        let y = if (y.height - theta).abs() > 1e-9 {
+            let down = y.height - theta;
+            y.shifted(down)
+        } else {
+            y
+        };
+        let delta = y.depth - (x.height + x.depth + clr);
+        if delta > 0.0 {
+            clr += delta / 2.0;
+        }
+        let sign_dy = -(x.height + clr);
+        let sign_total = y.height + y.depth;
+        let sign_depth = y.depth;
+        let bar = MathBox::rule(x.width, theta, 0.0);
+        let overbar = MathBox {
+            tag: SourceTag::NONE,
+            width: x.width,
+            height: x.height + clr + theta + e.radical_extra_ascender,
+            depth: x.depth,
+            kind: BoxKind::VBox(vec![
+                Child {
+                    dx: 0.0,
+                    dy: -(x.height + clr),
+                    content: bar,
+                },
+                Child {
+                    dx: 0.0,
+                    dy: 0.0,
+                    content: x,
+                },
+            ]),
+        };
+        let body = MathBox::hbox(vec![(sign_dy, y), (0.0, overbar)]);
+        let Some(degree) = degree else {
+            return body;
+        };
+        let r = self.clean_box(degree, Style::SCRIPT_SCRIPT);
+        let sign_bottom_dy = sign_dy + sign_depth;
+        let raise_dy = sign_bottom_dy - e.radical_degree_bottom_raise_percent / 100.0 * sign_total;
+        MathBox::hbox(vec![
+            (0.0, MathBox::kern(e.radical_kern_before_degree)),
+            (raise_dy, r),
+            (0.0, MathBox::kern(e.radical_kern_after_degree)),
+            (0.0, body),
+        ])
+    }
+
     fn make_sqrt(&mut self, radicand: &MathList, style: Style) -> MathBox {
         let p = self.params(style);
         let x = self.clean_box(radicand, style.cramped());
@@ -1485,7 +1749,8 @@ impl Engine<'_> {
         let wanted = x.height + x.depth + clr + theta;
         let sizes = self.m.radical_sizes(style.size_class());
         let ext = self.m.radical_extensible(style.size_class());
-        let Some(y) = self.var_delimiter(&sizes, ext, wanted, |wanted, used| {
+        let assembly = self.m.radical_assembly(style.size_class());
+        let Some(y) = self.var_delimiter(&sizes, ext, assembly, wanted, |wanted, used| {
             Limitation::RadicalTooSmall { wanted, used }
         }) else {
             self.limitations.push(Limitation::MissingGlyph('\u{221A}'));
@@ -1580,21 +1845,42 @@ impl Engine<'_> {
                 break;
             }
         }
+        // An OpenType face: the base an accent is designed for is
+        // `AccentBaseHeight`, not σ₅, and the accent's own top-accent
+        // anchor replaces "half its width plus its italic correction"
+        // (LuaTeX `make_math_accent`; the manual's "Accent handling").
+        let e = self.m.opentype_extras(style.size_class());
+        let base_height = e.map_or(p.x_height, |e| e.accent_base_height);
         // δ from the bare character's height, then grown by the height the
         // scripts added, so the accent clears them (make_math_accent).
         let delta = match scripted_char {
             Some((_, g)) => {
-                let d = g.height.min(p.x_height) + (x.height - g.height);
+                let d = g.height.min(base_height) + (x.height - g.height);
                 h = x.height;
                 d
             }
-            None => h.min(p.x_height),
+            None => h.min(base_height),
         };
         let y = MathBox::glyph(chosen);
         // `char_box` widths include the italic correction (1.846pt for the
         // cmmi12 \vec accent), which TeX centres with; the box itself keeps
         // width 0 in TeX, so only the shift depends on it.
-        let accent_dx = s + (w - (y.width + chosen.italic)) / 2.0;
+        let accent_dx = if e.is_some() {
+            // The accent's anchor: its top-accent line when the face lists
+            // one (`skew` is that line's offset from the glyph's centre),
+            // else half its width plus its italic correction. Latin Modern
+            // Math `\hat{x}`: 𝑥's anchor at 3.29 pt, the hat's at −2.64,
+            // the hat's origin 5.93 pt right of 𝑥's.
+            let accent_anchor = y.width / 2.0
+                + if chosen.skew != 0.0 {
+                    chosen.skew
+                } else {
+                    chosen.italic
+                };
+            s + w / 2.0 - accent_anchor
+        } else {
+            s + (w - (y.width + chosen.italic)) / 2.0
+        };
         // Stack: accent, kern −δ, base; baseline at the base's baseline.
         let accent_dy = -(h - delta) - y.depth;
         let mut height = (h - delta) + y.depth + y.height;
@@ -1651,7 +1937,8 @@ impl Engine<'_> {
         };
         let sizes = self.m.delimiter_sizes(ch, style.size_class());
         let ext = self.m.delimiter_extensible(ch, style.size_class());
-        match self.var_delimiter(&sizes, ext, wanted, |wanted, used| {
+        let assembly = self.m.delimiter_assembly(ch, style.size_class());
+        match self.var_delimiter(&sizes, ext, assembly, wanted, |wanted, used| {
             Limitation::DelimiterTooSmall { ch, wanted, used }
         }) {
             // Centre the delimiter on the axis (`var_delimiter`'s last step).
@@ -1683,11 +1970,18 @@ fn tag_delimiters(b: &mut MathBox, tags: [SourceTag; 2]) {
 
 /// `overbar(b, k, t)`: vpack(kern t, rule t, kern k, b); baseline of `b`.
 fn overbar(b: MathBox, k: f64, t: f64) -> MathBox {
+    overbar_kerned(b, k, t, t)
+}
+
+/// LuaTeX's `overbar(b, k, t, ht)`: vpack(kern ht, rule t, kern k, b) --
+/// TeX's with the kern above the rule its own length (an OpenType face's
+/// `OverbarExtraAscender`).
+fn overbar_kerned(b: MathBox, k: f64, t: f64, ht: f64) -> MathBox {
     let w = b.width;
     MathBox {
         tag: SourceTag::NONE,
         width: w,
-        height: b.height + k + 2.0 * t,
+        height: b.height + k + t + ht,
         depth: b.depth,
         kind: BoxKind::VBox(vec![
             Child {
@@ -1702,6 +1996,109 @@ fn overbar(b: MathBox, k: f64, t: f64) -> MathBox {
             },
         ]),
     }
+}
+
+/// How often one extender may repeat in an assembly; the cap only keeps a
+/// malformed font from looping (a `\left(` around a page-tall box needs
+/// about 10 of Latin Modern Math's 0.498 em paren extender).
+const MAX_ASSEMBLY_REPEATS: usize = 256;
+
+/// An OpenType vertical glyph assembly of exactly `wanted` pt (OpenType 1.9
+/// §6.3.5), built the way LuaTeX builds one (`mlist.c`,
+/// `get_delimiter_box`/`stack_glue_into_box`): the non-extender parts
+/// appear once, every extender the same number of times -- the smallest
+/// count whose parts still cover `wanted` at the least overlap the font
+/// allows -- and between two parts sits glue whose natural width is minus
+/// the joint's largest overlap (the smaller of the two connectors), able to
+/// stretch to minus the font's `minConnectorOverlap`; packing the stack to
+/// `wanted` then shares the shortfall among the joints in proportion to
+/// their stretch. Measured on STIX Two Math's `(` around a 53.5 pt body:
+/// bottom/top hooks (end connector 2.5 pt) and three extenders (connectors
+/// 10 pt, minimum 1 pt), joints 1.75/5.5/5.5/1.75 pt. When even the
+/// fewest parts exceed `wanted` at their largest overlaps the stack keeps
+/// that natural size.
+///
+/// The box's baseline is its bottom (`height` the stack's extent, `depth`
+/// 0); each part's glyph sits with its origin at its rise above the
+/// bottom, its ink expected to run up to its `full_advance`. `None` when
+/// the assembly has no parts.
+fn stack_assembly(a: &Assembly, wanted: f64) -> Option<MathBox> {
+    let fixed_n = a.parts.iter().filter(|p| !p.extender).count();
+    let ext_n = a.parts.iter().filter(|p| p.extender).count();
+    if a.parts.is_empty() {
+        return None;
+    }
+    let min_overlap = a.min_overlap.max(0.0);
+    let sequence = |repeats: usize| -> Vec<&crate::metrics::AssemblyPart> {
+        let mut seq = Vec::with_capacity(fixed_n + ext_n * repeats);
+        for p in &a.parts {
+            if p.extender {
+                seq.extend(std::iter::repeat_n(p, repeats));
+            } else {
+                seq.push(p);
+            }
+        }
+        seq
+    };
+    // A joint's largest overlap, never below the font's minimum.
+    let joints = |seq: &[&crate::metrics::AssemblyPart]| -> Vec<f64> {
+        seq.windows(2)
+            .map(|w| {
+                w[0].end_connector
+                    .min(w[1].start_connector)
+                    .max(min_overlap)
+            })
+            .collect()
+    };
+    let mut repeats = 0usize;
+    let (seq, max_overlaps) = loop {
+        let seq = sequence(repeats);
+        if seq.is_empty() {
+            if ext_n == 0 {
+                return None;
+            }
+            repeats += 1;
+            continue;
+        }
+        let max_overlaps = joints(&seq);
+        let advance: f64 = seq.iter().map(|p| p.full_advance).sum();
+        let longest = advance - min_overlap * max_overlaps.len() as f64;
+        if longest >= wanted || ext_n == 0 || repeats >= MAX_ASSEMBLY_REPEATS {
+            break (seq, max_overlaps);
+        }
+        repeats += 1;
+    };
+    let advance: f64 = seq.iter().map(|p| p.full_advance).sum();
+    let natural = advance - max_overlaps.iter().sum::<f64>();
+    let stretch: f64 = max_overlaps.iter().map(|m| m - min_overlap).sum();
+    let ratio = if wanted > natural && stretch > 0.0 {
+        ((wanted - natural) / stretch).min(1.0)
+    } else {
+        0.0
+    };
+    let mut children = Vec::with_capacity(seq.len());
+    let mut rise = 0.0;
+    let mut width: f64 = 0.0;
+    for (i, p) in seq.iter().enumerate() {
+        children.push(Child {
+            dx: 0.0,
+            dy: -rise,
+            content: MathBox::glyph(&p.glyph),
+        });
+        width = width.max(p.glyph.width);
+        if let Some(m) = max_overlaps.get(i) {
+            rise += p.full_advance - (m - ratio * (m - min_overlap));
+        } else {
+            rise += p.full_advance;
+        }
+    }
+    Some(MathBox {
+        tag: SourceTag::NONE,
+        width,
+        height: rise,
+        depth: 0.0,
+        kind: BoxKind::VBox(children),
+    })
 }
 
 /// tex.web §713: stack `bot`, n×`rep`, `mid`, n×`rep`, `top` until the total
