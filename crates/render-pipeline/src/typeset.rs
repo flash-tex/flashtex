@@ -2558,14 +2558,18 @@ impl<'a> Context<'a> {
                         // The face cannot set a part: no break here.
                         _ => (None, None, None),
                     };
-                    let replaced = pre_break.is_some() && post_break.is_some();
-                    if replaced {
-                        out.push((
-                            pl::Item::Penalty(pl::Penalty { value: HYPHEN_PENALTY, flagged: true, pre_break, automatic: true, post_break, replace_count: 1 }),
-                            rec,
-                        ));
+                    // The penalty goes in front of the ligature box it
+                    // replaces, and only when that box exists: `replace_count`
+                    // counts items, so a penalty with nothing behind it would
+                    // swallow whatever came next.
+                    let at_penalty = out.len();
+                    let replaced = fragment(self, &mut out, lig.start, lig.end, &mut first);
+                    if let (true, Some(pre_break), Some(post_break)) = (replaced, pre_break, post_break) {
+                        out.insert(
+                            at_penalty,
+                            (pl::Item::Penalty(pl::Penalty { value: HYPHEN_PENALTY, flagged: true, pre_break: Some(pre_break), automatic: true, post_break: Some(post_break), replace_count: 1 }), rec),
+                        );
                     }
-                    fragment(self, &mut out, lig.start, lig.end, &mut first);
                     let kern = residual_pt(&text[lig.start..next], &text[lig.start..lig.end], &text[lig.end..next]);
                     if kern != 0.0 && lig.end < next {
                         out.push((pl::Item::kern(kern), None));
