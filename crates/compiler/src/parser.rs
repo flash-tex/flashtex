@@ -7517,7 +7517,10 @@ impl P<'_> {
                         style: TextStyle::BOLD,
                         space_before: false,
                     }],
+                    lists: Vec::new(),
+                    line_break_before: None,
                 });
+                self.finish_block_dependencies();
             }
             self.paragraph_styles.push(style);
             // An inner alignment environment overrides an outer declaration.

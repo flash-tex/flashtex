@@ -222,8 +222,10 @@ fn environment_and_package_inventory_equals_the_parser_arms() {
         true,
     );
     expected.remove("begin");
-    // `thebibliography`'s arm sets its heading text, not an environment name.
+    // `thebibliography`'s and `abstract`'s arms set their heading text,
+    // not an environment name.
     expected.remove("References");
+    expected.remove("Abstract");
     expected.extend(arms(region(&parser, "fn paragraph_style(", "\n}\n")));
     let inventory = supported::inventory();
     let actual: BTreeSet<String> = inventory
