@@ -41,13 +41,20 @@
 //! - **Tables.** `\arraystretch` is read where LaTeX reads it, at
 //!   `\begin{tabular}`: a host prelude makes the engine emit its value there
 //!   (see [`HOST_PRELUDE`]), recorded in [`Expansion::arraystretch`].
+//! - **Packages and classes.** `\usepackage`/`\RequirePackage`/
+//!   `\documentclass`/`\LoadClass` read project `.sty`/`.cls` documents
+//!   through the engine's package reader ([`crate::packages::reader`]);
+//!   their tokens carry the file's own [`DocumentId`], and the loading
+//!   command's span is recorded in [`Expansion::package_files`]. Names the
+//!   reader declines (built-in models, missing files) reach the parser as
+//!   before.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
-use flashtex_tex_expansion::{self as tex, CatCode, Edit, Engine, IncrementalExpander, Limits, TokenKind as TexKind};
+use flashtex_tex_expansion::{self as tex, CatCode, Edit, Engine, IncrementalExpander, Limits, OpenedFile, PackageReader, TokenKind as TexKind};
 
 use crate::diagnostics::Diagnostic;
 use crate::lexer::{tokenize_document, Token, TokenKind};
@@ -93,6 +100,9 @@ pub struct Expansion {
     /// otherwise never hear about it), keyed by the pushed
     /// `flashtexcurrentlabel` token's own span.
     pub current_label_by_marker: HashMap<(usize, usize), String>,
+    /// Every project `.sty`/`.cls` the engine read, with the span of the
+    /// `\usepackage`/`\documentclass`/... that loaded it, in loading order.
+    pub package_files: Vec<(DocumentId, Span)>,
 }
 
 /// Host definitions run before the document. `\DeclareMathOperator` is
@@ -526,6 +536,8 @@ struct Converter<'d> {
     /// Every `\@currentlabel` record in production order, with its marker's
     /// engine token index (kept and spliced like `stretch_log`).
     current_label_log: Vec<(usize, (usize, usize), String)>,
+    /// Package files mapped so far (see [`Expansion::package_files`]).
+    package_files: Vec<(DocumentId, Span)>,
 }
 
 struct PendingWord {
@@ -811,9 +823,11 @@ fn configure(engine: &mut Engine) {
 }
 
 /// The expansion engine's `em`/`ex` come from the text font its tracked font
-/// commands select ([`crate::font_units`]).
-fn configure_with_fonts(engine: &mut Engine, fonts: DocumentFonts) {
+/// commands select ([`crate::font_units`]); its `\usepackage` files from
+/// the project's package reader.
+fn configure_with_fonts(engine: &mut Engine, fonts: DocumentFonts, reader: PackageReader) {
     configure(engine);
+    engine.set_package_reader(reader);
     for (name, switch) in crate::font_units::font_switches() {
         engine.declare_font_switch(name, switch);
     }
@@ -853,19 +867,34 @@ fn option_and_group_words(tokens: &[Token], index: usize) -> (String, String) {
     (options.trim_matches(|c| matches!(c, '[' | ']')).to_string(), group)
 }
 
-fn document_fonts(documents: &[SourceDocument<'_>]) -> DocumentFonts {
+/// `entry` is scanned first: its `\documentclass` size option wins over a
+/// project class file's `\LoadClass[11pt]{article}` (as article.cls's
+/// declaration order makes the later size win), whatever the document
+/// order. Package and class files of built-in names are never loaded, so
+/// they are not scanned.
+fn document_fonts(documents: &[SourceDocument<'_>], entry: usize) -> DocumentFonts {
     let mut class_pt = None;
     let mut t1 = false;
     let mut latin_modern = false;
     let mut preamble_latin_modern = false;
-    for (document_index, document) in documents.iter().enumerate() {
+    let order = std::iter::once(entry).chain((0..documents.len()).filter(|i| *i != entry));
+    for document_index in order {
+        let Some(document) = documents.get(document_index) else {
+            continue;
+        };
+        if let Some((stem, ext)) = document.path.rsplit_once('.').filter(|(_, ext)| matches!(*ext, "sty" | "cls")) {
+            let name = stem.rsplit('/').next().unwrap_or(stem);
+            if crate::packages::is_built_in(name, ext) {
+                continue;
+            }
+        }
         let tokens = tokenize_document(document.text, DocumentId(document_index));
         for (index, token) in tokens.iter().enumerate() {
             let TokenKind::Command(name) = &token.kind else {
                 continue;
             };
             match name.as_str() {
-                "documentclass" if class_pt.is_none() => {
+                "documentclass" | "LoadClass" if class_pt.is_none() => {
                     let (options, group) = option_and_group_words(&tokens, index + 1);
                     class_pt = options.split(',').find_map(|option| match option.trim() {
                         "10pt" => Some(10.0),
@@ -894,7 +923,7 @@ fn document_fonts(documents: &[SourceDocument<'_>]) -> DocumentFonts {
                             .or(Some(11.0));
                     }
                 }
-                "usepackage" => {
+                "usepackage" | "RequirePackage" => {
                     let (options, group) = option_and_group_words(&tokens, index + 1);
                     for package in group.split(',').map(str::trim) {
                         match package {
@@ -917,6 +946,18 @@ fn document_fonts(documents: &[SourceDocument<'_>]) -> DocumentFonts {
         setup: crate::font_units::FontSetup::new(class_pt, t1, latin_modern),
         preamble_latin_modern: preamble_latin_modern && t1,
     }
+}
+
+/// The engine's reader for the project's `.sty`/`.cls` documents, serving
+/// the prepared text (see [`Prepared`]) of each, as `include` does.
+fn package_reader(documents: &[SourceDocument<'_>], prepared: &[Prepared<'_>]) -> PackageReader {
+    let files = documents
+        .iter()
+        .zip(prepared)
+        .filter(|(d, _)| crate::packages::is_package_file(d.path))
+        .map(|(d, p)| (d.path.to_string(), p.text.to_string()))
+        .collect();
+    crate::packages::reader(files)
 }
 
 fn has_includes(text: &str) -> bool {
@@ -970,6 +1011,25 @@ impl<'d> Converter<'d> {
             current_label_index: 0,
             stretch_log: Vec::new(),
             current_label_log: Vec::new(),
+            package_files: Vec::new(),
+        }
+    }
+
+    /// Give the tokens of a `.sty`/`.cls` the engine opened their document:
+    /// the file is resolved by the same rule the reader used
+    /// (`crate::packages::resolve`), so the name the engine reports maps to
+    /// the document whose text it read. The loading command's span is kept
+    /// for the parser's "loaded here" label.
+    fn map_opened(&mut self, file: &OpenedFile) {
+        if self.source_documents.contains_key(&file.source_id) {
+            return;
+        }
+        let (name, ext) = file.name.rsplit_once('.').unwrap_or((&file.name, ""));
+        let index = crate::packages::resolve(self.documents, name, ext);
+        self.source_documents.insert(file.source_id, index);
+        if let Some(index) = index {
+            let at = self.span(file.loaded_at).unwrap_or(self.last_span);
+            self.package_files.push((DocumentId(index), at));
         }
     }
 
@@ -1272,10 +1332,13 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     let entry_text: &str = prepared.get(entry).map_or("", |p| p.text.as_ref());
     let limits = limits_for(total_bytes);
     let mut engine = Engine::with_limits(entry_text, limits);
-    configure_with_fonts(&mut engine, document_fonts(documents));
+    configure_with_fonts(&mut engine, document_fonts(documents, entry), package_reader(documents, &prepared));
 
     let mut conv = Converter::new(documents, entry);
     let mut lookahead: VecDeque<(tex::Token, Option<tex::Span>)> = VecDeque::new();
+    // Package files the engine has opened so far (`map_opened` is cheap,
+    // so every pull checks the count).
+    let mut opened = 0usize;
     // Engine tokens taken so far. The output token limit is the incremental
     // expander's (`IncrementalExpander`'s run loop): the token that goes past
     // it is still converted, then the run stops with the same diagnostic and
@@ -1295,6 +1358,12 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
             }
         };
         let Some((token, origin)) = next else { break };
+        if engine.opened_package_files().len() > opened {
+            for file in &engine.opened_package_files()[opened..] {
+                conv.map_opened(file);
+            }
+            opened = engine.opened_package_files().len();
+        }
         match conv.convert_token(&prepared, &token, origin) {
             Flow::Next => continue,
             Flow::Include(name, at) => {
@@ -1329,9 +1398,18 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
             }
         }
     }
+    for file in &engine.opened_package_files()[opened..] {
+        conv.map_opened(file);
+    }
     let diagnostics = engine.diagnostics().to_vec();
     conv.map_diagnostics(&diagnostics);
-    Expansion { tokens: Rc::new(conv.out), diagnostics: conv.diagnostics, arraystretch: conv.arraystretch, current_label_by_marker: conv.current_label_by_marker }
+    Expansion {
+        tokens: Rc::new(conv.out),
+        diagnostics: conv.diagnostics,
+        arraystretch: conv.arraystretch,
+        current_label_by_marker: conv.current_label_by_marker,
+        package_files: conv.package_files,
+    }
 }
 
 /// A converter state with nothing pending, recorded while converting: after
@@ -1364,6 +1442,9 @@ pub struct ExpansionCache {
     old_engine_tokens: usize,
     /// The class size and font packages change the engine's `em`/`ex`.
     fonts: DocumentFonts,
+    /// The project's `.sty`/`.cls` texts the expander read: an edit to one
+    /// of them is not an edit of the entry, so the cache is rebuilt instead.
+    package_texts: Vec<(String, String)>,
     /// Tokens at the end of `out` typeset unexpanded after the engine
     /// stopped (see [`Converter::resume_unexpanded`]); no marks cover them.
     recovered: usize,
@@ -1460,7 +1541,7 @@ pub fn expand_project_with_cache(
         .map(|(index, d)| if index == entry { prepare(d.text, DocumentId(index)) } else { Prepared::plain(d.text) })
         .collect();
     let masked: &str = prepared[entry].text.as_ref();
-    let fonts = document_fonts(documents);
+    let fonts = document_fonts(documents, entry);
     // The same limits as `expand_project`, which the expander applies to
     // every edit (`IncrementalExpander::edit_with_limits`).
     let limits = limits_for(documents.iter().map(|d| d.text.len()).sum());
@@ -1469,6 +1550,7 @@ pub fn expand_project_with_cache(
             && c.entry_path == document.path
             && c.fonts == fonts
             && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
+            && c.package_texts == crate::packages::package_texts(documents)
     });
     let expansion = if reusable {
         update_cache(cache.as_mut().expect("checked"), documents, entry, &prepared, limits)
@@ -1494,12 +1576,16 @@ pub fn expand_project_with_cache(
 
 fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepared<'_>], limits: Limits) -> (ExpansionCache, Expansion) {
     let masked: &str = prepared[entry].text.as_ref();
-    let fonts = document_fonts(documents);
+    let fonts = document_fonts(documents, entry);
+    let reader = package_reader(documents, prepared);
     let init: Rc<dyn Fn(&mut Engine)> = Rc::new(move |engine| {
-        configure_with_fonts(engine, fonts);
+        configure_with_fonts(engine, fonts, reader.clone());
     });
     let expander = IncrementalExpander::with_host(masked, limits, CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
+    for file in expander.opened_package_files() {
+        conv.map_opened(file);
+    }
     let mut marks = vec![Mark { index: 0, out_len: 0, last_span: conv.last_span }];
     // One allocation for the converted stream: growing it by doubling frees
     // a chain of blocks as large as the stream (hundreds of MB on a runaway
@@ -1522,6 +1608,7 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         last_span: conv.last_span,
         old_engine_tokens: 0,
         fonts,
+        package_texts: crate::packages::package_texts(documents),
         recovered: 0,
         lent: false,
     };
@@ -1631,6 +1718,9 @@ fn update_cache(
     if changes.old.is_empty() && changes.new.is_empty() && cache.masked.len() == masked.len() {
         if cache.expander.limits() == limits {
             let mut conv = Converter::new(documents, entry);
+            for file in cache.expander.opened_package_files() {
+                conv.map_opened(file);
+            }
             conv.out = Vec::new();
             conv.last_span = cache.last_span;
             conv.stretch_log = cache.stretch_log.clone();
@@ -1678,6 +1768,9 @@ fn update_cache(
     };
 
     let mut conv = Converter::new(documents, entry);
+    for file in cache.expander.opened_package_files() {
+        conv.map_opened(file);
+    }
     conv.out = out;
     conv.last_span = restart.last_span;
     // Records whose marker precedes the restart point are unchanged; later
@@ -1785,6 +1878,7 @@ fn finish_diagnostics(cache: &ExpansionCache, mut conv: Converter<'_>) -> Expans
         diagnostics: conv.diagnostics,
         arraystretch: conv.arraystretch,
         current_label_by_marker: conv.current_label_by_marker,
+        package_files: conv.package_files,
     }
 }
 
@@ -2002,7 +2096,7 @@ mod tests {
             path: "main.tex",
             text: preamble,
         };
-        document_fonts(std::slice::from_ref(&doc)).setup.class_pt
+        document_fonts(std::slice::from_ref(&doc), 0).setup.class_pt
     }
 
     /// KOMA classes default to 11pt and honour `fontsize=`; the legacy

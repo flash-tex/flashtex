@@ -17,6 +17,7 @@ use std::rc::Rc;
 use crate::catcode::CatCode;
 use crate::conditionals::{ConditionalStack, IfBranch, IfShape};
 use crate::error::{Diagnostic, Limits};
+use crate::latex_packages::{Declaration, LoadKind, OpenedFile, PackageReader, PACKAGES_PRELUDE};
 use crate::lexer::{Lexer, State as LexState};
 use crate::macro_def::{BodyPart, MacroDef, MacroFlags, ParamPart};
 use crate::prelude::PRELUDE;
@@ -367,6 +368,19 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("flashtexsetlist", Primitive::FlashtexSetlist),
     ("verb", Primitive::Verb),
     ("flashtex@stop", Primitive::StopInput),
+    // The package/class kernel (`latex_packages.rs`).
+    ("usepackage", Primitive::LoadFiles(LoadKind::UsePackage)),
+    ("RequirePackage", Primitive::LoadFiles(LoadKind::RequirePackage)),
+    ("documentclass", Primitive::LoadFiles(LoadKind::DocumentClass)),
+    ("LoadClass", Primitive::LoadFiles(LoadKind::LoadClass)),
+    ("flashtex@inputfile", Primitive::InputPackageFile),
+    ("flashtex@emit", Primitive::EmitPassThrough),
+    ("flashtex@latex@error", Primitive::LatexError),
+    ("flashtex@latex@warning", Primitive::LatexWarning),
+    ("NeedsTeXFormat", Primitive::PreambleDeclaration(Declaration::NeedsTeXFormat)),
+    ("ProvidesPackage", Primitive::PreambleDeclaration(Declaration::ProvidesPackage)),
+    ("ProvidesClass", Primitive::PreambleDeclaration(Declaration::ProvidesClass)),
+    ("ProvidesFile", Primitive::PreambleDeclaration(Declaration::ProvidesFile)),
 ];
 
 /// Name of the private sentinel control sequence used to bound nested
@@ -413,6 +427,10 @@ pub struct Checkpoint {
     /// The host's `em`/`ex` provider: a restored engine resolves font
     /// units exactly as the engine that took the checkpoint did.
     pub(crate) metrics: MetricsHandle,
+    /// The host's package reader, carried like `metrics`: a restored
+    /// engine resolves `\usepackage` files exactly as the engine that took
+    /// the checkpoint did (see `latex_packages.rs`).
+    pub(crate) package_reader: ReaderHandle,
     /// `Engine::last_origin` at the snapshot. The step limit's diagnostic is
     /// reported there when the very next step is over the limit.
     pub(crate) last_origin: Option<Span>,
@@ -426,6 +444,15 @@ pub struct Checkpoint {
 
 #[derive(Clone)]
 pub(crate) struct MetricsHandle(pub(crate) Rc<dyn FontMetrics>);
+
+#[derive(Clone)]
+pub(crate) struct ReaderHandle(pub(crate) Option<PackageReader>);
+
+impl std::fmt::Debug for ReaderHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_some() { "PackageReader" } else { "None" })
+    }
+}
 
 impl std::fmt::Debug for MetricsHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -458,14 +485,20 @@ pub struct Engine {
     /// Tokens already decided to be output (a stack, popped first by
     /// `next_content_token`), e.g. prefixes passed through ahead of an
     /// unmodelled control sequence.
-    emit_queue: Vec<Token>,
+    pub(crate) emit_queue: Vec<Token>,
     /// Host file access for `\input` (None: `\input` passes through).
     file_reader: Option<Rc<dyn Fn(&str) -> Option<String>>>,
     /// Files opened by `\input`, as (source id, name).
     opened_files: Vec<(u32, String)>,
+    /// Host file access for `\usepackage`/`\documentclass` and their
+    /// siblings (None: every name is declined and passed through). See
+    /// `latex_packages.rs`.
+    pub(crate) package_reader: Option<PackageReader>,
+    /// `.sty`/`.cls` files opened through `package_reader`.
+    pub(crate) opened_packages: Vec<OpenedFile>,
     /// Invocation origin of the most recently read raw token (host
     /// integration; see `next_content_token_with_origin`).
-    last_origin: Option<Span>,
+    pub(crate) last_origin: Option<Span>,
     /// Span of the last token read from source text (the document or an
     /// `\input` file; preludes run in engines of their own).
     last_text_span: Option<Span>,
@@ -510,6 +543,8 @@ impl Engine {
             emit_queue: Vec::new(),
             file_reader: None,
             opened_files: Vec::new(),
+            package_reader: None,
+            opened_packages: Vec::new(),
             last_origin: None,
             last_text_span: None,
         }
@@ -674,12 +709,12 @@ impl Engine {
         &self.src
     }
 
-    fn err(&mut self, msg: impl Into<String>, span: Span) {
+    pub(crate) fn err(&mut self, msg: impl Into<String>, span: Span) {
         let span = self.reported_span(span);
         self.report(Diagnostic::error(msg, span));
     }
 
-    fn warn(&mut self, msg: impl Into<String>, span: Span) {
+    pub(crate) fn warn(&mut self, msg: impl Into<String>, span: Span) {
         let span = self.reported_span(span);
         self.report(Diagnostic::warning(msg, span));
     }
@@ -738,7 +773,7 @@ impl Engine {
         }
     }
 
-    fn is_prelude_span(&self, span: Span) -> bool {
+    pub(crate) fn is_prelude_span(&self, span: Span) -> bool {
         !span.is_synthetic() && span.source_id != 0 && span.source_id < self.st.prelude_source_end
     }
 
@@ -794,7 +829,7 @@ impl Engine {
 
     // ---- raw token stream -------------------------------------------------
 
-    fn push_tokens(&mut self, toks: Vec<Token>) {
+    pub(crate) fn push_tokens(&mut self, toks: Vec<Token>) {
         let origin = self.last_origin;
         self.push_tokens_with_origin(toks, origin);
     }
@@ -811,7 +846,7 @@ impl Engine {
         self.sources.push(Input::Toks(pend, 0));
     }
 
-    fn push_pending(&mut self, mut toks: Vec<Pending>) {
+    pub(crate) fn push_pending(&mut self, mut toks: Vec<Pending>) {
         if toks.is_empty() {
             return;
         }
@@ -831,7 +866,7 @@ impl Engine {
     /// origin of `None` stays `None` (the token was read from source
     /// text), unlike [`Engine::push_pending`], which attributes such a
     /// token to the last read.
-    fn push_pending_as_read(&mut self, toks: Vec<Pending>) {
+    pub(crate) fn push_pending_as_read(&mut self, toks: Vec<Pending>) {
         if toks.is_empty() {
             return;
         }
@@ -947,7 +982,7 @@ impl Engine {
     /// `\outer` macro token (or end of the base file) is an error that
     /// TeX reports with a specific message and recovers from by inserting
     /// a closing token and re-reading the forbidden token afterwards.
-    fn next_raw(&mut self) -> Option<Pending> {
+    pub(crate) fn next_raw(&mut self) -> Option<Pending> {
         let p = self.next_raw_unchecked();
         if self.st.scanner_status == ScannerStatus::Normal {
             return p;
@@ -1253,6 +1288,7 @@ impl Engine {
             state: self.st.clone(),
             steps: self.steps,
             metrics: MetricsHandle(self.metrics.clone()),
+            package_reader: ReaderHandle(self.package_reader.clone()),
             last_origin: self.last_origin,
             peak_memory: self.peak_memory,
             out_len,
@@ -1266,6 +1302,7 @@ impl Engine {
         let mut e = Self::from_parts(src, cp.pos, cp.lex_state, cp.state.clone(), limits);
         e.steps = cp.steps;
         e.metrics = cp.metrics.0.clone();
+        e.package_reader = cp.package_reader.0.clone();
         e.last_origin = cp.last_origin;
         e.peak_memory = cp.peak_memory;
         e
@@ -1478,7 +1515,7 @@ impl Engine {
     /// through expand-only dispatch (for `\edef`/`\xdef`), honoring
     /// `\noexpand` freezing; otherwise tokens are taken completely raw
     /// (for `\def`/`\gdef` bodies, and for ordinary `{...}` arguments).
-    fn scan_braced_group(&mut self, expand: bool) -> Vec<Token> {
+    pub(crate) fn scan_braced_group(&mut self, expand: bool) -> Vec<Token> {
         self.scan_braced_group_pending(expand).into_iter().map(|p| p.tok).collect()
     }
 
@@ -1978,6 +2015,26 @@ impl Engine {
         }
     }
 
+    /// tex.web §403 `scan_left_brace`: a general text (`\detokenize`,
+    /// `\unexpanded`, `\message`, ...) starts at the first `{` found
+    /// *after expansion*, so `\detokenize\expandafter{\CurrentOption}` --
+    /// how latex.ltx spells out a macro's text -- reaches the brace. Spaces
+    /// and `\relax` before it are skipped as TeX does; anything else is
+    /// left for the group scanner's own "Missing { inserted" recovery.
+    fn expand_to_left_brace(&mut self) {
+        loop {
+            match self.peek_one_expanding() {
+                Some(t) if matches!(t.kind, TokenKind::Char(_, CatCode::Space)) => {
+                    self.next_raw_token();
+                }
+                Some(t) if matches!(&t.kind, TokenKind::ControlSequence(n) if n == "relax") => {
+                    self.next_raw_token();
+                }
+                _ => break,
+            }
+        }
+    }
+
     fn skip_spaces(&mut self) {
         loop {
             match self.peek_one() {
@@ -2015,7 +2072,7 @@ impl Engine {
     /// Read a `{name}` argument and flatten it to a plain string (each
     /// inner token contributes its display character; used for
     /// environment/counter names which are always plain letters).
-    fn read_name_arg(&mut self) -> String {
+    pub(crate) fn read_name_arg(&mut self) -> String {
         // Names are expanded (LaTeX reads them via \csname), so a macro
         // expanding to the name works too.
         let toks = self.scan_braced_group(true);
@@ -2180,6 +2237,7 @@ impl Engine {
             }
             Unexpanded => {
                 let saved = std::mem::replace(&mut self.st.scanner_status, ScannerStatus::Absorbing("\\unexpanded".into()));
+                self.expand_to_left_brace();
                 let toks = self.scan_braced_group(false);
                 self.st.scanner_status = saved;
                 if self.st.edef_depth > 0 {
@@ -2192,6 +2250,7 @@ impl Engine {
             }
             Detokenize => {
                 let saved = std::mem::replace(&mut self.st.scanner_status, ScannerStatus::Absorbing("\\detokenize".into()));
+                self.expand_to_left_brace();
                 let toks = self.scan_braced_group(false);
                 self.st.scanner_status = saved;
                 let s = self.detokenize(&toks);
@@ -2576,6 +2635,12 @@ impl Engine {
                 Step::Eof
             }
             Verb => self.do_verb(&tok),
+            LoadFiles(kind) => self.do_load_files(tok, kind),
+            InputPackageFile => self.do_input_package_file(&tok),
+            EmitPassThrough => self.do_emit_pass_through(),
+            LatexError => self.do_latex_message(&tok, true),
+            LatexWarning => self.do_latex_message(&tok, false),
+            PreambleDeclaration(declaration) => self.do_declaration(tok, declaration),
             NewCounter => {
                 self.do_newcounter(tok.span);
                 Step::Continue
@@ -2818,7 +2883,7 @@ impl Engine {
 
     /// `\detokenize`/`\scantokens` text: every token as `\string` would
     /// show it, with a space after control words (tex.web `print_cs`).
-    fn detokenize(&self, toks: &[Token]) -> String {
+    pub(crate) fn detokenize(&self, toks: &[Token]) -> String {
         let mut s = String::new();
         for t in toks {
             match &t.kind {
@@ -3198,14 +3263,25 @@ impl Engine {
             .trim()
             .to_string();
         back.extend(name_group);
-        if let Some(shared) = self.scan_through_bracket() {
+        // The counter-sharing name is an expanded context like `{name}`
+        // above (real TeX resolves it through `\csname c@...\endcsname`),
+        // so it scans with `expand` set: a `\def`-defined macro for a real
+        // counter expands before the existence check below, exactly the
+        // way the rest of the engine reads it. Kept aside before `back`
+        // takes ownership of the tokens.
+        let shared_bracket = self.scan_through_bracket(true);
+        let shared_name = shared_bracket.as_ref().map(|toks| Self::bracket_arg_text(toks));
+        if let Some(shared) = shared_bracket {
             back.extend(shared);
         }
         // The caption body is stored as a token list and only expanded
         // when a theorem heading is actually typeset, same as its `back`
         // treatment below: raw, not expanded here.
         back.extend(self.scan_through_group(false));
-        if let Some(within) = self.scan_through_bracket() {
+        // The `[within]` reset-counter name is never compared here (the
+        // compiler owns it), so it stays raw: what the user wrote is what
+        // is handed back.
+        if let Some(within) = self.scan_through_bracket(false) {
             back.extend(within);
         }
         // LaTeX's own guard idiom (`\@ifdefinable`, via `\@ifundefined`)
@@ -3238,15 +3314,35 @@ impl Engine {
             self.clear_prefixes();
             return;
         }
-        if !name.is_empty() {
+        // A counter-sharing declaration whose `shared` name is not a known
+        // theorem environment will be rejected downstream by the compiler's
+        // `parser.rs::new_theorem` ("shares the counter of undefined theorem
+        // environment"). Claim nothing here in that case: claiming
+        // `\name`/`\end{name}` now would permanently burn the name, so a
+        // later corrected retry would fail with "already defined" even
+        // though no real theorem environment exists. The declaration is
+        // still handed back below (with the shared name already expanded,
+        // so the compiler reads the same resolved text), so the compiler
+        // -- which owns the diagnostic -- reports it exactly once; no
+        // second diagnostic is emitted from this side. This check must
+        // stay the same rule as the compiler's (`theorem_names`
+        // membership here mirrors its `self.theorems` lookup, applied to
+        // the expanded name); see also the field docs in `scopes.rs`.
+        let shared_ok = shared_name.as_ref().map_or(true, |s| self.st.scopes.is_theorem_env(s));
+        if !name.is_empty() && shared_ok {
             // Claim `\name`/`\end{name}` the way `\newenvironment` claims
             // its commands, so `\begin{name}` no longer reports the
             // environment undefined and a later `\newcommand` on either
             // name is refused, as in LaTeX. Both are host commands: still
             // emitted unchanged for the typesetter, which owns the actual
             // declaration (scanned above, handed back below).
+            // Both claims are global (`\newtheorem` is a global declaration
+            // in real LaTeX), and so is the `theorem_names` registration
+            // just below: none of the three pushes a save entry, so no
+            // group close can undo them.
             self.st.scopes.assign_cs(&name, Meaning::Primitive(Primitive::Host), true);
             self.st.scopes.assign_cs(&format!("end{name}"), Meaning::Primitive(Primitive::Host), true);
+            self.st.scopes.register_theorem_env(&name);
             // A stale rejection from an earlier, now-undone collision (e.g.
             // the name was `\let` back to undefined since) must not persist
             // once this declaration succeeds. Global, matching the global
@@ -3255,11 +3351,13 @@ impl Engine {
             // declaration that is supposed to be permanent.
             self.st.scopes.set_theorem_env_rejected(&name, false, true);
         }
-        // Hand the declaration back exactly as read: the leader bypasses
-        // re-dispatch through the output queue (like a prefix carried
-        // ahead of an unmodelled command in `prefix_before_content`), and
-        // the arguments re-enter the input with spans, origins, and freeze
+        // Hand the declaration back: the leader bypasses re-dispatch
+        // through the output queue (like a prefix carried ahead of an
+        // unmodelled command in `prefix_before_content`), and the
+        // arguments re-enter the input with spans, origins, and freeze
         // flags intact, so they expand downstream exactly as before.
+        // (`{name}` and `[shared]` were scanned expanded, the way TeX
+        // itself resolves them, so what returns is the resolved text.)
         if self.prefix_pending() {
             let mut prefixes = Vec::new();
             for (on, prefix) in [
@@ -3348,9 +3446,14 @@ impl Engine {
     /// Scan `[...]` (spaces skipped ahead, as LaTeX's `\@ifnextchar`
     /// does), returning every token *including* the brackets, or `None`
     /// when no `[` follows (the lookahead, spaces included, is pushed
-    /// back). Lets a `\newtheorem` declaration be handed back untouched;
-    /// otherwise mirrors `scan_bracketed_optional`.
-    fn scan_through_bracket(&mut self) -> Option<Vec<Pending>> {
+    /// back). Lets a `\newtheorem` declaration be handed back; otherwise
+    /// mirrors `scan_bracketed_optional`. With `expand` set, the content
+    /// between the brackets is read through `next_expanding_raw` -- the
+    /// same expansion path as `scan_through_group(true)` (delimiters
+    /// themselves stay raw, exactly like its braces) -- so a
+    /// `\def`-defined macro used as the counter-sharing name resolves
+    /// before anything compares it.
+    fn scan_through_bracket(&mut self, expand: bool) -> Option<Vec<Pending>> {
         let mut out = Vec::new();
         loop {
             match self.next_raw() {
@@ -3372,9 +3475,13 @@ impl Engine {
                 }
             }
         }
+        if expand {
+            self.st.edef_depth += 1;
+        }
         let mut brace_depth = 0i32;
         loop {
-            let p = match self.next_raw() {
+            let pending = if expand { self.next_expanding_raw() } else { self.next_raw() };
+            let p = match pending {
                 Some(p) => p,
                 None => break,
             };
@@ -3394,7 +3501,38 @@ impl Engine {
                 _ => out.push(p),
             }
         }
+        if expand {
+            self.st.edef_depth -= 1;
+        }
         Some(out)
+    }
+
+    /// Trimmed text of a `scan_through_bracket` result: leading spaces and
+    /// the outer `[`/`]` delimiters are dropped. The shared-counter
+    /// bracket is scanned with `expand` set, so a `\def`-defined macro
+    /// there (e.g. a `[\base]` argument) already resolved through
+    /// `next_expanding_raw` before this text is built -- the comparison
+    /// below sees the same expanded name the rest of the engine would.
+    /// A control sequence that is still a control sequence here is simply
+    /// not expandable (undefined, or frozen by `\noexpand`), so
+    /// `display_name`'s backslash is kept, not stripped: it can never
+    /// coincide with a real (backslash-free) theorem name, and the
+    /// expanded tokens handed back downstream let the compiler's own
+    /// `parser.rs::new_theorem` read the same resolved text with its raw
+    /// token-to-text step. A truncated scan (EOF before `]`) yields
+    /// whatever body was collected.
+    fn bracket_arg_text(toks: &[Pending]) -> String {
+        let mut body = toks.iter().as_slice();
+        while matches!(body.first().map(|p| &p.tok.kind), Some(TokenKind::Char(_, CatCode::Space))) {
+            body = &body[1..];
+        }
+        if matches!(body.first().map(|p| &p.tok.kind), Some(TokenKind::Char('[', CatCode::Other))) {
+            body = &body[1..];
+        }
+        while matches!(body.last().map(|p| &p.tok.kind), Some(TokenKind::Char(']', CatCode::Other)) | Some(TokenKind::Char(_, CatCode::Space))) {
+            body = &body[..body.len() - 1];
+        }
+        body.iter().map(|p| p.tok.display_name()).collect::<String>().trim().to_string()
     }
 
     /// `\begin{name}`: LaTeX opens a group, records `\@currenvir`, then
@@ -5654,6 +5792,12 @@ fn primitive_name(p: Primitive) -> &'static str {
         SetKeys => "setkeys",
         FlashtexSetlist => "flashtexsetlist",
         Verb => "verb",
+        LoadFiles(kind) => kind.name(),
+        InputPackageFile => "flashtex@inputfile",
+        EmitPassThrough => "flashtex@emit",
+        LatexError => "flashtex@latex@error",
+        LatexWarning => "flashtex@latex@warning",
+        PreambleDeclaration(declaration) => declaration.name(),
         StopInput => "flashtex@stop",
         Host | HostAssignment => "flashtex@host",
         IntPar(IntParam::Font) => "flashtex@font",
@@ -6027,7 +6171,8 @@ fn is_format_level(p: Primitive) -> bool {
             | NewEnvironment | RenewEnvironment | NewTheorem | Begin | End | NewCounter | SetCounter | AddToCounter | StepCounter
             | RefStepCounter | AddToReset | RemoveFromReset | CounterWithin | CounterWithout | Label | Value | Arabic
             | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol | NewLength | SetToWidth | SetToHeight
-            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | Verb | StopInput
+            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | Verb | StopInput | LoadFiles(_) | InputPackageFile
+            | EmitPassThrough | LatexError | LatexWarning | PreambleDeclaration(_)
     )
 }
 
@@ -6224,6 +6369,18 @@ fn build_initial_state() -> State {
     let stray: Vec<&Token> = out.iter().filter(|t| !matches!(t.kind, TokenKind::Char(' ', CatCode::Space))).collect();
     debug_assert!(stray.is_empty(), "prelude produced output tokens: {:?}", stray);
     debug_assert!(engine.diagnostics.is_empty(), "prelude produced diagnostics: {:?}", engine.diagnostics);
+    // The package/class kernel (`latex_packages.rs`), under a prelude id of
+    // its own for the same reason.
+    let mut st = engine.st;
+    let id = st.next_source_id;
+    st.next_source_id += 1;
+    st.prelude_source_end = st.next_source_id;
+    let mut engine = Engine::from_parts(Rc::from(PACKAGES_PRELUDE), 0, LexState::NewLine, st, Limits::default());
+    engine.sources[0] = Input::Text(Lexer::new(Rc::from(PACKAGES_PRELUDE), id));
+    let out = engine.run();
+    let stray: Vec<&Token> = out.iter().filter(|t| !matches!(t.kind, TokenKind::Char(' ', CatCode::Space))).collect();
+    debug_assert!(stray.is_empty(), "package prelude produced output tokens: {:?}", stray);
+    debug_assert!(engine.diagnostics.is_empty(), "package prelude produced diagnostics: {:?}", engine.diagnostics);
     // The class counters above: real classes allocate them with
     // `\newcounter`, so `[within]` parents (and `\setcounter` et al.) must
     // resolve them here. Only the `c@<name>` register is created;

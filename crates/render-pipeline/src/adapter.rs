@@ -1009,6 +1009,13 @@ pub struct Labels {
     /// The document's cleveref naming options and `\crefname` overrides
     /// (`Parsed::cleveref`), so `\cref` can name the type it refers to.
     pub cleveref: flashtex_compiler::xref::CleverefConfig,
+    /// Macro invocations whose definition is in another document -- a
+    /// project `.sty`/`.cls` the compiler read (`Parsed::expansions`): the
+    /// invocation's `(document, start)` to the definition's `(document,
+    /// end)`. `token_gap` reads the replacement text's own blanks from the
+    /// defining document; every in-document definition is found by the
+    /// source scan and needs no entry.
+    pub foreign_definitions: BTreeMap<(usize, usize), (usize, usize)>,
 }
 
 fn inlines_of(block: &CBlock) -> &[Inline] {
@@ -1433,10 +1440,17 @@ impl Labels {
                 kinds.insert(key.clone(), kind.clone());
             }
         }
+        let foreign_definitions = parsed
+            .expansions
+            .iter()
+            .filter(|site| site.definition.document != site.invocation.document)
+            .map(|site| ((site.invocation.document.0, site.invocation.start), (site.definition.document.0, site.definition.end)))
+            .collect();
         Labels {
             values,
             kinds,
             cleveref: parsed.cleveref.clone(),
+            foreign_definitions,
             ..Labels::default()
         }
     }
@@ -1475,17 +1489,42 @@ pub fn adapt_cached(
 ) -> Doc {
     let _macro_defs = MacroDefsScope::enter(texts);
     let source = texts.get(entry).copied().unwrap_or("");
-    let explicit_class = class_options(source);
+    // A `\documentclass` naming a project `.cls` file: the compiler read
+    // the file and reports the standard class it `\LoadClass`es (or
+    // `article`) with the options passed on, which stand in for the class
+    // line here (`flashtex_class_geometry::DocumentSetup::from_preamble_with_class`).
+    let project_class = parsed
+        .class_file
+        .and_then(|_| parsed.document_class.as_deref())
+        .and_then(flashtex_class_geometry::ClassKind::parse)
+        .map(|kind| (kind, parsed.class_options.clone().unwrap_or_default()));
+    let explicit_class = match &project_class {
+        Some((_, class_options)) => Some(class_options.clone()),
+        None => class_options(source),
+    };
     let class_options = explicit_class.clone().unwrap_or_else(|| options.default_class_options.clone());
     let size = class_size(&class_options);
     // LaTeX's own \parindent (size1x.clo) applies when the document declares a
     // class; body-only input keeps the compiler's implicit 0pt.
     let family = Stylesheet::family_for(&parsed.packages, t1_encoding(source));
-    let setup = document_setup(
-        source,
-        explicit_class.is_some(),
-        &class_options,
-    );
+    let setup = match &project_class {
+        Some((kind, class_options)) => {
+            let mut setup = flashtex_class_geometry::DocumentSetup::from_preamble_with_class(source, *kind, class_options);
+            // The class file's own `\usepackage{geometry}`/`\pagestyle` come
+            // before the preamble's; a preamble setting then overrides.
+            if let Some(class_text) = parsed.class_file.and_then(|id| texts.get(id.0).copied()) {
+                let from_class = flashtex_class_geometry::DocumentSetup::from_preamble_with_class(class_text, *kind, class_options);
+                if setup.geometry.is_none() {
+                    setup.geometry = from_class.geometry;
+                }
+                if setup.pagestyle.is_none() {
+                    setup.pagestyle = from_class.pagestyle;
+                }
+            }
+            setup
+        }
+        None => document_setup(source, explicit_class.is_some(), &class_options),
+    };
     let mut resolved = flashtex_class_geometry::resolve(&setup);
     // The class size as the class resolved it, not as the option list spells
     // it: beamer (and the KOMA classes) default to 11pt with no `11pt` option
@@ -1510,7 +1549,17 @@ pub fn adapt_cached(
     // the frame from `doc.flags`.
     let columns = crate::columns::ColumnMode::scan(source, entry, resolved.flags.twocolumn);
     resolved.set_twocolumn(columns.start());
-    let assigned = apply_preamble_lengths(source, &mut resolved, size, family, setup.geometry.is_some());
+    // A project class file's `\setlength`s run before the preamble's, as
+    // the class is read first.
+    let class_assigned = parsed
+        .class_file
+        .and_then(|id| texts.get(id.0).copied())
+        .map(|class_text| apply_preamble_lengths(class_text, &mut resolved, size, family, setup.geometry.is_some()));
+    let mut assigned = apply_preamble_lengths(source, &mut resolved, size, family, setup.geometry.is_some());
+    if let Some(class_assigned) = class_assigned {
+        assigned.parindent |= class_assigned.parindent;
+        assigned.parskip |= class_assigned.parskip;
+    }
     let mut style = Stylesheet::from_resolved(&resolved, family);
     style.columns = columns;
     // apply_preamble_lengths is the source of truth for `\parindent` /
@@ -1580,7 +1629,24 @@ pub fn adapt_cached(
     });
     style.nfss = crate::nfss::Scheme::for_document(&parsed.packages, t1_encoding(source));
     style.input = crate::inputenc::InputSetup::for_project(texts, entry);
-    let styles: Vec<Styles> = texts.iter().map(|t| Styles::new(t, style_intervals(t), style.nfss)).collect();
+    // A project package or class file's macros wrap font declarations
+    // around their arguments in every document that invokes them.
+    let styles: Vec<Styles> = texts
+        .iter()
+        .enumerate()
+        .map(|(index, t)| {
+            let mut intervals = style_intervals(t);
+            for (package, _) in &parsed.package_files {
+                if package.0 != index {
+                    if let Some(defs) = texts.get(package.0) {
+                        intervals.extend(macro_argument_intervals_defined_in(t, defs));
+                    }
+                }
+            }
+            intervals.sort_by_key(|(start, _, _, _)| *start);
+            Styles::new(t, intervals, style.nfss)
+        })
+        .collect();
     let labels_fp = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -7645,18 +7711,33 @@ fn style_intervals(source: &str) -> Vec<StyleInterval> {
 /// because their `#1` is the bracketed argument and not a brace group; so is
 /// an undelimited (unbraced) argument.
 fn macro_argument_intervals(source: &str) -> Vec<StyleInterval> {
+    macro_argument_intervals_defined_in(source, source)
+}
+
+/// [`macro_argument_intervals`] for definitions read from `defs_source`
+/// -- `source` itself, or a project package or class file the compiler
+/// loaded for it (`Parsed::package_files`), whose macros the document
+/// invokes from its first byte on. A definition of the same name in
+/// `source` takes over from its own position.
+fn macro_argument_intervals_defined_in(source: &str, defs_source: &str) -> Vec<StyleInterval> {
     let bytes = source.as_bytes();
-    let defs = macro_definitions(source);
+    let same = std::ptr::eq(source, defs_source);
+    let defs = macro_definitions(defs_source);
+    let own: Vec<MacroDef> = if same { Vec::new() } else { macro_definitions(source) };
     let mut out = Vec::new();
     for (index, def) in defs.iter().enumerate() {
-        let name = &source[def.name.clone()];
+        let name = &defs_source[def.name.clone()];
         // A later definition of the same name takes over from its position.
-        let until = defs[index + 1..].iter().find(|d| source[d.name.clone()] == *name).map_or(bytes.len(), |d| d.at);
-        let header = &source[def.name.end..def.body.start - 1];
+        let until = if same {
+            defs[index + 1..].iter().find(|d| defs_source[d.name.clone()] == *name).map_or(bytes.len(), |d| d.at)
+        } else {
+            own.iter().find(|d| source[d.name.clone()] == *name).map_or(bytes.len(), |d| d.at)
+        };
+        let header = &defs_source[def.name.end..def.body.start - 1];
         if header.matches('[').count() > 1 {
             continue;
         }
-        let body = &source[def.body.clone()];
+        let body = &defs_source[def.body.clone()];
         let body_intervals = source_style_intervals(body);
         // For each parameter the body uses, the body intervals around it:
         // the command, whether its group closes right after `#k` (italic
@@ -7671,7 +7752,7 @@ fn macro_argument_intervals(source: &str) -> Vec<StyleInterval> {
             }
         }
         let Some(arity) = params.iter().map(|(k, _)| *k).max() else { continue };
-        let mut from = def.body.end;
+        let mut from = if same { def.body.end } else { 0 };
         // (A redefinition nested inside this body ends the range before it
         // starts.)
         while from < until {
@@ -8182,7 +8263,19 @@ impl BodyCursor {
 /// replacement token and an argument (the whitespace around `#k`). `text`
 /// is the token's text, used to find its place in a definition. `None`
 /// when nothing was read (the first token) or the place is unknown.
-fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: Span, text: Option<&str>, cursor: &mut Option<BodyCursor>) -> Option<String> {
+/// `foreign` gives, for an invocation whose macro is defined in another
+/// document (a project package file), that document's text and a byte
+/// position inside the definition (`Labels::foreign_definitions`); the
+/// body is then read there instead of in `src`.
+fn token_gap<'a>(
+    src: &'a str,
+    prev_end: Option<usize>,
+    prev_span: Option<Span>,
+    span: Span,
+    text: Option<&str>,
+    cursor: &mut Option<BodyCursor>,
+    foreign: &dyn Fn(Span) -> Option<(&'a str, usize)>,
+) -> Option<String> {
     let source_gap = |pe: usize, ps: Span| -> Option<String> {
         if ps.document != span.document {
             // Crossing an \input boundary: TeX reads the newline that ends
@@ -8200,8 +8293,9 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
     let digits = |k: usize| 1 + k.to_string().len();
     // A word of a replacement text.
     if let Some(name) = control_word_at(src, span.start, span.end) {
-        if let Some(def) = macro_def(src, name, span.start) {
-            let body = &src[def.body.clone()];
+        let (def_src, before) = foreign(span).unwrap_or((src, span.start));
+        if let Some(def) = macro_def(def_src, name, before) {
+            let body = &def_src[def.body.clone()];
             let (start, prefix, default_at) = match *cursor {
                 Some(c) if c.inv == span => (c.at, None, c.default_at),
                 _ => match prev_span.and_then(|ps| macro_arg_index(src, span, ps.start)) {
@@ -8244,7 +8338,7 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
             // without `[..]`): the compiler spans its tokens at the
             // invocation like the body's, but they are not in the body --
             // TeX reads them where the body reaches `#1`.
-            let default = def.default.clone().filter(|_| !optional_given(src, span)).map(|r| &src[r]);
+            let default = def.default.clone().filter(|_| !optional_given(src, span)).map(|r| &def_src[r]);
             if let Some(default) = default {
                 // Standing inside the default: the next word of it, if any,
                 // is found there before the body is searched.
@@ -8296,7 +8390,8 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
     // An argument of the invocation being read.
     if let Some(c) = *cursor {
         if let Some((name, k)) = macro_arg_index(src, c.inv, span.start) {
-            if let Some(body) = macro_body(src, name, c.inv.start) {
+            let (def_src, before) = foreign(c.inv).unwrap_or((src, c.inv.start));
+            if let Some(body) = macro_body(def_src, name, before) {
                 if let Some(p) = body.get(c.at..).and_then(|rest| rest.find(&format!("#{k}"))) {
                     let pos = c.at + p;
                     let gap = body[c.at..pos].to_string();
@@ -9615,7 +9710,7 @@ fn items_cached(
 /// box keeps today's slow success instead of a spurious paragraph error;
 /// everything laid out through `break_paragraph` passes `true`.
 #[allow(clippy::too_many_arguments)]
-fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Styles], labels: &Labels, size: u32, heading: bool, compiler_weight: bool, bound: bool) -> Vec<Item> {
+fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: &[Styles], labels: &Labels, size: u32, heading: bool, compiler_weight: bool, bound: bool) -> Vec<Item> {
     // `\ref`/`\pageref` become ordinary text attributed to the command's
     // bytes; `\label` becomes a zero-width marker.
     let mut resolved: Vec<std::borrow::Cow<Inline>> = Vec::with_capacity(inlines.len());
@@ -9647,10 +9742,22 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
     // word, or the glue's control word). `\hfill` in a title is the
     // compiler's own `Inline::HFill` (pin `3d3d5ae3`, also inside macro
     // bodies), so the gap is never scanned for fills here.
+    // A macro defined in a project package or class file: its body is in
+    // that document (`Labels::foreign_definitions`).
+    let foreign = |inv: Span| -> Option<(&'a str, usize)> {
+        let (document, end) = labels.foreign_definitions.get(&(inv.document.0, inv.start))?;
+        Some((texts.get(*document).copied()?, *end))
+    };
+    // The replacement text of the macro `inv` invokes, wherever it is defined.
+    let body_of = |source: &'a str, inv: Span| -> Option<&'a str> {
+        let name = control_word_at(source, inv.start, inv.end)?;
+        let (def_src, before) = foreign(inv).unwrap_or((source, inv.start));
+        macro_body(def_src, name, before)
+    };
     let mut space_between = |prev_end: Option<usize>, prev_span: Option<Span>, span: Span, text: Option<&str>, after_control_word: bool| -> bool {
         let src = text_of(span.document);
         let mut c = cursor.get();
-        let gap = token_gap(src, prev_end, prev_span, span, text, &mut c);
+        let gap = token_gap(src, prev_end, prev_span, span, text, &mut c, &foreign);
         cursor.set(c);
         match gap {
             None => false,
@@ -10189,7 +10296,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 after_control_word = false;
                 // A word of a user macro's replacement text, found in the
                 // definition body: the body's own font commands apply to it.
-                let in_body = cursor.get().filter(|c| c.inv == *span).and_then(|c| Some((macro_body(source, control_word_at(source, span.start, span.end)?, span.start)?, c.word?)));
+                let in_body = cursor.get().filter(|c| c.inv == *span).and_then(|c| Some((body_of(source, *span)?, c.word?)));
                 let mut style = match in_body {
                     Some((body, offset)) => styles_of(span.document).in_body(span.start, body, offset),
                     None => style_at(styles_of(span.document), span.start),
@@ -10222,7 +10329,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     // macro body is read in the body's font there.
                     let body_blank = cursor.get().and_then(|c| {
                         let blank = c.blank?;
-                        let body = macro_body(source, control_word_at(source, c.inv.start, c.inv.end)?, c.inv.start)?;
+                        let body = body_of(source, c.inv)?;
                         Some(styles_of(span.document).in_body(c.inv.start, body, blank))
                     });
                     let mut gap_style = match body_blank {
@@ -10439,8 +10546,9 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 }
                 // A text symbol the compiler set from a control word (`\AA`,
                 // `\ss`, `\today`): TeX skips the blanks after the word. User
-                // macro replacements keep their own cursor (`token_gap`).
-                after_control_word = control_word_at(source, span.start, span.end).is_some() && !is_invocation_span(source, *span);
+                // macro replacements keep their own cursor (`token_gap`),
+                // wherever the macro is defined (`body_of`).
+                after_control_word = control_word_at(source, span.start, span.end).is_some() && body_of(source, *span).is_none();
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
                 // A lowered `\verb`/`\lstinline` (`lower_inline`): the
