@@ -3,6 +3,7 @@ import HostedWindows
 import SwiftUI
 import XCTest
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// GH#2: accepting a completion whose replacement supplies its own closing
 /// delimiter, while the editor's own auto-inserted closer sits immediately

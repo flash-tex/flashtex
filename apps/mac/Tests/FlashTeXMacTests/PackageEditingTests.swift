@@ -2,6 +2,7 @@ import AppKit
 import XCTest
 import FlashTeXProtocol
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// Package and class authoring in the editor (lane pkg-editor): `@` as a
 /// letter in `.sty`/`.cls` buffers and inside `\makeatletter`, the kernel's

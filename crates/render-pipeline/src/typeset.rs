@@ -11965,7 +11965,7 @@ fn assemble_block(
                             width: Tick::from_tex_pt(r.width).max(Tick(1)),
                             height: Tick::from_tex_pt(r.height).max(Tick(1)),
                             paint: paint_of(r),
-                            provenance: Provenance::Source(source_of(r.span)),
+                            provenance: provenance_of(r.span, source_of),
                         }));
                     }
                     // Each piece is assembled like a block of its own, then
@@ -11997,7 +11997,7 @@ fn assemble_block(
                             width: Tick::from_tex_pt(r.width).max(Tick(1)),
                             height: Tick::from_tex_pt(r.height).max(Tick(1)),
                             paint: paint_of(r),
-                            provenance: Provenance::Source(source_of(r.span)),
+                            provenance: provenance_of(r.span, source_of),
                         }));
                     }
                 }
@@ -12007,7 +12007,7 @@ fn assemble_block(
                     // `\hrule`s, side `\vrule`s `\fboxrule` shorter, half a
                     // rule inside each end).
                     let x0 = local.x;
-                    let provenance = Provenance::Source(source_of(cb.span));
+                    let provenance = provenance_of(cb.span, source_of);
                     let block_rule = |x: f64, top: f64, w: f64, h: f64, color| {
                         display::Item::Rule(Rule {
                             x: Tick::from_tex_pt(x),
@@ -12065,7 +12065,7 @@ fn assemble_block(
                             width: Tick::from_tex_pt(ul.width).max(Tick(1)),
                             height: Tick::from_tex_pt(ul.thickness).max(Tick(1)),
                             paint: Paint::BLACK,
-                            provenance: Provenance::Source(source_of(ul.span)),
+                            provenance: provenance_of(ul.span, source_of),
                         }));
                     }
                 }
@@ -12092,7 +12092,7 @@ fn assemble_block(
                     // transform maps the unit square into that box (the
                     // same arithmetic as `floatpage::Placer::emit`, with the
                     // baseline at 0 and the line's shift applied later).
-                    let provenance = Provenance::Source(source_of(g.span));
+                    let provenance = provenance_of(g.span, source_of);
                     let (left, base, gbox) = (local.x, 0.0, g.gbox);
                     if let Some(kind) = g.placeholder {
                         let m = gbox.matrix;
@@ -12131,7 +12131,7 @@ fn assemble_block(
                 }
                 BoxRec::Leader { .. } => {}
                 BoxRec::Paths(p) => {
-                    let provenance = Provenance::Source(source_of(p.span));
+                    let provenance = provenance_of(p.span, source_of);
                     let x0 = local.x;
                     let tx = |x: f64| Tick::from_tex_pt(x0 + x);
                     let ty = |y: f64| Tick::from_tex_pt(-y);

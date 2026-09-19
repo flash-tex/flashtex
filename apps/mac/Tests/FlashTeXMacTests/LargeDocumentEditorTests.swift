@@ -4,6 +4,7 @@ import XCTest
 import FlashTeXProtocol
 import HostedWindows
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// Large-document editor operations (lane mac-editor-a11y-2): selection
 /// changes (select-all, shift-arrow over a long line), input-method

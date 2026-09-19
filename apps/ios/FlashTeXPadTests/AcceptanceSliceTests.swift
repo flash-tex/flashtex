@@ -152,14 +152,16 @@ final class AcceptanceSliceTests: XCTestCase {
         if case .refused = model.review!.state {} else { XCTFail("expected refused") }
     }
 
-    func testLocalCompletionsFromSource() {
+    func testLocalCompletionsFromSource() async {
         model.openBundledSample()
         let text = model.document!.text
         let caret = (text as NSString).range(of: "\\subsection{At the café}").location + 4 // after "\sub"
         model.caretMoved(caret)
+        await model.settleCompletions() // computed off the main actor after the debounce
         XCTAssertTrue(model.completions.contains { $0.text == "\\subsection" })
         let endCaret = (text as NSString).length
         model.caretMoved(endCaret)
+        await model.settleCompletions()
         // Document has an unclosed \begin{document}? demo.tex closes it; check the helper directly.
         XCTAssertEqual(LocalCompletion.openEnvironments(in: "\\begin{document}\\begin{itemize}"), ["document", "itemize"])
         let s = LocalCompletion.suggestions(in: "\\begin{itemize}\n\\e", caretByte: 18)

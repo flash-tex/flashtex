@@ -4,6 +4,7 @@ import XCTest
 import FlashTeXProtocol
 import HostedWindows
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// `SourceEditorView`: VoiceOver label/value/selection and line-column
 /// announcements, windowed diagnostic marks on a large buffer, navigation

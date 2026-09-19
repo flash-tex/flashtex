@@ -6,8 +6,12 @@ a one-line instruction ("this is a matrix", "convert this to TikZ"), and send
 it to the Mac app. The Mac converts it into a proposal that *you review and
 approve on the Mac* before anything is inserted into your document.
 
-The iPad never edits your `.tex` file directly. It shows the status of each
-capture and, once a proposal exists, the returned LaTeX read-only.
+The iPad never edits your Mac's `.tex` file directly. It shows the status of
+each capture and, once a proposal exists, the returned LaTeX read-only.
+
+It is also a LaTeX editor in its own right (**Editor** in the sidebar): open a
+`.tex` file from Files or the bundled sample and write with the same rules the
+Mac editor uses — see [The editor](#the-editor).
 
 Source and full engineering notes: `apps/ios/README.md`.
 
@@ -174,6 +178,61 @@ Mac cannot answer ("outcome unavailable").
 
 Captures, receipts and outcomes are saved on the iPad and restored after a
 relaunch; an interrupted send comes back retryable with the same id.
+
+## The editor
+
+**Editor** in the sidebar opens a `.tex` buffer (*Open .tex…* from Files, or
+the bundled `demo.tex`). It is the Mac editor's behaviour on the iPad — the
+rules are literally the same code, shared between the two apps:
+
+- **Colouring** — commands, environment names, braces, comments, inline and
+  display math (`$…$`, `\[…\]`, `align` and friends), verbatim bodies,
+  `\ref`/`\cite` keys and `\newcommand` definitions, in light and dark.
+  Only the lines you edit are re-coloured, so long documents stay fluid.
+- **Auto-close** — `{`, `[`, `(` and `$` insert their closer after the caret;
+  `\(` and `\[` get `\)` / `\]`; `\left(` in math gets `\right)`. Typing
+  the closer steps over the one that was inserted, Backspace between an
+  inserted pair removes both, and nothing is paired in a comment, after a
+  backslash, before a word, or on a `$` that closes math already open.
+- **Return** — keeps the line's indentation; after `\begin{itemize}` (and any
+  environment except `document` and verbatim ones) indents the body by four
+  spaces, starts a list body with `\item ` (`\item[] ` in `description`,
+  `\bibitem{} ` in `thebibliography`) and adds the matching `\end{…}` when
+  it is missing; Return on an `\item` line with text continues the list,
+  Return on a bare `\item` just breaks the line.
+- **Matching** — the bracket or `$` pair around the caret is highlighted.
+- **Completion** — type `\` and the list below the editor offers the commands
+  the document already uses, then the compiler's whole vocabulary (the same
+  inventory as the Mac, with its one-line documentation); `\begin{` offers
+  environment skeletons, `\ref{` labels and `\cite{` keys from the document.
+  Math-only symbols are hidden in prose and vice versa, and a beamer- or
+  letter-only command is hidden once the document declares another class.
+  Tapping a row (or Tab) inserts it; a snippet such as `\frac{}{}` puts the
+  caret in the first group and Tab jumps to the next.
+- **Diagnostics** — ⌘E (or the count button above the editor) shows the
+  compile diagnostics list beside the text.
+
+With a hardware keyboard (hold ⌘ for the list):
+
+| Keys | Action |
+|---|---|
+| ⌘Z / ⇧⌘Z | Undo / redo |
+| ⌃Space | Show completions |
+| Esc | Hide completions, leave a snippet |
+| Tab | Accept the first completion, else next snippet placeholder, else indent |
+| ⌘/ | Toggle `%` comment on the selected lines |
+| ⌘] / ⌘[ | Indent / outdent the selected lines |
+| ⌘⇧B / ⌘I | Wrap the selection in `\textbf{}` / `\textit{}` (empty selection: caret inside) |
+| ⌘E | Toggle the diagnostics panel |
+
+With the on-screen keyboard a bar above it offers `\`, `{ }`, `[ ]`, `$`,
+`^`, `_`, `\frac`, `\sqrt`, `\begin`, `\item`, Tab, undo and redo; the
+characters behave exactly as typed ones (a tapped `{` closes itself). The bar
+hides while a hardware keyboard is attached.
+
+The buffer stays on the iPad: it is not sent to the Mac and not compiled
+(transfer-v1 carries captures, not documents). Diagnostics come from a
+`compile_result` file you open or the bundled fixture.
 
 ## Limits
 

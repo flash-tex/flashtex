@@ -1,4 +1,5 @@
 import Foundation
+import FlashTeXEditorCore
 import FlashTeXPadKit
 import FlashTeXProtocol
 import NearbyClient
@@ -32,8 +33,25 @@ final class PadModel: ObservableObject {
     @Published var diagnostics: [DiagnosticItem] = []
     @Published var diagnosticsSource: DiagnosticsSource = .none
 
-    // Completions (local, source-derived)
+    // Completions: the document's own names plus the compiler's inventory
+    // (the bundled supported-latex.json, shared with the Mac), computed off
+    // the main actor from a snapshot after a short debounce.
     @Published var completions: [LocalCompletion.Suggestion] = []
+    /// Esc hid the list; the next edit or ⌃Space shows it again.
+    @Published var completionsDismissed = false
+    /// ⌘E: the diagnostics list beside the editor.
+    @Published var diagnosticsPanelVisible = false
+    /// The live editor, when the Editor panel is showing: completions are
+    /// inserted through it (undoable, with snippet stops) rather than by
+    /// rewriting the document.
+    weak var editor: EditorController?
+    /// Whether the caret is in math (from the editor's lexer; nil without an editor).
+    var caretMathMode: Bool?
+    /// Debounce before a completion pass (seconds); tests shorten it.
+    var completionDelay: TimeInterval = 0.12
+    private(set) var completionTask: Task<Void, Never>?
+    /// Completion passes that reached the list (evidence for tests).
+    private(set) var completionPasses = 0
 
     // Reviewed proposal
     @Published var review: ReviewSession?
@@ -385,31 +403,115 @@ final class PadModel: ObservableObject {
         refreshCompletions()
     }
 
-    func textChanged(_ text: String) {
-        guard var d = document, !d.text.sameBytes(as: text) else { return }
+    /// A keystroke's cost on the main actor: no scan of the document here —
+    /// the text is a value snapshot, the revision moves, and the completion
+    /// pass is scheduled off the main actor. Returns the new revision (the
+    /// editor records it so it does not reload its own edit).
+    @discardableResult
+    func textChanged(_ text: String, caret: Int? = nil, mathMode: Bool? = nil) -> Int {
+        guard var d = document else { return 0 }
+        if let caret { caretUTF16 = caret }
+        caretMathMode = mathMode
+        guard !d.text.sameBytes(as: text) else { return d.revision }
         d.text = text
         d.revision += 1
         document = d
         // A buffer edit invalidates a pending review's binding (sha/revision); keep it
         // pending so approve() refuses it with the exact reason rather than hiding it.
+        completionsDismissed = false
+        refreshCompletions()
+        return d.revision
+    }
+
+    func caretMoved(_ utf16: Int, mathMode: Bool? = nil) {
+        caretUTF16 = utf16
+        caretMathMode = mathMode
         refreshCompletions()
     }
 
-    func caretMoved(_ utf16: Int) { caretUTF16 = utf16; refreshCompletions() }
+    /// Schedules a completion pass: after `completionDelay` (coalescing the
+    /// keystrokes in between) the document snapshot is scanned on a
+    /// background task and the list lands back here, unless a newer edit
+    /// superseded it.
+    func refreshCompletions() { scheduleCompletions(delay: completionDelay) }
 
-    func refreshCompletions() {
-        guard let d = document, let byte = d.byteOffset(ofUTF16: caretUTF16) else { completions = []; return }
-        completions = LocalCompletion.suggestions(in: d.text, caretByte: byte)
+    /// ⌃Space: a pass right now, even after Esc.
+    func showCompletions() {
+        completionsDismissed = false
+        scheduleCompletions(delay: 0)
     }
 
-    /// Applies a completion at its byte range (the same offset discipline as an edit).
+    /// Esc: hide the list until the next edit.
+    func dismissCompletions() {
+        completionTask?.cancel()
+        completionsDismissed = true
+        completions = []
+    }
+
+    private func scheduleCompletions(delay: TimeInterval) {
+        completionTask?.cancel()
+        guard let d = document, !completionsDismissed else { completions = []; return }
+        let text = d.text
+        let caret = caretUTF16
+        let context = LocalCompletion.Context(vocabulary: Self.bundledVocabulary, mathMode: caretMathMode)
+        completionTask = Task { [weak self] in
+            if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+            guard !Task.isCancelled else { return }
+            let result = await Task.detached(priority: .userInitiated) { () -> [LocalCompletion.Suggestion] in
+                guard let byte = LaTeXEditing.utf8Offset(of: caret, in: text) else { return [] }
+                return LocalCompletion.suggestions(in: text, caretByte: byte, context: context)
+            }.value
+            guard !Task.isCancelled, let self else { return }
+            self.completions = result
+            self.completionPasses += 1
+        }
+    }
+
+    /// Waits for the pending completion pass (tests).
+    func settleCompletions() async { await completionTask?.value }
+
+    /// The compiler's inventory bundled with the app (`Resources/supported-latex.json`,
+    /// byte-identical to the Mac's copy; `apps/mac/scripts/sync-supported-latex.sh`).
+    /// Decoded once, on first use from the background completion task.
+    static let bundledVocabulary: LaTeXVocabulary = {
+        guard let url = Bundle.main.url(forResource: "supported-latex", withExtension: "json"),
+              let data = try? Data(contentsOf: url), let v = try? LaTeXVocabulary(inventoryData: data) else { return .empty }
+        return v
+    }()
+
+    /// Applies a completion: through the live editor when there is one
+    /// (undoable, snippet stops), else at its byte range in the document
+    /// (the same offset discipline as an edit).
     func accept(_ s: LocalCompletion.Suggestion) {
         guard var d = document, let r = d.text.rangeOfUTF8(start: s.replaceStart, end: s.replaceEnd) else { return }
-        d.text.replaceSubrange(r, with: s.text)
+        if let editor {
+            editor.accept(s, replacing: NSRange(r, in: d.text))
+            return
+        }
+        let insertion = s.insertion
+        d.text.replaceSubrange(r, with: insertion)
         d.revision += 1
         document = d
-        caretUTF16 = NSRange(d.text.startIndex..<d.text.index(r.lowerBound, offsetBy: s.text.count), in: d.text).length
+        let start = NSRange(d.text.startIndex..<r.lowerBound, in: d.text).length
+        caretUTF16 = start + (s.snippet?.caretUTF16 ?? (insertion as NSString).length)
         refreshCompletions()
+    }
+
+    /// Editor key commands the model answers. Returns true when Tab accepted
+    /// a completion (the editor then leaves the caret alone).
+    @discardableResult
+    func handle(_ command: EditorCommand) -> Bool {
+        switch command {
+        case .showCompletions: showCompletions()
+        case .dismiss: dismissCompletions()
+        case .toggleDiagnostics: diagnosticsPanelVisible.toggle()
+        case .acceptOrNextStop:
+            guard let first = completions.first else { return false }
+            accept(first)
+            return true
+        default: break
+        }
+        return false
     }
 
     // MARK: diagnostics from a compile_result file

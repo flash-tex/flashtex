@@ -1,6 +1,7 @@
 import AppKit
 import XCTest
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// Lexer runs on tricky inputs and the incremental invariant (lane mac-syntax-highlight):
 /// after any sequence of edits, `runs(in:)` over the whole text equals a

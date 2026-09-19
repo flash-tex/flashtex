@@ -1,6 +1,7 @@
 import XCTest
 import FlashTeXProtocol
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// The project manifest in the shell (ProjectManifest.swift,
 /// docs/user/project-manifest.md): the helper's `manifest` payload decoded,

@@ -3,6 +3,7 @@ import HostedWindows
 import SwiftUI
 import XCTest
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// Vim-style hybrid line numbering in the gutter
 /// (`EditorPreferences.relativeLineNumbers`, off by default and independent of
