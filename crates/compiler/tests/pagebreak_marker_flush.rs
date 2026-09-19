@@ -218,10 +218,14 @@ fn thispagestyle_between_words_stays_on_the_horizontal_path() {
     }
 }
 
-/// Unchanged (issue row 1 shape at IR level): `\maketitle` flushes first, so
-/// the following `\pagebreak` sees an empty `para` and is just a penalty.
+/// Issue row 1 at IR level: article's `\maketitle` ends with
+/// `\thispagestyle{plain}`, which the parser records as a `PageStyle`
+/// marker inline (`this_page`) after the flushed title block. That
+/// marker-only paragraph must ship *before* `\pagebreak`'s penalty — the
+/// title page is the plain one — instead of being carried onto the page
+/// after the break.
 #[test]
-fn maketitle_then_pagebreak_is_just_a_penalty_after_the_title() {
+fn maketitle_then_pagebreak_keeps_the_title_page_marker_before_the_penalty() {
     let parsed = parse(r"\title{T}\author{A}\maketitle\pagebreak After.");
     assert!(
         parsed.diagnostics.is_empty(),
@@ -229,17 +233,33 @@ fn maketitle_then_pagebreak_is_just_a_penalty_after_the_title() {
         parsed.diagnostics
     );
     let blocks = parsed.blocks;
-    assert_eq!(blocks.len(), 3, "{blocks:?}");
+    assert_eq!(blocks.len(), 4, "{blocks:?}");
     assert!(
         matches!(blocks[0], Block::TitleBlock { .. }),
         "{blocks:?}"
     );
+    match &blocks[1] {
+        Block::Paragraph(inlines) => {
+            assert_eq!(inlines.len(), 1, "{blocks:?}");
+            assert!(
+                matches!(inlines[0], Inline::PageStyle { this_page: true, .. }),
+                "{blocks:?}"
+            );
+        }
+        other => panic!("the title page's style marker must precede the penalty: {other:?}"),
+    }
     assert!(
-        matches!(blocks[1], Block::Penalty { value: -10_000, .. }),
+        matches!(blocks[2], Block::Penalty { value: -10_000, .. }),
         "{blocks:?}"
     );
-    match &blocks[2] {
-        Block::Paragraph(inlines) => assert!(has_text(inlines, "After"), "{blocks:?}"),
+    match &blocks[3] {
+        Block::Paragraph(inlines) => {
+            assert!(has_text(inlines, "After"), "{blocks:?}");
+            assert!(
+                !inlines.iter().any(|inline| matches!(inline, Inline::PageStyle { .. })),
+                "marker carried past the break: {blocks:?}"
+            );
+        }
         other => panic!("{other:?}"),
     }
 }
