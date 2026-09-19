@@ -16,8 +16,29 @@
 mod common;
 
 use common::{lm_available, render_one, words_of, Word};
+use flashtex_compiler::parser::SourceDocument;
 use flashtex_render_pipeline::display::{Item, PathCmd, PathItem, PathPaintOp};
-use flashtex_render_pipeline::Rendered;
+use flashtex_render_pipeline::{render, FontSet, RenderOptions, Rendered};
+
+const BLOCKS_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/real-world/beamer-blocks-columns");
+
+/// Renders `text` as `main.tex` of the blocks-columns corpus deck's
+/// directory, so `\includegraphics{figure.png}` reads that fixture's file.
+fn render_with_figure(text: &str) -> Rendered {
+    let fonts = FontSet::with_default_dirs(&[]);
+    let options = RenderOptions { project_root: Some(BLOCKS_FIXTURE.into()), ..RenderOptions::default() };
+    let docs = [SourceDocument { path: "main.tex", text }];
+    render(&docs, "main.tex", 1, "beamer-polish", &fonts, &options)
+}
+
+/// The visible words of `page` as `(text, x, baseline)`.
+fn page_words(words: &[Word], page: u32) -> Vec<(String, f64, f64)> {
+    words.iter().filter(|w| w.page == page).map(|w| (w.text.clone(), w.x, w.baseline)).collect()
+}
+
+fn images_of(r: &Rendered, page: usize) -> usize {
+    r.v2.pages[page - 1].resident_items().iter().filter(|it| matches!(it, Item::Image(_))).count()
+}
 
 /// Every `Item::Path` of `page` (1-based).
 fn paths_of(r: &Rendered, page: usize) -> Vec<&PathItem> {
@@ -156,4 +177,51 @@ fn madrid_navigation_symbols_sit_above_the_footline() {
     let (x0, y0, x1, y1) = bbox(&paths);
     assert!(near(x0, 233.391 + 2.0, 0.02) && near(x1, 340.075 + 19.2, 0.02), "{x0} {x1}");
     assert!(near(y1, 272.126 - 12.121, 0.02) && near(y0, 272.126 - 12.121 - 4.0, 0.02), "{y0} {y1}");
+}
+
+/// Item 2: covered formulas, graphics and tables keep their space and are
+/// not painted. Probe deck (pdflatex, `pdftext.py`): on slide 1 `E`, `=`,
+/// `mc`, `2`, `a`..`d` and the image are written 2000bp off the page
+/// (`\pgfsys@begininvisible`), while `after` stays at x = 106.326,
+/// `tail.` at 124.888 and `end.` at 95.257 (baselines 103.594 / 139.161 /
+/// 156.434); slide 2 paints everything at the same places (`E` 61.165,
+/// `a` (62.809, 149.642), `d` (80.006, 163.191), the image `1 0 0 1
+/// 3.637 0 cm` after `Picture`).
+#[test]
+fn covered_math_graphics_and_tables_keep_their_space_unpainted() {
+    if !lm_available() {
+        return;
+    }
+    let deck = "\\documentclass{beamer}\n\\setbeamertemplate{navigation symbols}{}\n\\begin{document}\n\\begin{frame}{Covered material}\nBefore \\uncover<2->{$E=mc^2$} after the formula.\n\nPicture \\uncover<2->{\\includegraphics[width=2cm]{figure.png}} tail.\n\nTable \\uncover<2->{\\begin{tabular}{ll} a & b \\\\ c & d \\end{tabular}} end.\n\\end{frame}\n\\end{document}\n";
+    let r = render_with_figure(deck);
+    assert_eq!(r.v2.pages.len(), 2);
+    let words = words_of(&r);
+    // Slide 1: no glyph of the covered material, no image.
+    let slide1 = page_words(&words, 1);
+    for covered in ["E", "=", "mc", "2", "a", "b", "c", "d"] {
+        assert!(!slide1.iter().any(|(t, _, _)| t == covered), "slide 1 paints covered {covered:?}: {slide1:?}");
+    }
+    assert_eq!(images_of(&r, 1), 0);
+    assert!(paths_of(&r, 1).is_empty());
+    // ... but the space is kept: the words after each covered box sit where
+    // pdflatex puts them. (`after` is 0.74bp off on both slides because
+    // beamer sets `$E=mc^2$` in its sans math fonts, CMSSI10/CMSS10, which
+    // this pipeline sets in Latin Modern Math: a gap of its own, identical
+    // on both slides.)
+    at(&words, 1, "after", 106.326, 103.594, 0.8);
+    at(&words, 1, "tail.", 124.888, 139.161, 0.01);
+    at(&words, 1, "end.", 95.257, 156.434, 0.01);
+    // Slide 2: everything painted, at the same places as an uncovered
+    // render of the same frame.
+    at(&words, 2, "a", 62.809, 149.642, 0.01);
+    at(&words, 2, "d", 80.006, 163.191, 0.01);
+    at(&words, 2, "tail.", 124.888, 139.161, 0.01);
+    assert_eq!(images_of(&r, 2), 1);
+    let uncovered = render_with_figure(&deck.replace("\\uncover<2->", "\\uncover<1->"));
+    let plain = words_of(&uncovered);
+    assert_eq!(page_words(&plain, 1), page_words(&words, 2));
+    // The visible words of slide 1 sit exactly where slide 2 has them.
+    for (t, x, y) in &slide1 {
+        assert!(page_words(&words, 2).iter().any(|(t2, x2, y2)| t2 == t && near(*x, *x2, 0.001) && near(*y, *y2, 0.001)), "{t:?} moved between slides");
+    }
 }

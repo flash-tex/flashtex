@@ -191,6 +191,9 @@ pub struct TableItem {
     pub double_rule_sep_color: Option<ct::ColorSpec>,
     /// longtable (see `crate::longtable`).
     pub longtable: Option<ct::Longtable>,
+    /// beamer covered material (`crate::overlay`): the table is set and
+    /// measured but not painted.
+    pub hidden: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -389,6 +392,7 @@ pub fn from_compiler(t: &ct::Tabular, lengths: TableLengths, size_cpt: u16, item
         rule_color: t.rule_color.clone(),
         double_rule_sep_color: t.double_rule_sep_color.clone(),
         longtable: t.longtable.clone(),
+        hidden: false,
     }
 }
 
@@ -1059,6 +1063,7 @@ mod tests {
             rule_color: None,
             double_rule_sep_color: None,
             longtable: None,
+            hidden: false,
         }
     }
 

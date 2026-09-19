@@ -158,7 +158,9 @@ pub enum Item {
     /// Interword glue. `factor` is TeX's space factor (1000 normal, 3000
     /// after sentence-ending punctuation, 999 after an uppercase letter).
     Space { style: TextStyle, factor: u32, no_break: bool },
-    Math { list: MathList, span: Span },
+    /// `hidden`: beamer covered material (`crate::overlay`): the formula
+    /// is set and measured but not painted.
+    Math { list: MathList, span: Span, hidden: bool },
     /// `\\`; `skip_pt` is the optional `[<dimen>]` (LaTeX `\@xnewline`:
     /// `\vadjust{\vskip <dimen>}` after the line, or `\vskip` after the
     /// paragraph under `\@centercr`).
@@ -239,7 +241,8 @@ pub enum Item {
     /// against the enclosing box's `\textwidth`). The keys are kept as
     /// written because their lengths resolve where the box is set (a beamer
     /// column's `\textwidth` is the column's).
-    Graphic { options: String, path: String, span: Span },
+    /// `hidden`: beamer covered material (`crate::overlay`).
+    Graphic { options: String, path: String, span: Span, hidden: bool },
     /// LaTeX's `\llap{...}`: `items` set at their natural width and then
     /// pulled back by exactly that width, so the line's reference point does
     /// not move and the material hangs in the left margin.
@@ -2347,7 +2350,7 @@ pub fn adapt_cached(
                 let mut current = Vec::new();
                 for item in items {
                     match item {
-                        Item::Math { list, span } if is_display(inlines, span) => {
+                        Item::Math { list, span, .. } if is_display(inlines, span) => {
                             if !current.is_empty() {
                                 parts.push(ParaPart::Lines(std::mem::take(&mut current)));
                             }
@@ -9880,7 +9883,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                items.push(Item::Graphic { options: g.options.clone(), path: g.path.clone(), span });
+                items.push(Item::Graphic { options: g.options.clone(), path: g.path.clone(), span, hidden: false });
                 prev_end = Some(span.end);
                 prev_span = Some(span);
                 factor = 1000;
@@ -10029,6 +10032,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     items.push(Item::Math {
                         list: math_row_list(row),
                         span: row.span,
+                        hidden: false,
                     });
                 }
                 prev_end = Some(span.end);
@@ -10045,6 +10049,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 items.push(Item::Math {
                     list: list.clone(),
                     span: *span,
+                    hidden: false,
                 });
                 prev_end = Some(span.end);
                 prev_span = Some(*span);

@@ -178,6 +178,8 @@ pub struct GraphicRec {
     pub resource: Option<Rc<display::ImageResource>>,
     pub placeholder: Option<floatpage::Placeholder>,
     pub span: Span,
+    /// beamer covered material: the box keeps its space, nothing is painted.
+    pub hidden: bool,
 }
 
 /// A laid-out `\textsuperscript`/`\textsubscript`: the script-size content
@@ -233,6 +235,8 @@ pub struct TableRec {
     /// colortbl fills, painted under the pieces and rules.
     pub fills: Vec<crate::table::PlacedRule>,
     pub span: Span,
+    /// beamer covered material: the box keeps its space, nothing is painted.
+    pub hidden: bool,
 }
 
 #[derive(Clone)]
@@ -292,6 +296,8 @@ pub struct MathRec {
     /// runs continue the previous piece's items when they land on the
     /// same line, so an unbroken formula assembles exactly as one box.
     pub continues: bool,
+    /// beamer covered material: the box keeps its space, nothing is painted.
+    pub hidden: bool,
     /// Paint for glyphs and rules whose source span lies inside a byte
     /// range of this formula's document (xcolor `\textcolor`/`\color` in
     /// math); the innermost range wins, unpainted leaves stay black.
@@ -1770,6 +1776,7 @@ impl<'a> Context<'a> {
             raise: 0.0,
             inline_breaks,
             continues: false,
+            hidden: false,
             #[cfg(feature = "math-glyph-spans")]
             span_paints: Vec::new(),
         });
@@ -2456,12 +2463,17 @@ impl<'a> Context<'a> {
                     let glue = self.space_glue(style, style.size_or(size), *factor);
                     push(&mut out, &mut recs, pl::Item::Glue(glue), None);
                 }
-                AItem::Math { list, span } => {
+                AItem::Math { list, span, hidden } => {
                     // `size`, not the body size: math inside a footnote is set
                     // with that size's math fonts (`math_fonts_at`). The split
                     // into `math_pieces` is main's inline-math line breaking and
                     // is orthogonal.
                     if let Some(rec) = self.math_box(list, *span, false, size) {
+                        if *hidden || base.hidden {
+                            if let BoxRec::Math(mi) = self.recs[rec] {
+                                self.maths[mi].hidden = true;
+                            }
+                        }
                         for (item, rec) in self.math_pieces(rec, size, *span) {
                             push(&mut out, &mut recs, item, rec);
                         }
@@ -2645,8 +2657,8 @@ impl<'a> Context<'a> {
                     let (run, rec) = self.color_box(cb, size);
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                 }
-                AItem::Graphic { options, path, span } => {
-                    if let Some((run, rec)) = self.graphic_box(options, path, *span, size) {
+                AItem::Graphic { options, path, span, hidden } => {
+                    if let Some((run, rec)) = self.graphic_box(options, path, *span, size, *hidden || base.hidden) {
                         push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                     }
                 }
@@ -2737,7 +2749,7 @@ impl<'a> Context<'a> {
     /// standalone graphic, for running text: `demo`/`draft` paint a
     /// placeholder, a file that cannot be read keeps its `width=`/`height=`
     /// size empty and is reported.
-    fn graphic_box(&mut self, options: &str, file: &str, span: Span, size: f64) -> Option<(pl::GlyphRun, usize)> {
+    fn graphic_box(&mut self, options: &str, file: &str, span: Span, size: f64, hidden: bool) -> Option<(pl::GlyphRun, usize)> {
         use crate::graphics::{self, GKey};
         let s = self.style;
         let tp = self.text_params(TextStyle::default(), size);
@@ -2766,7 +2778,7 @@ impl<'a> Context<'a> {
             }
         };
         let rec = if gmode.demo {
-            GraphicRec { gbox: graphics::demo_box(&keys), resource: None, placeholder: Some(floatpage::Placeholder::DemoRule), span }
+            GraphicRec { gbox: graphics::demo_box(&keys), resource: None, placeholder: Some(floatpage::Placeholder::DemoRule), span, hidden }
         } else {
             let loaded = match self.images {
                 Some((options, cache)) => cache.borrow_mut().load(options, file, page),
@@ -2776,19 +2788,19 @@ impl<'a> Context<'a> {
                 Ok((resource, info)) => {
                     let gbox = graphics::size_box(info.width_bp / graphics::BP_PER_PT, info.height_bp / graphics::BP_PER_PT, &keys);
                     let (resource, placeholder) = if draft { (None, Some(floatpage::Placeholder::DraftFrame)) } else { (Some(resource), None) };
-                    GraphicRec { gbox, resource, placeholder, span }
+                    GraphicRec { gbox, resource, placeholder, span, hidden }
                 }
                 Err(msg) if draft => {
                     let nat = graphics::MISSING_NATURAL_BP / graphics::BP_PER_PT;
                     let sources = vec![self.source(span)];
                     self.emit(None, Diagnostic::warning("image_unavailable", format!("{msg}; the `draft` option keeps its 1 in natural size, as pdfTeX does"), sources));
-                    GraphicRec { gbox: graphics::size_box(nat, nat, &keys), resource: None, placeholder: Some(floatpage::Placeholder::DraftFrame), span }
+                    GraphicRec { gbox: graphics::size_box(nat, nat, &keys), resource: None, placeholder: Some(floatpage::Placeholder::DraftFrame), span, hidden }
                 }
                 Err(msg) => match requested() {
                     Some(gbox) => {
                         let sources = vec![self.source(span)];
                         self.emit(None, Diagnostic::error("image_unavailable", format!("{msg} (its requested size is kept empty)"), sources));
-                        GraphicRec { gbox, resource: None, placeholder: None, span }
+                        GraphicRec { gbox, resource: None, placeholder: None, span, hidden }
                     }
                     None => {
                         let sources = vec![self.source(span)];
@@ -2817,7 +2829,7 @@ impl<'a> Context<'a> {
                 pieces.push(TablePiece { x: p.x, baseline: p.baseline, block });
             }
         }
-        self.recs.push(BoxRec::Table(Rc::new(TableRec { pieces, rules: geometry.rules, fills: geometry.fills, span: t.span })));
+        self.recs.push(BoxRec::Table(Rc::new(TableRec { pieces, rules: geometry.rules, fills: geometry.fills, span: t.span, hidden: t.hidden })));
         let run = pl::GlyphRun {
             font: MATH_SENTINEL,
             size,
@@ -2996,7 +3008,7 @@ impl<'a> Context<'a> {
                     .map(|r| crate::table::PlacedRule { top: r.top - base, ..r.clone() })
                     .collect()
             };
-            let rec = TableRec { pieces, rules: cut(&chunk.geometry.rules), fills: cut(&chunk.geometry.fills), span };
+            let rec = TableRec { pieces, rules: cut(&chunk.geometry.rules), fills: cut(&chunk.geometry.fills), span, hidden: false };
             let (height, depth) = (base - top, bottom - base);
             ctx.recs.push(BoxRec::Table(Rc::new(rec)));
             let run = pl::GlyphRun {
@@ -10743,6 +10755,10 @@ fn assemble_block(
                 }
                 BoxRec::Math(mi) => {
                     let m = &maths[*mi];
+                    // beamer covered formula: set and measured, not painted.
+                    if m.hidden {
+                        continue;
+                    }
                     math_items(&local, m, source_of, &mut items, &mut used);
                     if let MathProvider::Tex(t) = &m.metrics {
                         resources.extend(t.take_resources());
@@ -10751,6 +10767,10 @@ fn assemble_block(
                 }
                 BoxRec::Picture(p) => picture_items(&local, p, source_of, &mut items, &mut used),
                 BoxRec::Table(t) => {
+                    // beamer covered table: set and measured, not painted.
+                    if t.hidden {
+                        continue;
+                    }
                     // `device: None`: `crate::tablecolor` has already flattened the
                     // colortbl colour to sRGB, so the operands pdfTeX would write
                     // (`k`/`rg`/`g`) are gone by here. Filling this in needs the
@@ -10894,6 +10914,11 @@ fn assemble_block(
                     // transform maps the unit square into that box (the
                     // same arithmetic as `floatpage::Placer::emit`, with the
                     // baseline at 0 and the line's shift applied later).
+                    // beamer covered graphic: the box keeps its space, the
+                    // image (or placeholder) is not painted.
+                    if g.hidden {
+                        continue;
+                    }
                     let provenance = Provenance::Source(source_of(g.span));
                     let (left, base, gbox) = (local.x, 0.0, g.gbox);
                     if let Some(kind) = g.placeholder {

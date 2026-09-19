@@ -272,12 +272,20 @@ fn restyle(item: &mut AItem, state: &mut State) {
             let mut first = None;
             transform_items(&mut t.items, state, &mut first);
         }
-        // Formulas, tables and graphics carry no text style: covered ones
-        // are still painted (a known gap; the corpus has none).
-        AItem::Math { .. }
-        | AItem::Table(_)
-        | AItem::Graphic { .. }
-        | AItem::Footnote { text: None, .. }
+        // Formulas, tables and graphics carry no text style: a covered one
+        // is flagged for the typesetter, which sets and measures it as
+        // usual and does not paint it (`typeset::assemble_block`).
+        AItem::Math { hidden, .. } | AItem::Graphic { hidden, .. } => {
+            if state.covered() {
+                *hidden = true;
+            }
+        }
+        AItem::Table(t) => {
+            if state.covered() {
+                t.hidden = true;
+            }
+        }
+        AItem::Footnote { text: None, .. }
         | AItem::LineBreak { .. }
         | AItem::Label { .. }
         | AItem::ItalicCorrection
@@ -393,6 +401,23 @@ mod tests {
             vec![("second".into(), false, false), ("late".into(), false, false), ("hot".into(), false, true), ("tail".into(), false, false)]
         );
         assert!(matches!(blocks[3], Block::FrameBegin { slide: 2, .. }));
+    }
+
+    #[test]
+    fn covered_formulas_and_graphics_are_flagged_hidden() {
+        let math = |hidden| AItem::Math { list: flashtex_compiler::math::MathList { atoms: Vec::new() }, span: Span::new(0, 0), hidden };
+        let graphic = |hidden| AItem::Graphic { options: String::new(), path: "f.png".into(), span: Span::new(0, 0), hidden };
+        let mut blocks = frame(2, vec![para(vec![begin(OverlayKind::Cover, "2-"), math(false), graphic(false), AItem::Overlay(OverlayMark::End), math(false)])]);
+        expand_frames(&mut blocks);
+        let items = |b: &Block| -> Vec<AItem> {
+            let Block::Paragraph { parts, .. } = b else { return Vec::new() };
+            parts.iter().flat_map(|p| match p {
+                ParaPart::Lines(items) => items.clone(),
+                _ => Vec::new(),
+            }).collect()
+        };
+        assert_eq!(items(&blocks[1]), vec![math(true), graphic(true), math(false)]);
+        assert_eq!(items(&blocks[4]), vec![math(false), graphic(false), math(false)]);
     }
 
     #[test]

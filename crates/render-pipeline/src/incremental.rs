@@ -394,10 +394,11 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 factor.hash(h);
                 no_break.hash(h);
             }
-            Item::Math { list, span } => {
+            Item::Math { list, span, hidden } => {
                 hash_math(list, h);
                 (span.start.wrapping_sub(base)).hash(h);
                 (span.end.wrapping_sub(base)).hash(h);
+                hidden.hash(h);
             }
             Item::LineBreak { skip_pt } => {
                 skip_pt.to_bits().hash(h);
@@ -466,11 +467,12 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
             Item::ColorBox(b) => {
                 format!("{b:?}").hash(h);
             }
-            Item::Graphic { options, path, span } => {
+            Item::Graphic { options, path, span, hidden } => {
                 options.hash(h);
                 path.hash(h);
                 (span.start.wrapping_sub(base)).hash(h);
                 (span.end.wrapping_sub(base)).hash(h);
+                hidden.hash(h);
             }
             Item::Lap { items } => {
                 hash_items(items, base, h);
@@ -906,7 +908,7 @@ pub fn relocate_items(items: &[Item], delta: isize) -> Vec<Item> {
                     }
                 }
             }
-            Item::Math { list, span } => {
+            Item::Math { list, span, .. } => {
                 shift_span(span, delta);
                 shift_math(list, delta);
             }
