@@ -53,7 +53,7 @@ Any editor or CI can drive that same JSON Lines protocol directly — see
 
 ```
 flashtex build [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
-               [--v2 out.json] [--timing] [--verbose] [--strict] [--json] [-j N]
+               [--font ROLE=NAME]... [--v2 out.json] [--timing] [--verbose] [--strict] [--json] [-j N]
 flashtex check [<main.tex>|<dir>] [--json] [--strict] [--project-root DIR] [--font-dir DIR]...
 flashtex watch [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
 flashtex manifest init [<main.tex>|<dir>] [--force]
@@ -99,6 +99,7 @@ output as *File › Export PDF* in the app. The file is written atomically
 | `-j`, `--jobs N` | Accepted for build-system compatibility; the engine is single-threaded | — |
 | `--class-options OPTS` | Class options assumed when the source has no `\documentclass` (body-only input) | `12pt` |
 | `--secnumdepth N` | Section numbering depth when the source does not set the counter | `2` |
+| `--font ROLE=NAME` | The installed family for a role — `text`, `sans`, `mono` or `math` (repeatable). Outranks the manifest's [`[fonts]`](project-manifest.md#keys) table for that role; the document's own `\setmainfont` still wins | the manifest, else the class fonts |
 
 ### `check`
 
