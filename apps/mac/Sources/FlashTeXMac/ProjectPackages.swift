@@ -150,7 +150,13 @@ final class ProjectPackagesState {
         }
         let pending = Set(offers.map(\.name))
         let wanted = names.filter { delivered[$0] == nil && !inFlight.contains($0) }
-        if wanted.allSatisfy(pending.contains), !offers.isEmpty { shown = true; return }
+        guard !wanted.isEmpty else {
+            let done = names.filter { delivered[$0] != nil }
+            model.navigationNote = done.isEmpty ? "\(names.joined(separator: ", ")): already being resolved"
+                : "\(done.joined(separator: ", ")) already resolved: " + done.map { "\($0) from \(delivered[$0]!.source)" }.joined(separator: "; ")
+            return
+        }
+        if wanted.allSatisfy(pending.contains) { shown = true; return }
         Task { await resolve(wanted.filter { !pending.contains($0) }, consent: manifestFetch == "always") }
     }
 
