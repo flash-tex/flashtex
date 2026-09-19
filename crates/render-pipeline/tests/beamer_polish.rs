@@ -225,3 +225,69 @@ fn covered_math_graphics_and_tables_keep_their_space_unpainted() {
         assert!(page_words(&words, 2).iter().any(|(t2, x2, y2)| t2 == t && near(*x, *x2, 0.001) && near(*y, *y2, 0.001)), "{t:?} moved between slides");
     }
 }
+
+/// The paint of the run reading `text` on `page` nearest `baseline`.
+fn run_paint(r: &Rendered, page: u32, text: &str, baseline: f64) -> (f64, f64, f64) {
+    let mut best: Option<(f64, (f64, f64, f64))> = None;
+    for p in &r.v2.pages {
+        if p.number != page {
+            continue;
+        }
+        for it in p.resident_items() {
+            if let Item::GlyphRun(run) = it {
+                if run.text == text {
+                    let d = (run.glyphs[0].baseline_y.to_bp() - baseline).abs();
+                    if best.is_none_or(|(b, _)| d < b) {
+                        best = Some((d, (run.paint.r, run.paint.g, run.paint.b)));
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(_, p)| p).unwrap_or_else(|| panic!("no run {text:?} on page {page}"))
+}
+
+/// Item 3: Madrid's `items[ball]` labels. The reference paints the
+/// `bigsphere` shading as an XObject (`/BBox [0 0 5.139 5.139]`): on p3
+/// at `1 0 0 1 22.133 162.312 cm` for each itemize item (its bottom
+/// 0.2pt above the item baseline 110.013, its right edge `\labelsep`
+/// before `Every` at 32.727), on p4 scaled 1.75 about the picture origin
+/// `22.424 164.069` (a 8.993bp ball centred 3.152bp above the baseline
+/// 111.209) under the white `\tiny` `1` at (20.837, 109.521). This
+/// pipeline paints a flat disc (`class_geometry::beamer::ball`: radius
+/// 0.491ex, colour 0.632 structure + 0.113 white + 0.256 black =
+/// 0.239 0.239 0.555) inside each of those boxes.
+#[test]
+fn madrid_ball_items_are_flat_discs_under_the_labels() {
+    if !lm_available() {
+        return;
+    }
+    let r = render_one(&madrid_deck());
+    let words = words_of(&r);
+    let ball = |p: &&PathItem| near(p.paint.r, 0.2394, 0.001) && near(p.paint.b, 0.5554, 0.001);
+    // p3: four itemize discs, each inside its XObject box.
+    let discs: Vec<&PathItem> = paths_of(&r, 3).into_iter().filter(ball).collect();
+    assert_eq!(discs.len(), 4, "p3 discs");
+    assert!(discs.iter().all(|p| matches!(p.op, PathPaintOp::Fill { .. })));
+    let (x0, y0, x1, y1) = bbox(&discs[..1]);
+    let (side, cx, top) = (5.139, 22.133 + 5.139 / 2.0, 272.126 - 162.312 - 5.139);
+    assert!(x0 >= 22.133 - 0.01 && x1 <= 22.133 + side + 0.01, "disc x {x0}..{x1}");
+    assert!(y0 >= top - 0.01 && y1 <= top + side + 0.01, "disc y {y0}..{y1}");
+    assert!(near((x0 + x1) / 2.0, cx, 0.01) && near((y0 + y1) / 2.0, top + side / 2.0, 0.01), "disc centre");
+    assert!(near(x1 - x0, 2.0 * 2.38, 0.05), "disc diameter {}", x1 - x0);
+    at(&words, 3, "Every", 32.727, 110.013, 0.01);
+    // p4: three enumerate discs 1.75 x as large, centred on the picture
+    // origin, under a white `1`/`2`/`3`.
+    let discs: Vec<&PathItem> = paths_of(&r, 4).into_iter().filter(ball).collect();
+    assert_eq!(discs.len(), 3, "p4 discs");
+    let (x0, y0, x1, y1) = bbox(&discs[..1]);
+    assert!(near((x0 + x1) / 2.0, 22.424, 0.01) && near((y0 + y1) / 2.0, 272.126 - 164.069, 0.01), "enumerate disc centre {:?}", (x0, y0, x1, y1));
+    assert!(near(x1 - x0, 1.75 * 2.0 * 2.38, 0.05), "enumerate disc diameter {}", x1 - x0);
+    at(&words, 4, "1", 20.837, 109.521, 0.05);
+    assert_eq!(run_paint(&r, 4, "1", 109.521), (1.0, 1.0, 1.0));
+    // The disc is painted before the number (the number sits on it).
+    let items = r.v2.pages[3].resident_items();
+    let disc_at = items.iter().position(|it| matches!(it, Item::Path(p) if ball(&p))).unwrap();
+    let one_at = items.iter().position(|it| matches!(it, Item::GlyphRun(g) if g.text == "1")).unwrap();
+    assert!(disc_at < one_at);
+}

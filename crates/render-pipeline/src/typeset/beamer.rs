@@ -575,18 +575,63 @@ impl<'a> Context<'a> {
         out
     }
 
+    /// A filled disc of `radius` centred `(cx, cy)` above the box's
+    /// reference point, as pgf writes a circle (four cubics, tangent
+    /// factor 0.5523).
+    fn disc(cx: f64, cy: f64, radius: f64, color: DeviceColor) -> super::Shape {
+        use super::ShapeCmd::{Close, Cubic, Move};
+        let (r, k) = (radius, 0.5522847 * radius);
+        super::Shape {
+            op: super::ShapeOp::Fill,
+            commands: vec![
+                Move(cx + r, cy),
+                Cubic(cx + r, cy + k, cx + k, cy + r, cx, cy + r),
+                Cubic(cx - k, cy + r, cx - r, cy + k, cx - r, cy),
+                Cubic(cx - r, cy - k, cx - k, cy - r, cx, cy - r),
+                Cubic(cx + k, cy - r, cx + r, cy - k, cx + r, cy),
+                Close,
+            ],
+            color,
+        }
+    }
+
+    /// The label of a Madrid (`items[ball]`) itemize item: `itemize item`
+    /// `[ball]` (`beamerbaseauxtemplates.sty` 366), `\raise0.2pt` of an
+    /// `\hbox{\pgfuseshading{bigsphere}}` in `item projected`'s colours:
+    /// a `2 x 0.53ex` square (`\normalsize` ex) holding the radial
+    /// shading, painted here as the flat disc `spec::ball` describes.
+    /// Measured (Madrid p3): the shading XObject (`/BBox [0 0 5.139
+    /// 5.139]`) at `1 0 0 1 22.133 162.312 cm`, its bottom 0.2pt above the
+    /// item baseline (110.013bp) and its right edge `\labelsep` before the
+    /// text (32.727bp).
+    pub(super) fn beamer_ball_item(&mut self, span: Span, hidden: bool) -> super::NumberBox {
+        const RAISE_PT: f64 = 0.2;
+        let ball = spec::ball(spec::STRUCTURE_RGB);
+        let (side, radius) = (frame_pt(ball.side), frame_pt(ball.radius));
+        let shape = Self::disc(side / 2.0, RAISE_PT + side / 2.0, radius, rgb_color(ball.color));
+        let (run, rec) = self.paths_box(span, side, side + RAISE_PT, 0.0, vec![shape], hidden);
+        super::NumberBox { width: side, height: side + RAISE_PT, depth: 0.0, pieces: vec![(run, rec, 0.0)] }
+    }
+
     /// The label of a Madrid (`items[ball]`) enumerate item: `enumerate
     /// item` `[ball]` (`beamerbaseauxtemplates.sty` 374-384), a
     /// `pgfpicture{-1ex}{-0.65ex}{1ex}{1ex}` (in the body font) holding
     /// the `bigsphere` shading and `\insertenumlabel` in `\tiny`, centred
     /// on the picture's origin and raised 0.5pt: the picture's baseline is
     /// its bounding box's bottom, so the number's baseline sits `0.65ex +
-    /// 0.5pt - ht/2` above the item's. The ball is a pgf radial shading and
-    /// is not drawn (the number is white, as on the ball). Measured (corpus
-    /// p4): `1` at x = 20.837bp, 1.688bp above the item baseline.
+    /// 0.5pt - ht/2` above the item's. The ball is the `bigsphere` shading
+    /// scaled 1.75 and centred on the origin (`\pgftext` centres its box):
+    /// painted as the flat disc `spec::ball` describes, 1.75 x its radius,
+    /// under the white number. Measured (corpus p4): `1` at x = 20.837bp,
+    /// 1.688bp above the item baseline; the shading XObject drawn under
+    /// `1 0 0 1 22.424 164.069 cm`, `-4.497 -4.497 cm`, `1.75 0 0 1.75 0 0
+    /// cm` (a 8.993bp disc centred 3.152bp above the baseline).
     pub(super) fn beamer_ball_number(&mut self, text: &str, span: Span, hidden: bool) -> Option<super::NumberBox> {
         let ex = frame_pt(spec::SANS_BODY_EX);
         let tiny = frame_pt(spec::TINY.size);
+        let ball = spec::ball(spec::STRUCTURE_RGB);
+        let disc = Self::disc(ex, 0.65 * ex, 1.75 * frame_pt(ball.radius), rgb_color(ball.color));
+        let (disc_run, disc_rec) = self.paths_box(span, 0.0, 1.65 * ex, 0.0, vec![disc], hidden);
         let digits = text.trim_end_matches('.');
         let seg = adapter::Segment {
             text: digits.to_string(),
@@ -604,7 +649,7 @@ impl<'a> Context<'a> {
         run.depth = (run.depth - raise_pt).max(0.0);
         let width = 2.0 * ex;
         let x = (width - run.width) / 2.0;
-        Some(super::NumberBox { width, height: 1.65 * ex, depth: 0.0, pieces: vec![(run, rec, x)] })
+        Some(super::NumberBox { width, height: 1.65 * ex, depth: 0.0, pieces: vec![(disc_run, disc_rec, 0.0), (run, rec, x)] })
     }
 }
 

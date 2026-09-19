@@ -146,6 +146,8 @@ pub enum BoxRec {
 pub struct PathsRec {
     pub shapes: Vec<Shape>,
     pub span: Span,
+    /// beamer covered material: the box keeps its space, nothing is painted.
+    pub hidden: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -4372,11 +4374,7 @@ impl<'a> Context<'a> {
             let color = Some(beamer::structure_color());
             let ball = self.beamer_theme().ball_items;
             let boxed = if symbol && ball {
-                // `items[ball]` (Madrid): the label is `\raise0.2pt` of the
-                // `bigsphere` pgf shading, a radial gradient this pipeline
-                // does not draw; its box keeps the label's place.
-                let ex = crate::style::frame_pt(flashtex_class_geometry::beamer::SANS_BODY_EX);
-                Some(NumberBox { width: 2.0 * ex, height: 1.8 * ex + 0.2, depth: 0.0, pieces: Vec::new() })
+                Some(self.beamer_ball_item(span, hidden))
             } else if symbol {
                 self.beamer_triangle_box(span, size, color, hidden)
             } else if ball {
@@ -4647,8 +4645,15 @@ impl<'a> Context<'a> {
     /// drawn as vector paths (beamer's navigation symbols). The line's
     /// baseline is the box's.
     pub(super) fn paths_block(&mut self, span: Span, width: f64, height: f64, depth: f64, x: f64, shapes: Vec<Shape>) -> BuiltBlock {
-        self.recs.push(BoxRec::Paths(Rc::new(PathsRec { shapes, span })));
-        let rec = self.recs.len() - 1;
+        let (run, rec) = self.paths_box(span, width, height, depth, shapes, false);
+        self.one_box_block(run, rec, x, height, depth)
+    }
+
+    /// A [`BoxRec::Paths`] box of `width` x `height` + `depth` holding
+    /// `shapes`, as one item of a horizontal list (a beamer `items[ball]`
+    /// label's disc).
+    pub(super) fn paths_box(&mut self, span: Span, width: f64, height: f64, depth: f64, shapes: Vec<Shape>, hidden: bool) -> (pl::GlyphRun, usize) {
+        self.recs.push(BoxRec::Paths(Rc::new(PathsRec { shapes, span, hidden })));
         let run = pl::GlyphRun {
             font: MATH_SENTINEL,
             size: self.style.body_size_pt,
@@ -4658,7 +4663,7 @@ impl<'a> Context<'a> {
             depth,
             source: span.start..span.end,
         };
-        self.one_box_block(run, rec, x, height, depth)
+        (run, self.recs.len() - 1)
     }
 
     /// [`Self::rule_block_sized`] painted in `color` (`None`: black): a
@@ -10958,6 +10963,10 @@ fn assemble_block(
                 }
                 BoxRec::Leader { .. } => {}
                 BoxRec::Paths(p) => {
+                    // beamer covered material: the box keeps its space.
+                    if p.hidden {
+                        continue;
+                    }
                     let provenance = Provenance::Source(source_of(p.span));
                     let x0 = local.x;
                     let tx = |x: f64| Tick::from_tex_pt(x0 + x);
