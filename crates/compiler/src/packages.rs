@@ -78,7 +78,7 @@ pub const BUILT_IN_PACKAGES: &[(&str, &str)] = &[
     ("fontenc", "T1/OT1 are the text encoding tables; fontenc.sty needs \\DeclareFontEncoding"),
     ("lmodern", "Latin Modern is the render pipeline's font set; lmodern.sty needs \\DeclareFontFamily"),
     ("fontspec", "\\setmainfont & co. are font settings (proposal S4); fontspec.sty is expl3 code"),
-    ("unicode-math", "math fonts are a setting (proposal S4); the file is expl3 code"),
+    ("unicode-math", "`\\setmathfont{…}` selects the OpenType math font (and the package alone selects Latin Modern Math); the file is expl3 code"),
     ("babel", "language selection is not modelled; babel.sty needs \\language and \\lccode tables"),
     ("iftex", "\\ifpdftex & co. would misreport the engine; the file tests primitives"),
     ("ifxetex", "\\ifxetex is the parser's; the file tests primitives"),
