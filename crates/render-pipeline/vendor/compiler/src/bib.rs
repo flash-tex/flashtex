@@ -161,7 +161,7 @@ pub fn prescan<T: Borrow<Token>>(tokens: &[T], diags: &mut Vec<Diagnostic>) -> B
                 let is_begin = name == "begin";
                 match group_text(tokens, i + 1) {
                     Some((environment, after)) => {
-                        if environment.trim() == "thebibliography" {
+                        if crate::parser::is_bibliography_environment(environment.trim()) {
                             in_bibliography = is_begin;
                         }
                         i = after;
@@ -292,7 +292,10 @@ fn natbib_options<T: Borrow<Token>>(tokens: &[T]) -> Option<natbib::Options> {
 /// spaces/comments from) `i`, and the index just past its closing brace.
 /// `None` if `i` is not followed by a brace group — a malformed `\bibitem`
 /// or `\begin`/`\end` is left for the real parse's own diagnostics.
-fn group_text<T: Borrow<Token>>(tokens: &[T], mut i: usize) -> Option<(String, usize)> {
+///
+/// Shared with `expansion`'s biblatex-package scan, which reads the same
+/// raw lexer tokens.
+pub(crate) fn group_text<T: Borrow<Token>>(tokens: &[T], mut i: usize) -> Option<(String, usize)> {
     while matches!(
         tokens.get(i).map(|t| &t.borrow().kind),
         Some(TokenKind::Space | TokenKind::Comment)
@@ -328,7 +331,10 @@ fn group_text<T: Borrow<Token>>(tokens: &[T], mut i: usize) -> Option<(String, u
 /// bracket matching (brackets are ordinary lexer word characters, never
 /// their own token kind) against a plain token slice instead of the live
 /// parse cursor.
-fn optional_bracket_text<T: Borrow<Token>>(tokens: &[T], mut i: usize) -> Option<(String, usize)> {
+///
+/// Shared with `expansion`'s biblatex-package scan, which reads the same
+/// raw lexer tokens.
+pub(crate) fn optional_bracket_text<T: Borrow<Token>>(tokens: &[T], mut i: usize) -> Option<(String, usize)> {
     while matches!(
         tokens.get(i).map(|t| &t.borrow().kind),
         Some(TokenKind::Space | TokenKind::Comment)

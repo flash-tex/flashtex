@@ -621,23 +621,32 @@ fn fancyhdr_diagnostics_never_suggest_moving_to_the_body() {
         "missing package must be named: {:?}",
         parsed.diagnostics
     );
-    // The later slice's commands are recognised as fancyhdr's own, with no
-    // move-advice either.
-    for command in ["\\lhead{X}", "\\fancypagestyle{plain}{}"] {
-        let parsed = parse(&format!(
-            "\\documentclass{{article}}\n\
-             \\usepackage{{fancyhdr}}\n\
-             {command}\n\
-             \\begin{{document}}\nText.\n\\end{{document}}\n"
-        ));
-        assert!(
-            parsed.diagnostics.iter().any(|d| d
-                .message
-                .contains("recognised but not implemented")),
-            "{command}: {:?}",
-            parsed.diagnostics
-        );
-    }
+    // The implemented single-slot command is silent; the later slice's
+    // command is recognised as fancyhdr's own, with no move-advice either.
+    let parsed = parse(
+        "\\documentclass{article}\n\
+         \\usepackage{fancyhdr}\n\
+         \\lhead{X}\n\
+         \\begin{document}\nText.\n\\end{document}\n",
+    );
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "\\lhead is implemented now: {:?}",
+        parsed.diagnostics
+    );
+    let parsed = parse(
+        "\\documentclass{article}\n\
+         \\usepackage{fancyhdr}\n\
+         \\fancypagestyle{plain}{}\n\
+         \\begin{document}\nText.\n\\end{document}\n",
+    );
+    assert!(
+        parsed.diagnostics.iter().any(|d| d
+            .message
+            .contains("recognised but not implemented")),
+        "\\fancypagestyle: {:?}",
+        parsed.diagnostics
+    );
     let leaked = parse(REPRO).diagnostics.iter().any(|d| {
         d.message.contains("move")
             || d.help
@@ -645,4 +654,113 @@ fn fancyhdr_diagnostics_never_suggest_moving_to_the_body() {
                 .is_some_and(|help| help.message.contains("move"))
     });
     assert!(!leaked, "no move-advice: {:?}", parse(REPRO).diagnostics);
+}
+
+#[test]
+fn single_slot_commands_fill_their_own_slots() {
+    // The six `\lhead`/`\chead`/`\rhead` / `\lfoot`/`\cfoot`/`\rfoot`
+    // commands (issue #833's repro used `\rhead`): silent, streaming in
+    // content-stream order -- header L, C, R, then the body, then footer
+    // L, C, R -- with the header above the body and the footer below it.
+    // Oracle (pdflatex TeX Live 2026): the `\rhead` header sits ~38pt
+    // above the body baseline, right-aligned on the same line the
+    // `\fancyhead[R]` field would take.
+    let out = compile(
+        "\\documentclass{article}\n\
+         \\usepackage{fancyhdr}\n\
+         \\pagestyle{fancy}\n\
+         \\fancyhf{}\n\
+         \\lhead{LH}\n\
+         \\chead{CH}\n\
+         \\rhead{RH}\n\
+         \\lfoot{LF}\n\
+         \\cfoot{CF}\n\
+         \\rfoot{RF}\n\
+         \\begin{document}\n\
+         Body.\n\
+         \\end{document}\n",
+    );
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+    assert_eq!(
+        page_words(&out),
+        ["LH", "CH", "RH", "Body.", "LF", "CF", "RF"],
+    );
+    let y = |word: &str| {
+        items(&out)
+            .iter()
+            .find(|item| item.text == word)
+            .unwrap_or_else(|| panic!("no item {word:?}"))
+            .baseline_y_pt
+    };
+    assert!(y("RH") < y("Body."), "header above: {:?}", page_words(&out));
+    assert!(y("Body.") < y("RF"), "footer below: {:?}", page_words(&out));
+    // Each single-slot command lands exactly where the matching
+    // `\fancyhead`/`\fancyfoot` position would put the same marker: the
+    // same slot, the same placement step.
+    for (single, positional) in [
+        ("\\lhead{SLOT}", "\\fancyhead[L]{SLOT}"),
+        ("\\chead{SLOT}", "\\fancyhead[C]{SLOT}"),
+        ("\\rhead{SLOT}", "\\fancyhead[R]{SLOT}"),
+        ("\\lfoot{SLOT}", "\\fancyfoot[L]{SLOT}"),
+        ("\\cfoot{SLOT}", "\\fancyfoot[C]{SLOT}"),
+        ("\\rfoot{SLOT}", "\\fancyfoot[R]{SLOT}"),
+    ] {
+        let (_, x_single) = field_hits(single, "SLOT");
+        let (n_pos, x_pos) = field_hits(positional, "SLOT");
+        assert_eq!(n_pos, 1, "{positional} must render once");
+        assert_eq!(
+            (x_single.is_nan(), x_single),
+            (false, x_pos),
+            "{single} must land where {positional} lands"
+        );
+    }
+}
+
+#[test]
+fn single_slot_optional_even_group_is_consumed_and_ignored() {
+    // The oracle stores `\rhead[even]{odd}`'s bracket into the even-page
+    // field, which never ships one-sided -- so the odd text renders once
+    // and the even text never leaks onto the page or into diagnostics.
+    let out = compile(
+        "\\documentclass{article}\n\
+         \\usepackage{fancyhdr}\n\
+         \\pagestyle{fancy}\n\
+         \\fancyhf{}\n\
+         \\rhead[Even]{Odd}\n\
+         \\begin{document}\n\
+         Body.\n\
+         \\end{document}\n",
+    );
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+    assert_eq!(page_words(&out), ["Odd", "Body."]);
+}
+
+#[test]
+fn single_slot_without_the_package_names_what_is_missing() {
+    // As with `\fancyhead`, header setup without the package says what is
+    // missing -- never the generic move-it-to-the-body advice, and never
+    // a leak of the field text onto the page.
+    let parsed = parse(
+        "\\documentclass{article}\n\
+         \\rhead{Right}\n\
+         \\begin{document}\nText.\n\\end{document}\n",
+    );
+    assert!(
+        parsed
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("\\rhead needs \\usepackage{fancyhdr}")),
+        "missing package must be named: {:?}",
+        parsed.diagnostics
+    );
+    let out = compile(
+        "\\documentclass{article}\n\
+         \\rhead{Right}\n\
+         \\begin{document}\nText.\n\\end{document}\n",
+    );
+    assert!(
+        !page_words(&out).contains(&"Right".to_string()),
+        "an unstored field must not leak onto the page: {:?}",
+        page_words(&out)
+    );
 }

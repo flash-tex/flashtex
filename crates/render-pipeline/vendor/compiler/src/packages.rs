@@ -70,6 +70,7 @@ pub const BUILT_IN_PACKAGES: &[(&str, &str)] = &[
     ("lipsum", "\\lipsum text is a parser table"),
     ("verbatim", "verbatim and comment environments are read by the lexer; verbatim.sty needs \\catcode tricks on \\obeylines output"),
     ("comment", "the comment environment is read by the lexer"),
+    ("alltt", "the alltt environment is read by the parser; alltt.sty needs \\catcode tricks on \\obeylines output"),
     ("url", "\\url is parsed raw by the lexer; url.sty needs \\discretionary and \\catcode tricks"),
     ("nameref", "\\nameref is crate::xref"),
     // -- encodings, fonts, languages --
@@ -80,6 +81,8 @@ pub const BUILT_IN_PACKAGES: &[(&str, &str)] = &[
     ("unicode-math", "math fonts are a setting (proposal S4); the file is expl3 code"),
     ("babel", "language selection is not modelled; babel.sty needs \\language and \\lccode tables"),
     ("iftex", "\\ifpdftex & co. would misreport the engine; the file tests primitives"),
+    ("ifxetex", "\\ifxetex is the parser's; the file tests primitives"),
+    ("ifluatex", "\\ifluatex is the parser's; the file tests primitives"),
     ("calc", "\\setlength arithmetic is the engine's \\dimexpr; calc.sty needs \\dimen registers with \\advance semantics"),
     ("etoolbox", "toggles are the engine's HOST_PRELUDE; etoolbox.sty needs \\numexpr on \\catcode tables and \\afterassignment tricks"),
     ("ifthen", "\\ifthenelse is an engine primitive"),
@@ -94,6 +97,7 @@ pub const BUILT_IN_PACKAGES: &[(&str, &str)] = &[
     ("subcaption", "subfigures are the render pipeline's; the file needs caption's machinery"),
     ("float", "[H] placement is the render pipeline's; float.sty needs \\output"),
     ("wrapfig", "wrapped figures are the render pipeline's; wrapfig.sty needs \\parshape and \\output"),
+    ("tcolorbox", "the tcolorbox environment (colback/colframe) is the parser's; tcolorbox.sty needs pgf and \\setbox"),
     // -- graphics and colour --
     ("graphicx", "\\includegraphics is the render pipeline's; graphicx.sty needs \\pdfximage and \\setbox"),
     ("graphics", "\\includegraphics is the render pipeline's; graphics.sty needs \\pdfximage and \\setbox"),
