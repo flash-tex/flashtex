@@ -220,9 +220,9 @@ pub fn symbol_byte(c: char) -> Option<u8> {
         '⇒' => 0xDE, // arrowdblright
         '⇓' => 0xDF, // arrowdbldown
         '◊' => 0xE0, // lozenge
-        '⟨' => 0xE1, // angleleft
+        '⟨' | '\u{2329}' | '\u{3008}' => 0xE1, // angleleft
         '∑' => 0xE5, // summation
-        '⟩' => 0xF1, // angleright
+        '⟩' | '\u{232A}' | '\u{3009}' => 0xF1, // angleright
         '∫' => 0xF2, // integral
         _ => return None,
     })
