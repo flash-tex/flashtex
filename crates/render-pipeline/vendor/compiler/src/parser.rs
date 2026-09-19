@@ -7507,21 +7507,6 @@ impl P<'_> {
             self.flush_paragraph(blocks, para);
         } else if let (Some(style), true) = (paragraph_style(&environment), self.in_body) {
             self.flush_paragraph(blocks, para);
-            if environment == "abstract" {
-                let heading_span = span.merge(argument_span);
-                blocks.push(Block::Styled {
-                    style: ParagraphStyle::Center,
-                    content: vec![Inline::Text {
-                        text: "Abstract".to_string(),
-                        span: heading_span,
-                        style: TextStyle::BOLD,
-                        space_before: false,
-                    }],
-                    lists: Vec::new(),
-                    line_break_before: None,
-                });
-                self.finish_block_dependencies();
-            }
             self.paragraph_styles.push(style);
             // An inner alignment environment overrides an outer declaration.
             if style != ParagraphStyle::Quote {
@@ -7731,9 +7716,6 @@ impl P<'_> {
         // `begin_theorem` below.
         if size_env {
             self.style = apply_style(self.style, &environment, self.body_size_pt());
-        }
-        if environment == "abstract" {
-            self.style.size = Some(FontSizeLevel::Small);
         }
         if self.in_body {
             if let Some(theorem) = self.theorems.get(&environment).cloned() {
@@ -14525,7 +14507,7 @@ fn paragraph_style(environment: &str) -> Option<ParagraphStyle> {
         "center" => Some(ParagraphStyle::Center),
         "flushright" => Some(ParagraphStyle::FlushRight),
         "flushleft" => Some(ParagraphStyle::FlushLeft),
-        "quote" | "quotation" | "verse" | "abstract" => Some(ParagraphStyle::Quote),
+        "quote" | "quotation" | "verse" => Some(ParagraphStyle::Quote),
         _ => None,
     }
 }

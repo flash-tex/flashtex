@@ -378,7 +378,7 @@
     {"name": "alert", "mode": "text", "origin": "text_dispatch", "arguments": "<overlay>{...}", "description": "beamer alert text in red on the slides the <overlay> spec selects (every slide without one); needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
     {"name": "pause", "mode": "text", "origin": "text_dispatch", "arguments": "[n]", "description": "beamer: the material after it is covered (space kept, not painted) until slide n, the pause count + 1 by default; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
     {"name": "onslide", "mode": "text", "origin": "text_dispatch", "arguments": "<overlay>{...}", "description": "beamer: without an argument, the material up to the next \\onslide or \\pause is covered on the slides the spec does not select; with one, like \\uncover (\\onslide* like \\only, \\onslide+ like \\visible); needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
-    {"name": "uncover", "mode": "text", "origin": "text_dispatch", "arguments": "<overlay>{...}", "description": "beamer: the argument (text, formulas, tabular, includegraphics) keeps its space and is not painted on the slides the spec does not select (\\setbeamercovered{invisible}), or painted mixed with the background under \\setbeamercovered{transparent}; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
+    {"name": "uncover", "mode": "text", "origin": "text_dispatch", "arguments": "<overlay>{...}", "description": "beamer: the argument keeps its space and is not painted on the slides the spec does not select (\\setbeamercovered{invisible}); needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
     {"name": "only", "mode": "text", "origin": "text_dispatch", "arguments": "<overlay>{...}", "description": "beamer: the argument is typeset only on the slides the spec selects and takes no space on the others; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
     {"name": "visible", "mode": "text", "origin": "text_dispatch", "arguments": "<overlay>{...}", "description": "beamer: like \\uncover; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
     {"name": "invisible", "mode": "text", "origin": "text_dispatch", "arguments": "<overlay>{...}", "description": "beamer: the argument is covered on the slides the spec selects; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
@@ -392,12 +392,12 @@
     {"name": "usefonttheme", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "accepted and read past: only beamer's default font theme is modelled; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
     {"name": "useinnertheme", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "accepted and read past: only beamer's default inner theme is modelled; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
     {"name": "useoutertheme", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "accepted and read past: only beamer's default outer theme is modelled; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
-    {"name": "setbeamertemplate", "mode": "text", "origin": "text_dispatch", "arguments": "{...}{...}", "description": "accepted and read past; \\setbeamertemplate{navigation symbols}{} removes the navigation symbol strip the renderer draws on every non-plain frame page, any other replacement template keeps the default strip; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
+    {"name": "setbeamertemplate", "mode": "text", "origin": "text_dispatch", "arguments": "{...}{...}", "description": "accepted and read past; \\setbeamertemplate{navigation symbols}{} is honoured by the renderer; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
     {"name": "setbeamercolor", "mode": "text", "origin": "text_dispatch", "arguments": "{...}{...}", "description": "accepted and read past: beamer's default colours stay in force; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
     {"name": "setbeamerfont", "mode": "text", "origin": "text_dispatch", "arguments": "{...}{...}", "description": "accepted and read past: beamer's default fonts stay in force; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
-    {"name": "setbeamercovered", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "beamer: read by the renderer from the preamble: invisible (the default) paints nothing for covered material, transparent[=pct] paints it in its colour mixed pct% with the page background (dynamic and highly dynamic are taken as their first step, 10 and 15); needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
+    {"name": "setbeamercovered", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "accepted and read past (overlays are not modelled yet); needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
     {"name": "setbeamersize", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "accepted and read past: beamer's default text margins stay in force; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
-    {"name": "beamertemplatenavigationsymbolsempty", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "beamer: removes the navigation symbol strip the renderer draws at the bottom right of every non-plain frame page; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
+    {"name": "beamertemplatenavigationsymbolsempty", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "accepted; the renderer draws no navigation symbols either way yet; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
     {"name": "column", "mode": "text", "origin": "text_dispatch", "arguments": "{width}", "description": "beamer column inside columns: a minipage of the given width (.5\\textwidth, 4cm) set beside the others; optional [c|t|T|b] alignment; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
     {"name": "long", "mode": "text", "origin": "expansion", "arguments": "", "description": "prefix: the following definition accepts \\par in arguments", "renders": true},
     {"name": "protected", "mode": "text", "origin": "expansion", "arguments": "", "description": "e-TeX prefix: the following macro is not expanded inside \\edef-like contexts", "renders": true},
@@ -1043,7 +1043,6 @@
     {"name": "flushright", "mode": "text", "description": "right-aligned paragraphs"},
     {"name": "quote", "mode": "text", "description": "indented paragraphs"},
     {"name": "quotation", "mode": "text", "description": "indented paragraphs"},
-    {"name": "abstract", "mode": "text", "description": "article/report abstract in \\small with quotation margins and centered title"},
     {"name": "sloppypar", "mode": "text", "description": "a paragraph set with \\sloppy"},
     {"name": "samepage", "mode": "text", "description": "\\samepage for the body"},
     {"name": "tiny", "mode": "text", "description": "the tiny size for the environment body"},
@@ -1137,7 +1136,7 @@
     ],
     "rows": [
       {"set": "kernel", "kind": "command", "canonical": 410, "supported": 203, "percent": 49.5},
-      {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 23, "percent": 76.7},
+      {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 22, "percent": 73.3},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 46, "percent": 45.1},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
       {"set": "amssymb", "kind": "command", "canonical": 229, "supported": 225, "percent": 98.3},
@@ -1151,6 +1150,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 20, "percent": 8.3}
     ],
-    "total": {"canonical": 1314, "supported": 558, "percent": 42.5}
+    "total": {"canonical": 1314, "supported": 557, "percent": 42.4}
   }
 }
