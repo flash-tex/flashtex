@@ -829,39 +829,53 @@ pub fn place_item(item: &crate::display::Item, dy: crate::display::Tick, path: &
 }
 
 fn shift_math(list: &mut MathList, delta: isize) {
+    map_math_spans(list, &mut |s| shift_span(s, delta));
+}
+
+/// Every atom of `list` and its sub-formulas given the one span `span`: a
+/// formula set somewhere other than where it was written (a rich `\tag`'s
+/// content set again by `\eqref`, #441), whose glyphs must map back to the
+/// command that set them, not to the tag's bytes.
+pub fn respan_math(list: &mut MathList, span: Span) {
+    map_math_spans(list, &mut |s| *s = span);
+}
+
+/// `f` over the span of every atom in `list`, recursively through every
+/// nucleus that holds a sub-formula, and the scripts.
+fn map_math_spans(list: &mut MathList, f: &mut dyn FnMut(&mut Span)) {
     for a in &mut list.atoms {
-        shift_span(&mut a.span, delta);
+        f(&mut a.span);
         match &mut a.nucleus {
             Nucleus::Symbol(_) | Nucleus::Text(_) | Nucleus::Space { .. } | Nucleus::Bold(_) | Nucleus::SizedDelimiter { .. } | Nucleus::Rule(_) => {}
             Nucleus::Fraction { numerator, denominator } => {
-                shift_math(numerator, delta);
-                shift_math(denominator, delta);
+                map_math_spans(numerator, f);
+                map_math_spans(denominator, f);
             }
-            Nucleus::Radical(r) | Nucleus::Framed { body: r, .. } | Nucleus::Accent { body: r, .. } | Nucleus::Group(r) => shift_math(r, delta),
+            Nucleus::Radical(r) | Nucleus::Framed { body: r, .. } | Nucleus::Accent { body: r, .. } | Nucleus::Group(r) => map_math_spans(r, f),
             Nucleus::Stacked { base, over, under } => {
-                shift_math(base, delta);
+                map_math_spans(base, f);
                 for part in [over, under].into_iter().flatten() {
-                    shift_math(part, delta);
+                    map_math_spans(part, f);
                 }
             }
             Nucleus::Matrix { rows, .. } => {
                 for cell in rows.iter_mut().flatten() {
-                    shift_math(cell, delta);
+                    map_math_spans(cell, f);
                 }
             }
             #[cfg(feature = "amsmath-inline")]
             Nucleus::GenFraction { numerator, denominator, .. } => {
-                shift_math(numerator, delta);
-                shift_math(denominator, delta);
+                map_math_spans(numerator, f);
+                map_math_spans(denominator, f);
             }
             #[cfg(feature = "amsmath-inline")]
-            Nucleus::Phantom { body, .. } | Nucleus::Operator { body, .. } => shift_math(body, delta),
+            Nucleus::Phantom { body, .. } | Nucleus::Operator { body, .. } => map_math_spans(body, f),
             #[cfg(feature = "amsmath-inline")]
-            Nucleus::SubArray { rows, .. } => rows.iter_mut().for_each(|r| shift_math(r, delta)),
+            Nucleus::SubArray { rows, .. } => rows.iter_mut().for_each(|r| map_math_spans(r, f)),
             #[cfg(feature = "amsmath-inline")]
             Nucleus::ExtArrow { above, below, .. } => {
-                shift_math(above, delta);
-                shift_math(below, delta);
+                map_math_spans(above, f);
+                map_math_spans(below, f);
             }
             // Nuclei only a re-pinned compiler emits. Every nested math list
             // must be shifted, or an edit before the formula leaves the
@@ -870,29 +884,29 @@ fn shift_math(list: &mut MathList, delta: isize) {
             Nucleus::TextRun(pieces) => {
                 for p in pieces.iter_mut() {
                     if let flashtex_compiler::math::TextPiece::Math(list) = p {
-                        shift_math(list, delta);
+                        map_math_spans(list, f);
                     }
                 }
             }
             #[cfg(feature = "compiler-node-surface")]
             Nucleus::SideSet { operator, left_superscript, left_subscript } => {
-                shift_math(operator, delta);
+                map_math_spans(operator, f);
                 for side in [left_superscript, left_subscript] {
                     if let Some(l) = side {
-                        shift_math(l, delta);
+                        map_math_spans(l, f);
                     }
                 }
             }
             #[cfg(feature = "compiler-node-surface")]
-            Nucleus::Lap { body, .. } => shift_math(body, delta),
+            Nucleus::Lap { body, .. } => map_math_spans(body, f),
             #[cfg(not(feature = "amsmath-inline"))]
             _ => {}
         }
         if let Some(s) = &mut a.superscript {
-            shift_math(s, delta);
+            map_math_spans(s, f);
         }
         if let Some(s) = &mut a.subscript {
-            shift_math(s, delta);
+            map_math_spans(s, f);
         }
     }
 }

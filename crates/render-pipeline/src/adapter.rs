@@ -1072,6 +1072,15 @@ pub struct BeamerDeck {
     pub short_date: Vec<Item>,
 }
 
+/// The content pieces of a rich `\tag` (see `tag_content_pieces`), as a
+/// label table value. The compiler's `TextPiece` is `PartialEq` only (a
+/// `Space` atom's `em` is an `f64`); the pieces come from the parse, which
+/// never makes a NaN, so equality is an equivalence here.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TagContent(pub Vec<flashtex_compiler::math::TextPiece>);
+
+impl Eq for TagContent {}
+
 /// Label values (`\ref`) and the pages they fell on in a previous layout
 /// pass (`\pageref`); a key absent from `pages` renders as `??`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1092,6 +1101,11 @@ pub struct Labels {
     /// from the compiler's `Inline::Label::kind`. Only `\cref` and friends
     /// read it; `\ref` needs the value alone.
     pub kinds: BTreeMap<String, String>,
+    /// The content of a rich `\tag` (`\tag{hi $x^2$}`, #441) per label in
+    /// its display ([`Labels::collect_rich_tags`]): what amsmath's `\eqref`
+    /// sets again, as `\textup{\tagform@{..}}`, where `values` has only the
+    /// compiler's flattened text of it.
+    pub rich_tags: BTreeMap<String, TagContent>,
     /// The document's cleveref naming options and `\crefname` overrides
     /// (`Parsed::cleveref`), so `\cref` can name the type it refers to.
     pub cleveref: flashtex_compiler::xref::CleverefConfig,
@@ -1577,6 +1591,45 @@ impl Labels {
         }
     }
 
+    /// Records the rich `\tag` content behind every equation `\label` set
+    /// in a tagged display (`rich_tags`). The compiler lifts `\label`s out
+    /// of a display's tokens and pushes them right after its
+    /// `Inline::Math`/`MathRows`, each spanning the `\label` where it was
+    /// written, so a label belongs to the display just before it, and to
+    /// the last of its rows that starts before the label (a row's span is
+    /// its cells', which the lifted `\label` may follow).
+    pub fn collect_rich_tags(&mut self, texts: &[&str], parsed: &Parsed) {
+        #[cfg(feature = "compiler-node-surface")]
+        for inlines in parsed.blocks.iter().map(inlines_of) {
+            // (span, rich tag content) of the display last seen, or of each
+            // of its rows.
+            let mut tags: Vec<(Span, Option<Vec<flashtex_compiler::math::TextPiece>>)> = Vec::new();
+            for inline in inlines {
+                match inline {
+                    Inline::Math { list, display: true, span, .. } => {
+                        tags.clear();
+                        tags.push((*span, rich_tag_of(texts, list)));
+                    }
+                    Inline::MathRows { rows, .. } => {
+                        tags.clear();
+                        for row in rows {
+                            tags.push((row.span, row.cells.iter().find_map(|c| rich_tag_of(texts, c))));
+                        }
+                    }
+                    Inline::Label { key, kind, span, .. } if kind == "equation" => {
+                        let before = |s: &Span| s.document == span.document && s.start <= span.start;
+                        if let Some((_, Some(pieces))) = tags.iter().rev().find(|(s, _)| before(s)) {
+                            self.rich_tags.insert(key.clone(), TagContent(pieces.clone()));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        #[cfg(not(feature = "compiler-node-surface"))]
+        let _ = (texts, parsed);
+    }
+
     /// Whether any `\pageref` in the parse needs a page number.
     pub fn needs_pages(parsed: &Parsed) -> bool {
         parsed
@@ -1804,6 +1857,14 @@ pub fn adapt_cached(
         for (k, v) in &labels.pages {
             k.hash(&mut h);
             v.hash(&mut h);
+        }
+        // A rich tag's structure, not only its flattened text in `values`:
+        // `\tag{$x$}` and `\tag{\textit{x}}` read alike there and set
+        // differently. Through `Debug`, as the non-`Hash` compiler nodes
+        // elsewhere in this crate.
+        for (k, v) in &labels.rich_tags {
+            k.hash(&mut h);
+            format!("{:?}", v.0).hash(&mut h);
         }
         h.finish()
     };
@@ -3809,6 +3870,40 @@ fn unsupported_inlines(inline: &Inline, out: &mut Vec<(&'static str, Span, Strin
 fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut Vec<Span>, out: &mut Vec<std::borrow::Cow<'a, Inline>>) {
     use flashtex_compiler::parser::{TextFamily, TextStyle as CStyle};
     match inline {
+        // amsmath `\eqref` to a rich `\tag` (#441): `\textup{\tagform@{..}}`
+        // sets the tag's content again -- its text pieces upright, its
+        // formulas at `\textstyle` -- so it is an inline formula holding
+        // the content's `TextRun` between `\tagform@`'s parentheses (a
+        // `\tag*` label gets them here too), every atom attributed to the
+        // command's bytes.
+        #[cfg(feature = "compiler-node-surface")]
+        Inline::Reference { key, page: false, equation: true, span, space_before } if labels.rich_tags.contains_key(key) => {
+            use flashtex_compiler::math::{MathAtom, Nucleus};
+            let content = labels.rich_tags[key].0.clone();
+            let mut list = MathList {
+                atoms: vec![MathAtom {
+                    nucleus: Nucleus::TextRun(tagform_pieces(content)),
+                    span: *span,
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                }],
+            };
+            crate::incremental::respan_math(&mut list, *span);
+            reference_spans.push(*span);
+            out.push(std::borrow::Cow::Owned(Inline::Math {
+                list,
+                display: false,
+                number: None,
+                number_span: None,
+                span: *span,
+                space_before: *space_before,
+                color: None,
+                color_ranges: Vec::new(),
+            }));
+        }
         Inline::Reference { key, page, equation, span, .. } => {
             let text = if *page {
                 labels.pages.get(key).map(|p| p.to_string())
@@ -5030,7 +5125,8 @@ fn strip_tag(texts: &[&str], list: &MathList, tag: &mut Option<TagLabel>, notes:
                 Nucleus::TextRun(pieces) => {
                     let source = texts.get(a.span.document.0).copied().unwrap_or("");
                     let starred = source.get(a.span.start..).is_some_and(|r| r.starts_with("\\tag*"));
-                    let pieces = trim_tag_pieces(pieces, !starred);
+                    let content = tag_content_pieces(pieces, starred);
+                    let pieces = if starred { content } else { tagform_pieces(content) };
                     let text = flashtex_compiler::math::text_run_reference_text_with_source(&pieces, source);
                     let mut atom = a.clone();
                     atom.nucleus = Nucleus::TextRun(pieces);
@@ -5056,27 +5152,65 @@ fn strip_tag(texts: &[&str], list: &MathList, tag: &mut Option<TagLabel>, notes:
     MathList { atoms }
 }
 
-/// amsmath's `\tagform@` is `(\ignorespaces#1\unskip\@@italiccorr)`
-/// (amsmath.sty 1211-1212): the spaces at either end of the label (inside the
-/// parentheses of an unstarred `\tag`) are not set.
+/// The content of a rich `\tag{..}`/`\tag*{..}` label as amsmath stores it
+/// in `\@currentlabel` (`\make@df@tag@@`/`\make@df@tag@@@`, amsmath.sty
+/// 1224-1227): the compiler's run without the parentheses it wraps an
+/// unstarred `\tag` in, and without the spaces at either end --
+/// `\tagform@` is `(\ignorespaces#1\unskip\@@italiccorr)` (1211-1212), so
+/// those are never set, in the tag or in an `\eqref` to it.
 #[cfg(feature = "compiler-node-surface")]
-fn trim_tag_pieces(pieces: &[flashtex_compiler::math::TextPiece], parens: bool) -> Vec<flashtex_compiler::math::TextPiece> {
+fn tag_content_pieces(pieces: &[flashtex_compiler::math::TextPiece], starred: bool) -> Vec<flashtex_compiler::math::TextPiece> {
     use flashtex_compiler::math::TextPiece;
     let mut out = pieces.to_vec();
     if let Some(TextPiece::Text { text, .. }) = out.first_mut() {
-        *text = match text.strip_prefix('(').filter(|_| parens) {
-            Some(rest) => format!("({}", rest.trim_start()),
-            None => text.trim_start().to_string(),
-        };
+        if !starred {
+            *text = text.strip_prefix('(').unwrap_or(text).to_string();
+        }
+        *text = text.trim_start().to_string();
     }
     if let Some(TextPiece::Text { text, .. }) = out.last_mut() {
-        *text = match text.strip_suffix(')').filter(|_| parens) {
-            Some(rest) => format!("{})", rest.trim_end()),
-            None => text.trim_end().to_string(),
-        };
+        if !starred {
+            *text = text.strip_suffix(')').unwrap_or(text).to_string();
+        }
+        *text = text.trim_end().to_string();
     }
     out.retain(|p| !matches!(p, TextPiece::Text { text, .. } if text.is_empty()));
     out
+}
+
+/// `\tagform@`'s parentheses around a label's content, in the upright body
+/// face whatever face the content opens or closes in (`\tag{\textbf{B}}`
+/// sets `(` upright, `B` bold, `)` upright).
+#[cfg(feature = "compiler-node-surface")]
+fn tagform_pieces(content: Vec<flashtex_compiler::math::TextPiece>) -> Vec<flashtex_compiler::math::TextPiece> {
+    use flashtex_compiler::math::{TextPiece, TextStyle};
+    let mut out = Vec::with_capacity(content.len() + 2);
+    out.push(TextPiece::text("(", TextStyle::NORMAL));
+    for piece in content {
+        match (out.last_mut(), piece) {
+            (Some(TextPiece::Text { text, style }), TextPiece::Text { text: t, style: st }) if *style == st => text.push_str(&t),
+            (_, piece) => out.push(piece),
+        }
+    }
+    match out.last_mut() {
+        Some(TextPiece::Text { text, style: TextStyle::Normal }) => text.push(')'),
+        _ => out.push(TextPiece::text(")", TextStyle::NORMAL)),
+    }
+    out
+}
+
+/// The rich `\tag` of a display's `list`, if it has one: its content pieces
+/// (see [`tag_content_pieces`]), for the `\label`s in the same display.
+#[cfg(feature = "compiler-node-surface")]
+fn rich_tag_of(texts: &[&str], list: &MathList) -> Option<Vec<flashtex_compiler::math::TextPiece>> {
+    use flashtex_compiler::math::Nucleus;
+    list.atoms.iter().find_map(|a| {
+        let rest = texts.get(a.span.document.0).and_then(|t| t.get(a.span.start..))?;
+        match &a.nucleus {
+            Nucleus::TextRun(pieces) if rest.starts_with("\\tag") => Some(tag_content_pieces(pieces, rest.starts_with("\\tag*"))),
+            _ => None,
+        }
+    })
 }
 
 /// `$$ ... \eqno <number> $$` (or `\leqno`): the compiler reads the
@@ -10851,6 +10985,15 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
+                // A rich `\eqref` (`lower_inline`): `\textup`'s `\check@icl`
+                // puts the italic correction of the word before it under
+                // the interword space, as for the text `\eqref` below.
+                if reference_spans.contains(span) {
+                    let at = items.len() - usize::from(matches!(items.last(), Some(Item::Space { .. })));
+                    if at > 0 && matches!(items[at - 1], Item::Word(_)) {
+                        items.insert(at, Item::ItalicCorrection);
+                    }
+                }
                 items.push(Item::Math {
                     list: list.clone(),
                     span: *span,

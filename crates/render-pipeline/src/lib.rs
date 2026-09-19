@@ -283,6 +283,7 @@ pub fn render_windowed(
         .collect();
     let in_picture = |s: &flashtex_compiler::Span| picture_ranges.get(s.document.0).is_some_and(|r| r.iter().any(|(a, b)| s.start >= *a && s.start < *b));
     let mut labels = adapter::Labels::from_parsed(&parsed);
+    labels.collect_rich_tags(&texts, &parsed);
     labels.values.extend(float_label_values);
     // `\label` given inside an `lstlisting`'s keys (`crate::listings`).
     labels.values.extend(listings::label_values(&texts));
