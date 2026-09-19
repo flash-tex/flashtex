@@ -1,5 +1,7 @@
 import Foundation
 
+// Shared by the Mac and iPad editors (FlashTeXEditorCore); platform-free.
+
 /// What Return does inside an environment (Settings > Editor > Environments).
 ///
 /// Two questions, answered per environment name with a fallback for the rest:
@@ -21,20 +23,20 @@ import Foundation
 /// stored as JSON in `EditorPreferences` (`environmentRules`). A starred
 /// environment falls back to its unstarred rule (`align*` → `align`), so a
 /// rule for `enumerate` covers `enumerate*` too.
-struct EnvironmentEditingRules: Equatable, Codable, Sendable {
-    struct Rule: Equatable, Codable, Identifiable, Sendable {
+public struct EnvironmentEditingRules: Equatable, Codable, Sendable {
+    public struct Rule: Equatable, Codable, Identifiable, Sendable {
         /// The environment name as written in `\begin{…}`, without the star.
-        var environment: String
+        public var environment: String
         /// Whether the body sits one indent unit in from `\begin`.
-        var indent: Bool
+        public var indent: Bool
         /// Text every new body line starts with (after the indentation);
         /// empty for none. The caret lands inside the first empty `[]` or
         /// `{}` it contains, else after it.
-        var newLine: String
+        public var newLine: String
 
-        var id: String { environment }
+        public var id: String { environment }
 
-        init(environment: String, indent: Bool = true, newLine: String = "") {
+        public init(environment: String, indent: Bool = true, newLine: String = "") {
             self.environment = environment
             self.indent = indent
             self.newLine = newLine
@@ -43,17 +45,17 @@ struct EnvironmentEditingRules: Equatable, Codable, Sendable {
 
     /// Whether the body of an environment with no rule of its own is
     /// indented one unit.
-    var indentByDefault: Bool
-    var rules: [Rule]
+    public var indentByDefault: Bool
+    public var rules: [Rule]
 
-    init(indentByDefault: Bool = true, rules: [Rule]) {
+    public init(indentByDefault: Bool = true, rules: [Rule]) {
         self.indentByDefault = indentByDefault
         self.rules = rules
     }
 
     /// The opinionated defaults: indent everything except `document`, and
     /// start list entries with their `\item`.
-    static let conventional = EnvironmentEditingRules(indentByDefault: true, rules: [
+    public static let conventional = EnvironmentEditingRules(indentByDefault: true, rules: [
         Rule(environment: "document", indent: false),
         Rule(environment: "itemize", newLine: "\\item "),
         Rule(environment: "enumerate", newLine: "\\item "),
@@ -63,11 +65,11 @@ struct EnvironmentEditingRules: Equatable, Codable, Sendable {
 
     /// Environments whose body is never indented and never gets a line
     /// template, whatever the rules say: their content is literal.
-    static var preservedBodyEnvironments: Set<String> { EditorIndentation.preservedBodyEnvironments }
+    public static let preservedBodyEnvironments: Set<String> = SyntaxHighlighter.verbatimEnvironments.union(["comment"])
 
     /// The rule for `environment`: an exact match, else the unstarred
     /// name's (`align*` → `align`).
-    func rule(for environment: String) -> Rule? {
+    public func rule(for environment: String) -> Rule? {
         let name = environment.trimmingCharacters(in: .whitespaces)
         if let exact = rules.first(where: { $0.environment == name }) { return exact }
         guard name.hasSuffix("*") else { return nil }
@@ -77,13 +79,13 @@ struct EnvironmentEditingRules: Equatable, Codable, Sendable {
 
     /// Whether Return after `\begin{environment}` (and every body line the
     /// editor writes) goes one indent unit deeper.
-    func indentsBody(of environment: String) -> Bool {
+    public func indentsBody(of environment: String) -> Bool {
         if Self.preservedBodyEnvironments.contains(environment) { return false }
         return rule(for: environment)?.indent ?? indentByDefault
     }
 
     /// What a new body line of `environment` starts with (`""` for nothing).
-    func newLineText(in environment: String) -> String {
+    public func newLineText(in environment: String) -> String {
         if Self.preservedBodyEnvironments.contains(environment) { return "" }
         return rule(for: environment)?.newLine ?? ""
     }
@@ -92,7 +94,7 @@ struct EnvironmentEditingRules: Equatable, Codable, Sendable {
     /// nil for a template that is not a command. Return on a line that
     /// starts with this command and has content after it repeats the
     /// template — the "next entry" rule of lists.
-    static func command(of template: String) -> String? {
+    public static func command(of template: String) -> String? {
         guard template.hasPrefix("\\") else { return nil }
         let letters = template.dropFirst().prefix { $0.isLetter }
         return letters.isEmpty ? nil : "\\" + letters
@@ -100,7 +102,7 @@ struct EnvironmentEditingRules: Equatable, Codable, Sendable {
 
     /// UTF-16 offset of the caret inside `template`: after the `[` or `{`
     /// of its first empty group, else the end.
-    static func caretOffset(in template: String) -> Int {
+    public static func caretOffset(in template: String) -> Int {
         let ns = template as NSString
         var i = 0
         while i + 1 < ns.length {
@@ -114,7 +116,7 @@ struct EnvironmentEditingRules: Equatable, Codable, Sendable {
     /// Environment names that are not blank, each trimmed and listed once
     /// (the first rule for a name wins), which is how the settings table
     /// hands its rows back.
-    func normalized() -> EnvironmentEditingRules {
+    public func normalized() -> EnvironmentEditingRules {
         var seen = Set<String>()
         let kept = rules.compactMap { rule -> Rule? in
             let name = rule.environment.trimmingCharacters(in: .whitespaces)
@@ -126,9 +128,9 @@ struct EnvironmentEditingRules: Equatable, Codable, Sendable {
 
     // MARK: persistence (JSON in UserDefaults)
 
-    func encoded() -> Data? { try? JSONEncoder().encode(self) }
+    public func encoded() -> Data? { try? JSONEncoder().encode(self) }
 
-    static func decoded(_ data: Data) -> EnvironmentEditingRules? {
+    public static func decoded(_ data: Data) -> EnvironmentEditingRules? {
         (try? JSONDecoder().decode(EnvironmentEditingRules.self, from: data))?.normalized()
     }
 }

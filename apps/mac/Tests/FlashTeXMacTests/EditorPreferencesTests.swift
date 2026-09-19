@@ -3,6 +3,7 @@ import HostedWindows
 import SwiftUI
 import XCTest
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// `EditorPreferences`: defaults, clamping/validation, persistence round trip
 /// through a temporary `UserDefaults` suite (with migration and repair of

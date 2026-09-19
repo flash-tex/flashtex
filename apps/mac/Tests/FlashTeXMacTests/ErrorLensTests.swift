@@ -4,6 +4,7 @@ import XCTest
 import FlashTeXProtocol
 import HostedWindows
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// Error lens (lane mac-editor-dx-3, ErrorLens.swift): one message per line
 /// from the editor's marks, errors only by default, drawn after the line.

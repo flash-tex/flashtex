@@ -2,6 +2,7 @@ import AppKit
 import HostedWindows
 import XCTest
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// Snippet tab stops, context-aware completion sources and the editor
 /// niceties added by mac-intellisense-2 (Completion.swift,

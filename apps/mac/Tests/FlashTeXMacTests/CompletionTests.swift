@@ -5,6 +5,7 @@ import FlashTeXAccessibility
 import HostedWindows
 @testable import FlashTeXProtocol
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 final class CompletionTests: XCTestCase {
     private func caret(after needle: String, in text: String) -> Int {

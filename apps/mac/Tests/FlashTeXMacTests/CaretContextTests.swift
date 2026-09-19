@@ -1,5 +1,6 @@
 import XCTest
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// `protocol/fixtures/caret-context-v1.json` drives this suite and
 /// `crates/bridge/tests/caret_context.rs`; `scripts/caret_context_oracle.py`

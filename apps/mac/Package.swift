@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .executable(name: "FlashTeXMac", targets: ["FlashTeXMac"]),
         .library(name: "FlashTeXProtocol", targets: ["FlashTeXProtocol"]),
+        .library(name: "FlashTeXEditorCore", targets: ["FlashTeXEditorCore"]),
         .library(name: "FlashTeXAccessibility", targets: ["FlashTeXAccessibility"]),
     ],
     dependencies: [
@@ -24,9 +25,18 @@ let package = Package(
     targets: [
         // Codable models for docs/contracts/runtime-v1.md plus offset conversion.
         .target(name: "FlashTeXProtocol"),
+        // Platform-free editor logic shared with the iPad app (apps/ios links
+        // it through a symlink in FlashTeXPadKit): the syntax token model,
+        // environment editing rules, the Return key, the delimiter matcher,
+        // auto-close policy and the supported-latex vocabulary decoder.
+        // Foundation only — no AppKit/UIKit may be imported here.
+        .target(
+            name: "FlashTeXEditorCore",
+            dependencies: ["FlashTeXProtocol"]
+        ),
         .executableTarget(
             name: "FlashTeXMac",
-            dependencies: ["FlashTeXProtocol", "FlashTeXAccessibility"],
+            dependencies: ["FlashTeXProtocol", "FlashTeXAccessibility", "FlashTeXEditorCore"],
             // The compiler's command inventory (crates/compiler/supported/
             // supported-latex.json), synced by scripts/sync-supported-latex.sh;
             // Completion.Vocabulary is decoded from it. make-app.sh copies it
@@ -52,7 +62,7 @@ let package = Package(
         ),
         .testTarget(
             name: "FlashTeXMacTests",
-            dependencies: ["FlashTeXMac", "HostedWindows", .product(name: "NearbyClient", package: "nearby-client")]
+            dependencies: ["FlashTeXMac", "FlashTeXEditorCore", "HostedWindows", .product(name: "NearbyClient", package: "nearby-client")]
         ),
         // One test per UI surface, rendering it to `Tests/DesignSnapshots/
         // __Snapshots__/`. Kept apart from FlashTeXMacTests so a design pass

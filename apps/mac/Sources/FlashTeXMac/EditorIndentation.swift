@@ -15,8 +15,7 @@ enum EditorIndentation {
     /// / listings variants live on `SyntaxHighlighter.verbatimEnvironments`;
     /// `comment` is the same extra name `EditorNavigation` and `CaretContext`
     /// already treat as inert (Highlighter does not list it).
-    static let preservedBodyEnvironments: Set<String> =
-        SyntaxHighlighter.verbatimEnvironments.union(["comment"])
+    static let preservedBodyEnvironments: Set<String> = EnvironmentEditingRules.preservedBodyEnvironments
 
     /// The conventional rules' flat environments (`document`): indenting a
     /// whole `document` body is the common complaint this exists to avoid.

@@ -2,6 +2,7 @@ import AppKit
 import HostedWindows
 import XCTest
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// Math-mode ranking in the completion list: inside `$…$` the compiler's math
 /// commands come before the text ones, which the vocabulary's table order

@@ -4,6 +4,7 @@ import XCTest
 import FlashTeXProtocol
 import HostedWindows
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// Hover data, ⌘-click routing, Return-key auto-indent/auto-close and the
 /// line-number gutter (lane mac-syntax-highlight).

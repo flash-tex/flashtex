@@ -2,6 +2,7 @@ import AppKit
 import XCTest
 import HostedWindows
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// Pure reindent rules plus the hosted CompletingTextView undo/selection
 /// path (lane editor-reindent, EditorIndentation.swift).

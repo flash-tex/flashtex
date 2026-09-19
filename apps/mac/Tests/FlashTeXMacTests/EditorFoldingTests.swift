@@ -4,6 +4,7 @@ import XCTest
 import FlashTeXProtocol
 import HostedWindows
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// Code folding (EditorFolding.swift): region computation, range shifting,
 /// unfold-on-reveal, Fold All / Unfold All, and the placeholder never entering
