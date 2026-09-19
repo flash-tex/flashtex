@@ -343,8 +343,14 @@ final class ShellModel {
         /// `display_list_window` this request carried (display-list-v2-window
         /// consumer, V2PageWindow.swift); nil for an unwindowed request.
         var window: RuntimeV1.CompileRequest.DisplayListWindow?
+        /// `fonts` this request carried (the manifest's `[fonts]`,
+        /// ProjectManifest.swift); nil when it named nothing.
+        var fonts: RuntimeV1.CompileRequest.Fonts?
     }
     private(set) var inFlightRequests: [String: InFlight] = [:]
+    /// `fonts` the applied result was requested with: a manifest change
+    /// with unchanged buffers must re-request (`compile()`), like a window.
+    private(set) var fontsApplied: RuntimeV1.CompileRequest.Fonts?
     /// `display-list-v2-delta`: the live v2 frame currently published, as the
     /// producer may relocate it (DisplayListDelta.swift). Set only when a live
     /// frame is published after full validation; cleared by any refusal,
@@ -1174,8 +1180,8 @@ final class ShellModel {
             log("layout capability switch while \(latestID) is in flight: re-requesting revision \(editorRevision) under \(LayoutNegotiation.describe(capabilities))")
         } else if let current = result, previewSource != .fixture, current.revision == editorRevision,
                   negotiation.requested == capabilities, previewV2 || !v1PagesElided,
-                  !v2WindowResendNeeded {
-            return // buffers, capability set and window unchanged since the applied result
+                  !v2WindowResendNeeded, fontsApplied == manifest.requestFonts {
+            return // buffers, capability set, window and fonts unchanged since the applied result
         }
         let id = "mac-\(nextRequestID)"
         nextRequestID += 1
@@ -1223,13 +1229,16 @@ final class ShellModel {
             // own timezone, which is the whole point of a *local* calendar date
             // -- and sends it as an ordinary request input.
             // protocol/proposals/runtime-v1-request-date.md
-            date: RuntimeV1.localDate())
+            date: RuntimeV1.localDate(),
+            // The manifest's `[fonts]` (ProjectManifest.swift): the families
+            // the text/sans/mono/math slots default to; nil sends nothing.
+            fonts: manifest.requestFonts)
         do {
             if TypingBench.isBenchActive { FlashTeXLog.write("compile: sending revision \(editorRevision) at \(MonotonicClock.nowNs())") }
             try worker.send(request, id: id)
             inFlightRequests[id] = InFlight(projectId: request.projectId, revision: request.revision,
                                             documents: sendDocuments, sentAt: Date(), layoutCapabilities: sent,
-                                            window: displayListWindow)
+                                            window: displayListWindow, fonts: request.fonts)
             latestRequestID = id
             inFlightRevision = editorRevision
             workerStatus = "compiling revision \(editorRevision) (\(id))…"
@@ -1332,6 +1341,7 @@ final class ShellModel {
             // request's window, engage after an over-limit failure/decline,
             // and re-request the same buffers under the now-desired window.
             let windowRetry = v2WindowNote(applied: incoming, sentWindow: sent.window)
+            fontsApplied = sent.fonts
             if compileQueued {
                 compileQueued = false
                 compile() // no-op when buffers and capability set are unchanged

@@ -302,3 +302,55 @@ fn manifest_operation_serves_the_manifest_its_inputs_and_the_template() {
     assert_eq!(files[0].get("path").and_then(Json::as_str), Some("local.sty"));
     assert!(p.get("template").and_then(Json::as_str).unwrap().contains("entry = \"main.tex\""));
 }
+
+/// The `set_fonts` operation: the governing manifest's `[fonts]` table
+/// rewritten (everything else kept), the template when there is none,
+/// nothing to write when there is none and nothing is named, and the
+/// refusals. It never writes: the consumer saves the text it returns.
+#[test]
+fn set_fonts_rewrites_the_fonts_table_and_writes_nothing_itself() {
+    let tmp = common::TempDir::new("helper-set-fonts");
+    let root = tmp.root();
+    // No manifest and nothing named: nothing to write.
+    let replies = run(root, &[r#"{"id":"1","operation":"set_fonts","fonts":{}}"#]);
+    let p = payload(&replies[0], "1");
+    assert_eq!(p.get("exists"), Some(&Json::Bool(false)));
+    assert_eq!(p.get("changed"), Some(&Json::Bool(false)));
+    assert!(p.get("text").is_none());
+    assert_eq!(p.get("path").and_then(Json::as_str), Some(root.join("flashtex.toml").to_str().unwrap()));
+    // No manifest and a family named: the template for `entry`, with the table.
+    let replies = run(root, &[r#"{"id":"2","operation":"set_fonts","entry":"paper.tex","fonts":{"text":"Georgia","math":null}}"#]);
+    let p = payload(&replies[0], "2");
+    assert_eq!(p.get("changed"), Some(&Json::Bool(true)));
+    let text = p.get("text").and_then(Json::as_str).unwrap();
+    assert!(text.contains("entry = \"paper.tex\"") && text.contains("[fonts]") && text.contains("\ntext = \"Georgia\"\n"), "{text}");
+    assert!(!root.join("flashtex.toml").exists(), "set_fonts writes nothing");
+    // An existing manifest: its other content byte for byte, the table replaced.
+    let original = "# mine\n[project]\nentry = \"paper.tex\"\n\n[fonts]\ntext = \"Old\"\nsans = \"Old Sans\"\n\n[packages]\nfetch = \"never\"\n";
+    std::fs::write(root.join("flashtex.toml"), original).unwrap();
+    let replies = run(
+        root,
+        &[
+            r#"{"id":"3","operation":"set_fonts","fonts":{"text":"Georgia","mono":"Menlo"}}"#,
+            r#"{"id":"4","operation":"set_fonts","fonts":{"text":3}}"#,
+            r#"{"id":"5","operation":"set_fonts","fonts":{"serif":"x"}}"#,
+            r#"{"id":"6","operation":"set_fonts","fonts":"Georgia"}"#,
+            r#"{"id":"7","operation":"set_fonts","fonts":{"text":"Old","sans":"Old Sans"}}"#,
+        ],
+    );
+    let p = payload(&replies[0], "3");
+    assert_eq!(p.get("exists"), Some(&Json::Bool(true)));
+    assert_eq!(p.get("changed"), Some(&Json::Bool(true)));
+    assert_eq!(
+        p.get("text").and_then(Json::as_str),
+        Some("# mine\n[project]\nentry = \"paper.tex\"\n\n[fonts]\ntext = \"Georgia\"\nmono = \"Menlo\"\n\n[packages]\nfetch = \"never\"\n")
+    );
+    assert_eq!(std::fs::read_to_string(root.join("flashtex.toml")).unwrap(), original, "untouched on disk");
+    assert_eq!(error_code(&replies[1], "4"), "invalid_request");
+    assert_eq!(error_code(&replies[2], "5"), "invalid_request");
+    assert_eq!(error_code(&replies[3], "6"), "invalid_request");
+    // The same table as on disk: nothing changed.
+    let p = payload(&replies[4], "7");
+    assert_eq!(p.get("changed"), Some(&Json::Bool(false)));
+    assert_eq!(p.get("text").and_then(Json::as_str), Some(original));
+}

@@ -119,8 +119,12 @@ pub struct RenderOptions {
     /// `text`, a local `\fontspec` group overrides both). `math` is carried
     /// for the math half (`docs/proposals/font-system-math.md`) and is not
     /// read yet. `None`, the default, changes nothing: the class fonts
-    /// apply exactly as before the field existed. The manifest lane fills
-    /// it from `flashtex.toml`; `flashtex-render` has no flag for it.
+    /// apply exactly as before the field existed. Filled per request from
+    /// the runtime-v1 payload's optional `fonts` object (`protocol.rs`:
+    /// `{"text","math","mono","sans"}`, sent by the Mac app, the preview
+    /// controller and `flashtex build` from `flashtex.toml`); a request
+    /// without it keeps the value the worker was started with.
+    /// `flashtex-render` has no flag for it.
     pub fonts: Option<FontSettings>,
 }
 

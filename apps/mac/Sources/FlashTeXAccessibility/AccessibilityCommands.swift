@@ -6,7 +6,7 @@ import Foundation
 /// "Accessibility help" list; the test target checks it against the README.
 public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case editorPreferences, checkForUpdates
-    case openLaTeXFile, newProject, newFile, moveFile, save, saveAs, showInFinder, openFixture, reloadFixture
+    case openLaTeXFile, newProject, newFile, moveFile, projectFonts, save, saveAs, showInFinder, openFixture, reloadFixture
     case attachBuiltCompiler, attachRenderPipeline, attachWorker, compile
     case exportPDF, printDocument, printSource
     case pinInsertionPoint, openCaptureProposal, submitSampleCapture, convertCapture, nearbyCompanion
@@ -72,6 +72,11 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          description: "Opens the Move to… sheet for the active document (also “Move to…” in a project row's context menu; dragging a row onto another row moves it into that row's folder, onto the tree's empty space to the project root): a rooted folder, never above the project root; every \\input, \\include, \\includegraphics, \\bibliography, \\addbibresource and \\lstinputlisting that resolved to the file is rewritten — one undoable edit per open document, closed documents of the include tree on disk. Refused for the entry document, with unsaved edits, or onto an existing file.",
                          requires: "a saved entry document (a project root) and an active document that is not the entry",
                          menuItem: "Move To…")
+        case .projectFonts:
+            return Entry(command: self, title: "Project fonts", shortcuts: ["File > Project Fonts…"], menu: "File",
+                         description: "Opens the Project Fonts sheet: the manifest's [fonts] table as four rows — Text, Math, Sans, Mono — each a searchable picker over the installed families the engine's own index finds (the Math row lists the families with an OpenType MATH table), with a sample line in the chosen family and “Class default” first. Apply writes the table into flashtex.toml (created from the template when absent; nothing is written for “Class default” everywhere without a manifest) and the preview recompiles. The document's own \\setmainfont, \\setmathfont, \\setsansfont and \\setmonofont still win.",
+                         requires: "a saved entry document (a project root)",
+                         menuItem: "Project Fonts…")
         case .save:
             return Entry(command: self, title: "Save", shortcuts: ["⌘S"], menu: "File",
                          description: "Saves the entry document as UTF-8; the editor header says “edited” while unsaved.",

@@ -130,6 +130,19 @@ without leaving the app, or open an existing `.tex` file.
   Create flashtex.toml…* writes the commented manifest template next to
   the entry and opens it (coloured as plain text with comments). See
   [the project manifest](project-manifest.md).
+- **Project Fonts.** *File › Project Fonts…* (also in the command palette)
+  sets the project's fonts globally — the manifest's `[fonts]` table — as
+  four rows, Text, Math, Sans and Mono. Each row is a searchable picker over
+  the families installed on the machine as the engine's own index finds
+  them (the same names `\setmainfont{` completes with; the Math row lists
+  only families with an OpenType MATH table), with a sample line set in the
+  chosen family and *Class default* first. Apply writes the table into
+  `flashtex.toml` — created from the template when there is none; *Class
+  default* everywhere without a manifest writes nothing — and the preview
+  recompiles with the new fonts. A `\setmainfont`, `\setsansfont` or
+  `\setmonofont` in the document still wins over the table, and a
+  `\fontspec{…}` group wins locally. The `\setmainfont{` completion rows
+  show the same sample in each family.
 - **Saving** (⌘S) is compare-and-replace: if the file changed on disk since
   it was read, you get *File › Resolve On-Disk Conflict…* with **Overwrite /
   Reload / Keep Editing** instead of a silent overwrite. FlashTeX also watches

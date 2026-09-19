@@ -503,6 +503,81 @@ path = {{}}         # local libraries, e.g. {{ mylib = \"../mylib\" }} — a dir
         )
     }
 
+    /// `text` with its `[fonts]` table replaced by `fonts` -- the one writer
+    /// the editor's Fonts sheet and the project-files helper's `set_fonts`
+    /// use, so nothing else composes TOML. Everything outside the table is
+    /// kept byte for byte (comments, unknown sections, key order). Inside
+    /// it, the four known keys and their commented-out template
+    /// placeholders (`# text = "…"`) are replaced by the keys `fonts` sets,
+    /// in `text`, `math`, `mono`, `sans` order; any other line of the table
+    /// (a comment, a key this version does not know) stays, after them.
+    /// The header line itself is kept (with its trailing comment). Without
+    /// a `[fonts]` table the new one is appended; without one and with
+    /// nothing to set the text is returned unchanged. A table naming
+    /// nothing is left as a bare header, which parses as the defaults.
+    /// `parse(with_fonts(t, f)).fonts == f` for every `t` that parses.
+    pub fn with_fonts(text: &str, fonts: &Fonts) -> String {
+        const KEYS: [&str; 4] = ["text", "math", "mono", "sans"];
+        let is_header = |line: &str| line.trim_start().starts_with('[');
+        let is_fonts_header = |line: &str| {
+            let t = line.trim_start();
+            t.strip_prefix("[fonts]").is_some_and(|rest| rest.trim_start().is_empty() || rest.trim_start().starts_with('#'))
+        };
+        // A `text = …` line, or the template's `# text = …` placeholder.
+        let is_known_key = |line: &str| {
+            let t = line.trim_start();
+            let t = t.strip_prefix('#').map_or(t, str::trim_start);
+            KEYS.iter().any(|k| t.strip_prefix(k).is_some_and(|rest| rest.trim_start().starts_with('=')))
+        };
+        let mut new_keys = String::new();
+        for (key, value) in KEYS.iter().zip([&fonts.text, &fonts.math, &fonts.mono, &fonts.sans]) {
+            if let Some(v) = value {
+                new_keys.push_str(&format!("{key} = {}\n", quote(v)));
+            }
+        }
+        let lines: Vec<&str> = text.split_inclusive('\n').collect();
+        let Some(start) = lines.iter().position(|l| is_fonts_header(l)) else {
+            if fonts.is_empty() {
+                return text.to_string();
+            }
+            let mut out = text.to_string();
+            if !out.is_empty() && !out.ends_with('\n') {
+                out.push('\n');
+            }
+            if !out.is_empty() && !out.ends_with("\n\n") {
+                out.push('\n');
+            }
+            out.push_str("[fonts]\n");
+            out.push_str(&new_keys);
+            return out;
+        };
+        let end = lines[start + 1..].iter().position(|l| is_header(l)).map_or(lines.len(), |i| start + 1 + i);
+        let mut out = String::new();
+        for l in &lines[..=start] {
+            out.push_str(l);
+        }
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&new_keys);
+        let body = &lines[start + 1..end];
+        let kept: Vec<&str> = body.iter().copied().filter(|l| !is_known_key(l) && !l.trim().is_empty()).collect();
+        for l in &kept {
+            out.push_str(l);
+        }
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        // One blank line before the next table when the original had one.
+        if end < lines.len() && body.last().is_some_and(|l| l.trim().is_empty()) {
+            out.push('\n');
+        }
+        for l in &lines[end..] {
+            out.push_str(l);
+        }
+        out
+    }
+
     /// Writes [`Manifest::template`] for `entry` at `path`, refusing to
     /// overwrite an existing file (`io::ErrorKind::AlreadyExists`).
     pub fn write_template(path: &Path, entry: &str) -> io::Result<()> {
@@ -813,5 +888,43 @@ name = "mylib"
         std::fs::write(d.join("wt/.git"), "gitdir: elsewhere\n").unwrap();
         assert_eq!(Manifest::locate(&d.join("wt/sub")), None);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn with_fonts_rewrites_only_the_fonts_table_and_round_trips() {
+        let fonts = Fonts { text: Some("Libertinus Serif".into()), math: None, mono: Some("JetBrains Mono".into()), sans: None };
+        // The template: placeholders replaced, comments elsewhere untouched.
+        let t = Manifest::with_fonts(&Manifest::template("main.tex"), &fonts);
+        assert_eq!(Manifest::parse(&t).unwrap().manifest.fonts, fonts);
+        assert!(t.contains("[fonts]   # font families by role"), "the header keeps its comment:\n{t}");
+        assert!(t.contains("[fonts]   # font families by role; overrides nothing the document itself sets (\\setmainfont, \\usepackage{lmodern}, …)\ntext = \"Libertinus Serif\"\nmono = \"JetBrains Mono\"\n\n[packages]"), "{t}");
+        assert!(!t.contains("# text = ") && !t.contains("# sans = "), "placeholders go:\n{t}");
+        assert!(t.starts_with("# flashtex.toml — the FlashTeX project manifest") && t.contains("entry = \"main.tex\"   # the document") && t.contains("# [library]"), "{t}");
+        // A full manifest: other sections byte-identical, unknown keys of the
+        // table kept after the new ones, an existing key dropped when unset.
+        let full = FULL.replace("[fonts]\n", "[fonts]\nserif = \"keep me\"   # unknown to this version\n");
+        let t = Manifest::with_fonts(&full, &fonts);
+        let p = Manifest::parse(&t).unwrap();
+        assert_eq!(p.manifest.fonts, fonts);
+        assert_eq!(p.warnings.iter().map(|w| w.key.as_str()).collect::<Vec<_>>(), vec!["fonts.serif"]);
+        assert!(t.contains("[fonts]\ntext = \"Libertinus Serif\"\nmono = \"JetBrains Mono\"\nserif = \"keep me\"   # unknown to this version\n\n[packages]"), "{t}");
+        let before = full.split("[fonts]").next().unwrap();
+        assert!(t.starts_with(before), "everything before the table is untouched");
+        let after = full.split("[packages]").nth(1).unwrap();
+        assert!(t.ends_with(after), "everything after the table is untouched");
+        // Nothing set: the table is emptied (a bare header) and still parses.
+        let t = Manifest::with_fonts(&full, &Fonts::default());
+        assert!(Manifest::parse(&t).unwrap().manifest.fonts.is_empty());
+        assert!(t.contains("[fonts]\nserif = \"keep me\""), "{t}");
+        // No table: appended; nothing to set and no table: unchanged.
+        let bare = "[project]\nentry = \"m.tex\"";
+        assert_eq!(Manifest::with_fonts(bare, &Fonts::default()), bare);
+        let t = Manifest::with_fonts(bare, &fonts);
+        assert_eq!(t, "[project]\nentry = \"m.tex\"\n\n[fonts]\ntext = \"Libertinus Serif\"\nmono = \"JetBrains Mono\"\n");
+        assert_eq!(Manifest::parse(&t).unwrap().manifest.fonts, fonts);
+        assert_eq!(Manifest::with_fonts("", &fonts), "[fonts]\ntext = \"Libertinus Serif\"\nmono = \"JetBrains Mono\"\n");
+        // A name needing escapes is quoted like `to_toml` quotes it.
+        let odd = Fonts { text: Some("Quote \" Back\\slash".into()), ..Fonts::default() };
+        assert_eq!(Manifest::parse(&Manifest::with_fonts("", &odd)).unwrap().manifest.fonts, odd);
     }
 }

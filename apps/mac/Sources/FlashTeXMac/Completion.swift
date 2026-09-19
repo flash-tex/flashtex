@@ -46,6 +46,10 @@ enum Completion {
         /// title; BibScanner.swift). Nil means the pane derives one from the
         /// kind and name (`CompletionPopup.displayedDocumentation`).
         var documentation: String? = nil
+        /// An installed font family (`\setmainfont{` and its kin): the row
+        /// sets its label and a sample in that family (ProjectFonts.swift
+        /// `FontSamples`), when the app has a face for it.
+        var sampleFamily: String? = nil
     }
 
     /// Replacement text plus the caret position inside it, in UTF-16 units.
@@ -741,7 +745,7 @@ enum Completion {
     private static func fontSuggestions(prefix: String, families: [String]) -> [Suggestion] {
         let names = fuzzyFilter(families, prefix: prefix) { $0 }
         return names.prefix(maxSuggestions).map {
-            Suggestion(label: $0, insertText: $0, kind: .command, detail: "installed font family")
+            Suggestion(label: $0, insertText: $0, kind: .command, detail: "installed font family", sampleFamily: $0)
         }
     }
 
@@ -2523,6 +2527,12 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         out.append(NSAttributedString(string: "  \(s.kind.badge) · \(s.detail)", attributes: [
             .font: DS.NSFonts.secondary, .foregroundColor: DS.Palette.textSecondary,
         ]))
+        // A font family: the sample line in that family (ProjectFonts.swift).
+        if let family = s.sampleFamily, let font = FontSamples.nsFont(family: family, size: 12) {
+            out.append(NSAttributedString(string: " — " + ProjectFontsState.sampleText, attributes: [
+                .font: font, .foregroundColor: DS.Palette.textSecondary,
+            ]))
+        }
         if let doc = displayedDocumentation(for: s) {
             out.append(NSAttributedString(string: " — \(doc)", attributes: [
                 .font: DS.NSFonts.secondary, .foregroundColor: DS.Palette.textTertiary,
@@ -2666,8 +2676,20 @@ final class CompletionRowView: NSView {
     func configure(_ s: Completion.Suggestion) {
         icon.image = NSImage(systemSymbolName: s.kind.symbolName, accessibilityDescription: nil)
         icon.contentTintColor = s.kind.tint
-        label.stringValue = s.label
-        detail.stringValue = "\(s.kind.badge) · \(s.detail)"
+        // A font family draws its name and the sample in its own face
+        // (ProjectFonts.swift `FontSamples`); every other row keeps the
+        // editor's monospaced face. `stringValue` resets an attributed value.
+        if let family = s.sampleFamily, let font = FontSamples.nsFont(family: family, size: 12) {
+            label.attributedStringValue = NSAttributedString(string: s.label, attributes: [.font: font, .foregroundColor: NSColor.labelColor])
+            let sample = NSMutableAttributedString(string: ProjectFontsState.sampleText + "  ", attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor])
+            sample.append(NSAttributedString(string: "\(s.kind.badge) · \(s.detail)", attributes: [.font: DS.NSFonts.secondary, .foregroundColor: NSColor.secondaryLabelColor]))
+            detail.attributedStringValue = sample
+        } else {
+            label.font = DS.NSFonts.monoCandidate
+            label.stringValue = s.label
+            detail.font = DS.NSFonts.secondary
+            detail.stringValue = "\(s.kind.badge) · \(s.detail)"
+        }
         setAccessibilityLabel(CompletionPopup.spokenLabel(s)) // FlashTeXAccessibility
     }
 }
@@ -3624,22 +3646,35 @@ final class CompletingTextView: NSTextView {
 enum InstalledFonts {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var cached: (URL, [String])?
+    nonisolated(unsafe) private static var cachedMath: (URL, [String])?
 
     nonisolated static func families(renderPipeline: URL?) -> [String] {
         guard let tool = renderPipeline else { return [] }
         lock.lock(); defer { lock.unlock() }
         if let (url, names) = cached, url == tool { return names }
-        let names = list(tool: tool)
+        let names = list(tool: tool, flag: "--list-fonts")
         cached = (tool, names)
+        return names
+    }
+
+    /// The families with a face carrying an OpenType `MATH` table
+    /// (`--list-math-fonts`): what the Fonts sheet's Math row offers
+    /// (ProjectFonts.swift). Same caching as `families`.
+    nonisolated static func mathFamilies(renderPipeline: URL?) -> [String] {
+        guard let tool = renderPipeline else { return [] }
+        lock.lock(); defer { lock.unlock() }
+        if let (url, names) = cachedMath, url == tool { return names }
+        let names = list(tool: tool, flag: "--list-math-fonts")
+        cachedMath = (tool, names)
         return names
     }
 
     /// Runs the tool with a bounded wait; an unresponsive or failing tool
     /// yields an empty list (and is retried next time).
-    private nonisolated static func list(tool: URL, timeout: TimeInterval = 10) -> [String] {
+    private nonisolated static func list(tool: URL, flag: String, timeout: TimeInterval = 10) -> [String] {
         let p = Process()
         p.executableURL = tool
-        p.arguments = ["--list-fonts"]
+        p.arguments = [flag]
         let stdout = Pipe()
         p.standardOutput = stdout
         p.standardError = FileHandle.nullDevice

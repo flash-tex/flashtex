@@ -100,6 +100,7 @@ extension ShellModel {
             config.compilerMaxFrameBytes = n
         }
         config.bibliographyPaths = documentKinds.startupBibliographyPaths(projectRoot: projectRoot, privateLedgerRoot: ledgerRoot, projectID: projectId, entry: entryPath) // DocumentKinds.swift: persisted explicit declarations, never inferred
+        config.fonts = manifest.fontsByRole // ProjectManifest.swift: `[fonts]` as `payload.fonts` on every helper compile
         controllerState = ControllerState()
         controllerLaunchURL = url
         controllerRelaunchTimes = [] // an explicit attach starts a fresh relaunch budget
@@ -167,6 +168,23 @@ extension ShellModel {
             controllerStatus = "edit failed to send: \(error.localizedDescription)"
             log(controllerStatus)
         }
+    }
+
+    /// The manifest's `[fonts]` changed (ProjectManifest.refresh): the
+    /// helper route learns the table and recompiles the durable source; the
+    /// direct route recompiles so the next request carries it.
+    func manifestFontsDidChange() {
+        if let controller, controller.isRunning, controllerState.ready {
+            do {
+                _ = try controller.configureFonts(manifest.fontsByRole)
+            } catch {
+                controllerStatus = "configure_fonts failed to send: \(error.localizedDescription)"
+                log(controllerStatus)
+            }
+            return
+        }
+        guard !controllerAttached, workerAttached else { return }
+        compile()
     }
 
     /// Explicit compile (⌘B): submits pending text first, else asks for a compile.

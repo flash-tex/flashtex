@@ -35,6 +35,15 @@
 //!   `template` is the commented manifest the consumer may save as
 //!   `flashtex.toml` for `entry` (default `main.tex`); a `save` with
 //!   `"expected":"new"` writes it under the same rules as any file.
+//! - `{"id","operation":"set_fonts","fonts":{"text"?,"math"?,"mono"?,"sans"?},
+//!   "entry"?}` → payload `{"path","exists","changed","text"?}`: the text of the
+//!   governing manifest (or of the template for `entry` when there is none)
+//!   with its `[fonts]` table replaced by `fonts` (`Manifest::with_fonts`,
+//!   the only TOML writer; everything else in the file is kept byte for
+//!   byte), for the consumer to `save` at `path` -- this operation writes
+//!   nothing. `changed` is false, and `text` absent, when there is no
+//!   manifest and `fonts` names nothing: nothing to write. A member that is
+//!   not a string, or an unknown member, is `invalid_request`.
 //!
 //! Errors are `{"id","error":{"code","message"}}` with codes `invalid_request`,
 //! `invalid_path`, `refused` (symlink component, escape, not a regular file,
@@ -364,6 +373,71 @@ fn manifest(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
     Ok(payload)
 }
 
+/// `set_fonts`: see the module documentation. Reads the governing manifest
+/// (or takes the template) and answers with the rewritten text; the
+/// consumer saves it through `save`, so the rooted rules apply to the write.
+fn set_fonts(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
+    let entry = match req.get("entry") {
+        None | Some(Json::Null) => "main.tex".to_string(),
+        Some(v) => v
+            .as_str()
+            .ok_or_else(|| fail("invalid_request", "entry must be a string"))?
+            .to_string(),
+    };
+    let mut fonts = flashtex_project_manifest::Fonts::default();
+    match req.get("fonts") {
+        None | Some(Json::Null) => {}
+        Some(Json::Object(members)) => {
+            for (key, value) in members {
+                let slot = match key.as_str() {
+                    "text" => &mut fonts.text,
+                    "math" => &mut fonts.math,
+                    "mono" => &mut fonts.mono,
+                    "sans" => &mut fonts.sans,
+                    other => return Err(fail("invalid_request", format!("fonts has an unknown member {other:?}; expected text, math, mono, sans"))),
+                };
+                *slot = match value {
+                    Json::Null => None,
+                    Json::String(s) if s.trim().is_empty() => None,
+                    Json::String(s) => Some(s.clone()),
+                    _ => return Err(fail("invalid_request", format!("fonts.{key} must be a family name (string) or null"))),
+                };
+            }
+        }
+        Some(_) => return Err(fail("invalid_request", "fonts must be an object of family names by role")),
+    }
+    let found = Manifest::locate(root.path());
+    let (path, exists, current) = match &found {
+        Some(path) => {
+            let text = std::fs::read_to_string(path).map_err(|e| fail("io", format!("{}: {e}", path.display())))?;
+            (path.clone(), true, text)
+        }
+        None => (root.path().join(flashtex_project_manifest::FILE_NAME), false, Manifest::template(&entry)),
+    };
+    let mut payload = Json::object();
+    payload
+        .insert("path", path.to_string_lossy().into_owned())
+        .insert("exists", exists);
+    if !exists && fonts.is_empty() {
+        payload.insert("changed", false);
+        return Ok(payload);
+    }
+    let text = Manifest::with_fonts(&current, &fonts);
+    // The rewrite must read back as what was asked, or the file stays as it is.
+    match Manifest::parse(&text) {
+        Ok(parsed) if parsed.manifest.fonts == fonts => {}
+        Ok(parsed) => {
+            return Err(fail(
+                "manifest_rewrite",
+                format!("the rewritten {} does not read back the requested fonts (got {:?}); not written", path.display(), parsed.manifest.fonts),
+            ))
+        }
+        Err(e) => return Err(fail("manifest_syntax", format!("{}: {e}", path.display()))),
+    }
+    payload.insert("changed", text != current).insert("text", text);
+    Ok(payload)
+}
+
 fn handle(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
     match string_field(req, "operation")? {
         "ping" => {
@@ -377,6 +451,7 @@ fn handle(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
         "status" => status(root, req),
         "save" => save(root, req),
         "manifest" => manifest(root, req),
+        "set_fonts" => set_fonts(root, req),
         other => Err(fail(
             "unsupported_operation",
             format!("unknown operation {other:?}"),

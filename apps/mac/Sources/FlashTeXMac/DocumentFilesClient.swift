@@ -142,8 +142,23 @@ enum ProjectFilesV1 {
         }
     }
 
+    /// The `set_fonts` reply: the governing manifest's text (or the template
+    /// for `entry` when there is none) with its `[fonts]` table replaced --
+    /// `crates/project-manifest` `Manifest::with_fonts`, the only TOML
+    /// writer -- for the shell to save at `path`. The helper writes nothing.
+    /// `changed` false (and no `text`): nothing to write.
+    struct SetFonts: Decodable, Equatable, Sendable {
+        var path: String
+        var exists: Bool
+        var changed: Bool
+        var text: String?
+    }
+
     struct PingRequest: Encodable { var id: String; var operation = "ping" }
     struct ManifestRequest: Encodable { var id: String; var operation = "manifest"; var entry: String? }
+    struct SetFontsRequest: Encodable {
+        var id: String; var operation = "set_fonts"; var entry: String?; var fonts: [String: String]
+    }
     struct ReadRequest: Encodable { var id: String; var operation = "read"; var path: String }
     struct StatusRequest: Encodable {
         var id: String; var operation = "status"; var path: String; var expectedSha256: String?
@@ -251,6 +266,9 @@ final class ProjectFilesClient {
               timeout: TimeInterval? = nil) async throws -> ProjectFilesV1.SaveOutcome {
         try await request({ ProjectFilesV1.SaveRequest(id: $0, path: path, text: text, expected: expected.wire, force: force) },
                           as: ProjectFilesV1.SaveOutcome.self, timeout: timeout)
+    }
+    func setFonts(entry: String?, fonts: [String: String], timeout: TimeInterval? = nil) async throws -> ProjectFilesV1.SetFonts {
+        try await request({ ProjectFilesV1.SetFontsRequest(id: $0, entry: entry, fonts: fonts) }, timeout: timeout)
     }
     func manifest(entry: String?, timeout: TimeInterval? = nil) async throws -> ProjectFilesV1.Manifest {
         try await request({ ProjectFilesV1.ManifestRequest(id: $0, entry: entry) }, as: ProjectFilesV1.Manifest.self, timeout: timeout)
