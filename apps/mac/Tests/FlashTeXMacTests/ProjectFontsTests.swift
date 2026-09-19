@@ -195,6 +195,31 @@ final class ProjectFontsTests: XCTestCase {
         XCTAssertNotEqual(model.fontsApplied, model.manifest.requestFonts, "compile() must not short-circuit on unchanged buffers")
     }
 
+    // MARK: the completion rows
+
+    func testFontCompletionRowsCarryTheSampleFamily() {
+        let typed = "\\setmainfont{Geo"
+        let s = Completion.suggestions(in: typed, caretUTF16: (typed as NSString).length, metadata: nil, fontFamilies: ["Georgia", "Helvetica"])
+        XCTAssertEqual(s.map(\.label), ["Georgia"])
+        XCTAssertEqual(s.first?.sampleFamily, "Georgia")
+        XCTAssertEqual(s.first?.detail, "installed font family")
+        // The attributed row appends the sample when AppKit knows the family.
+        if FontSamples.nsFont(family: "Georgia", size: 12) != nil {
+            XCTAssertTrue(CompletionPopup.attributed(s[0]).string.hasSuffix(" — " + ProjectFontsState.sampleText))
+        }
+        let row = CompletionRowView(frame: NSRect(x: 0, y: 0, width: 600, height: 24))
+        row.configure(s[0])
+        XCTAssertEqual(row.accessibilityLabel(), CompletionPopup.spokenLabel(s[0]))
+        // A family the app has no face for gets no sample and keeps the plain row.
+        let unknown = Completion.Suggestion(label: "No Such Family 4711", insertText: "No Such Family 4711", kind: .command, detail: "installed font family", sampleFamily: "No Such Family 4711")
+        XCTAssertNil(FontSamples.nsFont(family: "No Such Family 4711", size: 12))
+        XCTAssertFalse(CompletionPopup.attributed(unknown).string.contains(ProjectFontsState.sampleText))
+        // Other rows are untouched.
+        let section = Completion.Suggestion(label: "\\section", insertText: "\\section", kind: .command, detail: "supported")
+        XCTAssertNil(section.sampleFamily)
+        XCTAssertFalse(CompletionPopup.attributed(section).string.contains(ProjectFontsState.sampleText))
+    }
+
     // MARK: the real helper
 
     func testRealHelperRewritesTheTableAndTheAppReadsItBack() async throws {
