@@ -2459,6 +2459,13 @@ impl MathParser<'_> {
                     ams_symbol: None,
                 }
             }
+            // amsthm `\qedhere`: the end-of-proof box for this display
+            // line. Recognised here so no "not supported in math mode"
+            // diagnostic fires; it stays a literal marker atom (like
+            // `\tag`'s atoms above) for the consumer to strip and place
+            // flush right — see `parser::raw_qedhere`, which records the
+            // proof's claim from the same tokens.
+            "qedhere" => symbol("\\qedhere".into(), span),
             "tag" => {
                 let starred = matches!(self.tokens.get(self.i).map(|t| &t.kind), Some(TokenKind::Word(w)) if w == "*");
                 self.skip_star();

@@ -429,6 +429,10 @@ pub struct RowPart {
     pub cells: Vec<MathList>,
     pub number: Option<(String, Span)>,
     pub span: Span,
+    /// amsthm `\qedhere` stripped from this row's cells (`strip_qedhere`):
+    /// the box is set on this row's own line, flush right. `None` without
+    /// one; the span is the command, for the rules' provenance.
+    pub qed_here: Option<Span>,
     /// `\intertext` paragraphs set before this row (feature
     /// `amsmath-inline`; always empty otherwise).
     pub intertext: Vec<IntertextPart>,
@@ -469,6 +473,10 @@ pub enum ParaPart {
         span: Span,
         number: Option<(String, Span)>,
         bracket: bool,
+        /// amsthm `\qedhere` stripped from `list` (`strip_qedhere`): the box
+        /// is set on the display's own line, flush right. `None` without
+        /// one; the span is the command, for the rules' provenance.
+        qed_here: Option<Span>,
     },
 }
 
@@ -1736,6 +1744,11 @@ pub fn adapt_cached(
     // Last source span of the previous paragraph block (None after a
     // heading or rule), for rejoining a display with its paragraph.
     let mut prev_para_end: Option<Span> = None;
+    // amsthm `\qedhere` in a display or alignment row claims the proof's
+    // box even when the automatic pair lands in a later paragraph (the
+    // `equation`/align environments flush before `\end{proof}`). A new
+    // proof opens a new claim window; consuming the pair clears it.
+    let mut pending_qed_claim = false;
     // The documents an entry `\input`/`\include` command reads (nested reads
     // included), from the reading order: a file whose body is only floats
     // has no unit to lay its `\chapter` out before.
@@ -2373,7 +2386,22 @@ pub fn adapt_cached(
                 // is in the source bytes at the head's span (which is the
                 // `\begin` command), so the weights come from the compiler's
                 // own scoping inside a theorem-like environment.
+                //
+                // A paragraph opening a proof starts a new `\qedhere` claim
+                // window (a pending display claim belongs to the proof that
+                // held the display); a display or alignment-row marker in
+                // this paragraph claims the box for the proof's end,
+                // wherever the automatic pair lands.
+                if inlines.first().map(inline_span).is_some_and(|s| {
+                    texts.get(s.document.0).and_then(|t| t.get(s.start..)).is_some_and(|r| r.starts_with("\\begin{proof}"))
+                }) {
+                    pending_qed_claim = false;
+                }
+                pending_qed_claim |= paragraph_claims_qed(inlines, texts);
                 let mut items = items_for_weighted(inlines, in_theorem);
+                if pending_qed_claim && truncate_auto_pair(&mut items, texts) {
+                    pending_qed_claim = false;
+                }
                 // `\paragraph`/`\subparagraph`: `{\normalfont\normalsize
                 // \bfseries <title>}` then `\hskip 1em`, run into this
                 // paragraph's first line. The compiler set the title as
@@ -2397,7 +2425,17 @@ pub fn adapt_cached(
                             if let Some((rows_span, row)) = math_row_of(inlines, span) {
                                 let rows_rest = texts.get(rows_span.document.0).and_then(|t| t.get(rows_span.start..)).unwrap_or("");
                                 let mut tag = None;
-                                let cells: Vec<MathList> = row.cells.iter().map(|c| strip_tag(texts, c, &mut tag, &mut limitations)).collect();
+                                let mut qed_here = None;
+                                let cells: Vec<MathList> = row
+                                    .cells
+                                    .iter()
+                                    .map(|c| {
+                                        let tagged = strip_tag(texts, c, &mut tag, &mut limitations);
+                                        let (stripped, qed) = strip_qedhere(texts, tagged);
+                                        qed_here = qed_here.or(qed);
+                                        stripped
+                                    })
+                                    .collect();
                                 let number = match tag {
                                     Some(t) => Some((t, row.span)),
                                     None => row.number.clone().map(|n| (format!("({n})"), row.span)),
@@ -2415,7 +2453,7 @@ pub fn adapt_cached(
                                     .collect();
                                 #[cfg(not(feature = "amsmath-inline"))]
                                 let intertext = Vec::new();
-                                let part = RowPart { cells, number, span: row.span, intertext };
+                                let part = RowPart { cells, number, span: row.span, intertext, qed_here };
                                 match parts.last_mut() {
                                     Some(ParaPart::Rows { span: s, rows, .. }) if *s == rows_span => rows.push(part),
                                     _ => parts.push(ParaPart::Rows {
@@ -2442,11 +2480,13 @@ pub fn adapt_cached(
                                     .map(|(n, s)| (format!("({n})"), s)),
                             };
                             let bracket = !amsmath && (rest.starts_with("\\[") || rest.starts_with("\\begin{displaymath}"));
+                            let (list, qed_here) = strip_qedhere(texts, list);
                             parts.push(ParaPart::Display {
                                 list,
                                 span,
                                 number,
                                 bracket,
+                                qed_here,
                             });
                         }
                         other => current.push(other),
@@ -4583,6 +4623,93 @@ fn strip_eqno(texts: &[&str], list: MathList, display: Span) -> (MathList, Optio
     let mut atoms = list.atoms;
     atoms.truncate(i);
     (MathList { atoms }, Some((body.to_string(), Span::in_document(display.document, start, end))))
+}
+
+/// Whether `atom` is amsthm `\qedhere`'s marker: a literal `\qedhere`
+/// symbol whose span opens the command in source (both must hold, so a
+/// coincidental span never eats formula content).
+fn is_qedhere_marker(texts: &[&str], atom: &flashtex_compiler::math::MathAtom) -> bool {
+    use flashtex_compiler::math::Nucleus;
+    matches!(&atom.nucleus, Nucleus::Symbol(s) if s == "\\qedhere")
+        && texts
+            .get(atom.span.document.0)
+            .and_then(|t| t.get(atom.span.start..))
+            .is_some_and(|r| r.starts_with("\\qedhere"))
+}
+
+/// Whether `list` holds such a marker atom: the command's span when so.
+fn qedhere_at(texts: &[&str], list: &MathList) -> Option<Span> {
+    list.atoms.iter().find_map(|a| is_qedhere_marker(texts, a).then_some(a.span))
+}
+
+/// `list` without amsthm `\qedhere`'s atoms, and the command's span when
+/// one was stripped, so the caller sets the end-of-proof box on the
+/// display's own line, flush right, instead of the automatic box after it
+/// (which is suppressed once the box is claimed).
+///
+/// The compiler leaves `\qedhere` as a literal `\qedhere` symbol atom (as
+/// it does `\tag`'s atoms for `strip_tag` above).
+fn strip_qedhere(texts: &[&str], list: MathList) -> (MathList, Option<Span>) {
+    if qedhere_at(texts, &list).is_none() {
+        return (list, None);
+    }
+    let mut found = None;
+    let atoms: Vec<_> = list
+        .atoms
+        .into_iter()
+        .filter(|a| {
+            if is_qedhere_marker(texts, &a) {
+                found = found.or(Some(a.span));
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+    (MathList { atoms }, found)
+}
+
+/// Whether any display or alignment row in these inlines carries a
+/// `\qedhere` marker: amsthm's claim on the proof's box, which suppresses
+/// the automatic pair even when it lands in a later paragraph (the
+/// `equation`/align environments flush before `\end{proof}`). Text
+/// `\qedhere` needs no such cross-paragraph claim: it shares its
+/// paragraph with the pair it suppresses.
+fn paragraph_claims_qed(inlines: &[Inline], texts: &[&str]) -> bool {
+    inlines.iter().any(|inline| match inline {
+        Inline::Math { list, display: true, .. } => qedhere_at(texts, list).is_some(),
+        Inline::MathRows { rows, .. } => rows
+            .iter()
+            .any(|row| row.cells.iter().any(|cell| qedhere_at(texts, cell).is_some())),
+        _ => false,
+    })
+}
+
+/// Retracts a trailing automatic end-of-proof pair — an `HFill` and a
+/// `QedBox` whose span opens `\end{proof}` in source, with a possible
+/// interword gap before the fill (TeX deletes trailing glue at `\par`
+/// anyway) — once a `\qedhere` claim is pending: true when one was
+/// removed. Only the automatic pair matches: a box the claim placed
+/// itself spans `\qedhere`, never `\end{proof}`.
+fn truncate_auto_pair(items: &mut Vec<Item>, texts: &[&str]) -> bool {
+    let is_auto = |item: &Item| {
+        matches!(item, Item::QedBox { span, .. }
+            if texts
+                .get(span.document.0)
+                .and_then(|t| t.get(span.start..))
+                .is_some_and(|r| r.starts_with("\\end{proof}")))
+    };
+    if !items.last().is_some_and(is_auto) {
+        return false;
+    }
+    items.pop();
+    if matches!(items.last(), Some(Item::HFill { .. })) {
+        items.pop();
+    }
+    if matches!(items.last(), Some(Item::Space { .. })) {
+        items.pop();
+    }
+    true
 }
 
 /// Whether the source between two consecutive pieces of material keeps TeX
@@ -9677,6 +9804,13 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
     let mut items: Vec<Item> = Vec::new();
     let mut prev_end: Option<usize> = None;
     let mut prev_span: Option<Span> = None;
+    // amsthm `\qedhere` under the pinned compiler leaves no inline (it is
+    // reported as unknown), so the gap scan below synthesises the box and
+    // this records that the automatic end-of-proof box is suppressed.
+    let mut qedhere_used = false;
+    // `items.len()` before the current `Inline::HFill`'s additions, so the
+    // suppressed automatic pair below can retract them exactly.
+    let mut hfill_start = None;
     let mut factor = 1000u32;
     let mut pending_accent: Option<(char, CharSrc)> = None;
     // The compiler's size declaration in force at the previous text
@@ -9754,6 +9888,45 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
             if sep.opens_the_body(inline_span(inline)) {
                 pending_head_sep.set(Some((sep.pt, sep.stretch_pt, sep.shrink_pt)));
                 head_sep = None;
+            }
+        }
+        // amsthm `\qedhere` under the pinned compiler: it reports the
+        // command as unknown and emits no inline, so without this the box
+        // would never be placed and the automatic end-of-proof box would
+        // still follow. The command's own bytes sit in the gap between the
+        // surrounding inlines; when one is found, the same fill + box the
+        // automatic mark uses are emitted at exactly this position (the
+        // current end of `items`), and the automatic pair is suppressed
+        // when it arrives below. A compiler that emits the pair itself
+        // (with the command's bytes as the pair's own span) leaves no such
+        // gap, so this never double-fires after a re-pin.
+        let here = inline_span(inline);
+        if let (Some(pe), Some(ps)) = (prev_end, prev_span) {
+            if ps.document == here.document && pe <= here.start {
+                let gap_found = text_of(here.document)
+                    .get(pe..here.start)
+                    .and_then(|gap| find_command(gap, "qedhere"))
+                    .map(|at| (pe + at, pe + at + "\\qedhere".len()));
+                if let Some((qs, qe)) = gap_found {
+                    let qspan = Span::in_document(here.document, qs, qe);
+                    let gap = space_between(prev_end, prev_span, qspan, Some("\\qedhere"), after_control_word);
+                    let mut gap_style = space_style(texts, styles, prev_end, qspan, TextStyle::default());
+                    gap_style.size_cpt = space_size(texts, prev_end, qspan, prev_size_cpt, 0);
+                    push_gap(&mut items, gap, gap_style, factor);
+                    let mut fill_style = style_at(styles_of(here.document), qs);
+                    fill_style.size_cpt = space_size(texts, prev_end, qspan, prev_size_cpt, 0);
+                    items.push(Item::HFill { fill: true, leader: FillLeader::None, style: fill_style });
+                    let mut qed_style = style_at(styles_of(here.document), qs);
+                    qed_style.size_cpt = fill_style.size_cpt;
+                    prev_size_cpt = qed_style.size_cpt;
+                    items.push(Item::QedBox { style: qed_style, span: qspan });
+                    prev_end = Some(qe);
+                    prev_span = Some(qspan);
+                    factor = 1000;
+                    pending_accent = None;
+                    after_control_word = true;
+                    qedhere_used = true;
+                }
             }
         }
         match &**inline {
@@ -9951,6 +10124,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 factor = 1000;
             }
             Inline::HFill { span, .. } | Inline::HSpace { span, .. } | Inline::TextGlue { span, .. } => {
+                hfill_start = Some(items.len());
                 // Explicit horizontal glue: the interword space read before
                 // it stays (TeX keeps both glue nodes). `TextGlue` is the
                 // compiler's text-mode `\quad`/`\qquad` (`em` ems of the
@@ -10185,6 +10359,22 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     })
                     && matches!(items.last(), Some(Item::HFill { leader: FillLeader::None, .. })) =>
             {
+                if qedhere_used {
+                    // amsthm's `\popQED`: the gap scan above already placed
+                    // the box at `\qedhere`, so this automatic end-of-proof
+                    // pair is suppressed — retracted exactly, gap glue and
+                    // fill with it.
+                    if let Some(start) = hfill_start {
+                        items.truncate(start);
+                    }
+                    prev_end = Some(span.end);
+                    prev_span = Some(*span);
+                    factor = 1000;
+                    pending_accent = None;
+                    after_control_word = false;
+                    hfill_start = None;
+                    continue;
+                }
                 let Inline::Text { style: compiler_style, .. } = &**inline else { unreachable!() };
                 let mut style = style_at(styles_of(span.document), span.start);
                 style.size_cpt = declared_size(compiler_style.size, size);
