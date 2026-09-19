@@ -2499,6 +2499,12 @@ impl<'a> Context<'a> {
         // mark, so the record is always `None` here and resolves to the
         // box before the call below).
         let mut margins: Vec<(usize, Option<usize>, usize)> = Vec::new();
+        // listings' `\lst@lostspace` and `\lst@width` (pt) inside a
+        // `\lstinline`, and where the box being booked starts in `out`
+        // (`AItem::Listing`, `listings::set_inline`).
+        let mut lst_lost = 0.0f64;
+        let mut lst_width = 0.0f64;
+        let mut lst_start = 0usize;
         for (idx, item) in items.iter().enumerate() {
             match item {
                 AItem::Overlong { .. } => {
@@ -2564,10 +2570,14 @@ impl<'a> Context<'a> {
                     // ends the search with no hyphens).
                     let after_glue = matches!(out.last(), Some(pl::Item::Glue(_)));
                     let joined = matches!(items.get(idx + 1), Some(AItem::Word(_) | AItem::Math { .. }));
+                    // A `\lstinline` token is an `\hbox` of its own
+                    // (`\lst@OutputToken`): never hyphenated, whatever its face.
+                    let boxed = matches!(items.get(idx + 1), Some(AItem::Listing(_)));
                     // The typewriter families declare `\hyphenchar\font=-1`
                     // (`ot1cmtt.fd`, `t1cmtt.fd`, `t1lmtt.fd`): no hyphens.
                     let hyphenate = after_glue
                         && !joined
+                        && !boxed
                         && w.segments.len() == 1
                         && merge_style(base, w.segments[0].style).family != crate::nfss::FamilyKind::Tt;
                     for seg in &w.segments {
@@ -2691,6 +2701,59 @@ impl<'a> Context<'a> {
                     self.recs.push(BoxRec::Rule { width, height: 0.0, bottom: 0.0, span: Span::new(0, 0), color: None });
                     let blank = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height: 0.0, depth: 0.0, source: 0..0 };
                     push(&mut out, &mut recs, pl::Item::Box(blank), Some(self.recs.len() - 1));
+                }
+                AItem::Listing(mark) => {
+                    // `\lst@Kern`: `\hbox{{\lst@currstyle{\kern#1}}}`, a box
+                    // of no height or depth (record as for `SpaceBox`).
+                    let kern_box = |this: &mut Self, width: f64| {
+                        this.recs.push(BoxRec::Rule { width, height: 0.0, bottom: 0.0, span: Span::new(0, 0), color: None });
+                        let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height: 0.0, depth: 0.0, source: 0..0 };
+                        (pl::Item::Box(run), Some(this.recs.len() - 1))
+                    };
+                    match mark {
+                        adapter::ListingMark::Begin { style, width_em } => {
+                            // `\lst@width` is set at `InitVars`, after the
+                            // `Init` hook applied `\lst@basicstyle`: the
+                            // quad is that face's (listings.sty 550, 1385).
+                            let style = merge_style(base, *style);
+                            lst_width = width_em * self.text_params(style, style.size_or(size)).quad;
+                            lst_lost = 0.0;
+                        }
+                        adapter::ListingMark::LostSpace => {
+                            if lst_lost > 0.0 {
+                                let (item, rec) = kern_box(self, lst_lost);
+                                push(&mut out, &mut recs, item, rec);
+                                lst_lost = 0.0;
+                            }
+                            lst_start = out.len();
+                        }
+                        adapter::ListingMark::Columns { columns } => {
+                            let wd: f64 = out[lst_start..]
+                                .iter()
+                                .map(|i| match i {
+                                    pl::Item::Box(run) => run.width,
+                                    pl::Item::Glue(glue) => glue.width,
+                                    pl::Item::Kern(kern) => kern.width,
+                                    pl::Item::Penalty(_) => 0.0,
+                                })
+                                .sum();
+                            lst_lost += f64::from(*columns) * lst_width - wd;
+                            if lst_lost > 0.0 {
+                                // `.5\lst@lostspace` before the box, the rest
+                                // after it, inside the same `\hbox`.
+                                let half = lst_lost / 2.0;
+                                let (item, rec) = kern_box(self, half);
+                                out.insert(lst_start, item);
+                                recs.insert(lst_start, rec);
+                                let (item, rec) = kern_box(self, lst_lost - half);
+                                push(&mut out, &mut recs, item, rec);
+                                lst_lost = 0.0;
+                            }
+                        }
+                        adapter::ListingMark::GobbledBlank => {
+                            lst_lost += lst_width;
+                        }
+                    }
                 }
                 AItem::LineBreak { skip_pt } => {
                     if fills {

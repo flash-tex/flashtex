@@ -257,6 +257,7 @@ fn restyle(item: &mut AItem, state: &mut State) {
         | AItem::Rule { style, .. }
         | AItem::QedBox { style, .. }
         | AItem::SpaceBox { style }
+        | AItem::Listing(crate::adapter::ListingMark::Begin { style, .. })
         | AItem::Kern { style, .. } => state.apply(style),
         AItem::Footnote { text: Some(t), .. } | AItem::Marginpar { text: t, .. } | AItem::Lap { items: t } => {
             let mut first = None;
@@ -296,6 +297,7 @@ fn restyle(item: &mut AItem, state: &mut State) {
         | AItem::Overlay(_)
         | AItem::Penalty { .. }
         | AItem::Overlong { .. }
+        | AItem::Listing(_)
         | AItem::LeaveVmode => {}
     }
 }

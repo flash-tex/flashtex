@@ -289,13 +289,45 @@ pub enum Item {
     /// `\discretionary{}{}{}` — charged `\exhyphenpenalty` (50) and
     /// counted as a hyphenated line for `\doublehyphendemerits`. listings'
     /// `breaklines` puts one after every token of a `\lstinline`
-    /// (lstmisc.sty `\lst@discretionary`, see `listings::break_inline`).
+    /// (lstmisc.sty `\lst@discretionary`, see `listings::set_inline`).
     Penalty { value: i32, flagged: bool },
     /// `\hbox{\ }`: a blank of the font in force set as a box, so it is
     /// neither stretchable nor discarded at a line break. listings sets
     /// every blank of a `\lstinline` this way (`\lst@outputspace`), which
     /// is why pdflatex's next line can open with one.
     SpaceBox { style: TextStyle },
+    /// listings' column bookkeeping around the boxes of a `\lstinline`
+    /// (see [`ListingMark`] and `listings::set_inline`): no material of its
+    /// own, but the kern boxes `\lst@lostspace` turns into.
+    Listing(ListingMark),
+}
+
+/// The steps of listings' `\lst@lostspace` bookkeeping inside a
+/// `\lstinline` (listings.sty 555-570, 572-586, 830-865), which
+/// `typeset::hlist` replays with the glyph widths it has and
+/// `listings::set_inline` explains. Under `flexiblecolumns` a token keeps
+/// its natural width, but every character is booked at `\lst@width` and
+/// the running difference — negative under a typewriter face — comes out
+/// as kern boxes wherever it is positive.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ListingMark {
+    /// `\lst@Init`: the lost space is 0 and `\lst@width` is `width_em`
+    /// quads (`basewidth`'s flexible value) of the `basicstyle` face,
+    /// `style`.
+    Begin { style: TextStyle, width_em: f64 },
+    /// `\lst@UseLostSpace` before a token's or blank's box: a kern box of
+    /// the lost space when it is positive, which is then 0.
+    LostSpace,
+    /// `\lst@CalcLostSpaceAndOutput` after a box of `columns` characters:
+    /// the lost space grows by `columns` times `\lst@width` less the box's
+    /// width; positive, it pads the box by that, half on each side
+    /// (`[c]` of `columns=[c]fixed`, `\lst@InsertHalfLostSpace`,
+    /// `\lst@InsertLostSpace`), and is 0 again.
+    Columns { columns: u32 },
+    /// A blank gobbled after another or at the start of the argument
+    /// (`\lst@AppendSpecialSpace`): no box, one `\lst@width` more of lost
+    /// space.
+    GobbledBlank,
 }
 
 /// beamer overlay markers (see [`Item::Overlay`]).
@@ -3279,7 +3311,9 @@ fn unsupported_inlines(inline: &Inline, out: &mut Vec<(&'static str, Span, Strin
             // suppressed (`style_intervals`, `TextStyle::literal`), so
             // there is nothing to report. Measured against pdflatex at
             // 12 pt T1: `\verb"ftxc --version"` 86.4289 pt, the oracle's
-            // 86.4289 pt.
+            // 86.4289 pt. (`\lstinline` is then re-set the way listings
+            // does it — the `basicstyle` face, one box per token, the
+            // column bookkeeping — by `listings::apply`.)
             //
             // `\verb*`'s visible-space glyph is the one remaining
             // difference, and it is not a geometry one: the compiler's
@@ -11684,12 +11718,23 @@ mod tests {
     /// marks the run mono (`parser::Inline::Verbatim`, `Block::Verbatim`)
     /// but the pipeline re-derives the family from the source, and these
     /// were in none of its tables.
+    ///
+    /// `\lstinline` is not `\verb`: listings sets it in the `basicstyle`
+    /// face, and the default `basicstyle={}` changes nothing, so the face
+    /// around the command stays (`listings::apply`). pdflatex (11 pt
+    /// article, `\usepackage{listings}`, no `\lstset`): `A \lstinline|xy|
+    /// B` sets `xy` in `SFRM1095`, `\textsf{sans \lstinline|s| here}` sets
+    /// `s` in `SFSS1095`; with `\lstset{basicstyle=\ttfamily\small}` the
+    /// `listings-manual` reference sets its inlines in `SFTT1000`.
     #[test]
     fn verbatim_constructs_are_set_in_the_typewriter_family() {
         assert_eq!(families(&items("A \\verb|x| B")), "rtr");
         assert_eq!(families(&items("A \\verb*|x| B")), "rtr");
-        assert_eq!(families(&items("A \\lstinline|x| B")), "rtr");
-        assert_eq!(families(&items("A \\lstinline[language=C]|x| B")), "rtr");
+        assert_eq!(families(&items("A \\lstinline|x| B")), "rrr");
+        assert_eq!(families(&items("A \\lstinline[language=C]|x| B")), "rrr");
+        assert_eq!(families(&items("A \\lstinline[basicstyle=\\ttfamily]|x| B")), "rtr");
+        assert_eq!(families(&items("\\lstset{basicstyle=\\ttfamily\\small}\nA \\lstinline|x| B")), "rtr");
+        assert_eq!(families(&items("\\textsf{A \\lstinline|x| B}")), "sss");
         assert_eq!(families(&items("\\begin{verbatim}\nx\n\\end{verbatim}")), "t");
         assert_eq!(families(&items("\\begin{lstlisting}[language=C]\nx\n\\end{lstlisting}")), "t");
     }

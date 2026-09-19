@@ -146,6 +146,12 @@ fn line_breaks_before_a_formula_rather_than_after_its_relation() {
 /// directly after the closing `|`, and `\verb|a b| y` reads the space token
 /// in the outer font (`\glue 3.33333 plus 1.66666 minus 1.11111`, not the
 /// typewriter's rigid 5.25 pt).
+///
+/// `\lstinline|a b|` under the default `basicstyle={}` is set in the face
+/// around it, `CMR10` here (`listings::apply`): pdftext reads `x` @133.768,
+/// `a` @142.344, `b` @151.310 (`a` 5.00002 pt, then the blank's box, 3.33333
+/// padded to 4 pt by listings' lost space: 2 × 4.50001 − 5.00002 − 3.33333),
+/// `y` @160.173 (`b` 5.55557 pt, then the roman interword glue).
 #[test]
 fn verbatim_argument_blanks_are_not_the_gap_after_it() {
     if !lm_available() {
@@ -165,11 +171,17 @@ fn verbatim_argument_blanks_are_not_the_gap_after_it() {
     // roman interword space (3.33333 pt) in one, nothing in the other.
     let (_, two) = &ls[1];
     let (_, three) = &ls[2];
-    let gap = |line: &[(f64, String)]| {
+    let gap = |line: &[(f64, String)], b_width_pt: f64| {
         let b = line.iter().find(|(_, t)| t == "b").expect("b");
         let y = line.iter().find(|(_, t)| t == "y").expect("y");
-        y.0 - b.0 - 5.25 * 72.0 / 72.27
+        y.0 - b.0 - b_width_pt * 72.0 / 72.27
     };
-    assert!((gap(two) - 3.33333 * 72.0 / 72.27).abs() < 0.01, "roman space after `\\lstinline`: {} bp", gap(two));
-    assert!(gap(three).abs() < 0.01, "no gap after `\\verb|a b|y`: {} bp", gap(three));
+    // The `\lstinline` is roman (`CMR10`, `b` 5.55557 pt), its blank a box
+    // padded to 4 pt: `a` @142.344, `b` @151.310, `y` @160.173.
+    for (text, x) in [("a", 142.344), ("b", 151.310), ("y", 160.173)] {
+        let w = two.iter().find(|(_, t)| t == text).expect(text);
+        assert!((w.0 - x).abs() < 0.02, "`{text}` at {} (pdflatex {x}): {two:?}", w.0);
+    }
+    assert!((gap(two, 5.55557) - 3.33333 * 72.0 / 72.27).abs() < 0.02, "roman space after `\\lstinline`: {} bp", gap(two, 5.55557));
+    assert!(gap(three, 5.25).abs() < 0.01, "no gap after `\\verb|a b|y`: {} bp", gap(three, 5.25));
 }
