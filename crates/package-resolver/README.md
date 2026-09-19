@@ -32,17 +32,23 @@ Files reach the compiler as documents at `packages/<name>/<file>`.
 | Step | Request | Read |
 |---|---|---|
 | describe | `GET https://ctan.org/json/2.0/pkg/<name>` | `version.number`, `ctan.path` (404: no such package) |
-| list | `GET https://mirrors.ctan.org<ctan.path>/` | every `href` that is a `.sty/.cls/.def/.clo/.cfg` |
+| list | `GET https://mirrors.ctan.org<ctan.path>/` | every `href` that is a `.sty/.cls/.def/.clo/.cfg`, plus every `.ins`/`.dtx` when there is a `.ins` |
 | fetch (after consent) | `GET https://mirrors.ctan.org<ctan.path>/<file>` | the file |
 
 `mirrors.ctan.org` redirects to a mirror that serves the archive root
 directly (`…/macros/latex/contrib/<name>/`; a `tex-archive/` prefix 404s on
 the mirrors). "Ask" performs the first two requests to phrase the question
 ("Fetch cancel 2.2 from CTAN (https://…)?"); no package file moves before
-consent. A directory with only `.dtx`/`.ins` is `NotAvailable("needs
-docstrip: …")` — the installer is TeX to execute, and nothing fetched is
-ever executed. CTAN keeps one version, so a `pin` naming another is
-`NotAvailable` naming both.
+consent. A directory with a `.ins` has its `.ins`/`.dtx` sources fetched
+too; after the download they go through
+[`crates/docstrip`](../docstrip/README.md) — an interpreter of docstrip's
+batch language, not a TeX, so nothing fetched is ever executed — and the
+generated `.sty`/`.cls`/`.def`/`.clo`/`.cfg` are cached next to the
+shipped ones (a shipped file wins over a generated one of the same name;
+the sources themselves are not cached). A directory with `.dtx` but no
+`.ins`, or a batch file that generates no package file, is
+`NotAvailable("needs docstrip …")` with the reason. CTAN keeps one
+version, so a `pin` naming another is `NotAvailable` naming both.
 
 A registry URL (`source = "https://…"`) is an archive root in the same
 layout (`<url>/macros/latex/contrib/<name>/`, listed the same way); it states
@@ -69,6 +75,19 @@ Root: `FLASHTEX_PACKAGE_CACHE`, else macOS
  "fetched_utc":"2026-09-19T10:11:12Z",
  "files":[{"name":"cancel.sty","sha256":"…","bytes":1234}]}
 ```
+
+A generated file carries its provenance and the manifest the
+interpreter's notes:
+
+```json
+{"name":"lipsum","version":"2.7", "…":"…",
+ "files":[{"name":"lipsum.sty","sha256":"…","bytes":14690,
+           "generated_from":{"batch":"lipsum.ins","sources":["lipsum.dtx"]}}],
+ "docstrip":{"notes":["lipsum.ins:41: \\newread is not a docstrip command; …"]}}
+```
+
+`ResolvedFile::generated_from` and `Resolution::Fetched::notes` carry the
+same; `flashtex packages list` marks generated files with `*`.
 
 A version is written to a staging directory and renamed into place, so a
 crash leaves no half version; a version directory without `manifest.json`

@@ -1,0 +1,16 @@
+[package]
+name = "flashtex-docstrip"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "A purpose-built interpreter for docstrip batch files (.ins) and the guarded-source (.dtx) stripping they drive, so packages that ship only sources become .sty/.cls files. Platform-free, no network, no TeX."
+
+[lib]
+name = "flashtex_docstrip"
+path = "src/lib.rs"
+
+# No dependencies: the `.ins` language is a handful of commands and the
+# guard grammar is regular. The crate reads bytes it is handed (or a
+# directory through `DirSources`) and never touches the network.
+[dependencies]

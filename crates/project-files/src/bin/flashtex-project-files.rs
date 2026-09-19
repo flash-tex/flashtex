@@ -530,6 +530,11 @@ fn resolve_packages(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
                             .insert("text", f.text.as_str())
                             .insert("sha256", flashtex_project_files::sha256_hex(f.text.as_bytes()))
                             .insert("bytes", f.text.len() as u64);
+                        if let Some(g) = &f.generated_from {
+                            let mut from = Json::object();
+                            from.insert("batch", g.batch.as_str()).insert("sources", g.sources.iter().map(|s| Json::from(s.as_str())).collect::<Vec<_>>());
+                            j.insert("generated_from", from);
+                        }
                         j
                     })
                     .collect::<Vec<_>>()
@@ -542,8 +547,11 @@ fn resolve_packages(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
                     };
                     o.insert("status", "cached").insert("version", version).insert("from", label).insert("files", files_json(&mount, &files));
                 }
-                Resolution::Fetched { version, files, source_url, .. } => {
+                Resolution::Fetched { version, files, source_url, notes, .. } => {
                     o.insert("status", "fetched").insert("version", version).insert("source_url", source_url).insert("files", files_json(name, &files));
+                    if !notes.is_empty() {
+                        o.insert("docstrip_notes", notes.iter().map(|n| Json::from(n.as_str())).collect::<Vec<_>>());
+                    }
                 }
                 Resolution::NeedsConsent { version, source_url, would_fetch, .. } => {
                     o.insert("status", "needs_consent")

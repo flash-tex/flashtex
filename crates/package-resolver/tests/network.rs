@@ -1,8 +1,8 @@
 //! The one test that touches the network, opt-in through
 //! `FLASHTEX_NETWORK_TESTS=1`: fetches a tiny real package (`cancel`, one
 //! `.sty`) from CTAN into a temporary cache and checks the layout, then
-//! checks that a `.dtx`-only package (`lipsum`) is reported as needing
-//! docstrip. Skipped, loudly, otherwise.
+//! fetches a `.dtx`/`.ins`-only package (`lipsum`) and checks that
+//! docstrip generated its `lipsum.sty`. Skipped, loudly, otherwise.
 
 use std::path::PathBuf;
 
@@ -58,12 +58,16 @@ fn fetches_cancel_from_ctan_when_opted_in() {
     // Cached now: no network for a `never` policy.
     assert!(matches!(resolver.resolve("cancel", &Policy::never()), Resolution::Cached { .. }));
 
-    // lipsum ships lipsum.dtx/lipsum.ins only.
-    let lipsum = resolver.resolve("lipsum", &policy);
+    // lipsum ships lipsum.dtx/lipsum.ins only: docstrip generates lipsum.sty.
+    let lipsum = resolver.resolve_with_consent("lipsum", &policy);
     match &lipsum {
-        Resolution::NotAvailable { reason, .. } => assert!(reason.starts_with("needs docstrip"), "{reason}"),
-        other => panic!("expected NotAvailable(needs docstrip), got {other:?}"),
+        Resolution::Fetched { files, notes, .. } => {
+            let sty = files.iter().find(|f| f.name == "lipsum.sty").expect("lipsum.sty generated");
+            assert!(sty.text.contains("\\ProvidesExplPackage {lipsum}"), "{}", &sty.text[..300.min(sty.text.len())]);
+            assert_eq!(sty.generated_from.as_ref().map(|g| g.batch.as_str()), Some("lipsum.ins"));
+            eprintln!("lipsum: {} files, {} docstrip notes", files.len(), notes.len());
+        }
+        other => panic!("expected Fetched with a generated lipsum.sty, got {other:?}"),
     }
-    eprintln!("lipsum: {lipsum:?}");
     let _ = std::fs::remove_dir_all(&root);
 }

@@ -9,6 +9,12 @@
 //!  "files":[{"name":"cancel.sty","sha256":"…","bytes":1234}]}
 //! ```
 //!
+//! A file docstrip generated from the package's `.ins`/`.dtx` carries
+//! `"generated_from":{"batch":"lipsum.ins","sources":["lipsum.dtx"]}`,
+//! and the manifest then has `"docstrip":{"notes":[…]}` with what the
+//! interpreter reported (a `.ins` that programs TeX beyond docstrip's
+//! commands yields notes; the generated files are still docstrip's).
+//!
 //! A store is atomic per version: the files land in a temporary sibling
 //! directory and are renamed into place last, so a crash mid-fetch leaves no
 //! half-written version, and a version directory without a `manifest.json`
@@ -37,6 +43,8 @@ pub struct Entry {
     pub fetched_utc: String,
     /// File names with their recorded digests, sorted by name.
     pub files: Vec<CachedFile>,
+    /// docstrip's notes from the fetch, when it ran.
+    pub docstrip_notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +52,37 @@ pub struct CachedFile {
     pub name: String,
     pub sha256: String,
     pub bytes: u64,
+    /// Set when docstrip generated the file rather than the source
+    /// shipping it.
+    pub generated_from: Option<GeneratedFrom>,
+}
+
+/// Where a generated file came from: the batch file that named it and
+/// the sources it was stripped from, in reading order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedFrom {
+    pub batch: String,
+    pub sources: Vec<String>,
+}
+
+impl GeneratedFrom {
+    /// `lipsum.ins + lipsum.dtx`, for messages.
+    pub fn label(&self) -> String {
+        let mut s = self.batch.clone();
+        for src in &self.sources {
+            s.push_str(" + ");
+            s.push_str(src);
+        }
+        s
+    }
+}
+
+/// What docstrip contributed to a version: the provenance of each
+/// generated file and the interpreter's notes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Generated {
+    pub from: std::collections::BTreeMap<String, GeneratedFrom>,
+    pub notes: Vec<String>,
 }
 
 impl Entry {
@@ -64,7 +103,7 @@ impl Entry {
                 ));
             }
             let text = String::from_utf8(bytes).map_err(|_| format!("cached {} is not UTF-8", display(&path)))?;
-            out.push(ResolvedFile { name: f.name.clone(), path, text });
+            out.push(ResolvedFile { name: f.name.clone(), path, text, generated_from: f.generated_from.clone() });
         }
         Ok(out)
     }
@@ -163,6 +202,12 @@ impl Store {
     /// replacing an existing copy of that version. Only package files
     /// ([`is_package_file`]) are accepted; a name with a separator is refused.
     pub fn store(&self, name: &str, version: &str, source_url: &str, files: &[(String, Vec<u8>)]) -> Result<Entry, String> {
+        self.store_with(name, version, source_url, files, &Generated::default())
+    }
+
+    /// [`Store::store`] recording which files docstrip generated and what
+    /// it reported.
+    pub fn store_with(&self, name: &str, version: &str, source_url: &str, files: &[(String, Vec<u8>)], generated: &Generated) -> Result<Entry, String> {
         if !is_valid_name(name) {
             return Err(format!("{name:?} is not a package name"));
         }
@@ -183,17 +228,29 @@ impl Store {
         for (file, bytes) in files {
             let path = staging.join(file);
             fs::write(&path, bytes).map_err(|e| format!("cannot write {}: {e}", display(&path)))?;
-            recorded.push(CachedFile { name: file.clone(), sha256: sha256_hex(bytes), bytes: bytes.len() as u64 });
+            recorded.push(CachedFile { name: file.clone(), sha256: sha256_hex(bytes), bytes: bytes.len() as u64, generated_from: generated.from.get(file).cloned() });
         }
         recorded.sort_by(|a, b| a.name.cmp(&b.name));
         let fetched_utc = iso_utc(std::time::SystemTime::now());
-        let manifest = json!({
+        let mut manifest = json!({
             "name": name,
             "version": version,
             "source_url": source_url,
             "fetched_utc": fetched_utc,
-            "files": recorded.iter().map(|f| json!({"name": f.name, "sha256": f.sha256, "bytes": f.bytes})).collect::<Vec<_>>(),
+            "files": recorded
+                .iter()
+                .map(|f| {
+                    let mut j = json!({"name": f.name, "sha256": f.sha256, "bytes": f.bytes});
+                    if let Some(g) = &f.generated_from {
+                        j["generated_from"] = json!({"batch": g.batch, "sources": g.sources});
+                    }
+                    j
+                })
+                .collect::<Vec<_>>(),
         });
+        if !generated.notes.is_empty() {
+            manifest["docstrip"] = json!({"notes": generated.notes});
+        }
         let manifest_path = staging.join(MANIFEST_NAME);
         fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).expect("json") + "\n")
             .map_err(|e| format!("cannot write {}: {e}", display(&manifest_path)))?;
@@ -202,7 +259,7 @@ impl Store {
             fs::remove_dir_all(&final_dir).map_err(|e| format!("cannot replace {}: {e}", display(&final_dir)))?;
         }
         fs::rename(&staging, &final_dir).map_err(|e| format!("cannot move {} into place: {e}", display(&final_dir)))?;
-        Ok(Entry { name: name.into(), version: version.into(), dir: final_dir, source_url: source_url.into(), fetched_utc, files: recorded })
+        Ok(Entry { name: name.into(), version: version.into(), dir: final_dir, source_url: source_url.into(), fetched_utc, files: recorded, docstrip_notes: generated.notes.clone() })
     }
 
     /// Removes one package (every version) or, with `None`, the whole
@@ -242,10 +299,18 @@ fn read_manifest(dir: &Path) -> Result<Option<Entry>, String> {
         .ok_or_else(|| format!("{} lacks \"files\"", display(&path)))?
         .iter()
         .map(|f| {
+            let generated_from = match f.get("generated_from") {
+                None => None,
+                Some(g) => Some(GeneratedFrom {
+                    batch: g.get("batch")?.as_str()?.to_string(),
+                    sources: g.get("sources")?.as_array()?.iter().map(|s| s.as_str().map(str::to_string)).collect::<Option<Vec<_>>>()?,
+                }),
+            };
             Some(CachedFile {
                 name: f.get("name")?.as_str()?.to_string(),
                 sha256: f.get("sha256")?.as_str()?.to_string(),
                 bytes: f.get("bytes")?.as_u64()?,
+                generated_from,
             })
         })
         .collect::<Option<Vec<_>>>()
@@ -253,6 +318,12 @@ fn read_manifest(dir: &Path) -> Result<Option<Entry>, String> {
     if files.iter().any(|f| !is_package_file(&f.name) || f.name.contains(['/', '\\'])) {
         return Err(format!("{} names a file that is not a package file", display(&path)));
     }
+    let docstrip_notes = v
+        .get("docstrip")
+        .and_then(|d| d.get("notes"))
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .unwrap_or_default();
     Ok(Some(Entry {
         name: str_of("name")?,
         version: str_of("version")?,
@@ -260,6 +331,7 @@ fn read_manifest(dir: &Path) -> Result<Option<Entry>, String> {
         source_url: str_of("source_url")?,
         fetched_utc: str_of("fetched_utc")?,
         files,
+        docstrip_notes,
     }))
 }
 
@@ -335,6 +407,30 @@ mod tests {
         assert_eq!(store.clear(None).unwrap(), 1);
         assert!(!root.exists());
         assert_eq!(store.clear(None).unwrap(), 0);
+    }
+
+    #[test]
+    fn generated_provenance_round_trips_through_the_manifest() {
+        let root = tmp("cache-generated");
+        let store = Store::new(&root);
+        let mut generated = Generated::default();
+        generated.from.insert("lipsum.sty".into(), GeneratedFrom { batch: "lipsum.ins".into(), sources: vec!["lipsum.dtx".into()] });
+        generated.notes.push("lipsum.ins:41: \\newread is not a docstrip command".into());
+        let e = store.store_with("lipsum", "2.7", "https://m/lipsum/", &[file("lipsum.sty", "s"), file("shipped.cfg", "c")], &generated).unwrap();
+        assert_eq!(e.files[0].generated_from, Some(GeneratedFrom { batch: "lipsum.ins".into(), sources: vec!["lipsum.dtx".into()] }));
+        assert_eq!(e.files[1].generated_from, None);
+        assert_eq!(e.files[0].generated_from.as_ref().unwrap().label(), "lipsum.ins + lipsum.dtx");
+        let again = store.lookup("lipsum", Some("2.7")).unwrap().unwrap();
+        assert_eq!(again, e);
+        assert_eq!(again.docstrip_notes.len(), 1);
+        let read = again.read().unwrap();
+        assert_eq!(read[0].generated_from, e.files[0].generated_from);
+        let text = std::fs::read_to_string(root.join("lipsum/2.7/manifest.json")).unwrap();
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["files"][0]["generated_from"]["batch"], "lipsum.ins");
+        assert_eq!(v["files"][1].get("generated_from"), None);
+        assert_eq!(v["docstrip"]["notes"][0].as_str().unwrap().len(), generated.notes[0].len());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

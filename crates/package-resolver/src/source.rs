@@ -16,10 +16,13 @@
 //!    parser reads only `href="…"` attributes and ignores anything with a
 //!    path separator, a query or a fragment.
 //!
-//! A package whose directory has no package file but a `.dtx`/`.ins` is
-//! reported as *needs docstrip*: its `.sty` only exists after running the
-//! installer, which this crate does not do (the `.ins` is TeX to execute,
-//! and executing fetched code is exactly what the design forbids).
+//! A directory with a `.ins` batch file also has every `.ins` and `.dtx`
+//! fetched: after the download the resolver runs `flashtex-docstrip` over
+//! them (no TeX is executed; the interpreter copies bytes the sources
+//! contain) and the generated `.sty`/`.cls`/`.def`/`.clo`/`.cfg` join the
+//! shipped ones in the cache. A directory with `.dtx` sources but no
+//! `.ins` (a self-installing `.dtx` or a `filecontents` package) is
+//! reported as *needs docstrip* with the reason.
 //!
 //! **A registry URL** (`source = "https://…"`) is an archive root in the
 //! same layout: the package lives at `<url>/macros/latex/contrib/<name>/`
@@ -32,6 +35,8 @@
 //! versions rather than fetching the wrong one.
 
 use serde_json::Value;
+
+use flashtex_docstrip::{is_batch_file, is_source_file};
 
 use crate::{is_package_file, FetchError, Fetcher, PackageSource};
 
@@ -112,8 +117,10 @@ fn describe_registry(fetcher: &dyn Fetcher, base: &str, name: &str) -> Result<Li
     Ok(Listing { name: name.into(), version: None, base_url, files, source_label: base.to_string() })
 }
 
-/// The package files a directory listing offers; the docstrip case and an
-/// empty directory are errors with the reason.
+/// The files a directory listing offers: the package files, plus every
+/// `.ins` and `.dtx` when there is a batch file to run them with. A
+/// directory with sources but no batch file, or with nothing usable, is
+/// an error with the reason.
 fn list_directory(fetcher: &dyn Fetcher, base_url: &str, name: &str) -> Result<Vec<String>, String> {
     let html = match fetcher.get(base_url) {
         Ok(b) => b,
@@ -121,20 +128,26 @@ fn list_directory(fetcher: &dyn Fetcher, base_url: &str, name: &str) -> Result<V
         Err(e) => return Err(format!("cannot list {base_url}: {e}")),
     };
     let names = hrefs(&String::from_utf8_lossy(&html));
-    let mut files: Vec<String> = names.iter().filter(|n| is_package_file(n)).cloned().collect();
+    let has_batch = names.iter().any(|n| is_batch_file(n));
+    let mut files: Vec<String> = names.iter().filter(|n| is_package_file(n) || (has_batch && is_docstrip_input(n))).cloned().collect();
     files.sort();
     files.dedup();
     if files.is_empty() {
-        let sources: Vec<&String> = names.iter().filter(|n| n.ends_with(".dtx") || n.ends_with(".ins")).collect();
+        let sources: Vec<&String> = names.iter().filter(|n| is_source_file(n)).collect();
         if !sources.is_empty() {
             return Err(format!(
-                "needs docstrip: {name} ships only {} at {base_url}; FlashTeX does not run the installer (a `.sty` produced by `tex {name}.ins` can be placed in the project or a texinputs directory)",
+                "needs docstrip but ships no .ins batch file: {name} has only {} at {base_url} (a `.dtx` that installs itself is TeX to execute, which FlashTeX does not do; a `.sty` produced by running it can be placed in the project or a texinputs directory)",
                 sources.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
             ));
         }
         return Err(format!("{base_url} lists no .sty/.cls/.def/.clo/.cfg file for {name}"));
     }
     Ok(files)
+}
+
+/// A file docstrip reads: a `.ins` batch file or a `.dtx` source.
+pub fn is_docstrip_input(name: &str) -> bool {
+    is_batch_file(name) || is_source_file(name)
 }
 
 /// The `href="…"` values of a listing that name a file: the last path
@@ -228,6 +241,13 @@ mod tests {
         assert!(describe(&f, &PackageSource::Ctan, "evil").unwrap_err().contains("refuses"));
         assert!(describe(&f, &PackageSource::Ctan, "broken").unwrap_err().contains("JSON"));
         assert!(describe(&f, &PackageSource::Ctan, "empty").unwrap_err().contains("lists no .sty"));
+        let f = FakeFetcher::new()
+            .with_ctan_package("lipsum", "2.7", &[("lipsum.dtx", "%"), ("lipsum.ins", "%"), ("lipsum.pdf", "%"), ("README.md", "#")])
+            .with_ctan_package("selfins", "1", &[("selfins.dtx", "%"), ("selfins.pdf", "%")])
+            .with_ctan_package("both", "1", &[("both.sty", "%"), ("both.dtx", "%"), ("both.ins", "%"), ("extra.cfg", "%")]);
+        assert_eq!(describe(&f, &PackageSource::Ctan, "lipsum").unwrap().files, ["lipsum.dtx", "lipsum.ins"], "a batch file brings every source with it");
+        assert!(describe(&f, &PackageSource::Ctan, "selfins").unwrap_err().starts_with("needs docstrip but ships no .ins"));
+        assert_eq!(describe(&f, &PackageSource::Ctan, "both").unwrap().files, ["both.dtx", "both.ins", "both.sty", "extra.cfg"]);
         let transport = FakeFetcher::new();
         struct Down;
         impl Fetcher for Down {
@@ -245,7 +265,7 @@ mod tests {
         let l = describe(&f, &PackageSource::Url("https://r.example/archive/".into()), "p").unwrap();
         assert_eq!(l.version, None);
         assert_eq!(l.base_url, "https://r.example/archive/macros/latex/contrib/p/");
-        assert_eq!(l.files, ["p.sty"]);
+        assert_eq!(l.files, ["p.sty"], "a .dtx without a .ins is documentation source only");
         assert_eq!(l.pin_conflict(Some("anything")), None, "checked after the download instead");
         assert!(describe(&f, &PackageSource::Url("https://r.example/archive".into()), "q").unwrap_err().contains("404"));
     }

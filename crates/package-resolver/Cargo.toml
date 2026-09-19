@@ -18,8 +18,11 @@ path = "src/lib.rs"
 # blocking + rustls configuration); it sits behind the default `network`
 # feature so a consumer that supplies its own `Fetcher` can leave it out,
 # and so no unit test ever links it.
+# `flashtex-docstrip` unpacks `.ins`/`.dtx` packages after a fetch (no
+# network, no TeX; it only copies bytes the sources contain).
 [dependencies]
 flashtex-project-manifest = { path = "../project-manifest" }
+flashtex-docstrip = { path = "../docstrip" }
 serde_json = "1"
 sha2 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"], optional = true }

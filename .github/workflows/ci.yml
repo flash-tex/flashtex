@@ -76,6 +76,7 @@ jobs:
           - project-files
           - project-manifest
           - package-resolver
+          - docstrip
           - font-discovery
     steps:
       - uses: actions/checkout@v4
@@ -128,6 +129,7 @@ jobs:
             crates/project-files
             crates/project-manifest
             crates/package-resolver
+            crates/docstrip
           key: helpers
       - name: Build every bundled helper (release)
         # Prints FLASHTEX_<NAME>=<path> lines; the app and its tests read them.
