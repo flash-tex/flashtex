@@ -1,13 +1,87 @@
 # Font system, math half: `\setmathfont` over the OpenType `MATH` table
 
-**Status:** contract, not implemented. Written by the S4 text lane
-(mac-claude-a / lane-fonts) for the owner of `crates/math-layout` (Daniel's
-crate) and whoever picks up the pipeline side. The text half — discovery,
-`Family::Named`, fontspec's `\setmainfont`/`\setsansfont`/`\setmonofont`/
-`\newfontfamily`/`\fontspec`, the manifest's `[fonts] text/sans/mono` — is on
-`lane/fonts` (`crates/font-discovery`, `crates/render-pipeline/src/fontspec.rs`,
-`fonts.rs`). This document is what the math half needs from `math-layout`, in
-the crate's own types, and where the rest of it already exists.
+**Status:** implemented on `lane/mathfont` (mac-claude-a, 2026-09-19) under
+the Commander's rulings on §5 — (1) LuaTeX's `mlist.c` is the oracle for
+OpenType math geometry, (2) `\usepackage{unicode-math}` alone switches the
+document to Latin Modern Math, (3) the `MathVariants`/`MathKernInfo`
+parsing moved into `crates/font-engine/src/math.rs`. What landed, against
+the sections below:
+
+* §1: font-engine's `MathTable` now reads `MathVariants` (variants,
+  assemblies, `min_connector_overlap`), `MathKernInfo` (`kern`) and the
+  extended-shape coverage; the pipeline's private `parse_variants` is
+  gone. `MathFonts` (`crates/render-pipeline/src/mathfont.rs`) is the
+  provider for a document's own font (`MathFonts::named`) as well as the
+  no-TFM fallback.
+* §2.1: `OpenTypeExtras`, `OpenTypeMathConstants` grown by the same
+  constants, `MathFontMetrics::opentype_extras` (default `None`), and the
+  rules behind it in `layout.rs` — fractions/stacks, scripts, radicals with
+  the degree, accents, over/underbar. Two rules the contract did not list
+  turned out to matter and are in: a box nucleus's script drops use the
+  *current* style's `SuperscriptBaselineDropMax`/`SubscriptBaselineDropMin`
+  (LuaTeX), and the radical sign is re-boxed so its ink top meets the
+  rule's top (STIX Two Math's sign sits above the baseline).
+* §2.2: `KernCorner`, `MathFontMetrics::math_kern`, LuaTeX's
+  `find_math_kern` in `make_scripts` (the smaller of the two heights'
+  sums), applied to a character nucleus with a one-character script.
+* §2.3: as unicode-math actually sets them (LuaLaTeX measured): `\mathcal`,
+  `\mathfrak`, `\mathbb` are the math face's own blocks; `\mathbf`,
+  `\mathsf`, `\mathit`, `\mathtt` and `\mathrm` are the *text* faces of the
+  document's text family (`MathFonts::with_text_alphabets`), not the
+  U+1D400… blocks the contract proposed — unicode-math's `\symbf` etc. would
+  be those, and the compiler has no model for them yet. The secondary
+  double-struck face is not used by a named font. Script sizes are the
+  face's `ScriptPercentScaleDown`/`ScriptScriptPercentScaleDown` with its
+  `ssty` alternates (script form at script size, scriptscript form below).
+* §2.4: `fontspec::Settings::math` (`MathSelection`): the last preamble
+  `\setmathfont` of the entry document > manifest `[fonts] math` >
+  `unicode-math`'s Latin Modern Math; `\setmathfont` in the body or an
+  included file is a `math_font_ignored` note; options (`Scale=`, `range=`)
+  are a `fontspec_feature_ignored` note; a family that is missing or has no
+  `MATH` table is a `math_font_unavailable` warning and TeX's metrics.
+  The provider follows every text size (`math_fonts_at`).
+* §3 holds: the corpus (70 fixtures, `scripts/render-corpus-v2.sh`) is
+  byte-identical before and after.
+* §4: `crates/render-pipeline/tests/setmathfont.rs` (the hw1 envelope
+  below, the LuaTeX oracle numbers for Latin Modern Math and STIX Two
+  Math), `crates/math-layout/tests/opentype_extras.rs`, font-engine's
+  `math::tests`.
+
+Test 1's finding, measured on hw1 (2743 glyphs, 286 from the math face):
+the median delta is 0 bp; 125 glyphs move more than 0.5 bp. The owners, in
+order: `\mathbb` (2.07 bp — LuaLaTeX sets ℝ from Latin Modern Math's
+open-face design, 6.39 pt, where the TeX route draws msbm's 7.22 pt design
+from New Computer Modern Math; the text after such an inline formula moves
+with it), `\bigl(` (1.46 bp — cmex's 12 pt paren against the face's
+10.95 pt variant, what LuaLaTeX picks too), a subscript alone (1.06 bp —
+LuaTeX drops it `SubscriptShiftDown` 2.47 pt, TeX σ₁₆ 1.5; the table has no
+σ₁₆), a display-style superscript (0.54 bp — `SuperscriptShiftUp` 3.63
+against σ₁₃ 4.12), `\forall`/`\exists` advances (0.73 bp). Formulas of
+letters, digits and relations agree within 0.25 bp (the italic corrections
+differ: 𝐷 before `(` by 0.21 bp). So "within 0.5 bp for every glyph" does
+not hold, and cannot for those constructs: they are where LuaTeX's geometry
+and pdfTeX's differ by design.
+
+Not done, deliberately: `flac` flattened accents (LuaTeX's default
+`\mathflattenmode` does not apply them either: `\hat{A}` keeps the plain
+hat), `\sqrt[n]` through the pipeline (the compiler drops the degree; the
+placement is implemented and unit-tested in math-layout), `\int\limits` on
+a symbol (the compiler does not carry `\limits` on it), `\mathbb` without
+`amsfonts` (the compiler rejects it before this code runs), `\ldots` as a
+single U+2026 glyph, `\symbf` and friends, `range=`/`Scale=`.
+
+The original contract follows, unchanged.
+
+---
+
+Written by the S4 text lane (mac-claude-a / lane-fonts) for the owner of
+`crates/math-layout` (Daniel's crate) and whoever picks up the pipeline
+side. The text half — discovery, `Family::Named`, fontspec's
+`\setmainfont`/`\setsansfont`/`\setmonofont`/`\newfontfamily`/`\fontspec`,
+the manifest's `[fonts] text/sans/mono` — is on `lane/fonts`
+(`crates/font-discovery`, `crates/render-pipeline/src/fontspec.rs`,
+`fonts.rs`). This document is what the math half needs from `math-layout`,
+in the crate's own types, and where the rest of it already exists.
 
 Direction it serves: `docs/proposals/packages-fonts-manifest.md` §2.4 —
 "support using any font on the computer, including for math", `unicode-math`

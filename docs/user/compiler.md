@@ -291,7 +291,24 @@ and embeds the Latin Modern OpenType faces (plus New Computer Modern Math for
 
 Without the TFMs the OpenType metrics are used and a `tfm_missing` /
 `math_metrics_opentype` warning says so; a missing required metric set is the
-blocking `required_metrics_unavailable` error, never a silent fallback. The
+blocking `required_metrics_unavailable` error, never a silent fallback.
+
+A document can choose its own fonts the way it would under XeLaTeX or
+LuaLaTeX. Text: `\setmainfont`/`\setsansfont`/`\setmonofont`,
+`\newfontfamily`, `\fontspec` (fontspec's syntax; `Scale=`, `BoldFont=`,
+`ItalicFont=`, `Numbers=OldStyle`, `Ligatures=TeX` honoured) or the
+manifest's `[fonts]` table, over every font installed on the machine.
+Math: `\setmathfont{Family}` in the preamble, `\usepackage{unicode-math}`
+alone (Latin Modern Math) or `[fonts] math = "…"` set every formula from
+that face's OpenType `MATH` table with LuaTeX's rules for it — the table's
+constants, cut-in kerns, top-accent anchors, glyph assemblies for tall
+delimiters, the face's script sizes and `ssty` forms. `\mathcal`,
+`\mathfrak` and `\mathbb` come from the math face; `\mathbf`, `\mathsf`,
+`\mathit`, `\mathtt` and `\mathrm` from the text fonts, as unicode-math sets
+them. `flashtex-render --list-math-fonts` names the usable families; one
+without a `MATH` table, or not installed, is a `math_font_unavailable`
+warning and the formula keeps TeX's metrics. A document that names no font
+is laid out exactly as before, with pdfLaTeX's metrics. The
 bundle covers Latin Modern Roman regular/bold/italic at 5–17 pt, the math
 faces, and — despite older notes here — sans (`lmsans*`, including demi-condensed),
 slanted (`lmromanslant*`/`lmmonoslant*`), small caps (`lmromancaps*`/
@@ -1235,7 +1252,7 @@ Any other package, or these packages with other options, is recorded and reporte
 | `fontenc` | T1/OT1 are the text encoding tables; fontenc.sty needs \DeclareFontEncoding |
 | `lmodern` | Latin Modern is the render pipeline's font set; lmodern.sty needs \DeclareFontFamily |
 | `fontspec` | \setmainfont & co. are font settings (proposal S4); fontspec.sty is expl3 code |
-| `unicode-math` | math fonts are a setting (proposal S4); the file is expl3 code |
+| `unicode-math` | `\setmathfont{…}` selects the OpenType math font (and the package alone selects Latin Modern Math); the file is expl3 code |
 | `babel` | language selection is not modelled; babel.sty needs \language and \lccode tables |
 | `iftex` | \ifpdftex & co. would misreport the engine; the file tests primitives |
 | `ifxetex` | \ifxetex is the parser's; the file tests primitives |
