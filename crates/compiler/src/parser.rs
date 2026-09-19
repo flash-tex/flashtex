@@ -19573,9 +19573,11 @@ mod tests {
         let source = r"\documentclass[10pt]{amsart}\begin{document}{\tiny a \scriptsize b \footnotesize c \small d \normalsize e \large f \Large g \LARGE h \huge i \Huge j}\end{document}";
         let output = full_output(source);
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        // Verified against a real pdflatex `\f@size` dump, not the
+        // `\@xipt`-family macro names' literal digits.
         for (text, size) in
             [("a", 6.0), ("b", 7.0), ("c", 8.0), ("d", 9.0), ("e", 10.0),
-             ("f", 11.0), ("g", 12.0), ("h", 14.0), ("i", 17.0), ("j", 20.0)]
+             ("f", 10.95), ("g", 12.0), ("h", 14.4), ("i", 17.28), ("j", 20.74)]
         {
             assert_eq!(output_size(&output, text), size, "{text}");
         }
@@ -19587,10 +19589,13 @@ mod tests {
         // point-size options (10pt is covered exhaustively above), spread
         // over all three AMS classes to prove they share the ladder.
         for (class, option, expected) in [
-            ("amsart", "8pt", [5.0, 8.0, 10.0, 14.0]),
-            ("amsart", "9pt", [5.0, 9.0, 11.0, 17.0]),
-            ("amsbook", "11pt", [7.0, 11.0, 14.0, 25.0]),
-            ("amsproc", "12pt", [8.0, 12.0, 17.0, 25.0]),
+            ("amsart", "8pt", [5.0, 8.0, 10.0, 14.4]),
+            ("amsart", "9pt", [5.0, 9.0, 10.95, 17.28]),
+            // `e` (`\normalsize`) stays 11.0: it resolves through the
+            // existing, separately-documented 11pt body-size approximation
+            // (real 10.95), not through the AMS ladder table at all.
+            ("amsbook", "11pt", [7.0, 11.0, 14.4, 24.88]),
+            ("amsproc", "12pt", [8.0, 12.0, 17.28, 24.88]),
         ] {
             let source = format!(
                 "\\documentclass[{option}]{{{class}}}\\begin{{document}}{{\\tiny a \\normalsize e \\Large g \\Huge j}}\\end{{document}}"
@@ -19615,12 +19620,21 @@ mod tests {
 
     #[test]
     fn ams_relative_steps_clamp_at_both_ends() {
-        // Past `\Huge` the size holds at `\Huge` (20pt at 10pt); below
-        // `\tiny` it holds the smallest representable declaration.
+        // Past `\Huge` the size holds at `\Huge` (20.74pt at 10pt, verified
+        // against a real pdflatex `\f@size` dump).
         let source = r"\documentclass[10pt]{amsart}\begin{document}{\Huge h \larger{X} \tiny t \smaller[3]{Y} \normalsize n \smaller s}\end{document}";
         let output = full_output(source);
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-        assert_eq!(output_size(&output, "X"), 20.0);
+        assert_eq!(output_size(&output, "X"), 20.74);
+        // Known remaining gap (tracked separately, not this fix): pdflatex
+        // holds at `\Tiny` (5pt) below `\tiny`, but rung 0 has no
+        // `FontSizeLevel` yet and folds onto `\tiny` (6pt) in
+        // `ams_rung_level`, so three steps down from `\tiny` still land on
+        // `\tiny` itself rather than the AMS classes' own lower `\Tiny`
+        // rung. Fixing it needs a real state slot for rung 0 (a new
+        // `FontSizeLevel` variant or an AMS-specific rung field), which
+        // touches ~80 call sites across this crate -- deliberately not
+        // done in the same change as the table-value fix above.
         assert_eq!(output_size(&output, "Y"), 6.0);
         assert_eq!(output_size(&output, "s"), 9.0);
     }
