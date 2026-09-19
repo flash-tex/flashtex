@@ -4457,6 +4457,12 @@ mod tests {
 
     #[test]
     fn unknown_command_and_unclosed_shift_recover_without_losing_content() {
+        // Issue #846 changed the recovery contract: pdflatex answers
+        // "Undefined control sequence" and typesets nothing for a
+        // command it cannot resolve, so the literal `\unknown` name no
+        // longer reaches the page. "Without losing content" now means
+        // the surrounding `x+` still renders and both diagnostics (the
+        // unknown command and the unclosed `$`) are still reported.
         let source = "$x+\\unknown";
         let (parsed, pages) = laid_out(source);
         let messages: Vec<_> = parsed
@@ -4468,9 +4474,13 @@ mod tests {
         assert!(messages
             .iter()
             .any(|m| m.contains("missing its closing '$'")));
+        assert!(!pages.iter().flat_map(|p| &p.items).any(|i| i.text.contains("unknown")));
         assert!(pages
             .iter()
-            .any(|p| p.items.iter().any(|i| i.text == "\\unknown")));
+            .any(|p| p.items.iter().any(|i| i.text == "x")));
+        assert!(pages
+            .iter()
+            .any(|p| p.items.iter().any(|i| i.text == "+")));
     }
 
     #[test]
