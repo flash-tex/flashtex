@@ -802,6 +802,11 @@ for the preview currently on screen, never for the request in flight.
 
 ## Completion and navigation
 
+Package and class files (`.sty`/`.cls`: the `@`-as-letter mode, the kernel
+vocabulary, macros "declared in mystyle.sty", go-to-definition into a
+package input, the `\usepackage` hint for problems inside one) are
+described in [docs/package-editing.md](docs/package-editing.md).
+
 Completion (`Completion.swift`) is a pure engine over the buffer's UTF-8 bytes
 with the caret in UTF-16 units, wired into the editor through a small
 `NSTextView` subclass (`CompletingTextView`) whose user-completion range includes
