@@ -2013,6 +2013,9 @@ impl<'a> Context<'a> {
                 .map(|(run, rec)| vec![(pl::Item::Box(run), Some(rec))])
                 .unwrap_or_default();
         }
+        if let Some(items) = self.ot1_math_symbol_items(seg, size) {
+            return items;
+        }
         if !hyphenate {
             return self.whole_word(seg, size);
         }
@@ -2148,6 +2151,129 @@ impl<'a> Context<'a> {
 
     fn whole_word(&mut self, seg: &adapter::Segment, size: f64) -> Vec<(pl::Item, Option<usize>)> {
         self.text_box(seg, size).map(|(run, rec)| vec![(pl::Item::Box(run), Some(rec))]).unwrap_or_default()
+    }
+
+    /// Which of `seg`'s characters an OT1 document sets from a math font
+    /// ([`crate::fonts::ot1_math_symbol_box`]), by index into `seg.chars`.
+    /// A `\`, `{` or `}` in non-verbatim text can only have come from
+    /// `\textbackslash`, `\{`/`\textbraceleft` or `\}`/`\textbraceright`
+    /// (the characters themselves are catcode 0, 1 and 2), so those are
+    /// always the OMS symbols; a `|`, `<` or `>` is one only when its
+    /// source is the `\textbar`/`\textless`/`\textgreater` command, since
+    /// the typed characters set the text font's own slots (`—`, `¡`, `¿`
+    /// in `cmr`). Empty for T1 documents, where `t1enc.def` declares all
+    /// six in the text font, and for verbatim, whose `\`, `{` and `}` are
+    /// the typewriter font's characters.
+    fn ot1_math_symbol_indices(&self, seg: &adapter::Segment) -> Vec<usize> {
+        if seg.style.literal || self.style.nfss.encoding() != "OT1" {
+            return Vec::new();
+        }
+        let bytes = seg.text.as_bytes();
+        if !bytes.iter().any(|b| matches!(b, b'\\' | b'{' | b'}' | b'|' | b'<' | b'>')) || seg.chars.len() != seg.text.chars().count() {
+            return Vec::new();
+        }
+        let command_at = |src: &adapter::CharSrc, name: &str| {
+            self.texts
+                .get(src.document.0)
+                .and_then(|t| t.get(src.start..src.end))
+                .is_some_and(|s| s.starts_with(name) && !s[name.len()..].starts_with(|c: char| c.is_ascii_alphabetic()))
+        };
+        seg.text
+            .chars()
+            .zip(seg.chars.iter())
+            .enumerate()
+            .filter(|(_, (c, src))| match c {
+                '\\' | '{' | '}' => true,
+                '|' => command_at(src, "\\textbar"),
+                '<' => command_at(src, "\\textless"),
+                '>' => command_at(src, "\\textgreater"),
+                _ => false,
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// `seg` set as pdflatex sets it under OT1 when it holds a text symbol
+    /// the kernel takes from a math font ([`Self::ot1_math_symbol_indices`]):
+    /// the text around each symbol in the text face, the symbol itself as
+    /// its own box ([`Self::ot1_math_symbol_box`]). `None` when `seg` has
+    /// no such character. The pieces are not hyphenated: TeX's hyphenation
+    /// pass stops at the first character of another font (§896-899), and
+    /// the letters on either side of a `\textbackslash` or `\{` are the
+    /// command names such words spell.
+    fn ot1_math_symbol_items(&mut self, seg: &adapter::Segment, size: f64) -> Option<Vec<(pl::Item, Option<usize>)>> {
+        let symbols = self.ot1_math_symbol_indices(seg);
+        if symbols.is_empty() {
+            return None;
+        }
+        let chars: Vec<char> = seg.text.chars().collect();
+        let mut out = Vec::new();
+        let mut push = |this: &mut Self, out: &mut Vec<(pl::Item, Option<usize>)>, boxed: Option<(pl::GlyphRun, usize)>| {
+            if let Some((run, rec)) = boxed {
+                if !out.is_empty() {
+                    this.mark_continues(rec);
+                }
+                out.push((pl::Item::Box(run), Some(rec)));
+            }
+        };
+        let mut start = 0;
+        for &at in symbols.iter().chain(std::iter::once(&chars.len())) {
+            if at > start {
+                let frag = adapter::Segment {
+                    text: chars[start..at].iter().collect(),
+                    chars: seg.chars[start..at].to_vec(),
+                    style: seg.style,
+                };
+                let boxed = self.text_box(&frag, size);
+                push(self, &mut out, boxed);
+            }
+            if at < chars.len() {
+                let boxed = self.ot1_math_symbol_box(chars[at], seg.chars[at], size, seg.style);
+                push(self, &mut out, boxed);
+            }
+            start = at + 1;
+        }
+        Some(out)
+    }
+
+    /// One OT1 math-font text symbol as `\UseTextSymbol` boxes it: the
+    /// `cmsy`/`cmmi` (or `cmbsy`/`cmmib` for roman `\bfseries`) character
+    /// box of [`crate::fonts::ot1_math_symbol_box`] at the text size, with
+    /// the glyph drawn from the math face at the box origin, where pdflatex
+    /// draws the `cmsy` glyph. Latin Modern Math carries the `lmsy10`/
+    /// `lmmi10` designs, whose advances are the box widths at 10 pt medium;
+    /// for `cmbsy` and the small optical sizes the drawn glyph is narrower
+    /// than its box (a bold `\textbackslash` is 0.575 em of which the
+    /// medium glyph fills 0.5). Without the math face the text face's own
+    /// character is set, as before.
+    fn ot1_math_symbol_box(&mut self, ch: char, src: adapter::CharSrc, size: f64, style: TextStyle) -> Option<(pl::GlyphRun, usize)> {
+        let seg = adapter::Segment { text: ch.to_string(), chars: vec![src], style };
+        // `\UseTextSymbol` keeps `\f@family`: only the roman family has
+        // `bx` declared in OMS/OML (`omscmr.fd`, `omlcmr.fd`); every other
+        // family, whatever its series, gets the encoding's medium default.
+        let mut key = style.key();
+        if key.family == crate::nfss::FamilyKind::Rm {
+            key.family = self.style.default_family;
+        }
+        let bold = key.family == crate::nfss::FamilyKind::Rm && key.series == crate::nfss::Series::Bx;
+        let Some((width, height, depth)) = crate::fonts::ot1_math_symbol_box(ch, bold, size) else {
+            return self.text_box(&seg, size);
+        };
+        let math = self.fonts.resolve(self.style.family, Role::Math, size);
+        if math.substituted.is_some() {
+            return self.text_box(&seg, size);
+        }
+        let (mut run, rec) = self.text_box_in(&seg, size, math.face)?;
+        if let ([glyph], BoxRec::Text { height: rec_height, depth: rec_depth, .. }) = (run.glyphs.as_mut_slice(), &mut self.recs[rec]) {
+            glyph.advance = width;
+            glyph.kern = 0.0;
+            run.width = width;
+            *rec_height = height;
+            *rec_depth = depth;
+        }
+        run.height = height;
+        run.depth = depth;
+        Some((run, rec))
     }
 
     /// Runs the breaker. A list it rejects (non-finite or overlong, which

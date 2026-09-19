@@ -550,6 +550,65 @@ pub fn tcrm_symbol_width(ch: char, size_pt: f64) -> Option<f64> {
     }
 }
 
+/// The box (width, height, depth in points) of a text symbol that OT1 has
+/// no slot for and the kernel therefore sets from a *math* font
+/// (latex.ltx 10046-10059: `\DeclareTextSymbolDefault{\textbackslash}{OMS}`,
+/// `\textbar`, `\textbraceleft`, `\textbraceright` likewise; `\textless`
+/// and `\textgreater` `{OML}`). `\UseTextSymbol` keeps the family, series
+/// and size and switches the encoding, so the font is what `omscmr.fd`/
+/// `omlcmr.fd` declare for the roman family -- `cmsy`/`cmmi` for `m`,
+/// `cmbsy`/`cmmib` for `bx` -- and for every other family and series
+/// (`cmss`, `cmtt`, `lmss`, `lmtt`, and any `b`) the encoding's default
+/// `OMS/cmsy/m/n` / `OML/cmm/m/it` after a "Font shape undefined" warning
+/// (`fontmath.ltx` 49-50). Latin Modern's `lmsy`/`lmmi` are metric copies.
+/// `bold` is that roman-`bx` case.
+///
+/// `CHARWD`/`CHARHT`/`CHARDP` in design units per design size, transcribed
+/// with `tftopl` from TeX Live 2026 (`cmsy5-10`, `cmbsy5/7/10`, `cmmi5-10`,
+/// `cmmib5/7/10`), with the `.fd` size ranges `<-5.5>5 <5.5-6.5>6 <6.5-7.5>7
+/// <7.5-8.5>8 <8.5-9.5>9 <9.5->10` (medium) and `<-6>5 <6-8>7 <8->10`
+/// (bold), every design scaled linearly to `size_pt` as TeX loads it.
+/// `None` for any other character.
+///
+/// pdflatex 10 pt: `\hbox{\texttt{a\textbackslash b}}` is 15.49992 pt
+/// (`cmtt` 5.24995 + `cmsy` 5.0 + 5.24995), `\hbox(7.5+2.5)`; the
+/// typewriter font's own `\` (5.25 pt, T1 slot 92) is what `[T1]{fontenc}`
+/// sets and what this used to set under OT1 too.
+pub fn ot1_math_symbol_box(ch: char, bold: bool, size_pt: f64) -> Option<(f64, f64, f64)> {
+    const MEDIUM_BOUNDS: [f64; 5] = [5.5, 6.5, 7.5, 8.5, 9.5];
+    const BOLD_BOUNDS: [f64; 2] = [6.0, 8.0];
+    // cmsy: `\{` `\}` `\` (slots 102, 103, 110) share one width; `|` (106).
+    const CMSY_BRACE: [f64; 6] = [0.73612, 0.6388855, 0.58532, 0.531258, 0.5138855, 0.500002];
+    const CMSY_BAR: [f64; 6] = [0.458338, 0.379628, 0.339288, 0.295143, 0.285492, 0.277779];
+    const CMBSY_BRACE: [f64; 3] = [0.7916565, 0.65516, 0.574997];
+    const CMBSY_BAR: [f64; 3] = [0.4694395, 0.371033, 0.319443];
+    // cmmi: `<` and `>` (slots 60, 62) share width, height and depth.
+    const CMMI_LESS: [(f64, f64, f64); 6] = [
+        (1.083349, 0.600916, 0.100916),
+        (0.962956, 0.587987, 0.087987),
+        (0.892861, 0.575675, 0.075675),
+        (0.826401, 0.563126, 0.063126),
+        (0.799377, 0.550973, 0.050973),
+        (0.777781, 0.539098, 0.039098),
+    ];
+    const CMMIB_LESS: [(f64, f64, f64); 3] = [(1.1944275, 0.654114, 0.154114), (1.01032, 0.625319, 0.125319), (0.89444, 0.585556, 0.085556)];
+    let medium = MEDIUM_BOUNDS.iter().filter(|b| size_pt >= **b).count();
+    let bold_ix = BOLD_BOUNDS.iter().filter(|b| size_pt >= **b).count();
+    let (w, h, d) = match ch {
+        '\\' | '{' | '}' => (if bold { CMBSY_BRACE[bold_ix] } else { CMSY_BRACE[medium] }, 0.75, 0.25),
+        '|' => (if bold { CMBSY_BAR[bold_ix] } else { CMSY_BAR[medium] }, 0.75, 0.25),
+        '<' | '>' => {
+            if bold {
+                CMMIB_LESS[bold_ix]
+            } else {
+                CMMI_LESS[medium]
+            }
+        }
+        _ => return None,
+    };
+    Some((w * size_pt, h * size_pt, d * size_pt))
+}
+
 /// Glyph extents in font units: `[x_min, y_min, x_max, y_max]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Bounds {
