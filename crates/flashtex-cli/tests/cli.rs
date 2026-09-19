@@ -187,6 +187,38 @@ fn a_v2_write_failure_is_not_reported_as_ok() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Issue #843's reporting half: a build that fails only at the output stage
+/// (here a genuinely empty body, so the display list has no pages) counts
+/// the failure — the summary must never read "0 errors" on a failed build.
+#[test]
+fn an_output_only_failure_counts_one_error() {
+    let dir = tmp("empty-body-counts");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\n\\end{document}\n").unwrap();
+    let out = dir.join("main.pdf");
+    let fonts = fonts_dir();
+    let o = run(&[
+        "build",
+        src.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+        "--font-dir",
+        fonts.to_str().unwrap(),
+        "--json",
+    ]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains(": failed, 0 pages, 1 error, 0 warnings"),
+        "the failure must be counted:\n{err}"
+    );
+    let report = json(&stdout(&o));
+    assert_eq!(report.get("status").and_then(|v| v.as_str()), Some("failed"), "{}", stdout(&o));
+    let summary = report.get("summary").unwrap();
+    assert_eq!(summary.get("errors").and_then(|v| v.as_i64()), Some(1), "{}", stdout(&o));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Exit code, summary line and `--json` status must all say `failed`.
 fn assert_output_failed(o: &Output) {
     let err = stderr(o);

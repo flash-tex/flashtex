@@ -387,6 +387,27 @@ fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<
     for f in &failures {
         let _ = writeln!(err, "flashtex: error: {f}");
     }
+    // A build that failed only at the output stage (the PDF or `--v2`
+    // write above) has no render diagnostic, so the summary counters would
+    // read "0 errors" on a failed build. Count each failure as an error
+    // diagnostic so the counters, `--json` and the exit code agree. Pushed
+    // after the per-diagnostic printing above on purpose: the `flashtex:
+    // error: ...` line just printed is already this failure's report, and
+    // printing it again in diagnostic form would duplicate it.
+    for f in &failures {
+        outcome.diagnostics.push(compile::Diagnostic {
+            path: project.entry.clone(),
+            line: None,
+            column: None,
+            start_byte: None,
+            end_byte: None,
+            error: true,
+            code: "output".to_string(),
+            message: f.clone(),
+            recovery: None,
+            suggestion: None,
+        });
+    }
     let wrote = outputs
         .iter()
         .map(|(k, p)| format!("{k} {}", p.display()))

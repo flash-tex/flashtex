@@ -3145,9 +3145,38 @@ impl<'a> Context<'a> {
         }
         // TeX's paragraph end: drop trailing glue, then
         // \penalty10000 \parfillskip \penalty-10000.
+        let had_horizontal = out
+            .iter()
+            .any(|i| matches!(i, pl::Item::Glue(_) | pl::Item::Kern(_)));
         while matches!(out.last(), Some(pl::Item::Glue(_))) {
             out.pop();
             recs.pop();
+        }
+        // TeX §1091 (`new_graf`): horizontal glue or kerns in vertical mode
+        // start a paragraph, and a paragraph with no boxes still breaks to
+        // one line — pdflatex ships a page for a body holding only
+        // `\hspace{1cm}`, `\hfill`, `\quad`, `\,`, `~` or `\ `. Without an
+        // undiscardable node the breaker sees only the paragraph-end triple
+        // and yields no lines, so `paragraph_block` drops the paragraph and
+        // the build fails with "display list has no pages". The empty hbox
+        // is the same anchor `AItem::LeaveVmode` uses (and `\hrulefill`
+        // relies on through the adapter): zero size, so paragraphs that
+        // already hold a box never reach this and lay out byte-identically.
+        // Whatsits alone (`\label`, penalties, `\/` with no box before it)
+        // leave no glue or kern behind, so genuinely empty paragraphs still
+        // contribute nothing.
+        if had_horizontal && !out.iter().any(|i| matches!(i, pl::Item::Box(_))) {
+            self.recs.push(BoxRec::Rule { width: 0.0, height: 0.0, bottom: 0.0, span: Span::new(0, 0), color: None });
+            let run = pl::GlyphRun {
+                font: MATH_SENTINEL,
+                size,
+                glyphs: Vec::new(),
+                width: 0.0,
+                height: 0.0,
+                depth: 0.0,
+                source: 0..0,
+            };
+            push(&mut out, &mut recs, pl::Item::Box(run), Some(self.recs.len() - 1));
         }
         push(&mut out, &mut recs, pl::Item::penalty(pl::INFINITE_PENALTY), None);
         push(&mut out, &mut recs, pl::Item::Glue(if fills { pl::Glue::fil() } else { pl::Glue::fixed(0.0) }), None);
