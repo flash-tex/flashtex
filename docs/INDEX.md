@@ -96,3 +96,6 @@ latency. Every consumer must retain source/project/revision and resource identit
 The sole orchestrator owns global integration and task queues. Engineers own their
 assigned product paths plus their own reports. Only an explicit user stop ends
 improvement cycles; completed checkpoints trigger useful next work.
+
+- [Issue #710 font metric sweep](evidence/font-metric-sweep-710.md): measured
+  Latin Modern versus Computer Modern glyph metrics and gate watch list.
