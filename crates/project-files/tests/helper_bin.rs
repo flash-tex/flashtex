@@ -213,3 +213,92 @@ fn symlinked_root_is_refused_at_startup() {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("cannot open root"));
 }
+
+/// The `manifest` operation: the governing `flashtex.toml` (walked up to
+/// from the root), the classified `texinputs`, the package inputs with
+/// their text, the template for the given entry, and the defaults when
+/// there is no manifest at all.
+#[test]
+fn manifest_operation_serves_the_manifest_its_inputs_and_the_template() {
+    let tmp = common::TempDir::new("helper-manifest");
+    let root = tmp.root();
+    std::fs::create_dir_all(root.join("styles")).unwrap();
+    std::fs::create_dir_all(root.join("../helper-manifest-shared")).unwrap();
+    std::fs::write(root.join("mystyle.sty"), "\\def\\x{1}\n").unwrap();
+    std::fs::write(root.join("styles/a.cls"), "class\n").unwrap();
+    std::fs::write(
+        root.join("flashtex.toml"),
+        "[project]\nentry = \"paper.tex\"\ntexinputs = [\"styles\", \"/abs\"]\n[fonts]\nserif = \"x\"\n",
+    )
+    .unwrap();
+    let replies = run(
+        root,
+        &[
+            r#"{"id":"1","operation":"manifest","entry":"paper.tex"}"#,
+            r#"{"id":"2","operation":"manifest","entry":3}"#,
+        ],
+    );
+    let p = payload(&replies[0], "1");
+    assert_eq!(p.get("exists"), Some(&Json::Bool(true)));
+    assert_eq!(
+        p.get("path").and_then(Json::as_str),
+        Some(root.join("flashtex.toml").to_str().unwrap())
+    );
+    let project = p.get("manifest").unwrap().get("project").unwrap();
+    assert_eq!(project.get("entry").and_then(Json::as_str), Some("paper.tex"));
+    assert_eq!(
+        p.get("manifest").unwrap().get("packages").unwrap().get("fetch").and_then(Json::as_str),
+        Some("ask")
+    );
+    let warnings = match p.get("warnings") {
+        Some(Json::Array(w)) => w,
+        other => panic!("warnings: {other:?}"),
+    };
+    assert_eq!(warnings[0].get("key").and_then(Json::as_str), Some("fonts.serif"));
+    let texinputs = match p.get("texinputs") {
+        Some(Json::Array(t)) => t,
+        other => panic!("texinputs: {other:?}"),
+    };
+    assert_eq!(texinputs[0].get("location").and_then(Json::as_str), Some("inside"));
+    assert_eq!(texinputs[1].get("location").and_then(Json::as_str), Some("invalid"));
+    let files = match p.get("files") {
+        Some(Json::Array(f)) => f,
+        other => panic!("files: {other:?}"),
+    };
+    let listed: Vec<(&str, &str)> = files
+        .iter()
+        .map(|f| (f.get("path").unwrap().as_str().unwrap(), f.get("kind").unwrap().as_str().unwrap()))
+        .collect();
+    assert_eq!(listed, [("mystyle.sty", "package"), ("styles/a.cls", "class")]);
+    assert_eq!(files[0].get("text").and_then(Json::as_str), Some("\\def\\x{1}\n"));
+    assert_eq!(files[0].get("texinput"), Some(&Json::Null));
+    assert_eq!(files[1].get("texinput").and_then(Json::as_u64), Some(0));
+    let diagnostics = match p.get("diagnostics") {
+        Some(Json::Array(d)) => d,
+        other => panic!("diagnostics: {other:?}"),
+    };
+    assert_eq!(diagnostics[0].get("key").and_then(Json::as_str), Some("project.texinputs[1]"));
+    let template = p.get("template").and_then(Json::as_str).unwrap();
+    assert!(template.contains("entry = \"paper.tex\""), "{template}");
+    assert_eq!(error_code(&replies[1], "2"), "invalid_request");
+
+    // No manifest anywhere up to the filesystem root: defaults, and the
+    // root's own package files are still the package inputs.
+    let bare = common::TempDir::new("helper-no-manifest");
+    std::fs::write(bare.root().join("local.sty"), "s").unwrap();
+    let replies = run(bare.root(), &[r#"{"id":"1","operation":"manifest"}"#]);
+    let p = payload(&replies[0], "1");
+    assert_eq!(p.get("exists"), Some(&Json::Bool(false)));
+    assert_eq!(p.get("path"), Some(&Json::Null));
+    assert_eq!(
+        p.get("manifest").unwrap().get("project").unwrap().get("entry"),
+        Some(&Json::Null)
+    );
+    let files = match p.get("files") {
+        Some(Json::Array(f)) => f,
+        other => panic!("files: {other:?}"),
+    };
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].get("path").and_then(Json::as_str), Some("local.sty"));
+    assert!(p.get("template").and_then(Json::as_str).unwrap().contains("entry = \"main.tex\""));
+}

@@ -665,3 +665,115 @@ fn broken_and_directory_symlinks_are_refused_not_missing() {
         ]
     );
 }
+
+/// docs/user/project-manifest.md: the package inputs come after the
+/// reference closure — the root's own `.sty`/`.cls` files, then each
+/// `texinputs` directory in manifest order — through the rooted handle;
+/// an outside directory is mounted at `texinputs/<i>/`, a `.tex` the
+/// closure already reached is not repeated, an invalid entry is a warning
+/// on `flashtex.toml`, and without a manifest only the root's own package
+/// files are added.
+#[test]
+fn manifest_texinputs_join_the_closure_after_the_entry_documents() {
+    use flashtex_project_manifest::Manifest;
+    let t = TempDir::new("texinputs");
+    t.write("proj/main.tex", "\\documentclass{myclass}\\usepackage{mystyle}\\input{styles/shared}");
+    t.write("proj/myclass.cls", "\\LoadClass{article}");
+    t.write("proj/notes.sty", "\\def\\notes{1}");
+    t.write("proj/README.md", "not a document");
+    t.write("proj/styles/mystyle.sty", "\\newcommand{\\hello}{Hi}");
+    t.write("proj/styles/shared.tex", "Shared.");
+    t.write("proj/styles/t1enc.def", "defs");
+    t.write("proj/styles/size11.clo", "clo");
+    t.write("proj/styles/refs.bib", "@book{k}");
+    t.write("proj/styles/logo.png", "png");
+    t.write("shared/common.sty", "\\def\\common{1}");
+    t.write("shared/deep/ignored.sty", "no recursion");
+    let root = t.root().join("proj");
+    let manifest = Manifest::parse(
+        "[project]\nentry = \"main.tex\"\ntexinputs = [\"styles\", \"../shared\", \"/abs\", \"missing\"]\n",
+    )
+    .unwrap()
+    .manifest;
+    let g = ProjectGraph::discover_with_manifest(&root, &pp("main.tex"), &Overlay::new(), &manifest, &root).unwrap();
+    assert_eq!(
+        paths(&g),
+        [
+            "main.tex",
+            "styles/shared.tex",
+            "myclass.cls",
+            "notes.sty",
+            "styles/mystyle.sty",
+            "styles/refs.bib",
+            "styles/size11.clo",
+            "styles/t1enc.def",
+            "texinputs/1/common.sty",
+        ]
+    );
+    assert_eq!(g.file(&pp("myclass.cls")).unwrap().kind, FileKind::Class);
+    assert_eq!(g.file(&pp("styles/size11.clo")).unwrap().kind, FileKind::Class);
+    assert_eq!(g.file(&pp("styles/t1enc.def")).unwrap().kind, FileKind::Package);
+    assert_eq!(g.file(&pp("styles/refs.bib")).unwrap().kind, FileKind::Bibliography);
+    let outside = g.file(&pp("texinputs/1/common.sty")).unwrap();
+    assert_eq!(outside.kind, FileKind::Package);
+    assert_eq!(outside.origin.as_deref(), Some(t.root().join("shared/common.sty").as_path()));
+    assert_eq!(outside.text.as_deref(), Some("\\def\\common{1}"));
+    assert!(g.file(&pp("styles/mystyle.sty")).unwrap().origin.is_none());
+    let docs: Vec<String> = g.documents().into_iter().map(|d| d.path).collect();
+    assert_eq!(
+        docs,
+        ["main.tex", "styles/shared.tex", "myclass.cls", "notes.sty", "styles/mystyle.sty", "styles/size11.clo", "styles/t1enc.def", "texinputs/1/common.sty"],
+        "documents: tex, package and class files; not the bibliography"
+    );
+    let warnings: Vec<(String, String)> = g
+        .diagnostics()
+        .iter()
+        .filter_map(|d| match &d.kind {
+            DiagnosticKind::Manifest { key } => {
+                assert_eq!(d.severity, Severity::Warning);
+                assert_eq!(d.path, pp("flashtex.toml"));
+                Some((key.clone(), d.message.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(warnings.len(), 2, "{warnings:?}");
+    assert_eq!(warnings[0].0, "project.texinputs[2]");
+    assert!(warnings[0].1.contains("not absolute"), "{}", warnings[0].1);
+    assert_eq!(warnings[1].0, "project.texinputs[3]");
+    assert!(warnings[1].1.contains("no directory missing"), "{}", warnings[1].1);
+
+    // An overlay buffer for a package input wins over its disk text.
+    let mut overlay = Overlay::new();
+    overlay.insert(pp("styles/mystyle.sty"), "edited");
+    let g = ProjectGraph::discover_with_manifest(&root, &pp("main.tex"), &overlay, &manifest, &root).unwrap();
+    let f = g.file(&pp("styles/mystyle.sty")).unwrap();
+    assert_eq!(f.source, FileSource::Overlay);
+    assert_eq!(f.text.as_deref(), Some("edited"));
+
+    // No manifest: the closure plus the root's own package files, nothing else.
+    let g = ProjectGraph::discover(&root, &pp("main.tex")).unwrap();
+    assert_eq!(paths(&g), ["main.tex", "styles/shared.tex", "myclass.cls", "notes.sty"]);
+    assert!(g.diagnostics().is_empty(), "{:?}", g.diagnostics());
+
+    // The Mac app pins the entry's directory as the root; a manifest above
+    // it naming `styles` beside itself is inside the manifest's project but
+    // outside that root, so its files are mounted virtually, not dropped.
+    std::fs::create_dir_all(root.join("paper")).unwrap();
+    t.write("proj/paper/main.tex", "\\usepackage{mystyle}");
+    let manifest = Manifest::parse("[project]\ntexinputs = [\"styles\"]\n").unwrap().manifest;
+    let g = ProjectGraph::discover_with_manifest(&root.join("paper"), &pp("main.tex"), &Overlay::new(), &manifest, &root).unwrap();
+    assert_eq!(paths(&g), ["main.tex", "texinputs/0/mystyle.sty", "texinputs/0/refs.bib", "texinputs/0/shared.tex", "texinputs/0/size11.clo", "texinputs/0/t1enc.def"]);
+    assert_eq!(g.file(&pp("texinputs/0/mystyle.sty")).unwrap().origin.as_deref(), Some(root.join("styles/mystyle.sty").as_path()));
+    assert!(g.diagnostics().is_empty(), "{:?}", g.diagnostics());
+
+    // A symlinked texinputs directory outside the root is refused, not followed.
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(t.root().join("shared"), t.root().join("link")).unwrap();
+        let manifest = Manifest::parse("[project]\ntexinputs = [\"../link\"]\n").unwrap().manifest;
+        let g = ProjectGraph::discover_with_manifest(&root, &pp("main.tex"), &Overlay::new(), &manifest, &root).unwrap();
+        assert!(!paths(&g).iter().any(|p| p.starts_with("texinputs/")), "{:?}", paths(&g));
+        assert!(g.diagnostics().iter().any(|d| matches!(&d.kind, DiagnosticKind::Manifest { key } if key == "project.texinputs[0]")), "{:?}", g.diagnostics());
+    }
+}

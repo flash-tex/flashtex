@@ -7,11 +7,24 @@
 //! (`\input{chapters/a}` inside `chapters/main.tex` still means
 //! `<root>/chapters/a.tex`). Files are visited depth-first in reference
 //! order, so `files()` and `documents()` are deterministic for a given tree.
+//!
+//! After the reference closure come the *package inputs* ([`texinput_files`],
+//! docs/user/project-manifest.md): the `.sty`/`.cls`/`.def`/`.clo` files
+//! directly in the root — what `\usepackage`/`\documentclass` finds in the
+//! working directory — and, with a `flashtex.toml`, every document-kind
+//! file of each `[project] texinputs` directory, in manifest order. They are
+//! listed and read through the same rooted, symlink-refusing handle; a
+//! directory the manifest places outside the root is opened as its own
+//! [`ProjectRoot`] and mounted at the virtual `texinputs/<index>/…`.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
+
+use flashtex_project_manifest::{
+    Manifest, TexInputLocation, is_texinput_file, outside_virtual_dir,
+};
 
 use crate::json::Json;
 use crate::path::{PathError, ProjectPath};
@@ -33,6 +46,45 @@ pub enum FileKind {
     Bibliography,
     /// Graphic asset; hashed but not loaded as text.
     Graphic,
+    /// A LaTeX package (`.sty`) or the definitions one loads (`.def`);
+    /// loaded as text and exported as a document so the compiler's
+    /// `\usepackage` resolver sees it, not scanned for references.
+    Package,
+    /// A document class (`.cls`) or its option files (`.clo`); as `Package`.
+    Class,
+}
+
+impl FileKind {
+    /// The kind a file name's extension implies, `None` for anything the
+    /// project layer does not carry (a README, a log).
+    pub fn from_name(name: &str) -> Option<FileKind> {
+        let ext = name.rsplit_once('.').filter(|(stem, _)| !stem.is_empty())?.1;
+        Some(match ext {
+            "tex" | "ltx" => FileKind::Tex,
+            "bib" => FileKind::Bibliography,
+            "sty" | "def" => FileKind::Package,
+            "cls" | "clo" => FileKind::Class,
+            e if GRAPHIC_EXTENSIONS.contains(&e) => FileKind::Graphic,
+            _ => return None,
+        })
+    }
+
+    /// The wire name (`project-files-v1` `manifest` payload).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FileKind::Tex => "tex",
+            FileKind::Bibliography => "bibliography",
+            FileKind::Graphic => "graphic",
+            FileKind::Package => "package",
+            FileKind::Class => "class",
+        }
+    }
+
+    /// Whether files of this kind are exported by [`ProjectGraph::documents`]:
+    /// what the compiler parses or resolves by name.
+    pub fn is_document(self) -> bool {
+        matches!(self, FileKind::Tex | FileKind::Package | FileKind::Class)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +109,11 @@ pub struct ProjectFile {
     pub bytes: u64,
     /// References found in this file (`Tex` only).
     pub references: Vec<Reference>,
+    /// The on-disk location of a file that is *not* under the root: one
+    /// from a `texinputs` directory the manifest placed outside it, whose
+    /// `path` is the virtual `texinputs/<index>/<name>`. `None` for every
+    /// rooted file (`<root>/<path>`) and for overlays.
+    pub origin: Option<PathBuf>,
 }
 
 /// A resolved reference from one file to another.
@@ -97,6 +154,10 @@ pub enum DiagnosticKind {
     ReadError { path: ProjectPath, message: String },
     /// Nesting exceeded [`MAX_DEPTH`]; the target was not descended into.
     DepthExceeded { target: ProjectPath },
+    /// The manifest said something this version ignores: an unknown key
+    /// (`key` is its dotted path) or a `texinputs` entry that cannot be
+    /// read (`key` is `project.texinputs[<i>]`). Always a warning.
+    Manifest { key: String },
 }
 
 /// A discovery diagnostic attributed to the referencing file and span.
@@ -196,6 +257,23 @@ impl ProjectGraph {
         entry: &ProjectPath,
         overlay: &Overlay,
     ) -> Result<ProjectGraph, DiscoverError> {
+        Self::discover_with_manifest(root, entry, overlay, &Manifest::default(), root)
+    }
+
+    /// [`discover_with`](Self::discover_with) followed by the package
+    /// inputs ([`texinput_files`]): the root's own `.sty`/`.cls`/`.def`/
+    /// `.clo` files and the manifest's `texinputs`, appended after the
+    /// reference closure (a file the closure already reached is not
+    /// repeated; an overlay buffer for a package input wins over disk).
+    /// `manifest_dir` is where `manifest` was read from — the directory
+    /// its relative paths resolve against, normally `root` itself.
+    pub fn discover_with_manifest(
+        root: &Path,
+        entry: &ProjectPath,
+        overlay: &Overlay,
+        manifest: &Manifest,
+        manifest_dir: &Path,
+    ) -> Result<ProjectGraph, DiscoverError> {
         // Opens the root once as a directory handle; every subsequent read
         // walks from this handle with `openat(O_NOFOLLOW)` at each
         // component (see `sys.rs`/`save.rs`), so containment is enforced on
@@ -237,6 +315,22 @@ impl ProjectGraph {
                 ));
             }
         }
+        let (inputs, diagnostics) = texinput_files(&d.project_root, manifest, manifest_dir);
+        for input in inputs {
+            if d.index.contains_key(&input.file.path) {
+                continue;
+            }
+            let mut file = input.file;
+            if let Some(text) = overlay.get(&file.path) {
+                file.source = FileSource::Overlay;
+                file.sha256 = sha256(text.as_bytes());
+                file.bytes = text.len() as u64;
+                file.text = Some(text.to_string());
+                file.origin = None;
+            }
+            d.add_file(file);
+        }
+        d.graph.diagnostics.extend(diagnostics);
         Ok(d.graph)
     }
 
@@ -284,10 +378,11 @@ impl ProjectGraph {
         self.files.iter().map(|f| &f.path)
     }
 
-    /// The runtime-v1 `documents` list: every `Tex` file with valid UTF-8
-    /// text, entry first, then depth-first reference order.
+    /// The runtime-v1 `documents` list: every `Tex`, `Package` and `Class`
+    /// file with valid UTF-8 text, entry first, then depth-first reference
+    /// order, then the package inputs.
     pub fn documents(&self) -> Vec<Document> {
-        self.documents_where(|f| f.kind == FileKind::Tex)
+        self.documents_where(|f| f.kind.is_document())
     }
 
     /// Like [`documents`](Self::documents) but also carries `.bib` sources
@@ -337,6 +432,197 @@ impl ProjectGraph {
             .insert("type", "compile")
             .insert("payload", self.compile_payload(project_id, revision));
         env.to_string_compact()
+    }
+}
+
+/// One package input: a file [`texinput_files`] found, and where.
+#[derive(Debug, Clone)]
+pub struct TexInputFile {
+    pub file: ProjectFile,
+    /// Index in `[project] texinputs`; `None` for the root's own files.
+    pub texinput: Option<usize>,
+}
+
+/// The package inputs of a project (docs/user/project-manifest.md): the
+/// `.sty`/`.cls`/`.def`/`.clo` files directly in the root, then, for each
+/// `[project] texinputs` entry in order, every `.sty`/`.cls`/`.tex`/`.bib`/
+/// `.def`/`.clo` file directly in that directory (names sorted; no
+/// recursion, as `TEXINPUTS` without `//`). Files under the root keep their
+/// project-relative paths and are listed and read through `project_root`'s
+/// pinned handle; a directory the manifest places outside the root is
+/// opened as its own [`ProjectRoot`] (a symlinked or missing directory is
+/// refused) and its files carry the virtual path `texinputs/<index>/<name>`
+/// with `origin` set to the real one. Every problem — an invalid entry, an
+/// unreadable directory, a refused file — is a `DiagnosticKind::Manifest`
+/// warning attributed to `flashtex.toml`, never an error, and the manifest's
+/// own parse warnings are reported the same way. Nothing is followed
+/// through a symlink anywhere.
+pub fn texinput_files(
+    project_root: &ProjectRoot,
+    manifest: &Manifest,
+    manifest_dir: &Path,
+) -> (Vec<TexInputFile>, Vec<Diagnostic>) {
+    let mut out = Vec::new();
+    let mut diagnostics = Vec::new();
+    let manifest_path = ProjectPath::normalize(flashtex_project_manifest::FILE_NAME)
+        .expect("the manifest file name is a valid project path");
+    let mut warn = |key: String, message: String| {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            message,
+            path: manifest_path.clone(),
+            span: None,
+            argument_span: None,
+            kind: DiagnosticKind::Manifest { key },
+        });
+    };
+
+    // The root's own package and class files: what `\usepackage{x}` finds
+    // next to the entry document (never `.tex`/`.bib`, which are the
+    // reference closure's business).
+    let root_dir = project_root.path().to_path_buf();
+    match project_root.list_dir(None) {
+        Ok(Some(names)) => {
+            for name in sorted_names(names) {
+                if !matches!(FileKind::from_name(&name), Some(FileKind::Package | FileKind::Class)) {
+                    continue;
+                }
+                let Ok(path) = ProjectPath::normalize(&name) else { continue };
+                match read_rooted(project_root, &path, FileKind::from_name(&name).unwrap()) {
+                    Ok(Some(file)) => out.push(TexInputFile { file, texinput: None }),
+                    Ok(None) => {}
+                    Err(e) => warn("project".into(), format!("{path}: {e}")),
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(e) => warn("project".into(), format!("cannot list {}: {e}", root_dir.display())),
+    }
+
+    for t in manifest.texinputs(manifest_dir) {
+        let key = format!("project.texinputs[{}]", t.index);
+        let context = |m: String| format!("{key} = {:?}: {m}", t.raw);
+        match &t.location {
+            TexInputLocation::Invalid(why) => warn(key.clone(), context(why.clone())),
+            TexInputLocation::Inside(dir) => {
+                // `dir` is relative to the manifest's directory, which may
+                // be an ancestor of the root the caller pinned (the Mac app
+                // pins the entry's directory; a manifest above it names
+                // `styles` beside itself). Under the root it is listed
+                // through the rooted handle; otherwise it is read exactly
+                // like an outside directory — its own handle, the virtual
+                // mount — because for this root that is what it is.
+                let abs = manifest_dir.join(dir);
+                let Some(rel) = abs
+                    .strip_prefix(&root_dir)
+                    .ok()
+                    .and_then(|r| r.to_str())
+                    .and_then(|r| ProjectPath::normalize(r).ok())
+                else {
+                    read_outside(project_root, &abs, t.index, &context, &mut warn, &mut out);
+                    continue;
+                };
+                let names = match project_root.list_dir(Some(&rel)) {
+                    Ok(Some(n)) => n,
+                    Ok(None) => {
+                        warn(key.clone(), context(format!("no directory {rel} under the project root")));
+                        continue;
+                    }
+                    Err(e) => {
+                        warn(key.clone(), context(format!("cannot list {rel}: {e}")));
+                        continue;
+                    }
+                };
+                for name in sorted_names(names).into_iter().filter(|n| is_texinput_file(n)) {
+                    let path = rel.with_appended_leaf(&name);
+                    let kind = FileKind::from_name(&name).unwrap_or(FileKind::Tex);
+                    match read_rooted(project_root, &path, kind) {
+                        Ok(Some(file)) => out.push(TexInputFile { file, texinput: Some(t.index) }),
+                        Ok(None) => {}
+                        Err(e) => warn(key.clone(), context(format!("{path}: {e}"))),
+                    }
+                }
+            }
+            TexInputLocation::Outside(dir) => read_outside(project_root, dir, t.index, &context, &mut warn, &mut out),
+        }
+    }
+    (out, diagnostics)
+}
+
+/// Lists and reads one `texinputs` directory that is not under the pinned
+/// root, through a handle of its own, mounting its files at
+/// `texinputs/<index>/<name>` (see [`texinput_files`]). `_root` documents
+/// that nothing here goes through the project's handle.
+fn read_outside(
+    _root: &ProjectRoot,
+    dir: &Path,
+    index: usize,
+    context: &dyn Fn(String) -> String,
+    warn: &mut dyn FnMut(String, String),
+    out: &mut Vec<TexInputFile>,
+) {
+    let key = format!("project.texinputs[{index}]");
+    let handle = match ProjectRoot::open(dir) {
+        Ok(h) => h,
+        Err(e) => {
+            warn(key, context(format!("cannot open {}: {e}", dir.display())));
+            return;
+        }
+    };
+    let names = match handle.list_dir(None) {
+        Ok(Some(n)) => n,
+        Ok(None) => return,
+        Err(e) => {
+            warn(key, context(format!("cannot list {}: {e}", dir.display())));
+            return;
+        }
+    };
+    let mount = outside_virtual_dir(index);
+    for name in sorted_names(names).into_iter().filter(|n| is_texinput_file(n)) {
+        let Ok(leaf) = ProjectPath::normalize(&name) else { continue };
+        let Ok(path) = ProjectPath::normalize(&format!("{mount}/{name}")) else { continue };
+        let kind = FileKind::from_name(&name).unwrap_or(FileKind::Tex);
+        match read_rooted(&handle, &leaf, kind) {
+            Ok(Some(mut file)) => {
+                file.path = path;
+                file.origin = Some(dir.join(&name));
+                out.push(TexInputFile { file, texinput: Some(index) });
+            }
+            Ok(None) => {}
+            Err(e) => warn(key.clone(), context(format!("{}: {e}", dir.join(&name).display()))),
+        }
+    }
+}
+
+/// Directory entry names as UTF-8, sorted; names that are not UTF-8
+/// cannot be project paths and are dropped.
+fn sorted_names(names: Vec<Vec<u8>>) -> Vec<String> {
+    let mut names: Vec<String> = names.into_iter().filter_map(|n| String::from_utf8(n).ok()).collect();
+    names.sort();
+    names
+}
+
+/// One rooted read of a package input as a `ProjectFile` (`Ok(None)`: the
+/// listed name is gone, or is not a regular file — a directory called
+/// `x.sty` is simply not a package).
+fn read_rooted(root: &ProjectRoot, path: &ProjectPath, kind: FileKind) -> Result<Option<ProjectFile>, SaveError> {
+    match root.read(path, DEFAULT_READ_LIMIT) {
+        Ok(Some(r)) => {
+            let bytes = r.bytes.len() as u64;
+            Ok(Some(ProjectFile {
+                path: path.clone(),
+                kind,
+                source: FileSource::Disk,
+                text: String::from_utf8(r.bytes).ok(),
+                sha256: r.sha256,
+                bytes,
+                references: Vec::new(),
+                origin: None,
+            }))
+        }
+        Ok(None) => Ok(None),
+        Err(SaveError::Refused(Refused::NotARegularFile { .. } | Refused::NotADirectory { .. })) => Ok(None),
+        Err(e) => Err(e),
     }
 }
 
@@ -504,6 +790,7 @@ impl Discovery<'_> {
                 sha256: sha256(text.as_bytes()),
                 bytes: text.len() as u64,
                 references: Vec::new(),
+                origin: None,
             }));
         }
         match self.project_root.read(path, DEFAULT_READ_LIMIT) {
@@ -522,6 +809,7 @@ impl Discovery<'_> {
                     sha256: r.sha256,
                     bytes: len,
                     references: Vec::new(),
+                    origin: None,
                 }))
             }
             Ok(None) => Resolution::Other(Loaded::Missing),
