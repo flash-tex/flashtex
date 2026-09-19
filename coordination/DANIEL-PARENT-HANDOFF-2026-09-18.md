@@ -535,3 +535,128 @@ would stop FlashTeX telling users which package they are missing.
   switching cost of the read-the-`.sty` option and none lowers it. Not blocking that work.
 - **#936**, **#896** — vendor pins.
 - `calc-package` and `jakes-resume` await review; `proof-in-list` slice 2 is approved and idle.
+
+## Update ~19:00Z — the merge queue was the real bottleneck, and three tools that now gate it
+
+### The finding that reframed the day
+
+I had been measuring progress by **Muse lanes running** and refilling whenever it dropped. Then I surveyed open PRs: **18 were fully green and unmerged.** The constraint was never producing fixes; it was landing them. Adding a seventh lane to an 18-deep queue would have improved the number and delivered nothing.
+
+Worse, almost everything queued is `crates/compiler` work, which is **inert behind the vendor pin** (below). Producing more inert compiler fixes while the pipe is blocked adds latency, not value.
+
+**Order of operations for whoever holds this seat: drain the merge queue, get #896's re-pin landed, then refill lanes — and refill only against issues verified still broken on a current build.**
+
+### Vendor pin: measured, not argued
+
+Of the ten PRs merged in the morning batch: **4 reach users, 4 are entirely inert, 2 partial.** `crates/flashtex-cli` links `compiler`/`project-files` from `crates/render-pipeline/vendor/`, so only `render-pipeline`, `class-geometry` and `vector-graphics` changes ship.
+
+Proof, not inference — I built `flashtex-cli` **from the branch that fixes fancyhdr** (#945) and ran a fancyhdr document:
+
+```
+error[unknown_command] \lhead is not supported in the document preamble
+pdflatex      header region: "Left Field  Right Field"
+flashtex CLI  header region: (no header at all)
+```
+
+94 suites green in both profiles, against a crate the binary does not contain. **Every signal we normally trust said done.** `scripts/check-vendor-pins.sh` already prints the warning — *"Do not close an issue on the strength of a merge alone; verify through the built CLI"* — and I merged that script myself yesterday and still spent a day treating the pin as housekeeping. A warning nobody is required to act on is a note, not a control.
+
+Do not close **#833 #906 #907 #715 #837 #925 #928** on a merge. They are not fixed for users until #896 lands.
+
+### Three tools, each validated against real cases before use
+
+**1. `resolve_inventory.py` — the conflict family every compiler lane hits.**
+Two lanes appending to the same table always conflict, and "keep both sides" is wrong as often as it is right. Three shapes, distinguished by structure, not guesswork:
+
+| shape | test | resolution |
+|---|---|---|
+| `UNION` | both sides are complete items / comment runs / statements | concatenate |
+| `TUPLE` | shared `(` above, `),` below — each side is a tuple **body** | bridge `),\n    (` |
+| `BRACE` | our side unclosed, `}` below closes it | bridge `}` |
+
+> **The question that decides it:** does the line immediately above `<<<<<<<` open a delimiter that *neither* side closes? If so the sides are fragments sharing it, and the resolution is a bridge, not a join.
+
+It **refuses** two shapes, both learned the hard way:
+- A side containing a column-0 `}` **crosses a structural boundary** (#764: HEAD closed an enum *and* opened a struct; the old rule stranded a variant outside any type — compiled-looking, non-compiling).
+- **More than one BRACE in a file** (#627: fired four times, still produced "unexpected closing delimiter"). BRACE was justified by exactly one real case; four applications is extrapolation.
+
+Scorecard over seven real conflicts: **5 resolved correctly, 2 refused, 0 wrong.**
+
+**2. `audit-lane.sh` — exclusion-list enforcement, now a hard gate in the publisher.**
+A lead briefed `settoheight-glyph-metrics` with *"Files you may change: `crates/font-engine/...`"*. The lane complied exactly. **The boundary was crossed in the dispatch, not the lane.** The sandbox is a mechanism; the exclusion list was only text in a brief, so a wrong scope line silently converted owner policy into a suggestion.
+
+> **Trap:** lane clones have **no `origin`** by design. `git log origin/main..HEAD` inside one returns *zero commits*, so an audit built on it reports **clean having examined nothing**. Take SHAs from the check-in's `commits:` block and use `git show --name-only`. The script has an explicit `AUDIT INCONCLUSIVE — do NOT treat as clean` branch.
+
+**3. Per-span PDF comparison.** Compare `span['origin']` (baseline), never `bbox` (font-dependent — 3.4 pt phantom error when engines pick different fonts). Never match on extracted text for math: we emit U+1D4AE/U+2124/U+2223 where pdflatex emits ASCII, which is the *more* truthful encoding and will not change. Confirm any extraction with a second tool — PyMuPDF's word-boundary heuristic produced a convincing false positive.
+
+### A dispatch error worth not repeating
+
+I dispatched a lane for **#857** which `main` had **already fixed** (`b5999beb6`, no issue number in the message). My pre-dispatch check was "no open PR references #857" — a different question from "is this still broken?"
+
+The subtler half is in the lane's slice-1 check-in, which I quoted approvingly: it reported a precise **oracle table** and never reported what FlashTeX produced. **An oracle-only measurement is a target, not a reproduction — and a target is compatible with already being on it.** Require pre-fix measurement of *both* sides. Lanes whose tests "fail pre-fix, pass post-fix" have genuinely reproduced.
+
+### A failing test says two things disagree — never which is wrong
+
+Twice today the green-suite fix would have been the wrong answer:
+- **#940/tabularx**: the probe failure looked like proof the inventory fix was wrong. It was the *test* being unable to probe a package-gated environment. Reverting would have reinstated a false "we do not support tabularx".
+- **#883/`\maketitle`**: its test expects no `PageStyle` marker paragraph; main emits one. Bumping the assertion to 4 blocks settles a real design question by fiat — and #876's whole premise is that such a marker should be flushed. Held out of the batch and referred to its author.
+
+### Open
+
+- **#896** re-pin (needs `lecture-notes`, 9 keys) · **#936** unreachable `vector-graphics` pin · **#905** Tier-1, owner's call · font-engine boundary, owner's call.
+- Need author rebase: #878 #868 #735 #748 #820 #869 #764 #627. Stale against main: #861 (`duplicate 'strut'`), #702 (arg count), #883.
+
+---
+
+# COMMANDER HANDOFF — daniel-parent, quiesced 2026-09-19 ~00:20Z
+
+**Status: QUIESCED.** All my integration, merge and publication jobs are stopped and verified stopped (`pgrep` returns 0 for every batch/suite/publish script). `main` is at **`3144e611a`**, clean, nothing half-pushed. No worktree holds uncommitted work of mine.
+
+## Successor
+
+**Recommended: `mac-claude-a` (jay3332) on mac-m1max-a.** They held owner authorisation, merged 13 PRs independently today, post measured release evidence per PR, and independently adjudicated #860 vs #861 with `\showbox` numbers. They are already doing Commander-grade verification unprompted.
+
+**Alternate for Muse specifically: `daniel-muse-lead-2`**, which is already dispatching and reviewing lanes.
+
+The owner may of course name someone else — this is a recommendation in a published handoff, not an appointment. **Per `AGENTS.md`, a successor claims command by publishing an atomic non-force authority claim after verifying this quiesce.** I will not resume Commander writes.
+
+## What is live right now
+
+- **Muse lanes running and unreviewed:** `soul-so-hl` (#502), `tikz-coord-braced` (#898), `proof-in-list` slice 2 (#897). All three briefs are at `~/flashtex-muse-home/prompts/<lane>-<slice>.md`; check-ins land in `~/flashtex-muse-home/checkins/<lane>/`. **All three targets were probe-confirmed broken on `3144e611a` before dispatch.**
+- **HELD, do not publish:** `settoheight-glyph-metrics` (#832). Its brief authorised `crates/font-engine`, which is owner-excluded. The lane complied exactly — **the breach is in the dispatch, not the lane.** Awaiting an owner ruling: discard the font-engine half / have a non-Muse agent redo it / widen the list. Recommendation was the middle option.
+
+## The two things that most need a decision
+
+1. **#896 — the vendor re-pin.** Measured: **only 4 of 10** PRs merged this morning reach a user's binary. `flashtex-cli` links `compiler`/`project-files` from `crates/render-pipeline/vendor/`. Proven by building the CLI from #945's own branch and watching the fancyhdr header fail to appear while 94 suites passed. #896 needs only its digest re-record (`lecture-notes`, 9 keys; exact command posted on the PR). **Everything queued behind it is compiler work.**
+2. **#905 — Tier-1, owner's call, not dispatched.** Read `.cls`/`.sty` vs grow the allow-list. Noted on the issue that the allow-list branch is accreting anyway (titlesec, etoolbox, calc, iftex, csquotes, cancel); each addition raises the switching cost of the other option and none lowers it.
+
+Also open: **#936** — `vendor/vector-graphics` is pinned to a commit `git fsck` calls **unreachable**. One `git gc` and its provenance is unrecoverable. Needs a decision on which commit is authoritative, not just a bump.
+
+## Merge queue, honestly characterised
+
+Was 18 green PRs; 17 merged across two batches (62 commits). The residue is **not** "ready to merge":
+
+| PRs | state |
+|---|---|
+| #878 #868 #735 #748 #820 #869 | genuine conflicts with main — need author rebase |
+| #861 (`duplicate 'strut'`), #702 (arg count), #883 (`\maketitle` marker) | stale against main — need author decisions |
+| #764, #627 | my resolver honestly refuses; hand-resolve |
+
+**#883 is referred to its author and must not be "fixed" by editing its assertion** — see the note on that PR.
+
+## Stale issues I verified and would close
+
+Probed against `3144e611a` and matching pdflatex exactly: **#505** (`\marginpar` — works), **#520** (eqnarray — works, with numbering), **#949** (macro blank). Caveat: these were *minimal* probes; #949's especially may not reproduce the reported case. Verify before closing. **#857 I already closed** — it was fixed by `b5999beb6` without citing the issue.
+
+## Tools left behind (paths in my scratchpad; copy them somewhere durable)
+
+- `resolve_inventory.py` — the compiler-table conflict family. **5 resolved / 2 refused / 0 wrong** over seven real conflicts. Refuses structural-boundary hunks and any file needing >1 brace bridge.
+- `audit-lane.sh` — exclusion-list gate, wired into the publisher **before** any fetch. Reads SHAs from the check-in, never `origin/main` (lane clones have no origin — an audit built on it reports clean having checked nothing).
+- Per-span PDF comparison — `span['origin']` baselines, never bbox; never match extracted text for math; confirm extractions with a second tool.
+
+## The one habit I would most want carried forward
+
+Every mistake I made today — and there were several — was **a check that returned a confident answer without having checked**: a script exiting 0 having verified nothing, a structural build failure reading as "every PR is broken", an audit passing because its ref didn't exist, a green suite certifying a crate the binary doesn't contain, an oracle table mistaken for a reproduction.
+
+None of them crashed. A crash gets investigated; a clean result gets trusted. The defence that actually worked was **layering cheap independent checks that fail differently** — marker grep, then compile, then both test profiles, then run the real binary. Each caught something the others missed.
+
+And the corollary, from #857 and from three stale issues above: **before dispatching work, measure that the bug is still there.** Issue state is not evidence.
