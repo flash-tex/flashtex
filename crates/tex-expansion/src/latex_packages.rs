@@ -39,6 +39,7 @@ use std::rc::Rc;
 use crate::catcode::CatCode;
 use crate::expand::{Engine, Input, Pending, Step};
 use crate::lexer::Lexer;
+use crate::package_defs::{DeclaredOption, PackageDefinition, Provides};
 use crate::span::Span;
 use crate::token::{Token, TokenKind};
 
@@ -56,8 +57,17 @@ pub struct OpenedFile {
     /// `name.ext` as the reader was asked for it.
     pub name: String,
     /// The `\usepackage`/`\documentclass`/... invocation that loaded it
-    /// (synthetic when it was loaded from a macro body).
+    /// (synthetic when it was loaded from a macro body). Its `source_id`
+    /// is the loader's: `0` for the document, another opened file's id for
+    /// a nested `\RequirePackage`/`\LoadClass` -- the load chain.
     pub loaded_at: Span,
+    /// `\ProvidesPackage`/`\ProvidesClass`, once the file has declared itself.
+    pub provides: Option<Provides>,
+    /// `\DeclareOption`s at the file's outermost level, in order.
+    pub options: Vec<DeclaredOption>,
+    /// Definitions made at the file's outermost level, in order (see
+    /// `package_defs.rs`).
+    pub definitions: Vec<PackageDefinition>,
 }
 
 /// Which loading command a [`Primitive::LoadFiles`](crate::scopes::Primitive)
@@ -702,7 +712,7 @@ impl Engine {
     /// depth 0 (as a `#1[#2]` delimited argument is). Every token read,
     /// spaces and brackets included, is appended to `taken`; the tokens
     /// between the brackets are returned.
-    fn take_bracketed(&mut self, taken: &mut Vec<Pending>) -> Option<Vec<Pending>> {
+    pub(crate) fn take_bracketed(&mut self, taken: &mut Vec<Pending>) -> Option<Vec<Pending>> {
         let mut spaces = Vec::new();
         loop {
             let Some(p) = self.next_raw() else {
@@ -743,7 +753,7 @@ impl Engine {
 
     /// `{ ... }` after optional spaces, unexpanded and brace-balanced,
     /// recorded in `taken` like [`Engine::take_bracketed`].
-    fn take_braced(&mut self, taken: &mut Vec<Pending>) -> Option<Vec<Pending>> {
+    pub(crate) fn take_braced(&mut self, taken: &mut Vec<Pending>) -> Option<Vec<Pending>> {
         let mut spaces = Vec::new();
         loop {
             let Some(p) = self.next_raw() else {
@@ -827,7 +837,14 @@ impl Engine {
                 let id = self.st.next_source_id;
                 self.st.next_source_id += 1;
                 let loaded_at = self.last_origin.unwrap_or(tok.span);
-                self.opened_packages.push(OpenedFile { source_id: id, name: format!("{name}.{ext}"), loaded_at });
+                self.opened_packages.push(OpenedFile {
+                    source_id: id,
+                    name: format!("{name}.{ext}"),
+                    loaded_at,
+                    provides: None,
+                    options: Vec::new(),
+                    definitions: Vec::new(),
+                });
                 self.prune_exhausted();
                 self.sources.push(Input::Text(Lexer::new(Rc::from(text), id)));
             }
