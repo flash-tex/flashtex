@@ -730,12 +730,12 @@ Canonical sources:
 | `\usefonttheme` | `{...}` | accepted and read past: only beamer's default font theme is modelled; needs \documentclass{beamer} |
 | `\useinnertheme` | `{...}` | accepted and read past: only beamer's default inner theme is modelled; needs \documentclass{beamer} |
 | `\useoutertheme` | `{...}` | accepted and read past: only beamer's default outer theme is modelled; needs \documentclass{beamer} |
-| `\setbeamertemplate` | `{...}{...}` | accepted and read past; \setbeamertemplate{navigation symbols}{} is honoured by the renderer; needs \documentclass{beamer} |
+| `\setbeamertemplate` | `{...}{...}` | accepted and read past; \setbeamertemplate{navigation symbols}{} removes the navigation symbol strip the renderer draws on every non-plain frame page, any other replacement template keeps the default strip; needs \documentclass{beamer} |
 | `\setbeamercolor` | `{...}{...}` | accepted and read past: beamer's default colours stay in force; needs \documentclass{beamer} |
 | `\setbeamerfont` | `{...}{...}` | accepted and read past: beamer's default fonts stay in force; needs \documentclass{beamer} |
 | `\setbeamercovered` | `{...}` | accepted and read past (overlays are not modelled yet); needs \documentclass{beamer} |
 | `\setbeamersize` | `{...}` | accepted and read past: beamer's default text margins stay in force; needs \documentclass{beamer} |
-| `\beamertemplatenavigationsymbolsempty` |  | accepted; the renderer draws no navigation symbols either way yet; needs \documentclass{beamer} |
+| `\beamertemplatenavigationsymbolsempty` |  | beamer: removes the navigation symbol strip the renderer draws at the bottom right of every non-plain frame page; needs \documentclass{beamer} |
 | `\column` | `{width}` | beamer column inside columns: a minipage of the given width (.5\textwidth, 4cm) set beside the others; optional [c\|t\|T\|b] alignment; needs \documentclass{beamer} |
 | `\\` |  | line break; an optional [length] is consumed |
 | `\-` |  | discretionary hyphen: a break point, invisible unless the line breaks there |

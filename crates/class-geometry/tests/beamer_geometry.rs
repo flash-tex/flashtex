@@ -262,3 +262,29 @@ fn madrid_theme_geometry() {
     let article = DocumentSetup::from_preamble("\\documentclass{article}\n\\usetheme{Madrid}\n\\begin{document}").unwrap();
     assert_eq!(article.beamer_theme, beamer::ThemeKind::Default);
 }
+
+/// The polish pass (issue #944 leftovers): the `navigation symbols`
+/// template and `\setbeamercovered` are read from the preamble.
+#[test]
+fn navigation_symbols_and_covered_mode_from_the_preamble() {
+    let on = DocumentSetup::from_preamble("\\documentclass{beamer}\n\\title{T}\n\\begin{document}").unwrap();
+    assert!(on.beamer_navigation_symbols);
+    assert_eq!(on.beamer_covered, beamer::Covered::Invisible);
+    assert!(resolve(&on).beamer_navigation_symbols);
+    let off = DocumentSetup::from_preamble("\\documentclass{beamer}\n\\setbeamertemplate{navigation symbols}{}\n\\setbeamercovered{transparent}\n\\begin{document}").unwrap();
+    assert!(!off.beamer_navigation_symbols);
+    assert_eq!(off.beamer_covered, beamer::Covered::Transparent(15));
+    let r = resolve(&off);
+    assert!(!r.beamer_navigation_symbols);
+    assert_eq!(r.beamer_covered, beamer::Covered::Transparent(15));
+    let empty = DocumentSetup::from_preamble("\\documentclass{beamer}\n\\beamertemplatenavigationsymbolsempty\n\\begin{document}").unwrap();
+    assert!(!empty.beamer_navigation_symbols);
+    // A replacement template that is not empty keeps the default strip; an
+    // article never reads either command.
+    let other = DocumentSetup::from_preamble("\\documentclass{beamer}\n\\setbeamertemplate{navigation symbols}[only frame symbol]{x}\n\\begin{document}").unwrap();
+    assert!(other.beamer_navigation_symbols);
+    let article = DocumentSetup::from_preamble("\\documentclass{article}\n\\setbeamertemplate{navigation symbols}{}\n\\setbeamercovered{transparent}\n\\begin{document}").unwrap();
+    assert!(article.beamer_navigation_symbols);
+    assert!(!resolve(&article).beamer_navigation_symbols);
+    assert_eq!(resolve(&article).beamer_covered, beamer::Covered::Invisible);
+}

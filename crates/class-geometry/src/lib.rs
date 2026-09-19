@@ -39,6 +39,14 @@ pub struct DocumentSetup {
     /// beamer: the last `\usetheme{..}` (`ThemeKind::Default` when none or
     /// an unmodelled name; see [`beamer::theme`]).
     pub beamer_theme: beamer::ThemeKind,
+    /// beamer: whether the `navigation symbols` template is the default
+    /// strip (`true`) or was emptied by `\setbeamertemplate{navigation
+    /// symbols}{}` / `\beamertemplatenavigationsymbolsempty`. Any other
+    /// replacement template (`[only frame symbol]`, `[horizontal]`, ...)
+    /// keeps the default strip: not modelled.
+    pub beamer_navigation_symbols: bool,
+    /// beamer: the last `\setbeamercovered{..}` (`invisible` when none).
+    pub beamer_covered: beamer::Covered,
     /// PDF media size when geometry does not set it (pdftex's
     /// `pdftexconfig.tex`; US Letter 8.5in x 11in in MacTeX 2026).
     pub engine_default_media: (Sp, Sp),
@@ -57,6 +65,8 @@ impl DocumentSetup {
             geometry: None,
             pagestyle: None,
             beamer_theme: beamer::ThemeKind::Default,
+            beamer_navigation_symbols: true,
+            beamer_covered: beamer::Covered::Invisible,
             engine_default_media: letter_media(),
         }
     }
@@ -113,6 +123,24 @@ impl DocumentSetup {
                         if let Some(name) = a.split(',').next_back() {
                             s.beamer_theme = beamer::ThemeKind::parse(name);
                         }
+                    }
+                }
+                // `\setbeamertemplate{navigation symbols}[opt]{<template>}`
+                // (beamer): an empty template switches the strip off.
+                ("setbeamertemplate", Some(a)) if a.trim() == "navigation symbols" => {
+                    let _ = read_group(pre, &mut j, '[', ']');
+                    if let (Some(s), Some(template)) = (setup.as_mut().filter(|s| s.class == ClassKind::Beamer), read_group(pre, &mut j, '{', '}')) {
+                        s.beamer_navigation_symbols = !template.trim().is_empty();
+                    }
+                }
+                ("beamertemplatenavigationsymbolsempty", None) => {
+                    if let Some(s) = setup.as_mut().filter(|s| s.class == ClassKind::Beamer) {
+                        s.beamer_navigation_symbols = false;
+                    }
+                }
+                ("setbeamercovered", Some(a)) => {
+                    if let Some(s) = setup.as_mut().filter(|s| s.class == ClassKind::Beamer) {
+                        s.beamer_covered = beamer::Covered::parse(&a);
                     }
                 }
                 _ => {}
@@ -188,6 +216,13 @@ pub struct ResolvedDocument {
     pub warnings: Vec<String>,
     /// beamer's theme (the default one for every other class).
     pub beamer_theme: beamer::Theme,
+    /// beamer: the default `navigation symbols` strip is drawn on every
+    /// non-plain frame page ([`DocumentSetup::beamer_navigation_symbols`]);
+    /// `false` for every other class.
+    pub beamer_navigation_symbols: bool,
+    /// beamer: how covered overlay material is painted
+    /// ([`DocumentSetup::beamer_covered`]).
+    pub beamer_covered: beamer::Covered,
 }
 
 impl ResolvedDocument {
@@ -269,6 +304,7 @@ pub fn resolve(setup: &DocumentSetup) -> ResolvedDocument {
         options.openright,
         secnumdepth,
     );
+    let is_beamer = options.kind == ClassKind::Beamer;
     let default_style = pagestyle::class_default(setup.class);
     let mut macros = StyleMacros::EMPTY.apply(default_style, options.twoside);
     let style = setup.pagestyle.unwrap_or(default_style);
@@ -310,5 +346,7 @@ pub fn resolve(setup: &DocumentSetup) -> ResolvedDocument {
         numbering: Numbering::Arabic,
         warnings,
         beamer_theme,
+        beamer_navigation_symbols: is_beamer && setup.beamer_navigation_symbols,
+        beamer_covered: if is_beamer { setup.beamer_covered } else { beamer::Covered::Invisible },
     }
 }

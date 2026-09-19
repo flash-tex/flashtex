@@ -889,6 +889,17 @@ pub(super) fn page_chrome(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, pages
             front.push((ctx.rule_block_colored(span, width, head_bottom - (box_top + bp1), -bp4, Some(rgb_color(r.title_bg))), head_bottom, 0.0));
             front.push((ctx.rule_block_colored(span, width, body_bottom - head_bottom, -bp4, Some(rgb_color(r.body_bg))), body_bottom, 0.0));
         }
+        // The navigation symbol strip (`sidebar right` `[default]`), on
+        // every page with a head/foot (`[plain]` has `\thispagestyle
+        // {empty}`), unless the template was emptied.
+        if frame.plain.is_none() && ctx.style.class_geometry.as_ref().is_some_and(|g| g.beamer_navigation_symbols) {
+            let strip = spec::navigation_strip(&theme);
+            let (width, height, depth) = (frame_pt(strip.width()), frame_pt(strip.height), frame_pt(strip.depth));
+            let x = s.page_width_pt - frame_pt(strip.right_inset) - width;
+            let baseline = s.page_height_pt - frame_pt(strip.baseline_above_bottom);
+            let block = ctx.paths_block(span, width, height, depth, x - text_x, navigation_symbol_shapes(&strip));
+            front.push((block, baseline, 0.0));
+        }
         if let (Some(foot), None) = (theme.footline, frame.plain) {
             let (ht, dp) = (frame_pt(foot.height), frame_pt(foot.depth));
             let size = frame_pt(foot.font.size);
@@ -966,6 +977,43 @@ pub(super) fn page_chrome(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, pages
             blocks.push(block);
         }
     }
+}
+
+/// The six navigation symbols as [`super::Shape`]s in the strip's own
+/// points (x from the strip's left edge, y up from the pictures' baseline):
+/// picture `i` at `i x (20pt + gap)`, its pgf coordinates (bp) scaled to
+/// points, the strong paths in `navigation symbols` and the light ones in
+/// `navigation symbols dimmed`.
+fn navigation_symbol_shapes(strip: &spec::NavigationStrip) -> Vec<super::Shape> {
+    use super::{Shape, ShapeCmd, ShapeOp};
+    const PT_PER_BP: f64 = 72.27 / 72.0;
+    let pitch = frame_pt(strip.picture_width + strip.gap);
+    let strong = rgb_color(spec::NAVIGATION_RGB);
+    let dimmed = rgb_color(spec::NAVIGATION_DIMMED_RGB);
+    let mut shapes = Vec::new();
+    for (i, symbol) in spec::NAVIGATION_SYMBOLS.iter().enumerate() {
+        let x0 = i as f64 * pitch;
+        let px = |x: f64| x0 + x * PT_PER_BP;
+        let py = |y: f64| y * PT_PER_BP;
+        for path in symbol.iter() {
+            let commands = path
+                .commands
+                .iter()
+                .map(|c| match *c {
+                    spec::NavCmd::Move(x, y) => ShapeCmd::Move(px(x), py(y)),
+                    spec::NavCmd::Line(x, y) => ShapeCmd::Line(px(x), py(y)),
+                    spec::NavCmd::Cubic(a, b, c, d, e, f) => ShapeCmd::Cubic(px(a), py(b), px(c), py(d), px(e), py(f)),
+                    spec::NavCmd::Close => ShapeCmd::Close,
+                })
+                .collect();
+            shapes.push(Shape {
+                op: if path.fill { ShapeOp::Fill } else { ShapeOp::Stroke { width: path.line_width_pt, round_cap: path.round_cap } },
+                commands,
+                color: if path.dimmed { dimmed } else { strong },
+            });
+        }
+    }
+    shapes
 }
 
 #[cfg(test)]

@@ -803,6 +803,310 @@ pub fn continuation_suffix(count: usize) -> String {
     out
 }
 
+// ---------------------------------------------------------------------------
+// Polish (issue #944 leftovers): navigation symbols, `items[ball]`, covered
+// text modes.
+// ---------------------------------------------------------------------------
+
+/// `navigation symbols dimmed` (`beamercolorthemedefault.sty` 117:
+/// `fg=structure.fg!20!bg`): rgb 0.84,0.84,0.94, the "light" half of every
+/// symbol. [`NAVIGATION_RGB`] is the strong half (`!40!bg`).
+pub const NAVIGATION_DIMMED_RGB: Rgb = tint(STRUCTURE_RGB, 20.0);
+
+/// One pgf path command of a navigation symbol, in **bp** from the
+/// picture's origin, y up (`beamerbasenavigationsymbols.tex` writes its
+/// coordinates in bp; the few `pt` ones are converted here).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum NavCmd {
+    Move(f64, f64),
+    Line(f64, f64),
+    Cubic(f64, f64, f64, f64, f64, f64),
+    Close,
+}
+
+/// One `\pgfusepathqfill` / `\pgfusepathqstroke` of a navigation symbol.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NavPath {
+    /// Filled (`true`) or stroked.
+    pub fill: bool,
+    /// `\pgfsetlinewidth` in pt (0.4 is pgf's default).
+    pub line_width_pt: f64,
+    /// `\pgfsetroundcap` (the back/forward arrows).
+    pub round_cap: bool,
+    /// Painted in the `navigation symbols dimmed` colour (the "light"
+    /// object) rather than `navigation symbols`.
+    pub dimmed: bool,
+    pub commands: &'static [NavCmd],
+}
+
+const fn stroke(commands: &'static [NavCmd], line_width_pt: f64, dimmed: bool) -> NavPath {
+    NavPath { fill: false, line_width_pt, round_cap: false, dimmed, commands }
+}
+
+const fn fill(commands: &'static [NavCmd], dimmed: bool) -> NavPath {
+    NavPath { fill: true, line_width_pt: 0.4, round_cap: false, dimmed, commands }
+}
+
+/// `1pt` in bp: the few `\pgfpoint{..pt}{..pt}` coordinates of the symbols.
+const BP_PER_PT: f64 = 72.0 / 72.27;
+
+use NavCmd::{Cubic, Line, Move};
+
+/// The two small triangles every "light" object draws.
+const NAV_TRIANGLES: [NavCmd; 6] = [Move(4.0, 0.5), Line(2.0, 2.0), Line(4.0, 3.5), Move(16.0, 0.5), Line(18.0, 2.0), Line(16.0, 3.5)];
+
+/// `\insertslidenavigationsymbol`: `beamerslidenavstrong` (a stroked
+/// `8.3pt,0.8pt` + `3.4pt x 2.4pt` rectangle) then `beamerslidenavlight`
+/// (the triangles, filled).
+const SLIDE_NAV: [NavPath; 2] = [
+    stroke(
+        &[
+            Move(8.3 * BP_PER_PT, 0.8 * BP_PER_PT),
+            Line(8.3 * BP_PER_PT + 3.4 * BP_PER_PT, 0.8 * BP_PER_PT),
+            Line(8.3 * BP_PER_PT + 3.4 * BP_PER_PT, 0.8 * BP_PER_PT + 2.4 * BP_PER_PT),
+            Line(8.3 * BP_PER_PT, 0.8 * BP_PER_PT + 2.4 * BP_PER_PT),
+            NavCmd::Close,
+        ],
+        0.4,
+        false,
+    ),
+    fill(&NAV_TRIANGLES, true),
+];
+
+/// `\insertframenavigationsymbol`: three stacked frames stroked, then the
+/// triangles.
+const FRAME_NAV: [NavPath; 2] = [
+    stroke(
+        &[
+            Move(7.0 * BP_PER_PT, 0.0),
+            Line(7.0 * BP_PER_PT + 3.4 * BP_PER_PT, 0.0),
+            Line(7.0 * BP_PER_PT + 3.4 * BP_PER_PT, 2.4 * BP_PER_PT),
+            Line(7.0 * BP_PER_PT, 2.4 * BP_PER_PT),
+            NavCmd::Close,
+            Move(7.8, 2.4),
+            Line(7.8, 3.2),
+            Line(11.2, 3.2),
+            Line(11.2, 0.8),
+            Line(10.4, 0.8),
+            Move(8.6, 3.2),
+            Line(8.6, 4.0),
+            Line(12.0, 4.0),
+            Line(12.0, 1.6),
+            Line(11.2, 1.6),
+        ],
+        0.4,
+        false,
+    ),
+    fill(&NAV_TRIANGLES, true),
+];
+
+/// `\insertsubsectionnavigationsymbol`: one strong 0.6pt line, then the
+/// triangles and four dimmed lines.
+const SUBSECTION_NAV: [NavPath; 3] = [
+    stroke(&[Move(9.0, 3.0), Line(12.0, 3.0)], 0.6, false),
+    fill(&NAV_TRIANGLES, true),
+    stroke(&[Move(8.0, 4.0), Line(11.0, 4.0), Move(9.0, 2.0), Line(12.0, 2.0), Move(8.0, 1.0), Line(11.0, 1.0), Move(9.0, 0.0), Line(12.0, 0.0)], 0.6, true),
+];
+
+/// `\insertsectionnavigationsymbol`: three strong lines, then the
+/// triangles and two dimmed lines.
+const SECTION_NAV: [NavPath; 3] = [
+    stroke(&[Move(8.0, 4.0), Line(11.0, 4.0), Move(9.0, 3.0), Line(12.0, 3.0), Move(9.0, 2.0), Line(12.0, 2.0)], 0.6, false),
+    fill(&NAV_TRIANGLES, true),
+    stroke(&[Move(8.0, 1.0), Line(11.0, 1.0), Move(9.0, 0.0), Line(12.0, 0.0)], 0.6, true),
+];
+
+/// `\insertdocnavigationsymbol` without an appendix
+/// (`beamerdocnavstrongsingle`): five strong lines.
+const DOC_NAV: [NavPath; 1] = [stroke(
+    &[Move(8.0, 4.0), Line(11.0, 4.0), Move(9.0, 3.0), Line(12.0, 3.0), Move(9.0, 2.0), Line(12.0, 2.0), Move(8.0, 1.0), Line(11.0, 1.0), Move(9.0, 0.0), Line(12.0, 0.0)],
+    0.6,
+    false,
+)];
+
+/// `\pgfpathcircle{\pgfpoint{9.5pt}{2.5pt}}{1.2pt}` as pgf writes it: four
+/// cubics with the 0.5523 tangent factor.
+const fn circle_bp(cx: f64, cy: f64, r: f64) -> [NavCmd; 6] {
+    const K: f64 = 0.5522847;
+    [
+        Move(cx + r, cy),
+        Cubic(cx + r, cy + K * r, cx + K * r, cy + r, cx, cy + r),
+        Cubic(cx - K * r, cy + r, cx - r, cy + K * r, cx - r, cy),
+        Cubic(cx - r, cy - K * r, cx - K * r, cy - r, cx, cy - r),
+        Cubic(cx + K * r, cy - r, cx + r, cy - K * r, cx + r, cy),
+        NavCmd::Close,
+    ]
+}
+
+const SEARCH_CIRCLE: [NavCmd; 6] = circle_bp(9.5 * BP_PER_PT, 2.5 * BP_PER_PT, 1.2 * BP_PER_PT);
+
+/// `\insertbackfindforwardnavigationsymbol`: the search handle (0.6pt),
+/// the search circle (0.4pt), then the two round-capped arrows.
+const BACK_FIND_FORWARD_NAV: [NavPath; 3] = [
+    stroke(&[Move(10.4, 1.6), Line(12.0, 0.0)], 0.6, false),
+    stroke(&SEARCH_CIRCLE, 0.4, false),
+    NavPath {
+        fill: false,
+        line_width_pt: 0.4,
+        round_cap: true,
+        dimmed: false,
+        commands: &[
+            Move(4.0, 0.0),
+            Cubic(5.1 * BP_PER_PT, 0.0, 6.0, 0.9, 6.0, 2.0),
+            Cubic(6.0, 3.1, 5.1, 4.0, 4.0, 4.0),
+            Cubic(2.9, 4.0, 2.0, 3.1, 2.0, 2.0),
+            Move(3.2, 2.6),
+            Line(2.0, 1.6),
+            Line(0.8, 2.6),
+            Move(16.0, 0.0),
+            Cubic(14.9, 0.0, 14.0, 0.9, 14.0, 2.0),
+            Cubic(14.0, 3.1, 14.9, 4.0, 16.0, 4.0),
+            Cubic(17.1, 4.0, 18.0, 3.1, 18.0, 2.0),
+            Move(19.2, 2.6),
+            Line(18.0, 1.6),
+            Line(16.8, 2.6),
+        ],
+    },
+];
+
+/// The six pictures of the default `navigation symbols` template
+/// (`beamerouterthemedefault.sty` 70-80), left to right: slide, frame,
+/// subsection, section, document, back/find/forward. Each is a
+/// `pgfpicture{0pt}{-1.5pt}{20pt}{5.5pt}` whose paths are
+/// `beamerbasenavigationsymbols.tex`'s, transcribed with the reference
+/// content stream (`fixtures/real-world/beamer-default`, every page) as
+/// the check: the same operators, coordinates and line widths in the
+/// same order.
+pub const NAVIGATION_SYMBOLS: [&[NavPath]; 6] = [&SLIDE_NAV, &FRAME_NAV, &SUBSECTION_NAV, &SECTION_NAV, &DOC_NAV, &BACK_FIND_FORWARD_NAV];
+
+/// Where the navigation symbol strip sits on a frame page
+/// (`beamerouterthemedefault.sty` 138-145, `sidebar right` `[default]`:
+/// `\vfill \llap{\insertlogo\hskip0.1cm} \vskip2pt \llap{\usebeamertemplate
+/// ***{navigation symbols}\hskip0.1cm} \vskip2pt` in a `\vbox to
+/// \sidebarheight` whose bottom is `\footheight - 4pt` (the footline box)
+/// above the paper's bottom edge). The template is an `\hbox` of six
+/// `\hbox{<picture>}`es separated by interword glue of the font in force
+/// there, `\Tiny` (`cmss8 at 4pt`, `\fontdimen2` 1.41663pt); each picture
+/// is `20pt` wide with its baseline `1.5pt` above its bounding box.
+///
+/// Measured (pdflatex TeX Live 2026, `fixtures/real-world/beamer-default`
+/// p2 and `beamer-madrid` p3 content streams): the pictures' origins are
+/// `1 0 0 1 233.391 3.487 cm` then five `21.337`/`21.336 cm` steps
+/// (Madrid: `233.391 12.121`), i.e. the strip's right edge is `0.1cm`
+/// from the paper's right edge and its baseline `2pt + 1.5pt` above the
+/// footline box (`3.5pt` = 3.487bp; Madrid `8.66663pt + 3.5pt` =
+/// 12.121bp).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NavigationStrip {
+    /// Each picture's width (`20pt`).
+    pub picture_width: Sp,
+    /// The glue between two pictures (`\Tiny` interword space, natural).
+    pub gap: Sp,
+    /// The strip's right edge from the paper's right edge (`0.1cm`).
+    pub right_inset: Sp,
+    /// The pictures' baseline above the paper's bottom edge.
+    pub baseline_above_bottom: Sp,
+    /// A picture's bounding box above (`5.5pt`) and below (`1.5pt`) its
+    /// baseline.
+    pub height: Sp,
+    pub depth: Sp,
+}
+
+impl NavigationStrip {
+    /// The whole strip's width: six pictures and five gaps.
+    pub fn width(&self) -> Sp {
+        self.picture_width.times(6) + self.gap.times(5)
+    }
+}
+
+/// `\fontdimen2` of `cmss8 at 4pt`: the TFM's space `0.35417175` (fix_word
+/// 371360) scaled to 4pt = 92840sp.
+pub const TINY4_SPACE: Sp = Sp(92_840);
+
+pub fn navigation_strip(theme: &Theme) -> NavigationStrip {
+    let foot_box = theme.footline.map_or(Sp::ZERO, |f| f.height + f.depth);
+    NavigationStrip {
+        picture_width: Sp::pt(20),
+        gap: TINY4_SPACE,
+        right_inset: len("0.1cm"),
+        baseline_above_bottom: foot_box + Sp::pt(2) + len("1.5pt"),
+        height: len("5.5pt"),
+        depth: len("1.5pt"),
+    }
+}
+
+/// `\setbeamercovered{<spec>}` (`beamerbaseoverlay.sty` 360-388): how
+/// covered material (`\uncover`, `\pause`, `\item<2->`, ...) is painted
+/// on the slides it is covered on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Covered {
+    /// `invisible` (the default): `\pgfsys@begininvisible`, nothing is
+    /// painted.
+    #[default]
+    Invisible,
+    /// `transparent[=<pct>]` (15 by default): `\opaqueness<1->{<pct>}`
+    /// mixes the current colour `<pct>!bg` (`\beamer@colorhook`), so
+    /// black text on the white page is painted `pct`% black. `dynamic`
+    /// and `highly dynamic` are taken as their first step (10 and 15):
+    /// their fade with the distance to the uncovering slide is not
+    /// modelled.
+    Transparent(u8),
+}
+
+impl Covered {
+    /// The value of one `\setbeamercovered{..}` argument (a key list;
+    /// `invisible` is always applied first, then the keys in order).
+    pub fn parse(spec: &str) -> Covered {
+        let mut mode = Covered::Invisible;
+        for key in spec.split(',') {
+            let key = key.trim();
+            let (name, value) = match key.split_once('=') {
+                Some((n, v)) => (n.trim(), Some(v.trim())),
+                None => (key, None),
+            };
+            mode = match name {
+                "invisible" => Covered::Invisible,
+                "transparent" => Covered::Transparent(value.and_then(|v| v.parse::<u8>().ok()).unwrap_or(15).min(100)),
+                "dynamic" => Covered::Transparent(10),
+                "highly dynamic" => Covered::Transparent(15),
+                // `still covered=`/`again covered=` take arbitrary actions:
+                // not modelled.
+                _ => mode,
+            };
+        }
+        mode
+    }
+}
+
+/// `items[ball]` (`beamerbaseauxtemplates.sty` 35-40, 366, 374-384): the
+/// `bigsphere` radial shading is a `2 x 0.53ex` square (`\normalsize`
+/// ex, 4.86665pt: 5.139bp, the XObject's `/BBox [0 0 5.139 5.139]` on
+/// Madrid p3) whose colour runs from `bg!15` at the (off-centre) focus
+/// through `bg!75`, `bg!70!black`, `bg!50!black` at `0.452ex` to
+/// `parent.bg` (white) at `0.53ex`, `bg` being `item projected`'s
+/// background = `structure.fg`. The pipeline paints a flat disc instead:
+/// its radius is the midpoint of the fade band (`(0.452 + 0.53) / 2 ex`),
+/// its colour the area-weighted mean of the shading inside the last
+/// opaque stop (numerically, on the reference's `/ShadingType 3`:
+/// `0.632 bg + 0.113 white + 0.256 black`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ball {
+    /// The shading square's side (`2 x 0.53ex`): the label box's width.
+    pub side: Sp,
+    /// The painted disc's radius.
+    pub radius: Sp,
+    pub color: Rgb,
+}
+
+pub fn ball(structure: Rgb) -> Ball {
+    let ex = SANS_BODY_EX;
+    Ball {
+        side: ex.scaled("1.06").unwrap(),
+        radius: ex.scaled("0.491").unwrap(),
+        color: (structure.0 * 0.632 + 0.113, structure.1 * 0.632 + 0.113, structure.2 * 0.632 + 0.113),
+    }
+}
+
 /// `[plain]` (`beamerbaseframe.sty` 244-246, 781-783): the frame keeps
 /// `\vbox to\textheight` but its entry code is `\vspace*{-\headheight}` and
 /// its exit code `\vspace*{-\footheight}` (a zero-height rule and the
@@ -950,6 +1254,45 @@ mod tests {
         assert_eq!(continuation_suffix(9), "IX");
         assert_eq!(plain_frame(&theme(ThemeKind::Default)).foot, Sp::pt(4));
         assert!((plain_frame(&theme(ThemeKind::Madrid)).foot.to_pt() - 12.66663).abs() < 0.00002);
+    }
+
+    #[test]
+    fn navigation_strip_sits_where_the_reference_paints_it() {
+        // beamer-default p2: `1 0 0 1 233.391 3.487 cm`, pitch 21.337bp,
+        // paper 362.835bp wide.
+        let paper = len("128mm");
+        let s = navigation_strip(&theme(ThemeKind::Default));
+        let left = paper - s.right_inset - s.width();
+        assert_eq!(bp(left), 233.391);
+        assert!((bp(s.picture_width + s.gap) - 21.337).abs() <= 0.001, "{}", bp(s.picture_width + s.gap));
+        assert_eq!(bp(s.baseline_above_bottom), 3.487);
+        // Madrid p3: `233.391 12.121`.
+        let m = navigation_strip(&theme(ThemeKind::Madrid));
+        assert_eq!(bp(paper - m.right_inset - m.width()), 233.391);
+        assert_eq!(bp(m.baseline_above_bottom), 12.121);
+        assert_eq!(NAVIGATION_SYMBOLS.len(), 6);
+        assert!((NAVIGATION_DIMMED_RGB.0 - 0.84).abs() < 1e-9 && (NAVIGATION_DIMMED_RGB.2 - 0.94).abs() < 1e-9);
+        assert!((NAVIGATION_RGB.0 - tint(STRUCTURE_RGB, 40.0).0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn covered_modes_parse_like_setbeamercovered() {
+        assert_eq!(Covered::parse("invisible"), Covered::Invisible);
+        assert_eq!(Covered::parse("transparent"), Covered::Transparent(15));
+        assert_eq!(Covered::parse("transparent=30"), Covered::Transparent(30));
+        assert_eq!(Covered::parse("dynamic"), Covered::Transparent(10));
+        assert_eq!(Covered::parse("highly dynamic"), Covered::Transparent(15));
+        assert_eq!(Covered::parse("transparent, invisible"), Covered::Invisible);
+        assert_eq!(Covered::parse("still covered={\\opaqueness<1->{15}}"), Covered::Invisible);
+    }
+
+    #[test]
+    fn ball_matches_the_shading_bbox() {
+        // Madrid p3: `/BBox [0 0 5.139 5.139]`, colours from `0.2 0.2 0.7`.
+        let b = ball(STRUCTURE_RGB);
+        assert_eq!(bp(b.side), 5.139);
+        assert!(b.radius < b.side.over(2) && b.radius.to_pt() > 0.45 * SANS_BODY_EX.to_pt());
+        assert!((b.color.0 - 0.2394).abs() < 0.001 && (b.color.2 - 0.5554).abs() < 0.001, "{:?}", b.color);
     }
 
     #[test]

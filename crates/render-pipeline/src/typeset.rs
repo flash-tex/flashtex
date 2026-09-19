@@ -133,6 +133,41 @@ pub enum BoxRec {
     /// image (or its `draft`/`demo` placeholder) in a box of the graphicx
     /// size, its bottom on the baseline.
     Graphic(Rc<GraphicRec>),
+    /// A box painted as vector paths (`display::Item::Path`): beamer's
+    /// navigation symbols and `items[ball]` discs (`typeset::beamer`).
+    Paths(Rc<PathsRec>),
+}
+
+/// The paths of a [`BoxRec::Paths`] box, in points from the box's
+/// reference point (its left edge on the baseline), y **up** as pgf
+/// writes them; `assemble_block` flips them into the display list's
+/// y-down line space.
+#[derive(Clone, Debug)]
+pub struct PathsRec {
+    pub shapes: Vec<Shape>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub struct Shape {
+    pub op: ShapeOp,
+    pub commands: Vec<ShapeCmd>,
+    pub color: flashtex_compiler::color::DeviceColor,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ShapeOp {
+    Fill,
+    /// A stroke of `width` points; `round_cap` is pgf's `\pgfsetroundcap`.
+    Stroke { width: f64, round_cap: bool },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ShapeCmd {
+    Move(f64, f64),
+    Line(f64, f64),
+    Cubic(f64, f64, f64, f64, f64, f64),
+    Close,
 }
 
 /// A placed `\includegraphics` (see [`BoxRec::Graphic`]): the same fields
@@ -4595,6 +4630,25 @@ impl<'a> Context<'a> {
         self.rule_block_colored(span, width, height, x, None)
     }
 
+    /// A one-line block whose single box is a [`BoxRec::Paths`] of `width`
+    /// x `height` + `depth` at `x` from the line's left edge: page chrome
+    /// drawn as vector paths (beamer's navigation symbols). The line's
+    /// baseline is the box's.
+    pub(super) fn paths_block(&mut self, span: Span, width: f64, height: f64, depth: f64, x: f64, shapes: Vec<Shape>) -> BuiltBlock {
+        self.recs.push(BoxRec::Paths(Rc::new(PathsRec { shapes, span })));
+        let rec = self.recs.len() - 1;
+        let run = pl::GlyphRun {
+            font: MATH_SENTINEL,
+            size: self.style.body_size_pt,
+            glyphs: Vec::new(),
+            width,
+            height,
+            depth,
+            source: span.start..span.end,
+        };
+        self.one_box_block(run, rec, x, height, depth)
+    }
+
     /// [`Self::rule_block_sized`] painted in `color` (`None`: black): a
     /// beamer theme's filled frametitle bar and footline boxes.
     pub(super) fn rule_block_colored(&mut self, span: Span, width: f64, height: f64, x: f64, color: Option<flashtex_compiler::color::DeviceColor>) -> BuiltBlock {
@@ -4609,12 +4663,19 @@ impl<'a> Context<'a> {
             depth: 0.0,
             source: span.start..span.end,
         };
+        self.one_box_block(run, rec, x, height, 0.0)
+    }
+
+    /// One line holding the single box `run` (record `rec`) at `x`, the
+    /// line's baseline `height` below its top and `depth` below that.
+    fn one_box_block(&mut self, run: pl::GlyphRun, rec: usize, x: f64, height: f64, depth: f64) -> BuiltBlock {
+        let width = run.width;
         let line = pl::Line {
             index: 0,
             runs: vec![position_run(&run, x, height)],
             baseline_y: height,
             height,
-            depth: 0.0,
+            depth,
             natural_width: width,
             set_width: width,
             ratio: 0.0,
@@ -4627,10 +4688,10 @@ impl<'a> Context<'a> {
             breaks: Vec::new(),
             stats: one_line_stats(),
             diagnostics: Vec::new(),
-            height,
+            height: height + depth,
         };
         let vertical = VBlock {
-            lines: vec![(height, 0.0)],
+            lines: vec![(height, depth)],
             penalty_before: None,
             space_before: None,
             parskip: None,
@@ -6664,6 +6725,7 @@ impl<'a> Context<'a> {
                     BoxRec::Underline(u) => Some(u.span),
                     BoxRec::TextScript(t) => Some(t.span),
                     BoxRec::Graphic(g) => Some(g.span),
+                    BoxRec::Paths(p) => Some(p.span),
                 })
                 .next();
             let _ = list;
@@ -9918,6 +9980,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     BoxRec::Underline(u) => Some(u.span),
                     BoxRec::TextScript(t) => Some(t.span),
                     BoxRec::Graphic(g) => Some(g.span),
+                    BoxRec::Paths(p) => Some(p.span),
             });
         let src = span.map(|sp| vec![ctx.source(sp)]).unwrap_or_default();
         ctx.diagnostics.push(Diagnostic::warning(
@@ -10455,6 +10518,7 @@ pub fn assemble_windowed(
                     BoxRec::Underline(u) => Some(u.span),
                     BoxRec::TextScript(t) => Some(t.span),
                     BoxRec::Graphic(g) => Some(g.span),
+                    BoxRec::Paths(p) => Some(p.span),
                     BoxRec::Text { .. } => None,
                 });
                 unmapped_diags.push(Diagnostic::warning(
@@ -10868,6 +10932,44 @@ fn assemble_block(
                     }));
                 }
                 BoxRec::Leader { .. } => {}
+                BoxRec::Paths(p) => {
+                    let provenance = Provenance::Source(source_of(p.span));
+                    let x0 = local.x;
+                    let tx = |x: f64| Tick::from_tex_pt(x0 + x);
+                    let ty = |y: f64| Tick::from_tex_pt(-y);
+                    for shape in &p.shapes {
+                        let commands = shape
+                            .commands
+                            .iter()
+                            .map(|c| match *c {
+                                ShapeCmd::Move(x, y) => display::PathCmd::Move(tx(x), ty(y)),
+                                ShapeCmd::Line(x, y) => display::PathCmd::Line(tx(x), ty(y)),
+                                ShapeCmd::Cubic(a, b, c, d, e, f) => display::PathCmd::Cubic(tx(a), ty(b), tx(c), ty(d), tx(e), ty(f)),
+                                ShapeCmd::Close => display::PathCmd::Close,
+                            })
+                            .collect();
+                        let op = match shape.op {
+                            ShapeOp::Fill => display::PathPaintOp::Fill { even_odd: false },
+                            ShapeOp::Stroke { width, round_cap } => display::PathPaintOp::Stroke(display::Stroke {
+                                width: Tick::from_tex_pt(width).max(Tick(1)),
+                                cap: if round_cap { display::LineCap::Round } else { display::LineCap::Butt },
+                                join: display::LineJoin::Miter,
+                                miter_limit: 10.0,
+                                dash: Vec::new(),
+                                dash_phase: Tick(0),
+                            }),
+                        };
+                        items.push(display::Item::Path(display::PathItem {
+                            op,
+                            commands,
+                            clips: Vec::new(),
+                            paint: Paint::of(Some(shape.color)),
+                            #[cfg(feature = "tikz-patterns")]
+                            pattern: None,
+                            provenance: provenance.clone(),
+                        }));
+                    }
+                }
                 BoxRec::Rule { width, height, bottom, span, color } => {
                     // Line-local like text: the rule's bottom is `bottom`
                     // above the baseline (0 for `\hrule`); a strut paints

@@ -1875,6 +1875,7 @@ fn rec_span(ctx: &Context, r: usize) -> Option<Span> {
         BoxRec::Underline(u) => Some(u.span),
         BoxRec::TextScript(t) => Some(t.span),
         BoxRec::Graphic(g) => Some(g.span),
+        BoxRec::Paths(p) => Some(p.span),
     }
 }
 
