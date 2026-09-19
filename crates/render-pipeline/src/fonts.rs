@@ -154,8 +154,9 @@ impl Default for Scale {
 /// absent the family's own nearest face is used. `tex_ligatures` is
 /// `Ligatures=TeX` (on by default for `\setmainfont`, as fontspec does):
 /// `--`/`---`/quotes are the TeX ligatures the adapter already forms.
-/// `oldstyle_numbers` is `Numbers=OldStyle` (GSUB `onum`), noted but not
-/// yet applied: the shaper runs `liga` only.
+/// `oldstyle_numbers` is `Numbers=OldStyle`: the face's GSUB `onum`
+/// substitutions, applied after shaping (`crate::shape::ShapeFlags`), as
+/// `\scshape` applies its `smcp`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NamedSpec {
     pub family: String,
@@ -807,6 +808,9 @@ pub struct LoadedFace {
     /// Modern (`ec-lm*`) TFM was attached instead (reported once).
     pub metrics_fallback: Option<String>,
     bounds_cache: RefCell<BTreeMap<u16, Bounds>>,
+    /// `GSUB` single-substitution maps by feature tag (`smcp`, `onum`),
+    /// parsed on first request; `None` when the face has no such feature.
+    feature_maps: RefCell<BTreeMap<[u8; 4], Option<Rc<BTreeMap<u16, u16>>>>>,
 }
 
 impl LoadedFace {
@@ -840,6 +844,24 @@ impl LoadedFace {
     /// paragraph-layout's opaque 32-byte identity: the content hash itself.
     pub fn layout_id(&self) -> flashtex_paragraph_layout::FontId {
         flashtex_paragraph_layout::FontId(self.sha256)
+    }
+
+    /// The face's `GSUB` single substitutions for feature `tag` (glyph ->
+    /// glyph): `smcp` for small capitals, `onum` for old-style figures.
+    /// `None` when the face has no `GSUB` or no such feature (or is a Core
+    /// 14 metric set), so a caller can say the feature is not applied.
+    pub fn feature_map(&self, tag: &[u8; 4]) -> Option<Rc<BTreeMap<u16, u16>>> {
+        if let Some(m) = self.feature_maps.borrow().get(tag) {
+            return m.clone();
+        }
+        let map = self
+            .otf()
+            .and_then(|f| f.table(b"GSUB"))
+            .and_then(|g| crate::mathfont::single_substitutions(g, tag).ok())
+            .filter(|m| !m.is_empty())
+            .map(Rc::new);
+        self.feature_maps.borrow_mut().insert(*tag, map.clone());
+        map
     }
 
     /// Glyph extents in font units. CFF faces use the real charstring
@@ -1309,10 +1331,14 @@ impl FontSet {
         };
         match result {
             Ok(r) => {
-                let caps = matches!(key.shape, Shape::Sc | Shape::Scit | Shape::Scsl).then(|| {
+                // Small caps are the face's own `smcp` substitutions
+                // (`crate::shape`, `ShapeFlags::SMALL_CAPS`); a face without
+                // the feature sets the full-size letters and says so.
+                let caps = (matches!(key.shape, Shape::Sc | Shape::Scit | Shape::Scsl) && r.face.feature_map(b"smcp").is_none()).then(|| {
                     format!(
-                        "{}: small caps (\\scshape) are not applied to a named font family; the {} face is used",
+                        "{}: \\scshape asks for small caps but {} has no GSUB `smcp` feature; the {} face is used as is",
                         spec.family,
+                        r.face.name,
                         if italic { "italic" } else { "upright" }
                     )
                 });
@@ -1426,6 +1452,7 @@ impl FontSet {
             shape_key: Rc::from(sha256::hex(&sha)),
             metrics_fallback: None,
             bounds_cache: RefCell::new(BTreeMap::new()),
+            feature_maps: RefCell::new(BTreeMap::new()),
         };
         Ok(self.insert(name, loaded))
     }
@@ -1461,6 +1488,7 @@ impl FontSet {
             shape_key: Rc::from(sha256::hex(&sha)),
             metrics_fallback: None,
             bounds_cache: RefCell::new(BTreeMap::new()),
+            feature_maps: RefCell::new(BTreeMap::new()),
         };
         self.insert(name, loaded)
     }
@@ -1575,6 +1603,7 @@ impl FontSet {
             },
             metrics_fallback,
             bounds_cache: RefCell::new(BTreeMap::new()),
+            feature_maps: RefCell::new(BTreeMap::new()),
         };
         Ok(self.insert(name, loaded))
     }

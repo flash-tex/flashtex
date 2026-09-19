@@ -236,7 +236,7 @@ impl MathFonts {
         let script_alternates = face
             .otf()
             .and_then(|f| f.table(b"GSUB"))
-            .and_then(|t| parse_script_alternates(t).ok())
+            .and_then(|t| single_substitutions(t, b"ssty").ok())
             .unwrap_or_default();
         Some(MathFonts {
             face,
@@ -696,12 +696,17 @@ fn parse_construction(m: &[u8], cons: usize) -> Result<Construction, flashtex_fo
     Ok((variants, parts))
 }
 
-/// `GSUB` `ssty` lookups -> each covered glyph's first substitute (the
-/// `ssty=1` form). Latin Modern Math's are AlternateSubst (type 3); single
-/// substitutions (type 1) and Extension wrappers (type 7) are read too, and
+/// `GSUB` lookups of feature `tag` -> each covered glyph's substitute:
+/// the `ssty=1` form for the math face's script alternates, the small
+/// capital for `smcp`, the old-style figure for `onum` (named text
+/// families, `crate::fonts::LoadedFace::feature_map`). Single
+/// substitutions (type 1), the first alternate of AlternateSubst (type 3,
+/// Latin Modern Math's `ssty`) and Extension wrappers (type 7) are read;
 /// any other lookup type is skipped. Script and language systems are not
-/// consulted: a math face's `ssty` is the same under all of them.
-fn parse_script_alternates(g: &[u8]) -> Result<BTreeMap<u16, u16>, flashtex_font_engine::Error> {
+/// consulted: these features are the same under all of them in the fonts
+/// this serves, and a language-specific `smcp` (Turkish `i`) is out of
+/// scope. `Ok` with an empty map when the table has no such feature.
+pub(crate) fn single_substitutions(g: &[u8], tag: &[u8; 4]) -> Result<BTreeMap<u16, u16>, flashtex_font_engine::Error> {
     let malformed = |what: &str| flashtex_font_engine::Error::Malformed(format!("GSUB {what}"));
     let mut out = BTreeMap::new();
     let features = usize::from(u16_at(g, 6)?);
@@ -709,7 +714,7 @@ fn parse_script_alternates(g: &[u8]) -> Result<BTreeMap<u16, u16>, flashtex_font
     let mut indices = Vec::new();
     for i in 0..usize::from(u16_at(g, features)?) {
         let rec = features + 2 + 6 * i;
-        if g.get(rec..rec + 4) != Some(b"ssty") {
+        if g.get(rec..rec + 4) != Some(&tag[..]) {
             continue;
         }
         let feature = features + usize::from(u16_at(g, rec + 4)?);

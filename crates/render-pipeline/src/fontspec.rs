@@ -577,13 +577,6 @@ fn note_ignored(o: &Options, limitations: &mut Vec<(&'static str, Span, String)>
             format!("{what}: fontspec option{} {} not applied (Scale, BoldFont, ItalicFont, BoldItalicFont, UprightFont, Numbers=OldStyle and Ligatures=TeX are)", if o.ignored.len() == 1 { "" } else { "s" }, o.ignored.join(", ")),
         ));
     }
-    if o.oldstyle == Some(true) {
-        limitations.push((
-            "fontspec_feature_ignored",
-            span,
-            format!("{what}: Numbers=OldStyle is recorded but the shaper does not run GSUB `onum` yet; lining figures are set"),
-        ));
-    }
 }
 
 /// Reads every document's fontspec commands into `style.fontspec`, marks

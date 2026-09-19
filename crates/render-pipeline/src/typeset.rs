@@ -872,6 +872,23 @@ impl<'a> Context<'a> {
         scale
     }
 
+    /// The `GSUB` features a run in a named family asks the shaper for:
+    /// `smcp` under `\scshape` (the family has no small-caps design of its
+    /// own, as Latin Modern has `lmromancaps`) and `onum` under
+    /// `Numbers=OldStyle`. Nothing for the class fonts.
+    fn named_flags(&self, style: TextStyle) -> crate::shape::ShapeFlags {
+        use crate::shape::ShapeFlags;
+        let Some(index) = self.named_index(style) else { return ShapeFlags::NONE };
+        let mut flags = ShapeFlags::NONE;
+        if style.caps {
+            flags = flags.with(ShapeFlags::SMALL_CAPS);
+        }
+        if self.style.fontspec.families.get(usize::from(index)).is_some_and(|s| s.oldstyle_numbers) {
+            flags = flags.with(ShapeFlags::OLDSTYLE_NUMS);
+        }
+        flags
+    }
+
     fn class_face(&mut self, style: TextStyle, size: f64, span: Span) -> Rc<LoadedFace> {
         let (role, notes) = self.text_role(style, size);
         let r = self.fonts.resolve(self.style.family, role, size);
@@ -1432,13 +1449,15 @@ impl<'a> Context<'a> {
         // name. The class font's scale is 1 and nothing here changes.
         let size = size * self.named_scale(seg.style, size, span);
         // Verbatim runs the font's ligature/kern program not at all
-        // (`\@noligs`); every other run runs it as TeX does.
-        let shaped = if seg.style.literal {
-            self.shaper.shape_literal(&face, &seg.text)
-        } else if !cuts.is_empty() {
-            self.shaper.shape_cut(&face, &seg.text, cuts)
+        // (`\@noligs`); every other run runs it as TeX does. A named
+        // family's run adds its `GSUB` features (small caps, old-style
+        // figures); the class fonts have their own small-caps designs and
+        // ask for nothing.
+        let flags = self.named_flags(seg.style).with(if seg.style.literal { crate::shape::ShapeFlags::LITERAL } else { crate::shape::ShapeFlags::NONE });
+        let shaped = if !cuts.is_empty() {
+            self.shaper.shape_cut_flags(&face, &seg.text, cuts, flags)
         } else {
-            self.shaper.shape(&face, &seg.text)
+            self.shaper.shape_flags(&face, &seg.text, flags)
         };
         if let Some(e) = &shaped.tfm_error {
             let src = self.source(span);
@@ -2151,8 +2170,9 @@ impl<'a> Context<'a> {
         // Measurements below are at the face's scaled size (`Scale=`);
         // `text_box` applies the same scale to the fragments it sets.
         let scaled = size * self.named_scale(seg.style, size, span);
+        let flags = self.named_flags(seg.style);
         let shaper = self.shaper;
-        let shaped = shaper.shape(&face, text);
+        let shaped = shaper.shape_flags(&face, text, flags);
         if shaped.refused.is_some() {
             return self.whole_word(seg, size);
         }
@@ -2171,11 +2191,11 @@ impl<'a> Context<'a> {
         // width by the face's 1000 units instead put the tail of a word like
         // `ellipsis\dots` (U+2026 has no T1 slot, `ellip` does) 12676 pt to
         // the left of the page, and every later word on its line with it.
-        let width_pt = |t: &str| shaper.shape(&face, t).width_pt(scaled);
+        let width_pt = |t: &str| shaper.shape_flags(&face, t, flags).width_pt(scaled);
         // Whole minus parts, with the exact integer subtraction kept for the
         // usual case where all three came back in the same units.
         let residual_pt = |whole: &str, head: &str, tail: &str| {
-            let (w, h, t) = (shaper.shape(&face, whole), shaper.shape(&face, head), shaper.shape(&face, tail));
+            let (w, h, t) = (shaper.shape_flags(&face, whole, flags), shaper.shape_flags(&face, head, flags), shaper.shape_flags(&face, tail, flags));
             if w.units_per_em == h.units_per_em && h.units_per_em == t.units_per_em {
                 scaled * (w.width_units - h.width_units - t.width_units) as f64 / w.units_per_em as f64
             } else {

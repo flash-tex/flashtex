@@ -333,3 +333,85 @@ fn a_glyph_the_named_font_lacks_is_set_in_latin_modern_not_dropped() {
     assert_eq!(missing.len(), 2, "{missing:?}");
     assert!(missing.iter().all(|(_, m)| m.contains("set in lmroman10-regular instead")), "{missing:?}");
 }
+
+/// The glyph ids of every glyph of the run whose text is `word`.
+fn gids(r: &Rendered, word: &str) -> Vec<u16> {
+    r.v2.pages[0]
+        .resident_items()
+        .iter()
+        .find_map(|it| match it {
+            Item::GlyphRun(run) if run.text == word => Some(run.glyphs.iter().map(|g| g.gid).collect()),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no run {word:?}"))
+}
+
+#[test]
+fn numbers_oldstyle_applies_the_faces_onum_substitutions() {
+    if !common::lm_available() {
+        return;
+    }
+    // Latin Modern Roman's `onum` maps the ten figures to `*.oldstyle`
+    // glyphs with their own advances (`1.oldstyle` is narrower than `1`).
+    let s = Staged::new("onum", &LM_ALL);
+    let lining = render_with(&doc("\\setmainfont{Latin Modern Roman}\n\\begin{document}\n1234567890\n\\end{document}"), &s.fonts(), &RenderOptions::default());
+    let oldstyle = render_with(&doc("\\setmainfont[Numbers=OldStyle]{Latin Modern Roman}\n\\begin{document}\n1234567890\n\\end{document}"), &s.fonts(), &RenderOptions::default());
+    let (a, b) = (gids(&lining, "1234567890"), gids(&oldstyle, "1234567890"));
+    assert_eq!(a.len(), 10);
+    assert!(a.iter().zip(&b).all(|(x, y)| x != y), "every figure substituted: {a:?} vs {b:?}");
+    let face = flashtex_font_engine::load_from_path(&s.0.join("lmroman10-regular.otf")).unwrap();
+    let map = FontSet::with_default_dirs(&[]).load_file(&s.fonts().index().find("Latin Modern Roman", 400, false).unwrap().clone()).unwrap().feature_map(b"onum").unwrap();
+    for (x, y) in a.iter().zip(&b) {
+        assert_eq!(map.get(x).copied(), Some(*y));
+    }
+    // The run's width is the substitutes' advances.
+    let expected: f64 = b.iter().map(|g| f64::from(face.advance(flashtex_font_engine::GlyphId(*g)).unwrap())).sum::<f64>() * 9.963 / 1000.0;
+    let width = runs(&oldstyle).iter().find(|r| r.0 == "1234567890").unwrap().2;
+    assert!((width - expected).abs() < 0.01, "{width} vs {expected}");
+    // No "not applied" note for it.
+    assert!(!codes(&oldstyle).iter().any(|(c, _)| c == "fontspec_feature_ignored"), "{:?}", codes(&oldstyle));
+}
+
+#[test]
+fn scshape_in_a_named_family_uses_its_smcp_or_says_it_has_none() {
+    if !common::lm_available() {
+        return;
+    }
+    // A face without `smcp` (Latin Modern Roman has none in the OTF; the
+    // small-caps design is a separate family) sets the letters as they are
+    // and says so once.
+    let s = Staged::new("smcp", &LM_ALL);
+    let r = render_with(&doc("\\setmainfont{Latin Modern Roman}\n\\begin{document}\nPlain \\textsc{Caps}\n\\end{document}"), &s.fonts(), &RenderOptions::default());
+    assert_eq!(gids(&r, "Caps")[1], gids(&r, "Plain")[2], "the `a` of Caps is the lowercase a");
+    let notes: Vec<_> = codes(&r).into_iter().filter(|(c, _)| c == "font_face_substituted").collect();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].1.contains("no GSUB `smcp`"), "{}", notes[0].1);
+    // A face with `smcp` (Iowan Old Style ships with macOS): the lowercase
+    // letters become the small capitals, with their advances.
+    let Some((path, face_index)) = installed("Iowan Old Style") else {
+        eprintln!("skipping the applied half: Iowan Old Style is not installed on this machine");
+        return;
+    };
+    let fonts = FontSet::with_default_dirs(&[]);
+    let r = render_with(&doc("\\setmainfont{Iowan Old Style}\n\\begin{document}\nplain \\textsc{plain}\n\\end{document}"), &fonts, &RenderOptions::default());
+    let items = r.v2.pages[0].resident_items();
+    let plain_runs: Vec<&flashtex_render_pipeline::display::GlyphRun> = items
+        .iter()
+        .filter_map(|it| match it {
+            Item::GlyphRun(run) if run.text == "plain" => Some(run),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(plain_runs.len(), 2);
+    let face = flashtex_font_engine::load_from_path_index(&path, face_index).unwrap();
+    let map = fonts.load_file(fonts.index().find("Iowan Old Style", 400, false).unwrap()).unwrap().feature_map(b"smcp").expect("Iowan Old Style has smcp");
+    let (lower, caps) = (&plain_runs[0], &plain_runs[1]);
+    for (l, c) in lower.glyphs.iter().zip(&caps.glyphs) {
+        assert_eq!(map.get(&l.gid).copied(), Some(c.gid), "{} -> {}", l.gid, c.gid);
+        let expected = f64::from(face.advance(flashtex_font_engine::GlyphId(c.gid)).unwrap()) * 9.963 / f64::from(face.units_per_em());
+        let kern = c.advance_x.to_bp() - expected;
+        // The advance is the small capital's own, plus the base pair's kern.
+        assert!(kern.abs() < 0.5, "{}: {} vs hmtx {expected}", c.gid, c.advance_x.to_bp());
+    }
+    assert!(!codes(&r).iter().any(|(c, _)| c == "font_face_substituted"), "{:?}", codes(&r));
+}

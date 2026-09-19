@@ -101,8 +101,9 @@ Metrics come from the face's own tables (advances, `GPOS`/`kern`, `GSUB`
 A character the named face lacks is set in Latin Modern for that run with
 one `missing_glyph` note per (font, character). Options honoured: `Scale=`
 (factor, `MatchLowercase`, `MatchUppercase`), `BoldFont`/`ItalicFont`/
-`BoldItalicFont`/`UprightFont`, `Ligatures=TeX`; `Numbers=OldStyle` and
-small caps are noted, not applied (the shaper runs no `onum`/`smcp`). Math
+`BoldItalicFont`/`UprightFont`, `Ligatures=TeX`, `Numbers=OldStyle` (the
+face's GSUB `onum`, applied after shaping); `\scshape` applies the face's
+`smcp` the same way, or notes once that the face has none. Math
 under a named family stays Latin Modern Math: `\setmathfont` is read and
 noted, and specified in `docs/proposals/font-system-math.md`.
 `flashtex-render --list-fonts` prints the families the index offers.
