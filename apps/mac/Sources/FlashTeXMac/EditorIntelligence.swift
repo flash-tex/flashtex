@@ -261,12 +261,17 @@ enum EditorIntelligence {
     }
 
     /// The Return-key insertion at `caret` (an empty selection): a newline
-    /// plus the current line's leading whitespace; one more `indentUnit`
-    /// after a line that opens an environment (`\begin{env}` with optional
-    /// arguments and nothing else after it), and — when `closeEnvironments`
-    /// and the buffer has fewer `\end{env}` than `\begin{env}` — the
-    /// matching `\end{env}` on the line after the caret.
-    static func newline(in text: NSString, caret: Int, indentUnit: String, closeEnvironments: Bool) -> NewlineInsertion {
+    /// plus the current line's leading whitespace; after a line that opens
+    /// an environment (`\begin{env}` with optional arguments and nothing
+    /// else after it) one more `indentUnit` when `rules` indent that body,
+    /// then the body's line template (`\item ` in a list), and — when
+    /// `closeEnvironments` and the buffer has fewer `\end{env}` than
+    /// `\begin{env}` — the matching `\end{env}` on the line after the caret.
+    /// Inside an environment whose template is a command, Return on a line
+    /// that starts with that command and has content after it repeats the
+    /// template (the next `\item`); on a bare `\item` line it just breaks.
+    static func newline(in text: NSString, caret: Int, indentUnit: String, closeEnvironments: Bool,
+                        rules: EnvironmentEditingRules = .conventional) -> NewlineInsertion {
         let caret = max(0, min(caret, text.length))
         var lineStart = caret
         while lineStart > 0, text.character(at: lineStart - 1) != 0x0A { lineStart -= 1 }
@@ -275,24 +280,79 @@ enum EditorIntelligence {
         let prefix = text.substring(with: NSRange(location: lineStart, length: caret - lineStart))
         let suffix = text.substring(with: NSRange(location: caret, length: lineEnd - caret))
         let indent = String(prefix.prefix { $0 == " " || $0 == "\t" })
-        // `\item …` Return inside a list continues it with a new `\item `; a
-        // bare `\item` line (nothing typed) just breaks the line.
-        if suffix.allSatisfy({ $0 == " " || $0 == "\t" || $0 == "\r" }), let item = itemContinuation(inLinePrefix: prefix) {
+        let lineIsDone = suffix.allSatisfy { $0 == " " || $0 == "\t" || $0 == "\r" }
+        // `\item …` Return inside a list continues it with a new `\item ` (or
+        // whatever the enclosing environment's template is); a bare `\item`
+        // line (nothing typed) just breaks the line.
+        if lineIsDone, let item = templateContinuation(in: text, caret: caret, linePrefix: prefix, rules: rules) {
             let insertion = "\n" + indent + item
-            return NewlineInsertion(text: insertion, caretOffset: insertion.utf16.count, closedEnvironment: nil)
+            let caretOffset = 1 + indent.utf16.count + EnvironmentEditingRules.caretOffset(in: item)
+            return NewlineInsertion(text: insertion, caretOffset: caretOffset, closedEnvironment: nil)
         }
         guard let env = openingEnvironment(inLinePrefix: prefix) else {
             return NewlineInsertion(text: "\n" + indent, caretOffset: 1 + indent.utf16.count, closedEnvironment: nil)
         }
-        var insertion = "\n" + indent + indentUnit
-        let caretOffset = insertion.utf16.count
+        let template = rules.newLineText(in: env)
+        var insertion = "\n" + indent + (rules.indentsBody(of: env) ? indentUnit : "") + template
+        let caretOffset = insertion.utf16.count - template.utf16.count + EnvironmentEditingRules.caretOffset(in: template)
         var closed: String?
-        if closeEnvironments, suffix.allSatisfy({ $0 == " " || $0 == "\t" || $0 == "\r" }),
+        if closeEnvironments, lineIsDone,
            occurrences(of: "\\begin{\(env)}", in: text) > occurrences(of: "\\end{\(env)}", in: text) {
             insertion += "\n" + indent + "\\end{\(env)}"
             closed = env
         }
         return NewlineInsertion(text: insertion, caretOffset: caretOffset, closedEnvironment: closed)
+    }
+
+    /// The line template to repeat after `linePrefix`: the innermost open
+    /// environment's (`rules.newLineText`) when the line starts with that
+    /// template's command and has content after it; failing an enclosing
+    /// rule, a plain `\item …` line still continues with `\item ` (a list
+    /// environment the rules do not name — `enumitem`'s `tasks`, a class's
+    /// own list). Nil when the line is a bare command (the user is leaving
+    /// the list) or anything else.
+    static func templateContinuation(in text: NSString, caret: Int, linePrefix prefix: String,
+                                     rules: EnvironmentEditingRules) -> String? {
+        let body = prefix.drop { $0 == " " || $0 == "\t" }
+        guard body.hasPrefix("\\") else { return nil }
+        let string = text as String
+        let enclosing = Completion.utf8Offset(of: caret, in: string)
+            .flatMap { Completion.openEnvironments(in: string, beforeByte: $0).last?.name }
+        let template = enclosing.map(rules.newLineText(in:)) ?? ""
+        if let command = EnvironmentEditingRules.command(of: template), hasContent(after: command, in: body) {
+            // The optional-argument form (`\item[term] text`) continues as
+            // `\item[] `, whatever the rule's own template says.
+            if body.dropFirst(command.count).first == "[", !template.contains("[") { return command + "[] " }
+            return template
+        }
+        if template.isEmpty, hasContent(after: "\\item", in: body) {
+            return body.dropFirst(5).first == "[" ? "\\item[] " : "\\item "
+        }
+        return nil
+    }
+
+    /// Whether `body` starts with `command` (not a longer command:
+    /// `\itemize` is not `\item`) followed, after any `[…]`/`{…}` groups,
+    /// by something other than whitespace.
+    private static func hasContent(after command: String, in body: Substring) -> Bool {
+        guard body.hasPrefix(command) else { return false }
+        var rest = body.dropFirst(command.count)
+        if let c = rest.first, c.isLetter { return false }
+        while let open = rest.first, open == "[" || open == "{" {
+            let closer: Character = open == "[" ? "]" : "}"
+            guard let close = rest.firstIndex(of: closer) else { return false }
+            rest = rest[rest.index(after: close)...]
+        }
+        return rest.contains(where: { $0 != " " && $0 != "\t" })
+    }
+
+    /// `\item ` (or `\item[…] ` for a description entry) when the line prefix
+    /// is a list entry with content after the `\item`; nil for a bare `\item`
+    /// (the user is leaving the list) or any other line. The rule-free form
+    /// of `templateContinuation`, kept for callers without a buffer.
+    static func itemContinuation(inLinePrefix prefix: String) -> String? {
+        templateContinuation(in: prefix as NSString, caret: (prefix as NSString).length, linePrefix: prefix,
+                             rules: EnvironmentEditingRules(indentByDefault: true, rules: []))
     }
 
     /// The environment a line prefix opens: its last `\begin{name}` followed
@@ -327,21 +387,6 @@ enum EditorIntelligence {
         guard rest.allSatisfy({ $0 == " " || $0 == "\t" || $0 == "\r" }) else { return nil }
         if prefix.contains("\\end{\(name)}") { return nil }
         return name
-    }
-
-    /// `\item ` (or `\item[…] ` for a description entry) when the line prefix
-    /// is a list entry with content after the `\item`; nil for a bare `\item`
-    /// (the user is leaving the list) or any other line.
-    static func itemContinuation(inLinePrefix prefix: String) -> String? {
-        let body = prefix.drop { $0 == " " || $0 == "\t" }
-        guard body.hasPrefix("\\item") else { return nil }
-        var rest = body.dropFirst(5)
-        if rest.first == "[" {
-            guard let close = rest.firstIndex(of: "]") else { return nil }
-            rest = rest[rest.index(after: close)...]
-        } else if let c = rest.first, c.isLetter { return nil } // `\itemize`, `\items`: not an item
-        guard rest.contains(where: { $0 != " " && $0 != "\t" }) else { return nil }
-        return body.dropFirst(5).first == "[" ? "\\item[] " : "\\item "
     }
 
     // MARK: ⌘/ line comment

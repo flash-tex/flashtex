@@ -18,9 +18,12 @@ enum EditorIndentation {
     static let preservedBodyEnvironments: Set<String> =
         SyntaxHighlighter.verbatimEnvironments.union(["comment"])
 
-    /// These environments do not indent their body. Indenting a whole
-    /// `document` body is the common complaint this constant exists to avoid.
-    static let flatEnvironments: Set<String> = ["document"]
+    /// The conventional rules' flat environments (`document`): indenting a
+    /// whole `document` body is the common complaint this exists to avoid.
+    /// The scanner takes the user's rules (`EnvironmentEditingRules`) when
+    /// the caller has them; this is the default they collapse to.
+    static let flatEnvironments: Set<String> =
+        Set(EnvironmentEditingRules.conventional.rules.filter { !$0.indent }.map(\.environment))
 
     /// Incoming scanner state for a run of lines. `reindent(_:baseDepth:unit:)`
     /// starts at `depth = baseDepth` with no preserved environment.
@@ -56,11 +59,11 @@ enum EditorIndentation {
     /// the environment depth; continuation lines under an item get one extra
     /// unit. Brace groups `{…}` that span lines add a unit. Escaped `\{`/`\%`
     /// and `%` comments are ignored when counting.
-    static func reindent(_ lines: [Substring], baseDepth: Int, unit: String) -> [String] {
-        reindent(lines, unit: unit, incoming: State(depth: baseDepth))
+    static func reindent(_ lines: [Substring], baseDepth: Int, unit: String, rules: EnvironmentEditingRules = .conventional) -> [String] {
+        reindent(lines, unit: unit, incoming: State(depth: baseDepth), rules: rules)
     }
 
-    static func reindent(_ lines: [Substring], unit: String, incoming: State) -> [String] {
+    static func reindent(_ lines: [Substring], unit: String, incoming: State, rules: EnvironmentEditingRules = .conventional) -> [String] {
         let unit = unit.isEmpty ? "  " : unit
         var state = incoming
         state.depth = max(0, state.depth)
@@ -69,7 +72,7 @@ enum EditorIndentation {
         for line in lines {
             var raw = line
             if raw.hasSuffix("\r") { raw = raw.dropLast() }
-            out.append(reindentLine(String(raw), unit: unit, state: &state))
+            out.append(reindentLine(String(raw), unit: unit, state: &state, rules: rules))
         }
         return out
     }
@@ -78,7 +81,8 @@ enum EditorIndentation {
     /// visual indent of the first non-blank line above it, plus that line's
     /// outgoing opens, so a partial selection matches its neighbour. Preserved
     /// bodies are detected by scanning from the start of `text`.
-    static func plan(in text: String, selection: NSRange, unit: String, tabWidth: Int, wholeDocument: Bool) -> Plan? {
+    static func plan(in text: String, selection: NSRange, unit: String, tabWidth: Int, wholeDocument: Bool,
+                     rules: EnvironmentEditingRules = .conventional) -> Plan? {
         let unit = unit.isEmpty ? "  " : unit
         let tabWidth = max(1, tabWidth)
         let ns = text as NSString
@@ -110,12 +114,12 @@ enum EditorIndentation {
 
         var state = State()
         for i in 0..<first {
-            _ = reindentLine(lines[i].content, unit: unit, state: &state)
+            _ = reindentLine(lines[i].content, unit: unit, state: &state, rules: rules)
         }
 
         if !wholeDocument, let neighbor = (0..<first).reversed().first(where: { !isBlank($0, lines: lines) }) {
             let visual = leadingUnits(lines[neighbor].content, unit: unit, tabWidth: tabWidth)
-            let scan = scanLine(lines[neighbor].content)
+            let scan = scanLine(lines[neighbor].content, rules: rules)
             state.depth = max(0, visual + scan.leadingCloses + scan.indentOpens - scan.indentCloses)
             state.itemContinuation = scan.opensItemContinuation
         } else if first == 0 {
@@ -124,7 +128,7 @@ enum EditorIndentation {
         }
 
         let oldContents = touched.map { lines[$0].content }
-        let newContents = reindent(oldContents.map { $0[...] }, unit: unit, incoming: state)
+        let newContents = reindent(oldContents.map { $0[...] }, unit: unit, incoming: state, rules: rules)
         let oldBlock = zip(oldContents, touched.map { lines[$0].terminator }).map { $0 + $1 }.joined()
         let newBlock = zip(newContents, touched.map { lines[$0].terminator }).map { $0 + $1 }.joined()
 
@@ -168,7 +172,7 @@ enum EditorIndentation {
 
     // MARK: line rewrite
 
-    private static func reindentLine(_ line: String, unit: String, state: inout State) -> String {
+    private static func reindentLine(_ line: String, unit: String, state: inout State, rules: EnvironmentEditingRules) -> String {
         if let name = state.preserved {
             if isCloser(line, for: name) {
                 let rewritten = indent(line, depth: state.preserveDepth, unit: unit)
@@ -179,7 +183,7 @@ enum EditorIndentation {
             return line
         }
 
-        let scan = scanLine(line)
+        let scan = scanLine(line, rules: rules)
         if scan.isBlank { return "" }
 
         let thisDepth = max(0, state.depth - scan.leadingCloses)
@@ -230,7 +234,7 @@ enum EditorIndentation {
         var preservedEnd: String?
     }
 
-    static func scanLine(_ line: String) -> LineScan {
+    static func scanLine(_ line: String, rules: EnvironmentEditingRules = .conventional) -> LineScan {
         var scan = LineScan()
         let ns = line as NSString
         let n = ns.length
@@ -275,7 +279,7 @@ enum EditorIndentation {
                             leading = false
                             if preservedBodyEnvironments.contains(env) {
                                 scan.preservedBegin = env
-                            } else if !flatEnvironments.contains(env) {
+                            } else if rules.indentsBody(of: env) {
                                 scan.indentOpens += 1
                             }
                         } else {
@@ -283,7 +287,7 @@ enum EditorIndentation {
                             if preservedBodyEnvironments.contains(env) {
                                 scan.preservedEnd = env
                                 leading = false
-                            } else if !flatEnvironments.contains(env) {
+                            } else if rules.indentsBody(of: env) {
                                 scan.indentCloses += 1
                                 if leading { scan.leadingCloses += 1 }
                             } else {
@@ -514,7 +518,8 @@ extension CompletingTextView {
         let unit = EditorPreferences.shared.indentString
         let tabWidth = EditorPreferences.shared.tabWidth
         guard let plan = EditorIndentation.plan(in: string, selection: selectedRange(), unit: unit,
-                                                tabWidth: tabWidth, wholeDocument: wholeDocument) else { return }
+                                                tabWidth: tabWidth, wholeDocument: wholeDocument,
+                                                rules: EditorPreferences.shared.environmentRules) else { return }
         let current = (string as NSString).substring(with: plan.range)
         guard let edit = EditorIndentation.trimmedReplacement(old: current, new: plan.replacement, range: plan.range) else { return }
         // Structural rewrite of existing source. `insertText` is AppKit's

@@ -1719,8 +1719,9 @@ final class CompletionTests: XCTestCase {
         // (1) Environment skeleton with the current line's indentation, caret on
         // the middle line; ⌘Z removes all three lines at once.
         try await accept(after: "\\begin{it", from: "\\begin{document}\n  ")
-        XCTAssertEqual(tv.string, "\\begin{document}\n  \\begin{itemize}\n  \\item \n  \\end{itemize}") // list template (SnippetTests)
-        XCTAssertEqual(tv.selectedRange(), NSRange(location: ("\\begin{document}\n  \\begin{itemize}\n  \\item " as NSString).length, length: 0))
+        let unit = EditorPreferences.shared.indentString // the body sits one unit in (EnvironmentEditingRules)
+        XCTAssertEqual(tv.string, "\\begin{document}\n  \\begin{itemize}\n  \(unit)\\item \n  \\end{itemize}") // list template (SnippetTests)
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: ("\\begin{document}\n  \\begin{itemize}\n  \(unit)\\item " as NSString).length, length: 0))
         XCTAssertEqual(undo.undoActionName, "Insert Environment")
         undo.undo()
         XCTAssertEqual(tv.string, "\\begin{document}\n  \\begin{it")

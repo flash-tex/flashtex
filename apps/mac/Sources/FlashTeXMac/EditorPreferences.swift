@@ -36,6 +36,8 @@ import SwiftUI
 /// | `followCaretInPreview`  | nothing in AppKit; `CaretFollow` reads the flag before each follow        |
 /// | `relativeLineNumbers`   | `LineNumberGutter.relativeLineNumbers` on the scroll view's ruler         |
 /// | `autosave`              | nothing here; `ShellModel.scheduleAutosave` reads the flag                |
+/// | `environmentRules`      | nothing in AppKit; the Return key, environment completions, Wrap in     |
+/// |                         | Environment and Re-indent read it (EnvironmentEditingRules.swift)       |
 ///
 /// Reading a property inside `withObservationTracking` (or a SwiftUI body)
 /// registers for its changes; `generation` changes with every property.
@@ -93,6 +95,7 @@ final class EditorPreferences {
         var followCaretInPreview: Bool
         var relativeLineNumbers: Bool
         var autosave: Bool
+        var environmentRules: EnvironmentEditingRules
     }
 
     // MARK: defaults and ranges
@@ -109,7 +112,8 @@ final class EditorPreferences {
     static let defaultSnapshot = Snapshot(
         fontFamily: nil, fontSize: 13, lineWrapping: true, tabWidth: 4, indentStyle: .spaces,
         appearance: .system, autoCloseBraces: true, completionPopup: true, spellCheck: true,
-        vimKeybindings: false, followCaretInPreview: true, relativeLineNumbers: false, autosave: true)
+        vimKeybindings: false, followCaretInPreview: true, relativeLineNumbers: false, autosave: true,
+        environmentRules: .conventional)
 
     // MARK: storage keys (versioned)
 
@@ -122,7 +126,7 @@ final class EditorPreferences {
 
     enum Key: String, CaseIterable {
         case fontFamily, fontSize, lineWrapping, tabWidth, indentStyle, appearance, autoCloseBraces, completionPopup, spellCheck
-        case vimKeybindings, followCaretInPreview, relativeLineNumbers, autosave
+        case vimKeybindings, followCaretInPreview, relativeLineNumbers, autosave, environmentRules
         case checkForUpdatesAutomatically, lastUpdateCheck, skippedUpdateVersion
         var storageKey: String { "FlashTeX.EditorPreferences.v\(EditorPreferences.schemaVersion).\(rawValue)" }
     }
@@ -263,6 +267,15 @@ final class EditorPreferences {
         set { update(\.autosave, \.autosave, newValue, key: .autosave) }
     }
 
+    /// Per-environment Return-key behaviour — whether a body is indented and
+    /// what each new line starts with (EnvironmentEditingRules.swift). The
+    /// value is normalized on the way in (blank names dropped, duplicates
+    /// collapsed) so the stored set is always what the editor reads.
+    var environmentRules: EnvironmentEditingRules {
+        get { access(keyPath: \.environmentRules); return storage.environmentRules }
+        set { update(\.environmentRules, \.environmentRules, newValue.normalized(), key: .environmentRules) }
+    }
+
     // MARK: update checking (UpdateChecker.swift)
 
     var checkForUpdatesAutomatically: Bool {
@@ -289,7 +302,7 @@ final class EditorPreferences {
                  indentStyle: indentStyle, appearance: appearance, autoCloseBraces: autoCloseBraces,
                  completionPopup: completionPopup, spellCheck: spellCheck,
                  vimKeybindings: vimKeybindings, followCaretInPreview: followCaretInPreview,
-                 relativeLineNumbers: relativeLineNumbers, autosave: autosave)
+                 relativeLineNumbers: relativeLineNumbers, autosave: autosave, environmentRules: environmentRules)
     }
 
     // MARK: derived values
@@ -429,6 +442,12 @@ final class EditorPreferences {
             s.autosave = value
         } else { repairs.append(.autosave) } // absent: new key, no prior explicit choice to preserve — default ON
 
+        if let raw = defaults.object(forKey: Key.environmentRules.storageKey) {
+            if let data = raw as? Data, let rules = EnvironmentEditingRules.decoded(data) {
+                s.environmentRules = rules
+            } else { repairs.append(.environmentRules) } // undecodable: the conventional rules
+        } // absent: the conventional rules, nothing to repair
+
         var u = Self.defaultUpdateSettings
         if let value = defaults.object(forKey: Key.checkForUpdatesAutomatically.storageKey) as? Bool {
             u.checkForUpdatesAutomatically = value
@@ -457,7 +476,7 @@ final class EditorPreferences {
         indentStyle = d.indentStyle; appearance = d.appearance; autoCloseBraces = d.autoCloseBraces
         completionPopup = d.completionPopup; spellCheck = d.spellCheck
         vimKeybindings = d.vimKeybindings; followCaretInPreview = d.followCaretInPreview
-        relativeLineNumbers = d.relativeLineNumbers; autosave = d.autosave
+        relativeLineNumbers = d.relativeLineNumbers; autosave = d.autosave; environmentRules = d.environmentRules
         let u = Self.defaultUpdateSettings
         checkForUpdatesAutomatically = u.checkForUpdatesAutomatically; lastUpdateCheck = u.lastUpdateCheck; skippedUpdateVersion = u.skippedUpdateVersion
     }
@@ -514,6 +533,8 @@ final class EditorPreferences {
         case .followCaretInPreview: defaults.set(storage.followCaretInPreview, forKey: k)
         case .relativeLineNumbers: defaults.set(storage.relativeLineNumbers, forKey: k)
         case .autosave: defaults.set(storage.autosave, forKey: k)
+        case .environmentRules:
+            if let data = storage.environmentRules.encoded() { defaults.set(data, forKey: k) } else { defaults.removeObject(forKey: k) }
         case .checkForUpdatesAutomatically: defaults.set(updateStorage.checkForUpdatesAutomatically, forKey: k)
         case .lastUpdateCheck:
             if let d = updateStorage.lastUpdateCheck { defaults.set(d, forKey: k) } else { defaults.removeObject(forKey: k) }
@@ -653,10 +674,16 @@ final class EditorPreferences {
 /// app has, so IntelliJ's search-plus-tree IA would be chrome without
 /// content: a deliberate simplification, not an omission.
 struct SettingsRootView: View {
+    @Bindable private var prefs: EditorPreferences = .shared
+
     var body: some View {
         TabView {
             EditorPreferencesView(preferences: .shared, showConversion: false)
                 .tabItem { Label("Editor", systemImage: "square.and.pencil") }
+            Form { EnvironmentRulesSection(rules: $prefs.environmentRules) } // Return inside \begin{…}: indent, and what each new line starts with (EnvironmentRulesSettings.swift)
+                .formStyle(.grouped)
+                .frame(width: DS.Layout.settingsWidth)
+                .tabItem { Label("Environments", systemImage: "list.bullet.indent") }
             Form { CompilePreferencesSection() } // auto-compile (moved out of the toolbar's producer menu, #653 review)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
@@ -788,3 +815,4 @@ struct EditorPreferencesView: View {
         .accessibilityLabel("Editor preferences")
     }
 }
+

@@ -679,11 +679,15 @@ enum Completion {
     /// the list is requested): what gates class-scoped commands when `text`
     /// itself declares no class — an included chapter or slide file. Nil, the
     /// default, is a file with no project, which gates nothing.
+    /// `indentUnit` and `environmentRules` shape the environment skeletons
+    /// (`environmentSnippet`): whether the body is indented, and what its
+    /// first line starts with (EnvironmentEditingRules.swift).
     static func suggestions(in text: String, caretUTF16: Int, metadata: Metadata?,
                             supported: [String] = defaultSupported, projectFiles: [String] = [],
                             graphicsFiles: [String] = [], recentEnvironments: [String] = [],
                             declaredElsewhere: [String] = [], mathMode: Bool? = nil,
                             bibliographyEntries: [BibScanner.Entry] = [], projectClass: String? = nil,
+                            indentUnit: String = "", environmentRules: EnvironmentEditingRules = .conventional,
                             cancelled: () -> Bool = { false }) -> [Suggestion] {
         guard let token = token(in: text, caretUTF16: caretUTF16), !cancelled() else { return [] }
         let out: [Suggestion]
@@ -698,7 +702,8 @@ enum Completion {
             case .beginEnvironment, .endEnvironment:
                 out = environmentSuggestions(prefix: prefix, tokenStart: token.start, text: text,
                                              closing: context == .endEnvironment, metadata: metadata, recent: recentEnvironments,
-                                             documentClass: documentClass(in: text) ?? projectClass)
+                                             documentClass: documentClass(in: text) ?? projectClass,
+                                             indentUnit: indentUnit, rules: environmentRules)
             case .reference:
                 out = referenceSuggestions(prefix: prefix, text: text, metadata: metadata)
             case .citation:
@@ -933,7 +938,8 @@ enum Completion {
     /// out in full, and an environment the document already opens or
     /// declares, are never hidden.
     private static func environmentSuggestions(prefix: String, tokenStart: Int, text: String, closing: Bool,
-                                               metadata: Metadata?, recent: [String], documentClass: String?) -> [Suggestion] {
+                                               metadata: Metadata?, recent: [String], documentClass: String?,
+                                               indentUnit: String, rules: EnvironmentEditingRules) -> [Suggestion] {
         var names: [String] = []
         if closing {
             names += openEnvironments(in: text, beforeByte: tokenStart).reversed().map(\.name)
@@ -957,36 +963,46 @@ enum Completion {
             var detail = knownEnvironments.contains(name) ? "supported by this compiler"
                 : declared.contains(name) ? "declared in this document" : "seen in this document"
             if let message = metadata?.diagnosticsByEnvironment[name] { detail += " — " + message }
-            let snippet = closing ? nil : environmentSnippet(name, indent: indent)
+            let snippet = closing ? nil : environmentSnippet(name, indent: indent, unit: indentUnit, rules: rules)
             out.append(Suggestion(label: name, insertText: name + "}", kind: .environment, detail: detail, snippet: snippet))
         }
         return Array(out.prefix(maxSuggestions))
     }
 
     /// Body skeleton inserted after `\begin{` for `name`: the caret on the
-    /// (indented) middle line, or inside the first placeholder of a richer
-    /// template (`itemize`/`enumerate` with `\item`, `figure`/`table` with
-    /// `\centering`, `\caption{}` and `\label{}`), the later placeholders as
-    /// Tab stops. Offsets are UTF-16 into the inserted text, which starts
-    /// right after the `\begin{` the user typed.
-    static func environmentSnippet(_ name: String, indent: String) -> Snippet {
+    /// middle line — indented one `unit` when `rules` indent that body — or
+    /// inside the first placeholder of a richer template (`figure`/`table`
+    /// with `\centering`, `\caption{}` and `\label{}`), the later
+    /// placeholders as Tab stops. The middle line starts with the rules'
+    /// line template for the environment (`\item ` in a list, with the
+    /// caret after it; `\item[] ` in a description, with the caret inside
+    /// the brackets and a stop after them). Offsets are UTF-16 into the
+    /// inserted text, which starts right after the `\begin{` the user typed.
+    static func environmentSnippet(_ name: String, indent: String, unit: String = "", rules: EnvironmentEditingRules = .conventional) -> Snippet {
         let nl = "\n" + indent
+        let body = rules.indentsBody(of: name) ? unit : ""
         let base = name.hasSuffix("*") ? String(name.dropLast()) : name
         var lines: [String]
         switch base {
-        case "itemize", "enumerate": lines = ["\(name)}", "\\item ⟨⟩", "\\end{\(name)}"]
-        case "description": lines = ["\(name)}", "\\item[⟨⟩] ⟨⟩", "\\end{\(name)}"]
         case "figure": lines = ["\(name)}", "\\centering", "\\includegraphics[width=0.8\\linewidth]{⟨⟩}", "\\caption{⟨⟩}", "\\label{fig:⟨⟩}", "\\end{\(name)}"]
         case "table": lines = ["\(name)}", "\\centering", "\\begin{tabular}{⟨⟩}", "\\end{tabular}", "\\caption{⟨⟩}", "\\label{tab:⟨⟩}", "\\end{\(name)}"]
-        case "align", "gather", "equation", "multline", "flalign", "alignat":
-            lines = ["\(name)}", "⟨⟩", "\\end{\(name)}"]
-        default: lines = ["\(name)}", "⟨⟩", "\\end{\(name)}"]
+        default:
+            // The line template with a placeholder inside its first empty
+            // group (`\item[⟨⟩] ⟨⟩`) or after it (`\item ⟨⟩`).
+            let template = rules.newLineText(in: name)
+            let at = EnvironmentEditingRules.caretOffset(in: template)
+            let ns = template as NSString
+            var middle = ns.substring(to: at) + "⟨⟩" + ns.substring(from: at)
+            if at < ns.length { middle += "⟨⟩" }
+            lines = ["\(name)}", middle, "\\end{\(name)}"]
         }
-        // Placeholders `⟨⟩` become stops (removed from the text).
+        // Placeholders `⟨⟩` become stops (removed from the text). Body lines
+        // (all but the first and last) sit one unit in.
         var out = ""
         var stops: [Int] = []
         for (i, line) in lines.enumerated() {
             if i > 0 { out += nl }
+            if i > 0, i < lines.count - 1 { out += body }
             var rest = Substring(line)
             while let r = rest.range(of: "⟨⟩") {
                 out += rest[..<r.lowerBound]
@@ -2004,6 +2020,11 @@ final class CompletionScheduler {
         /// file that declares no class of its own. Nil (a bare text view, a
         /// file with no project) gates nothing.
         var projectClass: String? = nil
+        /// What one indent level is (`EditorPreferences.indentString`) and
+        /// the environment rules (`EditorPreferences.environmentRules`): the
+        /// environment skeletons are built with them.
+        var indentUnit: String = ""
+        var environmentRules: EnvironmentEditingRules = .conventional
     }
 
     struct Outcome: Equatable {
@@ -2096,6 +2117,8 @@ final class CompletionScheduler {
                                                                      declaredElsewhere: declaredElsewhere, mathMode: request.mathMode,
                                                                      bibliographyEntries: bibliographyEntries,
                                                                      projectClass: request.projectClass,
+                                                                     indentUnit: request.indentUnit,
+                                                                     environmentRules: request.environmentRules,
                                                                      cancelled: { job.isCancelled })
             let t1 = MonotonicClock.nowNs()
             let outcome = Outcome(generation: job.generation, caretUTF16: request.caretUTF16, range: range, items: items,
@@ -3104,7 +3127,9 @@ final class CompletingTextView: NSTextView {
         guard charRange.location != NSNotFound, charRange.location >= 0, charRange.length >= 0,
               NSMaxRange(charRange) <= (text as NSString).length else { return nil }
         let items = Completion.suggestions(in: text, caretUTF16: NSMaxRange(charRange), metadata: boundMetadata,
-                                          supported: supportedCommands, projectClass: projectDocumentClass())
+                                          supported: supportedCommands, projectClass: projectDocumentClass(),
+                                          indentUnit: EditorPreferences.shared.indentString,
+                                          environmentRules: EditorPreferences.shared.environmentRules)
         return items.isEmpty ? nil : items.map(\.insertText)
     }
 
@@ -3137,7 +3162,9 @@ final class CompletingTextView: NSTextView {
                                                   graphicsRoot: graphicsRoot(), recentCommands: recentlyUsed.commands,
                                                   recentEnvironments: recentlyUsed.environments, otherDocuments: otherDocuments(),
                                                   bibliography: bibliographySources(), mathMode: mathModeAtCaret(caret.location),
-                                                  projectClass: projectDocumentClass())
+                                                  projectClass: projectDocumentClass(),
+                                                  indentUnit: EditorPreferences.shared.indentString,
+                                                  environmentRules: EditorPreferences.shared.environmentRules)
         scheduler.schedule(request) { [weak self] outcome in
             self?.present(outcome, metadataRevision: metadata?.revision)
         }

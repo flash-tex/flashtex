@@ -78,7 +78,8 @@ extension ShellModel {
         guard !name.isEmpty, name.allSatisfy({ $0.isLetter || $0 == "*" }) else { navigationNote = "“\(env)” is not an environment name."; return }
         let text = activeText as NSString
         let sel = NSRange(location: min(caretUTF16, text.length), length: min(caretLengthUTF16, text.length - min(caretUTF16, text.length)))
-        let wrap = EditorNavigation.wrap(selection: sel, in: text, environment: name, indentUnit: EditorPreferences.shared.indentString)
+        let wrap = EditorNavigation.wrap(selection: sel, in: text, environment: name, indentUnit: EditorPreferences.shared.indentString,
+                                         rules: EditorPreferences.shared.environmentRules)
         pendingEdit = .init(path: activePath, nsRange: wrap.range, text: wrap.replacement, token: nextEditToken(), revision: editorRevision)
         // Applied after the edit lands (the view applies the pending edit first, then the newest selection).
         selection = .init(path: activePath, nsRange: wrap.selection, token: (selection?.token ?? 0) + 1)

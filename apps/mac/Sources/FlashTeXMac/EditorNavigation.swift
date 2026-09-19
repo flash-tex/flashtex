@@ -177,10 +177,11 @@ enum EditorNavigation {
     /// ⌘⇧W: `\begin{env}` … `\end{env}` around `selection`. A selection that
     /// covers whole lines (or is empty) becomes a block: the environment on
     /// its own lines at the first line's indentation, every non-blank body
-    /// line indented one more `indentUnit` (none for verbatim-like
-    /// environments); anything else is wrapped inline. The caret lands at
-    /// the start of the body.
-    static func wrap(selection: NSRange, in text: NSString, environment env: String, indentUnit: String) -> Wrap {
+    /// line indented one more `indentUnit` when `rules` indent that body
+    /// (never for verbatim-like environments); anything else is wrapped
+    /// inline. The caret lands at the start of the body.
+    static func wrap(selection: NSRange, in text: NSString, environment env: String, indentUnit: String,
+                     rules: EnvironmentEditingRules = .conventional) -> Wrap {
         let sel = NSRange(location: max(0, min(selection.location, text.length)),
                           length: max(0, min(selection.length, text.length - min(selection.location, text.length))))
         var lineStart = sel.location
@@ -201,7 +202,7 @@ enum EditorNavigation {
         let block = NSRange(location: lineStart, length: lineEnd - lineStart)
         var lines = text.substring(with: block).components(separatedBy: "\n")
         let indent = String((lines.first ?? "").prefix(while: blank)) // the block's own indentation
-        let unit = SyntaxHighlighter.verbatimEnvironments.contains(env) ? "" : indentUnit
+        let unit = rules.indentsBody(of: env) ? indentUnit : ""
         if sel.length == 0, lines.allSatisfy({ $0.allSatisfy(blank) }) { lines = [indent] } // a blank line becomes the (indented) body line
         let body = lines.map { $0.allSatisfy(blank) && sel.length > 0 ? "" : unit + $0 }.joined(separator: "\n")
         let head = indent + begin + "\n"

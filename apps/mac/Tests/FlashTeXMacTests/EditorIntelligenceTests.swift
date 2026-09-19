@@ -123,21 +123,86 @@ final class EditorIntelligenceTests: XCTestCase {
                        .init(text: "\n\t", caretOffset: 2, closedEnvironment: nil))
         XCTAssertEqual(EI.newline(in: "" as NSString, caret: 0, indentUnit: "    ", closeEnvironments: true),
                        .init(text: "\n", caretOffset: 1, closedEnvironment: nil))
-        // After \begin{env}: one level deeper and the matching \end{env} below the caret.
+        // After \begin{env}: one level deeper, the environment's line template
+        // (`\item ` in a list) and the matching \end{env} below the caret.
         XCTAssertEqual(EI.newline(in: "  \\begin{itemize}" as NSString, caret: 17, indentUnit: "  ", closeEnvironments: true),
-                       .init(text: "\n    \n  \\end{itemize}", caretOffset: 5, closedEnvironment: "itemize"))
+                       .init(text: "\n    \\item \n  \\end{itemize}", caretOffset: 11, closedEnvironment: "itemize"))
+        XCTAssertEqual(EI.newline(in: "  \\begin{center}" as NSString, caret: 16, indentUnit: "  ", closeEnvironments: true),
+                       .init(text: "\n    \n  \\end{center}", caretOffset: 5, closedEnvironment: "center"))
         // Optional arguments after the name are fine; trailing spaces too.
         XCTAssertEqual(EI.newline(in: "\\begin{figure}[htbp]{x} " as NSString, caret: 24, indentUnit: "\t", closeEnvironments: true).closedEnvironment, "figure")
-        // Auto-close off: indent only.
+        // Auto-close off: indent and template only.
         XCTAssertEqual(EI.newline(in: "\\begin{itemize}" as NSString, caret: 15, indentUnit: "  ", closeEnvironments: false),
+                       .init(text: "\n  \\item ", caretOffset: 9, closedEnvironment: nil))
+        XCTAssertEqual(EI.newline(in: "\\begin{align*}" as NSString, caret: 14, indentUnit: "  ", closeEnvironments: false),
                        .init(text: "\n  ", caretOffset: 3, closedEnvironment: nil))
+    }
+
+    /// The environment rules (Settings > Editor > Environments) decide both
+    /// halves of the Return insertion: a `description` body starts with
+    /// `\item[] ` and the caret inside the brackets; a rule that says no
+    /// indent keeps the body flush; a rule of the user's own (a `frame`
+    /// that starts each line with `\pause`) is honoured, starred forms fall
+    /// back to the unstarred rule, and verbatim bodies are never indented.
+    func testNewlineFollowsTheEnvironmentRules() {
+        typealias R = EnvironmentEditingRules
+        XCTAssertEqual(EI.newline(in: "\\begin{description}" as NSString, caret: 19, indentUnit: "  ", closeEnvironments: false),
+                       .init(text: "\n  \\item[] ", caretOffset: 9, closedEnvironment: nil))
+        let flat = R(indentByDefault: false, rules: [R.Rule(environment: "itemize", indent: false, newLine: "\\item ")])
+        XCTAssertEqual(EI.newline(in: "\\begin{itemize}" as NSString, caret: 15, indentUnit: "  ", closeEnvironments: false, rules: flat).text,
+                       "\n\\item ")
+        XCTAssertEqual(EI.newline(in: "\\begin{center}" as NSString, caret: 14, indentUnit: "  ", closeEnvironments: false, rules: flat).text,
+                       "\n")
+        let frame = R(indentByDefault: true, rules: [R.Rule(environment: "frame", indent: true, newLine: "\\pause ")])
+        XCTAssertEqual(EI.newline(in: "\\begin{frame}" as NSString, caret: 13, indentUnit: "\t", closeEnvironments: false, rules: frame).text,
+                       "\n\t\\pause ")
+        XCTAssertEqual(EI.newline(in: "\\begin{enumerate*}" as NSString, caret: 18, indentUnit: "  ", closeEnvironments: false).text,
+                       "\n  \\item ")
+        // `document` is flat by convention; a verbatim body is never indented
+        // (its \begin never even counts as opening, see the next test).
+        XCTAssertEqual(R.conventional.indentsBody(of: "document"), false)
+        XCTAssertEqual(R.conventional.indentsBody(of: "lstlisting"), false)
+        XCTAssertEqual(R.conventional.indentsBody(of: "theorem"), true)
+        XCTAssertEqual(R.conventional.newLineText(in: "thebibliography"), "\\bibitem{} ")
+        XCTAssertEqual(R.caretOffset(in: "\\bibitem{} "), 9)
+        XCTAssertEqual(R.caretOffset(in: "\\item "), 6)
+        // Blank and duplicate names collapse; the first rule for a name wins.
+        let messy = R(indentByDefault: true, rules: [R.Rule(environment: " x "), R.Rule(environment: ""), R.Rule(environment: "x", indent: false)])
+        XCTAssertEqual(messy.normalized().rules, [R.Rule(environment: "x")])
+        XCTAssertEqual(R.decoded(messy.encoded()!), messy.normalized())
+    }
+
+    /// Return on an entry line repeats the enclosing environment's template
+    /// — `\item ` in a list, `\bibitem{} ` in a bibliography, a user rule's
+    /// text in its environment — and a bare entry line (nothing typed after
+    /// the command) just breaks. `\item[…]` keeps its bracket form. Outside
+    /// any rule, a plain `\item …` line still continues with `\item `.
+    func testNewlineRepeatsTheEntryTemplate() {
+        let list = "\\begin{itemize}\n  \\item first" as NSString
+        XCTAssertEqual(EI.newline(in: list, caret: list.length, indentUnit: "  ", closeEnvironments: true),
+                       .init(text: "\n  \\item ", caretOffset: 9, closedEnvironment: nil))
+        let bare = "\\begin{itemize}\n  \\item" as NSString
+        XCTAssertEqual(EI.newline(in: bare, caret: bare.length, indentUnit: "  ", closeEnvironments: true).text, "\n  ")
+        let desc = "\\begin{description}\n  \\item[term] text" as NSString
+        XCTAssertEqual(EI.newline(in: desc, caret: desc.length, indentUnit: "  ", closeEnvironments: true),
+                       .init(text: "\n  \\item[] ", caretOffset: 9, closedEnvironment: nil))
+        let bib = "\\begin{thebibliography}{9}\n\\bibitem{knuth} Knuth." as NSString
+        XCTAssertEqual(EI.newline(in: bib, caret: bib.length, indentUnit: "  ", closeEnvironments: true).text, "\n\\bibitem{} ")
+        let bareBib = "\\begin{thebibliography}{9}\n\\bibitem{knuth}" as NSString
+        XCTAssertEqual(EI.newline(in: bareBib, caret: bareBib.length, indentUnit: "  ", closeEnvironments: true).text, "\n")
+        let loose = "\\item alone" as NSString
+        XCTAssertEqual(EI.newline(in: loose, caret: loose.length, indentUnit: "  ", closeEnvironments: true).text, "\n\\item ")
+        XCTAssertNil(EI.itemContinuation(inLinePrefix: "\\itemize"))
+        XCTAssertEqual(EI.itemContinuation(inLinePrefix: "  \\item[a] b"), "\\item[] ")
+        // Text after the caret on the line: a plain break.
+        XCTAssertEqual(EI.newline(in: list, caret: list.length - 2, indentUnit: "  ", closeEnvironments: true).text, "\n  ")
     }
 
     func testNewlineDoesNotCloseWhatIsAlreadyClosed() {
         // Balanced already: no second \end.
         let balanced = "\\begin{itemize}\n\\item a\n\\end{itemize}" as NSString
         XCTAssertEqual(EI.newline(in: balanced, caret: 15, indentUnit: "  ", closeEnvironments: true).closedEnvironment, nil)
-        XCTAssertEqual(EI.newline(in: balanced, caret: 15, indentUnit: "  ", closeEnvironments: true).text, "\n  ")
+        XCTAssertEqual(EI.newline(in: balanced, caret: 15, indentUnit: "  ", closeEnvironments: true).text, "\n  \\item ")
         // Two begins, one end: the second gets closed.
         let open = "\\begin{itemize}\n\\begin{itemize}\n\\end{itemize}" as NSString
         XCTAssertEqual(EI.newline(in: open, caret: 15, indentUnit: "  ", closeEnvironments: true).closedEnvironment, "itemize")
@@ -275,8 +340,8 @@ final class EditorIntelligenceTests: XCTestCase {
         tv.setSelectedRange(NSRange(location: text.utf16.count, length: 0))
         tv.doCommand(by: #selector(NSResponder.insertNewline(_:))) // the key path: delegate doCommandBy(insertNewline:)
         try await Task.sleep(nanoseconds: 50_000_000)
-        XCTAssertEqual(tv.string, "  \\begin{itemize}\n  \(unit)\n  \\end{itemize}")
-        XCTAssertEqual(tv.selectedRange(), NSRange(location: 20 + unit.utf16.count, length: 0))
+        XCTAssertEqual(tv.string, "  \\begin{itemize}\n  \(unit)\\item \n  \\end{itemize}") // the list rule: body indented, `\item ` first
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 26 + unit.utf16.count, length: 0))
         XCTAssertEqual(model.activeText, tv.string) // the binding saw the edit once
         XCTAssertEqual(probe.coordinator?.currentLine, 1)
         // Undo removes the whole insertion.

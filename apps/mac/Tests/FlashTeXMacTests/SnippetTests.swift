@@ -235,8 +235,9 @@ final class SnippetTests: XCTestCase {
 
         // Environment template: itemize with its first \item, Tab to the end.
         try await accept(after: "\\begin{item", from: "")
-        XCTAssertEqual(tv.string, "\\begin{itemize}\n\\item \n\\end{itemize}")
-        XCTAssertEqual(tv.selectedRange().location, 22)
+        let unit = EditorPreferences.shared.indentString // the body sits one unit in (EnvironmentEditingRules)
+        XCTAssertEqual(tv.string, "\\begin{itemize}\n\(unit)\\item \n\\end{itemize}")
+        XCTAssertEqual(tv.selectedRange().location, 22 + unit.utf16.count)
         key(tv, "\t", code: 48)
         XCTAssertEqual(tv.selectedRange().location, (tv.string as NSString).length)
         XCTAssertFalse(tv.isSnippetActive)

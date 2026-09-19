@@ -1015,16 +1015,19 @@ struct SourceEditorView: NSViewRepresentable {
             return true
         }
 
-        /// Return: auto-indent, one level deeper after `\begin{env}`, closing
-        /// it with `\end{env}` when brace auto-closing is on. One typing-
-        /// coalesced insertion through `insertText` (undo removes it whole).
+        /// Return: auto-indent, one level deeper after `\begin{env}` when the
+        /// environment rules say so (Settings > Editor > Environments), with
+        /// the body's line template (`\item `), closing it with `\end{env}`
+        /// when brace auto-closing is on. One typing-coalesced insertion
+        /// through `insertText` (undo removes it whole).
         func insertNewline(in tv: NSTextView) -> Bool {
             guard programmaticChanges == 0, !tv.hasMarkedText() else { return false }
             let sel = tv.selectedRange()
             guard sel.length == 0 else { return false }
             let text = tv.textStorage?.string as NSString? ?? ""
             let insertion = EditorIntelligence.newline(in: text, caret: sel.location, indentUnit: EditorPreferences.shared.indentString,
-                                                       closeEnvironments: parent.autoClosePairs.contains("{"))
+                                                       closeEnvironments: parent.autoClosePairs.contains("{"),
+                                                       rules: EditorPreferences.shared.environmentRules)
             guard insertion.text != "\n" else { return false } // plain Return: AppKit's own path
             tv.insertText(insertion.text, replacementRange: sel)
             tv.setSelectedRange(NSRange(location: sel.location + insertion.caretOffset, length: 0))

@@ -49,6 +49,8 @@ final class CompletionAutoCloseTests: XCTestCase {
     }
 
     private var windows: [NSWindow] = []
+    /// The environment skeletons indent their body one unit (EnvironmentEditingRules).
+    private let unit = EditorPreferences.shared.indentString
 
     override func tearDown() {
         windows.forEach { $0.orderOut(nil) }
@@ -268,8 +270,8 @@ final class CompletionAutoCloseTests: XCTestCase {
 
         accept(environment("proof"), in: tv, exec)
         // The whole point: one `}`, not two.
-        XCTAssertEqual(tv.string, "\\begin{proof}\n\n\\end{proof}")
-        XCTAssertEqual(tv.selectedRange(), NSRange(location: 14, length: 0), "caret on the empty middle line")
+        XCTAssertEqual(tv.string, "\\begin{proof}\n\(unit)\n\\end{proof}")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 14 + unit.utf16.count, length: 0), "caret on the empty middle line")
         XCTAssertEqual(co.pendingClosers, [], "the tracked closer was consumed by the replacement, not left dangling")
         assertClosersMatchTheText(co, tv)
         turn()
@@ -280,7 +282,7 @@ final class CompletionAutoCloseTests: XCTestCase {
         undo.undo()
         XCTAssertEqual(tv.string, "\\begin{proof}", "one undo restores exactly the pre-accept buffer")
         undo.redo()
-        XCTAssertEqual(tv.string, "\\begin{proof}\n\n\\end{proof}")
+        XCTAssertEqual(tv.string, "\\begin{proof}\n\(unit)\n\\end{proof}")
     }
 
     /// `\end{` completes without a snippet (`insertCompletion`), and carries a
@@ -291,7 +293,7 @@ final class CompletionAutoCloseTests: XCTestCase {
         accept(command("\\begin{}"), in: tv, exec)
         type("itemize", into: tv)
         accept(environment("itemize"), in: tv, exec)
-        XCTAssertEqual(tv.string, "\\begin{itemize}\n\\item \n\\end{itemize}")
+        XCTAssertEqual(tv.string, "\\begin{itemize}\n\(unit)\\item \n\\end{itemize}")
         XCTAssertEqual(co.pendingClosers, [])
         turn()
 
@@ -304,7 +306,7 @@ final class CompletionAutoCloseTests: XCTestCase {
         type("item", into: tv)
         XCTAssertEqual(co.pendingClosers, [closer + 4])
         accept({ $0.kind == .environment && $0.label == "itemize" && $0.snippet == nil }, in: tv, exec)
-        XCTAssertEqual(tv.string, "\\begin{itemize}\n\\item \n\\end{itemize}\n\\end{itemize}")
+        XCTAssertEqual(tv.string, "\\begin{itemize}\n\(unit)\\item \n\\end{itemize}\n\\end{itemize}")
         XCTAssertEqual(co.pendingClosers, [])
         assertClosersMatchTheText(co, tv)
     }
@@ -356,7 +358,7 @@ final class CompletionAutoCloseTests: XCTestCase {
         XCTAssertEqual(co.pendingClosers, [], "nothing tracked")
         tv.setSelectedRange(NSRange(location: 12, length: 0))
         accept(environment("proof"), in: tv, exec)
-        XCTAssertEqual(tv.string, "\\begin{proof}\n\n\\end{proof}}", "the user's own brace is left exactly where they put it")
+        XCTAssertEqual(tv.string, "\\begin{proof}\n\(unit)\n\\end{proof}}", "the user's own brace is left exactly where they put it")
         assertClosersMatchTheText(co, tv)
     }
 
@@ -377,7 +379,7 @@ final class CompletionAutoCloseTests: XCTestCase {
         XCTAssertEqual(co.pendingClosers, [7])
         type("proof", into: tv)
         accept(environment("proof"), in: tv, exec)
-        XCTAssertEqual(tv.string, "\\begin{proof}\n\n\\end{proof}")
+        XCTAssertEqual(tv.string, "\\begin{proof}\n\(unit)\n\\end{proof}")
         XCTAssertEqual(co.pendingClosers, [])
         assertClosersMatchTheText(co, tv)
     }
@@ -391,7 +393,8 @@ final class CompletionAutoCloseTests: XCTestCase {
             accept(command("\\begin{}"), in: tv, exec)
             type(String(name.prefix(3)), into: tv)
             accept(environment(name), in: tv, exec)
-            let expected = "\\begin{" + Completion.environmentSnippet(name, indent: "").text
+            let expected = "\\begin{" + Completion.environmentSnippet(name, indent: "", unit: EditorPreferences.shared.indentString,
+                                                                    rules: EditorPreferences.shared.environmentRules).text
             XCTAssertEqual(tv.string, expected, "\(name): exactly the template, no stray closer")
             XCTAssertFalse(tv.string.hasSuffix("}}"), "\(name): no doubled brace at the end")
             // `figure` parks the caret inside `\includegraphics{}`, so that
@@ -404,7 +407,8 @@ final class CompletionAutoCloseTests: XCTestCase {
             XCTAssertEqual(co.pendingClosers, tracked, "\(name): only a closer the caret sits before is tracked")
             assertClosersMatchTheText(co, tv)
             // Tab reaches every placeholder and ends inside the buffer.
-            let stops = Completion.environmentSnippet(name, indent: "").stops.map { $0 + 7 }
+            let stops = Completion.environmentSnippet(name, indent: "", unit: EditorPreferences.shared.indentString,
+                                                      rules: EditorPreferences.shared.environmentRules).stops.map { $0 + 7 }
             XCTAssertTrue(stops.allSatisfy { $0 <= (tv.string as NSString).length }, "\(name): stops fit the buffer")
             turn()
         }
