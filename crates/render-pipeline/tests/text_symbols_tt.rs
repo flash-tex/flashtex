@@ -191,6 +191,33 @@ fn the_space_after_textbackslash_is_the_typewriter_interword_glue() {
 }
 
 #[test]
+fn ldots_in_texttt_is_three_typewriter_periods_with_zero_kerns() {
+    if !lm_available() {
+        return;
+    }
+    // OT1: x . . . y in cmtt, \kern 0.0 after each period = 26.24977.
+    assert_advances("", "\\texttt{x\\ldots y}", &[CMTT; 5]);
+    // T1: the same in ectt1000 = 26.24359.
+    assert_advances(T1, "\\texttt{x\\ldots y}", &[ECTT; 5]);
+}
+
+#[test]
+fn ldots_in_roman_and_bold_carries_fontdimen3_kerns() {
+    if !lm_available() {
+        return;
+    }
+    // cmr10: x 5.27779, . 2.77779 + \kern 1.66666 (x3), y 5.27779 = 23.88893.
+    assert_advances("", "x\\ldots y", &[5.27779, 4.44445, 4.44445, 4.44445, 5.27779]);
+    // ecrm1000: x 5.27649, . 2.7771 + \kern 1.66626, y 5.27649 = 23.88306.
+    assert_advances(T1, "x\\ldots y", &[5.27649, 4.44336, 4.44336, 4.44336, 5.27649]);
+    // cmbx10: x 6.06944, . 3.19446 + \kern 1.91666, y 6.06944 (the box's
+    // trailing \kern 0.15973 is \textbf's italic correction, not a glyph).
+    assert_advances("", "\\textbf{x\\ldots y}", &[6.06944, 5.11112, 5.11112, 5.11112, 6.06944]);
+    // ecbx1000: x 6.06796, . 3.19366 + \kern 1.9162, y 6.06796 (+ \kern 0.15968).
+    assert_advances(T1, "\\textbf{x\\ldots y}", &[6.06796, 5.10986, 5.10986, 5.10986, 6.06796]);
+}
+
+#[test]
 fn verbatim_backslash_and_braces_stay_typewriter_characters() {
     if !lm_available() {
         return;
