@@ -526,6 +526,40 @@ impl ColumnMode {
     }
 }
 
+/// A single post-material switch the page builder lays out: the index of
+/// the first document block after the switch (`adapter`'s block list), the
+/// switch's own byte offset (so the limitation pass can tell it apart from
+/// the switches that are still reported), and `\if@twocolumn` after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ColumnSwitch {
+    /// Index into `adapter::Doc::blocks` of the first block after the
+    /// switch.
+    pub block: usize,
+    /// Byte offset of the `\twocolumn`/`\onecolumn` command itself.
+    pub at: usize,
+    /// `\if@twocolumn` after the switch: the column state of every page
+    /// from [`ColumnSwitch::block`] to the end of the document.
+    pub on: bool,
+}
+
+/// The `twocolumn_mid_document` limitation text for a switch to `on` that
+/// the frame (built with starting state `start_two`) cannot follow: the
+/// rest of the document keeps whatever column count it already had.
+///
+/// One shared helper so the adapter pass (which reports every switch the
+/// page builder does not lay out) and the page builder itself (which
+/// reports the recorded switch back when it has to decline it) cannot
+/// drift apart.
+pub fn mid_document_message(on: bool, start_two: bool) -> String {
+    format!(
+        "\\{} after the first material starts a new page, but changing the number of \
+         page columns during a document is not implemented: the rest of the document \
+         keeps {} column(s)",
+        if on { "twocolumn" } else { "onecolumn" },
+        if start_two { 2 } else { 1 },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

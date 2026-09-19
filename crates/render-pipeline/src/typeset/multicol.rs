@@ -801,6 +801,11 @@ pub(super) fn outer_doc(ctx: &mut Context, doc: &Doc, floats: &[floatpage::Float
         limitations: Vec::new(),
         superseded: Vec::new(),
         top_material: None,
+        // The outer document rewrites block indices (and drops the switch
+        // command's surroundings into marker rules), so a recorded switch
+        // does not survive it: the caller reports it back instead.
+        column_switch: None,
+        post_style: None,
         secnumdepth: doc.secnumdepth,
         page_starts,
         default_color: doc.default_color,
@@ -2028,6 +2033,10 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
             limitations: Vec::new(),
             superseded: Vec::new(),
             top_material: None,
+            // A region body is laid out at its own `\hsize`, never across
+            // a document column switch.
+            column_switch: None,
+            post_style: None,
             secnumdepth: doc.secnumdepth,
             page_starts: Vec::new(),
             default_color: doc.default_color,

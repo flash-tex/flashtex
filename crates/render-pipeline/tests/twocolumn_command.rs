@@ -160,12 +160,17 @@ fn a_switch_after_material_is_reported_and_one_before_it_is_not() {
     let (codes, _) = layout(leading);
     assert!(!codes.iter().any(|c| c == "twocolumn_mid_document"), "{codes:?}");
 
-    // The page frame is still one frame for the whole document, so a
-    // switch that really changes the column count after material is named,
-    // not silently approximated.
+    // One bare switch after material is laid out, not reported: the pages
+    // after it use the post-switch frame (see `twocolumn_switch.rs` for
+    // the oracle numbers). Measured against pdflatex: `Aaa` stays
+    // one-column on page 1, `Bbb` opens the first two-column page
+    // indented a `\parindent` (15pt) into it.
     let mid = "\\documentclass[10pt]{article}\n\\begin{document}\nAaa\n\\twocolumn\nBbb\n\\end{document}\n";
-    let (codes, _) = layout(mid);
-    assert!(codes.iter().any(|c| c == "twocolumn_mid_document"), "{codes:?}");
+    let (codes, words) = layout(mid);
+    assert!(!codes.iter().any(|c| c == "twocolumn_mid_document"), "{codes:?}");
+    assert_eq!(word(&words, "Aaa").page, 1);
+    assert_eq!(word(&words, "Bbb").page, 2);
+    close(word(&words, "Bbb").x, 133.768 + 14.944, "post-switch column");
 
     // A `\twocolumn` that changes nothing still breaks the page, and says
     // nothing about columns.

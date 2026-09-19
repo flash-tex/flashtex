@@ -514,6 +514,12 @@ pub struct Laid {
 pub struct Context<'a> {
     fonts: &'a FontSet,
     style: &'a Stylesheet,
+    /// A second stylesheet the build swaps to past a mid-document column
+    /// switch (`adapter::Doc::post_style`): `swap_style` exchanges it with
+    /// `style`, so every width, frame and tolerance the block builders
+    /// read follows the switch with no lifetime cost (both borrows live
+    /// in `'a`, only the slots move).
+    alt_style: Option<&'a Stylesheet>,
     paths: &'a [&'a str],
     /// Document sources (indexed like `paths`), read only to re-derive what
     /// the compiler's math list flattens (`\left`/`\right` fences).
@@ -629,6 +635,23 @@ impl<'a> Context<'a> {
         self.math_colors = colors;
     }
 
+    /// Carries the post-switch stylesheet (`adapter::Doc::post_style`) for
+    /// a build that lays out a mid-document column switch.
+    pub fn set_alt_style(&mut self, style: Option<&'a Stylesheet>) {
+        self.alt_style = style;
+    }
+
+    /// Exchanges the active stylesheet with the carried one, twice restoring
+    /// it: block builders between the two calls read the post-switch frame.
+    /// `false` when no second stylesheet is carried: the caller lays out
+    /// without the switch instead.
+    fn swap_style(&mut self) -> bool {
+        let Some(mut alt) = self.alt_style.take() else { return false };
+        std::mem::swap(&mut self.style, &mut alt);
+        self.alt_style = Some(alt);
+        true
+    }
+
     /// The unmasked document sources (see [`Context::sources`]): the
     /// request's documents as read, before `floats::mask` blanked the float
     /// environments the compiler must not see.
@@ -646,6 +669,7 @@ impl<'a> Context<'a> {
         Context {
             fonts,
             style,
+            alt_style: None,
             paths,
             texts,
             sources: texts,
@@ -9665,6 +9689,36 @@ fn add_skip(v: &mut pagebuild::VBlock, pt: f64, flex: (f64, f64)) {
     });
 }
 
+/// Whether `doc` can reach `open_right`'s `\cleardoublepage` blanks: a
+/// non-article class with a chapter, part or double clearpage. Those pad
+/// whole pages assuming one column count, which a mid-document switch
+/// would change underneath them, so the switch stays reported there.
+fn chapterish(doc: &Doc) -> bool {
+    let non_article = doc.style.class_geometry.as_deref().is_some_and(|g| {
+        !matches!(g.options.kind, flashtex_class_geometry::ClassKind::Article)
+    });
+    non_article
+        && doc.blocks.iter().any(|b| {
+            matches!(
+                b,
+                Block::Chapter { .. } | Block::Part { .. } | Block::ClearPage { double: true, .. }
+            )
+        })
+}
+
+/// Reports a recorded column switch back as the `twocolumn_mid_document`
+/// limitation: same code, span and text the adapter pass emits for every
+/// switch the page builder does not lay out.
+fn decline_switch(ctx: &mut Context, doc: &Doc, sw: &crate::columns::ColumnSwitch) {
+    let len = if sw.on { "\\twocolumn".len() } else { "\\onecolumn".len() };
+    let at = sw.at;
+    ctx.diagnostics.push(Diagnostic::warning(
+        "twocolumn_mid_document",
+        crate::columns::mid_document_message(sw.on, doc.style.columns.start()),
+        vec![ctx.source(Span::in_document(DocumentId(doc.style.columns.document()), at, at + len))],
+    ));
+}
+
 /// Lays out every block of `doc` onto pages. With `cache`, blocks whose
 /// items, flags and style match an earlier build are reused (see
 /// `incremental`); the result is identical either way.
@@ -9676,7 +9730,28 @@ pub fn build(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCache>) -> Laid 
 /// ([`floatpage`]); without floats the page builder is unchanged.
 pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCache>, floats: &[floatpage::FloatSpec]) -> Laid {
     if let Some(outer) = multicol::outer_doc(ctx, doc, floats) {
+        // The outer document rewrites block indices, so a recorded switch
+        // does not survive it: report it back and lay out without it.
+        if let Some(sw) = doc.column_switch {
+            decline_switch(ctx, doc, &sw);
+        }
         return build_with_floats(ctx, &outer, cache, floats);
+    }
+    // A recorded single switch is laid out unless a path that assumes one
+    // column count for the whole document stands in the way: floats
+    // (`floatpage` paginates whole pages at once), the `\@topnewpage` box
+    // (it shortens whole pages), or chapterish pages (whole-page blanks).
+    // Anything declined here is reported back as the limitation the
+    // adapter pass skipped for the recorded switch.
+    let mut switch = doc.column_switch;
+    if let Some(sw) = switch {
+        let declined = !floats.is_empty()
+            || doc.top_material.as_ref().is_some_and(|(body, _)| !body.is_empty())
+            || chapterish(doc);
+        if declined {
+            decline_switch(ctx, doc, &sw);
+            switch = None;
+        }
     }
     let mut blocks: Vec<BuiltBlock> = Vec::new();
     let style: &Stylesheet = ctx.style;
@@ -9691,6 +9766,16 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // Blocks after a class command's `\clearpage` (book matter commands).
     let mut clears: Vec<usize> = Vec::new();
     let n_columns = geo.map_or(1, |g| g.frame.columns.len().max(1));
+    // Past a laid-out switch the frame (and the column count the loop's
+    // two-column arms read) is the post-switch one; before it, this one.
+    // `usize::MAX` without a switch, so every block reads the pre-switch
+    // value exactly as before.
+    let switch_at = switch.map(|sw| sw.block).unwrap_or(usize::MAX);
+    let post_columns = doc
+        .post_style
+        .as_deref()
+        .and_then(|p| p.class_geometry.as_deref())
+        .map_or(n_columns, |g| g.frame.columns.len().max(1));
     // `\twocolumn[\@maketitle]` (`\@topnewpage`): its first block, its lines
     // placed in the box, and the box height plus `\dbltextfloatsep` that
     // both columns of the first page lose.
@@ -9714,8 +9799,16 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // (`\@topsepadd` keeps `\partopsep` for the closing skip too).
     let mut env_vmode = false;
     let quad = ctx.text_params(TextStyle::default(), ctx.style.body_size_pt).quad;
-    let style_fp = if cache.is_some() { incremental::style_fingerprint(ctx.style) } else { 0 };
-    let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp, tag, items, flags);
+    // The cache fingerprint follows the active stylesheet: past the switch
+    // the same items break at another width, so they key differently.
+    let style_fp = std::cell::Cell::new(if cache.is_some() { incremental::style_fingerprint(ctx.style) } else { 0 });
+    let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp.get(), tag, items, flags);
+    // First built-block index past the switch: every box at or after it
+    // belongs to a post-switch page. `swapped` records the `swap_style`
+    // below actually firing, so the restore afterwards cannot run on a
+    // switch whose block never comes up.
+    let mut built_split = 0usize;
+    let mut swapped = false;
     // Two-column documents: blocks that start a page (`\clearpage`,
     // `\chapter`, `\part`) rather than a column, and blocks set across the
     // text width (`\onecolumn` material), by built-block index.
@@ -9739,6 +9832,17 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     for (doc_index, block) in doc.blocks.iter().enumerate() {
         if doc_index < skip_to {
             continue;
+        }
+        // Past the switch the loop's column-count arms (`wide_blocks`,
+        // titles) read the post-switch frame's count; the line widths
+        // already follow it through `ctx.style` below.
+        let n_columns = if doc_index < switch_at { n_columns } else { post_columns };
+        if switch.is_some_and(|sw| sw.block == doc_index) {
+            built_split = blocks.len();
+            swapped = ctx.swap_style();
+            if swapped {
+                style_fp.set(incremental::style_fingerprint(ctx.style));
+            }
         }
         if doc.page_starts.binary_search(&doc_index).is_ok() {
             page_start_blocks.push(blocks.len());
@@ -10060,7 +10164,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             }
             Block::Paragraph { .. } => {
                 let mut st = ParaState { after_heading, env_vmode, env_skips: None };
-                ctx.build_paragraph(&mut blocks, block, &mut st, cache, style_fp, quad);
+                ctx.build_paragraph(&mut blocks, block, &mut st, cache, style_fp.get(), quad);
                 (after_heading, env_vmode) = (st.after_heading, st.env_vmode);
             }
             Block::Rule {
@@ -10155,13 +10259,43 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             });
         }
     }
+    // Past the switch the builders read the post-switch stylesheet; back
+    // to the document's own for everything below, which lays out whole
+    // pages (or is told the post width explicitly).
+    if swapped {
+        ctx.swap_style();
+    }
+    // The adapter records a block that exists, so the loop above always
+    // reaches it — but if it ever did not, or no post stylesheet was
+    // carried, the switch must stay reported rather than silently
+    // switching nothing.
+    if !swapped {
+        if let Some(sw) = switch.take() {
+            decline_switch(ctx, doc, &sw);
+        }
+    }
+    // The switch's `\clearpage` breaks the page before the first post
+    // column. Its penalty rides the first post block's own `penalty_before`
+    // into the vertical list — unless that block sets nothing, in which
+    // case the penalty never reaches the list: move it to the first post
+    // block that does (overwriting whatever stood there is faithful, the
+    // `\clearpage` having already ended the page; and when nothing after
+    // the switch sets anything there is no post page to open).
+    if swapped {
+        if let Some(j) = (built_split..blocks.len()).find(|&j| !blocks[j].vertical.lines.is_empty()) {
+            blocks[j].vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+        }
+    }
     // `\twocolumn` begins with `\clearpage`: column material after
     // full-width material starts a page (`\onecolumn`'s own `\clearpage`
     // comes with the `\chapter*` heading of the list).
-    if n_columns > 1 && !wide_blocks.is_empty() {
+    if !wide_blocks.is_empty() {
         for i in 1..blocks.len() {
             let wide = |b: usize| wide_blocks.binary_search(&b).is_ok();
-            if wide(i - 1) && !wide(i) {
+            // Without a switch `built_split` is 0 and `post_columns` is
+            // `n_columns`, so this reads exactly as before.
+            let cols = if i < built_split { n_columns } else { post_columns };
+            if cols > 1 && wide(i - 1) && !wide(i) {
                 blocks[i].vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
                 page_start_blocks.push(i);
             }
@@ -10180,7 +10314,14 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     }
     // Footnote blocks are appended after the body's (not in `vblocks`).
     let body_blocks = blocks.len();
-    let insertions = footnotes::prepare(ctx, &mut blocks, &params);
+    // Notes and rules past a laid-out switch are set at the post width;
+    // without one every note reads the document width as before.
+    let footnote_split = switch.and_then(|_| {
+        doc.post_style
+            .as_deref()
+            .map(|p| (built_split, p.text_width_pt))
+    });
+    let insertions = footnotes::prepare(ctx, &mut blocks, &params, footnote_split);
     // beamer: every frame's fills, once the frame's own footnotes are known
     // (`beamer::resolve_fills`); the notes sit at the frame's foot.
     for frame in &frames {
@@ -10250,7 +10391,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             Some(ins) => {
                 let regions = pagebuild::resolve_regions(&list, &longtables);
                 let (mut pages, areas) = pagebuild::break_pages_inserts_regions(&params, &list, short_pages, short, ins, &regions);
-                footnotes::place(ctx, &mut blocks, &mut pages, areas);
+                footnotes::place(ctx, &mut blocks, &mut pages, areas, footnote_split);
                 (pages, Vec::new(), Vec::new())
             }
             None => {
@@ -10263,7 +10404,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
         let (mut pages, images, labels, areas) =
             floatpage::paginate(ctx, &mut blocks, &params, &list, floats, &regions, body_blocks, insertions.as_ref(), short_cols, short, columns);
         if insertions.is_some() {
-            footnotes::place(ctx, &mut blocks, &mut pages, areas);
+            footnotes::place(ctx, &mut blocks, &mut pages, areas, footnote_split);
         }
         (pages, images, labels)
     };
@@ -10352,33 +10493,113 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // page builder put in a later column moves to the next page.
     let mut aligned: Vec<usize> = Vec::new();
     page_start_blocks.extend(clears.iter().copied());
-    if columns > 1 && !(page_start_blocks.is_empty() && wide_blocks.is_empty()) {
-        let flags = |list: &[usize]| {
-            let mut v = vec![false; blocks.len()];
-            for &b in list {
-                if let Some(f) = v.get_mut(b) {
-                    *f = true;
-                }
+    // First page-builder column at or after the switch's first built
+    // block. Empty padding columns carry no lines, so inserting them
+    // never moves this boundary's meaning, only its position: recompute
+    // it after every padding pass.
+    let switch_col = |built: &[pagebuild::BuiltPage]| {
+        built
+            .iter()
+            .position(|bp| bp.lines.iter().any(|l| l.payload.0 >= built_split))
+            .unwrap_or(built.len())
+    };
+    let flags = |list: &[usize]| {
+        let mut v = vec![false; blocks.len()];
+        for &b in list {
+            if let Some(f) = v.get_mut(b) {
+                *f = true;
             }
-            v
-        };
-        aligned = align_columns(&mut built, columns, &flags(&page_start_blocks), &flags(&wide_blocks));
+        }
+        v
+    };
+    if switch.is_some() {
+        // Each side pads within itself: pre-switch columns group
+        // `n_columns` per page, post-switch ones `post_columns`.
+        let gated = !(page_start_blocks.is_empty() && wide_blocks.is_empty());
+        if gated && n_columns > 1 {
+            let split = switch_col(&built);
+            let len = built.len();
+            aligned.extend(align_columns(&mut built, 0..len.min(split), n_columns, &flags(&page_start_blocks), &flags(&wide_blocks)).into_iter());
+        }
+        if gated && post_columns > 1 {
+            let split = switch_col(&built);
+            let len = built.len();
+            aligned.extend(align_columns(&mut built, split..len, post_columns, &flags(&page_start_blocks), &flags(&wide_blocks)).into_iter());
+        }
+    } else if columns > 1 && !(page_start_blocks.is_empty() && wide_blocks.is_empty()) {
+        let len = built.len();
+        aligned = align_columns(&mut built, 0..len, columns, &flags(&page_start_blocks), &flags(&wide_blocks));
     }
     let mut blank_pages: Vec<usize> = Vec::new();
-    let counters = geo.map_or_else(Vec::new, |g| {
+    // Whole-page blanks still assume one column count (unreachable with a
+    // laid-out switch, whose documents decline it above), and they mutate
+    // `built`, so they run before the grouping below.
+    if let Some(g) = geo {
         if g.flags.twoside && !chapter_starts.is_empty() {
             blank_pages = open_right(&mut built, &chapter_starts, blocks.len(), &events, g.numbering, columns);
         }
-        page_counters(&built, columns, blocks.len(), &events, g.numbering)
+    }
+    // Chunk, page and frame of every page: pre-switch columns group
+    // `n_columns` per page under the document frame, post-switch ones
+    // `post_columns` under the post-switch frame. Without a switch every
+    // column groups `columns` per page under the one frame, as before.
+    let (page_of, page_start, page_frames): (Vec<usize>, Vec<usize>, Vec<Option<&flashtex_class_geometry::ResolvedDocument>>) = if switch.is_some() {
+        let split = switch_col(&built);
+        // The boundary chunk opens post-switch material: by the EJECT the
+        // transfer guarantees above, nothing pre-switch shares it.
+        debug_assert!(
+            built.get(split).is_none_or(|bp| bp.lines.iter().all(|l| l.payload.0 >= built_split)),
+            "post-switch material shares a column with pre-switch material"
+        );
+        let post_geo = doc.post_style.as_deref().and_then(|p| p.class_geometry.as_deref());
+        let mut page_of = Vec::with_capacity(built.len());
+        let mut page_start = Vec::new();
+        let mut page_frames = Vec::new();
+        let mut ci = 0usize;
+        while ci < split {
+            page_start.push(ci);
+            page_frames.push(geo);
+            for _ in 0..n_columns {
+                if ci >= split {
+                    break;
+                }
+                page_of.push(page_start.len() - 1);
+                ci += 1;
+            }
+        }
+        while ci < built.len() {
+            page_start.push(ci);
+            page_frames.push(post_geo);
+            for _ in 0..post_columns {
+                if ci >= built.len() {
+                    break;
+                }
+                page_of.push(page_start.len() - 1);
+                ci += 1;
+            }
+        }
+        (page_of, page_start, page_frames)
+    } else {
+        let (page_of, n_pages) = uniform_pages(built.len(), columns);
+        (
+            page_of,
+            (0..n_pages).map(|pi| pi * columns.max(1)).collect(),
+            vec![geo; n_pages],
+        )
+    };
+    let n_pages = page_start.len();
+    let counters = geo.map_or_else(Vec::new, |g| {
+        page_counters(&built, &page_of, n_pages, blocks.len(), &events, g.numbering)
     });
     let mut pages = pl::Pages {
-        pages: Vec::with_capacity(built.len().div_ceil(columns)),
+        pages: Vec::with_capacity(n_pages),
         overflow: Vec::new(),
         text_height: s.text_height_pt,
     };
     let mut line_dx: Vec<Vec<f64>> = Vec::with_capacity(pages.pages.capacity());
     for (ci, bp) in built.iter().enumerate() {
-        let (pi, col) = (ci / columns, ci % columns);
+        let pi = page_of[ci];
+        let col = ci - page_start[pi];
         let number = pi as u32 + 1;
         if col == 0 {
             pages.pages.push(pl::Page {
@@ -10392,8 +10613,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
         }
         // `\@themargin` of this page (0 on odd and one-sided pages: the
         // blocks are assembled at `\oddsidemargin`) plus the column offset.
+        // Past a laid-out switch the offset comes from the post-switch
+        // frame, whose first column sits where the old text block did.
         let counter = counters.get(pi).map_or(i64::from(number), |c| c.0);
-        let dx = geo.map_or(0.0, |g| crate::style::frame_pt(g.frame.text_left(counter)) - s.text_x_pt + crate::style::frame_pt(g.frame.columns[col].offset));
+        let dx = page_frames[pi].map_or(0.0, |g| crate::style::frame_pt(g.frame.text_left(counter)) - s.text_x_pt + crate::style::frame_pt(g.frame.columns[col].offset));
         let page = pages.pages.last_mut().expect("pushed above");
         let dxs = line_dx.last_mut().expect("pushed above");
         for placed in &bp.lines {
@@ -10429,8 +10652,14 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
         }
     }
     multicol::shift(ctx, &mut pages, &mut line_dx, &blocks);
-    if let Some(g) = geo {
-        page_chrome(ctx, g, &mut blocks, &mut pages, &mut line_dx, &events, &counters);
+    // One frame per page: without a switch every entry is the document
+    // frame. A page without one (impossible with a laid-out switch, which
+    // needs class geometry on both sides) skips the chrome as a
+    // geometry-less document does.
+    let chrome_frames: Vec<&flashtex_class_geometry::ResolvedDocument> =
+        page_frames.iter().filter_map(|f| *f).collect();
+    if chrome_frames.len() == n_pages {
+        page_chrome(ctx, &chrome_frames, &mut blocks, &mut pages, &mut line_dx, &events, &counters);
     }
     // beamer: the theme's frametitle bars, footline boxes and rounded
     // title box on every frame page (`typeset::beamer::page_chrome`).
@@ -10453,7 +10682,11 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 ci += 1;
             }
         }
-        ((ci / columns) as u32 + 1, ci % columns)
+        // Without a switch this reads `(ci / columns, ci % columns),
+        // exactly as before; with one the page and the within-page column
+        // come from the grouping above.
+        let pi = page_of.get(ci).copied().unwrap_or(n_pages.saturating_sub(1));
+        (pi as u32 + 1, ci.saturating_sub(page_start.get(pi).copied().unwrap_or(0)))
     };
     let images: Vec<(u32, display::Item)> = images
         .into_iter()
@@ -10546,16 +10779,30 @@ const SENTENCE_SPACE_MARK: char = '\u{2002}';
 /// numbering at the start, `\pagenumbering` resets to 1, `\setcounter{page}`
 /// sets, each shipout steps. Events belong to the page holding the next
 /// block (as in [`page_chrome`]).
-fn page_counters(built: &[pagebuild::BuiltPage], columns: usize, n_blocks: usize, events: &[(usize, adapter::ChromeEvent, Span)], numbering: flashtex_class_geometry::Numbering) -> Vec<(i64, flashtex_class_geometry::Numbering)> {
-    let n_pages = built.len().div_ceil(columns.max(1));
+/// Chunk-to-page mapping (and page count) for a uniform column count:
+/// every `columns` page-builder columns make a page.
+fn uniform_pages(n_chunks: usize, columns: usize) -> (Vec<usize>, usize) {
+    let columns = columns.max(1);
+    let n_pages = n_chunks.div_ceil(columns);
+    ((0..n_chunks).map(|ci| ci / columns).collect(), n_pages)
+}
+
+fn page_counters(
+    built: &[pagebuild::BuiltPage],
+    page_of: &[usize],
+    n_pages: usize,
+    n_blocks: usize,
+    events: &[(usize, adapter::ChromeEvent, Span)],
+    numbering: flashtex_class_geometry::Numbering,
+) -> Vec<(i64, flashtex_class_geometry::Numbering)> {
     if n_pages == 0 {
         return Vec::new();
     }
     let mut first_page: Vec<Option<usize>> = vec![None; n_blocks];
-    for (ci, bp) in built.iter().enumerate() {
+    for (bp, &pi) in built.iter().zip(page_of.iter()) {
         for l in &bp.lines {
             if let Some(slot) = first_page.get_mut(l.payload.0) {
-                slot.get_or_insert(ci / columns.max(1));
+                slot.get_or_insert(pi);
             }
         }
     }
@@ -10601,7 +10848,8 @@ fn open_right(built: &mut Vec<pagebuild::BuiltPage>, chapter_starts: &[(usize, u
             // `\ifodd\c@page` is tested before the counter commands issued
             // after the clear (book `\mainmatter`'s `\pagenumbering{arabic}`).
             let before: Vec<(usize, adapter::ChromeEvent, Span)> = events.iter().enumerate().filter(|(i, (b, _, _))| !(*b == block && *i >= cut)).map(|(_, e)| e.clone()).collect();
-            if page_counters(built, columns, n_blocks, &before, numbering)[k / columns].0 % 2 == 0 {
+            let (page_of, n_pages) = uniform_pages(built.len(), columns);
+            if page_counters(built, &page_of, n_pages, n_blocks, &before, numbering)[k / columns].0 % 2 == 0 {
                 for _ in 0..columns {
                     built.insert(k, pagebuild::BuiltPage::default());
                     inserted.push(k);
@@ -10621,19 +10869,23 @@ fn open_right(built: &mut Vec<pagebuild::BuiltPage>, chapter_starts: &[(usize, u
 /// Inserts empty columns so such a column is a page's first and the column
 /// after `\onecolumn` material starts the next page; returns the inserted
 /// indices (in the final list, ascending).
-fn align_columns(built: &mut Vec<pagebuild::BuiltPage>, columns: usize, page_start: &[bool], wide: &[bool]) -> Vec<usize> {
+fn align_columns(built: &mut Vec<pagebuild::BuiltPage>, range: std::ops::Range<usize>, columns: usize, page_start: &[bool], wide: &[bool]) -> Vec<usize> {
     let flag = |v: &[bool], b: usize| v.get(b).copied().unwrap_or(false);
     let mut inserted = Vec::new();
     let mut prev_wide = false;
-    let mut k = 0;
-    while k < built.len() {
+    // Page phase is relative to the range: each side of a laid-out switch
+    // starts a fresh page at the range start.
+    let mut k = range.start;
+    let mut end = range.end.min(built.len());
+    while k < end {
         let starts = built[k].lines.first().is_some_and(|l| flag(page_start, l.payload.0));
         let has_wide = built[k].lines.iter().any(|l| flag(wide, l.payload.0));
-        if (starts || has_wide || prev_wide) && k % columns != 0 {
-            while k % columns != 0 {
+        if (starts || has_wide || prev_wide) && (k - range.start) % columns != 0 {
+            while (k - range.start) % columns != 0 {
                 built.insert(k, pagebuild::BuiltPage::default());
                 inserted.push(k);
                 k += 1;
+                end += 1;
             }
         }
         prev_wide = has_wide;
@@ -10668,7 +10920,7 @@ fn provenance_of(span: Span, source_of: &dyn Fn(Span) -> SourceRange) -> Provena
 /// only for its page), `\leftmark` from the page's last mark and
 /// `\rightmark` from its first (`\botmark`/`\firstmark`, the previous
 /// page's last mark when the page has none).
-fn page_chrome(ctx: &mut Context, g: &flashtex_class_geometry::ResolvedDocument, blocks: &mut Vec<BuiltBlock>, pages: &mut pl::Pages, line_dx: &mut [Vec<f64>], events: &[(usize, adapter::ChromeEvent, Span)], counters: &[(i64, flashtex_class_geometry::Numbering)]) {
+fn page_chrome(ctx: &mut Context, frames: &[&flashtex_class_geometry::ResolvedDocument], blocks: &mut Vec<BuiltBlock>, pages: &mut pl::Pages, line_dx: &mut [Vec<f64>], events: &[(usize, adapter::ChromeEvent, Span)], counters: &[(i64, flashtex_class_geometry::Numbering)]) {
     use crate::style::frame_pt;
     use adapter::ChromeEvent;
     use flashtex_class_geometry::Field;
@@ -10693,13 +10945,18 @@ fn page_chrome(ctx: &mut Context, g: &flashtex_class_geometry::ResolvedDocument,
     // document becomes synthetic provenance (`source: null` in runtime-v1)
     // instead of claiming document 0, byte 0.
     let span = NO_SOURCE_SPAN;
-    let frame = &g.frame;
-    let width = frame_pt(frame.text_width);
     let text_x = ctx.style.text_x_pt;
-    let mut macros = g.style_macros;
+    // Without a switch every page reads the same frame; past one each page
+    // reads its own (the running heads are frame-width, the separator rule
+    // column-geometry). The macro seed is one document's either way.
+    let Some(first_frame) = frames.first() else { return };
+    let mut macros = first_frame.style_macros;
     let mut top = (String::new(), String::new());
     let mut current = top.clone();
     for pi in 0..n_pages {
+        let g = frames[pi];
+        let frame = &g.frame;
+        let width = frame_pt(frame.text_width);
         let (number, numbering) = counters.get(pi).copied().unwrap_or((pi as i64 + 1, g.numbering));
         let mut this = None;
         let mut first: Option<(String, String)> = None;

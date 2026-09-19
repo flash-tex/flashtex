@@ -389,6 +389,9 @@ pub fn render_windowed(
         // so every span still indexes them).
         let original: Vec<&str> = documents.iter().map(|d| d.text).collect();
         let mut ctx = typeset::Context::with_texts(fonts, &doc.style, &paths, &original);
+        // One laid-out `\twocolumn`/`\onecolumn` switch: the post-switch
+        // stylesheet the page builder swaps to (`adapter::Doc::post_style`).
+        ctx.set_alt_style(doc.post_style.as_deref());
         // `\includegraphics` in running text reads its file the way a float's
         // graphic does (issue #944, Tier 3).
         ctx.set_images(options, &image_cache);
