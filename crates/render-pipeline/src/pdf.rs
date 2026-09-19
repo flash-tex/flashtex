@@ -55,7 +55,11 @@ pub fn write_pdf_exact(v2: &DisplayList, font_dirs: &[std::path::PathBuf], proje
     let envelope = v2.write_json_with("export", true);
     let options = flashtex_pdf::v2::V2Options { font_dirs: font_dirs.to_vec() };
     let (doc, report) = flashtex_pdf::v2::from_v2_rooted(&envelope, &options, project_root)?;
-    let rendered = flashtex_pdf::exact::render_exact(&doc).map_err(|e| e.to_string())?;
+    // `display-list-v2-links` §5: the link rectangles become real `/Link`
+    // annotations. Read off the display list rather than the envelope --
+    // `from_v2` does not carry `navigation`, and the list is right here.
+    let navigation = link_annotations(v2)?;
+    let rendered = flashtex_pdf::exact::render_exact_with(&doc, &navigation).map_err(|e| e.to_string())?;
     flashtex_pdf::verify::check_structure(&rendered.bytes).map_err(|e| format!("generated PDF failed self-check: {e}"))?;
     let mut notes = Vec::new();
     for f in &report.fonts {
@@ -78,4 +82,132 @@ pub fn write_pdf_exact(v2: &DisplayList, font_dirs: &[std::path::PathBuf], proje
         glyphs: report.glyphs,
         images: report.images,
     })
+}
+
+/// The `/Link` annotations of `v2`'s `navigation` (`display-list-v2-links`
+/// §5), by page index.
+///
+/// The display list is y **down** from each page's top-left in ticks; a PDF
+/// `/Rect` is `[llx lly urx ury]` y **up** from the page's bottom-left in
+/// points, so each rectangle is flipped against its own page's height. Ticks
+/// are 2^-20 of a point, so the conversion is exact in at most 20 fractional
+/// digits and never rounds.
+///
+/// `/Border [0 0 0]` and no `/C`: a link must not paint something the page
+/// does not already show. pdflatex under plain `hyperref` draws a coloured
+/// box (`/Border [0 0 1] /C [0 1 1]`), but under `colorlinks` or `hidelinks`
+/// -- what most documents use -- it draws nothing and colours the text
+/// instead, and this pipeline cannot see which, because hyperref's options
+/// are not exposed by the pinned compiler. Drawing nothing is the choice that
+/// cannot add ink the author did not ask for.
+///
+/// `links.destinations` is deliberately NOT copied into `nav.destinations`
+/// yet. The producer never fills it -- `links::navigation` returns
+/// `destinations: BTreeMap::new()` unconditionally, because internal-link
+/// production has not landed -- and its `Destination { page, x, y }` shape
+/// has no producer to pin down its conventions (page numbering, anchor
+/// semantics), so there is no verified conversion to the pdf crate's
+/// `{ page: 0-based index, view: Xyz }` shape to write. Copying an always
+/// empty map would be a no-op; inventing the conversion now would bake in
+/// unverified coordinate semantics. When the internal-link half of the
+/// producer lands, copy the map here (converting coordinates the way the
+/// rectangles below are flipped) and emit `LinkAction::GoTo` for the
+/// `"link"` class instead of skipping it.
+fn link_annotations(v2: &DisplayList) -> Result<flashtex_pdf::navigation::Navigation, String> {
+    use flashtex_pdf::exact::Decimal;
+    use flashtex_pdf::navigation::{LinkAction, LinkAnnotation, Navigation};
+
+    let mut nav = Navigation::default();
+    let Some(links) = v2.navigation.as_ref() else { return Ok(nav) };
+    let tick = |t: crate::display::Tick| {
+        Decimal::from_ratio(i128::from(t.0), 1 << 20, 20)
+            .ok_or_else(|| format!("link coordinate {} is not an exact decimal", t.0))
+    };
+    nav.links = vec![Vec::new(); v2.pages.len()];
+    for link in &links.links {
+        // `class` is hyperref's colour class: "url" for `\url` and external
+        // `\href`, "link" reserved for internal references. An internal
+        // link's `uri` would be a destination *name*, not a URI, so it must
+        // never become a `/URI` action (a viewer would open the bare name
+        // as a URL). The producer does not emit internal links yet
+        // (`links::navigation` always returns empty `destinations`), so
+        // skip anything that is not "url" rather than mislabel it.
+        match link.class {
+            "url" => {}
+            _ => continue,
+        }
+        let index = (link.page as usize).checked_sub(1).filter(|i| *i < v2.pages.len());
+        let Some(index) = index else {
+            return Err(format!("link on page {} but the document has {} pages", link.page, v2.pages.len()));
+        };
+        let height = v2.pages[index].height;
+        for r in &link.rects {
+            nav.links[index].push(LinkAnnotation {
+                rect: [
+                    tick(r.x0)?,
+                    tick(crate::display::Tick(height.0 - r.y1.0))?,
+                    tick(r.x1)?,
+                    tick(crate::display::Tick(height.0 - r.y0.0))?,
+                ],
+                border: vec![Decimal::from_i64(0), Decimal::from_i64(0), Decimal::from_i64(0)],
+                color: Vec::new(),
+                action: LinkAction::Uri(link.uri.clone()),
+            });
+        }
+    }
+    Ok(nav)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::link_annotations;
+    use crate::display::{DisplayList, Page, Tick};
+    use crate::links::{Link, LinkRect};
+    use flashtex_pdf::navigation::LinkAction;
+
+    fn rect_link(class: &'static str, uri: &str) -> Link {
+        Link {
+            page: 1,
+            rects: vec![LinkRect { x0: Tick(0), y0: Tick(0), x1: Tick(100), y1: Tick(100) }],
+            class,
+            uri: uri.to_string(),
+            source: None,
+        }
+    }
+
+    /// One blank page carrying `link` as its whole `navigation`. Built by
+    /// hand because the producer never emits a non-`"url"` class, so no
+    /// end-to-end render can produce one yet.
+    fn list_with(link: Link) -> DisplayList {
+        DisplayList {
+            project_id: String::new(),
+            revision: 0,
+            documents: Vec::new(),
+            fonts: Vec::new(),
+            pages: vec![Page::resident(1, Tick(0), Tick(792 * 1048576), Vec::new())],
+            diagnostics: Vec::new(),
+            window: None,
+            document_features: None,
+            navigation: Some(crate::links::Navigation { links: vec![link], destinations: Default::default() }),
+        }
+    }
+
+    #[test]
+    fn a_non_url_class_link_never_becomes_a_uri_action() {
+        // An internal reference (`class: "link"`): its `uri` is a
+        // destination *name*, and emitting it as `/URI (sec:a)` would make
+        // a viewer open the bare name as a URL. It must be skipped, leaving
+        // no annotation and no destination behind.
+        let nav = link_annotations(&list_with(rect_link("link", "sec:a"))).unwrap();
+        assert!(nav.links.iter().all(|page| page.is_empty()));
+        assert!(nav.destinations.is_empty());
+    }
+
+    #[test]
+    fn a_url_class_link_still_becomes_a_uri_action() {
+        let nav = link_annotations(&list_with(rect_link("url", "https://example.com"))).unwrap();
+        assert_eq!(nav.links.len(), 1);
+        assert_eq!(nav.links[0].len(), 1);
+        assert_eq!(nav.links[0][0].action, LinkAction::Uri("https://example.com".to_string()));
+    }
 }
