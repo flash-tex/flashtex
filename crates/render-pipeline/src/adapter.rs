@@ -1086,6 +1086,8 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
         // `lower_blocks` turns it into ordinary paragraphs before the block
         // walk reaches here.
         CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak | CBlock::Verbatim { .. } | CBlock::TableOfContents { .. } | CBlock::VFill | CBlock::LetterBlock { .. } => &[],
+        // Lowered to a flush-left paragraph by `lower_blocks`, like `Verbatim`.
+        CBlock::Alltt { .. } => &[],
         // beamer's frame edges and title page are units of their own
         // (`split_at_page_breaks`); the title is what anchors the head.
         CBlock::BeamerFrameBegin { title, .. } | CBlock::BeamerTitlePage { title, .. } => title,
@@ -1153,7 +1155,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
         let par_leading = *par_leading;
         let first = match block {
             CBlock::Heading { number_span, .. } => Some(*number_span),
-            CBlock::Verbatim { span, .. } | CBlock::TableOfContents { span } | CBlock::Rule { span } => Some(*span),
+            CBlock::Verbatim { span, .. } | CBlock::Alltt { span, .. } | CBlock::TableOfContents { span } | CBlock::Rule { span } => Some(*span),
             _ => anchor_span(inlines_of(block)),
         };
         if pending_vfill > 0 {
@@ -1202,6 +1204,37 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
                         par_leading,
                     ));
                 }
+            }
+            // `alltt` (compiler `Block::Alltt`): typewriter lines whose
+            // commands stayed active, one flush-left paragraph with a
+            // forced break between lines, as `Verbatim` below. The list
+            // level and margin the compiler recorded are not applied yet.
+            CBlock::Alltt { lines, .. } => {
+                let mut content: Vec<Inline> = Vec::new();
+                let mut prev_end: Option<Span> = None;
+                for line in lines {
+                    let first = line.iter().find(|i| !is_marker(i)).map(inline_span);
+                    if let (Some(prev), Some(first)) = (prev_end, first) {
+                        content.push(line_break_inline(Span {
+                            document: first.document,
+                            start: prev.end.min(first.start),
+                            end: first.start,
+                        }));
+                    }
+                    if let Some(last) = line.iter().filter(|i| !is_marker(i)).map(inline_span).last() {
+                        prev_end = Some(last);
+                    }
+                    content.extend(line.iter().cloned());
+                }
+                out.push((
+                    CBlock::Styled {
+                        style: ParagraphStyle::FlushLeft,
+                        content,
+                        lists: Vec::new(),
+                        line_break_before: None,
+                    },
+                    None,
+                ));
             }
             CBlock::Verbatim { lines, span: _ } => {
                 let mut content: Vec<Inline> = Vec::with_capacity(lines.len() * 2);
@@ -3294,6 +3327,7 @@ fn math_colors(blocks: &[flashtex_compiler::parser::Block]) -> std::collections:
                 Inline::ColorBox(b) => walk(&b.content, out),
                 Inline::Underline(u) => walk(&u.content, out),
                 Inline::TextScript(t) => walk(&t.content, out),
+                Inline::Phantom(p) => walk(&p.content, out),
                 _ => {}
             }
         }
@@ -3595,6 +3629,7 @@ fn inline_span(i: &Inline) -> Span {
         Inline::ColorBox(b) => b.span,
         Inline::Underline(u) => u.span,
         Inline::TextScript(t) => t.span,
+        Inline::Phantom(p) => p.span,
         Inline::Graphic(g) => g.span,
         Inline::Transform(t) => t.span,
         // Nodes only a re-pinned compiler emits; all of them carry the
@@ -4777,7 +4812,7 @@ fn split_at_page_breaks<'p>(
                 list_vmode_by_depth.clear();
             }
             CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak | CBlock::BeamerFrameBegin { .. } | CBlock::BeamerTitlePage { .. } => unreachable!("handled above"),
-            CBlock::Verbatim { .. } | CBlock::TableOfContents { .. } | CBlock::TitleBlock { .. } | CBlock::VFill | CBlock::LetterBlock { .. } => unreachable!("lowered by lower_blocks"),
+            CBlock::Verbatim { .. } | CBlock::Alltt { .. } | CBlock::TableOfContents { .. } | CBlock::TitleBlock { .. } | CBlock::VFill | CBlock::LetterBlock { .. } => unreachable!("lowered by lower_blocks"),
             // Blocks only a re-pinned compiler emits. Skipping a `Penalty`
             // is exactly what the old pin did (it had no such node), so page
             // breaking is unchanged until PR #569's pipeline half reads it;
@@ -9997,6 +10032,9 @@ fn items_cached(
             Inline::TextScript(t) => {
                 format!("{t:?}").hash(&mut h);
             }
+            Inline::Phantom(p) => {
+                format!("{p:?}").hash(&mut h);
+            }
             Inline::Logo { logo, style, .. } => {
                 logo.hash(&mut h);
                 style.hash(&mut h);
@@ -10364,6 +10402,26 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     items: content,
                     span,
                 })));
+                prev_end = Some(span.end);
+                prev_span = Some(span);
+                factor = 1000;
+            }
+            // Text-mode `\phantom{...}` (compiler `Inline::Phantom`): the
+            // argument is set and measured but not painted, as beamer's
+            // covered text is (`overlay::hide_items`). `\hphantom` keeps
+            // the height it should drop and `\vphantom` the width it
+            // should drop: an approximation, noted rather than modelled,
+            // until the pipeline has a zero-height/zero-width box.
+            Inline::Phantom(p) => {
+                let span = p.span;
+                let gap = space_between(prev_end, prev_span, span, None, after_control_word);
+                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                push_gap(&mut items, gap, gap_style, factor);
+                after_control_word = false;
+                let mut content = items_from_inlines_styled(texts, &p.content, styles, labels, size, heading, compiler_weight, false);
+                crate::overlay::hide_items(&mut content);
+                items.extend(content);
                 prev_end = Some(span.end);
                 prev_span = Some(span);
                 factor = 1000;
