@@ -168,6 +168,8 @@ struct SourceEditorView: NSViewRepresentable {
         }
         if let completing = tv as? CompletingTextView, completing.projectFiles != projectFiles { completing.projectFiles = projectFiles }
         (tv as? CompletingTextView)?.graphicsRoot = graphicsRoot
+        // `\setmainfont{` lists the families the engine's own index finds (Completion.swift `InstalledFonts`).
+        (tv as? CompletingTextView)?.renderPipeline = { ShellModel.locateRenderPipeline() }
         // The other open documents' macros complete as declared (Completion.declaredCommands); read when the list is requested.
         (tv as? CompletingTextView)?.otherDocuments = { [hoverContext] in hoverContext().otherDocuments.map(\.text) }
         (tv as? CompletingTextView)?.bibliographySources = bibliographySources // `\cite{` from the project's .bib files (BibScanner.swift)

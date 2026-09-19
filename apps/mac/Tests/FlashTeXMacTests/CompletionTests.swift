@@ -2550,4 +2550,24 @@ final class CompletionLiveHelperTests: XCTestCase {
         XCTAssertEqual(tv.lastOutcome?.items, [])
         XCTAssertNil(tv.session)
     }
+
+    func testFontArgumentsOfferInstalledFamilies() {
+        // `\setmainfont{`, `\fontspec[opts]{` and friends complete against the
+        // families the job listed (the engine's index, `InstalledFonts`); the
+        // prefix is fuzzy-matched and the whole family name is inserted.
+        let families = ["Georgia", "Helvetica", "Helvetica Neue", "Latin Modern Roman", "Times New Roman"]
+        for typed in ["\\setmainfont{Hel", "\\setsansfont{Hel", "\\setmonofont{Hel", "\\setmathfont{Hel", "\\fontspec[Scale=0.9]{Hel"] {
+            let s = Completion.suggestions(in: typed, caretUTF16: (typed as NSString).length, metadata: nil, fontFamilies: families)
+            XCTAssertEqual(s.map(\.label), ["Helvetica", "Helvetica Neue"], typed)
+            XCTAssertEqual(s.first?.detail, "installed font family", typed)
+            XCTAssertEqual(s.first?.insertText, "Helvetica", typed)
+        }
+        let empty = "\\setmainfont{"
+        XCTAssertEqual(Completion.suggestions(in: empty, caretUTF16: (empty as NSString).length, metadata: nil, fontFamilies: families).map(\.label), families)
+        // Without a listing (no built worker) the argument offers nothing, and
+        // an ordinary command's argument is not a font argument.
+        XCTAssertEqual(Completion.suggestions(in: empty, caretUTF16: (empty as NSString).length, metadata: nil), [])
+        let other = "\\textbf{Hel"
+        XCTAssertFalse(Completion.suggestions(in: other, caretUTF16: (other as NSString).length, metadata: nil, fontFamilies: families).map(\.label).contains("Helvetica"))
+    }
 }

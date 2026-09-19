@@ -142,10 +142,23 @@ fn main() {
             "--timing" => outputs.timing = true,
             "--device-color" => outputs.device_color = true,
             "--images" => outputs.images = true,
+            "--list-fonts" => {
+                // The named-family index (`flashtex_font_discovery`), one
+                // family per line, as `\setmainfont{...}` would match it:
+                // what the Mac app's completion offers. The project's
+                // `fonts/` directory counts when `--project-root` precedes.
+                let fonts = FontSet::with_default_dirs(&dirs);
+                fonts.set_project_root(options.project_root.as_deref());
+                for family in fonts.index().families() {
+                    println!("{family}");
+                }
+                return;
+            }
             "-h" | "--help" => {
-                eprintln!("usage: flashtex-render [--tex main.tex] [--v2 out.json] [--pdf out.pdf] [--font-dir DIR]... [--class-options OPTS] [--secnumdepth N] [--date YYYY-MM-DD] [--timing] [--device-color] [--images]");
+                eprintln!("usage: flashtex-render [--tex main.tex] [--v2 out.json] [--pdf out.pdf] [--font-dir DIR]... [--class-options OPTS] [--secnumdepth N] [--date YYYY-MM-DD] [--timing] [--device-color] [--images] [--list-fonts]");
                 eprintln!("  --images: --v2 also serialises image items (display-list-v2-images); off by default");
                 eprintln!("  --date: what \\today renders (default 1970-01-01); a request's own payload.date wins");
+                eprintln!("  --list-fonts: print the installed font families named fonts resolve against, one per line, and exit");
                 eprintln!("  without --tex: runtime-v1 JSON Lines worker (compile requests on stdin, one compile_result per line on stdout)");
                 return;
             }
