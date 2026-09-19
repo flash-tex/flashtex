@@ -129,6 +129,40 @@ fn the_head_is_small_and_centred_and_the_body_is_a_quotation() {
     );
 }
 
+/// `\noindent` on the first paragraph of the quotation body: `\@item`'s
+/// `\everypar` finds no `\parindent` box and answers `\kern-\itemindent`,
+/// cancelling the `\hskip\itemindent` of `\@labels`, so the line starts at
+/// `\leftmargini`. A later paragraph without it is indented by
+/// `\listparindent` (1.5em of `\small`). `fixtures/real-world/plain-article`
+/// opens its abstract this way; pdflatex sets "This" at x = 158.675 bp, the
+/// same x as the continuation lines, and our line was 13.8 bp further in.
+#[test]
+fn noindent_on_the_first_quotation_paragraph_starts_at_leftmargin() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let text = TITLE_ABSTRACT.replace("SIZE", "10pt").replace(
+        "\\begin{abstract}\nBody",
+        "\\begin{abstract}\n\\noindent Body of the first paragraph.\n\nBody",
+    );
+    let (_, words) = layout(&text);
+    let s = flashtex_render_pipeline::Stylesheet::article(10, flashtex_render_pipeline::fonts::Family::LatinModern, None);
+    const TEXT_X: f64 = 72.0;
+    let first = words
+        .iter()
+        .filter(|w| w.text.starts_with("Body") && w.size < bp(9.5))
+        .map(|w| w.x)
+        .collect::<Vec<_>>();
+    assert_eq!(first.len(), 2, "two body paragraphs: {first:?}");
+    let left = TEXT_X + bp(s.leftmargini_pt);
+    assert!((first[0] - left).abs() < 0.02, "\\noindent first paragraph at \\leftmargini: {} vs {left}", first[0]);
+    // 1.5em of \small: cmr9's quad is 9.24774pt, so 13.87161pt (the
+    // `\hbox(0.0+0.0)x13.87161` in the module's `\showoutput` transcript).
+    let indented = left + bp(13.87161);
+    assert!((first[1] - indented).abs() < 0.05, "second paragraph indented by \\listparindent: {} vs {indented}", first[1]);
+}
+
 /// `\if@twocolumn` (article.cls 378-379) is `\section*{\abstractname}`: an
 /// unnumbered `\Large\bfseries` head at the *column* measure and the body as
 /// ordinary `\normalsize` paragraphs — no `\small`, no `quotation`, no

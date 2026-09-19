@@ -337,12 +337,21 @@ pub fn apply(texts: &[&str], blocks: &mut Vec<Block>, style: &Stylesheet) -> Vec
             continue;
         }
         for block in &mut blocks[first..=last] {
+            let noindent = noindent_before(texts, block);
             let Block::Paragraph { indent, style: para_style, env_open, list, sized, .. } = block else { continue };
             // `\list` sets `\parindent\listparindent`, and `\@item`'s
             // `\everypar` drops the `\parindent` box of the first paragraph
             // only to re-add the same width as `\itemindent`: every
-            // paragraph of a `quotation` is indented by `\listparindent`.
-            *indent = true;
+            // paragraph of a `quotation` is indented by `\listparindent` —
+            // unless it opens with `\noindent`. Then there is no box for
+            // `\lastbox` to take, and `\@item`'s `\everypar` answers with
+            // `\kern-\itemindent` (ltlists.dtx `\ifvoid\z@ \kern-\itemindent
+            // \fi`) which cancels the `\hskip\itemindent` of `\@labels`: the
+            // first line starts at `\leftmargin`. Later paragraphs are the
+            // ordinary case (`\noindent` simply sets no `\parindent` box).
+            // `fixtures/real-world/plain-article` opens its abstract with
+            // `\noindent`, and pdflatex sets that line at `\leftmargini`.
+            *indent = !noindent;
             *para_style = ParaStyle::Quote;
             // The `\list`'s own `\addvspace\@topsep` is absorbed whole by
             // the `\end{center}` skip already on the vertical list: at
@@ -733,6 +742,18 @@ fn abstract_name(texts: &[&str]) -> Option<String> {
         }
     }
     name
+}
+
+/// Whether `\noindent` stands right before the block's first material,
+/// with nothing but whitespace between — the same entry-only rule the
+/// adapter applies to a plain paragraph (its own `noindent_at` check),
+/// re-read from the source bytes because the compiler carried this body as
+/// plain text and the adapter's decision has been overwritten here.
+fn noindent_before(texts: &[&str], block: &Block) -> bool {
+    let Some(span) = block_span(block) else { return false };
+    let Some(text) = texts.get(span.document.0) else { return false };
+    let Some(before) = text.get(..span.start) else { return false };
+    before.trim_end().ends_with("\\noindent")
 }
 
 /// The first source position a block sets material at.
