@@ -225,6 +225,19 @@ pub enum Primitive {
     Verb,
     /// Internal: stop reading all input (`\end{document}`).
     StopInput,
+    /// `\usepackage`, `\RequirePackage`, `\documentclass`, `\LoadClass`
+    /// (see `latex_packages.rs`).
+    LoadFiles(crate::latex_packages::LoadKind),
+    /// Internal: `\flashtex@inputfile{name}{ext}` reads a `.sty`/`.cls`
+    /// through the host's package reader.
+    InputPackageFile,
+    /// Internal: `\flashtex@emit{tokens}` hands tokens to the output as a
+    /// pass-through.
+    EmitPassThrough,
+    /// Internal: `\flashtex@latex@error{text}` records a LaTeX error.
+    LatexError,
+    /// Internal: `\flashtex@latex@warning{text}` records a LaTeX warning.
+    LatexWarning,
 }
 
 #[derive(Debug, Clone, PartialEq)]

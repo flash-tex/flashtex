@@ -17,6 +17,7 @@ use std::rc::Rc;
 use crate::catcode::CatCode;
 use crate::conditionals::{ConditionalStack, IfBranch, IfShape};
 use crate::error::{Diagnostic, Limits};
+use crate::latex_packages::{LoadKind, OpenedFile, PackageReader, PACKAGES_PRELUDE};
 use crate::lexer::{Lexer, State as LexState};
 use crate::macro_def::{BodyPart, MacroDef, MacroFlags, ParamPart};
 use crate::prelude::PRELUDE;
@@ -367,6 +368,15 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("flashtexsetlist", Primitive::FlashtexSetlist),
     ("verb", Primitive::Verb),
     ("flashtex@stop", Primitive::StopInput),
+    // The package/class kernel (`latex_packages.rs`).
+    ("usepackage", Primitive::LoadFiles(LoadKind::UsePackage)),
+    ("RequirePackage", Primitive::LoadFiles(LoadKind::RequirePackage)),
+    ("documentclass", Primitive::LoadFiles(LoadKind::DocumentClass)),
+    ("LoadClass", Primitive::LoadFiles(LoadKind::LoadClass)),
+    ("flashtex@inputfile", Primitive::InputPackageFile),
+    ("flashtex@emit", Primitive::EmitPassThrough),
+    ("flashtex@latex@error", Primitive::LatexError),
+    ("flashtex@latex@warning", Primitive::LatexWarning),
 ];
 
 /// Name of the private sentinel control sequence used to bound nested
@@ -413,6 +423,10 @@ pub struct Checkpoint {
     /// The host's `em`/`ex` provider: a restored engine resolves font
     /// units exactly as the engine that took the checkpoint did.
     pub(crate) metrics: MetricsHandle,
+    /// The host's package reader, carried like `metrics`: a restored
+    /// engine resolves `\usepackage` files exactly as the engine that took
+    /// the checkpoint did (see `latex_packages.rs`).
+    pub(crate) package_reader: ReaderHandle,
     /// `Engine::last_origin` at the snapshot. The step limit's diagnostic is
     /// reported there when the very next step is over the limit.
     pub(crate) last_origin: Option<Span>,
@@ -426,6 +440,15 @@ pub struct Checkpoint {
 
 #[derive(Clone)]
 pub(crate) struct MetricsHandle(pub(crate) Rc<dyn FontMetrics>);
+
+#[derive(Clone)]
+pub(crate) struct ReaderHandle(pub(crate) Option<PackageReader>);
+
+impl std::fmt::Debug for ReaderHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_some() { "PackageReader" } else { "None" })
+    }
+}
 
 impl std::fmt::Debug for MetricsHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -458,14 +481,20 @@ pub struct Engine {
     /// Tokens already decided to be output (a stack, popped first by
     /// `next_content_token`), e.g. prefixes passed through ahead of an
     /// unmodelled control sequence.
-    emit_queue: Vec<Token>,
+    pub(crate) emit_queue: Vec<Token>,
     /// Host file access for `\input` (None: `\input` passes through).
     file_reader: Option<Rc<dyn Fn(&str) -> Option<String>>>,
     /// Files opened by `\input`, as (source id, name).
     opened_files: Vec<(u32, String)>,
+    /// Host file access for `\usepackage`/`\documentclass` and their
+    /// siblings (None: every name is declined and passed through). See
+    /// `latex_packages.rs`.
+    pub(crate) package_reader: Option<PackageReader>,
+    /// `.sty`/`.cls` files opened through `package_reader`.
+    pub(crate) opened_packages: Vec<OpenedFile>,
     /// Invocation origin of the most recently read raw token (host
     /// integration; see `next_content_token_with_origin`).
-    last_origin: Option<Span>,
+    pub(crate) last_origin: Option<Span>,
     /// Span of the last token read from source text (the document or an
     /// `\input` file; preludes run in engines of their own).
     last_text_span: Option<Span>,
@@ -510,6 +539,8 @@ impl Engine {
             emit_queue: Vec::new(),
             file_reader: None,
             opened_files: Vec::new(),
+            package_reader: None,
+            opened_packages: Vec::new(),
             last_origin: None,
             last_text_span: None,
         }
@@ -674,12 +705,12 @@ impl Engine {
         &self.src
     }
 
-    fn err(&mut self, msg: impl Into<String>, span: Span) {
+    pub(crate) fn err(&mut self, msg: impl Into<String>, span: Span) {
         let span = self.reported_span(span);
         self.report(Diagnostic::error(msg, span));
     }
 
-    fn warn(&mut self, msg: impl Into<String>, span: Span) {
+    pub(crate) fn warn(&mut self, msg: impl Into<String>, span: Span) {
         let span = self.reported_span(span);
         self.report(Diagnostic::warning(msg, span));
     }
@@ -738,7 +769,7 @@ impl Engine {
         }
     }
 
-    fn is_prelude_span(&self, span: Span) -> bool {
+    pub(crate) fn is_prelude_span(&self, span: Span) -> bool {
         !span.is_synthetic() && span.source_id != 0 && span.source_id < self.st.prelude_source_end
     }
 
@@ -811,7 +842,7 @@ impl Engine {
         self.sources.push(Input::Toks(pend, 0));
     }
 
-    fn push_pending(&mut self, mut toks: Vec<Pending>) {
+    pub(crate) fn push_pending(&mut self, mut toks: Vec<Pending>) {
         if toks.is_empty() {
             return;
         }
@@ -831,7 +862,7 @@ impl Engine {
     /// origin of `None` stays `None` (the token was read from source
     /// text), unlike [`Engine::push_pending`], which attributes such a
     /// token to the last read.
-    fn push_pending_as_read(&mut self, toks: Vec<Pending>) {
+    pub(crate) fn push_pending_as_read(&mut self, toks: Vec<Pending>) {
         if toks.is_empty() {
             return;
         }
@@ -947,7 +978,7 @@ impl Engine {
     /// `\outer` macro token (or end of the base file) is an error that
     /// TeX reports with a specific message and recovers from by inserting
     /// a closing token and re-reading the forbidden token afterwards.
-    fn next_raw(&mut self) -> Option<Pending> {
+    pub(crate) fn next_raw(&mut self) -> Option<Pending> {
         let p = self.next_raw_unchecked();
         if self.st.scanner_status == ScannerStatus::Normal {
             return p;
@@ -1253,6 +1284,7 @@ impl Engine {
             state: self.st.clone(),
             steps: self.steps,
             metrics: MetricsHandle(self.metrics.clone()),
+            package_reader: ReaderHandle(self.package_reader.clone()),
             last_origin: self.last_origin,
             peak_memory: self.peak_memory,
             out_len,
@@ -1266,6 +1298,7 @@ impl Engine {
         let mut e = Self::from_parts(src, cp.pos, cp.lex_state, cp.state.clone(), limits);
         e.steps = cp.steps;
         e.metrics = cp.metrics.0.clone();
+        e.package_reader = cp.package_reader.0.clone();
         e.last_origin = cp.last_origin;
         e.peak_memory = cp.peak_memory;
         e
@@ -1478,7 +1511,7 @@ impl Engine {
     /// through expand-only dispatch (for `\edef`/`\xdef`), honoring
     /// `\noexpand` freezing; otherwise tokens are taken completely raw
     /// (for `\def`/`\gdef` bodies, and for ordinary `{...}` arguments).
-    fn scan_braced_group(&mut self, expand: bool) -> Vec<Token> {
+    pub(crate) fn scan_braced_group(&mut self, expand: bool) -> Vec<Token> {
         self.scan_braced_group_pending(expand).into_iter().map(|p| p.tok).collect()
     }
 
@@ -1978,6 +2011,26 @@ impl Engine {
         }
     }
 
+    /// tex.web §403 `scan_left_brace`: a general text (`\detokenize`,
+    /// `\unexpanded`, `\message`, ...) starts at the first `{` found
+    /// *after expansion*, so `\detokenize\expandafter{\CurrentOption}` --
+    /// how latex.ltx spells out a macro's text -- reaches the brace. Spaces
+    /// and `\relax` before it are skipped as TeX does; anything else is
+    /// left for the group scanner's own "Missing { inserted" recovery.
+    fn expand_to_left_brace(&mut self) {
+        loop {
+            match self.peek_one_expanding() {
+                Some(t) if matches!(t.kind, TokenKind::Char(_, CatCode::Space)) => {
+                    self.next_raw_token();
+                }
+                Some(t) if matches!(&t.kind, TokenKind::ControlSequence(n) if n == "relax") => {
+                    self.next_raw_token();
+                }
+                _ => break,
+            }
+        }
+    }
+
     fn skip_spaces(&mut self) {
         loop {
             match self.peek_one() {
@@ -2015,7 +2068,7 @@ impl Engine {
     /// Read a `{name}` argument and flatten it to a plain string (each
     /// inner token contributes its display character; used for
     /// environment/counter names which are always plain letters).
-    fn read_name_arg(&mut self) -> String {
+    pub(crate) fn read_name_arg(&mut self) -> String {
         // Names are expanded (LaTeX reads them via \csname), so a macro
         // expanding to the name works too.
         let toks = self.scan_braced_group(true);
@@ -2180,6 +2233,7 @@ impl Engine {
             }
             Unexpanded => {
                 let saved = std::mem::replace(&mut self.st.scanner_status, ScannerStatus::Absorbing("\\unexpanded".into()));
+                self.expand_to_left_brace();
                 let toks = self.scan_braced_group(false);
                 self.st.scanner_status = saved;
                 if self.st.edef_depth > 0 {
@@ -2192,6 +2246,7 @@ impl Engine {
             }
             Detokenize => {
                 let saved = std::mem::replace(&mut self.st.scanner_status, ScannerStatus::Absorbing("\\detokenize".into()));
+                self.expand_to_left_brace();
                 let toks = self.scan_braced_group(false);
                 self.st.scanner_status = saved;
                 let s = self.detokenize(&toks);
@@ -2576,6 +2631,11 @@ impl Engine {
                 Step::Eof
             }
             Verb => self.do_verb(&tok),
+            LoadFiles(kind) => self.do_load_files(tok, kind),
+            InputPackageFile => self.do_input_package_file(&tok),
+            EmitPassThrough => self.do_emit_pass_through(),
+            LatexError => self.do_latex_message(&tok, true),
+            LatexWarning => self.do_latex_message(&tok, false),
             NewCounter => {
                 self.do_newcounter(tok.span);
                 Step::Continue
@@ -2818,7 +2878,7 @@ impl Engine {
 
     /// `\detokenize`/`\scantokens` text: every token as `\string` would
     /// show it, with a space after control words (tex.web `print_cs`).
-    fn detokenize(&self, toks: &[Token]) -> String {
+    pub(crate) fn detokenize(&self, toks: &[Token]) -> String {
         let mut s = String::new();
         for t in toks {
             match &t.kind {
@@ -5727,6 +5787,11 @@ fn primitive_name(p: Primitive) -> &'static str {
         SetKeys => "setkeys",
         FlashtexSetlist => "flashtexsetlist",
         Verb => "verb",
+        LoadFiles(kind) => kind.name(),
+        InputPackageFile => "flashtex@inputfile",
+        EmitPassThrough => "flashtex@emit",
+        LatexError => "flashtex@latex@error",
+        LatexWarning => "flashtex@latex@warning",
         StopInput => "flashtex@stop",
         Host | HostAssignment => "flashtex@host",
         IntPar(IntParam::Font) => "flashtex@font",
@@ -6100,7 +6165,8 @@ fn is_format_level(p: Primitive) -> bool {
             | NewEnvironment | RenewEnvironment | NewTheorem | Begin | End | NewCounter | SetCounter | AddToCounter | StepCounter
             | RefStepCounter | AddToReset | RemoveFromReset | CounterWithin | CounterWithout | Label | Value | Arabic
             | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol | NewLength | SetToWidth | SetToHeight
-            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | Verb | StopInput
+            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | Verb | StopInput | LoadFiles(_) | InputPackageFile
+            | EmitPassThrough | LatexError | LatexWarning
     )
 }
 
@@ -6297,6 +6363,18 @@ fn build_initial_state() -> State {
     let stray: Vec<&Token> = out.iter().filter(|t| !matches!(t.kind, TokenKind::Char(' ', CatCode::Space))).collect();
     debug_assert!(stray.is_empty(), "prelude produced output tokens: {:?}", stray);
     debug_assert!(engine.diagnostics.is_empty(), "prelude produced diagnostics: {:?}", engine.diagnostics);
+    // The package/class kernel (`latex_packages.rs`), under a prelude id of
+    // its own for the same reason.
+    let mut st = engine.st;
+    let id = st.next_source_id;
+    st.next_source_id += 1;
+    st.prelude_source_end = st.next_source_id;
+    let mut engine = Engine::from_parts(Rc::from(PACKAGES_PRELUDE), 0, LexState::NewLine, st, Limits::default());
+    engine.sources[0] = Input::Text(Lexer::new(Rc::from(PACKAGES_PRELUDE), id));
+    let out = engine.run();
+    let stray: Vec<&Token> = out.iter().filter(|t| !matches!(t.kind, TokenKind::Char(' ', CatCode::Space))).collect();
+    debug_assert!(stray.is_empty(), "package prelude produced output tokens: {:?}", stray);
+    debug_assert!(engine.diagnostics.is_empty(), "package prelude produced diagnostics: {:?}", engine.diagnostics);
     // The class counters above: real classes allocate them with
     // `\newcounter`, so `[within]` parents (and `\setcounter` et al.) must
     // resolve them here. Only the `c@<name>` register is created;
