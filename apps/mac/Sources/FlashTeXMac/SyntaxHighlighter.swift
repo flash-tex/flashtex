@@ -79,6 +79,10 @@ struct SyntaxHighlighter {
         /// inside a braced value — and `quoted` an open `"…"` value; both
         /// carry across lines, so a value that spans lines stays a value.
         case bibtex(depth: Int, quoted: Bool)
+        /// A `flashtex.toml` buffer (`Language.toml`): plain text with `#`
+        /// comments — nothing else is coloured, so the manifest reads as
+        /// the configuration file it is, not as LaTeX.
+        case toml
 
         var isMath: Bool {
             switch self {
@@ -95,10 +99,16 @@ struct SyntaxHighlighter {
     /// (`reference`, the string colour), bare numbers (`number`) and `%`
     /// comments — the LaTeX roles and colours, nothing new to theme.
     enum Language: Equatable, Sendable {
-        case latex, bibtex
+        case latex, bibtex, toml
 
         /// Mode the first line starts in.
-        var initialMode: Mode { self == .bibtex ? .bibtex(depth: 0, quoted: false) : .text }
+        var initialMode: Mode {
+            switch self {
+            case .latex: .text
+            case .bibtex: .bibtex(depth: 0, quoted: false)
+            case .toml: .toml
+            }
+        }
     }
 
     static let mathEnvironments: Set<String> = [
@@ -237,6 +247,7 @@ struct SyntaxHighlighter {
                 case .verbatim(let env): i = verbatimBody(from: i, env: env, kind: .verbatim)
                 case .commentEnvironment: i = verbatimBody(from: i, env: "comment", kind: .comment)
                 case .bibtex(let depth, let quoted): i = bibtexUnit(at: i, depth: depth, quoted: quoted)
+                case .toml: i = tomlUnit(at: i)
                 default: i = codeUnit(at: i)
                 }
             }
@@ -479,6 +490,16 @@ struct SyntaxHighlighter {
                 }
                 return i + 1
             }
+        }
+
+        /// TOML: a `#` comment runs to the end of the line; everything else
+        /// is plain. The mode never changes, so any line can start a lex.
+        mutating func tomlUnit(at i: Int) -> Int {
+            guard units[i] == 0x23 else { return i + 1 } // #
+            var j = i + 1
+            while j < end, units[j] != 0x0A { j += 1 }
+            emit(i, j, .comment)
+            return j
         }
 
         /// `\newcommand{\foo}` / `\newcommand\foo` / `\newenvironment{foo}`:

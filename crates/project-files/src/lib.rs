@@ -1,10 +1,12 @@
-//! FlashTeX project file layer (original Rust; its only dependencies are
-//! `unicode-normalization` and the `libc` bindings used by [`sys`]).
+//! FlashTeX project file layer (original Rust; its dependencies are
+//! `unicode-normalization`, the `libc` bindings used by [`sys`], and the
+//! sibling `flashtex-project-manifest` for the optional `flashtex.toml`).
 //!
 //! - [`graph`]: normalized project graph from an entry file, following
 //!   `\input`, `\include`, `\bibliography`, `\addbibresource` and
 //!   `\includegraphics` with byte spans; cycle, missing-file and path-escape
-//!   diagnostics; runtime-v1 `documents` export (entry first).
+//!   diagnostics; runtime-v1 `documents` export (entry first); the package
+//!   inputs (`.sty`/`.cls` in the root and the manifest's `texinputs`).
 //! - [`scan`]: the light reference scanner used by the graph.
 //! - [`path`]: [`ProjectPath`] normalization (relative, forward slashes,
 //!   never escaping the root).
@@ -31,7 +33,7 @@ pub mod watch;
 
 pub use graph::{
     Diagnostic, DiagnosticKind, DiscoverError, Document, Edge, FileKind, FileSource, Overlay,
-    ProjectFile, ProjectGraph, Severity,
+    ProjectFile, ProjectGraph, Severity, TexInputFile, texinput_files,
 };
 pub use path::{PathError, ProjectPath};
 pub use recovery::{

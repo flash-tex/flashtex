@@ -42,7 +42,11 @@ extension ShellModel {
     /// reports LaTeX. With no kind reported (no helper attached, or a path
     /// the snapshot does not list) a `.bib` extension decides — colouring is
     /// a reading aid, not a claim about the project's declared sources.
+    /// A `.toml` buffer (the project manifest, ProjectManifest.swift) is
+    /// plain text with comments whatever the helper declared: it is never
+    /// LaTeX. `.sty`/`.cls`/`.def`/`.clo` are LaTeX like any other source.
     var editorLanguage: SyntaxHighlighter.Language {
+        if ProjectManifest.isManifestPath(activePath) { return .toml }
         switch documentKinds.kind(of: activePath) {
         case .bibliography: return .bibtex
         case .latex: return .latex

@@ -13,6 +13,10 @@ path = "src/lib.rs"
 [dependencies]
 libc = "0.2.189"
 unicode-normalization = "0.1.25"
+# The optional `flashtex.toml` (docs/user/project-manifest.md): the graph
+# adds its `texinputs` to the closure and the helper serves it to the app.
+# Platform-free and network-free like this crate.
+flashtex-project-manifest = { path = "../project-manifest" }
 
 [features]
 # Deterministic race-test hooks (`save::race_hook`). Test-only and never on by

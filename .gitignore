@@ -33,3 +33,4 @@ docs/design/canvas/*.html
 # artifacts; neither belongs in the tree.
 apps/mac/swift-test.log
 apps/mac/snapshot-artifacts/
+apps/mac/Package.resolved
