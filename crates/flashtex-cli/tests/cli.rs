@@ -1264,6 +1264,7 @@ fn a_local_library_resolves_first_and_no_manifest_resolves_nothing() {
     assert_eq!(codes(&report).iter().filter(|c| c.starts_with("package") || c.starts_with("manifest")).cloned().collect::<Vec<_>>(), ["manifest_packages_path"]);
     assert!(!cache.exists(), "a library is never copied into the cache");
     let _ = std::fs::remove_dir_all(&dir);
+}
 
 /// A `.sty` beside the entry is part of the document set with no manifest at
 /// all (LaTeX's working-directory rule): the compiler's package resolver
