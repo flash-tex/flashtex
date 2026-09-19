@@ -190,6 +190,44 @@ fn default_ignorables_keep_their_bytes_without_glyphs() {
 }
 
 #[test]
+fn shaping_empty_text_yields_no_clusters() {
+    // A bounded/degenerate input: zero scalars in, zero clusters out, never
+    // an error or a panic.
+    let s = shape(&times(), "", &ShapeOptions::default()).unwrap();
+    assert!(s.clusters.is_empty());
+    assert!(s.missing.is_empty());
+    assert_eq!(s.advance_units(), 0);
+}
+
+#[test]
+fn leading_combining_mark_without_a_base_is_reported_missing() {
+    // U+0301 COMBINING ACUTE ACCENT with nothing before it: mark composition
+    // only fires against a preceding cluster, so this must fall through to
+    // ordinary mapping rather than panic on an empty `clusters` list. Times
+    // Roman's AFM has no standalone glyph for it, so it becomes .notdef and
+    // is listed as missing, still occupying its own one-glyph cluster.
+    let s = shape(&times(), "\u{0301}", &ShapeOptions::default()).unwrap();
+    assert_eq!(s.clusters.len(), 1);
+    assert_eq!(
+        s.missing,
+        vec![flashtex_font_engine::shape::MissingGlyph {
+            ch: '\u{0301}',
+            byte_offset: 0,
+        }]
+    );
+    assert_eq!(s.clusters[0].glyphs.len(), 1);
+    assert_eq!(s.clusters[0].glyphs[0].gid, GlyphId::NOTDEF);
+    assert_eq!(s.clusters[0].glyphs[0].advance, 0);
+    assert_eq!(s.clusters[0].source_range, 0..2); // U+0301 is 2 UTF-8 bytes.
+
+    // A mark with no base never retroactively attaches to what follows it
+    // either: it stays its own cluster, and the base after it starts fresh.
+    let s2 = shape(&times(), "\u{0301}a", &ShapeOptions::default()).unwrap();
+    assert_eq!(s2.clusters.len(), 2);
+    assert_eq!(s2.clusters[1].text, "a");
+}
+
+#[test]
 fn cluster_hit_testing() {
     let s = shape(&times(), "AV", &ShapeOptions::default()).unwrap();
     assert_eq!(s.cluster_at_x(0).unwrap().text, "A");
