@@ -6495,11 +6495,15 @@ impl<'a> Context<'a> {
     /// A rich `\tag` label (`\tag{hi $x^2$}`, #441) as amsmath's
     /// `\maketag@@@` sets it: `\hbox{\m@th\normalfont ...}`, the label's
     /// `TextRun` in text style at the body size -- text pieces in the body
-    /// face, inline formulas at `\textstyle`. One math box, at offset 0.
+    /// face, inline formulas at `\textstyle`. One math box, at offset 0,
+    /// whose glyphs map to the `\tag{..}` bytes (the run's own span) rather
+    /// than to the whole display `nspan` names, so the caret lands in the
+    /// tag's argument.
     fn math_number_box(&mut self, list: &flashtex_compiler::math::MathList, nspan: Span, size: f64) -> Option<NumberBox> {
-        let rec = self.math_box(list, nspan, false, size)?;
+        let tspan = list.atoms.iter().map(|a| a.span).reduce(Span::merge).filter(|s| s.document == nspan.document).unwrap_or(nspan);
+        let rec = self.math_box(list, tspan, false, size)?;
         let BoxRec::Math(mi) = &self.recs[rec] else { unreachable!() };
-        let run = math_run(&self.maths[*mi].root, size, nspan);
+        let run = math_run(&self.maths[*mi].root, size, tspan);
         Some(NumberBox { width: run.width, height: run.height, depth: run.depth, pieces: vec![(run, rec, 0.0)] })
     }
 
