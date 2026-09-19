@@ -247,7 +247,7 @@ struct FlashTeXMacApp: App {
                     .disabled(model.project.projectRoot == nil)
                 Button("Move To…") { model.scaffold.presentMove(model.activePath) } // ProjectMove.swift (no key: the tree drags too)
                     .disabled(model.project.projectRoot == nil || model.activePath == model.project.entryPath)
-                Button("Open LaTeX File or Project Folder…") { model.openTexPanel() }
+                Button("Open LaTeX File…") { model.openTexPanel() } // also a project folder: its flashtex.toml names the entry (ProjectManifest.swift)
                     .keyboardShortcut("o")
                 // The project manifest (ProjectManifest.swift): writes the
                 // commented template next to the entry and opens it.

@@ -101,7 +101,7 @@ without leaving the app, or open an existing `.tex` file.
 
 ### Opening and working in a project
 
-- **Open** a file with *File › Open LaTeX File or Project Folder…* (⌘O).
+- **Open** a file with *File › Open LaTeX File…* (⌘O).
   It becomes the **entry document** (sent to the engine as `main.tex`,
   whatever its real name) and its folder becomes the project root. Open a
   **folder** instead and its [`flashtex.toml`](project-manifest.md) names

@@ -92,7 +92,7 @@ governs the entry — the defaults when there is none — with each `texinputs`
 entry classified (`inside`, `outside`, `invalid`) and the warnings. See
 [Command-line tools](compiler.md#manifest).
 
-**The Mac app.** *File › Open LaTeX File or Project Folder…* (⌘O) accepts
+**The Mac app.** *File › Open LaTeX File…* (⌘O) accepts
 a folder: the entry is `[project] entry`, else the folder's only `.tex`
 file. The `.sty`/`.cls`/`.def`/`.clo` files next to the entry and every file
 under `texinputs` show in the sidebar's Project tree as dimmed rows with the
