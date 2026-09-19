@@ -14,3 +14,6 @@ This authorization does not apply to Commander's protected personal Claude accou
 or authorize purchases/overages. All participants share the Max account's actual
 quota. Other Claude accounts still require their separately verified funding route.
 Preserve actual commit-executor provenance and the Mac-specific primary-author rule.
+
+Interface contracts: `contracts/registry.json` is the source of truth for which
+contracts exist, their canonical files and status (see contracts/README.md).

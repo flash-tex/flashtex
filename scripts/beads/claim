@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""Claim a Beads task under the FlashTeX claim rule.
+
+A claim counts only after BOTH of these:
+  * a successful `bd dolt push` that carries the claim
+  * a re-read showing this actor as assignee
+
+Steps:
+  1. pull (skip with --no-pull when the sync loop pulled within --max-lag)
+  2. show: the task must be open, and unassigned or already ours
+  3. bd update <id> --claim --actor <me>
+  4. bd dolt push. If rejected: pull, re-read, and retry while still ours
+     (up to --max-attempts, default 6, jittered backoff).
+     - Pull fails with the merge-conflict wedge: we lost. Exit 1 and leave
+       recovery to the machine sync loop (never run ledger-recover here).
+  5. re-read: assignee == me -> CLAIMED (exit 0), else LOST (exit 1)
+  Any non-zero exit undoes the local claim if the row still shows us, so an
+  uncounted claim is never pushed later. The undo's check+write runs under
+  <state>/ledger-write.lock, shared with ledger-recover (soak run 3 race).
+
+  --release <id>: the same atomic unclaim for handoffs (low usage, reassignment).
+
+Exit codes:
+  0  claimed
+  1  lost, or not claimable
+  3  transport error, or the machine ledger is recovering/held
+     (<state>/RECOVERING or HOLD): the claim is NOT counted. Retry later; do not start work.
+
+Usage: scripts/beads/claim <id> --actor <agent-id> [--repo DIR] [--no-pull] [--json] [--release]
+"""
+import argparse
+import fcntl
+import json
+import os
+import random
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+BD = os.path.join(HERE, "bd")
+
+
+def bd(args, repo):
+    p = subprocess.run([BD] + args, cwd=repo, capture_output=True, text=True)
+    return p.returncode, p.stdout, p.stderr
+
+
+def show(i, repo):
+    rc, out, err = bd(["show", i, "--json"], repo)
+    if rc != 0:
+        return None
+    d = json.loads(out)
+    return d[0] if isinstance(d, list) else d
+
+
+class LedgerMutex:
+    """Machine-wide ledger write mutex (<state>/ledger-write.lock), shared with ledger-recover.
+
+    Reads never wait for bd's storage lock, but writes do. A check-then-write
+    sequence (e.g. "row still mine? then unclaim") that runs while ledger-recover
+    holds the storage lock would read the pre-recovery row and write on top of
+    the settled one. Soak run 3 reopened a task closed by its legitimate owner
+    this way (trial-g7of). Holding this mutex makes check+write atomic
+    relative to recovery.
+    """
+
+    def __init__(self, state_dir, timeout=900):
+        self.path = os.path.join(state_dir, "ledger-write.lock")
+        self.timeout = timeout
+        self.f = None
+
+    def __enter__(self):
+        if os.environ.get("FLASHTEX_BEADS_NO_MUTEX") == "1":  # test-only: reproduce the run-3 race
+            return self
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        self.f = open(self.path, "a+")
+        deadline = time.time() + self.timeout
+        while True:
+            try:
+                fcntl.flock(self.f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self
+            except BlockingIOError:
+                if time.time() > deadline:
+                    raise SystemExit(f"claim: timed out waiting for {self.path}")
+                time.sleep(0.2)
+
+    def __exit__(self, *exc):
+        if self.f:
+            fcntl.flock(self.f, fcntl.LOCK_UN)
+            self.f.close()
+
+
+def release_if_mine(i, actor, repo, state_dir):
+    """Atomically (relative to recovery) unclaim i if it is still in_progress by actor."""
+    with LedgerMutex(state_dir):
+        cur = show(i, repo)
+        if not (cur and cur.get("assignee") == actor and cur.get("status") == "in_progress"):
+            return False, (cur or {}).get("assignee"), (cur or {}).get("status")
+        if os.environ.get("FLASHTEX_BEADS_TEST_DELAY_AFTER_CHECK"):  # test-only: widen the race window
+            time.sleep(float(os.environ["FLASHTEX_BEADS_TEST_DELAY_AFTER_CHECK"]))
+        rc, _, _ = bd(["update", i, "--status", "open", "--assignee", "", "--actor", actor], repo)
+        return rc == 0, actor, "open"
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("id")
+    ap.add_argument("--actor", required=True)
+    ap.add_argument("--repo", default=os.getcwd())
+    ap.add_argument("--no-pull", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--max-attempts", type=int, default=6, help="push attempts (pull + re-read between)")
+    ap.add_argument("--release", action="store_true", help="unclaim <id> if still yours (atomic vs recovery), then push")
+    a = ap.parse_args()
+    res = {"id": a.id, "actor": a.actor}
+    state_dir = os.environ.get("FLASHTEX_BEADS_STATE", os.path.expanduser("~/.local/state/flashtex-beads"))
+    if a.release:
+        released, who, status = release_if_mine(a.id, a.actor, a.repo, state_dir)
+        if not released:
+            res.update(result="NOT_MINE", assignee=who, status=status)
+            print(json.dumps(res) if a.json else f"NOT_MINE: {a.id} (assignee={who} status={status})")
+            return 1
+        rc, out, err = bd(["dolt", "push"], a.repo)
+        res.update(result="RELEASED" if rc == 0 else "RELEASED_LOCAL_sync_loop_pushes")
+        print(json.dumps(res) if a.json else f"{res['result']}: {a.id}")
+        return 0
+
+    claimed_locally = [False]
+
+    def done(result, code, **kw):
+        # A claim that did not count must not linger locally: it would be pushed
+        # later and assign the task to an agent that believes it lost. Undo it,
+        # but only under the ledger mutex (see LedgerMutex).
+        if code != 0 and claimed_locally[0]:
+            undone, _, _ = release_if_mine(a.id, a.actor, a.repo, state_dir)
+            kw["local_claim_undone"] = undone
+        res.update(kw, result=result)
+        print(json.dumps(res) if a.json else f"{result}: {a.id} ({kw})")
+        return code
+
+    for marker in ("RECOVERING", "HOLD"):
+        if os.path.exists(os.path.join(state_dir, marker)):
+            # The machine ledger is wedged or being recovered: a local claim now
+            # could never be pushed and would only add churn. Try again later.
+            return done(f"NOT_COUNTED_ledger_{marker.lower()}", 3)
+    if not a.no_pull:
+        rc, out, err = bd(["dolt", "pull"], a.repo)
+        if rc != 0:
+            return done("NOT_COUNTED_pull_failed", 3, error=(err or out).strip()[-200:])
+    cur = show(a.id, a.repo)
+    if cur is None:
+        return done("NOT_FOUND", 1)
+    if cur.get("status") != "open" and not (cur.get("status") == "in_progress" and cur.get("assignee") == a.actor):
+        return done("NOT_CLAIMABLE", 1, status=cur.get("status"), assignee=cur.get("assignee"))
+    if cur.get("assignee") not in (None, "", a.actor):
+        return done("NOT_CLAIMABLE", 1, status=cur.get("status"), assignee=cur.get("assignee"))
+    rc, out, err = bd(["update", a.id, "--claim", "--actor", a.actor], a.repo)
+    if rc != 0:
+        return done("LOST_local_cas", 1, error=(err or out).strip()[-200:])
+    claimed_locally[0] = True
+    # Push; a rejection only means someone else pushed first. Pull, re-read, and
+    # retry while the claim is still ours (bounded, jittered). Under heavy
+    # cross-machine write load a single retry livelocks (soak run 1).
+    rng = random.Random()
+    attempts = 0
+    while True:
+        attempts += 1
+        rc, out, err = bd(["dolt", "push"], a.repo)
+        if rc == 0:
+            break
+        txt = out + err
+        if not ("rejected" in txt or "non-fast-forward" in txt or "Integrate the remote" in txt):
+            return done("NOT_COUNTED_push_failed", 3, error=txt.strip()[-200:], attempts=attempts)
+        if attempts >= a.max_attempts:
+            return done("NOT_COUNTED_push_rejected_repeatedly", 3, attempts=attempts)
+        prc, pout, perr = bd(["dolt", "pull"], a.repo)
+        if prc != 0:
+            if "require operator resolution" in (pout + perr):
+                return done("LOST_collision_sync_loop_recovers", 1, attempts=attempts)
+            return done("NOT_COUNTED_pull_failed", 3, error=(perr or pout).strip()[-200:], attempts=attempts)
+        after = show(a.id, a.repo)
+        if not after or after.get("assignee") != a.actor:
+            return done("LOST", 1, assignee=(after or {}).get("assignee"), attempts=attempts)
+        time.sleep(rng.uniform(0.5, 1.5) * attempts)
+    res["attempts"] = attempts
+    after = show(a.id, a.repo)
+    if after and after.get("assignee") == a.actor and after.get("status") == "in_progress":
+        return done("CLAIMED", 0)
+    return done("LOST", 1, assignee=(after or {}).get("assignee"))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

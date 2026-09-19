@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- FlashTeX Beads machine sync loop (macOS launchd user agent).
+     Install: scripts/beads/service/install-launchd.sh /path/to/main/clone
+     (it substitutes @REPO@, @HOME@ and writes ~/Library/LaunchAgents/dev.flashtex.beads-sync.plist).
+     KeepAlive restarts the loop after crashes and network-failure exits, but NOT
+     after exit 2 (needs_operator): SuccessfulExit=false only restarts on non-zero,
+     so the loop also refuses to start while <state>/HOLD exists. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dev.flashtex.beads-sync</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>@REPO@/scripts/beads/sync-loop</string>
+    <string>--repo</string><string>@REPO@</string>
+    <string>--max-backoff</string><string>60</string>
+  </array>
+  <key>WorkingDirectory</key><string>@REPO@</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>@HOME@/.local/share/flashtex-beads/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+    <key>FLASHTEX_BEADS_STATE</key><string>@HOME@/.local/state/flashtex-beads</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>@HOME@/.local/state/flashtex-beads/sync-loop.log</string>
+  <key>StandardErrorPath</key><string>@HOME@/.local/state/flashtex-beads/sync-loop.log</string>
+</dict>
+</plist>

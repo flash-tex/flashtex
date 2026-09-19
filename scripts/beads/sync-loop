@@ -1,0 +1,282 @@
+#!/usr/bin/env python3
+"""FlashTeX machine sync loop for the Beads ledger (one per machine).
+
+Agents never run their own pull loops. This supervisor process (no model calls):
+  * pulls every --interval seconds (default 60)
+  * checks every --push-check seconds (default 5) whether the local ledger has
+    commits origin/main lacks, and pushes when it does, at most every
+    --min-push-gap seconds (default 15); rejected pushes pull and retry up to
+    --push-attempts times (never --force)
+  * backs off exponentially on network/transport errors (10 s doubling, up to --max-backoff, default 300 s)
+  * on the "merge conflicts ... require operator resolution" wedge, runs
+    scripts/beads/ledger-recover. That tool is lossless or refuses:
+      - exit 0: recovered
+      - exit 4: lost a race; retried within ~3 s (no backoff). While recovering,
+        <state>/RECOVERING exists and scripts/beads/claim refuses new claims.
+      - exit 2: needs an operator. The loop stops pushing, writes
+        state=needs_operator, creates the hold file <state>/HOLD and exits 2.
+        While HOLD exists, later starts refuse (exit 2) until an operator
+        removes it.
+
+Status is written atomically to <state>/status.json. Read it with
+scripts/beads/ledger-status. Fields:
+  machine, repo, pid, state (starting|ok|degraded|recovering|needs_operator|stopped),
+  last_pull_ok_utc, last_push_ok_utc, lag_seconds (now - last successful pull),
+  unpushed_commits, consecutive_failures, backoff_seconds, pulls, pushes,
+  push_rejections, recoveries, last_error, last_recovery, updated_utc
+
+Single instance per state dir: a flock on <state>/sync-loop.lock. A second copy
+exits 75.
+State dir: $FLASHTEX_BEADS_STATE, default ~/.local/state/flashtex-beads.
+
+Usage:
+  scripts/beads/sync-loop --repo /path/to/main/clone [--interval 60] [--once]
+"""
+import argparse
+import datetime as dt
+import fcntl
+import json
+import os
+import random
+import signal
+import subprocess
+import sys
+import time
+
+PREFIX = os.environ.get("FLASHTEX_BEADS_PREFIX", os.path.expanduser("~/.local/share/flashtex-beads"))
+DOLT = os.path.join(PREFIX, "bin", "dolt")
+HERE = os.path.dirname(os.path.abspath(__file__))
+BD = os.path.join(HERE, "bd")
+RECOVER = os.path.join(HERE, "ledger-recover")
+WEDGE = "require operator resolution"
+REJECT_MARKERS = ("non-fast-forward", "rejected", "Integrate the remote changes")
+
+
+def iso(t):
+    return None if t is None else dt.datetime.fromtimestamp(t, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def run(cmd, cwd, timeout=300):
+    try:
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+    except subprocess.TimeoutExpired:
+        return 124, f"timeout after {timeout}s: {' '.join(cmd)}"
+
+
+def tail(s, n=300):
+    s = " | ".join(x for x in s.strip().splitlines() if x.strip() and "chunks" not in x)
+    return s[-n:]
+
+
+class Loop:
+    def __init__(self, a):
+        self.a = a
+        self.repo = os.path.abspath(a.repo)
+        self.state_dir = a.state_dir
+        os.makedirs(self.state_dir, exist_ok=True)
+        self.status_path = os.path.join(self.state_dir, "status.json")
+        self.hold_path = os.path.join(self.state_dir, "HOLD")
+        self.recovering_path = os.path.join(self.state_dir, "RECOVERING")
+        self.retry_soon = False
+        machine = os.environ.get("FLASHTEX_MACHINE")
+        if not machine:
+            try:
+                machine = open(os.path.expanduser("~/.config/flashtex/machine")).read().strip()
+            except OSError:
+                machine = os.uname().nodename
+        self.s = {"machine": machine, "repo": self.repo, "pid": os.getpid(), "state": "starting",
+                  "interval": a.interval, "last_pull_ok_utc": None, "last_push_ok_utc": None,
+                  "lag_seconds": None, "unpushed_commits": None, "consecutive_failures": 0,
+                  "backoff_seconds": 0, "pulls": 0, "pushes": 0, "push_rejections": 0,
+                  "recoveries": 0, "recovery_attempts": 0, "last_error": None, "last_recovery": None,
+                  "started_utc": iso(time.time())}
+        self.last_pull_ok = None
+        self.last_push = 0.0
+        self.stop = False
+        self.db = self._find_db()
+
+    def _find_db(self):
+        root = os.path.join(self.repo, ".beads", "embeddeddolt")
+        try:
+            name = json.load(open(os.path.join(self.repo, ".beads", "metadata.json"))).get("dolt_database")
+        except OSError:
+            name = None
+        if name and os.path.isdir(os.path.join(root, name, ".dolt")):
+            return os.path.join(root, name)
+        c = [d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d, ".dolt"))] if os.path.isdir(root) else []
+        if len(c) != 1:
+            raise SystemExit(f"sync-loop: no single embedded DB under {root} (run scripts/beads/bd bootstrap first)")
+        return os.path.join(root, c[0])
+
+    def write_status(self):
+        now = time.time()
+        self.s["lag_seconds"] = None if self.last_pull_ok is None else int(now - self.last_pull_ok)
+        self.s["updated_utc"] = iso(now)
+        tmp = self.status_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(self.s, f, indent=2)
+        os.replace(tmp, self.status_path)
+
+    def fail(self, msg):
+        self.s["consecutive_failures"] += 1
+        self.s["last_error"] = {"utc": iso(time.time()), "message": msg}
+        self.s["state"] = "degraded"
+        # 10 s, 20 s, 40 s, ... capped at --max-backoff: recover quickly after short outages.
+        self.s["backoff_seconds"] = min(self.a.max_backoff, 10 * (2 ** min(self.s["consecutive_failures"] - 1, 10)))
+
+    def ok(self):
+        self.s["consecutive_failures"] = 0
+        self.s["backoff_seconds"] = 0
+        if self.s["state"] in ("starting", "degraded", "recovering"):
+            self.s["state"] = "ok"
+
+    def unpushed(self):
+        # Read-only dolt CLI query; it works while bd holds the storage lock.
+        rc, out = run([DOLT, "sql", "-r", "json", "-q", "select count(*) as n from dolt_log('origin/main..main')"], self.db, timeout=60)
+        if rc != 0:
+            return None
+        try:
+            return int(json.loads(out.strip().splitlines()[-1])["rows"][0]["n"])
+        except Exception:
+            return None
+
+    def recover(self):
+        # RECOVERING tells scripts/beads/claim to refuse new claims (no local
+        # writes) until a pull succeeds again.
+        self.s["recovery_attempts"] += 1
+        open(self.recovering_path, "w").write(iso(time.time()))
+        rc, out = run([RECOVER, "--repo", self.repo, "--skip-pull-check"], self.repo, timeout=900)
+        summary = tail(out, 800)
+        self.s["last_recovery"] = {"utc": iso(time.time()), "exit": rc, "summary": summary}
+        if rc == 0:
+            self.s["recoveries"] += 1
+            return "recovered"
+        if rc == 4:
+            return "retry"
+        return "operator"
+
+    def pull(self):
+        rc, out = run([BD, "dolt", "pull"], self.repo, timeout=self.a.net_timeout)
+        self.s["pulls"] += 1
+        if rc == 0:
+            self.last_pull_ok = time.time()
+            self.s["last_pull_ok_utc"] = iso(self.last_pull_ok)
+            self.ok()
+            if os.path.exists(self.recovering_path):
+                os.remove(self.recovering_path)
+            return True
+        if WEDGE in out:
+            r = self.recover()
+            if r == "recovered":
+                return self.pull()
+            if r == "retry":
+                # Not a network failure: retry within seconds, no backoff.
+                self.s["recovery_retries"] = self.s.get("recovery_retries", 0) + 1
+                self.s["last_error"] = {"utc": iso(time.time()), "message": "recovery lost a race; retrying"}
+                self.s["state"] = "recovering"
+                self.retry_soon = True
+                return False
+            self.s["state"] = "needs_operator"
+            self.s["last_error"] = {"utc": iso(time.time()), "message": "ledger-recover refused: " + self.s["last_recovery"]["summary"]}
+            with open(self.hold_path, "w") as f:
+                json.dump(self.s["last_error"], f)
+            return False
+        self.fail("pull: " + tail(out))
+        return False
+
+    def push(self):
+        # Rejection = another machine pushed first: pull (merges, or recovers a
+        # wedge) and retry a few times with jitter.
+        for attempt in range(1, self.a.push_attempts + 1):
+            rc, out = run([BD, "dolt", "push"], self.repo, timeout=self.a.net_timeout)
+            if rc == 0:
+                self.s["pushes"] += 1
+                self.last_push = time.time()
+                self.s["last_push_ok_utc"] = iso(self.last_push)
+                self.ok()
+                return True
+            if not any(m in out for m in REJECT_MARKERS):
+                self.fail("push: " + tail(out))
+                return False
+            self.s["push_rejections"] += 1
+            if not self.pull():
+                return False
+            time.sleep(random.uniform(0.5, 2.0) * attempt)
+        return False
+
+    def run(self):
+        if os.path.exists(self.hold_path):
+            self.s["state"] = "needs_operator"
+            self.s["last_error"] = {"utc": iso(time.time()), "message": f"HOLD present ({self.hold_path}); an operator must resolve and remove it"}
+            self.write_status()
+            print(self.s["last_error"]["message"], file=sys.stderr)
+            return 2
+        next_pull = 0.0
+        while not self.stop:
+            now = time.time()
+            if now >= next_pull:
+                self.pull()
+                if self.s["state"] == "needs_operator":
+                    self.write_status()
+                    return 2
+                if self.retry_soon:
+                    self.retry_soon = False
+                    next_pull = time.time() + 3
+                else:
+                    next_pull = time.time() + (self.s["backoff_seconds"] or self.a.interval)
+            n = self.unpushed()
+            self.s["unpushed_commits"] = n
+            if (n is None or n > 0) and self.s["consecutive_failures"] == 0 and time.time() - self.last_push >= self.a.min_push_gap:
+                if self.push():
+                    self.s["unpushed_commits"] = self.unpushed()
+                if self.s["state"] == "needs_operator":
+                    self.write_status()
+                    return 2
+            self.write_status()
+            if self.a.once:
+                break
+            slept = 0.0
+            while not self.stop and slept < self.a.push_check and time.time() < next_pull:
+                time.sleep(0.5)
+                slept += 0.5
+        self.s["state"] = "stopped" if self.stop else self.s["state"]
+        self.write_status()
+        return 0 if self.s["state"] in ("ok", "stopped") else 1
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--repo", required=True, help="the machine's main clone of the repo (worktrees share its .beads)")
+    ap.add_argument("--interval", type=int, default=int(os.environ.get("FLASHTEX_BEADS_PULL_INTERVAL", "60")))
+    ap.add_argument("--push-check", type=float, default=5.0)
+    ap.add_argument("--max-backoff", type=int, default=300)
+    ap.add_argument("--min-push-gap", type=float, default=15.0, help="minimum seconds between background pushes (agents push their own claims)")
+    ap.add_argument("--push-attempts", type=int, default=3)
+    ap.add_argument("--net-timeout", type=int, default=120, help="kill a bd pull/push that runs longer (a stalled transport otherwise freezes the loop)")
+    ap.add_argument("--state-dir", default=os.environ.get("FLASHTEX_BEADS_STATE", os.path.expanduser("~/.local/state/flashtex-beads")))
+    ap.add_argument("--once", action="store_true", help="one pull/push cycle, then exit")
+    a = ap.parse_args()
+    os.makedirs(a.state_dir, exist_ok=True)
+    lockf = open(os.path.join(a.state_dir, "sync-loop.lock"), "a+")
+    try:
+        fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(f"sync-loop: another instance holds {a.state_dir}/sync-loop.lock", file=sys.stderr)
+        return 75
+    lockf.seek(0)
+    lockf.truncate()
+    lockf.write(str(os.getpid()))
+    lockf.flush()
+    os.environ["FLASHTEX_BEADS_STATE"] = a.state_dir
+    loop = Loop(a)
+
+    def on_sig(*_):
+        loop.stop = True
+    signal.signal(signal.SIGTERM, on_sig)
+    signal.signal(signal.SIGINT, on_sig)
+    return loop.run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

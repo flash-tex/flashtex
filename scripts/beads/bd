@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# FlashTeX guard wrapper for Beads. Agents and scripts call THIS, not bd directly.
+#
+# What it enforces (docs/coordination/beads.md):
+#   1. Version pins: bd 1.2.2 and dolt 2.3.3, or it refuses to run.
+#   2. BD_SMART_GATE=0, which disables bd's "first-mover" auto-migration path.
+#   3. Metrics off: BD_DISABLE_METRICS=1 on every call (install-pinned.sh also
+#      persists `bd metrics off`).
+#   4. Schema/upgrade-changing commands run only on the machine that currently
+#      holds Commander authority, and never while command is vacant.
+#   5. `bd dolt push --force` is always refused (claim safety).
+#
+# Machine identity: $FLASHTEX_MACHINE, else ~/.config/flashtex/machine (one line,
+# e.g. mac-m1max-a). The value must match the alias in the authority record.
+#
+# Authority record (owner decision 5): after cutover, the Beads bead named by
+# $FLASHTEX_AUTHORITY_BEAD (default ft-authority), with metadata `machine` and
+# `authority_state`. Before cutover, or if the bead is unreadable, the fallback
+# is coordination/authority.json at the repo's origin/main (fetched first).
+set -euo pipefail
+
+BD_PIN=1.2.2
+DOLT_PIN=2.3.3
+PREFIX="${FLASHTEX_BEADS_PREFIX:-$HOME/.local/share/flashtex-beads}"
+REAL_BD="$PREFIX/bin/bd"
+REAL_DOLT="$PREFIX/bin/dolt"
+
+die() { echo "flashtex-bd: $*" >&2; exit 3; }
+
+[ -x "$REAL_BD" ] || die "pinned bd not found at $REAL_BD; run scripts/beads/install-pinned.sh"
+[ -x "$REAL_DOLT" ] || die "pinned dolt not found at $REAL_DOLT; run scripts/beads/install-pinned.sh"
+
+# bd shells out to `dolt` via PATH for git remotes: the pinned dolt must win.
+export PATH="$PREFIX/bin:$PATH"
+
+# The machine ledger lives in ONE standalone clone (never the main checkout).
+# bd resolves any git worktree to its main clone's root, so an unrouted `bd init`
+# from a worktree writes .beads into the main checkout (VERIFIED 2026-09-13).
+# Agents in worktrees are routed to the ledger via BEADS_DIR; the default comes
+# from ~/.config/flashtex/beads-dir (one line: /abs/path/to/ledger/.beads).
+if [ -z "${BEADS_DIR:-}" ] && [ -r "$HOME/.config/flashtex/beads-dir" ]; then
+  BEADS_DIR="$(head -1 "$HOME/.config/flashtex/beads-dir")"
+  [ -d "$BEADS_DIR" ] || die "~/.config/flashtex/beads-dir points at missing $BEADS_DIR"
+  export BEADS_DIR
+fi
+export BD_SMART_GATE=0
+export BD_DISABLE_METRICS=1
+
+bd_v="$("$REAL_BD" version 2>/dev/null | head -1 || true)"
+dolt_v="$("$REAL_DOLT" version 2>/dev/null | head -1 || true)"
+case "$bd_v" in "bd version $BD_PIN "*) ;; *) die "bd version mismatch: '$bd_v' (pinned $BD_PIN). Refusing." ;; esac
+case "$dolt_v" in "dolt version $DOLT_PIN"*) ;; *) die "dolt version mismatch: '$dolt_v' (pinned $DOLT_PIN). Refusing." ;; esac
+resolved_dolt="$(command -v dolt)"
+[ "$resolved_dolt" = "$REAL_DOLT" ] || die "PATH resolves dolt to $resolved_dolt, not $REAL_DOLT"
+
+# ---- classify the command -------------------------------------------------
+args=("$@")
+sub=""; sub2=""
+i=0
+# Skip global flags that take a value, so the subcommand is found.
+while [ $i -lt ${#args[@]} ]; do
+  a="${args[$i]}"
+  case "$a" in
+    --actor|--db|-C|--directory|--dolt-auto-commit) i=$((i+2)); continue ;;
+    -*) i=$((i+1)); continue ;;
+    *) if [ -z "$sub" ]; then sub="$a"; else sub2="$a"; break; fi ;;
+  esac
+  i=$((i+1))
+done
+has_flag() { local f; for f in "${args[@]}"; do [ "$f" = "$1" ] && return 0; done; return 1; }
+
+privileged=""
+case "$sub" in
+  migrate)
+    # Read-only forms are allowed everywhere.
+    if has_flag --inspect || has_flag --dry-run; then :; else privileged="bd migrate"; fi ;;
+  upgrade)
+    case "$sub2" in status|review|"") ;; *) privileged="bd upgrade $sub2" ;; esac ;;
+  doctor)
+    # doctor --fix can apply pending schema migrations.
+    if has_flag --fix; then privileged="bd doctor --fix"; fi ;;
+  flatten|rename-prefix|admin) privileged="bd $sub" ;;
+  init)
+    # Initialising the real FlashTeX ledger is the Commander machine's job.
+    if git remote get-url origin 2>/dev/null | grep -qiE 'flash-tex/flashtex(\.git)?$'; then
+      privileged="bd init on flash-tex/flashtex"
+    fi ;;
+  dolt)
+    if [ "$sub2" = push ] && { has_flag --force || has_flag -f; }; then
+      die "bd dolt push --force is forbidden (it can erase other machines' claims). Pull, re-read, then push."
+    fi ;;
+esac
+
+if [ -n "${BD_ALLOW_REMOTE_MIGRATE:-}" ] && [ -z "$privileged" ]; then
+  privileged="BD_ALLOW_REMOTE_MIGRATE set"
+fi
+
+# Owner-authorized one-time initial creation of the real ledger (2026-09-13).
+# Needs an explicit authorization note in FLASHTEX_BEADS_OWNER_AUTHORIZED_INIT, and
+# refuses if origin already has refs/dolt/data. It applies to `init` only, never
+# to migrate/upgrade.
+if [ "$privileged" = "bd init on flash-tex/flashtex" ] && [ -n "${FLASHTEX_BEADS_OWNER_AUTHORIZED_INIT:-}" ]; then
+  existing="$(git ls-remote origin 'refs/dolt/*' 2>/dev/null)" || die "bd init: cannot reach origin to check for an existing ledger"
+  [ -z "$existing" ] || die "bd init refused: origin already has a ledger ($existing). Use bd bootstrap."
+  echo "flashtex-bd: owner-authorized one-time init ($FLASHTEX_BEADS_OWNER_AUTHORIZED_INIT)" >&2
+  privileged=""
+fi
+
+if [ -n "$privileged" ]; then
+  me="${FLASHTEX_MACHINE:-$(cat "$HOME/.config/flashtex/machine" 2>/dev/null || true)}"
+  [ -n "$me" ] || die "$privileged requires a machine identity (FLASHTEX_MACHINE or ~/.config/flashtex/machine)"
+  auth_machine=""; auth_state=""
+  bead="${FLASHTEX_AUTHORITY_BEAD:-ft-authority}"
+  if json="$("$REAL_BD" show "$bead" --json 2>/dev/null)"; then
+    auth_machine="$(printf '%s' "$json" | python3 -c 'import json,sys
+d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d
+m=d.get("metadata") or {}
+m=json.loads(m) if isinstance(m,str) else m
+print(m.get("machine",""))' 2>/dev/null || true)"
+    auth_state="$(printf '%s' "$json" | python3 -c 'import json,sys
+d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d
+m=d.get("metadata") or {}
+m=json.loads(m) if isinstance(m,str) else m
+print(m.get("authority_state",""))' 2>/dev/null || true)"
+    src="beads:$bead"
+  fi
+  if [ -z "$auth_machine" ]; then
+    git fetch -q origin main 2>/dev/null || die "$privileged: cannot fetch origin/main to read authority record"
+    rec="$(git show origin/main:coordination/authority.json 2>/dev/null)" || die "$privileged: no authority record available"
+    auth_machine="$(printf '%s' "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("machine",""))')"
+    auth_state="$(printf '%s' "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("authority_state",""))')"
+    src="origin/main:coordination/authority.json"
+  fi
+  [ "$auth_state" = active ] || die "$privileged refused: authority_state='$auth_state' in $src (upgrades frozen while no Commander is active)"
+  [ "$auth_machine" = "$me" ] || die "$privileged refused: this machine is '$me', Commander machine is '$auth_machine' ($src)"
+  echo "flashtex-bd: $privileged permitted on Commander machine $me ($src)" >&2
+fi
+
+exec "$REAL_BD" "$@"
