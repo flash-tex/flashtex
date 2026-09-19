@@ -137,3 +137,64 @@ byte-identical.
 See [runtime-v1-layout-capabilities.md](runtime-v1-layout-capabilities.md) for per-request
 `rules-v1` and `font-hints-v1`. They do not change output for unnegotiated clients.
 Unknown primitives must be explicitly rejected, never silently omitted.
+
+## Optional `metadata` object
+
+`compile_result.payload.metadata` carries sections a client uses for editor
+intelligence, not for drawing pages. It is absent (never null) when no section
+has anything to say, so a reply for a project without project package files is
+byte-identical to one written before the object existed; consumers must
+tolerate its absence and ignore unknown sections. Every span in it is
+`{path, start, end}`: the project-relative document path and zero-based,
+end-exclusive UTF-8 byte offsets into the request's revision.
+
+### `metadata.packages`
+
+One entry per project `.sty`/`.cls` file the expansion pass read
+(`\usepackage`, `\RequirePackage`, `\documentclass`, `\LoadClass` resolved to a
+document of the request), in loading order:
+
+```json
+{"path": "mystyle.sty", "kind": "package",
+ "provides": {"name": "mystyle", "date": "2024/01/02", "version": "v1.3",
+              "description": "my macros", "span": {"path": "mystyle.sty", "start": 24, "end": 73}},
+ "loaded_by": {"path": "main.tex", "start": 24, "end": 35},
+ "options_declared": [{"name": "draft", "span": {"path": "mystyle.sty", "start": 74, "end": 112}}],
+ "definitions": [
+   {"name": "emphx", "kind": "macro", "definer": "newcommand", "arity": 1,
+    "optional_default": null, "signature": "[1]", "overrides": false,
+    "span": {"path": "mystyle.sty", "start": 113, "end": 149}}]}
+```
+
+- `kind` is `package` (`.sty`) or `class` (`.cls`).
+- `provides` is the file's `\ProvidesPackage`/`\ProvidesClass`, or null before
+  one is seen. The bracket is split as `YYYY/MM/DD vX.Y description` when it
+  follows that layout; a part that does not is null.
+- `loaded_by` is the command that loaded the file. For a nested load
+  (`a.sty` `\RequirePackage`s `b.sty`) it lies in the loading package's
+  document, so following `loaded_by` from entry to entry gives the load chain
+  back to the entry document. Diagnostics raised inside a package carry the
+  same chain as `labels` (`b.sty is loaded here` in `a.sty`, `a.sty is loaded
+  here` in `main.tex`).
+- `options_declared` lists the file's `\DeclareOption` names in order, `*`
+  for `\DeclareOption*`, each with the span of the whole declaration.
+- `definitions` lists what the file defined at its outermost level -- the
+  defining command was read from the file's own text, not from a macro
+  body, an option's code run by `\ProcessOptions`, or an `\AtEndOfPackage`
+  hook -- in order, including repeated definitions of one name. `kind` is
+  `macro` (`\newcommand` & co., `\def` & co., `\let`,
+  `\DeclareRobustCommand`, `\NewDocumentCommand` & co.), `environment`,
+  `conditional` (each of the three commands a `\newif` or `\newboolean`
+  creates), `counter`, `length`, `register` (`\newcount` & co.), `theorem`
+  or `math_operator`; `definer` is the defining command without its
+  backslash. `arity` counts the parameters (a `\let` copy reports the copied
+  macro's); `optional_default` is the `[default]` of a LaTeX definer's
+  optional first parameter; `signature` is the parameter shape as written
+  (`[2][x]`; a `\def` parameter text such as `#1\stop`; an xparse argument
+  specification such as `O{x} m`). `span` is the whole defining statement,
+  `\global`/`\long` prefixes included, trailing spaces and comments
+  excluded; `overrides` says the name had a meaning before (a
+  `\renewcommand`, a `\def` over a taken name, a `\let` over an existing
+  command). A `theorem` entry adds `title` (the heading text) and `within`
+  (the counter it is numbered within, or null); a shared counter
+  (`\newtheorem{lem}[thm]{Lemma}`) appears in `signature` as `[thm]`.

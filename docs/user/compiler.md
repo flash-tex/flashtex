@@ -1284,6 +1284,19 @@ Any other package, or these packages with other options, is recorded and reporte
 | `amsproc` | AMS size tables in the parser |
 <!-- END GENERATED supported-latex -->
 
+What each project package or class file defined -- its `\newcommand`s,
+`\def`s, `\let`s, environments, `\newif` switches, counters, lengths,
+theorems, `\DeclareMathOperator`s and `\NewDocumentCommand`s, each with its
+parameter shape and the byte span of the defining statement, plus the file's
+`\ProvidesPackage` and `\DeclareOption`s and the command that loaded it -- is
+reported to the editor in the `metadata.packages` section of the worker's
+`compile_result` (schema in
+[runtime-v1 › Optional `metadata` object](../contracts/runtime-v1.md#optional-metadata-object)).
+Only definitions made at the file's outermost level are listed; a definition
+made by a macro the file calls, by an option's code, or by an
+`\AtEndOfPackage` hook is not. A diagnostic raised inside a package names the
+whole chain of files that loaded it, back to the document.
+
 Through `flashtex-render` (what the `flashtex` CLI and the app run), packages the
 render pipeline sets on the compiler's behalf are silent too, with any options:
 `amsmath`, `amssymb`, `amsfonts`, `lmodern`, `microtype`, `geometry`, `graphicx`
