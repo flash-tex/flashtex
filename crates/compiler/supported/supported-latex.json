@@ -1125,7 +1125,10 @@
     {"name": "xspace", "silent_options": "", "description": "\\xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)"},
     {"name": "ifthen", "silent_options": "", "description": "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used"},
     {"name": "csquotes", "silent_options": "", "description": "\\enquote: typographic quotation marks, alternating double/single on nesting"},
-    {"name": "etoolbox", "silent_options": "", "description": "toggle booleans: \\newtoggle/\\providetoggle declare a false toggle, \\toggletrue/\\togglefalse set it, \\iftoggle{name}{true}{false} selects a branch at expansion time; a duplicate \\newtoggle and any use of an undefined toggle are diagnosed where they are used and leave existing state alone. The rest of etoolbox (patching, hooks, list processing) is diagnosed where it is used"}
+    {"name": "etoolbox", "silent_options": "", "description": "toggle booleans: \\newtoggle/\\providetoggle declare a false toggle, \\toggletrue/\\togglefalse set it, \\iftoggle{name}{true}{false} selects a branch at expansion time; a duplicate \\newtoggle and any use of an undefined toggle are diagnosed where they are used and leave existing state alone. The rest of etoolbox (patching, hooks, list processing) is diagnosed where it is used"},
+    {"name": "iftex", "silent_options": "", "description": "\\ifxetex and \\ifluatex (with the \\ifXeTeX/\\ifLuaTeX aliases) are false, as iftex.sty sets them under pdflatex, so engine-guarded blocks skip"},
+    {"name": "ifxetex", "silent_options": "", "description": "legacy shim for iftex's \\ifxetex switch, false here as under pdflatex"},
+    {"name": "ifluatex", "silent_options": "", "description": "legacy shim for iftex's \\ifluatex switch, false here as under pdflatex"}
   ],
   "coverage": {
     "sources": [

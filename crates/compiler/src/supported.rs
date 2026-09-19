@@ -1406,6 +1406,21 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "",
         "toggle booleans: \\newtoggle/\\providetoggle declare a false toggle, \\toggletrue/\\togglefalse set it, \\iftoggle{name}{true}{false} selects a branch at expansion time; a duplicate \\newtoggle and any use of an undefined toggle are diagnosed where they are used and leave existing state alone. The rest of etoolbox (patching, hooks, list processing) is diagnosed where it is used",
     ),
+    (
+        "iftex",
+        "",
+        "\\ifxetex and \\ifluatex (with the \\ifXeTeX/\\ifLuaTeX aliases) are false, as iftex.sty sets them under pdflatex, so engine-guarded blocks skip",
+    ),
+    (
+        "ifxetex",
+        "",
+        "legacy shim for iftex's \\ifxetex switch, false here as under pdflatex",
+    ),
+    (
+        "ifluatex",
+        "",
+        "legacy shim for iftex's \\ifluatex switch, false here as under pdflatex",
+    ),
 ];
 
 /// The vendored coverage denominator.

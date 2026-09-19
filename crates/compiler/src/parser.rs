@@ -13846,6 +13846,18 @@ impl P<'_> {
             // `\linespread{1.5}`: a bare scale factor with no unit suffix, so
             // the dimension heuristic below would never catch it on its own.
             ("linespread", 1),
+            // fontspec setup commands: the font name (or feature list) is a
+            // parameter, never prose -- without this, `\setmainfont{Times
+            // New Roman}` would leak the font name onto the page as body
+            // text next to its diagnostic. (`\newfontfamily` takes a control
+            // sequence first, which this one-braced-group recovery cannot
+            // consume, so it keeps the generic path.)
+            ("setmainfont", 1),
+            ("setsansfont", 1),
+            ("setmonofont", 1),
+            ("fontspec", 1),
+            ("defaultfontfeatures", 1),
+            ("addfontfeature", 1),
         ];
         if let Some(&(_, arity)) = KNOWN_ARITY_UNIMPLEMENTED
             .iter()
@@ -13960,6 +13972,12 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // not implemented and is diagnosed as an unknown command where it
         // is used.
         "etoolbox" => options.is_empty(),
+        // Engine-test packages (`iftex`, and the legacy `ifxetex`/`ifluatex`
+        // shims): their `\ifxetex`/`\ifluatex` switches are defined false in
+        // the expansion pass's host prelude -- this compiler is
+        // pdflatex-equivalent, as `iftex.sty` sets them under pdflatex -- so
+        // loading the package is silent. They take no options of their own.
+        "iftex" | "ifxetex" | "ifluatex" => options.is_empty(),
         // natbib citation commands (crate::natbib) with the delimiter,
         // separator and citation-style options that decide the characters
         // they set. `sort`/`compress`/`super`/`longnamesfirst` are parsed but
