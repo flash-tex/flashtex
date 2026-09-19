@@ -546,12 +546,12 @@ Canonical sources:
 | `\fancyhead` | `[pos]{...}` | fancyhdr: sets the header fields for positions L, C, R (combinable with E/O, as in [LE,RO]); empty content clears them |
 | `\fancyfoot` | `[pos]{...}` | fancyhdr: sets the footer fields for positions L, C, R (combinable with E/O, as in [LE,RO]); empty content clears them |
 | `\fancyhf` | `[pos]{...}` | fancyhdr: sets all six header and footer fields at once; empty content clears them |
-| `\lhead` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
-| `\chead` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
-| `\rhead` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
-| `\lfoot` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
-| `\cfoot` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
-| `\rfoot` | `{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
+| `\lhead` | `[even]{...}` | fancyhdr: sets the left header field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
+| `\chead` | `[even]{...}` | fancyhdr: sets the centre header field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
+| `\rhead` | `[even]{...}` | fancyhdr: sets the right header field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
+| `\lfoot` | `[even]{...}` | fancyhdr: sets the left footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
+| `\cfoot` | `[even]{...}` | fancyhdr: sets the centre footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
+| `\rfoot` | `[even]{...}` | fancyhdr: sets the right footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
 | `\fancypagestyle` | `{style}{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
 | `\pagenumbering` | `{style}` | resets the page counter to 1 and selects the \thepage/\pageref style (arabic, roman, Roman, alph, Alph); unknown styles fall back to arabic |
 | `\listfiles` |  | accepted no-op; there is no log stream |
@@ -1109,7 +1109,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `ulem` | `normalem` | \uline: 0.4pt rule under the argument (single-line); \sout: 0.4pt strike at 0.55ex; \emph is not redefined |
 | `soul` | `` | \so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828); \st stays unsupported |
 | `relsize` | `` | \larger/\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size |
-| `fancyhdr` | `` | \pagestyle{fancy} ships the \fancyhead/\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \fancyhf clears all six fields; \lhead and friends plus \fancypagestyle are diagnosed where they are used |
+| `fancyhdr` | `` | \pagestyle{fancy} ships the \fancyhead/\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \fancyhf clears all six fields; \lhead/\chead/\rhead and \lfoot/\cfoot/\rfoot set one field each (an optional even-page group is ignored one-sided); \fancypagestyle is diagnosed where it is used |
 | `titlesec` | `` | \titleformat{\section} headings take the format's face and size (unnumbered with an empty label) with the \titlerule after-code rule; other levels, printed labels, before-code and shapes beyond the implemented subset are diagnosed where they are used |
 | `xspace` | `` | \xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
 | `ifthen` | `` | \ifthenelse with \equal, \NOT, \AND, \OR, \isodd, \isundefined, \lengthtest and \boolean tests, and \newif conditionals with \newboolean/\setboolean; \whiledo loops are diagnosed where they are used |
