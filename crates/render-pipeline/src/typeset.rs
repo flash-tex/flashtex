@@ -2699,6 +2699,9 @@ impl<'a> Context<'a> {
                 pl::layout_paragraph_microtype(list, &params, &mt).map(|(lines, _)| lines)
             }
         };
+        if trace_paragraphs_enabled() {
+            self.trace_paragraph(list, params, recs, result.as_ref().ok());
+        }
         match result {
             Ok(lines) => Some(lines),
             Err(e) => {
@@ -2713,6 +2716,103 @@ impl<'a> Context<'a> {
                 None
             }
         }
+    }
+
+    /// `FLASHTEX_TRACE_PARAGRAPHS=1`: dumps the horizontal list handed to
+    /// the breaker and the breaks it chose, on stderr, in the spirit of
+    /// `\tracingparagraphs` (TeXbook ch. 14, tex.web §846): one item per
+    /// line with its index, so a diff against pdflatex's feasible-break log
+    /// finds the first node that differs. Widths are in points; a box shows
+    /// the text of its `BoxRec` (or `[math]`/`[rule]`), a penalty its value,
+    /// hyphenation flag and discretionary parts, glue its stretch/shrink.
+    fn trace_paragraph(&self, list: &[pl::Item], params: &pl::LineBreakParams, recs: Option<&[Option<usize>]>, lines: Option<&pl::Lines>) {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "@paragraph hsize={:.5} pretolerance={} tolerance={} emergencystretch={:.3} parindent={:.5} leftskip={:.3} rightskip={:.3}+{:.3} linepenalty={} adjdemerits={} mode={:?}",
+            params.line_width,
+            params.pretolerance,
+            params.tolerance,
+            params.emergency_stretch,
+            params.parindent,
+            params.left_skip.width,
+            params.right_skip.width,
+            params.right_skip.stretch,
+            params.line_penalty,
+            params.adj_demerits,
+            params.mode
+        );
+        let order = |o: pl::GlueOrder| match o {
+            pl::GlueOrder::Finite => "",
+            pl::GlueOrder::Fil => "fil",
+            pl::GlueOrder::Fill => "fill",
+            pl::GlueOrder::Filll => "filll",
+        };
+        let text_of = |i: usize, run: &pl::GlyphRun| -> String {
+            let rec = recs.and_then(|r| r.get(i).copied().flatten());
+            match rec.map(|r| &self.recs[r]) {
+                Some(BoxRec::Text { text, .. }) => format!("{text:?}"),
+                Some(BoxRec::Math(_)) => "[math]".to_string(),
+                Some(BoxRec::Rule { .. }) => "[rule]".to_string(),
+                Some(_) => "[box]".to_string(),
+                None if run.font == MATH_SENTINEL && run.glyphs.is_empty() => "[empty]".to_string(),
+                None => format!("[{} glyphs]", run.glyphs.len()),
+            }
+        };
+        for (i, item) in list.iter().enumerate() {
+            match item {
+                pl::Item::Box(run) => {
+                    let _ = writeln!(out, "  {i:4} box  w={:.5} h={:.3} d={:.3} {}", run.width, run.height, run.depth, text_of(i, run));
+                }
+                pl::Item::Glue(g) => {
+                    let _ = writeln!(out, "  {i:4} glue w={:.5} plus {:.5}{} minus {:.5}{}", g.width, g.stretch, order(g.stretch_order), g.shrink, order(g.shrink_order));
+                }
+                pl::Item::Penalty(p) => {
+                    let mut s = format!("  {i:4} pen  p={}", p.value);
+                    if p.flagged {
+                        s.push_str(" flagged");
+                    }
+                    if p.automatic {
+                        s.push_str(" auto");
+                    }
+                    if let Some(pre) = &p.pre_break {
+                        let _ = write!(s, " pre=w{:.5}", pre.width);
+                    }
+                    if let Some(post) = &p.post_break {
+                        let _ = write!(s, " post=w{:.5}", post.width);
+                    }
+                    if p.replace_count > 0 {
+                        let _ = write!(s, " replace={}", p.replace_count);
+                    }
+                    let _ = writeln!(out, "{s}");
+                }
+                pl::Item::Kern(k) => {
+                    let _ = writeln!(out, "  {i:4} kern w={:.5}", k.width);
+                }
+            }
+        }
+        if let Some(lines) = lines {
+            let _ = writeln!(out, "@result pass={} lines={} demerits={:.0}", lines.stats.pass, lines.stats.lines, lines.stats.total_demerits);
+            for (line, brk) in lines.lines.iter().zip(&lines.breaks) {
+                let _ = writeln!(
+                    out,
+                    "@line {} items={}..{} break@{} ratio={:.4} b={:.0} fit={:?} t={:.0}{}",
+                    line.index + 1,
+                    line.items.start,
+                    line.items.end,
+                    brk.item,
+                    brk.ratio,
+                    brk.badness,
+                    brk.fitness,
+                    brk.demerits,
+                    if brk.hyphenated { " -" } else { "" }
+                );
+            }
+        } else {
+            let _ = writeln!(out, "@result error");
+        }
+        eprint!("{out}");
     }
 
     /// The microtype side of a horizontal list: each text box's (and
@@ -7752,6 +7852,13 @@ pub(crate) fn design_size(family: Family, size: f64) -> u32 {
             }
         }
     }
+}
+
+/// `FLASHTEX_TRACE_PARAGRAPHS` set to anything but `0`/empty enables
+/// [`Context::trace_paragraph`].
+fn trace_paragraphs_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FLASHTEX_TRACE_PARAGRAPHS").map(|v| !v.is_empty() && v != "0").unwrap_or(false))
 }
 
 fn seg_span(seg: &adapter::Segment) -> Option<Span> {
