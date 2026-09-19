@@ -3,7 +3,7 @@
 These directories are byte-for-byte copies (`git archive <sha>:crates/<name>`)
 of sibling crates at the revisions the pipeline was built against when each
 was last re-pinned. **These are frozen snapshots, not live mirrors**: as of
-this writing every pinned SHA (`compiler` and `tex-expansion` `3cee176e8`,
+this writing every pinned SHA (`compiler` `0bc4a2c7a` and `tex-expansion` `3cee176e8`,
 `bibliography` `8a8a22b4`, `math-layout` and `font-engine` `456ff1e6b`
 (from `lane/mathfont`, see their rows), `font-resources`/`project-files`
 `d5440b0`, `pdf` `d5cedcb0a`, `document-style`
@@ -28,7 +28,7 @@ because the siblings depend on each other by `../<name>` path.
 
 | Directory | Branch | Commit | Owner |
 | --- | --- | --- | --- |
-| `compiler` | `main` | `3cee176e8` (was `f30ee5cc6`: the integration of the previous Commander's remaining PRs — #827 AMS `\Tiny` rung, #863 factor-by-length dimensions, #950 user-defined environment bodies as real groups — plus `metadata.packages` (`crate::package_definitions`: what each project `.sty`/`.cls` defined, with statement spans and the load chain). Exported with the archive command in the header, byte-identical to the real crate apart from `PIN`) | compiler lead |
+| `compiler` | `main` | `0bc4a2c7a` (was `3cee176e8`: beamer polish — frame-level `<spec>`s, action specs (`alert@2`), `\temporal`, beamer sub-enumerate labels, `Block::BeamerSection` for `\tableofcontents`; exported with the archive command in the header, byte-identical to the real crate apart from `PIN`) | compiler lead |
 | `font-resources` | `main` | `d5440b0` (crates/font-resources last changed by `5c89501`; shared TFM reader `tfm.rs`/`tfm_run.rs`, `required_tfm.rs`) | commander-corpus |
 | `project-files` | `main` | `d5440b0` (last changed by `d92db37`; `ProjectRoot` for the rooted TFM reads) | project-files owner |
 | `font-engine` | `lane/mathfont` (the math half of the font system; on `main` once the lane is integrated) | `456ff1e6b` (was `f418238`; re-pinned for `\setmathfont`: `02cfec162` gives `MathTable` the `MathVariants` (`vertical_variants`/`horizontal_variants`, `vertical_assembly`/`horizontal_assembly`, `min_connector_overlap`), `MathKernInfo` (`kern(gid, corner, height)`) and `ExtendedShapeCoverage` readers `src/mathfont.rs` now lays OpenType math out from, replacing the pipeline's own `parse_variants`; brings main's `1ff6abc0` (Core14 Symbol U+2223 `afm_char`, its test and Cargo.lock) with it. `git archive 456ff1e6b:crates/font-engine`, byte-identical to the crate apart from `PIN`) | mac-font-engine / lane-mathfont |

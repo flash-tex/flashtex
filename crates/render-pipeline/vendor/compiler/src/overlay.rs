@@ -71,18 +71,27 @@ impl OverlaySpec {
     /// and `.` reads one less, and a `+` anywhere in the specification steps
     /// it once the decode is done (`\beamer@decodefind`'s
     /// `\ifbeamer@plusencountered\stepcounter{beamerpauses}\fi`), so
-    /// `\item<+->` in sequence uncovers item by item.
+    /// `\item<+->` in sequence uncovers item by item. Action entries
+    /// (`alert@2`) are decoded and dropped; [`Self::parse_with_actions`]
+    /// keeps them.
     pub fn parse(raw: &str, pauses: &mut u32) -> OverlaySpec {
+        Self::parse_with_actions(raw, pauses).0
+    }
+
+    /// [`Self::parse`] keeping the action specifications
+    /// (`beamerbasedecode.sty` 138-150 `\beamer@decodeaction`: an entry
+    /// `<action>@<spec>` names an action applied on the slides `<spec>`
+    /// selects, e.g. `\item<1-| alert@2>`); the actions come back in
+    /// source order, ones this compiler does not model dropped. Every
+    /// entry's `+`/`.` reads the same counter and one `+` anywhere steps
+    /// it once.
+    pub fn parse_with_actions(raw: &str, pauses: &mut u32) -> (OverlaySpec, Vec<OverlayAction>) {
         let mut spec = OverlaySpec::default();
+        let mut actions: Vec<OverlayAction> = Vec::new();
         let mut plus = false;
         let mut any_entry = false;
         for entry in raw.split('|') {
             let entry: String = entry.chars().filter(|c| !c.is_whitespace()).collect();
-            // `action@spec`: an action specification (`alert@2`); the
-            // slides of the default action are the ones without `@`.
-            if entry.contains('@') {
-                continue;
-            }
             let (mode, body) = match entry.split_once(':') {
                 Some((mode, body)) => (mode, body),
                 None => ("beamer", entry.as_str()),
@@ -91,52 +100,37 @@ impl OverlaySpec {
                 // A bare keyword (`<handout>`) is that mode's `1-`.
                 continue;
             }
-            any_entry = true;
+            // `action@spec`: the action's own specification; the slides of
+            // the default action are the ones without `@`.
+            let (action, body) = match body.split_once('@') {
+                Some((action, body)) => (Some(OverlayAction::kind(action)), body),
+                None => (None, body),
+            };
+            let mut target = OverlaySpec::default();
+            if action.is_none() {
+                any_entry = true;
+            }
             if body.is_empty() {
-                spec.all = true;
-                continue;
+                target.all = true;
+            } else if body.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+                // A body opening with a letter is a mode keyword (`<beamer>`,
+                // `<all>`): `\beamer@checkcat` reads it as `1-` for that mode.
+                target.all = true;
+            } else {
+                Self::decode_ranges(body, *pauses, &mut plus, &mut target);
             }
-            // A body opening with a letter is a mode keyword (`<beamer>`,
-            // `<all>`): `\beamer@checkcat` reads it as `1-` for that mode.
-            if body.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
-                spec.all = true;
-                continue;
-            }
-            for part in body.split(',') {
-                if part.is_empty() {
-                    continue;
+            match action {
+                Some(Some(kind)) => {
+                    if !target.all && target.ranges.is_empty() {
+                        target.all = true;
+                    }
+                    actions.push(OverlayAction { kind, spec: target });
                 }
-                if part == "*" {
-                    spec.all = true;
-                    continue;
-                }
-                let (lo, hi) = match part.split_once('-') {
-                    Some((lo, hi)) => (lo, Some(hi)),
-                    None => (part, None),
-                };
-                let lo_n = relative_number(lo, *pauses, &mut plus);
-                match hi {
-                    None => {
-                        if let Some(n) = lo_n {
-                            spec.ranges.push(OverlayRange::One(n));
-                        }
-                    }
-                    Some("") => {
-                        if lo.is_empty() {
-                            spec.all = true;
-                        } else if let Some(n) = lo_n {
-                            spec.ranges.push(OverlayRange::From(n));
-                        }
-                    }
-                    Some(hi) => {
-                        let hi_n = relative_number(hi, *pauses, &mut plus);
-                        match (lo.is_empty(), lo_n, hi_n) {
-                            (true, _, Some(m)) => spec.ranges.push(OverlayRange::Until(m)),
-                            (false, Some(n), Some(m)) => spec.ranges.push(OverlayRange::Between(n, m)),
-                            (false, Some(n), None) => spec.ranges.push(OverlayRange::From(n)),
-                            _ => {}
-                        }
-                    }
+                // An action this compiler does not model (`\<name>env`).
+                Some(None) => {}
+                None => {
+                    spec.all |= target.all;
+                    spec.ranges.extend(target.ranges);
                 }
             }
         }
@@ -150,7 +144,85 @@ impl OverlaySpec {
         if !any_entry || (!spec.all && spec.ranges.is_empty()) {
             spec.all = true;
         }
-        spec
+        (spec, actions)
+    }
+
+    /// The comma list of `*`, `n`, `n-`, `-n` and `n-m` of one entry.
+    fn decode_ranges(body: &str, pauses: u32, plus: &mut bool, spec: &mut OverlaySpec) {
+        for part in body.split(',') {
+            if part.is_empty() {
+                continue;
+            }
+            if part == "*" {
+                spec.all = true;
+                continue;
+            }
+            let (lo, hi) = match part.split_once('-') {
+                Some((lo, hi)) => (lo, Some(hi)),
+                None => (part, None),
+            };
+            let lo_n = relative_number(lo, pauses, plus);
+            match hi {
+                None => {
+                    if let Some(n) = lo_n {
+                        spec.ranges.push(OverlayRange::One(n));
+                    }
+                }
+                Some("") => {
+                    if lo.is_empty() {
+                        spec.all = true;
+                    } else if let Some(n) = lo_n {
+                        spec.ranges.push(OverlayRange::From(n));
+                    }
+                }
+                Some(hi) => {
+                    let hi_n = relative_number(hi, pauses, plus);
+                    match (lo.is_empty(), lo_n, hi_n) {
+                        (true, _, Some(m)) => spec.ranges.push(OverlayRange::Until(m)),
+                        (false, Some(n), Some(m)) => spec.ranges.push(OverlayRange::Between(n, m)),
+                        (false, Some(n), None) => spec.ranges.push(OverlayRange::From(n)),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    /// The slides of `\temporal<spec>{before}{during}{after}`'s `before`
+    /// argument (`beamerbaseoverlay.sty` 135-138): a slide the
+    /// specification does not select while it still names a later one
+    /// (`\beamer@localanotherslide`, set by every `\beamer@decode*` whose
+    /// number exceeds the slide). A specification selecting every slide
+    /// leaves nothing before it.
+    pub fn temporal_before(&self) -> OverlaySpec {
+        let max = self.max_slide();
+        let mut before = OverlaySpec::default();
+        let mut run: Option<u32> = None;
+        let close = |start: u32, end: u32, before: &mut OverlaySpec| {
+            before.ranges.push(if start == end { OverlayRange::One(start) } else { OverlayRange::Between(start, end) });
+        };
+        for slide in 1..max {
+            if self.contains(slide) {
+                if let Some(start) = run.take() {
+                    close(start, slide - 1, &mut before);
+                }
+            } else if run.is_none() {
+                run = Some(slide);
+            }
+        }
+        if let Some(start) = run {
+            close(start, max - 1, &mut before);
+        }
+        before
+    }
+
+    /// The slides of `\temporal`'s `after` argument: not selected and past
+    /// the last slide the specification names.
+    pub fn temporal_after(&self) -> OverlaySpec {
+        if self.all {
+            return OverlaySpec::default();
+        }
+        OverlaySpec::from(self.max_slide() + 1)
     }
 
     /// Whether `slide` (1-based) is selected.
@@ -207,6 +279,32 @@ pub enum OverlayKind {
     /// `\invisible`, `invisibleenv`: covered on the selected slides,
     /// painted on the others.
     Invisible,
+}
+
+/// One `<action>@<spec>` entry of a specification (`\item<1-| alert@2>`,
+/// `\action<alert@2->{...}`): `beamerbaseoverlay.sty` 84-92 and 99-111
+/// wrap the material in `\begin{<action>env}<all:spec>` inside the default
+/// action's `uncoverenv`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct OverlayAction {
+    pub kind: OverlayKind,
+    pub spec: OverlaySpec,
+}
+
+impl OverlayAction {
+    /// The overlay command an action name selects, for the ones this
+    /// compiler models (`alert`, `uncover`, `only`, `visible`,
+    /// `invisible`); `None` for any other (a user-defined `\<name>env`).
+    pub fn kind(name: &str) -> Option<OverlayKind> {
+        Some(match name {
+            "alert" => OverlayKind::Alert,
+            "uncover" => OverlayKind::Cover,
+            "only" => OverlayKind::Only,
+            "visible" => OverlayKind::Visible,
+            "invisible" => OverlayKind::Invisible,
+            _ => return None,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -271,5 +369,46 @@ mod tests {
         assert_eq!(s.max_slide(), 1);
         let s = parse("2, 4");
         assert!(s.contains(2) && s.contains(4) && !s.contains(3));
+    }
+
+    /// `\item<1-| alert@2>` (the probe deck `fixtures/real-world/
+    /// beamer-polish`, frame "Actions"): the default action is `1-`, the
+    /// alert action `2`; `<2-| alert@3>` likewise; an action's `+` reads
+    /// and steps the same counter; an unmodelled action is dropped.
+    #[test]
+    fn actions_are_decoded_with_their_own_specifications() {
+        let mut pauses = 1;
+        let (s, actions) = OverlaySpec::parse_with_actions("1-| alert@2", &mut pauses);
+        assert!(s.contains(1) && s.contains(2));
+        assert_eq!(actions, vec![OverlayAction { kind: OverlayKind::Alert, spec: OverlaySpec { all: false, ranges: vec![OverlayRange::One(2)] } }]);
+        let (s, actions) = OverlaySpec::parse_with_actions("2-| alert@3", &mut pauses);
+        assert!(!s.contains(1) && s.contains(2));
+        assert_eq!(actions[0].spec.max_slide(), 3);
+        let (_, actions) = OverlaySpec::parse_with_actions("+-| alert@+", &mut pauses);
+        assert_eq!(pauses, 2, "one step for the whole specification");
+        assert_eq!(actions[0].spec, OverlaySpec { all: false, ranges: vec![OverlayRange::One(1)] });
+        let (s, actions) = OverlaySpec::parse_with_actions("only@2|uncover@3-|shout@1", &mut pauses);
+        assert!(s.all, "no default entry: every slide");
+        assert_eq!(actions.iter().map(|a| a.kind).collect::<Vec<_>>(), vec![OverlayKind::Only, OverlayKind::Cover]);
+        let (_, actions) = OverlaySpec::parse_with_actions("handout:alert@2", &mut pauses);
+        assert!(actions.is_empty(), "another mode's action");
+    }
+
+    /// `\temporal<2>{before}{during}{after}` on slides 1/2/3 (probe deck):
+    /// `before` on 1, `after` from 3; `<2,5>` is "before" on 1, 3 and 4.
+    #[test]
+    fn temporal_before_and_after() {
+        let s = parse("2");
+        let before = s.temporal_before();
+        assert!(before.contains(1) && !before.contains(2) && !before.contains(3));
+        let after = s.temporal_after();
+        assert!(!after.contains(2) && after.contains(3) && after.contains(9));
+        let s = parse("2,5");
+        let before = s.temporal_before();
+        assert_eq!(before.ranges, vec![OverlayRange::One(1), OverlayRange::Between(3, 4)]);
+        assert!(!s.temporal_after().contains(5) && s.temporal_after().contains(6));
+        let s = parse("*");
+        assert!(!s.temporal_before().contains(1) && !s.temporal_after().contains(1));
+        assert_eq!(parse("1-").temporal_before().ranges, vec![]);
     }
 }
