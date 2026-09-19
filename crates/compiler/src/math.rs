@@ -4382,6 +4382,15 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("ell", "ℓ"),
     ("hbar", "ℏ"),
     ("circ", "∘"),
+    // fontmath.ltx 276-277: `\dagger`/`\ddagger` are `\mathbin` at cmsy
+    // "79/"7A; 507-508: `\mathsection`/`\mathparagraph` are `\mathord` at
+    // "78/"7B, which `\S`/`\P` select in math mode (latex.ltx 10084-10085).
+    ("dagger", "†"),
+    ("ddagger", "‡"),
+    ("mathsection", "§"),
+    ("S", "§"),
+    ("mathparagraph", "¶"),
+    ("P", "¶"),
     ("parallel", "∥"),
     ("nmid", "∤"),
     ("nleq", "≰"),
@@ -4653,6 +4662,8 @@ fn symbol_class(glyph: &str) -> AtomClass {
         | "\u{0338}" => Rel,
         "+" | "-" | "−" | "*" | "±" | "×" | "÷" | "⋅" | "·" | "∗" | "∪" | "∩" | "∨" | "∧" | "⊕"
         | "⊗" | "⊖" | "⊘" | "⊙" | "◯" | "∖" | "∓" | "∘"
+        // fontmath.ltx 276-277: `\ddagger`/`\dagger`, `\mathbin` at cmsy "7A/"79.
+        | "‡" | "†"
         // fontmath.ltx 278-279: `\sqcap`/`\sqcup`, `\mathbin` at cmsy "75/"74.
         | "⊓" | "⊔"
         // Issue #591: `\diamond` is the kernel cmsy `\mathbin` (U+22C4),
@@ -7867,6 +7878,32 @@ mod spacing_tests {
             close(x(&b, glyph), width("a", SIZE) + 4.0);
             close(x(&b, "b"), x(&b, glyph) + width(glyph, SIZE) + 4.0);
         }
+    }
+
+    /// #441 (`\tag*{$\dagger$}`): the cmsy marks fontmath.ltx declares at
+    /// 276-277 (`\dagger`/`\ddagger`, `\mathbin`) and 507-508
+    /// (`\mathsection`/`\mathparagraph`, `\mathord`, which `\S`/`\P` select
+    /// in math mode) are known commands, spaced by their class: a Bin takes
+    /// medium space each side between operands, an Ord none. Advances are
+    /// Latin Modern Math's (0.444/0.444/0.444/0.611 em).
+    #[test]
+    fn dagger_marks_are_binary_and_section_marks_ordinary() {
+        for (command, glyph) in [("dagger", "†"), ("ddagger", "‡")] {
+            assert_eq!(command_glyph(command), Some(glyph));
+            let b = laid_out(&format!("a\\{command} b"), SIZE);
+            close(x(&b, glyph), width("a", SIZE) + 4.0);
+            close(x(&b, "b"), x(&b, glyph) + width(glyph, SIZE) + 4.0);
+            close(width(glyph, SIZE), 0.444 * SIZE);
+        }
+        for (command, glyph, em) in [("S", "§", 0.444), ("mathsection", "§", 0.444), ("P", "¶", 0.611), ("mathparagraph", "¶", 0.611)] {
+            assert_eq!(command_glyph(command), Some(glyph));
+            let b = laid_out(&format!("a\\{command} b"), SIZE);
+            close(x(&b, glyph), width("a", SIZE));
+            close(x(&b, "b"), x(&b, glyph) + em * SIZE);
+        }
+        let alone = laid_out(r"\dagger", SIZE);
+        assert_eq!(alone.items.len(), 1, "{:?}", alone.items);
+        assert_eq!(alone.items[0].text, "†");
     }
 
     /// Issue #591 (`\diamond`/`\Diamond`, follow-up to #516's `\Box`):
