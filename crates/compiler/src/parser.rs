@@ -5702,6 +5702,18 @@ impl P<'_> {
             if horizontal {
                 para.push(Inline::PagePenalty { value, span });
             } else {
+                // GH-876: a pending marker-only paragraph (`\label` whatsits
+                // are the only inlines that keep vertical mode here) ships
+                // before the penalty, exactly as `\newpage`/`\clearpage` flush
+                // first above. Otherwise it is carried past the break and
+                // joins the following text, so the marker takes effect one
+                // page late. Guarded to a non-empty `para` outside a list
+                // item: the common vertical break (empty `para`) is untouched,
+                // and `\item`'s pending marker still attaches to the item's
+                // own paragraph instead of being split off.
+                if !para.is_empty() && self.pending_item.is_none() {
+                    self.flush_paragraph(blocks, para);
+                }
                 blocks.push(Block::Penalty {
                     value,
                     fil: false,
