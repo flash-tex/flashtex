@@ -123,9 +123,9 @@ final class ProjectManifestTests: XCTestCase {
         XCTAssertEqual(WorkspaceSidebarRows.rows(model: model).map(\.id), ["main.tex", "mystyle.sty", "package:texinputs/0/shared.cls"])
         XCTAssertEqual(WorkspaceSidebarRows.rows(model: model)[1].icon, FileTypeStyle.classOrStyle.systemImage, "a .sty member keeps the class/style icon")
 
-        // Switching to it colours it as LaTeX; a .toml member as TOML.
+        // Switching to it colours it as a package (LaTeX with `@` a letter); a .toml member as TOML.
         _ = model.project.switchDocument(to: "mystyle.sty")
-        XCTAssertEqual(model.editorLanguage, .latex)
+        XCTAssertEqual(model.editorLanguage, .package)
         _ = try write("flashtex.toml", "# c\n[project]\n")
         let toml = await model.project.openDocument("flashtex.toml")
         XCTAssertEqual(toml, .opened(path: "flashtex.toml"))

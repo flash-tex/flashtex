@@ -119,6 +119,47 @@ final class ProjectPackagesState {
         !s.isEmpty && !s.hasPrefix(".") && s.count <= 100 && s.allSatisfy { $0.isLetter || $0.isNumber || "-_.+".contains($0) } && s.allSatisfy(\.isASCII)
     }
 
+    /// The packages one diagnostic says were not found (`unresolvedNames`)
+    /// that have no `<name>.sty` under `projectRoot` yet: what the Problems
+    /// row offers "Create name.sty" and "Fetch name…" for. Empty without a
+    /// root (nothing could be written), and once the file exists.
+    nonisolated static func missingPackages(for d: RuntimeV1.Diagnostic, projectRoot: URL?) -> [String] {
+        guard let root = projectRoot else { return [] }
+        return unresolvedNames(in: [d]).filter { name in
+            guard case .file(let url) = ProjectDocuments.rootedFile(name + ".sty", under: root) else { return false }
+            return !FileManager.default.fileExists(atPath: url.path)
+        }
+    }
+
+    /// "Fetch name…" on a Problems row: asks the helper about exactly these
+    /// packages — declined or not — and shows the consent sheet for what
+    /// needs it (cached ones are delivered at once). Says why when the
+    /// manifest forbids fetching for this project, or the entry is unsaved.
+    func presentFetch(_ names: [String]) {
+        guard let projectRoot = model.project.projectRoot else {
+            model.navigationNote = "Save the entry document first (⌘S): packages are resolved for a project."
+            return
+        }
+        if root != projectRoot { reset(for: projectRoot) }
+        note = nil
+        declined.subtract(names)
+        for name in names { unavailable[name] = nil }
+        if manifestFetch == "never" || manifestSource == "none" {
+            model.navigationNote = "\(ProjectManifest.fileName) says [packages] fetch = \"\(manifestFetch)\", source = \"\(manifestSource)\": nothing is fetched for this project (edit the manifest to change that)."
+            return
+        }
+        let pending = Set(offers.map(\.name))
+        let wanted = names.filter { delivered[$0] == nil && !inFlight.contains($0) }
+        guard !wanted.isEmpty else {
+            let done = names.filter { delivered[$0] != nil }
+            model.navigationNote = done.isEmpty ? "\(names.joined(separator: ", ")): already being resolved"
+                : "\(done.joined(separator: ", ")) already resolved: " + done.map { "\($0) from \(delivered[$0]!.source)" }.joined(separator: "; ")
+            return
+        }
+        if wanted.allSatisfy(pending.contains) { shown = true; return }
+        Task { await resolve(wanted.filter { !pending.contains($0) }, consent: manifestFetch == "always") }
+    }
+
     /// Called from `ShellModel.result`'s observer: resolves what the latest
     /// compile could not find and is not yet delivered, unavailable,
     /// declined or in flight. A new project root resets everything.

@@ -264,7 +264,55 @@ enum EditorDiagnostics {
                               message: diagnostic.message, recovery: diagnostic.recovery, resultStatus: result.status,
                               hasFix: mechanicalEdit(for: diagnostic) != nil))
         }
+        marks += packageHints(for: result, resultID: resultID, path: path, region: region, currentText: currentText)
         return Report(marks: marks, stale: stale, edit: region)
+    }
+
+    /// A problem inside a package or class file (`source.path` a `.sty`/
+    /// `.cls`, the compiler's diagnostic at the package line) is also marked
+    /// where the document loaded it: the compiler's secondary label
+    /// "mystyle.sty is loaded here" names the `\usepackage` span in `path`.
+    /// One mark per such span — "mystyle.sty: 2 problems — loaded here",
+    /// the worst severity of them — so the gutter, the underline, the hover
+    /// and the error lens all point at the line to look under, and stepping
+    /// (⌘⇧]) reaches it. The identity is the first diagnostic's index with
+    /// the label's span as its source, so it never collides with the mark
+    /// the package buffer draws for the same diagnostic. Rebased and refused
+    /// exactly like a primary mark; never a fix.
+    static func packageHints(for result: RuntimeV1.CompileResult, resultID: String?, path: String,
+                             region: SourceMapping.ChangedRegion?, currentText: String) -> [Mark] {
+        struct Hint { var index: Int; var source: RuntimeV1.SourceRange; var severity: RuntimeV1.Severity; var count: Int; var file: String }
+        var order: [String] = []
+        var hints: [String: Hint] = [:]
+        for (index, d) in result.diagnostics.enumerated() {
+            guard let source = d.source, source.path != path, ProjectManifest.isPackagePath(source.path), let labels = d.labels else { continue }
+            for label in labels where !label.primary && label.source.path == path {
+                let key = "\(source.path)@\(label.source.startByte)..<\(label.source.endByte)"
+                if var hint = hints[key] {
+                    hint.count += 1
+                    if d.severity == .error { hint.severity = .error }
+                    hints[key] = hint
+                } else {
+                    order.append(key)
+                    hints[key] = Hint(index: index, source: label.source, severity: d.severity, count: 1,
+                                      file: ProjectManifest.packageDisplayName(source.path))
+                }
+            }
+        }
+        var out: [Mark] = []
+        for key in order {
+            guard let hint = hints[key] else { continue }
+            var start = hint.source.startByte, end = hint.source.endByte
+            if let region {
+                guard case .rebased(let s, let e) = SourceMapping.rebase(start: start, end: end, across: region) else { continue }
+                start = s; end = e
+            }
+            guard let ns = currentText.clusterAlignedNSRange(utf8Start: start, utf8End: end) else { continue }
+            let message = "\(hint.file): \(hint.count) problem\(hint.count == 1 ? "" : "s") — loaded here"
+            out.append(Mark(identity: Identity(resultID: resultID, index: hint.index, source: hint.source), nsRange: ns,
+                            severity: hint.severity, message: message, recovery: nil, resultStatus: result.status, hasFix: false))
+        }
+        return out
     }
 
     // MARK: keyboard navigation (document order, wrapping, "n of m")

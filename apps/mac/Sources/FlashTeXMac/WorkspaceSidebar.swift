@@ -322,6 +322,7 @@ struct ProjectSection: View {
         case .buffer: parts.append("buffer")
         case .helper: parts.append("via the helper's durable ledger")
         case .disk: parts.append("read from disk")
+        case .virtual(let source): parts.append("read-only, from \(source)")
         }
         if let r = doc.durableRevision { parts.append("durable revision \(r)") }
         if doc.isDirty { parts.append("edited since last save") }

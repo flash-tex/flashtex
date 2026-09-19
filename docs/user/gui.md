@@ -317,6 +317,66 @@ without leaving the app, or open an existing `.tex` file.
 - **Editor font size**: ⌘⌥= / ⌘⌥- / ⌘⌥0 (8–36 pt, default 13), or pinch over
   the editor.
 
+### Packages and classes
+
+The project's own `.sty`/`.cls` files (next to the entry document, under a
+`texinputs` directory of `flashtex.toml`, or resolved into the package
+cache — see [project-manifest.md](project-manifest.md)) are part of the
+editor's picture of the project, not just of the compile:
+
+- **Package editing mode**: a `.sty`, `.cls`, `.def` or `.clo` buffer is
+  lexed with `@` as a letter, so `\@ifnextchar` and `\@tempdima` are one
+  command token for colouring, hover, ⌘-click and completion — as they are
+  while LaTeX reads the file. In any other buffer the same holds between
+  `\makeatletter` and `\makeatother`; outside it `\@` stays the control
+  symbol it is in a document. The ltclass vocabulary (`\ProvidesPackage`,
+  `\NeedsTeXFormat`, `\DeclareOption`, `\ProcessOptions`, `\RequirePackage`,
+  `\LoadClass`, `\PassOptionsToPackage`, `\CurrentOption`,
+  `\@ifpackageloaded`, `\AtEndOfPackage`, `\PackageWarning`/`\PackageError`,
+  `\ClassWarning`, `\newif`, `\def`/`\let`/`\edef`, `\csname`…`\endcsname`,
+  `\expandafter`, `\@namedef`/`\@nameuse`, the scratch registers, …) has
+  one-line hover documentation everywhere and leads the completion list
+  inside a package buffer (or inside `\makeatletter`), each entry with its
+  argument snippet; a document never sees those rows above its own
+  vocabulary.
+- **Completing package and class names**: `\RequirePackage{` and
+  `\PassOptionsToPackage{…}{` complete like `\usepackage{`, `\LoadClass{`
+  like `\documentclass{`. Both offer the project's own files first
+  ("package in this project · mystyle.sty"), then the common CTAN names or
+  the standard classes.
+- **Macros from packages are first-class**: commands and environments a
+  project package declares (`\newcommand`, `\def`, `\DeclareRobustCommand`,
+  `\NewDocumentCommand`, `\newif` switches, `\newenvironment`,
+  `\newtheorem`) complete in every document with the detail "declared in
+  mystyle.sty" and their argument shape as the snippet (`\emphx{|}` from
+  `\newcommand{\emphx}[1]`; the buffer's own macros get the same). Hovering
+  such a macro peeks its definition line and file. **Go to definition**
+  (⌘-click, ⌃⌘J) on it opens the package at the definition: a `.sty` next
+  to the entry opens as an ordinary member; a file that lives outside the
+  project root (a `texinputs` directory, a resolved package) opens
+  **read-only** with a strip above the editor saying where it really comes
+  from — it is compiled from there and never saved, renamed or moved.
+- **Problems inside a package** are listed with the package path and line;
+  *Go to source* opens the package file (read-only when it is not a project
+  file) at the span. The `\usepackage` line that loaded it gets a secondary
+  mark — "mystyle.sty: 2 problems — loaded here" — in the gutter, the
+  underline, the hover and the error lens, so the line to look under is
+  visible from the document.
+- **Missing-package quick fixes**: the row for `packages X are recognised
+  but not implemented` (or `no project file found: looked for X.sty`)
+  offers **Create X.sty** — writes the package template (`\NeedsTeXFormat`,
+  `\ProvidesPackage{X}[date v1.0 …]`, `\DeclareOption*`,
+  `\ProcessOptions\relax`) next to the entry document and opens it; the next
+  compile loads it — and **Fetch X…**, which opens the package consent
+  sheet for that name (nothing is fetched until you agree there; see
+  *Fetch Missing Packages…*). Several names fold into one menu. The
+  compiler's own fix (remove the `\usepackage`) stays alongside.
+- **New File…** (⌘N) accepts a `.sty` or `.cls` name and writes the same
+  template (`\ProvidesClass` + `\LoadClass{article}` for a class); a new
+  package is referenced from the caret with `\usepackage{name}` when the
+  insert toggle is on, a class with nothing (the document's
+  `\documentclass` names it).
+
 ## Compiling
 
 FlashTeX compiles through a **producer** process that ships inside the app.

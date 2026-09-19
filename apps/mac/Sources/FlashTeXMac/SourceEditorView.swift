@@ -41,6 +41,19 @@ struct SourceEditorView: NSViewRepresentable {
     var projectIndexMetadata: Completion.Metadata?
     /// Project document paths for `\input{`/`\include{` completion (Completion.swift).
     var projectFiles: [String] = []
+    /// The project's `.sty`/`.cls` paths for `\usepackage{`/`\documentclass{`
+    /// completion (`ShellModel.projectPackageFiles`); read when the list is
+    /// requested, not per keystroke.
+    var projectPackageFiles: () -> [String] = { [] }
+    /// The project's package and class files with their text
+    /// (`ShellModel.packageDocumentsForEditor`): their macros complete as
+    /// "declared in mystyle.sty". Read when the list is requested.
+    var packageDocuments: () -> [Completion.SourceDocument] = { [] }
+    /// False for a read-only buffer (a package input shown from a virtual
+    /// `texinputs/<i>/…` or `packages/<name>/…` path, ProjectDocuments.swift
+    /// `Origin.virtual`): the text view refuses typing, and the pane shows
+    /// where the file came from.
+    var editable = true
     /// The rooted project directory whose image files `\includegraphics{`
     /// completes; read when the list is requested, not per keystroke.
     var graphicsRoot: () -> URL? = { nil }
@@ -168,10 +181,17 @@ struct SourceEditorView: NSViewRepresentable {
         }
         if let completing = tv as? CompletingTextView, completing.projectFiles != projectFiles { completing.projectFiles = projectFiles }
         (tv as? CompletingTextView)?.graphicsRoot = graphicsRoot
+        (tv as? CompletingTextView)?.projectPackageFiles = projectPackageFiles // `\usepackage{` offers the project's own .sty files first
+        (tv as? CompletingTextView)?.packageDocuments = packageDocuments // their macros complete as "declared in mystyle.sty"
+        if tv.isEditable != editable { tv.isEditable = editable }
         // `\setmainfont{` lists the families the engine's own index finds (Completion.swift `InstalledFonts`).
         (tv as? CompletingTextView)?.renderPipeline = { ShellModel.locateRenderPipeline() }
         // The other open documents' macros complete as declared (Completion.declaredCommands); read when the list is requested.
-        (tv as? CompletingTextView)?.otherDocuments = { [hoverContext] in hoverContext().otherDocuments.map(\.text) }
+        // An open .sty/.cls member is a package document instead, so its
+        // macros read "declared in mystyle.sty" rather than "in an open document".
+        (tv as? CompletingTextView)?.otherDocuments = { [hoverContext] in
+            hoverContext().otherDocuments.filter { !ProjectManifest.isPackagePath($0.path) }.map(\.text)
+        }
         (tv as? CompletingTextView)?.bibliographySources = bibliographySources // `\cite{` from the project's .bib files (BibScanner.swift)
         (tv as? CompletingTextView)?.projectDocumentClass = projectDocumentClass // class-scoped commands in an included file (Completion.swift)
         if let m = projectIndexMetadata { _ = (tv as? CompletingTextView)?.accept(projectIndex: m) }
@@ -909,6 +929,19 @@ struct SourceEditorView: NSViewRepresentable {
             return Completion.isMathMode(in: text, caretUTF16: caret, highlighter: syntax.inSync(with: text) ? syntax.highlighter : nil)
         }
 
+        /// Whether the author is writing a package at `caret` — a
+        /// `.sty`/`.cls` buffer (`Language.package`) or a caret inside
+        /// `\makeatletter` — and whether `@` is a control-word letter there,
+        /// from the in-sync syntax model (one line's lexing). Out of sync:
+        /// the language alone decides, so a package buffer never loses its
+        /// vocabulary to a pending re-lex.
+        func packageContext(at caret: Int, in tv: NSTextView) -> (packageMode: Bool, atLetter: Bool) {
+            let package = syntax.language == .package
+            guard let text = tv.textStorage?.string as NSString?, syntax.inSync(with: text) else { return (package, package) }
+            let atLetter = syntax.highlighter.atLetter(at: caret, text: text)
+            return (package || atLetter, atLetter)
+        }
+
         func installIntelligence(on scroll: NSScrollView, lineNumbers: Bool) {
             guard let tv = scroll.documentView as? NSTextView else { return }
             hover.install(on: tv)
@@ -922,6 +955,12 @@ struct SourceEditorView: NSViewRepresentable {
                 completing.mathModeAtCaret = { [weak self] index in
                     guard let self, let tv = self.textView else { return nil }
                     return self.mathMode(at: index, in: tv)
+                }
+                // Package authoring: the kernel vocabulary leads and `@` joins
+                // the token (Completion.swift), from the same model.
+                completing.packageContextAtCaret = { [weak self] index in
+                    guard let self, let tv = self.textView else { return (false, false) }
+                    return self.packageContext(at: index, in: tv)
                 }
                 completing.backgroundDecorator = { [weak self] rect in self?.drawCurrentLine(in: rect) }
                 // GH74: a completion snippet's placeholder closer (`\section{}`)

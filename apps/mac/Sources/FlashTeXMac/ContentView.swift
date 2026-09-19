@@ -151,6 +151,10 @@ struct EditorPane: View {
             // No line under the strip: tab strip and editor share one
             // surface (Islands); the active tab's underline marks the edge.
             DocumentTabBar()
+            // A package input opened from a virtual path (a `texinputs`
+            // directory outside the root, a resolved package) is read-only:
+            // the strip says where it really lives (ShellModel+PackageNavigation.swift).
+            if let note = model.project.readOnlyNote(for: model.activePath) { ReadOnlyBanner(note: note) }
             SourceEditorView(
                 text: Binding(get: { model.activeText }, set: { model.updateActiveText($0) }),
                 selection: model.selection,
@@ -160,6 +164,9 @@ struct EditorPane: View {
                 editorRevision: model.editorRevision,
                 projectIndexMetadata: model.completionMetadata,
                 projectFiles: model.documents.map(\.path), // `\input{` completion (Completion.swift)
+                projectPackageFiles: { model.projectPackageFiles }, // `\usepackage{` offers the project's .sty files first (ShellModel+EditorHover.swift)
+                packageDocuments: { model.packageDocumentsForEditor() }, // macros of the project's .sty/.cls files complete as declared there (ShellModel+PackageNavigation.swift)
+                editable: model.project.readOnlyNote(for: model.activePath) == nil, // a package input from a virtual path is shown, never edited
                 graphicsRoot: { model.project.projectRoot }, // `\includegraphics{` completion walks the saved project's directory
                 onCaretChange: { model.caretUTF16 = $0 },
                 onSelectionChange: { if model.caretLengthUTF16 != $0.length { model.caretLengthUTF16 = $0.length } }, // every keystroke reports length 0; an equal write still invalidates its readers
