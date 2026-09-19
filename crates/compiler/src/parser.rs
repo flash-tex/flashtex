@@ -2674,6 +2674,23 @@ fn letter_parskip_pt(class_size_pt: Option<f64>) -> f64 {
     }
 }
 
+/// parskip.sty's no-option `\parskip` (`.5\baselineskip plus 2pt`), in
+/// points. The three values are what pdflatex prints for `\the\parskip`
+/// (TeX Live 2026, parskip v2.0h: 0.5 x 12/13.6/14.5pt `\baselineskip` at
+/// 10/11/12pt) rather than `0.5 * baselineskip`, matching this file's
+/// `letter_parskip_pt` convention. An unrecognised size keeps the standard
+/// classes' own 10pt default. The `plus 2pt` stretch is not modelled:
+/// `parskip_pt` is rigid, so only the natural length is stored. The
+/// package's `\parindent` (0pt) needs no state: this engine never indents
+/// paragraphs, so a zero `\parindent` is already exact.
+fn parskip_package_default_pt(class_size_pt: Option<f64>) -> f64 {
+    match class_size_pt {
+        Some(size) if size == 11.0 => 6.8,
+        Some(size) if size == 12.0 => 7.25,
+        _ => 6.0,
+    }
+}
+
 /// `letter.cls` line 236: `\medskipamount=\parskip`, which `\closing` uses
 /// six of between the closing line and the signature.
 fn letter_signature_gap_pt(class_size_pt: Option<f64>) -> f64 {
@@ -7610,6 +7627,17 @@ impl P<'_> {
         }
         if packages.iter().any(|package| package == "lmodern") {
             self.latin_modern = true;
+        }
+        if packages.iter().any(|package| package == "parskip") {
+            // parskip.sty with no options assigns `\parskip` (`.5\baselineskip
+            // plus 2pt`) and `\parindent` (0pt) at load time. This writes the
+            // same `parskip_pt` field a manual `\setlength{\parskip}` writes,
+            // so preamble order decides: a later `\setlength` still wins, and
+            // loading the package after one restores the default, exactly as
+            // in real LaTeX. Package options (`skip=`, `indent=`, `parfill=`,
+            // `tocskip=`) are not honoured; they keep the "recognised but not
+            // implemented" warning `package_matches_layout` raises below.
+            self.parskip_pt = Some(parskip_package_default_pt(self.class_size_pt));
         }
         if packages.iter().any(|package| package == "fontenc") {
             if let Some(encoding) = text_builtins::fontenc_encoding(&options) {
@@ -14884,6 +14912,12 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // `\widthof`/`\heightof`/`\depthof`/`\totalheightof` are not parsed:
         // they keep the length argument's own diagnostic where they are used.
         "calc" => options.is_empty(),
+        // parskip.sty's no-option defaults (`\parindent` 0pt, `\parskip`
+        // `.5\baselineskip plus 2pt`, whose natural length `use_package`
+        // stores in `parskip_pt`) are implemented above, so loading the
+        // package is silent; its key=value options (`skip=`, `indent=`,
+        // `parfill=`, `tocskip=`) keep the warning below.
+        "parskip" => options.is_empty(),
         _ => false,
     }
 }

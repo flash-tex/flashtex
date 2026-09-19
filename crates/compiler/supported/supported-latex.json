@@ -1134,7 +1134,8 @@
     {"name": "etoolbox", "silent_options": "", "description": "toggle booleans: \\newtoggle/\\providetoggle declare a false toggle, \\toggletrue/\\togglefalse set it, \\iftoggle{name}{true}{false} selects a branch at expansion time; a duplicate \\newtoggle and any use of an undefined toggle are diagnosed where they are used and leave existing state alone. The rest of etoolbox (patching, hooks, list processing) is diagnosed where it is used"},
     {"name": "iftex", "silent_options": "", "description": "\\ifxetex and \\ifluatex (with the \\ifXeTeX/\\ifLuaTeX aliases) are false, as iftex.sty sets them under pdflatex, so engine-guarded blocks skip"},
     {"name": "ifxetex", "silent_options": "", "description": "legacy shim for iftex's \\ifxetex switch, false here as under pdflatex"},
-    {"name": "ifluatex", "silent_options": "", "description": "legacy shim for iftex's \\ifluatex switch, false here as under pdflatex"}
+    {"name": "ifluatex", "silent_options": "", "description": "legacy shim for iftex's \\ifluatex switch, false here as under pdflatex"},
+    {"name": "parskip", "silent_options": "", "description": "\\parindent 0pt and \\parskip of half the class \\baselineskip (6.0pt at 10pt, 6.8pt at 11pt, 7.25pt at 12pt; the plus 2pt stretch is not modelled); package options are diagnosed"}
   ],
   "coverage": {
     "sources": [

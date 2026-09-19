@@ -1437,6 +1437,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "",
         "legacy shim for iftex's \\ifluatex switch, false here as under pdflatex",
     ),
+    (
+        "parskip",
+        "",
+        "\\parindent 0pt and \\parskip of half the class \\baselineskip (6.0pt at 10pt, 6.8pt at 11pt, 7.25pt at 12pt; the plus 2pt stretch is not modelled); package options are diagnosed",
+    ),
 ];
 
 /// The vendored coverage denominator.
