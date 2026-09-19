@@ -330,10 +330,6 @@ fn letter_probe(name: &str, arguments: &str) -> Option<String> {
 /// the letter.cls commands above they are exercised under their own class.
 const BEAMER_DOCUMENT: &str = "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}{Probe}\n#\n\\end{frame}\n\\end{document}\n";
 
-/// beamer's overlay environments (`<overlay>` after `\begin`), probed
-/// inside a frame like the class's commands.
-const BEAMER_ENVIRONMENTS: &[&str] = &["uncoverenv", "onlyenv", "visibleenv", "invisibleenv", "alertenv", "actionenv"];
-
 /// Where a beamer command has to sit to be exercised for real: inside a
 /// frame of a beamer deck. `None` for anything that is not beamer-gated.
 fn beamer_probe(name: &str, arguments: &str) -> Option<String> {
@@ -475,7 +471,7 @@ fn every_inventory_entry_compiles_without_an_unsupported_diagnostic() {
             ),
             // beamer's overlay environments exist only inside a frame of a
             // beamer deck, like the class's commands (`beamer_probe`).
-            Mode::Text if BEAMER_ENVIRONMENTS.contains(&e.name) => (
+            Mode::Text if supported::BEAMER_OVERLAY_ENVIRONMENTS.contains(&e.name) => (
                 BEAMER_DOCUMENT.replace('#', &format!("\\begin{{{0}}}<2>a\\end{{{0}}}", e.name)),
                 format!("environment '{}' is not implemented", e.name),
             ),
@@ -706,6 +702,52 @@ fn offer_rule_hides_scoped_commands_only_under_another_class() {
     assert!(opening.offered_in_class(Some("letter")));
 }
 
+/// Environments scope the same way, on the same probes: `letter` is
+/// letter.cls's, the blocks, columns and overlay environments are beamer's,
+/// and the ones that merely behave differently under beamer (`frame`,
+/// `figure`, `table`) stay universal. Same offer rule as the commands.
+#[test]
+fn environment_class_scope_matches_the_parser_gate() {
+    let inventory = supported::inventory();
+    let scoped: BTreeSet<String> = inventory
+        .environments
+        .iter()
+        .filter(|e| e.requires_class.is_some())
+        .map(|e| e.name.to_string())
+        .collect();
+    let listed: BTreeSet<String> = ["letter"]
+        .iter()
+        .chain(supported::BEAMER_CLASS_ENVIRONMENTS)
+        .chain(supported::BEAMER_OVERLAY_ENVIRONMENTS)
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(scoped, listed, "scope must be exactly the letter and beamer gates");
+    let by_name = |name: &str| {
+        inventory
+            .environments
+            .iter()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("environment {name} is not in the inventory"))
+    };
+    assert_eq!(by_name("letter").requires_class, Some("letter"));
+    for name in supported::BEAMER_CLASS_ENVIRONMENTS
+        .iter()
+        .chain(supported::BEAMER_OVERLAY_ENVIRONMENTS)
+    {
+        assert_eq!(by_name(name).requires_class, Some("beamer"), "{name} is gated on the beamer class");
+    }
+    for name in ["frame", "figure", "table", "itemize", "equation"] {
+        assert_eq!(by_name(name).requires_class, None, "{name} is universal");
+    }
+    let (itemize, invisibleenv) = (by_name("itemize"), by_name("invisibleenv"));
+    for class in [None, Some("article"), Some("beamer")] {
+        assert!(itemize.offered_in_class(class), "itemize is universal: offered under {class:?}");
+    }
+    assert!(invisibleenv.offered_in_class(None), "unknown class gates nothing");
+    assert!(!invisibleenv.offered_in_class(Some("article")));
+    assert!(invisibleenv.offered_in_class(Some("beamer")));
+}
+
 /// The `requires_class` field reaches `--supported json`, the Mac completion
 /// vocabulary's data source, without moving anything else: the schema marker
 /// stays `flashtex-supported-latex/1` (the sync script greps for it and the
@@ -745,6 +787,33 @@ fn requires_class_is_emitted_in_supported_json() {
             None => assert!(
                 entry.get("requires_class").is_none(),
                 "\\{name} is universal and must not gain the key"
+            ),
+        }
+    }
+    let environments = parsed
+        .get("environments")
+        .and_then(|v| v.as_arr())
+        .expect("environments array");
+    assert_eq!(environments.len(), inventory.environments.len());
+    for entry in environments {
+        let name = entry
+            .get("name")
+            .and_then(|v| v.as_str())
+            .expect("environment name");
+        let model = inventory
+            .environments
+            .iter()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("JSON-only environment {name}"));
+        match model.requires_class {
+            Some(class) => assert_eq!(
+                entry.get("requires_class").and_then(|v| v.as_str()),
+                Some(class),
+                "environment {name} must carry its class in JSON"
+            ),
+            None => assert!(
+                entry.get("requires_class").is_none(),
+                "environment {name} is universal and must not gain the key"
             ),
         }
     }

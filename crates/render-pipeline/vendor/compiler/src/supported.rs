@@ -117,6 +117,23 @@ pub struct Environment {
     pub name: &'static str,
     pub mode: Mode,
     pub description: String,
+    /// The one document class that defines the environment (`letter` for
+    /// letter.cls's `letter`, `beamer` for its blocks, columns and overlay
+    /// environments), or `None` for every class. Emitted as `requires_class`
+    /// in `--supported json` and read by the Mac completion the same way
+    /// [`Command::requires_class`] is: hidden only under a different class.
+    pub requires_class: Option<&'static str>,
+}
+
+impl Environment {
+    /// [`Command::offered_in_class`] for environments: the same rule.
+    pub fn offered_in_class(&self, class: Option<&str>) -> bool {
+        match (self.requires_class, class) {
+            (None, _) => true,
+            (Some(_), None) => true,
+            (Some(required), Some(class)) => required == class,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -215,6 +232,26 @@ pub const BEAMER_CLASS_COMMANDS: &[&str] = &[
 /// commands above. `frame`, `figure` and `table` exist in every class and
 /// only *behave* differently under beamer, so they are not here.
 pub const BEAMER_CLASS_ENVIRONMENTS: &[&str] = &["block", "alertblock", "exampleblock", "columns", "column"];
+
+/// beamer's overlay environments (`beamerbaseoverlay.sty`: `\begin{onlyenv}<2>`
+/// …), parsed only inside a frame of a beamer deck; outside beamer they are
+/// unknown environments like the blocks above.
+pub const BEAMER_OVERLAY_ENVIRONMENTS: &[&str] =
+    &["uncoverenv", "onlyenv", "visibleenv", "invisibleenv", "alertenv", "actionenv"];
+
+/// [`Environment::requires_class`] for a text environment: letter.cls's
+/// `letter`, beamer's blocks, columns and overlay environments; `None`
+/// (universal) for the rest — `frame`, `figure` and `table` exist in every
+/// class and only behave differently under beamer.
+fn environment_requires_class(name: &str) -> Option<&'static str> {
+    if name == "letter" {
+        Some("letter")
+    } else if BEAMER_CLASS_ENVIRONMENTS.contains(&name) || BEAMER_OVERLAY_ENVIRONMENTS.contains(&name) {
+        Some("beamer")
+    } else {
+        None
+    }
+}
 
 /// The class in [`Command::requires_class`] terms, or `None` for universal.
 fn requires_class(name: &str) -> Option<&'static str> {
@@ -1536,6 +1573,7 @@ pub fn inventory() -> Inventory {
             name,
             mode: Mode::Text,
             description: description.to_string(),
+            requires_class: environment_requires_class(name),
         })
         .collect();
     for &(name, align, left, right) in math::GRID_ENVIRONMENTS {
@@ -1554,6 +1592,7 @@ pub fn inventory() -> Inventory {
             name,
             mode: Mode::Math,
             description: format!("math grid, {align} cells{fences}"),
+            requires_class: None,
         });
     }
 
@@ -1717,12 +1756,18 @@ pub fn render_json(inventory: &Inventory) -> String {
         .environments
         .iter()
         .map(|e| {
-            format!(
-                "    {{\"name\": {}, \"mode\": \"{}\", \"description\": {}}}",
+            let mut line = format!(
+                "    {{\"name\": {}, \"mode\": \"{}\", \"description\": {}",
                 json_str(e.name),
                 e.mode.as_str(),
                 json_str(&e.description)
-            )
+            );
+            // Same optional key as the commands above; the schema stays `/1`.
+            if let Some(class) = e.requires_class {
+                line.push_str(&format!(", \"requires_class\": {}", json_str(class)));
+            }
+            line.push('}');
+            line
         })
         .collect();
     out.push_str(&lines.join(",\n"));

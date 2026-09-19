@@ -205,6 +205,13 @@ enum Completion {
                 let name: String
                 let mode: Mode
                 let description: String
+                /// The inventory's `requires_class`, as on `Command`: beamer's
+                /// blocks, columns and overlay environments, letter.cls's `letter`.
+                var requiresClass: String? = nil
+                enum CodingKeys: String, CodingKey {
+                    case name, mode, description
+                    case requiresClass = "requires_class"
+                }
             }
             let schema: String
             let generator: String
@@ -299,6 +306,20 @@ enum Completion {
 
         /// Text/display environments and the math grids the compiler accepts, in file order.
         static let environments: [String] = inventory.environments.map(\.name)
+
+        /// The class each class-scoped environment needs (`requires_class`);
+        /// a universal environment has no entry.
+        static let environmentClasses: [String: String] = Dictionary(inventory.environments.compactMap { e in
+            e.requiresClass.map { (e.name, $0) }
+        }, uniquingKeysWith: { a, _ in a })
+
+        /// `Entry.offered(inClass:)` for an environment name: hidden only
+        /// where the class is known and different (`invisibleenv` is not
+        /// offered in an article; unknown gates nothing).
+        static func environmentOffered(_ name: String, inClass documentClass: String?) -> Bool {
+            guard let required = environmentClasses[name], let documentClass else { return true }
+            return required == documentClass
+        }
 
         /// Each environment's inventory `description` (the popup's documentation line when no hand-written one exists).
         static let environmentDescriptions: [String: String] = Dictionary(inventory.environments.map { ($0.name, $0.description) },
@@ -676,7 +697,8 @@ enum Completion {
             switch context {
             case .beginEnvironment, .endEnvironment:
                 out = environmentSuggestions(prefix: prefix, tokenStart: token.start, text: text,
-                                             closing: context == .endEnvironment, metadata: metadata, recent: recentEnvironments)
+                                             closing: context == .endEnvironment, metadata: metadata, recent: recentEnvironments,
+                                             documentClass: documentClass(in: text) ?? projectClass)
             case .reference:
                 out = referenceSuggestions(prefix: prefix, text: text, metadata: metadata)
             case .citation:
@@ -903,19 +925,27 @@ enum Completion {
         return out.sorted()
     }
 
+    /// `documentClass` is the class the gate on class-scoped environments
+    /// reads — the text's own `\documentclass`, else the project root's, else
+    /// nil (`commandSuggestions` resolves commands the same way): beamer's
+    /// `invisibleenv` is not offered in an article, and an unknown class
+    /// gates nothing. The escape hatches match the commands': the name typed
+    /// out in full, and an environment the document already opens or
+    /// declares, are never hidden.
     private static func environmentSuggestions(prefix: String, tokenStart: Int, text: String, closing: Bool,
-                                               metadata: Metadata?, recent: [String]) -> [Suggestion] {
+                                               metadata: Metadata?, recent: [String], documentClass: String?) -> [Suggestion] {
         var names: [String] = []
         if closing {
             names += openEnvironments(in: text, beforeByte: tokenStart).reversed().map(\.name)
         }
         let declared = declaredEnvironments(in: text)
-        let offered = Set(knownEnvironments + declared)
+        let known = knownEnvironments.filter { $0 == prefix || Vocabulary.environmentOffered($0, inClass: documentClass) }
+        let offered = Set(known + declared)
         // Recently accepted names first (the environments this author keeps
         // opening), then the compiler's table, the document's declarations and
         // the names it already uses.
         names += recent.filter { offered.contains($0) }
-        names += knownEnvironments
+        names += known
         names += declared
         names += documentEnvironments(in: text)
         var seen = Set<String>()

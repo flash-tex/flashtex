@@ -49,9 +49,10 @@ final class SnippetTests: XCTestCase {
         let s = Completion.suggestions(in: "\\sbs", caretUTF16: 4, result: nil)
         XCTAssertEqual(labels(s).first, "\\subsection{...}")
         XCTAssertTrue(s.allSatisfy { Completion.matchRank($0.insertText.dropFirst().description, prefix: "sbs") == 2 })
-        let se = Completion.suggestions(in: "x \\se", caretUTF16: 5, result: nil)
+        let se = Completion.suggestions(in: "x \\se", caretUTF16: 5, result: nil, projectClass: "article")
         // Computed from the live vocabulary (not a hand-copied snapshot) so this
-        // tracks the compiler's inventory as it grows.
+        // tracks the compiler's inventory as it grows; an article project, as
+        // the helper assumes (beamer's `\setbeamer…` entries are gated out).
         XCTAssertEqual(labels(se), CompletionTestVocabulary.labels(forPrefix: "se"), "prefix matches only, in table order")
         // The rule itself, isolated from the compiler's vocabulary through a
         // synthetic `supported:` list injected via the seam on
