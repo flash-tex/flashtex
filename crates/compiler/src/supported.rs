@@ -1280,6 +1280,10 @@ pub(crate) const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
         "actionenv",
         "beamer <overlay> environment: with a plain spec, uncoverenv; needs \\documentclass{beamer}",
     ),
+    (
+        "tcolorbox",
+        "tcolorbox with colback/colframe only, sized to its content like \\fcolorbox (0.5mm rule, 1mm padding, black!5!white fill, black!75!white frame); other keys warn and are ignored, corners stay square, no title, one-line bodies only",
+    ),
     ("center", "centred paragraphs"),
     ("flushleft", "left-aligned paragraphs"),
     ("flushright", "right-aligned paragraphs"),
@@ -1475,6 +1479,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "titlesec",
         "",
         "\\titleformat{\\section} headings take the format's face and size (unnumbered with an empty label) with the \\titlerule after-code rule; other levels, printed labels, before-code and shapes beyond the implemented subset are diagnosed where they are used",
+    ),
+    (
+        "tcolorbox",
+        "",
+        "the tcolorbox environment with colback/colframe only (see the tcolorbox environment); every other key and every library option is diagnosed",
     ),
     (
         "xspace",
