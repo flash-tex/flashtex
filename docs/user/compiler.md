@@ -146,10 +146,13 @@ and fetch time (`--json`: `flashtex-packages/1`). `flashtex packages fetch
 governing manifest names (the one for the entry or directory given, else
 the current directory's; CTAN without one), honouring its `pin` — the
 command itself is the consent, so `fetch = "ask"`/`"never"` do not apply,
-`source = "none"` still does; a package CTAN does not have, or that ships
-only `.dtx`/`.ins` (needs docstrip), exits 1 with the reason. `flashtex
-packages clear [<name>]` removes one package (every version) or the whole
-cache.
+`source = "none"` still does; a package that ships `.ins`/`.dtx` sources is
+unpacked with FlashTeX's docstrip and each generated file is printed with
+the batch file and sources it came from (docstrip's notes follow on
+stderr, the first five; all are in the cache's `manifest.json`); a package
+CTAN does not have, or whose sources yield no `.sty`/`.cls`/… (needs
+docstrip), exits 1 with the reason. `flashtex packages clear [<name>]`
+removes one package (every version) or the whole cache.
 
 ### `supported`
 

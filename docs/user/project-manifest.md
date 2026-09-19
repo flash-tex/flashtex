@@ -103,11 +103,17 @@ is read from there. For everything else, FlashTeX looks, in order:
 Resolved files reach the engine as documents at `packages/<name>/<file>`,
 after the entry's closure and the `texinputs` files, so a project file of
 the same name always wins. A package that ships only `.dtx`/`.ins` sources
-(`lipsum`, for instance) is reported as *needs docstrip*: FlashTeX does not
-run the installer, because nothing fetched is ever executed outside the
-typesetter; run `tex name.ins` yourself and put the `.sty` in the project.
-Offline, everything cached or in a library keeps working. `flashtex
-packages list|fetch <name>|clear` inspects, fills and empties the cache.
+(`lipsum`, `microtype`, `siunitx` — most of CTAN) has them fetched too and
+unpacked with FlashTeX's own docstrip (an interpreter of the `.ins`
+language, not a TeX run, so nothing fetched is executed); the generated
+`.sty`/`.cls`/`.def`/`.cfg` are what gets cached, each marked with the
+batch file and sources it came from, and `flashtex packages fetch` prints
+them. A package whose `.dtx` installs itself without a `.ins`, or whose
+batch file needs more TeX than docstrip's commands, is reported as *needs
+docstrip* with the reason; run `tex name.ins` yourself and put the `.sty`
+in the project. Offline, everything cached or in a library keeps working.
+`flashtex packages list|fetch <name>|clear` inspects, fills and empties
+the cache.
 
 ## What each tool does with it
 

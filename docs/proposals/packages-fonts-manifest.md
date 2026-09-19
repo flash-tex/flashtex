@@ -160,10 +160,14 @@ pin = { siunitx = "3.3.24", tikz = "3.1.10" }
 
 **Status (2026-09-19): shipped on `lane/resolver`** — `crates/package-resolver`
 (libraries → cache → source; `ask` describes, `resolve_with_consent`
-fetches; CTAN via the JSON API record + the mirror listing; `.dtx`-only is
-`NotAvailable("needs docstrip")`, docstrip itself is not implemented; a
-registry URL is the same layout with a content-hash version; git URLs are
-out of scope), the CLI (`--fetch`, `--write-pins`, `packages
+fetches; CTAN via the JSON API record + the mirror listing; `.ins`/`.dtx`
+packages are fetched with their sources and unpacked with
+`crates/docstrip` — landed on `lane/docstrip`, byte-identical to TeX Live
+for lipsum, booktabs, siunitx, float, microtype, xcolor, hyperref,
+fontspec, amsmath, graphics, tools and base, 4647 identical generated
+files across the whole of TeX Live's `source/latex` — a `.dtx` without
+a `.ins` is `NotAvailable("needs docstrip …")`; a registry URL is the
+same layout with a content-hash version; git URLs are out of scope), the CLI (`--fetch`, `--write-pins`, `packages
 list|fetch|clear`; nothing runs without a manifest or `--fetch`), the
 project-files helper (`resolve_packages`, `set_packages`) and the Mac app
 (one consent sheet per project, Fetch / Not Now / Never, *Remember* writes

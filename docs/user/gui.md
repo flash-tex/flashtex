@@ -156,8 +156,10 @@ without leaving the app, or open an existing `.tex` file.
   project — and appear under a dimmed *Packages* group in the Project tree
   with their source in the tooltip; they cannot be opened as project files.
   *File › Fetch Missing Packages…* asks again about anything declined. A
-  package that ships only `.dtx`/`.ins` sources is reported as needing
-  docstrip rather than fetched. See [the project manifest](project-manifest.md#packages).
+  package that ships only `.dtx`/`.ins` sources is unpacked with FlashTeX's
+  docstrip after the fetch (the consent names the sources); one whose
+  sources cannot be unpacked is reported as needing docstrip. See
+  [the project manifest](project-manifest.md#packages).
 - **Saving** (⌘S) is compare-and-replace: if the file changed on disk since
   it was read, you get *File › Resolve On-Disk Conflict…* with **Overwrite /
   Reload / Keep Editing** instead of a silent overwrite. FlashTeX also watches
