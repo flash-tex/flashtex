@@ -2834,6 +2834,12 @@ pub fn parse_project_with(
         path: entry_path,
         text: "",
     });
+    // Non-LaTeX2e recognition (issue #907): identified from the raw sources
+    // before expansion consumes `\input`, so the parser can name the format
+    // once and suppress the symptom flood below. `None` for every LaTeX2e
+    // project and every ordinary fragment — the common case costs one cheap
+    // tokenize pass and changes nothing.
+    let legacy_format = crate::legacy_format::detect_legacy_format(documents, entry);
     let mut expanded = if documents.is_empty() {
         expansion::Expansion {
             tokens: Rc::new(Vec::new()),
@@ -3014,6 +3020,15 @@ pub fn parse_project_with(
         .with_help(format!("add \\end{{{name}}}")));
     }
 
+    // Issue #907: one early diagnostic naming the non-LaTeX2e format, in
+    // place of the downstream symptom flood. Gated on positive
+    // identification above — a normal document keeps every diagnostic.
+    if let Some(format) = legacy_format {
+        p.diags
+            .retain(|d| !crate::legacy_format::is_legacy_symptom(&d.message, d.code));
+        p.diags.insert(0, legacy_diagnostic(format));
+    }
+
     let incremental_safe = p.diags.is_empty();
     let tokens = p.restore_tokens();
     let preamble_source = preamble_source(entry_document.text, has_document, &tokens);
@@ -3041,6 +3056,35 @@ pub fn parse_project_with(
         fancy: p.fancy,
         beamer,
     }
+}
+
+/// The single recognition diagnostic for a positively identified non-LaTeX2e
+/// format (issue #907). It names the actual problem — worth more than the
+/// hundred symptom errors it replaces — and records that the document still
+/// renders best-effort as LaTeX2e.
+fn legacy_diagnostic(format: crate::legacy_format::LegacyFormat) -> Diagnostic {
+    let (message, marker) = match format {
+        crate::legacy_format::LegacyFormat::Latex209 { marker } => (
+            "This is a LaTeX 2.09 document (`\\documentstyle`), not LaTeX2e. \
+             FlashTeX supports LaTeX2e; convert to `\\documentclass`.",
+            marker,
+        ),
+        crate::legacy_format::LegacyFormat::PlainTex { marker } => (
+            "This looks like a plain TeX document, not LaTeX. \
+             FlashTeX supports LaTeX2e.",
+            marker,
+        ),
+    };
+    Diagnostic::error(
+        message,
+        Some(marker),
+        Some(
+            "rendered the document best-effort as LaTeX2e; the layout will differ from the original"
+                .into(),
+        ),
+    )
+    .with_code(crate::diagnostics::DiagnosticCode::UnsupportedFeature)
+    .with_label(marker, "this marker identifies the format", true)
 }
 
 /// Whether only whitespace separates two definition spans (so they belong

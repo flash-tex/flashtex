@@ -24,6 +24,7 @@ pub mod graphics;
 pub mod incremental;
 pub mod json;
 pub mod layout;
+mod legacy_format;
 pub mod lexer;
 pub mod lm_math;
 pub mod math;
