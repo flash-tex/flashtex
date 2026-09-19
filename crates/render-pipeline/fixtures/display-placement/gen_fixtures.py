@@ -155,6 +155,16 @@ F["51-gather-wide-tag-own-line"] = doc(
 F["52-gather-wide-tag-leqno"] = doc(
     "Before.\n\\begin{gather}\n d = e\\\\\n " + WIDE + " + c_1 + c_2 \\tag{tag $\\ast$ here}\n\\end{gather}\nAfter.",
     opts="leqno")
+# `\eqref` to a rich tag is `\textup{\tagform@{\ref{..}}}`: the tag's content
+# set again in running text -- its math as math, `\textbf` kept, a `\tag*`
+# label between `\tagform@`'s parentheses all the same -- with `\textup`'s
+# `\check@icl` italic correction before it.
+F["53-eqref-rich-tags"] = doc(
+    "Before.\n" + eq("a = b \\tag{hi $x^2$}\\label{e:a}") + "\nmiddle\n"
+    + eq("c = d \\tag*{$\\pm$}\\label{e:b}") + "\nand\n"
+    + eq("e = f \\tag{\\textbf{B} $y_1$}\\label{e:c}") + "\nand\n"
+    + "\\begin{align}\n g &= h \\tag{$\\ast$}\\label{e:d}\\\\\n i &= j \\label{e:e}\n\\end{align}\n"
+    + "See \\eqref{e:a}, \\eqref{e:b} and \\eqref{e:c}; \\emph{then} \\eqref{e:d} and \\eqref{e:e}.")
 
 
 def main():

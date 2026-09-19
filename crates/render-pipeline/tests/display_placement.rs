@@ -12,8 +12,8 @@
 //! math-layout `MathBox::pack_to`), and `\numberwithin`/`subequations`
 //! numbers come from the compiler (17, 18; 17's `\eqref` takes `\textup`'s
 //! `\check@icl` italic correction before its space). Display 20 sits in a
-//! nested list, whose closing `\topsep` is its own level's. The fixture not
-//! listed here does not pass yet: `\tag{$..$}` math (15).
+//! nested list, whose closing `\topsep` is its own level's. 15's
+//! `\tag{$*$}` row and the `\eqref` to it set the tag's math as math (#441).
 //!
 //! 47-50 are the cumulative case: eight displays down one page whose box
 //! height is set by a *family-0* digit. Family 0 (`operators`) is `cmr`
@@ -29,7 +29,11 @@
 //! `align`/`gather`/`multline` (40-43; `multline` sets its tag on the last
 //! line, or the first under `leqno`), a rich tag too wide for its line (44),
 //! `\text{for all $x$}` (45), and `align`/`gather` tags amsmath's
-//! `\calc@shift@*` moves to a line of their own (46, 51, 52).
+//! `\calc@shift@*` moves to a line of their own (46, 51, 52). An `\eqref`
+//! to a rich tag (15, 53) sets the tag's content again, as
+//! `\textup{\tagform@{..}}` does: 53 checks that `\textbf{B} $y_1$` keeps
+//! its bold piece and its subscript in the reference, and that a `\tag*`
+//! label is referenced in parentheses.
 
 mod common;
 
@@ -55,6 +59,7 @@ const PASSING: &[&str] = &[
     "12-dollars-eqno",
     "13-dollars-leqno",
     "14-equation-star",
+    "15-align-tag-notag-eqref",
     "16-gather-numbers",
     "17-numberwithin-section",
     "18-subequations",
@@ -97,6 +102,7 @@ const TEXT_RUN_PASSING: &[&str] = &[
     "46-align-wide-tag-own-line",
     "51-gather-wide-tag-own-line",
     "52-gather-wide-tag-leqno",
+    "53-eqref-rich-tags",
 ];
 
 fn num(v: &Value, k: &str) -> f64 {
