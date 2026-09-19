@@ -578,6 +578,96 @@ path = {{}}         # local libraries, e.g. {{ mylib = \"../mylib\" }} — a dir
         out
     }
 
+    /// `text` with the `[packages]` keys given replaced -- the one writer the
+    /// CLI's `--write-pins`, the app's consent sheet ("remember", "never for
+    /// this project") and the helper's `set_packages` use. `fetch` and `pin`
+    /// are each rewritten only when `Some`; every other line of the file,
+    /// the table's other keys (`source`, `path`, unknown ones), comments and
+    /// order included, is kept byte for byte. A key that is present (or
+    /// present as the template's commented `# pin = …` placeholder) is
+    /// replaced in place, keeping a trailing `# comment` on its line; one
+    /// that is absent is appended to the table; without a `[packages]`
+    /// table one is appended to the file. Nothing to set returns `text`
+    /// unchanged. `parse(with_packages(t, f, p)).packages` has `f`/`p`
+    /// for every `t` that parses.
+    pub fn with_packages(text: &str, fetch: Option<FetchPolicy>, pin: Option<&BTreeMap<String, String>>) -> String {
+        let mut wanted: Vec<(&str, String)> = Vec::new();
+        if let Some(f) = fetch {
+            wanted.push(("fetch", quote(f.as_str())));
+        }
+        if let Some(p) = pin {
+            let inner = p.iter().map(|(k, v)| format!("{} = {}", quote_key(k), quote(v))).collect::<Vec<_>>().join(", ");
+            wanted.push(("pin", if inner.is_empty() { "{}".to_string() } else { format!("{{ {inner} }}") }));
+        }
+        if wanted.is_empty() {
+            return text.to_string();
+        }
+        let is_header = |line: &str| line.trim_start().starts_with('[');
+        let is_packages_header = |line: &str| {
+            let t = line.trim_start();
+            t.strip_prefix("[packages]").is_some_and(|rest| rest.trim_start().is_empty() || rest.trim_start().starts_with('#'))
+        };
+        // The key a `fetch = …` or `# fetch = …` line sets, when it is one we write.
+        let key_of = |line: &str| -> Option<&'static str> {
+            let t = line.trim_start();
+            let t = t.strip_prefix('#').map_or(t, str::trim_start);
+            ["fetch", "pin"].into_iter().find(|k| t.strip_prefix(k).is_some_and(|rest| rest.trim_start().starts_with('=')))
+        };
+        let render = |key: &str, value: &str, comment: &str| format!("{key} = {value}{comment}\n");
+        let lines: Vec<&str> = text.split_inclusive('\n').collect();
+        let Some(start) = lines.iter().position(|l| is_packages_header(l)) else {
+            let mut out = text.to_string();
+            if !out.is_empty() && !out.ends_with('\n') {
+                out.push('\n');
+            }
+            if !out.is_empty() && !out.ends_with("\n\n") {
+                out.push('\n');
+            }
+            out.push_str("[packages]\n");
+            for (k, v) in &wanted {
+                out.push_str(&render(k, v, ""));
+            }
+            return out;
+        };
+        let end = lines[start + 1..].iter().position(|l| is_header(l)).map_or(lines.len(), |i| start + 1 + i);
+        let mut out = String::new();
+        for l in &lines[..=start] {
+            out.push_str(l);
+        }
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        let body = &lines[start + 1..end];
+        let trailing_blank = body.iter().rev().take_while(|l| l.trim().is_empty()).count();
+        let mut written: Vec<&str> = Vec::new();
+        for l in &body[..body.len() - trailing_blank] {
+            match key_of(l).filter(|k| wanted.iter().any(|(w, _)| w == k)) {
+                Some(k) if written.contains(&k) => {} // a duplicate line goes
+                Some(k) => {
+                    let (_, value) = wanted.iter().find(|(w, _)| *w == k).unwrap();
+                    out.push_str(&render(k, value, trailing_comment(l)));
+                    written.push(k);
+                }
+                None => out.push_str(l),
+            }
+        }
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        for (k, v) in &wanted {
+            if !written.contains(k) {
+                out.push_str(&render(k, v, ""));
+            }
+        }
+        for _ in 0..trailing_blank {
+            out.push('\n');
+        }
+        for l in &lines[end..] {
+            out.push_str(l);
+        }
+        out
+    }
+
     /// Writes [`Manifest::template`] for `entry` at `path`, refusing to
     /// overwrite an existing file (`io::ErrorKind::AlreadyExists`).
     pub fn write_template(path: &Path, entry: &str) -> io::Result<()> {
@@ -590,6 +680,25 @@ path = {{}}         # local libraries, e.g. {{ mylib = \"../mylib\" }} — a dir
     pub fn write_default(path: &Path) -> io::Result<()> {
         Self::write_template(path, "main.tex")
     }
+}
+
+/// The `   # comment` tail of a key line (with its leading whitespace), or
+/// `""`: the first `#` outside a basic string.
+fn trailing_comment(line: &str) -> &str {
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, c) in line.char_indices() {
+        match c {
+            '\\' if in_string => escaped = !escaped,
+            '"' if !escaped => in_string = !in_string,
+            '#' if !in_string => {
+                let start = line[..i].trim_end().len();
+                return line[start..].trim_end_matches(['\n', '\r']);
+            }
+            _ => escaped = false,
+        }
+    }
+    ""
 }
 
 /// A TOML basic string literal for `s` (quotes and escapes as TOML needs).
@@ -926,5 +1035,46 @@ name = "mylib"
         // A name needing escapes is quoted like `to_toml` quotes it.
         let odd = Fonts { text: Some("Quote \" Back\\slash".into()), ..Fonts::default() };
         assert_eq!(Manifest::parse(&Manifest::with_fonts("", &odd)).unwrap().manifest.fonts, odd);
+    }
+
+    #[test]
+    fn with_packages_rewrites_only_the_named_keys_and_round_trips() {
+        let mut pins = BTreeMap::new();
+        pins.insert("siunitx".to_string(), "3.3.24".to_string());
+        pins.insert("odd name".to_string(), "v\"1".to_string());
+        // The template: `fetch` and `pin` replaced in place, their comments kept, the rest untouched.
+        let t = Manifest::with_packages(&Manifest::template("main.tex"), Some(FetchPolicy::Never), Some(&pins));
+        let p = Manifest::parse(&t).unwrap();
+        assert_eq!(p.manifest.packages.fetch, FetchPolicy::Never);
+        assert_eq!(p.manifest.packages.pin, pins);
+        assert_eq!(p.manifest.packages.source, PackageSource::Ctan);
+        assert!(t.contains("fetch = \"never\"     # when \\usepackage names such a package"), "{t}");
+        assert!(t.contains("siunitx = \"3.3.24\" }          # exact versions"), "{t}");
+        assert!(t.contains("source = \"ctan\"   # where a package") && t.contains("path = {}         # local libraries") && t.contains("# [library]"), "{t}");
+        let before = Manifest::template("main.tex");
+        assert_eq!(t.split("[packages]").next(), before.split("[packages]").next(), "everything before the table is untouched");
+        // Only `fetch`: the pin line is not touched at all.
+        let t = Manifest::with_packages(&before, Some(FetchPolicy::Always), None);
+        assert!(t.contains("pin = {}          # exact versions"), "{t}");
+        assert_eq!(Manifest::parse(&t).unwrap().manifest.packages.fetch, FetchPolicy::Always);
+        // Only `pin`, on a table that lacks the key: appended to the table, before the blank line.
+        let full = FULL.replace("pin = { siunitx = \"3.3.24\", tikz = \"3.1.10\" }\n", "");
+        let t = Manifest::with_packages(&full, None, Some(&pins));
+        let p = Manifest::parse(&t).unwrap();
+        assert_eq!(p.manifest.packages.pin, pins);
+        assert_eq!(p.manifest.packages.fetch, FetchPolicy::Never, "the fixture's fetch is untouched");
+        assert!(t.contains("path = { mylib = \"../mylib\" }\npin = { ") && t.contains("siunitx = \"3.3.24\" }\n\n[library]"), "{t}");
+        let after = full.split("[library]").nth(1).unwrap();
+        assert!(t.ends_with(after));
+        // Empty pins are `{}`; nothing to set is the identity; no table: appended.
+        let t = Manifest::with_packages(FULL, None, Some(&BTreeMap::new()));
+        assert!(t.contains("pin = {}\n") && Manifest::parse(&t).unwrap().manifest.packages.pin.is_empty(), "{t}");
+        assert_eq!(Manifest::with_packages(FULL, None, None), FULL);
+        let bare = "[project]\nentry = \"m.tex\"";
+        let t = Manifest::with_packages(bare, Some(FetchPolicy::Never), None);
+        assert_eq!(t, "[project]\nentry = \"m.tex\"\n\n[packages]\nfetch = \"never\"\n");
+        assert_eq!(Manifest::parse(&t).unwrap().manifest.packages.fetch, FetchPolicy::Never);
+        assert_eq!(trailing_comment("fetch = \"a # not a comment\"   # real"), "   # real");
+        assert_eq!(trailing_comment("fetch = \"ask\""), "");
     }
 }
