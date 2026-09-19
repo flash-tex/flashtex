@@ -59,7 +59,6 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // Definitions, counters and programming.
     "def", "edef", "gdef", "let", "the", "makeatletter", "relax",
     "expandafter", "csname", "endcsname", "ensuremath", "protect",
-    "RequirePackage", "PassOptionsToPackage",
     // Cross-references and links.
     "autoref", "nameref", "hyperref", "hyperlink", "hypertarget",
     // Colour and graphics packages.
