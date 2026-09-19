@@ -357,3 +357,21 @@ fn incremental_expansion_reads_packages_like_a_full_run() {
         assert_eq!(opened, ["mystyle.sty", "opts.sty"]);
     }
 }
+
+/// In the document itself the four declarations are the host parser's
+/// (inert metadata); only inside a package or class file do they run.
+#[test]
+fn declarations_in_a_document_pass_through() {
+    let (out, diags) = run(
+        "\\NeedsTeXFormat{LaTeX2e}[2022/06/01]\\ProvidesClass{article}\\ProvidesPackage{hyperref}[2023-11-26 v7.01d]\\ProvidesFile{foo.cfg}\\NeedsTeXFormat",
+        &[],
+    );
+    assert_eq!(
+        out,
+        "\\NeedsTeXFormat LaTeX2e[2022/06/01]\\ProvidesClass article\\ProvidesPackage hyperref[2023-11-26 v7.01d]\\ProvidesFile foo.cfg\\NeedsTeXFormat"
+    );
+    assert!(diags.is_empty(), "{diags:?}");
+    // `\@ifpackageloaded` is untouched by a document-level `\ProvidesPackage`.
+    let (out, _) = run("\\ProvidesPackage{x}\\makeatletter\\@ifpackageloaded{x}{-}{N}", &[]);
+    assert!(out.ends_with('N'), "{out}");
+}

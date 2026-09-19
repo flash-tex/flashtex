@@ -17,7 +17,7 @@ use std::rc::Rc;
 use crate::catcode::CatCode;
 use crate::conditionals::{ConditionalStack, IfBranch, IfShape};
 use crate::error::{Diagnostic, Limits};
-use crate::latex_packages::{LoadKind, OpenedFile, PackageReader, PACKAGES_PRELUDE};
+use crate::latex_packages::{Declaration, LoadKind, OpenedFile, PackageReader, PACKAGES_PRELUDE};
 use crate::lexer::{Lexer, State as LexState};
 use crate::macro_def::{BodyPart, MacroDef, MacroFlags, ParamPart};
 use crate::prelude::PRELUDE;
@@ -377,6 +377,10 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("flashtex@emit", Primitive::EmitPassThrough),
     ("flashtex@latex@error", Primitive::LatexError),
     ("flashtex@latex@warning", Primitive::LatexWarning),
+    ("NeedsTeXFormat", Primitive::PreambleDeclaration(Declaration::NeedsTeXFormat)),
+    ("ProvidesPackage", Primitive::PreambleDeclaration(Declaration::ProvidesPackage)),
+    ("ProvidesClass", Primitive::PreambleDeclaration(Declaration::ProvidesClass)),
+    ("ProvidesFile", Primitive::PreambleDeclaration(Declaration::ProvidesFile)),
 ];
 
 /// Name of the private sentinel control sequence used to bound nested
@@ -825,7 +829,7 @@ impl Engine {
 
     // ---- raw token stream -------------------------------------------------
 
-    fn push_tokens(&mut self, toks: Vec<Token>) {
+    pub(crate) fn push_tokens(&mut self, toks: Vec<Token>) {
         let origin = self.last_origin;
         self.push_tokens_with_origin(toks, origin);
     }
@@ -2636,6 +2640,7 @@ impl Engine {
             EmitPassThrough => self.do_emit_pass_through(),
             LatexError => self.do_latex_message(&tok, true),
             LatexWarning => self.do_latex_message(&tok, false),
+            PreambleDeclaration(declaration) => self.do_declaration(tok, declaration),
             NewCounter => {
                 self.do_newcounter(tok.span);
                 Step::Continue
@@ -5792,6 +5797,7 @@ fn primitive_name(p: Primitive) -> &'static str {
         EmitPassThrough => "flashtex@emit",
         LatexError => "flashtex@latex@error",
         LatexWarning => "flashtex@latex@warning",
+        PreambleDeclaration(declaration) => declaration.name(),
         StopInput => "flashtex@stop",
         Host | HostAssignment => "flashtex@host",
         IntPar(IntParam::Font) => "flashtex@font",
@@ -6166,7 +6172,7 @@ fn is_format_level(p: Primitive) -> bool {
             | RefStepCounter | AddToReset | RemoveFromReset | CounterWithin | CounterWithout | Label | Value | Arabic
             | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol | NewLength | SetToWidth | SetToHeight
             | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | Verb | StopInput | LoadFiles(_) | InputPackageFile
-            | EmitPassThrough | LatexError | LatexWarning
+            | EmitPassThrough | LatexError | LatexWarning | PreambleDeclaration(_)
     )
 }
 

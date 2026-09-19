@@ -238,6 +238,9 @@ pub enum Primitive {
     LatexError,
     /// Internal: `\flashtex@latex@warning{text}` records a LaTeX warning.
     LatexWarning,
+    /// `\NeedsTeXFormat`, `\ProvidesPackage`, `\ProvidesClass`,
+    /// `\ProvidesFile` (see `latex_packages.rs`).
+    PreambleDeclaration(crate::latex_packages::Declaration),
 }
 
 #[derive(Debug, Clone, PartialEq)]

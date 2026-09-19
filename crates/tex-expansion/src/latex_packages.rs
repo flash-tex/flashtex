@@ -115,6 +115,31 @@ impl LoadKind {
     }
 }
 
+/// `\NeedsTeXFormat`, `\ProvidesPackage`, `\ProvidesClass` and
+/// `\ProvidesFile`: kernel macros inside a package or class file, and
+/// pass-through everywhere else. The host parser models them in a document
+/// (as inert metadata with its own argument diagnostics), and the real
+/// `\NeedsTeXFormat` answers a bad argument with `\endinput`, which would
+/// end the document being typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Declaration {
+    NeedsTeXFormat,
+    ProvidesPackage,
+    ProvidesClass,
+    ProvidesFile,
+}
+
+impl Declaration {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Declaration::NeedsTeXFormat => "NeedsTeXFormat",
+            Declaration::ProvidesPackage => "ProvidesPackage",
+            Declaration::ProvidesClass => "ProvidesClass",
+            Declaration::ProvidesFile => "ProvidesFile",
+        }
+    }
+}
+
 /// The package/class kernel, run once after `prelude.rs`'s `PRELUDE` when
 /// the initial state is built. Line references are to `latex.ltx` of TeX
 /// Live 2026 where a definition is copied.
@@ -270,7 +295,7 @@ pub(crate) const PACKAGES_PRELUDE: &str = r"\makeatletter
   \fi}
 \def\IfFileLoadedT  #1{\IfFileLoadedTF{#1}\@firstofone\@gobble}
 \def\IfFileLoadedF  #1{\IfFileLoadedTF{#1}{}}
-\def\ProvidesPackage#1{%
+\def\flashtex@ProvidesPackage#1{%
   \xdef\@gtempa{#1}%
   \edef\reserved@a{\detokenize\expandafter{\@gtempa}}%
   \edef\reserved@b{\detokenize\expandafter{\@currname}}%
@@ -283,8 +308,8 @@ pub(crate) const PACKAGES_PRELUDE: &str = r"\makeatletter
 \def\@pr@videpackage[#1]{%
   \expandafter\protected@xdef
      \csname ver@\@currname.\@currext\endcsname{#1}}
-\let\ProvidesClass\ProvidesPackage
-\def\ProvidesFile#1{%
+\let\flashtex@ProvidesClass\flashtex@ProvidesPackage
+\def\flashtex@ProvidesFile#1{%
   \@ifnextchar[{\@providesfile{#1}}{\@providesfile{#1}[]}}
 \def\@providesfile#1[#2]{%
     \expandafter\xdef\csname ver@#1\endcsname{#2}}
@@ -384,7 +409,7 @@ pub(crate) const PACKAGES_PRELUDE: &str = r"\makeatletter
                     \csname unprocessedoptions-\@currname.\@currext\endcsname
                     \relax}%
   \@loadwithoptions\@pkgextension\RequirePackage}
-\def\NeedsTeXFormat#1{%
+\def\flashtex@NeedsTeXFormat#1{%
   \def\reserved@a{#1}%
   \ifx\reserved@a\fmtname
     \expandafter\@needsformat
@@ -755,6 +780,31 @@ impl Engine {
             taken.push(p);
         }
         Some(inner)
+    }
+
+    /// One of the four [`Declaration`]s: the kernel macro while a package
+    /// or class file is being read (`\@currext` is `sty` or `cls`), the
+    /// unchanged token for the host parser otherwise.
+    pub(crate) fn do_declaration(&mut self, tok: Token, declaration: Declaration) -> Step {
+        if self.in_package_file() {
+            let name = format!("flashtex@{}", declaration.name());
+            self.push_tokens(vec![Token::new(TokenKind::ControlSequence(name), tok.span)]);
+            Step::Continue
+        } else {
+            Step::Emit(tok)
+        }
+    }
+
+    /// Whether `\@currext` is non-empty: a `.sty`/`.cls` is being read.
+    fn in_package_file(&self) -> bool {
+        let mut meaning = self.st.scopes.meaning("@currext");
+        while let crate::scopes::Meaning::Let(inner) = meaning {
+            meaning = *inner;
+        }
+        match meaning {
+            crate::scopes::Meaning::Macro(def) => !def.body.is_empty(),
+            _ => false,
+        }
     }
 
     fn package_file_exists(&self, name: &str, ext: &str) -> bool {

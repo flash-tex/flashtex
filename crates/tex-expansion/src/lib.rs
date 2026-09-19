@@ -39,7 +39,7 @@ pub use catcode::{CatCode, CatCodeTable};
 pub use error::{is_output_limit, output_limit_message, Diagnostic, Limits, Severity};
 pub use expand::{is_group_token, to_fnsymbol, BoxMeasurer, Checkpoint, DefaultBoxMeasurer, Engine, LabelRecord, Mode};
 pub use incremental::{Edit, EditStats, IncrementalExpander};
-pub use latex_packages::{LoadKind, OpenedFile, PackageReader};
+pub use latex_packages::{Declaration, LoadKind, OpenedFile, PackageReader};
 pub use registers::{scale_internal_dimen, DefaultFontMetrics, FontMetrics, FontSwitch, Glue};
 pub use span::Span;
 pub use token::{Token, TokenKind};
