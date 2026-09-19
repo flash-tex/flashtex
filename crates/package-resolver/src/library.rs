@@ -118,7 +118,7 @@ pub fn load(key: &str, raw: &str, manifest_dir: &Path) -> Result<Library, String
         }
         let bytes = fs::read(&path).map_err(|e| format!("cannot read {}: {e}", display(&path)))?;
         let text = String::from_utf8(bytes).map_err(|_| format!("{} is not UTF-8", display(&path)))?;
-        files.push(ResolvedFile { name, path, text });
+        files.push(ResolvedFile { name, path, text, generated_from: None });
     }
     Ok(Library { name: key.into(), dir, files })
 }

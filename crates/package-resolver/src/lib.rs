@@ -23,8 +23,12 @@
 //! fetches on the spot (the manifest is the remembered consent);
 //! `"never"` and `source = "none"` stop at the cache. Nothing here is
 //! executed: the files are handed to the compiler as documents at the
-//! virtual project paths `packages/<name>/<file>`, and `.dtx`/`.ins`-only
-//! packages are reported as needing docstrip rather than unpacked.
+//! virtual project paths `packages/<name>/<file>`. A package that ships
+//! `.ins`/`.dtx` sources has them fetched too and unpacked with
+//! [`flashtex_docstrip`] (an interpreter of docstrip's batch language,
+//! not a TeX) right after the download; the generated `.sty`/`.cls`/…
+//! are cached next to the shipped ones with their provenance recorded
+//! in `manifest.json`.
 //!
 //! The network is an injected [`Fetcher`]; unit tests use a fake one over an
 //! in-memory archive and never open a socket. The `network` feature adds
@@ -41,6 +45,7 @@ pub mod library;
 pub mod scan;
 pub mod source;
 
+pub use cache::GeneratedFrom;
 pub use flashtex_project_manifest::{FetchPolicy, PackageSource, Packages};
 pub use library::Library;
 
@@ -49,9 +54,10 @@ pub const CACHE_ENV: &str = "FLASHTEX_PACKAGE_CACHE";
 
 /// The LaTeX source files a package contributes to the document set:
 /// what `\usepackage`/`\documentclass`/`\RequirePackage`/`\LoadClass` and
-/// the class kernel (`.def`, `.clo`, `.cfg`) can ask for. Documentation,
-/// `.dtx`/`.ins` sources, fonts and everything else in a CTAN directory is
-/// never fetched.
+/// the class kernel (`.def`, `.clo`, `.cfg`) can ask for. `.ins`/`.dtx`
+/// sources are fetched only to be run through docstrip and are not
+/// cached; documentation, fonts and everything else in a CTAN directory
+/// is never fetched.
 pub const PACKAGE_EXTENSIONS: &[&str] = &["sty", "cls", "def", "clo", "cfg"];
 
 /// The project-relative directory resolved files are mounted at:
@@ -147,6 +153,8 @@ pub struct ResolvedFile {
     pub name: String,
     pub path: PathBuf,
     pub text: String,
+    /// Set when docstrip generated the file from the package's sources.
+    pub generated_from: Option<GeneratedFrom>,
 }
 
 /// Where a [`Resolution::Cached`] answer came from.
@@ -169,11 +177,14 @@ pub enum Resolution {
     /// current version when the source states one (CTAN), `would_fetch`
     /// the file names, `source_url` where from.
     NeedsConsent { name: String, version: Option<String>, source_url: String, would_fetch: Vec<String> },
-    /// Fetched now and stored in the cache.
-    Fetched { name: String, version: String, files: Vec<ResolvedFile>, source_url: String },
+    /// Fetched now and stored in the cache. `notes` is what docstrip
+    /// reported while unpacking `.ins`/`.dtx` sources (empty when the
+    /// package shipped its files or the batch file was plain docstrip).
+    Fetched { name: String, version: String, files: Vec<ResolvedFile>, source_url: String, notes: Vec<String> },
     /// Cannot be resolved, with the reason a diagnostic can carry verbatim:
     /// the policy forbids fetching, the source has no such package, it
-    /// ships only `.dtx`/`.ins` (needs docstrip), a pin the source cannot
+    /// ships `.dtx` sources without a `.ins` to run them (or docstrip
+    /// produced no package file from them), a pin the source cannot
     /// satisfy, or a network or disk failure.
     NotAvailable { name: String, reason: String },
 }
@@ -343,7 +354,8 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
-        // A registry URL states no version; the content is the version.
+        // A registry URL states no version; the content (sources included)
+        // is the version.
         let version = listing.version.clone().unwrap_or_else(|| cache::content_version(&bytes));
         if let Some(pin) = policy.pin.as_deref() {
             if pin != version {
@@ -353,9 +365,13 @@ impl<'a> Resolver<'a> {
                 };
             }
         }
-        match self.cache.store(name, &version, &listing.base_url, &bytes) {
+        let (files, generated) = match unpack(name, bytes) {
+            Ok(u) => u,
+            Err(reason) => return Resolution::NotAvailable { name: name.into(), reason },
+        };
+        match self.cache.store_with(name, &version, &listing.base_url, &files, &generated) {
             Ok(entry) => match entry.read() {
-                Ok(files) => Resolution::Fetched { name: name.into(), version, files, source_url: listing.base_url },
+                Ok(files) => Resolution::Fetched { name: name.into(), version, files, source_url: listing.base_url, notes: generated.notes },
                 Err(reason) => Resolution::NotAvailable { name: name.into(), reason },
             },
             Err(reason) => Resolution::NotAvailable { name: name.into(), reason: format!("cannot store {name} in the package cache: {reason}") },
@@ -401,6 +417,75 @@ enum Local {
     Found(Resolution),
     Refused(Resolution),
     Missing,
+}
+
+/// The files to cache from a download and what docstrip contributed.
+pub type Unpacked = (Vec<(String, Vec<u8>)>, cache::Generated);
+
+/// The files to cache from a download: the shipped package files plus
+/// what docstrip generates from the `.ins`/`.dtx` among them, with the
+/// provenance of each generated file and docstrip's notes. Every `.ins`
+/// is run in name order against the downloaded sources (and against
+/// what earlier runs generated). A shipped file always wins over a
+/// generated one of the same name; a generated name that is not a
+/// plain package file name (a `.tex`, a `.drv`, a path) is dropped with
+/// a note. An error is a package with sources from which nothing usable
+/// came out.
+pub fn unpack(name: &str, fetched: Vec<(String, Vec<u8>)>) -> Result<Unpacked, String> {
+    let mut files: Vec<(String, Vec<u8>)> = fetched.iter().filter(|(n, _)| is_package_file(n)).cloned().collect();
+    let sources: BTreeMap<String, Vec<u8>> = fetched.into_iter().filter(|(n, _)| source::is_docstrip_input(n)).collect();
+    let mut batches: Vec<&String> = sources.keys().filter(|n| flashtex_docstrip::is_batch_file(n)).collect();
+    batches.sort();
+    let mut generated = cache::Generated::default();
+    if batches.is_empty() {
+        return Ok((files, generated));
+    }
+    let shipped: std::collections::BTreeSet<String> = files.iter().map(|(n, _)| n.clone()).collect();
+    let options = flashtex_docstrip::Options { today: Some(today()) };
+    let mut produced = 0usize;
+    for batch in batches {
+        let outcome = flashtex_docstrip::run_with(batch, &sources[batch], &sources, &options);
+        for d in &outcome.diagnostics {
+            generated.notes.push(d.to_string());
+        }
+        for f in outcome.files {
+            produced += 1;
+            let plain = !f.name.contains(['/', '\\']);
+            if !plain || !is_package_file(&f.name) {
+                generated.notes.push(format!("{batch}: {} generated but not cached (not a .sty/.cls/.def/.clo/.cfg file name)", f.name));
+                continue;
+            }
+            if shipped.contains(&f.name) {
+                let same = files.iter().any(|(n, b)| *n == f.name && *b == f.bytes);
+                generated.notes.push(format!("{batch}: {} is shipped by the package; the shipped copy is kept ({})", f.name, if same { "docstrip's is identical" } else { "docstrip's differs" }));
+                continue;
+            }
+            files.retain(|(n, _)| *n != f.name);
+            files.push((f.name.clone(), f.bytes));
+            generated.from.insert(f.name, GeneratedFrom { batch: batch.clone(), sources: f.sources });
+        }
+        if !outcome.completed {
+            generated.notes.push(format!("{batch}: the run did not complete"));
+        }
+    }
+    if files.is_empty() {
+        let why = generated.notes.iter().take(3).map(String::as_str).collect::<Vec<_>>().join("; ");
+        return Err(format!(
+            "needs docstrip: {name} ships only sources and running its batch file generated no .sty/.cls/.def/.clo/.cfg ({produced} file(s) generated; {})",
+            if why.is_empty() { "no notes".to_string() } else { why }
+        ));
+    }
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok((files, generated))
+}
+
+/// Today as (year, month, day) in UTC, for `\AddGenerationDate` headers.
+fn today() -> (i32, u32, u32) {
+    let iso = iso_utc(std::time::SystemTime::now());
+    let y = iso[0..4].parse().unwrap_or(0);
+    let m = iso[5..7].parse().unwrap_or(0);
+    let d = iso[8..10].parse().unwrap_or(0);
+    (y, m, d)
 }
 
 /// The pins a set of resolutions would record: `name = version` for every
@@ -617,17 +702,72 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    const INS: &str = "\\input docstrip.tex\n\\keepsilent\n\\preamble\nHello.\n\\endpreamble\n\\generate{\\file{lipsum.sty}{\\from{lipsum.dtx}{package}}\\file{lipsum.tex}{\\from{lipsum.dtx}{driver}}}\n\\newread\\x\n\\endbatchfile\n";
+    const DTX: &str = "% \\iffalse\n%<*driver>\n\\documentclass{ltxdoc}\n%</driver>\n% \\fi\n%<*package>\n\\ProvidesPackage{lipsum}\n%</package>\n";
+
     #[test]
-    fn unknown_package_docstrip_only_and_pins() {
-        let root = tmp("pins");
+    fn a_dtx_ins_package_is_unpacked_with_docstrip() {
+        let root = tmp("docstrip");
         let fetcher = FakeFetcher::new()
-            .with_ctan_package("lipsum", "2.7", &[("lipsum.dtx", "%"), ("lipsum.ins", "%"), ("lipsum.pdf", "%")])
-            .with_ctan_package("cancel", "2.2", &[("cancel.sty", "x")]);
+            .with_ctan_package("lipsum", "2.7", &[("lipsum.dtx", DTX), ("lipsum.ins", INS), ("lipsum.pdf", "%"), ("README", "r")])
+            .with_ctan_package("selfins", "1", &[("selfins.dtx", DTX), ("selfins.pdf", "%")])
+            .with_ctan_package("nothing", "1", &[("nothing.dtx", DTX), ("nothing.ins", "\\input docstrip\n\\generate{\\file{nothing.tex}{\\from{nothing.dtx}{driver}}}\n")])
+            .with_ctan_package("both", "1", &[("both.sty", "shipped\n"), ("both.dtx", DTX.replace("lipsum", "both").as_str()), ("both.ins", INS.replace("lipsum", "both").as_str())]);
+        let resolver = Resolver::new(&root, &fetcher);
+        // Asking names the sources that would be fetched; nothing runs yet.
+        let r = resolver.resolve("lipsum", &ask());
+        assert!(matches!(&r, Resolution::NeedsConsent { would_fetch, .. } if would_fetch == &["lipsum.dtx".to_string(), "lipsum.ins".to_string()]), "{r:?}");
+        assert!(!root.join("lipsum").exists());
+        let r = resolver.resolve_with_consent("lipsum", &ask());
+        match &r {
+            Resolution::Fetched { files, notes, version, .. } => {
+                assert_eq!(version, "2.7");
+                assert_eq!(files.len(), 1, "{files:?}");
+                assert_eq!(files[0].name, "lipsum.sty");
+                assert!(files[0].text.starts_with("%%\n%% This is file `lipsum.sty',\n%% generated with the docstrip utility.\n"), "{}", files[0].text);
+                assert!(files[0].text.ends_with("%% Hello.\n\\ProvidesPackage{lipsum}\n\\endinput\n%%\n%% End of file `lipsum.sty'.\n"), "{}", files[0].text);
+                assert_eq!(files[0].generated_from, Some(GeneratedFrom { batch: "lipsum.ins".into(), sources: vec!["lipsum.dtx".into()] }));
+                assert!(notes.iter().any(|n| n.starts_with("lipsum.ins:7: \\newread is not a docstrip command")), "{notes:?}");
+                assert!(notes.iter().any(|n| n.contains("lipsum.tex generated but not cached")), "{notes:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let dir = root.join("lipsum/2.7");
+        assert!(dir.join("lipsum.sty").is_file());
+        assert!(!dir.join("lipsum.dtx").exists() && !dir.join("lipsum.ins").exists(), "sources are not cached");
+        let manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["files"][0]["generated_from"]["sources"][0], "lipsum.dtx");
+        assert!(manifest["docstrip"]["notes"].as_array().unwrap().len() >= 2);
+        // Cached: the provenance survives.
+        let r = resolver.resolve("lipsum", &Policy::never());
+        assert!(matches!(&r, Resolution::Cached { files, .. } if files[0].generated_from.is_some()), "{r:?}");
+        // A .dtx without a .ins, and a .ins that generates no package file.
+        let r = resolver.resolve_with_consent("selfins", &ask());
+        assert!(matches!(&r, Resolution::NotAvailable { reason, .. } if reason.starts_with("needs docstrip but ships no .ins")), "{r:?}");
+        let r = resolver.resolve_with_consent("nothing", &ask());
+        assert!(matches!(&r, Resolution::NotAvailable { reason, .. } if reason.starts_with("needs docstrip") && reason.contains("generated no .sty")), "{r:?}");
+        assert!(!root.join("nothing").exists());
+        // A shipped file wins over docstrip's copy of the same name.
+        let r = resolver.resolve_with_consent("both", &ask());
+        match &r {
+            Resolution::Fetched { files, notes, .. } => {
+                assert_eq!(files.len(), 1);
+                assert_eq!(files[0].text, "shipped\n");
+                assert_eq!(files[0].generated_from, None);
+                assert!(notes.iter().any(|n| n.contains("both.sty is shipped by the package; the shipped copy is kept (docstrip's differs)")), "{notes:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unknown_package_and_pins() {
+        let root = tmp("pins");
+        let fetcher = FakeFetcher::new().with_ctan_package("cancel", "2.2", &[("cancel.sty", "x")]);
         let resolver = Resolver::new(&root, &fetcher);
         let r = resolver.resolve("nosuch", &ask());
         assert!(matches!(&r, Resolution::NotAvailable { reason, .. } if reason.contains("CTAN has no package") && reason.contains("404")), "{r:?}");
-        let r = resolver.resolve("lipsum", &ask());
-        assert!(matches!(&r, Resolution::NotAvailable { reason, .. } if reason.starts_with("needs docstrip")), "{r:?}");
         // A pin the archive cannot satisfy names both versions, before any file moves.
         let pinned = Policy { pin: Some("2.1".into()), ..ask() };
         let r = resolver.resolve("cancel", &pinned);

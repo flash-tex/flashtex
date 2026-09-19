@@ -167,6 +167,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "flashtex-docstrip"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-document-style"
 version = "0.1.0"
 
@@ -206,6 +210,7 @@ version = "0.1.0"
 name = "flashtex-package-resolver"
 version = "0.1.0"
 dependencies = [
+ "flashtex-docstrip",
  "flashtex-project-manifest",
  "reqwest",
  "serde_json",
