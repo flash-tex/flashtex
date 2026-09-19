@@ -4792,6 +4792,7 @@ impl<'a> Context<'a> {
                         Block::BeamerToc { .. } => "\\tableofcontents",
                         Block::BeamerBlockBegin { .. } | Block::BeamerBlockEnd { .. } => "a beamer block",
                         Block::ColumnsBegin { .. } | Block::Column { .. } | Block::ColumnsEnd { .. } => "beamer columns",
+                        Block::Letter { .. } => "a letter.cls block",
                         Block::Paragraph { .. } | Block::Rule { .. } | Block::Picture { .. } => unreachable!(),
                     };
                     let source = vec![self.source(float)];
@@ -5906,6 +5907,264 @@ impl<'a> Context<'a> {
             labels,
             cache_key: None,
         })
+    }
+
+    /// One of letter.cls's positioned blocks as one line of the vertical
+    /// list ([`adapter::LetterKind`]; letter.cls of TeX Live 2026, line
+    /// numbers below). Every number here was read off pdflatex's
+    /// `\showoutput` of `fixtures/real-world/letter` (11pt: `\baselineskip`
+    /// 13.6, `\parskip` 7.66498 = 0.7em, `\strutbox` 9.51996+4.08003, math
+    /// axis 2.7375):
+    ///
+    /// * the return address is one `tabular{l@{}}` in `\raggedleft`
+    ///   (`\hbox(30.80246+25.32747)` holding `\vbox(30.80246+25.32747)
+    ///   x109.19083`): rows of `\@arstrut` height, `\\*[2\parskip]` adding
+    ///   its 15.32996 to the row's depth, the whole `\vcenter`ed on the
+    ///   axis (3 rows and the extra = 56.12993; 28.06497 ± 2.7375). The box
+    ///   is `\tabcolsep` wider than its widest row and flush with the right
+    ///   margin, so every row starts `\textwidth` less that width in. The
+    ///   line is taller than `\topskip`, so on the first page its top sits
+    ///   at the text area's top and the first row's baseline 9.51996 below;
+    ///   what follows sees its depth 25.32747 and takes `\lineskip`;
+    /// * the recipient is `{\raggedright ... \par}`: `\raggedright` makes
+    ///   `\\` `\@centercr`, each line its own paragraph (`\glue -7.66498`
+    ///   then `\glue(\parskip) 7.66498` between them: `\baselineskip`
+    ///   apart, no penalties), at natural width and left;
+    /// * the closing is `\hspace*{\longindentation}\parbox{\indentedwidth}
+    ///   {...}` on a `\noindent` line: the parbox is `$\vcenter{...}$`
+    ///   (`\hbox(38.34319+32.86821)` around `\vbox(38.34319+32.86821)
+    ///   x180.0`), its lines "Sincerely," (natural, 7.54149+2.12863), the
+    ///   `\\[6\medskipamount]` glue 45.98987 (`\parskip` is 0 inside a
+    ///   parbox), `\baselineskip` glue 1.95142 and the signature with its
+    ///   `\strut` (9.51996+4.08003): 71.2114 in all, 35.6057 ± 2.7375;
+    /// * `\cc`/`\encl` are `\parbox[t]{\textwidth}{\@hangfrom{label: }
+    ///   ...\strut}` on a `\noindent` line: a `\vtop`, so the line's height
+    ///   is its first line's -- `\strutbox`'s 9.51996 -- and its depth the
+    ///   rest (4.08003 for one line). The label is an `\hbox` with its
+    ///   trailing space inside (`\sfcode` 2000 after the colon: 3.63054 +
+    ///   1.20892 at 11pt), 26.61899 for `encl: `.
+    ///
+    /// The class's own `\vspace`s are the block's `gap_before_pt`
+    /// (`\closing`'s `\par\nobreak\vspace{\parskip}`) and `gap_after_pt`
+    /// (`\opening`'s two `\vspace{2\parskip}`), before and after the
+    /// paragraph's own `\parskip`; the next block's interline glue is the
+    /// page builder's, from this line's depth. A block whose text sets no
+    /// box (an empty `\signature`) contributes nothing.
+    fn letter_block(&mut self, b: &adapter::LetterBlockRef<'_>) -> Option<BuiltBlock> {
+        use adapter::LetterKind as K;
+        let s = self.style;
+        let size = s.body_size_pt;
+        let bs = s.baselineskip_pt;
+        let strut = (0.7 * bs, 0.3 * bs);
+        let axis = crate::table::AXIS_EM * size;
+        let width = s.text_width_pt;
+        let parskip = skip_tuple(s.parskip);
+        // Interline glue inside a `\vbox` (TeX §679) with the class's
+        // `\lineskip`/`\lineskiplimit`.
+        let interline = |prev_depth: f64, height: f64| {
+            let g = bs - prev_depth - height;
+            if g < s.lineskiplimit_pt {
+                s.lineskip_pt
+            } else {
+                g
+            }
+        };
+        let gap = |i: usize| b.extra_gap_after_pt.get(i).copied().unwrap_or(0.0);
+        // `\opening` with no `\address` (`\fromaddress` empty, lines
+        // 266-268): `{\raggedleft\@date\par}`, a plain line with the date
+        // at the right margin and no `tabular` around it. The compiler's
+        // block then holds the date alone (an address adds a line before
+        // it).
+        let date_only = b.kind == K::ReturnAddress && b.lines.len() == 1;
+        match b.kind {
+            K::ReturnAddress | K::Closing => {
+                // Rows (`tabular`) or lines (the parbox's `\raggedright`
+                // paragraphs), each with its natural runs.
+                let mut rows: Vec<(Vec<(pl::GlyphRun, usize, f64)>, f64, f64, f64)> = Vec::new();
+                for (i, line) in b.lines.iter().enumerate() {
+                    let (runs, w) = self.hbox_runs(line, size);
+                    if runs.is_empty() {
+                        continue;
+                    }
+                    let (mut h, mut d) = runs.iter().fold((0.0f64, 0.0f64), |(h, d), r| (h.max(r.0.height), d.max(r.0.depth)));
+                    let last = i + 1 == b.lines.len();
+                    if date_only {
+                        // A text line: the glyphs' own extents.
+                    } else if b.kind == K::ReturnAddress {
+                        // `\@arstrut` in every cell.
+                        h = h.max(strut.0);
+                        d = d.max(strut.1);
+                    } else if last {
+                        // `\fromsig\strut`.
+                        h = h.max(strut.0);
+                        d = d.max(strut.1);
+                    }
+                    rows.push((runs, w, h, d));
+                }
+                if rows.is_empty() {
+                    return None;
+                }
+                // Baseline of each row from the box's top, and the box's
+                // total height.
+                let mut offsets = Vec::with_capacity(rows.len());
+                let mut y = 0.0;
+                for (i, (_, _, h, d)) in rows.iter().enumerate() {
+                    if i > 0 {
+                        // A `tabular` row is `\@arstrut`-tall and its extra
+                        // leading (`\\[<dimen>]`) is added to the row above's
+                        // depth; a parbox line takes `\baselineskip` glue
+                        // after the `\vskip` of the `\\[<dimen>]` before it.
+                        let prev_d = rows[i - 1].3;
+                        y += match b.kind {
+                            K::ReturnAddress => prev_d + gap(i - 1) + h,
+                            _ => prev_d + gap(i - 1) + interline(prev_d, *h) + h,
+                        };
+                    } else {
+                        y = *h;
+                    }
+                    offsets.push(y);
+                }
+                let total = y + rows.last().map_or(0.0, |r| r.3);
+                // `\vcenter`: the box straddles the math axis.
+                let (height, depth) = if date_only { (rows[0].2, rows[0].3) } else { (total / 2.0 + axis, total / 2.0 - axis) };
+                let left = match b.kind {
+                    K::ReturnAddress => width - rows.iter().map(|r| r.1).fold(0.0, f64::max),
+                    _ => b.indent_pt,
+                };
+                let mut placed = Vec::new();
+                for (k, (row, _, _, _)) in rows.into_iter().enumerate() {
+                    // Upward from the line's baseline to this row's.
+                    let raise = height - offsets[k];
+                    for (run, rec, x) in row {
+                        self.raise_record(rec, raise);
+                        placed.push((run, rec, left + x));
+                    }
+                }
+                let mut v = plain_vblock(vec![(height, depth)]);
+                v.parskip = Some(parskip);
+                if b.kind == K::Closing {
+                    // `\par\nobreak\vspace{\parskip}` (line 286).
+                    v.penalty_before = Some(pagebuild::INF_PENALTY);
+                }
+                if b.gap_before_pt != 0.0 {
+                    v.space_before = Some((b.gap_before_pt, 0.0, 0.0));
+                }
+                if b.gap_after_pt != 0.0 {
+                    v.space_after = Some((b.gap_after_pt, 0.0, 0.0));
+                }
+                Some(positioned_block(placed, height, depth, width, v))
+            }
+            K::Recipient => {
+                let mut lines: Vec<(f64, f64)> = Vec::new();
+                let mut placed: Vec<pl::Line> = Vec::new();
+                let mut items = Vec::new();
+                let mut recs = Vec::new();
+                for line in b.lines.iter() {
+                    let (runs, w) = self.hbox_runs(line, size);
+                    if runs.is_empty() {
+                        continue;
+                    }
+                    let (h, d) = runs.iter().fold((0.0f64, 0.0f64), |(h, d), r| (h.max(r.0.height), d.max(r.0.depth)));
+                    let start = items.len();
+                    let mut positioned = Vec::with_capacity(runs.len());
+                    for (run, rec, x) in runs {
+                        positioned.push(position_run(&run, x, 0.0));
+                        items.push(pl::Item::Box(run));
+                        recs.push(Some(rec));
+                    }
+                    placed.push(pl::Line {
+                        index: lines.len(),
+                        runs: positioned,
+                        baseline_y: h,
+                        height: h,
+                        depth: d,
+                        natural_width: w,
+                        set_width: width,
+                        ratio: 0.0,
+                        badness: 0.0,
+                        items: start..items.len(),
+                        hyphenated: false,
+                    });
+                    lines.push((h, d));
+                }
+                if lines.is_empty() {
+                    return None;
+                }
+                let n = items.len();
+                let mut v = plain_vblock(lines.clone());
+                v.parskip = Some(parskip);
+                if b.gap_before_pt != 0.0 {
+                    v.space_before = Some((b.gap_before_pt, 0.0, 0.0));
+                }
+                if b.gap_after_pt != 0.0 {
+                    v.space_after = Some((b.gap_after_pt, 0.0, 0.0));
+                }
+                Some(BuiltBlock {
+                    block: pl::ParagraphBlock::body(pl::Lines {
+                        lines: placed,
+                        breaks: Vec::new(),
+                        stats: pl::Stats {
+                            algorithm: pl::Algorithm::TotalFit,
+                            lines: lines.len(),
+                            pass: 1,
+                            total_demerits: 0.0,
+                            overfull: Vec::new(),
+                            underfull: Vec::new(),
+                            hyphenated_lines: 0,
+                            emergency_pass_used: false,
+                        },
+                        diagnostics: Vec::new(),
+                        height: lines.iter().map(|(h, d)| h + d).sum(),
+                    }),
+                    items,
+                    recs,
+                    vertical: v,
+                    labels: Vec::new(),
+                    cache_key: None,
+                })
+                .filter(|_| n > 0)
+            }
+            K::Annotation => {
+                // `\@hangfrom{<label>: }`: the label box, its space inside,
+                // then the text. The hanging indent of a wrapped annotation
+                // (`\hangindent\wd\@tempboxa`) is not set; the class's
+                // `\cc`/`\encl` lines are short.
+                let mut items: Vec<AItem> = Vec::new();
+                items.extend(b.lines.first().into_iter().flat_map(|l| l.iter().cloned()));
+                items.push(AItem::Space { style: TextStyle::default(), factor: 2000, no_break: true });
+                items.extend(b.lines.get(1).into_iter().flat_map(|l| l.iter().cloned()));
+                let sized = adapter::SizedPara {
+                    size_pt: size,
+                    baselineskip_pt: bs,
+                    parindent_em: None,
+                    vspace_after_em: 0.0,
+                    close_skip: None,
+                    strut: true,
+                };
+                let mut built = self.paragraph_block(&items, false, true, false, ParaStyle::Plain, None, Some(sized), None)?;
+                // One `\vtop`: no page break inside it.
+                built.vertical.interline_penalty = pagebuild::INF_PENALTY;
+                built.vertical.club_penalty = 0;
+                built.vertical.widow_penalty = 0;
+                Some(built)
+            }
+        }
+    }
+
+    /// Moves the box `rec` records `dy` points up its line (a `tabular`
+    /// row above or below the line's baseline).
+    fn raise_record(&mut self, rec: usize, dy: f64) {
+        if dy == 0.0 {
+            return;
+        }
+        match &mut self.recs[rec] {
+            BoxRec::Text { raise, .. } => *raise += dy,
+            BoxRec::Math(mi) => {
+                let mi = *mi;
+                self.maths[mi].raise += dy;
+            }
+            _ => {}
+        }
     }
 
     /// `items` as an `\hbox` at natural width: the runs that carry a
@@ -10589,6 +10848,17 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 blocks.push(b);
                 after_heading = false;
             }
+            Block::Letter { kind, lines, extra_gap_after_pt, gap_before_pt, gap_after_pt, indent_pt, span, eject_before, vspace_before } => {
+                let letter = adapter::LetterBlockRef { kind: *kind, lines, extra_gap_after_pt, gap_before_pt: *gap_before_pt, gap_after_pt: *gap_after_pt, indent_pt: *indent_pt, span: *span };
+                if let Some(mut b) = ctx.letter_block(&letter) {
+                    if *eject_before {
+                        b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                    }
+                    add_vspace(&mut b.vertical, *vspace_before);
+                    blocks.push(b);
+                }
+                after_heading = false;
+            }
             Block::LongTable {
                 table,
                 eject_before,
@@ -10824,13 +11094,28 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // On **page 1 only** a fil glue sits at the top of the text block. Line
     // 404's unguarded `\raggedbottom` puts `\@textbottom`'s
     // `\vskip \z@ \@plus.0001fil` at the bottom, so the page's leftover space
-    // is shared between the two in the ratio of their stretch: the top takes
-    // .00006/(.00006+.0001) = 3/8 of it and the first baseline moves down by
-    // that much. This is page building, not a frame length, which is why
-    // `crates/class-geometry`'s `letter_oracle` checks its model on page 2
-    // and only bounds page 1 -- the shift belongs here.
+    // is shared between the two in the ratio of their stretch. TeX keeps a
+    // glue's stretch in scaled points (§150, `stretch` is a `scaled`), so
+    // `.00006fil` is round(0.00006 * 65536) = 4 sp of fil and `.0001fil`
+    // 7 sp, and the top takes 4/11 of the slack -- not the 3/8 the decimals
+    // suggest. Measured on `fixtures/real-world/letter`: the slack is
+    // 650.43 - 530.5712 = 119.8588 pt (the natural list ends at the `\ps`
+    // baseline, see below), and the first row's baseline is 124.907 bp =
+    // 53.106 pt below the text top less the row's 9.51996 = 43.586 pt, which
+    // is 119.8588 * 4/11 (3/8 gives 44.947, 1.36 bp low). This is page
+    // building, not a frame length, which is why `crates/class-geometry`'s
+    // `letter_oracle` checks its model on page 2 and only bounds page 1 --
+    // the shift belongs here.
     //
-    // Without it every letter's page 1 rode 3/8 of its slack too high:
+    // The slack is measured to the last box's *baseline*: `\@makecol`
+    // (latex.ltx) packs `\vbox to\@colht{\@texttop \dimen@\dp\@outputbox
+    // \unvbox\@outputbox \vskip-\dimen@ \@textbottom}`, taking the last
+    // depth back out (the reference's list ends `\hbox(7.54149+2.12863)
+    // \penalty 200 \glue -2.12863 \glue 0.0 plus 0.0001fil`). Only a depth
+    // beyond `\maxdepth` stays, as the height the page builder charged for
+    // it. Counting the depth put the first baseline 0.56 bp low.
+    //
+    // Without it every letter's page 1 rode 4/11 of its slack too high:
     // 41.95 bp on `fixtures/real-world/letter`, a rigid offset that put 0%
     // of the page's words within 0.5 bp on the vertical axis however exactly
     // the spacing between them was set.
@@ -10845,11 +11130,12 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             let used = page1
                 .lines
                 .iter()
-                .map(|l| l.baseline + l.depth.min(params.maxdepth))
+                .map(|l| l.baseline + (l.depth - params.maxdepth).max(0.0))
                 .fold(0.0_f64, f64::max);
             let leftover = params.vsize - used;
             if leftover > 0.0 {
-                let shift = leftover * (6e-5 / (6e-5 + 1e-4));
+                // 4 sp and 7 sp of fil (see above).
+                let shift = leftover * (4.0 / (4.0 + 7.0));
                 for l in &mut page1.lines {
                     l.baseline += shift;
                 }

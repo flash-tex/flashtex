@@ -485,6 +485,44 @@ pub enum ParaPart {
     },
 }
 
+/// Which letter.cls block a [`Block::Letter`] is (letter.cls, TeX Live
+/// 2026; the compiler's `LetterPart` plus the `\cc`/`\encl` paragraph).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LetterKind {
+    /// `\opening`'s `{\raggedleft\begin{tabular}{l@{}}\ignorespaces
+    /// \fromaddress \\*[2\parskip] \@date \end{tabular}\par}` (lines
+    /// 270-273): one `tabular` -- a box `\vcenter`ed on the math axis
+    /// whose rows share one left edge -- pushed to the right margin.
+    ReturnAddress,
+    /// `\opening`'s `{\raggedright \toname \\ \toaddress \par}` (line
+    /// 276): `\raggedright` makes `\\` `\@centercr`, so every line is a
+    /// paragraph of its own at natural width, `\parskip` cancelled.
+    Recipient,
+    /// `\closing`'s `\noindent\hspace*{\longindentation}\parbox
+    /// {\indentedwidth}{\raggedright \ignorespaces #1\\[6\medskipamount]
+    /// \fromsig\strut}\par` (lines 286-296): a `\parbox` (position `c`:
+    /// `$\vcenter{...}$`) on a line of its own, `\longindentation` in.
+    Closing,
+    /// `\cc`/`\encl` (lines 298-311): `\par\noindent\parbox[t]
+    /// {\textwidth}{\@hangfrom{\normalfont\ccname: }\ignorespaces
+    /// #1\strut}\par` -- the label box (its trailing space inside it,
+    /// `\sfcode` 2000 after the colon) hangs, and `\strut` gives the
+    /// line `\strutbox`'s height and depth.
+    Annotation,
+}
+
+/// A [`Block::Letter`] by reference, as the typesetter reads it.
+#[derive(Debug, Clone, Copy)]
+pub struct LetterBlockRef<'a> {
+    pub kind: LetterKind,
+    pub lines: &'a [Vec<Item>],
+    pub extra_gap_after_pt: &'a [f64],
+    pub gap_before_pt: f64,
+    pub gap_after_pt: f64,
+    pub indent_pt: f64,
+    pub span: Span,
+}
+
 /// LaTeX paragraph-shape environments (compiler `Block::Styled`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ParaStyle {
@@ -609,6 +647,31 @@ pub enum Block {
         authors: Vec<Vec<Vec<Item>>>,
         date: Option<Vec<Item>>,
         span: Span,
+    },
+    /// One of letter.cls's positioned blocks (compiler `LetterBlock`, or
+    /// the `\cc`/`\encl` paragraph the compiler labels): the typesetter
+    /// sets it as the class does -- a `tabular` in `\raggedleft`, a
+    /// `\parbox` at `\longindentation`, a `\parbox[t]` with a hanging
+    /// label -- see [`LetterKind`] and `typeset::Context::letter_block`.
+    Letter {
+        kind: LetterKind,
+        /// The block's lines, one per `\\` of the class's own text (a
+        /// `tabular` row, a `\raggedright` line); for
+        /// [`LetterKind::Annotation`] the label (`encl:`) and the text.
+        lines: Vec<Vec<Item>>,
+        /// The class's own extra leading after line `i` (`\\*[2\parskip]`
+        /// between address and date, `\\[6\medskipamount]` between
+        /// closing and signature), parallel to `lines`; in points.
+        extra_gap_after_pt: Vec<f64>,
+        /// The class's own `\vspace` before/after the block, beyond the
+        /// `\parskip` every paragraph takes (compiler `LetterBlock`).
+        gap_before_pt: f64,
+        gap_after_pt: f64,
+        /// `\hspace*{\longindentation}` before the closing's `\parbox`.
+        indent_pt: f64,
+        span: Span,
+        eject_before: bool,
+        vspace_before: f64,
     },
     /// A class command's `\clearpage` (`double`: `\cleardoublepage`), from
     /// book.cls `\frontmatter`/`\mainmatter`/`\backmatter` (lines 284-298):
@@ -1118,6 +1181,31 @@ pub struct Labels {
     pub foreign_definitions: BTreeMap<(usize, usize), (usize, usize)>,
 }
 
+/// The `\cc`/`\encl` paragraph as the compiler emits it (`letter_annotation`
+/// in its parser): a first `Inline::Text` holding exactly `cc:` or `encl:`
+/// whose span is the whole command, followed by the argument's inlines,
+/// every one of them inside that span. Returns the label, the text and the
+/// command's span. The label's trailing space is not in the inlines --
+/// the compiler marks the text's first inline `space_before` instead, and
+/// the pipeline's gap scan sees no bytes between a span and one it
+/// contains -- which is why the typesetter sets the label as the class's
+/// `\hbox{{\normalfont\enclname: }}`, space included.
+fn letter_annotation(inlines: &[Inline]) -> Option<(&[Inline], &[Inline], Span)> {
+    let Some(Inline::Text { text, span, space_before: false, .. }) = inlines.first() else { return None };
+    if text != "cc:" && text != "encl:" {
+        return None;
+    }
+    let rest = &inlines[1..];
+    let inside = |i: &Inline| {
+        let s = inline_span(i);
+        s.document == span.document && s.start >= span.start && s.end <= span.end
+    };
+    if rest.is_empty() || !rest.iter().all(inside) {
+        return None;
+    }
+    Some((&inlines[..1], rest, *span))
+}
+
 fn inlines_of(block: &CBlock) -> &[Inline] {
     match block {
         CBlock::Paragraph(i) => i,
@@ -1169,16 +1257,15 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
 ///   exact `\vskip`s and `\thanks` are not.
 /// - `\vfill`: dropped (the page builder has no stretchable vertical
 ///   glue), reported on the next block.
-fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: bool, parskip_pt: f64) -> (Vec<(CBlock, ParLeading)>, Vec<(&'static str, Span, String)>, Vec<StashedTitle>, Vec<Span>) {
-    use flashtex_compiler::parser::{FontSizeLevel, LetterPart, ParagraphStyle, TextFamily, TextStyle as CStyle};
+fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: bool) -> (Vec<(CBlock, ParLeading)>, Vec<(&'static str, Span, String)>, Vec<StashedTitle>, Vec<Span>) {
+    use flashtex_compiler::parser::{FontSizeLevel, ParagraphStyle, TextFamily, TextStyle as CStyle};
     let mut out: Vec<(CBlock, ParLeading)> = Vec::with_capacity(blocks.len());
     let mut limitations: Vec<(&'static str, Span, String)> = Vec::new();
     let mut titles: Vec<StashedTitle> = Vec::new();
-    // The source spans of the `\opening`/`\closing` blocks lowered below.
-    // Their `\raggedleft`/`\raggedright` is a *declaration*, not a
-    // `flushright`/`flushleft` environment, so the `env_close` pass must not
-    // give them `\@endparenv`'s `\@topsepadd` glue.
-    let mut letter_spans: Vec<Span> = Vec::new();
+    // Formerly the source spans of the `\opening`/`\closing` paragraphs
+    // this pass lowered; `LetterBlock`s now pass through whole (see the
+    // arm below), so nothing is recorded here.
+    let letter_spans: Vec<Span> = Vec::new();
     let mut pending_vfill = 0usize;
     let sized = |inlines: &[Inline], size: FontSizeLevel| -> Vec<Inline> {
         inlines
@@ -1367,134 +1454,11 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
                     ));
                 }
             }
-            // letter.cls's three positioned blocks. The pipeline has no
-            // layout for any of them yet (`\raggedleft` boxes, a fixed
-            // `\longindentation` offset and the class's own inter-block
-            // skips), so each line is set as an ordinary paragraph in the
-            // nearest alignment the pipeline does have and the geometry that
-            // is lost is named once per block. Nothing is dropped: every
-            // line of every part reaches the page in source order.
-            // letter.cls's three positioned blocks (`\opening`'s return
-            // address + date and recipient, `\closing`'s closing +
-            // signature). The compiler resolved the class's own skips into
-            // `gap_before_pt`/`gap_after_pt`/`extra_gap_after_pt`, all of
-            // them multiples of letter.cls's `\parskip` (line 91,
-            // `0.7em` = 7.66498pt at 11pt), so the pipeline's job here is to
-            // spend them, not to recompute them.
-            //
-            // Each run of lines with no extra gap between them becomes **one**
-            // paragraph whose lines are joined by `Inline::LineBreak` -- not
-            // one paragraph per line. That distinction is the whole vertical
-            // structure: a `\\` inside a paragraph costs `\baselineskip`,
-            // while a new paragraph costs `\baselineskip` *plus* `\parskip`,
-            // and letter.cls sets the address and the recipient as single
-            // `\\`-separated paragraphs (a `tabular{l@{}}` and a
-            // `{\raggedright ...\par}` group).
-            //
-            // `extra_gap_after_pt` (the `\\*[2\parskip]` between
-            // `\fromaddress` and `\@date`) does split the paragraph, so the
-            // `\vspace` that carries it has the following paragraph's own
-            // `\parskip` taken out of it: the two together must add up to the
-            // gap the class asked for, once.
-            CBlock::LetterBlock { part, lines, extra_gap_after_pt, gap_before_pt, gap_after_pt, indent_pt, span } => {
-                let para_style = match part {
-                    // `\opening`'s `{\raggedleft ...}`. See the limitation
-                    // below: this is the *nearest* style, not the class's.
-                    LetterPart::ReturnAddress => Some(ParagraphStyle::FlushRight),
-                    // `{\raggedright ...}` and `\parbox{...}{\raggedright ...}`
-                    // are *declarations*, not `flushleft`/`flushright`
-                    // environments, so they carry none of `\trivlist`'s
-                    // `\topsep`/`\partopsep` glue. A `Styled` block here does
-                    // carry it (9pt + 3pt at 11pt), which put the recipient
-                    // and the closing 12pt too low. These blocks are short,
-                    // unwrapped lines, where `\raggedright` and justification
-                    // set identical text, so a plain paragraph is both the
-                    // right vertical answer and the same horizontal one.
-                    LetterPart::Recipient | LetterPart::Closing => None,
-                };
-                if *gap_before_pt != 0.0 {
-                    out.push((vspace_block(*gap_before_pt), None));
-                }
-                let mut group: Vec<Inline> = Vec::new();
-                let mut prev_end: Option<Span> = None;
-                for (i, line) in lines.iter().enumerate() {
-                    let first = anchor_span(line.iter());
-                    if !group.is_empty() {
-                        // The break owns the bytes between the two lines, so
-                        // no interword space is read across it (as the
-                        // `verbatim` lowering above does).
-                        if let (Some(prev), Some(at)) = (prev_end, first) {
-                            group.push(line_break_inline(Span {
-                                document: at.document,
-                                start: prev.end.min(at.start),
-                                end: at.start,
-                            }));
-                        }
-                    }
-                    group.extend(line.iter().cloned());
-                    prev_end = line.iter().map(inline_span).last().or(prev_end);
-                    let extra = extra_gap_after_pt.get(i).copied().unwrap_or(0.0);
-                    if extra == 0.0 && i + 1 != lines.len() {
-                        continue;
-                    }
-                    if !group.is_empty() {
-                        let content = std::mem::take(&mut group);
-                        // Keyed by the first inline's span, not the block's:
-                        // `\address`'s text comes from the *preamble*, so it
-                        // lies outside `\opening`'s own span entirely.
-                        if let Some(at) = content.iter().map(inline_span).next() {
-                            letter_spans.push(at);
-                        }
-                        out.push((
-                            match para_style {
-                                Some(style) => CBlock::Styled { style, content, lists: Vec::new(), line_break_before: None },
-                                None => CBlock::Paragraph(content),
-                            },
-                            par_leading,
-                        ));
-                    }
-                    if extra != 0.0 {
-                        out.push((vspace_block(extra - parskip_pt), None));
-                    }
-                }
-                if *gap_after_pt != 0.0 {
-                    out.push((vspace_block(*gap_after_pt), None));
-                }
-                // What is still approximate is horizontal, and only
-                // horizontal: the pipeline has no per-paragraph left offset
-                // or measure, so neither `\longindentation` nor the
-                // `\raggedleft` *box* can be expressed yet. Reported once per
-                // block rather than silently produced.
-                let mut lost: Vec<String> = Vec::new();
-                if *indent_pt != 0.0 {
-                    lost.push(format!(
-                        "its {indent_pt} pt \\longindentation offset (it is set at the left margin instead)"
-                    ));
-                }
-                if para_style.is_some() {
-                    lost.push(
-                        "the \\raggedleft box, whose lines share a *left* edge at the right margin \
-                         (flushright aligns their right edges instead, so lines of unequal length differ)"
-                            .to_string(),
-                    );
-                }
-                if !lost.is_empty() {
-                    limitations.push((
-                        "unsupported_block",
-                        *span,
-                        format!(
-                            "{}: the class's vertical skips are applied exactly; {} {} not",
-                            match part {
-                                LetterPart::ReturnAddress => "\\opening's return address and date",
-                                LetterPart::Recipient => "\\opening's recipient",
-                                LetterPart::Closing => "\\closing and signature",
-                            },
-                            lost.join(" and "),
-                            if lost.len() == 1 { "is" } else { "are" },
-                        ),
-                    ));
-                }
-            }
+            // letter.cls's positioned blocks (`\opening`'s return address
+            // and recipient, `\closing`): the typesetter sets them as the
+            // class does (`Block::Letter`, `typeset::letter_blocks`), so
+            // they pass through the way `Paragraph`s do.
+            CBlock::LetterBlock { .. } => out.push((block.clone(), par_leading)),
             CBlock::VFill => pending_vfill += 1,
             other => out.push((other.clone(), par_leading)),
         }
@@ -1900,7 +1864,7 @@ pub fn adapt_cached(
     #[cfg(not(feature = "par-leading"))]
     let leadings: Vec<ParLeading> = vec![None; parsed.blocks.len()];
     let paired: Vec<(CBlock, ParLeading)> = parsed.blocks.iter().cloned().zip(leadings).collect();
-    let (mut lowered, mut limitations, stashed, letter_spans) = lower_blocks(texts, &paired, stash_titles, style.parskip.natural);
+    let (mut lowered, mut limitations, stashed, letter_spans) = lower_blocks(texts, &paired, stash_titles);
     let mut stashed = stashed.into_iter();
     let title_of = |(title, authors, date): StashedTitle, span: Span| Block::Title {
         title: items_for(&title, false),
@@ -2031,7 +1995,7 @@ pub fn adapt_cached(
         let unit_start = next.as_ref().and_then(|unit| match &unit.kind {
             UnitKind::Heading { number_span, .. } => Some(*number_span),
             UnitKind::Paragraph { inlines, .. } => anchor_span(inlines.iter()),
-            UnitKind::Rule { span } => Some(*span),
+            UnitKind::Rule { span } | UnitKind::Letter { span, .. } => Some(*span),
             UnitKind::FrameBegin { span, .. } | UnitKind::FrameEnd { span } | UnitKind::BeamerTitle { span, .. } | UnitKind::BeamerToc { span } => Some(*span),
             UnitKind::BeamerBlockBegin { span, .. }
             | UnitKind::BeamerBlockEnd { span }
@@ -2476,6 +2440,21 @@ pub fn adapt_cached(
             }
             UnitKind::BeamerToc { span } => {
                 blocks.push(Block::BeamerToc { entries: beamer_sections.clone(), span });
+                after_heading = false;
+                prev_para_end = None;
+            }
+            UnitKind::Letter { kind, lines, extra_gap_after_pt, gap_before_pt, gap_after_pt, indent_pt, span } => {
+                blocks.push(Block::Letter {
+                    kind,
+                    lines: lines.iter().map(|l| items_for(l, false)).collect(),
+                    extra_gap_after_pt,
+                    gap_before_pt,
+                    gap_after_pt,
+                    indent_pt,
+                    span,
+                    eject_before,
+                    vspace_before,
+                });
                 after_heading = false;
                 prev_para_end = None;
             }
@@ -3246,6 +3225,7 @@ fn block_range(b: &Block, document: flashtex_compiler::DocumentId) -> Option<(us
         | Block::Chapter { span, .. }
         | Block::Part { span, .. }
         | Block::Title { span, .. }
+        | Block::Letter { span, .. }
         | Block::ClearPage { span, .. }
         | Block::NoBreakFalse { span }
         | Block::Chrome { span, .. }
@@ -3583,6 +3563,7 @@ fn block_source_range(block: &Block, entry: usize) -> Option<(usize, usize)> {
         | Block::Chapter { span, .. }
         | Block::Part { span, .. }
         | Block::Title { span, .. }
+        | Block::Letter { span, .. }
         | Block::Rule { span, .. } => in_entry(*span),
         Block::Picture { document: d, picture, .. } => (*d == document).then_some((picture.start, picture.end)),
         Block::LongTable { table, .. } => in_entry(table.span),
@@ -3687,6 +3668,7 @@ fn column_switch_block(blocks: &[Block], source: &str, entry: usize, columns: &c
                 | Block::Heading { eject_before, .. }
                 | Block::Part { eject_before, .. }
                 | Block::Rule { eject_before, .. }
+                | Block::Letter { eject_before, .. }
                 | Block::Picture { eject_before, .. }
                 | Block::LongTable { eject_before, .. } => *eject_before,
                 Block::Chapter { .. } | Block::Title { .. } => true,
@@ -4224,6 +4206,17 @@ enum UnitKind<'p> {
     Rule {
         span: Span,
     },
+    /// A letter.cls block ([`Block::Letter`]): a compiler `LetterBlock`, or
+    /// the `\cc`/`\encl` paragraph (see [`letter_annotation`]).
+    Letter {
+        kind: LetterKind,
+        lines: Vec<&'p [Inline]>,
+        extra_gap_after_pt: Vec<f64>,
+        gap_before_pt: f64,
+        gap_after_pt: f64,
+        indent_pt: f64,
+        span: Span,
+    },
     /// beamer `\begin{frame}` / `\end{frame}` (#944).
     FrameBegin {
         block: &'p CBlock,
@@ -4387,6 +4380,62 @@ fn split_at_page_breaks<'p>(
             // mode, which dropped `\partopsep` from its closing
             // `\@topsepadd` (`nested_list_end_skips`).
             CBlock::Paragraph(inlines) if !inlines.is_empty() && inlines.iter().all(|i| matches!(i, Inline::PageStyle { .. })) => continue,
+            // letter.cls's positioned blocks: vertical-mode material of
+            // their own. The class's `\vspace`s around them are already in
+            // the block (`gap_before_pt`/`gap_after_pt`), so the gap scan
+            // below is not run for them; a `\vspace` block the compiler
+            // emitted before one still arrives through `pending_vspace`.
+            CBlock::LetterBlock { part, lines, extra_gap_after_pt, gap_before_pt, gap_after_pt, indent_pt, span } => {
+                units.push(Unit {
+                    kind: UnitKind::Letter {
+                        kind: match part {
+                            flashtex_compiler::parser::LetterPart::ReturnAddress => LetterKind::ReturnAddress,
+                            flashtex_compiler::parser::LetterPart::Recipient => LetterKind::Recipient,
+                            flashtex_compiler::parser::LetterPart::Closing => LetterKind::Closing,
+                        },
+                        lines: lines.iter().map(Vec::as_slice).collect(),
+                        extra_gap_after_pt: extra_gap_after_pt.clone(),
+                        gap_before_pt: *gap_before_pt,
+                        gap_after_pt: *gap_after_pt,
+                        indent_pt: *indent_pt,
+                        span: *span,
+                    },
+                    eject_before: std::mem::take(&mut pending_eject),
+                    vspace_before: std::mem::take(&mut pending_vspace),
+                    addvspace_before: 0.0,
+                    addvspace_flex: (0.0, 0.0),
+                    vspace_flex: (0.0, 0.0),
+                    endlist_adjust: 0.0,
+                    limitations: std::mem::take(&mut pending_limitations),
+                });
+                prev_end = Some(*span);
+                prev_vmode = true;
+                continue;
+            }
+            CBlock::Paragraph(inlines) if style.is_letter() && letter_annotation(inlines).is_some() => {
+                let (label, text, span) = letter_annotation(inlines).expect("checked above");
+                units.push(Unit {
+                    kind: UnitKind::Letter {
+                        kind: LetterKind::Annotation,
+                        lines: vec![label, text],
+                        extra_gap_after_pt: Vec::new(),
+                        gap_before_pt: 0.0,
+                        gap_after_pt: 0.0,
+                        indent_pt: 0.0,
+                        span,
+                    },
+                    eject_before: std::mem::take(&mut pending_eject),
+                    vspace_before: std::mem::take(&mut pending_vspace),
+                    addvspace_before: 0.0,
+                    addvspace_flex: (0.0, 0.0),
+                    vspace_flex: (0.0, 0.0),
+                    endlist_adjust: 0.0,
+                    limitations: std::mem::take(&mut pending_limitations),
+                });
+                prev_end = Some(span);
+                prev_vmode = true;
+                continue;
+            }
             CBlock::Rule { span } => {
                 let eject = std::mem::take(&mut pending_eject) || prev_end.is_some_and(|p| gap_has_page_break(texts, p, *span));
                 units.push(Unit {
@@ -12524,6 +12573,7 @@ mod tests {
                     })
                     .collect(),
                 Block::Rule { .. } => "R".to_string(),
+                Block::Letter { lines, .. } => lines.iter().map(|l| shape(l)).collect::<Vec<_>>().join("/"),
                 Block::Picture { .. } => "P".to_string(),
                 Block::Chapter { .. } => "C".to_string(),
                 Block::Part { .. } => "P".to_string(),

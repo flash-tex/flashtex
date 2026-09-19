@@ -535,6 +535,7 @@ fn block_start(b: &Block) -> Option<(usize, usize)> {
         | Block::ColumnsBegin { span, .. }
         | Block::Column { span, .. }
         | Block::ColumnsEnd { span, .. }
+        | Block::Letter { span, .. }
         | Block::Rule { span, .. } => Some((span.document.0, span.start)),
         Block::TocEntry(e) => Some((e.list_span.document.0, e.list_span.start)),
         Block::Picture { document, picture, .. } => Some((document.0, picture.start)),

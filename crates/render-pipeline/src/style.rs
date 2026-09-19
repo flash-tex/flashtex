@@ -436,6 +436,11 @@ impl Stylesheet {
         self.class_geometry.as_ref().is_some_and(|g| g.options.kind == flashtex_class_geometry::ClassKind::Beamer)
     }
 
+    /// `\documentclass{letter}`.
+    pub fn is_letter(&self) -> bool {
+        self.class_geometry.as_ref().is_some_and(|g| g.options.kind == flashtex_class_geometry::ClassKind::Letter)
+    }
+
     /// The body family selected by the loaded packages.
     pub fn family_of(packages: &[String]) -> Family {
         Stylesheet::family_for(packages, false)
