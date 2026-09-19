@@ -158,6 +158,21 @@ pin = { siunitx = "3.3.24", tikz = "3.1.10" }
 
 ### S3 — package resolution and cache (after S1 + S2)
 
+**Status (2026-09-19): shipped on `lane/resolver`** — `crates/package-resolver`
+(libraries → cache → source; `ask` describes, `resolve_with_consent`
+fetches; CTAN via the JSON API record + the mirror listing; `.dtx`-only is
+`NotAvailable("needs docstrip")`, docstrip itself is not implemented; a
+registry URL is the same layout with a content-hash version; git URLs are
+out of scope), the CLI (`--fetch`, `--write-pins`, `packages
+list|fetch|clear`; nothing runs without a manifest or `--fetch`), the
+project-files helper (`resolve_packages`, `set_packages`) and the Mac app
+(one consent sheet per project, Fetch / Not Now / Never, *Remember* writes
+`fetch = "always"`; resolved files under a Packages sidebar group on the
+direct route). Docs: [docs/user/project-manifest.md#packages](../user/project-manifest.md#packages),
+[crates/package-resolver/README.md](../../crates/package-resolver/README.md).
+Delivery to S1: the files arrive as documents at `packages/<name>/<file>`
+after the `texinputs` files.
+
 - `crates/package-resolver` (project layer, may use the network): given an
   unresolved name, consult the cache `~/Library/Application Support/FlashTeX
   /packages/<name>/<version>/` (Linux: `$XDG_CACHE_HOME/flashtex`), then

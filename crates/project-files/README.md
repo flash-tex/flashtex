@@ -1,8 +1,12 @@
 # flashtex-project-files
 
-Original Rust project file layer for FlashTeX. Edition 2024; its only
-dependencies are `unicode-normalization` and `libc` (the rooted file
-operations' C bindings). Owner: `mac-project-files` (Claude Code subagent, parent `mac-claude-a`).
+Original Rust project file layer for FlashTeX. Edition 2024; the library's
+dependencies are `unicode-normalization`, `libc` (the rooted file
+operations' C bindings) and the sibling `flashtex-project-manifest`; the
+helper binary also links `flashtex-package-resolver` for its
+`resolve_packages`/`set_packages` operations (the one place this crate's
+process may touch the network, and only under the manifest's `[packages]`
+policy — see `src/bin/flashtex-project-files.rs`). Owner: `mac-project-files` (Claude Code subagent, parent `mac-claude-a`).
 
 It answers four questions the single-file Mac shell cannot today: *which files
 make up this project*, *what exactly is in them* (content identity), *how do I

@@ -143,6 +143,21 @@ without leaving the app, or open an existing `.tex` file.
   `\setmonofont` in the document still wins over the table, and a
   `\fontspec{…}` group wins locally. The `\setmainfont{` completion rows
   show the same sample in each family.
+- **Packages.** When a compile reports a `\usepackage` the engine does not
+  model and the project does not supply, FlashTeX resolves it through the
+  manifest's local libraries and the per-user package cache first (no
+  network) and then, under the manifest's `[packages] fetch` policy, offers
+  to fetch its LaTeX source files from CTAN: **one sheet per project**
+  listing each package, its version, its files and the URL, with *Fetch*,
+  *Not Now* and *Never for This Project* (which writes `fetch = "never"`);
+  tick *Remember* and Fetch writes `fetch = "always"` so the sheet does not
+  come back. Nothing is fetched without the sheet or that remembered answer.
+  Fetched and library files are compiled from the cache — never from the
+  project — and appear under a dimmed *Packages* group in the Project tree
+  with their source in the tooltip; they cannot be opened as project files.
+  *File › Fetch Missing Packages…* asks again about anything declined. A
+  package that ships only `.dtx`/`.ins` sources is reported as needing
+  docstrip rather than fetched. See [the project manifest](project-manifest.md#packages).
 - **Saving** (⌘S) is compare-and-replace: if the file changed on disk since
   it was read, you get *File › Resolve On-Disk Conflict…* with **Overwrite /
   Reload / Keep Editing** instead of a silent overwrite. FlashTeX also watches

@@ -86,6 +86,9 @@ latency. Every consumer must retain source/project/revision and resource identit
   defaults, unknown keys as warnings, `texinputs` classified lexically and never read
   there; `crates/project-files` (`README.md`, "Package inputs") lists and reads them
   through its rooted handles and serves them to the app (`manifest` helper operation).
+- `crates/package-resolver/README.md`: S3 — local libraries, the per-user package cache
+  and consent-gated fetches (the exact CTAN endpoints, the cache layout, the `Fetcher`
+  seam); user side in `docs/user/project-manifest.md` "Packages".
 - `docs/contracts/runtime-v1.md` and `docs/contracts/transfer-v1.md`: production
   message contracts. `docs/contracts/rendering-v2-proposal.md` is a proposal, not permission
   to change existing clients without negotiation and migration tests.

@@ -54,10 +54,15 @@ Any editor or CI can drive that same JSON Lines protocol directly — see
 ```
 flashtex build [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
                [--font ROLE=NAME]... [--v2 out.json] [--timing] [--verbose] [--strict] [--json] [-j N]
-flashtex check [<main.tex>|<dir>] [--json] [--strict] [--project-root DIR] [--font-dir DIR]...
+               [--fetch ask|always|never] [--write-pins]
+flashtex check [<main.tex>|<dir>] [--json] [--strict] [--project-root DIR] [--font-dir DIR]... [--fetch ask|always|never]
 flashtex watch [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
+               [--fetch ask|always|never] [--write-pins]
 flashtex manifest init [<main.tex>|<dir>] [--force]
 flashtex manifest show [<main.tex>|<dir>] [--json]
+flashtex packages list [--json]
+flashtex packages fetch <name>... [<main.tex>|<dir>]
+flashtex packages clear [<name>]
 flashtex supported [--json|--md|--coverage]
 flashtex worker [--font-dir DIR]... [--project-root DIR] [--v2 out.json] [--pdf out.pdf] [--timing]
 flashtex fonts [--font-dir DIR]... [--json]
@@ -100,6 +105,8 @@ output as *File › Export PDF* in the app. The file is written atomically
 | `--class-options OPTS` | Class options assumed when the source has no `\documentclass` (body-only input) | `12pt` |
 | `--secnumdepth N` | Section numbering depth when the source does not set the counter | `2` |
 | `--font ROLE=NAME` | The installed family for a role — `text`, `sans`, `mono` or `math` (repeatable). Outranks the manifest's [`[fonts]`](project-manifest.md#keys) table for that role; the document's own `\setmainfont` still wins | the manifest, else the class fonts |
+| `--fetch POLICY` | `ask`, `always` or `never`: whether a package the documents ask for that is not in the project, a [local library](project-manifest.md#packages) or the package cache may be fetched from the manifest's `[packages] source`. `ask` prompts once per package when stdin and stderr are terminals and is `never` with a `package_fetch` diagnostic otherwise | the manifest's `fetch`; without a manifest nothing is resolved |
+| `--write-pins` | (build/watch) Record each version fetched during this build in the manifest's `[packages] pin` table; without it a build never rewrites the manifest | off |
 
 ### `check`
 
@@ -128,6 +135,21 @@ the defaults when there is none — with each `texinputs` entry classified
 `invalid` with the reason) and every warning; `--json` is the
 `flashtex-manifest/1` document (`entry`, `path`, `exists`, `manifest`,
 `texinputs`, `warnings`).
+
+### `packages`
+
+The per-user package cache ([where and how it is laid out](project-manifest.md#packages);
+`FLASHTEX_PACKAGE_CACHE` overrides the directory). `flashtex packages list
+[--json]` prints every cached package with its version, files, source URL
+and fetch time (`--json`: `flashtex-packages/1`). `flashtex packages fetch
+<name>... [<main.tex>|<dir>]` fetches each name from the source the
+governing manifest names (the one for the entry or directory given, else
+the current directory's; CTAN without one), honouring its `pin` — the
+command itself is the consent, so `fetch = "ask"`/`"never"` do not apply,
+`source = "none"` still does; a package CTAN does not have, or that ships
+only `.dtx`/`.ins` (needs docstrip), exits 1 with the reason. `flashtex
+packages clear [<name>]` removes one package (every version) or the whole
+cache.
 
 ### `supported`
 
