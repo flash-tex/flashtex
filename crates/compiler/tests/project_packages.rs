@@ -199,3 +199,197 @@ fn diagnostics_inside_a_package_point_into_it_and_name_the_load_site() {
     assert_eq!(unknown.span.map(|s| s.document), Some(DocumentId(0)));
     assert_eq!(unknown.severity, Severity::Error);
 }
+
+// ---- what a package defined (`crate::package_definitions`) ----------------
+
+use flashtex_compiler::json::{self, Value};
+use flashtex_compiler::protocol::handle_line;
+
+/// The `compile_result` payload for `documents`.
+fn compile_payload(documents: &[(&str, &str)]) -> Value {
+    let docs = documents
+        .iter()
+        .map(|(path, text)| {
+            let mut doc = Value::obj();
+            doc.set("path", json::str_(*path));
+            doc.set("text", json::str_(*text));
+            doc
+        })
+        .collect();
+    let mut payload = Value::obj();
+    payload.set("project_id", json::str_("project-packages"));
+    payload.set("revision", Value::Num(1.0));
+    payload.set("entry_path", json::str_("main.tex"));
+    payload.set("documents", Value::Arr(docs));
+    let mut env = Value::obj();
+    env.set("protocol_version", Value::Num(1.0));
+    env.set("id", json::str_("pkg"));
+    env.set("type", json::str_("compile"));
+    env.set("payload", payload);
+    let reply = json::parse(&handle_line(&json::write(&env))).expect("valid JSON reply");
+    reply.get("payload").expect("payload").clone()
+}
+
+fn text_of<'a>(span: &Value, documents: &[(&str, &'a str)]) -> &'a str {
+    let path = span.get("path").and_then(|v| v.as_str()).expect("path");
+    let (start, end) = (span.get("start").and_then(|v| v.as_i64()).unwrap() as usize, span.get("end").and_then(|v| v.as_i64()).unwrap() as usize);
+    let text = documents.iter().find(|(p, _)| *p == path).map(|(_, t)| *t).expect("document");
+    &text[start..end]
+}
+
+/// `Parsed::package_definitions` for the mystyle probe: the file, its
+/// `\ProvidesPackage`, the loading command, and the two macros with their
+/// shapes and statement spans in `mystyle.sty`.
+#[test]
+fn mystyle_reports_its_definitions() {
+    let main = "\\documentclass{article}\n\\usepackage{mystyle}\n\\begin{document}\n\\hello\n\\end{document}\n";
+    let parsed = parse(&[SourceDocument { path: "main.tex", text: main }, SourceDocument { path: "mystyle.sty", text: MYSTYLE }]);
+    assert_eq!(parsed.package_definitions.len(), 1);
+    let record = &parsed.package_definitions[0];
+    assert_eq!((record.document, record.kind), (DocumentId(1), "package"));
+    assert_eq!(&main[record.loaded_by.start..record.loaded_by.end], "\\usepackage");
+    assert_eq!(record.loaded_by, parsed.package_files[0].1);
+    let provides = record.provides.as_ref().expect("provides");
+    assert_eq!((provides.name.as_str(), provides.date.as_deref(), provides.span.document), ("mystyle", None, DocumentId(1)));
+    assert_eq!(&MYSTYLE[provides.span.start..provides.span.end], "\\ProvidesPackage{mystyle}");
+    let rows: Vec<(&str, &str, &str, u8, &str, &str, bool)> = record
+        .definitions
+        .iter()
+        .map(|d| (d.name.as_str(), d.kind, d.definer.as_str(), d.arity, d.signature.as_str(), &MYSTYLE[d.span.start..d.span.end], d.overrides))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("hello", "macro", "newcommand", 0, "", "\\newcommand{\\hello}{Hello from mystyle}", false),
+            ("emphx", "macro", "newcommand", 1, "[1]", "\\newcommand{\\emphx}[1]{\\textbf{#1}}", false),
+        ]
+    );
+    assert!(record.definitions.iter().all(|d| d.span.document == DocumentId(1)));
+    // The same records come out of the compile output and stay put across
+    // an unchanged recompile.
+    let constraints = flashtex_compiler::layout::LayoutConstraints::default();
+    let docs = [SourceDocument { path: "main.tex", text: main }, SourceDocument { path: "mystyle.sty", text: MYSTYLE }];
+    let output = flashtex_compiler::incremental::compile_full_project(&docs, "main.tex", constraints);
+    assert_eq!(output.packages, parsed.package_definitions);
+    let mut session = flashtex_compiler::incremental::Session::new();
+    session.compile_project(&docs, "main.tex", constraints);
+    let again = session.compile_project(&docs, "main.tex", constraints);
+    assert_eq!(again.output.packages, parsed.package_definitions);
+}
+
+/// The runtime-v1 `metadata.packages` section for the mystyle probe, and
+/// its absence for a project without package files.
+#[test]
+fn compile_result_carries_metadata_packages() {
+    let main = "\\documentclass{article}\n\\usepackage{mystyle}\n\\begin{document}\n\\hello\n\\end{document}\n";
+    let documents = [("main.tex", main), ("mystyle.sty", MYSTYLE)];
+    let payload = compile_payload(&documents);
+    assert_eq!(payload.get("status").and_then(|v| v.as_str()), Some("ok"));
+    let packages = payload.get("metadata").and_then(|m| m.get("packages")).and_then(|p| p.as_arr()).expect("metadata.packages");
+    assert_eq!(packages.len(), 1);
+    let package = &packages[0];
+    assert_eq!(package.get("path").and_then(|v| v.as_str()), Some("mystyle.sty"));
+    assert_eq!(package.get("kind").and_then(|v| v.as_str()), Some("package"));
+    let provides = package.get("provides").expect("provides");
+    assert_eq!(provides.get("name").and_then(|v| v.as_str()), Some("mystyle"));
+    assert_eq!(provides.get("date"), Some(&Value::Null));
+    assert_eq!(text_of(package.get("loaded_by").unwrap(), &documents), "\\usepackage");
+    assert_eq!(package.get("loaded_by").and_then(|s| s.get("path")).and_then(|v| v.as_str()), Some("main.tex"));
+    assert_eq!(package.get("options_declared").and_then(|v| v.as_arr()).map(|a| a.len()), Some(0));
+    let definitions = package.get("definitions").and_then(|v| v.as_arr()).expect("definitions");
+    let rows: Vec<(String, String, String, i64, Value, String, String, bool)> = definitions
+        .iter()
+        .map(|d| {
+            (
+                d.get("name").unwrap().as_str().unwrap().to_string(),
+                d.get("kind").unwrap().as_str().unwrap().to_string(),
+                d.get("definer").unwrap().as_str().unwrap().to_string(),
+                d.get("arity").unwrap().as_i64().unwrap(),
+                d.get("optional_default").unwrap().clone(),
+                d.get("signature").unwrap().as_str().unwrap().to_string(),
+                text_of(d.get("span").unwrap(), &documents).to_string(),
+                matches!(d.get("overrides"), Some(Value::Bool(true))),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("hello".into(), "macro".into(), "newcommand".into(), 0, Value::Null, "".into(), "\\newcommand{\\hello}{Hello from mystyle}".into(), false),
+            ("emphx".into(), "macro".into(), "newcommand".into(), 1, Value::Null, "[1]".into(), "\\newcommand{\\emphx}[1]{\\textbf{#1}}".into(), false),
+        ]
+    );
+    // The exact wire text, for the consumer's decoder.
+    let wire = json::write(package.get("definitions").unwrap());
+    assert_eq!(
+        wire,
+        "[{\"arity\":0,\"definer\":\"newcommand\",\"kind\":\"macro\",\"name\":\"hello\",\"optional_default\":null,\"overrides\":false,\"signature\":\"\",\"span\":{\"end\":88,\"path\":\"mystyle.sty\",\"start\":49}},\
+          {\"arity\":1,\"definer\":\"newcommand\",\"kind\":\"macro\",\"name\":\"emphx\",\"optional_default\":null,\"overrides\":false,\"signature\":\"[1]\",\"span\":{\"end\":123,\"path\":\"mystyle.sty\",\"start\":88}}]"
+    );
+    // No package files: no `metadata` key at all.
+    let plain = compile_payload(&[("main.tex", "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n")]);
+    assert_eq!(plain.get("metadata"), None);
+}
+
+/// The myclass probe: the class and the package it `\RequirePackage`s,
+/// each loaded by the command in its loader, the class's `\DeclareOption*`
+/// and `\newcommand`.
+#[test]
+fn myclass_reports_the_class_and_its_package() {
+    let main = "\\documentclass{myclass}\n\\begin{document}\n\\greeting\n\\end{document}\n";
+    let documents = [("main.tex", main), ("myclass.cls", MYCLASS), ("mystyle.sty", MYSTYLE)];
+    let payload = compile_payload(&documents);
+    let packages = payload.get("metadata").and_then(|m| m.get("packages")).and_then(|p| p.as_arr()).expect("metadata.packages");
+    let summary: Vec<(String, String, String, String, Vec<String>, Vec<String>)> = packages
+        .iter()
+        .map(|p| {
+            (
+                p.get("path").unwrap().as_str().unwrap().to_string(),
+                p.get("kind").unwrap().as_str().unwrap().to_string(),
+                p.get("loaded_by").unwrap().get("path").unwrap().as_str().unwrap().to_string(),
+                text_of(p.get("loaded_by").unwrap(), &documents).to_string(),
+                p.get("options_declared").unwrap().as_arr().unwrap().iter().map(|o| o.get("name").unwrap().as_str().unwrap().to_string()).collect(),
+                p.get("definitions").unwrap().as_arr().unwrap().iter().map(|d| d.get("name").unwrap().as_str().unwrap().to_string()).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("myclass.cls".into(), "class".into(), "main.tex".into(), "\\documentclass".into(), vec!["*".into()], vec!["greeting".into()]),
+            ("mystyle.sty".into(), "package".into(), "myclass.cls".into(), "\\RequirePackage".into(), vec![], vec!["hello".into(), "emphx".into()]),
+        ]
+    );
+    let class = &packages[0];
+    assert_eq!(class.get("provides").unwrap().get("name").and_then(|v| v.as_str()), Some("myclass"));
+    let option = &class.get("options_declared").unwrap().as_arr().unwrap()[0];
+    assert_eq!(text_of(option.get("span").unwrap(), &documents), "\\DeclareOption*{\\PassOptionsToClass{\\CurrentOption}{article}}");
+}
+
+/// A diagnostic inside `b.sty`, loaded by `a.sty`, loaded by `main.tex`:
+/// both loaders are labelled, innermost first.
+#[test]
+fn diagnostics_in_a_nested_package_name_the_whole_load_chain() {
+    let a = "\\ProvidesPackage{a}\n\\RequirePackage{b}\n";
+    let b = "\\ProvidesPackage{b}\n\\newcommand{\\dup}{x}\n\\newcommand{\\dup}{y}\n";
+    let main = "\\documentclass{article}\n\\usepackage{a}\n\\begin{document}\n\\dup\n\\end{document}\n";
+    let parsed = parse(&[SourceDocument { path: "main.tex", text: main }, SourceDocument { path: "a.sty", text: a }, SourceDocument { path: "b.sty", text: b }]);
+    let redefined = parsed.diagnostics.iter().find(|d| d.message == "LaTeX Error: Command \\dup already defined.").expect("the engine's error");
+    assert_eq!(redefined.span.map(|s| s.document), Some(DocumentId(2)));
+    let labels: Vec<(String, DocumentId, &str)> = redefined
+        .labels
+        .iter()
+        .map(|l| {
+            let text = match l.span.document {
+                DocumentId(0) => &main[l.span.start..l.span.end],
+                DocumentId(1) => &a[l.span.start..l.span.end],
+                _ => "",
+            };
+            (l.text.clone(), l.span.document, text)
+        })
+        .collect();
+    assert_eq!(labels, [("b.sty is loaded here".to_string(), DocumentId(1), "\\RequirePackage"), ("a.sty is loaded here".to_string(), DocumentId(0), "\\usepackage")]);
+    // The records agree: `b.sty` is loaded from `a.sty`.
+    let chain: Vec<(DocumentId, DocumentId)> = parsed.package_definitions.iter().map(|r| (r.document, r.loaded_by.document)).collect();
+    assert_eq!(chain, [(DocumentId(1), DocumentId(0)), (DocumentId(2), DocumentId(1))]);
+}
