@@ -216,6 +216,11 @@ pub struct V1Payload {
     pub pages: Vec<V1Page>,
     pub diagnostics: Vec<display::Diagnostic>,
     pub accepted: Option<Vec<String>>,
+    /// The optional `metadata` object (`metadata_json`): editor
+    /// intelligence, not page content. `None` is absent on the wire, so a
+    /// reply for a project without package files is byte-identical to one
+    /// written before the object existed.
+    pub metadata: Option<Value>,
 }
 
 /// Height of the U+2500 glyph box relative to the font size, as the current
@@ -387,7 +392,26 @@ pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<Strin
         pages,
         diagnostics: v2.diagnostics.clone(),
         accepted,
+        metadata: None,
     }
+}
+
+/// The `compile_result` payload's optional `metadata` object, exactly as
+/// the compiler's own `compile_result` carries it (`protocol.rs` there
+/// documents the schema; `docs/contracts/runtime-v1.md` "Optional
+/// `metadata` object"): `metadata.packages` is one entry per project
+/// `.sty`/`.cls` the expansion pass read, with the definitions it made and
+/// their byte spans, serialised by the vendored compiler's
+/// `package_definitions::to_json`. `paths` are the request's document
+/// paths indexed by `DocumentId`. `None` -- the object absent, never null
+/// -- when there are no package records.
+pub fn metadata_json(packages: &[flashtex_compiler::package_definitions::PackageRecord], paths: &[&str]) -> Option<Value> {
+    if packages.is_empty() {
+        return None;
+    }
+    let mut metadata = Value::obj();
+    metadata.set("packages", flashtex_compiler::package_definitions::to_json(packages, paths));
+    Some(metadata)
 }
 
 fn source_json(s: &SourceRange) -> Value {
@@ -498,6 +522,9 @@ impl V1Payload {
         p.set("pdf_path", Value::Null);
         if let Some(acc) = &self.accepted {
             p.set("layout_capabilities", Value::Arr(acc.iter().cloned().map(json::str_).collect()));
+        }
+        if let Some(metadata) = &self.metadata {
+            p.set("metadata", metadata.clone());
         }
         p
     }
@@ -779,6 +806,11 @@ impl V1Payload {
                 len += usize::from(i > 0) + js_len(c);
             }
         }
+        // `metadata` is small (a few package records), so its length is
+        // the written object's, as the value-tree path writes it.
+        if let Some(metadata) = &self.metadata {
+            len += ",\"metadata\":".len() + json::write(metadata).len();
+        }
         // The closing brackets of `pages` and of each page's `items` are
         // part of the `"],..."` literals below, as in the writer.
         len += ",\"pages\":[".len();
@@ -869,6 +901,12 @@ impl V1Payload {
                 js(out, c);
             }
             out.push(']');
+        }
+        // Sorted key order puts `metadata` between `layout_capabilities`
+        // and `pages`; the object itself is the value-tree writer's bytes.
+        if let Some(metadata) = &self.metadata {
+            out.push_str(",\"metadata\":");
+            out.push_str(&json::write(metadata));
         }
         out.push_str(",\"pages\":[");
         for (pi, pg) in self.pages.iter().enumerate() {
@@ -980,6 +1018,44 @@ mod tests {
         assert_eq!(acc, vec!["display-list-v2".to_string(), "display-list-v2-diagnostics".to_string()]);
     }
 
+    /// A `metadata` object of the shape `metadata_json` emits (one package
+    /// record with a null `provides.date`, an escaped description, a
+    /// definition), so the writers are pinned on the real section.
+    fn sample_metadata() -> Value {
+        let span = |path: &str, a: f64, b: f64| {
+            let mut v = Value::obj();
+            v.set("path", json::str_(path));
+            v.set("start", json::num(a));
+            v.set("end", json::num(b));
+            v
+        };
+        let mut provides = Value::obj();
+        provides.set("name", json::str_("mystyle"));
+        provides.set("date", Value::Null);
+        provides.set("version", json::str_("v1.0"));
+        provides.set("description", json::str_("my \"macros\"\n"));
+        provides.set("span", span("mystyle.sty", 24.0, 58.0));
+        let mut def = Value::obj();
+        def.set("name", json::str_("emphx"));
+        def.set("kind", json::str_("macro"));
+        def.set("definer", json::str_("newcommand"));
+        def.set("arity", json::num(1.0));
+        def.set("optional_default", Value::Null);
+        def.set("signature", json::str_("[1]"));
+        def.set("span", span("mystyle.sty", 59.0, 95.0));
+        def.set("overrides", Value::Bool(false));
+        let mut record = Value::obj();
+        record.set("path", json::str_("mystyle.sty"));
+        record.set("kind", json::str_("package"));
+        record.set("provides", provides);
+        record.set("loaded_by", span("main.tex", 24.0, 44.0));
+        record.set("options_declared", Value::Arr(Vec::new()));
+        record.set("definitions", Value::Arr(vec![def]));
+        let mut metadata = Value::obj();
+        metadata.set("packages", Value::Arr(vec![record]));
+        metadata
+    }
+
     #[test]
     fn writer_matches_value_tree() {
         let src = |path: &str, a: usize, b: usize| SourceRange {
@@ -1046,6 +1122,7 @@ mod tests {
                 display::Diagnostic::error("e", "boom", Vec::new()),
             ],
             accepted: Some(vec!["rules-v1".into(), "font-hints-v1".into()]),
+            metadata: Some(sample_metadata()),
         };
         let mut env = Value::obj();
         env.set("protocol_version", json::num(1.0));
@@ -1056,8 +1133,11 @@ mod tests {
         let mut none = payload.clone();
         none.accepted = None;
         none.diagnostics.clear();
+        none.metadata = None;
         env.set("payload", none.to_json());
-        assert_eq!(none.write_envelope("r-1"), json::write(&env));
+        let line = none.write_envelope("r-1");
+        assert_eq!(line, json::write(&env));
+        assert!(!line.contains("\"metadata\""), "absent, never null: {line}");
         let mut with_suggestion = display::Diagnostic::error("unknown_command", r"\alpah", vec![src("main.tex", 5, 11)]);
         with_suggestion.suggestion = Some(r"\alpha".into());
         let mut suggested = payload.clone();
@@ -1139,6 +1219,7 @@ mod tests {
                 with_suggestion,
             ],
             accepted: Some(vec!["rules-v1".into(), "font-hints-v1".into()]),
+            metadata: Some(sample_metadata()),
         };
         for id in ["r-1", "", "id \"quoted\"\u{9}"] {
             assert_eq!(payload.envelope_len(id), payload.write_envelope(id).len(), "id {id:?}");
@@ -1147,6 +1228,7 @@ mod tests {
         none.accepted = None;
         none.diagnostics.clear();
         none.pages.clear();
+        none.metadata = None;
         assert_eq!(none.envelope_len("r-1"), none.write_envelope("r-1").len());
         // The whole `jpt` milli-grid near zero, where the trailing-zero
         // trimming lives, plus a pseudo-random sweep of larger magnitudes.
@@ -1162,6 +1244,7 @@ mod tests {
             }],
             diagnostics: Vec::new(),
             accepted: None,
+            metadata: None,
         };
         let mut x: u64 = 0x9e3779b97f4a7c15;
         let mut values: Vec<f64> = (-2200..2200).map(|m| m as f64 / 1000.0).collect();

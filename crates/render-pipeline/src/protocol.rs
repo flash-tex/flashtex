@@ -941,6 +941,11 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
         rendered.v2.diagnostics.extend(closure_diagnostics);
     }
     let mut v1 = crate::v1::fallback(&rendered.v2, caps, accepted.clone());
+    // `metadata.packages`: what the project's `.sty`/`.cls` files defined,
+    // as the compiler's own `compile_result` carries it (`v1::metadata_json`);
+    // absent for a project without package files.
+    let paths: Vec<&str> = sources.iter().map(|d| d.path).collect();
+    v1.metadata = crate::v1::metadata_json(&rendered.package_definitions, &paths);
     // display-list-v2: the envelope is serialised first because declining it
     // (over the line limit) changes the echoed capabilities and diagnostics
     // of the compile_result that precedes it.

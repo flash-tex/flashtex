@@ -71,6 +71,11 @@ pub struct Rendered {
     pub elapsed_ms: f64,
     /// Layout passes run (1 unless `\pageref` needed page numbers).
     pub passes: u32,
+    /// What each project `.sty`/`.cls` the expansion pass read defined
+    /// (`flashtex_compiler::package_definitions`), in loading order: the
+    /// runtime-v1 `metadata.packages` section of the `compile_result`
+    /// (`v1::metadata_json`). Empty for a project without package files.
+    pub package_definitions: Vec<flashtex_compiler::package_definitions::PackageRecord>,
 }
 
 /// `\pageref` values converge in two passes in practice; the cap bounds a
@@ -434,6 +439,7 @@ pub fn render_windowed(
             v2,
             elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
             passes,
+            package_definitions: parsed.package_definitions.clone(),
         };
     }
 }
