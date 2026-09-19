@@ -163,7 +163,7 @@ final class RenameSymbolTests: XCTestCase {
         m.activePath = "main.tex"; m.caretUTF16 = 2
         XCTAssertEqual(EditorIntelligence.definitionTarget(in: m.activeText as NSString, at: 2), .command(name: "input"))
         m.goToDefinition(ofCommand: "section")
-        XCTAssertEqual(m.navigationNote, "\\section has no \\newcommand/\\def/\\DeclareMathOperator definition in the open documents (a standard command).")
+        XCTAssertEqual(m.navigationNote, "\\section has no \\newcommand/\\def/\\DeclareMathOperator definition in the open documents or the project's packages (a standard command).")
         // Hover peek.
         XCTAssertEqual(m.definitionSummary(forCommand: "R"), "\\newcommand{\\R}{\\mathbb{R}} (line 1 in ch.tex)")
         XCTAssertNil(m.definitionSummary(forCommand: "section"))

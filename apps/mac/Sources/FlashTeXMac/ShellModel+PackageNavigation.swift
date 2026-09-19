@@ -1,0 +1,133 @@
+import Foundation
+import SwiftUI
+
+/// The project's package and class files as editor intelligence sees them
+/// (lane pkg-editor): what completion scans for "declared in mystyle.sty"
+/// rows, what Go to Definition and the hover peek search after the open
+/// documents, and how a file that is not a project member is opened —
+/// a rooted `.sty` next to the entry as an ordinary member, a virtual
+/// `texinputs/<i>/…` or `packages/<name>/…` path read-only with a banner
+/// saying where it comes from (`ProjectDocuments.openVirtual`).
+///
+/// Everything here works from the package inputs' text, as the compiler's
+/// own `\usepackage` resolver reads them (ProjectManifest.packageInputs,
+/// ProjectPackagesState.documents): the compile result carries no
+/// definition spans for a package macro yet, so the definitions are found
+/// by the same lexical scan the open documents use (EditorNavigation).
+extension ShellModel {
+    /// One package input beyond the open members: its text and, when it
+    /// has no file under the project root, where it really comes from.
+    struct PackageInput: Equatable {
+        var path: String
+        var text: String
+        /// Nil for a file under the project root (openable as a member).
+        var virtualSource: String?
+    }
+
+    /// The package inputs that are not open members, in the compile
+    /// request's order: the manifest's (a `texinputs` mount says where its
+    /// real file is), then the resolved packages (each says which library
+    /// or cache delivered it).
+    var packageInputs: [PackageInput] {
+        let open = Set(documents.map(\.path))
+        var seen = open
+        var out: [PackageInput] = []
+        let rowsByPath = Dictionary(manifest.rows.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+        for input in manifest.packageInputs() where seen.insert(input.path).inserted {
+            let row = rowsByPath[input.path]
+            let source = row?.origin.map { "\($0) (texinputs[\(row?.texinput ?? 0)] of \(ProjectManifest.fileName))" }
+            out.append(PackageInput(path: input.path, text: input.text, virtualSource: source))
+        }
+        let delivered = Dictionary(projectPackages.rows.map { ($0.path, $0.source) }, uniquingKeysWith: { a, _ in a })
+        for doc in projectPackages.documents() where seen.insert(doc.path).inserted {
+            out.append(PackageInput(path: doc.path, text: doc.text, virtualSource: delivered[doc.path] ?? "a resolved package"))
+        }
+        return out
+    }
+
+    /// What completion scans for package declarations: the open `.sty`/`.cls`
+    /// members other than the active buffer (its own declarations are
+    /// "declared in this document"), then `packageInputs`. Read once per
+    /// list request; the scan runs off-main.
+    func packageDocumentsForEditor() -> [Completion.SourceDocument] {
+        var out = documents.filter { $0.path != activePath && ProjectManifest.isPackagePath($0.path) }
+            .map { Completion.SourceDocument(path: $0.path, text: $0.text) }
+        out += packageInputs.map { Completion.SourceDocument(path: $0.path, text: $0.text) }
+        return out
+    }
+
+    /// A definition found in a package input that is not open.
+    struct PackageDefinition: Equatable {
+        var input: PackageInput
+        var definition: EditorNavigation.Definition
+    }
+
+    /// The first `\newcommand`/`\def`/… of `\name` (or `\newenvironment` of
+    /// `name`) in the package inputs, after `definition(ofCommand:)` found
+    /// none in the open documents.
+    func packageDefinition(ofCommand name: String, environment: Bool = false) -> PackageDefinition? {
+        for input in packageInputs {
+            if let d = EditorNavigation.definition(of: name, in: input.text as NSString, environment: environment) {
+                return PackageDefinition(input: input, definition: d)
+            }
+        }
+        return nil
+    }
+
+    /// Opens a package input as a member — rooted: through the ordinary
+    /// open (a `.sty` next to the entry becomes an editable member);
+    /// virtual: read-only with the banner — and switches to it. False with
+    /// the refusal noted.
+    @discardableResult
+    func openPackageInput(_ input: PackageInput) async -> Bool {
+        if let source = input.virtualSource {
+            switch project.openVirtual(input.path, text: input.text, source: source) {
+            case .opened, .alreadyOpen:
+                if case .refused(let why) = project.switchDocument(to: input.path) { navigationNote = why; return false }
+                return true
+            case .refused(let why):
+                navigationNote = why
+                return false
+            }
+        }
+        return await openAndSwitch(input.path, role: .opened) { [weak self] in self?.navigationNote = $0 }
+    }
+
+    /// Opens the package input at `path` (a diagnostic's path, a definition's)
+    /// when it is one; false — with nothing noted — for any other path.
+    @discardableResult
+    func openPackageInput(at path: String) async -> Bool {
+        guard let input = packageInputs.first(where: { $0.path == path }) else { return false }
+        return await openPackageInput(input)
+    }
+
+    /// ⌘-click / ⌃⌘J on a macro a package defines: opens the file (read-only
+    /// when virtual) and selects the definition, like `reveal` does for an
+    /// open document.
+    func goToPackageDefinition(_ hit: PackageDefinition) {
+        Task { @MainActor [weak self] in
+            guard let self, await self.openPackageInput(hit.input) else { return }
+            self.selectInEditor(hit.definition.range, path: hit.input.path)
+            self.navigationNote = "Definition: \(hit.definition.summary) at line \(hit.definition.line) in \(hit.input.path)"
+                + (hit.input.virtualSource.map { " (read-only, from \($0))." } ?? ".")
+        }
+    }
+}
+
+/// The strip above a read-only buffer: where the shown file really lives.
+struct ReadOnlyBanner: View {
+    let note: String
+
+    var body: some View {
+        HStack(spacing: DS.Space.s) {
+            Image(systemName: "lock.fill").foregroundStyle(DS.Colors.textSecondary).accessibilityHidden(true)
+            Text(note).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
+        .background(DS.Colors.surfaceRaised)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Read-only: \(note)")
+        .accessibilityIdentifier("editor.readonly")
+    }
+}

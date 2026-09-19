@@ -157,6 +157,167 @@ final class PackageEditingTests: XCTestCase {
         XCTAssertTrue(Completion.opensAutomatically(Completion.token(in: "\\RequirePackage{", caretUTF16: 16)))
     }
 
+    // MARK: macros declared in the project's packages
+
+    static let mystyle = """
+    \\NeedsTeXFormat{LaTeX2e}
+    \\ProvidesPackage{mystyle}[2026/01/01 v1.0]
+    \\RequirePackage{xcolor}
+    \\newcommand{\\emphx}[1]{\\textcolor{red}{#1}}
+    \\newcommand{\\note}[2][red]{\\textcolor{#1}{#2}}
+    \\DeclareRobustCommand{\\brand}{FlashTeX}
+    \\def\\pair#1#2{(#1, #2)}
+    \\NewDocumentCommand{\\boxed}{o m}{#2}
+    \\newif\\ifdraft
+    \\newtheorem{lemma}{Lemma}
+    \\newenvironment{aside}{\\begin{quote}}{\\end{quote}}
+    \\endinput
+
+    """
+
+    func testDeclarationsCarryTheArgumentShape() {
+        let d = Completion.declarations(in: Self.mystyle)
+        func shape(_ name: String) -> (Int, Bool, String)? { d.first { $0.name == name }.map { ($0.mandatory, $0.optional, $0.definer) } }
+        XCTAssertEqual(shape("emphx")?.0, 1); XCTAssertEqual(shape("emphx")?.1, false)
+        XCTAssertEqual(shape("note")?.0, 1); XCTAssertEqual(shape("note")?.1, true, "[2][red]: one optional, one mandatory")
+        XCTAssertEqual(shape("brand")?.0, 0); XCTAssertEqual(shape("brand")?.2, "DeclareRobustCommand")
+        XCTAssertEqual(shape("pair")?.0, 2, "\\def\\pair#1#2")
+        XCTAssertEqual(shape("boxed")?.0, 1); XCTAssertEqual(shape("boxed")?.1, true, "xparse `o m`")
+        XCTAssertEqual(d.filter { $0.definer == "newif" }.map(\.name), ["ifdraft", "drafttrue", "draftfalse"])
+        XCTAssertEqual(d.filter { $0.kind == .environment }.map(\.name), ["lemma", "aside"])
+        XCTAssertEqual(d.first { $0.name == "emphx" }?.snippet, Completion.Snippet(text: "\\emphx{}", caretUTF16: 7, stops: [8]))
+        XCTAssertEqual(d.first { $0.name == "pair" }?.snippet?.text, "\\pair{}{}")
+        XCTAssertNil(d.first { $0.name == "brand" }?.snippet, "no arguments, no snippet")
+        // `declaredCommands` is the same scan's command names, unchanged in order.
+        XCTAssertEqual(Completion.declaredCommands(in: Self.mystyle), ["emphx", "note", "brand", "pair", "boxed", "ifdraft", "drafttrue", "draftfalse"])
+        // The buffer's own declarations get the shape too.
+        let ownText = "\\newcommand{\\emphx}[1]{x}\n\\emp"
+        let own = Completion.suggestions(in: ownText, caretUTF16: (ownText as NSString).length, metadata: nil)
+        XCTAssertEqual(own.first?.label, "\\emphx"); XCTAssertEqual(own.first?.snippet?.text, "\\emphx{}")
+    }
+
+    func testMacrosDeclaredInAPackageInputAreOfferedWithTheFileAndTheSnippet() {
+        let packages = [Completion.SourceDocument(path: "texinputs/0/mystyle.sty", text: Self.mystyle)]
+        let declared = Completion.packageDeclarations(in: packages)
+        XCTAssertEqual(declared.first?.file, "mystyle.sty")
+        func offered(_ typed: String) -> [Completion.Suggestion] {
+            let text = "\\documentclass{article}\\usepackage{mystyle}\n" + typed
+            return Completion.suggestions(in: text, caretUTF16: (text as NSString).length, metadata: nil,
+                                          declaredElsewhere: ["emphz"], packageDeclarations: declared)
+        }
+        let e = offered("\\emp")
+        XCTAssertEqual(e.prefix(2).map(\.label), ["\\emphz", "\\emphx"], "an open document's macro, then the package's: \(e.map(\.label))")
+        XCTAssertEqual(e[1].detail, "declared in mystyle.sty")
+        XCTAssertEqual(e[1].snippet, Completion.Snippet(text: "\\emphx{}", caretUTF16: 7, stops: [8]))
+        XCTAssertEqual(e[1].kind, .command)
+        XCTAssertTrue(e.contains { $0.insertText == "\\emph" }, "the compiler's \\emph stays offered after them: \(e.map(\.insertText))")
+        XCTAssertEqual(offered("\\pai").first?.snippet?.text, "\\pair{}{}")
+        XCTAssertEqual(offered("\\ifdr").first?.label, "\\ifdraft")
+        XCTAssertEqual(offered("\\draftt").first?.detail, "declared in mystyle.sty")
+        // A macro the buffer itself declares keeps its own row (and label), whatever the package says.
+        let text = "\\newcommand{\\emphx}{y}\n\\emp"
+        let here = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, metadata: nil, packageDeclarations: declared)
+        XCTAssertEqual(here.first?.detail, "declared in this document")
+        XCTAssertEqual(here.filter { $0.label == "\\emphx" }.count, 1)
+        // Environments: `\begin{lem` finds the package's `\newtheorem`.
+        let env = offered("\\begin{lem")
+        XCTAssertEqual(env.first?.label, "lemma")
+        XCTAssertEqual(env.first?.detail, "declared in mystyle.sty")
+        XCTAssertEqual(offered("\\begin{asi").first?.label, "aside")
+        // The scheduler scans the package documents for a command and an environment name only.
+        let exec = CompletionTests.ManualExecutor()
+        let scheduler = CompletionScheduler(executor: exec.run)
+        var delivered: [CompletionScheduler.Outcome] = []
+        var req = CompletionScheduler.Request(text: "\\begin{document}\n\\emp", caretUTF16: 21, metadata: nil)
+        req.packageDocuments = packages
+        scheduler.schedule(req) { delivered.append($0) }
+        exec.runAll()
+        let deadline = Date().addingTimeInterval(2)
+        while delivered.isEmpty, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        XCTAssertEqual(delivered.first?.items.first?.label, "\\emphx")
+        XCTAssertEqual(delivered.first?.items.first?.detail, "declared in mystyle.sty")
+    }
+
+    func testGoToDefinitionOpensThePackageFileAtItsDefinition() async throws {
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("pkg-editor-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let entry = tmp.appendingPathComponent("main.tex")
+        try "\\documentclass{article}\n\\usepackage{mystyle}\n\\begin{document}\n\\emphx{a} \\begin{lemma}x\\end{lemma}\n\\end{document}\n"
+            .write(to: entry, atomically: true, encoding: .utf8)
+        try Self.mystyle.write(to: tmp.appendingPathComponent("mystyle.sty"), atomically: true, encoding: .utf8)
+        let m = ShellModel()
+        m.detachWorker()
+        // The manifest read the helper would do: mystyle.sty next to the entry
+        // (rooted), and a second package on a texinputs mount outside the root (virtual).
+        m.manifest.reader = { root, _ in
+            let json = """
+            {"path":null,"exists":false,"manifest_dir":null,
+             "manifest":{"project":{"entry":"main.tex","texinputs":[],"output":null},"fonts":{"text":null,"math":null,"mono":null,"sans":null},
+                         "packages":{"source":"ctan","fetch":"ask","pin":{},"path":{}},"library":null},
+             "warnings":[],"texinputs":[],"diagnostics":[],"template":"",
+             "files":[{"path":"mystyle.sty","kind":"package","texinput":null,"origin":null,"text":\(Self.json(Self.mystyle)),"sha256":"a","bytes":1},
+                      {"path":"texinputs/0/lab.sty","kind":"package","texinput":0,"origin":"/shared/tex/lab.sty","text":"\\\\ProvidesPackage{lab}\\n\\\\newcommand{\\\\labnote}[1]{#1}\\n","sha256":"b","bytes":1}]}
+            """
+            return .success(try! JSONDecoder().decode(ProjectFilesV1.Manifest.self, from: Data(json.utf8)))
+        }
+        XCTAssertEqual(m.openTex(at: entry), .opened)
+        XCTAssertEqual(m.packageInputs.map(\.path), ["mystyle.sty", "texinputs/0/lab.sty"])
+        XCTAssertNil(m.packageInputs[0].virtualSource)
+        XCTAssertEqual(m.packageInputs[1].virtualSource, "/shared/tex/lab.sty (texinputs[0] of flashtex.toml)")
+        XCTAssertEqual(m.packageDocumentsForEditor().map(\.path), ["mystyle.sty", "texinputs/0/lab.sty"])
+        // Hover peek before anything is open: the package's definition, named by its file.
+        XCTAssertEqual(m.definitionSummary(forCommand: "emphx"), "\\newcommand{\\emphx}{\\textcolor{red}{#1}} (line 4 in mystyle.sty)")
+        XCTAssertEqual(m.definitionSummary(forCommand: "labnote"), "\\newcommand{\\labnote}{#1} (line 2 in texinputs/0/lab.sty)")
+        XCTAssertNil(m.definitionSummary(forCommand: "section"))
+        // ⌘-click on \emphx: the rooted .sty opens as an ordinary member, the definition selected.
+        m.caretUTF16 = (m.activeText as NSString).range(of: "\\emphx{a}").location + 2
+        m.goToDefinition()
+        try await settle { m.activePath == "mystyle.sty" }
+        XCTAssertEqual(m.documents.map(\.path), ["main.tex", "mystyle.sty"])
+        XCTAssertNil(m.project.readOnlyNote(for: "mystyle.sty"), "a file under the root is an editable member")
+        XCTAssertEqual((m.activeText as NSString).substring(with: try XCTUnwrap(m.selection?.nsRange)), "\\newcommand{\\emphx}[1]{\\textcolor{red}{#1}}")
+        XCTAssertEqual(m.navigationNote, "Definition: \\newcommand{\\emphx}{\\textcolor{red}{#1}} at line 4 in mystyle.sty.")
+        XCTAssertEqual(m.editorLanguage, .package)
+        // Now open, it is found the ordinary way (and no longer a package input).
+        XCTAssertEqual(m.packageInputs.map(\.path), ["texinputs/0/lab.sty"])
+        XCTAssertEqual(m.definitionSummary(forCommand: "emphx"), "\\newcommand{\\emphx}{\\textcolor{red}{#1}} (line 4)")
+        // An environment a package declares: \begin{lemma} goes to its \newtheorem.
+        m.project.switchDocument(to: "main.tex")
+        m.caretUTF16 = (m.activeText as NSString).range(of: "lemma}x").location + 1
+        m.goToDefinition()
+        XCTAssertEqual(m.activePath, "mystyle.sty")
+        XCTAssertEqual((m.activeText as NSString).substring(with: try XCTUnwrap(m.selection?.nsRange)), "\\newtheorem{lemma}{Lemma}")
+        // A macro from the virtual mount: opened read-only with the banner, never saved.
+        m.project.switchDocument(to: "main.tex")
+        m.goToDefinition(ofCommand: "labnote")
+        try await settle { m.activePath == "texinputs/0/lab.sty" }
+        XCTAssertEqual(m.project.readOnlyNote(for: "texinputs/0/lab.sty"),
+                       "lab.sty comes from /shared/tex/lab.sty (texinputs[0] of flashtex.toml) — shown read-only; the compiler reads it from there")
+        XCTAssertEqual((m.activeText as NSString).substring(with: try XCTUnwrap(m.selection?.nsRange)), "\\newcommand{\\labnote}[1]{#1}")
+        XCTAssertTrue(m.navigationNote?.hasSuffix("in texinputs/0/lab.sty (read-only, from /shared/tex/lab.sty (texinputs[0] of flashtex.toml)).") == true, m.navigationNote ?? "")
+        XCTAssertEqual(m.project.changeRefusal(for: "texinputs/0/lab.sty"), m.project.readOnlyNote(for: "texinputs/0/lab.sty"))
+        if case .failed(let why) = await m.project.saveDocument("texinputs/0/lab.sty") { XCTAssertTrue(why.contains("read-only")) } else { XCTFail("a virtual member is never saved") }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tmp.appendingPathComponent("texinputs/0/lab.sty").path))
+        XCTAssertFalse(m.project.isDirty("texinputs/0/lab.sty"))
+        XCTAssertEqual(m.project.listing.last?.origin, .virtual(source: "/shared/tex/lab.sty (texinputs[0] of flashtex.toml)"))
+        // The compile request still carries it once (the open member, not the implicit input).
+        XCTAssertEqual(m.project.implicitClosureDocuments().map(\.path), [])
+        // A standard command: explained, nothing opened.
+        m.goToDefinition(ofCommand: "section")
+        XCTAssertEqual(m.navigationNote, "\\section has no \\newcommand/\\def/\\DeclareMathOperator definition in the open documents or the project's packages (a standard command).")
+    }
+
+    private static func json(_ s: String) -> String {
+        String(data: try! JSONEncoder().encode(s), encoding: .utf8)!
+    }
+
+    private func settle(_ until: @escaping () -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while !until(), Date() < deadline { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertTrue(until(), "did not settle in 5 s", file: file, line: line)
+    }
+
     // MARK: New File… templates
 
     func testNewFileKeepsAPackageOrClassExtensionAndWritesTheTemplate() {

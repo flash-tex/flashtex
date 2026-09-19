@@ -588,6 +588,7 @@ extension ProjectDocuments {
     /// carrying unsaved edits (they would be lost or land in the wrong file).
     func changeRefusal(for path: String) -> String? {
         if path == entryPath { return "\(path) is the entry document" }
+        if let why = readOnlyNote(for: path) { return why }
         if isDirty(path) { return "\(path) has unsaved edits; save them first (⌘S)" }
         return nil
     }

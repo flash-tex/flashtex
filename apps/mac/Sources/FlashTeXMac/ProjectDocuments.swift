@@ -293,6 +293,12 @@ struct ProjectDocument: Equatable, Identifiable {
         case helper
         /// Read directly under the rooted project directory.
         case disk
+        /// A package input shown from a virtual path (`texinputs/<i>/…` for
+        /// a manifest directory outside the root, `packages/<name>/…` for a
+        /// resolved package), with where it really comes from. Read-only:
+        /// never saved, renamed, moved or deleted; the compiler reads the
+        /// same text (ProjectDocuments.implicitClosureDocuments).
+        case virtual(source: String)
     }
     var path: String
     var role: Role
@@ -834,6 +840,29 @@ final class ProjectDocuments {
         return openDirectly(path, role: role)
     }
 
+    /// Opens a package input that has no file under the project root — a
+    /// `texinputs/<i>/…` mount of a manifest directory outside the root, or
+    /// a `packages/<name>/…` file resolved from a library or the cache —
+    /// as a read-only member showing `text`, `source` saying where it
+    /// really lives (`readOnlyNote(for:)`; the editor refuses typing). Go
+    /// to Definition into such a file and a Problems row pointing into it
+    /// land here (ShellModel+PackageNavigation.swift). Never through the
+    /// helper: there is no rooted file for it to own.
+    func openVirtual(_ path: String, text: String, source: String) -> OpenOutcome {
+        prune()
+        if isOpen(path) { return .alreadyOpen(path: path) }
+        insert(path: path, text: text, role: .opened, origin: .virtual(source: source), diskSHA256: nil)
+        return note(.opened(path: path))
+    }
+
+    /// Why `path` cannot be edited: it is a virtual package input
+    /// (`Origin.virtual`), with where it comes from. Nil for every ordinary
+    /// member.
+    func readOnlyNote(for path: String) -> String? {
+        guard case .virtual(let source)? = origins[path] else { return nil }
+        return "\(ProjectManifest.packageDisplayName(path)) comes from \(source) — shown read-only; the compiler reads it from there"
+    }
+
     private func openDirectly(_ path: String, role: ProjectDocument.Role) -> OpenOutcome {
         guard let root = projectRoot else {
             return note(.refused("cannot open \(path): the entry document is not saved, so there is no project root"))
@@ -1053,6 +1082,7 @@ final class ProjectDocuments {
     func saveDocument(_ path: String, timeout: TimeInterval = 10) async -> SaveOutcome {
         prune()
         guard path != entryPath else { return .failed("\(path) is the entry document; use Save (ShellModel.saveTex)") }
+        if let why = readOnlyNote(for: path) { return .failed(why) }
         guard let doc = model.documents.first(where: { $0.path == path }) else { return .failed("\(path) is not open") }
         guard let root = projectRoot else { return .failed("no project root") }
         let url = root.appendingPathComponent(path)

@@ -251,7 +251,9 @@ extension ShellModel {
         switch EditorIntelligence.definitionTarget(in: text, at: caret) {
         case .command(let name)?: goToDefinition(ofCommand: name)
         case .environment(let name)?:
-            if let hit = definition(ofCommand: name, environment: true) { reveal(hit) } else { goToMatching() }
+            if let hit = definition(ofCommand: name, environment: true) { reveal(hit) }
+            else if let hit = packageDefinition(ofCommand: name, environment: true) { goToPackageDefinition(hit) } // ShellModel+PackageNavigation.swift
+            else { goToMatching() }
         case .label?, .citation?: goToMatching()
         case .file(let path, _)?:
             Task { @MainActor [weak self] in
@@ -263,7 +265,10 @@ extension ShellModel {
 
     func goToDefinition(ofCommand name: String) {
         guard let hit = definition(ofCommand: name) else {
-            navigationNote = "\\\(name) has no \\newcommand/\\def/\\DeclareMathOperator definition in the open documents" + (EditorIntelligence.CommandDocs.documentation(for: name) != nil ? " (a standard command)." : ".")
+            // Not in an open document: a package or class file of the project
+            // may define it (ShellModel+PackageNavigation.swift).
+            if let packageHit = packageDefinition(ofCommand: name) { goToPackageDefinition(packageHit); return }
+            navigationNote = "\\\(name) has no \\newcommand/\\def/\\DeclareMathOperator definition in the open documents or the project's packages" + (EditorIntelligence.CommandDocs.documentation(for: name) != nil ? " (a standard command)." : ".")
             return
         }
         reveal(hit)
@@ -353,10 +358,15 @@ extension ShellModel {
 
     // MARK: hover peek
 
-    /// The user's own definition of `\name`, for the hover (EditorIntelligence quick info).
+    /// The user's own definition of `\name`, for the hover (EditorIntelligence
+    /// quick info): from the open documents, else from a package input of
+    /// the project (`packageDefinition`), named by its file.
     func definitionSummary(forCommand name: String) -> String? {
-        guard let hit = definition(ofCommand: name) else { return nil }
-        return hit.definition.summary + " (line \(hit.definition.line)" + (hit.path == activePath ? ")" : " in \(hit.path))")
+        if let hit = definition(ofCommand: name) {
+            return hit.definition.summary + " (line \(hit.definition.line)" + (hit.path == activePath ? ")" : " in \(hit.path))")
+        }
+        guard let hit = packageDefinition(ofCommand: name) else { return nil }
+        return hit.definition.summary + " (line \(hit.definition.line) in \(hit.input.path))"
     }
 }
 

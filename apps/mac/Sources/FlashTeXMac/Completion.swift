@@ -744,6 +744,7 @@ enum Completion {
                             indentUnit: String = "", environmentRules: EnvironmentEditingRules = .conventional,
                             fontFamilies: [String] = [],
                             packageMode: Bool = false, atLetter: Bool = false, projectPackageFiles: [String] = [],
+                            packageDeclarations: [PackageDeclaration] = [],
                             cancelled: () -> Bool = { false }) -> [Suggestion] {
         guard let token = token(in: text, caretUTF16: caretUTF16, atLetter: atLetter), !cancelled() else { return [] }
         let out: [Suggestion]
@@ -751,7 +752,7 @@ enum Completion {
         case .command(let prefix, _, _):
             out = commandSuggestions(prefix: prefix, tokenStart: token.start, text: text, metadata: metadata, supported: supported,
                                      declaredElsewhere: declaredElsewhere, mathMode: mathMode, projectClass: projectClass,
-                                     packageMode: packageMode, cancelled: cancelled)
+                                     packageMode: packageMode, packageDeclarations: packageDeclarations, cancelled: cancelled)
         case .word(let prefix, _, _, let context):
             guard prefix.unicodeScalars.count >= 2 || context != .none else { return [] }
             switch context {
@@ -759,7 +760,8 @@ enum Completion {
                 out = environmentSuggestions(prefix: prefix, tokenStart: token.start, text: text,
                                              closing: context == .endEnvironment, metadata: metadata, recent: recentEnvironments,
                                              documentClass: documentClass(in: text) ?? projectClass,
-                                             indentUnit: indentUnit, rules: environmentRules)
+                                             indentUnit: indentUnit, rules: environmentRules,
+                                             packageEnvironments: packageDeclarations.filter { $0.declaration.kind == .environment })
             case .reference:
                 out = referenceSuggestions(prefix: prefix, text: text, metadata: metadata)
             case .citation:
@@ -814,7 +816,8 @@ enum Completion {
 
     private static func commandSuggestions(prefix: String, tokenStart: Int, text: String, metadata: Metadata?,
                                            supported: [String], declaredElsewhere: [String], mathMode: Bool?,
-                                           projectClass: String?, packageMode: Bool = false, cancelled: () -> Bool) -> [Suggestion] {
+                                           projectClass: String?, packageMode: Bool = false,
+                                           packageDeclarations: [PackageDeclaration] = [], cancelled: () -> Bool) -> [Suggestion] {
         var out: [Suggestion] = []
         let scan = scanCommands(in: text, tokenStart: tokenStart, prefix: prefix)
         if cancelled() { return [] }
@@ -841,7 +844,7 @@ enum Completion {
         // are "declared" from the keystroke that defines them — never "not
         // supported by the compiler" while the project index is still catching
         // up (or absent: an unsaved buffer has no index at all).
-        let declaredHere = declaredCommands(in: text)
+        let declaredHere = declarations(in: text).filter { $0.kind == .command }
         let mathFirst = mathMode == true
         // 1. Close environments still open at the caret.
         for open in scan.open.reversed() where "end".hasPrefix(prefix) {
@@ -909,14 +912,20 @@ enum Completion {
         // name the vocabulary already offers keeps its entry (`offered`), so
         // `\renewcommand{\vec}` still shows the compiler's `\vec` row.
         var declaredRows: [(suggestion: Suggestion, rank: Int)] = []
-        for (names, where_) in [(declaredHere, "declared in this document"), (declaredElsewhere, "declared in an open document")] {
-            for name in names where name.hasPrefix(prefix) && offered.insert(name).inserted {
-                // Once the index has answered for this revision its line is the
-                // richer one (file, use count); until then the buffer's.
-                var detail = declared[name].flatMap { item in metadata.map { item.detail(noun: "declared", revision: $0.revision) } } ?? where_
-                if let message = metadata?.diagnosticsByCommand[name] { detail += " — " + message }
-                declaredRows.append((Suggestion(label: "\\" + name, insertText: "\\" + name, kind: .command, detail: detail), 1))
-            }
+        // Rows: the buffer's own declarations (with their argument shape as
+        // the snippet), the other open documents' (names only: the
+        // scheduler hands the names), then the project's package and class
+        // files' ("declared in mystyle.sty", with the shape).
+        var rows: [(name: String, where_: String, snippet: Snippet?)] = declaredHere.map { ($0.name, "declared in this document", $0.snippet) }
+        rows += declaredElsewhere.map { ($0, "declared in an open document", nil) }
+        rows += packageDeclarations.filter { $0.declaration.kind == .command }.map { ($0.declaration.name, "declared in \($0.file)", $0.declaration.snippet) }
+        for row in rows where row.name.hasPrefix(prefix) && offered.insert(row.name).inserted {
+            let name = row.name
+            // Once the index has answered for this revision its line is the
+            // richer one (file, use count); until then the buffer's.
+            var detail = declared[name].flatMap { item in metadata.map { item.detail(noun: "declared", revision: $0.revision) } } ?? row.where_
+            if let message = metadata?.diagnosticsByCommand[name] { detail += " — " + message }
+            declaredRows.append((Suggestion(label: "\\" + name, insertText: "\\" + name, kind: .command, detail: detail, snippet: row.snippet), 1))
         }
         vocabulary.insert(contentsOf: declaredRows, at: vocabulary.first?.rank == 0 ? 1 : 0)
         func ordered(_ rows: [(suggestion: Suggestion, rank: Int)]) -> [Suggestion] {
@@ -1064,20 +1073,25 @@ enum Completion {
     /// declares, are never hidden.
     private static func environmentSuggestions(prefix: String, tokenStart: Int, text: String, closing: Bool,
                                                metadata: Metadata?, recent: [String], documentClass: String?,
-                                               indentUnit: String, rules: EnvironmentEditingRules) -> [Suggestion] {
+                                               indentUnit: String, rules: EnvironmentEditingRules,
+                                               packageEnvironments: [PackageDeclaration] = []) -> [Suggestion] {
         var names: [String] = []
         if closing {
             names += openEnvironments(in: text, beforeByte: tokenStart).reversed().map(\.name)
         }
         let declared = declaredEnvironments(in: text)
+        // The project's package and class files' `\newenvironment`/`\newtheorem`s
+        // ("declared in mystyle.sty"), after the buffer's own.
+        let fromPackages = Dictionary(packageEnvironments.map { ($0.declaration.name, $0.file) }, uniquingKeysWith: { a, _ in a })
         let known = knownEnvironments.filter { $0 == prefix || Vocabulary.environmentOffered($0, inClass: documentClass) }
-        let offered = Set(known + declared)
+        let offered = Set(known + declared + fromPackages.keys)
         // Recently accepted names first (the environments this author keeps
         // opening), then the compiler's table, the document's declarations and
         // the names it already uses.
         names += recent.filter { offered.contains($0) }
         names += known
         names += declared
+        names += packageEnvironments.map(\.declaration.name)
         names += documentEnvironments(in: text)
         var seen = Set<String>()
         var out: [Suggestion] = []
@@ -1086,7 +1100,8 @@ enum Completion {
         let indent = closing ? "" : lineIndent(in: text, beforeByte: tokenStart)
         for name in fuzzyFilter(names, prefix: prefix, key: { $0 }) where seen.insert(name).inserted {
             var detail = knownEnvironments.contains(name) ? "supported by this compiler"
-                : declared.contains(name) ? "declared in this document" : "seen in this document"
+                : declared.contains(name) ? "declared in this document"
+                : fromPackages[name].map { "declared in \($0)" } ?? "seen in this document"
             if let message = metadata?.diagnosticsByEnvironment[name] { detail += " — " + message }
             let snippet = closing ? nil : environmentSnippet(name, indent: indent, unit: indentUnit, rules: rules)
             out.append(Suggestion(label: name, insertText: name + "}", kind: .environment, detail: detail, snippet: snippet))
@@ -1428,31 +1443,185 @@ enum Completion {
     /// `\newcommand{\foo}{x}` makes `\foo` the author's macro from the
     /// keystroke that writes it: completion offers it as declared and never
     /// as "not supported by the compiler", before any index reply.
+    /// The names of `declarations(in:)`'s commands.
     static func declaredCommands(in text: String) -> [String] {
-        var out: [String] = []
+        declarations(in: text).filter { $0.kind == .command }.map(\.name)
+    }
+
+    /// One macro or environment a source declares, with the argument shape
+    /// its definer states: `\newcommand{\emphx}[1]` is one mandatory
+    /// argument, `[2][x]` one optional then one mandatory, `\def\foo#1#2` two,
+    /// `\NewDocumentCommand{\x}{o m m}` one optional and two mandatory. The
+    /// shape is the completion snippet (`\emphx{|}`), so a macro from a
+    /// package completes like a command of the compiler's vocabulary.
+    struct Declaration: Equatable {
+        enum Kind: Equatable { case command, environment }
+        var name: String
+        var kind: Kind
+        /// Mandatory arguments (the optional one, when there is one, not counted).
+        var mandatory: Int
+        /// Whether the first argument is optional (`[…]`).
+        var optional: Bool
+        /// The defining command (`newcommand`, `def`, `newif`, `newtheorem`, …).
+        var definer: String
+
+        /// `\emphx{}` with the caret inside, Tab through the rest; nil for a
+        /// macro without mandatory arguments, or an environment.
+        var snippet: Completion.Snippet? {
+            guard kind == .command, mandatory > 0 else { return nil }
+            return Completion.argumentSnippet(name: name, arguments: String(repeating: "{}", count: mandatory))
+        }
+    }
+
+    /// Every declaration of `text`, in order, one per (kind, name): the
+    /// command definers of `declaredCommands`, `\newif\iffoo` (which
+    /// declares `\iffoo`, `\footrue` and `\foofalse`), and the environment
+    /// definers `\newenvironment`, `\renewenvironment`, `\newtheorem[*]` and
+    /// `\NewDocumentEnvironment`. Bytes only, like the rest of the scans.
+    static func declarations(in text: String) -> [Declaration] {
+        var out: [Declaration] = []
+        var seen = Set<String>()
+        func add(_ d: Declaration) {
+            if seen.insert((d.kind == .command ? "c:" : "e:") + d.name).inserted { out.append(d) }
+        }
         withBytes(text) { b in
             guard let p = b.baseAddress else { return }
+            let n = b.count
             let table = wordByteClass
-            forEachCommand(in: b, upTo: b.count) { name, nameStart, _ in
-                guard definesCommand(name) else { return }
-                var j = nameStart + name.count
-                if j < b.count, p[j] == UInt8(ascii: "*") { j += 1 }
-                while j < b.count, p[j] == UInt8(ascii: " ") { j += 1 }
-                let braced = j < b.count && p[j] == UInt8(ascii: "{")
-                if braced { j += 1 }
-                while j < b.count, p[j] == UInt8(ascii: " ") { j += 1 }
-                guard j < b.count, p[j] == backslash else { return }
-                let start = j + 1
-                var k = start
-                while k < b.count, table[Int(p[k])] == 1 { k += 1 }
-                guard k > start else { return } // `\def\@x`, `\let\{`: not a completable control word
-                if braced {
-                    var close = k
-                    while close < b.count, p[close] == UInt8(ascii: " ") { close += 1 }
-                    guard close < b.count, p[close] == UInt8(ascii: "}") else { return }
+            func skipSpaces(_ j: inout Int) { while j < n, p[j] == UInt8(ascii: " ") || p[j] == UInt8(ascii: "\t") { j += 1 } }
+            /// `[…]` at `j` on one line: the inner bytes and the index after `]`.
+            func bracket(at j: Int) -> (inner: Range<Int>, after: Int)? {
+                guard j < n, p[j] == UInt8(ascii: "[") else { return nil }
+                var k = j + 1
+                while k < n, p[k] != UInt8(ascii: "]"), p[k] != UInt8(ascii: "\n") { k += 1 }
+                guard k < n, p[k] == UInt8(ascii: "]") else { return nil }
+                return (j + 1 ..< k, k + 1)
+            }
+            /// A balanced `{…}` at `j` (may span lines; `\{` is an escape).
+            func group(at j: Int) -> (inner: Range<Int>, after: Int)? {
+                guard j < n, p[j] == UInt8(ascii: "{") else { return nil }
+                var k = j + 1, depth = 1
+                while k < n {
+                    if p[k] == backslash { k += 2; continue }
+                    if p[k] == UInt8(ascii: "{") { depth += 1 } else if p[k] == UInt8(ascii: "}") { depth -= 1; if depth == 0 { return (j + 1 ..< k, k + 1) } }
+                    k += 1
                 }
-                let macro = String(decoding: UnsafeBufferPointer(start: p + start, count: k - start), as: UTF8.self)
-                if !out.contains(macro) { out.append(macro) }
+                return nil
+            }
+            forEachCommand(in: b, upTo: n) { name, nameStart, _ in
+                let definesCmd = definesCommand(name)
+                let isNewif = bytes(name, equal: "newif")
+                let definesEnv = bytes(name, equal: "newenvironment") || bytes(name, equal: "renewenvironment")
+                    || bytes(name, equal: "newtheorem") || bytes(name, equal: "NewDocumentEnvironment")
+                guard definesCmd || isNewif || definesEnv else { return }
+                let definer = String(decoding: name, as: UTF8.self)
+                var j = nameStart + name.count
+                if j < n, p[j] == UInt8(ascii: "*") { j += 1 }
+                skipSpaces(&j)
+                let macro: String
+                if definesEnv {
+                    guard let g = group(at: j) else { return }
+                    let raw = String(decoding: UnsafeBufferPointer(rebasing: b[g.inner]), as: UTF8.self).trimmingCharacters(in: .whitespaces)
+                    guard !raw.isEmpty, !raw.contains("\\"), !raw.contains("\n"), !raw.contains("{") else { return }
+                    macro = raw
+                    j = g.after
+                } else {
+                    let braced = j < n && p[j] == UInt8(ascii: "{")
+                    if braced { j += 1; skipSpaces(&j) }
+                    guard j < n, p[j] == backslash else { return }
+                    let start = j + 1
+                    var k = start
+                    while k < n, table[Int(p[k])] == 1 { k += 1 }
+                    guard k > start else { return } // `\def\@x`, `\let\{`: not a completable control word
+                    if braced {
+                        var close = k
+                        skipSpaces(&close)
+                        guard close < n, p[close] == UInt8(ascii: "}") else { return }
+                        j = close + 1
+                    } else {
+                        j = k
+                    }
+                    macro = String(decoding: UnsafeBufferPointer(start: p + start, count: k - start), as: UTF8.self)
+                }
+                if isNewif {
+                    // `\newif\iffoo`: the switch and its two setters.
+                    guard macro.hasPrefix("if"), macro.count > 2 else { return }
+                    let base = String(macro.dropFirst(2))
+                    for switchName in [macro, base + "true", base + "false"] {
+                        add(Declaration(name: switchName, kind: .command, mandatory: 0, optional: false, definer: definer))
+                    }
+                    return
+                }
+                // The argument shape, by the definer's own syntax.
+                var mandatory = 0, optional = false
+                switch definer {
+                case "def", "gdef", "edef", "xdef":
+                    // The parameter text `#1#2` up to the body.
+                    var k = j
+                    while k < n, p[k] != UInt8(ascii: "{"), p[k] != UInt8(ascii: "\n") {
+                        if p[k] == UInt8(ascii: "#"), k + 1 < n, p[k + 1] >= 0x30, p[k + 1] <= 0x39 { mandatory += 1 }
+                        k += 1
+                    }
+                case _ where definer.hasSuffix("DocumentCommand") || definer == "NewDocumentEnvironment":
+                    // xparse: `{o m m}` — `m r R v b` mandatory, `o O s t d D e E` optional.
+                    skipSpaces(&j)
+                    if let spec = group(at: j) {
+                        for c in b[spec.inner] {
+                            switch c {
+                            case UInt8(ascii: "m"), UInt8(ascii: "r"), UInt8(ascii: "R"), UInt8(ascii: "v"), UInt8(ascii: "b"): mandatory += 1
+                            case UInt8(ascii: "o"), UInt8(ascii: "O"), UInt8(ascii: "s"), UInt8(ascii: "t"), UInt8(ascii: "d"), UInt8(ascii: "D"),
+                                 UInt8(ascii: "e"), UInt8(ascii: "E"): optional = true
+                            default: break
+                            }
+                        }
+                    }
+                case "let", "DeclareMathOperator", "DeclarePairedDelimiter":
+                    if definer == "DeclarePairedDelimiter" { mandatory = 1 } // `\abs{x}`
+                default:
+                    // `[n]` then an optional `[default]`.
+                    skipSpaces(&j)
+                    if let count = bracket(at: j) {
+                        let digits = String(decoding: UnsafeBufferPointer(rebasing: b[count.inner]), as: UTF8.self).trimmingCharacters(in: .whitespaces)
+                        if let value = Int(digits) {
+                            mandatory = max(0, value)
+                            j = count.after
+                            skipSpaces(&j)
+                            if bracket(at: j) != nil { optional = true; mandatory = max(0, mandatory - 1) }
+                        }
+                    }
+                }
+                add(Declaration(name: macro, kind: definesEnv ? .environment : .command, mandatory: mandatory, optional: optional, definer: definer))
+            }
+        }
+        return out
+    }
+
+    /// A source the editor is not editing but whose declarations it offers:
+    /// a package input (`ProjectDocuments.ImplicitDocument` shape) with its
+    /// project path.
+    struct SourceDocument: Equatable, Sendable {
+        var path: String
+        var text: String
+    }
+
+    /// One declaration of a package or class file, with the file it came
+    /// from (`ProjectManifest.packageDisplayName`: `mystyle.sty`).
+    struct PackageDeclaration: Equatable {
+        var declaration: Declaration
+        var file: String
+        var path: String
+    }
+
+    /// Every declaration of every package document, in document then source
+    /// order, one per (kind, name) across them all (the first file wins, as
+    /// LaTeX's first definition does for `\newcommand`).
+    static func packageDeclarations(in documents: [SourceDocument]) -> [PackageDeclaration] {
+        var seen = Set<String>()
+        var out: [PackageDeclaration] = []
+        for doc in documents {
+            let file = ProjectManifest.packageDisplayName(doc.path)
+            for d in declarations(in: doc.text) where seen.insert((d.kind == .command ? "c:" : "e:") + d.name).inserted {
+                out.append(PackageDeclaration(declaration: d, file: file, path: doc.path))
             }
         }
         return out
@@ -2165,6 +2334,13 @@ final class CompletionScheduler {
         /// The project's `.sty`/`.cls` paths (`ShellModel.projectPackageFiles`):
         /// offered first after `\usepackage{` and `\documentclass{`.
         var projectPackageFiles: [String] = []
+        /// The project's package and class files with their text
+        /// (`ShellModel.packageDocumentsForEditor`): their `\newcommand`s,
+        /// `\def`s, `\newif`s and `\newenvironment`s are offered as declared
+        /// in that file (`Completion.packageDeclarations`; scanned by the
+        /// job, and only when the caret is on a command or an environment
+        /// name).
+        var packageDocuments: [Completion.SourceDocument] = []
     }
 
     struct Outcome: Equatable {
@@ -2238,6 +2414,7 @@ final class CompletionScheduler {
             var graphics: [String] = []
             var fontFamilies: [String] = []
             var declaredElsewhere: [String] = []
+            var packageDeclarations: [Completion.PackageDeclaration] = []
             var bibliographyEntries: [BibScanner.Entry] = []
             if !job.isCancelled {
                 switch Completion.token(in: request.text, caretUTF16: request.caretUTF16, atLetter: request.atLetter) {
@@ -2249,6 +2426,9 @@ final class CompletionScheduler {
                     if let sources = request.bibliography { bibliographyEntries = BibScanner.entries(for: sources, cancelled: { job.isCancelled }) }
                 case .command?:
                     declaredElsewhere = request.otherDocuments.flatMap(Completion.declaredCommands)
+                    packageDeclarations = Completion.packageDeclarations(in: request.packageDocuments)
+                case .word(_, _, _, .beginEnvironment)?, .word(_, _, _, .endEnvironment)?:
+                    packageDeclarations = Completion.packageDeclarations(in: request.packageDocuments)
                 default: break
                 }
             }
@@ -2265,6 +2445,7 @@ final class CompletionScheduler {
                                                                      fontFamilies: fontFamilies,
                                                                      packageMode: request.packageMode, atLetter: request.atLetter,
                                                                      projectPackageFiles: request.projectPackageFiles,
+                                                                     packageDeclarations: packageDeclarations,
                                                                      cancelled: { job.isCancelled })
             let t1 = MonotonicClock.nowNs()
             let outcome = Outcome(generation: job.generation, caretUTF16: request.caretUTF16, range: range, items: items,
@@ -2918,6 +3099,11 @@ final class CompletingTextView: NSTextView {
     /// asked on the main thread when the list is requested; what
     /// `\usepackage{`/`\documentclass{` offer first. A bare text view has none.
     var projectPackageFiles: () -> [String] = { [] }
+    /// The project's package and class files with their text
+    /// (`ShellModel.packageDocumentsForEditor`), asked on the main thread
+    /// when the list is requested and scanned by the job off-main; their
+    /// macros are offered as declared in that file. A bare text view has none.
+    var packageDocuments: () -> [Completion.SourceDocument] = { [] }
     /// Code folding (EditorFolding.swift): hidden ranges stay in the storage.
     let folds = EditorFoldStore()
 
@@ -3346,7 +3532,7 @@ final class CompletingTextView: NSTextView {
                                                   environmentRules: EditorPreferences.shared.environmentRules,
                                                   renderPipeline: renderPipeline(),
                                                   packageMode: packageContext.packageMode, atLetter: packageContext.atLetter,
-                                                  projectPackageFiles: projectPackageFiles())
+                                                  projectPackageFiles: projectPackageFiles(), packageDocuments: packageDocuments())
         scheduler.schedule(request) { [weak self] outcome in
             self?.present(outcome, metadataRevision: metadata?.revision)
         }
