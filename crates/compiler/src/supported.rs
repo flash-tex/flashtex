@@ -314,6 +314,8 @@ pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "setbeamersize",
     "beamertemplatenavigationsymbolsempty",
     "column",
+    "titleformat",
+    "titlerule",
 ];
 
 /// Canonical commands the expansion pass executes itself (engine primitives
@@ -554,6 +556,10 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("so", "{...}", "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)"),
     ("hl", "{...}", "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)"),
     ("enquote", "{text}", "csquotes: wraps text in typographic quotation marks; nesting alternates double \\u{201c}\\u{201d} and single \\u{2018}\\u{2019} (needs csquotes)"),
+    ("titleformat", "{\\section}{format}{label}{sep}{before}[after]", "titlesec: \\section headings take the format's face and size (an empty label prints no number); a \\titlerule after-code draws the full-width rule; other levels are diagnosed (needs titlesec)"),
+    ("titlerule", "", "titlesec: a rule filling the rest of the line, or the full text width between paragraphs (needs titlesec)"),
+    ("pdfgentounicode", "", "pdfTeX glyph-to-Unicode switch: accepted no-op, copy-paste metadata with no visible output"),
+    ("pdfglyphtounicode", "{name}{hex}", "pdfTeX glyph-to-Unicode mapping: accepted no-op, copy-paste metadata with no visible output"),
     ("textsuperscript", "{...}", "kernel text superscript: argument at \\sf@size raised like a math superscript (single-line)"),
     ("textsubscript", "{...}", "kernel text subscript: argument at \\sf@size lowered like a math subscript (single-line)"),
     ("text", "{...}", "amsmath text in text mode: outside math simply \\mbox, the argument as one unbreakable box in the current style"),
@@ -1385,6 +1391,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "fancyhdr",
         "",
         "\\pagestyle{fancy} ships the \\fancyhead/\\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \\fancyhf clears all six fields; \\lhead and friends plus \\fancypagestyle are diagnosed where they are used",
+    ),
+    (
+        "titlesec",
+        "",
+        "\\titleformat{\\section} headings take the format's face and size (unnumbered with an empty label) with the \\titlerule after-code rule; other levels, printed labels, before-code and shapes beyond the implemented subset are diagnosed where they are used",
     ),
     (
         "xspace",

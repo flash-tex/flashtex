@@ -1956,6 +1956,16 @@ fn include(
             "skipped the empty include and continued",
         );
     }
+    // `\input{glyphtounicode}` (pdfTeX's glyph-to-Unicode table): the
+    // ~2,700-line system file is pure `\pdfglyphtounicode` metadata with zero
+    // visible effect (measured against pdflatex, TeX Live 2026), so it is a
+    // silent no-op. Matched by exact target name -- never a general
+    // kpathsea/system-file fallback. (The parser's own `include` carries the
+    // same exemption for the tokens that reach it.)
+    let target = requested.trim();
+    if target == "glyphtounicode" || target == "glyphtounicode.tex" {
+        return;
+    }
     if !path_is_safe(requested) {
         return skip(
             conv,
