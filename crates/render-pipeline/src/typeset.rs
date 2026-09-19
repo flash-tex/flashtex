@@ -414,7 +414,20 @@ impl MathProvider {
 pub struct BuiltBlock {
     pub block: pl::ParagraphBlock,
     /// The horizontal list the block's lines index into.
-    pub items: Vec<pl::Item>,
+    ///
+    /// Shared, and deliberately *not* relocated when a cached block is
+    /// restored (`incremental::relocate_block`). Once a block is built,
+    /// nothing reads an item back: the only two consumers are
+    /// `assemble_block`, which asks each index whether it is an
+    /// `Item::Box` to pair boxes with the line's runs, and
+    /// `floatpage::block_source`, which uses `items.len()` as an index
+    /// range and then reads `recs`. Every source offset that reaches the
+    /// display list comes from the line runs and from `recs`, both of
+    /// which are still relocated. Copying and re-offsetting this list on
+    /// every keystroke was the single largest part of restoring a cached
+    /// block -- about 11 ms of a 272 ms keystroke on the 500 KB fixture,
+    /// across ~9,700 restored blocks -- for a result no one looks at.
+    pub items: Rc<Vec<pl::Item>>,
     pub recs: Vec<Option<usize>>,
     /// Penalties and skips around and inside the block (lines filled).
     pub vertical: VBlock,
@@ -4032,7 +4045,7 @@ impl<'a> Context<'a> {
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
-            items: list,
+            items: Rc::new(list),
             recs,
             vertical,
             labels,
@@ -4866,7 +4879,7 @@ impl<'a> Context<'a> {
                 space_after: h.after.glue(),
                 keep_with_next: true,
             },
-            items: list,
+            items: Rc::new(list),
             recs,
             vertical,
             labels,
@@ -4994,7 +5007,7 @@ impl<'a> Context<'a> {
         (
             BuiltBlock {
                 block: pl::ParagraphBlock::body(lines),
-                items,
+                items: Rc::new(items),
                 recs,
                 vertical,
                 labels: Vec::new(),
@@ -5109,7 +5122,7 @@ impl<'a> Context<'a> {
         };
         BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
-            items: vec![pl::Item::Box(run)],
+            items: Rc::new(vec![pl::Item::Box(run)]),
             recs: vec![Some(rec)],
             vertical,
             labels: Vec::new(),
@@ -5146,7 +5159,7 @@ impl<'a> Context<'a> {
         };
         let mut out = vec![BuiltBlock {
             block: pl::ParagraphBlock::body(empty),
-            items: Vec::new(),
+            items: Rc::new(Vec::new()),
             recs: Vec::new(),
             vertical: VBlock {
                 lines: vec![(0.0, 0.0)],
@@ -5296,7 +5309,7 @@ impl<'a> Context<'a> {
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
-            items: list,
+            items: Rc::new(list),
             recs,
             vertical,
             labels,
@@ -5603,7 +5616,7 @@ impl<'a> Context<'a> {
         vertical.vskip_after = vskips_of(&lines, &skips);
         Some(BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
-            items: list,
+            items: Rc::new(list),
             recs,
             vertical,
             labels,
@@ -5676,7 +5689,7 @@ impl<'a> Context<'a> {
         };
         let block = BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
-            items,
+            items: Rc::new(items),
             recs,
             vertical: VBlock {
                 lines: vec![(ht, dp)],
@@ -5946,7 +5959,7 @@ impl<'a> Context<'a> {
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
-            items,
+            items: Rc::new(items),
             recs,
             vertical: VBlock {
                 lines: vec![(height, depth)],
@@ -6140,7 +6153,7 @@ impl<'a> Context<'a> {
         };
         BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
-            items: vec![pl::Item::Box(run)],
+            items: Rc::new(vec![pl::Item::Box(run)]),
             recs: vec![Some(rec)],
             vertical,
             labels: Vec::new(),
@@ -6208,7 +6221,7 @@ impl<'a> Context<'a> {
                 space_after: pl::Glue::fixed(0.0),
                 keep_with_next: false,
             },
-            items: Vec::new(),
+            items: Rc::new(Vec::new()),
             recs: Vec::new(),
             vertical,
             labels: Vec::new(),
@@ -6537,7 +6550,7 @@ impl<'a> Context<'a> {
                 space_after: if space_after.is_some() { below.glue() } else { pl::Glue::fixed(0.0) },
                 keep_with_next: false,
             },
-            items,
+            items: Rc::new(items),
             recs,
             vertical,
             labels: Vec::new(),
@@ -6894,7 +6907,10 @@ impl<'a> Context<'a> {
                         vskips.push(v);
                         lines.push(line);
                     }
-                    items.extend(b.items);
+                    // `b` is a block this call just built, so its item list is
+                    // normally unshared and moves out; the clone is the
+                    // fallback for a block restored from the cache.
+                    items.extend(Rc::try_unwrap(b.items).unwrap_or_else(|rc| (*rc).clone()));
                     recs.extend(b.recs);
                 }
                 match vskips.last_mut() {
@@ -7073,7 +7089,7 @@ impl<'a> Context<'a> {
                 space_after: below.glue(),
                 keep_with_next: false,
             },
-            items,
+            items: Rc::new(items),
             recs,
             vertical,
             labels: Vec::new(),
@@ -7198,7 +7214,7 @@ fn table_cell_block(lines: pl::Lines, items: Vec<pl::Item>, recs: Vec<Option<usi
         line_penalty: Vec::new(),
         depth_after: pagebuild::DepthAfter::default(),
     };
-    BuiltBlock { block: pl::ParagraphBlock::body(lines), items, recs, vertical, labels, cache_key: None }
+    BuiltBlock { block: pl::ParagraphBlock::body(lines), items: Rc::new(items), recs, vertical, labels, cache_key: None }
 }
 
 fn line_extents(lines: &pl::Lines) -> Vec<(f64, f64)> {
@@ -9403,7 +9419,7 @@ fn positioned_block(runs: Vec<(pl::GlyphRun, usize, f64)>, height: f64, depth: f
             diagnostics: Vec::new(),
             height: height + depth,
         }),
-        items,
+        items: Rc::new(items),
         recs,
         vertical,
         labels: Vec::new(),
