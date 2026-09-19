@@ -463,6 +463,44 @@ impl<'a> Context<'a> {
         }
     }
 
+    /// beamer's `\tableofcontents` in a frame (`beamerbasetoc.sty` 73-93
+    /// and 113-150; `\showoutput` of a three-section probe): `\vspace*
+    /// {-.5em}` (a zero `\hrule` that keeps `\prevdepth`, then the skip),
+    /// and for every section `\vfill` -- beamer's, `0pt plus 1fill`, the
+    /// same order as the frame's own `[c]` skips -- followed by the
+    /// `section in toc` line (`\hbox{\vbox{<title>\par}}`, structure
+    /// colour, `\normalsize`) under ordinary `\baselineskip` glue, then a
+    /// closing `\vfill`. The fills go into `frame`, whose resolver shares
+    /// the free height between them and the `1fill`/`1.5fill` frame
+    /// skips: five sections give 8.5 units. Measured (probe deck
+    /// `beamer-polish` p1): entries 35.086bp apart from 73.956bp.
+    pub(super) fn beamer_toc(&mut self, blocks: &mut Vec<BuiltBlock>, frame: Option<&mut OpenFrame>, entries: &[Vec<AItem>], span: Span) {
+        let s = self.style;
+        let width = s.text_width_pt;
+        let size = frame_pt(spec::NORMAL.size);
+        let bs = frame_pt(spec::NORMAL.baselineskip);
+        let em = self.text_params(TextStyle::default(), size).quad;
+        let style = TextStyle { color: Some(structure_color()), ..TextStyle::default() };
+        let mut fills: Vec<(usize, f64)> = Vec::new();
+        let mut first = true;
+        for entry in entries {
+            let items = recolored(entry, structure_color());
+            let Some(mut b) = self.beamer_line(&items, size, style, ParaStyle::FlushLeft, width, 0.0, bs, span) else { continue };
+            // `\vspace*{-.5em}` before the first `\vfill`.
+            b.vertical.space_before = Some((if first { -0.5 * em } else { 0.0 }, 0.0, 0.0));
+            b.vertical.penalty_before = Some(pagebuild::INF_PENALTY);
+            b.vertical.penalty_after = Some(pagebuild::INF_PENALTY);
+            fills.push((blocks.len(), 1.0));
+            blocks.push(b);
+            first = false;
+        }
+        if let Some(f) = frame {
+            f.fills.extend(fills);
+            // The closing `\vfill`.
+            f.trailing_fill += 1.0;
+        }
+    }
+
     /// `\end{frame}` of a `[plain]` frame (`beamerbaseframe.sty` 116): the
     /// body's `\vbox{}` is followed by `\nointerlineskip`, so the first
     /// body line sits without interline glue.
@@ -663,6 +701,7 @@ fn vert_break(list: &[VItem], h: f64, items: &[bool]) -> Option<usize> {
     let mut cur_height = 0.0f64;
     let mut prev_dp = 0.0f64;
     let mut stretch = 0.0f64;
+    let mut shrink = 0.0f64;
     let mut fil = false;
     let mut best: Option<(usize, i64)> = None;
     let mut prev_box = false;
@@ -684,10 +723,26 @@ fn vert_break(list: &[VItem], h: f64, items: &[bool]) -> Option<usize> {
             } else {
                 0
             };
-            let cost = if cur_height > h {
+            // §974: a list taller than `h` by no more than its shrink is
+            // still a feasible break, at the badness of shrinking it.
+            // Measured (probe deck `beamer-polish`, `[t,allowframebreaks]`):
+            // the 14th item's bottom sits 1.47bp past `0.95\textheight`,
+            // within the 13 `\itemsep`s' `minus 3pt`, and pdflatex still
+            // breaks after it, as in the `[c]` corpus frame.
+            let b = if cur_height < h {
+                if fil {
+                    0
+                } else {
+                    pagebuild::badness(h - cur_height, stretch)
+                }
+            } else if cur_height - h > shrink {
                 pagebuild::AWFUL_BAD
             } else {
-                let b = if fil { 0 } else { pagebuild::badness(h - cur_height, stretch) };
+                pagebuild::badness(cur_height - h, shrink)
+            };
+            let cost = if b == pagebuild::AWFUL_BAD {
+                b
+            } else {
                 let pen = i64::from(pen) + i64::from(item_bonus);
                 if b < pagebuild::INF_BAD {
                     b + pen
@@ -709,10 +764,11 @@ fn vert_break(list: &[VItem], h: f64, items: &[bool]) -> Option<usize> {
                 prev_box = true;
                 total_natural = cur_height + prev_dp;
             }
-            VItem::Glue { width, stretch: st, fil: f, .. } => {
+            VItem::Glue { width, stretch: st, shrink: sh, fil: f } => {
                 cur_height += prev_dp + width;
                 prev_dp = 0.0;
                 stretch += st;
+                shrink += sh;
                 fil |= *f;
                 prev_box = false;
                 total_natural = cur_height;
@@ -720,10 +776,12 @@ fn vert_break(list: &[VItem], h: f64, items: &[bool]) -> Option<usize> {
             VItem::Penalty(_) => prev_box = false,
         }
     }
-    // The whole list fits (its last depth excluded, as at every break):
-    // no split.
+    // The whole list fits (its last depth excluded, as at every break),
+    // its shrink allowed for: the end of the list is a forced break
+    // (§972 `pi := eject_penalty`) of cost `eject_penalty` whenever it is
+    // not awful, so it wins over every earlier break -- no split.
     let _ = total_natural;
-    if cur_height <= h + 1e-6 {
+    if cur_height <= h + shrink + 1e-6 {
         return None;
     }
     // A break after the last box is no break at all.
@@ -839,10 +897,32 @@ fn natural_and_stretch(style: &crate::style::Stylesheet, blocks: &[BuiltBlock], 
 /// (corpus p4/p5): `glue set 0.04607` and `0.50691`.
 fn resolve_autobreak(style: &crate::style::Stylesheet, blocks: &mut [BuiltBlock], frame: &OpenFrame, inserts: f64) {
     let Some(end) = frame.end else { return };
+    let Some(auto) = frame.autobreak else { return };
     let (natural, stretch) = natural_and_stretch(style, blocks, frame.start, end);
-    let total = stretch + frame.trailing_stretch;
     let free = style.text_height_pt - natural - inserts + frame.plain.unwrap_or(0.0) - 1e-6;
-    if total <= 0.0 || free <= 0.0 {
+    if free <= 0.0 {
+        return;
+    }
+    // `[t]`/`[b]`: a `1fill` skip takes the whole free height and no
+    // finite glue stretches (TeX §659). A `[t]` page's fill is the
+    // trailing skip, which nothing follows; a `[b]` page's is the glue
+    // above the body. Measured (probe deck `beamer-polish` p10, `[t]`):
+    // sharing the free height by weight put the continuation's first
+    // baseline 0.02bp low (the `.5\paperheight` stretch's share).
+    if auto.top_fill || auto.bottom_fill {
+        if auto.top_fill {
+            if let Some(v) = blocks.get_mut(frame.body_at).map(|b| &mut b.vertical) {
+                let share = if auto.bottom_fill { free / 2.0 } else { free };
+                v.space_before = Some(match v.space_before {
+                    Some((n, _, _)) => (n + share, 0.0, 0.0),
+                    None => (share, 0.0, 0.0),
+                });
+            }
+        }
+        return;
+    }
+    let total = stretch + frame.trailing_stretch;
+    if total <= 0.0 {
         return;
     }
     let ratio = free / total;

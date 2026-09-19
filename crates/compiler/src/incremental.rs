@@ -568,6 +568,7 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
         } => map_span(span, changes, deltas),
         Block::BeamerFrameBegin {
             options: _,
+            spec: _,
             title,
             subtitle,
             slides: _,
@@ -578,6 +579,10 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             map_span(span, changes, deltas)
         }
         Block::BeamerFrameEnd { span } => map_span(span, changes, deltas),
+        Block::BeamerSection { level: _, number: _, title, span } => {
+            shift_inlines(title, changes, deltas)?;
+            map_span(span, changes, deltas)
+        }
         Block::BeamerBlockBegin { kind: _, title, span } => {
             shift_inlines(title, changes, deltas)?;
             map_span(span, changes, deltas)
@@ -985,6 +990,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         // candidate set, `shift_block`'s equality check gates reuse.
         Block::BeamerFrameBegin { title, .. } => title,
         Block::BeamerFrameEnd { .. } => &[],
+        Block::BeamerSection { title, .. } => title,
         Block::BeamerTitlePage { title, .. } => title,
         Block::BeamerBlockBegin { title, .. } => title,
         Block::BeamerCaption { content, .. } => content,

@@ -1,0 +1,145 @@
+\documentclass{beamer}
+% Polish deck (issue #944 leftovers): nested lists, \framesubtitle, sans
+% math, \tableofcontents, frame-level and action overlay specifications,
+% \temporal, [t]/[b] with allowframebreaks, a footnote inside columns.
+\setbeamertemplate{navigation symbols}{}
+
+\title{Polish}
+\author{A. Author}
+\date{March 2026}
+
+\begin{document}
+
+\begin{frame}
+  \frametitle{Outline}
+  \tableofcontents
+\end{frame}
+
+\section{Lists}
+
+\begin{frame}
+  \frametitle{Nested lists}
+  \framesubtitle{Three levels of itemize, two of enumerate}
+  \begin{itemize}
+    \item First level item.
+    \begin{itemize}
+      \item Second level item, set in small.
+      \begin{itemize}
+        \item Third level item, set in footnotesize.
+      \end{itemize}
+      \item Another second level item.
+    \end{itemize}
+    \item Back to the first level.
+  \end{itemize}
+  \begin{enumerate}
+    \item One
+    \begin{enumerate}
+      \item One point one
+      \item One point two
+    \end{enumerate}
+    \item Two
+  \end{enumerate}
+\end{frame}
+
+\section{Mathematics}
+
+\begin{frame}
+  \frametitle{Sans-serif mathematics}
+  Inline $x + y = 2z$ and $f(x) = \alpha x^2 + \beta$ use the sans family.
+  \[
+    \int_0^1 f(x)\,dx = \frac{a+b}{2}
+  \]
+  Operators like $\sin x$ and $\log n$ follow.
+\end{frame}
+
+\section{Overlays}
+
+% 2 pages: the frame-level specification suppresses slide 1.
+\begin{frame}<2->
+  \frametitle{Frame-level specification}
+  \begin{itemize}
+    \item<1-> Item on every slide.
+    \item<2-> Item from the second slide.
+    \item<3-> Item from the third slide.
+  \end{itemize}
+\end{frame}
+
+% 3 pages: an action specification and \temporal.
+\begin{frame}
+  \frametitle{Actions}
+  \begin{itemize}
+    \item<1-| alert@2> Alerted on the second slide only.
+    \item<2-| alert@3> From the second slide, alerted on the third.
+    \item<3-> From the third slide.
+  \end{itemize}
+  \temporal<2>{Before the second slide.}{On the second slide.}{After the second slide.}
+\end{frame}
+
+\section{Breaks}
+
+\begin{frame}[t,allowframebreaks]
+  \frametitle{Top-aligned breaks}
+  \begin{itemize}
+    \item Item one of a list that is too long for a single frame.
+    \item Item two.
+    \item Item three.
+    \item Item four.
+    \item Item five.
+    \item Item six.
+    \item Item seven.
+    \item Item eight.
+    \item Item nine.
+    \item Item ten.
+    \item Item eleven.
+    \item Item twelve.
+    \item Item thirteen.
+    \item Item fourteen.
+    \item Item fifteen.
+    \item Item sixteen.
+    \item Item seventeen.
+    \item Item eighteen.
+    \item Item nineteen.
+    \item Item twenty, the last one, on the second page of the frame.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[b,allowframebreaks]
+  \frametitle{Bottom-aligned breaks}
+  \begin{itemize}
+    \item Item one of a list that is too long for a single frame.
+    \item Item two.
+    \item Item three.
+    \item Item four.
+    \item Item five.
+    \item Item six.
+    \item Item seven.
+    \item Item eight.
+    \item Item nine.
+    \item Item ten.
+    \item Item eleven.
+    \item Item twelve.
+    \item Item thirteen.
+    \item Item fourteen.
+    \item Item fifteen.
+    \item Item sixteen.
+    \item Item seventeen.
+    \item Item eighteen.
+    \item Item nineteen.
+    \item Item twenty, the last one, on the second page of the frame.
+  \end{itemize}
+\end{frame}
+
+\section{Columns}
+
+\begin{frame}
+  \frametitle{A footnote in a column}
+  \begin{columns}[T]
+    \column{.5\textwidth}
+      The left column carries a footnote\footnote{Set at the bottom of the
+      frame, not of the column.} in its text.
+    \column{.5\textwidth}
+      The right column has none.
+  \end{columns}
+\end{frame}
+
+\end{document}

@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 477 text-mode and 574 math-mode command entries, 85 environments and 39 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 478 text-mode and 574 math-mode command entries, 85 environments and 39 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -792,6 +792,7 @@ Canonical sources:
 | `\only` | `<overlay>{...}` | beamer: the argument is typeset only on the slides the spec selects and takes no space on the others; needs \documentclass{beamer} |
 | `\visible` | `<overlay>{...}` | beamer: like \uncover; needs \documentclass{beamer} |
 | `\invisible` | `<overlay>{...}` | beamer: the argument is covered on the slides the spec selects; needs \documentclass{beamer} |
+| `\temporal` | `<overlay>{before}{during}{after}` | beamer: {during} on the slides the spec selects, {before} on earlier slides, {after} on later ones, each taking space only where it shows; needs \documentclass{beamer} |
 | `\subtitle` | `{...}` | beamer subtitle for \titlepage; optional [short] read past; needs \documentclass{beamer} |
 | `\institute` | `{...}` | beamer institute for \titlepage; optional [short] read past; needs \documentclass{beamer} |
 | `\titlepage` |  | beamer title page (default template: centred title, subtitle, author, institute, date); needs \documentclass{beamer} |

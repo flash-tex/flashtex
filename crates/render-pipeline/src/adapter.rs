@@ -681,11 +681,20 @@ pub enum Block {
         /// `[allowframebreaks]`: the body is `\vsplit` over as many pages as
         /// it needs (`class_geometry::beamer::autobreak`).
         allowframebreaks: bool,
-        /// The frame's slide count (compiler `BeamerFrameBegin::slides`);
-        /// after `crate::overlay::expand_frames` the frame appears once
-        /// per slide and `slide` says which.
+        /// The largest slide the body names (compiler
+        /// `BeamerFrameBegin::slides`); after `crate::overlay::expand_frames`
+        /// the frame appears once per slide it is set on and `slide` says
+        /// which.
         slides: u32,
         slide: u32,
+        /// `\begin{frame}<spec>` (compiler `BeamerFrameBegin::spec`): the
+        /// slides the frame is set on; `expand_frames` runs beamer's frame
+        /// loop over it.
+        spec: flashtex_compiler::overlay::OverlaySpec,
+        /// This copy is the frame's first slide set: it steps
+        /// `framenumber` (`\beamer@@@@frame`'s `\stepcounter`); the
+        /// frame's later slides share the number.
+        first_slide: bool,
         span: Span,
     },
     /// beamer `\end{frame}`: `addvspace_before` is the `\@endparenv` skip
@@ -704,6 +713,18 @@ pub enum Block {
         date: Vec<Item>,
         span: Span,
     },
+    /// beamer `\tableofcontents` inside a frame (`beamerbasetoc.sty`
+    /// 73-93, 113-150): `\vspace*{-.5em}`, then for every section a
+    /// `\vfill` (beamer's, `plus 1fill`) and the `section in toc` line
+    /// (the title in the structure colour), then a closing `\vfill` --
+    /// the fills sharing the frame's free height with the frame's own
+    /// `[c]` skips. `entries` are the deck's `\section`s (compiler
+    /// `BeamerSection`) in document order; subsection entries (the
+    /// `subsection in toc` template, `\leftskip 1.5em`, no `\vfill` of
+    /// their own) are not set yet. Measured (probe deck `beamer-polish`
+    /// p1, five sections): entries at baselines 73.956, 109.042, 144.128,
+    /// 179.213, 214.299bp (35.086 apart) at x 28.346, CMSS10.
+    BeamerToc { entries: Vec<Vec<Item>>, span: Span },
     /// beamer `\begin{block}{title}` and friends (compiler
     /// `BeamerBlockBegin`, #944 Tier 3): the blocks up to the matching
     /// [`Block::BeamerBlockEnd`] are the body. `addvspace_before` /
@@ -820,6 +841,9 @@ pub struct ListGeom {
     /// beamer: the item is covered on this slide (`\item<2->`, a `\pause`
     /// before it), so its label is not painted either (`TextStyle::hidden`).
     pub hidden: bool,
+    /// beamer: the item is alerted on this slide (`\item<1-| alert@2>`),
+    /// so its label takes the alert colour with the text.
+    pub alerted: bool,
     /// The innermost itemize/enumerate's enumitem `itemindent=`, in points
     /// (added to [`Self::itemindent_em`]): the item's first line, and its
     /// label, start this much further in.
@@ -1092,6 +1116,9 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
         // (`split_at_page_breaks`); the title is what anchors the head.
         CBlock::BeamerFrameBegin { title, .. } | CBlock::BeamerTitlePage { title, .. } => title,
         CBlock::BeamerFrameEnd { .. } => &[],
+        // A beamer section has no material of its own; its title anchors
+        // nothing (the block is read for `Block::BeamerToc` only).
+        CBlock::BeamerSection { .. } => &[],
         // Tier 3: the block title and the caption text anchor their units;
         // the column markers are units of their own bytes.
         CBlock::BeamerBlockBegin { title, .. } => title,
@@ -1669,8 +1696,33 @@ pub fn adapt_cached(
         style.tolerance = 9999.0;
         style.emergency_stretch_pt = 3.0 * style.body_size_pt;
     }
+    // beamer loads `amsmath` and `amsthm` itself (`beamerbasetheorems.sty`
+    // 15-18, unless the `noamsthm` class option) and `amssymb`
+    // (`beamerbasefont.sty` 20-21, unless `noamssymb`): the packages'
+    // font declarations are in force whether or not the document names
+    // them. Measured (probe deck `beamer-polish` p3): the display `\int`
+    // is `CMEX10` at 10.91bp, amsfonts' scaled `cmex10 at 10.95pt`, not the
+    // kernel's `sfixed*cmex10`.
+    let mut packages = parsed.packages.clone();
+    if style.is_beamer() {
+        let opt = |name: &str| class_options.split(',').any(|o| o.trim() == name);
+        if !opt("noamsthm") {
+            style.class_loads_amsmath = true;
+            for p in ["amsmath", "amsthm"] {
+                if !packages.iter().any(|q| q == p) {
+                    packages.push(p.to_string());
+                }
+            }
+        }
+        if !opt("noamssymb") {
+            style.class_loads_amssymb = true;
+            if !packages.iter().any(|q| q == "amssymb") {
+                packages.push("amssymb".to_string());
+            }
+        }
+    }
     // amsmath makes `\[` a plain `$$` (see [`ParaPart::Display::bracket`]).
-    let amsmath = parsed.packages.iter().any(|p| p == "amsmath");
+    let amsmath = packages.iter().any(|p| p == "amsmath");
     // amsmath's `leqno`/`fleqn` options (global class options reach it too).
     // Without amsmath, `leqno.clo`/`fleqn.clo` build displays differently
     // (a zero-width `\eqno`, a `trivlist`), which is not modelled.
@@ -1683,7 +1735,7 @@ pub fn adapt_cached(
         // `\usepackage[cmex10]{amsmath}` keeps the kernel's `sfixed*cmex10`.
         amsmath_cmex10 = package.split(',').any(|o| o.trim() == "cmex10");
     }
-    style.cmex_designs = crate::style::cmex_designs(&parsed.packages, amsmath_cmex10);
+    style.cmex_designs = crate::style::cmex_designs(&packages, amsmath_cmex10);
     style.math_roman_lm = crate::style::math_roman_lm(&parsed.packages);
     #[cfg(feature = "amsmath-inline")]
     let mathtools = parsed.packages.iter().any(|p| p == "mathtools");
@@ -1833,7 +1885,21 @@ pub fn adapt_cached(
     // Contents lists (`crate::toc`): every `\contentsline` record, where
     // each list stands, and the label keys of records whose page is that of
     // the next block. Nothing is collected without a list.
-    let toc_active = commands.iter().any(|c| matches!(c.kind, BodyKind::ContentsList(_)));
+    // beamer: the contents list is the frame's `Block::BeamerToc`, its
+    // entries the deck's `\section`s (compiler `BeamerSection`).
+    let toc_active = !style.is_beamer() && commands.iter().any(|c| matches!(c.kind, BodyKind::ContentsList(_)));
+    let beamer_sections: Vec<Vec<Item>> = if style.is_beamer() {
+        parsed
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                CBlock::BeamerSection { level: 1, title, .. } => Some(items_for(title, true)),
+                _ => None,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let toc_settings = crate::toc::Settings::read(source, has_chapters);
     // `\@sect` writes `\numberline` up to the same `\c@secnumdepth` that
     // decides the printed number; the two are one counter, resolved above.
@@ -1900,7 +1966,7 @@ pub fn adapt_cached(
             UnitKind::Heading { number_span, .. } => Some(*number_span),
             UnitKind::Paragraph { inlines, .. } => anchor_span(inlines.iter()),
             UnitKind::Rule { span } => Some(*span),
-            UnitKind::FrameBegin { span, .. } | UnitKind::FrameEnd { span } | UnitKind::BeamerTitle { span, .. } => Some(*span),
+            UnitKind::FrameBegin { span, .. } | UnitKind::FrameEnd { span } | UnitKind::BeamerTitle { span, .. } | UnitKind::BeamerToc { span } => Some(*span),
             UnitKind::BeamerBlockBegin { span, .. }
             | UnitKind::BeamerBlockEnd { span }
             | UnitKind::ColumnsBegin { span, .. }
@@ -2100,6 +2166,10 @@ pub fn adapt_cached(
                         }
                         prev_para_end = None;
                     }
+                    // beamer's `\tableofcontents` is the frame's own
+                    // `Block::BeamerToc` (`UnitKind::BeamerToc`), not a
+                    // spliced list under a `Contents` heading.
+                    BodyKind::ContentsList(_) if style.is_beamer() => {}
                     BodyKind::ContentsList(kind) => {
                         // `\newpage` (etc.) right before the command breaks
                         // before the list's heading.
@@ -2294,7 +2364,7 @@ pub fn adapt_cached(
                 prev_para_end = None;
             }
             UnitKind::FrameBegin { block, span } => {
-                if let CBlock::BeamerFrameBegin { options, title, subtitle, slides, .. } = block {
+                if let CBlock::BeamerFrameBegin { options, spec, title, subtitle, slides, .. } = block {
                     use flashtex_class_geometry::beamer::FrameAlign;
                     use flashtex_compiler::parser::BeamerFrameAlign;
                     blocks.push(Block::FrameBegin {
@@ -2309,6 +2379,8 @@ pub fn adapt_cached(
                         allowframebreaks: options.allowframebreaks,
                         slides: *slides,
                         slide: 1,
+                        spec: spec.clone(),
+                        first_slide: true,
                         span,
                     });
                 }
@@ -2333,6 +2405,11 @@ pub fn adapt_cached(
                         span,
                     });
                 }
+                after_heading = false;
+                prev_para_end = None;
+            }
+            UnitKind::BeamerToc { span } => {
+                blocks.push(Block::BeamerToc { entries: beamer_sections.clone(), span });
                 after_heading = false;
                 prev_para_end = None;
             }
@@ -2802,6 +2879,9 @@ pub fn adapt_cached(
     // A list after the last material (a document that is nothing but its
     // lists, or `\listoffigures` at the very end) is set there too.
     for cmd in &commands[next_command..] {
+        if style.is_beamer() {
+            break;
+        }
         if let BodyKind::ContentsList(kind) = cmd.kind {
             let before = source[..cmd.start].trim_end();
             let eject = ["\\newpage", "\\clearpage", "\\cleardoublepage", "\\pagebreak"].iter().any(|c| before.ends_with(c));
@@ -2960,6 +3040,11 @@ pub fn adapt_cached(
             // sees one diagnostic per `\twocolumn[`, not two.
             superseded.push(Span::in_document(flashtex_compiler::DocumentId(entry), open, open));
         }
+    }
+    // beamer: nested itemize/enumerate bodies take `\small`/`\footnotesize`
+    // and the leading of the size in force at their `\par`.
+    if style.is_beamer() {
+        beamer_nested_list_sizes(&mut blocks, style.base);
     }
     // beamer: a frame with overlays is set once per slide
     // (`crate::overlay`), before the block-index tables below are taken.
@@ -3433,6 +3518,7 @@ fn block_source_range(block: &Block, entry: usize) -> Option<(usize, usize)> {
         Block::FrameBegin { .. }
         | Block::FrameEnd { .. }
         | Block::BeamerTitle { .. }
+        | Block::BeamerToc { .. }
         | Block::BeamerBlockBegin { .. }
         | Block::BeamerBlockEnd { .. }
         | Block::ColumnsBegin { .. }
@@ -3534,6 +3620,7 @@ fn column_switch_block(blocks: &[Block], source: &str, entry: usize, columns: &c
                 Block::FrameBegin { .. }
                 | Block::FrameEnd { .. }
                 | Block::BeamerTitle { .. }
+                | Block::BeamerToc { .. }
                 | Block::BeamerBlockBegin { .. }
                 | Block::BeamerBlockEnd { .. }
                 | Block::ColumnsBegin { .. }
@@ -4042,6 +4129,10 @@ enum UnitKind<'p> {
         block: &'p CBlock,
         span: Span,
     },
+    /// beamer `\tableofcontents` in a frame.
+    BeamerToc {
+        span: Span,
+    },
     /// beamer Tier 3 (#944): block edges, column markers, captions.
     BeamerBlockBegin {
         block: &'p CBlock,
@@ -4158,6 +4249,20 @@ fn split_at_page_breaks<'p>(
                 continue;
             }
             CBlock::TableOfContents { span } => {
+                // beamer: the contents are a frame's material of their
+                // own (`Block::BeamerToc`), not a spliced contents list.
+                if style.is_beamer() {
+                    units.push(Unit {
+                        kind: UnitKind::BeamerToc { span: *span },
+                        eject_before: false,
+                        vspace_before: std::mem::take(&mut pending_vspace),
+                        addvspace_before: 0.0,
+                        addvspace_flex: (0.0, 0.0),
+                        vspace_flex: (0.0, 0.0),
+                        endlist_adjust: 0.0,
+                        limitations: std::mem::take(&mut pending_limitations),
+                    });
+                }
                 prev_end = Some(*span);
                 prev_vmode = true;
                 continue;
@@ -4508,6 +4613,7 @@ fn split_at_page_breaks<'p>(
                     labelsep_pt,
                     itemindent_pt,
                     hidden: false,
+                    alerted: false,
                 });
             }
         }
@@ -4822,6 +4928,14 @@ fn split_at_page_breaks<'p>(
             CBlock::Penalty { .. } => continue,
             #[cfg(feature = "compiler-node-surface")]
             CBlock::Tabbing { .. } => unreachable!("lowered by lower_blocks"),
+            // A beamer `\section` sets nothing: it is a `\tableofcontents`
+            // entry (`Block::BeamerToc`) and the gap bookkeeping's marker
+            // for the material that follows.
+            CBlock::BeamerSection { span, .. } => {
+                prev_end = Some(*span);
+                prev_vmode = true;
+                continue;
+            }
         }
         let block_end = match block {
             CBlock::BeamerFrameEnd { span }
@@ -7945,6 +8059,49 @@ fn font_declaration(name: &str) -> Option<&'static [crate::nfss::Command]> {
         "tt" => &[C::Normal, C::Family(F::Tt)],
         _ => return None,
     })
+}
+
+/// beamer's nested list bodies (`beamerfontthemedefault.sty` 105-106:
+/// `itemize/enumerate subbody` is `size=\small`, `subsubbody`
+/// `\footnotesize`; `beamerbaselocalstructure.sty` 197 and 256 apply the
+/// font before `\list`): every paragraph of a level-2 item is set in
+/// `\small`, of a level-3 item in `\footnotesize` (their labels with it:
+/// `\usebeamerfont*{itemize subitem}` keeps the size). The leading is the
+/// `\baselineskip` at the paragraph's `\par` (TeX §679): a nested
+/// `\begin{itemize}` applies the inner size *before* `\@trivlist`'s
+/// `\par`, so a paragraph followed by a deeper item takes the deeper
+/// level's leading. Measured (probe deck `beamer-polish` p2, `\showoutput`
+/// transcript of the same frame): the level-1 item's line ends under
+/// `\glue(\baselineskip) 4.39584` + `\hbox(7.60416+0.0)` = 12pt (`\small`'s)
+/// because level 2 opens next; the level-2 item under 4.0014 + 6.9986 = 11pt
+/// (`\footnotesize`'s, level 3 opens next); the level-3 item under 3.30127
+/// + 6.44873 + 1.25 = 11pt (its own `\end{itemize}`); "Another second level
+/// item." under 3.86252 + 6.9986 + 1.13889 = 12pt.
+fn beamer_nested_list_sizes(blocks: &mut [Block], base: flashtex_document_style::BaseSize) {
+    use flashtex_document_style::{font_size, SizeName};
+    let level_of = |b: &Block| match b {
+        Block::Paragraph { list: Some(g), .. } if g.llap => Some(g.level),
+        _ => None,
+    };
+    let size_for = |level: u8| match level {
+        0 | 1 => None,
+        2 => Some(font_size(base, SizeName::Small)),
+        _ => Some(font_size(base, SizeName::FootnoteSize)),
+    };
+    for i in 0..blocks.len() {
+        let Some(level) = level_of(&blocks[i]) else { continue };
+        let next = blocks.get(i + 1).and_then(level_of).unwrap_or(0);
+        let leading = size_for(level.max(next)).map(|f| f.baselineskip.0);
+        let Block::Paragraph { sized, leading_pt, .. } = &mut blocks[i] else { continue };
+        if let Some(f) = size_for(level) {
+            if sized.is_none() {
+                *sized = Some(SizedPara { size_pt: f.size.0, baselineskip_pt: f.baselineskip.0, parindent_em: None, vspace_after_em: 0.0, close_skip: None, strut: false });
+            }
+        }
+        if leading_pt.is_none() {
+            *leading_pt = leading;
+        }
+    }
 }
 
 /// The `\baselineskip` a [`ParLeading`] selects, in points: the *second*
@@ -12191,7 +12348,7 @@ mod tests {
                 Block::NoBreakFalse { .. } => "B".to_string(),
                 Block::TocEntry(..) => "E".to_string(),
                 Block::LongTable { .. } => "L".to_string(),
-                Block::FrameBegin { .. } | Block::FrameEnd { .. } | Block::BeamerTitle { .. } => "F".to_string(),
+                Block::FrameBegin { .. } | Block::FrameEnd { .. } | Block::BeamerTitle { .. } | Block::BeamerToc { .. } => "F".to_string(),
                 Block::BeamerBlockBegin { .. } | Block::BeamerBlockEnd { .. } | Block::ColumnsBegin { .. } | Block::Column { .. } | Block::ColumnsEnd { .. } => "F".to_string(),
             })
             .collect();

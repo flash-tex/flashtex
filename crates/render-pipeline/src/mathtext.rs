@@ -139,6 +139,14 @@ pub struct TextSink {
     /// placeholder is `\displaystyle` in display math and `\textstyle`
     /// otherwise ([`BuiltBody::Cancel`]).
     pub display: bool,
+    /// beamer's sans-serif math (`beamerbasefont.sty` 204-260,
+    /// `class_geometry::ResolvedDocument::beamer_sans_math`): the
+    /// `pureletters` family is `OT1/cmss/m/it`, `numbers` and `operators`
+    /// `OT1/cmss/m/n`, so ASCII letters, digits, the operator-family
+    /// punctuation and operator names are text-font runs
+    /// ([`TextSink::atom_in`]) in the sans shapes; Greek, symbols and
+    /// large operators stay in the math fonts.
+    pub sans_math: bool,
 }
 
 /// An `array`/`cases`/matrix/`aligned` grid met inside a sub-formula (a

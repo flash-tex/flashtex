@@ -221,6 +221,7 @@ fn block_inlines(block: Block) -> Vec<Inline> {
         | Block::TitleBlock { .. }
         | Block::BeamerFrameBegin { .. }
         | Block::BeamerFrameEnd { .. }
+        | Block::BeamerSection { .. }
         | Block::BeamerTitlePage { .. }
         | Block::BeamerBlockBegin { .. }
         | Block::BeamerBlockEnd { .. }
