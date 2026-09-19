@@ -428,6 +428,8 @@ impl RowsEnv {
 pub struct RowPart {
     pub cells: Vec<MathList>,
     pub number: Option<(String, Span)>,
+    /// A rich `\tag` label (see [`TagLabel`]) set in place of `number`'s text.
+    pub number_math: Option<MathList>,
     pub span: Span,
     /// amsthm `\qedhere` stripped from this row's cells (`strip_qedhere`):
     /// the box is set on this row's own line, flush right. `None` without
@@ -472,6 +474,9 @@ pub enum ParaPart {
         list: MathList,
         span: Span,
         number: Option<(String, Span)>,
+        /// A rich `\tag` label (see [`TagLabel`]) set in place of `number`'s
+        /// text.
+        number_math: Option<MathList>,
         bracket: bool,
         /// amsthm `\qedhere` stripped from `list` (`strip_qedhere`): the box
         /// is set on the display's own line, flush right. `None` without
@@ -2623,9 +2628,9 @@ pub fn adapt_cached(
                                         stripped
                                     })
                                     .collect();
-                                let number = match tag {
-                                    Some(t) => Some((t, row.span)),
-                                    None => row.number.clone().map(|n| (format!("({n})"), row.span)),
+                                let (number, number_math) = match tag {
+                                    Some((t, math)) => (Some((t, row.span)), math),
+                                    None => (row.number.clone().map(|n| (format!("({n})"), row.span)), None),
                                 };
                                 #[cfg(feature = "amsmath-inline")]
                                 let intertext = row
@@ -2640,7 +2645,7 @@ pub fn adapt_cached(
                                     .collect();
                                 #[cfg(not(feature = "amsmath-inline"))]
                                 let intertext = Vec::new();
-                                let part = RowPart { cells, number, span: row.span, intertext, qed_here };
+                                let part = RowPart { cells, number, number_math, span: row.span, intertext, qed_here };
                                 match parts.last_mut() {
                                     Some(ParaPart::Rows { span: s, rows, .. }) if *s == rows_span => rows.push(part),
                                     _ => parts.push(ParaPart::Rows {
@@ -2659,8 +2664,9 @@ pub fn adapt_cached(
                             let mut tag = None;
                             let list = strip_tag(texts, &list, &mut tag, &mut limitations);
                             let (list, eqno) = strip_eqno(texts, list, span);
+                            let number_math = tag.as_ref().and_then(|(_, math)| math.clone());
                             let number = match (tag, eqno) {
-                                (Some(t), _) => Some((t, span)),
+                                (Some((t, _)), _) => Some((t, span)),
                                 (None, Some(n)) => Some(n),
                                 (None, None) => display_number(inlines, span)
                                     .filter(|_| rest.starts_with("\\begin{equation}"))
@@ -2672,6 +2678,7 @@ pub fn adapt_cached(
                                 list,
                                 span,
                                 number,
+                                number_math,
                                 bracket,
                                 qed_here,
                             });
@@ -2710,11 +2717,17 @@ pub fn adapt_cached(
                                 continue;
                             }
                             let number = rows[found].number.take();
+                            // A rich tag's run (`number_math`) travels with
+                            // its text, or the last row would set the
+                            // flattened text instead (#441).
+                            let number_math = rows[found].number_math.take();
                             for row in rows.iter_mut() {
                                 row.number = None;
+                                row.number_math = None;
                             }
                             if let Some(last) = rows.last_mut() {
                                 last.number = number;
+                                last.number_math = number_math;
                             }
                         }
                     }
@@ -4971,51 +4984,57 @@ fn math_row_of(inlines: &[Inline], span: Span) -> Option<(Span, &flashtex_compil
     })
 }
 
+/// A `\tag{..}` label as the compiler made it: its text (`\tagform@`'s
+/// parentheses for `\tag`, none for `\tag*`) and, for a label that is not
+/// plain upright text -- `\tag{hi $x^2$}`, `\tag{\textbf{A}}` (#441) -- the
+/// label as a one-atom math list holding its `TextRun`, which the typesetter
+/// sets as amsmath's `\maketag@@@` `\hbox` instead of the text.
+pub type TagLabel = (String, Option<MathList>);
+
 /// `list` without the atoms the compiler makes of `\tag{..}`/`\tag*{..}` (the
-/// label text and the `2\quad` glue it inserts, both spanning the command);
+/// label text and the interim glue it inserts, both spanning the command);
 /// the label as set goes to `tag`: `\tagform@`'s parentheses for `\tag`,
-/// none for `\tag*`.
+/// none for `\tag*`. amsmath places the label itself (`\tagform@` flush to
+/// the margin, `\eqnshift`/`\calc@shift@*`), so the compiler's interim gap
+/// (`math::INTERIM_TAG_GAP_EM`) never reaches the layout.
 ///
 /// A label the compiler could not flatten to one upright string --
 /// `\tag{hi $x^2$}`, `\tag{\textbf{A}}` (#441) -- arrives as
-/// `Nucleus::TextRun`, a run of text and nested math pieces. It still becomes
-/// a tag here, set as the run's text with a `math_limitation` at the `\tag`
-/// saying the nested math is not set as math; PR #585 replaces that with
-/// amsmath's `\maketag@@@` hbox. **It must never be left as `None`:** the
-/// caller's `None` arm is the *automatic* equation number, so a dropped rich
-/// tag does not look dropped -- `\tag{hi $x^2$}` silently becomes a
-/// plausible `(1)`, and a reader cross-referencing the source cannot tell.
-fn strip_tag(texts: &[&str], list: &MathList, tag: &mut Option<String>, notes: &mut Vec<(&'static str, Span, String)>) -> MathList {
+/// `Nucleus::TextRun`, a run of text and nested math pieces. It becomes a
+/// [`TagLabel`] carrying the run, which the typesetter sets as amsmath's
+/// `\maketag@@@` `\hbox` (text pieces in the body face, formulas at
+/// `\textstyle`). **It must never be left as `None`:** the caller's `None`
+/// arm is the *automatic* equation number, so a dropped rich tag does not
+/// look dropped -- `\tag{hi $x^2$}` silently becomes a plausible `(1)`, and
+/// a reader cross-referencing the source cannot tell.
+fn strip_tag(texts: &[&str], list: &MathList, tag: &mut Option<TagLabel>, notes: &mut Vec<(&'static str, Span, String)>) -> MathList {
     use flashtex_compiler::math::Nucleus;
     let is_tag = |span: Span| texts.get(span.document.0).and_then(|t| t.get(span.start..)).is_some_and(|r| r.starts_with("\\tag"));
     let mut atoms = Vec::with_capacity(list.atoms.len());
     for a in &list.atoms {
         if is_tag(a.span) {
             match &a.nucleus {
-                Nucleus::Text(s) | Nucleus::Symbol(s) => *tag = Some(s.clone()),
+                Nucleus::Text(s) | Nucleus::Symbol(s) => *tag = Some((s.clone(), None)),
                 // The compiler's interim `2\quad` gap (`INTERIM_TAG_GAP_EM`),
                 // which spans the command too. It is not a label; the
                 // pipeline places the tag itself.
                 Nucleus::Space { .. } => {}
-                // A rich label. `text_run_reference_text_with_source` is the
-                // flattening the compiler itself uses for `\eqref` to this
-                // tag, so the set label and the reference to it read
-                // alike; composite atoms with no single glyph (e.g.
-                // `\frac`) fall back to their source text there, and must
-                // do the same here.
+                // A rich label: the run itself, trimmed like `\tagform@`'s
+                // `\ignorespaces#1\unskip`, is what gets set; its text is
+                // `text_run_reference_text_with_source`, the flattening the
+                // compiler itself uses for `\eqref` to this tag, so the
+                // set label and the reference to it read alike (composite
+                // atoms with no single glyph, e.g. `\frac`, fall back to
+                // their source text there).
                 #[cfg(feature = "compiler-node-surface")]
                 Nucleus::TextRun(pieces) => {
                     let source = texts.get(a.span.document.0).copied().unwrap_or("");
-                    let text = flashtex_compiler::math::text_run_reference_text_with_source(pieces, source);
-                    notes.push((
-                        "math_limitation",
-                        a.span,
-                        format!(
-                            "\\tag label set as the upright text {text:?}: math and font switches inside a tag are not set as math yet (#441). \
-                             The automatic equation number does not replace it."
-                        ),
-                    ));
-                    *tag = Some(text);
+                    let starred = source.get(a.span.start..).is_some_and(|r| r.starts_with("\\tag*"));
+                    let pieces = trim_tag_pieces(pieces, !starred);
+                    let text = flashtex_compiler::math::text_run_reference_text_with_source(&pieces, source);
+                    let mut atom = a.clone();
+                    atom.nucleus = Nucleus::TextRun(pieces);
+                    *tag = Some((text, Some(MathList { atoms: vec![atom] })));
                 }
                 // Anything else: the label cannot be set, so the display is
                 // left unnumbered and the reason is reported. Taking the
@@ -5027,7 +5046,7 @@ fn strip_tag(texts: &[&str], list: &MathList, tag: &mut Option<String>, notes: &
                         a.span,
                         "\\tag label could not be set; the display is left unnumbered rather than taking the automatic equation number (#441)".to_string(),
                     ));
-                    *tag = Some(String::new());
+                    *tag = Some((String::new(), None));
                 }
             }
             continue;
@@ -5035,6 +5054,29 @@ fn strip_tag(texts: &[&str], list: &MathList, tag: &mut Option<String>, notes: &
         atoms.push(a.clone());
     }
     MathList { atoms }
+}
+
+/// amsmath's `\tagform@` is `(\ignorespaces#1\unskip\@@italiccorr)`
+/// (amsmath.sty 1211-1212): the spaces at either end of the label (inside the
+/// parentheses of an unstarred `\tag`) are not set.
+#[cfg(feature = "compiler-node-surface")]
+fn trim_tag_pieces(pieces: &[flashtex_compiler::math::TextPiece], parens: bool) -> Vec<flashtex_compiler::math::TextPiece> {
+    use flashtex_compiler::math::TextPiece;
+    let mut out = pieces.to_vec();
+    if let Some(TextPiece::Text { text, .. }) = out.first_mut() {
+        *text = match text.strip_prefix('(').filter(|_| parens) {
+            Some(rest) => format!("({}", rest.trim_start()),
+            None => text.trim_start().to_string(),
+        };
+    }
+    if let Some(TextPiece::Text { text, .. }) = out.last_mut() {
+        *text = match text.strip_suffix(')').filter(|_| parens) {
+            Some(rest) => format!("{})", rest.trim_end()),
+            None => text.trim_end().to_string(),
+        };
+    }
+    out.retain(|p| !matches!(p, TextPiece::Text { text, .. } if text.is_empty()));
+    out
 }
 
 /// `$$ ... \eqno <number> $$` (or `\leqno`): the compiler reads the

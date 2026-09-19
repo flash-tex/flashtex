@@ -23,6 +23,13 @@
 //! page at 10 / 11 / 12 pt (89, 89 and 121 of the 163 words outside the
 //! gate). 50 is the same page *with* `lmodern`, which really does rebind
 //! `operators`, so it must not move either way.
+//!
+//! Rich tags (#441; the compiler's `TextRun`, PR #470, and the placement of
+//! PR #585): `\tag{hi $x^2$}`, `\tag*{...}` and `leqno` (37-39), tags in
+//! `align`/`gather`/`multline` (40-43; `multline` sets its tag on the last
+//! line, or the first under `leqno`), a rich tag too wide for its line (44),
+//! `\text{for all $x$}` (45), and `align`/`gather` tags amsmath's
+//! `\calc@shift@*` moves to a line of their own (46, 51, 52).
 
 mod common;
 
@@ -75,6 +82,23 @@ const PASSING: &[&str] = &[
     "50-lm-math-roman-boxes",
 ];
 
+/// Rich tags and `\text` with math (#441): the compiler's `TextRun`
+/// (PR #470) set and placed as amsmath's `\maketag@@@`.
+const TEXT_RUN_PASSING: &[&str] = &[
+    "37-rich-tag-equation",
+    "38-rich-tag-star",
+    "39-rich-tag-leqno",
+    "40-align-rich-tags",
+    "41-gather-rich-tags",
+    "42-multline-tag",
+    "43-multline-tag-leqno",
+    "44-wide-rich-tag-own-line",
+    "45-text-math-display",
+    "46-align-wide-tag-own-line",
+    "51-gather-wide-tag-own-line",
+    "52-gather-wide-tag-leqno",
+];
+
 fn num(v: &Value, k: &str) -> f64 {
     match v.get(k) {
         Some(Value::Num(n)) => *n,
@@ -92,7 +116,7 @@ fn display_placement_matches_pdflatex() {
     let fonts = FontSet::with_default_dirs(&[]);
     let options = RenderOptions::default();
     let mut failures = Vec::new();
-    for name in PASSING {
+    for name in PASSING.iter().chain(TEXT_RUN_PASSING) {
         let tex = std::fs::read_to_string(format!("{dir}/fixtures/{name}.tex")).unwrap();
         let reference = json::parse(&std::fs::read_to_string(format!("{dir}/refs/{name}.json")).unwrap()).unwrap();
         let docs = [SourceDocument { path: "main.tex", text: &tex }];

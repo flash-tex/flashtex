@@ -1,0 +1,108 @@
+{
+ "fixture": "45-text-math-display.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Before.",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "x",
+    "x": 260.46,
+    "y_top": 146.72
+   },
+   {
+    "text": "=",
+    "x": 268.9232,
+    "y_top": 146.72
+   },
+   {
+    "text": "1",
+    "x": 279.4417,
+    "y_top": 146.72
+   },
+   {
+    "text": "for",
+    "x": 294.3856,
+    "y_top": 146.72
+   },
+   {
+    "text": "all",
+    "x": 309.6314,
+    "y_top": 146.72
+   },
+   {
+    "text": "x",
+    "x": 323.4655,
+    "y_top": 146.72
+   },
+   {
+    "text": "in",
+    "x": 332.4766,
+    "y_top": 146.72
+   },
+   {
+    "text": "S",
+    "x": 344.107,
+    "y_top": 146.72
+   },
+   {
+    "text": "and",
+    "x": 133.768,
+    "y_top": 164.653
+   },
+   {
+    "text": "y",
+    "x": 275.332,
+    "y_top": 176.608
+   },
+   {
+    "text": "=",
+    "x": 283.3449,
+    "y_top": 176.608
+   },
+   {
+    "text": "2",
+    "x": 293.8535,
+    "y_top": 176.608
+   },
+   {
+    "text": "if",
+    "x": 302.1623,
+    "y_top": 176.608
+   },
+   {
+    "text": "y",
+    "x": 311.292,
+    "y_top": 176.608
+   },
+   {
+    "text": "\u2208",
+    "x": 319.3049,
+    "y_top": 176.608
+   },
+   {
+    "text": "T",
+    "x": 328.7066,
+    "y_top": 176.608
+   },
+   {
+    "text": "(i)",
+    "x": 465.8857,
+    "y_top": 176.608
+   },
+   {
+    "text": "end.",
+    "x": 133.768,
+    "y_top": 194.541
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ]
+}
