@@ -69,6 +69,12 @@ pub struct TextStyle {
     /// `\setbeamercovered{invisible}`, the default; pdflatex moves the
     /// covered text 2000 bp off the page (`\pgfsys@begininvisible`).
     pub hidden: bool,
+    /// A named font family in force locally (`\fontspec{..}`, a
+    /// `\newfontfamily` switch, a body `\setmainfont`): an index into
+    /// `Stylesheet::fontspec.families`, set by `crate::fontspec::apply`.
+    /// `None` leaves the family slot's default (a preamble `\setmainfont`,
+    /// the manifest, or the class font) to decide.
+    pub named: Option<u16>,
 }
 
 impl TextStyle {
@@ -2630,6 +2636,13 @@ pub fn adapt_cached(
     // `quotation`) is read from the source bytes here, before the
     // `env_close` pass below derives the closing skips from the styles.
     let mut superseded = crate::abstractenv::apply(texts, &mut blocks, &style);
+    // fontspec's `\setmainfont`/`\fontspec`/`\newfontfamily` (and the
+    // manifest's `[fonts]`): the named families, read from the source the
+    // same way, marked on the runs they cover. A document naming no font
+    // returns at once with the blocks untouched.
+    let fontspec = crate::fontspec::apply(texts, entry, &mut blocks, &mut style, options);
+    superseded.extend(fontspec.superseded);
+    limitations.extend(fontspec.limitations);
     // `\twocolumn`/`\onecolumn` are set here, from the source, the same way:
     // the pinned `vendor/compiler` reports them as unknown commands.
     superseded.extend(
@@ -6960,7 +6973,10 @@ fn list_em_ex(size: u32, family: crate::fonts::Family) -> Option<(f64, f64)> {
             Some((font.quad.0, font.x_height.0))
         }
         crate::fonts::Family::ComputerModern => ec_em_ex(size, family),
-        crate::fonts::Family::Times => None,
+        // The stylesheet's family is the class family the preamble's
+        // lengths were evaluated in; a named family is layered over it
+        // (`Stylesheet::fontspec`) and never reaches here.
+        crate::fonts::Family::Times | crate::fonts::Family::Named(_) => None,
     }
 }
 

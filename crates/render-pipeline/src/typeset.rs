@@ -592,6 +592,12 @@ pub struct Context<'a> {
     /// Math providers for text sizes other than the body's (footnotes), by
     /// size in centipoints; `None` when that size's metrics are missing.
     math_fonts_sized: BTreeMap<u32, Option<MathProvider>>,
+    /// The document's named families (`Stylesheet::fontspec.families`, by
+    /// index) interned on the font set, and each one's resolved `Scale=`
+    /// factor once a face of it has been loaded (`MatchLowercase` needs the
+    /// face's x-height).
+    named_ids: Vec<crate::fonts::NamedId>,
+    named_scales: BTreeMap<u16, f64>,
     /// LaTeX's `\@parboxrestore` is in force: the material is being set in
     /// a box of its own (a float body), not in the page's text. It sets
     /// `\parindent` and `\parskip` to zero and ends with `\sloppy`
@@ -672,6 +678,8 @@ impl<'a> Context<'a> {
             multicol: multicol::State::default(),
             rlap_marks: false,
             math_fonts_sized: BTreeMap::new(),
+            named_ids: style.fontspec.families.iter().map(|spec| fonts.intern_named(spec)).collect(),
+            named_scales: BTreeMap::new(),
         }
     }
 
@@ -786,7 +794,85 @@ impl<'a> Context<'a> {
         self.emit(Some(key), d);
     }
 
+    /// The named family a text style is set in, if any: the run's own
+    /// (`TextStyle::named`, a local `\fontspec`/switch) else the slot
+    /// default for its family kind after `\familydefault` (a preamble
+    /// `\setmainfont`, the manifest). `None` is the class font.
+    fn named_index(&self, style: TextStyle) -> Option<u16> {
+        let fs = &self.style.fontspec;
+        if fs.is_empty() {
+            return None;
+        }
+        style.named.or_else(|| {
+            let kind = if style.family == crate::nfss::FamilyKind::Rm { self.style.default_family } else { style.family };
+            fs.slot(kind)
+        })
+    }
+
+    /// The face of a run in a named family, with its diagnostics: the
+    /// family missing (a warning, Latin Modern's face for the shape is
+    /// used), a nearest weight/style or small caps not applied (a note).
+    /// NFSS substitution does not apply -- the family has whatever faces it
+    /// has -- so only the key's series and shape are read.
+    fn named_face(&mut self, index: u16, style: TextStyle, size: f64, span: Span) -> Rc<LoadedFace> {
+        let Some(&id) = self.named_ids.get(usize::from(index)) else {
+            return self.class_face(style, size, span);
+        };
+        let key = style.key();
+        let r = self.fonts.resolve(Family::Named(id), Role::Font(key), size);
+        let family = self.style.fontspec.families.get(usize::from(index)).map(|s| s.family.clone()).unwrap_or_default();
+        if let Some(reason) = &r.family_missing {
+            let src = self.source(span);
+            self.report_once(
+                format!("family:{family}"),
+                Diagnostic::warning("font_family_unavailable", format!("{reason}; Latin Modern is used for \"{family}\""), vec![src]),
+            );
+        }
+        if let Some(note) = &r.note {
+            let src = self.source(span);
+            self.report_once(format!("named:{note}"), Diagnostic::warning("font_face_substituted", note.clone(), vec![src]));
+        }
+        r.face
+    }
+
     fn face(&mut self, style: TextStyle, size: f64, span: Span) -> Rc<LoadedFace> {
+        match self.named_index(style) {
+            Some(index) => self.named_face(index, style, size, span),
+            None => self.class_face(style, size, span),
+        }
+    }
+
+    /// `Scale=` of the run's named family (1 for the class font): a
+    /// factor, or the ratio that matches the family's x-height
+    /// (`MatchLowercase`) or cap height (`MatchUppercase`) to the main
+    /// font's, as fontspec computes it (`fontspec-code-load.dtx`,
+    /// `\__fontspec_calc_scale:`). The main font is the text slot's named
+    /// family when there is one, else the class font.
+    fn named_scale(&mut self, style: TextStyle, size: f64, span: Span) -> f64 {
+        let Some(index) = self.named_index(style) else { return 1.0 };
+        if let Some(s) = self.named_scales.get(&index) {
+            return *s;
+        }
+        let scale = match self.style.fontspec.families.get(usize::from(index)).map(|s| s.scale) {
+            Some(crate::fonts::Scale::Factor(f)) => f,
+            Some(which @ (crate::fonts::Scale::MatchLowercase | crate::fonts::Scale::MatchUppercase)) => {
+                let lowercase = which == crate::fonts::Scale::MatchLowercase;
+                let upright = TextStyle { named: Some(index), ..TextStyle::default() };
+                let this = self.named_face(index, upright, size, span);
+                let main = match self.style.fontspec.text {
+                    Some(t) if t != index => self.named_face(t, TextStyle { named: Some(t), ..TextStyle::default() }, size, span),
+                    _ => self.class_face(TextStyle::default(), size, span),
+                };
+                let (a, b) = (crate::fonts::height_em(&this, lowercase), crate::fonts::height_em(&main, lowercase));
+                if a > 0.0 && b > 0.0 { b / a } else { 1.0 }
+            }
+            None => 1.0,
+        };
+        self.named_scales.insert(index, scale);
+        scale
+    }
+
+    fn class_face(&mut self, style: TextStyle, size: f64, span: Span) -> Rc<LoadedFace> {
         let (role, notes) = self.text_role(style, size);
         let r = self.fonts.resolve(self.style.family, role, size);
         for (key, message) in notes {
@@ -994,6 +1080,20 @@ impl<'a> Context<'a> {
     /// `\fontdimen`s of the face for `style` at `size`: the face's TFM
     /// when it has one (exact fixwords), else the transcribed table.
     fn text_params(&self, style: TextStyle, size: f64) -> params::TextParamsPt {
+        // A named family: XeTeX's parameters for a native font, off the
+        // face itself, at the scaled size (`fonts::opentype_params`). The
+        // scale is whatever `named_scale` has computed for the family; a
+        // `MatchLowercase` family whose face has not been loaded yet
+        // (parameters asked before any of its text was set) is at 1.
+        if let Some(index) = self.named_index(style) {
+            if let Some(&id) = self.named_ids.get(usize::from(index)) {
+                let r = self.fonts.resolve(Family::Named(id), Role::Font(style.key()), size);
+                if r.family_missing.is_none() {
+                    let scale = self.named_scales.get(&index).copied().unwrap_or(1.0);
+                    return crate::fonts::opentype_params(&r.face).at(size * scale);
+                }
+            }
+        }
         let r = self.fonts.resolve(self.style.family, self.text_role(style, size).0, size);
         if let (None, Some(tfm)) = (&r.substituted, &r.face.tfm) {
             let dim = |n: usize| tfm.param(n).map_or(0.0, |v| crate::tfm::Tfm::pt(v, size));
@@ -1327,6 +1427,10 @@ impl<'a> Context<'a> {
     /// have none, e.g. `text_box_in`'s synthetic segments).
     fn text_box_shaped(&mut self, seg: &adapter::Segment, size: f64, face: Rc<LoadedFace>, cuts: &[usize]) -> Option<(pl::GlyphRun, usize)> {
         let span = seg_span(seg)?;
+        // fontspec `Scale=`: the family is loaded at the scaled size, as
+        // `\fontspec` does through `\fontsize`'s `[<scale>]` in the font
+        // name. The class font's scale is 1 and nothing here changes.
+        let size = size * self.named_scale(seg.style, size, span);
         // Verbatim runs the font's ligature/kern program not at all
         // (`\@noligs`); every other run runs it as TeX does.
         let shaped = if seg.style.literal {
@@ -2016,6 +2120,9 @@ impl<'a> Context<'a> {
         if let Some(items) = self.ot1_math_symbol_items(seg, size) {
             return items;
         }
+        if let Some(items) = self.named_fallback_items(seg, size) {
+            return items;
+        }
         if !hyphenate {
             return self.whole_word(seg, size);
         }
@@ -2041,6 +2148,9 @@ impl<'a> Context<'a> {
         }
         let Some(span) = seg_span(seg) else { return Vec::new() };
         let face = self.face(seg.style, size, span);
+        // Measurements below are at the face's scaled size (`Scale=`);
+        // `text_box` applies the same scale to the fragments it sets.
+        let scaled = size * self.named_scale(seg.style, size, span);
         let shaper = self.shaper;
         let shaped = shaper.shape(&face, text);
         if shaped.refused.is_some() {
@@ -2061,15 +2171,15 @@ impl<'a> Context<'a> {
         // width by the face's 1000 units instead put the tail of a word like
         // `ellipsis\dots` (U+2026 has no T1 slot, `ellip` does) 12676 pt to
         // the left of the page, and every later word on its line with it.
-        let width_pt = |t: &str| shaper.shape(&face, t).width_pt(size);
+        let width_pt = |t: &str| shaper.shape(&face, t).width_pt(scaled);
         // Whole minus parts, with the exact integer subtraction kept for the
         // usual case where all three came back in the same units.
         let residual_pt = |whole: &str, head: &str, tail: &str| {
             let (w, h, t) = (shaper.shape(&face, whole), shaper.shape(&face, head), shaper.shape(&face, tail));
             if w.units_per_em == h.units_per_em && h.units_per_em == t.units_per_em {
-                size * (w.width_units - h.width_units - t.width_units) as f64 / w.units_per_em as f64
+                scaled * (w.width_units - h.width_units - t.width_units) as f64 / w.units_per_em as f64
             } else {
-                w.width_pt(size) - h.width_pt(size) - t.width_pt(size)
+                w.width_pt(scaled) - h.width_pt(scaled) - t.width_pt(scaled)
             }
         };
         // Byte offset -> char index, for the fragments' `chars`.
@@ -2151,6 +2261,63 @@ impl<'a> Context<'a> {
 
     fn whole_word(&mut self, seg: &adapter::Segment, size: f64) -> Vec<(pl::Item, Option<usize>)> {
         self.text_box(seg, size).map(|(run, rec)| vec![(pl::Item::Box(run), Some(rec))]).unwrap_or_default()
+    }
+
+    /// A word in a named family whose face lacks a glyph for some of its
+    /// characters: the runs it can set stay in it, the others are set in
+    /// Latin Modern's face for the same shape (the class fallback, which
+    /// draws every T1 character), joined as one unbreakable word, with one
+    /// `missing_glyph` warning per (font, character) saying where the
+    /// character went. Nothing is dropped: fontspec on XeTeX would set
+    /// `.notdef` boxes here, and typst falls back per glyph the same way.
+    /// `None` when the word is not in a named family or has no gap, so the
+    /// ordinary path (hyphenation included) runs.
+    fn named_fallback_items(&mut self, seg: &adapter::Segment, size: f64) -> Option<Vec<(pl::Item, Option<usize>)>> {
+        let index = self.named_index(seg.style)?;
+        let span = seg_span(seg)?;
+        let face = self.named_face(index, seg.style, size, span);
+        let has = |ch: char| face.face().glyph_id(ch).is_some() || ch == '\u{2026}' && face.face().glyph_id('.').is_some();
+        if seg.text.chars().all(has) {
+            return None;
+        }
+        let fallback = self.class_face(seg.style, size, span);
+        // Split into maximal runs of set-here / set-in-fallback characters.
+        let mut runs: Vec<(bool, usize, usize)> = Vec::new();
+        for (i, ch) in seg.text.chars().enumerate() {
+            let present = has(ch);
+            match runs.last_mut() {
+                Some((p, _, end)) if *p == present => *end = i + 1,
+                _ => runs.push((present, i, i + 1)),
+            }
+        }
+        let char_byte: Vec<usize> = seg.text.char_indices().map(|(b, _)| b).chain(std::iter::once(seg.text.len())).collect();
+        let mut out = Vec::new();
+        for (k, (present, a, b)) in runs.into_iter().enumerate() {
+            let frag = adapter::Segment { text: seg.text[char_byte[a]..char_byte[b]].to_string(), chars: seg.chars[a..b].to_vec(), style: seg.style };
+            let placed = if present {
+                self.text_box(&frag, size)
+            } else {
+                for ch in frag.text.chars() {
+                    let src = self.source(frag.chars.first().map(|c| c.span()).unwrap_or(span));
+                    self.report_once(
+                        format!("missing:{}:{}", face.font_id, ch),
+                        Diagnostic::warning(
+                            "missing_glyph",
+                            format!("U+{:04X} '{}' has no glyph in {}; set in {} instead", ch as u32, ch, face.name, fallback.name),
+                            vec![src],
+                        ),
+                    );
+                }
+                self.text_box_in(&frag, size, fallback.clone())
+            };
+            if let Some((run, rec)) = placed {
+                if k > 0 {
+                    self.mark_continues(rec);
+                }
+                out.push((pl::Item::Box(run), Some(rec)));
+            }
+        }
+        Some(out)
     }
 
     /// Which of `seg`'s characters an OT1 document sets from a math font
@@ -2411,7 +2578,9 @@ impl<'a> Context<'a> {
                 scheme.family_name(crate::nfss::FamilyKind::Sf),
                 scheme.family_name(crate::nfss::FamilyKind::Tt),
             )),
-            Family::Times => None,
+            // microtype ships no configuration for Times here, nor for an
+            // arbitrary named family (mt-*.cfg files are per TeX font).
+            Family::Times | Family::Named(_) => None,
         };
         let resolved = match (families, face.tfm.clone()) {
             (Some((rm, sf, tt)), Some(tfm)) => {
@@ -7017,6 +7186,7 @@ fn merge_style(base: TextStyle, s: TextStyle) -> TextStyle {
         undefined: s.undefined.or(base.undefined),
         color: s.color.or(base.color),
         hidden: s.hidden || base.hidden,
+        named: s.named.or(base.named),
     }
 }
 
@@ -7034,6 +7204,7 @@ fn merge_base(style: TextStyle, base: TextStyle) -> TextStyle {
         undefined: style.undefined.or(base.undefined),
         color: style.color.or(base.color),
         hidden: style.hidden || base.hidden,
+        named: style.named.or(base.named),
     }
 }
 
@@ -7100,7 +7271,8 @@ impl flashtex_compiler::text_builtins::LogoMetrics for TfmLogoMetrics {
 
 pub(crate) fn design_size(family: Family, size: f64) -> u32 {
     match family {
-        Family::Times => 10,
+        // A named OpenType family has one design, like Times.
+        Family::Times | Family::Named(_) => 10,
         Family::LatinModern | Family::ComputerModern => {
             if size < 8.5 {
                 8
@@ -10786,7 +10958,7 @@ pub fn assemble_windowed(
             sha256: f.font_id.to_string(),
             byte_length: f.byte_length,
             format: f.format.to_string(),
-            face_index: 0,
+            face_index: f.face_index,
             units_per_em: f.units_per_em,
             glyph_count: f.glyph_count,
             postscript_name: f.postscript_name.clone(),

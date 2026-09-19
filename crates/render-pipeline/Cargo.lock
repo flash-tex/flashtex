@@ -70,6 +70,10 @@ name = "flashtex-document-style"
 version = "0.1.0"
 
 [[package]]
+name = "flashtex-font-discovery"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-font-engine"
 version = "0.1.0"
 dependencies = [
@@ -120,6 +124,7 @@ dependencies = [
  "flashtex-class-geometry",
  "flashtex-compiler",
  "flashtex-document-style",
+ "flashtex-font-discovery",
  "flashtex-font-engine",
  "flashtex-font-resources",
  "flashtex-math-layout",

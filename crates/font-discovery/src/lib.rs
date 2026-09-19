@@ -151,9 +151,12 @@ impl FontIndex {
         &self.errors
     }
 
-    /// Every family name, sorted, deduplicated.
+    /// Every family name, sorted, deduplicated -- except the hidden system
+    /// families whose names start with a dot (`.SF NS`, `.Al Bayan PUA`),
+    /// which macOS keeps out of every font menu; they stay findable by
+    /// exact name through [`FontIndex::find`].
     pub fn families(&self) -> Vec<String> {
-        let set: BTreeSet<&str> = self.files.iter().map(|f| f.info.family.as_str()).collect();
+        let set: BTreeSet<&str> = self.files.iter().map(|f| f.info.family.as_str()).filter(|f| !f.starts_with('.')).collect();
         set.into_iter().map(str::to_string).collect()
     }
 

@@ -60,8 +60,10 @@ pub fn text_params(family: Family, bold: bool, italic: bool, design_size: u32) -
             extra_space: 0.06,
         },
         // Only the fallback when no TFM is attached; Computer Modern (EC)
-        // faces normally carry their `ec*` TFM's own `\fontdimen`s.
-        Family::LatinModern | Family::ComputerModern => {
+        // faces normally carry their `ec*` TFM's own `\fontdimen`s. A named
+        // family never reaches here: `typeset::Context::text_params` reads
+        // its parameters off the OpenType face (`fonts::opentype_params`).
+        Family::LatinModern | Family::ComputerModern | Family::Named(_) => {
             if italic {
                 // ec-lmri12 (also used for 10: lmri10 has the same fractions
                 // to four places).

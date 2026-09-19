@@ -22,11 +22,13 @@
 const PREFIX: &str = "packages ";
 const SUFFIX: &str = " are recognised but not implemented";
 
-/// Packages whose effect on the output this crate produces.
+/// Packages whose effect on the output this crate produces. `fontspec`'s
+/// font selection is `crate::fontspec` (named families from the installed
+/// fonts), so its load is no longer "not implemented".
 pub fn implemented_by_pipeline(package: &str) -> bool {
     matches!(
         package,
-        "amsmath" | "amssymb" | "amsfonts" | "lmodern" | "microtype" | "geometry" | "graphicx" | "tikz" | "float"
+        "amsmath" | "amssymb" | "amsfonts" | "lmodern" | "microtype" | "geometry" | "graphicx" | "tikz" | "float" | "fontspec"
     )
 }
 
