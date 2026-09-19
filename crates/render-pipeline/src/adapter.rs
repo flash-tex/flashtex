@@ -8229,6 +8229,97 @@ fn url_argument_end(bytes: &[u8], open: usize) -> Option<usize> {
     None
 }
 
+/// Whether the inline whose span is `span` is one of the runs the compiler
+/// splits a `\url{...}`/`\nolinkurl{...}` into (`parser::push_url_text`:
+/// every run carries the span of the whole command, backslash through
+/// closing brace).
+fn url_run_at(source: &str, span: Span) -> bool {
+    let Some(rest) = source.get(span.start..span.end) else { return false };
+    let Some(rest) = rest.strip_prefix('\\') else { return false };
+    let len = rest.bytes().take_while(u8::is_ascii_alphabetic).count();
+    url_command(&rest[..len]) && rest[len..].trim_start().starts_with('{')
+}
+
+/// url.sty's `\UrlBreakPenalty` (`\binoppenalty`, 700).
+const URL_BREAK_PENALTY: i32 = 700;
+/// url.sty's `\UrlBigBreakPenalty` (`\relpenalty`, 500).
+const URL_BIG_BREAK_PENALTY: i32 = 500;
+
+/// The math atom class url.sty gives a URL character: `\UrlBreaks` are
+/// binary operators (`\mathcode "2...`), `\UrlBigBreaks` (`:`) relations,
+/// everything else ordinary. The set is the compiler's measured
+/// `parser::URL_BREAK_AFTER` less `:`; `-` is ordinary (url.sty breaks at
+/// a hyphen only under its `hyphens` option, and the compiler puts the
+/// 0.5pt kern there instead).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UrlAtom {
+    Ord,
+    Bin,
+    Rel,
+}
+
+fn url_atom(c: char) -> UrlAtom {
+    match c {
+        ':' => UrlAtom::Rel,
+        '/' | '.' | '?' | '&' | '#' | '=' | '+' | '_' | ',' | ';' | '!' | '|' | '>' | ')' | ']' | '\'' | '@' => UrlAtom::Bin,
+        _ => UrlAtom::Ord,
+    }
+}
+
+/// The penalty TeX puts between the last character of `before` and the
+/// character `next` of the same URL, or `None` when there is no legal
+/// break there.
+///
+/// url.sty typesets a URL as a math list (`\Url@do`: `\mathsurround\z@`,
+/// `\medmuskip\Urlmuskip`, `\thickmuskip\Urlmuskip`, both 0mu), so its
+/// break points are TeX's own math-list penalties: `\binoppenalty` after a
+/// Bin atom and `\relpenalty` after a Rel atom (TeX §761), subject to the
+/// Bin→Ord demotions of §728-729 — a Bin preceded by Bin, Rel or nothing
+/// is Ord, and a Bin followed by a Rel (or the end of the list) is Ord.
+/// No penalty follows a Rel that another Rel follows.
+///
+/// pdflatex (TeX Live 2026, 11pt `article`, T1, hyperref) shows both the
+/// list (`\showbox`) and the break (`\tracingparagraphs`):
+///
+/// ```text
+/// .\T1/cmtt/m/n/10.95 s
+/// .\glue(\thickmuskip) 0.0
+/// .\T1/cmtt/m/n/10.95 :
+/// .\glue(\thickmuskip) 0.0
+/// .\T1/cmtt/m/n/10.95 /
+/// .\glue(\medmuskip) 0.0
+/// .\T1/cmtt/m/n/10.95 /
+/// .\glue(\medmuskip) 0.0
+/// .\T1/cmtt/m/n/10.95 e
+/// ...
+/// \T1/cmtt/m/n/10.95 https : / / example . org / ftxc /
+/// @\penalty via @@1 b=7 p=700 d=490289
+/// @@2: line 2.2 t=490458 -> @@1
+///  issues$[][] \T1/cmr/m/n/10.95 rather than emailed directly.
+/// ```
+///
+/// — the first `/` of `://` follows the relation and is Ord (no medmuskip
+/// on its left), the second is Bin, and the paragraph breaks after the
+/// last `/` at 700 (`fixtures/real-world/listings-manual`, page 1; the
+/// whole URL is one box without the penalties, and `issues` cannot fit).
+fn url_break_penalty(before: &str, next: char) -> Option<i32> {
+    let mut r_type: Option<UrlAtom> = None;
+    for c in before.chars() {
+        let mut t = url_atom(c);
+        if t == UrlAtom::Bin && r_type != Some(UrlAtom::Ord) {
+            t = UrlAtom::Ord;
+        }
+        r_type = Some(t);
+    }
+    match (r_type?, url_atom(next)) {
+        (UrlAtom::Rel, UrlAtom::Rel) => None,
+        (UrlAtom::Rel, _) => Some(URL_BIG_BREAK_PENALTY),
+        (UrlAtom::Bin, UrlAtom::Rel) => None,
+        (UrlAtom::Bin, _) => Some(URL_BREAK_PENALTY),
+        (UrlAtom::Ord, _) => None,
+    }
+}
+
 /// The NFSS commands of a text font command with a braced argument
 /// (latex.ltx 14213-14222 `\DeclareTextFontCommand`, and `\emph`).
 fn text_font_command(name: &str) -> Option<&'static [crate::nfss::Command]> {
@@ -10597,6 +10688,9 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
     let mut hfill_start = None;
     let mut factor = 1000u32;
     let mut pending_accent: Option<(char, CharSrc)> = None;
+    // The `\url{...}` whose runs are being assembled (its span) and the
+    // characters of it seen so far, for `url_break_penalty` between runs.
+    let mut url_run: Option<(Span, String)> = None;
     // The compiler's size declaration in force at the previous text
     // inline, for the interword space read after it.
     let mut prev_size_cpt = 0u16;
@@ -11359,6 +11453,27 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     prev_span = Some(*span);
                     continue;
                 }
+                // A run of a `\url{...}` (the compiler splits the argument
+                // after every url.sty break character, `parser::url_pieces`,
+                // each run with the whole command's span): the break between
+                // it and the previous run of the same URL is TeX's math-list
+                // penalty (`url_break_penalty`), a bare `\penalty` since the
+                // muskips around it are 0mu. Without it the runs merged into
+                // one unbreakable word.
+                let is_url_run = url_run_at(source, *span);
+                if is_url_run {
+                    match url_run.as_mut().filter(|(s, _)| s == span) {
+                        Some((_, before)) => {
+                            if let Some(value) = text.chars().next().and_then(|next| url_break_penalty(before, next)) {
+                                items.push(Item::Penalty { value, flagged: false });
+                            }
+                            before.push_str(text);
+                        }
+                        None => url_run = Some((*span, text.clone())),
+                    }
+                } else {
+                    url_run = None;
+                }
                 // Per-character sources. Macro replacement text shares the
                 // invocation span; keep that attribution for every char.
                 let citation = generated_citation(source, *span);
@@ -11488,6 +11603,12 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     run.push((ch, src));
                 }
                 flush(&mut run, &mut items, &mut factor);
+                // A URL is a formula, and leaving math mode sets the space
+                // factor to 1000 (TeX §1196): the space after `\url{x.}` is
+                // an ordinary one, not the `\sfcode` 3000 of the `.`.
+                if is_url_run {
+                    factor = 1000;
+                }
                 // A style group closing right after this text: LaTeX's
                 // \text@command appends \/ (`\maybe@ic`) unless the next
                 // token is in \nocorrlist (`,` and `.`) or the enclosing
@@ -12698,10 +12819,11 @@ mod tests {
     /// roman setting this used to produce is 32pt narrower.
     #[test]
     fn url_and_nolinkurl_are_set_in_the_typewriter_family() {
+        // One word per url.sty break run (`https:` `//` `example.` `org/` `x`).
         let it = items("A \\url{https://example.org/x} B");
-        assert_eq!(families(&it), "rtr", "{it:?}");
+        assert_eq!(families(&it), "rtttttr", "{it:?}");
         let it = items("A \\nolinkurl{https://example.org/x} B");
-        assert_eq!(families(&it), "rtr", "{it:?}");
+        assert_eq!(families(&it), "rtttttr", "{it:?}");
         // `\href` typesets only its second argument, in the ambient family.
         let it = items("A \\href{https://example.org/x}{link text} B");
         assert_eq!(families(&it), "rrrr", "{it:?}");
@@ -12715,15 +12837,54 @@ mod tests {
     #[test]
     fn a_percent_or_brace_inside_a_url_does_not_disturb_a_later_font_command() {
         let it = items("A \\url{https://e.org/a%20b} \\textbf{bold} C");
-        assert_eq!(families(&it), "rtrr", "{it:?}");
-        let Item::Word(bold) = it.iter().filter(|i| matches!(i, Item::Word(_))).nth(2).unwrap() else {
+        assert_eq!(families(&it), "rtttttrr", "{it:?}");
+        let Item::Word(bold) = it.iter().filter(|i| matches!(i, Item::Word(_))).nth(6).unwrap() else {
             panic!()
         };
         assert_eq!(bold.text(), "bold");
         assert!(bold.segments[0].style.bold, "the \\textbf after the URL is still bold: {bold:?}");
         // A brace pair inside the URL is balanced, not a group.
         let it = items("A \\url{https://e.org/{x}} \\textbf{bold} C");
-        assert_eq!(families(&it), "rtrr", "{it:?}");
+        assert_eq!(families(&it), "rtttttrr", "{it:?}");
+    }
+
+    /// A URL breaks where TeX's math-list penalties fall
+    /// (`url_break_penalty`): `\relpenalty` 500 after the `:` (a Rel),
+    /// `\binoppenalty` 700 after a Bin that an Ord precedes, and nothing
+    /// after the first `/` of `://` (a Bin after a Rel is an Ord) or after
+    /// the hyphen (an Ord, with url.sty's 0.5pt kern). pdflatex (TeX Live
+    /// 2026, 11pt `article`, T1, hyperref) breaks
+    /// `\url{https://example.org/ftxc/issues}` after the last `/` at
+    /// `p=700` (`\tracingparagraphs`: `@\penalty via @@1 b=7 p=700
+    /// d=490289`), and the space after a URL ending in `.` is an ordinary
+    /// one (math mode leaves the space factor at 1000).
+    #[test]
+    fn a_url_carries_tex_s_math_list_penalties_between_its_runs() {
+        fn shape(items: &[Item]) -> String {
+            items
+                .iter()
+                .map(|i| match i {
+                    Item::Word(w) => w.text(),
+                    Item::Penalty { value, flagged: false } => format!("<{value}>"),
+                    Item::Kern { .. } => "<kern>".to_string(),
+                    Item::Space { factor, .. } => format!(" ({factor}) "),
+                    other => format!("{other:?}"),
+                })
+                .collect()
+        }
+        let it = items("at \\url{https://example.org/ftxc/issues} rather");
+        assert_eq!(shape(&it), "at (1000) https:<500>//<700>example.<700>org/<700>ftxc/<700>issues (1000) rather", "{it:?}");
+        // A hyphen is no break; a run ending the URL gets no penalty; the
+        // space factor after the URL's `.` is 1000, not 3000.
+        let it = items("x \\url{a-b.} y");
+        assert_eq!(shape(&it), "x (1000) a-<kern>b. (1000) y", "{it:?}");
+        assert_eq!(url_break_penalty("https:", '/'), Some(URL_BIG_BREAK_PENALTY));
+        assert_eq!(url_break_penalty("https:/", '/'), None);
+        assert_eq!(url_break_penalty("https://", 'e'), Some(URL_BREAK_PENALTY));
+        assert_eq!(url_break_penalty("a/", ':'), None, "a Bin followed by a Rel is an Ord");
+        assert_eq!(url_break_penalty("a:", ':'), None, "no penalty between two Rels");
+        assert_eq!(url_break_penalty("a?", '&'), Some(URL_BREAK_PENALTY));
+        assert_eq!(url_break_penalty("a?&", 'b'), None, "the `&` after a Bin is an Ord");
     }
 
     /// The typewriter family covers the whole `\url{...}`, not just its
