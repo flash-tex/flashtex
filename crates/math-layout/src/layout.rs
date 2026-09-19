@@ -1223,8 +1223,15 @@ impl Engine<'_> {
                 _ => None,
             }
         };
+        // Rule 18a: the drops are the script font's σ₁₈/σ₁₉ in TeX
+        // (`sup_drop(t)`, t the script size) but the current style's
+        // parameters in LuaTeX (`sup_shift_drop(cur_style)`, scaled by the
+        // text size: `\overline{x}^2` in Latin Modern Math raises the `2`
+        // 6.42 − 2.5 = 3.92 pt, not 6.42 − 1.75).
         let (mut shift_up, mut shift_down) = if is_char {
             (0.0, 0.0)
+        } else if e.is_some() {
+            (nucleus.height - p.sup_drop, nucleus.depth + p.sub_drop)
         } else {
             (nucleus.height - t.sup_drop, nucleus.depth + t.sub_drop)
         };
@@ -1815,14 +1822,10 @@ impl Engine<'_> {
         let mut h = x.height;
         // Skew only applies when the base is a single symbol (possibly with
         // scripts moved under the accent, see `accent_over_scripted_char`).
-        let skew_of = |ch: char| {
-            self.m
-                .glyph(ch, style.size_class())
-                .map(|g| g.skew)
-                .unwrap_or(0.0)
-        };
-        let s = match (scripted_char, base.atoms.as_slice()) {
-            (Some((ch, _)), _) => skew_of(ch),
+        let glyph_of = |ch: char| self.m.glyph(ch, style.size_class());
+        // The base character, when the base is one.
+        let base_glyph = match (scripted_char, base.atoms.as_slice()) {
+            (Some((ch, _)), _) => glyph_of(ch),
             (
                 None,
                 [
@@ -1834,9 +1837,10 @@ impl Engine<'_> {
                         ..
                     },
                 ],
-            ) => skew_of(*ch),
-            _ => 0.0,
+            ) => glyph_of(*ch),
+            _ => None,
         };
+        let s = base_glyph.map_or(0.0, |g| g.skew);
         let mut chosen = &sizes[0];
         for g in &sizes[1..] {
             if g.width <= w {
@@ -1866,18 +1870,22 @@ impl Engine<'_> {
         // cmmi12 \vec accent), which TeX centres with; the box itself keeps
         // width 0 in TeX, so only the shift depends on it.
         let accent_dx = if e.is_some() {
-            // The accent's anchor: its top-accent line when the face lists
-            // one (`skew` is that line's offset from the glyph's centre),
-            // else half its width plus its italic correction. Latin Modern
-            // Math `\hat{x}`: 𝑥's anchor at 3.29 pt, the hat's at −2.64,
-            // the hat's origin 5.93 pt right of 𝑥's.
+            // The base's anchor is its character's top-accent line (half the
+            // glyph's own advance plus `skew`, not the box's width with the
+            // correction kern TeX centres over: `\vec{v}` in Latin Modern
+            // Math anchors at 2.94 pt, 𝑣's advance being 4.85), or half a
+            // box base's width; the accent's is its top-accent line when the
+            // face lists one, else half its width plus its italic
+            // correction. `\hat{x}`: 𝑥's anchor at 3.29 pt, the hat's at
+            // −2.64, the hat's origin 5.93 pt right of 𝑥's.
+            let base_anchor = base_glyph.map_or(w / 2.0, |g| g.width / 2.0 + g.skew);
             let accent_anchor = y.width / 2.0
                 + if chosen.skew != 0.0 {
                     chosen.skew
                 } else {
                     chosen.italic
                 };
-            s + w / 2.0 - accent_anchor
+            base_anchor - accent_anchor
         } else {
             s + (w - (y.width + chosen.italic)) / 2.0
         };
