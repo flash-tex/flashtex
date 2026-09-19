@@ -291,3 +291,47 @@ fn madrid_ball_items_are_flat_discs_under_the_labels() {
     let one_at = items.iter().position(|it| matches!(it, Item::GlyphRun(g) if g.text == "1")).unwrap();
     assert!(disc_at < one_at);
 }
+
+/// Item 4: `\setbeamercovered{transparent}`. pdflatex paints the covered
+/// material of the item-2 probe deck on slide 1 in its colour mixed
+/// `15!bg` -- `0.85 g` before `E`, `=`, `mc`, `2`, `a`..`d` (the
+/// `\beamer@colorhook`), the image `/Im7 Do` at full strength with no
+/// ExtGState -- at the same positions as slide 2 (`E` 61.169 / 61.165,
+/// `a` (62.809, 149.642)); `transparent=30` mixes `30!bg`.
+#[test]
+fn transparent_covered_material_is_painted_mixed_with_the_background() {
+    if !lm_available() {
+        return;
+    }
+    let deck = "\\documentclass{beamer}\n\\setbeamertemplate{navigation symbols}{}\n\\setbeamercovered{transparent}\n\\begin{document}\n\\begin{frame}{Covered material}\nBefore \\uncover<2->{$E=mc^2$} after the formula.\n\nPicture \\uncover<2->{\\includegraphics[width=2cm]{figure.png}} tail.\n\nTable \\uncover<2->{\\begin{tabular}{ll} a & b \\\\ c & d \\end{tabular}} end.\n\\end{frame}\n\\end{document}\n";
+    let r = render_with_figure(deck);
+    assert_eq!(r.v2.pages.len(), 2);
+    let words = words_of(&r);
+    at(&words, 1, "a", 62.809, 149.642, 0.01);
+    at(&words, 1, "d", 80.006, 163.191, 0.01);
+    at(&words, 1, "E", 61.169, 103.594, 0.05);
+    at(&words, 1, "end.", 95.257, 156.434, 0.01);
+    assert_eq!(page_words(&words, 1), page_words(&words, 2));
+    let grey = (0.85, 0.85, 0.85);
+    for covered in ["E", "=", "mc", "2", "a", "b", "c", "d"] {
+        let baseline = if covered == "2" { 99.635 } else if "abcd".contains(covered) { 150.0 } else { 103.594 };
+        assert_eq!(run_paint(&r, 1, covered, baseline), grey, "slide 1 {covered:?}");
+        assert_eq!(run_paint(&r, 2, covered, baseline), (0.0, 0.0, 0.0), "slide 2 {covered:?}");
+    }
+    assert_eq!(run_paint(&r, 1, "after", 103.594), (0.0, 0.0, 0.0));
+    // The image is painted on both slides; a `transparent=30` deck mixes
+    // 30% of the colour.
+    assert_eq!((images_of(&r, 1), images_of(&r, 2)), (1, 1));
+    let thirty = render_with_figure(&deck.replace("{transparent}", "{transparent=30}"));
+    assert_eq!(run_paint(&thirty, 1, "a", 150.0), (0.7, 0.7, 0.7));
+    // Madrid: a covered `\item<2->`'s ball disc and its text are mixed too.
+    let madrid = render_one("\\documentclass{beamer}\n\\usetheme{Madrid}\n\\setbeamercovered{transparent}\n\\begin{document}\n\\begin{frame}{T}\n\\begin{itemize}\n\\item<1-> one\n\\item<2-> two\n\\end{itemize}\n\\end{frame}\n\\end{document}\n");
+    assert_eq!(madrid.v2.pages.len(), 2);
+    assert_eq!(run_paint(&madrid, 1, "two", 130.0), grey);
+    // (The other fills on the page are the navigation strip's triangles,
+    // 0.84 0.84 0.94.)
+    let discs: Vec<&PathItem> = paths_of(&madrid, 1).into_iter().filter(|p| matches!(p.op, PathPaintOp::Fill { .. })).collect();
+    let full = discs.iter().filter(|p| near(p.paint.r, 0.2394, 0.001)).count();
+    let mixed = discs.iter().filter(|p| near(p.paint.r, 0.2394 * 0.15 + 0.85, 0.001) && near(p.paint.b, 0.5554 * 0.15 + 0.85, 0.001)).count();
+    assert_eq!((full, mixed), (1, 1), "{:?}", discs.iter().map(|p| rgb(p)).collect::<Vec<_>>());
+}

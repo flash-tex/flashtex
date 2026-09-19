@@ -21,6 +21,7 @@ use std::rc::Rc;
 use std::sync::OnceLock;
 
 use flashtex_compiler::parser::{FillLeader, SourceDocument};
+use flashtex_class_geometry::beamer::Covered;
 use flashtex_compiler::{DocumentId, Span};
 use flashtex_font_engine::sha256;
 use flashtex_math_layout as ml;
@@ -10485,6 +10486,8 @@ pub fn assemble_windowed(
     // that carries none, after placement; whether the document has one to
     // write into is therefore part of the harvest.
     let mut any_painted_item = false;
+    // beamer `\setbeamercovered{..}`: how covered overlay material paints.
+    let covered = style.class_geometry.as_ref().map_or(Covered::Invisible, |g| g.beamer_covered);
 
     for (bi, block) in laid.blocks.iter().enumerate() {
         let hit = block
@@ -10498,7 +10501,7 @@ pub fn assemble_windowed(
         let a = match hit {
             Some(a) => a,
             None => {
-                let built = assemble_block(block, &laid.recs, &laid.maths, text_x, &source_of, &paths, &empty);
+                let built = assemble_block(block, &laid.recs, &laid.maths, text_x, &source_of, &paths, &empty, covered);
                 match (cache, block.cache_key) {
                     // A block no resident page uses is harvested and dropped;
                     // caching it is exactly the retention the window exists to
@@ -10686,6 +10689,38 @@ pub fn assemble_windowed(
     }
 }
 
+/// `\setbeamercovered{transparent=<pct>}` on one painted item: its colour
+/// becomes `<colour>!<pct>!bg` (`\beamer@colorhook`; `beamerbaseoverlay.sty`
+/// 319-336), the page background being white. Black text on the default
+/// and Madrid pages is thus `0.85 g` at 15%, as pdflatex writes it. An
+/// image is left as it is (pdflatex draws it at full strength; only pgf
+/// shadings get the `!<pct>opaque` variant, which the ball discs
+/// approximate by the same mix).
+fn dim_item(item: &mut display::Item, pct: u8) {
+    match item {
+        display::Item::GlyphRun(r) => r.paint = mix_with_white(&r.paint, pct),
+        display::Item::Rule(r) => r.paint = mix_with_white(&r.paint, pct),
+        display::Item::Path(p) => p.paint = mix_with_white(&p.paint, pct),
+        display::Item::Image(_) => {}
+    }
+}
+
+/// `paint!<pct>!white` in the paint's own model (gray stays gray, as
+/// xcolor mixes `black!15!white` to `0.85 g`; an rgb or cmyk paint mixes
+/// in rgb).
+fn mix_with_white(paint: &Paint, pct: u8) -> Paint {
+    use flashtex_compiler::color::{ColorSpace, DeviceColor};
+    let f = f64::from(pct.min(100)) / 100.0;
+    let mix = |c: f64| c * f + (1.0 - f);
+    let bn = |v: f64| (v * 1e9).round().clamp(0.0, 1e9) as u32;
+    let device = match &paint.device {
+        Some(d) if d.space == ColorSpace::Gray => DeviceColor::from_billionths(ColorSpace::Gray, &[bn(mix(d.to_rgb().0))]),
+        None => DeviceColor::from_billionths(ColorSpace::Gray, &[bn(mix(0.299 * paint.r + 0.587 * paint.g + 0.114 * paint.b))]),
+        Some(_) => DeviceColor::from_billionths(ColorSpace::Rgb, &[bn(mix(paint.r)), bn(mix(paint.g)), bn(mix(paint.b))]),
+    };
+    Paint { r: mix(paint.r), g: mix(paint.g), b: mix(paint.b), a: paint.a, device }
+}
+
 /// Assembles one block's lines in line-local coordinates.
 #[allow(clippy::too_many_arguments)]
 fn assemble_block(
@@ -10696,6 +10731,7 @@ fn assemble_block(
     source_of: &dyn Fn(Span) -> SourceRange,
     paths: &[Rc<str>],
     empty: &Rc<str>,
+    covered: Covered,
 ) -> incremental::AssembledBlock {
     let mut used: BTreeMap<Rc<str>, Rc<LoadedFace>> = BTreeMap::new();
     let mut lines = Vec::with_capacity(block.block.lines.lines.len());
@@ -10730,6 +10766,24 @@ fn assemble_block(
             let mut local = run.clone();
             local.x += text_x;
             local.baseline_y = 0.0;
+            // beamer covered material (`TextStyle::hidden`, `MathRec::hidden`,
+            // ...): the box is set and measured like visible material; what
+            // it paints depends on `\setbeamercovered`: nothing (`invisible`,
+            // the default) or its colours mixed `pct!bg` (`transparent`),
+            // images excepted (pdflatex draws a covered image at full
+            // strength under `transparent`).
+            let hidden = match &recs[rec] {
+                BoxRec::Text { style, .. } => style.hidden,
+                BoxRec::Math(mi) => maths[*mi].hidden,
+                BoxRec::Table(t) => t.hidden,
+                BoxRec::Graphic(g) => g.hidden,
+                BoxRec::Paths(p) => p.hidden,
+                _ => false,
+            };
+            if hidden && covered == Covered::Invisible {
+                continue;
+            }
+            let painted_from = items.len();
             match &recs[rec] {
                 BoxRec::Text {
                     face,
@@ -10744,10 +10798,6 @@ fn assemble_block(
                     raise,
                     ..
                 } => {
-                    // beamer covered text: set and measured, not painted.
-                    if style.hidden {
-                        continue;
-                    }
                     used.entry(face.font_id.clone()).or_insert_with(|| face.clone());
                     if let Some(item) = text_item(&local, face, *size, text, clusters, glyphs, *height, *depth, *raise, source_of, Paint::of(style.color)) {
                         match (items.last_mut(), item) {
@@ -10760,10 +10810,6 @@ fn assemble_block(
                 }
                 BoxRec::Math(mi) => {
                     let m = &maths[*mi];
-                    // beamer covered formula: set and measured, not painted.
-                    if m.hidden {
-                        continue;
-                    }
                     math_items(&local, m, source_of, &mut items, &mut used);
                     if let MathProvider::Tex(t) = &m.metrics {
                         resources.extend(t.take_resources());
@@ -10772,10 +10818,6 @@ fn assemble_block(
                 }
                 BoxRec::Picture(p) => picture_items(&local, p, source_of, &mut items, &mut used),
                 BoxRec::Table(t) => {
-                    // beamer covered table: set and measured, not painted.
-                    if t.hidden {
-                        continue;
-                    }
                     // `device: None`: `crate::tablecolor` has already flattened the
                     // colortbl colour to sRGB, so the operands pdfTeX would write
                     // (`k`/`rg`/`g`) are gone by here. Filling this in needs the
@@ -10798,7 +10840,7 @@ fn assemble_block(
                     // Each piece is assembled like a block of its own, then
                     // moved to its place; the rules follow the text.
                     for piece in &t.pieces {
-                        let a = assemble_block(&piece.block, recs, maths, 0.0, source_of, paths, empty);
+                        let a = assemble_block(&piece.block, recs, maths, 0.0, source_of, paths, empty, covered);
                         let piece_lines = &piece.block.block.lines.lines;
                         let first = piece_lines.first().map_or(0.0, |l| l.baseline_y);
                         let dx = Tick::from_tex_pt(local.x + piece.x);
@@ -10847,7 +10889,7 @@ fn assemble_block(
                     };
                     let r = cb.rule;
                     items.push(block_rule(x0 + r, r - cb.height, cb.width - 2.0 * r, cb.height + cb.depth - 2.0 * r, cb.fill));
-                    let a = assemble_block(&cb.block, recs, maths, 0.0, source_of, paths, empty);
+                    let a = assemble_block(&cb.block, recs, maths, 0.0, source_of, paths, empty, covered);
                     let dx = Tick::from_tex_pt(x0);
                     for line_items in &a.lines {
                         for it in line_items {
@@ -10871,7 +10913,7 @@ fn assemble_block(
                 }
                 BoxRec::Underline(ul) => {
                     let x0 = local.x;
-                    let a = assemble_block(&ul.block, recs, maths, 0.0, source_of, paths, empty);
+                    let a = assemble_block(&ul.block, recs, maths, 0.0, source_of, paths, empty, covered);
                     let dx = Tick::from_tex_pt(x0);
                     for line_items in &a.lines {
                         for it in line_items {
@@ -10897,7 +10939,7 @@ fn assemble_block(
                     }
                 }
                 BoxRec::TextScript(ts) => {
-                    let a = assemble_block(&ts.block, recs, maths, 0.0, source_of, paths, empty);
+                    let a = assemble_block(&ts.block, recs, maths, 0.0, source_of, paths, empty, covered);
                     let dx = Tick::from_tex_pt(local.x);
                     let dy = Tick::from_tex_pt(-ts.raise);
                     for line_items in &a.lines {
@@ -10919,11 +10961,6 @@ fn assemble_block(
                     // transform maps the unit square into that box (the
                     // same arithmetic as `floatpage::Placer::emit`, with the
                     // baseline at 0 and the line's shift applied later).
-                    // beamer covered graphic: the box keeps its space, the
-                    // image (or placeholder) is not painted.
-                    if g.hidden {
-                        continue;
-                    }
                     let provenance = Provenance::Source(source_of(g.span));
                     let (left, base, gbox) = (local.x, 0.0, g.gbox);
                     if let Some(kind) = g.placeholder {
@@ -10963,10 +11000,6 @@ fn assemble_block(
                 }
                 BoxRec::Leader { .. } => {}
                 BoxRec::Paths(p) => {
-                    // beamer covered material: the box keeps its space.
-                    if p.hidden {
-                        continue;
-                    }
                     let provenance = Provenance::Source(source_of(p.span));
                     let x0 = local.x;
                     let tx = |x: f64| Tick::from_tex_pt(x0 + x);
@@ -11019,6 +11052,11 @@ fn assemble_block(
                         paint: Paint::of(*color),
                         provenance: provenance_of(*span, source_of),
                     }));
+                }
+            }
+            if let (true, Covered::Transparent(pct)) = (hidden, covered) {
+                for item in &mut items[painted_from..] {
+                    dim_item(item, pct);
                 }
             }
         }

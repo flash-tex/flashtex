@@ -16,8 +16,10 @@
 //!   `\invisible` (inverted): the material is **covered** -- it is shaped,
 //!   measured and broken like visible text so the space is kept, but its
 //!   glyph runs are not emitted ([`TextStyle::hidden`], read by
-//!   `typeset::assemble_block`). `\setbeamercovered{invisible}`, the
-//!   default; `transparent` is not modelled;
+//!   `typeset::assemble_block`) under `\setbeamercovered{invisible}`, the
+//!   default, or painted in its colours mixed `pct!bg` under
+//!   `\setbeamercovered{transparent=<pct>}` (`class_geometry::beamer::
+//!   Covered`, read from the preamble);
 //! - `\alert<spec>`: the alert colour (rgb 1,0,0 in the default theme) on
 //!   the selected slides, the surrounding colour otherwise.
 //!
