@@ -4202,9 +4202,7 @@ impl P<'_> {
             "pause" | "onslide" | "uncover" | "only" | "visible" | "invisible" => self.beamer_overlay_command(name, span, para),
             "titlepage" => self.beamer_titlepage(span, blocks, para),
             "note" => self.beamer_note(name, span),
-            "frame" if self.is_beamer_class() && self.in_body && self.beamer_frame.is_none() => {
-                self.beamer_frame_command(span, blocks, para)
-            }
+            "frame" => self.beamer_frame_command(name, span, blocks, para),
             "column" => self.beamer_column_command(name, span, blocks, para),
             "label" | "ref" | "pageref" | "eqref" | "thepage" => self.label_or_reference_command(name, span, para),
             "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
@@ -8714,7 +8712,29 @@ impl P<'_> {
     /// beamer `\let\frame=\framelatex` (the kernel's boxed `\frame`); that
     /// case never reaches here (the dispatch arm is gated on no open frame)
     /// and stays the unknown-command path.
-    fn beamer_frame_command(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+    fn beamer_frame_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        if !self.beamer_command_available(name, span) {
+            return;
+        }
+        if self.beamer_frame.is_some() || !self.in_body {
+            // Inside a frame beamer `\let\frame=\framelatex`: the kernel's
+            // `\frame{<text>}`, an `\fbox` with `\fboxsep` 0 (latex.ltx
+            // `\frame`: `\@frameb@x\relax` on a `\fboxsep\z@` box).
+            let space_before = self.space_precedes(self.i - 1);
+            let (tokens, body) = self.required_group(name, span);
+            let content = self.box_inlines(tokens);
+            para.push(Inline::ColorBox(Box::new(ColorBox {
+                fill: self.page_color.unwrap_or(DeviceColor::WHITE),
+                frame: Some(self.style.color.unwrap_or(DeviceColor::BLACK)),
+                content,
+                fboxsep_pt: 0.0,
+                fboxrule_pt: self.fboxrule_pt,
+                span: span.merge(body),
+                space_before,
+                highlight: None,
+            })));
+            return;
+        }
         self.beamer_frame_head(span, blocks, para, false);
         self.skip_spaces();
         match self.peek() {
