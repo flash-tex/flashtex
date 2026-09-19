@@ -1066,12 +1066,19 @@ pub fn candidates(kind: ReferenceKind, base: &ProjectPath) -> (FileKind, Vec<Pro
             }
         }
         ReferenceKind::Bibliography => {
-            if base.extension() == Some("bib") {
+            // A pre-built `.bbl` is worth more than the `.bib` it was made
+            // from (arXiv ships the former without running BibTeX), but a
+            // present database keeps its existing behavior: `.bib` is tried
+            // first, `.bbl` second, and the first file on disk wins.
+            if base.extension() == Some("bib") || base.extension() == Some("bbl") {
                 (FileKind::Bibliography, vec![base.clone()])
             } else {
                 (
                     FileKind::Bibliography,
-                    vec![base.with_appended_extension("bib")],
+                    vec![
+                        base.with_appended_extension("bib"),
+                        base.with_appended_extension("bbl"),
+                    ],
                 )
             }
         }

@@ -1257,6 +1257,10 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
         "References section with numbered \\bibitem entries",
     ),
     (
+        "mcitethebibliography",
+        "References section like thebibliography (mciteplus; its sublist grouping is not applied)",
+    ),
+    (
         "multicols",
         "multicol {n}[preface][premulticols]: balanced columns, laid out by the render pipeline",
     ),

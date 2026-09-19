@@ -1079,6 +1079,7 @@
     {"name": "comment", "mode": "text", "description": "body discarded unread, even invalid commands inside (comment package)"},
     {"name": "proof", "mode": "text", "description": "amsthm proof with a closing square"},
     {"name": "thebibliography", "mode": "text", "description": "References section with numbered \\bibitem entries"},
+    {"name": "mcitethebibliography", "mode": "text", "description": "References section like thebibliography (mciteplus; its sublist grouping is not applied)"},
     {"name": "multicols", "mode": "text", "description": "multicol {n}[preface][premulticols]: balanced columns, laid out by the render pipeline"},
     {"name": "multicols*", "mode": "text", "description": "multicol {n}[preface][premulticols]: unbalanced columns, laid out by the render pipeline"},
     {"name": "array", "mode": "math", "description": "math grid, centred cells"},
