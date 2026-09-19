@@ -50,7 +50,8 @@ flashtex — the FlashTeX LaTeX engine
 
 usage:
   flashtex build [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
-                 [--v2 out.json] [--timing] [--verbose] [--strict] [--json] [-j N]
+                 [--font ROLE=NAME]... [--v2 out.json] [--timing] [--verbose]
+                 [--strict] [--json] [-j N]
   flashtex check [<main.tex>|<dir>] [--json] [--strict] [--fix] [--dry-run]
                  [--project-root DIR] [--font-dir DIR]...
   flashtex watch [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
@@ -84,6 +85,9 @@ options:
                        the manifest's directory, else the entry file's); nothing
                        outside it is read except the manifest's `texinputs`
   --font-dir DIR       an extra font directory, probed first (repeatable)
+  --font ROLE=NAME     the installed family for a role -- text, sans, mono or
+                       math (repeatable); outranks the manifest's `[fonts]`,
+                       the document's own \\setmainfont still wins
   --v2 FILE            also write the rendering-v2 display list envelope
   --timing             print render/PDF/total wall time to stderr
   -v, --verbose        also print the PDF route's notes (embedded fonts, widths)
@@ -249,6 +253,24 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
                 c.interval_ms = n.parse::<u64>().map_err(|_| format!("{a} needs milliseconds, got {n:?}"))?.max(20);
             }
             "--class-options" => c.render.default_class_options = value(&mut i, a)?,
+            // `--font text=NAME` (repeatable; roles text, sans, mono, math):
+            // the same slots as the manifest's `[fonts]`, outranking it.
+            "--font" => {
+                let raw = value(&mut i, a)?;
+                let (role, name) = raw.split_once('=').ok_or_else(|| format!("{a} needs ROLE=NAME (roles: text, sans, mono, math), got {raw:?}"))?;
+                let name = name.trim();
+                if name.is_empty() {
+                    return Err(format!("{a} {role}= needs a family name"));
+                }
+                let fonts = c.render.fonts.get_or_insert_with(Default::default);
+                match role.trim() {
+                    "text" => fonts.text = Some(name.to_string()),
+                    "sans" => fonts.sans = Some(name.to_string()),
+                    "mono" => fonts.mono = Some(name.to_string()),
+                    "math" => fonts.math = Some(name.to_string()),
+                    r => return Err(format!("{a} role must be text, sans, mono or math, got {r:?}")),
+                }
+            }
             "--secnumdepth" => {
                 let n = value(&mut i, a)?;
                 c.render.default_secnumdepth = n.parse::<u8>().map_err(|_| format!("{a} needs a small number, got {n:?}"))?;

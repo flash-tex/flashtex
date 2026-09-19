@@ -1,4 +1,4 @@
-use flashtex_document_runtime::{Event, Limits};
+use flashtex_document_runtime::{Event, Limits, RequestFonts};
 use flashtex_edit_ledger::{Document, Store};
 use flashtex_preview_controller::{Controller, Update};
 use flashtex_project_index::Category;
@@ -948,4 +948,48 @@ fn grouped_encoding_refusal_preserves_source_and_permanent_retry() {
             "x".repeat(2048)
         );
     }
+}
+/// `payload.fonts` (the manifest's `[fonts]`): forwarded on every request
+/// once configured, kept across a compiler restart, and absent -- the
+/// unchanged legacy request -- when nothing is named.
+#[test]
+fn configured_fonts_reach_every_request_including_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    // A fake compiler that reports the request's `fonts` member as a diagnostic.
+    let echo_fonts = "import json,sys\nfor line in sys.stdin:\n r=json.loads(line);p=r['payload']\n print(json.dumps({'protocol_version':1,'type':'compile_result','id':r['id'],'payload':{'project_id':p['project_id'],'revision':p['revision'],'status':'ok','pages':[],'diagnostics':[{'severity':'warning','message':'fonts='+json.dumps(p.get('fonts'),sort_keys=True),'source':None,'recovery':None}]}}),flush=True)\n";
+    let mut controller = Controller::new(
+        "p".into(),
+        "main.tex".into(),
+        vec![store(dir.path())],
+        command(dir.path(), echo_fonts),
+        Limits::default(),
+    )
+    .unwrap();
+    let reported = |controller: &mut Controller| -> String {
+        let events = wait(controller, |events| events.iter().any(|e| matches!(e, Update::Preview(_))));
+        let preview = events
+            .into_iter()
+            .rev()
+            .find_map(|e| if let Update::Preview(p) = e { Some(p) } else { None })
+            .unwrap();
+        preview.result["payload"]["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    controller.compile_current().unwrap();
+    assert_eq!(reported(&mut controller), "fonts=null", "nothing configured: no field");
+    let fonts = RequestFonts { text: Some("Libertinus Serif".into()), mono: Some("JetBrains Mono".into()), ..RequestFonts::default() };
+    controller.configure_fonts(Some(fonts.clone())).unwrap();
+    assert_eq!(controller.fonts(), Some(&fonts));
+    assert_eq!(reported(&mut controller), r#"fonts={"mono": "JetBrains Mono", "text": "Libertinus Serif"}"#);
+    // A restart re-applies the setting to the new session.
+    controller
+        .restart(command(dir.path(), echo_fonts), Limits::default())
+        .unwrap();
+    assert_eq!(reported(&mut controller), r#"fonts={"mono": "JetBrains Mono", "text": "Libertinus Serif"}"#);
+    // A table naming nothing is no field again.
+    controller.configure_fonts(Some(RequestFonts::default())).unwrap();
+    assert_eq!(controller.fonts(), None);
+    assert_eq!(reported(&mut controller), "fonts=null");
 }

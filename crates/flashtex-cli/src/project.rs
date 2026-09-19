@@ -20,7 +20,7 @@
 use std::path::{Path, PathBuf};
 
 use flashtex_project_files::{DiagnosticKind, ProjectGraph, ProjectPath, ProjectRoot, Severity, DEFAULT_READ_LIMIT};
-use flashtex_project_manifest::{is_texinput_file, Loaded, Manifest, TexInputLocation};
+use flashtex_project_manifest::{is_texinput_file, Fonts, Loaded, Manifest, TexInputLocation};
 
 /// One source document, as runtime-v1 carries it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +64,9 @@ pub struct Project {
     pub manifest: Option<PathBuf>,
     /// `[project] output` resolved against the manifest's directory.
     pub output_dir: Option<PathBuf>,
+    /// The manifest's `[fonts]` table (empty without one): the families the
+    /// render's text/sans/mono/math slots default to (`compile::compile`).
+    pub fonts: Fonts,
 }
 
 /// What the user pointed `flashtex` at: a file, a directory, or nothing
@@ -291,6 +294,7 @@ pub fn load(input: &Input, project_root: Option<&Path>) -> Result<Project, Strin
         outside_files,
         manifest: input.manifest.found.clone(),
         output_dir,
+        fonts: input.manifest.manifest.fonts.clone(),
     })
 }
 

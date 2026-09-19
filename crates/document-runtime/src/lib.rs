@@ -32,6 +32,28 @@ pub struct Request {
     pub entry_path: String,
     pub documents: Vec<Document>,
 }
+/// `payload.fonts`: the project manifest's `[fonts]` table
+/// (`flashtex.toml`, `docs/user/project-manifest.md`) as the runtime-v1
+/// compile request carries it -- the installed family each slot defaults to
+/// when the document itself names none. Every member is optional and an
+/// absent member is not serialised; a table naming nothing is sent as no
+/// field at all (`Session::set_fonts`), so the request bytes stay frozen.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestFonts {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sans: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mono: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub math: Option<String>,
+}
+impl RequestFonts {
+    pub fn is_empty(&self) -> bool {
+        self.text.is_none() && self.sans.is_none() && self.mono.is_none() && self.math.is_none()
+    }
+}
 #[derive(Clone, Debug)]
 pub struct Limits {
     pub max_frame: usize,
@@ -251,6 +273,9 @@ pub struct Session {
     /// `payload.project_root` on every compile request. `None` keeps the
     /// frozen runtime-v1 request bytes unchanged.
     project_root: Option<String>,
+    /// The manifest's `[fonts]` sent as `payload.fonts` on every compile
+    /// request; `None` (or a table naming nothing) sends no field.
+    fonts: Option<RequestFonts>,
 }
 impl Session {
     pub fn spawn(executable: impl AsRef<Path>, limits: Limits) -> Result<Self, String> {
@@ -295,6 +320,7 @@ impl Session {
             completed_snapshots_enabled: false,
             completed_snapshot: None,
             project_root: None,
+            fonts: None,
         })
     }
     /// Directory the producer reads `\includegraphics` files from, forwarded
@@ -310,6 +336,16 @@ impl Session {
     }
     pub fn project_root(&self) -> Option<&str> {
         self.project_root.as_deref()
+    }
+    /// The manifest's `[fonts]` forwarded per request as `payload.fonts`
+    /// (`RenderOptions::fonts` in the producer). A table naming nothing is
+    /// `None`. Applies to requests submitted after this call; family names
+    /// are not validated here, the producer reports an unknown one.
+    pub fn set_fonts(&mut self, fonts: Option<RequestFonts>) {
+        self.fonts = fonts.filter(|f| !f.is_empty());
+    }
+    pub fn fonts(&self) -> Option<&RequestFonts> {
+        self.fonts.as_ref()
     }
     pub fn submit(&mut self, request: Request) -> Result<(), String> {
         self.submit_with_capabilities(request, Vec::new())
@@ -411,6 +447,7 @@ impl Session {
             self.limits.max_frame,
             &capabilities,
             self.project_root.as_deref(),
+            self.fonts.as_ref(),
         )?;
         let encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
         if self.latest.values().any(|(_, id)| id == &request.id)
@@ -777,13 +814,14 @@ pub fn validate_project_root(root: &str) -> Result<(), String> {
 }
 #[cfg(test)]
 fn encode(r: &Request, limit: usize, capabilities: &[String]) -> Result<Vec<u8>, String> {
-    encode_rooted(r, limit, capabilities, None)
+    encode_rooted(r, limit, capabilities, None, None)
 }
 fn encode_rooted(
     r: &Request,
     limit: usize,
     capabilities: &[String],
     project_root: Option<&str>,
+    fonts: Option<&RequestFonts>,
 ) -> Result<Vec<u8>, String> {
     if r.id.is_empty()
         || r.id.len() > 128
@@ -815,6 +853,8 @@ fn encode_rooted(
         layout_capabilities: &'a [String],
         #[serde(skip_serializing_if = "Option::is_none")]
         project_root: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fonts: Option<&'a RequestFonts>,
     }
     #[derive(Serialize)]
     struct Envelope<'a> {
@@ -835,6 +875,7 @@ fn encode_rooted(
             documents: &r.documents,
             layout_capabilities: capabilities,
             project_root,
+            fonts,
         },
     };
     let mut bytes = serde_json::to_vec(&envelope).map_err(|e| e.to_string())?;
@@ -1078,10 +1119,10 @@ mod project_root_tests {
     fn absent_root_keeps_legacy_request_bytes_and_present_root_is_forwarded() {
         let r = request();
         let legacy = encode(&r, 1 << 20, &[]).unwrap();
-        assert_eq!(encode_rooted(&r, 1 << 20, &[], None).unwrap(), legacy);
+        assert_eq!(encode_rooted(&r, 1 << 20, &[], None, None).unwrap(), legacy);
         assert!(!String::from_utf8_lossy(&legacy).contains("project_root"));
         let caps = vec!["display-list-v2-images".to_string()];
-        let rooted = encode_rooted(&r, 1 << 20, &caps, Some("/tmp/proj")).unwrap();
+        let rooted = encode_rooted(&r, 1 << 20, &caps, Some("/tmp/proj"), None).unwrap();
         let v: Value = serde_json::from_slice(&rooted).unwrap();
         assert_eq!(v["payload"]["project_root"], "/tmp/proj");
         assert_eq!(
@@ -1089,6 +1130,19 @@ mod project_root_tests {
             "display-list-v2-images"
         );
         assert_eq!(v["payload"]["entry_path"], "main.tex");
+    }
+    #[test]
+    fn absent_fonts_keep_legacy_request_bytes_and_named_slots_are_forwarded() {
+        let r = request();
+        let legacy = encode(&r, 1 << 20, &[]).unwrap();
+        assert!(!String::from_utf8_lossy(&legacy).contains("fonts"));
+        // `set_fonts` drops a table naming nothing, so a session never sends `{}`.
+        assert!(RequestFonts::default().is_empty());
+        let fonts = RequestFonts { text: Some("Libertinus Serif".into()), math: Some("Libertinus Math".into()), ..RequestFonts::default() };
+        let with = encode_rooted(&r, 1 << 20, &[], None, Some(&fonts)).unwrap();
+        let v: Value = serde_json::from_slice(&with).unwrap();
+        assert_eq!(v["payload"]["fonts"], serde_json::json!({"text": "Libertinus Serif", "math": "Libertinus Math"}));
+        assert!(v["payload"].get("project_root").is_none());
     }
     #[test]
     fn image_capability_is_accepted_only_when_requested_with_display_list() {

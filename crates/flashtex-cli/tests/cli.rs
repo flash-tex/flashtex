@@ -453,6 +453,43 @@ fn a_manifest_names_the_entry_adds_texinputs_and_sets_the_output_dir() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// docs/user/project-manifest.md `[fonts]`: the manifest's families reach
+/// the render (`RenderOptions::fonts`) -- the body is set in the named face
+/// from the project's own `fonts/` directory -- and `--font ROLE=NAME`
+/// outranks the manifest for that role.
+#[test]
+fn the_manifests_fonts_table_selects_the_body_face_and_font_flags_outrank_it() {
+    let dir = tmp("manifest-fonts");
+    write_tex(&dir, "main.tex", "\\documentclass{article}\n\\begin{document}\nHello fonts.\n\\end{document}\n");
+    write_tex(&dir, "flashtex.toml", "[project]\nentry = \"main.tex\"\n[fonts]\ntext = \"Latin Modern Sans\"\n");
+    std::fs::create_dir_all(dir.join("fonts")).unwrap();
+    for f in ["lmsans10-regular.otf", "lmmono10-regular.otf"] {
+        std::fs::copy(fonts_dir().join(f), dir.join("fonts").join(f)).unwrap();
+    }
+    let fonts = fonts_dir();
+    let v2 = dir.join("out.json");
+    let o = run(&["build", dir.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--v2", v2.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let published = |path: &Path| -> Vec<String> {
+        let text = std::fs::read_to_string(path).unwrap();
+        let env = json(&text);
+        let list = env.get("payload").unwrap();
+        list.get("fonts").unwrap().as_arr().unwrap().iter().map(|f| f.get("postscript_name").unwrap().as_str().unwrap().to_string()).collect()
+    };
+    let names = published(&v2);
+    assert!(names.iter().any(|n| n == "LMSans10-Regular"), "the manifest's text family is embedded: {names:?}");
+    // `--font text=` for the same role wins over the manifest.
+    let o = run(&["build", dir.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--v2", v2.to_str().unwrap(), "--font", "text=Latin Modern Mono"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let names = published(&v2);
+    assert!(names.iter().any(|n| n == "LMMono10-Regular") && !names.iter().any(|n| n == "LMSans10-Regular"), "{names:?}");
+    // A malformed flag is a usage error.
+    let o = run(&["build", dir.to_str().unwrap(), "--font", "serif=x"]);
+    assert_eq!(o.status.code(), Some(2), "{}", stderr(&o));
+    assert!(stderr(&o).contains("text, sans, mono or math"), "{}", stderr(&o));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `manifest init` writes the commented template naming the actual entry
 /// and refuses to overwrite without `--force`; a directory holding exactly
 /// one `.tex` file needs no manifest to build, and without one the PDF

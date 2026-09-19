@@ -342,6 +342,7 @@ mod tests {
             outside_files: Vec::new(),
             manifest: None,
             output_dir: None,
+            fonts: Default::default(),
         }
     }
 
