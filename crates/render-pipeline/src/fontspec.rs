@@ -43,10 +43,16 @@
 //! font goes through none of this: `apply` returns early and the blocks
 //! are untouched, which `scripts/render-corpus-v2.sh` checks byte for byte.
 //!
-//! The math font (`\setmathfont`, `unicode-math`) is the other half of the
-//! system and is specified, not implemented, in
-//! `docs/proposals/font-system-math.md`; `\setmathfont` is read here only
-//! to say so once.
+//! The math font is the other half of the system (`docs/proposals/
+//! font-system-math.md`): `\setmathfont[opts]{Family}` in the preamble
+//! selects the document's OpenType math font ([`Settings::math`]),
+//! `\usepackage{unicode-math}` alone selects Latin Modern Math (what the
+//! package does under XeLaTeX/LuaLaTeX), and the manifest's `[fonts] math`
+//! sits below both. `typeset::Context::math_fonts` resolves the family and
+//! builds the `MathProvider::Otf` provider; a document naming none stays on
+//! TeX's metrics. The math font is per document: unicode-math itself
+//! documents that `\setmathfont` in the body is not honoured, so one there
+//! is noted and ignored. `Scale=` and `range=` are noted as not applied.
 
 use flashtex_compiler::Span;
 
@@ -69,11 +75,38 @@ pub struct Settings {
     pub sans: Option<u16>,
     /// `\ttdefault`: `\setmonofont`, else `[fonts] mono`.
     pub mono: Option<u16>,
+    /// The document's math font: the last preamble `\setmathfont{..}` of
+    /// the entry document, else `[fonts] math`, else (with `unicode-math`
+    /// loaded) Latin Modern Math. `None`: TeX's metrics, as always.
+    pub math: Option<MathSelection>,
 }
+
+/// Where the document's OpenType math font comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathSelection {
+    /// The family as the index matches it.
+    pub family: String,
+    pub source: MathSource,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathSource {
+    /// `\setmathfont{..}` in the preamble.
+    SetMathFont,
+    /// The manifest's `[fonts] math`.
+    Manifest,
+    /// `\usepackage{unicode-math}` with no `\setmathfont`: the package's
+    /// default, Latin Modern Math.
+    UnicodeMath,
+}
+
+/// The family `\usepackage{unicode-math}` selects when the document names
+/// none (unicode-math's `\setmathfont{latinmodern-math.otf}` default).
+pub const UNICODE_MATH_DEFAULT: &str = "Latin Modern Math";
 
 impl Settings {
     pub fn is_empty(&self) -> bool {
-        self.families.is_empty()
+        self.families.is_empty() && self.math.is_none()
     }
 
     /// The slot default for a family kind.
@@ -538,14 +571,39 @@ fn scan(text: &str, is_entry: bool, settings: &mut Settings, limitations: &mut V
                     )),
                 }
             }
-            Kind::SetMath => limitations.push((
-                "math_font_not_implemented",
-                span(c),
-                format!(
-                    "\\setmathfont{{{}}}: selecting a math font is not implemented yet (docs/proposals/font-system-math.md); math is set in Latin Modern Math",
-                    c.arg.trim()
-                ),
-            )),
+            Kind::SetMath => {
+                let family = c.arg.trim();
+                if c.start >= body {
+                    limitations.push((
+                        "math_font_ignored",
+                        span(c),
+                        format!(
+                            "\\setmathfont{{{family}}} in the document body is not applied: the math font is set once per document (unicode-math's own rule); move it to the preamble"
+                        ),
+                    ));
+                } else if !is_entry {
+                    limitations.push((
+                        "math_font_ignored",
+                        span(c),
+                        format!("\\setmathfont{{{family}}} in an included file is not applied: only the entry document's preamble selects the math font"),
+                    ));
+                } else {
+                    // `range=`, `Scale=` and every other option: not applied.
+                    let ignored: Vec<&str> = split_top_level(&c.options, ',').into_iter().map(str::trim).filter(|o| !o.is_empty()).collect();
+                    if !ignored.is_empty() {
+                        limitations.push((
+                            "fontspec_feature_ignored",
+                            span(c),
+                            format!(
+                                "\\setmathfont{{{family}}}: option{} {} not applied (the family is; `range=` and `Scale=` have no effect yet)",
+                                if ignored.len() == 1 { "" } else { "s" },
+                                ignored.join(", ")
+                            ),
+                        ));
+                    }
+                    settings.math = Some(MathSelection { family: family.to_string(), source: MathSource::SetMathFont });
+                }
+            }
         }
     }
     // Uses of the switches, each a scope to the end of its group. A switch
@@ -586,16 +644,24 @@ fn note_ignored(o: &Options, limitations: &mut Vec<(&'static str, Span, String)>
 pub fn apply(texts: &[&str], entry: usize, blocks: &mut [Block], style: &mut Stylesheet, options: &RenderOptions) -> Applied {
     let mut applied = Applied::default();
     let any = texts.iter().any(|t| present(t));
-    let manifest = options.fonts.as_ref().filter(|f| f.text.is_some() || f.sans.is_some() || f.mono.is_some());
-    if !any && manifest.is_none() {
+    let manifest = options.fonts.as_ref().filter(|f| f.text.is_some() || f.sans.is_some() || f.mono.is_some() || f.math.is_some());
+    let unicode_math = texts.get(entry).is_some_and(|t| crate::adapter::package_options(t, "unicode-math").is_some());
+    if !any && manifest.is_none() && !unicode_math {
         return applied;
     }
     let mut settings = Settings::default();
-    // The manifest first, so the document's own commands override it.
+    // The manifest first, so the document's own commands override it; the
+    // package's default below both.
+    if unicode_math {
+        settings.math = Some(MathSelection { family: UNICODE_MATH_DEFAULT.to_string(), source: MathSource::UnicodeMath });
+    }
     if let Some(f) = manifest {
         settings.text = f.text.as_deref().map(|n| settings.intern(NamedSpec::new(n)));
         settings.sans = f.sans.as_deref().map(|n| settings.intern(NamedSpec::new(n)));
         settings.mono = f.mono.as_deref().map(|n| settings.intern(NamedSpec::new(n)));
+        if let Some(m) = f.math.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+            settings.math = Some(MathSelection { family: m.to_string(), source: MathSource::Manifest });
+        }
     }
     let scans: Vec<DocScan> = texts
         .iter()

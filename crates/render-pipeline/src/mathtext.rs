@@ -918,6 +918,28 @@ impl MathFontMetrics for TextRunMetrics<'_> {
             skew: 0.0,
         })
     }
+
+    // The OpenType provider's own questions (`MathProvider::Otf`): the
+    // handles this wrapper adds are boxes, never characters, so every one
+    // of them passes straight through.
+    fn opentype_extras(&self, size: SizeClass) -> Option<ml::OpenTypeExtras> {
+        self.inner.opentype_extras(size)
+    }
+
+    fn math_kern(&self, glyph: &Glyph, corner: ml::KernCorner, height: f64) -> f64 {
+        if glyph.font_id.0 >= RUN_FONT_BASE {
+            return 0.0;
+        }
+        self.inner.math_kern(glyph, corner, height)
+    }
+
+    fn delimiter_assembly(&self, ch: char, size: SizeClass) -> Option<ml::Assembly> {
+        self.inner.delimiter_assembly(ch, size)
+    }
+
+    fn radical_assembly(&self, size: SizeClass) -> Option<ml::Assembly> {
+        self.inner.radical_assembly(size)
+    }
 }
 
 /// A short, single-line rendering of a refused argument for diagnostics.

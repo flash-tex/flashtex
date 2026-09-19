@@ -1,33 +1,46 @@
-//! `MathFontMetrics` for math-layout, driven by Latin Modern Math through
-//! font-engine: Appendix G parameters from the `MATH` constants
-//! (`MathParams::from_opentype`, the LuaTeX correspondence), glyph metrics
-//! from the face advances and the CFF charstring bounds, italic corrections
-//! and top-accent attachment from the `MATH` table, and vertical glyph
-//! variants (display-size operators, larger delimiters, radical signs) read
-//! from `MathVariants` here because font-engine does not expose them yet
-//! (requested API, see docs/proposals/rendering-abi.md).
+//! `MathFontMetrics` for math-layout, driven by an OpenType `MATH` face
+//! through font-engine: Appendix G parameters from the `MATH` constants
+//! (`MathParams::from_opentype`, the LuaTeX correspondence) and the
+//! constants beyond them (`OpenTypeExtras`), glyph metrics from the face
+//! advances and the CFF charstring bounds, italic corrections, top-accent
+//! attachment and cut-in kerns from `MathGlyphInfo`, and the vertical and
+//! horizontal variants and glyph assemblies (display-size operators,
+//! larger delimiters, radical signs, wide accents) from `MathVariants`, all
+//! read by font-engine's `MathTable`.
 //!
-//! `\usepackage{times}` changes only the text fonts in LaTeX; math stays in
-//! Computer Modern, so this provider is used for both families.
+//! Two callers: `TexMathMetrics` (pdfLaTeX's geometry) paints its TFM boxes
+//! with this provider's Latin Modern Math outlines and never asks it to lay
+//! anything out, and `MathProvider::Otf` lays the whole formula out from
+//! the table -- for a document that selects an OpenType math font
+//! (`\setmathfont`, `unicode-math`, the manifest's `[fonts] math`;
+//! [`MathFonts::named`]), and as the fallback when the `lm` TFMs are
+//! missing. Under `\usepackage{times}` math stays in Computer Modern, so
+//! the Latin Modern Math provider serves both text families.
 //!
-//! Blackboard bold is the exception to "one face": pdfLaTeX's `\mathbb`
-//! comes from AMS `msbm10`, a serifed double-struck design, while Latin
-//! Modern Math's double-struck block is the sans-like open-face design. New
-//! Computer Modern Math reproduces the msbm design (and its widths track
-//! msbm's), so when `NewCMMath-Regular.otf` is in a font directory every
-//! double-struck code point is drawn from it as a secondary face
-//! ([`BB_FONT`]); otherwise Latin Modern Math draws it and the typesetter
-//! reports the profile difference once.
+//! Blackboard bold is the exception to "one face" in the TFM route:
+//! pdfLaTeX's `\mathbb` comes from AMS `msbm10`, a serifed double-struck
+//! design, while Latin Modern Math's double-struck block is the sans-like
+//! open-face design. New Computer Modern Math reproduces the msbm design
+//! (and its widths track msbm's), so when `NewCMMath-Regular.otf` is in a
+//! font directory every double-struck code point is drawn from it as a
+//! secondary face ([`BB_FONT`]); otherwise Latin Modern Math draws it and
+//! the typesetter reports the profile difference once. A named math font
+//! draws its own double-struck block, as unicode-math does.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use flashtex_math_layout::{FontId as MathFontId, Glyph, MathFontMetrics, MathParams, OpenTypeMathConstants, SizeClass};
+use flashtex_font_engine::math::{KernCorner as OtfCorner, MathTable};
+use flashtex_math_layout::{
+    Assembly, AssemblyPart as LayoutPart, FontId as MathFontId, Glyph, KernCorner, MathFontMetrics, MathParams, OpenTypeExtras,
+    OpenTypeMathConstants, SizeClass,
+};
 
 use crate::cff::u16_at;
 use crate::fonts::LoadedFace;
 use crate::ids::GlyphId;
+use crate::mathalpha::MathAlphabet;
 
 /// The three sizes of one math context, points.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -45,15 +58,31 @@ impl MathSizes {
             SizeClass::ScriptScript => self.script_script,
         }
     }
-}
 
-/// One vertical variant from `MathVariants`: glyph and its declared advance
-/// height (font units).
-#[derive(Debug, Clone, Copy)]
-struct VertVariant {
-    gid: u16,
-    #[allow(dead_code)]
-    advance: u16,
+    /// The sizes unicode-math declares for a document set in an OpenType
+    /// math font (`\__um_declare_math_sizes:`): script and scriptscript at
+    /// the face's `ScriptPercentScaleDown`/`ScriptScriptPercentScaleDown`
+    /// of the text size, whatever `\DeclareMathSizes` the class has.
+    /// Measured on LuaLaTeX + unicode-math in a 12pt article, `f^{2^3}`:
+    /// Latin Modern Math (70/50) sets the `2` at 8.4 pt and the `3` at
+    /// 6 pt; STIX Two Math (70/55) the `3` at 6.6 pt (its `three.ssty2`,
+    /// 561 units, comes out 3.7026 pt wide).
+    pub fn unicode_math(text: f64, c: &flashtex_font_engine::math::MathConstants) -> MathSizes {
+        let pct = |p: i16| f64::from(p.clamp(1, 100)) / 100.0;
+        MathSizes {
+            text,
+            script: text * pct(c.script_percent_scale_down),
+            script_script: text * pct(c.script_script_percent_scale_down),
+        }
+    }
+
+    fn index(size: SizeClass) -> usize {
+        match size {
+            SizeClass::Text => 0,
+            SizeClass::Script => 1,
+            SizeClass::ScriptScript => 2,
+        }
+    }
 }
 
 /// One `GlyphPartRecord` of a `MathVariants` glyph assembly, font units.
@@ -62,7 +91,7 @@ struct VertVariant {
 /// height for a vertical part: every Latin Modern Math vertical part draws
 /// from its origin up to exactly `fullAdvance`). `start_connector` and
 /// `end_connector` are how much of the part may be overlapped by the
-/// neighbour before it and after it — the joint between two parts may
+/// neighbour before it and after it -- the joint between two parts may
 /// overlap by at most `min(end of the lower, start of the upper)` and at
 /// least [`MathFonts::min_connector_overlap`]. `extender` is `partFlags`
 /// bit 0 (`fExtender`): the part may repeat to reach the wanted size.
@@ -75,14 +104,72 @@ pub struct AssemblyPart {
     pub extender: bool,
 }
 
-/// One `MathGlyphConstruction`: the variant records and the glyph assembly
-/// (empty when the construction has none).
-type Construction = (Vec<VertVariant>, Vec<AssemblyPart>);
+impl From<&flashtex_font_engine::math::GlyphPart> for AssemblyPart {
+    fn from(p: &flashtex_font_engine::math::GlyphPart) -> AssemblyPart {
+        AssemblyPart {
+            gid: p.gid.0,
+            start_connector: p.start_connector,
+            end_connector: p.end_connector,
+            full_advance: p.full_advance,
+            extender: p.extender,
+        }
+    }
+}
 
 /// How often one extender may repeat in an assembly. A `\left(` around a
 /// page-tall box needs about 10 (Latin Modern Math's paren extender is
 /// 0.498 em); the cap only keeps a malformed font from looping.
 const MAX_ASSEMBLY_REPEATS: usize = 256;
+
+/// The text faces a math alphabet draws from ([`MathFonts::with_text_alphabets`]):
+/// fontspec's `\mathbf`/`\mathsf`/`\mathit`/`\mathtt` and `\mathrm`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextAlphabet {
+    Bold,
+    Sans,
+    Italic,
+    Mono,
+    /// The upright roman face: `\mathrm{K}` and the operator text.
+    Roman,
+}
+
+impl TextAlphabet {
+    fn index(self) -> u32 {
+        match self {
+            TextAlphabet::Bold => 0,
+            TextAlphabet::Sans => 1,
+            TextAlphabet::Italic => 2,
+            TextAlphabet::Mono => 3,
+            TextAlphabet::Roman => 4,
+        }
+    }
+
+    /// The alphabet a math alphanumeric symbol belongs to, for the four
+    /// that are text fonts.
+    fn of(alphabet: MathAlphabet) -> Option<TextAlphabet> {
+        match alphabet {
+            MathAlphabet::Bold => Some(TextAlphabet::Bold),
+            MathAlphabet::Sans => Some(TextAlphabet::Sans),
+            MathAlphabet::Italic => Some(TextAlphabet::Italic),
+            MathAlphabet::Mono => Some(TextAlphabet::Mono),
+            MathAlphabet::Fraktur => None,
+        }
+    }
+
+    /// The NFSS shape of the alphabet's text face.
+    pub fn key(self) -> crate::nfss::FontKey {
+        use crate::nfss::{FamilyKind, FontKey, Series, Shape};
+        match self {
+            TextAlphabet::Bold => FontKey::new(FamilyKind::Rm, Series::Bx, Shape::N),
+            TextAlphabet::Sans => FontKey::new(FamilyKind::Sf, Series::M, Shape::N),
+            TextAlphabet::Italic => FontKey::new(FamilyKind::Rm, Series::M, Shape::It),
+            TextAlphabet::Mono => FontKey::new(FamilyKind::Tt, Series::M, Shape::N),
+            TextAlphabet::Roman => FontKey::new(FamilyKind::Rm, Series::M, Shape::N),
+        }
+    }
+
+    pub const ALL: [TextAlphabet; 5] = [TextAlphabet::Bold, TextAlphabet::Sans, TextAlphabet::Italic, TextAlphabet::Mono, TextAlphabet::Roman];
+}
 
 pub struct MathFonts {
     face: Rc<LoadedFace>,
@@ -93,24 +180,20 @@ pub struct MathFonts {
     /// Set once a double-struck glyph was served from `face` because `bb`
     /// is absent; drained by the typesetter for its one profile note.
     bb_fallback: RefCell<bool>,
+    /// The document's own math font (`\setmathfont`, `unicode-math`, the
+    /// manifest): every glyph comes from `face` (or a text alphabet face),
+    /// never from the secondary face, and no profile note is owed.
+    named: bool,
     sizes: MathSizes,
     constants: OpenTypeMathConstants,
     x_height_units: i16,
-    /// Vertical constructions from `MathVariants`: each base glyph's
-    /// variants (advance heights, smallest first) and its assembly's parts,
-    /// bottom to top (larger delimiters and radicals, then the pieces a
-    /// delimiter taller than every variant is assembled from).
-    vert: BTreeMap<u16, Construction>,
-    /// Horizontal constructions from `MathVariants`: each base glyph's
-    /// variants (advance widths) and its assembly's parts, left to right
-    /// (wide accents, `\overbrace` pieces).
-    horiz: BTreeMap<u16, Construction>,
-    /// `MathVariants.minConnectorOverlap`, font units: the least a part may
-    /// overlap its neighbour in an assembly (20 in Latin Modern Math).
-    min_connector_overlap: u16,
-    /// The first `ssty` (script-style) alternate of each glyph the face's
-    /// `GSUB` lists one for: Latin Modern Math's `minute` -> `minute.st`.
-    script_alternates: BTreeMap<u16, u16>,
+    /// The `ssty` (script-style) alternates of each glyph the face's
+    /// `GSUB` lists them for, in the font's order: Latin Modern Math's
+    /// `minute` -> [`minute.st`, `minute.sts`].
+    script_alternates: BTreeMap<u16, Vec<u16>>,
+    /// The text faces of the math alphabets unicode-math sets from the text
+    /// fonts, per alphabet and size index (`with_text_alphabets`).
+    alphabets: Vec<(TextAlphabet, usize, Rc<LoadedFace>)>,
     /// Characters with no glyph in the math font, recorded for diagnostics.
     missing: RefCell<Vec<char>>,
 }
@@ -120,6 +203,9 @@ const MATH_FONT: MathFontId = MathFontId(0);
 /// `FontId(1)` is the double-struck face (New Computer Modern Math); glyphs
 /// carry it only when that face is loaded.
 pub const BB_FONT: MathFontId = MathFontId(1);
+/// `FontId(0x20 + 3·alphabet + size)`: a text alphabet face at a size
+/// index ([`TextAlphabet`]).
+const ALPHABET_FONT_BASE: u32 = 0x20;
 /// File name of the double-struck face, looked up in the font directories.
 pub const BB_FONT_FILE: &str = "NewCMMath-Regular.otf";
 
@@ -205,7 +291,7 @@ impl MathFonts {
     /// `face` must carry a `MATH` table (Latin Modern Math); `None` otherwise.
     pub fn new(face: Rc<LoadedFace>, sizes: MathSizes) -> Option<MathFonts> {
         let table = face.math()?;
-        let c = &table.constants;
+        let c = table.constants();
         let constants = OpenTypeMathConstants {
             units_per_em: face.units_per_em as u16,
             axis_height: c.axis_height,
@@ -225,33 +311,95 @@ impl MathFonts {
             upper_limit_baseline_rise_min: c.upper_limit_baseline_rise_min,
             lower_limit_baseline_drop_min: c.lower_limit_baseline_drop_min,
             delimited_sub_formula_min_height: c.delimited_sub_formula_min_height,
+            fraction_numerator_gap_min: c.fraction_numerator_gap_min,
+            fraction_num_display_style_gap_min: c.fraction_num_display_style_gap_min,
+            fraction_denominator_gap_min: c.fraction_denominator_gap_min,
+            fraction_denom_display_style_gap_min: c.fraction_denom_display_style_gap_min,
+            stack_gap_min: c.stack_gap_min,
+            stack_display_style_gap_min: c.stack_display_style_gap_min,
+            stack_top_display_style_shift_up: c.stack_top_display_style_shift_up,
+            stack_bottom_shift_down: c.stack_bottom_shift_down,
+            stack_bottom_display_style_shift_down: c.stack_bottom_display_style_shift_down,
+            sub_superscript_gap_min: c.sub_superscript_gap_min,
+            superscript_bottom_max_with_subscript: c.superscript_bottom_max_with_subscript,
+            subscript_top_max: c.subscript_top_max,
+            superscript_bottom_min: c.superscript_bottom_min,
+            space_after_script: c.space_after_script,
+            radical_rule_thickness: c.radical_rule_thickness,
+            radical_vertical_gap: c.radical_vertical_gap,
+            radical_display_style_vertical_gap: c.radical_display_style_vertical_gap,
+            radical_extra_ascender: c.radical_extra_ascender,
+            radical_kern_before_degree: c.radical_kern_before_degree,
+            radical_kern_after_degree: c.radical_kern_after_degree,
+            radical_degree_bottom_raise_percent: c.radical_degree_bottom_raise_percent,
+            accent_base_height: c.accent_base_height,
+            flattened_accent_base_height: c.flattened_accent_base_height,
+            overbar_vertical_gap: c.overbar_vertical_gap,
+            overbar_rule_thickness: c.overbar_rule_thickness,
+            overbar_extra_ascender: c.overbar_extra_ascender,
+            underbar_vertical_gap: c.underbar_vertical_gap,
+            underbar_rule_thickness: c.underbar_rule_thickness,
+            // font-engine names the specification's `UnderbarExtraDescender`
+            // after its neighbour; it is the descender.
+            underbar_extra_descender: c.underbar_extra_ascender,
+            display_operator_min_height: c.display_operator_min_height,
         };
         let vm = face.face().vertical_metrics();
         let x_height_units = if vm.x_height_declared { vm.x_height } else { 431 };
-        let (min_connector_overlap, vert, horiz) = face
-            .otf()
-            .and_then(|f| f.table(b"MATH"))
-            .and_then(|t| parse_variants(t).ok())
-            .unwrap_or_default();
         let script_alternates = face
             .otf()
             .and_then(|f| f.table(b"GSUB"))
-            .and_then(|t| single_substitutions(t, b"ssty").ok())
+            .and_then(|t| alternate_substitutions(t, b"ssty").ok())
             .unwrap_or_default();
         Some(MathFonts {
             face,
             bb: None,
             bb_status: None,
             bb_fallback: RefCell::new(false),
+            named: false,
             sizes,
             constants,
             x_height_units,
-            vert,
-            horiz,
-            min_connector_overlap,
             script_alternates,
+            alphabets: Vec::new(),
             missing: RefCell::new(Vec::new()),
         })
+    }
+
+    /// The document's own math font (`\setmathfont{..}`, `unicode-math`,
+    /// the manifest's `[fonts] math`): [`MathFonts::new`] on `face`, drawing
+    /// everything from it -- no secondary double-struck face, no profile
+    /// note when `\mathbb` is set from it. `None` when `face` has no `MATH`
+    /// table.
+    pub fn named(face: Rc<LoadedFace>, sizes: MathSizes) -> Option<MathFonts> {
+        let mut m = MathFonts::new(face, sizes)?;
+        m.named = true;
+        Some(m)
+    }
+
+    /// Whether this is a document's own math font ([`MathFonts::named`]).
+    pub fn is_named(&self) -> bool {
+        self.named
+    }
+
+    /// Attaches the text faces unicode-math sets the text math alphabets
+    /// from: `\mathbf`/`\mathsf`/`\mathit`/`\mathtt` are the text fonts'
+    /// bold, sans, italic and typewriter faces (LuaLaTeX + unicode-math,
+    /// `\setmathfont{Latin Modern Math}`: `\mathbf{x}` is LMRoman10-Bold's
+    /// `x`, `\mathsf{y}` LMSans10-Regular's, `\mathtt{z}` LMMono10-Regular's,
+    /// `\mathit{d}` LMRoman10-Italic's), while `\mathcal`, `\mathfrak` and
+    /// `\mathbb` come from the math font's own alphanumeric blocks. `faces`
+    /// is one entry per alphabet and size index (0 text, 1 script, 2
+    /// scriptscript); an alphabet without a face falls back to the math
+    /// font's own block for it.
+    pub fn with_text_alphabets(mut self, faces: Vec<(TextAlphabet, usize, Rc<LoadedFace>)>) -> MathFonts {
+        self.alphabets = faces;
+        self
+    }
+
+    /// The `MATH` table of the face (present: `new` checked it).
+    fn table(&self) -> &MathTable {
+        self.face.math().expect("MathFonts::new checked the MATH table")
     }
 
     /// Attaches the double-struck face (`Ok`) or records why it is absent
@@ -302,7 +450,7 @@ impl MathFonts {
         if k == 0 {
             return Some(base);
         }
-        self.vert.get(&base)?.0.iter().filter(|v| v.gid != base).nth(k - 1).map(|v| v.gid)
+        self.table().vertical_variants(GlyphId(base)).iter().filter(|v| v.gid.0 != base).nth(k - 1).map(|v| v.gid.0)
     }
 
     /// The vertical variant of `ch` (drawn at `size_pt`) whose ink
@@ -318,12 +466,11 @@ impl MathFonts {
     pub fn variant_nearest(&self, ch: char, size_pt: f64, wanted: f64) -> Option<u16> {
         let base = self.base_gid(ch)?;
         let drawn = Self::math_char(ch);
-        self.vert
-            .get(&base)?
-            .0
+        self.table()
+            .vertical_variants(GlyphId(base))
             .iter()
-            .filter(|v| v.gid != base)
-            .map(|v| (v.gid, (self.glyph_for(v.gid, drawn, size_pt).total_height() - wanted).abs()))
+            .filter(|v| v.gid.0 != base)
+            .map(|v| (v.gid.0, (self.glyph_for(v.gid.0, drawn, size_pt).total_height() - wanted).abs()))
             .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(gid, _)| gid)
     }
@@ -332,12 +479,15 @@ impl MathFonts {
     /// `size_pt` is nearest `wanted` pt: what paints a cmex/msbm wide accent
     /// laid out at its TFM width.
     pub fn hvariant_nearest(&self, ch: char, size_pt: f64, wanted: f64) -> Option<u16> {
-        let base = self.face.face().glyph_id(ch)?.0;
-        let (variants, _) = self.horiz.get(&base)?;
+        let base = self.face.face().glyph_id(ch)?;
+        let variants = self.table().horizontal_variants(base);
+        if variants.is_empty() {
+            return None;
+        }
         let upem = f64::from(self.face.units_per_em);
         variants
             .iter()
-            .map(|v| (v.gid, (f64::from(v.advance) * size_pt / upem - wanted).abs()))
+            .map(|v| (v.gid.0, (f64::from(v.advance) * size_pt / upem - wanted).abs()))
             .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(gid, _)| gid)
     }
@@ -349,37 +499,128 @@ impl MathFonts {
         self.face
             .face()
             .glyph_id(ch)
-            .and_then(|g| self.horiz.get(&g.0))
-            .map(|(_, parts)| parts.iter().map(|p| p.gid).collect())
+            .and_then(|g| self.table().horizontal_assembly(g))
+            .map(|a| a.parts.iter().map(|p| p.gid.0).collect())
             .unwrap_or_default()
     }
 
     /// The parts of `ch`'s vertical glyph assembly, bottom to top (Latin
     /// Modern Math's `(`: bottom hook, extender, top hook; `{`: bottom,
     /// extender, middle, extender, top); empty when it has none.
-    pub fn vassembly_parts(&self, ch: char) -> &[AssemblyPart] {
+    pub fn vassembly_parts(&self, ch: char) -> Vec<AssemblyPart> {
         self.face
             .face()
             .glyph_id(ch)
-            .and_then(|g| self.vert.get(&g.0))
-            .map(|(_, parts)| parts.as_slice())
-            .unwrap_or(&[])
+            .and_then(|g| self.table().vertical_assembly(g))
+            .map(|a| a.parts.iter().map(AssemblyPart::from).collect())
+            .unwrap_or_default()
+    }
+
+    /// Whether `gid` is a part of the vertical assembly of `ch`: the
+    /// painter joins a run of them into one cluster.
+    pub fn is_assembly_part(&self, ch: char, gid: u16) -> bool {
+        self.vassembly_parts(ch).iter().any(|p| p.gid == gid)
     }
 
     /// The face's first `ssty` alternate of `gid`: the design for script
     /// style. `None` when the face lists none.
     pub fn script_alternate(&self, gid: u16) -> Option<u16> {
-        self.script_alternates.get(&gid).copied()
+        self.script_alternates.get(&gid).and_then(|a| a.first().copied())
+    }
+
+    /// The glyph the document's own math font sets `gid` with at `size`:
+    /// its `ssty` script form at script size and scriptscript form at
+    /// scriptscript size, as unicode-math loads `\scriptfont` with `ssty=1`
+    /// and `\scriptscriptfont` with `ssty=2` (LuaLaTeX, Latin Modern Math
+    /// `\frac{a}{b}`: the 7 pt `a` is `u1D44E.st`, 4.34 pt wide, not the
+    /// text form's 3.70). The base glyph when the face lists no alternate.
+    fn script_gid(&self, gid: u16, size: SizeClass) -> u16 {
+        let Some(alternates) = self.script_alternates.get(&gid) else {
+            return gid;
+        };
+        match size {
+            SizeClass::Text => gid,
+            SizeClass::Script => alternates.first().copied().unwrap_or(gid),
+            SizeClass::ScriptScript => alternates.get(1).or(alternates.first()).copied().unwrap_or(gid),
+        }
     }
 
     /// `MathVariants.minConnectorOverlap` in font units.
     pub fn min_connector_overlap(&self) -> u16 {
-        self.min_connector_overlap
+        self.table().min_connector_overlap()
     }
 
     /// The face's units per em, for scaling assembly measurements.
     pub fn units_per_em(&self) -> f64 {
         f64::from(self.face.units_per_em)
+    }
+
+    /// The face that draws a placed glyph's `font_id`: the math face, the
+    /// secondary double-struck face, or a text alphabet face.
+    pub fn face_of(&self, font: MathFontId) -> Option<Rc<LoadedFace>> {
+        if font == MATH_FONT {
+            return Some(self.face.clone());
+        }
+        if font == BB_FONT {
+            return self.bb.clone();
+        }
+        self.alphabets.iter().find(|(a, i, _)| Self::alphabet_font(*a, *i) == font).map(|(_, _, f)| f.clone())
+    }
+
+    /// Font id of a text alphabet face at size index `i`.
+    fn alphabet_font(alphabet: TextAlphabet, i: usize) -> MathFontId {
+        MathFontId(ALPHABET_FONT_BASE + 3 * alphabet.index() + i as u32)
+    }
+
+    /// `letter` from the text face of `alphabet` at `size`, tagged `ch`
+    /// (the math alphanumeric the compiler emitted), when the face is
+    /// attached ([`MathFonts::with_text_alphabets`]).
+    fn alphabet_glyph(&self, alphabet: TextAlphabet, letter: char, ch: char, size: SizeClass) -> Option<Glyph> {
+        let i = MathSizes::index(size);
+        let (_, _, face) = self.alphabets.iter().find(|(a, j, _)| *a == alphabet && *j == i)?;
+        let gid = face.face().glyph_id(letter)?;
+        let mut g = Self::glyph_from(face, Self::alphabet_font(alphabet, i), gid.0, ch, self.sizes.at(size));
+        g.height = g.height.max(0.0);
+        g.depth = g.depth.max(0.0);
+        // A text face has no MATH table: LuaTeX (luaotfload) gives an
+        // italic face's glyphs the italic correction by which their ink
+        // overhangs the advance (`\mathit{d}\mathrm{d}` in Latin Modern:
+        // 0.69 pt between the two `d`s).
+        if alphabet == TextAlphabet::Italic {
+            let b = face.bounds(GlyphId(gid.0), Some(letter));
+            if !b.empty {
+                g.italic = (face.pt(i64::from(b.x_max), g.size) - g.width).max(0.0);
+            }
+        }
+        Some(g)
+    }
+
+    /// `ch`'s vertical glyph assembly at `size` for math-layout, when the
+    /// face has one: every part as a glyph box plus its connectors and
+    /// full advance in points.
+    fn assembly(&self, ch: char, size: SizeClass) -> Option<Assembly> {
+        let drawn = Self::math_char(ch);
+        let gid = self.face.face().glyph_id(drawn).or_else(|| self.face.face().glyph_id(ch))?;
+        let a = self.table().vertical_assembly(gid)?;
+        if a.parts.is_empty() {
+            return None;
+        }
+        let size_pt = self.sizes.at(size);
+        let pt = |u: u16| self.face.pt(i64::from(u), size_pt);
+        Some(Assembly {
+            parts: a
+                .parts
+                .iter()
+                .map(|p| LayoutPart {
+                    glyph: self.glyph_for(p.gid.0, drawn, size_pt),
+                    start_connector: pt(p.start_connector),
+                    end_connector: pt(p.end_connector),
+                    full_advance: pt(p.full_advance),
+                    extender: p.extender,
+                })
+                .collect(),
+            min_overlap: pt(self.table().min_connector_overlap()),
+        })
     }
 
     /// Paints `ch`'s vertical glyph assembly to exactly `span` pt at
@@ -401,9 +642,10 @@ impl MathFonts {
         if parts.is_empty() || size_pt <= 0.0 {
             return None;
         }
+        let parts = parts.as_slice();
         let upem = self.units_per_em();
         let want = span * upem / size_pt;
-        let min_overlap = f64::from(self.min_connector_overlap);
+        let min_overlap = f64::from(self.min_connector_overlap());
         let fixed: f64 = parts.iter().filter(|p| !p.extender).map(|p| f64::from(p.full_advance)).sum();
         let stretch: f64 = parts.iter().filter(|p| p.extender).map(|p| f64::from(p.full_advance)).sum();
         let fixed_n = parts.iter().filter(|p| !p.extender).count();
@@ -501,7 +743,17 @@ impl MathFonts {
     }
 
     fn glyph_for(&self, gid: u16, ch: char, size_pt: f64) -> Glyph {
-        Self::glyph_from(&self.face, MATH_FONT, gid, ch, size_pt)
+        let mut g = Self::glyph_from(&self.face, MATH_FONT, gid, ch, size_pt);
+        if self.named {
+            // A box has no negative height or depth: LuaTeX's `char_height`/
+            // `char_depth` of an OpenType glyph whose ink lies entirely
+            // above the baseline (a combining accent, an arrow) are its
+            // bbox top and 0. The TFM route keeps the raw values it has
+            // always laid its fallback glyphs out with.
+            g.height = g.height.max(0.0);
+            g.depth = g.depth.max(0.0);
+        }
+        g
     }
 
     /// `gid` of `face` as a math glyph tagged `font_id`: advance, ink box
@@ -541,8 +793,37 @@ impl MathFonts {
         }
     }
 
+    /// The character a math symbol the compiler spells in ASCII is set
+    /// as when this provider lays the formula out (unicode-math's
+    /// `\mathcode`s): the hyphen-minus is the minus sign, `*` the asterisk
+    /// operator; everything else is [`MathFonts::math_char`]. The TeX
+    /// provider never comes through here for these two (their cmsy slots
+    /// are mapped in `TexMathMetrics::otf_gid`).
+    fn laid_out_char(ch: char) -> char {
+        match ch {
+            '-' => '\u{2212}',
+            '*' => '\u{2217}',
+            // `typeset::accent_char` spells the accents as the spacing
+            // modifiers TeX's `\mathaccent` slots hold; unicode-math sets
+            // the combining marks, whose zero advance and top-accent anchor
+            // are what Rule 12 reads here (`\widehat`/`\widetilde`/`\vec`
+            // are combining already).
+            '\u{02C6}' => '\u{0302}', // \hat
+            '\u{00AF}' => '\u{0304}', // \bar
+            '\u{02DC}' => '\u{0303}', // \tilde
+            '\u{02D9}' => '\u{0307}', // \dot
+            '\u{00A8}' => '\u{0308}', // \ddot
+            '\u{02C7}' => '\u{030C}', // \check
+            '\u{02D8}' => '\u{0306}', // \breve
+            '\u{00B4}' => '\u{0301}', // \acute
+            '`' => '\u{0300}',        // \grave
+            '\u{02DA}' => '\u{030A}', // \mathring
+            _ => Self::math_char(ch),
+        }
+    }
+
     fn base_gid(&self, ch: char) -> Option<u16> {
-        let drawn = Self::math_char(ch);
+        let drawn = Self::laid_out_char(ch);
         let g = self.face.face().glyph_id(drawn).or_else(|| self.face.face().glyph_id(ch));
         if g.is_none() {
             self.missing.borrow_mut().push(ch);
@@ -558,11 +839,9 @@ impl MathFonts {
         let size_pt = self.sizes.at(size);
         let drawn = Self::math_char(ch);
         let mut out = vec![self.glyph_for(base, drawn, size_pt)];
-        if let Some((vs, _)) = self.vert.get(&base) {
-            for v in vs {
-                if v.gid != base {
-                    out.push(self.glyph_for(v.gid, drawn, size_pt));
-                }
+        for v in self.table().vertical_variants(GlyphId(base)) {
+            if v.gid.0 != base {
+                out.push(self.glyph_for(v.gid.0, drawn, size_pt));
             }
         }
         out.sort_by(|a, b| a.total_height().partial_cmp(&b.total_height()).unwrap_or(std::cmp::Ordering::Equal));
@@ -579,12 +858,12 @@ impl MathFontMetrics for MathFonts {
     fn font_name(&self, font: MathFontId) -> String {
         match (&self.bb, font) {
             (Some(bb), BB_FONT) => bb.name.clone(),
-            _ => self.face.name.clone(),
+            _ => self.face_of(font).map_or_else(|| self.face.name.clone(), |f| f.name.clone()),
         }
     }
 
     fn glyph(&self, ch: char, size: SizeClass) -> Option<Glyph> {
-        if is_secondary_face(ch) {
+        if !self.named && is_secondary_face(ch) {
             // `VARNOTHING_SENTINEL` has no glyph of its own in either face;
             // it stands for U+2205, which both faces do carry.
             let drawn = Self::math_char(ch);
@@ -597,15 +876,34 @@ impl MathFontMetrics for MathFonts {
                 None => *self.bb_fallback.borrow_mut() = true,
             }
         }
+        // A one-letter text alphabet (`\mathbf{x}`, `\mathsf{y}`, ...,
+        // arriving as its math alphanumeric): the text face, as unicode-math
+        // sets it, when one is attached; else the math font's own block.
+        if let Some((alphabet, letter)) = crate::mathalpha::classify(ch) {
+            if let Some(g) = TextAlphabet::of(alphabet).and_then(|text| self.alphabet_glyph(text, letter, ch, size)) {
+                return Some(g);
+            }
+        }
         let gid = self.base_gid(ch)?;
-        Some(self.glyph_for(gid, Self::math_char(ch), self.sizes.at(size)))
+        let gid = if self.named { self.script_gid(gid, size) } else { gid };
+        Some(self.glyph_for(gid, Self::laid_out_char(ch), self.sizes.at(size)))
     }
 
+    /// Rule 13 in display style: the first variant at least
+    /// `DisplayOperatorMinHeight` tall (LuaTeX `Umathoperatorsize`; the
+    /// manual's note 6), the largest when none is, and none at all when
+    /// the face lists no variant.
     fn large_operator(&self, ch: char, size: SizeClass) -> Option<Glyph> {
         let v = self.variants(ch, size);
-        // The first variant strictly taller than the text-size glyph.
-        let base_h = v.first()?.total_height();
-        v.into_iter().find(|g| g.total_height() > base_h + 1e-6)
+        if v.len() < 2 {
+            return None;
+        }
+        let min = self.opentype_extras(size).map_or(0.0, |e| e.display_operator_min_height);
+        let base_h = v[0].total_height();
+        v.iter()
+            .find(|g| g.total_height() >= min && g.total_height() > base_h + 1e-6)
+            .or(v.last())
+            .copied()
     }
 
     fn delimiter_sizes(&self, ch: char, size: SizeClass) -> Vec<Glyph> {
@@ -616,84 +914,72 @@ impl MathFontMetrics for MathFonts {
         self.variants('\u{221A}', size)
     }
 
+    /// The accent and, for the wide accents (`\widehat`/`\widetilde`, the
+    /// combining marks `typeset::accent_char` keeps as such), its horizontal
+    /// variants, narrowest first: the base combining mark has no advance,
+    /// so Rule 12 keeps it over a single character and steps up to the
+    /// variant no wider than a wider base. unicode-math's `\hat`, `\bar`,
+    /// `\vec`, ... are fixed accents that never stretch (LuaLaTeX sets
+    /// `\hat{A}` with the 0-advance hat although Latin Modern Math lists a
+    /// 6.4 pt variant that would fit 𝐴's 7.5 pt), so those get the base
+    /// glyph only.
     fn accent_sizes(&self, ch: char, size: SizeClass) -> Vec<Glyph> {
-        self.glyph(ch, size).into_iter().collect()
+        let Some(base) = self.glyph(ch, size) else {
+            return Vec::new();
+        };
+        let mut out = vec![base];
+        let wide = matches!(ch, '\u{0302}' | '\u{0303}');
+        if wide && base.font_id == MATH_FONT {
+            let size_pt = self.sizes.at(size);
+            for v in self.table().horizontal_variants(GlyphId(base.gid)) {
+                if v.gid.0 != base.gid {
+                    out.push(self.glyph_for(v.gid.0, base.ch, size_pt));
+                }
+            }
+            out.sort_by(|a, b| a.width.partial_cmp(&b.width).unwrap_or(std::cmp::Ordering::Equal));
+        }
+        out
     }
-}
 
-/// `MathVariants` in full: `minConnectorOverlap`, the vertical
-/// constructions and the horizontal ones.
-///
-/// OpenType `MathVariants` is `minConnectorOverlap`, `vertGlyphCoverage`,
-/// `horizGlyphCoverage`, `vertGlyphCount`, `horizGlyphCount`, then the
-/// vertical and horizontal construction offsets; a `MathGlyphConstruction`
-/// is `glyphAssemblyOffset`, `variantCount` and 4-byte `(variantGlyph,
-/// advanceMeasurement)` records; a `GlyphAssembly` is a 4-byte
-/// `italicsCorrection` `MathValueRecord`, `partCount` and 10-byte
-/// `GlyphPartRecord`s (`glyphID`, `startConnectorLength`,
-/// `endConnectorLength`, `fullAdvance`, `partFlags`).
-///
-/// Both axes read the assembly: a delimiter or brace taller than the
-/// largest variant is built from its vertical parts
-/// ([`MathFonts::vertical_assembly`]), a `\overbrace`/`\underbrace` from
-/// its horizontal ones.
-fn parse_variants(m: &[u8]) -> Result<(u16, BTreeMap<u16, Construction>, BTreeMap<u16, Construction>), flashtex_font_engine::Error> {
-    let (mut vert, mut horiz) = (BTreeMap::new(), BTreeMap::new());
-    let v = usize::from(u16_at(m, 8)?);
-    if v == 0 {
-        return Ok((0, vert, horiz));
-    }
-    let min_overlap = u16_at(m, v)?;
-    let vert_cov = usize::from(u16_at(m, v + 2)?);
-    let horiz_cov = usize::from(u16_at(m, v + 4)?);
-    let vert_count = usize::from(u16_at(m, v + 6)?);
-    let horiz_count = usize::from(u16_at(m, v + 8)?);
-    // The construction offsets are one array of `vertGlyphCount` vertical
-    // entries followed by `horizGlyphCount` horizontal ones.
-    if vert_cov != 0 {
-        for (i, gid) in parse_coverage(m, v + vert_cov)?.iter().enumerate().take(vert_count) {
-            vert.insert(*gid, parse_construction(m, v + usize::from(u16_at(m, v + 10 + 2 * i)?))?);
+    /// Upright text in math (`\mathrm{K}`, the operator words): the roman
+    /// text face when attached, else the math font's own upright glyph.
+    fn text_glyph(&self, ch: char, size: SizeClass) -> Option<Glyph> {
+        if let Some(g) = self.alphabet_glyph(TextAlphabet::Roman, ch, ch, size) {
+            return Some(g);
         }
+        let gid = self.face.face().glyph_id(ch)?;
+        let gid = if self.named { self.script_gid(gid.0, size) } else { gid.0 };
+        Some(self.glyph_for(gid, ch, self.sizes.at(size)))
     }
-    if horiz_cov != 0 {
-        for (i, gid) in parse_coverage(m, v + horiz_cov)?.iter().enumerate().take(horiz_count) {
-            let at = v + 10 + 2 * vert_count + 2 * i;
-            horiz.insert(*gid, parse_construction(m, v + usize::from(u16_at(m, at)?))?);
-        }
-    }
-    Ok((min_overlap, vert, horiz))
-}
 
-/// One `MathGlyphConstruction` at `cons`: its variant records and, when
-/// `glyphAssemblyOffset` is non-zero, its assembly parts in order.
-fn parse_construction(m: &[u8], cons: usize) -> Result<Construction, flashtex_font_engine::Error> {
-    let assembly = usize::from(u16_at(m, cons)?);
-    let n = usize::from(u16_at(m, cons + 2)?);
-    let mut variants = Vec::with_capacity(n);
-    for j in 0..n {
-        let rec = cons + 4 + 4 * j;
-        variants.push(VertVariant {
-            gid: u16_at(m, rec)?,
-            advance: u16_at(m, rec + 2)?,
-        });
+    fn opentype_extras(&self, size: SizeClass) -> Option<OpenTypeExtras> {
+        Some(OpenTypeExtras::from_opentype(&self.constants, self.sizes.at(size)))
     }
-    let mut parts = Vec::new();
-    if assembly != 0 {
-        let a = cons + assembly;
-        let count = usize::from(u16_at(m, a + 4)?);
-        parts.reserve(count);
-        for k in 0..count {
-            let p = a + 6 + 10 * k;
-            parts.push(AssemblyPart {
-                gid: u16_at(m, p)?,
-                start_connector: u16_at(m, p + 2)?,
-                end_connector: u16_at(m, p + 4)?,
-                full_advance: u16_at(m, p + 6)?,
-                extender: u16_at(m, p + 8)? & 1 != 0,
-            });
+
+    /// `MathKernInfo` of the math face, the height converted to the glyph's
+    /// own font units and the kern back to points at its size.
+    fn math_kern(&self, glyph: &Glyph, corner: KernCorner, height: f64) -> f64 {
+        if glyph.font_id != MATH_FONT || glyph.size <= 0.0 {
+            return 0.0;
         }
+        let upem = self.units_per_em();
+        let units = (height * upem / glyph.size).round().clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16;
+        let corner = match corner {
+            KernCorner::TopRight => OtfCorner::TopRight,
+            KernCorner::TopLeft => OtfCorner::TopLeft,
+            KernCorner::BottomRight => OtfCorner::BottomRight,
+            KernCorner::BottomLeft => OtfCorner::BottomLeft,
+        };
+        self.face.pt(i64::from(self.table().kern(GlyphId(glyph.gid), corner, units)), glyph.size)
     }
-    Ok((variants, parts))
+
+    fn delimiter_assembly(&self, ch: char, size: SizeClass) -> Option<Assembly> {
+        self.assembly(ch, size)
+    }
+
+    fn radical_assembly(&self, size: SizeClass) -> Option<Assembly> {
+        self.assembly('\u{221A}', size)
+    }
 }
 
 /// `GSUB` lookups of feature `tag` -> each covered glyph's substitute:
@@ -707,8 +993,19 @@ fn parse_construction(m: &[u8], cons: usize) -> Result<Construction, flashtex_fo
 /// this serves, and a language-specific `smcp` (Turkish `i`) is out of
 /// scope. `Ok` with an empty map when the table has no such feature.
 pub(crate) fn single_substitutions(g: &[u8], tag: &[u8; 4]) -> Result<BTreeMap<u16, u16>, flashtex_font_engine::Error> {
+    Ok(alternate_substitutions(g, tag)?
+        .into_iter()
+        .filter_map(|(gid, alternates)| alternates.first().map(|a| (gid, *a)))
+        .collect())
+}
+
+/// [`single_substitutions`] keeping every alternate of an AlternateSubst
+/// in the font's order: Latin Modern Math's `ssty` lists the script form
+/// (`.st`, what LuaTeX's `ssty=1` selects for `\scriptfont`) and then the
+/// scriptscript form (`.sts`, `ssty=2`).
+pub(crate) fn alternate_substitutions(g: &[u8], tag: &[u8; 4]) -> Result<BTreeMap<u16, Vec<u16>>, flashtex_font_engine::Error> {
     let malformed = |what: &str| flashtex_font_engine::Error::Malformed(format!("GSUB {what}"));
-    let mut out = BTreeMap::new();
+    let mut out: BTreeMap<u16, Vec<u16>> = BTreeMap::new();
     let features = usize::from(u16_at(g, 6)?);
     let lookups = usize::from(u16_at(g, 8)?);
     let mut indices = Vec::new();
@@ -741,19 +1038,20 @@ pub(crate) fn single_substitutions(g: &[u8], tag: &[u8; 4]) -> Result<BTreeMap<u
             let format = u16_at(g, sub)?;
             let coverage = parse_coverage(g, sub + usize::from(u16_at(g, sub + 2)?))?;
             for (c, gid) in coverage.into_iter().enumerate() {
-                let substitute = match (kind, format) {
-                    (1, 1) => gid.wrapping_add(u16_at(g, sub + 4)?),
-                    (1, 2) => u16_at(g, sub + 6 + 2 * c)?,
+                let substitutes = match (kind, format) {
+                    (1, 1) => vec![gid.wrapping_add(u16_at(g, sub + 4)?)],
+                    (1, 2) => vec![u16_at(g, sub + 6 + 2 * c)?],
                     (3, 1) => {
                         let set = sub + usize::from(u16_at(g, sub + 6 + 2 * c)?);
-                        if u16_at(g, set)? == 0 {
+                        let n = usize::from(u16_at(g, set)?);
+                        if n == 0 {
                             continue;
                         }
-                        u16_at(g, set + 2)?
+                        (0..n).map(|a| u16_at(g, set + 2 + 2 * a)).collect::<Result<Vec<u16>, _>>()?
                     }
                     _ => break,
                 };
-                out.entry(gid).or_insert(substitute);
+                out.entry(gid).or_insert(substitutes);
             }
         }
     }
