@@ -1196,6 +1196,7 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("flushright", "right-aligned paragraphs"),
     ("quote", "indented paragraphs"),
     ("quotation", "indented paragraphs"),
+    ("abstract", "article/report abstract in \\small with quotation margins and centered title"),
     ("sloppypar", "a paragraph set with \\sloppy"),
     ("samepage", "\\samepage for the body"),
     ("tiny", "the tiny size for the environment body"),
