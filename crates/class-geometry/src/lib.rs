@@ -47,6 +47,15 @@ pub struct DocumentSetup {
     pub beamer_navigation_symbols: bool,
     /// beamer: the last `\setbeamercovered{..}` (`invisible` when none).
     pub beamer_covered: beamer::Covered,
+    /// beamer: formulas are set in the sans family (`beamer.cls` 266:
+    /// `\mathfamilydefault` is `\sfdefault` and `\beamer@sansmathtrue`;
+    /// `beamerbasefont.sty` 204-260 then moves `operators`, `numbers` and
+    /// `pureletters` to `OT1/cmss`). `false` after `\usefonttheme{serif}`
+    /// (`\mathfamilydefault` back to `cmr`, which `\beamer@font@check`
+    /// takes as "suppress the replacements"), `\usefonttheme
+    /// {professionalfonts}` or the `mathserif` class option; `serif`'s
+    /// `[onlylarge]` keeps the sans math.
+    pub beamer_sans_math: bool,
     /// PDF media size when geometry does not set it (pdftex's
     /// `pdftexconfig.tex`; US Letter 8.5in x 11in in MacTeX 2026).
     pub engine_default_media: (Sp, Sp),
@@ -67,6 +76,7 @@ impl DocumentSetup {
             beamer_theme: beamer::ThemeKind::Default,
             beamer_navigation_symbols: true,
             beamer_covered: beamer::Covered::Invisible,
+            beamer_sans_math: class == ClassKind::Beamer && !class_options.split(',').any(|o| o.trim() == "mathserif"),
             engine_default_media: letter_media(),
         }
     }
@@ -161,6 +171,20 @@ impl DocumentSetup {
                         s.beamer_covered = beamer::Covered::parse(&a);
                     }
                 }
+                // `\usefonttheme[opts]{serif}` / `{professionalfonts}`
+                // (beamer): the math replacements are suppressed.
+                ("usefonttheme", Some(a)) => {
+                    if let Some(s) = setup.as_mut().filter(|s| s.class == ClassKind::Beamer) {
+                        let only_large = opt.as_deref().is_some_and(|o| o.split(',').any(|k| k.trim() == "onlylarge"));
+                        for name in a.split(',') {
+                            match name.trim() {
+                                "serif" if !only_large => s.beamer_sans_math = false,
+                                "professionalfonts" => s.beamer_sans_math = false,
+                                _ => {}
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
             i = if j > at { j } else { at };
@@ -241,6 +265,9 @@ pub struct ResolvedDocument {
     /// beamer: how covered overlay material is painted
     /// ([`DocumentSetup::beamer_covered`]).
     pub beamer_covered: beamer::Covered,
+    /// beamer: formulas in the sans family
+    /// ([`DocumentSetup::beamer_sans_math`]); `false` for every other class.
+    pub beamer_sans_math: bool,
 }
 
 impl ResolvedDocument {
@@ -366,5 +393,6 @@ pub fn resolve(setup: &DocumentSetup) -> ResolvedDocument {
         beamer_theme,
         beamer_navigation_symbols: is_beamer && setup.beamer_navigation_symbols,
         beamer_covered: if is_beamer { setup.beamer_covered } else { beamer::Covered::Invisible },
+        beamer_sans_math: is_beamer && setup.beamer_sans_math,
     }
 }

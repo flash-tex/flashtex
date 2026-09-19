@@ -288,3 +288,24 @@ fn navigation_symbols_and_covered_mode_from_the_preamble() {
     assert!(!resolve(&article).beamer_navigation_symbols);
     assert_eq!(resolve(&article).beamer_covered, beamer::Covered::Invisible);
 }
+
+/// Sans-serif math (`beamer.cls` 266, `beamerbasefont.sty` 204-260) is
+/// beamer's default; `\usefonttheme{serif}`, `{professionalfonts}` and the
+/// `mathserif` class option keep the standard math fonts. Measured
+/// (probe deck `fixtures/real-world/beamer-polish` p3): `x`, `y`, `f` in
+/// CMSSI10, `+`, `=`, `2`, `(x)`, `sin`, `log` in CMSS10, `\alpha` in CMMI10.
+#[test]
+fn sans_math_from_the_preamble() {
+    let on = DocumentSetup::from_preamble("\\documentclass{beamer}\n\\begin{document}").unwrap();
+    assert!(on.beamer_sans_math && resolve(&on).beamer_sans_math);
+    let serif = DocumentSetup::from_preamble("\\documentclass{beamer}\n\\usefonttheme{serif}\n\\begin{document}").unwrap();
+    assert!(!serif.beamer_sans_math && !resolve(&serif).beamer_sans_math);
+    let pro = DocumentSetup::from_preamble("\\documentclass{beamer}\n\\usetheme{Madrid}\n\\usefonttheme{professionalfonts}\n\\begin{document}").unwrap();
+    assert!(!pro.beamer_sans_math);
+    let large = DocumentSetup::from_preamble("\\documentclass{beamer}\n\\usefonttheme[onlylarge]{serif}\n\\begin{document}").unwrap();
+    assert!(large.beamer_sans_math, "`[onlylarge]` leaves the math sans");
+    let option = DocumentSetup::from_preamble("\\documentclass[mathserif]{beamer}\n\\begin{document}").unwrap();
+    assert!(!option.beamer_sans_math);
+    let article = DocumentSetup::from_preamble("\\documentclass{article}\n\\begin{document}").unwrap();
+    assert!(!article.beamer_sans_math && !resolve(&article).beamer_sans_math);
+}

@@ -765,6 +765,14 @@ pub struct AutoBreak {
     pub top: Sp,
     /// `\splittopskip` for the continuation's first box: `\baselineskip`.
     pub splittopskip: Sp,
+    /// The top skip's stretch is `1fill` (`[b]`): it takes the whole free
+    /// height and every finite stretch stays at its natural size (TeX
+    /// §659: the highest order of infinity alone sets). Measured (probe
+    /// deck `beamer-polish`, `[t,allowframebreaks]` p9/p10): items
+    /// 16.538bp apart, the natural 16.6pt, on both pages.
+    pub top_fill: bool,
+    /// The bottom skip's stretch is `1fill` (`[t]`).
+    pub bottom_fill: bool,
 }
 
 pub fn autobreak(align: FrameAlign, paperheight: Sp) -> AutoBreak {
@@ -776,13 +784,34 @@ pub fn autobreak(align: FrameAlign, paperheight: Sp) -> AutoBreak {
             bottom_stretch: paperheight.scaled("0.6").unwrap(),
             top: Sp::ZERO,
             splittopskip,
+            top_fill: false,
+            bottom_fill: false,
         },
-        // `[t]`/`[b]` copy `\beamer@frametopskip`/`bottomskip`: `[t]`'s
-        // `.2cm plus .5\paperheight` above and a fill below; `[b]` a fill
-        // above and nothing below. A fill is modelled as a stretch far
-        // larger than any finite one.
-        FrameAlign::Top => AutoBreak { factor: 0.95, top_stretch: paperheight.scaled("0.5").unwrap(), bottom_stretch: Sp::pt(1_000_000), top: len("0.2cm"), splittopskip },
-        FrameAlign::Bottom => AutoBreak { factor: 0.95, top_stretch: Sp::pt(1_000_000), bottom_stretch: Sp::ZERO, top: Sp::ZERO, splittopskip },
+        // `[t]`/`[b]` copy `\beamer@frametopskip`/`bottomskip`
+        // (`beamerbaseframe.sty` 263-272): `[t]`'s `.2cm plus
+        // .5\paperheight` above and `0pt plus 1fill` below; `[b]` `0pt
+        // plus 1fill` above and nothing below. The fill's stretch is given
+        // as one far larger than any finite one for the `\vsplit`'s
+        // badness (0, as for any infinite stretch); the box's glue setting
+        // reads the flags.
+        FrameAlign::Top => AutoBreak {
+            factor: 0.95,
+            top_stretch: paperheight.scaled("0.5").unwrap(),
+            bottom_stretch: Sp::pt(1_000_000),
+            top: len("0.2cm"),
+            splittopskip,
+            top_fill: false,
+            bottom_fill: true,
+        },
+        FrameAlign::Bottom => AutoBreak {
+            factor: 0.95,
+            top_stretch: Sp::pt(1_000_000),
+            bottom_stretch: Sp::ZERO,
+            top: Sp::ZERO,
+            splittopskip,
+            top_fill: true,
+            bottom_fill: false,
+        },
     }
 }
 
@@ -1248,6 +1277,11 @@ mod tests {
         let a = autobreak(FrameAlign::Center, len("96mm"));
         assert!((a.top_stretch.to_pt() - 109.25697).abs() < 0.001, "{:?}", a.top_stretch);
         assert!((a.bottom_stretch.to_pt() - 163.88963).abs() < 0.002, "{:?}", a.bottom_stretch);
+        assert!(!a.top_fill && !a.bottom_fill);
+        let t = autobreak(FrameAlign::Top, len("96mm"));
+        assert!((t.top.to_pt() - 5.69055).abs() < 0.001 && !t.top_fill && t.bottom_fill);
+        let b = autobreak(FrameAlign::Bottom, len("96mm"));
+        assert!(b.top_fill && !b.bottom_fill && b.bottom_stretch == Sp::ZERO);
         assert_eq!(continuation_suffix(1), "I");
         assert_eq!(continuation_suffix(2), "II");
         assert_eq!(continuation_suffix(4), "IV");
