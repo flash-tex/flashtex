@@ -217,9 +217,45 @@ pub fn load(input: &Input, project_root: Option<&Path>) -> Result<Project, Strin
             message: w.to_string(),
         });
     }
+    let mut seen: std::collections::BTreeSet<String> = documents.iter().map(|d| d.path.clone()).collect();
+    // The entry's own directory is LaTeX's working directory: a `.sty`/
+    // `.cls`/`.def`/`.clo` beside `main.tex` is what `\usepackage{name}`
+    // finds first, manifest or not, so it joins the document set right after
+    // the include closure and before any `texinputs` (the compiler's
+    // resolver takes the first document whose file name matches).
+    if let Some(entry_dir) = entry.as_str().rsplit_once('/').map(|(d, _)| d.to_string()).or(Some(String::new())) {
+        let abs = if entry_dir.is_empty() { root.clone() } else { root.join(&entry_dir) };
+        let diag = |message: String| ProjectDiagnostic {
+            path: entry.as_str().to_string(),
+            start_byte: None,
+            end_byte: None,
+            error: false,
+            code: "package_inputs",
+            message,
+        };
+        if let Some(root_handle) = open_root(&root, &mut diagnostics, &diag) {
+            for name in list_texinput_files(&abs, &mut diagnostics, &diag) {
+                if !(name.ends_with(".sty") || name.ends_with(".cls") || name.ends_with(".def") || name.ends_with(".clo")) {
+                    continue; // `.tex`/`.bib` beside the entry are the closure's business
+                }
+                let path = if entry_dir.is_empty() { name.clone() } else { format!("{entry_dir}/{name}") };
+                let Ok(path) = ProjectPath::normalize(&path) else { continue };
+                if !seen.insert(path.as_str().to_string()) {
+                    continue;
+                }
+                match root_handle.read_text(&path, DEFAULT_READ_LIMIT) {
+                    Ok(Some((text, _))) => {
+                        files.push(path.as_str().to_string());
+                        documents.push(Document { path: path.as_str().to_string(), text });
+                    }
+                    Ok(None) => {}
+                    Err(e) => diagnostics.push(diag(format!("{path}: {e}"))),
+                }
+            }
+        }
+    }
     if let (Some(found), Some(mdir)) = (&input.manifest.found, &input.manifest_dir) {
         outside_files.push(found.clone());
-        let mut seen: std::collections::BTreeSet<String> = documents.iter().map(|d| d.path.clone()).collect();
         for t in input.manifest.manifest.texinputs(mdir) {
             let key = format!("project.texinputs[{}]", t.index);
             let diag = |message: String| ProjectDiagnostic {

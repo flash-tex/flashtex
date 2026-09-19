@@ -1096,3 +1096,28 @@ fn timing_prints_labeled_wall_times() {
     assert!(!stderr(&plain).contains("flashtex: timing:"), "{}", stderr(&plain));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A `.sty` beside the entry is part of the document set with no manifest at
+/// all (LaTeX's working-directory rule): the compiler's package resolver
+/// finds `mystyle.sty` and its macros expand, so the build has no
+/// `unsupported_feature` warning and no `unknown_command` error. Without the
+/// entry-directory enumeration this was "packages mystyle are recognised but
+/// not implemented" + two errors (`\hello`, `\emphx`).
+#[test]
+fn a_sty_beside_the_entry_is_read_without_a_manifest() {
+    let dir = tmp("entry-sty");
+    std::fs::write(
+        dir.join("mystyle.sty"),
+        "\\NeedsTeXFormat{LaTeX2e}\n\\ProvidesPackage{mystyle}\n\\newcommand{\\hello}{Hello from mystyle}\n\\newcommand{\\emphx}[1]{\\textbf{#1}}\n",
+    )
+    .unwrap();
+    write_tex(&dir, "main.tex", "\\documentclass{article}\n\\usepackage{mystyle}\n\\begin{document}\n\\hello, \\emphx{world}.\n\\end{document}\n");
+    let fonts = fonts_dir();
+    let o = run(&["build", dir.join("main.tex").to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&stdout(&o));
+    let diagnostics = report.get("diagnostics").unwrap().as_arr().unwrap();
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let documents: Vec<&str> = report.get("documents").unwrap().as_arr().unwrap().iter().map(|d| d.as_str().unwrap()).collect();
+    assert_eq!(documents, ["main.tex", "mystyle.sty"], "closure first, then the entry directory's package files");
+}
