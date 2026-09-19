@@ -1,8 +1,65 @@
 # Package and class files in the editor
 
 Where the project's `.sty`/`.cls`/`.def`/`.clo` files enter editor
-intelligence (lane pkg-editor), and what the engine does not provide yet.
+intelligence (lane pkg-editor): the engine's `metadata.packages` first, the
+package inputs' text as the fallback.
 User-facing behaviour is in [docs/user/gui.md › Packages and classes](../../../docs/user/gui.md#packages-and-classes).
+
+## What the engine puts on the wire
+
+Every `compile_result` for a project whose document loads a project
+`.sty`/`.cls` carries `payload.metadata.packages`
+([runtime-v1 › Optional `metadata` object](../../../docs/contracts/runtime-v1.md#optional-metadata-object)):
+one record per file the expansion pass read, with its `\ProvidesPackage`
+(name, date, version, description), the `\usepackage`/`\RequirePackage`
+that loaded it, its `\DeclareOption`s and every definition it made at its
+outermost level -- name, kind (`macro`, `environment`, `conditional`,
+`counter`, `length`, `register`, `theorem`, `math_operator`), the defining
+command, the parameter shape (`arity`, `optional_default`, `signature`)
+and the byte span of the whole defining statement in that file. Both
+producers write it: the compiler's own `compile_result` and
+`flashtex-render` (`crates/render-pipeline`, `v1::metadata_json`), the
+worker the app actually runs. The object is absent, never null, for a
+project without package files.
+
+The app decodes it as `RuntimeV1.CompileResult.metadata`
+(`RuntimeV1.Metadata`, `RuntimeV1.PackageRecord`; `FastJSON` reads the
+section on the hot path, it is not skipped as an unknown key) and
+`Completion.Metadata.from(_:)` carries the records as `packages`.
+
+- **Completion rows** -- `CompletionScheduler.Request.packageRecords`
+  (the last `compileResult`'s records, whatever its revision: names and
+  shapes do not move with document edits) reach
+  `Completion.packageDeclarations(in:records:)`, which builds the
+  "declared in mystyle.sty" rows from the records instead of scanning: a
+  `macro`, `conditional`, `math_operator`, `length` or `register` is a
+  command, an `environment` or `theorem` an environment, a `counter` names
+  no control sequence and is skipped; the snippet's mandatory count is the
+  engine's `arity` less the optional first parameter (`optional_default`,
+  or an xparse `o`/`O{…}` first argument); the definer is the engine's.
+  When the file's `\ProvidesPackage` has a description, the row's detail
+  is `declared in mystyle.sty — <description>`.
+- **Go to Definition / hover peek** -- `ShellModel.packageDefinition(ofCommand:environment:)`
+  looks the name up in `result.metadata.packages` first and returns the
+  engine's definition: `via` is the definer, the range is the statement's
+  byte span converted to UTF-16 against the input's text, the line is
+  counted from the same bytes. So a macro made through `\csname` or inside
+  a conditional is found too. The offsets are trusted only while the
+  input's text is the text the compiler read (`compiledDocuments`).
+- The `\usepackage` line hint (`mystyle.sty: N problems`) is unchanged: it
+  is built from the diagnostics' secondary labels, not from the records.
+
+## The fallback: the package inputs' text
+
+Without records -- no result yet, an older producer, a bare text view, a
+name the engine did not record, a package input edited since the compile --
+everything below works from the package inputs' *text* with the same
+lexical scans the open documents use (`Completion.declarations`,
+`EditorNavigation.definitions`). That is exact enough for
+`\newcommand`-style definitions and wrong in the ways a lexical scan is
+wrong (a macro defined through `\csname`, inside a conditional, or by a
+package the package loads is not seen; `\let` copies are found by name
+only), which is why the records come first.
 
 ## The three sources of package inputs
 
@@ -33,8 +90,8 @@ texts, the compiler resolves `\usepackage` against the same paths.
 | Colouring, `@` as a letter | `ShellModel.editorLanguage` → `SyntaxHighlighter.Language.package`; `\makeatletter` flips `atLetters` per line in any buffer | the active buffer only |
 | Kernel vocabulary first, `@` in the typed token | `SourceEditorView.Coordinator.packageContext(at:in:)` → `CompletionScheduler.Request.packageMode` / `.atLetter` | the syntax model at the caret |
 | `\usepackage{` / `\documentclass{` names | `ShellModel.projectPackageFiles` → `Request.projectPackageFiles` | paths of 1–3 |
-| "declared in mystyle.sty" rows and `\begin{` names | `ShellModel.packageDocumentsForEditor()` → `Request.packageDocuments` → `Completion.packageDeclarations(in:)` (off-main, only for a command or environment token) | texts of 1–3 |
-| Go to Definition / hover peek | `ShellModel.packageDefinition(ofCommand:environment:)` after `definition(ofCommand:)` | texts of 2–3 (open members are found first, the ordinary way) |
+| "declared in mystyle.sty" rows and `\begin{` names | `ShellModel.packageDocumentsForEditor()` → `Request.packageDocuments` → `Completion.packageDeclarations(in:records:)` (off-main, only for a command or environment token) | `metadata.packages` when the result has them, else texts of 1–3 |
+| Go to Definition / hover peek | `ShellModel.packageDefinition(ofCommand:environment:)` after `definition(ofCommand:)` | `metadata.packages` (spans into the input's text) when the result has the name, else texts of 2–3 (open members are found first, the ordinary way) |
 | Problems row → package file | `ShellModel.goToOccurrence` → `openPackageInput(at:)` | paths of 2–3 |
 | `\usepackage` line hint | `EditorDiagnostics.packageHints` from the compiler's secondary labels | the compile result only |
 
@@ -44,28 +101,16 @@ Opening a virtual input goes through `ProjectDocuments.openVirtual`
 non-editable (`SourceEditorView.editable`), the `ReadOnlyBanner` above the
 editor. The compile request carries it once, as the open member.
 
-## What the engine should expose next
+## What the engine could expose next
 
-Everything above works from the package inputs' *text* with the same
-lexical scans the open documents use (`Completion.declarations`,
-`EditorNavigation.definitions`). It is exact enough for `\newcommand`-style
-definitions and wrong in the ways a lexical scan is wrong: a macro defined
-through `\csname`, inside a conditional, or by a package the package loads
-is not seen; `\let` copies are found by name only. For it to be exact, the
-compiler (S1, `crates/compiler/src/packages.rs` / `tex-expansion`) should
-put on the wire:
+The records carry the load site (`loaded_by`) and the file's
+`\ProvidesPackage`, which the editor does not use yet:
 
-- per package input, the definitions it actually made while loading the
-  file — name, kind (macro / environment / switch), the parameter shape it
-  parsed, and the definition's byte span in that file (`documents` already
-  carry the same paths, so `RuntimeV1.SourceRange` fits);
-- for each definition, the load site (`\usepackage`/`\RequirePackage`
-  span) so the hint at the loading line can name what a package brought
-  in, not only how many problems it has;
-- the `loaded here` label already emitted (`with_label`) on every
-  diagnostic raised inside a package, including ones raised by a package
-  the package loaded (today the label names the direct loader only).
-
-With those, `packageDeclarations` and `packageDefinition` become lookups
-into the result instead of scans, and a definition's span is the
-compiler's, not a guess from the source text.
+- the hint at the `\usepackage` line could name what the package brought
+  in (`mystyle.sty: 4 macros, 2 environments`), not only how many
+  problems it has;
+- the `loaded here` label on a diagnostic raised inside a package names
+  the direct loader; the records' `loaded_by` chain gives the whole
+  nesting for a package loaded by a package.
+- a definition's `overrides` (the name had a meaning before) could mark
+  a `\renewcommand` of a kernel command in the package buffer.

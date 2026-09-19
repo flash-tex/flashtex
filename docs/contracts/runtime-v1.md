@@ -148,6 +148,13 @@ tolerate its absence and ignore unknown sections. Every span in it is
 `{path, start, end}`: the project-relative document path and zero-based,
 end-exclusive UTF-8 byte offsets into the request's revision.
 
+Both producers emit it: the compiler's own `compile_result`
+(`crates/compiler/src/protocol.rs`) and `flashtex-render`
+(`crates/render-pipeline`, `v1::metadata_json`), which serialises the same
+records with the vendored compiler's `package_definitions::to_json`, so the
+section reads identically whichever worker a client runs. In sorted key
+order it sits between `layout_capabilities` and `pages`.
+
 ### `metadata.packages`
 
 One entry per project `.sty`/`.cls` file the expansion pass read
