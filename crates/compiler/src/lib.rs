@@ -31,6 +31,7 @@ pub mod math;
 pub mod natbib;
 pub mod newcm_math;
 pub mod overlay;
+pub mod package_definitions;
 pub mod packages;
 pub mod parser;
 pub mod protocol;

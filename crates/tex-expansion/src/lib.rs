@@ -29,6 +29,7 @@ mod incremental;
 mod latex_packages;
 mod lexer;
 mod macro_def;
+mod package_defs;
 mod prelude;
 mod registers;
 mod scopes;
@@ -40,6 +41,7 @@ pub use error::{is_output_limit, output_limit_message, Diagnostic, Limits, Sever
 pub use expand::{is_group_token, to_fnsymbol, BoxMeasurer, Checkpoint, DefaultBoxMeasurer, Engine, LabelRecord, Mode};
 pub use incremental::{Edit, EditStats, IncrementalExpander};
 pub use latex_packages::{Declaration, LoadKind, OpenedFile, PackageReader};
+pub use package_defs::{DeclaredOption, DefinitionKind, PackageDefinition, Provides};
 pub use registers::{scale_internal_dimen, DefaultFontMetrics, FontMetrics, FontSwitch, Glue};
 pub use span::Span;
 pub use token::{Token, TokenKind};

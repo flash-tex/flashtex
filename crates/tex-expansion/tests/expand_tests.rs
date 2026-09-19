@@ -911,6 +911,21 @@ fn newtheorem_let_to_relax_guard_still_declares() {
     assert!(out.contains(r"\endthm "), "{out:?}");
 }
 
+/// ltdefns.dtx `\@ifdefinable` goes through `\@ifundefined`, so a name
+/// `\csname` has just made `\relax` is free: the
+/// `\expandafter\newcommand\csname name\endcsname` idiom defines it, as
+/// does `\newcommand` after `\let\name\relax`; `\relax` itself stays
+/// refused (`\@qrelax`).
+#[test]
+fn newcommand_defines_a_relax_valued_name() {
+    let r = expand_str(r"\expandafter\newcommand\csname foo\endcsname{F}\let\bar\relax\newcommand\bar{B}\foo\bar");
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    assert_eq!(text(&r.tokens), "FB");
+    let r = expand_str(r"\newcommand\relax{x}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["LaTeX Error: Command \\relax already defined."]);
+}
+
 #[test]
 fn newtheorem_relax_itself_is_never_definable() {
     // `\relax`'s own meaning is trivially `Relax`, the same value the

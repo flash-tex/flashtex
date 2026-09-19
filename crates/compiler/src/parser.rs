@@ -1979,6 +1979,9 @@ pub struct Parsed {
     /// Every project `.sty`/`.cls` the expansion pass read, with the span
     /// of the command that loaded it (see `expansion::Expansion::package_files`).
     pub package_files: Vec<(DocumentId, Span)>,
+    /// What each of those files defined, in the same order
+    /// (`crate::package_definitions`; the runtime-v1 `metadata.packages`).
+    pub package_definitions: Vec<crate::package_definitions::PackageRecord>,
     /// Body size from the `\documentclass` point-size option
     /// (`10pt`/`11pt`/`12pt`, plus `8pt`/`9pt` for the AMS classes).
     pub class_size_pt: Option<f64>,
@@ -3018,6 +3021,7 @@ pub fn parse_project_with(
             arraystretch: HashMap::new(),
             current_label_by_marker: HashMap::new(),
             package_files: Vec::new(),
+            package_records: Vec::new(),
         }
     } else {
         expansion::expand_project_cached(documents, entry)
@@ -3206,16 +3210,12 @@ pub fn parse_project_with(
     }
 
     // A diagnostic inside a project package or class file names the
-    // command that loaded it, as LaTeX's log prints the file it is reading.
-    for (package, loaded_at) in &expanded.package_files {
-        let path = documents[package.0].path;
-        let path = path.rsplit('/').next().unwrap_or(path);
-        for diagnostic in &mut p.diags {
-            if diagnostic.span.is_some_and(|s| s.document == *package) && !diagnostic.labels.iter().any(|l| l.span == *loaded_at) {
-                *diagnostic = std::mem::replace(diagnostic, Diagnostic::error("", None, None))
-                    .with_label(*loaded_at, format!("{path} is loaded here"), false);
-            }
-        }
+    // command that loaded it -- and, for a file another package loaded,
+    // that package's loader too -- as LaTeX's log prints the files it is
+    // reading (`crate::package_definitions::label_load_chain`).
+    {
+        let paths: Vec<&str> = documents.iter().map(|d| d.path).collect();
+        crate::package_definitions::label_load_chain(&mut p.diags, &expanded.package_files, &paths);
     }
     let class_file = expanded.package_files.iter().map(|(id, _)| *id).find(|id| documents[id.0].path.ends_with(".cls"));
     // Issue #907: one early diagnostic naming the non-LaTeX2e format, in
@@ -3240,6 +3240,7 @@ pub fn parse_project_with(
         class_options: p.class_options,
         class_file,
         package_files: expanded.package_files,
+        package_definitions: expanded.package_records,
         class_size_pt: p.class_size_pt,
         parskip_pt: p.parskip_pt,
         packages: p.packages,

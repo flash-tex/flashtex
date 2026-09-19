@@ -103,6 +103,9 @@ pub struct Expansion {
     /// Every project `.sty`/`.cls` the engine read, with the span of the
     /// `\usepackage`/`\documentclass`/... that loaded it, in loading order.
     pub package_files: Vec<(DocumentId, Span)>,
+    /// The same files with what each defined (`crate::package_definitions`),
+    /// parallel to `package_files`.
+    pub package_records: Vec<crate::package_definitions::PackageRecord>,
 }
 
 /// Host definitions run before the document. `\DeclareMathOperator` is
@@ -570,6 +573,9 @@ struct Converter<'d> {
     current_label_log: Vec<(usize, (usize, usize), String)>,
     /// Package files mapped so far (see [`Expansion::package_files`]).
     package_files: Vec<(DocumentId, Span)>,
+    /// The same, with each file's engine source id: what
+    /// [`Converter::package_records`] pairs with the engine's final records.
+    package_sites: Vec<(u32, DocumentId, Span)>,
 }
 
 struct PendingWord {
@@ -1072,6 +1078,7 @@ impl<'d> Converter<'d> {
             stretch_log: Vec::new(),
             current_label_log: Vec::new(),
             package_files: Vec::new(),
+            package_sites: Vec::new(),
         }
     }
 
@@ -1090,7 +1097,24 @@ impl<'d> Converter<'d> {
         if let Some(index) = index {
             let at = self.span(file.loaded_at).unwrap_or(self.last_span);
             self.package_files.push((DocumentId(index), at));
+            self.package_sites.push((file.source_id, DocumentId(index), at));
         }
+    }
+
+    /// [`Expansion::package_records`] from the engine's opened files once
+    /// the run is over: a file is mapped when it opens
+    /// ([`Converter::map_opened`]), but what it defined is complete only
+    /// when it has been read to the end.
+    fn package_records<'f>(&self, files: impl Iterator<Item = &'f OpenedFile>) -> Vec<crate::package_definitions::PackageRecord> {
+        let files: HashMap<u32, &OpenedFile> = files.map(|file| (file.source_id, file)).collect();
+        self.package_sites
+            .iter()
+            .filter_map(|(source_id, document, at)| {
+                let file = files.get(source_id)?;
+                let path = self.documents[document.0].path;
+                Some(crate::package_definitions::PackageRecord::from_opened(file, *document, *at, path, &|span| self.span(span)))
+            })
+            .collect()
     }
 
     /// No partially built word, `\arraystretch` capture, `\@currentlabel`
@@ -1515,12 +1539,14 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     }
     let diagnostics = engine.diagnostics().to_vec();
     conv.map_diagnostics(&diagnostics);
+    let package_records = conv.package_records(engine.opened_package_files().iter());
     Expansion {
         tokens: Rc::new(conv.out),
         diagnostics: conv.diagnostics,
         arraystretch: conv.arraystretch,
         current_label_by_marker: conv.current_label_by_marker,
         package_files: conv.package_files,
+        package_records,
     }
 }
 
@@ -1991,12 +2017,14 @@ fn stretch_map(log: &[(usize, (usize, usize), String)]) -> HashMap<(usize, usize
 fn finish_diagnostics(cache: &ExpansionCache, mut conv: Converter<'_>) -> Expansion {
     conv.last_span = cache.last_span;
     conv.map_diagnostics(cache.expander.diagnostics());
+    let package_records = conv.package_records(cache.expander.opened_package_files());
     Expansion {
         tokens: Rc::new(Vec::new()),
         diagnostics: conv.diagnostics,
         arraystretch: conv.arraystretch,
         current_label_by_marker: conv.current_label_by_marker,
         package_files: conv.package_files,
+        package_records,
     }
 }
 
