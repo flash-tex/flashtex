@@ -140,25 +140,7 @@ enum Completion {
             /// Nil for commands without a braced argument.
             var snippet: Completion.Snippet? {
                 if let override = Vocabulary.snippetOverrides[name] { return override }
-                var out = "\\" + name
-                var stops: [Int] = []
-                var i = arguments.startIndex
-                while i < arguments.endIndex {
-                    let c = arguments[i]
-                    if c == "[" {
-                        i = arguments[i...].firstIndex(of: "]").map(arguments.index(after:)) ?? arguments.endIndex
-                    } else if c == "{" {
-                        out += "{"
-                        stops.append((out as NSString).length)
-                        out += "}"
-                        i = arguments[i...].firstIndex(of: "}").map(arguments.index(after:)) ?? arguments.endIndex
-                    } else {
-                        i = arguments.index(after: i)
-                    }
-                }
-                guard let caret = stops.first else { return nil }
-                // Tab visits the later braces, then leaves the snippet.
-                return Completion.Snippet(text: out, caretUTF16: caret, stops: Array(stops.dropFirst()) + [(out as NSString).length])
+                return Completion.argumentSnippet(name: name, arguments: arguments)
             }
             var detail: String {
                 switch mode {
@@ -341,6 +323,33 @@ enum Completion {
     /// Anchors `Bundle(for:)` to this module for the inventory lookup.
     private final class VocabularyBundleMarker {}
 
+    /// `\name` plus its argument shape as an insertion: every `{…}` of
+    /// `arguments` becomes `{}`, `[…]` optionals are dropped, the caret lands
+    /// in the first braces and Tab visits the later ones, then leaves. Nil
+    /// when the shape has no braced argument. The rule behind the
+    /// vocabulary's snippets (`Vocabulary.Entry.snippet`), the kernel's
+    /// (`CommandDocs.kernel`) and a declared macro's (`Declaration.snippet`).
+    static func argumentSnippet(name: String, arguments: String) -> Snippet? {
+        var out = "\\" + name
+        var stops: [Int] = []
+        var i = arguments.startIndex
+        while i < arguments.endIndex {
+            let c = arguments[i]
+            if c == "[" {
+                i = arguments[i...].firstIndex(of: "]").map(arguments.index(after:)) ?? arguments.endIndex
+            } else if c == "{" {
+                out += "{"
+                stops.append((out as NSString).length)
+                out += "}"
+                i = arguments[i...].firstIndex(of: "}").map(arguments.index(after:)) ?? arguments.endIndex
+            } else {
+                i = arguments.index(after: i)
+            }
+        }
+        guard let caret = stops.first else { return nil }
+        return Snippet(text: out, caretUTF16: caret, stops: Array(stops.dropFirst()) + [(out as NSString).length])
+    }
+
     static let defaultSupported: [String] = Vocabulary.names
 
     /// Environments the compiler names explicitly; any other environment
@@ -360,7 +369,9 @@ enum Completion {
         /// A run of letters, with what immediately precedes it (`\begin{`, `\ref{`, …).
         case word(text: String, start: Int, end: Int, context: Context)
 
-        enum Context: Equatable { case none, beginEnvironment, endEnvironment, reference, citation, label, package, file, graphics, font }
+        /// `package`: `\usepackage{`/`\RequirePackage{`; `documentClass`:
+        /// `\documentclass{`/`\LoadClass{` (a class name).
+        enum Context: Equatable { case none, beginEnvironment, endEnvironment, reference, citation, label, package, documentClass, file, graphics, font }
 
         var start: Int {
             switch self { case .command(_, let s, _), .word(_, let s, _, _): return s }
@@ -371,19 +382,21 @@ enum Completion {
     }
 
     /// Returns nil when the caret is not on a scalar boundary or there is no
-    /// token immediately before it.
-    static func token(in text: String, caretUTF16: Int) -> Token? {
+    /// token immediately before it. `atLetter` makes `@` a letter of a
+    /// control word (`\@ifnextchar` is one token inside `\makeatletter` and
+    /// in a package file; `SyntaxHighlighter.atLetter(at:)` answers it).
+    static func token(in text: String, caretUTF16: Int, atLetter: Bool = false) -> Token? {
         guard let caretByte = utf8Offset(of: caretUTF16, in: text) else { return nil }
-        return withBytes(text) { b in token(in: b, caretByte: caretByte) }
+        return withBytes(text) { b in token(in: b, caretByte: caretByte, atLetter: atLetter) }
     }
 
-    private static func token(in b: UnsafeBufferPointer<UInt8>, caretByte: Int) -> Token? {
+    private static func token(in b: UnsafeBufferPointer<UInt8>, caretByte: Int, atLetter: Bool = false) -> Token? {
         guard caretByte <= b.count, let p = b.baseAddress else { return nil }
         if let key = argumentKeyToken(in: b, caretByte: caretByte) { return key }
         let table = wordByteClass
         var start = caretByte
         var asciiLettersOnly = true
-        while start > 0, table[Int(p[start - 1])] != 0 {
+        while start > 0, table[Int(p[start - 1])] != 0 || (atLetter && p[start - 1] == UInt8(ascii: "@")) {
             if p[start - 1] >= 0x80 { asciiLettersOnly = false }
             start -= 1
         }
@@ -425,7 +438,19 @@ enum Completion {
             return .reference
         }
         if citationCommands.contains(where: { endsWith(b, upTo: end, suffix: "\\" + $0) }) { return .citation }
-        if endsWith(b, upTo: end, suffix: "\\usepackage") { return .package }
+        if packageCommands.contains(where: { endsWith(b, upTo: end, suffix: "\\" + $0) }) { return .package }
+        if classCommands.contains(where: { endsWith(b, upTo: end, suffix: "\\" + $0) }) { return .documentClass }
+        // `\PassOptionsToPackage{options}{`: the name is the second braced
+        // argument, so one `{…}` group (single-line, unnested) before this
+        // brace is stepped over for these two only.
+        if end > 0, b[end - 1] == UInt8(ascii: "}") {
+            var j = end - 1
+            while j > 0, b[j - 1] != UInt8(ascii: "{"), b[j - 1] != UInt8(ascii: "\n"), b[j - 1] != UInt8(ascii: "}") { j -= 1 }
+            if j > 0, b[j - 1] == UInt8(ascii: "{") {
+                if endsWith(b, upTo: j - 1, suffix: "\\PassOptionsToPackage") { return .package }
+                if endsWith(b, upTo: j - 1, suffix: "\\PassOptionsToClass") { return .documentClass }
+            }
+        }
         if fileCommands.contains(where: { endsWith(b, upTo: end, suffix: "\\" + $0) }) { return .file }
         if graphicsCommands.contains(where: { endsWith(b, upTo: end, suffix: "\\" + $0) }) { return .graphics }
         if fontCommands.contains(where: { endsWith(b, upTo: end, suffix: "\\" + $0) }) { return .font }
@@ -434,6 +459,16 @@ enum Completion {
 
     /// Commands whose `{` argument completes a project document path.
     static let fileCommands = ["input", "include"]
+
+    /// Commands whose first `{` argument is a package name: the document's
+    /// `\usepackage` and the package author's `\RequirePackage` family
+    /// (`\PassOptionsToPackage{options}{name}` is matched on its second, in
+    /// `context(in:before:)`).
+    static let packageCommands = ["usepackage", "RequirePackage", "RequirePackageWithOptions"]
+
+    /// Commands whose first `{` argument is a class name: `\documentclass`
+    /// and the class author's `\LoadClass` family.
+    static let classCommands = ["documentclass", "LoadClass", "LoadClassWithOptions"]
 
     /// Commands whose `{` argument completes an image file under the project root.
     static let graphicsCommands = ["includegraphics"]
@@ -468,7 +503,7 @@ enum Completion {
         }
         let context = context(in: b, before: opener)
         switch context {
-        case .reference, .citation, .label, .package, .file, .graphics, .font:
+        case .reference, .citation, .label, .package, .documentClass, .file, .graphics, .font:
             let text = String(decoding: b[start..<caretByte], as: UTF8.self)
             guard text.utf8.allSatisfy({ $0 < 0x80 }) || text.unicodeScalars.allSatisfy({ $0.properties.isAlphabetic }) else { return nil }
             return .word(text: text, start: start, end: caretByte, context: context)
@@ -505,13 +540,13 @@ enum Completion {
     /// The token at the caret, read from at most `window` UTF-16 units before
     /// it. This is the cheap main-thread gate for automatic completion: it is
     /// O(window), never O(document), so it may run on every keystroke.
-    static func caretToken(in text: NSString, caretUTF16: Int, window: Int = caretTokenWindow) -> CaretToken? {
+    static func caretToken(in text: NSString, caretUTF16: Int, window: Int = caretTokenWindow, atLetter: Bool = false) -> CaretToken? {
         let caret = max(0, min(caretUTF16, text.length))
         var from = max(0, caret - max(1, window))
         if from > 0, from < text.length { from = text.rangeOfComposedCharacterSequence(at: from).location }
         guard from <= caret else { return nil }
         let slice = text.substring(with: NSRange(location: from, length: caret - from))
-        guard let token = token(in: slice, caretUTF16: (slice as NSString).length),
+        guard let token = token(in: slice, caretUTF16: (slice as NSString).length, atLetter: atLetter),
               let ns = slice.nsRange(utf8Bytes: .init(path: "", startByte: token.start, endByte: token.end))
         else { return nil }
         return CaretToken(token: token, startUTF16: from + ns.location)
@@ -631,10 +666,10 @@ enum Completion {
 
     /// UTF-16 range the chosen suggestion replaces: the token before the caret
     /// including a leading `\`, or an empty range at the caret.
-    static func completionRange(in text: String, caretUTF16: Int) -> NSRange {
+    static func completionRange(in text: String, caretUTF16: Int, atLetter: Bool = false) -> NSRange {
         let length = (text as NSString).length
         let caret = max(0, min(caretUTF16, length))
-        guard let token = token(in: text, caretUTF16: caret),
+        guard let token = token(in: text, caretUTF16: caret, atLetter: atLetter),
               let ns = text.nsRange(utf8Bytes: .init(path: "", startByte: token.start, endByte: token.end))
         else { return NSRange(location: caret, length: 0) }
         return ns
@@ -695,6 +730,12 @@ enum Completion {
     /// `fontFamilies` are the installed families `\setmainfont{` offers
     /// (`InstalledFonts.families`, listed by the job off-main and only when
     /// the caret is in that argument).
+    /// `packageMode` says the author is writing a package or class — a
+    /// `.sty`/`.cls` buffer, or the caret inside `\makeatletter` — so the
+    /// kernel's authoring vocabulary (`EditorIntelligence.CommandDocs.kernel`)
+    /// leads the command list; `atLetter` (the same source) makes `@` part of
+    /// the typed token. `projectPackageFiles` are the project's `.sty`/`.cls`
+    /// paths, offered first after `\usepackage{` and `\documentclass{`.
     static func suggestions(in text: String, caretUTF16: Int, metadata: Metadata?,
                             supported: [String] = defaultSupported, projectFiles: [String] = [],
                             graphicsFiles: [String] = [], recentEnvironments: [String] = [],
@@ -702,14 +743,15 @@ enum Completion {
                             bibliographyEntries: [BibScanner.Entry] = [], projectClass: String? = nil,
                             indentUnit: String = "", environmentRules: EnvironmentEditingRules = .conventional,
                             fontFamilies: [String] = [],
+                            packageMode: Bool = false, atLetter: Bool = false, projectPackageFiles: [String] = [],
                             cancelled: () -> Bool = { false }) -> [Suggestion] {
-        guard let token = token(in: text, caretUTF16: caretUTF16), !cancelled() else { return [] }
+        guard let token = token(in: text, caretUTF16: caretUTF16, atLetter: atLetter), !cancelled() else { return [] }
         let out: [Suggestion]
         switch token {
         case .command(let prefix, _, _):
             out = commandSuggestions(prefix: prefix, tokenStart: token.start, text: text, metadata: metadata, supported: supported,
                                      declaredElsewhere: declaredElsewhere, mathMode: mathMode, projectClass: projectClass,
-                                     cancelled: cancelled)
+                                     packageMode: packageMode, cancelled: cancelled)
         case .word(let prefix, _, _, let context):
             guard prefix.unicodeScalars.count >= 2 || context != .none else { return [] }
             switch context {
@@ -725,7 +767,9 @@ enum Completion {
             case .label:
                 out = labelSuggestions(prefix: prefix, tokenStart: token.start, text: text, metadata: metadata)
             case .package:
-                out = packageSuggestions(prefix: prefix)
+                out = packageSuggestions(prefix: prefix, projectPackageFiles: projectPackageFiles)
+            case .documentClass:
+                out = classSuggestions(prefix: prefix, projectPackageFiles: projectPackageFiles)
             case .file:
                 out = fileSuggestions(prefix: prefix, files: projectFiles, detail: "project document")
             case .graphics:
@@ -770,10 +814,28 @@ enum Completion {
 
     private static func commandSuggestions(prefix: String, tokenStart: Int, text: String, metadata: Metadata?,
                                            supported: [String], declaredElsewhere: [String], mathMode: Bool?,
-                                           projectClass: String?, cancelled: () -> Bool) -> [Suggestion] {
+                                           projectClass: String?, packageMode: Bool = false, cancelled: () -> Bool) -> [Suggestion] {
         var out: [Suggestion] = []
         let scan = scanCommands(in: text, tokenStart: tokenStart, prefix: prefix)
         if cancelled() { return [] }
+        // Writing a package or class: the kernel's authoring vocabulary
+        // (`\ProvidesPackage`, `\DeclareOption`, `\@ifnextchar`, …) is what
+        // the author means by `\P` or `\@i` here, so it leads the list in
+        // its table order — the exact spelling still first. A name the
+        // compiler's vocabulary also has (`\newcommand`, `\RequirePackage`)
+        // takes the kernel row, with the authoring documentation. Only when
+        // `packageMode` is on: a document author never sees these rows
+        // above `\section`.
+        var kernelRows: [Suggestion] = []
+        if packageMode {
+            for k in EditorIntelligence.CommandDocs.kernel where k.name.hasPrefix(prefix) {
+                kernelRows.append(Suggestion(label: "\\" + k.name + k.arguments, insertText: "\\" + k.name, kind: .command,
+                                             detail: "package authoring (LaTeX kernel)",
+                                             snippet: argumentSnippet(name: k.name, arguments: k.arguments)))
+            }
+            // The exact spelling leads even here.
+            if let i = kernelRows.firstIndex(where: { $0.insertText == "\\" + prefix }), i > 0 { kernelRows.insert(kernelRows.remove(at: i), at: 0) }
+        }
         // The author's own macros (`\newcommand{\foo}`, `\def\foo`, …; see
         // `declaredCommands`), read from the buffer on every request so they
         // are "declared" from the keystroke that defines them — never "not
@@ -803,6 +865,8 @@ enum Completion {
         //    falls back to them (`\ite` in math still offers `\item`) —
         //    something is always shown.
         var offered = Set<String>()
+        for row in kernelRows { offered.insert(String(row.insertText.dropFirst())) }
+        out += kernelRows
         let declared: [String: Metadata.Item] = Dictionary((metadata?.commands ?? []).filter { $0.definitions > 0 }.map { ($0.name, $0) },
                                                            uniquingKeysWith: { a, _ in a })
         let exact = supported.contains(prefix) ? [prefix] : []
@@ -910,11 +974,46 @@ enum Completion {
         "textcomp", "wrapfig", "adjustbox", "pdfpages", "xspace", "etoolbox", "ifthen", "calc", "times", "mathptmx",
     ]
 
-    private static func packageSuggestions(prefix: String) -> [Suggestion] {
-        let names = fuzzyFilter(knownPackages, prefix: prefix) { $0 }
-        return names.prefix(maxSuggestions).map {
-            Suggestion(label: $0, insertText: $0, kind: .command, detail: "package (recognised, not implemented by this compiler)")
+    /// `\usepackage{`/`\RequirePackage{` candidates: the project's own
+    /// `.sty` files first (`projectPackageFiles`, the paths the compiler
+    /// resolves `\usepackage` against — a member, a file next to the entry,
+    /// a `texinputs` directory, a resolved package), then the CTAN names.
+    static func packageSuggestions(prefix: String, projectPackageFiles: [String] = []) -> [Suggestion] {
+        var seen = Set<String>()
+        let own = projectPackageFiles.filter { ($0 as NSString).pathExtension.lowercased() == "sty" }
+            .map { path in (name: (ProjectManifest.packageDisplayName(path) as NSString).deletingPathExtension, file: ProjectManifest.packageDisplayName(path)) }
+            .filter { seen.insert($0.name).inserted }
+        let ownRows = fuzzyFilter(own, prefix: prefix) { $0.name }.map {
+            Suggestion(label: $0.name, insertText: $0.name, kind: .command, detail: "package in this project · \($0.file)")
         }
+        let names = fuzzyFilter(knownPackages.filter { !seen.contains($0) }, prefix: prefix) { $0 }
+        return Array((ownRows + names.map {
+            Suggestion(label: $0, insertText: $0, kind: .command, detail: "package (recognised, not implemented by this compiler)")
+        }).prefix(maxSuggestions))
+    }
+
+    /// `\documentclass{`/`\LoadClass{` candidates: the standard and common
+    /// CTAN classes (static, like `knownPackages`).
+    static let knownClasses = [
+        "article", "report", "book", "letter", "beamer", "memoir", "amsart", "amsbook", "amsproc", "scrartcl", "scrreprt", "scrbook",
+        "scrlttr2", "standalone", "IEEEtran", "acmart", "revtex4-2", "elsarticle", "llncs", "proc", "slides", "minimal", "exam",
+        "moderncv", "tufte-handout", "tufte-book", "subfiles",
+    ]
+
+    /// `\documentclass{`/`\LoadClass{` candidates: the project's own `.cls`
+    /// files first, then `knownClasses`.
+    static func classSuggestions(prefix: String, projectPackageFiles: [String] = []) -> [Suggestion] {
+        var seen = Set<String>()
+        let own = projectPackageFiles.filter { ($0 as NSString).pathExtension.lowercased() == "cls" }
+            .map { path in (name: (ProjectManifest.packageDisplayName(path) as NSString).deletingPathExtension, file: ProjectManifest.packageDisplayName(path)) }
+            .filter { seen.insert($0.name).inserted }
+        let ownRows = fuzzyFilter(own, prefix: prefix) { $0.name }.map {
+            Suggestion(label: $0.name, insertText: $0.name, kind: .command, detail: "class in this project · \($0.file)")
+        }
+        let names = fuzzyFilter(knownClasses.filter { !seen.contains($0) }, prefix: prefix) { $0 }
+        return Array((ownRows + names.map {
+            Suggestion(label: $0, insertText: $0, kind: .command, detail: "document class")
+        }).prefix(maxSuggestions))
     }
 
     /// `\input{`/`\include{` (project documents) and `\includegraphics{`
@@ -2056,6 +2155,16 @@ final class CompletionScheduler {
         /// `\setmainfont{` offers, run by the job off-main once per launch
         /// (`InstalledFonts`). Nil offers no families.
         var renderPipeline: URL? = nil
+        /// The author is writing a package or class (a `.sty`/`.cls` buffer,
+        /// or the caret inside `\makeatletter`): the kernel vocabulary leads
+        /// (`Completion.suggestions(packageMode:)`). Decided on the main
+        /// thread from the editor's syntax model, like `mathMode`.
+        var packageMode = false
+        /// `@` is a letter of the token at the caret (the same source).
+        var atLetter = false
+        /// The project's `.sty`/`.cls` paths (`ShellModel.projectPackageFiles`):
+        /// offered first after `\usepackage{` and `\documentclass{`.
+        var projectPackageFiles: [String] = []
     }
 
     struct Outcome: Equatable {
@@ -2125,13 +2234,13 @@ final class CompletionScheduler {
         let scheduledAt = MonotonicClock.nowNs()
         execute { [weak self] in
             let t0 = MonotonicClock.nowNs()
-            let range = Completion.completionRange(in: request.text, caretUTF16: request.caretUTF16)
+            let range = Completion.completionRange(in: request.text, caretUTF16: request.caretUTF16, atLetter: request.atLetter)
             var graphics: [String] = []
             var fontFamilies: [String] = []
             var declaredElsewhere: [String] = []
             var bibliographyEntries: [BibScanner.Entry] = []
             if !job.isCancelled {
-                switch Completion.token(in: request.text, caretUTF16: request.caretUTF16) {
+                switch Completion.token(in: request.text, caretUTF16: request.caretUTF16, atLetter: request.atLetter) {
                 case .word(_, _, _, .graphics)?:
                     if let root = request.graphicsRoot { graphics = Completion.graphicsFiles(under: root) }
                 case .word(_, _, _, .font)?:
@@ -2154,6 +2263,8 @@ final class CompletionScheduler {
                                                                      indentUnit: request.indentUnit,
                                                                      environmentRules: request.environmentRules,
                                                                      fontFamilies: fontFamilies,
+                                                                     packageMode: request.packageMode, atLetter: request.atLetter,
+                                                                     projectPackageFiles: request.projectPackageFiles,
                                                                      cancelled: { job.isCancelled })
             let t1 = MonotonicClock.nowNs()
             let outcome = Outcome(generation: job.generation, caretUTF16: request.caretUTF16, range: range, items: items,
@@ -2798,6 +2909,15 @@ final class CompletingTextView: NSTextView {
     /// the list keeps the plain text-mode order and hides nothing
     /// (`Completion.allows`).
     var mathModeAtCaret: (Int) -> Bool? = { _ in nil }
+    /// Whether the author is writing a package at the caret and whether `@`
+    /// is a control-word letter there, answered by the owner from the same
+    /// syntax model (`SyntaxHighlighter.atLetter(at:)`, `Language.package`).
+    /// Unwired: a document, where `\@` is a control symbol.
+    var packageContextAtCaret: (Int) -> (packageMode: Bool, atLetter: Bool) = { _ in (false, false) }
+    /// The project's `.sty`/`.cls` paths (`ShellModel.projectPackageFiles`),
+    /// asked on the main thread when the list is requested; what
+    /// `\usepackage{`/`\documentclass{` offer first. A bare text view has none.
+    var projectPackageFiles: () -> [String] = { [] }
     /// Code folding (EditorFolding.swift): hidden ranges stay in the storage.
     let folds = EditorFoldStore()
 
@@ -3057,7 +3177,8 @@ final class CompletingTextView: NSTextView {
         let caret = selectedRange()
         guard caret.length == 0 else { return nil }
         // `mutableString` is the storage's own NSString, not a bridged copy.
-        return Completion.caretToken(in: storage.mutableString, caretUTF16: caret.location)
+        return Completion.caretToken(in: storage.mutableString, caretUTF16: caret.location,
+                                     atLetter: packageContextAtCaret(caret.location).atLetter)
     }
 
     /// Arms the automatic open after a typed character. Nothing is scanned
@@ -3214,6 +3335,7 @@ final class CompletingTextView: NSTextView {
         guard caret.length == 0, !hasMarkedText() else { return }
         lastCaret = caret
         let metadata = boundMetadata
+        let packageContext = packageContextAtCaret(caret.location)
         let request = CompletionScheduler.Request(text: string, caretUTF16: caret.location, metadata: metadata,
                                                   supported: supportedCommands, projectFiles: projectFiles,
                                                   graphicsRoot: graphicsRoot(), recentCommands: recentlyUsed.commands,
@@ -3222,7 +3344,9 @@ final class CompletingTextView: NSTextView {
                                                   projectClass: projectDocumentClass(),
                                                   indentUnit: EditorPreferences.shared.indentString,
                                                   environmentRules: EditorPreferences.shared.environmentRules,
-                                                  renderPipeline: renderPipeline())
+                                                  renderPipeline: renderPipeline(),
+                                                  packageMode: packageContext.packageMode, atLetter: packageContext.atLetter,
+                                                  projectPackageFiles: projectPackageFiles())
         scheduler.schedule(request) { [weak self] outcome in
             self?.present(outcome, metadataRevision: metadata?.revision)
         }

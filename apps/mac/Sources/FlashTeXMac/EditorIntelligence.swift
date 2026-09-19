@@ -456,13 +456,103 @@ enum EditorIntelligence {
         static func category(for name: String) -> String {
             if citationCommands.contains(name) { return "Citation command" }
             if SyntaxHighlighter.referenceCommands.contains(name) { return name == "label" ? "Label command" : "Reference command" }
+            if kernelByName[name] != nil { return "Package-authoring command" }
             if SyntaxHighlighter.fileCommands.contains(name) { return "File command" }
             if SyntaxHighlighter.definitionCommands.contains(name) { return "Definition" }
             if name.count == 1, !(name.first?.isLetter ?? true) { return "Control symbol" }
             return "Command"
         }
 
-        static func documentation(for name: String) -> String? { table[name] }
+        /// The hand-written line for `\name`: the document vocabulary first,
+        /// then the package-authoring vocabulary (`kernel`).
+        static func documentation(for name: String) -> String? { table[name] ?? kernelByName[name]?.documentation }
+
+        /// One command of the package-authoring vocabulary (`kernel`).
+        struct KernelCommand: Equatable {
+            let name: String
+            /// The argument shape as typed (`{package}[date]`), the source of
+            /// the completion snippet (`Completion.argumentSnippet`).
+            let arguments: String
+            let documentation: String
+        }
+
+        /// What a `.sty`/`.cls` author types that a document author does not
+        /// (ltclass.dtx, the `\makeatletter` kernel and the TeX primitives
+        /// packages are written in), in the order completion offers them
+        /// inside a package buffer: the file-level declarations, options,
+        /// loading, conditionals, definitions, then messages. Each line is
+        /// the hover's and the completion row's documentation. Kept apart
+        /// from `table`: these are not in the compiler's inventory (it reads
+        /// package files with its own expansion) and the drift gate on
+        /// `table` must not see them.
+        static let kernel: [KernelCommand] = [
+            .init(name: "NeedsTeXFormat", arguments: "{LaTeX2e}", documentation: "\\NeedsTeXFormat{LaTeX2e}[date]: the format this file needs; the first line of a package or class."),
+            .init(name: "ProvidesPackage", arguments: "{name}[date]", documentation: "\\ProvidesPackage{name}[yyyy/mm/dd vX.Y info]: names the package (must match the file) and its version line."),
+            .init(name: "ProvidesClass", arguments: "{name}[date]", documentation: "\\ProvidesClass{name}[yyyy/mm/dd vX.Y info]: names the class (must match the file) and its version line."),
+            .init(name: "ProvidesFile", arguments: "{name}[date]", documentation: "\\ProvidesFile{name}[info]: names any other file LaTeX loads (a .def, a .cfg)."),
+            .init(name: "DeclareOption", arguments: "{option}{code}", documentation: "\\DeclareOption{option}{code}: what \\usepackage[option] runs; \\DeclareOption*{code} handles every other option (\\CurrentOption)."),
+            .init(name: "CurrentOption", arguments: "", documentation: "The option being processed inside \\DeclareOption*{…}."),
+            .init(name: "ExecuteOptions", arguments: "{options}", documentation: "\\ExecuteOptions{a,b}: runs the declared options' code as defaults, before \\ProcessOptions."),
+            .init(name: "ProcessOptions", arguments: "", documentation: "\\ProcessOptions\\relax: runs the code of every option the user passed, in declaration order (\\ProcessOptions* in the order passed)."),
+            .init(name: "OptionNotUsed", arguments: "", documentation: "Inside \\DeclareOption*: leaves the option unused so a later class can take it."),
+            .init(name: "RequirePackage", arguments: "[options]{package}", documentation: "\\RequirePackage[options]{package}[date]: loads another package from inside a package or class (\\usepackage is for documents)."),
+            .init(name: "RequirePackageWithOptions", arguments: "{package}", documentation: "\\RequirePackageWithOptions{package}: loads it with the options this package was given."),
+            .init(name: "LoadClass", arguments: "[options]{class}", documentation: "\\LoadClass[options]{class}[date]: a class built on another one loads it here, after \\ProcessOptions."),
+            .init(name: "LoadClassWithOptions", arguments: "{class}", documentation: "\\LoadClassWithOptions{class}: loads the parent class with every option this class was given."),
+            .init(name: "PassOptionsToPackage", arguments: "{options}{package}", documentation: "\\PassOptionsToPackage{options}{package}: adds options for a package loaded later (avoids an option clash)."),
+            .init(name: "PassOptionsToClass", arguments: "{options}{class}", documentation: "\\PassOptionsToClass{options}{class}: adds options for the class loaded by \\LoadClass."),
+            .init(name: "@ifpackageloaded", arguments: "{package}{yes}{no}", documentation: "\\@ifpackageloaded{package}{yes}{no}: branches on whether the package is loaded (after \\begin{document}: \\AtBeginDocument)."),
+            .init(name: "@ifclassloaded", arguments: "{class}{yes}{no}", documentation: "\\@ifclassloaded{class}{yes}{no}: branches on the document class."),
+            .init(name: "@ifpackagewith", arguments: "{package}{options}{yes}{no}", documentation: "\\@ifpackagewith{package}{options}{yes}{no}: whether the package was loaded with those options."),
+            .init(name: "IfFileExists", arguments: "{file}{yes}{no}", documentation: "\\IfFileExists{file}{yes}{no}: branches on whether LaTeX can find the file."),
+            .init(name: "InputIfFileExists", arguments: "{file}{yes}{no}", documentation: "\\InputIfFileExists{file}{then}{else}: inputs the file when it exists (a .cfg override)."),
+            .init(name: "AtEndOfPackage", arguments: "{code}", documentation: "\\AtEndOfPackage{code}: runs the code when the package finishes loading."),
+            .init(name: "AtEndOfClass", arguments: "{code}", documentation: "\\AtEndOfClass{code}: runs the code when the class finishes loading."),
+            .init(name: "AtBeginDocument", arguments: "{code}", documentation: "\\AtBeginDocument{code}: runs the code at \\begin{document}, after every package is loaded."),
+            .init(name: "AtEndDocument", arguments: "{code}", documentation: "\\AtEndDocument{code}: runs the code at \\end{document}."),
+            .init(name: "newcommand", arguments: "{\\name}[n]{body}", documentation: "\\newcommand{\\name}[n]{body}: defines a macro with n arguments (#1 … #n); an error if it exists."),
+            .init(name: "DeclareRobustCommand", arguments: "{\\name}[n]{body}", documentation: "\\DeclareRobustCommand{\\name}[n]{body}: a macro safe in moving arguments (captions, headings); redefines silently."),
+            .init(name: "def", arguments: "\\name{body}", documentation: "\\def\\name#1#2{body}: TeX's primitive definition with a parameter text; no check that \\name is free."),
+            .init(name: "edef", arguments: "\\name{body}", documentation: "\\edef\\name{body}: defines \\name as the full expansion of body now."),
+            .init(name: "gdef", arguments: "\\name{body}", documentation: "\\gdef\\name{body}: \\def, global."),
+            .init(name: "xdef", arguments: "\\name{body}", documentation: "\\xdef\\name{body}: \\edef, global."),
+            .init(name: "let", arguments: "\\name=\\other", documentation: "\\let\\name=\\other: \\name becomes what \\other is now (a copy, not a call)."),
+            .init(name: "csname", arguments: "", documentation: "\\csname name\\endcsname: the control sequence built from the text in between (\\relax if undefined)."),
+            .init(name: "endcsname", arguments: "", documentation: "Closes \\csname."),
+            .init(name: "@namedef", arguments: "{name}{body}", documentation: "\\@namedef{name}{body}: \\def of the control sequence called name (built with \\csname)."),
+            .init(name: "@nameuse", arguments: "{name}", documentation: "\\@nameuse{name}: calls the control sequence called name."),
+            .init(name: "@ifundefined", arguments: "{name}{yes}{no}", documentation: "\\@ifundefined{name}{yes}{no}: branches on whether \\name is undefined (or \\relax)."),
+            .init(name: "@ifnextchar", arguments: "x{yes}{no}", documentation: "\\@ifnextchar x{yes}{no}: peeks at the next token — how optional arguments are parsed."),
+            .init(name: "@ifstar", arguments: "{starred}{plain}", documentation: "\\@ifstar{starred}{plain}: branches on a following * (a starred command variant)."),
+            .init(name: "expandafter", arguments: "", documentation: "\\expandafter\\a\\b: expands \\b one step before \\a is read."),
+            .init(name: "noexpand", arguments: "", documentation: "\\noexpand\\x: inside \\edef, keeps \\x unexpanded."),
+            .init(name: "newif", arguments: "\\ifname", documentation: "\\newif\\ifname: declares a switch with \\nametrue, \\namefalse and \\ifname … \\else … \\fi."),
+            .init(name: "ifx", arguments: "", documentation: "\\ifx\\a\\b … \\else … \\fi: true when the two tokens are the same (macros: same expansion)."),
+            .init(name: "ifdefined", arguments: "", documentation: "\\ifdefined\\x … \\fi: true when \\x is defined (e-TeX)."),
+            .init(name: "fi", arguments: "", documentation: "Closes an \\if…."),
+            .init(name: "else", arguments: "", documentation: "The else branch of an \\if…."),
+            .init(name: "relax", arguments: "", documentation: "Does nothing; ends a number or an argument scan (\\ProcessOptions\\relax)."),
+            .init(name: "newtoks", arguments: "\\name", documentation: "\\newtoks\\name: a token register (\\name={…}, \\the\\name)."),
+            .init(name: "newdimen", arguments: "\\name", documentation: "\\newdimen\\name: a dimension register."),
+            .init(name: "newskip", arguments: "\\name", documentation: "\\newskip\\name: a glue register."),
+            .init(name: "newcount", arguments: "\\name", documentation: "\\newcount\\name: a count register."),
+            .init(name: "@tempdima", arguments: "", documentation: "Scratch dimension register (with \\@tempdimb, \\@tempdimc); never rely on it across macros."),
+            .init(name: "@tempcnta", arguments: "", documentation: "Scratch count register (with \\@tempcntb)."),
+            .init(name: "@tempboxa", arguments: "", documentation: "Scratch box register."),
+            .init(name: "@empty", arguments: "", documentation: "The empty macro; compare with \\ifx\\x\\@empty."),
+            .init(name: "@gobble", arguments: "", documentation: "\\@gobble{x}: discards one argument (\\@gobbletwo two)."),
+            .init(name: "@firstofone", arguments: "", documentation: "\\@firstofone{x}: x (\\@firstoftwo, \\@secondoftwo pick one of two)."),
+            .init(name: "PackageWarning", arguments: "{package}{text}", documentation: "\\PackageWarning{package}{text}: a warning on the terminal and in the log, with the line number (\\PackageWarningNoLine without)."),
+            .init(name: "PackageError", arguments: "{package}{text}{help}", documentation: "\\PackageError{package}{text}{help}: stops with an error; help is shown on ?."),
+            .init(name: "PackageInfo", arguments: "{package}{text}", documentation: "\\PackageInfo{package}{text}: a note in the log only."),
+            .init(name: "ClassWarning", arguments: "{class}{text}", documentation: "\\ClassWarning{class}{text}: a warning with the line number (\\ClassWarningNoLine without)."),
+            .init(name: "ClassError", arguments: "{class}{text}{help}", documentation: "\\ClassError{class}{text}{help}: stops with an error."),
+            .init(name: "ClassInfo", arguments: "{class}{text}", documentation: "\\ClassInfo{class}{text}: a note in the log only."),
+            .init(name: "typeout", arguments: "{text}", documentation: "\\typeout{text}: writes the text to the terminal and the log."),
+            .init(name: "MessageBreak", arguments: "", documentation: "A line break inside a \\PackageWarning/\\PackageError text."),
+        ]
+
+        static let kernelByName: [String: KernelCommand] = Dictionary(kernel.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
 
         /// Standard LaTeX commands and environments the hover documents
         /// although the compiler does not render them (it diagnoses them, so

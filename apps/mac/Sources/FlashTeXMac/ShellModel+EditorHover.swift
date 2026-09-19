@@ -37,6 +37,19 @@ extension ShellModel {
         return BibScanner.Sources(projectRoot: project.projectRoot, declaredPaths: documentKinds.bibliographyPaths, documents: docs)
     }
 
+    /// The project's package and class files, as paths: the open members
+    /// with a package extension, the manifest's package inputs (the root's
+    /// own `.sty`/`.cls` and the `texinputs` directories) and the resolved
+    /// packages, in that order — what `\usepackage{`/`\documentclass{`
+    /// completion offers before the CTAN names. Read once per list request.
+    var projectPackageFiles: [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for path in documents.map(\.path) where ProjectManifest.isPackagePath(path) && seen.insert(path).inserted { out.append(path) }
+        for row in manifest.rows + projectPackages.rows where seen.insert(row.path).inserted { out.append(row.path) }
+        return out
+    }
+
     /// How the active buffer is coloured: BibTeX when the helper reports it
     /// as a declared bibliography (`DocumentKinds.kind(of:)`), LaTeX when it
     /// reports LaTeX. With no kind reported (no helper attached, or a path
@@ -44,9 +57,11 @@ extension ShellModel {
     /// a reading aid, not a claim about the project's declared sources.
     /// A `.toml` buffer (the project manifest, ProjectManifest.swift) is
     /// plain text with comments whatever the helper declared: it is never
-    /// LaTeX. `.sty`/`.cls`/`.def`/`.clo` are LaTeX like any other source.
+    /// LaTeX. `.sty`/`.cls`/`.def`/`.clo` are LaTeX with `@` a letter
+    /// (`Language.package`), as they are while LaTeX reads them.
     var editorLanguage: SyntaxHighlighter.Language {
         if ProjectManifest.isManifestPath(activePath) { return .toml }
+        if ProjectManifest.isPackagePath(activePath) { return .package }
         switch documentKinds.kind(of: activePath) {
         case .bibliography: return .bibtex
         case .latex: return .latex

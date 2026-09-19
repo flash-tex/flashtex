@@ -282,11 +282,20 @@ struct NewFileSheet: View {
                 .accessibilityIdentifier("project.newfile.name")
                 .onSubmit { if case .success = resolved { Task { await state.createFile() } } }
             switch resolved {
-            case .success(let path): Text("Creates \(path)").font(.caption).foregroundStyle(.secondary)
-            case .failure(let f): Text(state.newFileName.isEmpty ? "A .tex name, subfolders allowed, inside the project folder." : f.text).font(.caption).foregroundStyle(state.newFileName.isEmpty ? Color.secondary : DS.Colors.severityWarning)
+            case .success(let path):
+                // A `.sty`/`.cls` name gets the ltclass template (ProjectScaffold.swift `PackageTemplate`).
+                Text(PackageTemplate.kind(of: path) == nil ? "Creates \(path)"
+                     : "Creates \(path) with a \(PackageTemplate.kind(of: path) == .package ? "package" : "class") template (\\NeedsTeXFormat, \\Provides…, \\ProcessOptions)")
+                    .font(.caption).foregroundStyle(.secondary)
+            case .failure(let f): Text(state.newFileName.isEmpty ? "A .tex, .sty or .cls name, subfolders allowed, inside the project folder." : f.text).font(.caption).foregroundStyle(state.newFileName.isEmpty ? Color.secondary : DS.Colors.severityWarning)
             }
-            Toggle("Insert \\input{…} at the caret in \(model.activePath)", isOn: $state.insertReference)
-                .accessibilityIdentifier("project.newfile.insert")
+            // `\usepackage{…}` for a new package; nothing to insert for a class.
+            if case .success(let path) = resolved, PackageTemplate.kind(of: path) == .documentClass {
+                Text("A class is named by the document's \\documentclass; nothing is inserted.").font(.caption).foregroundStyle(.secondary)
+            } else {
+                Toggle("Insert \({ if case .success(let p) = resolved, PackageTemplate.kind(of: p) == .package { return "\\usepackage{…}" } else { return "\\input{…}" } }()) at the caret in \(model.activePath)", isOn: $state.insertReference)
+                    .accessibilityIdentifier("project.newfile.insert")
+            }
             if let note = state.note { Text(note).font(.callout).foregroundStyle(DS.Colors.severityWarning).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Spacer()

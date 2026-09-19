@@ -263,15 +263,17 @@ enum NewFilePath {
         }
     }
 
-    /// `raw` normalized to a rooted `.tex` path.
+    /// `raw` normalized to a rooted `.tex` path — or a `.sty`/`.cls` path
+    /// when the name says so (a package or class file gets its template,
+    /// `PackageTemplate`); any other extension is completed with `.tex`.
     static func resolve(_ raw: String) -> Result<String, Failure> {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let path: String
         do { path = try ProjectIncludes.normalize(trimmed) }
         catch { return .failure(.invalid("\(error)")) }
-        let withExt = path.hasSuffix(".tex") ? path : path + ".tex"
+        let withExt = path.hasSuffix(".tex") || PackageTemplate.kind(of: path) != nil ? path : path + ".tex"
         if withExt == ProjectTemplate.entryPath { return .failure(.isEntry) }
-        if withExt.split(separator: "/").last.map({ $0 == ".tex" }) ?? true { return .failure(.invalid("empty file name")) }
+        if withExt.split(separator: "/").last.map({ $0 == ".tex" || $0 == ".sty" || $0 == ".cls" }) ?? true { return .failure(.invalid("empty file name")) }
         return .success(withExt)
     }
 
@@ -280,9 +282,101 @@ enum NewFilePath {
         path.hasSuffix(".tex") ? String(path.dropLast(4)) : path
     }
 
-    /// The `\input{…}` line inserted at the caret, on its own line.
+    /// The command that references a new file from the document that made
+    /// it: `\input{sections/a}` for a `.tex` file, `\usepackage{mystyle}`
+    /// for a `.sty` (the compiler resolves it by name next to the entry),
+    /// nil for a `.cls` — a class is named by `\documentclass`, which the
+    /// document already has.
+    static func referenceCommand(for path: String, kind: ProjectIncludes.Kind = .input) -> String? {
+        switch PackageTemplate.kind(of: path) {
+        case .package: return "\\usepackage{\(PackageTemplate.name(of: path))}"
+        case .documentClass: return nil
+        case nil: return "\\\(kind.rawValue){\(inputArgument(for: path))}"
+        }
+    }
+
+    /// The `\input{…}` (or `\usepackage{…}`) line inserted at the caret, on its own line.
     static func referenceText(for path: String, kind: ProjectIncludes.Kind = .input, into text: String, atByte byte: Int) -> String {
-        Insertion.insertionText("\\\(kind.rawValue){\(inputArgument(for: path))}", into: text, atByte: byte)
+        Insertion.insertionText(referenceCommand(for: path, kind: kind) ?? "", into: text, atByte: byte)
+    }
+}
+
+// MARK: - package and class templates
+
+/// What File › New File… writes into a fresh `.sty` or `.cls` (and the
+/// "Create mystyle.sty" quick fix on the compiler's missing-package
+/// diagnostic, ProblemsPanel.swift): the ltclass preamble every package
+/// and class starts with, with today's date in the `\Provides…` line.
+/// A `.tex` gets no template (nil), as before.
+enum PackageTemplate {
+    enum Kind: Equatable { case package, documentClass }
+
+    /// `.sty` → package, `.cls` → class, anything else nil.
+    static func kind(of path: String) -> Kind? {
+        switch (path as NSString).pathExtension.lowercased() {
+        case "sty": return .package
+        case "cls": return .documentClass
+        default: return nil
+        }
+    }
+
+    /// The name `\ProvidesPackage`/`\usepackage` use: the file name without
+    /// its extension (`styles/mystyle.sty` → `mystyle`).
+    static func name(of path: String) -> String {
+        ((path as NSString).lastPathComponent as NSString).deletingPathExtension
+    }
+
+    /// `yyyy/mm/dd` as `\ProvidesPackage` wants it.
+    static func dateStamp(_ date: Date = Date()) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy/MM/dd"
+        return f.string(from: date)
+    }
+
+    /// The template for `path`, nil when it is not a package or class file.
+    static func text(for path: String, date: Date = Date()) -> String? {
+        guard let kind = kind(of: path) else { return nil }
+        let name = name(of: path)
+        let stamp = dateStamp(date)
+        switch kind {
+        case .package:
+            return """
+            \\NeedsTeXFormat{LaTeX2e}
+            \\ProvidesPackage{\(name)}[\(stamp) v1.0 \(name)]
+
+            % Options: \\DeclareOption{name}{code}, then \\ProcessOptions.
+            \\DeclareOption*{\\PackageWarning{\(name)}{Unknown option `\\CurrentOption'}}
+            \\ProcessOptions\\relax
+
+            % Packages this one needs.
+            % \\RequirePackage{xcolor}
+
+            % Definitions (\\@ is a letter here: no \\makeatletter needed).
+
+            \\endinput
+
+            """
+        case .documentClass:
+            return """
+            \\NeedsTeXFormat{LaTeX2e}
+            \\ProvidesClass{\(name)}[\(stamp) v1.0 \(name)]
+
+            % Options not declared here go to the parent class.
+            \\DeclareOption*{\\PassOptionsToClass{\\CurrentOption}{article}}
+            \\ProcessOptions\\relax
+            \\LoadClass{article}
+
+            % Packages this class needs.
+            % \\RequirePackage{geometry}
+
+            % Definitions (\\@ is a letter here: no \\makeatletter needed).
+
+            \\endinput
+
+            """
+        }
     }
 }
 
@@ -404,16 +498,18 @@ extension ProjectDocuments {
         }
     }
 
-    /// New File…: writes `<root>/<path>` (empty, or `text`) and opens it as a
-    /// member with `role`. Refuses an existing file, a path outside the root,
-    /// and the entry document's name.
+    /// New File…: writes `<root>/<path>` (empty, or `text`; a `.sty`/`.cls`
+    /// with no text gets its `PackageTemplate`) and opens it as a member
+    /// with `role`. Refuses an existing file, a path outside the root, and
+    /// the entry document's name.
     @discardableResult
-    func createDocument(_ rawPath: String, text: String = "", role: ProjectDocument.Role = .opened) async -> CreateOutcome {
+    func createDocument(_ rawPath: String, text given: String = "", role: ProjectDocument.Role = .opened) async -> CreateOutcome {
         let path: String
         switch NewFilePath.resolve(rawPath) {
         case .success(let p): path = p
         case .failure(let f): return noteCreate(.refused("cannot create \(rawPath): \(f.text)"))
         }
+        let text = given.isEmpty ? (PackageTemplate.text(for: path) ?? "") : given
         if isOpen(path) { return noteCreate(.refused("cannot create \(path): it is already open")) }
         let url: URL
         switch newFileURL(path) {
@@ -455,6 +551,9 @@ extension ProjectDocuments {
     /// an edit is pending, so the switch waits for the editor).
     func newFile(_ rawPath: String, insertReference: Bool) async -> CreateOutcome {
         let referencing = model.activePath
+        // A `.sty` is referenced with `\usepackage{name}`; a `.cls` has no
+        // reference to insert (the document's `\documentclass` names it).
+        let insertReference = insertReference && NewFilePath.referenceCommand(for: (try? NewFilePath.resolve(rawPath).get()) ?? rawPath) != nil
         let outcome = await createDocument(rawPath, role: insertReference ? .included(from: referencing) : .opened)
         guard case .created(let path) = outcome else { return outcome }
         if insertReference, model.activePath == referencing {

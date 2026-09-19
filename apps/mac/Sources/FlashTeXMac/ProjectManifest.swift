@@ -47,6 +47,25 @@ final class ProjectManifest {
         path == fileName || path.hasSuffix("/" + fileName) || path.lowercased().hasSuffix(".toml")
     }
 
+    /// The extensions of a package input as the helper classifies them
+    /// (`crates/project-manifest`): a package, a class, and the `.def`/`.clo`
+    /// files they load.
+    nonisolated static let packageExtensions: Set<String> = ["sty", "cls", "def", "clo"]
+
+    /// Whether a project path is a package or class file: lexed with `@` a
+    /// letter (`SyntaxHighlighter.Language.package`), completed with the
+    /// kernel's vocabulary first, and — when the compiler reports a problem
+    /// inside it — marked at the `\usepackage` that loaded it.
+    nonisolated static func isPackagePath(_ path: String) -> Bool {
+        packageExtensions.contains((path as NSString).pathExtension.lowercased())
+    }
+
+    /// `mystyle.sty` for any of `mystyle.sty`, `texinputs/0/mystyle.sty`,
+    /// `packages/mystyle/mystyle.sty`: what the editor calls a package input.
+    nonisolated static func packageDisplayName(_ path: String) -> String {
+        (path as NSString).lastPathComponent
+    }
+
     /// One package input as the sidebar shows it.
     struct Row: Equatable, Sendable {
         var path: String

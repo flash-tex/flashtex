@@ -39,6 +39,11 @@ import AppKit
 ///   `file`; the control sequence defined by `\newcommand`-like commands is
 ///   `definition`.
 /// - `\verb<d>…<d>` is `verbatim` (plain) to the delimiter or the line end.
+/// - `@` is a letter of a control word between `\makeatletter` and
+///   `\makeatother` (so `\@ifnextchar` is one command token there) and
+///   everywhere in a `.sty`/`.cls` buffer (`Language.package`); elsewhere
+///   `\@` is the control symbol it is in a document. The flag is a
+///   line-start state like `Mode`, carried in `atLetters`.
 /// - Line breaks are `\n`; a `\r` is whitespace (CRLF sources).
 struct SyntaxHighlighter {
     enum Kind: UInt8, CaseIterable, Sendable {
@@ -100,15 +105,24 @@ struct SyntaxHighlighter {
     /// comments — the LaTeX roles and colours, nothing new to theme.
     enum Language: Equatable, Sendable {
         case latex, bibtex, toml
+        /// A package or class file (`.sty`, `.cls`, `.def`, `.clo`): LaTeX
+        /// in which `@` is a letter of every control word — the kernel's
+        /// `\@ifpackageloaded`, `\@tempdima` — as it is while such a file is
+        /// read, without a `\makeatletter`. `\makeatother` does not turn it
+        /// off here: a package's `@` names are its own, not the document's.
+        case package
 
         /// Mode the first line starts in.
         var initialMode: Mode {
             switch self {
-            case .latex: .text
+            case .latex, .package: .text
             case .bibtex: .bibtex(depth: 0, quoted: false)
             case .toml: .toml
             }
         }
+
+        /// Whether `@` is a control-word letter on the first line.
+        var initialAtLetter: Bool { self == .package }
     }
 
     static let mathEnvironments: Set<String> = [
@@ -130,6 +144,9 @@ struct SyntaxHighlighter {
         "input", "include", "includeonly", "includegraphics", "bibliography", "bibliographystyle", "usepackage",
         "documentclass", "RequirePackage", "addbibresource", "graphicspath", "lstinputlisting", "inputminted",
         "subfile", "import", "subimport", "includepdf", "InputIfFileExists",
+        // ltclass (package and class authoring): the package or class named.
+        "RequirePackageWithOptions", "LoadClass", "LoadClassWithOptions", "ProvidesPackage", "ProvidesClass", "ProvidesFile",
+        "PassOptionsToPackage", "PassOptionsToClass", "@ifpackageloaded", "@ifclassloaded",
     ]
     static let definitionCommands: Set<String> = [
         "newcommand", "renewcommand", "providecommand", "newcommand*", "renewcommand*", "providecommand*", "def", "gdef",
@@ -137,19 +154,24 @@ struct SyntaxHighlighter {
         "newenvironment*", "renewenvironment*", "NewDocumentCommand", "RenewDocumentCommand", "ProvideDocumentCommand",
         "DeclareDocumentCommand", "NewDocumentEnvironment", "newtheorem", "newtheorem*", "newlength", "newcounter",
         "newif", "newcolumntype", "DeclareRobustCommand", "DeclarePairedDelimiter", "newcommandx",
+        "@namedef", "DeclareOption", "newtoks", "newbox", "newdimen", "newskip", "newcount",
     ]
 
     // MARK: lexer
 
     /// Lexes `units[from..<to]` (UTF-16, with `base` the offset of `units[0]`
-    /// in the document) starting in `mode`. Runs are appended to `runs` when
-    /// given; the mode at `to` is returned. `to` should be a line end (or the
-    /// end of the text) for the returned mode to be a line-start mode.
+    /// in the document) starting in `mode`, with `atLetter` saying whether
+    /// `@` is a control-word letter there (updated to the state at `to`;
+    /// `package` pins it on). Runs are appended to `runs` when given; the
+    /// mode at `to` is returned. `to` should be a line end (or the end of
+    /// the text) for the returned mode to be a line-start mode.
     static func lex(_ units: UnsafeBufferPointer<UInt16>, from: Int, to: Int, base: Int, mode: Mode,
+                    atLetter: inout Bool, package: Bool = false,
                     runs: inout [Run], collect: Bool = true) -> Mode {
-        var state = Lexer(units: units, end: to, base: base, mode: mode, collect: collect)
+        var state = Lexer(units: units, end: to, base: base, mode: mode, atLetter: atLetter, package: package, collect: collect)
         state.run(from: from)
         if collect { runs.append(contentsOf: state.runs) }
+        atLetter = state.atLetter
         return state.mode
     }
 
@@ -158,6 +180,10 @@ struct SyntaxHighlighter {
         let end: Int
         let base: Int
         var mode: Mode
+        /// `@` is a letter of a control word (`\makeatletter`; a package file).
+        var atLetter: Bool
+        /// A `Language.package` buffer: `\makeatother` never turns `atLetter` off.
+        let package: Bool
         let collect: Bool
         var runs: [Run] = []
         /// Start of an open `math` run (merged across characters), or nil.
@@ -165,11 +191,14 @@ struct SyntaxHighlighter {
         /// Current line has only whitespace so far (for the blank-line rule).
         var lineBlank = true
 
-        init(units: UnsafeBufferPointer<UInt16>, end: Int, base: Int, mode: Mode, collect: Bool) {
-            self.units = units; self.end = end; self.base = base; self.mode = mode; self.collect = collect
+        init(units: UnsafeBufferPointer<UInt16>, end: Int, base: Int, mode: Mode, atLetter: Bool, package: Bool, collect: Bool) {
+            self.units = units; self.end = end; self.base = base; self.mode = mode
+            self.atLetter = atLetter; self.package = package; self.collect = collect
         }
 
         @inline(__always) static func isLetter(_ c: UInt16) -> Bool { (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) }
+        /// A letter of a control word: ASCII letters, plus `@` while `atLetter`.
+        @inline(__always) func isControlLetter(_ c: UInt16) -> Bool { Self.isLetter(c) || (atLetter && c == 0x40) }
         @inline(__always) static func isDigit(_ c: UInt16) -> Bool { c >= 0x30 && c <= 0x39 }
         @inline(__always) static func isSpace(_ c: UInt16) -> Bool { c == 0x20 || c == 0x09 || c == 0x0D }
         @inline(__always) static func isHighSurrogate(_ c: UInt16) -> Bool { c >= 0xD800 && c <= 0xDBFF }
@@ -191,7 +220,7 @@ struct SyntaxHighlighter {
         /// Control word letters after the backslash at `i`; returns the end.
         func controlWordEnd(after i: Int) -> Int {
             var j = i + 1
-            while j < end, Self.isLetter(units[j]) { j += 1 }
+            while j < end, isControlLetter(units[j]) { j += 1 }
             if j < end, j > i + 1, units[j] == 0x2A { j += 1 } // starred form: \newcommand*, \begin{align*} is the env
             return j
         }
@@ -346,7 +375,7 @@ struct SyntaxHighlighter {
             let next = i + 1 < end ? units[i + 1] : 0
             let inMath = mode.isMath
             let commandKind: Kind = inMath ? .mathCommand : .command
-            guard Self.isLetter(next) else {
+            guard isControlLetter(next) else {
                 // Control symbol (or a trailing lone backslash).
                 var j = min(end, i + 2)
                 if i + 1 < end, Self.isHighSurrogate(next), i + 2 < end { j = i + 3 }
@@ -408,6 +437,10 @@ struct SyntaxHighlighter {
                 return stop
             default:
                 emit(i, e, commandKind)
+                // `\makeatletter` … `\makeatother`: `@` joins control words
+                // in between (the kernel's private names). A package file
+                // keeps it on whatever it says.
+                if word == "makeatletter" { atLetter = true } else if word == "makeatother", !package { atLetter = false }
                 if SyntaxHighlighter.referenceCommands.contains(word) { return colourArgument(at: e, kind: .reference) }
                 if SyntaxHighlighter.fileCommands.contains(word) { return colourArgument(at: e, kind: .file) }
                 if SyntaxHighlighter.definitionCommands.contains(word) { return definedName(after: e) }
@@ -515,7 +548,7 @@ struct SyntaxHighlighter {
                 k = controlWordEnd(after: k)
                 if k == j + 1, k < end { k += 1 } // control symbol
             } else {
-                while k < end, Self.isLetter(units[k]) || units[k] == 0x2A { k += 1 }
+                while k < end, isControlLetter(units[k]) || units[k] == 0x2A { k += 1 }
             }
             guard k > j else { return e }
             emit(j, k, .definition)
@@ -531,6 +564,10 @@ struct SyntaxHighlighter {
     private(set) var lineStarts: [Int] = [0]
     /// Mode at the start of each line (`count == lineStarts.count`).
     private(set) var modes: [Mode]
+    /// Whether `@` is a control-word letter at the start of each line
+    /// (`count == lineStarts.count`): inside `\makeatletter`…`\makeatother`,
+    /// or always in a `Language.package` buffer.
+    private(set) var atLetters: [Bool]
     private(set) var length = 0
     /// Lines re-lexed by the last `edit` (evidence for tests/benchmarks).
     private(set) var lastEditLinesLexed = 0
@@ -541,6 +578,7 @@ struct SyntaxHighlighter {
     init(language: Language = .latex) {
         self.language = language
         modes = [language.initialMode]
+        atLetters = [language.initialAtLetter]
     }
 
     var lineCount: Int { lineStarts.count }
@@ -567,17 +605,22 @@ struct SyntaxHighlighter {
         length = text.length
         lineStarts = [0]
         modes = [language.initialMode]
+        atLetters = [language.initialAtLetter]
         lastEditLinesLexed = 0
         guard length > 0 else { return }
+        let package = language == .package
         withUnits(of: text, range: NSRange(location: 0, length: length)) { units in
             var mode = language.initialMode
+            var atLetter = language.initialAtLetter
             var lineStart = 0
             var runs: [Run] = []
             for i in 0..<length where units[i] == 0x0A {
-                mode = Self.lex(units, from: lineStart, to: i + 1, base: 0, mode: mode, runs: &runs, collect: false)
+                mode = Self.lex(units, from: lineStart, to: i + 1, base: 0, mode: mode, atLetter: &atLetter, package: package,
+                                runs: &runs, collect: false)
                 lineStart = i + 1
                 lineStarts.append(lineStart)
                 modes.append(mode)
+                atLetters.append(atLetter)
             }
         }
     }
@@ -615,6 +658,7 @@ struct SyntaxHighlighter {
         // Splice the line table in place; shift the old tail by the edit's delta.
         lineStarts.replaceSubrange((first + 1)..<tail, with: fresh)
         modes.replaceSubrange((first + 1)..<tail, with: repeatElement(.text, count: fresh.count))
+        atLetters.replaceSubrange((first + 1)..<tail, with: repeatElement(false, count: fresh.count))
         if delta != 0 {
             lineStarts.withUnsafeMutableBufferPointer { b in
                 var i = first + 1 + fresh.count
@@ -624,22 +668,27 @@ struct SyntaxHighlighter {
         length = newLength
         // Re-lex from `first` until convergence.
         let freshEndLine = first + fresh.count // first line whose stored mode is old
+        let package = language == .package
         var lineIndex = first
         var mode = modes[first]
+        var atLetter = atLetters[first]
         var lexed = 0
         var dirtyEnd = lineStarts[first]
         while lineIndex < lineStarts.count {
             let r = lineRange(lineIndex)
             var runs: [Run] = []
             withUnits(of: text, range: r) { units in
-                mode = Self.lex(units, from: 0, to: units.count, base: r.location, mode: mode, runs: &runs, collect: false)
+                mode = Self.lex(units, from: 0, to: units.count, base: r.location, mode: mode, atLetter: &atLetter, package: package,
+                                runs: &runs, collect: false)
             }
             lexed += 1
             dirtyEnd = NSMaxRange(r)
             let next = lineIndex + 1
             guard next < lineStarts.count else { break }
-            if next > freshEndLine, modes[next] == mode { break } // converged with an old line-start mode
+            // Converged with an old line-start state (mode and `@` flag both).
+            if next > freshEndLine, modes[next] == mode, atLetters[next] == atLetter { break }
             modes[next] = mode
+            atLetters[next] = atLetter
             lineIndex = next
         }
         lastEditLinesLexed = lexed
@@ -656,8 +705,10 @@ struct SyntaxHighlighter {
         let start = lineStarts[first]
         let end = NSMaxRange(lineRange(last))
         var runs: [Run] = []
+        var atLetter = atLetters[first]
         withUnits(of: text, range: NSRange(location: start, length: end - start)) { units in
-            _ = Self.lex(units, from: 0, to: units.count, base: start, mode: modes[first], runs: &runs)
+            _ = Self.lex(units, from: 0, to: units.count, base: start, mode: modes[first], atLetter: &atLetter,
+                         package: language == .package, runs: &runs)
         }
         if start == range.location, end == NSMaxRange(range) { return runs }
         return runs.compactMap { run in
@@ -684,15 +735,32 @@ struct SyntaxHighlighter {
     /// is checked against this rather than being a second opinion
     /// (`CaretContextTests.testAgreesWithTheSyntaxHighlighter`).
     func mode(at utf16: Int, text: NSString) -> Mode {
-        guard text.length == length, length > 0 else { return language.initialMode }
+        state(at: utf16, text: text).mode
+    }
+
+    /// Whether `@` is a control-word letter **at** `utf16` — inside a
+    /// `\makeatletter` block, or anywhere in a package buffer — by the same
+    /// one-line lex as `mode(at:)`. Completion reads it to take `\@ifnext`
+    /// as one token there.
+    func atLetter(at utf16: Int, text: NSString) -> Bool {
+        state(at: utf16, text: text).atLetter
+    }
+
+    /// Mode and `@` flag at `utf16`: the caret's line re-lexed from its own
+    /// start state up to the position (see `mode(at:)`).
+    func state(at utf16: Int, text: NSString) -> (mode: Mode, atLetter: Bool) {
+        guard text.length == length, length > 0 else { return (language.initialMode, language.initialAtLetter) }
         let clamped = max(0, min(utf16, length))
         let index = line(at: clamped)
         let start = lineStarts[index]
-        guard clamped > start else { return modes[index] }
+        guard clamped > start else { return (modes[index], atLetters[index]) }
         var runs: [Run] = []
-        return withUnits(of: text, range: NSRange(location: start, length: clamped - start)) { units in
-            Self.lex(units, from: 0, to: units.count, base: start, mode: modes[index], runs: &runs, collect: false)
+        var atLetter = atLetters[index]
+        let mode = withUnits(of: text, range: NSRange(location: start, length: clamped - start)) { units in
+            Self.lex(units, from: 0, to: units.count, base: start, mode: modes[index], atLetter: &atLetter,
+                     package: language == .package, runs: &runs, collect: false)
         }
+        return (mode, atLetter)
     }
 
     /// Kind of the run at `utf16` after a full lex (hover/tests), or nil for plain text.
