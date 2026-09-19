@@ -14,9 +14,7 @@ use crate::date::TodayDate;
 use crate::color::{ColorSpace, Colors, DeviceColor};
 use crate::diagnostics::Diagnostic;
 use crate::expansion::{self, ExpansionSite};
-use crate::lexer::{apply_text_ligatures, tokenize_document, Token, TokenKind};
-#[cfg(test)]
-use crate::lexer::tokenize;
+use crate::lexer::{apply_text_ligatures, tokenize, tokenize_document, Token, TokenKind};
 use crate::math::{self, MathList, MathPackages};
 use crate::natbib;
 use crate::siunitx;
@@ -124,6 +122,23 @@ impl PageStyleName {
 /// six to empty -- and `\fancyhead`/`\fancyfoot` fill them. The rule widths
 /// are fancyhdr's defaults (`\headrulewidth` 0.4pt, `\footrulewidth` 0pt);
 /// `\setlength` on either updates them.
+/// What a beamer deck declares for its theme's head/foot templates (issue
+/// #944, Tier 4): `\usetheme{<name>}` and the *short* forms of
+/// `\title[short]{..}`, `\author[short]{..}`, `\institute[short]{..}`,
+/// `\date[short]{..}` (`beamerbasetitle.sty`: `\beamer@shorttitle` and
+/// friends, the full argument when no short form is given). The infolines
+/// outer theme (Madrid) sets them in its footline on every frame; the
+/// render pipeline lays that out (`typeset/beamer.rs`). `theme` is `None`
+/// under the default theme.
+#[derive(Debug, Clone, Default)]
+pub struct BeamerDeck {
+    pub theme: Option<String>,
+    pub short_title: Vec<Inline>,
+    pub short_author: Vec<Inline>,
+    pub short_institute: Vec<Inline>,
+    pub short_date: Vec<Inline>,
+}
+
 #[derive(Debug, Clone)]
 pub struct FancyHdr {
     /// Header fields left, centre, right.
@@ -1809,6 +1824,9 @@ pub struct Parsed {
     /// `\fancyfoot` / `\fancyhf` / `\setlength{\headrulewidth}` ...),
     /// read by layout when a page ships under `\pagestyle{fancy}`.
     pub fancy: FancyHdr,
+    /// beamer's theme and short title-block forms (`None` outside
+    /// `\documentclass{beamer}`); see [`BeamerDeck`].
+    pub beamer: Option<BeamerDeck>,
 }
 
 impl Parsed {
@@ -2844,6 +2862,12 @@ pub fn parse_project_with(
         date: None,
         subtitle: None,
         institute: None,
+        beamer_theme: None,
+        short_title: None,
+        short_author: None,
+        short_institute: None,
+        short_date: None,
+        beamer_frame_groups: Vec::new(),
         beamer_frame: None,
         beamer_columns_depth: 0,
         beamer_block_overlays: Vec::new(),
@@ -2872,6 +2896,7 @@ pub fn parse_project_with(
     p.diags.extend(bibliography_diags);
     p.diags.extend(expanded.diagnostics);
     let blocks = p.document();
+    let beamer = p.beamer_deck();
 
     while let Some(open) = p.brace_stack.pop() {
         p.diags.push(Diagnostic::error(
@@ -2916,6 +2941,7 @@ pub fn parse_project_with(
         parameters: p.parameters,
         hyphenation: p.hyphenation,
         fancy: p.fancy,
+        beamer,
     }
 }
 
@@ -3158,6 +3184,19 @@ struct P<'a> {
     /// read by `\titlepage`. The optional short forms are dropped.
     subtitle: Option<(Vec<InputToken>, Span)>,
     institute: Option<(Vec<InputToken>, Span)>,
+    /// beamer's `\usetheme{<name>}` (the last one) and the `[short]` forms
+    /// of `\title`/`\author`/`\institute`/`\date` (`None` when the
+    /// command gave none: the full argument stands in), for the theme's
+    /// footline ([`BeamerDeck`]).
+    beamer_theme: Option<String>,
+    short_title: Option<Vec<InputToken>>,
+    short_author: Option<Vec<InputToken>>,
+    short_institute: Option<Vec<InputToken>>,
+    short_date: Option<Vec<InputToken>>,
+    /// `brace_stack.len()` when the body group of a `\frame{...}` command
+    /// was entered: the `}` that brings the stack back to that depth ends
+    /// the frame (`beamer_frame_end`).
+    beamer_frame_groups: Vec<usize>,
     /// The index in the body's block list of the open beamer frame's
     /// [`Block::BeamerFrameBegin`], so `\frametitle`/`\framesubtitle` in
     /// the body can patch its title; `None` outside a frame.
@@ -3642,6 +3681,14 @@ impl P<'_> {
                             self.overlay_groups.pop();
                             if render {
                                 para.push(Inline::OverlayEnd { span: tok.span });
+                            }
+                        }
+                        if self.beamer_frame_groups.last() == Some(&self.brace_stack.len()) {
+                            // The `}` of `\frame{...}`: `\end{frame}`.
+                            self.beamer_frame_groups.pop();
+                            if render {
+                                self.flush_paragraph(blocks, para);
+                                self.beamer_frame_end(tok.span, blocks);
                             }
                         }
                     }
@@ -4155,6 +4202,9 @@ impl P<'_> {
             "pause" | "onslide" | "uncover" | "only" | "visible" | "invisible" => self.beamer_overlay_command(name, span, para),
             "titlepage" => self.beamer_titlepage(span, blocks, para),
             "note" => self.beamer_note(name, span),
+            "frame" if self.is_beamer_class() && self.in_body && self.beamer_frame.is_none() => {
+                self.beamer_frame_command(span, blocks, para)
+            }
             "column" => self.beamer_column_command(name, span, blocks, para),
             "label" | "ref" | "pageref" | "eqref" | "thepage" => self.label_or_reference_command(name, span, para),
             "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
@@ -4299,20 +4349,21 @@ impl P<'_> {
         // beamerbasetitle.sty: `\title[short]{...}`, `\author[short]{...}`,
         // `\date[short]{...}` take an optional short form (for the
         // headline/footline templates), which article's never do.
-        if self.is_beamer_class() {
-            let _ = self.optional_bracket_argument();
-        }
+        let short = if self.is_beamer_class() { self.optional_bracket_tokens() } else { None };
         match name {
         "title" => {
             let (tokens, argument_span) = self.required_group(name, span);
+            self.short_title = short.or_else(|| Some(tokens.clone()));
             self.title = Some((tokens, span.merge(argument_span)));
         }
         "author" => {
             let (tokens, argument_span) = self.required_group(name, span);
+            self.short_author = short.or_else(|| Some(tokens.clone()));
             self.author = Some((tokens, span.merge(argument_span)));
         }
         "date" => {
             let (tokens, argument_span) = self.required_group(name, span);
+            self.short_date = short.or_else(|| Some(tokens.clone()));
             self.date = Some((tokens, span.merge(argument_span)));
         }
             _ => unreachable!("\\{name} is not in this command family"),
@@ -8287,6 +8338,13 @@ impl P<'_> {
     /// consumed here; the body parses with the ordinary dispatch until
     /// `\end{frame}`, which pushes the matching [`Block::BeamerFrameEnd`].
     fn beamer_frame_begin(&mut self, open: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        self.beamer_frame_head(open, blocks, para, true);
+    }
+
+    /// The shared head of `\begin{frame}` and `\frame`: the pause counter
+    /// reset, `<overlay>[options]<default overlay>` and, for the
+    /// environment (`with_titles`), the `{title}{subtitle}` groups.
+    fn beamer_frame_head(&mut self, open: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>, with_titles: bool) {
         self.flush_paragraph(blocks, para);
         // `\beamer@framepauses`: the pause counter restarts at 1 and no
         // slide is named yet.
@@ -8304,17 +8362,19 @@ impl P<'_> {
         // blank line ends the head, as `\@ifnextchar` stops at `\par`.
         let mut head: [Vec<Inline>; 2] = [Vec::new(), Vec::new()];
         let mut span = open;
-        for slot in head.iter_mut() {
-            self.skip_spaces();
-            if !matches!(
-                self.peek().map(|token| &token.kind),
-                Some(TokenKind::LBrace)
-            ) {
-                break;
+        if with_titles {
+            for slot in head.iter_mut() {
+                self.skip_spaces();
+                if !matches!(
+                    self.peek().map(|token| &token.kind),
+                    Some(TokenKind::LBrace)
+                ) {
+                    break;
+                }
+                let (tokens, title_span) = self.required_group("frame", open);
+                span = span.merge(title_span);
+                *slot = self.inlines_from_tokens(tokens, TextStyle::default(), false);
             }
-            let (tokens, title_span) = self.required_group("frame", open);
-            span = span.merge(title_span);
-            *slot = self.inlines_from_tokens(tokens, TextStyle::default(), false);
         }
         let [title, subtitle] = head;
         self.beamer_frame = Some(blocks.len());
@@ -8631,14 +8691,73 @@ impl P<'_> {
         if !self.beamer_command_available(name, span) {
             return;
         }
-        let _ = self.optional_bracket_argument();
+        let short = self.optional_bracket_tokens();
         let (tokens, argument_span) = self.required_group(name, span);
+        if name == "institute" {
+            // `\beamer@shortinstitute`: the short form, or the whole
+            // argument (`\@dblarg`).
+            self.short_institute = short.or_else(|| Some(tokens.clone()));
+        }
         let value = Some((tokens, span.merge(argument_span)));
         if name == "subtitle" {
             self.subtitle = value;
         } else {
             self.institute = value;
         }
+    }
+
+    /// `\frame<spec>[options]{body}` (beamer, the command form of the
+    /// `frame` environment: `\beamer@framecommand`): the head is read as
+    /// for `\begin{frame}`, minus the `{title}{subtitle}` groups — the first
+    /// brace group *is* the body. The body's `{` opens an ordinary group
+    /// whose `}` is the frame's end (`beamer_frame_groups`). Inside a frame
+    /// beamer `\let\frame=\framelatex` (the kernel's boxed `\frame`); that
+    /// case never reaches here (the dispatch arm is gated on no open frame)
+    /// and stays the unknown-command path.
+    fn beamer_frame_command(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        self.beamer_frame_head(span, blocks, para, false);
+        self.skip_spaces();
+        match self.peek() {
+            Some(token) if token.kind == TokenKind::LBrace => {
+                let open = token.span;
+                self.i += 1;
+                self.beamer_frame_groups.push(self.brace_stack.len());
+                self.open_group(open);
+            }
+            _ => {
+                // beamer: `\frame` followed by a single token frames just
+                // that token; a missing body is an empty frame here.
+                self.diags.push(Diagnostic::error(
+                    "\\frame requires a braced body (e.g. \\frame{\\frametitle{..} ...})",
+                    Some(span),
+                    Some("set an empty frame and continued".into()),
+                ));
+                self.beamer_frame_end(span, blocks);
+            }
+        }
+    }
+
+    /// The deck's theme and short title-block forms as resolved inline
+    /// content, once the whole document is parsed (`None` outside beamer).
+    fn beamer_deck(&mut self) -> Option<BeamerDeck> {
+        if !self.is_beamer_class() {
+            return None;
+        }
+        let taken = [self.short_title.take(), self.short_author.take(), self.short_institute.take(), self.short_date.take()];
+        let mut field = |tokens: Option<Vec<InputToken>>| -> Vec<Inline> {
+            match tokens {
+                Some(tokens) => self.inlines_from_tokens(tokens, TextStyle::default(), false),
+                None => Vec::new(),
+            }
+        };
+        let [short_title, short_author, short_institute, short_date] = taken.map(&mut field);
+        Some(BeamerDeck {
+            theme: self.beamer_theme.take(),
+            short_title,
+            short_author,
+            short_institute,
+            short_date,
+        })
     }
 
     /// `\titlepage` (beamer): the [`Block::BeamerTitlePage`] of everything
@@ -8743,7 +8862,17 @@ impl P<'_> {
             if !matches!(self.peek().map(|token| &token.kind), Some(TokenKind::LBrace)) {
                 break;
             }
-            let _ = self.required_group(name, span);
+            let (tokens, _) = self.required_group(name, span);
+            if name == "usetheme" {
+                // `\usetheme{Madrid}` (a comma list loads several; the last
+                // one wins for the outer/inner/colour set the pipeline
+                // models): the name the render pipeline's theme table reads.
+                let theme = token_text(&tokens);
+                let theme = theme.split(',').next_back().unwrap_or("").trim();
+                if !theme.is_empty() {
+                    self.beamer_theme = Some(theme.to_string());
+                }
+            }
         }
     }
 
@@ -10224,6 +10353,50 @@ impl P<'_> {
             .with_help("add a closing ']'"));
         }
         Some((content, span))
+    }
+
+    /// [`Self::optional_bracket_argument`], but the argument's *tokens*
+    /// (for `inlines_from_tokens`): beamer's `\title[short]{..}` short
+    /// form, which its footline typesets. The `[`/`]` are trimmed off the
+    /// first and last word; a word that carries text past the `]` keeps
+    /// only its tail in the stream, so the part before the bracket is
+    /// re-lexed from the raw text (`[a]b` is not a form the decks use).
+    fn optional_bracket_tokens(&mut self) -> Option<Vec<InputToken>> {
+        self.skip_spaces();
+        let start = self.i;
+        let (raw, span) = self.optional_bracket_argument()?;
+        let mut tokens: Vec<InputToken> = self.t[start..self.i].to_vec();
+        let closed_in_range = tokens
+            .last()
+            .is_some_and(|t| matches!(&t.token.kind, TokenKind::Word(w) if w.ends_with(']')));
+        if !closed_in_range {
+            // The closing `]` sat inside a word with a tail (`[a]b`): the
+            // stream keeps the tail only. Re-lex the raw argument instead.
+            let document = span.document;
+            return Some(
+                tokenize(&raw)
+                    .into_iter()
+                    .map(|mut token| {
+                        token.span = Span::in_document(document, span.start + 1 + token.span.start, span.start + 1 + token.span.end);
+                        InputToken { token, definition: None, maps_to_invocation: false }
+                    })
+                    .collect(),
+            );
+        }
+        if let Some(last) = tokens.last_mut() {
+            if let TokenKind::Word(w) = &mut last.token.kind {
+                w.pop();
+            }
+        }
+        if let Some(first) = tokens.first_mut() {
+            if let TokenKind::Word(w) = &mut first.token.kind {
+                if w.starts_with('[') {
+                    w.remove(0);
+                }
+            }
+        }
+        tokens.retain(|t| !matches!(&t.token.kind, TokenKind::Word(w) if w.is_empty()));
+        Some(tokens)
     }
 
     /// latex.ltx `\@getpen` of a `\linebreak`/`\pagebreak`-family priority
