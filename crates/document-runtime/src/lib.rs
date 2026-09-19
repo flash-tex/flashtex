@@ -908,6 +908,7 @@ fn validate_reply_value(v: Value, r: &Request, requested: &[String]) -> Result<V
             || !matches!(
                 cap.as_str(),
                 "rules-v1" | "font-hints-v1" | "display-list-v2" | "display-list-v2-images"
+                    | "display-list-v2-diagnostics"
             )
     }) {
         return Err("compiler accepted unknown or unrequested capability".into());
@@ -918,6 +919,12 @@ fn validate_reply_value(v: Value, r: &Request, requested: &[String]) -> Result<V
         && !accepted.iter().any(|cap| cap == "display-list-v2")
     {
         return Err("compiler accepted display-list-v2-images without display-list-v2".into());
+    }
+    // PROPOSAL display-list-v2-diagnostics: same pairing rule as images.
+    if accepted.iter().any(|cap| cap == "display-list-v2-diagnostics")
+        && !accepted.iter().any(|cap| cap == "display-list-v2")
+    {
+        return Err("compiler accepted display-list-v2-diagnostics without display-list-v2".into());
     }
 
     if !matches!(p["status"].as_str(), Some("ok" | "recovered" | "failed"))
@@ -1114,6 +1121,46 @@ mod project_root_tests {
             &both
         )
         .is_err());
+    }
+    #[test]
+    fn diagnostics_capability_is_accepted_only_when_requested_with_display_list() {
+        let r = request();
+        let reply = |caps: Value| {
+            serde_json::json!({"protocol_version":1,"id":"r1","type":"compile_result",
+                "payload":{"project_id":"p","revision":1,"status":"ok","pages":[],
+                "diagnostics":[],"layout_capabilities":caps}})
+        };
+        let both: Vec<String> = vec![
+            "display-list-v2".into(),
+            "display-list-v2-diagnostics".into(),
+        ];
+        assert!(validate_reply_value(reply(serde_json::json!(both)), &r, &both).is_ok());
+        assert!(
+            validate_reply_value(reply(serde_json::json!(["display-list-v2"])), &r, &both).is_ok()
+        );
+        let plain: Vec<String> = vec!["display-list-v2".into()];
+        assert!(validate_reply_value(reply(serde_json::json!(both)), &r, &plain).is_err());
+        // Alone: pairing error, not the unknown-cap error.
+        assert_eq!(
+            validate_reply_value(
+                reply(serde_json::json!(["display-list-v2-diagnostics"])),
+                &r,
+                &both
+            )
+            .unwrap_err(),
+            "compiler accepted display-list-v2-diagnostics without display-list-v2"
+        );
+        // Unknown: still refused even when requested.
+        let unknown: Vec<String> = vec!["display-list-v2".into(), "not-a-capability".into()];
+        assert_eq!(
+            validate_reply_value(
+                reply(serde_json::json!(unknown)),
+                &r,
+                &unknown
+            )
+            .unwrap_err(),
+            "compiler accepted unknown or unrequested capability"
+        );
     }
 }
 

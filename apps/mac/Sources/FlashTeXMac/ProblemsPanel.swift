@@ -7,7 +7,11 @@ import FlashTeXProtocol
 /// Esc / ⌘C, "N places", explanation lines and Fix… quick fixes). The list
 /// receives the full `displayedDiagnostics` and only hides groups by
 /// severity, so explanation and quick-fix indices stay those of the result.
-/// View > Toggle Problems (⌘⇧M) and the sidebar's Problems rows show it.
+/// When `compile_result.diagnostics` is empty, that list is the live v2
+/// frame mapped through `asRuntimeV1` (`ShellModel.producerDiagnostics`);
+/// when both sources list rows, runtime-v1 wins and the v2 sibling is not
+/// concatenated. View > Toggle Problems (⌘⇧M) and the sidebar's Problems
+/// rows show it.
 struct ProblemsPanel: View {
     @Environment(ShellModel.self) var model
 
