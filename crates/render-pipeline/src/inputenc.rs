@@ -329,7 +329,7 @@ fn declared(source: &str) -> Option<BTreeSet<char>> {
 
 /// A dfu expansion's text command and its argument: `\@tabacckludge'e` →
 /// (`\'`, `e`), `\k a` → (`\k`, `a`), `\k{}` → (`\k`, ``), `\th` → (`\th`, ``).
-fn command_of(expansion: &str) -> Option<(String, String)> {
+pub(crate) fn command_of(expansion: &str) -> Option<(String, String)> {
     let body = expansion.strip_prefix('\\')?;
     let (cmd, rest) = if let Some(after) = body.strip_prefix("@tabacckludge") {
         let accent = after.chars().next()?;

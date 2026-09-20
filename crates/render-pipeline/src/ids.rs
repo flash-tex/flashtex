@@ -182,6 +182,50 @@ impl EncodingCode {
             }
         }
     }
+
+    /// The TS1 (text companion) slot of a character that T1 has no slot for
+    /// and that the kernel sets from the companion font instead: `©` is
+    /// `\textcopyright`, declared `\DeclareTextSymbolDefault{..}{TS1}`
+    /// (latex.ltx 14425, slot 169 of `ts1enc.def`), likewise `®`, `™`, `°`,
+    /// `×`, `€`… The tables are the `*.dfu`/`ts1enc.def`
+    /// declarations `flashtex-tex-text-encoding` carries. `None` for a T1
+    /// character (never consulted for one), for ASCII, for a character
+    /// nobody declares, and for one whose T1 meaning is not a TS1 symbol
+    /// (an accent, a macro such as `\textellipsis`).
+    pub fn ts1_symbol(ch: char) -> Option<EncodingCode> {
+        use flashtex_tex_text_encoding::encoding::{self, Declared, Default, Encoding as E, Resolution};
+        if ch.is_ascii() || EncodingCode::for_char(ch, Encoding::T1).is_some() {
+            return None;
+        }
+        let (expansion, _) = flashtex_tex_text_encoding::unicode::lookup_declared(ch)?;
+        let (cmd, arg) = crate::inputenc::command_of(expansion)?;
+        if !arg.is_empty() {
+            return None;
+        }
+        let from_companion = match encoding::resolve(E::T1, &cmd) {
+            Resolution::Default(Default::Symbol(E::TS1)) => true,
+            // `\CheckEncodingSubset\UseTextSymbol{TS1}<fake>{n}\cmd` and
+            // `\tc@check@symbol{n}\cmd` (latex.ltx 10430): the TS1 glyph is
+            // used when `n` exceeds the family's `\DeclareEncodingSubset`
+            // (`cmr` 0, `lmr` 1); `\texteuro` is `{8}`, `\textcelsius` `{9}`.
+            Resolution::Default(Default::Command(body)) => {
+                (body.starts_with("\\CheckEncodingSubset\\UseTextSymbol{TS1}") || body.starts_with("\\tc@check@symbol{"))
+                    && body
+                        .rfind('{')
+                        .and_then(|at| body[at + 1..].split('}').next())
+                        .and_then(|n| n.parse::<u8>().ok())
+                        .is_some_and(|n| n >= 2)
+            }
+            _ => false,
+        };
+        if !from_companion {
+            return None;
+        }
+        match encoding::declared(E::TS1, &cmd)? {
+            Declared::Symbol(slot) => Some(EncodingCode(slot)),
+            _ => None,
+        }
+    }
 }
 
 /// Resolves a Unicode character to an original glyph id of `face` through
@@ -210,6 +254,20 @@ mod tests {
         assert_eq!(EncodingCode::for_char('Œ', Encoding::T1), Some(EncodingCode(0xD7)));
         assert_eq!(EncodingCode::for_char('×', Encoding::T1), None);
         assert_eq!(EncodingCode::for_char('ǅ', Encoding::T1), None);
+        // `ts1enc.def` slots of the kernel's TS1-default symbols.
+        assert_eq!(EncodingCode::ts1_symbol('©'), Some(EncodingCode(169)));
+        assert_eq!(EncodingCode::ts1_symbol('®'), Some(EncodingCode(174)));
+        assert_eq!(EncodingCode::ts1_symbol('°'), Some(EncodingCode(176)));
+        assert_eq!(EncodingCode::ts1_symbol('™'), Some(EncodingCode(151)));
+        assert_eq!(EncodingCode::ts1_symbol('€'), Some(EncodingCode(191)));
+        assert_eq!(EncodingCode::ts1_symbol('×'), Some(EncodingCode(214)));
+        // A T1 character, ASCII, a kernel macro (`\textellipsis`) and an
+        // undeclared character are not companion symbols.
+        assert_eq!(EncodingCode::ts1_symbol('é'), None);
+        assert_eq!(EncodingCode::ts1_symbol('£'), None);
+        assert_eq!(EncodingCode::ts1_symbol('a'), None);
+        assert_eq!(EncodingCode::ts1_symbol('…'), None);
+        assert_eq!(EncodingCode::ts1_symbol('ǅ'), None);
         for code in 0x20u8..=0xFF {
             if let Some(c) = EncodingCode(code).to_char(Encoding::T1) {
                 assert_eq!(EncodingCode::for_char(c, Encoding::T1), Some(EncodingCode(if code == 0x7F { 0x2D } else { code })), "slot {code:#x}");

@@ -1733,6 +1733,1231 @@
       "path": "fonts/tfm/jknappen/ec/ecso3583.tfm",
       "sha256": "609d583b5084650c8ac4fd9d3bb31a9a5967b4becb2b47a54fe72eb53a3a9593",
       "byte_length": 3584
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbi0500.tfm",
+      "sha256": "cccba04a6f3a7f1e84438cce6963e93aea0960300b64eeb6386c6fd3ecc58969",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbi0600.tfm",
+      "sha256": "43151e23cb1afce9533eba5103ac1ccad93a2e6bb49ce75525dececd4dc084f2",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbi0700.tfm",
+      "sha256": "b02777bd236d745a898a524f26c34e15bc70064a7070ba8f6be60cc2130195fa",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbi0800.tfm",
+      "sha256": "163094ed62a4ebab35d159d76fcee88ea8d1fab151bc9b2daa2c016b9011aa7f",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbi0900.tfm",
+      "sha256": "2fbc241c5d25f24f802d72991831af91654773ee27e7dd7e2139648428f45ade",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbi1000.tfm",
+      "sha256": "e5e90c8a062283a44d22c7336510bfb19dfcf25cfd9123bcdd365a0fbbc2519e",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbi1095.tfm",
+      "sha256": "7cbc04119d6e15cffc760acede0f2c1bb39ff91a120c819d6864029b344ba0bb",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbi1200.tfm",
+      "sha256": "31a2a4ab416aa96948607d1f1a5b695ecc9551ed59d9e7a4bd9a9d450e145ea1",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbi1440.tfm",
+      "sha256": "1c9cf2372fb0a8a2b70f93469290798e7a4384a355c88fe6ac5fd316a83590a7",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbi1728.tfm",
+      "sha256": "60556dee1a4bfdb3b54331b632787514989fe35e43c85d97004fa6235085bb35",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbi2074.tfm",
+      "sha256": "5f46389b928021c6f9411854a6814242519cf093c091c8e4a944b11e18c644e1",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbi2488.tfm",
+      "sha256": "01acfe8302ade01136471bd99484c27ecfb47d3331811df1dbb77fa68aa9d8ed",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbi2986.tfm",
+      "sha256": "eeec88a57c2fe7ec6d245092d14ec06d53df96b5191bf20e3a30e1a217297504",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbi3583.tfm",
+      "sha256": "12e144c6eb6bfd23c3b3ff70a7863a20560640b193c2108601ba69d5b28632e8",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbl0500.tfm",
+      "sha256": "fe89629acfff4edf20a7f27d33c82c09e408783671c8c73b0292c17364e5dd75",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbl0600.tfm",
+      "sha256": "267bbc608fffc7ba4d89ff49f653891c14beac6893d1853ef2a67402a2628c56",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbl0700.tfm",
+      "sha256": "b3854cd13742ac3a83e1c59fba4826b692ed52271a63146e4bc7b4f714167371",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbl0800.tfm",
+      "sha256": "d14decceb924e31494d88a4483d6c0dbc1544689a334dd7bb4ef3cb22346c1af",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbl0900.tfm",
+      "sha256": "9bea9413db26a2317ee5bac66e2018d84b2079788d644dbf112068e424d07d94",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbl1000.tfm",
+      "sha256": "f385837c23053adeb39a377929a265ef6f02a7477b75cb0ad725d99ef4e0d40f",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbl1095.tfm",
+      "sha256": "7426ea55c94ef62a9099e2f007cad0fa44e270a3f28e4fbcdcaa459e690fcf2c",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbl1200.tfm",
+      "sha256": "523181c9d7c5b64b2e54e78fd75cb59608a0445829885ec1a3d909864139380c",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbl1440.tfm",
+      "sha256": "5bf75c13f0e1f06a32205e00046d955f843a04d0392a65d3f798fe363d0ea98d",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbl1728.tfm",
+      "sha256": "f28d7de50baddcc3daca85300f23e2410c855a8814c8fa0f4bec37bf8d3cbbf7",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbl2074.tfm",
+      "sha256": "4f602a5b6ab2233ca935279e22e586851f5447666552523bffdb432b1d452dd0",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbl2488.tfm",
+      "sha256": "161328a2d36faff55ccc354cdd36a840e2eeaa2c751b4c909170cc319f3f4635",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbl2986.tfm",
+      "sha256": "9cbceb3a750e7e774534b0de8be861b9e2d625ff658344c0f0cd151bbfb84b2c",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbl3583.tfm",
+      "sha256": "c317cd80bb3c02952fa749e13b88deb1d083b149e7d1e13f30866feea830409d",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbx0500.tfm",
+      "sha256": "c3d912fdde2daa841bf945f75c0064ca1b2c4037c0a82044422e51787d2d70cc",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbx0600.tfm",
+      "sha256": "89151d88349082cc55a69ea5fddfb052814f615db2ac0008261ec88358ad8ed5",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbx0700.tfm",
+      "sha256": "a54f332f88d96ee1babb1bf7f9ec7d108837c041081b49d38abc2a4def3a9178",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbx0800.tfm",
+      "sha256": "8070d48858fe48cb120b76338d2adc737bf991e767ddef85e806b0b0df9c5416",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbx0900.tfm",
+      "sha256": "2bba03df92f772675e2d810f10832bc15d9df2bba841b77273e8b6518a793d1c",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbx1000.tfm",
+      "sha256": "e58cbfff82c74427655ea423181f587605fe56c8e8ffb769e6f42ac61ae85e69",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbx1095.tfm",
+      "sha256": "6008c9e187ff688dd8f095e34f8fb1413dfd823be8f0a47267f81f9a3f4818b2",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbx1200.tfm",
+      "sha256": "f80d9b0b3ab82c1560dbeda3279c61a79beadeaaceacf9235460ef02dedb0825",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbx1440.tfm",
+      "sha256": "07c4db2484eeffd9c117c90804025bd86343d6a68ec6f447f2a13325915e1a73",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbx1728.tfm",
+      "sha256": "1b3649a2f47395a296c3426323a4b8d6262540710cc21970b7b2f3c0e6d68e07",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbx2074.tfm",
+      "sha256": "44fdc17e322f9b794400b00c65fad01b5147010195c26675748911285eea50fd",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbx2488.tfm",
+      "sha256": "180ca8c2c068c48e8da78d5df2d231f3f6db9ab7d00c7edea624954adcf83543",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbx2986.tfm",
+      "sha256": "b436896e6d5f961999682c00d2b5bbdb805df85d51e435e4188202b8bfe2d648",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcbx3583.tfm",
+      "sha256": "b3c78432612139f1c7c94dfb3bc6a71fbe7389161155f404f4fa4d6d94c9924d",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcit0800.tfm",
+      "sha256": "a20cbd3352977c4354eff7d29ec8884f675f88f708ffd5553f34d7cea4748a07",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcit0900.tfm",
+      "sha256": "2e6c0590c8339a05476d83416555d2cd3937d70764059ea2bad9d1e914a84356",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcit1000.tfm",
+      "sha256": "94d64da6008ff9cab14fbb769304eab111e224937c7d7b16c5430ae13a862998",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcit1095.tfm",
+      "sha256": "6488675ad5af5b61c7d0af20242a9bacbcddf8904ef6e536ccd18e9a3c3ad035",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcit1200.tfm",
+      "sha256": "17dbee267b5d913a5ec723560a79a0ae7e514a63862eaed0b9ce935ea5cbdb02",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcit1440.tfm",
+      "sha256": "055ac14f2ced64f2aa841086ab1e4a77bfdb848e1ddfeca55191c9eb4658ac6f",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcit1728.tfm",
+      "sha256": "54cd6fd7e6bae28e86081a47ded28ce365700ad602f137d0a03ef8295a58991f",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcit2074.tfm",
+      "sha256": "523ccbcb20d540409737c0a72fbc80bb7cf27531f1359a080146b7d52d219879",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcit2488.tfm",
+      "sha256": "28aea0b750d1301a6e68d8853172cbeb7366b4fa3b9fd5002d7878dfd992ea0b",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcit2986.tfm",
+      "sha256": "473e62a9118dc235732ce0f5016b9b05db9098b3b3a24f54d7e9000cec73401a",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcit3583.tfm",
+      "sha256": "90ba3e5eca0e517477b67791b8415b30acb4eb3c8df9e7937a8e736b997a09b3",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrb0500.tfm",
+      "sha256": "c6669ba05bdd33ae13be218dcde49c663e43ce99173f4c96d935dcac6e782e4d",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrb0600.tfm",
+      "sha256": "9b516770b6dda8532a3af50328bb4cb777b551d34da4ea57625d7222fb73e57f",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrb0700.tfm",
+      "sha256": "f013b9796b77f19546ff1e912ea9aae097ba2ecf39266cb7fcf5b55ada4edd7b",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrb0800.tfm",
+      "sha256": "563b45c5207756f029a615d8ea4f115f18430391bb6bfdeb66460b56e29af0c7",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrb0900.tfm",
+      "sha256": "b2380449a7726db293a4c860f19c43ba52a038d14007e044797e1b3c59993dbb",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrb1000.tfm",
+      "sha256": "38a9e0ce6938f578d893bd1c1416a12c7413f0cf4f81b5d3984c63f4971e4b11",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrb1095.tfm",
+      "sha256": "a09b5a5d34d30014c758f43468dd1855139ac7e433cb0bbaede9f0e8a0173c5a",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrb1200.tfm",
+      "sha256": "5e82f410b322a44b4093acfd8de733c1c67dfc4a1f8d4cf78eccab62e1a1be5f",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrb1440.tfm",
+      "sha256": "54da26aad6f008bd819e67bfbc9066d5edee06bed459978a1685654e51900274",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrb1728.tfm",
+      "sha256": "c8b675f37ea5cbfe8dc7691a1321222bdbc218942ca066de1ea6e1d1c0a64b9d",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrb2074.tfm",
+      "sha256": "caecf8b53f38a2e2c145ae02224ad9a8728af73d6953aa9cef63315d06716aff",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrb2488.tfm",
+      "sha256": "d32d84865fe52630bfff9c2b0c12ee7eb1543e6945e70cc2c7627871d04ff9d7",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrb2986.tfm",
+      "sha256": "5bf83c6c95b120b21ff97103d4e4cb95eccb0455e6d05b5130ab5669e89bbd28",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrb3583.tfm",
+      "sha256": "db9bb6b2c9284388c3c3316e56084da4d3a654371459d26e90c97f2e33b73a8f",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrm0500.tfm",
+      "sha256": "95f9f5049cab511974e8bcc7c8382779ed546b423b58a22abf95e2c2deefc9ff",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrm0600.tfm",
+      "sha256": "48ea58eba78090568b1460744118faeabefda3d172fef33a6943e7108efa6003",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrm0700.tfm",
+      "sha256": "32cc904be1a9a86755c55c56bc06b84b64d45ddfaf4971e4d7e04f4b0f0adfcb",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrm0800.tfm",
+      "sha256": "e5d93b489de6e4eece8db6183d0a4ba504ecdf6edecf49bc8effea4d163f32a1",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrm0900.tfm",
+      "sha256": "de1605723982e67e44a00e303b3e7559268d5bd5aaa219ad3b882458832302d2",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrm1000.tfm",
+      "sha256": "748a696710f9bc67a3dbb825d863dc73a0fe802ec3473b28b11f222011028387",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrm1095.tfm",
+      "sha256": "2dff1d6a6df24e5dc7b7bd7af9c6d65160bdb39a2a6acf18b33a71d962520118",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrm1200.tfm",
+      "sha256": "bde495512f4eaf7102c6652e1af6071dfbe91cc6e07981bda936b3d2b94130b3",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrm1440.tfm",
+      "sha256": "75572222d928f020882561e8def36dea93ab9141d90279e9e898e6aea23a2e8f",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrm1728.tfm",
+      "sha256": "6745660ab0315b8d2f561f9fe887dae373bcba510152024e66c829956098cccb",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrm2074.tfm",
+      "sha256": "53b992ddccef03909d9233b7f65a2c5b47a06f6637a3a1ae331cfe0abaab8865",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrm2488.tfm",
+      "sha256": "fadaa16d1d52abcffcf8a146c8b64c52ccdb12bf2e23ac26d7668d3555c97903",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrm2986.tfm",
+      "sha256": "8bffdbee36519b7d79bcd4d00dacbc963cc66dbe37ce57eb367105447c989924",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcrm3583.tfm",
+      "sha256": "91399730b1ace1037b3051dfca4ea5d26ae1ede50f8e58addddd737227cddf77",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsi0800.tfm",
+      "sha256": "f34f6bc6acebdfb198f974af9883a0d94ce3a66423e85c6d74c9e4ff093260c5",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsi0900.tfm",
+      "sha256": "efa60d138e41c8b95f265d8c5d80f527ffb8398ec082065b6b564c9590774c70",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsi1000.tfm",
+      "sha256": "4cbf2a9f9f58535f6e69418d309ee44a8dcadffaed1d0d639c7499c243513c7b",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsi1095.tfm",
+      "sha256": "f1883f372170822adf0a680b1c278f2845d147dd3770576b5e5734da241b8dee",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsi1200.tfm",
+      "sha256": "7c3462d8c6a6b879f6ea4518a0f1e9036fefca5b30627d8c96434b594fde3588",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsi1440.tfm",
+      "sha256": "7bae77e585a10b4c180c14422ea77bf4e7a11037d44f126ce6b51a3a99386254",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsi1728.tfm",
+      "sha256": "0a2ddf2bc3ce458f7cf4e07749c7e7e3cc56a28d9069be2fb1570c7ccba4fdf0",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsi2074.tfm",
+      "sha256": "b1753b564bf8a4bc1c02466c275ed70155030adaaad417c0ce5d843b94273f88",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsi2488.tfm",
+      "sha256": "5771de3cbf82531454eeb70812563879c94e45c47de696f3cb6d8246b57a2660",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsi2986.tfm",
+      "sha256": "67fedf4d928220e2a5edadaa1cecb5113c4ef3a199125bf0c8cee7d9d291286e",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsi3583.tfm",
+      "sha256": "d5997a1fa72c8675c20d17603e9f3e07a08a59ad6757d1fbfe17edc9cc6c6597",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsl0500.tfm",
+      "sha256": "eafa53896b3f05480136f1e25ced1027e5b355d9a1b19d62377ee87f5c84905a",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsl0600.tfm",
+      "sha256": "becd3dc46ad2772aa6b3fc99ca764d2881ee7caa40ff4379bff5a2063150b1cd",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsl0700.tfm",
+      "sha256": "bde4abbb41ba5c8097ae357043cee57b3111510a9d5fe1233f6461a66ba7289a",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsl0800.tfm",
+      "sha256": "e5b20578f02e614a1975f36d83499c085212f12a702ee49fbeab787f68467bca",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsl0900.tfm",
+      "sha256": "625c619ba95d9861037ee5e18fbbbc38169d19f02e61f0a8b65505382ddf1d34",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsl1000.tfm",
+      "sha256": "d668f98b13c618e28774b2d3751fd8bf372887e1229865b4cbc13499aa41bb00",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsl1095.tfm",
+      "sha256": "268c7bcfed8460798be5b999cf796eac10d2e16360f2cd94f38f13d17890fe19",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsl1200.tfm",
+      "sha256": "ec8ce050a3f77aa9d62e3218739cdb633d4e2d5830c5a478e427d4ff067d5979",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsl1440.tfm",
+      "sha256": "6741ad3e5dcbddddc64261e430c34404cb62b20512798b4161da82442374edee",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsl1728.tfm",
+      "sha256": "992cd5cdf14dc76605dcb9ffb9a2a70f353837c5198fd94ec17f7e6c847b71dc",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsl2074.tfm",
+      "sha256": "4f8dc2369580a73f2199f246d950b330fc572b10b6f70354889735f39e462a1f",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsl2488.tfm",
+      "sha256": "d40b7d7040b828acef73313a1d089688b2ebff6238acb380e823b2131e4470b6",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsl2986.tfm",
+      "sha256": "af18e3a89a0c741e536c6ff579a91d90181569b6638a4403c185f539dc420fcd",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsl3583.tfm",
+      "sha256": "7d037c5920692025f611970cf304914f7e0b7749ab00bbbd8d27354eebecf68d",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcso0800.tfm",
+      "sha256": "ba04b274df61f70dc9665dcc87f5cecfddd55ffe3af7f6ea4688a1c30fb435b7",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcso0900.tfm",
+      "sha256": "19a1ccd7a9890855d1557a4d2cb7f1878b476733f299d9e7c09e01079451a0b7",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcso1000.tfm",
+      "sha256": "5064b9706bfc18e3327a46d2c3666f64b61b1073b93ece5ac74f5d63ec89c1a6",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcso1095.tfm",
+      "sha256": "989d6c932e918400aa9498e351703c09f9ccab0908da16ef85c280a532a97ce7",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcso1200.tfm",
+      "sha256": "9b2a82f6a426b5e3b41370ed5f4576904d91011b4333872a41939a648a084eec",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcso1440.tfm",
+      "sha256": "7fef0db5c2a0296b5224f40f334a8597f18cb6d363046ab08d1db76d2aa39c42",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcso1728.tfm",
+      "sha256": "c836092bc690819a37001a900df8b5baa0cfde70d42f22210577bdc5a987ff1e",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcso2074.tfm",
+      "sha256": "a1d549d89c63a9fc0dc58b92499bec2faae4cf83fdd3208505fe8649d357429b",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcso2488.tfm",
+      "sha256": "0b063ffb0907665661eec61f1fa780223cef2821e01dfc8484950a1ca76cdb38",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcso2986.tfm",
+      "sha256": "31ab354ff7ef3a943195379cc5f68969d3e7ec10003860b7c6f709b97920491e",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcso3583.tfm",
+      "sha256": "06f1ec5e330328672a79c1c3a3b2e64bfaa5f9d096fa8b53cc7bb78a8987cfa3",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcss0800.tfm",
+      "sha256": "8cfdcdf82282206f0ea5ae9b6ca402540b95f17bbf5ffdebda6de12eeb87bc67",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcss0900.tfm",
+      "sha256": "ed8be9a96abd603c147be231b05b789176f9b7567c74b3e492d7c9911b7d09e9",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcss1000.tfm",
+      "sha256": "c3a5db889d05ed3b5120c39056a7cd24f24fdff984f6d030c6ce4ea1a01a8c38",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcss1095.tfm",
+      "sha256": "350213ebdbec33c711506ba8a472053f0057ff7c9f396c715f18adb1ec08b696",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcss1200.tfm",
+      "sha256": "1b2881b214bd14b002d3271edbc583a13b8e465ba54ecff01035d80c36940d28",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcss1440.tfm",
+      "sha256": "7e9e567697245ae3069f72a12fb5abfdf60df42ba00384f4aa1460f1755d84bd",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcss1728.tfm",
+      "sha256": "a7e9c69bad07d6c7fff43b78bd3b1bcae5261f795cbacfae3ed665f17bcbff66",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcss2074.tfm",
+      "sha256": "95a4d3fa3804ef00a23b0ee7cecb256c3707a2802312e3764d730fca0b4e1417",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcss2488.tfm",
+      "sha256": "86d6305dfa2ce45814c20229ecc685c505018cebee5f3be345da11e4119d887a",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcss2986.tfm",
+      "sha256": "8cbb7d373a4f8ad2fab4ac3ab0db9612e37c3a5c84830b4718f5403476205a57",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcss3583.tfm",
+      "sha256": "97398dc9cbed116511783b172f061f29f7b4c3592874f70b29937388fab8f1e2",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcst0800.tfm",
+      "sha256": "b3ba249e776613bc9efedcd71b12f2cdd642be289ea0f4e1ddc77cd02e864246",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcst0900.tfm",
+      "sha256": "a2d51f0b2998401de0f8ed750690ea21e41c819f7248955f7296d09a40e80a37",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcst1000.tfm",
+      "sha256": "0b747d75faff45a4491774a170e694dc911f5417c440bddfea21f3383b4b578f",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcst1095.tfm",
+      "sha256": "a60b45f4de0bf9488e2146f498144e64fb7e4045f4858e29ae18a56663e5d10c",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcst1200.tfm",
+      "sha256": "bbe2aa9cea7f8ebbe4e90292586b11c1887d464925a203961d640c8d88a81c4d",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcst1440.tfm",
+      "sha256": "71f8425e3d18f76a7de73fba23d1141fad7e345b1bb207ff53431e52eb137fb9",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcst1728.tfm",
+      "sha256": "efe2e26f10b8ae96e87cdad1183a15537cafbf1daed6f6eacfab7eb8938f553a",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcst2074.tfm",
+      "sha256": "e751672205b12a6402cdfbcb162c22f3297ca2ea72a05e039d4e73df250c8c1c",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcst2488.tfm",
+      "sha256": "703f41b151d0c505c8f2aa3bdb3d3bcec493812c72757bdbae0f628011354937",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcst2986.tfm",
+      "sha256": "e0359d6c09901a1f06b957c0e1d5b5e65a2f52e5c95c0aba453c520cd099e971",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcst3583.tfm",
+      "sha256": "a2ac0424a6c1913de23cbcaf7c636fa8953dbea5530204edcb3d820121a860f8",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsx0800.tfm",
+      "sha256": "251f94b0f416b0a9083855b6bb533c21f8ed6b0e279898285f158b3beb8eb289",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsx0900.tfm",
+      "sha256": "b0fbb300884ba845997d4a3043bb7999a8d2a19ba5d6ad27b54ab4dfecd5ff55",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsx1000.tfm",
+      "sha256": "7bff9654369317cd5df081773fa7166c7eff736c1499037a2542d2d2f26a16ea",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsx1095.tfm",
+      "sha256": "8ba979a133fac78af3770769ebdf704e21ca3f14c42ecef9f5a621862dd6052f",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsx1200.tfm",
+      "sha256": "2d632f3e157180a615c6c82acd85b30ceef5fef194c68a9c252c088b020af119",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsx1440.tfm",
+      "sha256": "42035de0ef30bac1379e3ea8f05f3a581f358ab2e9478de9eef8d86f7a133f97",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsx1728.tfm",
+      "sha256": "0afd72d3b6ac8eeb98d5729814b29586b3fa61bf56e3b9eddc728b9224a402aa",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsx2074.tfm",
+      "sha256": "f12c945831f4986d2c839ad2267dee2f8d2c550701d8c580b4c7d5b8d93670a1",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsx2488.tfm",
+      "sha256": "2f9f82f910235d9ae9b90ad5abdff817b24495dcd5a949f891d9096d79a1cca1",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsx2986.tfm",
+      "sha256": "7a42d04503c53f41e568d4b742a03112464a6f14654cf95acf57f6b2cdc00621",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcsx3583.tfm",
+      "sha256": "f9f5fa71ae4e9081b616cb4d7f99ccc2b14aa96e9c2077907ac390d614f452d4",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcti0500.tfm",
+      "sha256": "016c2fe3f1bce464d4bf8c37f5483eb65de2dc5f14ca600ccac454b0600178ae",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcti0600.tfm",
+      "sha256": "95017fe409ac687360e95e165a8db7bdf8cc29fa2365bfe7d2fe653db2bfae23",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcti0700.tfm",
+      "sha256": "c251c6dd79bb5d5e8d185b43179714158617fd96e6b8a1dc54fa498b7eec3f7b",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcti0800.tfm",
+      "sha256": "4a6e686fe18c3af467462560e58b4f90c755e81d1e13f24229a1d02c9d32995e",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcti0900.tfm",
+      "sha256": "fa0621a19bd49385079cdb511d9e0866ca38f6d1e5ba0268cdd740f12666b13b",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcti1000.tfm",
+      "sha256": "aa8384f920f5026de39ef57e7d1c3aca12dbb9942432eedba4c7d9f0111bdd14",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcti1095.tfm",
+      "sha256": "4846244d9f45cb76b454a838adbbedd8e0d3fb4b7764d88c9127f16ec1b43e29",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcti1200.tfm",
+      "sha256": "d4a21b482bf2b5b94f1af2700f531d1182fd79042160b7a1471793da44ac030e",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcti1440.tfm",
+      "sha256": "5857ed6f3025cdd92ef3598c63a0231423d8bbdcfdcc3c6959e5ecf7afc8d305",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcti1728.tfm",
+      "sha256": "c98be3a248d664d227df839a23e10143c5951705c7c3f7f76a39f022119d9d6c",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcti2074.tfm",
+      "sha256": "06dd7b1faaf8897fb780ca7ac33655dd2dd06928061978cc5ea50df40711c5c2",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcti2488.tfm",
+      "sha256": "98b3f3153d0fa803d80f8163fe6548b8abe5f2b02f09924a010d34dbe4784c6b",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcti2986.tfm",
+      "sha256": "7bb04864882183d2bd05a5d670be4e84dedfbdefbc9f19416402d5cbfcab39d7",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcti3583.tfm",
+      "sha256": "32b0e397043831f111af03b97883491672e24772a595434b5a7bc6fb593873ed",
+      "byte_length": 2048
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tctt0800.tfm",
+      "sha256": "f84c92880b9d54117d0abbbf0014d39e121a04fa25953d73fbcd10f3bf8cc89c",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tctt0900.tfm",
+      "sha256": "ead2b3f8652e96e049e88761cb1c63823c55405c79d438473ef77c13cc916876",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tctt1000.tfm",
+      "sha256": "381970273ec40ff84c80baa2a9b524b99f9ad9be29baae026f4a608c3600f45c",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tctt1095.tfm",
+      "sha256": "c1d82087de2924cbd521ae3bdfb52f65485878bdc0f18dc2630abf21f94e9553",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tctt1200.tfm",
+      "sha256": "fd14c616192b7f4f1457c825431bb3be7a8630984ab84edc286c44883dc3d8e1",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tctt1440.tfm",
+      "sha256": "84298c1b64067c938b9e25511208a535960c5bc8bc8960ed1c79132187e542c0",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tctt1728.tfm",
+      "sha256": "c56057a7001c61498a3ea859e37d9ea7a5507f33ee82ba5500ff576b5c3522b4",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tctt2074.tfm",
+      "sha256": "a913e204fb6f3bae6c4e11055bf58c893ca6fc72d8315f7bcfa211d552e79203",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tctt2488.tfm",
+      "sha256": "8929f248165f282a82e3b4591126383b4ba62e4f7143ae7cffec8ccc0e3c7524",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tctt2986.tfm",
+      "sha256": "81ca7936cc1326566e11f92df2220f6695375f6074a4d9d5d098d4781bd013f4",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tctt3583.tfm",
+      "sha256": "ae786bace53ff53c8392160c5d95c1b239cd7c8982a7d7febc9fed1428752de1",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcui0500.tfm",
+      "sha256": "4e187f4ce786378157503cf0c3e4b78b5ddd6731c798baf5be2aa1dfe8dd112e",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcui0600.tfm",
+      "sha256": "be6fce4aeb3fe62ff0242baf1d3a7306bfb956679c9bc57beda8948861a52f7b",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcui0700.tfm",
+      "sha256": "3b2ab53628776132bdda780d5b9e3cf7290c1277959f169ba63123d056456dcc",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcui0800.tfm",
+      "sha256": "e11da0afa19c06abd9ba801f0375b965f302f2b8261c6afaed46547591932a5e",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcui0900.tfm",
+      "sha256": "12242dfaf53440f341be76e63925ce00a970f20a6d3c54c0dcc5c8ae75da8898",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcui1000.tfm",
+      "sha256": "994bbb7ed14543f0ea5e04ca54d1535fad53a769ca44a6056e29696d38d110b2",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcui1095.tfm",
+      "sha256": "e505c677cfc3d54070d930724bca0dd3579d90bb677619fd1a7aadf8b617f9f1",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcui1200.tfm",
+      "sha256": "ddc22c4a564cf854788950f9e1c1d7a44b3a4c919fd576216b7fd046581cad1b",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcui1440.tfm",
+      "sha256": "5dd518ccce66252ef55ecf27b06cc3406d207e35ab9dd2571696ccce81796ba9",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcui1728.tfm",
+      "sha256": "adb969eca0a0980ecfdb06b32a25c62dfef65ff34c466863e51e0945d550421e",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcui2074.tfm",
+      "sha256": "a3a0fbaa0da9716ab0610ca6836ab9b43501ae7923e4a14f688cc8f0d92d15e0",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcui2488.tfm",
+      "sha256": "1862da976e54ee218513011f97645b3d140b07ed5d51b3cb0aff24201748fc5b",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcui2986.tfm",
+      "sha256": "0c232f00c729e9c3eb5a245a856a6074fd735a2a65c10161ccf5e6d2d1eb9de0",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/jknappen/ec/tcui3583.tfm",
+      "sha256": "4ff5cf21a6d5fabb31931e4f8cad9a782b2d7ccb39d4cef2988bca9bf748c29a",
+      "byte_length": 1536
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmb10.tfm",
+      "sha256": "47a811d8b12bebc4684ff278637dcbb3baf1093d8724b555dbb87217a2089781",
+      "byte_length": 1584
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmbo10.tfm",
+      "sha256": "1f04df460e9b21b5d662f4301cff15072fe3c954a532ccd9242b5bb6eb801712",
+      "byte_length": 1752
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmbx10.tfm",
+      "sha256": "ca84586d76988101b84bd724c838c03187e529d7f4632b209addd7ba8252e150",
+      "byte_length": 1592
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmbx12.tfm",
+      "sha256": "b8f16ac44be1e266a194580e9c14853c53fa950b4a65d2651420731327638b23",
+      "byte_length": 1600
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmbx5.tfm",
+      "sha256": "2168c0813c243d251a68235683d65df6d3dd7285e2be2fe83728404d15ead21d",
+      "byte_length": 1584
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmbx6.tfm",
+      "sha256": "69a82edf6c9f3745a45bcbbd37e4a00ece1038ce98bbb20bb6e1bd8bf0bec0fe",
+      "byte_length": 1584
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmbx7.tfm",
+      "sha256": "c5714b6d5a949604a537ccdb2f9131aae83bcff5ffe15c4b01b2ab48d785045f",
+      "byte_length": 1596
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmbx8.tfm",
+      "sha256": "6e3f8a07da5918441682134f50221461d7e0bd9c427b9a5bf0bef4a16cdb80dc",
+      "byte_length": 1584
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmbx9.tfm",
+      "sha256": "fb7a99349afe7e716cbcaff1753b70f41fd0e6da79f35e6f137226cf5c346e09",
+      "byte_length": 1592
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmbxi10.tfm",
+      "sha256": "4cec37854f10ce38136227b179db1b7ace145baa93fff3f95ef11b9870c8aef0",
+      "byte_length": 1792
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmbxo10.tfm",
+      "sha256": "d41b1b9389478a082416b39cee53cfc67554d012d1057b770001ec8166259656",
+      "byte_length": 1760
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmcsc10.tfm",
+      "sha256": "56dddaf4b8cdd44c11fed91fba723a6dd14637e30c46fa291a537fcc18fddc16",
+      "byte_length": 1580
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmcsco10.tfm",
+      "sha256": "733c411009756037c7e1669bd441add94f7b4f1407f6e04531c761e308bba2d2",
+      "byte_length": 1768
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmr10.tfm",
+      "sha256": "080be3dc1bf1bac9eb612e44718ea630d2bd2ebf4d8e8e00333a78b5332ca6b3",
+      "byte_length": 1556
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmr12.tfm",
+      "sha256": "8b05e23c3ae967fd0ec8e3071fcb4d1081b71e2c17a948f465b65ad85c138e33",
+      "byte_length": 1596
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmr17.tfm",
+      "sha256": "f2b63550faa3b33bb23032e945b6a95c0487bf12d0ae7ae41397dd2f60232fa7",
+      "byte_length": 1632
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmr5.tfm",
+      "sha256": "0ca0f45098215f4f3cab75bc192118ab9dd8d030732ac4fd359a833fd825e7b0",
+      "byte_length": 1560
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmr6.tfm",
+      "sha256": "f72dd98af6f32cc08e485a7017fbc84dc575fa8a88aaf8ea637a677e9474ab7c",
+      "byte_length": 1572
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmr7.tfm",
+      "sha256": "3234126c23165ed092bb588424c779802413fd6c6f19f8c3d8b9e5e9a8f06d85",
+      "byte_length": 1576
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmr8.tfm",
+      "sha256": "2cfebf34600254ef1d6981785fa7c50875d07934a1645b547cf98cc5d93152c7",
+      "byte_length": 1584
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmr9.tfm",
+      "sha256": "c3d77e6841eee2e5f5f4edf8a9a406b1662d9102f1032741f18af8e387303de9",
+      "byte_length": 1576
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmri10.tfm",
+      "sha256": "de0b6d29be7c752d1b54196bac3c1c77521d93c1612ee8d6e2e1e6ca5fe262cf",
+      "byte_length": 1764
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmri12.tfm",
+      "sha256": "403961ac8b9107cbb9088b7625e5adb048742f63ecc05a55acded11d9b64d839",
+      "byte_length": 1756
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmri7.tfm",
+      "sha256": "e0a94fa2bcc180de35d5bfc82480521f17387a40e06cb5a3b01031f7f31f96d2",
+      "byte_length": 1784
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmri8.tfm",
+      "sha256": "bfaedcce1a91203ce4e22c9e7d641937867ebb0f031cd53047b12bb547924271",
+      "byte_length": 1776
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmri9.tfm",
+      "sha256": "512a6b7ef520da98687c68ecaeba920de243277cee49d48d1691ed4818f4f7a6",
+      "byte_length": 1772
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmro10.tfm",
+      "sha256": "2ae596dc7f1acfcd7ff5d67f7125b11134168d0a6c6d215fbc33b06ccfe3771b",
+      "byte_length": 1728
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmro12.tfm",
+      "sha256": "82b567fccc10a2b2e5ed8b8f222d62eb9fb245297f57d756acd79be7d7b12975",
+      "byte_length": 1768
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmro17.tfm",
+      "sha256": "fe0cf3a56e9df46f5076b56fe419f378988d5c7fec6af9f7aa4d6831f29b85a1",
+      "byte_length": 1780
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmro8.tfm",
+      "sha256": "db3dc0a3911ce80b8c61129af5603646a060c3f24e6a58390d7bcc702939a190",
+      "byte_length": 1756
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmro9.tfm",
+      "sha256": "317cf312cac80674643cdb276a6523d91d089599cac4da66b1dc789bb728d47a",
+      "byte_length": 1752
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmss10.tfm",
+      "sha256": "b4585b1f37f86b3817d818529e45dd70813fce07f4ae57232b065d7147e90788",
+      "byte_length": 1576
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmss12.tfm",
+      "sha256": "9c1e4b2da96e0d601e814883db3b24bc7a95a220c4979aceb25fc090c92b34a7",
+      "byte_length": 1616
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmss17.tfm",
+      "sha256": "11898d86f0e2731c7d32899896124ead5ae676507824d7526d7c1dfefe3b9615",
+      "byte_length": 1644
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmss8.tfm",
+      "sha256": "01f4fb0b7accc535f871041f294f32e8bbe1e8318ad3da954cfe07be56e0b56f",
+      "byte_length": 1604
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmss9.tfm",
+      "sha256": "012920afe22b4290290da5a6c57eacc15e7f7a5e16e9e680ae65fee5ebc24cda",
+      "byte_length": 1604
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmssbo10.tfm",
+      "sha256": "40d654861f9e12fa8ec6c1b689c183e91fd7bfe11e406e213989494e125a928d",
+      "byte_length": 1768
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmssbx10.tfm",
+      "sha256": "4c88f182eaba814b27f8db64922653594dc0a4300e0fad9324c44405762d0804",
+      "byte_length": 1600
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmssdc10.tfm",
+      "sha256": "a80bc26bc8f48e00d8309be82fc8d40dfb063ca193ed15c56f70168ce39f3719",
+      "byte_length": 1640
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmssdo10.tfm",
+      "sha256": "4077ca222a8c87941a8213473306b1518bc005ab62f9d1e9405d167ab4a98c31",
+      "byte_length": 1788
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmsso10.tfm",
+      "sha256": "be963cf0dfe231bf3f18e345f2d88e2414bb309be1f759dedfb145949ec11bb9",
+      "byte_length": 1756
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmsso12.tfm",
+      "sha256": "37eea17e22130d275812df9348be1923e44b2d9495dcf4f85a7f62e92f56b452",
+      "byte_length": 1788
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmsso17.tfm",
+      "sha256": "96d525461898af2cffbc1df70ec2bc264ff90eb75c882f94d3c8af46a5a3a03e",
+      "byte_length": 1796
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmsso8.tfm",
+      "sha256": "f1928f6e11d60306209496b37fe7a6a31f939dc032e8126b4be5d21ded944fc5",
+      "byte_length": 1780
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmsso9.tfm",
+      "sha256": "7e97567839bfe556b9afa0c82403432186d516339013b20197396a18aa0635f9",
+      "byte_length": 1784
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmtcsc10.tfm",
+      "sha256": "078718d7fbde15356c49f23e703029ef12d56c662d782729d887ff2196dff706",
+      "byte_length": 1316
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmtcso10.tfm",
+      "sha256": "cf03a972f6c2316e359464f2fd9e0fa69407b7fb59aa9e1dd6926d80f92c4c0f",
+      "byte_length": 1324
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmtk10.tfm",
+      "sha256": "65c0b82420bdbf614f0bb828e19b995c0d1f07825171a78e51fddbbc75153543",
+      "byte_length": 1316
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmtko10.tfm",
+      "sha256": "a45205e07e68ab173a22bab5dd66d9aab599241741021e7ad32adb7914f26749",
+      "byte_length": 1324
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmtt10.tfm",
+      "sha256": "e3dba75e17953de0b9f56ebcb809bc8343554b8379d2b3b10c496a8eb459b858",
+      "byte_length": 1316
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmtt12.tfm",
+      "sha256": "6443b8e937d40b220199ae95f9814810c43a7d08dcbf685a8e1f1570688aa19a",
+      "byte_length": 1320
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmtt8.tfm",
+      "sha256": "a9014969f76485ef2a0f45a3666ad8832727ec8baef5af56c39364ab2592dc9e",
+      "byte_length": 1320
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmtt9.tfm",
+      "sha256": "087de95124951a42582a07d39e6b98840c4b1448a1c7e2a083c834f06cb96c26",
+      "byte_length": 1316
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmtti10.tfm",
+      "sha256": "5584f41a4f1fdca9111a5fced370aefecfa76a920c08568761d412a439fa0a31",
+      "byte_length": 1324
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmtto10.tfm",
+      "sha256": "d2eeb41505655a48ca10844a082fc680ff42cbfd4843145d68a65b4ef7e8951a",
+      "byte_length": 1324
+    },
+    {
+      "path": "fonts/tfm/public/lm/ts1-lmu10.tfm",
+      "sha256": "39efc8b53d2250cbd6bf5e2cc88e36295304814035a94fc65e6e78c7bfbe3c69",
+      "byte_length": 1548
     }
   ],
   "ec_provenance": {
@@ -2074,5 +3299,11 @@
     "copied_from": "/nix/store/l7fr37hc3k7wgpavm25lcyndwwghwb9x-texlive-2025-r78234-final-env-texmfdist (TeX Live 2025 r78234 on linux-primary; package jknappen)",
     "cross_checked": "Same byte-comparison gate as the face tier: all 191 files already pinned from packages lm, jknappen and amsfonts compare equal (cmp) between this tree and the pins, which is what establishes that this distribution is the release the earlier tiers were cut from.",
     "license": "doc/fonts/ec/copyrite.txt (Joerg Knappen / Norbert Schwarz ec-fonts notice), already vendored alongside the metrics for the existing EC tiers - same package, so no new license applies."
+  },
+  "ts1_companions_provenance": {
+    "purpose": "ts1_companion_tfm (crates/render-pipeline/src/fonts.rs) pairs every text TFM with its TS1 text-companion font: the font \\UseTextSymbol{TS1} switches to for the symbols T1 has no slot for (\\textcopyright, \\textregistered, \\texttrademark, \\textdegree, \\texteuro, ...), at the same family/series/shape/size. jknappen tc* for the EC faces (ts1cmr.fd: tcrm/tcsl/tcti/tcbx/tcrb/tcbi/tcbl/tcui at the 14 EC sizes; ts1cmss.fd: tcss/tcsi/tcsx/tcso and ts1cmtt.fd: tctt/tcst/tcit at the 11 sizes their T1 counterparts reach) and ts1-lm* for every ec-lm* pinned here. Without the companion a symbol is set at the Latin Modern outline's own advance: \\copyright is 0.683 em there against tcrm1095's 1.11084 em, which put `\\copyright~2026; \\pounds 75.` in fixtures/real-world/unicode-accents 4.60 bp left of pdflatex.",
+    "copied_from": "/usr/local/texlive/2026/texmf-dist/fonts/tfm/jknappen/ec and fonts/tfm/public/lm (MacTeX 2026; TeX Live packages jknappen and lm)",
+    "cross_checked": "The 189 tc* files are the same jknappen/ec directory the ec* files above were copied from; the 56 ts1-lm* files the same public/lm directory as the ec-lm* files; hashed after the copy.",
+    "license": "tc*: doc/fonts/ec/copyrite.txt (ec-fonts, already pinned); ts1-lm*: doc/fonts/lm/GUST-FONT-LICENSE.TXT (already pinned). No new package."
   }
 }

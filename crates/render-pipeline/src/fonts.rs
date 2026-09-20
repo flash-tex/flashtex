@@ -600,12 +600,46 @@ pub fn ec_tfm_file(role: Role, size_pt: f64) -> Option<String> {
     Some(format!("{prefix}{suffix}.tfm"))
 }
 
+/// The TS1 (text companion) metric file set with the text file `tfm`: the
+/// font `\UseTextSymbol{TS1}{..}` switches to for a symbol T1 lacks
+/// (`\textcopyright`, `\textdegree`, ...), which keeps the family, series,
+/// shape and size and changes only the encoding.
+///
+/// * `ts1cmr.fd`: `tcrm`/`tcsl`/`tcti`/`tcbx`/`tcrb`/`tcbi`/`tcbl`/`tcui`
+///   at the EC sizes -- `ec<shape><size>` → `tc<shape><size>`; the small-caps
+///   shapes it does not declare (`eccc`, `ecsc`, `ecxc`, `ecoc`, `ectc`)
+///   are NFSS-substituted by the upright of the same series (`m/sc` →
+///   `m/n`, `bx/sc` → `bx/n`) before the font is loaded;
+/// * `ts1cmss.fd`/`ts1cmtt.fd`: `tcss`/`tcsi`/`tcsx`/`tcso`, `tctt`/`tcst`/
+///   `tcit` likewise;
+/// * `ts1lm*.fd`: `ec-lm<face>` → `ts1-lm<face>`.
+///
+/// `None` for a file this table cannot pair. The companion is optional:
+/// a face without one sets those symbols from its own program's advances,
+/// as before.
+pub fn ts1_companion_tfm(tfm: &str) -> Option<String> {
+    let stem = tfm.strip_suffix(".tfm")?;
+    if let Some(rest) = stem.strip_prefix("ec-lm") {
+        return Some(format!("ts1-lm{rest}.tfm"));
+    }
+    let rest = stem.strip_prefix("ec")?;
+    let (shape, size) = rest.split_at(rest.find(|c: char| c.is_ascii_digit())?);
+    let shape = match shape {
+        "cc" | "sc" => "rm",
+        "xc" | "oc" => "bx",
+        "tc" => "tt",
+        other => other,
+    };
+    Some(format!("tc{shape}{size}.tfm"))
+}
+
 /// `CHARWD` of `tcrm<size>.tfm` (the TS1 `cmr` `m/n` font `ts1cmr.fd`
 /// loads, at the same declared sizes as [`EC_SIZES`]) for the TS1 symbols
 /// the default itemize labels use, in design-size units: `(\textbullet` and
 /// `\textasteriskcentered` (the same width), `\textperiodcentered)`. These
 /// are the `cmsy` designs: 0.5em and 0.2777em at 10 pt. Transcribed with
-/// `tftopl` from TeX Live 2026, because the bundled texmf ships no `tcrm`.
+/// `tftopl` from TeX Live 2026 (predating the bundled `tc*` companions,
+/// [`ts1_companion_tfm`]; the list labels keep this table).
 const TCRM_SYMBOL_WIDTHS: [(f64, f64); 14] = [
     (0.680389, 0.402679),
     (0.610962, 0.351766),
@@ -797,6 +831,11 @@ pub struct LoadedFace {
     /// The TeX metrics pdfTeX lays this face out with (`ec-lm*.tfm`), when
     /// found; shaping then takes widths/kerns/ligatures/heights from here.
     pub tfm: Option<Rc<Tfm>>,
+    /// The TS1 companion of `tfm` ([`ts1_companion_tfm`]), when found: the
+    /// metrics of the symbols T1 has no slot for (`©`, `°`, `€`, ...),
+    /// which pdfTeX sets from the companion font at the same size. `None`
+    /// leaves those to the program's own advances.
+    pub ts1_tfm: Option<Rc<Tfm>>,
     /// Why no TFM is attached (reported once by the typesetter).
     pub tfm_missing: Option<String>,
     pub tfm_status: TfmStatus,
@@ -1447,6 +1486,7 @@ impl FontSet {
             face_index: file.face_index,
             kind: FaceKind::Otf { face, cff },
             tfm: None,
+            ts1_tfm: None,
             tfm_missing: None,
             tfm_status: TfmStatus::Missing("named family: OpenType metrics by design".into()),
             shape_key: Rc::from(sha256::hex(&sha)),
@@ -1483,6 +1523,7 @@ impl FontSet {
             face_index: 0,
             kind: FaceKind::Core14(f),
             tfm: None,
+            ts1_tfm: None,
             tfm_missing: None,
             tfm_status: TfmStatus::Missing("Core 14 face: AFM metrics".into()),
             shape_key: Rc::from(sha256::hex(&sha)),
@@ -1569,8 +1610,8 @@ impl FontSet {
             },
             None => latin_modern_tfm(&stem),
         };
-        let (tfm, tfm_missing, tfm_status) = match tfm_choice {
-            Some(tfm_file) => match self.tfm(&tfm_file) {
+        let (tfm, tfm_missing, tfm_status) = match &tfm_choice {
+            Some(tfm_file) => match self.tfm(tfm_file) {
                 Ok(t) => (Some(t), None, TfmStatus::Loaded),
                 Err(TfmStatus::RequiredUnavailable(e)) => {
                     let msg = format!("required metric asset {tfm_file}: {e}");
@@ -1581,6 +1622,14 @@ impl FontSet {
             },
             None => (None, None, TfmStatus::Missing("no TFM pairs with this file".into())),
         };
+        // The companion is best effort: pdfTeX would stop on a missing
+        // `tcrm1095.tfm`, but a bundle without the `tc*` files still sets
+        // the symbol, from the program's advance, as it always has.
+        let ts1_tfm = tfm
+            .as_ref()
+            .and_then(|_| tfm_choice.as_deref())
+            .and_then(ts1_companion_tfm)
+            .and_then(|f| self.tfm(&f).ok());
         let loaded = LoadedFace {
             font_id: Rc::from(sha256::hex(&sha)),
             engine_id,
@@ -1595,6 +1644,7 @@ impl FontSet {
             face_index: 0,
             kind: FaceKind::Otf { face, cff: Some(cff) },
             tfm,
+            ts1_tfm,
             tfm_missing,
             tfm_status,
             shape_key: match ec_tfm {
@@ -1741,6 +1791,59 @@ mod tests {
             assert!(cm.metrics_fallback.as_deref().is_some_and(|m| m.contains("ecrm1095.tfm")));
             assert!(cm.tfm.is_some());
         }
+    }
+
+    #[test]
+    fn ts1_companions_follow_the_ts1_fd_files() {
+        assert_eq!(ts1_companion_tfm("ecrm1095.tfm").as_deref(), Some("tcrm1095.tfm"));
+        assert_eq!(ts1_companion_tfm("ecbx1200.tfm").as_deref(), Some("tcbx1200.tfm"));
+        assert_eq!(ts1_companion_tfm("ecti1000.tfm").as_deref(), Some("tcti1000.tfm"));
+        assert_eq!(ts1_companion_tfm("ecss0800.tfm").as_deref(), Some("tcss0800.tfm"));
+        assert_eq!(ts1_companion_tfm("ectt1095.tfm").as_deref(), Some("tctt1095.tfm"));
+        // `TS1/cmr/m/sc` is undefined: pdflatex substitutes `m/n` (probe
+        // log: "Font shape `TS1/cmr/m/sc' undefined ... using `TS1/cmr/m/n'").
+        assert_eq!(ts1_companion_tfm("eccc1095.tfm").as_deref(), Some("tcrm1095.tfm"));
+        assert_eq!(ts1_companion_tfm("ecxc1095.tfm").as_deref(), Some("tcbx1095.tfm"));
+        assert_eq!(ts1_companion_tfm("ectc1000.tfm").as_deref(), Some("tctt1000.tfm"));
+        assert_eq!(ts1_companion_tfm("ec-lmr10.tfm").as_deref(), Some("ts1-lmr10.tfm"));
+        assert_eq!(ts1_companion_tfm("ec-lmbxi10.tfm").as_deref(), Some("ts1-lmbxi10.tfm"));
+        assert_eq!(ts1_companion_tfm("rm-lmr10.tfm"), None);
+    }
+
+    /// pdflatex (TeX Live 2026) `\showbox` of `\hbox{a\copyright b}` in an
+    /// 11pt `[T1]{fontenc}` article: `\T1/cmr/m/n/10.95 a`, `\TS1/cmr/m/n/10.95
+    /// ©` (`tcrm1095` slot 169, CHARWD 1.11084), `\T1/cmr/m/n/10.95 b`, the
+    /// box `hbox(8.21059+2.7369)x23.58533`; `\hbox{\textbf{a\copyright b}}`
+    /// is 26.92859 (`tcbx1095`), `\hbox{\textregistered}` 12.093,
+    /// `\hbox{\texttrademark}` 7.25731, `\hbox{\textdegree}` 3.63054. Latin
+    /// Modern Roman's own `©` advance is 0.683 em: without the companion the
+    /// first box was 18.98pt, and `\copyright~2026;` in
+    /// fixtures/real-world/unicode-accents sat 4.60bp left of the reference.
+    #[test]
+    fn ts1_symbols_take_the_companion_fonts_metrics() {
+        let set = FontSet::with_default_dirs(&[]);
+        if !set.latin_modern_available() || !set.tfm_dirs().iter().any(|d| d.join("tcrm1095.tfm").is_file()) {
+            eprintln!("skipping: Latin Modern or the tc* companions not installed");
+            return;
+        }
+        let shaper = crate::shape::Shaper::new();
+        let width = |bold: bool, text: &str| -> f64 {
+            let face = set.resolve(Family::ComputerModern, Role::Text { bold, italic: false }, 10.95).face;
+            assert!(face.ts1_tfm.is_some(), "{}: no companion", face.name);
+            shaper.shape(&face, text).width_pt(10.95)
+        };
+        assert!((width(false, "a©b") - 23.58533).abs() < 1e-3, "{}", width(false, "a©b"));
+        assert!((width(true, "a©b") - 26.92859).abs() < 1e-3, "{}", width(true, "a©b"));
+        assert!((width(false, "®") - 12.093).abs() < 1e-3, "{}", width(false, "®"));
+        assert!((width(false, "™") - 7.25731).abs() < 1e-3, "{}", width(false, "™"));
+        assert!((width(false, "°") - 3.63054).abs() < 1e-3, "{}", width(false, "°"));
+        // The companion's box, not the outline's: `hbox(8.21059+2.7369)`.
+        let face = set.resolve(Family::ComputerModern, Role::Text { bold: false, italic: false }, 10.95).face;
+        let s = shaper.shape(&face, "a©b");
+        assert!(s.tfm_metrics);
+        assert!((s.height_pt(10.95) - 8.21059).abs() < 1e-3 && (s.depth_pt(10.95) - 2.7369).abs() < 1e-3, "{} {}", s.height_pt(10.95), s.depth_pt(10.95));
+        // Three clusters: the symbol stands outside `a`/`b`'s ligkern run.
+        assert_eq!(s.clusters.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["a", "©", "b"]);
     }
 
     #[test]
