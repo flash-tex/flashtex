@@ -9435,8 +9435,16 @@ fn kern_amount_matches(spelling: &str, amount: &TextDimen) -> bool {
 /// TeX eats right after the word does not count.
 fn gap_has_space_after_control_word(rest: &str) -> bool {
     let rest = rest.trim_start_matches([' ', '\t']);
-    // A newline right after the word is eaten too (it is the same skip).
-    let rest = rest.strip_prefix('\n').unwrap_or(rest);
+    // A newline right after the word is eaten too (state S ignores the end
+    // of the line, TeX §347), and the next line then begins in state N,
+    // where its indentation is skipped as well (§344): `\quad\n  \href`
+    // holds no space token. Reading that indentation as one put an extra
+    // interword space after each line-ending `\quad` of
+    // `fixtures/real-world/cv`'s contact line (both ends 3.62 bp out).
+    let rest = match rest.strip_prefix('\n') {
+        Some(next_line) => next_line.trim_start_matches([' ', '\t']),
+        None => rest,
+    };
     gap_has_space(rest)
 }
 
@@ -12969,6 +12977,30 @@ mod tests {
             Some(vec![(0, 1), (1, 3), (3, 4), (4, 6)])
         );
         assert_eq!(ligature_char_sources("\\today", Span::new(0, 6), "September 19, 2026"), None);
+    }
+
+    /// The whitespace after a control word is eaten whether it is blanks,
+    /// the end of the line, or the end of the line plus the next line's
+    /// indentation (`gap_has_space_after_control_word`): `15213 \quad
+    /// $\cdot$ \quad\n  \href{..}{..}` is glue, quad, math, glue, quad,
+    /// text — pdflatex's contact line of `fixtures/real-world/cv`.
+    #[test]
+    fn the_indentation_of_the_line_after_a_control_word_is_no_space() {
+        let shape = |src: &str| -> String {
+            items(src)
+                .iter()
+                .map(|i| match i {
+                    Item::Word(w) => w.text(),
+                    Item::Space { .. } => " ".to_string(),
+                    Item::Quad { .. } => "<quad>".to_string(),
+                    Item::Math { .. } => "<math>".to_string(),
+                    other => format!("{other:?}"),
+                })
+                .collect()
+        };
+        assert_eq!(shape("15213 \\quad $\\cdot$ \\quad\n  (412)"), "15213 <quad><math> <quad>(412)");
+        assert_eq!(shape("A \\quad\n  \\href{mailto:x@y.z}{x@y.z} B"), "A <quad>x@y.z B");
+        assert_eq!(shape("A \\quad B"), "A <quad>B");
     }
 
     /// A URL breaks where TeX's math-list penalties fall
