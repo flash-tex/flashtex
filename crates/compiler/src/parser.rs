@@ -9673,7 +9673,10 @@ impl P<'_> {
                     style: note_style,
                     space_before: false,
                 });
-                let mut inner = self.inlines_from_tokens(note_tokens, note_style);
+                // Read like an `\item[<label>]`: every token that cannot be
+                // set is reported rather than dropped (a note is short
+                // enough that a silent drop leaves a bare `()`).
+                let mut inner = self.inlines_from_tokens_reporting(note_tokens, note_style, true, false);
                 if let Some(Inline::Text { space_before, .. }) = inner.first_mut() {
                     *space_before = false;
                 }

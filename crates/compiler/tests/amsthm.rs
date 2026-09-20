@@ -119,6 +119,50 @@ Statement.
     );
     assert_eq!(runs[5].0, ".");
     assert_eq!(runs[5].1, TextStyle::BOLD, "the head punctuation follows the note, in the head font");
+
+
+/// `\begin{defn}[$\sigma$-algebra]` (owner report, 2026-09-20): the note's
+/// tokens go through the same text-run builder as `\item[<label>]`, so the
+/// math shift inside it is a math atom, not the literal `\sigma`. pdflatex
+/// sets `Definition 1 (σ-algebra).` with `σ` from `cmmi10` between the
+/// upright parentheses; the `A` of the body follows at 253.679 bp in a
+/// 10 pt article (ours 253.677).
+#[test]
+fn optional_note_sets_nested_math_and_styles() {
+    let source = r"\usepackage{amsthm}
+\newtheorem{defn}{Definition}
+\begin{defn}[$\sigma$-algebra]
+A collection.
+\end{defn}
+\begin{defn}[\emph{weak} form]
+Text.
+\end{defn}";
+    let blocks = parser::parse(source).blocks;
+    let inlines: Vec<Inline> = blocks
+        .into_iter()
+        .flat_map(|block| match block {
+            Block::Paragraph(inlines) => inlines,
+            _ => Vec::new(),
+        })
+        .collect();
+    let math = inlines.iter().filter(|i| matches!(i, Inline::Math { .. })).count();
+    assert_eq!(math, 1, "the note's `$\\sigma$` is one math atom: {inlines:?}");
+    let texts: Vec<String> = inlines
+        .iter()
+        .filter_map(|i| match i {
+            Inline::Text { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(!texts.iter().any(|t| t.contains("sigma")), "no literal command name in the note: {texts:?}");
+    assert!(texts.iter().any(|t| t == "-algebra"), "{texts:?}");
+    let weak = inlines.iter().find_map(|i| match i {
+        Inline::Text { text, style, .. } if text == "weak" => Some(*style),
+        _ => None,
+    });
+    assert_eq!(weak.map(|s| s.italic), Some(true), "`\\emph{{weak}}` inside the note is italic: {texts:?}");
+    let messages = messages(source);
+    assert!(messages.iter().all(|m| !m.contains("not supported")), "{messages:?}");
 }
 
 #[test]
