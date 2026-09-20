@@ -1,4 +1,5 @@
 import XCTest
+import FlashTeXProtocol
 @testable import FlashTeXMac
 @testable import FlashTeXEditorCore
 
@@ -189,5 +190,117 @@ final class CaretContextTests: XCTestCase {
         XCTAssertEqual(result.caret.mode, .comment)
         let spliced = String(text.prefix(byte)) + (result.text ?? "") + String(text.dropFirst(byte))
         XCTAssertTrue(spliced.hasPrefix("text % note: x^2\n"), spliced)
+    }
+
+    // MARK: - approval-time wrap (lane lane-capture-flow)
+
+    private func wrapping(_ before: String, _ after: String, _ latex: String) -> WrapDecision {
+        CaretContext.wrapping(for: latex, in: before + after, atByte: before.utf8.count)
+    }
+
+    /// Rule 1: caret in text on its own line + a formula → display math on its own lines.
+    func testWrappingFormulaOnItsOwnLineBecomesDisplayMath() {
+        let d = wrapping("Some prose.\n\n", "\n\nMore prose.\n", "x = 2y + 1")
+        XCTAssertEqual(d, .wrap(.init(kind: .displayMath, prefix: "\\[ ", suffix: " \\]")))
+        XCTAssertEqual(d.wrapping?.applied(to: "x = 2y + 1"), "\\[ x = 2y + 1 \\]")
+        // Indented on an otherwise blank line: the block still gets its own lines.
+        let indented = wrapping("Some prose.\n\n  ", "\n\nMore prose.\n", "\\frac{a}{b}")
+        XCTAssertEqual(indented.wrapping?.prefix, "\n\\[ ")
+        XCTAssertEqual(indented.wrapping?.suffix, " \\]")
+    }
+
+    /// Rule 2: caret inside a sentence (or a tabular cell) + a formula → inline math.
+    func testWrappingFormulaInsideASentenceOrCellBecomesInlineMath() {
+        XCTAssertEqual(wrapping("We know that ", " holds for all n.\n", "x^2 + y^2"),
+                       .wrap(.init(kind: .inlineMath, prefix: "$", suffix: "$")))
+        XCTAssertEqual(wrapping("\\begin{tabular}{c}\n", " \\\\\n\\end{tabular}\n", "a + b").wrapping?.kind, .inlineMath)
+    }
+
+    /// Rule 3: caret already in math → bare; a proposal with its own delimiters cannot be wrapped into legality.
+    func testWrappingAtAMathCaretIsBareAndRefusesDelimitedProposals() {
+        XCTAssertEqual(wrapping("Let $a + ", "$ hold.\n", "x^2"), .wrap(.init(kind: .asIs, prefix: "", suffix: "")))
+        XCTAssertEqual(wrapping("\\begin{align}\n", "\n\\end{align}\n", "y = mx + c").wrapping?.kind, .asIs)
+        guard case .unsafe(let why) = wrapping("Let $a + ", "$ hold.\n", "$x^2$") else { return XCTFail("must refuse") }
+        XCTAssertTrue(why.contains("inside math"), why)
+        XCTAssertTrue(why.contains("move the caret"), why)
+    }
+
+    /// Rule 4: a proposal that already carries delimiters or an environment is never wrapped again.
+    func testWrappingNeverDoubleWraps() {
+        XCTAssertEqual(wrapping("We know that ", " holds.\n", "$x^2$"), .wrap(.init(kind: .asIs, prefix: "", suffix: "")))
+        XCTAssertEqual(wrapping("Some prose.\n\n", "\n\nMore.\n", "\\[ x^2 \\]"), .wrap(.init(kind: .asIs, prefix: "", suffix: "")))
+        XCTAssertEqual(wrapping("Hello", " world\n", "\\begin{center}x\\end{center}"),
+                       .wrap(.init(kind: .asIs, prefix: "\n", suffix: "\n")), "a block mid-line gets its own lines")
+        XCTAssertEqual(wrapping("Some prose.\n\n", "\n\nMore.\n", "\\begin{equation}x\\end{equation}"),
+                       .wrap(.init(kind: .asIs, prefix: "", suffix: "")), "an environment is never wrapped")
+        // Display math where only inline fits (mid-sentence, a cell) is the one
+        // thing a wrap cannot fix; the reason says where to put the caret.
+        for display in ["\\[ x^2 \\]", "\\begin{equation}x\\end{equation}"] {
+            guard case .unsafe(let why) = wrapping("We know that ", " holds.\n", display) else { return XCTFail("must refuse \(display)") }
+            XCTAssertTrue(why.contains("own line"), why)
+        }
+    }
+
+    /// Rule 5: a tikzpicture outside any figure is inserted bare on its own lines; no automatic figure.
+    func testWrappingTikzPictureIsBareOnItsOwnLines() {
+        let tikz = "\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}"
+        let d = wrapping("Hello", " world\n", tikz)
+        XCTAssertEqual(d, .wrap(.init(kind: .asIs, prefix: "\n", suffix: "\n")))
+        XCTAssertFalse(d.wrapping!.applied(to: tikz).contains("figure"))
+        XCTAssertEqual(wrapping("Hello\n", "\nworld\n", tikz), .wrap(.init(kind: .asIs, prefix: "", suffix: "")), "already on its own line")
+    }
+
+    /// Rule 6: text proposals are inserted bare.
+    func testWrappingProseIsBare() {
+        XCTAssertEqual(wrapping("Hello ", "world\n", "see figure 2"), .wrap(.init(kind: .asIs, prefix: "", suffix: "")))
+        XCTAssertEqual(wrapping("Some prose.\n\n", "\n\nMore.\n", "Theorem 2 follows."), .wrap(.init(kind: .asIs, prefix: "", suffix: "")))
+    }
+
+    /// Rule 7: verbatim and comments take the transcription exactly.
+    func testWrappingInVerbatimOrCommentIsLiteral() {
+        XCTAssertEqual(wrapping("\\begin{verbatim}\n", "\n\\end{verbatim}\n", "x = y + 1"), .wrap(.init(kind: .asIs, prefix: "", suffix: "")))
+        XCTAssertEqual(wrapping("% note ", "\n", "x = y + 1"), .wrap(.init(kind: .asIs, prefix: "", suffix: "")))
+    }
+
+    /// The owner's `x = 2y + 1` has no structural command; its letters-and-
+    /// operators shape still makes it a formula. Placeholders and prose stay prose.
+    func testLooksLikeFormulaSeparatesFormulasFromProse() {
+        for formula in ["x = 2y + 1", "a + b = c", "f(x) = 3x - 1", "sin(x) + cos(x) = 1", "\\mathbb{R} = X", "n! = n(n-1)!", "a < b"] {
+            XCTAssertTrue(CaretContext.looksLikeFormula(formula), formula)
+        }
+        for prose in ["see figure 2", "<F>", "12", "x", "A = the set", "Hello world", "for all real numbers", "-x"] {
+            XCTAssertFalse(CaretContext.looksLikeFormula(prose), prose)
+        }
+        XCTAssertEqual(CaretContext(wrap: .display).normalize("x = 2y + 1").text, "\\[ x = 2y + 1 \\]")
+        XCTAssertEqual(CaretContext(wrap: .inline).normalize("x = 2y + 1").text, "$x = 2y + 1$")
+    }
+
+    /// The wire form carries the kind label the bridge journals with the edit.
+    func testWrappingWireFormCarriesTheKind() {
+        let w = InsertionWrapping(kind: .displayMath, prefix: "\\[ ", suffix: " \\]").wire
+        XCTAssertEqual(w, .init(prefix: "\\[ ", suffix: " \\]", kind: "display_math"))
+        XCTAssertEqual(w.applied(to: "x"), "\\[ x \\]")
+    }
+
+    // MARK: - the shell's mirror of a caret-mode anchor
+
+    /// A caret anchor follows edits like the caret (bridge `AnchorMode::Caret`);
+    /// a fixed one is invalidated by an insertion at it (the owner's bug).
+    func testCaretAnchorFollowsTypingAtItWhileAFixedAnchorIsDropped() {
+        let binding = TransferV1.AnchorBinding(projectId: "p", path: "main.tex", revision: 1, startByte: 5, endByte: 5, sourceSha256: String(repeating: "0", count: 64))
+        let caret = TransferV1.Anchor(destinationId: "mac-caret-1", projectId: "p", path: "main.tex", pinnedRevision: 1, currentRevision: 1,
+                                      startByte: 5, endByte: 5, valid: true, binding: binding, mode: .caret)
+        let fixed = TransferV1.Anchor(destinationId: "mac-anchor-1", projectId: "p", path: "main.tex", pinnedRevision: 1, currentRevision: 1,
+                                      startByte: 5, endByte: 5, valid: true, binding: binding, mode: nil)
+        let typed = DestinationTracking.follow(caret, startByte: 5, endByte: 5, replacementBytes: 2, revision: 2)
+        XCTAssertEqual([typed.startByte, typed.endByte, typed.currentRevision], [7, 7, 2])
+        XCTAssertTrue(typed.valid)
+        let spanned = DestinationTracking.follow(typed, startByte: 2, endByte: 9, replacementBytes: 1, revision: 3)
+        XCTAssertEqual([spanned.startByte, spanned.endByte], [3, 3], "collapsed after the replacement")
+        XCTAssertTrue(spanned.valid)
+        let after = DestinationTracking.follow(spanned, startByte: 4, endByte: 5, replacementBytes: 0, revision: 4)
+        XCTAssertEqual(after.startByte, 3, "an edit after it leaves it alone")
+        let dropped = DestinationTracking.follow(fixed, startByte: 5, endByte: 5, replacementBytes: 2, revision: 2)
+        XCTAssertFalse(dropped.valid)
     }
 }

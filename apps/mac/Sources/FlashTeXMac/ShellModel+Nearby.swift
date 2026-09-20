@@ -55,8 +55,15 @@ extension ShellModel: CaptureSink, DestinationProvider {
     /// returns its acknowledgement; bridge `error` envelopes pass through.
     func forwardNearbyCapture(_ submit: RuntimeV1.CaptureSubmit, pairId: String? = nil) async -> Result<NearbyV1.CaptureReceived, NearbyV1.ErrorPayload> {
         // The Captures panel shows the row the moment the bytes are here.
-        captureInbox.received(submit, pairId: pairId, autoPinned: submit.destinationId == captureInbox.autoPinnedDestinationId)
+        captureInbox.received(submit, pairId: pairId, autoPinned: Self.isAutomaticDestinationId(submit.destinationId))
         guard let bridge, bridge.running else { return receiveNearbyCapture(submit) }
+        // An automatic destination means "the caret": bind the capture where the
+        // caret is *now*, under the id the companion holds — whether that id was
+        // announced a keystroke ago, before a bridge restart, or before an edit
+        // moved the caret. Only an explicit ⌘⌥P pin is a promise about bytes.
+        if Self.isAutomaticDestinationId(submit.destinationId) {
+            await rebindAutomaticDestination(submit.destinationId)
+        }
         do {
             let ack = try await bridge.submit(submit)
             let received = NearbyV1.CaptureReceived(captureId: ack.captureId, durable: ack.durable,
@@ -103,34 +110,108 @@ extension ShellModel: CaptureSink, DestinationProvider {
     }
 
     /// What `hello_ack` / `destination_query` announce (lane mac-capture-fluid):
-    /// the pin when one is valid; otherwise the caret, pinned right now on the
-    /// companion's behalf (locally and, when attached, on the bridge, awaited
-    /// so the id the companion binds to is one the bridge knows). The user
-    /// never has to press ⌘⌥P; an explicit pin still overrides until an edit
-    /// drops it. Off with `FLASHTEX_CAPTURE_CARET_DESTINATION=0`.
+    /// an explicit pin while it is valid; otherwise the caret, pinned right now
+    /// on the companion's behalf (locally and, when attached, on the bridge in
+    /// caret mode, awaited so the id the companion binds to is one the bridge
+    /// knows). The companion asks again right before every send, so the
+    /// destination it names is the caret as of that moment — and the caret is
+    /// pinned again when the capture arrives and when it is approved, so the
+    /// id never goes stale (lane lane-capture-flow: the owner's
+    /// `destination_reselection_required` after merely typing). The user never
+    /// has to press ⌘⌥P; an explicit pin overrides until an edit drops it.
+    /// Off with `FLASHTEX_CAPTURE_CARET_DESTINATION=0`.
     func nearbyDestinationPinningCaretIfNeeded() async -> NearbyV1.Destination? {
-        if let d = nearbyDestination { return d }
-        guard CaptureInboxFeature.caretDestination else { return nil }
-        guard historicalRefusal(of: "pinning an insertion point") == nil,
-              let anchor = Insertion.makeAnchor(id: "mac-caret-\(nextAnchorNumber)", path: activePath,
-                                                text: activeText, caretUTF16: caretUTF16, revision: editorRevision)
-        else { return nil }
-        nextAnchorNumber += 1
+        if let d = nearbyDestination, !Self.isAutomaticDestinationId(d.destinationId) { return d }
+        guard CaptureInboxFeature.caretDestination else { return nearbyDestination }
+        let id = captureInbox.autoPinnedDestinationId ?? "mac-caret-\(nextAnchorNumber)"
+        guard await pinCaretForCompanion(id: id) else { return nearbyDestination }
+        return nearbyDestination
+    }
+
+    /// Ids the shell mints for the automatic destination. The prefix is the
+    /// whole contract: a capture naming one is bound at the caret when it is
+    /// received and approved, never refused for naming a stale one.
+    static let automaticDestinationPrefix = "mac-caret-"
+    static func isAutomaticDestinationId(_ id: String) -> Bool { id.hasPrefix(automaticDestinationPrefix) }
+
+    /// Pins the caret (or the selection) as the automatic destination `id`:
+    /// locally, and on the bridge in caret mode when one is attached. A pin
+    /// already at the caret at this revision is not sent again. Returns false
+    /// when the caret cannot be pinned (historical preview, bad caret, bridge
+    /// refusal), with `captureNote` saying why.
+    @discardableResult
+    func pinCaretForCompanion(id: String) async -> Bool {
+        if let why = historicalRefusal(of: "pinning an insertion point") { captureNote = why; return false }
+        guard let anchor = Insertion.makeAnchor(id: id, path: activePath, text: activeText, caretUTF16: caretUTF16, revision: editorRevision)
+        else { captureNote = "Caret position is not valid."; return false }
+        if Self.isAutomaticDestinationId(id), captureInbox.autoPinnedDestinationId != id {
+            if id == "mac-caret-\(nextAnchorNumber)" { nextAnchorNumber += 1 }
+            captureInbox.autoPinnedDestinationId = id
+        }
         self.anchor = anchor
-        captureInbox.autoPinnedDestinationId = anchor.id
         if let bridge, bridge.running {
-            let end = activeText.utf8ByteRange(of: NSRange(location: caretUTF16, length: caretLengthUTF16))?.end ?? anchor.byteOffset
-            guard await bridgePinAndWait(destinationId: anchor.id, path: anchor.path, revision: anchor.revision,
-                                         startByte: anchor.byteOffset, endByte: max(end, anchor.byteOffset)) != nil else { return nil }
+            let end = max(activeText.utf8ByteRange(of: NSRange(location: caretUTF16, length: caretLengthUTF16))?.end ?? anchor.byteOffset, anchor.byteOffset)
+            if let d = bridge.destination, d.destinationId == id, d.isCaret, d.valid, d.path == anchor.path,
+               d.startByte == anchor.byteOffset, d.endByte == end, d.currentRevision == anchor.revision {
+                return true // already there
+            }
+            guard await bridgePinAndWait(destinationId: id, path: anchor.path, revision: anchor.revision,
+                                         startByte: anchor.byteOffset, endByte: end, mode: .caret) != nil else { return false }
         }
         captureNote = "Insertion point: the caret (\(anchor.path) byte \(anchor.byteOffset)); pin (⌘⌥P) to override."
-        return nearbyDestination
+        return true
+    }
+
+    /// Re-pins the automatic destination `id` at the caret before a capture
+    /// naming it is submitted or approved. Never touches an explicit pin.
+    func rebindAutomaticDestination(_ id: String) async {
+        guard Self.isAutomaticDestinationId(id), CaptureInboxFeature.caretDestination else { return }
+        _ = await pinCaretForCompanion(id: id)
     }
 
     /// True while the announced destination is the automatic caret pin (or nothing is pinned yet).
     var captureDestinationIsAutomatic: Bool {
         guard let d = nearbyDestination else { return true }
-        return d.destinationId == captureInbox.autoPinnedDestinationId
+        return Self.isAutomaticDestinationId(d.destinationId)
+    }
+
+    /// The one-click way out of a refused capture ("Insert at caret" on a failed
+    /// row): the caret becomes the capture's destination — its own id is
+    /// re-pinned there in caret mode, which the bridge allows for an automatic
+    /// id and for an explicit pin that is already gone — and the capture is
+    /// taken as far as it can go: re-submitted from the inspector's bytes when
+    /// the bridge never journaled it, converted when it has no proposal, and
+    /// inserted (through the ordinary approval) when it has one. Nothing is
+    /// inserted without a proposal the user has seen.
+    @discardableResult
+    func recoverCaptureAtCaret(_ item: CaptureInbox.Item) async -> ApproveOutcome {
+        guard let bridge, bridge.running else { captureNote = "No bridge attached."; return .refused("no bridge") }
+        guard await pinCaretForCompanion(id: item.destinationId) else { return .refused(captureNote ?? "the caret could not be pinned") }
+        captureInbox.clearFailure(item.id)
+        if let proposal = captureInboxProposal(item) {
+            return await approveBridgeProposal(proposal, latex: proposal.latex)
+        }
+        let journaled: Bool
+        do { _ = try await bridge.status(captureId: item.id); journaled = true }
+        catch let f as BridgeClient.Failure where f.code == "capture_missing" { journaled = false }
+        catch { captureNote = "Cannot reach the bridge journal: \((error as? BridgeClient.Failure)?.text ?? "\(error)")"; return .refused("bridge") }
+        if !journaled {
+            let submit = RuntimeV1.CaptureSubmit(captureId: item.id, destinationId: item.destinationId, baseRevision: editorRevision,
+                                                 image: .init(mimeType: item.mimeType, dataBase64: item.image.base64EncodedString()),
+                                                 instructions: item.instructions)
+            do { _ = try await bridge.submit(submit) } catch {
+                let why = (error as? BridgeClient.Failure)?.text ?? "\(error)"
+                captureInbox.noteFailure(item.id, "bridge refused the capture again: \(why)")
+                captureNote = "Cannot bind \(item.id) at the caret: \(why)"
+                return .refused(why)
+            }
+        }
+        guard let proposal = await convertCaptureForInbox(captureId: item.id) else {
+            return .refused(captureNote ?? "conversion failed")
+        }
+        captureNote = "Capture \(item.id) is bound at the caret and converted; click Insert at caret to insert it."
+        _ = proposal
+        return .refused("review the proposal, then Insert at caret")
     }
 
     /// Opening the Captures panel: advertise (a paired iPad connects without

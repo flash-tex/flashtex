@@ -1,4 +1,5 @@
 import Foundation
+import FlashTeXProtocol
 
 /// What mode the document is in where a capture will land, and the wrapping
 /// that makes an insertion there legal LaTeX.
@@ -335,8 +336,67 @@ extension CaretContext {
         "section", "subsection", "subsubsection", "paragraph", "item", "textbf", "emph", "textit",
         "caption", "footnote", "par", "begin",
     ]
+    /// Function names that may appear in a formula as plain letters (`sin(x)`,
+    /// `log n`) without making it prose. See `looksLikeFormula`.
+    private static let formulaWords: Set<String> = [
+        "sin", "cos", "tan", "cot", "sec", "csc", "sinh", "cosh", "tanh", "log", "ln", "lg", "exp",
+        "lim", "max", "min", "sup", "inf", "det", "dim", "ker", "deg", "gcd", "lcm", "arg", "mod",
+        "sgn", "tr", "id", "dx", "dy", "dz", "dt",
+    ]
 
-    private enum Shape { case bareMath, prose, delimited }
+    enum Shape { case bareMath, prose, delimited }
+
+    /// Undelimited content with no structural math command can still be a
+    /// formula the recogniser forgot to delimit — the owner's `x = 2y + 1`.
+    /// Prose has words; a formula has single letters, digits and operators.
+    /// So: at least one relation/arithmetic operator with an operand on each
+    /// side, and every run of letters that is not a control word is at most
+    /// two letters long or a recognised function name. `see figure 2` fails
+    /// on `see`, `<F>` has no operands; `a + b = c`, `f(x) = 3x - 1` pass.
+    /// Same rule as `looks_like_formula` in crates/bridge/src/caret.rs.
+    static func looksLikeFormula(_ content: String) -> Bool {
+        let bytes = Array(content.utf8)
+        func isOperand(_ b: UInt8, opening: Bool) -> Bool {
+            if isAsciiLetter(b) || (b >= 0x30 && b <= 0x39) { return true }
+            return opening ? "([{\\".utf8.contains(b) : ")]}".utf8.contains(b)
+        }
+        func operandBefore(_ at: Int) -> Bool {
+            var i = at
+            while i > 0, bytes[i - 1] == UInt8(ascii: " ") { i -= 1 }
+            return i > 0 && isOperand(bytes[i - 1], opening: false)
+        }
+        func operandAfter(_ at: Int) -> Bool {
+            var i = at
+            while i < bytes.count, bytes[i] == UInt8(ascii: " ") { i += 1 }
+            return i < bytes.count && isOperand(bytes[i], opening: true)
+        }
+        var hasOperator = false
+        var i = 0
+        while i < bytes.count {
+            let b = bytes[i]
+            if b == UInt8(ascii: "\\") {
+                var end = i + 1
+                if end < bytes.count, isAsciiLetter(bytes[end]) {
+                    while end < bytes.count, isAsciiLetter(bytes[end]) || bytes[end] == UInt8(ascii: "*") { end += 1 }
+                } else if end < bytes.count {
+                    end += 1
+                    while end < bytes.count, bytes[end] & 0xC0 == 0x80 { end += 1 }
+                }
+                i = end
+                continue
+            }
+            if isAsciiLetter(b) {
+                let start = i
+                while i < bytes.count, isAsciiLetter(bytes[i]) { i += 1 }
+                let run = String(decoding: bytes[start..<i], as: UTF8.self)
+                if run.count > 2, !formulaWords.contains(run) { return false }
+                continue
+            }
+            if "=<>+-*/".utf8.contains(b), operandBefore(i), operandAfter(i + 1) { hasOperator = true }
+            i += 1
+        }
+        return hasOperator
+    }
 
     /// Make `latex` legal at this caret.
     ///
@@ -476,7 +536,7 @@ extension CaretContext {
     /// prose (`<F>`, `see figure 2`), and guessing wrong corrupts the document
     /// silently. Content with no math marker is left exactly as it came, and
     /// the prompt carries the instruction to delimit it.
-    private static func shape(_ content: String) -> Shape {
+    static func shape(_ content: String) -> Shape {
         if !scanMath(content).spans.isEmpty { return .delimited }
         var hasMathMarker = false
         var hasTextMarker = false
@@ -501,7 +561,7 @@ extension CaretContext {
             i += 1
         }
         if hasTextMarker || content.contains("\n\n") { return .prose }
-        return hasMathMarker ? .bareMath : .prose
+        return hasMathMarker || looksLikeFormula(content) ? .bareMath : .prose
     }
 
     private static func isAsciiLetter(_ b: UInt8) -> Bool {
@@ -612,5 +672,130 @@ extension CaretContext {
             result.whole = spans[0]
         }
         return result
+    }
+}
+
+// MARK: - approval-time wrap
+
+/// What the shell puts around a journaled proposal when it approves it: the
+/// delimiters and line breaks the caret's context calls for *at that moment*
+/// (transfer-v1 additive `capture_prepare_insert.wrap`). The proposal text
+/// itself is never changed — the reviewer approves the journaled proposal, the
+/// bridge applies `prefix + proposal + suffix` and journals the wrap — which is
+/// why this is a wrap and not a rewrite: only what can be expressed as text
+/// around the proposal is decided here; anything else is refused with a reason
+/// the user can act on (`WrapDecision.unsafe`).
+struct InsertionWrapping: Equatable {
+    enum Kind: String {
+        case displayMath = "display_math"
+        case inlineMath = "inline_math"
+        case asIs = "as_is"
+
+        var label: String {
+            switch self {
+            case .displayMath: return "display math"
+            case .inlineMath: return "inline math"
+            case .asIs: return "as is"
+            }
+        }
+    }
+    var kind: Kind
+    var prefix: String
+    var suffix: String
+
+    func applied(to proposal: String) -> String { prefix + proposal.trimmingCharacters(in: .whitespacesAndNewlines) + suffix }
+    /// Wire form for `capture_prepare_insert`.
+    var wire: TransferV1.InsertionWrap { .init(prefix: prefix, suffix: suffix, kind: kind.rawValue) }
+    /// Short caption for the inspector and the review sheet: "as display math (\\[ … \\])".
+    var caption: String {
+        switch kind {
+        case .displayMath: return "as display math (\\[ … \\])"
+        case .inlineMath: return "as inline math ($ … $)"
+        case .asIs: return prefix.isEmpty && suffix.isEmpty ? "as is" : "as is, on its own line"
+        }
+    }
+}
+
+enum WrapDecision: Equatable {
+    case wrap(InsertionWrapping)
+    /// No prefix/suffix makes the proposal legal here; the reason says what to do.
+    case unsafe(String)
+
+    var wrapping: InsertionWrapping? { if case .wrap(let w) = self { return w }; return nil }
+}
+
+extension CaretContext {
+    /// Block-shaped content — a display block, an environment, several lines —
+    /// stands on its own lines; everything else is inline text.
+    static func isBlock(_ body: String) -> Bool {
+        body.hasPrefix("\\begin{") || body.hasPrefix("\\[") || body.hasPrefix("$$") || body.contains("\n")
+    }
+
+    /// Newlines that put a block on its own lines: one before unless the caret
+    /// is at a line start, one after unless it is at a line end (the same
+    /// layout `Insertion.insertionText` gives display math).
+    static func linePadding(in text: String, atByte byte: Int) -> (prefix: String, suffix: String) {
+        let u = text.utf8
+        let byte = max(0, min(byte, u.count))
+        let idx = u.index(u.startIndex, offsetBy: byte)
+        let atLineStart = idx == text.startIndex || text[text.index(before: idx)] == "\n"
+        let atLineEnd = idx == text.endIndex || text[idx] == "\n"
+        return (atLineStart ? "" : "\n", atLineEnd ? "" : "\n")
+    }
+
+    /// The wrap for `latex` landing at `byte` of `text`, decided by this caret
+    /// context (derived from the same place). The rules, each covered by
+    /// `CaretContextTests.testWrapping…`:
+    ///
+    /// 1. caret in text on its own line + a formula → `\\[ … \\]` on its own lines;
+    /// 2. caret inside a sentence (or a tabular cell) + a formula → `$ … $`;
+    /// 3. caret already in math (`$…$`, `\\[ \\]`, `equation`, `align`, …) → bare;
+    ///    a proposal that carries its own delimiters cannot be made legal by a
+    ///    wrap → `unsafe`, with what to do;
+    /// 4. proposal already wrapped (`\\[`, `$`, an environment) → never wrapped
+    ///    again; a display block gets its own lines; display math where only
+    ///    inline fits (a cell, mid-sentence) → `unsafe`;
+    /// 5. a `tikzpicture` (any environment) outside any figure → bare on its
+    ///    own lines, no automatic `figure`;
+    /// 6. text proposals → bare;
+    /// 7. verbatim / comment → bare, exactly as transcribed.
+    func wrapping(for latex: String, in text: String, atByte byte: Int) -> WrapDecision {
+        let body = latex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if wrap == .literal { return .wrap(.init(kind: .asIs, prefix: "", suffix: "")) }
+        let scan = Self.scanMath(body)
+        guard scan.balanced else { return .unsafe("the proposal's math delimiters are unbalanced; convert it again or reject it") }
+        let block = Self.isBlock(body)
+        let pad: (prefix: String, suffix: String) = block ? Self.linePadding(in: text, atByte: byte) : ("", "")
+        switch wrap {
+        case .literal:
+            return .wrap(.init(kind: .asIs, prefix: "", suffix: ""))
+        case .alreadyMath:
+            guard scan.spans.isEmpty else {
+                return .unsafe("the caret is inside math (\(delimiter ?? "an environment")) but the proposal carries its own delimiters; move the caret outside the math, or convert the capture again there")
+            }
+            return .wrap(.init(kind: .asIs, prefix: "", suffix: ""))
+        case .inline, .display:
+            if !scan.spans.isEmpty || block {
+                if wrap == .inline, scan.spans.contains(where: \.display) {
+                    let place = environment.map { Self.tabularEnvironments.contains($0) } == true
+                        ? "a \\begin{\(environment!)} cell" : "the middle of a sentence"
+                    return .unsafe("the proposal is display math and the caret is in \(place), where only inline math fits; put the caret on its own line, or convert the capture again there")
+                }
+                return .wrap(.init(kind: .asIs, prefix: pad.prefix, suffix: pad.suffix))
+            }
+            if Self.shape(body) == .bareMath, !body.isEmpty {
+                if wrap == .display {
+                    let lines = Self.linePadding(in: text, atByte: byte)
+                    return .wrap(.init(kind: .displayMath, prefix: lines.prefix + "\\[ ", suffix: " \\]" + lines.suffix))
+                }
+                return .wrap(.init(kind: .inlineMath, prefix: "$", suffix: "$"))
+            }
+            return .wrap(.init(kind: .asIs, prefix: pad.prefix, suffix: pad.suffix))
+        }
+    }
+
+    /// `wrapping(for:in:atByte:)` for the context derived at `byte` of `text`.
+    static func wrapping(for latex: String, in text: String, atByte byte: Int) -> WrapDecision {
+        derive(text, caretByte: byte).wrapping(for: latex, in: text, atByte: byte)
     }
 }

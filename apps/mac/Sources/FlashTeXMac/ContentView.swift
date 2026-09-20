@@ -698,6 +698,19 @@ private struct ProposalReviewSheet: View {
                 if let cr = proposal.contextRevision {
                     Text("Context revision \(cr)\(cr == model.editorRevision ? "" : " (editor is at \(model.editorRevision))")").font(.caption).foregroundStyle(cr == model.editorRevision ? DS.Colors.textSecondary : DS.Colors.severityWarning)
                 }
+                // What Approve will put in the document: the journaled proposal
+                // inside the wrap the caret's context calls for right now.
+                if let preview = model.captureInsertionPreview(captureId: proposal.captureId, latex: latex) {
+                    switch preview.decision {
+                    case .wrap(let w):
+                        Text("Inserts \(w.caption): \(preview.text.replacingOccurrences(of: "\n", with: "⏎"))")
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
+                            .accessibilityIdentifier("review.wrap")
+                    case .unsafe(let why):
+                        Label(why, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(DS.Colors.severityWarning)
+                            .accessibilityIdentifier("review.wrap")
+                    }
+                }
             }
             if let a = model.anchor {
                 Text("Inserts at \(a.path) byte \(a.byteOffset) (anchor \(a.id))").font(.caption).foregroundStyle(.secondary)
