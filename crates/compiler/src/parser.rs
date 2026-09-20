@@ -13623,6 +13623,7 @@ impl P<'_> {
         let mut full = options.as_ref().map_or(span, |(_, s)| span.merge(*s));
         let mut pre_unit = None;
         let mut args = Vec::with_capacity(required);
+        let mut leftover = None;
         for index in 0..required {
             if pre_unit_bracket && index == 1 {
                 if let Some((raw, s)) = self.siunitx_bracket() {
@@ -13630,11 +13631,15 @@ impl P<'_> {
                     pre_unit = Some(raw);
                 }
             }
-            let (tokens, argument_span) = self.required_group(name, span);
+            let (tokens, argument_span, rest) = self.siunitx_argument(name, span);
             if argument_span.document == span.document {
                 full = full.merge(argument_span);
             }
             args.push(siunitx::raw_text(tokens.iter().map(|t| &t.token)));
+            if rest.is_some() {
+                leftover = rest;
+                break;
+            }
         }
         let atoms = siunitx::typeset(
             name,
@@ -13647,17 +13652,101 @@ impl P<'_> {
             &mut self.diags,
         );
         if atoms.is_empty() {
-            return;
+            // Nothing typeset (`\si{}`, `\num{}`), but the command still
+            // stood between the source spaces on either side, so TeX keeps
+            // both interword glues (`\hbox{a \unit{} b}` is `a` glue glue
+            // `b`, 18.7534pt at 11pt). A zero glue in its place keeps them
+            // apart the same way, and is discarded at a line break as the
+            // second of TeX's two glues would be.
+            self.siunitx_zero_glue(full, space_before, para);
+        } else {
+            para.push(Inline::Math {
+                color: self.style.color,
+                color_ranges: Vec::new(),
+                list: crate::math::MathList { atoms },
+                display: false,
+                number: None,
+                number_span: None,
+                span: full,
+                space_before,
+            });
         }
-        para.push(Inline::Math {
-            color: self.style.color,
-            color_ranges: Vec::new(),
-            list: crate::math::MathList { atoms },
-            display: false,
-            number: None,
-            number_span: None,
-            span: full,
-            space_before,
+        if let Some(rest) = leftover {
+            para.push(rest);
+        }
+    }
+
+    /// One required argument of a siunitx command, read as TeX reads a
+    /// macro's `#n` (xparse `m`): the braced group, or, with no brace, the
+    /// next non-space token. `\SI{} macro` therefore takes `m` as its unit
+    /// (pdflatex's `\showbox`: `and` glue `\mathon m \mathoff` `acro`),
+    /// and the rest of that word is returned as the text to set after the
+    /// formula. Anything else keeps `required_group`'s diagnostic.
+    fn siunitx_argument(&mut self, name: &str, span: Span) -> (Vec<InputToken>, Span, Option<Inline>) {
+        self.skip_spaces();
+        let Some(input) = self.t.get(self.i) else {
+            let (tokens, s) = self.required_group(name, span);
+            return (tokens, s, None);
+        };
+        match &input.token.kind {
+            TokenKind::LBrace => {
+                let (tokens, s) = self.required_group(name, span);
+                (tokens, s, None)
+            }
+            TokenKind::Word(word) if !input.token.control_symbol && !input.maps_to_invocation => {
+                let mut chars = word.chars();
+                let Some(first) = chars.next() else {
+                    let (tokens, s) = self.required_group(name, span);
+                    return (tokens, s, None);
+                };
+                let rest: String = chars.collect();
+                let whole = input.token.span;
+                let head = Span::in_document(whole.document, whole.start, whole.start + first.len_utf8());
+                let argument = InputToken {
+                    token: Token { kind: TokenKind::Word(first.to_string()), span: head, control_symbol: false },
+                    definition: input.definition,
+                    maps_to_invocation: false,
+                };
+                self.i += 1;
+                let leftover = (!rest.is_empty()).then(|| Inline::Text {
+                    text: self.word_text(&rest),
+                    span: Span::in_document(whole.document, head.end, whole.end),
+                    style: self.style,
+                    space_before: false,
+                });
+                (vec![argument], head, leftover)
+            }
+            TokenKind::Command(_) => {
+                let argument = input.clone();
+                let s = argument.token.span;
+                self.i += 1;
+                (vec![argument], s, None)
+            }
+            _ => {
+                let (tokens, s) = self.required_group(name, span);
+                (tokens, s, None)
+            }
+        }
+    }
+
+    /// The zero-width glue standing in for a siunitx command that typeset
+    /// nothing (see [`Parser::siunitx`]): an `\hspace{0pt}` at the command's
+    /// span, with the interword space on either side the way `\hspace`
+    /// records it.
+    fn siunitx_zero_glue(&mut self, span: Span, space_before: bool, para: &mut Vec<Inline>) {
+        let space_after = matches!(self.t.get(self.i).map(|input| &input.token.kind), Some(TokenKind::Space));
+        let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+        let size = self.style.size.map_or(body, |level| crate::layout::size_declaration_pt(level, body));
+        let word_space = crate::layout::word_space(size, crate::layout::style_font(self.style));
+        para.push(Inline::HSpace {
+            pt: 0.0,
+            space_before_pt: if space_before && !para.is_empty() { word_space } else { 0.0 },
+            space_after_pt: if space_after { word_space } else { 0.0 },
+            span,
+            stretch_pt: 0.0,
+            stretch_fil: 0,
+            shrink_pt: 0.0,
+            shrink_fil: 0,
         });
     }
 
