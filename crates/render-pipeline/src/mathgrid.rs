@@ -54,6 +54,16 @@ pub struct GridSpec {
     /// `\vcenter` (`c`), from `array[t]` (latex.ltx `\@array`) or amsmath's
     /// `aligned[t]`/`gathered[b]` (`\ams@start@box`).
     pub vpos: char,
+    /// The [`Gaps::Quads`] gap is written in column 1's template rather
+    /// than column 2's: amsmath `cases` is `\array{@{}l@{\quad}l@{}}`, and
+    /// `\@mkpream` appends an `@{...}` to the *preceding* column's
+    /// `\@preamble`, so every row's first cell ends with the `\quad`
+    /// whether or not the row has a `&`. A `cases` whose rows never reach
+    /// column 2 is therefore still one `\quad` wider than its widest cell
+    /// (pdflatex `\showbox`: rows `x - 3y + 2z = -6` set 94.78958pt =
+    /// 83.9017 + `\glue 10.88788`). mathtools' `\newcases` puts the gap in
+    /// column 2's u-part (`&#1\strut@ #3`), so `rcases`/`dcases` do not.
+    pub gap_in_first_column: bool,
 }
 
 /// amsgen.sty `\compute@ex@` (lines 104-125): amsmath's `\ex@` at font size
@@ -108,12 +118,14 @@ impl GridSpec {
             strut: true,
             outer_mu: 0.0,
             vpos,
+            gap_in_first_column: false,
         };
         match env.as_str() {
             "cases" => {
                 spec.stretch = 1.2;
                 spec.gaps = Gaps::Quads(1.0);
                 spec.trim_outer = true;
+                spec.gap_in_first_column = true;
             }
             // `cases` and `rcases` do NOT share a macro path: `cases` is
             // amsmath.sty's own `\env@cases` (`\arraystretch=1.2`,
@@ -123,7 +135,9 @@ impl GridSpec {
             // They land on numerically equivalent spacing (1.2 stretch, a
             // `\quad` gap) by coincidence of both authors' choices, not
             // shared code, which is why this compiler models them
-            // identically here.
+            // identically here -- except which column's template carries
+            // the gap (`gap_in_first_column`), which only shows when no row
+            // has a `&`.
             "rcases" => {
                 spec.stretch = 1.2;
                 spec.gaps = Gaps::Quads(1.0);
@@ -269,6 +283,11 @@ pub fn layout_grid(rows: Vec<Vec<MathBox>>, columns: &str, spec: &GridSpec, pitc
                 }
                 xs.push(x);
                 x += w;
+            }
+            // The gap belongs to column 1's template, so a single-column
+            // grid still ends with it (`GridSpec::gap_in_first_column`).
+            if spec.gap_in_first_column && ncols == 1 {
+                x += n * quad;
             }
         }
         Gaps::Pairs => {
@@ -494,6 +513,40 @@ mod tests {
         assert_eq!((array.stretch, array.gaps, array.trim_outer), (1.0, Gaps::ColSep, false));
     }
 
+    /// pdflatex (TeX Live 2026, 11pt article, amsmath) `\showbox` of
+    /// `\begin{cases} 2x + y - z = 4 \\ x - 3y + 2z = -6 \\ 3x + 2y + z = 5
+    /// \end{cases}` -- no `&` anywhere: every row is `\hbox(...)x94.78958`
+    /// ending in `\glue 10.88788` (the `@{\quad}` of column 1's template, one
+    /// `ecrm1095` quad) after the 83.9017pt widest cell. Without the quad the
+    /// display was 10.888pt narrower and its centring put every word of
+    /// fixtures/real-world/ps-calculus page 2 5.42bp to the right.
+    #[test]
+    fn single_column_cases_still_ends_with_its_quad() {
+        let spec_for = |env: &str| {
+            let src = format!("\\begin{{{env}}} a \\\\ b \\end{{{env}}}");
+            GridSpec::from_source(&src, Span::in_document(Default::default(), 0, 6), 11)
+        };
+        let pitch = Pitch {
+            baselineskip: 13.6,
+            lineskip: 1.0,
+            lineskiplimit: 0.0,
+        };
+        let p = ml::CmMathMetrics::latex_10pt().params(ml::SizeClass::Text);
+        let rows = || vec![vec![MathBox::rule(60.0, 5.0, 1.0)], vec![MathBox::rule(83.9017, 5.0, 1.0)], vec![MathBox::rule(70.0, 5.0, 1.0)]];
+        let g = layout_grid(rows(), "ll", &spec_for("cases"), pitch, &p, 10.88788);
+        assert!((g.width - 94.78958).abs() < 1e-4, "{}", g.width);
+        // mathtools' `rcases`/`dcases` write the `\quad` in column 2's
+        // u-part, so a single-column one is exactly its widest cell.
+        for env in ["rcases", "dcases"] {
+            let g = layout_grid(rows(), "ll", &spec_for(env), pitch, &p, 10.88788);
+            assert!((g.width - 83.9017).abs() < 1e-9, "{env}: {}", g.width);
+        }
+        // With a second column the quad sits between the columns, as before.
+        let two = vec![vec![MathBox::rule(60.0, 5.0, 1.0), MathBox::rule(20.0, 5.0, 1.0)], vec![MathBox::rule(83.9017, 5.0, 1.0)]];
+        let g = layout_grid(two, "ll", &spec_for("cases"), pitch, &p, 10.88788);
+        assert!((g.width - (83.9017 + 10.88788 + 20.0)).abs() < 1e-9, "{}", g.width);
+    }
+
     #[test]
     fn grid_places_columns_with_arraycolsep_and_rows_at_baselineskip() {
         let cell = |w: f64, h: f64, d: f64| MathBox::rule(w, h, d);
@@ -511,6 +564,7 @@ mod tests {
             strut: true,
             outer_mu: 0.0,
             vpos: 'c',
+            gap_in_first_column: false,
         };
         let pitch = Pitch {
             baselineskip: 12.0,
