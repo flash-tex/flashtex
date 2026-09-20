@@ -8236,6 +8236,97 @@ fn url_argument_end(bytes: &[u8], open: usize) -> Option<usize> {
     None
 }
 
+/// Whether the inline whose span is `span` is one of the runs the compiler
+/// splits a `\url{...}`/`\nolinkurl{...}` into (`parser::push_url_text`:
+/// every run carries the span of the whole command, backslash through
+/// closing brace).
+fn url_run_at(source: &str, span: Span) -> bool {
+    let Some(rest) = source.get(span.start..span.end) else { return false };
+    let Some(rest) = rest.strip_prefix('\\') else { return false };
+    let len = rest.bytes().take_while(u8::is_ascii_alphabetic).count();
+    url_command(&rest[..len]) && rest[len..].trim_start().starts_with('{')
+}
+
+/// url.sty's `\UrlBreakPenalty` (`\binoppenalty`, 700).
+const URL_BREAK_PENALTY: i32 = 700;
+/// url.sty's `\UrlBigBreakPenalty` (`\relpenalty`, 500).
+const URL_BIG_BREAK_PENALTY: i32 = 500;
+
+/// The math atom class url.sty gives a URL character: `\UrlBreaks` are
+/// binary operators (`\mathcode "2...`), `\UrlBigBreaks` (`:`) relations,
+/// everything else ordinary. The set is the compiler's measured
+/// `parser::URL_BREAK_AFTER` less `:`; `-` is ordinary (url.sty breaks at
+/// a hyphen only under its `hyphens` option, and the compiler puts the
+/// 0.5pt kern there instead).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UrlAtom {
+    Ord,
+    Bin,
+    Rel,
+}
+
+fn url_atom(c: char) -> UrlAtom {
+    match c {
+        ':' => UrlAtom::Rel,
+        '/' | '.' | '?' | '&' | '#' | '=' | '+' | '_' | ',' | ';' | '!' | '|' | '>' | ')' | ']' | '\'' | '@' => UrlAtom::Bin,
+        _ => UrlAtom::Ord,
+    }
+}
+
+/// The penalty TeX puts between the last character of `before` and the
+/// character `next` of the same URL, or `None` when there is no legal
+/// break there.
+///
+/// url.sty typesets a URL as a math list (`\Url@do`: `\mathsurround\z@`,
+/// `\medmuskip\Urlmuskip`, `\thickmuskip\Urlmuskip`, both 0mu), so its
+/// break points are TeX's own math-list penalties: `\binoppenalty` after a
+/// Bin atom and `\relpenalty` after a Rel atom (TeX §761), subject to the
+/// Bin→Ord demotions of §728-729 — a Bin preceded by Bin, Rel or nothing
+/// is Ord, and a Bin followed by a Rel (or the end of the list) is Ord.
+/// No penalty follows a Rel that another Rel follows.
+///
+/// pdflatex (TeX Live 2026, 11pt `article`, T1, hyperref) shows both the
+/// list (`\showbox`) and the break (`\tracingparagraphs`):
+///
+/// ```text
+/// .\T1/cmtt/m/n/10.95 s
+/// .\glue(\thickmuskip) 0.0
+/// .\T1/cmtt/m/n/10.95 :
+/// .\glue(\thickmuskip) 0.0
+/// .\T1/cmtt/m/n/10.95 /
+/// .\glue(\medmuskip) 0.0
+/// .\T1/cmtt/m/n/10.95 /
+/// .\glue(\medmuskip) 0.0
+/// .\T1/cmtt/m/n/10.95 e
+/// ...
+/// \T1/cmtt/m/n/10.95 https : / / example . org / ftxc /
+/// @\penalty via @@1 b=7 p=700 d=490289
+/// @@2: line 2.2 t=490458 -> @@1
+///  issues$[][] \T1/cmr/m/n/10.95 rather than emailed directly.
+/// ```
+///
+/// — the first `/` of `://` follows the relation and is Ord (no medmuskip
+/// on its left), the second is Bin, and the paragraph breaks after the
+/// last `/` at 700 (`fixtures/real-world/listings-manual`, page 1; the
+/// whole URL is one box without the penalties, and `issues` cannot fit).
+fn url_break_penalty(before: &str, next: char) -> Option<i32> {
+    let mut r_type: Option<UrlAtom> = None;
+    for c in before.chars() {
+        let mut t = url_atom(c);
+        if t == UrlAtom::Bin && r_type != Some(UrlAtom::Ord) {
+            t = UrlAtom::Ord;
+        }
+        r_type = Some(t);
+    }
+    match (r_type?, url_atom(next)) {
+        (UrlAtom::Rel, UrlAtom::Rel) => None,
+        (UrlAtom::Rel, _) => Some(URL_BIG_BREAK_PENALTY),
+        (UrlAtom::Bin, UrlAtom::Rel) => None,
+        (UrlAtom::Bin, _) => Some(URL_BREAK_PENALTY),
+        (UrlAtom::Ord, _) => None,
+    }
+}
+
 /// The NFSS commands of a text font command with a braced argument
 /// (latex.ltx 14213-14222 `\DeclareTextFontCommand`, and `\emph`).
 fn text_font_command(name: &str) -> Option<&'static [crate::nfss::Command]> {
@@ -9351,8 +9442,16 @@ fn kern_amount_matches(spelling: &str, amount: &TextDimen) -> bool {
 /// TeX eats right after the word does not count.
 fn gap_has_space_after_control_word(rest: &str) -> bool {
     let rest = rest.trim_start_matches([' ', '\t']);
-    // A newline right after the word is eaten too (it is the same skip).
-    let rest = rest.strip_prefix('\n').unwrap_or(rest);
+    // A newline right after the word is eaten too (state S ignores the end
+    // of the line, TeX §347), and the next line then begins in state N,
+    // where its indentation is skipped as well (§344): `\quad\n  \href`
+    // holds no space token. Reading that indentation as one put an extra
+    // interword space after each line-ending `\quad` of
+    // `fixtures/real-world/cv`'s contact line (both ends 3.62 bp out).
+    let rest = match rest.strip_prefix('\n') {
+        Some(next_line) => next_line.trim_start_matches([' ', '\t']),
+        None => rest,
+    };
     gap_has_space(rest)
 }
 
@@ -10651,6 +10750,9 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
     let mut hfill_start = None;
     let mut factor = 1000u32;
     let mut pending_accent: Option<(char, CharSrc)> = None;
+    // The `\url{...}` whose runs are being assembled (its span) and the
+    // characters of it seen so far, for `url_break_penalty` between runs.
+    let mut url_run: Option<(Span, String)> = None;
     // The compiler's size declaration in force at the previous text
     // inline, for the interword space read after it.
     let mut prev_size_cpt = 0u16;
@@ -11270,6 +11372,43 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 let mut style = style_at(styles_of(span.document), span.start);
                 style.size_cpt = declared_size(compiler_style.size, size);
                 prev_size_cpt = style.size_cpt;
+                // amsthm.sty 273-279, `\qed` in text:
+                //
+                // ```text
+                // \leavevmode\unskip\penalty9999 \hbox{}\nobreak\hfill
+                // \quad\hbox{\qedsymbol}
+                // ```
+                //
+                // `\unskip` takes the interword glue the source's blank
+                // before `\end{proof}` gave, then a `\penalty9999` (the box
+                // may go to a line of its own, at a price), an empty box,
+                // `\nobreak`, the fill, and a `\quad` in front of the symbol.
+                // The fill's arm above pushed that glue and the fill; both
+                // are replaced. With the glue kept and the quad missing the
+                // last line was 1em + a space too short in the breaker's
+                // eyes: `fixtures/divergence-probes/min5-proof-close-shrink`
+                // kept `hence by zero.` on one shrunk line where pdflatex
+                // breaks after `by` (`zero.` 445.7 bp off).
+                let fill_style = match hfill_start.and_then(|s| items.get(s..)).and_then(|tail| tail.iter().find_map(|i| match i {
+                    Item::HFill { style, .. } => Some(*style),
+                    _ => None,
+                })) {
+                    Some(fill_style) => {
+                        items.truncate(hfill_start.unwrap_or(items.len()));
+                        if matches!(items.last(), Some(Item::Space { .. })) {
+                            items.pop();
+                        }
+                        Some(fill_style)
+                    }
+                    None => None,
+                };
+                if let Some(fill_style) = fill_style {
+                    items.push(Item::Penalty { value: 9999, flagged: false });
+                    items.push(Item::LeaveVmode);
+                    items.push(Item::Penalty { value: 10000, flagged: false });
+                    items.push(Item::HFill { fill: true, leader: FillLeader::None, style: fill_style });
+                    items.push(Item::Quad { em: 1.0, plus_em: 0.0, minus_em: 0.0, style });
+                }
                 items.push(Item::QedBox { style, span: *span });
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
@@ -11434,29 +11573,60 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     prev_span = Some(*span);
                     continue;
                 }
+                // A run of a `\url{...}` (the compiler splits the argument
+                // after every url.sty break character, `parser::url_pieces`,
+                // each run with the whole command's span): the break between
+                // it and the previous run of the same URL is TeX's math-list
+                // penalty (`url_break_penalty`), a bare `\penalty` since the
+                // muskips around it are 0mu. Without it the runs merged into
+                // one unbreakable word.
+                let is_url_run = url_run_at(source, *span);
+                if is_url_run {
+                    match url_run.as_mut().filter(|(s, _)| s == span) {
+                        Some((_, before)) => {
+                            if let Some(value) = text.chars().next().and_then(|next| url_break_penalty(before, next)) {
+                                items.push(Item::Penalty { value, flagged: false });
+                            }
+                            before.push_str(text);
+                        }
+                        None => url_run = Some((*span, text.clone())),
+                    }
+                } else {
+                    url_run = None;
+                }
                 // Per-character sources. Macro replacement text shares the
                 // invocation span; keep that attribution for every char.
                 let citation = generated_citation(source, *span);
-                let exact = span.end - span.start == text.len()
-                    && !reference_spans.contains(span)
-                    && !citation;
-                let mut chars: Vec<(char, CharSrc)> = Vec::new();
-                for (offset, ch) in text.char_indices() {
-                    let src = if exact {
-                        CharSrc {
-                            document: span.document,
-                            start: span.start + offset,
-                            end: span.start + offset + ch.len_utf8(),
-                        }
-                    } else {
-                        CharSrc {
-                            document: span.document,
-                            start: span.start,
-                            end: span.end,
-                        }
-                    };
-                    chars.push((ch, src));
-                }
+                // The compiler's input-ligature pass (`lexer::
+                // apply_text_ligatures`) makes the text of a word shorter
+                // than its bytes (`--` is one U+2013), so the sources are
+                // aligned ligature by ligature, not by equal length: with the
+                // length test, `pp.~1119--1184,` was "not the source's own
+                // bytes" and its `~` was set as a tilde glyph (6.09 pt in
+                // `ecrm1000`) instead of a tie — `1981.` 2.76 bp right on
+                // `fixtures/real-world/article-twocolumn` page 2.
+                let exact_sources = if reference_spans.contains(span) || citation {
+                    None
+                } else {
+                    ligature_char_sources(source, *span, text)
+                };
+                let exact = exact_sources.is_some();
+                let mut chars: Vec<(char, CharSrc)> = match exact_sources {
+                    Some(sources) => text.chars().zip(sources).collect(),
+                    None => text
+                        .chars()
+                        .map(|ch| {
+                            (
+                                ch,
+                                CharSrc {
+                                    document: span.document,
+                                    start: span.start,
+                                    end: span.end,
+                                },
+                            )
+                        })
+                        .collect(),
+                };
                 if let Some((mark, msrc)) = pending_accent.take() {
                     if let Some((first, fsrc)) = chars.first().copied() {
                         if let Some(composed) = accent(mark, first) {
@@ -11487,7 +11657,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     for (c, _) in run.iter() {
                         *factor = space_factor(*c, *factor);
                     }
-                    push_segment(items, text, srcs, style);
+                    push_segment_in(items, text, srcs, style, source);
                     run.clear();
                 };
                 for (ch, src) in chars {
@@ -11563,6 +11733,12 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     run.push((ch, src));
                 }
                 flush(&mut run, &mut items, &mut factor);
+                // A URL is a formula, and leaving math mode sets the space
+                // factor to 1000 (TeX §1196): the space after `\url{x.}` is
+                // an ordinary one, not the `\sfcode` 3000 of the `.`.
+                if is_url_run {
+                    factor = 1000;
+                }
                 // A style group closing right after this text: LaTeX's
                 // \text@command appends \/ (`\maybe@ic`) unless the next
                 // token is in \nocorrlist (`,` and `.`) or the enclosing
@@ -11838,11 +12014,40 @@ fn space_style(
 
 /// Appends a segment to the current word or starts a new word.
 fn push_segment(items: &mut Vec<Item>, text: String, chars: Vec<CharSrc>, style: TextStyle) {
+    push_segment_in(items, text, chars, style, "");
+}
+
+/// [`push_segment`] for a run read from `source`, which decides whether it
+/// joins the segment before it (see the empty-group rule inside).
+fn push_segment_in(items: &mut Vec<Item>, text: String, chars: Vec<CharSrc>, style: TextStyle, source: &str) {
     let segment = Segment { text, chars, style };
     match items.last_mut() {
         Some(Item::Word(word)) => {
             if let Some(last) = word.segments.last_mut() {
-                if last.style == style {
+                // One segment is shaped as one string, with the face's
+                // ligature/kern program running across it. An empty group
+                // between two runs is the token TeX's lig/kern lookahead
+                // stops at (§1034-1040: only a character token continues
+                // the program): `-{}-` is two hyphens in `T1/cmtt` where
+                // `--` is the en dash of `ectt1095`'s `LIG O 55 O 25`, and
+                // `f{}i` is two letters. As one string, `\texttt{-{}-set}`
+                // lost a hyphen's 5.66 pt on every such `description` item
+                // of `fixtures/real-world/listings-manual` (page 3). So the
+                // run starts a segment of its own there.
+                //
+                // Only the empty group, deliberately: a closing brace alone
+                // (`Schr\"{o}dinger`, `{Experi}ence`) stops the program too,
+                // but leaves TeX's hyphenation pass one word (§898 walks the
+                // character nodes, and a group leaves none), and a segment
+                // is also the unit `typeset` hyphenates — the kern it would
+                // save is worth less than the hyphenation points it would
+                // lose. `{}` inside a word is the idiom for "no ligature"
+                // and rarely wants a hyphen either side of it.
+                let empty_group = match (last.chars.last(), segment.chars.first()) {
+                    (Some(prev), Some(next)) => prev.document == next.document && source.get(prev.end..next.start) == Some("{}"),
+                    _ => false,
+                };
+                if last.style == style && !empty_group {
                     last.text.push_str(&segment.text);
                     last.chars.extend(segment.chars);
                     return;
@@ -11854,6 +12059,43 @@ fn push_segment(items: &mut Vec<Item>, text: String, chars: Vec<CharSrc>, style:
             segments: vec![segment],
         })),
     }
+}
+
+/// The source bytes of each character of `text`, when `text` is exactly the
+/// bytes of `span` read through the compiler's input-ligature pass
+/// (`lexer::apply_text_ligatures`: `---` `--` ``` `` ``` `''` ``!` `` ``?` ``
+/// `` ` `` `'`), and `None` when it is anything else — a macro's
+/// replacement text, a control word's symbol, a theorem head. A ligature's
+/// character gets the bytes of its whole input sequence.
+fn ligature_char_sources(source: &str, span: Span, text: &str) -> Option<Vec<CharSrc>> {
+    let bytes = source.get(span.start..span.end)?;
+    let mut sources = Vec::with_capacity(text.len());
+    let mut at = 0usize;
+    for ch in text.chars() {
+        let rest = &bytes[at..];
+        let len = if rest.starts_with(ch) {
+            ch.len_utf8()
+        } else {
+            let input = match ch {
+                '\u{2014}' => "---",
+                '\u{2013}' => "--",
+                '\u{201C}' => "``",
+                '\u{201D}' => "''",
+                '\u{00A1}' => "!`",
+                '\u{00BF}' => "?`",
+                '\u{2018}' => "`",
+                '\u{2019}' => "'",
+                _ => return None,
+            };
+            if !rest.starts_with(input) {
+                return None;
+            }
+            input.len()
+        };
+        sources.push(CharSrc { document: span.document, start: span.start + at, end: span.start + at + len });
+        at += len;
+    }
+    (at == bytes.len()).then_some(sources)
 }
 
 /// TeX input ligatures of T1-encoded text: `--` `---` ` `` `` `''` `'`.
@@ -12802,13 +13044,33 @@ mod tests {
     /// roman setting this used to produce is 32pt narrower.
     #[test]
     fn url_and_nolinkurl_are_set_in_the_typewriter_family() {
+        // One word per url.sty break run (`https:` `//` `example.` `org/` `x`).
         let it = items("A \\url{https://example.org/x} B");
-        assert_eq!(families(&it), "rtr", "{it:?}");
+        assert_eq!(families(&it), "rtttttr", "{it:?}");
         let it = items("A \\nolinkurl{https://example.org/x} B");
-        assert_eq!(families(&it), "rtr", "{it:?}");
+        assert_eq!(families(&it), "rtttttr", "{it:?}");
         // `\href` typesets only its second argument, in the ambient family.
         let it = items("A \\href{https://example.org/x}{link text} B");
         assert_eq!(families(&it), "rrrr", "{it:?}");
+    }
+
+    /// `-{}-`: the empty group is a token TeX's lig/kern lookahead stops at,
+    /// so the two hyphens are two segments (shaped apart, no `--` ligature);
+    /// a closing brace alone (`{Experi}ence`) keeps one segment, so the word
+    /// is still hyphenated whole (`push_segment_in`).
+    #[test]
+    fn an_empty_group_splits_a_word_into_two_segments() {
+        let segs = |src: &str| -> Vec<Vec<String>> {
+            items(src)
+                .iter()
+                .filter_map(|i| match i {
+                    Item::Word(w) => Some(w.segments.iter().map(|s| s.text.clone()).collect()),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(segs("\\texttt{-{}-set} f{}ine"), [vec!["-", "-set"], vec!["f", "ine"]]);
+        assert_eq!(segs("{Experi}ence"), [vec!["Experience"]]);
     }
 
     /// A URL's argument is read as raw source bytes (url.sty makes every
@@ -12819,15 +13081,133 @@ mod tests {
     #[test]
     fn a_percent_or_brace_inside_a_url_does_not_disturb_a_later_font_command() {
         let it = items("A \\url{https://e.org/a%20b} \\textbf{bold} C");
-        assert_eq!(families(&it), "rtrr", "{it:?}");
-        let Item::Word(bold) = it.iter().filter(|i| matches!(i, Item::Word(_))).nth(2).unwrap() else {
+        assert_eq!(families(&it), "rtttttrr", "{it:?}");
+        let Item::Word(bold) = it.iter().filter(|i| matches!(i, Item::Word(_))).nth(6).unwrap() else {
             panic!()
         };
         assert_eq!(bold.text(), "bold");
         assert!(bold.segments[0].style.bold, "the \\textbf after the URL is still bold: {bold:?}");
         // A brace pair inside the URL is balanced, not a group.
         let it = items("A \\url{https://e.org/{x}} \\textbf{bold} C");
-        assert_eq!(families(&it), "rtrr", "{it:?}");
+        assert_eq!(families(&it), "rtttttrr", "{it:?}");
+    }
+
+    /// A tie inside a word the compiler's ligature pass shortened
+    /// (`pp.~1119--1184,`: `--` is one U+2013, so the text is a byte shorter
+    /// than its span) is still the source's own `~`, i.e. an unbreakable
+    /// interword space and not a tilde glyph (`ligature_char_sources`).
+    #[test]
+    fn a_tie_next_to_an_input_ligature_is_still_a_tie() {
+        let it = items("pp.~1119--1184, 1981.");
+        let shape: Vec<String> = it
+            .iter()
+            .map(|i| match i {
+                Item::Word(w) => w.text(),
+                Item::Space { no_break: true, .. } => "~".to_string(),
+                Item::Space { .. } => " ".to_string(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(shape, ["pp.", "~", "1119\u{2013}1184,", " ", "1981."], "{it:?}");
+        // The en dash's source is both hyphens.
+        let Item::Word(w) = &it[2] else { panic!() };
+        let dash = w.segments[0].chars[4];
+        assert_eq!((dash.start, dash.end), (8, 10));
+        assert_eq!(
+            ligature_char_sources("a``b''", Span::new(0, 6), "a\u{201C}b\u{201D}").map(|s| s.iter().map(|c| (c.start, c.end)).collect::<Vec<_>>()),
+            Some(vec![(0, 1), (1, 3), (3, 4), (4, 6)])
+        );
+        assert_eq!(ligature_char_sources("\\today", Span::new(0, 6), "September 19, 2026"), None);
+    }
+
+    /// The whitespace after a control word is eaten whether it is blanks,
+    /// the end of the line, or the end of the line plus the next line's
+    /// indentation (`gap_has_space_after_control_word`): `15213 \quad
+    /// $\cdot$ \quad\n  \href{..}{..}` is glue, quad, math, glue, quad,
+    /// text — pdflatex's contact line of `fixtures/real-world/cv`.
+    #[test]
+    fn the_indentation_of_the_line_after_a_control_word_is_no_space() {
+        let shape = |src: &str| -> String {
+            items(src)
+                .iter()
+                .map(|i| match i {
+                    Item::Word(w) => w.text(),
+                    Item::Space { .. } => " ".to_string(),
+                    Item::Quad { .. } => "<quad>".to_string(),
+                    Item::Math { .. } => "<math>".to_string(),
+                    other => format!("{other:?}"),
+                })
+                .collect()
+        };
+        assert_eq!(shape("15213 \\quad $\\cdot$ \\quad\n  (412)"), "15213 <quad><math> <quad>(412)");
+        assert_eq!(shape("A \\quad\n  \\href{mailto:x@y.z}{x@y.z} B"), "A <quad>x@y.z B");
+        assert_eq!(shape("A \\quad B"), "A <quad>B");
+    }
+
+    /// `\end{proof}` appends amsthm.sty 273-279's `\qed`: the blank before
+    /// it is `\unskip`ped, then `\penalty9999 \hbox{}\nobreak\hfill\quad`
+    /// and the symbol box — no interword glue, and a `\quad` in front.
+    #[test]
+    fn the_end_of_a_proof_is_amsthm_s_qed_list() {
+        let src = "\\begin{proof}\nHence by zero.\n\\end{proof}";
+        let parsed = flashtex_compiler::parser::parse(src);
+        let doc = adapt(&[src], 0, &parsed, &RenderOptions::default(), &Labels::default());
+        let Block::Paragraph { parts, .. } = &doc.blocks[0] else { panic!("{:?}", doc.blocks) };
+        let ParaPart::Lines(it) = &parts[0] else { panic!() };
+        let tail: Vec<String> = it
+            .iter()
+            .skip_while(|i| !matches!(i, Item::Word(w) if w.text() == "zero."))
+            .map(|i| match i {
+                Item::Word(w) => w.text(),
+                Item::Penalty { value, .. } => format!("<{value}>"),
+                Item::LeaveVmode => "<hbox>".to_string(),
+                Item::HFill { fill: true, leader: FillLeader::None, .. } => "<hfill>".to_string(),
+                Item::Quad { em, .. } => format!("<quad {em}>"),
+                Item::QedBox { .. } => "<qed>".to_string(),
+                Item::Space { .. } => "<space>".to_string(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(tail, ["zero.", "<9999>", "<hbox>", "<10000>", "<hfill>", "<quad 1>", "<qed>"], "{it:?}");
+    }
+
+    /// A URL breaks where TeX's math-list penalties fall
+    /// (`url_break_penalty`): `\relpenalty` 500 after the `:` (a Rel),
+    /// `\binoppenalty` 700 after a Bin that an Ord precedes, and nothing
+    /// after the first `/` of `://` (a Bin after a Rel is an Ord) or after
+    /// the hyphen (an Ord, with url.sty's 0.5pt kern). pdflatex (TeX Live
+    /// 2026, 11pt `article`, T1, hyperref) breaks
+    /// `\url{https://example.org/ftxc/issues}` after the last `/` at
+    /// `p=700` (`\tracingparagraphs`: `@\penalty via @@1 b=7 p=700
+    /// d=490289`), and the space after a URL ending in `.` is an ordinary
+    /// one (math mode leaves the space factor at 1000).
+    #[test]
+    fn a_url_carries_tex_s_math_list_penalties_between_its_runs() {
+        fn shape(items: &[Item]) -> String {
+            items
+                .iter()
+                .map(|i| match i {
+                    Item::Word(w) => w.text(),
+                    Item::Penalty { value, flagged: false } => format!("<{value}>"),
+                    Item::Kern { .. } => "<kern>".to_string(),
+                    Item::Space { factor, .. } => format!(" ({factor}) "),
+                    other => format!("{other:?}"),
+                })
+                .collect()
+        }
+        let it = items("at \\url{https://example.org/ftxc/issues} rather");
+        assert_eq!(shape(&it), "at (1000) https:<500>//<700>example.<700>org/<700>ftxc/<700>issues (1000) rather", "{it:?}");
+        // A hyphen is no break; a run ending the URL gets no penalty; the
+        // space factor after the URL's `.` is 1000, not 3000.
+        let it = items("x \\url{a-b.} y");
+        assert_eq!(shape(&it), "x (1000) a-<kern>b. (1000) y", "{it:?}");
+        assert_eq!(url_break_penalty("https:", '/'), Some(URL_BIG_BREAK_PENALTY));
+        assert_eq!(url_break_penalty("https:/", '/'), None);
+        assert_eq!(url_break_penalty("https://", 'e'), Some(URL_BREAK_PENALTY));
+        assert_eq!(url_break_penalty("a/", ':'), None, "a Bin followed by a Rel is an Ord");
+        assert_eq!(url_break_penalty("a:", ':'), None, "no penalty between two Rels");
+        assert_eq!(url_break_penalty("a?", '&'), Some(URL_BREAK_PENALTY));
+        assert_eq!(url_break_penalty("a?&", 'b'), None, "the `&` after a Bin is an Ord");
     }
 
     /// The typewriter family covers the whole `\url{...}`, not just its

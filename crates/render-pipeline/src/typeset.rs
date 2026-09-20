@@ -3463,27 +3463,58 @@ impl<'a> Context<'a> {
                     // follows the `\parindent` box, nor an `\item`'s, which
                     // follows the label box and `\penalty0`), when its
                     // letters are in one font (§896), and when nothing but
-                    // non-letters follows them up to the next glue, penalty
-                    // or kern (§899: a math or word box glued straight on
-                    // ends the search with no hyphens).
+                    // character nodes follows them up to the next glue,
+                    // penalty or explicit kern (§899: a math node or a box
+                    // glued straight on ends the search with no hyphens).
+                    //
+                    // The segments of a word and a word item that follows
+                    // directly are character nodes in the same list, not
+                    // boxes: `\emph{Experience},` is the letters in `cmti`
+                    // and then `,` in `cmr`, one word of two segments here.
+                    // §896 skips characters up to the first letter, §898
+                    // ends the word at a non-letter or a font change, and
+                    // §899 skips the characters behind it to the glue. So
+                    // the segment holding the word's first letter is the
+                    // one hyphenated, whatever the characters around it.
+                    // pdflatex hyphenates that word (`\tracingparagraphs`
+                    // on `fixtures/real-world/article-twocolumn`'s second
+                    // `\bibitem`: `Soft-ware: Prac-tice and
+                    // Ex-pe-ri-ence\T1/cmr/m/n/10 ,`, and the chosen
+                    // `@@7: line 2.1-` ends in `Experi-`); with the word
+                    // set whole, its line was `graphs into ... Experience,`
+                    // at badness 1742 and every word of it 33.8 bp off.
+                    // Only a following word that continues the letters in
+                    // the same face is still the same word to §898
+                    // (`{Experi}ence`), and that one is not hyphenated in
+                    // halves here.
                     let after_glue = matches!(out.last(), Some(pl::Item::Glue(_)));
-                    let joined = matches!(items.get(idx + 1), Some(AItem::Word(_) | AItem::Math { .. }));
+                    let has_letter = |s: &adapter::Segment| s.text.chars().any(char::is_alphabetic);
+                    let hyphenated_seg = w.segments.iter().position(has_letter);
+                    let continued = match (items.get(idx + 1), w.segments.last()) {
+                        (Some(AItem::Word(next)), Some(last)) => {
+                            hyphenated_seg == Some(w.segments.len() - 1)
+                                && last.text.chars().last().is_some_and(char::is_alphabetic)
+                                && next.segments.first().is_some_and(|s| s.text.chars().next().is_some_and(char::is_alphabetic) && s.style == last.style)
+                        }
+                        _ => false,
+                    };
+                    let joined = matches!(items.get(idx + 1), Some(AItem::Math { .. })) || continued;
                     // A `\lstinline` token is an `\hbox` of its own
                     // (`\lst@OutputToken`): never hyphenated, whatever its face.
                     let boxed = matches!(items.get(idx + 1), Some(AItem::Listing(_)));
-                    // The typewriter families declare `\hyphenchar\font=-1`
-                    // (`ot1cmtt.fd`, `t1cmtt.fd`, `t1lmtt.fd`): no hyphens.
-                    let hyphenate = after_glue
-                        && !joined
-                        && !boxed
-                        && w.segments.len() == 1
-                        && merge_style(base, w.segments[0].style).family != crate::nfss::FamilyKind::Tt;
-                    for seg in &w.segments {
+                    for (seg_idx, seg) in w.segments.iter().enumerate() {
                         let seg = adapter::Segment {
                             text: seg.text.clone(),
                             chars: seg.chars.clone(),
                             style: merge_style(base, seg.style),
                         };
+                        // The typewriter families declare `\hyphenchar\font=-1`
+                        // (`ot1cmtt.fd`, `t1cmtt.fd`, `t1lmtt.fd`): no hyphens.
+                        let hyphenate = after_glue
+                            && !joined
+                            && !boxed
+                            && hyphenated_seg == Some(seg_idx)
+                            && seg.style.family != crate::nfss::FamilyKind::Tt;
                         // A size declaration in force (`{\Large ...}`) sets
                         // this segment at its own size.
                         let seg_size = seg.style.size_or(size);
@@ -3790,6 +3821,15 @@ impl<'a> Context<'a> {
                     // `\/`: a kern of the last character's TFM italic
                     // correction (§1113); nothing when the last node is not
                     // a character or the metrics carry no correction.
+                    //
+                    // A kern, not fixed glue: a break is legal only at a
+                    // glue after it (§866, `pl` alike), and the end of a
+                    // list keeps it where a trailing glue is dropped (§816).
+                    // As glue it fell off the end of a `description` label
+                    // (`\item[\texttt{-{}-set \emph{key}=\emph{value}}]`:
+                    // `\/` after `value` is `\kern 1.90057` in pdflatex's
+                    // `\showbox`, the last node of `\descriptionlabel`'s box)
+                    // and the item's text started 1.9 pt early.
                     let last = recs.iter().rev().find_map(|r| *r).and_then(|r| match &self.recs[r] {
                         BoxRec::Text { glyphs, size, .. } if matches!(out.last(), Some(pl::Item::Box(_))) => {
                             glyphs.last().map(|g| crate::tfm::Tfm::pt(g.italic_fix, *size))
@@ -3798,7 +3838,7 @@ impl<'a> Context<'a> {
                     });
                     if let Some(ic) = last {
                         if ic > 0.0 {
-                            push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fixed(ic)), None);
+                            push(&mut out, &mut recs, pl::Item::kern(ic), None);
                         }
                     }
                 }
@@ -5188,6 +5228,9 @@ impl<'a> Context<'a> {
                         });
                     }
                 }
+                // The environment is closed: its declared skips must not
+                // reach a later `\end` that belongs to another one.
+                st.env_skips = None;
             }
             st.after_heading = false;
     }
@@ -10968,8 +11011,20 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     let mut mark_rules: Vec<flashtex_class_geometry::MarkRule> = geo.map(|g| g.mark_rules.clone()).unwrap_or_default();
     let mut after_heading = false;
     // Whether the open paragraph-shape environment began in vertical mode
-    // (`\@topsepadd` keeps `\partopsep` for the closing skip too).
+    // (`\@topsepadd` keeps `\partopsep` for the closing skip too), and
+    // the `\@topsep`/`\@topsepadd` it declared itself (amsthm's). Both
+    // belong to the environment, not to the block that opened it: a
+    // `proof` of two paragraphs closes at its second, and with the skips
+    // dropped between blocks that one ended with `\trivlist`'s derived
+    // `\topsep` (9pt plus 3pt minus 5pt at 11pt) instead of the proof's
+    // own `6pt plus 6pt` + `\partopsep` (9pt plus 7pt minus 1pt) --
+    // pdflatex's `\tracingpages` on `fixtures/real-world/lecture-notes`
+    // page 1 reaches the section break at `t=663.63 plus 82.02554 minus
+    // 43.82797` and this builder at `plus 78.03 minus 47.83`, so the page's
+    // shrink ratio came out 0.276 for pdflatex's 0.301 and every line
+    // after a theorem drifted (0.72 bp median, 1.08 at the foot).
     let mut env_vmode = false;
+    let mut env_skips: Option<adapter::EnvSkips> = None;
     let quad = ctx.text_params(TextStyle::default(), ctx.style.body_size_pt).quad;
     // The cache fingerprint follows the active stylesheet: past the switch
     // the same items break at another width, so they key differently.
@@ -11339,9 +11394,9 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 events.push((blocks.len(), event.clone(), *span));
             }
             Block::Paragraph { .. } => {
-                let mut st = ParaState { after_heading, env_vmode, env_skips: None };
+                let mut st = ParaState { after_heading, env_vmode, env_skips };
                 ctx.build_paragraph(&mut blocks, block, &mut st, cache, style_fp.get(), quad);
-                (after_heading, env_vmode) = (st.after_heading, st.env_vmode);
+                (after_heading, env_vmode, env_skips) = (st.after_heading, st.env_vmode, st.env_skips);
             }
             Block::Rule {
                 span,

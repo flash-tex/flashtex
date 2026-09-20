@@ -215,3 +215,52 @@ fn a_closing_topsep_is_absorbed_by_a_larger_belowdisplayskip() {
     // `Proof.` 9 pt (8.97 bp) further down.
     check("theorem line -> proof, across the display", proof - there, 2.0 * 24.60001);
 }
+
+/// The baseline, in bp from the page top, of the glyph run that starts with
+/// `word` on page 1 of a document that may run to more pages.
+fn baseline_on_page_one(text: &str, word: &str) -> f64 {
+    let fonts = FontSet::with_default_dirs(&[]);
+    let docs = [SourceDocument { path: "main.tex", text }];
+    let r = render(&docs, "main.tex", 1, "amsthm-topsep", &fonts, &RenderOptions::default());
+    for item in r.v2.pages[0].resident_items() {
+        let Item::GlyphRun(run) = item else { continue };
+        if run.text.trim_start().starts_with(word) {
+            if let Some(g) = run.glyphs.first() {
+                return g.baseline_y.to_bp();
+            }
+        }
+    }
+    panic!("no glyph run starting `{word}` on page 1");
+}
+
+/// A `proof` of two paragraphs closes with *its* `\@topsepadd` (6pt plus
+/// 6pt + `\partopsep` = 9pt plus 7pt minus 1pt at 11pt), not with the
+/// `\trivlist` derivation the second paragraph would get on its own (9pt
+/// plus 3pt minus 5pt). The natural values agree, so only a page set with
+/// shrink tells them apart: `fixtures/divergence-probes/min5-proof-close-
+/// shrink` has `\textheight` 120pt and pdflatex's `\tracingpages` breaks it
+/// at the `\section` with `t=123.60004 plus 16.0 minus 13.0 g=120.0 b=2
+/// p=-300 c=-298`, a shrink ratio of 3.6/13. With the proof's skips dropped
+/// between its blocks the builder had `minus 17.0`, ratio 3.6/17, and the
+/// proof's lines sat 0.78 bp low (`lecture-notes` page 1: 0.72 bp median
+/// drift, 1.08 at the foot). The same probe pins amsthm's `\qed` list
+/// (`\unskip\penalty9999 \hbox{}\nobreak\hfill\quad\hbox{\qedsymbol}`):
+/// with the source blank kept and the `\quad` missing, `hence by zero.`
+/// stayed on one shrunk line where pdflatex breaks after `by`. Reference
+/// word origins from the committed `reference.pdf` (pdfTeX
+/// 3.141592653-2.6-1.40.29, TeX Live 2026).
+#[test]
+fn a_two_paragraph_proof_closes_with_its_own_topsepadd() {
+    if !common::lm_available() {
+        eprintln!("SKIP a_two_paragraph_proof_closes_with_its_own_topsepadd: Latin Modern not installed");
+        return;
+    }
+    let path = format!("{}/../../fixtures/divergence-probes/min5-proof-close-shrink/main.tex", env!("CARGO_MANIFEST_DIR"));
+    let tex = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let y = |w: &str| baseline_on_page_one(&tex, w);
+    // Reference baselines in bp; the corpus tolerance is 0.1 bp.
+    for (word, expect) in [("Theorem", 82.959), ("Proof.", 128.664), ("Uniqueness.", 155.763), ("zero.", 169.312), ("Corollary", 191.552)] {
+        let got = y(word);
+        assert!((got - expect).abs() <= 0.1, "`{word}`: {got:.3} bp, pdflatex {expect:.3} bp");
+    }
+}

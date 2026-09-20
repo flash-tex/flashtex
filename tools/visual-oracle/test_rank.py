@@ -172,6 +172,103 @@ class RankTests(unittest.TestCase):
         self.assertNotEqual(rank.norm("−"), rank.norm("="))
 
 
+class AnchorRepairTests(unittest.TestCase):
+    """`reanchor_pairs`: hyperref-toc page 1 (docs/evidence/visual-oracle-
+    2026-09-19T210411Z, rank 2) read as a -446 bp/+13.57 bp outlier although
+    every one of its 505 words was within 0.02 bp of the reference. The
+    cause was difflib's text-only alignment pairing a candidate `2` with a
+    same-text reference `2` several lines away, while the two tokens' true
+    (adjacent, ~0 bp) partners sat unaligned. A table of contents' repeated
+    section/page-number digits are the sharpest case, so these tests build
+    a two-line TOC-shaped page (`2 Intro ... 2` / `3 Method ... 3`, one
+    "2" and one "3" per line, each appearing twice: once as the section
+    number, once as the page number) whose candidate stream orders the two
+    lines' tokens differently from the reference's strict reading order —
+    exactly what makes difflib's LCS ambiguous over repeated short tokens."""
+
+    def _toc_words(self):
+        sec1 = {"text": "2", "x": 72.0, "y_top": 100.0, "size": 10.0, "font": "F"}
+        title1 = {"text": "Intro", "x": 90.0, "y_top": 100.0, "size": 10.0, "font": "F"}
+        page1 = {"text": "2", "x": 534.6, "y_top": 100.0, "size": 10.0, "font": "F"}
+        sec2 = {"text": "3", "x": 72.0, "y_top": 112.0, "size": 10.0, "font": "F"}
+        title2 = {"text": "Method", "x": 90.0, "y_top": 112.0, "size": 10.0, "font": "F"}
+        page2 = {"text": "3", "x": 534.6, "y_top": 112.0, "size": 10.0, "font": "F"}
+        return sec1, title1, page1, sec2, title2, page2
+
+    def test_toc_repeated_page_numbers_are_repaired_by_position(self):
+        sec1, title1, page1, sec2, title2, page2 = self._toc_words()
+        ref = [sec1, title1, page1, sec2, title2, page2]  # reading order: left to right, top to bottom
+        # The candidate's stream groups both lines' section numbers before
+        # either title, and both titles before either page number — a
+        # plausible page-builder ordering difference for tab-stop/leader
+        # boxes, and it is exactly what makes difflib's LCS ambiguous: the
+        # longest common run it finds pairs the reference's line-1 *page*
+        # number with the candidate's line-1 *section* number (dx ~ -462.6,
+        # dy 0) and leaves the true pair (both line-1 page numbers) and one
+        # "Intro"/"Intro" pair unaligned on both sides.
+        cand = [dict(sec1), dict(sec2), dict(title1), dict(title2), dict(page1), dict(page2)]
+
+        raw_pairs, raw_ref_un, raw_cand_un = rank.align_words(ref, cand)
+        self.assertIn((2, 0), raw_pairs)  # the mispairing this test exists to catch
+        bad_dx = cand[0]["x"] - ref[2]["x"]
+        self.assertLess(bad_dx, -400.0)  # -462.6: the raw alignment's outlier
+        self.assertEqual(raw_ref_un, 2)
+        self.assertEqual(raw_cand_un, 2)
+
+        g = rank.geometry_page(ref, cand, [], top_n=6)
+        # Both "2"s and both "3"s now measure at their true, matching
+        # positions; only the one genuinely-unaligned "Intro"/"Intro" pair
+        # (a difflib artefact of the same reordering, not a repeated token,
+        # so outside this rule's scope) remains on each side.
+        self.assertEqual(g["aligned"], 5)
+        self.assertEqual(g["reference_unaligned"], 1)
+        self.assertEqual(g["candidate_unaligned"], 1)
+        self.assertEqual(g["max_delta"], 0.0)
+        self.assertEqual(g["reflowed"], 0)
+        for t in g["top"]:
+            self.assertEqual((t["dx"], t["dy"]), (0.0, 0.0))
+
+    def test_a_genuine_reflow_has_no_same_text_neighbour_to_anchor_to(self):
+        # `Conclusion` is unique on the page and moves to the next line
+        # (a real line-break difference); there is no other "conclusion"
+        # word for the repair rule to borrow, so the pair must stay exactly
+        # as difflib found it and still count as reflowed.
+        ref = [
+            {"text": "Start", "x": 72.0, "y_top": 100.0, "size": 10.0, "font": "F"},
+            {"text": "middle", "x": 72.0, "y_top": 112.0, "size": 10.0, "font": "F"},
+            {"text": "Conclusion", "x": 300.0, "y_top": 112.0, "size": 10.0, "font": "F"},
+        ]
+        cand = [
+            {"text": "Start", "x": 72.0, "y_top": 100.0, "size": 10.0, "font": "F"},
+            {"text": "middle", "x": 72.0, "y_top": 112.0, "size": 10.0, "font": "F"},
+            {"text": "Conclusion", "x": 72.0, "y_top": 124.0, "size": 10.0, "font": "F"},
+        ]
+        g = rank.geometry_page(ref, cand, [], top_n=3)
+        self.assertEqual(g["aligned"], 3)
+        self.assertEqual(g["reference_unaligned"], 0)
+        self.assertEqual(g["candidate_unaligned"], 0)
+        self.assertEqual(g["reflowed"], 1)
+        top = {t["text"]: t for t in g["top"]}
+        self.assertEqual(top["Conclusion"]["dx"], -228.0)
+        self.assertEqual(top["Conclusion"]["dy"], 12.0)
+
+    def test_an_uneven_duplicate_count_leaves_the_extra_one_unaligned(self):
+        # A ref-only extra "2" (e.g. an appendix numeral with no candidate
+        # counterpart) must not be forced onto someone else's position: the
+        # repair rule only pairs within the threshold, so it stays a
+        # leftover duplicate, honestly counted as unaligned.
+        sec1, title1, page1, sec2, title2, page2 = self._toc_words()
+        extra = {"text": "2", "x": 300.0, "y_top": 124.0, "size": 10.0, "font": "F"}
+        ref = [sec1, title1, page1, sec2, title2, page2, extra]
+        cand = [dict(sec1), dict(sec2), dict(title1), dict(title2), dict(page1), dict(page2)]
+        g = rank.geometry_page(ref, cand, [], top_n=6)
+        self.assertEqual(g["aligned"], 5)
+        self.assertEqual(g["reference_unaligned"], 2)  # "Intro" and the extra "2"
+        self.assertEqual(g["candidate_unaligned"], 1)  # "Intro"
+        self.assertEqual(g["max_delta"], 0.0)
+        self.assertEqual(g["reflowed"], 0)
+
+
 class ThumbTests(unittest.TestCase):
     def test_sheet_writes_png_with_diff_colours(self):
         w, h = 6, 3
