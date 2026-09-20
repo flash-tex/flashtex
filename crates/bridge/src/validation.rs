@@ -643,6 +643,7 @@ impl crate::Bridge {
             removed_text: doc.text[anchor.start_byte..anchor.end_byte].into(),
             replacement: proposal.latex.clone(),
             document_before_sha256: digest(doc.text.as_bytes()),
+            wrap: None,
         };
         let documents: Vec<_> = self
             .documents

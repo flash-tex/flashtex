@@ -420,6 +420,66 @@ const TEXT_MARKERS: &[&str] = &[
     "caption", "footnote", "par", "begin",
 ];
 
+/// Function names that may appear in a formula as plain letters (`sin(x)`,
+/// `log n`) without making it prose. See `looks_like_formula`.
+const FORMULA_WORDS: &[&str] = &[
+    "sin", "cos", "tan", "cot", "sec", "csc", "sinh", "cosh", "tanh", "log", "ln", "lg", "exp",
+    "lim", "max", "min", "sup", "inf", "det", "dim", "ker", "deg", "gcd", "lcm", "arg", "mod",
+    "sgn", "tr", "id", "dx", "dy", "dz", "dt",
+];
+
+/// Undelimited content with no structural math command can still be a formula
+/// the recogniser forgot to delimit — the owner's `x = 2y + 1`. Prose has
+/// words; a formula has single letters, digits and operators. So: at least one
+/// relation/arithmetic operator with an operand on each side, and every run of
+/// letters that is not a control word is at most two letters long or a
+/// recognised function name. `see figure 2` fails on `see`, `<F>` has no
+/// operands; `a + b = c`, `E = mc^2`, `f(x) = 3x - 1` pass.
+fn looks_like_formula(content: &str) -> bool {
+    let bytes = content.as_bytes();
+    let operand_before = |mut i: usize| {
+        while i > 0 && bytes[i - 1] == b' ' {
+            i -= 1;
+        }
+        i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || matches!(bytes[i - 1], b')' | b']' | b'}'))
+    };
+    let operand_after = |mut i: usize| {
+        while i < bytes.len() && bytes[i] == b' ' {
+            i += 1;
+        }
+        i < bytes.len()
+            && (bytes[i].is_ascii_alphanumeric() || matches!(bytes[i], b'(' | b'[' | b'{' | b'\\'))
+    };
+    let mut has_operator = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'\\' {
+            i = control_sequence_end(bytes, i);
+            continue;
+        }
+        if b.is_ascii_alphabetic() {
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+            let run = &content[start..i];
+            if run.len() > 2 && !FORMULA_WORDS.contains(&run) {
+                return false;
+            }
+            continue;
+        }
+        if matches!(b, b'=' | b'<' | b'>' | b'+' | b'-' | b'*' | b'/')
+            && operand_before(i)
+            && operand_after(i + 1)
+        {
+            has_operator = true;
+        }
+        i += 1;
+    }
+    has_operator
+}
+
 /// What a transcription looks like once its delimiters are accounted for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shape {
@@ -636,7 +696,7 @@ fn display_to_inline(body: &str, scan: &MathScan) -> Option<String> {
 }
 
 /// Is this transcription mathematics, prose, or already delimited?
-fn shape(content: &str) -> Shape {
+pub fn shape(content: &str) -> Shape {
     if !scan_math(content).spans.is_empty() {
         return Shape::Delimited;
     }
@@ -661,14 +721,15 @@ fn shape(content: &str) -> Shape {
     if has_text_marker || content.contains("\n\n") {
         return Shape::Prose;
     }
-    if has_math_marker {
+    if has_math_marker || looks_like_formula(content) {
         return Shape::BareMath;
     }
-    // Deliberately conservative. Without a structural signal there is no
-    // reliable way to tell undelimited mathematics (`x = y`) from ordinary
-    // prose (`<F>`, `see figure 2`), and guessing wrong corrupts the document
-    // in the silent direction. Content with no math marker is left exactly as
-    // it came, and the prompt carries the instruction to delimit it.
+    // Deliberately conservative past that point. Without a structural signal
+    // or the letters-and-operators shape there is no reliable way to tell
+    // undelimited mathematics from ordinary prose (`<F>`, `see figure 2`),
+    // and guessing wrong corrupts the document in the silent direction.
+    // Content that is neither is left exactly as it came, and the prompt
+    // carries the instruction to delimit it.
     Shape::Prose
 }
 

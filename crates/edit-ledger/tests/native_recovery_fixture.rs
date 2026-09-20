@@ -59,6 +59,7 @@ fn checkpoint_helper_kill_reopen_preserves_backup_source_history_and_ids() {
         removed_text: "original".into(),
         replacement: "revised".into(),
         document_before_sha256: document.source_sha256.clone(),
+        wrap: None,
     };
     let applied = helper.ask(json!({"id":"apply","operation":"apply","edit":edit}));
     let rotate = json!({"id":"rotate","operation":"checkpoint_rotate",
@@ -137,6 +138,7 @@ fn native_undo_restart_fixture_preserves_source_receipt_and_redo() {
         removed_text: fixture["removed_text"].as_str().unwrap().into(),
         replacement: fixture["replacement"].as_str().unwrap().into(),
         document_before_sha256: document.source_sha256.clone(),
+        wrap: None,
     };
     helper.ask(json!({"id":"init","operation":"initialize","document":document}));
     let applied = helper.ask(json!({"id":"apply","operation":"apply","edit":edit}));

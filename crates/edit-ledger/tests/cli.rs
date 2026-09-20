@@ -43,6 +43,7 @@ fn subprocess_apply_crash_before_receipt_delivery_recovers_source_and_receipt() 
         removed_text: "é😀".into(),
         replacement: "$x$".into(),
         document_before_sha256: digest("aé😀z"),
+        wrap: None,
     };
     let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-edit-ledger"))
         .args(["--store", dir.path().to_str().unwrap()])

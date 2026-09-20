@@ -15,6 +15,7 @@ fn edit(document: &Document) -> PreparedEdit {
         removed_text: "é😀".into(),
         replacement: "$x$".into(),
         document_before_sha256: document.source_sha256.clone(),
+        wrap: None,
     }
 }
 pub(crate) fn setup() -> (tempfile::TempDir, Store, PreparedEdit) {

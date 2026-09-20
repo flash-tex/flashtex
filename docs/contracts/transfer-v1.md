@@ -1,6 +1,6 @@
 # Capture bridge and reviewed insertion v1
 
-Owner: Commander, FT-007. Updated September 12, 2026. Status: implemented local
+Owner: Commander, FT-007. Updated September 19, 2026 (caret-mode destinations, approval-time wrap). Status: implemented local
 Rust bridge interface, additive to [runtime-v1](runtime-v1.md); native integration
 and encrypted nearby transport remain outstanding. Implementation and tests:
 [`crates/bridge`](../../crates/bridge/README.md). This document governs these new
@@ -161,6 +161,47 @@ project snapshots before review. Reusing a revision number with changed dependen
 content is detected by the hash. Mac review UI integration and temporary-project
 compiler validation remain separate acceptance gates; a fresh proposal is not proof
 that the proposed TeX compiles successfully.
+
+## Caret-mode destinations and approval-time wrap (additive bridge update)
+
+Two optional fields, both ignored by older peers and absent from every existing
+message when not used; `protocol_version` stays 1.
+
+`destination_pin` accepts `mode`: `"fixed"` (the default; every rule above) or
+`"caret"`. A caret anchor is the Mac's *automatic* destination — "wherever the
+caret is when the capture is inserted" — pinned on the companion's behalf when
+it asks `hello`/`destination_query`, never by the user. It differs from a fixed
+anchor in exactly four ways: a `document_edit` never invalidates it (text
+inserted at or before it shifts it, like a caret; an edit spanning it collapses
+it to the end of the replacement); the same `destination_id` may be re-pinned
+at any range and any revision (the id is the companion's handle, not a promise
+about bytes — after a bridge restart the Mac re-pins it wherever the caret is);
+a capture's `base_revision` and the binding journaled at receipt are
+informational rather than checked; and `capture_prepare_insert` does not require
+the conversion's dependency fingerprints to be fresh (the caret context is
+re-derived at the anchor's current position when the edit is prepared, and the
+whole replacement is gated against it). A fixed anchor may be replaced by a
+caret anchor under the same id only when it is already invalid (the Mac's
+"Insert at caret" recovery) or when the replacement is itself caret-mode; a
+valid fixed anchor is still `destination_conflict` unless re-pinned identically.
+The anchor reply carries `mode`. Unknown-snapshot `document_open` still
+invalidates every anchor of that document, caret ones included.
+
+`capture_prepare_insert` accepts `wrap: {prefix, suffix, kind?}` (each string at
+most 1024 UTF-8 bytes, no NUL; `kind` is a free label such as `display_math`,
+`inline_math`, `as_is`, at most 32 bytes, not interpreted). The Mac computes it
+from the caret's context at approval time — the math delimiters and line breaks
+that make the journaled proposal legal where it is landing — and the bridge
+journals it with the prepared edit: `replacement = prefix + proposal + suffix`,
+`capture_edit.wrap` and `capture_status.prepared.wrap` return it, and
+`capture_application_received.wrap` echoes the wrap the applied edit was
+prepared with. The whole replacement is gated by the same caret-context
+predicate as the bare proposal (`unsupported_construct_requires_confirmation`
+when it would nest or unbalance math); an oversized wrap is `invalid_wrap`. An
+idempotent repeat of the request returns the journaled edit and wrap, whatever
+wrap the repeat carried. The journal integrity check now requires
+`replacement == wrap.prefix + proposal.latex + wrap.suffix`; the reviewed text
+is still the journaled proposal and only the journaled proposal.
 
 ## Compiler validation before review approval
 

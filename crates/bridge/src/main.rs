@@ -26,6 +26,10 @@ struct Pin {
     revision: u64,
     start_byte: usize,
     end_byte: usize,
+    /// Additive: `fixed` (default, the explicit pin) or `caret` (the Mac's
+    /// automatic destination; see `AnchorMode`).
+    #[serde(default)]
+    mode: AnchorMode,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -45,6 +49,10 @@ struct Prepare {
     capture_id: String,
     expected_revision: u64,
     approved: bool,
+    /// Additive: text the Mac puts around the proposal at approval
+    /// (`InsertionWrap`); journaled with the prepared edit.
+    #[serde(default)]
+    wrap: Option<InsertionWrap>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -112,13 +120,14 @@ fn dispatch(
         }
         "destination_pin" => {
             let pin: Pin = decode(message.payload)?;
-            let a = bridge.pin(
+            let a = bridge.pin_with_mode(
                 &pin.destination_id,
                 &pin.project_id,
                 &pin.path,
                 pin.revision,
                 pin.start_byte,
                 pin.end_byte,
+                pin.mode,
             )?;
             Ok(("destination_pinned", serde_json::to_value(a)?))
         }
@@ -156,10 +165,11 @@ fn dispatch(
         }
         "capture_prepare_insert" => {
             let request: Prepare = decode(message.payload)?;
-            let edit = bridge.prepare_insert(
+            let edit = bridge.prepare_insert_wrapped(
                 &request.capture_id,
                 request.expected_revision,
                 request.approved,
+                request.wrap,
             )?;
             Ok(("capture_edit", serde_json::to_value(edit)?))
         }
@@ -170,9 +180,16 @@ fn dispatch(
                 &request.edit_id,
                 request.new_revision,
             )?;
+            // Additive: the wrap the applied edit was prepared with, so a
+            // receipt says what was put around the proposal.
+            let wrap = bridge
+                .store
+                .get(&request.capture_id)?
+                .and_then(|r| r.prepared)
+                .and_then(|e| e.wrap);
             Ok((
                 "capture_application_received",
-                json!({"capture_id":request.capture_id,"edit_id":receipt.edit_id,"new_revision":receipt.new_revision}),
+                json!({"capture_id":request.capture_id,"edit_id":receipt.edit_id,"new_revision":receipt.new_revision,"wrap":wrap}),
             ))
         }
         "capture_status" => {
