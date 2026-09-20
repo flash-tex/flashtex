@@ -78,7 +78,12 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(math.map(\.detail).suffix(2), ["math · symbol α", "math · symbol ℵ"])
         XCTAssertEqual(math.map(\.detail).prefix(2), ["amsmath page-break permission inside displays; no material",
                                             "\\penalty0 · in math: zero-penalty breakpoint in a formula (\\penalty0); layout-neutral, formulas never break"])
-        XCTAssertEqual(Completion.Vocabulary.symbols.count, Completion.Vocabulary.inventory.commands.filter { $0.origin == .mathSymbol && $0.renders }.count)
+        // One entry per name, text mode first: `\S`/`\P` are text commands that
+        // also render as math symbols, so they are not counted twice.
+        let inventory = Completion.Vocabulary.inventory
+        let textNames = Set(inventory.commands.filter { $0.renders && $0.mode == .text && $0.origin != .controlSymbol }.map(\.name))
+        XCTAssertEqual(Completion.Vocabulary.symbols.count,
+                       inventory.commands.filter { $0.origin == .mathSymbol && $0.renders && !textNames.contains($0.name) }.count)
         XCTAssertGreaterThan(Completion.Vocabulary.entries.count, Completion.Vocabulary.symbols.count)
         // Math-only commands are marked once, by the `math ·` prefix of `Entry.detail`.
         // `\fr` means `\frac`: this fragment belongs to an article project,
@@ -627,9 +632,12 @@ final class CompletionTests: XCTestCase {
         }
 
         // Derived tables mirror the inventory in file order.
-        let byOrigin = { (o: V.Origin) in rendered.filter { $0.origin == o }.map(\.name) }
+        // A name offered in text mode is not listed again as a math symbol
+        // (`\S`, `\P`): the entry carries the math description instead.
+        let textNames = Set(rendered.filter { $0.mode == .text && $0.origin != .controlSymbol }.map(\.name))
+        let byOrigin = { (o: V.Origin) in rendered.filter { $0.origin == o && (o != .mathSymbol || !textNames.contains($0.name)) }.map(\.name) }
         XCTAssertEqual(V.symbols.map(\.0), byOrigin(.mathSymbol))
-        XCTAssertEqual(V.symbols.map(\.1), rendered.filter { $0.origin == .mathSymbol }.map { $0.glyph ?? "" })
+        XCTAssertEqual(V.symbols.map(\.1), rendered.filter { $0.origin == .mathSymbol && !textNames.contains($0.name) }.map { $0.glyph ?? "" })
         XCTAssertEqual(V.operatorNames, byOrigin(.mathOperator))
         XCTAssertEqual(V.environments, inventory.environments.map(\.name))
         XCTAssertEqual(Completion.knownEnvironments, V.environments)
