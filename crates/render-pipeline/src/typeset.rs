@@ -3180,27 +3180,58 @@ impl<'a> Context<'a> {
                     // follows the `\parindent` box, nor an `\item`'s, which
                     // follows the label box and `\penalty0`), when its
                     // letters are in one font (§896), and when nothing but
-                    // non-letters follows them up to the next glue, penalty
-                    // or kern (§899: a math or word box glued straight on
-                    // ends the search with no hyphens).
+                    // character nodes follows them up to the next glue,
+                    // penalty or explicit kern (§899: a math node or a box
+                    // glued straight on ends the search with no hyphens).
+                    //
+                    // The segments of a word and a word item that follows
+                    // directly are character nodes in the same list, not
+                    // boxes: `\emph{Experience},` is the letters in `cmti`
+                    // and then `,` in `cmr`, one word of two segments here.
+                    // §896 skips characters up to the first letter, §898
+                    // ends the word at a non-letter or a font change, and
+                    // §899 skips the characters behind it to the glue. So
+                    // the segment holding the word's first letter is the
+                    // one hyphenated, whatever the characters around it.
+                    // pdflatex hyphenates that word (`\tracingparagraphs`
+                    // on `fixtures/real-world/article-twocolumn`'s second
+                    // `\bibitem`: `Soft-ware: Prac-tice and
+                    // Ex-pe-ri-ence\T1/cmr/m/n/10 ,`, and the chosen
+                    // `@@7: line 2.1-` ends in `Experi-`); with the word
+                    // set whole, its line was `graphs into ... Experience,`
+                    // at badness 1742 and every word of it 33.8 bp off.
+                    // Only a following word that continues the letters in
+                    // the same face is still the same word to §898
+                    // (`{Experi}ence`), and that one is not hyphenated in
+                    // halves here.
                     let after_glue = matches!(out.last(), Some(pl::Item::Glue(_)));
-                    let joined = matches!(items.get(idx + 1), Some(AItem::Word(_) | AItem::Math { .. }));
+                    let has_letter = |s: &adapter::Segment| s.text.chars().any(char::is_alphabetic);
+                    let hyphenated_seg = w.segments.iter().position(has_letter);
+                    let continued = match (items.get(idx + 1), w.segments.last()) {
+                        (Some(AItem::Word(next)), Some(last)) => {
+                            hyphenated_seg == Some(w.segments.len() - 1)
+                                && last.text.chars().last().is_some_and(char::is_alphabetic)
+                                && next.segments.first().is_some_and(|s| s.text.chars().next().is_some_and(char::is_alphabetic) && s.style == last.style)
+                        }
+                        _ => false,
+                    };
+                    let joined = matches!(items.get(idx + 1), Some(AItem::Math { .. })) || continued;
                     // A `\lstinline` token is an `\hbox` of its own
                     // (`\lst@OutputToken`): never hyphenated, whatever its face.
                     let boxed = matches!(items.get(idx + 1), Some(AItem::Listing(_)));
-                    // The typewriter families declare `\hyphenchar\font=-1`
-                    // (`ot1cmtt.fd`, `t1cmtt.fd`, `t1lmtt.fd`): no hyphens.
-                    let hyphenate = after_glue
-                        && !joined
-                        && !boxed
-                        && w.segments.len() == 1
-                        && merge_style(base, w.segments[0].style).family != crate::nfss::FamilyKind::Tt;
-                    for seg in &w.segments {
+                    for (seg_idx, seg) in w.segments.iter().enumerate() {
                         let seg = adapter::Segment {
                             text: seg.text.clone(),
                             chars: seg.chars.clone(),
                             style: merge_style(base, seg.style),
                         };
+                        // The typewriter families declare `\hyphenchar\font=-1`
+                        // (`ot1cmtt.fd`, `t1cmtt.fd`, `t1lmtt.fd`): no hyphens.
+                        let hyphenate = after_glue
+                            && !joined
+                            && !boxed
+                            && hyphenated_seg == Some(seg_idx)
+                            && seg.style.family != crate::nfss::FamilyKind::Tt;
                         // A size declaration in force (`{\Large ...}`) sets
                         // this segment at its own size.
                         let seg_size = seg.style.size_or(size);

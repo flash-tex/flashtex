@@ -31,6 +31,14 @@
 //!   @@1 b=99), and the missing `\newblock` glue moved every word after a
 //!   block boundary (natbib-review p.3, thesis-chapter p.5).
 //!
+//! Two more from the 2026-09-19T230000Z ranking (main `608ee20ca`):
+//!
+//! * `min5-url-break`: a `\url` is a math list with url.sty's penalties
+//!   between its runs (listings-manual p.1).
+//! * `min5-emph-punct-hyphen`: a word followed by punctuation in another
+//!   font is still hyphenated, and a tie next to an input ligature is still
+//!   a tie (article-twocolumn p.2).
+//!
 //! ## Oracle
 //!
 //! Word origins (first glyph x, baseline y from the page top, bp) read by
@@ -151,4 +159,54 @@ fn bibliography_entries_use_sfcode_period_sloppy_and_newblock_glue() {
     check("min4-bib-sfcode", &tex, "[3]", 72.000, 213.429);
     check("min4-bib-sfcode", &tex, "PhD", 347.178, 213.429);
     check("min4-bib-sfcode", &tex, "1983.", 513.345, 213.429);
+}
+
+/// url.sty sets a URL as a math list whose muskips are 0mu, so it breaks at
+/// TeX's own math-list penalties: `\binoppenalty` (700) after a `\UrlBreaks`
+/// character that an ordinary one precedes, `\relpenalty` (500) after `:`
+/// (tex.web §761 with the §728-729 Bin→Ord demotions). The pipeline merged
+/// the compiler's runs back into one unbreakable word, so a URL that did
+/// not fit went down whole (listings-manual p.1: `rather` 37.44 bp left).
+/// pdflatex's `\tracingparagraphs`: `https : / / example . org / ftxc /`
+/// then `@\penalty via @@1 b=7 p=700 d=490289`; for the second paragraph
+/// `... / items ?` then `@\penalty via @@0 b=0 p=700 d=490100`.
+#[test]
+fn a_url_breaks_at_its_math_list_penalties() {
+    if !common::lm_available() {
+        return;
+    }
+    let tex = probe_source("min5-url-break");
+    // `issues` opens line 2 of paragraph 1 (was the whole URL on line 2 and
+    // `rather` at 72.000); `filter=` opens line 2 of paragraph 2.
+    check("min5-url-break", &tex, "https:", 399.065, 96.508);
+    check("min5-url-break", &tex, "issues", 72.000, 110.057);
+    check("min5-url-break", &tex, "rather", 109.442, 110.057);
+    check("min5-url-break", &tex, "directly.", 207.074, 110.057);
+    check("min5-url-break", &tex, "https:", 325.790, 123.606);
+    check("min5-url-break", &tex, "filter=", 72.000, 137.156);
+    check("min5-url-break", &tex, "which", 228.239, 137.156);
+}
+
+/// `\emph{Software: Practice and Experience},` is one word of two segments
+/// here (the letters in `cmti`, the `,` in `cmr`); TeX ends the word at the
+/// font change (§898) and skips the `,` to the glue (§899), so `Experience`
+/// is hyphenated like any other word. The pipeline refused every word of
+/// more than one segment, and the second `\bibitem` then broke after
+/// `paragraphs` and `Experience,` (badness 1742) instead of `para-` and
+/// `Experi-` (pdflatex `@@10: line 3.2- t=498525`), every word of its
+/// middle line 33.8 bp off (article-twocolumn p.2). The same entry's
+/// `pp.~1119--1184,` also lost its tie to the input-ligature length test
+/// (`1981.` 2.76 bp right).
+#[test]
+fn a_word_followed_by_punctuation_in_another_font_is_hyphenated() {
+    if !common::lm_available() {
+        return;
+    }
+    let tex = probe_source("min5-emph-punct-hyphen");
+    check("min5-emph-punct-hyphen", &tex, "para-", 274.281, 138.649);
+    check("min5-emph-punct-hyphen", &tex, "graphs", 69.495, 150.604);
+    check("min5-emph-punct-hyphen", &tex, "Software:", 156.874, 150.604);
+    check("min5-emph-punct-hyphen", &tex, "Experi-", 265.641, 150.604);
+    check("min5-emph-punct-hyphen", &tex, "ence", 69.495, 162.559);
+    check("min5-emph-punct-hyphen", &tex, "1981.", 229.990, 162.559);
 }

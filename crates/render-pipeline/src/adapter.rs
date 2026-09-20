@@ -11477,26 +11477,36 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // Per-character sources. Macro replacement text shares the
                 // invocation span; keep that attribution for every char.
                 let citation = generated_citation(source, *span);
-                let exact = span.end - span.start == text.len()
-                    && !reference_spans.contains(span)
-                    && !citation;
-                let mut chars: Vec<(char, CharSrc)> = Vec::new();
-                for (offset, ch) in text.char_indices() {
-                    let src = if exact {
-                        CharSrc {
-                            document: span.document,
-                            start: span.start + offset,
-                            end: span.start + offset + ch.len_utf8(),
-                        }
-                    } else {
-                        CharSrc {
-                            document: span.document,
-                            start: span.start,
-                            end: span.end,
-                        }
-                    };
-                    chars.push((ch, src));
-                }
+                // The compiler's input-ligature pass (`lexer::
+                // apply_text_ligatures`) makes the text of a word shorter
+                // than its bytes (`--` is one U+2013), so the sources are
+                // aligned ligature by ligature, not by equal length: with the
+                // length test, `pp.~1119--1184,` was "not the source's own
+                // bytes" and its `~` was set as a tilde glyph (6.09 pt in
+                // `ecrm1000`) instead of a tie — `1981.` 2.76 bp right on
+                // `fixtures/real-world/article-twocolumn` page 2.
+                let exact_sources = if reference_spans.contains(span) || citation {
+                    None
+                } else {
+                    ligature_char_sources(source, *span, text)
+                };
+                let exact = exact_sources.is_some();
+                let mut chars: Vec<(char, CharSrc)> = match exact_sources {
+                    Some(sources) => text.chars().zip(sources).collect(),
+                    None => text
+                        .chars()
+                        .map(|ch| {
+                            (
+                                ch,
+                                CharSrc {
+                                    document: span.document,
+                                    start: span.start,
+                                    end: span.end,
+                                },
+                            )
+                        })
+                        .collect(),
+                };
                 if let Some((mark, msrc)) = pending_accent.take() {
                     if let Some((first, fsrc)) = chars.first().copied() {
                         if let Some(composed) = accent(mark, first) {
@@ -11900,6 +11910,43 @@ fn push_segment(items: &mut Vec<Item>, text: String, chars: Vec<CharSrc>, style:
             segments: vec![segment],
         })),
     }
+}
+
+/// The source bytes of each character of `text`, when `text` is exactly the
+/// bytes of `span` read through the compiler's input-ligature pass
+/// (`lexer::apply_text_ligatures`: `---` `--` ``` `` ``` `''` ``!` `` ``?` ``
+/// `` ` `` `'`), and `None` when it is anything else — a macro's
+/// replacement text, a control word's symbol, a theorem head. A ligature's
+/// character gets the bytes of its whole input sequence.
+fn ligature_char_sources(source: &str, span: Span, text: &str) -> Option<Vec<CharSrc>> {
+    let bytes = source.get(span.start..span.end)?;
+    let mut sources = Vec::with_capacity(text.len());
+    let mut at = 0usize;
+    for ch in text.chars() {
+        let rest = &bytes[at..];
+        let len = if rest.starts_with(ch) {
+            ch.len_utf8()
+        } else {
+            let input = match ch {
+                '\u{2014}' => "---",
+                '\u{2013}' => "--",
+                '\u{201C}' => "``",
+                '\u{201D}' => "''",
+                '\u{00A1}' => "!`",
+                '\u{00BF}' => "?`",
+                '\u{2018}' => "`",
+                '\u{2019}' => "'",
+                _ => return None,
+            };
+            if !rest.starts_with(input) {
+                return None;
+            }
+            input.len()
+        };
+        sources.push(CharSrc { document: span.document, start: span.start + at, end: span.start + at + len });
+        at += len;
+    }
+    (at == bytes.len()).then_some(sources)
 }
 
 /// TeX input ligatures of T1-encoded text: `--` `---` ` `` `` `''` `'`.
@@ -12846,6 +12893,34 @@ mod tests {
         // A brace pair inside the URL is balanced, not a group.
         let it = items("A \\url{https://e.org/{x}} \\textbf{bold} C");
         assert_eq!(families(&it), "rtttttrr", "{it:?}");
+    }
+
+    /// A tie inside a word the compiler's ligature pass shortened
+    /// (`pp.~1119--1184,`: `--` is one U+2013, so the text is a byte shorter
+    /// than its span) is still the source's own `~`, i.e. an unbreakable
+    /// interword space and not a tilde glyph (`ligature_char_sources`).
+    #[test]
+    fn a_tie_next_to_an_input_ligature_is_still_a_tie() {
+        let it = items("pp.~1119--1184, 1981.");
+        let shape: Vec<String> = it
+            .iter()
+            .map(|i| match i {
+                Item::Word(w) => w.text(),
+                Item::Space { no_break: true, .. } => "~".to_string(),
+                Item::Space { .. } => " ".to_string(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(shape, ["pp.", "~", "1119\u{2013}1184,", " ", "1981."], "{it:?}");
+        // The en dash's source is both hyphens.
+        let Item::Word(w) = &it[2] else { panic!() };
+        let dash = w.segments[0].chars[4];
+        assert_eq!((dash.start, dash.end), (8, 10));
+        assert_eq!(
+            ligature_char_sources("a``b''", Span::new(0, 6), "a\u{201C}b\u{201D}").map(|s| s.iter().map(|c| (c.start, c.end)).collect::<Vec<_>>()),
+            Some(vec![(0, 1), (1, 3), (3, 4), (4, 6)])
+        );
+        assert_eq!(ligature_char_sources("\\today", Span::new(0, 6), "September 19, 2026"), None);
     }
 
     /// A URL breaks where TeX's math-list penalties fall
