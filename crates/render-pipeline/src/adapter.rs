@@ -75,6 +75,13 @@ pub struct TextStyle {
     /// `None` leaves the family slot's default (a preamble `\setmainfont`,
     /// the manifest, or the class font) to decide.
     pub named: Option<u16>,
+    /// CJK.sty's `CJK` environment in force (the compiler's
+    /// `TextStyle::cjk`): the characters inputenc does not declare are set
+    /// from the family's subfont metrics with `\CJKglue` between them
+    /// (`typeset::Context::cjk_items`, `crate::cjk`). The face, size and
+    /// interword glue of the run are untouched: CJK.sty selects its `C70`
+    /// font per character inside a group of its own.
+    pub cjk: Option<flashtex_compiler::parser::CjkRun>,
 }
 
 impl TextStyle {
@@ -10201,6 +10208,52 @@ fn style_at(styles: &Styles, at: usize) -> TextStyle {
 /// Whether the bytes between two consecutive inlines contain an interword
 /// space under TeX's rules (braces and control words produce none; spaces
 /// after a control word are eaten; comments swallow their newline).
+/// Whether `ch` is one CJK.sty reads in a `CJK` environment (CJKutf8.sty
+/// 30-60: every non-ASCII character inputenc's `utf8.def`/`*.dfu` tables do
+/// not declare), so that `\CJK@ignorespaces` follows it. The project's own
+/// `\DeclareUnicodeCharacter`s are not consulted here (they would make the
+/// character inputenc's); `typeset` classifies with them.
+fn cjk_read_char(ch: char) -> bool {
+    !ch.is_ascii() && flashtex_tex_text_encoding::unicode::lookup_declared(ch).is_none()
+}
+
+/// The interword spaces of a gap that crosses a `CJK` environment boundary,
+/// or `None` for a gap without one (the ordinary [`gap_has_space`] rule).
+///
+/// `\begin{CJK}[..]{..}{..}` and `\end{CJK}` (CJK.sty 1084-1094) expand
+/// to assignments and typeset nothing, and `\end` does not `\ignorespaces`
+/// (latex.ltx's `\@ignore` is only set by lists), so a blank on each side
+/// of the command is a space token of its own: pdflatex's `\showoutput`
+/// of `です。⏎\end{CJK}⏎(` has two `\glue 3.63054` in front of the `(`.
+/// `after_nospace_cjk` is `CJK*`/`\CJKnospace` after a CJK character: its
+/// `\ignorespaces` expands `\end{CJK*}` on its way to the next non-blank
+/// token and eats only the blank before the command (CJK.sty 879-882).
+fn cjk_gap_spaces(gap: &str, after_nospace_cjk: bool) -> Option<u8> {
+    let at = [("\\end{CJK}", false), ("\\end{CJK*}", false), ("\\begin{CJK}", true), ("\\begin{CJK*}", true)]
+        .iter()
+        .filter_map(|(needle, begin)| gap.find(needle).map(|i| (i, needle.len(), *begin)))
+        .min()?;
+    let (before, rest) = gap.split_at(at.0);
+    let mut rest = &rest[at.1..];
+    if before.contains("\\begin{") || before.contains("\\end{") {
+        // More than one environment command in one gap: not modelled.
+        return None;
+    }
+    if at.2 {
+        // `\begin{CJK}`'s arguments: an optional `[..]` and two `{..}`.
+        if let Some(close) = rest.strip_prefix('[').and_then(|t| t.find(']')) {
+            rest = &rest[close + 2..];
+        }
+        for _ in 0..2 {
+            let close = rest.strip_prefix('{').and_then(|t| t.find('}'))?;
+            rest = &rest[close + 2..];
+        }
+    }
+    let first = gap_has_space(before) && !after_nospace_cjk;
+    let second = gap_has_space(rest);
+    Some(u8::from(first) + u8::from(second))
+}
+
 fn gap_has_space(gap: &str) -> bool {
     let bytes = gap.as_bytes();
     let mut i = 0;
@@ -10414,6 +10467,7 @@ fn items_cached(
             Inline::Text { text, style, .. } => {
                 text.hash(&mut h);
                 style.color.hash(&mut h);
+                style.cjk.hash(&mut h);
                 // A macro argument's font comes from the definition, which
                 // may sit outside the hashed slice (`macro_argument_intervals`).
                 let here = st.at(s.start);
@@ -11262,8 +11316,23 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 } else {
                     None
                 };
-                let has_space = space_between(prev_end, prev_span, *span, Some(text), after_control_word);
+                let mut has_space = space_between(prev_end, prev_span, *span, Some(text), after_control_word);
                 after_control_word = false;
+                // A `CJK` environment boundary in the gap, and `CJK*`'s
+                // `\ignorespaces` after the previous CJK character
+                // (`cjk_gap_spaces`): the gap may then hold two interword
+                // spaces, or none where the source shows one.
+                let mut second_space = false;
+                if let Some(pe) = prev_end.filter(|_| prev_span.is_some_and(|ps| ps.document == span.document)) {
+                    let after_nospace_cjk = matches!(items.last(), Some(Item::Word(w)) if w.segments.last().is_some_and(|s| s.style.cjk.is_some_and(|r| r.nospace) && s.text.chars().last().is_some_and(cjk_read_char)));
+                    match cjk_gap_spaces(source.get(pe..span.start).unwrap_or(""), after_nospace_cjk) {
+                        Some(0) => has_space = false,
+                        Some(2) => second_space = true,
+                        Some(_) => {}
+                        None if after_nospace_cjk => has_space = false,
+                        None => {}
+                    }
+                }
                 // A word of a user macro's replacement text, found in the
                 // definition body: the body's own font commands apply to it.
                 let in_body = cursor.get().filter(|c| c.inv == *span).and_then(|c| Some((body_of(source, *span)?, c.word?)));
@@ -11279,6 +11348,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 let Inline::Text { style: compiler_style, .. } = &**inline else { unreachable!() };
                 style.size_cpt = declared_size(compiler_style.size, size);
                 style.color = compiler_style.color;
+                style.cjk = compiler_style.cjk;
                 if heading {
                     // `\@startsection` sets `\bfseries`; the compiler's
                     // heading styles start bold and `\normalfont`/
@@ -11324,6 +11394,11 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     }
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
+                    if second_space && has_space {
+                        // The second space token is read with the same
+                        // space factor: glue never changes `\spacefactor`.
+                        items.push(Item::Space { style: gap_style, factor, no_break: false });
+                    }
                     pending_accent = None;
                 }
                 // LaTeX's `\check@icl`: a text font command whose font is
@@ -11832,6 +11907,35 @@ fn tex_ligatures(chars: Vec<(char, CharSrc)>) -> Vec<(char, CharSrc)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// CJK.sty's environment boundary in a gap (`cjk_gap_spaces`): pdflatex
+    /// reads a space token on each side of `\end{CJK}`, `CJK*`'s
+    /// `\ignorespaces` eats the one before it, and `\begin{CJK}`'s three
+    /// arguments are skipped.
+    #[test]
+    fn cjk_environment_boundary_spaces() {
+        assert_eq!(cjk_gap_spaces("\n\\end{CJK}\n", false), Some(2), "two glues before the `(` of the fixture");
+        assert_eq!(cjk_gap_spaces("\n\\end{CJK*}\n", true), Some(1), "CJK*: \\ignorespaces after the character eats the first");
+        assert_eq!(cjk_gap_spaces("\\end{CJK} ", false), Some(1));
+        assert_eq!(cjk_gap_spaces("\\end{CJK}", false), Some(0));
+        assert_eq!(cjk_gap_spaces("\n\\begin{CJK}{UTF8}{min}", false), Some(1), "a line end before the environment: one");
+        assert_eq!(cjk_gap_spaces(" \\begin{CJK*}[T1]{UTF8}{min} ", false), Some(2));
+        assert_eq!(cjk_gap_spaces(" \\begin{CJK}{UTF8}{min}", false), Some(1));
+        assert_eq!(cjk_gap_spaces(" ", false), None, "no environment command: the ordinary rule");
+        assert_eq!(cjk_gap_spaces("\\end{CJK}\\begin{CJK}{UTF8}{min}", false), Some(0));
+    }
+
+    /// The characters CJK.sty reads in a `CJK` environment: everything
+    /// inputenc does not declare.
+    #[test]
+    fn cjk_read_characters() {
+        assert!(cjk_read_char('東'));
+        assert!(cjk_read_char('。'));
+        assert!(cjk_read_char('α'));
+        assert!(!cjk_read_char('ü'), "utf8.def declares it");
+        assert!(!cjk_read_char('a'));
+        assert!(!cjk_read_char('—'), "U+2014 is \\textemdash");
+    }
 
     /// Issue #520: the environment name at the display's first byte picks
     /// the alignment, so `eqnarray` reaches the kernel `\halign` arm rather

@@ -628,6 +628,10 @@ pub struct Context<'a> {
     /// face's x-height).
     named_ids: Vec<crate::fonts::NamedId>,
     named_scales: BTreeMap<u16, f64>,
+    /// The installed face that paints each CJK.sty family's characters
+    /// (`crate::cjk::paint_families`, resolved once per family through the
+    /// discovery index), `None` when no candidate is installed.
+    cjk_faces: BTreeMap<flashtex_compiler::parser::CjkFamily, Option<Rc<LoadedFace>>>,
     /// LaTeX's `\@parboxrestore` is in force: the material is being set in
     /// a box of its own (a float body), not in the page's text. It sets
     /// `\parindent` and `\parskip` to zero and ends with `\sloppy`
@@ -731,6 +735,7 @@ impl<'a> Context<'a> {
             math_fonts_sized: BTreeMap::new(),
             named_ids: style.fontspec.families.iter().map(|spec| fonts.intern_named(spec)).collect(),
             named_scales: BTreeMap::new(),
+            cjk_faces: BTreeMap::new(),
         }
     }
 
@@ -2379,6 +2384,9 @@ impl<'a> Context<'a> {
         if let Some(items) = self.ot1_math_symbol_items(seg, size) {
             return items;
         }
+        if let Some(items) = self.cjk_items(seg, size, hyphenate) {
+            return items;
+        }
         if let Some(items) = self.named_fallback_items(seg, size) {
             return items;
         }
@@ -2652,6 +2660,281 @@ impl<'a> Context<'a> {
             }
         }
         Some(out)
+    }
+
+    /// A run inside a `CJK` environment (`adapter::TextStyle::cjk`) that
+    /// holds characters CJK.sty reads (`crate::cjk`): each of them is one
+    /// box of the family's subfont width, height and depth, with
+    /// `\CJKglue` (`0pt plus .08\baselineskip`, CJK.sty 824) between two
+    /// CJK characters -- guarded by `\penalty10000` on both sides in front
+    /// of a closing punctuation character and after an opening one (UTF8.chr
+    /// 216-243, CJK.enc 293-305) -- and nothing at all between a CJK
+    /// character and a Latin one, which is what `\CJK@testLastCJK` finds
+    /// after a character of the text font (CJK.sty 562-566). The Latin
+    /// stretches between them take the ordinary path, hyphenated only when
+    /// they open the word: TeX's hyphenation scan (§896) stops at the first
+    /// letter it meets, and a `C70` font's `\hyphenchar` is -1 (`c70min.fd`
+    /// 19), so a Latin word glued after a CJK character is never hyphenated,
+    /// while one in front of it ends at the font change (§899) and is.
+    ///
+    /// `None` when the run is not in a `CJK` environment or holds no
+    /// character CJK.sty reads, so the ordinary path runs unchanged.
+    fn cjk_items(&mut self, seg: &adapter::Segment, size: f64, hyphenate: bool) -> Option<Vec<(pl::Item, Option<usize>)>> {
+        use crate::cjk::{self, Class, Punct};
+        let run = seg.style.cjk?;
+        let extra = self.style.input.as_ref().map(|i| i.extra.clone()).unwrap_or_default();
+        let declared = |c: char| flashtex_tex_text_encoding::unicode::lookup_declared(c).is_some() || extra.contains(&c);
+        let classes: Vec<Class> = seg.text.chars().map(|c| cjk::classify(c, declared)).collect();
+        if classes.iter().all(|c| *c == Class::Latin) {
+            return None;
+        }
+        if seg.chars.len() != classes.len() {
+            return None;
+        }
+        // `\CJKglue` reads `\baselineskip` where the character is read: the
+        // size declaration in force sets it (`\@setfontsize`).
+        let stretch = 0.08 * self.cjk_baselineskip(size);
+        let glue = |nobreak: bool, out: &mut Vec<(pl::Item, Option<usize>)>| {
+            if nobreak {
+                out.push((pl::Item::penalty(pl::INFINITE_PENALTY), None));
+            }
+            out.push((pl::Item::Glue(pl::Glue::finite(0.0, stretch, 0.0)), None));
+            if nobreak {
+                out.push((pl::Item::penalty(pl::INFINITE_PENALTY), None));
+            }
+        };
+        let char_byte: Vec<usize> = seg.text.char_indices().map(|(b, _)| b).chain(std::iter::once(seg.text.len())).collect();
+        let chars: Vec<char> = seg.text.chars().collect();
+        let mut out = Vec::new();
+        // What `\lastkern` reads: 0 after the text font's characters, 1sp
+        // after a CJK character (`\CJK@CJK`), 2sp after an opening
+        // punctuation character (`\CJK@kern`).
+        let mut last_kern = 0u8;
+        let mut i = 0;
+        while i < chars.len() {
+            match classes[i] {
+                Class::Latin => {
+                    let mut j = i + 1;
+                    while j < chars.len() && classes[j] == Class::Latin {
+                        j += 1;
+                    }
+                    let frag = adapter::Segment { text: seg.text[char_byte[i]..char_byte[j]].to_string(), chars: seg.chars[i..j].to_vec(), style: adapter::TextStyle { cjk: None, ..seg.style } };
+                    out.extend(self.word_items(&frag, size, hyphenate && i == 0));
+                    last_kern = 0;
+                    i = j;
+                }
+                Class::Symbol => {
+                    // `\CJK@char` (UTF8.chr 35-48): the glyph alone.
+                    if let Some(item) = self.cjk_box(chars[i], seg.chars[i], seg.style, size, run.family) {
+                        out.push(item);
+                    }
+                    last_kern = 0;
+                    i += 1;
+                }
+                Class::Cjk(punct) => {
+                    match last_kern {
+                        1 => glue(punct == Punct::Post, &mut out),
+                        2 => glue(true, &mut out),
+                        _ => {}
+                    }
+                    if let Some(item) = self.cjk_box(chars[i], seg.chars[i], seg.style, size, run.family) {
+                        out.push(item);
+                    }
+                    last_kern = if punct == Punct::Pre { 2 } else { 1 };
+                    i += 1;
+                }
+            }
+        }
+        Some(out)
+    }
+
+    /// `\baselineskip` under the size declaration in force for a run at
+    /// `size` (size1x.clo's `\@setfontsize` pairs): the document's own for
+    /// the body size, which also carries setspace's stretch.
+    fn cjk_baselineskip(&self, size: f64) -> f64 {
+        let body = self.style.body_size_pt;
+        if (size - body).abs() < 1e-9 {
+            self.style.baselineskip_pt
+        } else {
+            crate::table::baselineskip_pt(adapter::class_size_of(body), (size * 100.0).round() as u16)
+        }
+    }
+
+    /// One CJK character as its `C70` subfont box (`crate::cjk::metrics`):
+    /// the TFM width, height and depth at `size`, painted from the family's
+    /// installed stand-in face when there is one and it has the glyph.
+    /// Under `\bfseries` the character is `\CJKbold`'s (CJK.sty 101-107):
+    /// the glyph, then two copies in `\hbox to 0.015em{\hss glyph}` boxes,
+    /// so it advances 1.03 em and is drawn three times 0.015 em apart
+    /// (`\showbox`: `\C70/min/m/n/10.95/67 q`, `\hbox(9.198+1.75198)x0.16423,
+    /// glue set -10.78577fil` twice). A character with no subfont for its
+    /// plane is a box of no width (pdflatex's `\nullfont`) and one
+    /// `missing_glyph` warning per (family, plane) says so; a family TeX
+    /// Live has no glyphs for is laid out with `cyberb`'s metrics and
+    /// reported once as the pdflatex failure it is.
+    fn cjk_box(&mut self, ch: char, src: adapter::CharSrc, style: TextStyle, size: f64, family: flashtex_compiler::parser::CjkFamily) -> Option<(pl::Item, Option<usize>)> {
+        use crate::cjk;
+        let span = src.span();
+        let m = cjk::metrics(family);
+        if family == flashtex_compiler::parser::CjkFamily::Unknown {
+            let s = self.source(span);
+            self.report_once(
+                "cjk:family:unknown".into(),
+                Diagnostic::error(
+                    "cjk_family_unavailable",
+                    "the CJK family is not one TeX Live ships glyphs for: pdflatex substitutes C70/song (Bitstream Cyberbit), lays the text out with its cyberb metrics (1 em, 0.8 em above and 0.1 em below the baseline) and then fails at shipout (`Font cyberb4e at 657 not found`) with no PDF; the same layout is set here from an installed CJK font".to_string(),
+                    vec![s],
+                ),
+            );
+        }
+        let mut width_em = cjk::width_em(family, ch);
+        if width_em == 0.0 {
+            let s = self.source(span);
+            self.report_once(
+                format!("cjk:plane:{}:{:02x}", m.stem, (ch as u32) >> 8),
+                Diagnostic::warning(
+                    "missing_glyph",
+                    format!(
+                        "U+{:04X} '{}' has no subfont in C70/{}: TeX Live has no {}{:02x}.tfm, so pdflatex sets it in \\nullfont (no width, nothing drawn) and so does this",
+                        ch as u32,
+                        ch,
+                        family.name(),
+                        m.stem,
+                        (ch as u32) >> 8
+                    ),
+                    vec![s],
+                ),
+            );
+        }
+        let bold = style.bold && width_em > 0.0;
+        if bold {
+            width_em += cjk::BOLD_EXTRA_EM;
+        }
+        let (height_em, depth_em) = (m.height, m.depth);
+        let (width, height, depth) = (width_em * size, height_em * size, depth_em * size);
+        let face = if width_em > 0.0 { self.cjk_face(family, span) } else { None };
+        let text_range = 0..ch.len_utf8();
+        let cluster = src.start..src.end;
+        match face {
+            Some(face) => {
+                let gid = face.face().glyph_id(ch).map(|g| g.0).unwrap_or(0);
+                if gid == 0 {
+                    let s = self.source(span);
+                    self.report_once(
+                        format!("missing:{}:{}", face.font_id, ch),
+                        Diagnostic::warning("missing_glyph", format!("U+{:04X} '{}' has no glyph in {}; its {width_em} em box is kept, nothing drawn in it", ch as u32, ch, face.name), vec![s]),
+                    );
+                }
+                let upem = f64::from(face.units_per_em);
+                let copies = if bold { 3 } else { 1 };
+                let shift = cjk::BOLD_EXTRA_EM / 2.0 * size;
+                let glyphs: Vec<pl::Glyph> = (0..copies)
+                    .map(|k| pl::Glyph { gid: u32::from(gid), advance: if k + 1 == copies { width - shift * k as f64 } else { shift }, kern: 0.0, cluster: cluster.clone() })
+                    .collect();
+                let run = pl::GlyphRun { font: face.layout_id(), size, glyphs, width, height, depth, source: cluster };
+                let rec = GlyphRec {
+                    gid,
+                    italic_fix: 0,
+                    x_offset_units: 0,
+                    y_offset_units: 0,
+                    y_max_units: (height_em * upem).round() as i32,
+                    y_min_units: -(depth_em * upem).round() as i32,
+                    empty: gid == 0,
+                    tfm_code: None,
+                    advance_fix: 0,
+                    kern_fix: 0,
+                };
+                self.recs.push(BoxRec::Text {
+                    face,
+                    size,
+                    text: ch.to_string(),
+                    style,
+                    clusters: vec![ClusterRec { text_range, span, glyphs: 0..copies }],
+                    glyphs: vec![rec; copies],
+                    height,
+                    depth,
+                    continues: false,
+                    raise: 0.0,
+                });
+                Some((pl::Item::Box(run), Some(self.recs.len() - 1)))
+            }
+            None => {
+                // No face: the box keeps its place on the line; a rule of no
+                // height ships nothing (see `AItem::LeaveVmode`).
+                self.recs.push(BoxRec::Rule { width, height: 0.0, bottom: 0.0, span, color: None });
+                let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height, depth, source: cluster };
+                Some((pl::Item::Box(run), Some(self.recs.len() - 1)))
+            }
+        }
+    }
+
+    /// The installed face that paints `family`'s characters: the first of
+    /// `crate::cjk::paint_families` the discovery index has, loaded once,
+    /// with one `font_face_substituted` note per family naming it -- the
+    /// wadalab/arphic/uhc Type 1 designs pdflatex embeds are TeX Live's
+    /// and are never painted here, only their metrics are. `None`, with one
+    /// `missing_glyph` warning per family, when none is installed.
+    fn cjk_face(&mut self, family: flashtex_compiler::parser::CjkFamily, span: Span) -> Option<Rc<LoadedFace>> {
+        if let Some(face) = self.cjk_faces.get(&family) {
+            return face.clone();
+        }
+        let m = crate::cjk::metrics(family);
+        let index = self.fonts.index();
+        let mut found = None;
+        let mut failures = Vec::new();
+        for name in crate::cjk::paint_families(family) {
+            let Some(hit) = index.find_match(name, 400, false) else { continue };
+            match self.fonts.load_file(hit.file) {
+                Ok(face) => {
+                    found = Some((face, name, hit.file.info.full_name.clone(), hit.file.path.display().to_string(), hit.file.face_index));
+                    break;
+                }
+                Err(reason) => failures.push(format!("{name}: {reason}")),
+            }
+        }
+        let src = self.source(span);
+        let face = match found {
+            Some((face, name, full_name, path, face_index)) => {
+                self.report_once(
+                    format!("cjk:paint:{}", m.stem),
+                    Diagnostic::warning(
+                        "font_face_substituted",
+                        format!(
+                            "C70/{} ({}, the {} subfonts): outlines painted from {full_name} (\"{name}\", {path}#{face_index}); the {} design is TeX Live's and is never painted here, so the strokes differ while every advance is the subfont's ({} em per full-width character)",
+                            family.name(),
+                            m.design,
+                            m.stem,
+                            m.design,
+                            m.width
+                        ),
+                        vec![src],
+                    ),
+                );
+                Some(face)
+            }
+            None => {
+                self.report_once(
+                    format!("cjk:nofont:{}", m.stem),
+                    Diagnostic::warning(
+                        "missing_glyph",
+                        format!(
+                            "no installed font paints C70/{} ({}): none of {} is among the {} faces indexed in {}{}; the characters keep their {} em boxes and are not drawn",
+                            family.name(),
+                            m.design,
+                            crate::cjk::paint_families(family).join(", "),
+                            index.files().len(),
+                            index.dirs().iter().map(|d| d.display().to_string()).collect::<Vec<_>>().join(", "),
+                            if failures.is_empty() { String::new() } else { format!(" ({})", failures.join("; ")) },
+                            m.width
+                        ),
+                        vec![src],
+                    ),
+                );
+                None
+            }
+        };
+        self.cjk_faces.insert(family, face.clone());
+        face
     }
 
     /// Which of `seg`'s characters an OT1 document sets from a math font
@@ -8150,6 +8433,7 @@ fn merge_style(base: TextStyle, s: TextStyle) -> TextStyle {
         color: s.color.or(base.color),
         hidden: s.hidden || base.hidden,
         named: s.named.or(base.named),
+        cjk: s.cjk.or(base.cjk),
     }
 }
 
@@ -8168,6 +8452,7 @@ fn merge_base(style: TextStyle, base: TextStyle) -> TextStyle {
         color: style.color.or(base.color),
         hidden: style.hidden || base.hidden,
         named: style.named.or(base.named),
+        cjk: style.cjk.or(base.cjk),
     }
 }
 
