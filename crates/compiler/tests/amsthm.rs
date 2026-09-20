@@ -119,7 +119,7 @@ Statement.
     );
     assert_eq!(runs[5].0, ".");
     assert_eq!(runs[5].1, TextStyle::BOLD, "the head punctuation follows the note, in the head font");
-
+}
 
 /// `\begin{defn}[$\sigma$-algebra]` (owner report, 2026-09-20): the note's
 /// tokens go through the same text-run builder as `\item[<label>]`, so the
