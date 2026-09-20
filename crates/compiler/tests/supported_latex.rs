@@ -93,7 +93,10 @@ fn arm_line(line: &str) -> Option<ArmLine> {
         rest = rest.strip_prefix('"')?;
         let end = rest.find('"')?;
         let name = &rest[..end];
-        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphabetic()) {
+        // A control-word arm is letters only; a package arm may carry a
+        // digit (`CJKutf8`, `\usepackage{CJKutf8}`), never as its first
+        // character.
+        if name.is_empty() || !name.starts_with(|c: char| c.is_ascii_alphabetic()) || !name.chars().all(|c| c.is_ascii_alphanumeric()) {
             return None;
         }
         names.push(name.to_string());
@@ -569,6 +572,12 @@ fn every_inventory_entry_compiles_without_an_unsupported_diagnostic() {
             Mode::Text if e.name == "longtable" => (
                 "\\usepackage{longtable}\\begin{longtable}{cc}a&b\\end{longtable}".into(),
                 "environment 'longtable' is not implemented".to_string(),
+            ),
+            // `CJK`/`CJK*` exist only with CJKutf8 and take the encoding
+            // and family arguments.
+            Mode::Text if e.name == "CJK" || e.name == "CJK*" => (
+                format!("\\usepackage{{CJKutf8}}\\begin{{{0}}}{{UTF8}}{{min}}a\\end{{{0}}}", e.name),
+                format!("environment '{}' ", e.name),
             ),
             // `tabularx` likewise exists only with its package, and takes a
             // target width before the column specification (#901).

@@ -48,6 +48,7 @@ const ITALIC: TextStyle = TextStyle {
     size: None,
     ams_tiny: false,
     color: None,
+    cjk: None,
 };
 
 #[test]
