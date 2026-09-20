@@ -108,14 +108,17 @@ Statement.
         TextStyle::BOLD,
         "the space before the note is a head-font space"
     );
-    assert_eq!(runs[2].0, "(Fermat)");
+    // The note is read as text (so `[B\'ezout]` sets `é`): its words are
+    // runs of their own between the parentheses, which stand on the
+    // bracket's own bytes.
+    let note: Vec<_> = runs[2..5].iter().map(|(t, s)| (t.as_str(), *s)).collect();
     assert_eq!(
-        runs[2].1,
-        TextStyle::default(),
+        note,
+        vec![("(", TextStyle::default()), ("Fermat", TextStyle::default()), (")", TextStyle::default())],
         "note must be upright, not italic"
     );
-    assert_eq!(runs[3].0, ".");
-    assert_eq!(runs[3].1, TextStyle::BOLD, "the head punctuation follows the note, in the head font");
+    assert_eq!(runs[5].0, ".");
+    assert_eq!(runs[5].1, TextStyle::BOLD, "the head punctuation follows the note, in the head font");
 }
 
 #[test]
@@ -519,7 +522,7 @@ Let $a$ divide $b$.
     let runs = text_runs(source);
     let head: Vec<(&str, TextStyle)> = runs
         .iter()
-        .take(4)
+        .take(6)
         .map(|(text, style)| (text.as_str(), *style))
         .collect();
     assert_eq!(
@@ -527,7 +530,9 @@ Let $a$ divide $b$.
         vec![
             ("Definition 1.1", TextStyle::BOLD),
             (" ", TextStyle::BOLD),
-            ("(Divides)", TextStyle::default()),
+            ("(", TextStyle::default()),
+            ("Divides", TextStyle::default()),
+            (")", TextStyle::default()),
             (".", TextStyle::BOLD),
         ]
     );
@@ -720,15 +725,17 @@ fn theorem_note_preserves_enclosing_size() {
 Statement.
 \end{theorem}}";
     let runs = text_runs(source);
-    assert_eq!(runs[2].0, "(Fermat)");
-    assert_eq!(
-        runs[2].1,
-        TextStyle {
-            size: LARGE,
-            ..TextStyle::default()
-        },
-        "the note stays upright at the enclosing size"
-    );
+    assert_eq!(runs[3].0, "Fermat");
+    for (text, style) in &runs[2..5] {
+        assert_eq!(
+            *style,
+            TextStyle {
+                size: LARGE,
+                ..TextStyle::default()
+            },
+            "the note ({text:?}) stays upright at the enclosing size"
+        );
+    }
 }
 
 /// GH-701: the fix is not `plain`-style-specific — `definition` (bold

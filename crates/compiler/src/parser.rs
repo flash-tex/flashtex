@@ -9567,7 +9567,9 @@ impl P<'_> {
         span: Span,
         para: &mut Vec<Inline>,
     ) {
-        let note = self.optional_bracket_argument();
+        // The note's tokens and the bracket's own bytes, for the
+        // parentheses `\thmnote` sets around it (the `[` and `]`).
+        let note = self.optional_bracket_tokens_spanned();
         // An enclosing size group (`{\large\begin{theorem}...`) stays in
         // effect for the head, the number, the note and the body: real
         // pdflatex sets all of them at the ambient size, since neither
@@ -9637,9 +9639,11 @@ impl P<'_> {
                 space_before: false,
             });
         }
-        if let Some((note_text, note_span)) = note {
-            let note_text = note_text.trim();
-            if !note_text.is_empty() {
+        if let Some((note_tokens, note_span)) = note {
+            let blank = note_tokens
+                .iter()
+                .all(|t| matches!(t.token.kind, TokenKind::Space | TokenKind::Comment));
+            if !blank {
                 // `\thmnote{ {\the\thm@notefont(#3)}}`: the space is outside
                 // the `\thm@notefont` group, so it too is a head-font space;
                 // only the parenthesised note itself is `\fontseries
@@ -9650,18 +9654,34 @@ impl P<'_> {
                     style: head_style,
                     space_before: false,
                 });
+                // `\thm@notefont` (`\fontseries\mddefault\upshape`)
+                // changes series/shape only, so the note keeps the
+                // ambient size like the head does.
+                let note_style = TextStyle {
+                    size: ambient_size,
+                    ams_tiny: ambient_tiny,
+                    cjk: ambient_cjk,
+                    ..TextStyle::default()
+                };
+                // The note is ordinary text (`[B\'ezout]` sets `é`, not the
+                // raw `'e`), read like a heading's title; the parentheses
+                // stand on the bracket's own bytes so nothing lies between
+                // them and the note's first and last words.
                 para.push(Inline::Text {
-                    text: format!("({note_text})"),
-                    span: note_span,
-                    // `\thm@notefont` (`\fontseries\mddefault\upshape`)
-                    // changes series/shape only, so the note keeps the
-                    // ambient size like the head does.
-                    style: TextStyle {
-                        size: ambient_size,
-                        ams_tiny: ambient_tiny,
-                        cjk: ambient_cjk,
-                        ..TextStyle::default()
-                    },
+                    text: "(".to_string(),
+                    span: Span::in_document(note_span.document, note_span.start, note_span.start + 1),
+                    style: note_style,
+                    space_before: false,
+                });
+                let mut inner = self.inlines_from_tokens(note_tokens, note_style);
+                if let Some(Inline::Text { space_before, .. }) = inner.first_mut() {
+                    *space_before = false;
+                }
+                para.extend(inner);
+                para.push(Inline::Text {
+                    text: ")".to_string(),
+                    span: Span::in_document(note_span.document, note_span.end - 1, note_span.end),
+                    style: note_style,
                     space_before: false,
                 });
             }
@@ -12060,6 +12080,12 @@ impl P<'_> {
     /// only its tail in the stream, so the part before the bracket is
     /// re-lexed from the raw text (`[a]b` is not a form the decks use).
     fn optional_bracket_tokens(&mut self) -> Option<Vec<InputToken>> {
+        self.optional_bracket_tokens_spanned().map(|(tokens, _)| tokens)
+    }
+
+    /// [`Self::optional_bracket_tokens`] with the bracket's own span (from
+    /// its `[` through its `]`), as `optional_bracket_argument` reports it.
+    fn optional_bracket_tokens_spanned(&mut self) -> Option<(Vec<InputToken>, Span)> {
         self.skip_spaces();
         let start = self.i;
         let (raw, span) = self.optional_bracket_argument()?;
@@ -12071,7 +12097,7 @@ impl P<'_> {
             // The closing `]` sat inside a word with a tail (`[a]b`): the
             // stream keeps the tail only. Re-lex the raw argument instead.
             let document = span.document;
-            return Some(
+            return Some((
                 tokenize(&raw)
                     .into_iter()
                     .map(|mut token| {
@@ -12079,22 +12105,34 @@ impl P<'_> {
                         InputToken { token, definition: None, maps_to_invocation: false }
                     })
                     .collect(),
-            );
+                span,
+            ));
         }
+        // A literal word's span shrinks with it, so the tokens' bytes are
+        // exactly the argument's (a consumer that reads the gaps between
+        // items from the source must not find the `[` inside the first).
         if let Some(last) = tokens.last_mut() {
             if let TokenKind::Word(w) = &mut last.token.kind {
+                let literal = last.token.span.end - last.token.span.start == w.len();
                 w.pop();
+                if literal {
+                    last.token.span.end -= 1;
+                }
             }
         }
         if let Some(first) = tokens.first_mut() {
             if let TokenKind::Word(w) = &mut first.token.kind {
                 if w.starts_with('[') {
+                    let literal = first.token.span.end - first.token.span.start == w.len();
                     w.remove(0);
+                    if literal {
+                        first.token.span.start += 1;
+                    }
                 }
             }
         }
         tokens.retain(|t| !matches!(&t.token.kind, TokenKind::Word(w) if w.is_empty()));
-        Some(tokens)
+        Some((tokens, span))
     }
 
     /// latex.ltx `\@getpen` of a `\linebreak`/`\pagebreak`-family priority
