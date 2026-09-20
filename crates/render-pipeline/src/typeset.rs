@@ -3538,6 +3538,15 @@ impl<'a> Context<'a> {
                     // `\/`: a kern of the last character's TFM italic
                     // correction (§1113); nothing when the last node is not
                     // a character or the metrics carry no correction.
+                    //
+                    // A kern, not fixed glue: a break is legal only at a
+                    // glue after it (§866, `pl` alike), and the end of a
+                    // list keeps it where a trailing glue is dropped (§816).
+                    // As glue it fell off the end of a `description` label
+                    // (`\item[\texttt{-{}-set \emph{key}=\emph{value}}]`:
+                    // `\/` after `value` is `\kern 1.90057` in pdflatex's
+                    // `\showbox`, the last node of `\descriptionlabel`'s box)
+                    // and the item's text started 1.9 pt early.
                     let last = recs.iter().rev().find_map(|r| *r).and_then(|r| match &self.recs[r] {
                         BoxRec::Text { glyphs, size, .. } if matches!(out.last(), Some(pl::Item::Box(_))) => {
                             glyphs.last().map(|g| crate::tfm::Tfm::pt(g.italic_fix, *size))
@@ -3546,7 +3555,7 @@ impl<'a> Context<'a> {
                     });
                     if let Some(ic) = last {
                         if ic > 0.0 {
-                            push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fixed(ic)), None);
+                            push(&mut out, &mut recs, pl::Item::kern(ic), None);
                         }
                     }
                 }

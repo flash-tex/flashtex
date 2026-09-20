@@ -31,10 +31,12 @@
 //!   @@1 b=99), and the missing `\newblock` glue moved every word after a
 //!   block boundary (natbib-review p.3, thesis-chapter p.5).
 //!
-//! Two more from the 2026-09-19T230000Z ranking (main `608ee20ca`):
+//! Three more from the 2026-09-19T230000Z ranking (main `608ee20ca`):
 //!
 //! * `min5-url-break`: a `\url` is a math list with url.sty's penalties
 //!   between its runs (listings-manual p.1).
+//! * `min5-description-label`: `-{}-` stays two hyphens and `\emph`'s
+//!   trailing `\/` stays in a label box (listings-manual p.3).
 //! * `min5-emph-punct-hyphen`: a word followed by punctuation in another
 //!   font is still hyphenated, and a tie next to an input ligature is still
 //!   a tie (article-twocolumn p.2).
@@ -209,4 +211,28 @@ fn a_word_followed_by_punctuation_in_another_font_is_hyphenated() {
     check("min5-emph-punct-hyphen", &tex, "Experi-", 265.641, 150.604);
     check("min5-emph-punct-hyphen", &tex, "ence", 69.495, 162.559);
     check("min5-emph-punct-hyphen", &tex, "1981.", 229.990, 162.559);
+}
+
+/// A `description` label of `\texttt{-{}-set \emph{key}=\emph{value}}`:
+/// the empty group keeps `--` from becoming `ectt1095`'s en-dash ligature
+/// (`LIG O 55 O 25`), and `\emph`'s closing `\/` after `value` is a kern
+/// that stays at the end of `\descriptionlabel`'s `\hbox`. pdflatex's
+/// `\showbox` of the label: 15 characters of 5.65837 pt plus two
+/// `\kern 1.90057` = 88.67671 pt. The pipeline shaped the two hyphens as
+/// one en dash and dropped the trailing correction with the trailing glue
+/// (listings-manual p.3: `Override` 7.54 bp left, `Rebuild` 5.64).
+#[test]
+fn a_description_label_keeps_its_empty_group_hyphens_and_trailing_italic_correction() {
+    if !common::lm_available() {
+        return;
+    }
+    let tex = probe_source("min5-description-label");
+    check("min5-description-label", &tex, "Rebuild", 116.912, 122.012);
+    check("min5-description-label", &tex, "Override", 165.805, 144.528);
+    check("min5-description-label", &tex, "Select", 146.997, 167.044);
+    check("min5-description-label", &tex, "Limit", 124.450, 189.559);
+    // `shelf{}ful` and `f{}ine` in the body: no `ff`/`fi` ligature, so the
+    // words that follow sit where pdflatex puts them.
+    check("min5-description-label", &tex, "of", 138.116, 215.064);
+    check("min5-description-label", &tex, "print:", 171.269, 215.064);
 }

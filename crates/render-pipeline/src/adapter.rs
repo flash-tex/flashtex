@@ -11537,7 +11537,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     for (c, _) in run.iter() {
                         *factor = space_factor(*c, *factor);
                     }
-                    push_segment(items, text, srcs, style);
+                    push_segment_in(items, text, srcs, style, source);
                     run.clear();
                 };
                 for (ch, src) in chars {
@@ -11894,11 +11894,40 @@ fn space_style(
 
 /// Appends a segment to the current word or starts a new word.
 fn push_segment(items: &mut Vec<Item>, text: String, chars: Vec<CharSrc>, style: TextStyle) {
+    push_segment_in(items, text, chars, style, "");
+}
+
+/// [`push_segment`] for a run read from `source`, which decides whether it
+/// joins the segment before it (see the empty-group rule inside).
+fn push_segment_in(items: &mut Vec<Item>, text: String, chars: Vec<CharSrc>, style: TextStyle, source: &str) {
     let segment = Segment { text, chars, style };
     match items.last_mut() {
         Some(Item::Word(word)) => {
             if let Some(last) = word.segments.last_mut() {
-                if last.style == style {
+                // One segment is shaped as one string, with the face's
+                // ligature/kern program running across it. An empty group
+                // between two runs is the token TeX's lig/kern lookahead
+                // stops at (§1034-1040: only a character token continues
+                // the program): `-{}-` is two hyphens in `T1/cmtt` where
+                // `--` is the en dash of `ectt1095`'s `LIG O 55 O 25`, and
+                // `f{}i` is two letters. As one string, `\texttt{-{}-set}`
+                // lost a hyphen's 5.66 pt on every such `description` item
+                // of `fixtures/real-world/listings-manual` (page 3). So the
+                // run starts a segment of its own there.
+                //
+                // Only the empty group, deliberately: a closing brace alone
+                // (`Schr\"{o}dinger`, `{Experi}ence`) stops the program too,
+                // but leaves TeX's hyphenation pass one word (§898 walks the
+                // character nodes, and a group leaves none), and a segment
+                // is also the unit `typeset` hyphenates — the kern it would
+                // save is worth less than the hyphenation points it would
+                // lose. `{}` inside a word is the idiom for "no ligature"
+                // and rarely wants a hyphen either side of it.
+                let empty_group = match (last.chars.last(), segment.chars.first()) {
+                    (Some(prev), Some(next)) => prev.document == next.document && source.get(prev.end..next.start) == Some("{}"),
+                    _ => false,
+                };
+                if last.style == style && !empty_group {
                     last.text.push_str(&segment.text);
                     last.chars.extend(segment.chars);
                     return;
@@ -12874,6 +12903,25 @@ mod tests {
         // `\href` typesets only its second argument, in the ambient family.
         let it = items("A \\href{https://example.org/x}{link text} B");
         assert_eq!(families(&it), "rrrr", "{it:?}");
+    }
+
+    /// `-{}-`: the empty group is a token TeX's lig/kern lookahead stops at,
+    /// so the two hyphens are two segments (shaped apart, no `--` ligature);
+    /// a closing brace alone (`{Experi}ence`) keeps one segment, so the word
+    /// is still hyphenated whole (`push_segment_in`).
+    #[test]
+    fn an_empty_group_splits_a_word_into_two_segments() {
+        let segs = |src: &str| -> Vec<Vec<String>> {
+            items(src)
+                .iter()
+                .filter_map(|i| match i {
+                    Item::Word(w) => Some(w.segments.iter().map(|s| s.text.clone()).collect()),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(segs("\\texttt{-{}-set} f{}ine"), [vec!["-", "-set"], vec!["f", "ine"]]);
+        assert_eq!(segs("{Experi}ence"), [vec!["Experience"]]);
     }
 
     /// A URL's argument is read as raw source bytes (url.sty makes every
