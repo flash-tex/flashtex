@@ -810,10 +810,18 @@ impl Context<'_> {
 
     fn quantity(&self, number: &str, unit: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<MathAtom> {
         let mut out = self.number(number, diagnostics);
+        let unit_source = unit;
         let unit = self.unit(unit, diagnostics);
         // The product joins a number to a unit: with either side empty
         // there is nothing to join (`\qty{1}{}` is `$1$`, `\qty{}{m}` `$m$`).
-        if !unit.is_empty() && !out.is_empty() {
+        // `\degree`, `\arcminute` and `\arcsecond` declare
+        // `quantity-product = { }` for themselves (siunitx.sty 8035-8040):
+        // pdflatex's `\hbox{\SI{8}{\degree} and}` is `8`, `\penalty10000`,
+        // the `{}^{\circ}` box, glue, `and` -- no `\,` kern (31.39632pt at
+        // 11pt; with the kern fixtures/real-world/lab-report set `and`
+        // 1.32 bp right of the reference).
+        let no_product = matches!(unit_source.trim(), "\\degree" | "\\arcminute" | "\\arcsecond");
+        if !unit.is_empty() && !out.is_empty() && !no_product {
             match &self.s.quantity_product {
                 Some(product) => out.extend(self.math(product)),
                 // `\penalty10000` and `\,`: a kern of 1/6 em of the current

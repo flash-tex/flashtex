@@ -71,6 +71,23 @@ fn an_empty_number_leaves_the_unit_without_a_product() {
     assert_eq!(with_number, ["+T:a", "M:3", "T:b"]);
 }
 
+/// siunitx.sty 8035-8040: `\degree`, `\arcminute` and `\arcsecond` declare
+/// `quantity-product = { }` for themselves. pdflatex's
+/// `\hbox{\SI{8}{\degree} and}` (11pt) is `\mathon 8 \mathoff`,
+/// `\penalty 10000`, `\mathon` the `{}^{\circ}` box `\mathoff`, glue,
+/// `and`: 31.39632pt, no `\,` kern between the number and the unit.
+#[test]
+fn the_angle_units_take_no_product() {
+    let (degree, diagnostics) = shape("a\\SI{8}{\\degree}b");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    // The number and the unit only.
+    assert_eq!(degree, ["+T:a", "M:2", "T:b"]);
+    let (arcminute, _) = shape("a\\qty{8}{\\arcminute}b");
+    assert_eq!(arcminute, ["+T:a", "M:2", "T:b"]);
+    let (metre, _) = shape("a\\qty{8}{\\metre}b");
+    assert_eq!(metre, ["+T:a", "M:3", "T:b"]);
+}
+
 #[test]
 fn an_unbraced_argument_is_the_next_token_as_in_tex() {
     let (inlines, diagnostics) = shape("older \\si{} and \\SI{} macro forms.");
