@@ -108,13 +108,15 @@ Statement.
         TextStyle::BOLD,
         "the space before the note is a head-font space"
     );
-    // The note is read as a text run between its own parentheses (so a
-    // `$…$` or `\emph{}` inside it is set as such); the plain case is three
-    // upright runs.
-    assert_eq!((runs[2].0.as_str(), runs[3].0.as_str(), runs[4].0.as_str()), ("(", "Fermat", ")"));
-    for run in &runs[2..5] {
-        assert_eq!(run.1, TextStyle::default(), "note must be upright, not italic: {run:?}");
-    }
+    // The note is read as text (so `[B\'ezout]` sets `é`): its words are
+    // runs of their own between the parentheses, which stand on the
+    // bracket's own bytes.
+    let note: Vec<_> = runs[2..5].iter().map(|(t, s)| (t.as_str(), *s)).collect();
+    assert_eq!(
+        note,
+        vec![("(", TextStyle::default()), ("Fermat", TextStyle::default()), (")", TextStyle::default())],
+        "note must be upright, not italic"
+    );
     assert_eq!(runs[5].0, ".");
     assert_eq!(runs[5].1, TextStyle::BOLD, "the head punctuation follows the note, in the head font");
 }
@@ -767,15 +769,15 @@ fn theorem_note_preserves_enclosing_size() {
 Statement.
 \end{theorem}}";
     let runs = text_runs(source);
-    assert_eq!((runs[2].0.as_str(), runs[3].0.as_str(), runs[4].0.as_str()), ("(", "Fermat", ")"));
-    for run in &runs[2..5] {
+    assert_eq!(runs[3].0, "Fermat");
+    for (text, style) in &runs[2..5] {
         assert_eq!(
-            run.1,
+            *style,
             TextStyle {
                 size: LARGE,
                 ..TextStyle::default()
             },
-            "the note stays upright at the enclosing size: {run:?}"
+            "the note ({text:?}) stays upright at the enclosing size"
         );
     }
 }
