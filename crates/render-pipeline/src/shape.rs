@@ -254,10 +254,8 @@ fn join_parts(face: &Rc<LoadedFace>, text: &str, parts: &[(usize, Rc<Shaped>)]) 
 fn shape_uncached(face: &Rc<LoadedFace>, text: &str, flags: ShapeFlags) -> Shaped {
     let literal = flags.contains(ShapeFlags::LITERAL);
     if let Some(tfm) = &face.tfm {
-        if let Some(ts1) = &face.ts1_tfm {
-            if let Some(s) = shape_around_ts1_symbols(face, tfm, ts1, text, literal) {
-                return s;
-            }
+        if let Some(s) = shape_around_isolated_chars(face, tfm, text, literal) {
+            return s;
         }
         match shape_tfm(face, tfm, text, literal) {
             Ok(Some(s)) => return s,
@@ -272,23 +270,50 @@ fn shape_uncached(face: &Rc<LoadedFace>, text: &str, flags: ShapeFlags) -> Shape
     shape_otf(face, text, flags)
 }
 
-/// TFM shaping of text holding TS1 symbols (`©`, `°`, `€`, ...: characters
-/// T1 has no slot for that the kernel sets from the text companion font,
-/// [`EncodingCode::ts1_symbol`]). In TeX each such symbol is a character of
-/// another font, so the text font's ligature/kern program stops on both
-/// sides of it and the symbol's own box comes from the companion's metrics
-/// (`\showbox`: `\TS1/cmr/m/n/10.95 ©` is `hbox(8.21059+2.7369)x12.093`,
-/// `tcrm1095` slot 169 at 1.11084 em -- Latin Modern Roman's own `©` is
-/// 0.683 em, which put `\copyright~2026` 4.6 bp short). The T1 pieces are
-/// shaped by [`shape_tfm`] and joined; `None` when the text has no such
-/// symbol or a piece cannot be TFM-shaped (the caller then proceeds as it
-/// would have without the companion).
-fn shape_around_ts1_symbols(face: &Rc<LoadedFace>, tfm: &Tfm, ts1: &Tfm, text: &str, literal: bool) -> Option<Shaped> {
-    let symbols: Vec<(usize, char, EncodingCode)> = text
+/// A character that TeX sets outside the text font's ligature/kern
+/// program: a TS1 symbol (a character of the companion font), or, in an
+/// OT1 font, an accented letter (an `\accent` construction).
+enum Isolated {
+    Ts1(EncodingCode),
+    /// An OT1 `\accent` construction, or `\L`'s box (`accent: None`).
+    Construction { base: EncodingCode, accent: Option<EncodingCode> },
+}
+
+/// TFM shaping of text holding characters the text font's program cannot
+/// set as a run ([`Isolated`]):
+///
+/// * TS1 symbols (`©`, `°`, `€`, ...: characters T1 has no slot for that
+///   the kernel sets from the text companion font,
+///   [`EncodingCode::ts1_symbol`]) -- in TeX a character of another font,
+///   so the program stops on both sides of it and its box comes from the
+///   companion's metrics (`\showbox`: `\TS1/cmr/m/n/10.95 ©` is
+///   `hbox(8.21059+2.7369)x12.093`, `tcrm1095` slot 169 at 1.11084 em --
+///   Latin Modern Roman's own `©` is 0.683 em, which put `\copyright~2026`
+///   4.6 bp short);
+/// * in an OT1 font, accented letters and `Ł`/`ł`
+///   ([`EncodingCode::ot1_construction`]): `make_accent` and `\L`'s
+///   `\hbox to\wd` give them the base letter's width and no kern with
+///   the neighbours.
+///
+/// The pieces between are shaped by [`shape_tfm`] and joined; `None` when
+/// the text has no such character or a piece cannot be TFM-shaped (the
+/// caller then proceeds as it would have without this).
+fn shape_around_isolated_chars(face: &Rc<LoadedFace>, tfm: &Tfm, text: &str, literal: bool) -> Option<Shaped> {
+    let isolated: Vec<(usize, char, Isolated)> = text
         .char_indices()
-        .filter_map(|(i, c)| EncodingCode::ts1_symbol(c).map(|slot| (i, c, slot)))
+        .filter_map(|(i, c)| {
+            if let Some(slot) = EncodingCode::ts1_symbol(c).filter(|_| face.ts1_tfm.is_some()) {
+                return Some((i, c, Isolated::Ts1(slot)));
+            }
+            if face.encoding == Encoding::OT1 {
+                if let Some((base, accent)) = EncodingCode::ot1_construction(c) {
+                    return Some((i, c, Isolated::Construction { base, accent }));
+                }
+            }
+            None
+        })
         .collect();
-    if symbols.is_empty() {
+    if isolated.is_empty() {
         return None;
     }
     let mut parts: Vec<(usize, Rc<Shaped>)> = Vec::new();
@@ -300,13 +325,75 @@ fn shape_around_ts1_symbols(face: &Rc<LoadedFace>, tfm: &Tfm, ts1: &Tfm, text: &
         }
         Some(())
     };
-    for (i, c, slot) in symbols {
+    for (i, c, how) in isolated {
         piece(&mut parts, at, i)?;
-        parts.push((i, Rc::new(shape_ts1_symbol(face, ts1, c, slot)?)));
+        let shaped = match how {
+            Isolated::Ts1(slot) => shape_ts1_symbol(face, face.ts1_tfm.as_deref()?, c, slot)?,
+            Isolated::Construction { base, accent } => shape_ot1_construction(face, tfm, c, base, accent)?,
+        };
+        parts.push((i, Rc::new(shaped)));
         at = i + c.len_utf8();
     }
     piece(&mut parts, at, text.len())?;
     join_parts(face, text, &parts)
+}
+
+/// One accented letter of an OT1 font as `\accent` builds it (tex.web
+/// §1123): the base letter's width, italic correction and depth, the box
+/// as tall as the accent raised onto the base (the accent sits at its own
+/// height over a lowercase base; over a taller base it is raised by the
+/// difference to the x-height) -- or, without an accent, `\L`'s box at
+/// the base's own size. The precomposed glyph of this face draws it.
+/// `None` when the TFM lacks a slot.
+fn shape_ot1_construction(face: &Rc<LoadedFace>, tfm: &Tfm, ch: char, base: EncodingCode, accent: Option<EncodingCode>) -> Option<Shaped> {
+    let b = tfm.metrics(base.0)?;
+    let height = match accent {
+        Some(accent) => {
+            let a = tfm.metrics(accent.0)?;
+            let x_height = tfm.param(5).unwrap_or(0);
+            let raise = (b.height - x_height).max(0);
+            b.height.max(a.height + raise)
+        }
+        None => b.height,
+    };
+    let mut missing = Vec::new();
+    let gid = match face.face().glyph_id(ch) {
+        Some(gid) => gid,
+        None => {
+            missing.push((ch, 0));
+            GlyphId(0)
+        }
+    };
+    let bounds = face.bounds(gid, Some(ch));
+    let empty = bounds.empty || gid.0 == 0;
+    let glyph = SGlyph {
+        gid,
+        advance: b.width,
+        italic: b.italic,
+        x_offset: 0,
+        y_offset: 0,
+        y_max: if empty { 0 } else { bounds.y_max },
+        y_min: if empty { 0 } else { bounds.y_min },
+        x_max: if empty { 0 } else { bounds.x_max },
+        empty,
+        // The construction is not one character of the font for
+        // microtype's tables either.
+        tfm_code: None,
+        tfm_kern: 0,
+    };
+    Some(Shaped {
+        face: face.clone(),
+        text: ch.to_string(),
+        clusters: vec![SCluster { glyphs: vec![glyph], text_range: 0..ch.len_utf8(), text: ch.to_string() }],
+        units_per_em: FIX,
+        tfm_metrics: true,
+        width_units: i64::from(b.width),
+        height_units: height,
+        depth_units: b.depth,
+        missing,
+        refused: None,
+        tfm_error: None,
+    })
 }
 
 /// One TS1 symbol as the companion font sets it: the slot's width, height
@@ -364,10 +451,12 @@ fn shape_ts1_symbol(face: &Rc<LoadedFace>, ts1: &Tfm, ch: char, slot: EncodingCo
     })
 }
 
-/// TFM shaping; `Ok(None)` when a character has no T1 slot (the caller then
-/// shapes through the font program and its own metrics); `Err` propagates
-/// the shared interpreter's errors (malformed program, run budget).
+/// TFM shaping in the face's encoding; `Ok(None)` when a character has no
+/// slot there (the caller then shapes through the font program and its own
+/// metrics); `Err` propagates the shared interpreter's errors (malformed
+/// program, run budget).
 fn shape_tfm(face: &Rc<LoadedFace>, tfm: &Tfm, text: &str, literal: bool) -> Result<Option<Shaped>, crate::tfm::TfmError> {
+    let encoding = face.encoding;
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let mut codes = Vec::with_capacity(chars.len());
     // Which input character each code came from, so a character that sets
@@ -394,7 +483,7 @@ fn shape_tfm(face: &Rc<LoadedFace>, tfm: &Tfm, text: &str, literal: bool) -> Res
             }
             continue;
         }
-        let Some(code) = EncodingCode::for_char(*c, Encoding::T1) else {
+        let Some(code) = EncodingCode::for_char(*c, encoding) else {
             return Ok(None);
         };
         codes.push(code.0);
@@ -452,8 +541,8 @@ fn shape_tfm(face: &Rc<LoadedFace>, tfm: &Tfm, text: &str, literal: bool) -> Res
         let kern_after = if explicit { ellipsis_kern } else { g.kern_after };
         let range = end_of(g.input.0)..end_of(g.input.1);
         let ctext = text[range.clone()].to_string();
-        let Some(ch) = EncodingCode(g.code).to_char(Encoding::T1) else {
-            return Err(crate::tfm::TfmError(format!("ligature program produced undeclared T1 slot {:#04x}", g.code)));
+        let Some(ch) = EncodingCode(g.code).to_char(encoding) else {
+            return Err(crate::tfm::TfmError(format!("ligature program produced undeclared {encoding:?} slot {:#04x}", g.code)));
         };
         let gid = match face.face().glyph_id(ch) {
             Some(gid) => gid,

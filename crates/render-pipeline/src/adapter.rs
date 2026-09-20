@@ -7726,7 +7726,7 @@ fn list_margins(index: &SourceIndex, source: &str, at: usize, size: u32, natbib_
     // The class sets `\leftmargin<i>` while it loads, before `fontenc`, so
     // its `em` is OT1 `cmr`'s quad (Latin Modern's), not the EC font's
     // (`ecrm1095`'s quad is 0.06 pt smaller at 11 pt).
-    let class_em_ex = if family == crate::fonts::Family::ComputerModern { list_em_ex(size, crate::fonts::Family::LatinModern) } else { em_ex };
+    let class_em_ex = if family == crate::fonts::Family::ComputerModern { list_em_ex(size, crate::fonts::Family::ComputerModernOt1) } else { em_ex };
     // beamer: `\leftmargin<i>` is 2em at every level
     // (`beamerbaselocalstructure.sty` 144-146).
     let beamer = style.is_beamer();
@@ -7801,7 +7801,9 @@ fn list_margins(index: &SourceIndex, source: &str, at: usize, size: u32, natbib_
 
 fn list_em_ex(size: u32, family: crate::fonts::Family) -> Option<(f64, f64)> {
     match family {
-        crate::fonts::Family::LatinModern => {
+        // document-style's size table is `cmr`'s (`\fontdimen6` 10.00002pt
+        // at 10pt), which Latin Modern's `rm-lmr`/`ec-lm` reproduce.
+        crate::fonts::Family::LatinModern | crate::fonts::Family::ComputerModernOt1 => {
             let base = match size {
                 12 => flashtex_document_style::BaseSize::Pt12,
                 11 => flashtex_document_style::BaseSize::Pt11,

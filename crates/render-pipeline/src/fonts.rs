@@ -117,6 +117,16 @@ pub enum Family {
     /// ...) laid out with the Latin Modern outlines, which draw the same
     /// Computer Modern designs. Math is unchanged (Latin Modern Math).
     ComputerModern,
+    /// LaTeX's default `cmr` without `fontenc` (OT1, no `lmodern`): the
+    /// metrics `ot1cmr.fd`/`ot1cmss.fd` load (`cmr10` at 10.95pt, `cmbx10`,
+    /// `cmti10`, `cmss10`, ...) laid out with the Latin Modern outlines.
+    /// Latin Modern's `ec-lm*` widths match Knuth's to 1e-5 em, but its
+    /// kern programs do not (`ec-lmss12` kerns `T`–`w`, `cmss12` does not;
+    /// `ec-lmr10` kerns `.`–`”`), which is what moved `Two columns` 1.17 bp
+    /// and `doing.''` 1.65 bp against pdflatex. Typewriter text keeps the
+    /// `ec-lmtt` metrics: `cmtt` is fixed-pitch without kerns, so nothing
+    /// differs. Math is unchanged (Latin Modern Math).
+    ComputerModernOt1,
     /// An installed font family named by the document or the manifest
     /// (`\setmainfont{Helvetica}`, `[fonts] text = "..."`), interned on the
     /// [`FontSet`] ([`FontSet::intern_named`]) and resolved through the
@@ -363,6 +373,28 @@ impl Discovery {
                 push(PathBuf::from(format!("{}/{EC_TFM_DIR}", &d[..at])));
             }
         }
+        // The OT1 metrics of `cmr` documents without `fontenc`
+        // (`Family::ComputerModernOt1`): `fonts/tfm/public/cm`, likewise.
+        for root in self.bundle_texmf_roots() {
+            push(root.join(CM_TFM_DIR));
+        }
+        for d in font_dirs {
+            let d = d.to_string_lossy();
+            if let Some(at) = d.find("/fonts/opentype/public/lm") {
+                push(PathBuf::from(format!("{}/{CM_TFM_DIR}", &d[..at])));
+            }
+        }
+        // ...and next to every explicit metrics directory of a TeX tree
+        // (`FLASHTEX_TFM_DIRS` naming `<texmf>/fonts/tfm/jknappen/ec` or
+        // `.../public/lm` finds `<texmf>/fonts/tfm/public/cm` without being
+        // told), after the explicit ones so their order is unchanged.
+        let explicit: Vec<PathBuf> = Discovery::split(&self.tfm_dirs);
+        for d in &explicit {
+            let d = d.to_string_lossy();
+            if let Some(at) = d.find("/fonts/tfm/") {
+                push(PathBuf::from(format!("{}/{CM_TFM_DIR}", &d[..at])));
+            }
+        }
         // `\mathfrak`'s `eufm` metrics (amsfonts `euler`), after the EC ones.
         for root in self.bundle_texmf_roots() {
             push(root.join(AMS_EULER_TFM_DIR));
@@ -515,6 +547,8 @@ pub fn latin_modern_outline(key: FontKey, size_pt: f64) -> (String, Option<&'sta
 fn metric_family_label(tfm: &str) -> &'static str {
     if tfm.starts_with("ec-lm") {
         "Latin Modern"
+    } else if tfm_encoding(tfm) == crate::ids::Encoding::OT1 {
+        "OT1 cm"
     } else if ["ecss", "ecsi", "ecsx", "ecso"].iter().any(|p| tfm.starts_with(p)) {
         "T1 cmss"
     } else if ["ectt", "ecst", "ecit", "ectc"].iter().any(|p| tfm.starts_with(p)) {
@@ -617,10 +651,34 @@ pub fn ec_tfm_file(role: Role, size_pt: f64) -> Option<String> {
 /// `None` for a file this table cannot pair. The companion is optional:
 /// a face without one sets those symbols from its own program's advances,
 /// as before.
-pub fn ts1_companion_tfm(tfm: &str) -> Option<String> {
+pub fn ts1_companion_tfm(tfm: &str, size_pt: f64) -> Option<String> {
     let stem = tfm.strip_suffix(".tfm")?;
     if let Some(rest) = stem.strip_prefix("ec-lm") {
         return Some(format!("ts1-lm{rest}.tfm"));
+    }
+    // Knuth's OT1 files (`cmr10` at 10.95pt): `ts1cmr.fd` declares the
+    // companions at the EC sizes (`genb*tcrm`), so the file is chosen by
+    // the size, not the design.
+    if let Some(cm) = stem.strip_prefix("cm").filter(|_| !stem.starts_with("cm-")) {
+        let design = cm.trim_end_matches(|c: char| c.is_ascii_digit());
+        let shape = match design {
+            "r" | "csc" => "rm",
+            "bx" | "b" => "bx",
+            "ti" => "ti",
+            "sl" => "sl",
+            "bxti" => "bi",
+            "bxsl" => "bl",
+            "u" => "ui",
+            "ss" | "ssdc" => "ss",
+            "ssi" => "si",
+            "ssbx" => "sx",
+            "tt" | "tcsc" => "tt",
+            "itt" => "it",
+            "sltt" => "st",
+            _ => return None,
+        };
+        let (_, suffix) = EC_SIZES.iter().min_by(|a, b| (a.0 - size_pt).abs().total_cmp(&(b.0 - size_pt).abs()))?;
+        return Some(format!("tc{shape}{suffix}.tfm"));
     }
     let rest = stem.strip_prefix("ec")?;
     let (shape, size) = rest.split_at(rest.find(|c: char| c.is_ascii_digit())?);
@@ -631,6 +689,81 @@ pub fn ts1_companion_tfm(tfm: &str) -> Option<String> {
         other => other,
     };
     Some(format!("tc{shape}{size}.tfm"))
+}
+
+/// The OT1 metric file `ot1cmr.fd`/`ot1cmss.fd` (TeX Live 2026) load for
+/// a text role at `size_pt`, at the declared size nearest `size_pt`. The
+/// files are Knuth's design sizes scaled to the requested size (`cmr10 at
+/// 10.95pt`), unlike the EC files which exist at every size:
+///
+/// * `ot1cmr.fd`: `m/n` `<5><6><7><8><9><10><12>gen*cmr <10.95>cmr10
+///   <14.4>cmr12 <17.28><20.74><24.88>cmr17`; `m/sl` `<5><6><7>cmsl8
+///   <8><9>gen*cmsl <10><10.95>cmsl10 <12>...cmsl12`; `m/it` `<5><6><7>cmti7
+///   <8>cmti8 <9>cmti9 <10><10.95>cmti10 <12>...cmti12`; `m/sc` `cmcsc10`;
+///   `m/ui` `cmu10`; `b/n` `cmb10`; `bx/n` `<5>...<9>gen*cmbx <10><10.95>cmbx10
+///   <12>...cmbx12`; `bx/sl` `cmbxsl10`; `bx/it` `cmbxti10`;
+/// * `ot1cmss.fd`: `m/n` `<5>...<8>cmss8 <9>cmss9 <10><10.95>cmss10
+///   <12><14.4>cmss12 <17.28>...cmss17`; `m/sl` (and `m/it`, `ssub`) the
+///   `cmssi` files at the same sizes; `bx/n` `cmssbx10`; `sbc/n` `cmssdc10`;
+///   an undeclared `bx/it`/`bx/sl` is NFSS-substituted by `bx/n`.
+///
+/// `None` for math, for the typewriter family (see
+/// [`Family::ComputerModernOt1`]) and for shapes the files do not declare.
+pub fn ot1_tfm_file(role: Role, size_pt: f64) -> Option<String> {
+    use FamilyKind::{Rm, Sf};
+    use Series::{Bx, Sbc, B, M};
+    use Shape::{Ui, It, Sc, Sl, N};
+    let key = role.key()?;
+    // The declared sizes of both files; an undeclared size is LaTeX's
+    // substitution to the nearest one.
+    const SIZES: [f64; 12] = [5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 10.95, 12.0, 14.4, 17.28, 20.74, 24.88];
+    let size = SIZES.iter().copied().min_by(|a, b| (a - size_pt).abs().total_cmp(&(b - size_pt).abs()))?;
+    let gen = |prefix: &str, own: &[u32], else_: &[(f64, u32)]| -> String {
+        let d = size.round() as u32;
+        if (size - f64::from(d)).abs() < 1e-9 && own.contains(&d) {
+            return format!("{prefix}{d}.tfm");
+        }
+        let (_, d) = else_.iter().find(|(at, _)| (*at - size).abs() < 1e-9).copied().unwrap_or(*else_.last().unwrap());
+        format!("{prefix}{d}.tfm")
+    };
+    // The `<a><b>file` runs of the declarations as (declared size, design).
+    let table = |prefix: &str, runs: &[(&[f64], u32)]| -> String {
+        let d = runs.iter().find(|(sizes, _)| sizes.iter().any(|at| (*at - size).abs() < 1e-9)).map_or(runs.last().unwrap().1, |(_, d)| *d);
+        format!("{prefix}{d}.tfm")
+    };
+    let file = match (key.family, key.series, key.shape) {
+        (Rm, M, N) => gen("cmr", &[5, 6, 7, 8, 9, 10, 12], &[(10.95, 10), (14.4, 12), (17.28, 17), (20.74, 17), (24.88, 17)]),
+        (Rm, M, Sl) => table("cmsl", &[(&[5.0, 6.0, 7.0, 8.0], 8), (&[9.0], 9), (&[10.0, 10.95], 10), (&[12.0, 14.4, 17.28, 20.74, 24.88], 12)]),
+        (Rm, M, It) => table("cmti", &[(&[5.0, 6.0, 7.0], 7), (&[8.0], 8), (&[9.0], 9), (&[10.0, 10.95], 10), (&[12.0, 14.4, 17.28, 20.74, 24.88], 12)]),
+        (Rm, M, Sc) => "cmcsc10.tfm".to_string(),
+        (Rm, M, Ui) => "cmu10.tfm".to_string(),
+        (Rm, B, N) => "cmb10.tfm".to_string(),
+        (Rm, Bx, N) => gen("cmbx", &[5, 6, 7, 8, 9], &[(10.0, 10), (10.95, 10), (12.0, 12), (14.4, 12), (17.28, 12), (20.74, 12), (24.88, 12)]),
+        (Rm, Bx, Sl) => "cmbxsl10.tfm".to_string(),
+        (Rm, Bx, It) => "cmbxti10.tfm".to_string(),
+        (Sf, M, N) => table("cmss", &[(&[5.0, 6.0, 7.0, 8.0], 8), (&[9.0], 9), (&[10.0, 10.95], 10), (&[12.0, 14.4], 12), (&[17.28, 20.74, 24.88], 17)]),
+        (Sf, M, Sl | It) => table("cmssi", &[(&[5.0, 6.0, 7.0, 8.0], 8), (&[9.0], 9), (&[10.0, 10.95], 10), (&[12.0, 14.4], 12), (&[17.28, 20.74, 24.88], 17)]),
+        (Sf, Bx, N | Sl | It) => "cmssbx10.tfm".to_string(),
+        (Sf, Sbc, N) => "cmssdc10.tfm".to_string(),
+        _ => return None,
+    };
+    Some(file)
+}
+
+/// Where TeX Live keeps Knuth's Computer Modern metrics (`public/cm`),
+/// relative to a texmf root; the bundled tree ships the files
+/// [`ot1_tfm_file`] can name under the same path.
+pub const CM_TFM_DIR: &str = "fonts/tfm/public/cm";
+
+/// The text encoding of a TFM by its name: Knuth's `cm*` files are OT1,
+/// everything else this crate attaches (`ec*`, `ec-lm*`, `ptm*8t`) is T1.
+pub fn tfm_encoding(tfm: &str) -> crate::ids::Encoding {
+    let stem = tfm.trim_end_matches(".tfm");
+    if stem.starts_with("cm") && !stem.starts_with("cm-") {
+        crate::ids::Encoding::OT1
+    } else {
+        crate::ids::Encoding::T1
+    }
 }
 
 /// `CHARWD` of `tcrm<size>.tfm` (the TS1 `cmr` `m/n` font `ts1cmr.fd`
@@ -831,6 +964,9 @@ pub struct LoadedFace {
     /// The TeX metrics pdfTeX lays this face out with (`ec-lm*.tfm`), when
     /// found; shaping then takes widths/kerns/ligatures/heights from here.
     pub tfm: Option<Rc<Tfm>>,
+    /// The text encoding `tfm` is laid out in ([`tfm_encoding`]): the slots
+    /// characters are shaped through. T1 when no TFM is attached.
+    pub encoding: crate::ids::Encoding,
     /// The TS1 companion of `tfm` ([`ts1_companion_tfm`]), when found: the
     /// metrics of the symbols T1 has no slot for (`©`, `°`, `€`, ...),
     /// which pdfTeX sets from the companion font at the same size. `None`
@@ -1312,9 +1448,13 @@ impl FontSet {
         }
         let file = Self::latin_modern_file(role, size_pt);
         let note = key.and_then(|k| latin_modern_outline(k, size_pt).1).map(|n| format!("{file}: {n}"));
-        let ec = if family == Family::ComputerModern { ec_tfm_file(role, size_pt) } else { None };
+        let ec = match family {
+            Family::ComputerModern => ec_tfm_file(role, size_pt),
+            Family::ComputerModernOt1 => ot1_tfm_file(role, size_pt),
+            _ => None,
+        };
         let loaded = match &ec {
-            Some(ec) => self.otf_with_tfm(&file, Some(ec)),
+            Some(ec) => self.otf_with_tfm(&file, Some(ec), size_pt),
             None => self.otf(&file),
         };
         let reason = match loaded {
@@ -1326,7 +1466,7 @@ impl FontSet {
             let roman_file = latin_modern_outline(roman, size_pt).0;
             if roman_file != file {
                 let metrics = ec.clone().or_else(|| latin_modern_tfm(file.trim_end_matches(".otf")));
-                if let Ok(face) = self.otf_with_tfm(&roman_file, metrics.as_deref()) {
+                if let Ok(face) = self.otf_with_tfm(&roman_file, metrics.as_deref(), size_pt) {
                     return Resolved {
                         note: Some(format!(
                             "{file}: {reason}; outlines drawn from {roman_file} with the {} metrics",
@@ -1486,6 +1626,7 @@ impl FontSet {
             face_index: file.face_index,
             kind: FaceKind::Otf { face, cff },
             tfm: None,
+            encoding: crate::ids::Encoding::T1,
             ts1_tfm: None,
             tfm_missing: None,
             tfm_status: TfmStatus::Missing("named family: OpenType metrics by design".into()),
@@ -1523,6 +1664,7 @@ impl FontSet {
             face_index: 0,
             kind: FaceKind::Core14(f),
             tfm: None,
+            encoding: crate::ids::Encoding::T1,
             ts1_tfm: None,
             tfm_missing: None,
             tfm_status: TfmStatus::Missing("Core 14 face: AFM metrics".into()),
@@ -1536,18 +1678,30 @@ impl FontSet {
 
     /// Loads an explicit file name from the bounded search list.
     pub fn otf(&self, file: &str) -> Result<Rc<LoadedFace>, String> {
-        self.otf_with_tfm(file, None)
+        self.otf_with_tfm(file, None, 10.0)
     }
 
-    /// [`FontSet::otf`] laid out with the EC metric file `ec_tfm` instead of
-    /// the `ec-lm*` TFM paired with the file. The face is a separate entry
-    /// named `<stem>+<tfm stem>` (same program and wire `font_id`, its own
-    /// `shape_key`). When `ec_tfm` is not found the `ec-lm*` TFM is attached
-    /// and [`LoadedFace::metrics_fallback`] says so.
-    pub fn otf_with_tfm(&self, file: &str, ec_tfm: Option<&str>) -> Result<Rc<LoadedFace>, String> {
+    /// [`FontSet::otf`] laid out with the EC or OT1 metric file `ec_tfm`
+    /// instead of the `ec-lm*` TFM paired with the file. The face is a
+    /// separate entry named `<stem>+<tfm stem>` (same program and wire
+    /// `font_id`, its own `shape_key`). When `ec_tfm` is not found the
+    /// `ec-lm*` TFM is attached and [`LoadedFace::metrics_fallback`] says
+    /// so. `size_pt` selects the TS1 companion of an OT1 file (`cmr10` is
+    /// loaded at several sizes, each with its own `tcrm<size>`; the face is
+    /// then named `<stem>+<tfm>+<companion>`).
+    pub fn otf_with_tfm(&self, file: &str, ec_tfm: Option<&str>, size_pt: f64) -> Result<Rc<LoadedFace>, String> {
         let stem = file.trim_end_matches(".otf").trim_end_matches(".ttf").to_string();
         let name = match ec_tfm {
-            Some(t) => format!("{stem}+{}", t.trim_end_matches(".tfm")),
+            Some(t) => {
+                let mut name = format!("{stem}+{}", t.trim_end_matches(".tfm"));
+                if tfm_encoding(t) == crate::ids::Encoding::OT1 {
+                    if let Some(c) = ts1_companion_tfm(t, size_pt) {
+                        name.push('+');
+                        name.push_str(c.trim_end_matches(".tfm"));
+                    }
+                }
+                name
+            }
             None => stem.clone(),
         };
         if let Some(existing) = self.by_name(&name) {
@@ -1628,8 +1782,9 @@ impl FontSet {
         let ts1_tfm = tfm
             .as_ref()
             .and_then(|_| tfm_choice.as_deref())
-            .and_then(ts1_companion_tfm)
+            .and_then(|t| ts1_companion_tfm(t, size_pt))
             .and_then(|f| self.tfm(&f).ok());
+        let encoding = tfm.as_ref().and_then(|_| tfm_choice.as_deref()).map_or(crate::ids::Encoding::T1, tfm_encoding);
         let loaded = LoadedFace {
             font_id: Rc::from(sha256::hex(&sha)),
             engine_id,
@@ -1644,6 +1799,7 @@ impl FontSet {
             face_index: 0,
             kind: FaceKind::Otf { face, cff: Some(cff) },
             tfm,
+            encoding,
             ts1_tfm,
             tfm_missing,
             tfm_status,
@@ -1743,6 +1899,104 @@ mod tests {
         );
     }
 
+    /// `ot1cmr.fd`/`ot1cmss.fd` (TeX Live 2026) as transcribed on
+    /// [`ot1_tfm_file`]: an 11pt article's body is `cmr10` at 10.95pt
+    /// (pdflatex's `\showbox` names it `\OT1/cmr/m/n/10.95`), its `\large`
+    /// `cmr12`, its `\Large` `cmr17`; beamer's `\large` frame title
+    /// `cmss12`.
+    #[test]
+    fn ot1_cmr_sizes_select_knuths_files_of_ot1cmr_fd() {
+        let rm = Role::Text { bold: false, italic: false };
+        let bf = Role::Text { bold: true, italic: false };
+        let it = Role::Text { bold: false, italic: true };
+        assert_eq!(ot1_tfm_file(rm, 10.95).as_deref(), Some("cmr10.tfm"));
+        assert_eq!(ot1_tfm_file(rm, 10.0).as_deref(), Some("cmr10.tfm"));
+        assert_eq!(ot1_tfm_file(rm, 12.0).as_deref(), Some("cmr12.tfm"));
+        assert_eq!(ot1_tfm_file(rm, 14.4).as_deref(), Some("cmr12.tfm"));
+        assert_eq!(ot1_tfm_file(rm, 17.28).as_deref(), Some("cmr17.tfm"));
+        assert_eq!(ot1_tfm_file(rm, 24.88).as_deref(), Some("cmr17.tfm"));
+        assert_eq!(ot1_tfm_file(rm, 8.0).as_deref(), Some("cmr8.tfm"));
+        assert_eq!(ot1_tfm_file(rm, 5.0).as_deref(), Some("cmr5.tfm"));
+        assert_eq!(ot1_tfm_file(bf, 10.95).as_deref(), Some("cmbx10.tfm"));
+        assert_eq!(ot1_tfm_file(bf, 9.0).as_deref(), Some("cmbx9.tfm"));
+        assert_eq!(ot1_tfm_file(bf, 14.4).as_deref(), Some("cmbx12.tfm"));
+        assert_eq!(ot1_tfm_file(it, 10.95).as_deref(), Some("cmti10.tfm"));
+        assert_eq!(ot1_tfm_file(it, 7.0).as_deref(), Some("cmti7.tfm"));
+        assert_eq!(ot1_tfm_file(it, 8.0).as_deref(), Some("cmti8.tfm"));
+        assert_eq!(ot1_tfm_file(it, 12.0).as_deref(), Some("cmti12.tfm"));
+        let sf = |bold: bool, shape: Shape| Role::Font(FontKey::new(FamilyKind::Sf, if bold { Series::Bx } else { Series::M }, shape));
+        assert_eq!(ot1_tfm_file(sf(false, Shape::N), 10.95).as_deref(), Some("cmss10.tfm"));
+        assert_eq!(ot1_tfm_file(sf(false, Shape::N), 12.0).as_deref(), Some("cmss12.tfm"));
+        assert_eq!(ot1_tfm_file(sf(false, Shape::N), 7.0).as_deref(), Some("cmss8.tfm"));
+        assert_eq!(ot1_tfm_file(sf(false, Shape::N), 20.74).as_deref(), Some("cmss17.tfm"));
+        assert_eq!(ot1_tfm_file(sf(false, Shape::It), 10.95).as_deref(), Some("cmssi10.tfm"));
+        assert_eq!(ot1_tfm_file(sf(true, Shape::N), 12.0).as_deref(), Some("cmssbx10.tfm"));
+        assert_eq!(ot1_tfm_file(sf(true, Shape::It), 12.0).as_deref(), Some("cmssbx10.tfm"));
+        let sc = Role::Font(FontKey::new(FamilyKind::Rm, Series::M, Shape::Sc));
+        assert_eq!(ot1_tfm_file(sc, 10.95).as_deref(), Some("cmcsc10.tfm"));
+        let tt = Role::Font(FontKey::new(FamilyKind::Tt, Series::M, Shape::N));
+        assert_eq!(ot1_tfm_file(tt, 10.95), None);
+        assert_eq!(ot1_tfm_file(Role::Math, 10.95), None);
+        assert_eq!(tfm_encoding("cmr10.tfm"), crate::ids::Encoding::OT1);
+        assert_eq!(tfm_encoding("cmssbx10.tfm"), crate::ids::Encoding::OT1);
+        assert_eq!(tfm_encoding("ecrm1095.tfm"), crate::ids::Encoding::T1);
+        assert_eq!(tfm_encoding("ec-lmr10.tfm"), crate::ids::Encoding::T1);
+        // Companions of Knuth's files go by the size the file is used at.
+        assert_eq!(ts1_companion_tfm("cmr10.tfm", 10.95).as_deref(), Some("tcrm1095.tfm"));
+        assert_eq!(ts1_companion_tfm("cmr10.tfm", 10.0).as_deref(), Some("tcrm1000.tfm"));
+        assert_eq!(ts1_companion_tfm("cmbx12.tfm", 14.4).as_deref(), Some("tcbx1440.tfm"));
+        assert_eq!(ts1_companion_tfm("cmss12.tfm", 12.0).as_deref(), Some("tcss1200.tfm"));
+        assert_eq!(ts1_companion_tfm("cmcsc10.tfm", 10.95).as_deref(), Some("tcrm1095.tfm"));
+    }
+
+    /// pdflatex (TeX Live 2026) `\showbox` in a 10pt article without
+    /// `fontenc`: `\hbox{doing.''}` is 31.66676pt and `\hbox{Two}` in
+    /// `\sffamily\large` 21.54836pt (`T`, `w`, `\kern-0.32639`, `o`) --
+    /// `cmr10`/`cmss12` have no `.`–`”` or `T`–`w` kern where Latin
+    /// Modern's `ec-lmr10`/`ec-lmss12` do, which put `doing.''` 1.65 bp and
+    /// `Two columns` 1.17 bp short on fixtures/real-world/plain-article
+    /// page 1 and beamer-blocks-columns page 3. `\hbox{Caf\'e}` is
+    /// 19.72226pt (`C a f` + the `\accent` construction at `e`'s width,
+    /// no kern), `\hbox{office---fine}` 47.77786pt (the `ffi` and `---`
+    /// ligatures), `\hbox{\copyright}` 11.1084pt (`tcrm1000`).
+    #[test]
+    fn ot1_documents_lay_out_with_knuths_metrics() {
+        let set = FontSet::with_default_dirs(&[]);
+        if !set.latin_modern_available() || !set.tfm_dirs().iter().any(|d| d.join("cmr10.tfm").is_file()) {
+            eprintln!("skipping: Latin Modern or the cm metrics not installed");
+            return;
+        }
+        let shaper = crate::shape::Shaper::new();
+        let rm = Role::Text { bold: false, italic: false };
+        let cm = set.resolve(Family::ComputerModernOt1, rm, 10.0).face;
+        let lm = set.resolve(Family::LatinModern, rm, 10.0).face;
+        assert_eq!(cm.name, "lmroman10-regular+cmr10+tcrm1000");
+        assert_eq!(cm.encoding, crate::ids::Encoding::OT1);
+        assert_eq!(cm.font_id, lm.font_id);
+        assert_ne!(cm.shape_key, lm.shape_key);
+        let w = |face: &Rc<LoadedFace>, text: &str| shaper.shape(face, text).width_pt(10.0);
+        assert!((w(&cm, "doing.”") - 31.66676).abs() < 1e-3, "{}", w(&cm, "doing.”"));
+        assert!(w(&lm, "doing.”") < w(&cm, "doing.”") - 1.0, "{}", w(&lm, "doing.”"));
+        let sf = Role::Font(FontKey::new(FamilyKind::Sf, Series::M, Shape::N));
+        let cmss = set.resolve(Family::ComputerModernOt1, sf, 12.0).face;
+        let lmss = set.resolve(Family::LatinModern, sf, 12.0).face;
+        assert_eq!(cmss.name, "lmsans12-regular+cmss12+tcss1200");
+        let w12 = |face: &Rc<LoadedFace>, text: &str| shaper.shape(face, text).width_pt(12.0);
+        assert!((w12(&cmss, "Two") - 21.54836).abs() < 1e-3, "{}", w12(&cmss, "Two"));
+        assert!(w12(&lmss, "Two") < w12(&cmss, "Two") - 0.9, "{}", w12(&lmss, "Two"));
+        // The accented letter: the base's width, no kern, shaped by the TFM.
+        let s = shaper.shape(&cm, "Café");
+        assert!(s.tfm_metrics);
+        assert!((s.width_pt(10.0) - 19.72226).abs() < 1e-3, "{}", s.width_pt(10.0));
+        assert_eq!(s.clusters.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["C", "a", "f", "é"]);
+        // The f-ligatures and the dashes are OT1 slots of the TFM.
+        let s = shaper.shape(&cm, "office—fine");
+        assert!(s.tfm_metrics && s.clusters.iter().any(|c| c.text == "ffi"));
+        assert!((s.width_pt(10.0) - 47.77786).abs() < 1e-3, "{}", s.width_pt(10.0));
+        // `©` still comes from the companion: `tcrm1000` slot 169.
+        assert!((w(&cm, "©") - 11.1084).abs() < 1e-3, "{}", w(&cm, "©"));
+    }
+
     #[test]
     fn t1_cmr_sizes_select_the_ec_metric_files_of_t1cmr_fd() {
         let rm = Role::Text { bold: false, italic: false };
@@ -1795,19 +2049,19 @@ mod tests {
 
     #[test]
     fn ts1_companions_follow_the_ts1_fd_files() {
-        assert_eq!(ts1_companion_tfm("ecrm1095.tfm").as_deref(), Some("tcrm1095.tfm"));
-        assert_eq!(ts1_companion_tfm("ecbx1200.tfm").as_deref(), Some("tcbx1200.tfm"));
-        assert_eq!(ts1_companion_tfm("ecti1000.tfm").as_deref(), Some("tcti1000.tfm"));
-        assert_eq!(ts1_companion_tfm("ecss0800.tfm").as_deref(), Some("tcss0800.tfm"));
-        assert_eq!(ts1_companion_tfm("ectt1095.tfm").as_deref(), Some("tctt1095.tfm"));
+        assert_eq!(ts1_companion_tfm("ecrm1095.tfm", 10.0).as_deref(), Some("tcrm1095.tfm"));
+        assert_eq!(ts1_companion_tfm("ecbx1200.tfm", 10.0).as_deref(), Some("tcbx1200.tfm"));
+        assert_eq!(ts1_companion_tfm("ecti1000.tfm", 10.0).as_deref(), Some("tcti1000.tfm"));
+        assert_eq!(ts1_companion_tfm("ecss0800.tfm", 10.0).as_deref(), Some("tcss0800.tfm"));
+        assert_eq!(ts1_companion_tfm("ectt1095.tfm", 10.0).as_deref(), Some("tctt1095.tfm"));
         // `TS1/cmr/m/sc` is undefined: pdflatex substitutes `m/n` (probe
         // log: "Font shape `TS1/cmr/m/sc' undefined ... using `TS1/cmr/m/n'").
-        assert_eq!(ts1_companion_tfm("eccc1095.tfm").as_deref(), Some("tcrm1095.tfm"));
-        assert_eq!(ts1_companion_tfm("ecxc1095.tfm").as_deref(), Some("tcbx1095.tfm"));
-        assert_eq!(ts1_companion_tfm("ectc1000.tfm").as_deref(), Some("tctt1000.tfm"));
-        assert_eq!(ts1_companion_tfm("ec-lmr10.tfm").as_deref(), Some("ts1-lmr10.tfm"));
-        assert_eq!(ts1_companion_tfm("ec-lmbxi10.tfm").as_deref(), Some("ts1-lmbxi10.tfm"));
-        assert_eq!(ts1_companion_tfm("rm-lmr10.tfm"), None);
+        assert_eq!(ts1_companion_tfm("eccc1095.tfm", 10.0).as_deref(), Some("tcrm1095.tfm"));
+        assert_eq!(ts1_companion_tfm("ecxc1095.tfm", 10.0).as_deref(), Some("tcbx1095.tfm"));
+        assert_eq!(ts1_companion_tfm("ectc1000.tfm", 10.0).as_deref(), Some("tctt1000.tfm"));
+        assert_eq!(ts1_companion_tfm("ec-lmr10.tfm", 10.0).as_deref(), Some("ts1-lmr10.tfm"));
+        assert_eq!(ts1_companion_tfm("ec-lmbxi10.tfm", 10.0).as_deref(), Some("ts1-lmbxi10.tfm"));
+        assert_eq!(ts1_companion_tfm("rm-lmr10.tfm", 10.0), None);
     }
 
     /// pdflatex (TeX Live 2026) `\showbox` of `\hbox{a\copyright b}` in an

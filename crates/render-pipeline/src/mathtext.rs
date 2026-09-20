@@ -32,7 +32,7 @@ use flashtex_math_layout::{FontId as MathFontId, Glyph, MathFontMetrics, MathPar
 
 use crate::adapter::space_factor;
 use crate::fonts::{Family, FontSet, LoadedFace, Role};
-use crate::ids::{Encoding, EncodingCode, GlyphId};
+use crate::ids::{EncodingCode, GlyphId};
 use crate::shape::{Shaped, Shaper};
 use crate::tfm::Tfm;
 
@@ -1413,7 +1413,7 @@ impl RomanSource {
                             .zip(word.chars())
                             .map(|(c, ch)| {
                                 let adv = c.glyphs.first().map(|g| g.advance).unwrap_or(0);
-                                let w = EncodingCode::for_char(ch, Encoding::T1)
+                                let w = EncodingCode::for_char(ch, face.encoding)
                                     .and_then(|code| text_tfm.metrics(code.0))
                                     .map(|m| m.width)
                                     .unwrap_or(adv);

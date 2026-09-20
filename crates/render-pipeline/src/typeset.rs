@@ -1504,6 +1504,7 @@ impl<'a> Context<'a> {
         let metrics = TfmLogoMetrics {
             current: current.tfm.clone(),
             small: small.tfm.clone(),
+            encoding: current.encoding,
             size,
             sf,
             quad: params.quad,
@@ -3298,7 +3299,7 @@ impl<'a> Context<'a> {
             _ => style.key(),
         };
         let families = match self.style.family {
-            Family::ComputerModern | Family::LatinModern => Some((
+            Family::ComputerModern | Family::ComputerModernOt1 | Family::LatinModern => Some((
                 scheme.family_name(crate::nfss::FamilyKind::Rm),
                 scheme.family_name(crate::nfss::FamilyKind::Sf),
                 scheme.family_name(crate::nfss::FamilyKind::Tt),
@@ -6924,7 +6925,7 @@ impl<'a> Context<'a> {
     /// 0.25em (pdflatex 10pt 2.5pt, 12pt 3.0pt). Fallback 0.25em when
     /// the face has no TFM.
     fn uline_depth(&self, size: f64) -> f64 {
-        use crate::ids::{Encoding, EncodingCode};
+        use crate::ids::EncodingCode;
         let r = self.fonts.resolve(
             self.style.family,
             crate::fonts::Role::Text { bold: false, italic: false },
@@ -6932,7 +6933,7 @@ impl<'a> Context<'a> {
         );
         if let (None, Some(tfm)) = (&r.substituted, &r.face.tfm) {
             let depth = |ch: char| {
-                EncodingCode::for_char(ch, Encoding::T1)
+                EncodingCode::for_char(ch, r.face.encoding)
                     .and_then(|c| tfm.metrics(c.0))
                     .map(|m| crate::tfm::Tfm::pt(m.depth, size))
             };
@@ -8505,6 +8506,8 @@ fn merge_base(style: TextStyle, base: TextStyle) -> TextStyle {
 struct TfmLogoMetrics {
     current: Option<Rc<crate::tfm::Tfm>>,
     small: Option<Rc<crate::tfm::Tfm>>,
+    /// The encoding both TFMs are read in (the faces' own).
+    encoding: crate::ids::Encoding,
     size: f64,
     sf: f64,
     quad: f64,
@@ -8515,7 +8518,7 @@ struct TfmLogoMetrics {
 
 impl flashtex_compiler::text_builtins::LogoMetrics for TfmLogoMetrics {
     fn char_box(&self, font: flashtex_compiler::text_builtins::LogoFont, ch: char) -> flashtex_compiler::text_builtins::CharBox {
-        use crate::ids::{Encoding, EncodingCode};
+        use crate::ids::EncodingCode;
         use flashtex_compiler::text_builtins::{pt_to_sp, CharBox, LogoFont};
         let (tfm, size) = match font {
             LogoFont::MathItalic => {
@@ -8524,7 +8527,7 @@ impl flashtex_compiler::text_builtins::LogoMetrics for TfmLogoMetrics {
             LogoFont::ScriptSize => (&self.small, self.sf),
             LogoFont::Current => (&self.current, self.size),
         };
-        let m = tfm.as_ref().and_then(|t| EncodingCode::for_char(ch, Encoding::T1).and_then(|code| t.metrics(code.0)));
+        let m = tfm.as_ref().and_then(|t| EncodingCode::for_char(ch, self.encoding).and_then(|code| t.metrics(code.0)));
         match m {
             Some(m) => CharBox {
                 width: pt_to_sp(crate::tfm::Tfm::pt(m.width, size)),
@@ -8564,7 +8567,7 @@ pub(crate) fn design_size(family: Family, size: f64) -> u32 {
     match family {
         // A named OpenType family has one design, like Times.
         Family::Times | Family::Named(_) => 10,
-        Family::LatinModern | Family::ComputerModern => {
+        Family::LatinModern | Family::ComputerModern | Family::ComputerModernOt1 => {
             if size < 8.5 {
                 8
             } else if size < 11.0 {

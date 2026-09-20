@@ -59,8 +59,11 @@ final class BundledMetricsTests: XCTestCase {
         // groups take the 11 distinct sizes their .fd files reach, which
         // declare <5><6><7><8>#50800 so 5/6/7 pt share 0800 = 256.
         // Plus 6 AMS symbols (msbm/msam at 5/7/10 pt) and 2 license files
-        // (ec, amsfonts). 58 + 256 + 6 + 2 = 322.
-        XCTAssertEqual(entries.count, 322)
+        // (ec, amsfonts). 58 + 256 + 6 + 2 = 322. Then the TS1 text
+        // companions of every ec* (189 tc*) and ec-lm* (56 ts1-lm*) file,
+        // the 41 OT1 cm* files ot1cmr.fd/ot1cmss.fd load and Knuth's README:
+        // 322 + 189 + 56 + 41 + 1 = 609.
+        XCTAssertEqual(entries.count, 609)
         let pinnedPaths = Set(Self.pinned.map(\.path))
         var listed = Set<String>()
         for e in entries {
@@ -73,7 +76,7 @@ final class BundledMetricsTests: XCTestCase {
         }
         // Every vendored TFM under each subdirectory this pin covers is
         // accounted for by exactly one tier (Commander-pinned or listed here).
-        for subdirectory in [BundledMetrics.tfmSubdirectory, BundledMetrics.ecTfmSubdirectory, BundledMetrics.amsSymbolsSubdirectory] {
+        for subdirectory in [BundledMetrics.tfmSubdirectory, BundledMetrics.ecTfmSubdirectory, BundledMetrics.amsSymbolsSubdirectory, BundledMetrics.cmTfmSubdirectory] {
             let dir = Self.vendoredRoot.appendingPathComponent(subdirectory)
             let onDisk = Set(try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".tfm") }
                 .map { subdirectory + "/" + $0 })
@@ -101,9 +104,17 @@ final class BundledMetricsTests: XCTestCase {
                 XCTAssertTrue(listed.contains(name), "claimed AMS symbol face missing: \(name)")
             }
         }
-        // The two license files this pin adds are present alongside the metrics.
+        // The OT1 Computer Modern faces the pin claims are exactly the files present.
+        for (family, sizes) in try XCTUnwrap(doc["cm_ot1_covered"] as? [String: [Int]]) {
+            for size in sizes {
+                let name = "\(BundledMetrics.cmTfmSubdirectory)/\(family)\(size).tfm"
+                XCTAssertTrue(listed.contains(name), "claimed OT1 cm face missing: \(name)")
+            }
+        }
+        // The license files these pins add are present alongside the metrics.
         XCTAssertTrue(listed.contains("doc/fonts/ec/copyrite.txt"))
         XCTAssertTrue(listed.contains("doc/fonts/amsfonts/README"))
+        XCTAssertTrue(listed.contains("doc/fonts/cm/README"))
     }
 
     // MARK: environment
@@ -159,12 +170,13 @@ final class BundledMetricsTests: XCTestCase {
         XCTAssertEqual(env["FLASHTEX_TFM_DIRS"], "/user/tfm:/App/lm:/App/ec:/App/ams")
     }
 
-    func testDefaultBundledDirectoriesFindsAllThreeFromTheRepositoryCopy() {
+    func testDefaultBundledDirectoriesFindsAllFourFromTheRepositoryCopy() {
         let dirs = BundledMetrics.defaultBundledDirectories(roots: [Self.vendoredRoot])
         XCTAssertEqual(dirs.map(\.path), [
             Self.vendoredRoot.appendingPathComponent(BundledMetrics.tfmSubdirectory).standardizedFileURL.path,
             Self.vendoredRoot.appendingPathComponent(BundledMetrics.ecTfmSubdirectory).standardizedFileURL.path,
             Self.vendoredRoot.appendingPathComponent(BundledMetrics.amsSymbolsSubdirectory).standardizedFileURL.path,
+            Self.vendoredRoot.appendingPathComponent(BundledMetrics.cmTfmSubdirectory).standardizedFileURL.path,
         ])
     }
 

@@ -21,13 +21,14 @@
 //! carries `height(box)` directly. The same thing happens under any deep
 //! box: `figure-rule-*` here uses no `tabular` at all.
 //!
-//! ## What the residual is
+//! ## Why the `\lineskip` rows are the sharp ones
 //!
 //! A line's height is its tallest glyph's `charht`. pdfLaTeX without
-//! `lmodern` sets text from OT1 `cmr*`; this pipeline measures with T1
-//! `ec-lmr*` (`fonts::latin_modern_tfm`). Latin Modern is metric-compatible
-//! with Computer Modern in *widths* only — its heights differ, so the two
-//! disagree exactly where `\lineskip` applies (`tftopl`, TeX Live 2026):
+//! `lmodern` sets text from OT1 `cmr*`, and so does this pipeline since
+//! `Family::ComputerModernOt1` (`fonts::ot1_tfm_file`). Before that it
+//! measured with T1 `ec-lmr*`, which is metric-compatible with Computer
+//! Modern in *widths* only — its heights differ, so the two disagreed
+//! exactly where `\lineskip` applies (`tftopl`, TeX Live 2026):
 //!
 //! | glyph | `cmr10` | `ec-lmr10` | `cmr12` | `ec-lmr12` |
 //! |---|---|---|---|---|
@@ -36,15 +37,13 @@
 //! | `x` | 0.430555 | 0.430550 | 0.430556 | 0.430556 |
 //! | `(` | 0.750000 | 0.750000 | 0.750000 | 0.750000 |
 //!
-//! So `tabular-follower-xheight` and `tabular-follower-paren` are exact and
-//! `tabular-follower-ascender` / `-digits` are not, by the difference above
-//! times the body size. That is the same defect #754 fixed for math family 0
-//! (`rm-lmr*` where the kernel declares `cmr*`), in the text path; it is
-//! **not** fixed here. The expected residuals are computed from the table,
-//! not from this engine's output, so the day the text metrics are corrected
-//! this test fails and says so instead of quietly following.
-//!
-//! Every other fixture asserts 0 within the 0.1 bp rule gate.
+//! The `tabular-follower-ascender` / `-digits` rows under the deep box used
+//! to carry that difference times the body size as an expected residual
+//! (-0.06076 bp at 11pt, -0.16058 for digits) so that the day the text
+//! metrics were corrected this test would fail and say so. That day came
+//! with the OT1 metrics route: every row now expects 0, the `\lineskip`
+//! rows within 0.003 bp (they came in at 0.0006), the rest within the
+//! 0.1 bp rule gate.
 //!
 //! Fixtures: `fixtures/float-tabular-boundary/*.tex`, expected data in
 //! `expected/*.txt` — every baseline pdfTeX set on the page, read from its

@@ -2958,6 +2958,216 @@
       "path": "fonts/tfm/public/lm/ts1-lmu10.tfm",
       "sha256": "39efc8b53d2250cbd6bf5e2cc88e36295304814035a94fc65e6e78c7bfbe3c69",
       "byte_length": 1548
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmr5.tfm",
+      "sha256": "581be818f67bd11a1792d05e129abe3ea30c5cbdfce3bed8da7c5fb50f5ba95b",
+      "byte_length": 1220
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmr6.tfm",
+      "sha256": "106afa9172f0c00e58b9f5cbc72b302a18aaeeaddf50caca145af9cc0b81afd2",
+      "byte_length": 1300
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmr7.tfm",
+      "sha256": "28f9f4d237bdae4babef4a59d90f17686a09d6f9df0b2c3c23b2ba15f20eee82",
+      "byte_length": 1300
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmr8.tfm",
+      "sha256": "4c5ae243ac0aa254e7ec7f0602cc2a4351e5011ff0cb6dc150a5f6de19585de6",
+      "byte_length": 1292
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmr9.tfm",
+      "sha256": "2ffa73e8446c1d46c3509a0f65ff97d4d09de46f48e1ce578a1004498b67dba9",
+      "byte_length": 1292
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmr10.tfm",
+      "sha256": "87f2d8981927644cbecaf3d639e96e348ea4e7be49d8804468bd8ba9ff3f5244",
+      "byte_length": 1296
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmr12.tfm",
+      "sha256": "1ce8af37ed38e93940829d3540e494eaaddc5201758d036b9074467e70a738dc",
+      "byte_length": 1288
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmr17.tfm",
+      "sha256": "86b6e8a52aae6ad1655e32099e12bd2904b158aba4c8afb74143266d2d9cd18f",
+      "byte_length": 1292
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmbx5.tfm",
+      "sha256": "a746151d8e3a521965bbfae2666e1528374a514375daa7d620e9b89ebbbfb0ae",
+      "byte_length": 1332
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmbx6.tfm",
+      "sha256": "38ded79d7cce07fa28921f37f6b88e67bd86951a3e5af709c219d63454786ce1",
+      "byte_length": 1344
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmbx7.tfm",
+      "sha256": "e7b284f0ee98b7773be9b57ca652b4bb14391370509a424b5b62b06b5cae86e4",
+      "byte_length": 1336
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmbx8.tfm",
+      "sha256": "6dab44c885b7cbf567771d9cfa565f3df34d0e8124132b9b6f9fdc496a1c2eda",
+      "byte_length": 1332
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmbx9.tfm",
+      "sha256": "9fb9cbe254c828bc6bdcc0ca66f81b6cb9b713edf0ef1b7fa67e231920112499",
+      "byte_length": 1328
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmbx10.tfm",
+      "sha256": "ae296e8e41b2b0f73e9a17fdc42c743b9ddcc58d23c30acaa3411206f7824780",
+      "byte_length": 1328
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmbx12.tfm",
+      "sha256": "0eb2f13840155007c2d3c59b074322a3aa7358b9643aa314f3146468ae7f0806",
+      "byte_length": 1324
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmti7.tfm",
+      "sha256": "78921699d46fd39b25e2e3ea08b96d9c3ad9c858a6ad2cc1aa60204a36ce88f0",
+      "byte_length": 1492
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmti8.tfm",
+      "sha256": "7a212edaa5bbb6898b6196e32a5753811dc3295a18b9bcd9c727c23ce0c21a4e",
+      "byte_length": 1504
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmti9.tfm",
+      "sha256": "bae91797b96e40fbeb97e2ea3184070e7cf707b72422c7c107edf1d1d5a10abb",
+      "byte_length": 1476
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmti10.tfm",
+      "sha256": "46a66e937f809c4fbe317947b583a14b408aca41ecb835eca3be46391190432a",
+      "byte_length": 1480
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmti12.tfm",
+      "sha256": "92d92985d932893a426546c1e59b69107423785857f6f29aa866be0aa8970883",
+      "byte_length": 1484
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmsl8.tfm",
+      "sha256": "581080f4ebd96f58b4b6f774ea2882f5e83fef7c932647a7c957f7e8db1f7823",
+      "byte_length": 1504
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmsl9.tfm",
+      "sha256": "bb0f9deb6852caed902cb04bfc8e8333345a37946bd0b6bd56d11848e729d3ca",
+      "byte_length": 1504
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmsl10.tfm",
+      "sha256": "dcbfc25c5aac16dc2b820e089a00aedef20a1af6d8d3c2efa54f6f17a985d33f",
+      "byte_length": 1508
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmsl12.tfm",
+      "sha256": "0bfef4919b1be6619d3e6892ea75066f4aa372b82d6164ebd06ef6c5b6281278",
+      "byte_length": 1504
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmcsc10.tfm",
+      "sha256": "0d691f70f365e55b83096764fe0c65338842d704bd5b979ed0c6882f9e17ce0d",
+      "byte_length": 1300
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmu10.tfm",
+      "sha256": "7896645187499d599c330a8cbebc4ba1e21fa88b4ad46a86ef3db53cfa39b6f7",
+      "byte_length": 1276
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmb10.tfm",
+      "sha256": "55cbc994b903a1c77150b9e8be4c12d745758aff76ac4f9dd7db5c5e00bc8aca",
+      "byte_length": 1336
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmbxsl10.tfm",
+      "sha256": "4a2dbf075487bcdb3b081926f8e5a03520b16a2e1af643e1e0fc36d7f344fb1e",
+      "byte_length": 1532
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmbxti10.tfm",
+      "sha256": "2ba218c04e402c9d013cf5e36ffffe6ae420c1f2192291606405ef9f3f86df70",
+      "byte_length": 1532
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmss8.tfm",
+      "sha256": "25650d37e11bee41e03dc4757a1b6f1a64f27a53c664aa618d1a8ded54d96ed5",
+      "byte_length": 1296
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmss9.tfm",
+      "sha256": "904af036b1e2e1d1375cf763959ef9517a2fc3e24ac94dbb6290574cfafc0b50",
+      "byte_length": 1320
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmss10.tfm",
+      "sha256": "431472f34665b6243a32936215f2e17d1f124cdf8513e86e2bedc4c3de3f980b",
+      "byte_length": 1316
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmss12.tfm",
+      "sha256": "38ba636afc0e32d07c340b9ad747c33c6d4a4256ccb9e42ae9f7d3df11b3fe1a",
+      "byte_length": 1324
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmss17.tfm",
+      "sha256": "a88f81798171b3582557826302ad7233e676949e17182d3dc84ea65bdf58e631",
+      "byte_length": 1320
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmssi8.tfm",
+      "sha256": "79ce614e9edf079e9656dd8103402fc2dc745c77846a6c0a921342b8ad6c33e3",
+      "byte_length": 1500
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmssi9.tfm",
+      "sha256": "c7e5764b1d1f637e733efdff121f7c88957a71844a3c4f5d4563f2b8c5d6bab2",
+      "byte_length": 1524
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmssi10.tfm",
+      "sha256": "9faee1d46e86de1eb7a8f7a53522d15fa8f06e75d292d8e6989dfcd252b322c7",
+      "byte_length": 1520
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmssi12.tfm",
+      "sha256": "e8ea523bf347a1e932fa15a7d67af8bbc3720f4f59566ef9bf4270b9c26518da",
+      "byte_length": 1532
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmssi17.tfm",
+      "sha256": "469b3e0bba8808729745f6221efb2bd1057814d24ecccc79ba67fdfad4ec2cd7",
+      "byte_length": 1528
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmssbx10.tfm",
+      "sha256": "59fcefaa9436cb00b1579a549b4a16b38606bb1b6138743d05ea35a74f168f54",
+      "byte_length": 1272
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmssdc10.tfm",
+      "sha256": "1a0a6b7410c4c9fcc683cedcb9282428c98bd6aa54902e84ef6e71913f8aaaa2",
+      "byte_length": 1328
+    },
+    {
+      "path": "doc/fonts/cm/README",
+      "sha256": "df37bc99ee2ed981004fc36690f9dbd44045348ae1b63b7ef2894e5b02d0f1a5",
+      "byte_length": 3608
     }
   ],
   "ec_provenance": {
@@ -3305,5 +3515,80 @@
     "copied_from": "/usr/local/texlive/2026/texmf-dist/fonts/tfm/jknappen/ec and fonts/tfm/public/lm (MacTeX 2026; TeX Live packages jknappen and lm)",
     "cross_checked": "The 189 tc* files are the same jknappen/ec directory the ec* files above were copied from; the 56 ts1-lm* files the same public/lm directory as the ec-lm* files; hashed after the copy.",
     "license": "tc*: doc/fonts/ec/copyrite.txt (ec-fonts, already pinned); ts1-lm*: doc/fonts/lm/GUST-FONT-LICENSE.TXT (already pinned). No new package."
+  },
+  "cm_ot1_provenance": {
+    "purpose": "ot1_tfm_file (crates/render-pipeline/src/fonts.rs) lays a document without fontenc (LaTeX's default OT1 cmr, Family::ComputerModernOt1) out with the metrics ot1cmr.fd/ot1cmss.fd load: cmr5-10/12/17, cmbx5-10/12, cmti7-10/12, cmsl8-10/12, cmcsc10, cmu10, cmb10, cmbxsl10, cmbxti10 and the sans cmss8/9/10/12/17, cmssi8/9/10/12/17, cmssbx10, cmssdc10 (41 files), each scaled to the requested size as TeX loads them (cmr10 at 10.95pt). Latin Modern's ec-lm* widths equal Knuth's to 1e-5 em but its kern programs are richer (ec-lmss12 kerns T-w, cmss12 does not; ec-lmr10 kerns .-quotedblright), which moved `Two columns` 1.17 bp and `doing.''` 1.65 bp against pdflatex in fixtures/real-world/beamer-blocks-columns and plain-article. The typewriter cmtt* files are not needed: cmtt is fixed pitch without kerns, so ec-lmtt lays it out identically.",
+    "copied_from": "/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm (MacTeX 2026; TeX Live package cm, revision 57963)",
+    "cross_checked": "Hashed after the copy; the same TeX Live tree the ec* and lm files above were copied from.",
+    "license": "Computer Modern fonts, Donald E. Knuth (CTAN package cm, licence `knuth`: free distribution of the unchanged fonts; the TFMs are the metrics Metafont generates from Knuth's unchanged sources). doc/fonts/cm/README is TeX Live's copy of Knuth's notes on the parameters."
+  },
+  "cm_ot1_covered": {
+    "cmr": [
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      12,
+      17
+    ],
+    "cmbx": [
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      12
+    ],
+    "cmti": [
+      7,
+      8,
+      9,
+      10,
+      12
+    ],
+    "cmsl": [
+      8,
+      9,
+      10,
+      12
+    ],
+    "cmcsc": [
+      10
+    ],
+    "cmu": [
+      10
+    ],
+    "cmb": [
+      10
+    ],
+    "cmbxsl": [
+      10
+    ],
+    "cmbxti": [
+      10
+    ],
+    "cmss": [
+      8,
+      9,
+      10,
+      12,
+      17
+    ],
+    "cmssi": [
+      8,
+      9,
+      10,
+      12,
+      17
+    ],
+    "cmssbx": [
+      10
+    ],
+    "cmssdc": [
+      10
+    ]
   }
 }

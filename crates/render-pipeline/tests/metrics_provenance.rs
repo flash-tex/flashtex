@@ -11,6 +11,14 @@ use flashtex_render_pipeline::display::Severity;
 use flashtex_render_pipeline::fonts::{Discovery, TfmStatus, REQUIRED_TFMS, REQUIRED_TFM_DIR};
 use flashtex_render_pipeline::{render, FontSet, RenderOptions};
 
+/// The probe document: `lmodern`, because the required 12pt set is Latin
+/// Modern's own (`ec-lmr12` and friends). A `cmr` document -- `[T1]{fontenc}`
+/// without `lmodern`, or no `fontenc` at all -- is laid out on the
+/// supplementary EC / Computer Modern metrics the full bundle ships
+/// (`t1cmr.fd`'s `ecrm*`, `ot1cmr.fd`'s `cmr*`), and says so
+/// (`ec_metrics_unavailable`) when a minimal tree lacks them.
+const PROBE_DOCUMENT: &str = "\\usepackage{lmodern}\\begin{document}Body $x^2$ text.\\end{document}";
+
 #[test]
 fn required_metrics_load_digest_bound_and_a_clean_compile_means_tex_metrics() {
     if !lm_available() {
@@ -26,7 +34,7 @@ fn required_metrics_load_digest_bound_and_a_clean_compile_means_tex_metrics() {
         let t = fonts.tfm(file).unwrap();
         assert_eq!(t.sha256(), sha);
     }
-    let docs = [SourceDocument { path: "main.tex", text: "\\begin{document}Body $x^2$ text.\\end{document}" }];
+    let docs = [SourceDocument { path: "main.tex", text: PROBE_DOCUMENT }];
     let r = render(&docs, "main.tex", 1, "p", &fonts, &RenderOptions::default());
     // The only diagnostics are the outline-resource profile notes for the
     // math families that have no optical OpenType sibling (lmmi12/lmmi8
@@ -63,7 +71,7 @@ fn missing_required_metrics_are_a_blocking_diagnostic_not_a_silent_fallback() {
     let fonts = FontSet::with_dirs(vec![otf_dir.clone()], Vec::new());
     assert!(fonts.required_metrics().is_err());
     assert!(matches!(fonts.tfm("ec-lmr12.tfm"), Err(TfmStatus::RequiredUnavailable(_))));
-    let docs = [SourceDocument { path: "main.tex", text: "\\begin{document}Body $x^2$ text.\\end{document}" }];
+    let docs = [SourceDocument { path: "main.tex", text: PROBE_DOCUMENT }];
     let r = render(&docs, "main.tex", 1, "p", &fonts, &RenderOptions::default());
     let blocking: Vec<_> = r.v2.diagnostics.iter().filter(|d| d.code == "required_metrics_unavailable").collect();
     assert!(blocking.len() >= 2, "text and math roman both report: {:?}", r.v2.diagnostics);
@@ -106,7 +114,7 @@ fn a_flat_bundle_directory_with_tfms_and_licence_satisfies_the_required_set() {
     let fonts = FontSet::with_dirs(vec![flat.clone()], vec![flat.clone()]);
     fonts.required_metrics().expect("flat layout loads the pinned set");
     assert_eq!(fonts.tfm("ec-lmr12.tfm").unwrap().sha256(), REQUIRED_TFMS[0].1);
-    let docs = [SourceDocument { path: "main.tex", text: "\\begin{document}Body $x^2$ text.\\end{document}" }];
+    let docs = [SourceDocument { path: "main.tex", text: PROBE_DOCUMENT }];
     let r = render(&docs, "main.tex", 1, "p", &fonts, &RenderOptions::default());
     assert!(r.v2.diagnostics.iter().all(|d| d.code == "math_resource_profile"), "{:?}", r.v2.diagnostics);
     let _ = std::fs::remove_dir_all(&tmp);
@@ -196,7 +204,7 @@ fn bundle_rooted_metrics_are_discovered_relative_to_the_executable_without_host_
         assert_eq!(tfm.source_sha256, sha);
         assert_eq!(fonts.tfm(file).unwrap().sha256(), sha);
     }
-    let docs = [SourceDocument { path: "main.tex", text: "\\begin{document}Body $x^2$ text.\\end{document}" }];
+    let docs = [SourceDocument { path: "main.tex", text: PROBE_DOCUMENT }];
     let r = render(&docs, "main.tex", 1, "p", &fonts, &RenderOptions::default());
     let others: Vec<_> = r.v2.diagnostics.iter().filter(|d| d.code != "math_resource_profile").collect();
     assert!(others.is_empty(), "{others:?}");
@@ -229,7 +237,7 @@ fn a_missing_or_mismatched_bundle_asset_is_the_blocking_diagnostic_never_a_silen
         let err = fonts.required_metrics().err().unwrap_or_else(|| panic!("{case}: loaded"));
         assert!(err.contains("ec-lmr12.tfm"), "{case}: {err}");
         assert!(matches!(fonts.tfm("ec-lmr12.tfm"), Err(TfmStatus::RequiredUnavailable(_))), "{case}");
-        let docs = [SourceDocument { path: "main.tex", text: "\\begin{document}Body $x^2$ text.\\end{document}" }];
+        let docs = [SourceDocument { path: "main.tex", text: PROBE_DOCUMENT }];
         let r = render(&docs, "main.tex", 1, "p", &fonts, &RenderOptions::default());
         let blocking: Vec<_> = r.v2.diagnostics.iter().filter(|d| d.code == "required_metrics_unavailable").collect();
         assert!(!blocking.is_empty(), "{case}: {:?}", r.v2.diagnostics);

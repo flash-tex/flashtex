@@ -20,7 +20,7 @@ out="${2:?usage: render-corpus-v2.sh <flashtex-render> <outdir>}"
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 export FLASHTEX_FONT_DIRS="${FLASHTEX_FONT_DIRS:-$repo/apps/mac/Fonts}"
 if [ -z "${FLASHTEX_TFM_DIRS:-}" ] && [ -d /usr/local/texlive/2026/texmf-dist/fonts/tfm ]; then
-  FLASHTEX_TFM_DIRS=$(find /usr/local/texlive/2026/texmf-dist/fonts/tfm -type d \( -name lm -o -name ec -o -name symbols \) | tr '\n' ':')
+  FLASHTEX_TFM_DIRS=$(find /usr/local/texlive/2026/texmf-dist/fonts/tfm -type d \( -name lm -o -name ec -o -name symbols -o -name cm \) | tr '\n' ':')
   export FLASHTEX_TFM_DIRS
 fi
 mkdir -p "$out"

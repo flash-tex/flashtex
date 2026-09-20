@@ -263,6 +263,7 @@ impl Stylesheet {
             nfss: match family {
                 Family::LatinModern => crate::nfss::Scheme::LmT1,
                 Family::ComputerModern | Family::Times => crate::nfss::Scheme::CmT1,
+                Family::ComputerModernOt1 => crate::nfss::Scheme::CmOt1,
                 // Never the stylesheet's own family (named families are
                 // layered over it, see `fontspec`); the T1 scheme is the
                 // encoding-neutral choice should one arrive here.
@@ -453,14 +454,25 @@ impl Stylesheet {
     /// not the `ec-lm*` fonts `lmodern` selects, which are about 0.6%
     /// wider at 10.95pt and move line breaks. Those documents get
     /// [`Family::ComputerModern`]: EC metrics with Latin Modern outlines.
-    /// OT1 documents (no `fontenc`) keep the Latin Modern metrics.
+    /// OT1 documents (no `fontenc`, no `lmodern`) are `ot1cmr.fd`'s
+    /// Knuth metrics, [`Family::ComputerModernOt1`], whose kern programs
+    /// are not Latin Modern's; only `lmodern` documents keep the Latin
+    /// Modern metrics.
+    ///
+    /// A `fontspec` document is XeTeX's or LuaTeX's: no OT1/T1 TFM ever
+    /// enters its layout, so its base family (the one named families are
+    /// layered over, and the fallback for a glyph they lack) is Latin
+    /// Modern with the `ec-lm*` metrics.
     pub fn family_for(packages: &[String], t1_encoding: bool) -> Family {
+        let lmodern = packages.iter().any(|p| p == "lmodern" || p == "fontspec");
         if packages.iter().any(|p| matches!(p.as_str(), "times" | "mathptmx" | "newtxtext" | "txfonts")) {
             Family::Times
-        } else if t1_encoding && !packages.iter().any(|p| p == "lmodern") {
+        } else if lmodern {
+            Family::LatinModern
+        } else if t1_encoding {
             Family::ComputerModern
         } else {
-            Family::LatinModern
+            Family::ComputerModernOt1
         }
     }
 
@@ -677,9 +689,12 @@ mod tests {
         let p = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(Stylesheet::family_for(&p(&["amsmath"]), true), Family::ComputerModern);
         assert_eq!(Stylesheet::family_for(&p(&["lmodern"]), true), Family::LatinModern);
-        assert_eq!(Stylesheet::family_for(&p(&["amsmath"]), false), Family::LatinModern);
+        assert_eq!(Stylesheet::family_for(&p(&["lmodern"]), false), Family::LatinModern);
+        assert_eq!(Stylesheet::family_for(&p(&["fontspec"]), false), Family::LatinModern);
+        // No `fontenc`, no `lmodern`: `ot1cmr.fd`'s Knuth metrics.
+        assert_eq!(Stylesheet::family_for(&p(&["amsmath"]), false), Family::ComputerModernOt1);
         assert_eq!(Stylesheet::family_for(&p(&["times"]), true), Family::Times);
-        assert_eq!(Stylesheet::family_of(&p(&["amsmath"])), Family::LatinModern);
+        assert_eq!(Stylesheet::family_of(&p(&["amsmath"])), Family::ComputerModernOt1);
         assert!(crate::adapter::t1_encoding("\\usepackage[T1]{fontenc}"));
         assert!(crate::adapter::t1_encoding("\\usepackage[OT1, T1]{fontenc}"));
         assert!(!crate::adapter::t1_encoding("\\usepackage[T1,OT1]{fontenc}"));

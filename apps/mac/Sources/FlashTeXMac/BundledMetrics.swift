@@ -51,6 +51,11 @@ enum BundledMetrics {
     /// live below a `texmf` root.
     static let amsSymbolsSubdirectory = "fonts/tfm/public/amsfonts/symbols"
 
+    /// Where Knuth's OT1 metrics (`cmr`/`cmbx`/`cmti`/`cmsl`/`cmss`...) that
+    /// `ot1cmr.fd`/`ot1cmss.fd` load for documents without `fontenc` live
+    /// below a `texmf` root (`fonts.rs::CM_TFM_DIR`).
+    static let cmTfmSubdirectory = "fonts/tfm/public/cm"
+
     /// The `texmf` roots probed, in order: the app bundle's
     /// `Contents/Resources/texmf`, then the repository's vendored
     /// `apps/mac/Fonts/texmf` (development builds and tests).
@@ -100,6 +105,11 @@ enum BundledMetrics {
         directory(amsSymbolsSubdirectory, roots: roots)
     }
 
+    /// The first candidate root carrying the OT1 Computer Modern metrics directory, or nil.
+    static func cmTfmDirectory(roots: [URL] = candidateRoots) -> URL? {
+        directory(cmTfmSubdirectory, roots: roots)
+    }
+
     /// `existing` (`FLASHTEX_TFM_DIRS` as the user set it, possibly nil or
     /// empty) with `bundled` appended: every non-empty explicit entry first,
     /// in its original order, then the bundled path (repeats of it dropped).
@@ -117,10 +127,11 @@ enum BundledMetrics {
 
     /// Every bundled metrics directory this app ships, in the order
     /// `producerEnvironment` appends them: Latin Modern, then EC, then AMS
-    /// symbols. A directory that was never vendored (or is missing from a
-    /// bare `swift build` product) is omitted rather than added empty.
+    /// symbols, then OT1 Computer Modern. A directory that was never
+    /// vendored (or is missing from a bare `swift build` product) is
+    /// omitted rather than added empty.
     static func defaultBundledDirectories(roots: [URL] = candidateRoots) -> [URL] {
-        [tfmDirectory(roots: roots), ecTfmDirectory(roots: roots), amsSymbolsDirectory(roots: roots)].compactMap { $0 }
+        [tfmDirectory(roots: roots), ecTfmDirectory(roots: roots), amsSymbolsDirectory(roots: roots), cmTfmDirectory(roots: roots)].compactMap { $0 }
     }
 
     /// The environment to launch a producer (or the helper that spawns one)
