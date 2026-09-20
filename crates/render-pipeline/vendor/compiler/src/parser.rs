@@ -9567,7 +9567,12 @@ impl P<'_> {
         span: Span,
         para: &mut Vec<Inline>,
     ) {
-        let note = self.optional_bracket_argument();
+        // The note's tokens, not its flattened text: `\thmnote` sets `#3`
+        // through `\thm@notefont` as ordinary text-mode material, so
+        // `\begin{defn}[$\sigma$-algebra]` has a math atom and
+        // `[\emph{weak}]` an italic run inside the parentheses (owner report
+        // 2026-09-20: the note printed `\sigma-algebra` literally).
+        let note = self.optional_bracket_tokens();
         // An enclosing size group (`{\large\begin{theorem}...`) stays in
         // effect for the head, the number, the note and the body: real
         // pdflatex sets all of them at the ambient size, since neither
@@ -9637,9 +9642,30 @@ impl P<'_> {
                 space_before: false,
             });
         }
-        if let Some((note_text, note_span)) = note {
-            let note_text = note_text.trim();
-            if !note_text.is_empty() {
+        if let Some(note_tokens) = note {
+            let note_span = note_tokens
+                .first()
+                .zip(note_tokens.last())
+                .map(|(a, b)| a.token.span.merge(b.token.span))
+                .unwrap_or(span);
+            // `\thm@notefont` (`\fontseries\mddefault\upshape`) changes
+            // series/shape only, so the note keeps the ambient size like
+            // the head does.
+            let note_style = TextStyle {
+                size: ambient_size,
+                ams_tiny: ambient_tiny,
+                cjk: ambient_cjk,
+                ..TextStyle::default()
+            };
+            // Read like an `\item[<label>]`: every token that cannot be set
+            // is reported rather than dropped (a note is short enough that
+            // a silent drop leaves a bare `()`).
+            let content = self.inlines_from_tokens_reporting(note_tokens, note_style, true, false);
+            let has_material = content.iter().any(|inline| match inline {
+                Inline::Text { text, .. } => !text.trim().is_empty(),
+                _ => true,
+            });
+            if has_material {
                 // `\thmnote{ {\the\thm@notefont(#3)}}`: the space is outside
                 // the `\thm@notefont` group, so it too is a head-font space;
                 // only the parenthesised note itself is `\fontseries
@@ -9651,17 +9677,27 @@ impl P<'_> {
                     space_before: false,
                 });
                 para.push(Inline::Text {
-                    text: format!("({note_text})"),
+                    text: "(".to_string(),
                     span: note_span,
-                    // `\thm@notefont` (`\fontseries\mddefault\upshape`)
-                    // changes series/shape only, so the note keeps the
-                    // ambient size like the head does.
-                    style: TextStyle {
-                        size: ambient_size,
-                        ams_tiny: ambient_tiny,
-                        cjk: ambient_cjk,
-                        ..TextStyle::default()
-                    },
+                    style: note_style,
+                    space_before: false,
+                });
+                let mut first = true;
+                for mut inline in content {
+                    // The opening parenthesis is set right against the
+                    // note's first token (`(#3)`): no glue before it.
+                    if first {
+                        if let Inline::Text { space_before, .. } = &mut inline {
+                            *space_before = false;
+                        }
+                        first = false;
+                    }
+                    para.push(inline);
+                }
+                para.push(Inline::Text {
+                    text: ")".to_string(),
+                    span: note_span,
+                    style: note_style,
                     space_before: false,
                 });
             }
