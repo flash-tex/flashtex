@@ -563,18 +563,25 @@ companion is paired, so the iPad reconnects without any click.
    the Mac from the iPad's *Find nearby Macs* list and enter the code. The
    window also lists **paired companions** (a "connected" badge, a
    per-companion permission pop-up, **Forget**).
-2. The insertion point is the caret: when the iPad asks where to insert, the
-   Mac pins the caret for it. *Edit › Pin Insertion Point* (⌘⌥P) is an
-   explicit override; the inspector's destination line says "(caret)" or
-   "(pinned)".
+2. The insertion point is the caret — the caret as it is when you click
+   **Insert at caret**, not where it was when the iPad connected. Keep typing,
+   move around, relaunch the app: the capture still goes where the caret is.
+   *Edit › Pin Insertion Point* (⌘⌥P) is an explicit override that stays put;
+   the inspector's destination line says "(caret)" or "(pinned)". If an edit
+   removes the pinned spot, the row says so and offers **Insert at caret**.
 3. Every capture the iPad sends appears in the inspector immediately with its
    image, instruction and state — *received* → *converting* → *proposal
    ready* → *inserted* (or *rejected* / *failed*, with the reason). With a
    conversion provider configured (Preferences → Capture conversion) the
    conversion starts on receipt; without one the row offers **Convert**.
-4. When the proposal is ready the LaTeX/TikZ is shown syntax-coloured.
-   **Insert at caret** approves it: the bridge prepares the edit at the bound
-   destination, verifies it, and inserts exactly one undoable edit (⌘Z).
+4. When the proposal is ready the row shows exactly what will be inserted,
+   syntax-coloured, with a small "as display math / inline math / as is"
+   indicator: a formula on its own line is wrapped in `\[ … \]`, one inside
+   a sentence in `$ … $`, nothing is wrapped when the caret is already inside
+   math or the proposal brings its own delimiters, and an environment (a TikZ
+   picture, say) goes in as is on its own lines. Move the caret and the
+   indicator follows. **Insert at caret** approves it: the bridge prepares the
+   edit at the caret, verifies it, and inserts exactly one undoable edit (⌘Z).
    **Edit** changes the text first (the bridge refuses edited text —
    transfer-v1 inserts only the journaled proposal — so edit after inserting
    or reject and resend), **Review…** opens the full sheet with the shadow

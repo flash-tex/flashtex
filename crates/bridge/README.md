@@ -76,7 +76,13 @@ bridge crash or restart, because it is fsynced to disk before any reply is
 sent (`Store::save`) and re-validated on every read (`Store::get`).
 
 Open document snapshots (`document_open`) and destination pins
-(`destination_pin`) do **not** survive a restart. `Bridge::documents` and
+(`destination_pin`) do **not** survive a restart. An anchor pinned with
+`mode: "caret"` (the Mac's automatic destination; transfer-v1 additive) is
+simply re-pinned by the Mac wherever the caret is after a restart — the same
+id at any range and revision — and `capture_prepare_insert` accepts an
+optional `wrap {prefix, suffix, kind}` that is journaled with the prepared
+edit (`replacement = prefix + proposal + suffix`); see
+`docs/contracts/transfer-v1.md`. `Bridge::documents` and
 `Bridge::anchors` (`src/lib.rs`) are ordinary in-memory maps, populated only
 by those two requests; a freshly spawned bridge process starts with both
 empty. This is deliberate, not an oversight: the Mac's live file is the only

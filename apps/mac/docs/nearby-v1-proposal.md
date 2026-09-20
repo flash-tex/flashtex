@@ -152,9 +152,32 @@ bootstrap key; the companion must store it and use it from the next connection
 on (the current connection stays open and usable).
 
 `destination` is `{destination_id, project_id, path, base_revision}` for the
-Mac's currently pinned insertion anchor (`Edit > Pin Insertion Point`) or an
-explicit `null`. The companion copies these into `capture_submit`; the user
-never types IDs or revisions (transfer-v1 requirement).
+Mac's current insertion destination or an explicit `null`. The companion
+copies these into `capture_submit`; the user never types IDs or revisions
+(transfer-v1 requirement). Which destination that is (§4a): an explicit pin
+(`Edit > Pin Insertion Point`, ids `mac-anchor-N`) while it is valid, else
+**the caret**, pinned on the companion's behalf under a stable automatic id
+(`mac-caret-N`) at the moment it asks.
+
+### 4a. The automatic destination is the caret at insertion time
+
+Updated September 19, 2026 (lane lane-capture-flow; owner's report). The Mac
+pins the caret for a companion in the bridge's caret mode (transfer-v1
+additive `destination_pin.mode: "caret"`): the anchor follows the Mac's edits
+like a caret and is never invalidated by typing at it, and the same id may be
+re-pinned anywhere at any revision. The Mac re-pins it at the caret every time
+a companion asks (`hello` / `destination_query`), when a `capture_submit`
+naming an automatic id arrives, and when that capture is approved — so a
+capture bound to an automatic id inserts **where the caret is when Insert is
+clicked**, whatever was typed since, and a companion that still holds an id
+from an earlier query or from before a bridge restart is not refused: the id
+is its handle for "the caret", not a promise about bytes. `base_revision`
+announced for a caret destination is the current document revision and is
+informational to the bridge in that mode. Only an explicit pin keeps the
+strict rule below (`destination_reselection_required` after an overlapping
+edit); once an edit drops it, the Mac announces the caret again instead of
+`null`. The Mac never inserts without the reviewer's Insert. Off with
+`FLASHTEX_CAPTURE_CARET_DESTINATION=0` (then `null` until a pin, as before).
 
 `capture_submit` validation on the Mac before any sink is called: decodable
 envelope, `capture_id`/`destination_id` are 1–128 ASCII `[A-Za-z0-9_-]`,
@@ -223,18 +246,20 @@ them like any other close (reconnect with backoff, re-send the same capture).
 
 Bridge codes passed through verbatim (with a bridge attached; crates/bridge
 `validate`/`capture_anchor`/`receive`), all terminal for the capture as sent:
-`destination_reselection_required` (the pinned target was unpinned, an edit
+`destination_reselection_required` (an *explicit* pin was unpinned, an edit
 overlapped or sat exactly on it, or a restored pin no longer matches the
-capture's durable binding — reselect on the Mac; `hello_ack.destination` and
-`destination` then report `null` until a new pin), `revision_conflict`
-(`base_revision` is not the pin's revision), `capture_id_conflict` (bridge
-journal: same id, different content), `image_too_large`,
-`instructions_too_large`, `invalid_image`, `unsupported_image`, `invalid_id`.
-The reference client's `NearbyWire.captureInputErrorCodes` lists these; a
-client that checks `destination` before sending (`NearbyReconnector`) sees the
-dropped pin as `null` first. The Mac never re-pins on the companion's behalf:
-an edit that overlaps the pin drops the advertised destination (the row shows
-"(invalid)") and the user pins again.
+capture's durable binding — reselect on the Mac, or use the inspector's
+"Insert at caret"; `hello_ack.destination` and `destination` then report the
+caret, §4a), `revision_conflict` (`base_revision` is not an explicit pin's
+revision), `capture_id_conflict` (bridge journal: same id, different content),
+`image_too_large`, `instructions_too_large`, `invalid_image`,
+`unsupported_image`, `invalid_id`. The reference client's
+`NearbyWire.captureInputErrorCodes` lists these; a client that checks
+`destination` before sending (`NearbyReconnector`) sees a re-pinned caret
+destination (same id, current revision) first. A capture naming an automatic
+id is never refused for staleness: the Mac re-pins that id at the caret before
+forwarding it (§4a). An edit that overlaps an explicit pin drops it (the row
+shows "(invalid)") and the caret takes over as the announced destination.
 
 Acknowledgement semantics: `durable: true` may only be reported when the local
 bridge has journaled the capture (transfer-v1 `capture_received`). With a
