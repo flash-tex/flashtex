@@ -55,6 +55,43 @@ fn run_paint(r: &Rendered, page: u32, text: &str, baseline: f64) -> (f64, f64, f
     best.map(|(_, p)| p).unwrap_or_else(|| panic!("no run {text:?} on page {page}"))
 }
 
+/// A filled path of `page` (1-based) whose points' bounding box is
+/// `(x, top, width, height)` within `tol` bp, painted `rgb` (a rounded
+/// block's head or body fill: the arcs' control points lie on the box).
+fn fill(r: &Rendered, page: usize, x: f64, top: f64, width: f64, height: f64, rgb: (f64, f64, f64), tol: f64) {
+    use flashtex_render_pipeline::display::{PathCmd, PathPaintOp};
+    let p = &r.v2.pages[page - 1];
+    let mut seen = Vec::new();
+    let found = p.resident_items().iter().any(|it| match it {
+        Item::Path(path) if matches!(path.op, PathPaintOp::Fill { .. }) => {
+            let mut b = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+            let mut add = |px: f64, py: f64| {
+                b.0 = b.0.min(px);
+                b.1 = b.1.min(py);
+                b.2 = b.2.max(px);
+                b.3 = b.3.max(py);
+            };
+            for c in &path.commands {
+                match *c {
+                    PathCmd::Move(px, py) | PathCmd::Line(px, py) => add(px.to_bp(), py.to_bp()),
+                    PathCmd::Cubic(_, _, _, _, px, py) => add(px.to_bp(), py.to_bp()),
+                    PathCmd::Close => {}
+                }
+            }
+            seen.push((b, (path.paint.r, path.paint.g, path.paint.b)));
+            (b.0 - x).abs() <= tol
+                && (b.1 - top).abs() <= tol
+                && (b.2 - b.0 - width).abs() <= tol
+                && (b.3 - b.1 - height).abs() <= tol
+                && (path.paint.r - rgb.0).abs() < 1e-6
+                && (path.paint.g - rgb.1).abs() < 1e-6
+                && (path.paint.b - rgb.2).abs() < 1e-6
+        }
+        _ => false,
+    });
+    assert!(found, "page {page}: no fill at ({x}, {top}) {width}x{height} in {rgb:?}; fills: {seen:?}");
+}
+
 /// The filled rectangle of `page` (1-based) at `(x, top, width, height)`
 /// within `tol` bp, painted `rgb`.
 fn rect(r: &Rendered, page: usize, x: f64, top: f64, width: f64, height: f64, rgb: (f64, f64, f64), tol: f64) {
@@ -252,7 +289,7 @@ fn madrid_frametitle_bar_and_body() {
 /// The rounded inner theme's title page: the `title` colour box inside a
 /// `beamerboxesrounded` (painted 59.758..113.832bp from the top, 6.909..
 /// 355.926 across; here a rectangle, the 4bp corner radius and the shadow
-/// not modelled), the title and subtitle in white and 2.23bp higher than
+/// `tests/beamer_visuals.rs`), the title and subtitle in white and 2.23bp higher than
 /// under the default template, the author 4.49bp lower.
 #[test]
 fn madrid_title_page_rounded_box() {
@@ -261,7 +298,7 @@ fn madrid_title_page_rounded_box() {
     }
     let r = render_one(&madrid_deck());
     let w = words_of(&r);
-    rect(&r, 1, 6.909, 59.758, 349.021, 54.074, (0.2, 0.2, 0.7), 0.5);
+    fill(&r, 1, 6.909, 59.758, 349.021, 54.074, (0.2, 0.2, 0.7), 0.5);
     at(&w, 1, "Incremental", 111.113, 83.181, 0.5);
     at(&w, 1, "Why", 92.660, 100.242, 0.5);
     at(&w, 1, "J.", 154.796, 142.283, 0.5);
@@ -298,8 +335,8 @@ fn madrid_plain_frame_has_no_footline() {
 /// pdflatex on the probe below (`\showoutput`: `\vbox(48.19664)`,
 /// `\vbox(32.46747)`, `\vbox(33.30078)`; the fills from the content
 /// stream: head 72.583..87.372bp, body ..118.600, x 6.909, 349.021
-/// wide). Drawn as two rectangles meeting at the 2pt gradient's middle;
-/// the 4bp corner radius and the shadow are not modelled.
+/// wide). The corner arcs, the 2pt transition and the shadow are
+/// `tests/beamer_visuals.rs`'s.
 #[test]
 fn madrid_rounded_blocks() {
     if !lm_available() {
@@ -317,8 +354,8 @@ fn madrid_rounded_blocks() {
     at(&w, 1, "Another", 10.909, 200.549, 0.5);
     assert_eq!(run_paint(&r, 1, "Plain", 83.885), (1.0, 1.0, 1.0));
     assert_eq!(run_paint(&r, 1, "The", 99.431), (0.0, 0.0, 0.0));
-    rect(&r, 1, 6.909, 72.583, 349.021, 87.372 - 72.583, (0.15, 0.15, 0.525), 0.5);
-    rect(&r, 1, 6.909, 87.372, 349.021, 118.600 - 87.372, (0.915, 0.915, 0.9525), 0.5);
-    rect(&r, 1, 6.909, 130.562, 349.021, 145.351 - 130.562, (0.75, 0.0, 0.0), 0.5);
-    rect(&r, 1, 6.909, 172.871, 349.021, 188.490 - 172.871, (0.0, 0.375, 0.0), 0.5);
+    fill(&r, 1, 6.909, 72.583, 349.021, 87.372 - 72.583, (0.15, 0.15, 0.525), 0.5);
+    fill(&r, 1, 6.909, 87.372, 349.021, 118.600 - 87.372, (0.915, 0.915, 0.9525), 0.5);
+    fill(&r, 1, 6.909, 130.562, 349.021, 145.351 - 130.562, (0.75, 0.0, 0.0), 0.5);
+    fill(&r, 1, 6.909, 172.871, 349.021, 188.490 - 172.871, (0.0, 0.375, 0.0), 0.5);
 }
