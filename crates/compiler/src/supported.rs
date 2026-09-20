@@ -728,7 +728,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("raggedleft", "", "right-aligned following paragraphs"),
     ("RaggedLeft", "", "right-aligned following paragraphs (ragged2e form)"),
     ("indent", "", "accepted; the first-line indent is diagnosed, not drawn"),
-    ("cite", "[note]{keys}", "numbered citation from thebibliography entries, or biblatex's numeric citation when biblatex is loaded; natbib redefines it as \\citet, or as \\citep when an optional argument follows"),
+    ("cite", "[note]{keys}", "numbered citation from thebibliography entries, or biblatex's numeric citation when biblatex is loaded; natbib redefines it as \\citet, or as \\citep when an optional argument follows; with cite.sty loaded the keys are sorted, three or more consecutive numbers become a range, and the separator is cite's thin glue"),
     ("parencite", "[pre][post]{keys}", "biblatex parenthetical citation: [n] in numeric style"),
     ("textcite", "[pre][post]{keys}", "biblatex textual citation: Author [n] in numeric style"),
     ("autocite", "[pre][post]{keys}", "biblatex automatic citation, equivalent to \\parencite in this compiler"),

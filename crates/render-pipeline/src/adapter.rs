@@ -11198,7 +11198,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                         Some(em) => (Item::Quad { em, plus_em: 0.0, minus_em: 0.0, style: quad_style() }, "\\hspace"),
                         None => (Item::HSpace { pt: *pt, stretch_pt: 0.0, shrink_pt: 0.0 }, "\\hspace"),
                     },
-                    Inline::TextGlue { em, .. } => (Item::Quad { em: *em, plus_em: 0.0, minus_em: 0.0, style: quad_style() }, if *em >= 2.0 { "\\qquad" } else { "\\quad" }),
+                    Inline::TextGlue { em, plus_em, minus_em, .. } => (Item::Quad { em: *em, plus_em: *plus_em, minus_em: *minus_em, style: quad_style() }, if *em >= 2.0 { "\\qquad" } else { "\\quad" }),
                     // `\hrulefill` and `\dotfill` (compiler `FillLeader`, #320)
                     // are `\leavevmode\leaders<box>\hfill\kern\z@`: the glue is
                     // exactly `\hfill`, so it is set here like any other, and
@@ -11841,22 +11841,39 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     }
                 }
             }
+            // A `\penalty` in the horizontal list (`\linebreak`/
+            // `\nolinebreak`'s `\@no@lnbk`, amsmath's `\nobreakdash`,
+            // cite.sty's `\penalty\@m` before its thin glue). `unskip` is
+            // `\@no@lnbk`'s: the interword space in front of the command is
+            // removed here and re-read from the source for the next word,
+            // so it lands after the penalty as TeX's `\unskip ... \ ` puts
+            // it -- and glue after a penalty is not a break point (tex.web
+            // §866: only glue after a non-discardable node is), which is
+            // what makes `word \nolinebreak word` unbreakable there. The
+            // source gap is read from the previous text's end, so the
+            // marker itself advances nothing.
+            #[cfg(feature = "compiler-node-surface")]
+            Inline::Penalty { value, unskip, .. } => {
+                if *unskip && matches!(items.last(), Some(Item::Space { .. })) {
+                    items.pop();
+                }
+                items.push(Item::Penalty { value: *value, flagged: false });
+            }
             // Inlines only a re-pinned compiler emits. Every one of them is
-            // a zero-width marker in the horizontal list -- a penalty, a
-            // discretionary, a tab stop or jump, a page-number marker -- so
-            // producing no item is what the old pin already did for the same
-            // source, and the line breaker sees exactly the same sequence.
-            // `Marginpar` is the one that carries text; the pipeline has no
-            // margin column yet (GH-505), so its note is not set here either
-            // way. PRs #569 (penalties/discretionaries), GH-TABBING and
-            // GH-505 (marginpar) replace this arm.
+            // a zero-width marker in the horizontal list -- a discretionary,
+            // a tab stop or jump, a page-number marker -- so producing no
+            // item is what the old pin already did for the same source, and
+            // the line breaker sees exactly the same sequence. `Marginpar`
+            // is the one that carries text; the pipeline has no margin
+            // column yet (GH-505), so its note is not set here either way.
+            // PR #569 (discretionaries), GH-TABBING and GH-505 (marginpar)
+            // replace this arm.
             #[cfg(feature = "compiler-node-surface")]
             Inline::ThePage { .. }
             | Inline::PageNumbering { .. }
             | Inline::TabStop { .. }
             | Inline::TabJump { .. }
             | Inline::Marginpar { .. }
-            | Inline::Penalty { .. }
             | Inline::PagePenalty { .. }
             | Inline::Discretionary { .. } => {}
             // beamer overlay markers: no material, no gap of their own (the
