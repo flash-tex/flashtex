@@ -80,6 +80,8 @@ pub const BUILT_IN_PACKAGES: &[(&str, &str)] = &[
     ("fontspec", "\\setmainfont & co. are font settings (proposal S4); fontspec.sty is expl3 code"),
     ("unicode-math", "`\\setmathfont{…}` selects the OpenType math font (and the package alone selects Latin Modern Math); the file is expl3 code"),
     ("babel", "language selection is not modelled; babel.sty needs \\language and \\lccode tables"),
+    ("CJKutf8", "the CJK environment, \\CJKfamily and the space switches are parser state and the render pipeline sets the characters from the C70 subfont metrics; CJKutf8.sty needs active characters and \\lastkern"),
+    ("CJK", "loaded by CJKutf8; CJK.sty needs active characters, \\lastkern and \\pdffontattr"),
     ("iftex", "\\ifpdftex & co. would misreport the engine; the file tests primitives"),
     ("ifxetex", "\\ifxetex is the parser's; the file tests primitives"),
     ("ifluatex", "\\ifluatex is the parser's; the file tests primitives"),

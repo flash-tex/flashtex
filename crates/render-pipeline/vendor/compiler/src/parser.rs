@@ -1525,6 +1525,93 @@ pub struct TextStyle {
     /// `None` is the page's default colour: pdfTeX writes no operator.
     /// `Some` carries the exact operator values (`crate::color`).
     pub color: Option<DeviceColor>,
+    /// CJK.sty's `CJK`/`CJK*` environment in force (`\usepackage{CJKutf8}`,
+    /// `\begin{CJK}{UTF8}{min}`): the family selected by the environment's
+    /// third argument or `\CJKfamily`, and whether `\CJKnospace` is in
+    /// force. `None` outside the environment, where non-Latin characters
+    /// keep inputenc's behaviour. Scoped by the environment (and by groups)
+    /// like the rest of the style; font commands never change it, since
+    /// CJK.sty selects its `C70` fonts per character inside a group of its
+    /// own (`\CJK@altchar`, UTF8.chr 52-109) and leaves `\f@family`
+    /// alone. The render pipeline sizes the characters of a run that carries
+    /// this from the family's subfont metrics (`render-pipeline/src/cjk.rs`).
+    pub cjk: Option<CjkRun>,
+}
+
+/// What a `CJK` environment puts on the text inside it (see
+/// [`TextStyle::cjk`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct CjkRun {
+    pub family: CjkFamily,
+    /// `CJK*` / `\CJKnospace`: CJK.sty 871-882, `\CJK@ignorespaces` is
+    /// `\ignorespaces` after every CJK character, so a source blank after
+    /// one is dropped; `CJK` / `\CJKspace` keep it as an interword space.
+    pub nospace: bool,
+}
+
+/// The `C70` font families CJK.sty's UTF-8 encoding can select: the
+/// `<family>` of `\begin{CJK}{UTF8}{<family>}` and `\CJKfamily{<family>}`.
+/// Each names a set of Type 1 subfonts in TeX Live whose TFM metrics the
+/// render pipeline tabulates (`c70min.fd`, `c70gbsn.fd`, `c70bsmi.fd`,
+/// `c70mj.fd`, `c70goth.fd`, `c70maru.fd`, `c70gkai.fd`, `c70bkai.fd`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum CjkFamily {
+    /// `min`: Wadalab Mincho (`udmj` subfonts; c70min.fd 23-24).
+    Min,
+    /// `goth`: Wadalab Gothic (`udgj`; c70goth.fd).
+    Goth,
+    /// `maru`: Wadalab Maru Gothic (`umrj`; c70maru.fd).
+    Maru,
+    /// `gbsn`: Arphic AR PL SungtiL GB (`gbsnu`; c70gbsn.fd 18).
+    Gbsn,
+    /// `gkai`: Arphic AR PL KaitiM GB (`gkaiu`; c70gkai.fd).
+    Gkai,
+    /// `bsmi`: Arphic AR PL Mingti2L Big5 (`bsmiu`; c70bsmi.fd 18).
+    Bsmi,
+    /// `bkai`: Arphic AR PL KaitiM Big5 (`bkaiu`; c70bkai.fd).
+    Bkai,
+    /// `mj`: UHC Myoungjo (`uwmj`; c70mj.fd 22).
+    Mj,
+    /// Any other name, including CJK.enc 798's default `song`: pdflatex
+    /// substitutes `C70/song/m/n` (`\wrong@fontshape`), Bitstream
+    /// Cyberbit's `cyberb` subfonts, whose TFMs TeX Live ships (zhmetrics)
+    /// but whose glyphs it does not: the paragraph is laid out with them and
+    /// pdflatex then fails at shipout (`!pdfTeX error: Font cyberb4e at 657
+    /// not found`) with no PDF.
+    Unknown,
+}
+
+impl CjkFamily {
+    /// The family of a `\begin{CJK}{..}{<name>}` / `\CJKfamily{<name>}`
+    /// argument (trimmed by the caller).
+    pub fn from_name(name: &str) -> CjkFamily {
+        match name {
+            "min" => CjkFamily::Min,
+            "goth" => CjkFamily::Goth,
+            "maru" => CjkFamily::Maru,
+            "gbsn" => CjkFamily::Gbsn,
+            "gkai" => CjkFamily::Gkai,
+            "bsmi" => CjkFamily::Bsmi,
+            "bkai" => CjkFamily::Bkai,
+            "mj" => CjkFamily::Mj,
+            _ => CjkFamily::Unknown,
+        }
+    }
+
+    /// The `<family>` name as CJK.sty spells it.
+    pub fn name(self) -> &'static str {
+        match self {
+            CjkFamily::Min => "min",
+            CjkFamily::Goth => "goth",
+            CjkFamily::Maru => "maru",
+            CjkFamily::Gbsn => "gbsn",
+            CjkFamily::Gkai => "gkai",
+            CjkFamily::Bsmi => "bsmi",
+            CjkFamily::Bkai => "bkai",
+            CjkFamily::Mj => "mj",
+            CjkFamily::Unknown => "song",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
@@ -1734,6 +1821,7 @@ impl TextStyle {
         size: None,
         ams_tiny: false,
         color: None,
+        cjk: None,
     };
 }
 
@@ -1936,8 +2024,10 @@ fn apply_style(style: TextStyle, name: &str, body_size_pt: f64) -> TextStyle {
     ) {
         next.ams_tiny = false;
     }
-    // Font commands (`\normalfont`, `\bf`) never change the colour.
+    // Font commands (`\normalfont`, `\bf`) never change the colour, nor
+    // the CJK environment in force (see `TextStyle::cjk`).
     next.color = style.color;
+    next.cjk = style.cjk;
     next
 }
 
@@ -2356,6 +2446,10 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "enspace",
     "enskip",
     "xspace",
+    "CJKfamily",
+    "CJKspace",
+    "CJKnospace",
+    "CJKtilde",
     "AA",
     "aa",
     "AE",
@@ -4801,6 +4895,10 @@ impl P<'_> {
             // `\xspace` (xspace.sty): a word space unless the token after
             // the macro call is `}`, another command, or `, . ! ? ; : ' /`.
             "xspace" => self.xspace(span),
+            // CJK.sty (`\usepackage{CJKutf8}`): the family switch and the
+            // space/tilde declarations of a `CJK` environment.
+            "CJKfamily" => self.cjk_family_command(span),
+            "CJKspace" | "CJKnospace" | "CJKtilde" => self.cjk_declaration(name),
             "rule" => self.text_rule(span, para),
             // titlesec's `\titlerule` (see `title_rule`): a rule at the
             // current line, like `\hrulefill` in a paragraph and `\hrule`
@@ -8718,6 +8816,14 @@ impl P<'_> {
                     | "Huge"
             );
         let alltt_env = environment == "alltt" && self.in_body;
+        // CJK.sty 1084-1094: `\begin{CJK}[<fontenc>]{<encoding>}{<family>}`
+        // and the `CJK*` form. The run the environment puts on its text is
+        // read here (its three arguments never reach the page) and applied
+        // after the style save below, so `\end` restores the surrounding
+        // style like any other environment.
+        let cjk_run = (matches!(environment.as_str(), "CJK" | "CJK*") && self.in_body)
+            .then(|| self.cjk_environment_arguments(&environment, span))
+            .flatten();
         self.env_alignments.push(self.declared_alignment);
         self.env_obeylines.push(self.obeylines);
         self.parameter_scopes.push(Vec::new());
@@ -8927,6 +9033,8 @@ impl P<'_> {
             // size environments out of the "not implemented" warning.
             // The declaration itself is applied after the style save
             // below, so the `\end` restore sees the surrounding style.
+        } else if cjk_run.is_some() {
+            // `CJK`/`CJK*`: read above, applied after the style save below.
         } else if self.in_body {
             // `abstract` deliberately lands here (issue #953): the render
             // pipeline owns the environment's typesetting
@@ -8961,6 +9069,8 @@ impl P<'_> {
         // `begin_theorem` below.
         if size_env {
             self.style = apply_style(self.style, &environment, self.body_size_pt());
+        } else if let Some(run) = cjk_run {
+            self.style.cjk = Some(run);
         } else if alltt_env {
             self.style = TextStyle {
                 bold: false,
@@ -8971,6 +9081,7 @@ impl P<'_> {
                 size: self.style.size,
                 ams_tiny: self.style.ams_tiny,
                 color: self.style.color,
+                cjk: self.style.cjk,
             };
             self.obeylines = true;
         }
@@ -8981,6 +9092,66 @@ impl P<'_> {
                 self.begin_proof(span, para);
             }
         }
+    }
+
+    /// The run `\begin{CJK}[<fontenc>]{<encoding>}{<family>}` (or
+    /// `CJK*`) puts on its body: `Some` when `\usepackage{CJKutf8}` (or
+    /// `CJK`) is loaded and the arguments were read, `None` -- with the
+    /// arguments left in the stream, where pdflatex's "Environment CJK
+    /// undefined" error leaves them too -- when it is not.
+    ///
+    /// CJK.sty 1049-1075 (`\CJK@envStart`): the optional argument is the
+    /// font encoding (`\CJKfontenc`), the first mandatory one the input
+    /// encoding (`\CJKenc`), the second the family (`\CJKfamily`). Only
+    /// `UTF8` is modelled (CJKutf8.sty loads inputenc's utf8 and lets it set
+    /// every character it declares, CJKutf8.sty 30-60; the rest are CJK's);
+    /// another encoding is diagnosed and set as UTF-8 anyway, which is the
+    /// document's actual encoding under `\usepackage[utf8]{inputenc}`.
+    fn cjk_environment_arguments(&mut self, environment: &str, span: Span) -> Option<CjkRun> {
+        if !self.packages.iter().any(|package| package == "CJKutf8" || package == "CJK") {
+            self.diags.push(
+                Diagnostic::environment_warning(
+                    environment,
+                    format!("environment '{environment}' needs \\usepackage{{CJKutf8}}"),
+                    Some(span),
+                    Some("typeset the arguments and the body as plain text".into()),
+                )
+                .with_optional_help(vocabulary::environment_help(environment)),
+            );
+            return None;
+        }
+        let _fontenc = self.optional_bracket_argument();
+        let (encoding_tokens, encoding_span) = self.required_group(environment, span);
+        let encoding = token_text(&encoding_tokens).trim().to_string();
+        let (family_tokens, _) = self.required_group(environment, span);
+        let family = token_text(&family_tokens).trim().to_string();
+        if encoding != "UTF8" {
+            self.diags.push(Diagnostic::warning(
+                format!("CJK encoding '{encoding}' is not implemented; the body is read as UTF-8"),
+                Some(encoding_span),
+                Some("only \\begin{CJK}{UTF8}{..} is modelled (CJKutf8)".into()),
+            ));
+        }
+        let family = self.cjk_family(&family, span);
+        Some(CjkRun { family, nospace: environment == "CJK*" })
+    }
+
+    /// The [`CjkFamily`] of a family name, with pdflatex's font warning for
+    /// a name whose `C70` shape does not exist (`\wrong@fontshape`: "Font
+    /// shape `C70/<name>/m/n' undefined, using `C70/song/m/n' instead").
+    fn cjk_family(&mut self, name: &str, span: Span) -> CjkFamily {
+        let family = CjkFamily::from_name(name);
+        if family == CjkFamily::Unknown {
+            self.diags.push(Diagnostic::warning(
+                format!(
+                    "CJK family '{name}' is not one of min, goth, maru, gbsn, gkai, bsmi, bkai, mj: \
+                     pdflatex substitutes C70/song (Bitstream Cyberbit), whose glyphs TeX Live does not ship, and produces no PDF"
+                ),
+                Some(span),
+                Some("the CJK characters are set 1 em wide from an installed CJK font".into()),
+            ));
+        }
+        family
     }
 
     /// `\end{..}` (see [`P::environment`]).
@@ -9250,6 +9421,39 @@ impl P<'_> {
         }
     }
 
+    /// `\CJKfamily{<family>}` (CJK.sty 738-760, `\CJK@selFam`): selects the
+    /// family for the rest of the group. Outside a `CJK` environment
+    /// `\CJK@selectFamily` is `\relax` (CJK.sty 1080) and the argument is
+    /// only stored, so nothing changes here.
+    fn cjk_family_command(&mut self, span: Span) {
+        let (tokens, _) = self.required_group("CJKfamily", span);
+        let name = token_text(&tokens).trim().to_string();
+        if let Some(run) = self.style.cjk.as_mut() {
+            let family = CjkFamily::from_name(&name);
+            run.family = family;
+            if family == CjkFamily::Unknown {
+                self.cjk_family(&name, span);
+            }
+        }
+    }
+
+    /// `\CJKspace`/`\CJKnospace` (CJK.sty 879-882: `\CJK@ignorespaces` is
+    /// `\@empty` or `\ignorespaces` after each CJK character, globally, so
+    /// the switch outlives the group) and `\CJKtilde` (CJK.sty 865-868:
+    /// makes `~` a `\nobreakspace`, which it already is here). Outside the
+    /// environment the switches only set the state the next `\begin{CJK}`
+    /// overrides (`\CJKspace`/`\CJKnospace` at 1085/1091), so they are
+    /// no-ops there.
+    fn cjk_declaration(&mut self, name: &str) {
+        if let Some(run) = self.style.cjk.as_mut() {
+            match name {
+                "CJKspace" => run.nospace = false,
+                "CJKnospace" => run.nospace = true,
+                _ => {}
+            }
+        }
+    }
+
     /// `\newtheorem{name}{Title}`, its starred (unnumbered) form, the
     /// shared-counter form `\newtheorem{name}[shared]{Title}`, and the
     /// reset-on-section form `\newtheorem{name}{Title}[section]`. See
@@ -9373,9 +9577,11 @@ impl P<'_> {
         // below derives from `head_style` via `..head_style` and inherits it.
         let ambient_size = self.style.size;
         let ambient_tiny = self.style.ams_tiny;
+        let ambient_cjk = self.style.cjk;
         let head_style = TextStyle {
             size: ambient_size,
             ams_tiny: ambient_tiny,
+            cjk: ambient_cjk,
             ..def.style.head_style()
         };
         // `\thmnumber{...\@upn{#2}}`: the number is `\textup`, so a
@@ -9453,6 +9659,7 @@ impl P<'_> {
                     style: TextStyle {
                         size: ambient_size,
                         ams_tiny: ambient_tiny,
+                        cjk: ambient_cjk,
                         ..TextStyle::default()
                     },
                     space_before: false,
@@ -9472,6 +9679,7 @@ impl P<'_> {
         self.style = TextStyle {
             size: ambient_size,
             ams_tiny: ambient_tiny,
+            cjk: ambient_cjk,
             ..def.style.body_style()
         };
     }
@@ -9488,6 +9696,7 @@ impl P<'_> {
         // effect for the heading and the body.
         let ambient_size = self.style.size;
         let ambient_tiny = self.style.ams_tiny;
+        let ambient_cjk = self.style.cjk;
         let heading = self
             .optional_bracket_argument()
             .map(|(text, _)| text.trim().to_string())
@@ -9500,6 +9709,7 @@ impl P<'_> {
                 italic: true,
                 size: ambient_size,
                 ams_tiny: ambient_tiny,
+                cjk: ambient_cjk,
                 ..TextStyle::default()
             },
             space_before: true,
@@ -9507,6 +9717,7 @@ impl P<'_> {
         self.style = TextStyle {
             size: ambient_size,
             ams_tiny: ambient_tiny,
+            cjk: ambient_cjk,
             ..TextStyle::default()
         };
     }
@@ -15242,6 +15453,14 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // (`style=`, `autostyle`, ...) are not modelled, so only a bare load
         // is silent.
         "csquotes" => options.is_empty(),
+        // CJKutf8.sty (its `\RequirePackage[encapsulated]{CJK}` and the
+        // fontenc options it passes through) is the `CJK` environment,
+        // `\CJKfamily` and the space switches; `\usepackage{CJK}` alone
+        // (without inputenc's utf8 in front) is accepted the same way, with
+        // `encapsulated` as its one modelled option. Every other CJK option
+        // (`lowercase`, `global`, `active`) keeps the load diagnostic.
+        "CJKutf8" => options.is_empty(),
+        "CJK" => options.iter().all(|option| *option == "encapsulated"),
         // calc.sty's `+`/`-` dimension chains in `\setlength`/`\addtolength`
         // are implemented above, so loading the package is silent (same rule
         // as `ifthen`); calc.sty takes no options. `*`, `/`, parentheses and

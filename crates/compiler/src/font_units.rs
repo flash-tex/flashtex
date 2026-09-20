@@ -211,6 +211,7 @@ impl EngineFontMetrics {
             // document-visible levels, never the AMS `\Tiny` rung (GH-824).
             ams_tiny: false,
             color: None,
+            cjk: None,
         };
         let latin_modern = if font & BODY != 0 {
             self.setup.latin_modern

@@ -657,6 +657,10 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("so", "{...}", "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)"),
     ("hl", "{...}", "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)"),
     ("enquote", "{text}", "csquotes: wraps text in typographic quotation marks; nesting alternates double \\u{201c}\\u{201d} and single \\u{2018}\\u{2019} (needs csquotes)"),
+    ("CJKfamily", "{family}", "CJKutf8: selects the CJK family (min, goth, maru, gbsn, gkai, bsmi, bkai, mj) for the rest of the group inside a CJK environment; an unknown family sets nothing, as pdflatex's C70/song substitution does"),
+    ("CJKspace", "", "CJKutf8: a source blank after a CJK character is an interword space again (undoes \\CJKnospace / CJK*)"),
+    ("CJKnospace", "", "CJKutf8: a source blank after a CJK character is ignored, as in the CJK* environment"),
+    ("CJKtilde", "", "CJKutf8: makes ~ a no-break space, which it already is; accepted no-op"),
     ("titleformat", "{\\section}{format}{label}{sep}{before}[after]", "titlesec: \\section headings take the format's face and size (an empty label prints no number); a \\titlerule after-code draws the full-width rule; other levels are diagnosed (needs titlesec)"),
     ("titlerule", "", "titlesec: a rule filling the rest of the line, or the full text width between paragraphs (needs titlesec)"),
     ("pdfgentounicode", "", "pdfTeX glyph-to-Unicode switch: accepted no-op, copy-paste metadata with no visible output"),
@@ -1319,6 +1323,14 @@ pub(crate) const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("quotation", "indented paragraphs"),
     ("sloppypar", "a paragraph set with \\sloppy"),
     ("samepage", "\\samepage for the body"),
+    (
+        "CJK",
+        "CJKutf8: \\begin{CJK}{UTF8}{family} sets the body's CJK characters as 1 em boxes with the family's subfont metrics, \\CJKglue between them and CJK.enc's punctuation no-break rules (needs CJKutf8)",
+    ),
+    (
+        "CJK*",
+        "CJKutf8: the CJK environment with a source blank after each CJK character ignored (needs CJKutf8)",
+    ),
     ("tiny", "the tiny size for the environment body"),
     ("scriptsize", "the scriptsize size for the environment body"),
     ("footnotesize", "the footnotesize size for the environment body"),
@@ -1527,6 +1539,16 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "csquotes",
         "",
         "\\enquote: typographic quotation marks, alternating double/single on nesting",
+    ),
+    (
+        "CJKutf8",
+        "",
+        "the CJK and CJK* environments with the UTF8 encoding and the min, goth, maru, gbsn, gkai, bsmi, bkai and mj families: each CJK character is a 1 em box with the family's subfont height and depth, \\CJKglue (0pt plus 0.08\\baselineskip) between characters and CJK.enc's no-break rules around punctuation; painted from an installed CJK font (Hiragino, Songti, ...) named in one diagnostic; \\CJKfamily, \\CJKspace, \\CJKnospace and \\CJKtilde; other encodings and families, vertical text and CJKpunct are diagnosed",
+    ),
+    (
+        "CJK",
+        "encapsulated",
+        "the package CJKutf8 loads; accepted with the same environment and commands (the body is read as UTF-8 either way)",
     ),
     (
         "calc",

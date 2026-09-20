@@ -328,6 +328,34 @@ impl PageState {
     }
 }
 
+/// `FLASHTEX_TRACE_PAGES` set to anything but `0`/empty prints TeX's
+/// `\tracingpages` line (§1006) for every legal breakpoint the builder
+/// costs, to stderr: `% t=<total> plus <stretch> minus <shrink> g=<goal>
+/// b=<badness> p=<penalty> c=<cost>#`, the `#` marking a new best break,
+/// so a page's shrink ratio can be checked against pdflatex's log.
+fn trace_pages_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FLASHTEX_TRACE_PAGES").map(|v| !v.is_empty() && v != "0").unwrap_or(false))
+}
+
+fn trace_page_cost(st: &PageState, goal: f64, b: i64, pi: i32, c: i64, best: bool) {
+    if !trace_pages_enabled() {
+        return;
+    }
+    let mut t = format!("t={:.5}", st.total);
+    if st.fil {
+        t.push_str(" plus 1.0fil");
+    } else if st.stretch != 0.0 {
+        t.push_str(&format!(" plus {:.5}", st.stretch));
+    }
+    if st.shrink != 0.0 {
+        t.push_str(&format!(" minus {:.5}", st.shrink));
+    }
+    let b = if b >= AWFUL_BAD { "*".to_string() } else { b.to_string() };
+    let c = if c >= AWFUL_BAD { "*".to_string() } else { c.to_string() };
+    eprintln!("% {t} g={goal:.5} b={b} p={pi} c={c}{}", if best { "#" } else { "" });
+}
+
 /// Positions of the boxes of `list` at natural size, measured down from the
 /// top of the box they are set in: with `topskip` the first box sits below
 /// `\topskip` glue (a page), otherwise at its own height (an internal
@@ -573,7 +601,9 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
                 } else {
                     b
                 };
-                if best.map_or(true, |(_, lc)| c <= lc) {
+                let improves = best.map_or(true, |(_, lc)| c <= lc);
+                trace_page_cost(&st, goal, b, pi, c, improves);
+                if improves {
                     best = Some((i, c));
                 }
                 if c == AWFUL_BAD || pi <= EJECT_PENALTY {
@@ -1043,7 +1073,7 @@ pub fn break_pages_inserts_regions(
         let mut best_ins: Option<usize> = is.last_ins;
         let mut fired: Option<usize> = None;
         let mut i = start;
-        let cost = |st: &PageState, is: &InsertState, pi: i32, reserve: f64| -> i64 {
+        let cost = |st: &PageState, is: &InsertState, pi: i32, reserve: f64| -> (i64, i64) {
             let goal = is.goal - reserve;
             let b = if st.total < goal {
                 if st.fil {
@@ -1068,9 +1098,9 @@ pub fn break_pages_inserts_regions(
                 b
             };
             if is.penalties >= i64::from(INF_PENALTY) {
-                AWFUL_BAD
+                (b, AWFUL_BAD)
             } else {
-                c
+                (b, c)
             }
         };
         while i < list.len() && !body_less {
@@ -1084,8 +1114,10 @@ pub fn break_pages_inserts_regions(
                 _ => 0,
             };
             if legal && st.has_box {
-                let c = cost(&st, &is, pi, regions.reserved(i));
-                if best.map_or(true, |(_, lc)| c <= lc) {
+                let (b, c) = cost(&st, &is, pi, regions.reserved(i));
+                let improves = best.map_or(true, |(_, lc)| c <= lc);
+                trace_page_cost(&st, is.goal - regions.reserved(i), b, pi, c, improves);
+                if improves {
                     best = Some((i, c));
                     best_ins = is.last_ins;
                 }
@@ -1136,7 +1168,7 @@ pub fn break_pages_inserts_regions(
         // The document's end (`\clearpage`: `\vfil\penalty-\@M`) is a
         // breakpoint like any other once insertions are on the page.
         if fired.is_none() && !is.page.is_empty() {
-            let c = cost(&st, &is, EJECT_PENALTY, regions.reserved(list.len().saturating_sub(1)));
+            let (_, c) = cost(&st, &is, EJECT_PENALTY, regions.reserved(list.len().saturating_sub(1)));
             if c == AWFUL_BAD {
                 if let Some((bi, _)) = best {
                     fired = Some(bi);

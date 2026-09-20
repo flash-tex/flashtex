@@ -15,6 +15,7 @@ pub mod abstractenv;
 pub mod adapter;
 pub(crate) mod amsthm;
 pub mod cff;
+pub mod cjk;
 pub mod columns;
 pub mod delta;
 pub mod display;
