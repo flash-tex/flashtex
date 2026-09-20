@@ -11318,6 +11318,43 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 let mut style = style_at(styles_of(span.document), span.start);
                 style.size_cpt = declared_size(compiler_style.size, size);
                 prev_size_cpt = style.size_cpt;
+                // amsthm.sty 273-279, `\qed` in text:
+                //
+                // ```text
+                // \leavevmode\unskip\penalty9999 \hbox{}\nobreak\hfill
+                // \quad\hbox{\qedsymbol}
+                // ```
+                //
+                // `\unskip` takes the interword glue the source's blank
+                // before `\end{proof}` gave, then a `\penalty9999` (the box
+                // may go to a line of its own, at a price), an empty box,
+                // `\nobreak`, the fill, and a `\quad` in front of the symbol.
+                // The fill's arm above pushed that glue and the fill; both
+                // are replaced. With the glue kept and the quad missing the
+                // last line was 1em + a space too short in the breaker's
+                // eyes: `fixtures/divergence-probes/min5-proof-close-shrink`
+                // kept `hence by zero.` on one shrunk line where pdflatex
+                // breaks after `by` (`zero.` 445.7 bp off).
+                let fill_style = match hfill_start.and_then(|s| items.get(s..)).and_then(|tail| tail.iter().find_map(|i| match i {
+                    Item::HFill { style, .. } => Some(*style),
+                    _ => None,
+                })) {
+                    Some(fill_style) => {
+                        items.truncate(hfill_start.unwrap_or(items.len()));
+                        if matches!(items.last(), Some(Item::Space { .. })) {
+                            items.pop();
+                        }
+                        Some(fill_style)
+                    }
+                    None => None,
+                };
+                if let Some(fill_style) = fill_style {
+                    items.push(Item::Penalty { value: 9999, flagged: false });
+                    items.push(Item::LeaveVmode);
+                    items.push(Item::Penalty { value: 10000, flagged: false });
+                    items.push(Item::HFill { fill: true, leader: FillLeader::None, style: fill_style });
+                    items.push(Item::Quad { em: 1.0, plus_em: 0.0, minus_em: 0.0, style });
+                }
                 items.push(Item::QedBox { style, span: *span });
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
@@ -13001,6 +13038,33 @@ mod tests {
         assert_eq!(shape("15213 \\quad $\\cdot$ \\quad\n  (412)"), "15213 <quad><math> <quad>(412)");
         assert_eq!(shape("A \\quad\n  \\href{mailto:x@y.z}{x@y.z} B"), "A <quad>x@y.z B");
         assert_eq!(shape("A \\quad B"), "A <quad>B");
+    }
+
+    /// `\end{proof}` appends amsthm.sty 273-279's `\qed`: the blank before
+    /// it is `\unskip`ped, then `\penalty9999 \hbox{}\nobreak\hfill\quad`
+    /// and the symbol box — no interword glue, and a `\quad` in front.
+    #[test]
+    fn the_end_of_a_proof_is_amsthm_s_qed_list() {
+        let src = "\\begin{proof}\nHence by zero.\n\\end{proof}";
+        let parsed = flashtex_compiler::parser::parse(src);
+        let doc = adapt(&[src], 0, &parsed, &RenderOptions::default(), &Labels::default());
+        let Block::Paragraph { parts, .. } = &doc.blocks[0] else { panic!("{:?}", doc.blocks) };
+        let ParaPart::Lines(it) = &parts[0] else { panic!() };
+        let tail: Vec<String> = it
+            .iter()
+            .skip_while(|i| !matches!(i, Item::Word(w) if w.text() == "zero."))
+            .map(|i| match i {
+                Item::Word(w) => w.text(),
+                Item::Penalty { value, .. } => format!("<{value}>"),
+                Item::LeaveVmode => "<hbox>".to_string(),
+                Item::HFill { fill: true, leader: FillLeader::None, .. } => "<hfill>".to_string(),
+                Item::Quad { em, .. } => format!("<quad {em}>"),
+                Item::QedBox { .. } => "<qed>".to_string(),
+                Item::Space { .. } => "<space>".to_string(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(tail, ["zero.", "<9999>", "<hbox>", "<10000>", "<hfill>", "<quad 1>", "<qed>"], "{it:?}");
     }
 
     /// A URL breaks where TeX's math-list penalties fall

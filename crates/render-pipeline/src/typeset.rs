@@ -4945,6 +4945,9 @@ impl<'a> Context<'a> {
                         });
                     }
                 }
+                // The environment is closed: its declared skips must not
+                // reach a later `\end` that belongs to another one.
+                st.env_skips = None;
             }
             st.after_heading = false;
     }
@@ -10723,8 +10726,20 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     let mut mark_rules: Vec<flashtex_class_geometry::MarkRule> = geo.map(|g| g.mark_rules.clone()).unwrap_or_default();
     let mut after_heading = false;
     // Whether the open paragraph-shape environment began in vertical mode
-    // (`\@topsepadd` keeps `\partopsep` for the closing skip too).
+    // (`\@topsepadd` keeps `\partopsep` for the closing skip too), and
+    // the `\@topsep`/`\@topsepadd` it declared itself (amsthm's). Both
+    // belong to the environment, not to the block that opened it: a
+    // `proof` of two paragraphs closes at its second, and with the skips
+    // dropped between blocks that one ended with `\trivlist`'s derived
+    // `\topsep` (9pt plus 3pt minus 5pt at 11pt) instead of the proof's
+    // own `6pt plus 6pt` + `\partopsep` (9pt plus 7pt minus 1pt) --
+    // pdflatex's `\tracingpages` on `fixtures/real-world/lecture-notes`
+    // page 1 reaches the section break at `t=663.63 plus 82.02554 minus
+    // 43.82797` and this builder at `plus 78.03 minus 47.83`, so the page's
+    // shrink ratio came out 0.276 for pdflatex's 0.301 and every line
+    // after a theorem drifted (0.72 bp median, 1.08 at the foot).
     let mut env_vmode = false;
+    let mut env_skips: Option<adapter::EnvSkips> = None;
     let quad = ctx.text_params(TextStyle::default(), ctx.style.body_size_pt).quad;
     // The cache fingerprint follows the active stylesheet: past the switch
     // the same items break at another width, so they key differently.
@@ -11094,9 +11109,9 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 events.push((blocks.len(), event.clone(), *span));
             }
             Block::Paragraph { .. } => {
-                let mut st = ParaState { after_heading, env_vmode, env_skips: None };
+                let mut st = ParaState { after_heading, env_vmode, env_skips };
                 ctx.build_paragraph(&mut blocks, block, &mut st, cache, style_fp.get(), quad);
-                (after_heading, env_vmode) = (st.after_heading, st.env_vmode);
+                (after_heading, env_vmode, env_skips) = (st.after_heading, st.env_vmode, st.env_skips);
             }
             Block::Rule {
                 span,
