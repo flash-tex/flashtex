@@ -7390,6 +7390,10 @@ struct SourceIndex<'t> {
     setlist: Vec<(&'t str, &'t str)>,
     /// [`natbib_author_year`] of the source.
     natbib_author_year: bool,
+    /// The document loads `enumerate` (tools) and not enumitem, so an
+    /// `enumerate` environment's `[<template>]` is enumerate.sty's
+    /// ([`enumerate_sty_widest`]).
+    enumerate_package: bool,
     /// For each `\begin`/`\end` of a [`LIST_ENVS`] environment, in source
     /// order, the byte just past its control word: [`list_stack_at`] reads
     /// the command at offset `at` when this is `<= at`.
@@ -7459,6 +7463,7 @@ impl<'t> SourceIndex<'t> {
         SourceIndex {
             setlist: setlist_calls(source),
             natbib_author_year: natbib_author_year(source),
+            enumerate_package: package_options(source, "enumerate").is_some() && package_options(source, "enumitem").is_none(),
             list_marks,
             list_stacks,
             theorem_marks,
@@ -7657,6 +7662,34 @@ fn widest_label(env: &str, depth: usize, label_key: Option<&str>, template: Opti
     }
 }
 
+/// The label enumerate.sty (tools, v3.00) measures for `\leftmargin<depth>`
+/// of `\begin{enumerate}[<template>]`: `\@enloop` (lines 52-65) makes every
+/// unbraced `A`, `a`, `i`, `I` or `1` token of the template the counter
+/// (`\Alph`, `\alph`, `\roman`, `\Roman`, `\arabic`), keeps a braced
+/// group as literal text and any other token as itself; `\@@enum@` (lines
+/// 72-83) then sets the counter to 7 and `\settowidth`s the margin to
+/// `\the\@enLab\hspace{\labelsep}` -- so `[(i)]` measures `(vii)`, `[a)]`
+/// measures `g)` and `[1.]` measures `7.`, each plus `\labelsep`
+/// ([`ListMargin::Widest`]). The counter is measured in the current text
+/// font: `\settowidth` runs before `\list`, in the enclosing font.
+fn enumerate_sty_widest(template: &str) -> String {
+    let mut out = String::new();
+    let mut depth = 0usize;
+    for c in template.chars() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            'A' if depth == 0 => out.push('G'),
+            'a' if depth == 0 => out.push('g'),
+            'i' if depth == 0 => out.push_str("vii"),
+            'I' if depth == 0 => out.push_str("VII"),
+            '1' if depth == 0 => out.push('7'),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// The value of a length register the preamble set before byte `at`, for
 /// an enumitem key given as `\name`: the last `\setlength{\name}{<dimen>}`
 /// (as a [`ListMargin::Fixed`]) or `\settowidth{\name}{<text>}` (as a
@@ -7781,6 +7814,18 @@ fn list_margins(index: &SourceIndex, source: &str, at: usize, size: u32, natbib_
                 }
             }
             let template = (!begin_keys && !options.is_empty()).then_some(*options);
+            // enumerate.sty (not enumitem): the template sets this depth's
+            // `\leftmargin` to the width of the label at counter value 7
+            // plus `\labelsep` (`\@@enum@`, enumerate.sty lines 79-82);
+            // measured: `[(i)]` in an 11pt article gives `\leftmargin`
+            // 25.74338pt = `\wd\hbox{(vii)}` 20.26837pt + 5.475pt where the
+            // class's `\leftmargini` is 27.37506pt. Deeper than
+            // `\@enumdepth` 4 is `\@toodeep`, an error, not a list.
+            if let (Some(template), "enumerate", true) = (template, *env, index.enumerate_package) {
+                if depth <= 4 {
+                    return ListMargin::Widest(enumerate_sty_widest(template));
+                }
+            }
             match leftmargin {
                 Some("*") => {
                     let label = widest_label(env, depth, label_key, template, widest);
