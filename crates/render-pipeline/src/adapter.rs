@@ -173,7 +173,10 @@ pub enum Item {
     Space { style: TextStyle, factor: u32, no_break: bool },
     /// `hidden`: beamer covered material (`crate::overlay`): the formula
     /// is set and measured but not painted.
-    Math { list: MathList, span: Span, hidden: bool },
+    /// `size_cpt`: the text size where the formula starts, in centipoints
+    /// (`\small` is 1095 in a 12 pt document), 0 for the block's own size;
+    /// the math fonts follow it (`\check@mathfonts`).
+    Math { list: MathList, span: Span, hidden: bool, size_cpt: u16 },
     /// `\\`; `skip_pt` is the optional `[<dimen>]` (LaTeX `\@xnewline`:
     /// `\vadjust{\vskip <dimen>}` after the line, or `\vskip` after the
     /// paragraph under `\@centercr`).
@@ -3948,6 +3951,7 @@ fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut V
                 span: *span,
                 space_before: *space_before,
                 color: None,
+                size: None,
                 color_ranges: Vec::new(),
             }));
         }
@@ -10718,8 +10722,9 @@ fn items_cached(
             }
             // The tag is the whole payload.
             Inline::LineBreak { .. } => {}
-            Inline::Math { list, display, number, color, .. } => {
+            Inline::Math { list, display, number, color, size, .. } => {
                 color.hash(&mut h);
+                size.hash(&mut h);
                 display.hash(&mut h);
                 number.hash(&mut h);
                 crate::incremental::hash_math(list, &mut h);
@@ -11385,17 +11390,21 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                         list: math_row_list(row),
                         span: row.span,
                         hidden: false,
+                        size_cpt: 0,
                     });
                 }
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
                 factor = 1000;
             }
-            Inline::Math { list, span, .. } => {
+            Inline::Math { list, span, size: math_size, .. } => {
+                // `{\small $x$}`: the formula is set with the math fonts of
+                // the text size where it starts (`\check@mathfonts`).
+                let size_cpt = declared_size(*math_size, size);
                 // The glue is the current font's where the space sits.
                 let gap = space_between(prev_end, prev_span, *span, None, after_control_word);
                 let mut gap_style = space_style(texts, styles, prev_end, *span, TextStyle::default());
-                gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
+                gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, size_cpt);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
                 // A rich `\eqref` (`lower_inline`): `\textup`'s `\check@icl`
@@ -11411,9 +11420,11 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     list: list.clone(),
                     span: *span,
                     hidden: false,
+                    size_cpt,
                 });
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
+                prev_size_cpt = size_cpt;
                 factor = 1000;
             }
             Inline::Logo { logo, span, style: compiler_style, .. } => {

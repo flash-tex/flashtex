@@ -1273,6 +1273,11 @@ impl<'a> Context<'a> {
             500..=700 => (5.0, 5.0),
             800 | 900 => (6.0, 5.0),
             1000 => (7.0, 5.0),
+            // fontmath.ltx 80-83: `\large`..`\Huge`.
+            1440 | 1728 | 2074 | 2488 => {
+                let [_, script, script_script] = ml::cm::declare_math_sizes(size);
+                (script, script_script)
+            }
             _ => (8.0, 6.0),
         };
         let r = self.fonts.resolve(self.style.family, Role::Math, size);
@@ -3549,11 +3554,14 @@ impl<'a> Context<'a> {
                     let glue = self.space_glue(style, style.size_or(size), *factor);
                     push(&mut out, &mut recs, pl::Item::Glue(glue), None);
                 }
-                AItem::Math { list, span, hidden } => {
+                AItem::Math { list, span, hidden, size_cpt } => {
                     // `size`, not the body size: math inside a footnote is set
-                    // with that size's math fonts (`math_fonts_at`). The split
-                    // into `math_pieces` is main's inline-math line breaking and
-                    // is orthogonal.
+                    // with that size's math fonts (`math_fonts_at`), and math
+                    // under a size declaration (`{\small $x$}`) with the
+                    // declared size's (`size_cpt`). The split into
+                    // `math_pieces` is main's inline-math line breaking and is
+                    // orthogonal.
+                    let size = if *size_cpt > 0 { f64::from(*size_cpt) / 100.0 } else { size };
                     if let Some(rec) = self.math_box(list, *span, false, size) {
                         if *hidden || base.hidden {
                             if let BoxRec::Math(mi) = self.recs[rec] {

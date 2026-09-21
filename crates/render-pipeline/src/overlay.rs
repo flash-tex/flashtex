@@ -482,7 +482,7 @@ mod tests {
 
     #[test]
     fn covered_formulas_and_graphics_are_flagged_hidden() {
-        let math = |hidden| AItem::Math { list: flashtex_compiler::math::MathList { atoms: Vec::new() }, span: Span::new(0, 0), hidden };
+        let math = |hidden| AItem::Math { list: flashtex_compiler::math::MathList { atoms: Vec::new() }, span: Span::new(0, 0), hidden, size_cpt: 0 };
         let graphic = |hidden| AItem::Graphic { options: String::new(), path: "f.png".into(), span: Span::new(0, 0), hidden };
         let mut blocks = frame(2, vec![para(vec![begin(OverlayKind::Cover, "2-"), math(false), graphic(false), AItem::Overlay(OverlayMark::End), math(false)])]);
         expand_frames(&mut blocks);

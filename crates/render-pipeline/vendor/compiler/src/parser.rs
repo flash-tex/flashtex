@@ -332,6 +332,11 @@ pub enum Inline {
         space_before: bool,
         /// The text colour where the formula starts (`TextStyle::color`).
         color: Option<DeviceColor>,
+        /// The size declaration in force where the formula starts
+        /// (`TextStyle::size`; `None` is `\normalsize`). LaTeX's math fonts
+        /// follow the text size (`\check@mathfonts` at `$`), so `{\small
+        /// $x$}` in a 12 pt document is set with the 10.95 pt math fonts.
+        size: Option<FontSizeLevel>,
         /// Source ranges inside the formula recoloured by `\color` or
         /// `\textcolor`, merged per colour in source order; an atom takes
         /// the colour of the range containing its span, else `color`.
@@ -11052,6 +11057,7 @@ impl P<'_> {
         let color_ranges = self.math_color_ranges(&raw);
         para.push(Inline::Math {
             color: self.style.color,
+            size: self.style.size,
             color_ranges,
             list,
             display: true,
@@ -11813,6 +11819,7 @@ impl P<'_> {
         let color_ranges = self.math_color_ranges(&raw);
         para.push(Inline::Math {
             color: self.style.color,
+            size: self.style.size,
             color_ranges,
             list,
             display,
@@ -12983,6 +12990,7 @@ impl P<'_> {
                     if !atoms.is_empty() {
                         content.push(Inline::Math {
                             color: style.color,
+                            size: style.size,
                             color_ranges: Vec::new(),
                             list: MathList { atoms },
                             display: false,
@@ -13645,6 +13653,7 @@ impl P<'_> {
         let color_ranges = self.math_color_ranges(&raw);
         content.push(Inline::Math {
             color: style.color,
+            size: style.size,
             color_ranges,
             list,
             display,
@@ -13867,6 +13876,7 @@ impl P<'_> {
         } else {
             para.push(Inline::Math {
                 color: self.style.color,
+                size: self.style.size,
                 color_ranges: Vec::new(),
                 list: crate::math::MathList { atoms },
                 display: false,

@@ -230,6 +230,17 @@ impl TexMathMetrics {
                 },
                 [name, "rm-lmr5", "rm-lmr5"],
             )
+        } else if [14.4, 17.28, 20.74, 24.88].into_iter().any(close) {
+            // fontmath.ltx 80-83: \DeclareMathSizes{\@xivpt}{\@xivpt}{\@xpt}
+            // {\@viipt} and the three above it -- `\large`..`\Huge` text,
+            // `{\large $x$}` or a `\section` title's formula -- with each
+            // family's design at each size (`cm::design_for`: cmr12/cmr17,
+            // cmmi12, cmsy10 scaled). The roman designs come from the
+            // metrics tree like the rows above; without them the size keeps
+            // the body's metrics (`math_fonts_at`).
+            let cm = CmMathMetrics::for_text_size(text_pt);
+            let names = cm.families[0].map(|f| lm_roman_tfm(f.name));
+            (cm, names)
         } else {
             return None;
         };
@@ -1028,6 +1039,21 @@ fn extra_symbol_slot(ch: char) -> Option<u8> {
 /// [`TexMathMetrics::otf_glyph`] from the secondary face when it is loaded.
 fn script_capital_slot(ch: char) -> Option<u8> {
     ('A'..='Z').find(|l| flashtex_compiler::newcm_math::script(*l) == Some(ch)).map(|l| l as u8)
+}
+
+/// The Latin Modern roman TFM (`rm-lmr12.tfm`'s stem) that carries the
+/// metrics of a CM roman design `cm::design_for` picks.
+fn lm_roman_tfm(cm: &str) -> &'static str {
+    match cm {
+        "cmr5" => "rm-lmr5",
+        "cmr6" => "rm-lmr6",
+        "cmr7" => "rm-lmr7",
+        "cmr8" => "rm-lmr8",
+        "cmr9" => "rm-lmr9",
+        "cmr10" => "rm-lmr10",
+        "cmr12" => "rm-lmr12",
+        _ => "rm-lmr17",
+    }
 }
 
 /// The Latin Modern TFM that carries the same metrics as a CM table name

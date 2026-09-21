@@ -396,11 +396,12 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 factor.hash(h);
                 no_break.hash(h);
             }
-            Item::Math { list, span, hidden } => {
+            Item::Math { list, span, hidden, size_cpt } => {
                 hash_math(list, h);
                 (span.start.wrapping_sub(base)).hash(h);
                 (span.end.wrapping_sub(base)).hash(h);
                 hidden.hash(h);
+                size_cpt.hash(h);
             }
             Item::LineBreak { skip_pt } => {
                 skip_pt.to_bits().hash(h);
