@@ -652,6 +652,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 span,
                 space_before: _,
                 color: _,
+                size: _,
                 color_ranges,
             } => {
                 shift_math_list(list, changes, deltas)?;
