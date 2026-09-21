@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 482 text-mode and 580 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 483 text-mode and 580 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -799,6 +799,7 @@ Canonical sources:
 | `\temporal` | `<overlay>{before}{during}{after}` | beamer: {during} on the slides the spec selects, {before} on earlier slides, {after} on later ones, each taking space only where it shows; needs \documentclass{beamer} |
 | `\subtitle` | `{...}` | beamer subtitle for \titlepage; optional [short] read past; needs \documentclass{beamer} |
 | `\institute` | `{...}` | beamer institute for \titlepage; optional [short] read past; needs \documentclass{beamer} |
+| `\logo` | `{...}` | beamer logo, set on every frame right-aligned above the navigation symbols (the sidebar right template); needs \documentclass{beamer} |
 | `\titlepage` |  | beamer title page (default template: centred title, subtitle, author, institute, date); needs \documentclass{beamer} |
 | `\note` | `{...}` | beamer note: typesets nothing (notes are shown only with \setbeameroption{show notes}); needs \documentclass{beamer} |
 | `\frame` | `<overlay>[options]{...}` | beamer frame as a command (the body brace group is the slide, like \begin{frame}...\end{frame}); needs \documentclass{beamer} |
