@@ -818,7 +818,7 @@ fn shift_math_list(list: &mut MathList, changes: &[ChangedBytes], deltas: &[isiz
             }
             Nucleus::SizedDelimiter { .. } => {}
             Nucleus::Space { .. } => {}
-            Nucleus::Rule(_) => {}
+            Nucleus::Rule(_) | Nucleus::Strut | Nucleus::Kern(_) => {}
             Nucleus::Fraction {
                 numerator,
                 denominator,

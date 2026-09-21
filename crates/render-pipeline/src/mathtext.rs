@@ -121,6 +121,10 @@ pub struct TextSink {
     /// The document's body font size in pt (`\f@size`), for size-dependent
     /// kerns such as amsmath's `\ex@`; 0 when unknown.
     pub body_size_pt: f64,
+    /// `\strutbox` at the formula's text size, (height, depth) in pt, for
+    /// `\strut` ([`BuiltBody::Strut`]); `None` when unknown, when the strut
+    /// takes the standard classes' 12pt `\baselineskip` at 10pt, scaled.
+    pub strut: Option<(f64, f64)>,
     /// Whether `amsfonts` (or `amssymb`, which loads it) is loaded: its
     /// `\widehat`/`\widetilde` switch to msbm's extra-wide accents past 2em.
     pub amsfonts: bool,
@@ -206,6 +210,11 @@ pub(crate) enum BuiltBody {
     /// thing a [`SizeClass::Text`] placeholder cannot tell). The strikes
     /// hang off the laid-out body's box ([`cancelled_math_box`]).
     Cancel { body: ml::MathList, kind: CancelKind, display: bool },
+    /// `\strut`, `\copy\strutbox` (latex.ltx 621): an empty box of no width
+    /// with the strut's height and depth in pt. `\strutbox` is built at the
+    /// text size and copied as it is, so it is the same box in every math
+    /// style; `\cfrac` heads every numerator with one.
+    Strut { height: f64, depth: f64 },
 }
 
 /// Which diagonals the cancel package draws through a body.
@@ -356,6 +365,13 @@ impl TextSink {
         let class = if diagonal { ml::AtomClass::Inner } else { ml::AtomClass::Ord };
         let refused = if diagonal { "\\ddots" } else { "\\vdots" };
         self.built_atom(class, BuiltBody::Dots { diagonal }, tag, refused)
+    }
+
+    /// `\strut` in a formula: an `Ord` atom (TeX §1076 makes a box one) for
+    /// the text size's `\strutbox` ([`BuiltBody::Strut`]).
+    pub(crate) fn strut_atom(&mut self, tag: ml::SourceTag) -> ml::Atom {
+        let (height, depth) = self.strut.unwrap_or((0.7 * 12.0, 0.3 * 12.0));
+        self.built_atom(ml::AtomClass::Ord, BuiltBody::Strut { height, depth }, tag, "\\strut")
     }
 
     /// An atom of `class` standing for a box this crate builds itself; an
@@ -694,6 +710,12 @@ impl<'a> TextRunMetrics<'a> {
                 framed_math_box(laid.root, spec.tag)
             }
             BuiltBody::Dots { diagonal } => self.dot_stack(*diagonal, size, spec.tag),
+            BuiltBody::Strut { height, depth } => {
+                let mut b = ml::MathBox::hlist(Vec::new());
+                b.height = *height;
+                b.depth = *depth;
+                b
+            }
             BuiltBody::Cancel { body, kind, display } => {
                 // `\mathpalette` hands `\@cancel` the current style; a
                 // text-size placeholder is either D or T, and only the

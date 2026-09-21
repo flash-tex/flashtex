@@ -1904,6 +1904,19 @@ impl<'a> Context<'a> {
         }
     }
 
+    /// `\strutbox` at the text size `size` (`\set@fontsize`): `.7` and `.3`
+    /// of that size's `\baselineskip`, as (height, depth) in pt -- the same
+    /// lookup the tabular struts make.
+    fn strut_pt(&self, size: f64) -> (f64, f64) {
+        let body = self.style.body_size_pt;
+        let bskip = if (size - body).abs() < 1e-9 {
+            self.style.baselineskip_pt
+        } else {
+            crate::table::baselineskip_pt(adapter::class_size_of(body), (size * 100.0).round() as u16)
+        };
+        (0.7 * bskip, 0.3 * bskip)
+    }
+
     fn math_box(&mut self, list: &flashtex_compiler::math::MathList, span: Span, display: bool, size: f64) -> Option<usize> {
         let fonts = self.math_fonts_at(span, size)?;
         let mut sink = crate::mathtext::TextSink::default();
@@ -1915,6 +1928,7 @@ impl<'a> Context<'a> {
             sink.text_quad = Some((text_quad, text_quad / fam2_quad));
         }
         sink.body_size_pt = self.style.body_size_pt;
+        sink.strut = Some(self.strut_pt(size));
         sink.amsfonts = self.ams_symbol_fonts;
         sink.amsmath = self.amsmath_loaded;
         sink.display = display;
@@ -1968,7 +1982,7 @@ impl<'a> Context<'a> {
         // source-derived facts above.
         let switch = |sp: &Span| style_switch_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         let segments = split_at_spaces(list, &fence, sink.font_em_ratio(), &switch);
-        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits, &text_italic, &text_roman, &text_split, &ellipsis)).collect();
+        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits, &text_italic, &text_roman, &text_split, &ellipsis, &switch)).collect();
         // Glue at a top-level grid cell's own top level is split out like
         // the formula's; only deeper glue is dropped.
         let nested_glue_em: f64 = segments
@@ -8742,7 +8756,7 @@ pub fn convert_math_fenced(list: &flashtex_compiler::math::MathList, sink: &mut 
     // No source to read, so no source-derived fact: no fence, no forced
     // class, no operator limits, and no run shown to be a whole run of math
     // characters (so no italic correction).
-    convert_math_classed(list, sink, fence, &|_| None, &|_| None, &|_| false, &|_| false, &|_| None, &|_| None)
+    convert_math_classed(list, sink, fence, &|_| None, &|_| None, &|_| false, &|_| false, &|_| None, &|_| None, &|_| None)
 }
 
 /// Maps the compiler's own atom class onto math-layout's.
@@ -9085,8 +9099,27 @@ pub fn convert_math_classed(
     text_roman: &dyn Fn(&Span) -> bool,
     text_split: &dyn Fn(&Span) -> Option<(&'static str, &'static str)>,
     ellipsis: &dyn Fn(&Span) -> Option<MathDots>,
+    switch: &dyn Fn(&Span) -> Option<ml::Style>,
 ) -> ml::MathList {
     use flashtex_compiler::math::{DelimiterRole, Nucleus as N};
+    // A style switch in a sub-formula (a `{\displaystyle ...}` group the
+    // compiler keeps whole, a numerator, a script) sets the rest of that
+    // list in its style (TeX §1171): the atoms after it become one
+    // `Styled` atom. Exact when the switch opens the list, which is how it
+    // is written; a switch after other atoms makes the rest one ordinary
+    // atom for spacing. The formula's own top level never gets here with
+    // a switch -- `split_at_spaces` cuts the runs there -- and one inside a
+    // `\left...\right` pair is left alone, as the pair cannot be split.
+    if let Some(k) = sub_list_style_switch(list, fence, switch) {
+        let style = switch(&list.atoms[k].span).expect("found by sub_list_style_switch");
+        let convert = |atoms: &[flashtex_compiler::math::MathAtom], sink: &mut crate::mathtext::TextSink| {
+            convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.to_vec() }, sink, fence, class, op_limits, text_italic, text_roman, text_split, ellipsis, switch)
+        };
+        let mut out = convert(&list.atoms[..k], sink);
+        let rest = convert(&list.atoms[k + 1..], sink);
+        out.atoms.push(ml::Atom::styled(style, rest));
+        return out;
+    }
     // Open fences: (left delimiter, atoms converted since it, its span).
     let mut stack: Vec<(Option<char>, Vec<ml::Atom>, Span)> = Vec::new();
     let mut atoms = Vec::new();
@@ -9098,7 +9131,7 @@ pub fn convert_math_classed(
         &list.atoms
     };
     for a in list_atoms {
-        let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class, op_limits, text_italic, text_roman, text_split, ellipsis);
+        let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class, op_limits, text_italic, text_roman, text_split, ellipsis, switch);
         let mut out: Vec<ml::Atom> = match &a.nucleus {
             // `\ldots`/`\cdots` and the amsmath spellings: TeX's
             // `\mathinner{\ldotp\ldotp\ldotp}` (`math_ellipsis_of`). The
@@ -9350,6 +9383,26 @@ pub fn convert_math_classed(
             // rule atom, so the box's width is kept as glue and nothing is
             // painted (reported by `math_approximations`). Font-relative
             // widths resolve against no font here (0).
+            // `\strut` (`\copy\strutbox`): an Ord box of no width, as tall
+            // and deep as the text size's strut, the same in every style
+            // (`crate::mathtext::BuiltBody::Strut`).
+            N::Strut => {
+                let tag = {
+                    #[cfg(feature = "math-glyph-spans")]
+                    {
+                        math_tag(a.span)
+                    }
+                    #[cfg(not(feature = "math-glyph-spans"))]
+                    {
+                        ml::SourceTag::NONE
+                    }
+                };
+                vec![sink.strut_atom(tag)]
+            }
+            // A fixed kern (`\cfrac`'s `\kern-\nulldelimiterspace`): glue
+            // with no stretch, which like TeX's kern node takes no part in
+            // atom spacing.
+            N::Kern(pt) => vec![ml::Atom::glue(0.0, *pt)],
             N::Rule(rule) => {
                 let cx = flashtex_compiler::text_builtins::DimenContext::default();
                 let width = flashtex_compiler::text_builtins::sp_to_pt(rule.width.resolve(&cx));
@@ -10056,6 +10109,8 @@ fn grid_pieces(
     let text_split = &text_split;
     let ellipsis = |sp: &Span| math_ellipsis_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
     let ellipsis = &ellipsis;
+    let switch = |sp: &Span| style_switch_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+    let switch = &switch;
     let mut pieces = Vec::new();
     // A mid-formula style switch in a grid formula is still dropped, as
     // before: grid pieces are laid out in the formula's own style.
@@ -10063,7 +10118,7 @@ fn grid_pieces(
         let mut run: Vec<MathAtom> = Vec::new();
         let flush = |run: &mut Vec<MathAtom>, pieces: &mut Vec<GridPiece>, sink: &mut crate::mathtext::TextSink| {
             if !run.is_empty() {
-                pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class, op_limits, text_italic, text_roman, text_split, ellipsis)));
+                pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class, op_limits, text_italic, text_roman, text_split, ellipsis, switch)));
             }
         };
         for (a, top) in atoms.iter().zip(top_level_grids(atoms, fence)) {
@@ -10094,7 +10149,7 @@ fn grid_pieces(
                             _ => cell,
                         };
                         let parts = split_at_spaces(cell, fence, sink.font_em_ratio(), &|_| None);
-                        let runs = parts.iter().map(|(atoms, _, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class, op_limits, text_italic, text_roman, text_split, ellipsis)).collect();
+                        let runs = parts.iter().map(|(atoms, _, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class, op_limits, text_italic, text_roman, text_split, ellipsis, switch)).collect();
                         let glue = parts.iter().map(|(_, em, _)| *em).collect();
                         (runs, glue)
                     };
@@ -10149,6 +10204,35 @@ fn top_level_grids(atoms: &[flashtex_compiler::math::MathAtom], fence: &dyn Fn(&
         .collect()
 }
 
+/// The index of the first style switch (`\displaystyle` etc., a bare
+/// zero-width `Space` atom re-read at its span) at `list`'s own level and
+/// outside any `\left...\right` pair; see [`convert_math_classed`].
+fn sub_list_style_switch(
+    list: &flashtex_compiler::math::MathList,
+    fence: &dyn Fn(&Span) -> Option<Fence>,
+    switch: &dyn Fn(&Span) -> Option<ml::Style>,
+) -> Option<usize> {
+    use flashtex_compiler::math::Nucleus as N;
+    let mut depth = 0usize;
+    for (k, a) in list.atoms.iter().enumerate() {
+        match &a.nucleus {
+            N::Space { em, .. } if *em == 0.0 && depth == 0 && a.superscript.is_none() && a.subscript.is_none() && switch(&a.span).is_some() => return Some(k),
+            N::Symbol(sym) if sym.chars().count() <= 1 => match fence(&a.span) {
+                Some(Fence::Left) => depth += 1,
+                Some(Fence::Right) => depth = depth.saturating_sub(1),
+                None => {}
+            },
+            N::SizedDelimiter { role, .. } => match role {
+                flashtex_compiler::math::DelimiterRole::Left => depth += 1,
+                flashtex_compiler::math::DelimiterRole::Right => depth = depth.saturating_sub(1),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Splits `list` at its top-level `Space` atoms (outside `\left...\right`
 /// pairs): each entry is a run of atoms and the glue after it in ems
 /// (`None` for the last run). Consecutive spaces sum; a formula without
@@ -10185,6 +10269,10 @@ fn split_at_spaces(
     for (idx, a) in list.atoms.iter().enumerate() {
         match &a.nucleus {
             N::Space { em, .. } if depth == 0 && a.superscript.is_none() && a.subscript.is_none() => {
+                // The run this space closes was set before the switch it
+                // may carry: `$\displaystyle\sum_i a = \textstyle\sum_j b$`
+                // keeps display limits on the first sum (issue #894).
+                let closing = active;
                 if *em == 0.0 && idx > 0 {
                     if let Some(s) = switch(&a.span) {
                         active = Some(s);
@@ -10197,7 +10285,7 @@ fn split_at_spaces(
                         continue;
                     }
                 }
-                out.push((std::mem::take(&mut current), Some(*em), active));
+                out.push((std::mem::take(&mut current), Some(*em), closing));
             }
             N::Symbol(sym) if sym.chars().count() <= 1 => {
                 match fence(&a.span) {
@@ -10281,7 +10369,7 @@ fn math_grids(list: &flashtex_compiler::math::MathList, out: &mut Vec<(usize, us
                 math_grids(denominator, out);
             }
             N::Radical(r) | N::Framed { body: r, .. } | N::Accent { body: r, .. } | N::Group(r) => math_grids(r, out),
-            N::Rule(_) => {}
+            N::Rule(_) | N::Strut | N::Kern(_) => {}
             N::Stacked { base, over, under } => {
                 math_grids(base, out);
                 for part in [over, under].into_iter().flatten() {
@@ -10360,7 +10448,7 @@ fn math_glue_em(list: &flashtex_compiler::math::MathList) -> f64 {
                     math_glue_em(base) + [over, under].into_iter().flatten().map(math_glue_em).sum::<f64>()
                 }
                 N::Matrix { rows, .. } => rows.iter().flatten().map(math_glue_em).sum(),
-                N::Symbol(_) | N::Text(_) | N::Bold(_) | N::SizedDelimiter { .. } | N::Rule(_) => 0.0,
+                N::Symbol(_) | N::Text(_) | N::Bold(_) | N::SizedDelimiter { .. } | N::Rule(_) | N::Strut | N::Kern(_) => 0.0,
                 #[cfg(feature = "amsmath-inline")]
                 N::GenFraction { numerator, denominator, .. } => math_glue_em(numerator) + math_glue_em(denominator),
                 #[cfg(feature = "amsmath-inline")]
@@ -10462,6 +10550,7 @@ fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<S
             // the regular roman face, so it is no longer a math_limitation.
             N::Bold(_) => {}
             N::Rule(_) => out.push("math-mode \\rule set as horizontal space of its width: math-layout has no rule atom, nothing painted".to_string()),
+            N::Strut | N::Kern(_) => {}
             N::Framed { body, .. } => math_approximations(body, out),
             N::Fraction { numerator, denominator } => {
                 math_approximations(numerator, out);

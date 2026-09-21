@@ -522,6 +522,10 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
             Nucleus::Rule(rule) => {
                 rule.hash(h);
             }
+            Nucleus::Strut => {}
+            Nucleus::Kern(pt) => {
+                pt.to_bits().hash(h);
+            }
             Nucleus::Fraction { numerator, denominator } => {
                 hash_math(numerator, h);
                 hash_math(denominator, h);
@@ -848,7 +852,7 @@ fn map_math_spans(list: &mut MathList, f: &mut dyn FnMut(&mut Span)) {
     for a in &mut list.atoms {
         f(&mut a.span);
         match &mut a.nucleus {
-            Nucleus::Symbol(_) | Nucleus::Text(_) | Nucleus::Space { .. } | Nucleus::Bold(_) | Nucleus::SizedDelimiter { .. } | Nucleus::Rule(_) => {}
+            Nucleus::Symbol(_) | Nucleus::Text(_) | Nucleus::Space { .. } | Nucleus::Bold(_) | Nucleus::SizedDelimiter { .. } | Nucleus::Rule(_) | Nucleus::Strut | Nucleus::Kern(_) => {}
             Nucleus::Fraction { numerator, denominator } => {
                 map_math_spans(numerator, f);
                 map_math_spans(denominator, f);
