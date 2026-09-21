@@ -547,7 +547,7 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             }
             map_span(span, changes, deltas)
         }
-        Block::TableOfContents { span } => map_span(span, changes, deltas),
+        Block::TableOfContents { span, .. } => map_span(span, changes, deltas),
         Block::TitleBlock {
             title,
             authors,

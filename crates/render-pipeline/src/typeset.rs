@@ -11315,8 +11315,8 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 ctx.beamer_title_page(&mut blocks, open_frame.as_mut(), title, subtitle, authors, institute, date, *span);
                 after_heading = false;
             }
-            Block::BeamerToc { entries, span } => {
-                ctx.beamer_toc(&mut blocks, open_frame.as_mut(), entries, *span);
+            Block::BeamerToc { entries, current, options, span } => {
+                ctx.beamer_toc(&mut blocks, open_frame.as_mut(), entries, *current, options, *span);
                 after_heading = false;
             }
             // beamer Tier 3 (`typeset::beamer_blocks`): a block's edges

@@ -451,3 +451,47 @@ fn logo_sits_above_the_navigation_symbols() {
     at(&w, 1, "R", 357.262, 263.160, 0.01);
     assert_eq!(run_paint(&r, 1, "R", 263.160), (1.0, 0.0, 0.0));
 }
+
+/// `\tableofcontents` with subsections, and `\AtBeginSection[]` putting
+/// an outline frame with `\tableofcontents[currentsection]` before every
+/// section: pdflatex ships 6 pages (the contents, an outline, two
+/// frames, an outline, a frame). Positions from its content stream,
+/// identical on the three contents pages: sections at x 28.346,
+/// subsections at 44.710 (`\leftskip` 1.5em), baselines 96.679 /
+/// 110.228 / 123.777 / 170.225 / 183.774. On the outlines the other
+/// section and its subsections are shaded (`\showoutput`: `0.84 0.84
+/// 0.94 rg` and `0.8 g`); the current section's subsections are black.
+#[test]
+fn beamer_toc_subsections_and_outline_frames() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{beamer}\n\\AtBeginSection[]{\\begin{frame}\\frametitle{Outline}\\tableofcontents[currentsection]\\end{frame}}\n\\begin{document}\n\\begin{frame}\\frametitle{Contents}\\tableofcontents\\end{frame}\n\\section{Intro}\n\\subsection{Why}\n\\begin{frame}\\frametitle{Why}Text.\\end{frame}\n\\subsection{How}\n\\begin{frame}\\frametitle{How}Text.\\end{frame}\n\\section{Results}\n\\subsection{Speed}\n\\begin{frame}\\frametitle{Speed}Text.\\end{frame}\n\\end{document}\n";
+    let r = render_one(src);
+    assert_eq!(r.v2.pages.len(), 6);
+    let w = words_of(&r);
+    for page in [1, 2, 5] {
+        at(&w, page, "Intro", 28.346, 96.679, 0.01);
+        at(&w, page, "Why", 44.710, 110.228, 0.01);
+        at(&w, page, "How", 44.710, 123.777, 0.01);
+        at(&w, page, "Results", 28.346, 170.225, 0.01);
+        at(&w, page, "Speed", 44.710, 183.774, 0.01);
+    }
+    at(&w, 2, "Outline", 8.504, 21.057, 0.01);
+    at(&w, 3, "Why", 8.504, 21.057, 0.01);
+    at(&w, 6, "Speed", 8.504, 21.057, 0.01);
+    let shaded_section = (0.84, 0.84, 0.94);
+    let close = |a: (f64, f64, f64), b: (f64, f64, f64)| (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6 && (a.2 - b.2).abs() < 1e-6;
+    // The full list: every section in the structure colour, subsections black.
+    assert_eq!(run_paint(&r, 1, "Results", 170.225), (0.2, 0.2, 0.7));
+    assert_eq!(run_paint(&r, 1, "Speed", 183.774), (0.0, 0.0, 0.0));
+    // Page 2 (at `Intro`) shades `Results` and `Speed`.
+    assert_eq!(run_paint(&r, 2, "Intro", 96.679), (0.2, 0.2, 0.7));
+    assert_eq!(run_paint(&r, 2, "Why", 110.228), (0.0, 0.0, 0.0));
+    assert!(close(run_paint(&r, 2, "Results", 170.225), shaded_section), "{:?}", run_paint(&r, 2, "Results", 170.225));
+    assert!(close(run_paint(&r, 2, "Speed", 183.774), (0.8, 0.8, 0.8)));
+    // Page 5 (at `Results`) shades `Intro`, `Why`, `How`.
+    assert!(close(run_paint(&r, 5, "Intro", 96.679), shaded_section));
+    assert!(close(run_paint(&r, 5, "How", 123.777), (0.8, 0.8, 0.8)));
+    assert_eq!(run_paint(&r, 5, "Speed", 183.774), (0.0, 0.0, 0.0));
+}

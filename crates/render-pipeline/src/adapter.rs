@@ -802,12 +802,15 @@ pub enum Block {
     /// (the title in the structure colour), then a closing `\vfill` --
     /// the fills sharing the frame's free height with the frame's own
     /// `[c]` skips. `entries` are the deck's `\section`s (compiler
-    /// `BeamerSection`) in document order; subsection entries (the
-    /// `subsection in toc` template, `\leftskip 1.5em`, no `\vfill` of
-    /// their own) are not set yet. Measured (probe deck `beamer-polish`
-    /// p1, five sections): entries at baselines 73.956, 109.042, 144.128,
-    /// 179.213, 214.299bp (35.086 apart) at x 28.346, CMSS10.
-    BeamerToc { entries: Vec<Vec<Item>>, span: Span },
+    /// `BeamerSection`) and subsections in document order (the
+    /// `subsection in toc` template: `\leftskip 1.5em`, no `\vfill` of
+    /// their own); `current` is `(\c@section, \c@subsection)` where the
+    /// list stands and `options` its `[..]` key list, which shade or hide
+    /// entries relative to it (`typeset::beamer_toc`). Measured (probe
+    /// deck `beamer-polish` p1, five sections): entries at baselines
+    /// 73.956, 109.042, 144.128, 179.213, 214.299bp (35.086 apart) at x
+    /// 28.346, CMSS10.
+    BeamerToc { entries: Vec<BeamerTocEntry>, current: (usize, usize), options: String, span: Span },
     /// beamer `\begin{block}{title}` and friends (compiler
     /// `BeamerBlockBegin`, #944 Tier 3): the blocks up to the matching
     /// [`Block::BeamerBlockEnd`] are the body. `addvspace_before` /
@@ -1146,6 +1149,17 @@ pub struct Doc {
     pub beamer: Option<BeamerDeck>,
 }
 
+/// One line of a beamer contents list: a `\section` (`level` 1) or
+/// `\subsection` (2) with the `\c@section`/`\c@subsection` values it was
+/// written at (`\beamer@sectionintoc{\the\c@section}..`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BeamerTocEntry {
+    pub level: u8,
+    pub section: usize,
+    pub subsection: usize,
+    pub items: Vec<Item>,
+}
+
 /// The short title-block forms a beamer theme's footline sets (compiler
 /// `parser::BeamerDeck`, as items); the theme itself is read from the
 /// preamble by `flashtex_class_geometry` (`Stylesheet::class_geometry`).
@@ -1312,7 +1326,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
         let par_leading = *par_leading;
         let first = match block {
             CBlock::Heading { number_span, .. } => Some(*number_span),
-            CBlock::Verbatim { span, .. } | CBlock::Alltt { span, .. } | CBlock::TableOfContents { span } | CBlock::Rule { span } => Some(*span),
+            CBlock::Verbatim { span, .. } | CBlock::Alltt { span, .. } | CBlock::TableOfContents { span, .. } | CBlock::Rule { span } => Some(*span),
             _ => anchor_span(inlines_of(block)),
         };
         if pending_vfill > 0 {
@@ -1942,18 +1956,37 @@ pub fn adapt_cached(
     // beamer: the contents list is the frame's `Block::BeamerToc`, its
     // entries the deck's `\section`s (compiler `BeamerSection`).
     let toc_active = !style.is_beamer() && commands.iter().any(|c| matches!(c.kind, BodyKind::ContentsList(_)));
-    let beamer_sections: Vec<Vec<Item>> = if style.is_beamer() {
-        parsed
-            .blocks
-            .iter()
-            .filter_map(|b| match b {
-                CBlock::BeamerSection { level: 1, title, .. } => Some(items_for(title, true)),
-                _ => None,
-            })
-            .collect()
+    // Every heading steps its counter (`\refstepcounter`, starred ones
+    // too) but only an unstarred one writes an entry; each contents list
+    // records the counters where it stands, in order.
+    let (beamer_sections, beamer_toc_currents): (Vec<BeamerTocEntry>, Vec<(usize, usize)>) = if style.is_beamer() {
+        let (mut section, mut subsection) = (0usize, 0usize);
+        let mut entries = Vec::new();
+        let mut currents = Vec::new();
+        for b in &parsed.blocks {
+            match b {
+                CBlock::BeamerSection { level: 1, title, number, .. } => {
+                    section += 1;
+                    subsection = 0;
+                    if !number.is_empty() {
+                        entries.push(BeamerTocEntry { level: 1, section, subsection: 0, items: items_for(title, true) });
+                    }
+                }
+                CBlock::BeamerSection { level: 2, title, number, .. } => {
+                    subsection += 1;
+                    if !number.is_empty() {
+                        entries.push(BeamerTocEntry { level: 2, section, subsection, items: items_for(title, true) });
+                    }
+                }
+                CBlock::TableOfContents { .. } => currents.push((section, subsection)),
+                _ => {}
+            }
+        }
+        (entries, currents)
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
+    let mut beamer_toc_index = 0usize;
     let toc_settings = crate::toc::Settings::read(source, has_chapters);
     // `\@sect` writes `\numberline` up to the same `\c@secnumdepth` that
     // decides the printed number; the two are one counter, resolved above.
@@ -2020,7 +2053,7 @@ pub fn adapt_cached(
             UnitKind::Heading { number_span, .. } => Some(*number_span),
             UnitKind::Paragraph { inlines, .. } => anchor_span(inlines.iter()),
             UnitKind::Rule { span } | UnitKind::Letter { span, .. } => Some(*span),
-            UnitKind::FrameBegin { span, .. } | UnitKind::FrameEnd { span } | UnitKind::BeamerTitle { span, .. } | UnitKind::BeamerToc { span } => Some(*span),
+            UnitKind::FrameBegin { span, .. } | UnitKind::FrameEnd { span } | UnitKind::BeamerTitle { span, .. } | UnitKind::BeamerToc { span, .. } => Some(*span),
             UnitKind::BeamerBlockBegin { span, .. }
             | UnitKind::BeamerBlockEnd { span }
             | UnitKind::ColumnsBegin { span, .. }
@@ -2462,8 +2495,10 @@ pub fn adapt_cached(
                 after_heading = false;
                 prev_para_end = None;
             }
-            UnitKind::BeamerToc { span } => {
-                blocks.push(Block::BeamerToc { entries: beamer_sections.clone(), span });
+            UnitKind::BeamerToc { span, options } => {
+                let current = beamer_toc_currents.get(beamer_toc_index).copied().unwrap_or((0, 0));
+                beamer_toc_index += 1;
+                blocks.push(Block::BeamerToc { entries: beamer_sections.clone(), current, options: options.to_string(), span });
                 after_heading = false;
                 prev_para_end = None;
             }
@@ -4270,9 +4305,10 @@ enum UnitKind<'p> {
         block: &'p CBlock,
         span: Span,
     },
-    /// beamer `\tableofcontents` in a frame.
+    /// beamer `\tableofcontents[options]` in a frame.
     BeamerToc {
         span: Span,
+        options: &'p str,
     },
     /// beamer Tier 3 (#944): block edges, column markers, captions.
     BeamerBlockBegin {
@@ -4389,12 +4425,12 @@ fn split_at_page_breaks<'p>(
                 pending_vspace += pt;
                 continue;
             }
-            CBlock::TableOfContents { span } => {
+            CBlock::TableOfContents { span, options } => {
                 // beamer: the contents are a frame's material of their
                 // own (`Block::BeamerToc`), not a spliced contents list.
                 if style.is_beamer() {
                     units.push(Unit {
-                        kind: UnitKind::BeamerToc { span: *span },
+                        kind: UnitKind::BeamerToc { span: *span, options: options.as_str() },
                         eject_before: false,
                         vspace_before: std::mem::take(&mut pending_vspace),
                         addvspace_before: 0.0,

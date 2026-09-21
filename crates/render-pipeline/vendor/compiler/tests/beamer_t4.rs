@@ -185,3 +185,43 @@ fn logo_is_carried_by_the_deck() {
     let article = parse("\\documentclass{article}\n\\begin{document}\n\\logo{X}\n\\end{document}\n");
     assert!(!article.diagnostics.is_empty(), "\\logo outside beamer is unknown");
 }
+
+/// `\AtBeginSection[special]{code}` (`beamerbasesection.sty` 231-237):
+/// every `\section` runs `code` where it stands -- here an outline frame
+/// -- and a starred one runs `special` (empty with `[]`).
+/// `\AtBeginSubsection` likewise for `\subsection`. The hook's frame sits
+/// after the heading's `BeamerSection`, and `\tableofcontents[..]` keeps
+/// its key list under beamer.
+#[test]
+fn at_begin_section_runs_its_hook_at_every_section() {
+    let src = "\\documentclass{beamer}\n\\AtBeginSection[]{\\begin{frame}\\frametitle{Outline}\\tableofcontents[currentsection]\\end{frame}}\n\\AtBeginSubsection{\\begin{frame}Sub hook.\\end{frame}}\n\\begin{document}\n\\section{Intro}\n\\subsection{Why}\n\\begin{frame}A.\\end{frame}\n\\section*{Unlisted}\n\\section{Results}\n\\begin{frame}B.\\end{frame}\n\\end{document}\n";
+    let parsed = parse(src);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let kinds: Vec<String> = parsed
+        .blocks
+        .iter()
+        .map(|b| match b {
+            Block::BeamerSection { level, title, .. } => format!("s{level}:{}", text_of(title)),
+            Block::BeamerFrameBegin { title, .. } => format!("frame:{}", text_of(title)),
+            Block::TableOfContents { options, .. } => format!("toc[{options}]"),
+            Block::Paragraph(inlines) => text_of(inlines),
+            _ => String::new(),
+        })
+        .filter(|k| !k.is_empty())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "s1:Intro", "frame:Outline", "toc[currentsection]", "s2:Why", "frame:", "Sub hook.", "frame:", "A.",
+            "s1:Unlisted", "s1:Results", "frame:Outline", "toc[currentsection]", "frame:", "B."
+        ],
+        "{kinds:?}"
+    );
+    let out = compiled(src);
+    assert!(out.diagnostics.is_empty(), "{:?}", messages(&out));
+    // The compiler's own layout opens with an empty page for a heading
+    // before the first frame (so it does without the hooks); the five
+    // frames are the pages that carry text.
+    let texts: Vec<String> = page_texts(&out).into_iter().filter(|t| !t.is_empty()).collect();
+    assert_eq!(texts, ["Outline Contents", "Sub hook.", "A.", "Outline Contents", "B."], "{texts:?}");
+}

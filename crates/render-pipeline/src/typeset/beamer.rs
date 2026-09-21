@@ -172,6 +172,110 @@ fn recolored(items: &[AItem], color: DeviceColor) -> Vec<AItem> {
         .collect()
 }
 
+/// How a contents entry is set (`beamerbasetoc.sty`
+/// `\beamer@tocaction@show/shaded/hide`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TocShow {
+    Show,
+    Shaded,
+    Hide,
+}
+
+impl TocShow {
+    fn parse(word: &str) -> Option<TocShow> {
+        match word.trim() {
+            "show" => Some(TocShow::Show),
+            "shaded" => Some(TocShow::Shaded),
+            "hide" => Some(TocShow::Hide),
+            _ => None,
+        }
+    }
+}
+
+/// `\tableofcontents[<options>]`'s styles (`beamerbasetoc.sty` 29-62):
+/// `\beamer@toc@cs`/`os` for the current and the other sections, and
+/// `css`/`oss`/`ooss` for the current subsection, the other subsections
+/// of the current section and the subsections of other sections. Keys
+/// this does not know (`pausesections`, `sections=..`, `firstsection`,
+/// `part`, ...) are read past.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct TocStyles {
+    pub current_section: TocShow,
+    pub other_section: TocShow,
+    pub current_subsection: TocShow,
+    pub other_subsection: TocShow,
+    pub other_section_subsection: TocShow,
+}
+
+impl TocStyles {
+    pub(super) fn parse(options: &str) -> TocStyles {
+        let mut st = TocStyles {
+            current_section: TocShow::Show,
+            other_section: TocShow::Show,
+            current_subsection: TocShow::Show,
+            other_subsection: TocShow::Show,
+            other_section_subsection: TocShow::Show,
+        };
+        for key in options.split(',') {
+            let (name, value) = match key.split_once('=') {
+                Some((n, v)) => (n.trim(), v.trim().trim_matches(|c| c == '{' || c == '}')),
+                None => (key.trim(), ""),
+            };
+            match name {
+                "currentsection" => {
+                    st.sections("show/shaded");
+                    st.subsections("show/show/shaded");
+                }
+                "currentsubsection" => st.subsections("show/shaded"),
+                "hideallsubsections" => st.subsections("hide"),
+                "hideothersubsections" => st.subsections("show/show/hide"),
+                "sectionstyle" => st.sections(value),
+                "subsectionstyle" => st.subsections(value),
+                _ => {}
+            }
+        }
+        st
+    }
+
+    /// `\beamer@toc@process`: `a` sets both, `a/b` each.
+    fn sections(&mut self, spec: &str) {
+        let parts: Vec<TocShow> = spec.split('/').filter_map(TocShow::parse).collect();
+        if let Some(&a) = parts.first() {
+            self.current_section = a;
+            self.other_section = parts.get(1).copied().unwrap_or(a);
+        }
+    }
+
+    /// `\beamer@toc@sprocess`: `a` sets all three, `a/b` the current one
+    /// and both others, `a/b/c` each.
+    fn subsections(&mut self, spec: &str) {
+        let parts: Vec<TocShow> = spec.split('/').filter_map(TocShow::parse).collect();
+        if let Some(&a) = parts.first() {
+            let b = parts.get(1).copied().unwrap_or(a);
+            self.current_subsection = a;
+            self.other_subsection = b;
+            self.other_section_subsection = parts.get(2).copied().unwrap_or(b);
+        }
+    }
+}
+
+/// `pct` of `c` over the white page (`colormixin{<pct>!parent.bg}`), in
+/// `c`'s own space: `0.2 0.2 0.7 rg` becomes `0.84 0.84 0.94 rg`, black
+/// `0.8 g`.
+fn mix_into_white(c: DeviceColor, pct: f64) -> DeviceColor {
+    const BILLION: f64 = 1e9;
+    let white_is_zero = matches!(c.space, ColorSpace::Cmyk);
+    let values: Vec<u32> = c
+        .billionths()
+        .iter()
+        .map(|&v| {
+            let white = if white_is_zero { 0.0 } else { BILLION };
+            (f64::from(v) * pct + white * (1.0 - pct)).round() as u32
+        })
+        .collect();
+    DeviceColor::from_billionths(c.space, &values).unwrap_or(c)
+}
+
 /// `items` in `color` where they set no colour of their own
 /// (`\usebeamercolor[fg]{logo}` around `\insertlogo`: an explicit
 /// `\color` inside the logo wins).
@@ -486,30 +590,76 @@ impl<'a> Context<'a> {
     /// and 113-150; `\showoutput` of a three-section probe): `\vspace*
     /// {-.5em}` (a zero `\hrule` that keeps `\prevdepth`, then the skip),
     /// and for every section `\vfill` -- beamer's, `0pt plus 1fill`, the
-    /// same order as the frame's own `[c]` skips -- followed by the
-    /// `section in toc` line (`\hbox{\vbox{<title>\par}}`, structure
-    /// colour, `\normalsize`) under ordinary `\baselineskip` glue, then a
-    /// closing `\vfill`. The fills go into `frame`, whose resolver shares
-    /// the free height between them and the `1fill`/`1.5fill` frame
-    /// skips: five sections give 8.5 units. Measured (probe deck
-    /// `beamer-polish` p1): entries 35.086bp apart from 73.956bp.
-    pub(super) fn beamer_toc(&mut self, blocks: &mut Vec<BuiltBlock>, frame: Option<&mut OpenFrame>, entries: &[Vec<AItem>], span: Span) {
+    /// same order as the frame's own `[c]` skips; `\vskip1.5em` instead
+    /// when the subsections of other sections are hidden -- followed by
+    /// the `section in toc` line (`\hbox{\vbox{<title>\par}}`, structure
+    /// colour, `\normalsize`) under ordinary `\baselineskip` glue; each
+    /// subsection is a `subsection in toc` paragraph (`\leavevmode
+    /// \leftskip=1.5em <title>\par`, the default foreground) under
+    /// ordinary interline glue; then a closing `\vfill`. The fills go into
+    /// `frame`, whose resolver shares the free height between them and the
+    /// `1fill`/`1.5fill` frame skips: five sections give 8.5 units.
+    ///
+    /// `options` shade or hide entries relative to `current` (`(\c@section,
+    /// \c@subsection)` where the list stands; [`TocStyles`]). A shaded
+    /// entry is its colour mixed 20% into the white page (`colormixin
+    /// {20!parent.bg}`: `0.84 0.84 0.94 rg` for a section, `0.8 g` for a
+    /// subsection); a hidden one sets nothing.
+    ///
+    /// Measured (probe deck `beamer-polish` p1): entries 35.086bp apart
+    /// from 73.956bp. With subsections (`\AtBeginSection` probe,
+    /// `\tableofcontents[currentsection]`, `\showoutput`): `Intro` at
+    /// 96.679bp, its subsections at 110.228 and 123.777 and x 44.710
+    /// (`\leftskip` 16.42503pt), `Results` 170.225, `Speed` 183.774.
+    pub(super) fn beamer_toc(&mut self, blocks: &mut Vec<BuiltBlock>, frame: Option<&mut OpenFrame>, entries: &[adapter::BeamerTocEntry], current: (usize, usize), options: &str, span: Span) {
         let s = self.style;
         let width = s.text_width_pt;
         let size = frame_pt(spec::NORMAL.size);
         let bs = frame_pt(spec::NORMAL.baselineskip);
         let em = self.text_params(TextStyle::default(), size).quad;
-        let style = TextStyle { color: Some(structure_color()), ..TextStyle::default() };
+        let styles = TocStyles::parse(options);
         let mut fills: Vec<(usize, f64)> = Vec::new();
         let mut first = true;
         for entry in entries {
-            let items = recolored(entry, structure_color());
-            let Some(mut b) = self.beamer_line(&items, size, style, ParaStyle::FlushLeft, width, 0.0, bs, span) else { continue };
-            // `\vspace*{-.5em}` before the first `\vfill`.
-            b.vertical.space_before = Some((if first { -0.5 * em } else { 0.0 }, 0.0, 0.0));
+            let in_current = entry.section == current.0;
+            let (show, color, indent) = if entry.level == 1 {
+                let st = if in_current { styles.current_section } else { styles.other_section };
+                (st, structure_color(), 0.0)
+            } else {
+                // `\beamer@tocifnothide` tests `css`/`oss`, the action
+                // then takes `css`, `oss` or `ooss`.
+                let check = if in_current { styles.current_subsection } else { styles.other_subsection };
+                let action = if !in_current {
+                    styles.other_section_subsection
+                } else if entry.subsection == current.1 {
+                    styles.current_subsection
+                } else {
+                    styles.other_subsection
+                };
+                let st = if check == TocShow::Hide { TocShow::Hide } else { action };
+                (st, DeviceColor::BLACK, 1.5 * em)
+            };
+            let color = match show {
+                TocShow::Hide => continue,
+                TocShow::Show => color,
+                TocShow::Shaded => mix_into_white(color, 0.2),
+            };
+            let style = TextStyle { color: Some(color), ..TextStyle::default() };
+            let items = recolored(&entry.items, color);
+            let Some(mut b) = self.beamer_line(&items, size, style, ParaStyle::FlushLeft, width - indent, indent, bs, span) else { continue };
+            // `\vspace*{-.5em}` before the first entry.
+            let lead = if first { -0.5 * em } else { 0.0 };
+            if entry.level == 1 && styles.other_section_subsection == TocShow::Hide {
+                // `\vskip1.5em` in place of the section's `\vfill`.
+                b.vertical.space_before = Some((lead + 1.5 * em, 0.0, 0.0));
+            } else {
+                b.vertical.space_before = Some((lead, 0.0, 0.0));
+                if entry.level == 1 {
+                    fills.push((blocks.len(), 1.0));
+                }
+            }
             b.vertical.penalty_before = Some(pagebuild::INF_PENALTY);
             b.vertical.penalty_after = Some(pagebuild::INF_PENALTY);
-            fills.push((blocks.len(), 1.0));
             blocks.push(b);
             first = false;
         }

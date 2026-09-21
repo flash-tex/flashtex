@@ -3,7 +3,7 @@
 These directories are byte-for-byte copies (`git archive <sha>:crates/<name>`)
 of sibling crates at the revisions the pipeline was built against when each
 was last re-pinned. **These are frozen snapshots, not live mirrors**: as of
-this writing every pinned SHA (`compiler` `9f2976f9d` and `tex-expansion` `3cee176e8`,
+this writing every pinned SHA (`compiler` `ba90bb1d1` and `tex-expansion` `3cee176e8`,
 `bibliography` `8a8a22b4`, `math-layout` and `font-engine` `456ff1e6b`
 (from `lane/mathfont`, see their rows), `font-resources`/`project-files`
 `d5440b0`, `pdf` `d5cedcb0a`, `document-style`
@@ -28,7 +28,7 @@ because the siblings depend on each other by `../<name>` path.
 
 | Directory | Branch | Commit | Owner |
 | --- | --- | --- | --- |
-| `compiler` | `main` | `9f2976f9d` (was `b64fff8e6`: beamer's `\logo{..}` stored in `BeamerDeck::logo` for the frames' `sidebar right`; before that `18047e69b`: cite.sty sorted/compressed citations and `\citepunct` glue (`Inline::TextGlue` gains `plus_em`/`minus_em`), the kernel `\cite` separator's `\penalty\@m`, natbib's author list as a group of its own; exported with the archive command in the header, byte-identical to the real crate apart from `PIN`) | compiler lead |
+| `compiler` | `main` | `ba90bb1d1` (was `9f2976f9d`: beamer's `\AtBeginSection`/`\AtBeginSubsection` hooks run at their headings, `Block::TableOfContents::options`; `9f2976f9d` itself added beamer's `\logo{..}` (`BeamerDeck::logo`) over `b64fff8e6`, which over `18047e69b` brought cite.sty sorted/compressed citations and `\citepunct` glue (`Inline::TextGlue` gains `plus_em`/`minus_em`), the kernel `\cite` separator's `\penalty\@m`, natbib's author list as a group of its own; exported with the archive command in the header, byte-identical to the real crate apart from `PIN`) | compiler lead |
 | `font-resources` | `main` | `d5440b0` (crates/font-resources last changed by `5c89501`; shared TFM reader `tfm.rs`/`tfm_run.rs`, `required_tfm.rs`) | commander-corpus |
 | `project-files` | `main` | `d5440b0` (last changed by `d92db37`; `ProjectRoot` for the rooted TFM reads) | project-files owner |
 | `font-engine` | `lane/mathfont` (the math half of the font system; on `main` once the lane is integrated) | `456ff1e6b` (was `f418238`; re-pinned for `\setmathfont`: `02cfec162` gives `MathTable` the `MathVariants` (`vertical_variants`/`horizontal_variants`, `vertical_assembly`/`horizontal_assembly`, `min_connector_overlap`), `MathKernInfo` (`kern(gid, corner, height)`) and `ExtendedShapeCoverage` readers `src/mathfont.rs` now lays OpenType math out from, replacing the pipeline's own `parse_variants`; brings main's `1ff6abc0` (Core14 Symbol U+2223 `afm_char`, its test and Cargo.lock) with it. `git archive 456ff1e6b:crates/font-engine`, byte-identical to the crate apart from `PIN`) | mac-font-engine / lane-mathfont |
