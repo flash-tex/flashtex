@@ -2637,7 +2637,7 @@ pub fn adapt_cached(
                 // paragraph's own unit comes first and takes it.
                 let noindent = initial
                     && noindent_at.take().is_some_and(|end| {
-                        span.document == entry_doc && source.get(end..span.start).is_some_and(|gap| gap.trim().is_empty())
+                        span.document == entry_doc && source.get(end..span.start).is_some_and(noindent_reaches)
                     });
                 // The paragraph path's indent decision verbatim (a picture
                 // carries no run-in head, so that arm is empty).
@@ -2935,7 +2935,7 @@ pub fn adapt_cached(
                 prev_para_end = inlines.iter().map(inline_span).last();
                 // `\noindent` right before the paragraph's first material.
                 let noindent = noindent_at.take().is_some_and(|end| {
-                    first_span.is_some_and(|f| f.document == entry_doc && source.get(end..f.start).is_some_and(|gap| gap.trim().is_empty()))
+                    first_span.is_some_and(|f| f.document == entry_doc && source.get(end..f.start).is_some_and(noindent_reaches))
                 });
                 // `\centering` sets `\parindent 0pt`; a list item's first
                 // paragraph carries no indent and `\list` sets
@@ -3800,6 +3800,68 @@ fn clear_page_blocks(texts: &[&str], blocks: &[Block]) -> Vec<usize> {
             (clear.is_some() && clear > column).then_some(i)
         })
         .collect()
+}
+
+/// Whether a `\noindent` whose source ends where `gap` starts still governs
+/// the paragraph whose first material starts where `gap` ends (#958).
+///
+/// `\noindent` in vertical mode is TeX's `new_graf` without the indent box
+/// (§1091): the paragraph starts right there and everything up to the next
+/// `\par` belongs to it. What sits between the command and the first
+/// material the pipeline sees therefore only matters when it ends that
+/// paragraph: a blank line or an explicit `\par` (the empty paragraph is
+/// discarded, §1096, and the next one is indented as usual), or an
+/// environment boundary (`\begin{center}`, a list, ... start with `\par`).
+/// Anything else is paragraph material that sets nothing before the first
+/// word: group braces, a font or size declaration (`\noindent{\small A}`,
+/// `\noindent\small A`, `\noindent\textbf{A}`), a comment, or the first
+/// argument of a command whose text comes later (`\textcolor{red}{A}`).
+/// Only whitespace used to be accepted, so all of those were indented.
+fn noindent_reaches(gap: &str) -> bool {
+    let bytes = gap.as_bytes();
+    let mut i = 0;
+    // Newlines since the last non-blank character: two make a blank line,
+    // i.e. `\par`. A comment's own line end is skipped with it.
+    let mut newlines = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                i += 1;
+                continue;
+            }
+            b'\n' => {
+                newlines += 1;
+                if newlines >= 2 {
+                    return false;
+                }
+            }
+            b' ' | b'\t' | b'\r' => {}
+            b'\\' => {
+                newlines = 0;
+                let start = i + 1;
+                let mut j = start;
+                while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
+                    j += 1;
+                }
+                if j == start {
+                    // A control symbol (`\,`, `\%`): one character.
+                    i = start + 1;
+                    continue;
+                }
+                if matches!(&gap[start..j], "par" | "begin" | "end") {
+                    return false;
+                }
+                i = j;
+                continue;
+            }
+            _ => newlines = 0,
+        }
+        i += 1;
+    }
+    true
 }
 
 /// The first inline that sits at a real source position: a `\pagestyle` /
