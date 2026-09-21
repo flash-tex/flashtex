@@ -2126,6 +2126,20 @@ impl MathParser<'_> {
                 ams_symbol: None,
                 ..symbol("△".into(), span)
             },
+            // latex.ltx: `\DeclareRobustCommand{\dag}{\ifmmode{\dagger}\else
+            // \textdagger\fi}` (and `\ddag` with `\ddagger`). In math that is
+            // a braced `\dagger`: an ordinary atom around the cmsy Bin mark
+            // (TeX §1186 unpacks only an ordinary one), so `$a\dag b$` sets
+            // no space where `$a\dagger b$` sets a medium one on each side.
+            "dag" | "ddag" => {
+                let glyph = if name == "dag" { "†" } else { "‡" };
+                MathAtom {
+                    nucleus: Nucleus::Group(MathList {
+                        atoms: vec![symbol(glyph.into(), span)],
+                    }),
+                    ..space(0.0, span)
+                }
+            }
             // TeXbook Chapter 17's `\mathbin`/`\mathrel`/... family: the
             // argument is a full math list, boxed as one atom whose class is
             // forced regardless of what its own contents would imply.

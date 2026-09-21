@@ -1070,6 +1070,12 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["dag", "ddag"],
+        "",
+        "latex.ltx `{\\dagger}`/`{\\ddagger}` in math: the cmsy mark as an ordinary atom",
+        true,
+    ),
+    (
         &["mathbf", "textbf"],
         "{text}",
         "literal text in Times-Bold",
