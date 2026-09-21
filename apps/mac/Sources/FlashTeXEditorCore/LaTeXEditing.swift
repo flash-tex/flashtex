@@ -261,58 +261,128 @@ public enum LaTeXEditing {
         }
     }
 
-    // MARK: ⌘] / ⌘[ indent and outdent
+    // MARK: indent and outdent (Mac Tab / ⇧Tab and Vim `>>`; iPad ⌘] / ⌘[)
 
-    /// One `unit` added at the start of every line the selection touches
-    /// (`outdent` false), or up to one `unit` — or a single tab — removed from
-    /// each (`outdent` true). Blank lines are left alone. A caret stays on
-    /// its line, shifted by that line's change; a selection grows to cover
-    /// the touched lines. Nil when nothing would change.
+    /// One text edit in the *original* text's coordinates.
+    public struct LineEdit: Equatable, Sendable {
+        public var range: NSRange
+        public var replacement: String
+        public init(range: NSRange, replacement: String) { self.range = range; self.replacement = replacement }
+    }
+
+    /// UTF-16 offsets of the start of every line `range` touches (at least
+    /// one: the line a caret sits on). A range that ends exactly at the start
+    /// of a following line does not pull that line in (selecting through the
+    /// end of line 1 touches line 1 only). Any line terminator counts.
+    public static func lineStarts(in text: NSString, range: NSRange) -> [Int] {
+        guard range.location >= 0, range.length >= 0, NSMaxRange(range) <= text.length else { return [] }
+        var end = NSMaxRange(range)
+        if range.length > 0, end < text.length, text.lineRange(for: NSRange(location: end, length: 0)).location == end {
+            end -= 1 // ends exactly at the start of a following line: exclude that line
+        }
+        var starts: [Int] = []
+        var loc = text.lineRange(for: NSRange(location: range.location, length: 0)).location
+        while true {
+            starts.append(loc)
+            let lineEnd = NSMaxRange(text.lineRange(for: NSRange(location: loc, length: 0)))
+            if lineEnd > end || lineEnd >= text.length || lineEnd == loc { break }
+            loc = lineEnd
+        }
+        return starts
+    }
+
+    /// One `unit` at the start of every line `range` touches. Across several
+    /// lines, blank (whitespace-only) lines are left alone, so indenting a
+    /// block never leaves trailing whitespace; a caret on a blank line still
+    /// indents that line. Nil when `range` or `unit` is unusable.
+    public static func indentEdits(in text: NSString, range: NSRange, unit: String) -> (edits: [LineEdit], selection: NSRange)? {
+        guard !unit.isEmpty else { return nil }
+        let starts = lineStarts(in: text, range: range)
+        guard let first = starts.first else { return nil }
+        let edits = starts.filter { starts.count == 1 || !isBlankLine(at: $0, in: text) }
+            .map { LineEdit(range: NSRange(location: $0, length: 0), replacement: unit) }
+        return (edits, selectionAfter(edits, range: range, firstLineStart: first))
+    }
+
+    /// Up to one indent level removed from the start of every line `range`
+    /// touches: the `unit` itself, else one leading tab (a tab is one level
+    /// whatever the unit), else, for a spaces unit, up to its width of
+    /// leading spaces. A tab unit never guesses how many spaces a tab is.
+    /// Nil when `range` or `unit` is unusable; an empty (non-nil) `edits`
+    /// means there was nothing to remove.
+    public static func outdentEdits(in text: NSString, range: NSRange, unit: String) -> (edits: [LineEdit], selection: NSRange)? {
+        guard !unit.isEmpty else { return nil }
+        let starts = lineStarts(in: text, range: range)
+        guard let first = starts.first else { return nil }
+        let unitLength = (unit as NSString).length
+        let spaceUnit = unit.allSatisfy { $0 == " " }
+        var edits: [LineEdit] = []
+        for start in starts {
+            var count = 0
+            if start + unitLength <= text.length, text.substring(with: NSRange(location: start, length: unitLength)) == unit {
+                count = unitLength
+            } else if start < text.length, text.character(at: start) == 0x09 {
+                count = 1
+            } else if spaceUnit {
+                while count < unitLength, start + count < text.length, text.character(at: start + count) == 0x20 { count += 1 }
+            }
+            guard count > 0 else { continue }
+            edits.append(LineEdit(range: NSRange(location: start, length: count), replacement: ""))
+        }
+        return (edits, selectionAfter(edits, range: range, firstLineStart: first))
+    }
+
+    /// `indentEdits` / `outdentEdits` as a single replacement of the span
+    /// they touch (the iPad's ⌘] / ⌘[). Nil when nothing would change.
     public static func indent(in text: NSString, selection: NSRange, unit: String, outdent: Bool) -> CommentToggle? {
         let sel = NSRange(location: max(0, min(selection.location, text.length)),
                           length: max(0, min(selection.length, text.length - min(selection.location, text.length))))
-        var start = sel.location
-        while start > 0, text.character(at: start - 1) != 0x0A { start -= 1 }
-        var end = NSMaxRange(sel)
-        if sel.length > 0, end > start, text.character(at: end - 1) == 0x0A { end -= 1 }
-        while end < text.length, text.character(at: end) != 0x0A { end += 1 }
-        let block = text.substring(with: NSRange(location: start, length: end - start))
-        let lines = block.components(separatedBy: "\n")
-        var caretDelta = 0
-        var caretLineStart = start
-        var changed = false
-        var out: [String] = []
-        for line in lines {
-            let lineStart = caretLineStart
-            caretLineStart += (line as NSString).length + 1
-            guard line.contains(where: { $0 != " " && $0 != "\t" }) else { out.append(line); continue }
-            let new: String
-            if outdent {
-                if line.hasPrefix(unit) { new = String(line.dropFirst(unit.count)) }
-                else if line.hasPrefix("\t") { new = String(line.dropFirst()) }
-                else {
-                    let spaces = line.prefix { $0 == " " }
-                    new = String(line.dropFirst(min(spaces.count, unit.count)))
-                }
-            } else {
-                new = unit + line
-            }
-            if new != line { changed = true }
-            out.append(new)
-            if sel.length == 0, lineStart <= sel.location, sel.location < caretLineStart {
-                let delta = (new as NSString).length - (line as NSString).length
-                // The caret never moves before its line's content start.
-                let indentLength = (line.prefix { $0 == " " || $0 == "\t" } as Substring).utf16.count
-                caretDelta = sel.location - lineStart >= indentLength ? delta : max(delta, -(sel.location - lineStart))
+        let plan = outdent ? outdentEdits(in: text, range: sel, unit: unit) : indentEdits(in: text, range: sel, unit: unit)
+        guard let plan, let lo = plan.edits.map(\.range.location).min(),
+              let hi = plan.edits.map({ NSMaxRange($0.range) }).max() else { return nil }
+        let out = NSMutableString(string: text.substring(with: NSRange(location: lo, length: hi - lo)))
+        for edit in plan.edits.sorted(by: { $0.range.location > $1.range.location }) {
+            out.replaceCharacters(in: NSRange(location: edit.range.location - lo, length: edit.range.length), with: edit.replacement)
+        }
+        return CommentToggle(range: NSRange(location: lo, length: hi - lo), replacement: out as String, selection: plan.selection)
+    }
+
+    private static func isBlankLine(at start: Int, in text: NSString) -> Bool {
+        var i = start
+        while i < text.length {
+            switch text.character(at: i) {
+            case 0x20, 0x09: i += 1
+            case 0x0A, 0x0D: return true
+            default: return false
             }
         }
-        guard changed else { return nil }
-        let replacement = out.joined(separator: "\n")
-        let range = NSRange(location: start, length: end - start)
-        let newLength = (replacement as NSString).length
-        let selectionAfter = sel.length == 0
-            ? NSRange(location: max(start, sel.location + caretDelta), length: 0)
-            : NSRange(location: start, length: newLength)
-        return CommentToggle(range: range, replacement: replacement, selection: selectionAfter)
+        return true
+    }
+
+    /// Where `offset` lands once the line-start `edits` are applied: shifted
+    /// by every edit wholly before it, or — inside a run of indentation an
+    /// edit removes — moved to where that run started, so it never slides
+    /// into the line's text or onto the next line.
+    private static func mapped(_ offset: Int, through edits: [LineEdit]) -> Int {
+        var shift = 0
+        for edit in edits.sorted(by: { $0.range.location < $1.range.location }) {
+            if NSMaxRange(edit.range) <= offset {
+                shift += (edit.replacement as NSString).length - edit.range.length
+            } else {
+                if edit.range.location < offset { return edit.range.location + shift }
+                break
+            }
+        }
+        return offset + shift
+    }
+
+    /// The selection after `edits`: a caret stays a caret on its line; a
+    /// selection starts at its first line's start (so it covers the new
+    /// indentation) and its end moves with the text, so a block selected
+    /// through its last newline stays selected through it.
+    private static func selectionAfter(_ edits: [LineEdit], range: NSRange, firstLineStart: Int) -> NSRange {
+        guard range.length > 0 else { return NSRange(location: mapped(range.location, through: edits), length: 0) }
+        let end = mapped(NSMaxRange(range), through: edits)
+        return NSRange(location: firstLineStart, length: max(0, end - firstLineStart))
     }
 }

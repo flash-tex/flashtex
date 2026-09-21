@@ -4,11 +4,10 @@ import Foundation
 /// supported-latex.json`, schema `flashtex-supported-latex/1`) as a
 /// completion vocabulary. Both apps bundle a byte-identical copy of that
 /// file (`apps/mac/scripts/sync-supported-latex.sh` writes both and CI
-/// checks them); this decoder is the iPad's, and mirrors what
-/// `Completion.Vocabulary` in the Mac app derives from the same bytes:
-/// every rendered command once, in the Mac's offer order — text commands
-/// in file order, then math structures, operators and symbols — and the
-/// environments in file order.
+/// checks them); this decoder is both apps' (the Mac's
+/// `Completion.Vocabulary.entries` are built from it): every rendered
+/// command once, in offer order — text commands in file order, then math
+/// structures, operators and symbols — and the environments in file order.
 public struct LaTeXVocabulary: Sendable, Equatable {
     public enum Mode: String, Decodable, Sendable { case text, math }
 
@@ -137,10 +136,18 @@ public struct LaTeXVocabulary: Sendable, Equatable {
     /// text-only commands are out, in text the math-only ones are, and an
     /// unknown mode (nil) hides nothing (the Mac's `Completion.allows`).
     public static func allows(_ command: Command, mathMode: Bool?) -> Bool {
+        allows(name: command.name, mode: command.mode, acceptedInMath: command.mathDescription != nil, mathMode: mathMode)
+    }
+
+    /// The same rule over bare fields, for a caller with its own row type
+    /// (the Mac's `Completion.Vocabulary.Entry`). `acceptedInMath`: the
+    /// compiler also accepts this text command in math (it has a math
+    /// description).
+    public static func allows(name: String, mode: Mode, acceptedInMath: Bool, mathMode: Bool?) -> Bool {
         guard let mathMode else { return true }
-        switch command.mode {
+        switch mode {
         case .math: return mathMode
-        case .text: return !mathMode || command.mathDescription != nil || mathAllowedTextCommands.contains(command.name)
+        case .text: return !mathMode || acceptedInMath || mathAllowedTextCommands.contains(name)
         }
     }
 
@@ -151,7 +158,7 @@ public struct LaTeXVocabulary: Sendable, Equatable {
 
 /// Replacement text plus the caret position inside it and the further
 /// placeholders Tab visits, all UTF-16 offsets into `text` (the Mac's
-/// `Completion.Snippet`).
+/// `Completion.Snippet` is this type).
 public struct LaTeXSnippet: Equatable, Sendable {
     public var text: String
     public var caretUTF16: Int
@@ -163,8 +170,9 @@ public struct LaTeXSnippet: Equatable, Sendable {
     }
 }
 
-/// Snippet rules shared with the Mac's completion (Completion.swift
-/// `argumentSnippet`, `environmentSnippet`, `snippetOverrides`).
+/// Snippet rules both editors call (the Mac's Completion.swift
+/// `argumentSnippet`, `environmentSnippet` and `Vocabulary.Entry.snippet`
+/// forward here).
 public enum LaTeXSnippets {
     /// Whole-snippet overrides for commands whose insertion is not the brace
     /// skeleton of their argument shape.
@@ -177,7 +185,13 @@ public enum LaTeXSnippets {
     /// in the first braces and Tab visits the later ones, then leaves. Nil
     /// when the shape has no braced argument.
     public static func argument(name: String, arguments: String) -> LaTeXSnippet? {
-        if let override = overrides[name] { return override }
+        overrides[name] ?? skeleton(name: name, arguments: arguments)
+    }
+
+    /// `argument` without the overrides: the brace skeleton alone, for
+    /// names outside the vocabulary (the Mac's kernel table and a
+    /// document's own `\newcommand`s).
+    public static func skeleton(name: String, arguments: String) -> LaTeXSnippet? {
         var out = "\\" + name
         var stops: [Int] = []
         var i = arguments.startIndex

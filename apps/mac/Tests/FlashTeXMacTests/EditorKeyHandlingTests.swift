@@ -53,10 +53,13 @@ final class EditorKeyHandlingTests: XCTestCase {
         let text = "    aa\n  bb\ncc\n\tdd"
         let (edits, _) = EKH.outdentEdits(in: text, range: NSRange(location: 0, length: text.utf16.count), unit: "    ")!
         // Line 1: 4 leading spaces, all removed. Line 2: only 2 (< 4), all removed.
-        // Line 3: none, no edit. Line 4: a tab, not a space, no edit (unit is spaces).
-        XCTAssertEqual(edits.count, 2)
+        // Line 3: none, no edit. Line 4: a tab is one indent level whatever the
+        // unit, so it goes too (the shared core's rule, as on the iPad; this
+        // Mac once left a tab-indented line where it was under a spaces unit).
+        XCTAssertEqual(edits.count, 3)
         XCTAssertTrue(edits.contains(EKH.LineEdit(range: NSRange(location: 0, length: 4), replacement: "")))
         XCTAssertTrue(edits.contains(EKH.LineEdit(range: NSRange(location: 7, length: 2), replacement: "")))
+        XCTAssertTrue(edits.contains(EKH.LineEdit(range: NSRange(location: 15, length: 1), replacement: "")))
     }
 
     func testOutdentWithTabUnitRemovesOneLeadingTabOnly() {

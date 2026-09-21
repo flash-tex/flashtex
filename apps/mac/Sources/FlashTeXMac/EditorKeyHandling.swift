@@ -9,34 +9,19 @@ import AppKit
 /// same way a hand-typed `{` already is. LaTeX-aware Re-indent Lines / Document
 /// (⌃I) lives in EditorIndentation.swift so this file stays Tab/Shift-Tab only.
 enum EditorKeyHandling {
-    /// One text-storage edit in the *original* text's coordinates.
-    struct LineEdit: Equatable {
-        var range: NSRange
-        var replacement: String
-    }
+    /// One text-storage edit in the *original* text's coordinates (shared
+    /// with the iPad: FlashTeXEditorCore/LaTeXEditing.swift).
+    typealias LineEdit = LaTeXEditing.LineEdit
 
-    // MARK: line ranges
+    // MARK: line ranges, indent / outdent (FlashTeXEditorCore)
+    //
+    // The line walk and both indentation directions are the shared core's,
+    // so Tab / ⇧Tab here and ⌘] / ⌘[ on the iPad run the same code.
 
-    /// UTF-16 offsets of the start of every line `range` touches (at least
-    /// one — the line a zero-length range/caret sits on). A range that ends
-    /// exactly at the start of a following line does not pull that line in
-    /// (selecting through the end of line 1 only touches line 1).
+    /// UTF-16 offsets of the start of every line `range` touches; see
+    /// `LaTeXEditing.lineStarts`.
     static func lineStarts(in text: String, range: NSRange) -> [Int] {
-        let ns = text as NSString
-        guard range.location >= 0, NSMaxRange(range) <= ns.length else { return [] }
-        var end = NSMaxRange(range)
-        if range.length > 0, end < ns.length, ns.lineRange(for: NSRange(location: end, length: 0)).location == end {
-            end -= 1 // ends exactly at the start of a following line: exclude that line
-        }
-        var starts: [Int] = []
-        var loc = ns.lineRange(for: NSRange(location: range.location, length: 0)).location
-        while true {
-            starts.append(loc)
-            let lineEnd = NSMaxRange(ns.lineRange(for: NSRange(location: loc, length: 0)))
-            if lineEnd > end || lineEnd >= ns.length || lineEnd == loc { break }
-            loc = lineEnd
-        }
-        return starts
+        LaTeXEditing.lineStarts(in: text as NSString, range: range)
     }
 
     /// Whether `range` spans more than one line (a single-line, or empty,
@@ -46,60 +31,14 @@ enum EditorKeyHandling {
         range.length > 0 && lineStarts(in: text, range: range).count > 1
     }
 
-    /// New selection after applying `edits` (each at or before `range`'s
-    /// original end, true for every line-start edit this file produces). A
-    /// caret (no selection) stays a caret, simply shifted by whatever the
-    /// (at most one) edit on its line changed at or before it — indenting at
-    /// a caret must not turn it into a selection. An actual selection snaps
-    /// to cover the touched lines in full, growing/shrinking with them.
-    private static func selectionAfter(_ edits: [LineEdit], range: NSRange, firstLineStart: Int) -> NSRange {
-        guard range.length > 0 else {
-            let delta = edits.reduce(0) { acc, edit in
-                guard NSMaxRange(edit.range) <= range.location else { return acc }
-                return acc + ((edit.replacement as NSString).length - edit.range.length)
-            }
-            return NSRange(location: range.location + delta, length: 0)
-        }
-        let newEnd = edits.reduce(NSMaxRange(range)) { acc, edit in
-            guard NSMaxRange(edit.range) <= NSMaxRange(range) else { return acc }
-            return acc + ((edit.replacement as NSString).length - edit.range.length)
-        }
-        return NSRange(location: firstLineStart, length: max(0, newEnd - firstLineStart))
-    }
-
-    // MARK: indent / outdent
-
-    /// Prefixes `unit` to the start of every line `range` touches (Tab over a
-    /// multi-line selection, or ⌘]). Nil when `range` or `unit` is unusable.
+    /// Tab over a multi-line selection; see `LaTeXEditing.indentEdits`.
     static func indentEdits(in text: String, range: NSRange, unit: String) -> (edits: [LineEdit], selection: NSRange)? {
-        guard !unit.isEmpty else { return nil }
-        let starts = lineStarts(in: text, range: range)
-        guard !starts.isEmpty else { return nil }
-        let edits = starts.map { LineEdit(range: NSRange(location: $0, length: 0), replacement: unit) }
-        return (edits, selectionAfter(edits, range: range, firstLineStart: starts[0]))
+        LaTeXEditing.indentEdits(in: text as NSString, range: range, unit: unit)
     }
 
-    /// Removes up to one indent unit's worth of leading whitespace from the
-    /// start of every line `range` touches (Shift-Tab, or ⌘[): the longest
-    /// run (up to `unit.count`) of `unit`'s repeated character found at that
-    /// line's start. A line with no matching leading whitespace contributes
-    /// no edit. Nil only when `range`/`unit` is unusable; an empty (but
-    /// non-nil) `edits` array means nothing was there to remove.
+    /// ⇧Tab; see `LaTeXEditing.outdentEdits`.
     static func outdentEdits(in text: String, range: NSRange, unit: String) -> (edits: [LineEdit], selection: NSRange)? {
-        guard let first = unit.first else { return nil }
-        let starts = lineStarts(in: text, range: range)
-        guard !starts.isEmpty else { return nil }
-        let ns = text as NSString
-        var edits: [LineEdit] = []
-        for start in starts {
-            var count = 0
-            while count < unit.count, start + count < ns.length, ns.character(at: start + count) == first.utf16.first {
-                count += 1
-            }
-            guard count > 0 else { continue }
-            edits.append(LineEdit(range: NSRange(location: start, length: count), replacement: ""))
-        }
-        return (edits, selectionAfter(edits, range: range, firstLineStart: starts[0]))
+        LaTeXEditing.outdentEdits(in: text as NSString, range: range, unit: unit)
     }
 
     // MARK: duplicate line (⌥⇧↓ / ⌥⇧↑)

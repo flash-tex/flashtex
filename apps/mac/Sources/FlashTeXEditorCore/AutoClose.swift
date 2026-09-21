@@ -1,10 +1,9 @@
 import Foundation
 
 /// The auto-close discipline of the source editor as pure decisions, so the
-/// iPad's `UITextViewDelegate` and the Mac's `NSTextViewDelegate` agree on
-/// what a keystroke does (the Mac coordinator in SourceEditorView.swift is
-/// the reference: `autoClose(after:)`, `pendingCloserCompleted`,
-/// `deleteBackward` and `shiftPendingClosers`).
+/// iPad's `UITextViewDelegate` (EditorController.swift) and the Mac's
+/// `NSTextViewDelegate` (SourceEditorView.swift's coordinator) make the same
+/// decision for a keystroke by calling the same code.
 ///
 /// The caller keeps the list of *pending closers*: UTF-16 offsets of the
 /// units an auto-close inserted and the user has not typed over or edited
@@ -21,12 +20,13 @@ public enum AutoClose {
     /// is escaped, in a comment or `\verb`, followed by a word, or a `$` that
     /// closes math already open in its paragraph.
     ///
-    /// Order matters and matches the Mac: `\left(` (math only) before `\(`,
-    /// before the plain pair.
-    public static func closer(afterTyping opener: Character, in text: String, caretUTF16: Int, mathMode: Bool,
+    /// Order matters: `\left(` (math only) before `\(`, before the plain
+    /// pair. `mathMode` is evaluated only for a `\left` opener, so a caller
+    /// whose mode lookup costs a scan pays for it only then.
+    public static func closer(afterTyping opener: Character, in text: String, caretUTF16: Int, mathMode: @autoclosure () -> Bool,
                               pairs: Set<Character> = conventionalPairs) -> String? {
-        if "([{|.".contains(opener), pairs.contains("("), mathMode,
-           let leftRight = BraceMatcher.leftRightCloser(in: text, caretUTF16: caretUTF16) {
+        if "([{|.".contains(opener), pairs.contains("("),
+           let leftRight = BraceMatcher.leftRightCloser(in: text, caretUTF16: caretUTF16), mathMode() {
             return leftRight
         }
         if opener == "(" || opener == "[", pairs.contains("("),

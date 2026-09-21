@@ -52,14 +52,10 @@ enum Completion {
         var sampleFamily: String? = nil
     }
 
-    /// Replacement text plus the caret position inside it, in UTF-16 units.
-    struct Snippet: Equatable {
-        let text: String
-        let caretUTF16: Int
-        /// Further placeholders (UTF-16 offsets into `text`, in Tab order,
-        /// after the caret's); the editor visits them with Tab / ⇧Tab.
-        var stops: [Int] = []
-    }
+    /// Replacement text plus the caret position inside it and the further
+    /// Tab stops, in UTF-16 units: the shared core's type, so a snippet the
+    /// iPad builds is the Mac's value too (FlashTeXEditorCore/LaTeXVocabulary.swift).
+    typealias Snippet = LaTeXSnippet
 
     static let maxSuggestions = 12
 
@@ -74,7 +70,8 @@ enum Completion {
     /// every rendered command is offered exactly once. Nothing here is
     /// written by hand except the snippet overrides.
     enum Vocabulary {
-        enum Mode: String, Equatable, Decodable { case text, math }
+        /// The shared core's mode (text or math), so the math filter is one rule.
+        typealias Mode = LaTeXVocabulary.Mode
 
         /// The inventory's `origin`: which compiler table accepts the command.
         enum Origin: String, Equatable, Decodable {
@@ -139,8 +136,7 @@ enum Completion {
             /// braces (`\section{|}`, `\frac{|}{}`, `\newcommand{|}{}`).
             /// Nil for commands without a braced argument.
             var snippet: Completion.Snippet? {
-                if let override = Vocabulary.snippetOverrides[name] { return override }
-                return Completion.argumentSnippet(name: name, arguments: arguments)
+                LaTeXSnippets.argument(name: name, arguments: arguments)
             }
             var detail: String {
                 switch mode {
@@ -160,10 +156,8 @@ enum Completion {
         static let argumentOverrides: [String: String] = [:]
 
         /// Whole-snippet overrides for commands whose insertion is not the
-        /// brace skeleton of their argument shape.
-        static let snippetOverrides: [String: Completion.Snippet] = [
-            "left": Completion.Snippet(text: "\\left( \\right)", caretUTF16: 6, stops: [14]),
-        ]
+        /// brace skeleton of their argument shape (shared with the iPad).
+        static let snippetOverrides: [String: Completion.Snippet] = LaTeXSnippets.overrides
 
         // MARK: the inventory
 
@@ -212,16 +206,39 @@ enum Completion {
             static let resourceExtension = "json"
         }
 
+        /// The bundled inventory's bytes, read once at first use; nil (logged)
+        /// when the resource is missing.
+        private static let inventoryData: Data? = {
+            do {
+                return try loadInventoryData()
+            } catch {
+                FlashTeXLog.write("completion: supported-latex.json unavailable: \(error)")
+                return nil
+            }
+        }()
+
         /// The bundled inventory, decoded once at first use. A missing or
         /// unreadable resource is logged and yields an empty vocabulary (the
         /// editor keeps working; `make-app.sh` and the tests refuse such a
         /// build).
         static let inventory: Inventory = {
             do {
-                return try decodeInventory(loadInventoryData())
+                if let inventoryData { return try decodeInventory(inventoryData) }
             } catch {
-                FlashTeXLog.write("completion: supported-latex.json unavailable: \(error)")
-                return Inventory(schema: Inventory.schema, generator: "", compilerVersion: "", commands: [], environments: [])
+                FlashTeXLog.write("completion: supported-latex.json unreadable: \(error)")
+            }
+            return Inventory(schema: Inventory.schema, generator: "", compilerVersion: "", commands: [], environments: [])
+        }()
+
+        /// The same bytes through the shared core's decoder: the command
+        /// rows, their order and the math descriptions the iPad offers.
+        static let shared: LaTeXVocabulary = {
+            guard let inventoryData else { return .empty }
+            do {
+                return try LaTeXVocabulary(inventoryData: inventoryData)
+            } catch {
+                FlashTeXLog.write("completion: supported-latex.json unreadable: \(error)")
+                return .empty
             }
         }()
 
@@ -263,25 +280,15 @@ enum Completion {
         /// A command the compiler accepts in both modes is one text entry
         /// carrying the math description; `control_symbol` contributes only
         /// `\\` (the math spacing symbols `\,` `\;` … are not completed).
-        static let entries: [Entry] = buildEntries(from: inventory)
-
-        static func buildEntries(from inventory: Inventory) -> [Entry] {
-            let rendered = inventory.commands.filter(\.renders)
-            let mathDescriptions = Dictionary(rendered.filter { $0.mode == .math }.map { ($0.name, $0.description) }, uniquingKeysWith: { a, _ in a })
-            var out: [Entry] = []
-            var seen = Set<String>()
-            func add(_ c: Inventory.Command, mathDescription: String? = nil) {
-                guard seen.insert(c.name).inserted else { return }
-                out.append(Entry(name: c.name, arguments: argumentOverrides[c.name] ?? c.arguments, description: c.description,
-                                 mode: c.mode, origin: c.origin, glyph: c.glyph, mathDescription: mathDescription,
-                                 requiresClass: c.requiresClass))
-            }
-            for c in rendered where c.mode == .text && c.origin != .controlSymbol { add(c, mathDescription: mathDescriptions[c.name]) }
-            for c in rendered where c.origin == .controlSymbol && c.name == "\\" { add(c) }
-            for origin in [Origin.mathStructure, .mathOperator, .mathSymbol] {
-                for c in rendered where c.origin == origin { add(c) }
-            }
-            return out
+        ///
+        /// The shared core decides the rows and their order
+        /// (`LaTeXVocabulary(inventoryData:)`), so the Mac and the iPad offer
+        /// the same commands in the same order; only `argumentOverrides` is
+        /// applied on top here.
+        static let entries: [Entry] = shared.commands.map { c in
+            Entry(name: c.name, arguments: argumentOverrides[c.name] ?? c.arguments, description: c.description,
+                  mode: c.mode, origin: Origin(rawValue: c.origin) ?? .textDispatch, glyph: c.glyph,
+                  mathDescription: c.mathDescription, requiresClass: c.requiresClass)
         }
 
         /// `math_symbol` commands with the glyph the compiler renders, in file order.
@@ -328,26 +335,10 @@ enum Completion {
     /// in the first braces and Tab visits the later ones, then leaves. Nil
     /// when the shape has no braced argument. The rule behind the
     /// vocabulary's snippets (`Vocabulary.Entry.snippet`), the kernel's
-    /// (`CommandDocs.kernel`) and a declared macro's (`Declaration.snippet`).
+    /// (`CommandDocs.kernel`) and a declared macro's (`Declaration.snippet`);
+    /// the shared core's `LaTeXSnippets.skeleton`, as on the iPad.
     static func argumentSnippet(name: String, arguments: String) -> Snippet? {
-        var out = "\\" + name
-        var stops: [Int] = []
-        var i = arguments.startIndex
-        while i < arguments.endIndex {
-            let c = arguments[i]
-            if c == "[" {
-                i = arguments[i...].firstIndex(of: "]").map(arguments.index(after:)) ?? arguments.endIndex
-            } else if c == "{" {
-                out += "{"
-                stops.append((out as NSString).length)
-                out += "}"
-                i = arguments[i...].firstIndex(of: "}").map(arguments.index(after:)) ?? arguments.endIndex
-            } else {
-                i = arguments.index(after: i)
-            }
-        }
-        guard let caret = stops.first else { return nil }
-        return Snippet(text: out, caretUTF16: caret, stops: Array(stops.dropFirst()) + [(out as NSString).length])
+        LaTeXSnippets.skeleton(name: name, arguments: arguments)
     }
 
     static let defaultSupported: [String] = Vocabulary.names
@@ -799,7 +790,7 @@ enum Completion {
     /// inside `equation`/`align`/`$…$`, so the math filter keeps them: the
     /// label/reference family (`\label{eq:main}` lives inside the
     /// environment it names) and `\\` (the row break of every math grid).
-    static let mathAllowedTextCommands: Set<String> = ["label", "ref", "eqref", "pageref", "\\"]
+    static let mathAllowedTextCommands: Set<String> = LaTeXVocabulary.mathAllowedTextCommands
 
     /// Whether the vocabulary entry belongs in the list at the caret's mode:
     /// in math (`true`) the text-only commands are out, in text (`false`) the
@@ -807,11 +798,7 @@ enum Completion {
     /// the compiler accepts in both modes (`\textbf`, `\quad`) is one text
     /// entry carrying a math description, so it stays either way.
     static func allows(_ entry: Vocabulary.Entry, mathMode: Bool?) -> Bool {
-        guard let mathMode else { return true }
-        switch entry.mode {
-        case .math: return mathMode
-        case .text: return !mathMode || entry.mathDescription != nil || mathAllowedTextCommands.contains(entry.name)
-        }
+        LaTeXVocabulary.allows(name: entry.name, mode: entry.mode, acceptedInMath: entry.mathDescription != nil, mathMode: mathMode)
     }
 
     private static func commandSuggestions(prefix: String, tokenStart: Int, text: String, metadata: Metadata?,
@@ -1118,41 +1105,9 @@ enum Completion {
     /// caret after it; `\item[] ` in a description, with the caret inside
     /// the brackets and a stop after them). Offsets are UTF-16 into the
     /// inserted text, which starts right after the `\begin{` the user typed.
+    /// The shared core's `LaTeXSnippets.environment`, as on the iPad.
     static func environmentSnippet(_ name: String, indent: String, unit: String = "", rules: EnvironmentEditingRules = .conventional) -> Snippet {
-        let nl = "\n" + indent
-        let body = rules.indentsBody(of: name) ? unit : ""
-        let base = name.hasSuffix("*") ? String(name.dropLast()) : name
-        var lines: [String]
-        switch base {
-        case "figure": lines = ["\(name)}", "\\centering", "\\includegraphics[width=0.8\\linewidth]{⟨⟩}", "\\caption{⟨⟩}", "\\label{fig:⟨⟩}", "\\end{\(name)}"]
-        case "table": lines = ["\(name)}", "\\centering", "\\begin{tabular}{⟨⟩}", "\\end{tabular}", "\\caption{⟨⟩}", "\\label{tab:⟨⟩}", "\\end{\(name)}"]
-        default:
-            // The line template with a placeholder inside its first empty
-            // group (`\item[⟨⟩] ⟨⟩`) or after it (`\item ⟨⟩`).
-            let template = rules.newLineText(in: name)
-            let at = EnvironmentEditingRules.caretOffset(in: template)
-            let ns = template as NSString
-            var middle = ns.substring(to: at) + "⟨⟩" + ns.substring(from: at)
-            if at < ns.length { middle += "⟨⟩" }
-            lines = ["\(name)}", middle, "\\end{\(name)}"]
-        }
-        // Placeholders `⟨⟩` become stops (removed from the text). Body lines
-        // (all but the first and last) sit one unit in.
-        var out = ""
-        var stops: [Int] = []
-        for (i, line) in lines.enumerated() {
-            if i > 0 { out += nl }
-            if i > 0, i < lines.count - 1 { out += body }
-            var rest = Substring(line)
-            while let r = rest.range(of: "⟨⟩") {
-                out += rest[..<r.lowerBound]
-                stops.append((out as NSString).length)
-                rest = rest[r.upperBound...]
-            }
-            out += rest
-        }
-        let caret = stops.first ?? (out as NSString).length
-        return Snippet(text: out, caretUTF16: caret, stops: Array(stops.dropFirst()) + [(out as NSString).length])
+        LaTeXSnippets.environment(name, indent: indent, unit: unit, rules: rules)
     }
 
     /// One candidate for `\label{`: a key derived from the enclosing

@@ -986,9 +986,11 @@ struct SourceEditorView: NSViewRepresentable {
             // `\right)`) is stepped over only by the keystroke that completes it:
             // its terminal unit, typed after its other units were typed by hand
             // (#932: a lone `\` opens a command, it never eats the closer's `\`).
+            // The decision is the shared core's (`AutoClose.overtypePrefix`), as on the iPad.
             if !pairing, programmaticChanges == 0, let replacementString, range.length == 0, replacementString.count == 1,
                !textView.hasMarkedText(),
-               let prefix = pendingCloserCompleted(by: replacementString, at: range.location, in: textView) {
+               let prefix = AutoClose.overtypePrefix(typing: replacementString, at: range.location,
+                                                     in: textView.string as NSString, pending: pendingClosers) {
                 if prefix > 0 {
                     // The hand-typed units before the caret duplicate the closer's:
                     // drop them so the buffer reads as if the closer was stepped over.
@@ -1009,7 +1011,7 @@ struct SourceEditorView: NSViewRepresentable {
                 announceMatch(in: textView)
                 return false // nothing more changes: the caret stepped over the closer
             }
-            shiftPendingClosers(edit: range, replacementLength: replacementLength)
+            pendingClosers = AutoClose.shifted(pendingClosers, edit: range, replacementLength: replacementLength)
             (textView as? CompletingTextView)?.noteFoldEdit(range, replacementLength: replacementLength)
             refreshFoldGutter(rescan: false)
             if !pairing, programmaticChanges == 0 {
@@ -1036,10 +1038,8 @@ struct SourceEditorView: NSViewRepresentable {
             guard commandSelector == #selector(NSResponder.deleteBackward(_:)), !pairing, programmaticChanges == 0,
                   !textView.hasMarkedText() else { return false }
             let caret = textView.selectedRange()
-            guard caret.length == 0, caret.location >= 1, pendingClosers.contains(caret.location),
-                  (textView.textStorage?.length ?? 0) > caret.location else { return false }
-            let pair = (textView.string as NSString).substring(with: NSRange(location: caret.location - 1, length: 2))
-            guard pair.count == 2, let opener = pair.first, BraceMatcher.closer(for: opener) == pair.last else { return false }
+            guard caret.length == 0,
+                  AutoClose.backspaceRemovesPair(at: caret.location, in: textView.string as NSString, pending: pendingClosers) else { return false }
             // Its own undo step: without breaking coalescing AppKit folds a
             // programmatic range deletion into the open typing group and undoes
             // more than the pair (observed: the preceding text vanished too).
@@ -1051,39 +1051,6 @@ struct SourceEditorView: NSViewRepresentable {
             lastEdit = nil
             commitUserChange(textView, edit: nil)
             return true
-        }
-
-        /// The number of hand-typed units before `caret` that, with `typed`,
-        /// complete the auto-inserted closer whose units are pending from
-        /// `caret`; nil when `typed` completes nothing. `0` is the plain case:
-        /// `typed` is a single-unit closer (`}`) sitting at the caret. For
-        /// `\]`/`\)`/`\right)` the keystroke must be the terminal unit and
-        /// the units before it must already precede the caret — `\[\alpha` +
-        /// `\` inserts a backslash, then `]` steps over the whole `\]`.
-        private func pendingCloserCompleted(by typed: String, at caret: Int, in textView: NSTextView) -> Int? {
-            guard let unit = typed.first, !BraceMatcher.isClosingUnitOpener(unit) else { return nil }
-            let text = textView.string as NSString
-            var k = 0
-            while pendingClosers.contains(caret + k), caret + k < text.length {
-                if text.substring(with: NSRange(location: caret + k, length: 1)) == typed {
-                    guard caret >= k else { return nil }
-                    let handTyped = text.substring(with: NSRange(location: caret - k, length: k))
-                    let units = text.substring(with: NSRange(location: caret, length: k))
-                    return handTyped == units ? k : nil
-                }
-                k += 1
-            }
-            return nil
-        }
-
-        private func shiftPendingClosers(edit range: NSRange, replacementLength: Int) {
-            guard !pendingClosers.isEmpty else { return }
-            let delta = replacementLength - range.length
-            pendingClosers = pendingClosers.compactMap { closer in
-                if NSMaxRange(range) <= closer { return closer + delta } // edit before it: shifts
-                if range.location > closer { return closer } // edit after it: unchanged
-                return nil // overlapped: the closer is gone
-            }
         }
 
         private func noteTypingStep() {
@@ -1173,36 +1140,19 @@ struct SourceEditorView: NSViewRepresentable {
             guard let edit, edit.range.length == 0, edit.replacement.count == 1, let opener = edit.replacement.first else { return }
             let caret = NSRange(location: edit.range.location + (edit.replacement as NSString).length, length: 0)
             guard tv.selectedRange() == caret else { return }
-            // `\left(` → `\right)` (and `[`, `\{`, `|`, `.`), owner-enabled by
-            // `(` and only in math mode: every unit of the closer is typed over,
-            // so `\right)` typed by hand lands exactly where it already is.
-            if "([{|.".contains(opener), parent.autoClosePairs.contains("("),
-               let leftRight = BraceMatcher.leftRightCloser(in: SourceEditorView.nativeText(of: tv), caretUTF16: caret.location),
-               mathMode(at: caret.location, in: tv) == true {
-                pairing = true
-                tv.insertText(leftRight, replacementRange: caret)
-                tv.setSelectedRange(caret)
-                pairing = false
-                pendingClosers += (0..<(leftRight as NSString).length).map { caret.location + $0 }
-                return
-            }
-            // `\(` → `\)`, `\[` → `\]` (owner-enabled by `(`): both halves of the closer are typed over.
-            if opener == "(" || opener == "[", parent.autoClosePairs.contains("("),
-               let math = BraceMatcher.mathCloser(in: SourceEditorView.nativeText(of: tv), caretUTF16: caret.location) {
-                pairing = true
-                tv.insertText(math, replacementRange: caret)
-                tv.setSelectedRange(caret)
-                pairing = false
-                pendingClosers += [caret.location, caret.location + 1]
-                return
-            }
-            guard parent.autoClosePairs.contains(opener), let closer = BraceMatcher.closer(for: opener) else { return }
-            guard BraceMatcher.autoCloseAllowed(in: SourceEditorView.nativeText(of: tv), caretUTF16: caret.location) else { return }
+            // `\left(` → `\right)` (math only), `\(` → `\)`, `\[` → `\]` (all
+            // owner-enabled by `(`), else the plain pair: the shared core's
+            // decision (`AutoClose.closer`), as on the iPad. Every unit of the
+            // closer is pending, so `\right)` typed by hand lands where it is.
+            // The mode scan runs only for a `\left` opener.
+            guard let closer = AutoClose.closer(afterTyping: opener, in: SourceEditorView.nativeText(of: tv), caretUTF16: caret.location,
+                                                mathMode: self.mathMode(at: caret.location, in: tv) == true,
+                                                pairs: parent.autoClosePairs) else { return }
             pairing = true
-            tv.insertText(String(closer), replacementRange: caret)
+            tv.insertText(closer, replacementRange: caret)
             tv.setSelectedRange(caret)
             pairing = false
-            pendingClosers.append(caret.location)
+            pendingClosers += (0..<(closer as NSString).length).map { caret.location + $0 }
         }
 
         func textWasReset() {
