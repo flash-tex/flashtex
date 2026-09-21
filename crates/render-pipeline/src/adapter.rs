@@ -275,6 +275,9 @@ pub enum Item {
     Underline(Box<UnderlineItem>),
     /// `\textsuperscript`/`\textsubscript` (compiler `Inline::TextScript`).
     TextScript(Box<TextScriptItem>),
+    /// A plain `\hbox` at its natural width (compiler `Inline::HBox`:
+    /// `\mbox`, text-mode `\text`, a kernel `\cite` label).
+    HBox(Box<HBoxItem>),
     /// A beamer overlay marker (compiler `Inline::OverlayBegin`/
     /// `OverlayEnd`/`Onslide`): no material. `crate::overlay::expand_frames`
     /// reads and removes them when it sets a frame once per slide; the
@@ -379,6 +382,14 @@ pub struct ColorBoxItem {
 pub struct UnderlineItem {
     pub thickness_pt: f64,
     pub geom: UnderlineGeom,
+    pub items: Vec<Item>,
+    pub span: Span,
+}
+
+/// A plain `\hbox{...}` (see [`Item::HBox`]): `items` set as one line at
+/// their natural width (`typeset::Context::plain_hbox`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HBoxItem {
     pub items: Vec<Item>,
     pub span: Span,
 }
@@ -3535,6 +3546,7 @@ fn math_colors(blocks: &[flashtex_compiler::parser::Block]) -> std::collections:
                 Inline::Underline(u) => walk(&u.content, out),
                 Inline::TextScript(t) => walk(&t.content, out),
                 Inline::Phantom(p) => walk(&p.content, out),
+                Inline::HBox(b) => walk(&b.content, out),
                 _ => {}
             }
         }
@@ -3584,6 +3596,7 @@ fn item_source_span(item: &Item) -> Option<Span> {
         Item::ColorBox(b) => Some(b.span),
         Item::Underline(u) => Some(u.span),
         Item::TextScript(t) => Some(t.span),
+        Item::HBox(b) => Some(b.span),
         Item::Lap { items } => {
             let mut spans = items.iter().filter_map(item_source_span);
             let first = spans.next()?;
@@ -3663,6 +3676,7 @@ fn marginpar_from(items: &[Item], entry: usize, at: usize) -> bool {
         Item::ColorBox(b) => marginpar_from(&b.items, entry, at),
         Item::Underline(u) => marginpar_from(&u.items, entry, at),
         Item::TextScript(t) => marginpar_from(&t.items, entry, at),
+        Item::HBox(b) => marginpar_from(&b.items, entry, at),
         Item::Footnote { text, .. } => text.as_ref().is_some_and(|t| marginpar_from(t, entry, at)),
         Item::Table(t) => t.entries.iter().any(|e| match e {
             crate::table::TableEntry::Row { cells, .. } => cells.iter().any(|c| marginpar_from(&c.items, entry, at)),
@@ -3903,6 +3917,7 @@ fn inline_span(i: &Inline) -> Span {
         Inline::Underline(u) => u.span,
         Inline::TextScript(t) => t.span,
         Inline::Phantom(p) => p.span,
+        Inline::HBox(b) => b.span,
         Inline::Graphic(g) => g.span,
         Inline::Transform(t) => t.span,
         // Nodes only a re-pinned compiler emits; all of them carry the
@@ -10840,6 +10855,9 @@ fn items_cached(
             Inline::Phantom(p) => {
                 format!("{p:?}").hash(&mut h);
             }
+            Inline::HBox(b) => {
+                format!("{b:?}").hash(&mut h);
+            }
             Inline::Logo { logo, style, .. } => {
                 logo.hash(&mut h);
                 style.hash(&mut h);
@@ -10926,6 +10944,43 @@ fn items_cached(
     let items = items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     cache.insert_adapted(key, crate::incremental::AdaptedBlock { items: items.clone(), base: start });
     items
+}
+
+/// The blanks just inside an `\\hbox`'s braces (`\\mbox{ lead}`,
+/// `\\mbox{trail }`). TeX keeps both: restricted horizontal mode appends a
+/// space token as interword glue wherever it stands, so pdfTeX's box is
+/// `glue, lead` and `trail, glue`. The compiler's content starts at its
+/// first word and ends at its last, so the list built from it has neither;
+/// they are read from the source between the braces and the content. The
+/// glue is the adjacent word's font's, the trailing one at the space factor
+/// that word leaves (`\\mbox{end. }` is a sentence space).
+fn hbox_edge_spaces(src: &str, span: Span, content: &[Inline], items: &mut Vec<Item>) {
+    let (Some(first), Some(last)) = (content.first().map(inline_span), content.last().map(inline_span)) else {
+        return;
+    };
+    let inside = |s: Span| s.document == span.document && s.start >= span.start && s.end <= span.end;
+    if !inside(first) || !inside(last) || span.end == 0 || src.as_bytes().get(span.end - 1) != Some(&b'}') {
+        return;
+    }
+    let blank = |g: Option<&str>| g.is_some_and(|g| !g.is_empty() && g.chars().all(|c| c == ' ' || c == '\t' || c == '\n' || c == '\r'));
+    let open = src.get(span.start..first.start).and_then(|s| s.rfind('{')).map(|i| span.start + i + 1);
+    if let (Some(open), Some(Item::Word(w))) = (open, items.first()) {
+        if blank(src.get(open..first.start)) {
+            if let Some(seg) = w.segments.first() {
+                let style = seg.style;
+                items.insert(0, Item::Space { style, factor: 1000, no_break: false });
+            }
+        }
+    }
+    if let Some(Item::Word(w)) = items.last() {
+        if blank(src.get(last.end..span.end - 1)) {
+            if let Some(seg) = w.segments.last() {
+                let style = seg.style;
+                let factor = w.segments.iter().flat_map(|s| s.text.chars()).fold(1000, |f, ch| space_factor(ch, f));
+                items.push(Item::Space { style, factor, no_break: false });
+            }
+        }
+    }
 }
 
 /// Converts the compiler inlines into words, spaces, math and line breaks.
@@ -11222,6 +11277,22 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     items: content,
                     span,
                 })));
+                prev_end = Some(span.end);
+                prev_span = Some(span);
+                factor = 1000;
+            }
+            // A plain `\hbox` (compiler `Inline::HBox`): `\leavevmode\hbox`,
+            // one box like a `\colorbox` without the colour.
+            Inline::HBox(b) => {
+                let span = b.span;
+                let gap = space_between(prev_end, prev_span, span, None, after_control_word);
+                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                push_gap(&mut items, gap, gap_style, factor);
+                after_control_word = false;
+                let mut content = items_from_inlines_styled(texts, &b.content, styles, labels, size, heading, compiler_weight, false);
+                hbox_edge_spaces(text_of(span.document), span, &b.content, &mut content);
+                items.push(Item::HBox(Box::new(HBoxItem { items: content, span })));
                 prev_end = Some(span.end);
                 prev_span = Some(span);
                 factor = 1000;

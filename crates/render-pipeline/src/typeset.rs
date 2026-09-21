@@ -130,6 +130,8 @@ pub enum BoxRec {
     Underline(Rc<UnderlineRec>),
     /// `\textsuperscript`/`\textsubscript` (`Context::text_script_box`).
     TextScript(Rc<TextScriptRec>),
+    /// A plain `\hbox` (`Context::plain_hbox`).
+    HBox(Rc<HBoxRec>),
     /// `\includegraphics` in running text (`Context::graphic_box`): the
     /// image (or its `draft`/`demo` placeholder) in a box of the graphicx
     /// size, its bottom on the baseline.
@@ -202,6 +204,18 @@ pub struct TextScriptRec {
     pub height: f64,
     pub depth: f64,
     pub raise: f64,
+    pub span: Span,
+}
+
+/// A laid-out plain `\hbox` (`\mbox`, a kernel citation label): the
+/// content as one line at its natural width, placed from the box's left
+/// edge on the line's baseline.
+#[derive(Clone)]
+pub struct HBoxRec {
+    pub block: BuiltBlock,
+    pub width: f64,
+    pub height: f64,
+    pub depth: f64,
     pub span: Span,
 }
 
@@ -1977,6 +1991,9 @@ impl<'a> Context<'a> {
         // `\mathrm{...}` against the operator names: under beamer's sans
         // math the one is roman and the others sans.
         let text_roman = |sp: &Span| math_text_is_mathrm(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+        // `\mbox{...}` against `\text{...}`: the one is set at the text size
+        // in every math style (see `math_text_box_of`).
+        let text_box = |sp: &Span| math_text_box_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // `\limsup`/`\liminf`: `lim`, a thin space, then `sup`/`inf`.
         let text_split = |sp: &Span| operator_thin_space_split(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // `\ldots`/`\cdots`: `\mathinner` of three Punct dots.
@@ -1998,7 +2015,7 @@ impl<'a> Context<'a> {
         // source-derived facts above.
         let switch = |sp: &Span| style_switch_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         let segments = split_at_spaces(list, &fence, sink.font_em_ratio(), &switch);
-        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits, &text_italic, &text_roman, &text_split, &ellipsis, &switch)).collect();
+        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits, &text_italic, &text_roman, &text_box, &text_split, &ellipsis, &switch)).collect();
         // Glue at a top-level grid cell's own top level is split out like
         // the formula's; only deeper glue is dropped.
         let nested_glue_em: f64 = segments
@@ -3826,6 +3843,10 @@ impl<'a> Context<'a> {
                 }
                 AItem::TextScript(ts) => {
                     let (run, rec) = self.text_script_box(ts, size);
+                    push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
+                }
+                AItem::HBox(hb) => {
+                    let (run, rec) = self.plain_hbox(hb, size);
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                 }
                 AItem::Kern { amount, style } => {
@@ -6940,6 +6961,27 @@ impl<'a> Context<'a> {
         (run, self.recs.len() - 1)
     }
 
+    /// A plain `\hbox{...}`: `hb.items` as one unbreakable line at their
+    /// natural width (TeX §649, no `to`/`spread`), height and depth those
+    /// of its content.
+    ///
+    /// `hbox_block` ends its list as a paragraph does, dropping trailing
+    /// glue (§1096); an `\hbox` keeps it (`\mbox{trail }`), so trailing
+    /// spaces are measured here and added to the width.
+    fn plain_hbox(&mut self, hb: &adapter::HBoxItem, size: f64) -> (pl::GlyphRun, usize) {
+        let body = hb.items.iter().rposition(|i| !matches!(i, AItem::Space { .. })).map_or(0, |i| i + 1);
+        let (block, mut width, height, depth) = self.hbox_block(&hb.items[..body], size);
+        for item in &hb.items[body..] {
+            if let AItem::Space { style, factor, .. } = item {
+                let style = merge_style(TextStyle::default(), *style);
+                width += self.space_glue(style, style.size_or(size), *factor).width;
+            }
+        }
+        self.recs.push(BoxRec::HBox(Rc::new(HBoxRec { block, width, height, depth, span: hb.span })));
+        let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height, depth, source: hb.span.start..hb.span.end };
+        (run, self.recs.len() - 1)
+    }
+
     /// ulem `\uline`/`\sout` or kernel `\underline`: content as an `\hbox`,
     /// rule placed by `ul.geom`. `\uline` keeps the 0.25em-top / 0.4pt path.
     fn underline_box(&mut self, ul: &adapter::UnderlineItem, size: f64) -> (pl::GlyphRun, usize) {
@@ -8369,6 +8411,7 @@ impl<'a> Context<'a> {
                     BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
                     BoxRec::TextScript(t) => Some(t.span),
+                    BoxRec::HBox(b) => Some(b.span),
                     BoxRec::Graphic(g) => Some(g.span),
                     BoxRec::Paths(p) => Some(p.span),
                     BoxRec::Discretionary { .. } => None,
@@ -8775,7 +8818,7 @@ pub fn convert_math_fenced(list: &flashtex_compiler::math::MathList, sink: &mut 
     // No source to read, so no source-derived fact: no fence, no forced
     // class, no operator limits, and no run shown to be a whole run of math
     // characters (so no italic correction).
-    convert_math_classed(list, sink, fence, &|_| None, &|_| None, &|_| false, &|_| false, &|_| None, &|_| None, &|_| None)
+    convert_math_classed(list, sink, fence, &|_| None, &|_| None, &|_| false, &|_| false, &|_| None, &|_| None, &|_| None, &|_| None)
 }
 
 /// Maps the compiler's own atom class onto math-layout's.
@@ -8966,6 +9009,47 @@ pub fn math_text_keeps_italic(text: &str, at: usize) -> bool {
 /// Whether the `Nucleus::Text` atom whose span starts at `at` is a
 /// `\mathrm{...}` run (re-read from the control word, like
 /// [`math_text_keeps_italic`]).
+/// Which text box a math `Nucleus::Text`/`TextRun` atom is, re-read from
+/// the control word at its span like [`math_text_is_mathrm`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MathTextBox {
+    /// `\mbox{...}`/`\hbox{...}`: an `\hbox` of the current text font,
+    /// which does not change size with the math style.
+    Kernel,
+    /// A `\DeclareTextFontCommand` (`\textrm`, `\textit`, `\emph`, ...):
+    /// `\nfss@text`, which is `{\mbox{#1}}` in the kernel (latex.ltx
+    /// `ltfntcmd.dtx`) and amsmath's `\text` once amstext is loaded
+    /// (`amstext.sty`: `\let\nfss@text\text`).
+    FontCommand,
+}
+
+/// A text atom as the box its command makes: an `\hbox` of the text
+/// font ([`MathTextBox::Kernel`], and a font command without amstext) is
+/// set at the text size whatever the math style, so `x_{\mbox{max}}` is
+/// 10pt text where `x_{\text{max}}` is 7pt: the atom is laid out in
+/// `\textstyle` (a `Styled` Ord, the ordinary atom TeX makes of a box,
+/// §1076). Everything else is returned as it is.
+fn fixed_text_size(atom: ml::Atom, text_box: Option<MathTextBox>, amstext: bool) -> ml::Atom {
+    match text_box {
+        Some(MathTextBox::Kernel) => {}
+        Some(MathTextBox::FontCommand) if !amstext => {}
+        _ => return atom,
+    }
+    ml::Atom::styled(ml::Style::TEXT, ml::MathList::new(vec![atom]))
+}
+
+/// See [`MathTextBox`]; `None` for everything else (`\text`, operator
+/// names, `\mathrm`, ...).
+pub fn math_text_box_of(text: &str, at: usize) -> Option<MathTextBox> {
+    let rest = text.get(at..)?.strip_prefix('\\')?;
+    let name: &str = &rest[..rest.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(rest.len())];
+    match name {
+        "mbox" | "hbox" => Some(MathTextBox::Kernel),
+        "textrm" | "textsf" | "texttt" | "textmd" | "textbf" | "textup" | "textit" | "textsl" | "textsc" | "textnormal" | "emph" => Some(MathTextBox::FontCommand),
+        _ => None,
+    }
+}
+
 pub fn math_text_is_mathrm(text: &str, at: usize) -> bool {
     text.get(at..).is_some_and(|r| r.strip_prefix("\\mathrm").is_some_and(|t| !t.starts_with(|c: char| c.is_ascii_alphabetic())))
 }
@@ -9116,6 +9200,7 @@ pub fn convert_math_classed(
     op_limits: &dyn Fn(&Span) -> Option<ml::Limits>,
     text_italic: &dyn Fn(&Span) -> bool,
     text_roman: &dyn Fn(&Span) -> bool,
+    text_box: &dyn Fn(&Span) -> Option<MathTextBox>,
     text_split: &dyn Fn(&Span) -> Option<(&'static str, &'static str)>,
     ellipsis: &dyn Fn(&Span) -> Option<MathDots>,
     switch: &dyn Fn(&Span) -> Option<ml::Style>,
@@ -9132,7 +9217,7 @@ pub fn convert_math_classed(
     if let Some(k) = sub_list_style_switch(list, fence, switch) {
         let style = switch(&list.atoms[k].span).expect("found by sub_list_style_switch");
         let convert = |atoms: &[flashtex_compiler::math::MathAtom], sink: &mut crate::mathtext::TextSink| {
-            convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.to_vec() }, sink, fence, class, op_limits, text_italic, text_roman, text_split, ellipsis, switch)
+            convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.to_vec() }, sink, fence, class, op_limits, text_italic, text_roman, text_box, text_split, ellipsis, switch)
         };
         let mut out = convert(&list.atoms[..k], sink);
         let rest = convert(&list.atoms[k + 1..], sink);
@@ -9150,7 +9235,7 @@ pub fn convert_math_classed(
         &list.atoms
     };
     for a in list_atoms {
-        let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class, op_limits, text_italic, text_roman, text_split, ellipsis, switch);
+        let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class, op_limits, text_italic, text_roman, text_box, text_split, ellipsis, switch);
         let mut out: Vec<ml::Atom> = match &a.nucleus {
             // `\ldots`/`\cdots` and the amsmath spellings: TeX's
             // `\mathinner{\ldotp\ldotp\ldotp}` (`math_ellipsis_of`). The
@@ -9255,7 +9340,7 @@ pub fn convert_math_classed(
                     atom.class = ml::AtomClass::Op;
                     atom.limits = limits;
                 }
-                vec![atom]
+                vec![fixed_text_size(atom, text_box(&a.span), sink.amsmath)]
             }
             // Glue inside a sub-formula (`\operatorname*{arg\,max}`, `\;`
             // inside `\left...\right`): math-layout's `Glue` atom, which
@@ -9710,7 +9795,11 @@ pub fn convert_math_classed(
                             // `\check@icr`: a slanted font's run takes its
                             // italic correction unless `.` or `,` follows
                             // (`\nocorrlist`).
-                            let nocorr = matches!(pieces.get(i + 1), Some(TextPiece::Text { text: next, .. }) if next.starts_with(['.', ',']));
+                            // A font command met in math is `\nfss@text{\itshape
+                            // ...}` (latex.ltx `\DeclareTextFontCommand`): its
+                            // math branch has no `\check@icr`.
+                            let nocorr = matches!(pieces.get(i + 1), Some(TextPiece::Text { text: next, .. }) if next.starts_with(['.', ',']))
+                                || text_box(&a.span) == Some(MathTextBox::FontCommand);
                             let atom = match text_piece_key(*style) {
                                 None => sink.atom(text),
                                 Some(key) => sink.atom_in_hbox(text, key, key.slanted() && !nocorr),
@@ -9720,7 +9809,7 @@ pub fn convert_math_classed(
                         TextPiece::Math(list) => ml::TextPiece::Math(sub(list, sink)),
                     });
                 }
-                vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::TextRun(out))]
+                vec![fixed_text_size(ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::TextRun(out)), text_box(&a.span), sink.amsmath)]
             }
             // `\sideset{_a^b}{_c^d}\sum`: the left pair hangs off an empty
             // box before the operator, which is what math-layout's
@@ -10148,6 +10237,8 @@ fn grid_pieces(
     let text_italic = &text_italic;
     let text_roman = |sp: &Span| math_text_is_mathrm(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
     let text_roman = &text_roman;
+    let text_box = |sp: &Span| math_text_box_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+    let text_box = &text_box;
     let text_split = |sp: &Span| operator_thin_space_split(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
     let text_split = &text_split;
     let ellipsis = |sp: &Span| math_ellipsis_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
@@ -10161,7 +10252,7 @@ fn grid_pieces(
         let mut run: Vec<MathAtom> = Vec::new();
         let flush = |run: &mut Vec<MathAtom>, pieces: &mut Vec<GridPiece>, sink: &mut crate::mathtext::TextSink| {
             if !run.is_empty() {
-                pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class, op_limits, text_italic, text_roman, text_split, ellipsis, switch)));
+                pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class, op_limits, text_italic, text_roman, text_box, text_split, ellipsis, switch)));
             }
         };
         for (a, top) in atoms.iter().zip(top_level_grids(atoms, fence)) {
@@ -10192,7 +10283,7 @@ fn grid_pieces(
                             _ => cell,
                         };
                         let parts = split_at_spaces(cell, fence, sink.font_em_ratio(), &|_| None);
-                        let runs = parts.iter().map(|(atoms, _, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class, op_limits, text_italic, text_roman, text_split, ellipsis, switch)).collect();
+                        let runs = parts.iter().map(|(atoms, _, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class, op_limits, text_italic, text_roman, text_box, text_split, ellipsis, switch)).collect();
                         let glue = parts.iter().map(|(_, em, _)| *em).collect();
                         (runs, glue)
                     };
@@ -12190,6 +12281,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
                     BoxRec::TextScript(t) => Some(t.span),
+                    BoxRec::HBox(b) => Some(b.span),
                     BoxRec::Graphic(g) => Some(g.span),
                     BoxRec::Paths(p) => Some(p.span),
                     BoxRec::Discretionary { .. } => None,
@@ -12755,6 +12847,7 @@ pub fn assemble_windowed(
                     BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
                     BoxRec::TextScript(t) => Some(t.span),
+                    BoxRec::HBox(b) => Some(b.span),
                     BoxRec::Graphic(g) => Some(g.span),
                     BoxRec::Paths(p) => Some(p.span),
                     BoxRec::Discretionary { .. } => None,
@@ -13179,6 +13272,22 @@ fn assemble_block(
                             provenance: provenance_of(ul.span, source_of),
                         }));
                     }
+                }
+                BoxRec::HBox(hb) => {
+                    let a = assemble_block(&hb.block, recs, maths, 0.0, source_of, paths, empty, covered);
+                    let dx = Tick::from_tex_pt(local.x);
+                    for line_items in &a.lines {
+                        for it in line_items {
+                            let mut item = incremental::place_item(it, Tick(0), "", 0);
+                            display::shift_x(&mut item, dx);
+                            items.push(item);
+                        }
+                    }
+                    for f in a.faces {
+                        used.entry(f.font_id.clone()).or_insert(f);
+                    }
+                    resources.extend(a.resources);
+                    unmapped.extend(a.unmapped);
                 }
                 BoxRec::TextScript(ts) => {
                     let a = assemble_block(&ts.block, recs, maths, 0.0, source_of, paths, empty, covered);

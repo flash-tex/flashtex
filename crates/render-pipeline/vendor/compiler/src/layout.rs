@@ -1526,6 +1526,7 @@ impl LayoutCursor {
                 // scratch box, so widths and extents fold in exactly as if
                 // the content stood alone.
                 Inline::ColorBox(b) => self.measure_into(m, &b.content, size, font),
+                Inline::HBox(b) => self.measure_into(m, &b.content, size, font),
                 Inline::Transform(b) => {
                     self.diagnostics.push(
                         Diagnostic::warning(
@@ -3753,6 +3754,7 @@ fn visit_inline_references(inlines: &[Inline], visitor: &mut impl FnMut(&str, Sp
                 }
             }
             Inline::Transform(b) => visit_inline_references(&b.content, visitor),
+            Inline::HBox(b) => visit_inline_references(&b.content, visitor),
             Inline::Underline(u) => visit_inline_references(&u.content, visitor),
             Inline::TextScript(t) => visit_inline_references(&t.content, visitor),
             _ => {}
@@ -4004,6 +4006,7 @@ fn content_descender_depth(inlines: &[Inline], size: f64) -> f64 {
             Inline::ColorBox(b) => has_descender(&b.content),
             Inline::Underline(u) => has_descender(&u.content),
             Inline::Transform(b) => has_descender(&b.content),
+            Inline::HBox(b) => has_descender(&b.content),
             _ => false,
         })
     }
@@ -4233,6 +4236,9 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
             } => c.place(text.clone(), size, *span, Font::Courier, *space_before),
             // The Core 14 layout has no box model: the content is set inline.
             Inline::ColorBox(b) => emit(c, &b.content, size, font),
+            // This layout splices boxes (compare `ColorBox`); the render
+            // pipeline sets an `\hbox` as one unbreakable box.
+            Inline::HBox(b) => emit(c, &b.content, size, font),
             // This Core 14 layout reads no image files and has no transformed
             // boxes; the rendering pipeline sets both (`crate::graphics`).
             Inline::Graphic(g) => c.diagnostics.push(
