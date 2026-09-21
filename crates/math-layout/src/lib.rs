@@ -30,7 +30,7 @@ pub use boxes::{
     PositionedGlyph, PositionedRule, PositionedRuns, positioned_runs,
 };
 pub use cm::CmMathMetrics;
-pub use layout::{Layout, Limitation, layout, layout_with_report};
+pub use layout::{Layout, Limitation, Neighbours, layout, layout_in_context, layout_with_report};
 pub use mathlist::{
     Atom, AtomClass, BigSizing, LeftScripts, Limits, MathFlex, MathList, Nucleus, TextPiece,
     TextStyle,

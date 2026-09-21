@@ -46,11 +46,41 @@ pub fn layout(list: &MathList, style: Style, metrics: &dyn MathFontMetrics) -> M
 
 /// [`layout`] plus the list of limitations hit along the way.
 pub fn layout_with_report(list: &MathList, style: Style, metrics: &dyn MathFontMetrics) -> Layout {
+    layout_in_context(list, style, metrics, Neighbours::default())
+}
+
+/// The noads on either side of a list that is one run of a longer formula
+/// (a caller that cuts a formula at its top-level glue and lays the runs
+/// out separately). TeX classifies the whole formula at once, and glue is
+/// not a noad, so Rules 5 and 6 see across the cut: in `\dots\,+b` the `+`
+/// follows an Inner and stays Bin, spaced on both sides.
+///
+/// `before` is the class the last noad before the run ended with (after
+/// Rules 5 and 6, as [`effective_classes`] gives it for the whole formula);
+/// `after` is the class the first noad after the run was given (its own,
+/// before any rule). `None` is the formula's edge. The default is a whole
+/// formula.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Neighbours {
+    pub before: Option<AtomClass>,
+    pub after: Option<AtomClass>,
+}
+
+/// [`layout_with_report`] for one run of a longer formula (see
+/// [`Neighbours`]). The run's own inter-atom spacing is set; the spacing
+/// between the run and its neighbours is the caller's, as it lays the
+/// glue between them.
+pub fn layout_in_context(
+    list: &MathList,
+    style: Style,
+    metrics: &dyn MathFontMetrics,
+    neighbours: Neighbours,
+) -> Layout {
     let mut engine = Engine {
         m: metrics,
         limitations: Vec::new(),
     };
-    let root = engine.list(list, style);
+    let root = engine.list_in(list, style, neighbours);
     Layout {
         root,
         limitations: engine.limitations,
@@ -64,6 +94,13 @@ struct Engine<'a> {
 
 /// Rules 5 and 6: Bin atoms that cannot be binary become Ord.
 pub fn effective_classes(atoms: &[Atom]) -> Vec<AtomClass> {
+    effective_classes_in(atoms, Neighbours::default())
+}
+
+/// [`effective_classes`] of one run of a longer formula: a Bin first in the
+/// run is judged against `neighbours.before`, and a Bin last in it against
+/// `neighbours.after`, instead of the list's edge.
+pub fn effective_classes_in(atoms: &[Atom], neighbours: Neighbours) -> Vec<AtomClass> {
     use AtomClass::*;
     let mut out: Vec<AtomClass> = Vec::with_capacity(atoms.len());
     // Index in `out` of the last noad; glue is skipped like TeX's `r_type`.
@@ -76,7 +113,10 @@ pub fn effective_classes(atoms: &[Atom]) -> Vec<AtomClass> {
         }
         match class {
             Bin => {
-                let prev = last.map(|i| out[i]);
+                let prev = match last {
+                    Some(i) => Some(out[i]),
+                    None => neighbours.before,
+                };
                 if matches!(prev, None | Some(Bin | Op | Rel | Open | Punct)) {
                     class = Ord;
                 }
@@ -93,8 +133,10 @@ pub fn effective_classes(atoms: &[Atom]) -> Vec<AtomClass> {
         out.push(class);
         last = Some(out.len() - 1);
     }
+    // Rule 6 against the next noad, or the end of the formula.
     if let Some(i) = last
         && out[i] == Bin
+        && matches!(neighbours.after, None | Some(Rel | Close | Punct))
     {
         out[i] = Ord;
     }
@@ -180,8 +222,13 @@ impl Engine<'_> {
 
     /// `mlist_to_hlist`: box every atom, then insert spacing (Rule 20).
     fn list(&mut self, list: &MathList, style: Style) -> MathBox {
-        let (atoms, pairs) = self.make_ords(&list.atoms, style);
-        let classes = effective_classes(&atoms);
+        self.list_in(list, style, Neighbours::default())
+    }
+
+    /// [`Engine::list`] for one run of a longer formula ([`Neighbours`]).
+    fn list_in(&mut self, list: &MathList, style: Style, neighbours: Neighbours) -> MathBox {
+        let (atoms, pairs) = self.make_ords(&list.atoms, style, neighbours.before);
+        let classes = effective_classes_in(&atoms, neighbours);
         let mu = self.params(style).mu();
         let mut items: Vec<MathBox> = Vec::with_capacity(atoms.len() * 2);
         let mut prev: Option<AtomClass> = None;
@@ -244,14 +291,16 @@ impl Engine<'_> {
         &self,
         atoms: &'l [Atom],
         style: Style,
+        before: Option<AtomClass>,
     ) -> (Cow<'l, [Atom]>, Vec<Option<OrdPair>>) {
         use AtomClass::*;
         let size = style.size_class();
         let mut atoms = Cow::Borrowed(atoms);
         let mut pairs = Vec::with_capacity(atoms.len());
         // TeX's `r_type`: the class of the last noad after Rule 5 (glue is
-        // not a noad).
-        let mut r_type: Option<AtomClass> = None;
+        // not a noad), across the cut when the list is one run of a longer
+        // formula.
+        let mut r_type: Option<AtomClass> = before;
         // A `|=:|>>` ligature's inserted character is a `math_text_char`:
         // `make_ord` skips it, and it loses its italic correction in a text
         // font like any character followed by one of its family.
