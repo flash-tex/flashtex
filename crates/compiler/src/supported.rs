@@ -586,6 +586,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("hfil", "", "infinite-stretch horizontal glue (same order as \\hfill)"),
     ("qedhere", "", "amsthm end-of-proof box on this line, flush right; the automatic box at \\end{proof} is suppressed"),
     ("hspace", "{dimension}", "fixed horizontal space; starred form identical"),
+    ("ensuremath", "{math}", "the argument as inline math (latex.ltx: `$...$` when not already in math mode)"),
     ("hskip", "<glue>", "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll"),
     ("quad", "", "1em of horizontal space"),
     ("qquad", "", "2em of horizontal space"),
@@ -1204,6 +1205,58 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (&["begin"], "{env}", "opens a math grid environment", true),
+    // Issue #846: kernel and amsmath commands the real-document corpus
+    // dropped in math mode.
+    (
+        &["backslash"],
+        "",
+        "the \\setminus glyph as an ordinary symbol (fontmath.ltx \\mathord at cmsy \"6E)",
+        true,
+    ),
+    (
+        &["vert", "Vert"],
+        "",
+        "single/double bar as an ordinary symbol (fontmath.ltx \\mathord)",
+        true,
+    ),
+    (
+        &["lvert", "lVert"],
+        "",
+        "amsmath opening single/double bar (\\mathopen: no glue after it)",
+        true,
+    ),
+    (
+        &["rvert", "rVert"],
+        "",
+        "amsmath closing single/double bar (\\mathclose: no glue before it)",
+        true,
+    ),
+    (&["ensuremath"], "{math}", "the argument itself (already in math mode)", true),
+    (
+        &["mkern", "mskip"],
+        "<mu glue>",
+        "math glue in mu (1/18 of the symbol font's quad); plus/minus stretch is read and dropped",
+        true,
+    ),
+    (
+        &["medspace", "thickspace", "negmedspace", "negthickspace"],
+        "",
+        "amsmath 4mu/5mu glue and their negatives (\\tmspace); undefined without amsmath",
+        true,
+    ),
+    (
+        &["thinspace", "negthinspace"],
+        "",
+        "kernel .16667em text-font kern, or 3mu once amsmath rebinds them",
+        true,
+    ),
+    (&["hdots"], "", "amsmath alias of \\ldots (baseline dots)", true),
+    (
+        &["rm", "bf", "it", "sf", "tt", "cal", "mit"],
+        "",
+        "LaTeX 2.09 font switch: the rest of the current group as \\mathrm/\\mathbf/\\mathit/\\mathsf/\\mathtt/\\mathcal/\\mathnormal (\\DeclareOldFontCommand's math branch)",
+        true,
+    ),
 ];
 
 /// Control symbols the lexer or math reader turns into something other than
