@@ -39,11 +39,20 @@ pub struct FontConfig {
 }
 
 /// The metric directories that live under a font tree's `texmf`, in the order
-/// `fonts.rs` wants them: Latin Modern first, then EC, then the AMS symbol and
-/// Euler sets.
+/// `fonts.rs` wants them: Latin Modern first, then EC, then Knuth's OT1 `cm*`
+/// set, then the AMS symbol and Euler sets.
+///
+/// This list has to follow `FontSet::tfm_dirs_for`: the harness builds its set
+/// with `with_dirs`, which discovers nothing, so a metric directory the product
+/// finds but this list omits turns every case that needs it into a
+/// `ec_metrics_unavailable` refusal. That is what happened when c716d6040 set
+/// OT1 documents in `cmr10`/`cmss10`: the four generated cases and every
+/// real-world fixture without `fontenc` dropped out of the gate as
+/// "unmeasured" and their digests stopped being checked.
 const TEXMF_METRIC_DIRS: &[&str] = &[
     "texmf/fonts/tfm/public/lm",
     "texmf/fonts/tfm/jknappen/ec",
+    "texmf/fonts/tfm/public/cm",
     "texmf/fonts/tfm/public/amsfonts/symbols",
     "texmf/fonts/tfm/public/amsfonts/euler",
 ];

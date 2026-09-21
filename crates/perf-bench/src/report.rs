@@ -572,7 +572,16 @@ pub fn gate(baseline: &Report, now: &Report, tolerance_pct: f64) -> GateOutcome 
 
     for b in &baseline.cases {
         let Some(n) = now.cases.iter().find(|c| c.id == b.id) else {
-            o.warnings.push(format!("{}: in the baseline but not in this run", b.id));
+            // Not selected (`--only`) is a legitimate absence. Selected and
+            // then refused is not: the case's digests went unchecked, which
+            // is how the OT1 cases dropped out of the gate unnoticed after
+            // c716d6040 (the harness did not list `public/cm`). A refusal of
+            // a baseline case fails the gate like a changed digest does.
+            if let Some((_, why)) = now.unmeasured.iter().find(|(id, _)| *id == b.id) {
+                o.digest_mismatches.push(format!("{}: in the baseline but refused by this run, so its output was not checked: {why}", b.id));
+            } else {
+                o.warnings.push(format!("{}: in the baseline but not in this run", b.id));
+            }
             continue;
         };
         for (k, want) in &b.digests {

@@ -152,6 +152,23 @@ fn a_changed_output_digest_fails_even_when_everything_got_faster() {
 }
 
 #[test]
+fn a_baseline_case_refused_by_the_run_fails_but_one_not_selected_only_warns() {
+    let base = report_of(vec![
+        case("refused", &[("cold.render_ms", 10.0, 0.01)], "aa"),
+        case("skipped", &[("cold.render_ms", 10.0, 0.01)], "aa"),
+    ]);
+    let mut now = report_of(Vec::new());
+    now.unmeasured.push(("refused".into(), "font diagnostics in a benchmarked render".into()));
+    let o = report::gate(&base, &now, 5.0);
+    // A case the font gate refused had its output go unchecked: that must
+    // not pass silently. A case left out with --only is just not this run's.
+    assert_eq!(o.digest_mismatches.len(), 1);
+    assert!(o.digest_mismatches[0].starts_with("refused:"));
+    assert!(o.warnings.iter().any(|w| w.starts_with("skipped: in the baseline but not in this run")));
+    assert!(report::gate_failed(&o, true));
+}
+
+#[test]
 fn timings_from_a_different_host_are_reported_but_not_enforced() {
     let mut base = report_of(vec![case("c", &[("cold.render_ms", 10.0, 0.01)], "aa")]);
     base.meta[0].1 = json::str_("macos/aarch64/other/10cpu");
