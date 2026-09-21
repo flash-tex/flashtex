@@ -430,6 +430,7 @@ fn take_lead(body: &mut Block, head: &mut Block, texts: &[&str], range: Range, s
         addvspace_flex: b_addflex,
         vspace_flex: b_vflex,
         endlist_adjust: b_endlist,
+        penalty_before: b_penalty,
         ..
     } = body
     else {
@@ -455,6 +456,8 @@ fn take_lead(body: &mut Block, head: &mut Block, texts: &[&str], range: Range, s
         lead_vflex,
         std::mem::replace(b_endlist, 0.0),
     );
+    // `\@endparenv`'s penalty stands where the skips do, before the head.
+    let penalty = b_penalty.take();
     match head {
         Block::Paragraph {
             eject_before: h_eject,
@@ -463,8 +466,10 @@ fn take_lead(body: &mut Block, head: &mut Block, texts: &[&str], range: Range, s
             addvspace_flex: h_addflex,
             vspace_flex: h_vflex,
             endlist_adjust: h_endlist,
+            penalty_before: h_penalty,
             ..
         } => {
+            *h_penalty = penalty;
             *h_eject = eject;
             *h_vspace = vspace;
             *h_addvspace = addvspace;
@@ -632,6 +637,7 @@ fn page_head_block(texts: &[&str], document: usize, range: Range) -> Block {
         addvspace_flex: (0.0, 0.0),
         vspace_flex: (0.0, 0.0),
         endlist_adjust: 0.0,
+        penalty_before: None,
         list: None,
         sized: None,
         leading_pt: None,
@@ -670,6 +676,7 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
         addvspace_flex: (0.0, 0.0),
         vspace_flex: (0.0, 0.0),
         endlist_adjust: 0.0,
+        penalty_before: None,
         list: None,
         sized: Some(SizedPara {
             size_pt: small.size_pt,

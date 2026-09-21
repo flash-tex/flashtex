@@ -4848,6 +4848,7 @@ impl<'a> Context<'a> {
             addvspace_flex,
             vspace_flex,
             endlist_adjust,
+            penalty_before,
             list,
             sized,
             leading_pt,
@@ -4859,6 +4860,7 @@ impl<'a> Context<'a> {
         let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp, tag, items, flags);
             let mut first = true;
             let mut eject = *eject_before;
+            let mut list_penalty = *penalty_before;
             let mut vspace = *vspace_before;
             let mut flex = *vspace_flex;
             // `\endtrivlist`: a positive trailing skip of the previous
@@ -5044,6 +5046,11 @@ impl<'a> Context<'a> {
                             pre_display = None;
                         } else if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.paragraph_block(items, ind, starts, ah, st, geom, sz, lead)) {
                             pre_display = b.block.lines.lines.last().map(|l| l.natural_width + 2.0 * quad);
+                            // The list's `\addpenalty` (`Block::Paragraph::
+                            // penalty_before`); an eject is the smaller.
+                            if let Some(p) = list_penalty.take() {
+                                b.vertical.penalty_before = Some(b.vertical.penalty_before.map_or(p, |q| q.min(p)));
+                            }
                             if std::mem::take(&mut eject) {
                                 b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
                             }

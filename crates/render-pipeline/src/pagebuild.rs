@@ -338,6 +338,62 @@ fn trace_pages_enabled() -> bool {
     *ON.get_or_init(|| std::env::var("FLASHTEX_TRACE_PAGES").map(|v| !v.is_empty() && v != "0").unwrap_or(false))
 }
 
+/// Whether `\vfil\penalty-\@M` finds the page overfull (§1005 `b =
+/// awful_bad`): the `\vfil` adds the last box's depth to `page_total`
+/// (§1004) and its infinite stretch makes an underfull page cost nothing,
+/// so only `page_total + depth - goal > page_shrink` matters.
+///
+/// The `\vfil` is a breakpoint of its own first when a box precedes it,
+/// weighed *before* its glue adds the depth ([`vfil_cost`]); only when it
+/// is no better than the best break so far does the overfull eject fire
+/// at an earlier one. pdflatex `\tracingpages`, a page whose last
+/// paragraph needs 1.16pt more than its 16pt of shrink once the depth is
+/// in: `t=665.00027 ... minus 16.0 ... b=75 p=0 c=75` (the `\vfil`, not
+/// better than `c=2` two lines up), then `t=667.1289 plus 1.0fil minus
+/// 16.0 ... b=* p=-10000`, and the page ends at the `c=2` break. On a page
+/// that ends exactly full, `t=650.0 plus 7.0 g=650.43001 b=0 p=0 c=0#`
+/// then `t=652.33331 ... b=* p=-10000`: the `\vfil` itself is the best
+/// break and the last line stays.
+fn eject_overfills(st: &PageState, goal: f64) -> bool {
+    st.has_box && st.total + st.depth - goal > st.shrink + 1e-9
+}
+
+/// §1005's cost of a `penalty 0` breakpoint (the `\vfil` of an eject) on
+/// the page as it stands.
+fn vfil_cost(st: &PageState, goal: f64) -> i64 {
+    let b = if st.total < goal {
+        if st.fil {
+            0
+        } else {
+            badness(goal - st.total, st.stretch)
+        }
+    } else if st.total - goal > st.shrink {
+        AWFUL_BAD
+    } else {
+        badness(st.total - goal, st.shrink)
+    };
+    if b < INF_BAD {
+        b
+    } else if b < AWFUL_BAD {
+        DEPLORABLE
+    } else {
+        b
+    }
+}
+
+/// The break an overfull eject fires at (see [`eject_overfills`]): the
+/// `\vfil` at `at` when a box precedes it and it costs no more than
+/// `best`, else `best`.
+fn eject_break(list: &[VItem], at: usize, st: &PageState, goal: f64, best: Option<(usize, i64)>) -> Option<usize> {
+    if at > 0 && matches!(list.get(at - 1), Some(VItem::Box { .. })) {
+        let c = vfil_cost(st, goal);
+        if c < AWFUL_BAD && best.map_or(true, |(_, lc)| c <= lc) {
+            return Some(at);
+        }
+    }
+    best.map(|(bi, _)| bi)
+}
+
 fn trace_page_cost(st: &PageState, goal: f64, b: i64, pi: i32, c: i64, best: bool) {
     if !trace_pages_enabled() {
         return;
@@ -579,6 +635,17 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
             if legal && st.has_box {
                 // §1005: page badness and cost at this breakpoint.
                 let goal = p.vsize - reserved(i);
+                // A forced break arrives as `\vfil\penalty-\@M` (`\newpage`,
+                // `\clearpage`, `\end{document}`): the `\vfil` glue moves
+                // the last box's depth into `page_total` (§1004) before the
+                // penalty is weighed, and a page overfull by that much more
+                // than its shrink is `awful_bad`, so TeX fires at the best
+                // earlier break instead. See [`eject_overfills`].
+                if pi <= EJECT_PENALTY && eject_overfills(&st, goal) {
+                    fired = eject_break(list, i, &st, goal, best).or(Some(i));
+                    trace_page_cost(&st, goal, AWFUL_BAD, pi, AWFUL_BAD, false);
+                    break;
+                }
                 let b = if st.total < goal {
                     if st.fil {
                         0
@@ -670,6 +737,12 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
                 VItem::Penalty(_) => {}
             }
             i += 1;
+        }
+        // The list ends at `\end{document}`'s `\clearpage`, the same
+        // `\vfil\penalty-\@M` as a `\newpage` (see [`eject_overfills`]).
+        let end_goal = p.vsize - reserved(list.len().saturating_sub(1));
+        if fired.is_none() && eject_overfills(&st, end_goal) {
+            fired = eject_break(list, list.len(), &st, end_goal, best).filter(|&bi| bi < list.len());
         }
         let end = match fired {
             Some(bi) => bi,
@@ -1113,6 +1186,12 @@ pub fn break_pages_inserts_regions(
                 VItem::Penalty(pen) => *pen,
                 _ => 0,
             };
+            if legal && st.has_box && pi <= EJECT_PENALTY && is.page.is_empty() && eject_overfills(&st, is.goal - regions.reserved(i)) {
+                // `\vfil\penalty-\@M` on a page without insertions: see
+                // [`eject_overfills`].
+                fired = eject_break(list, i, &st, is.goal - regions.reserved(i), best).or(Some(i));
+                break;
+            }
             if legal && st.has_box {
                 let (b, c) = cost(&st, &is, pi, regions.reserved(i));
                 let improves = best.map_or(true, |(_, lc)| c <= lc);
@@ -1176,6 +1255,10 @@ pub fn break_pages_inserts_regions(
             } else {
                 best_ins = is.last_ins;
             }
+        } else if fired.is_none() && eject_overfills(&st, is.goal - regions.reserved(list.len().saturating_sub(1))) {
+            // No insertion on the page: only the `\vfil`'s depth can
+            // overfill it (see [`eject_overfills`]).
+            fired = eject_break(list, list.len(), &st, is.goal - regions.reserved(list.len().saturating_sub(1)), best).filter(|&bi| bi < list.len());
         }
         let end = match fired {
             Some(bi) => bi,

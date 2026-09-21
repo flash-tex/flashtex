@@ -599,6 +599,12 @@ pub enum Block {
         /// in points; summed innermost first. Nothing when there was no
         /// trailing skip.
         endlist_adjust: f64,
+        /// `\addpenalty` before the block's skips: a `\list`'s
+        /// `\@beginparpenalty` (first `\item`, unless `\@nobreak`),
+        /// `\@itempenalty` (every later `\item`) and `\@endparpenalty`
+        /// (the block after `\end{<list>}`), all `-\@lowpenalty` = -51 in
+        /// the standard classes. `None` for no penalty node.
+        penalty_before: Option<i32>,
         /// The paragraph is (part of) an `itemize`/`enumerate` `\item`
         /// (compiler `Block::ListItem`): LaTeX's `\list` geometry applies.
         list: Option<ListGeom>,
@@ -2562,6 +2568,7 @@ pub fn adapt_cached(
                         addvspace_flex: unit.addvspace_flex,
                         vspace_flex: unit.vspace_flex,
                         endlist_adjust: unit.endlist_adjust,
+                        penalty_before: unit.penalty_before,
                         list: None,
                         sized: None,
                         // The one-line caption is an `\hbox` appended to the
@@ -2932,6 +2939,7 @@ pub fn adapt_cached(
                     addvspace_flex,
                     vspace_flex: unit.vspace_flex,
                     endlist_adjust: unit.endlist_adjust,
+                    penalty_before: unit.penalty_before,
                     list,
                     sized: None,
                     leading_pt: par_leading_pt(par_leading.or_else(|| size_env_par_leading(texts, &styles, inlines)), style.base),
@@ -4170,6 +4178,14 @@ fn join_clever(parts: &[String], oxford: bool) -> String {
     }
 }
 
+/// `\@beginparpenalty`, `\@itempenalty` and `\@endparpenalty`: each is
+/// `-\@lowpenalty` (latex.ltx), and `\@lowpenalty` is 51 in article,
+/// report and book (`\@lowpenalty 51`). A list offers the page builder a
+/// slightly favoured break before its first item, between its items and
+/// after it: pdflatex ends a page between two `\item`s where the break
+/// inside the next item costs no more than 51 less.
+const LIST_PENALTY: i32 = -51;
+
 /// A compiler block, or the piece of a paragraph between page-break
 /// commands (`\newpage` ends the paragraph in LaTeX; the compiler keeps the
 /// text in one block and reports the command as unsupported).
@@ -4185,6 +4201,8 @@ struct Unit<'p> {
     vspace_flex: (f64, f64),
     /// See [`Block::Paragraph::endlist_adjust`].
     endlist_adjust: f64,
+    /// See [`Block::Paragraph::penalty_before`].
+    penalty_before: Option<i32>,
     /// Constructs before this unit the pipeline set approximately.
     limitations: Vec<(&'static str, Span, String)>,
 }
@@ -4383,6 +4401,7 @@ fn split_at_page_breaks<'p>(
                         addvspace_flex: (0.0, 0.0),
                         vspace_flex: (0.0, 0.0),
                         endlist_adjust: 0.0,
+                        penalty_before: None,
                         limitations: std::mem::take(&mut pending_limitations),
                     });
                 }
@@ -4428,6 +4447,7 @@ fn split_at_page_breaks<'p>(
                     addvspace_flex: (0.0, 0.0),
                     vspace_flex: (0.0, 0.0),
                     endlist_adjust: 0.0,
+                    penalty_before: None,
                     limitations: std::mem::take(&mut pending_limitations),
                 });
                 prev_end = Some(*span);
@@ -4452,6 +4472,7 @@ fn split_at_page_breaks<'p>(
                     addvspace_flex: (0.0, 0.0),
                     vspace_flex: (0.0, 0.0),
                     endlist_adjust: 0.0,
+                    penalty_before: None,
                     limitations: std::mem::take(&mut pending_limitations),
                 });
                 prev_end = Some(span);
@@ -4468,6 +4489,7 @@ fn split_at_page_breaks<'p>(
                     addvspace_flex: (0.0, 0.0),
                     vspace_flex: (0.0, 0.0),
                     endlist_adjust: 0.0,
+                    penalty_before: None,
                     limitations: std::mem::take(&mut pending_limitations),
                 });
                 prev_end = Some(*span);
@@ -4496,6 +4518,7 @@ fn split_at_page_breaks<'p>(
                     addvspace_flex: (0.0, 0.0),
                     vspace_flex: (0.0, 0.0),
                     endlist_adjust: 0.0,
+                    penalty_before: None,
                     limitations: std::mem::take(&mut pending_limitations),
                 });
                 prev_end = Some(*span);
@@ -4589,6 +4612,7 @@ fn split_at_page_breaks<'p>(
         let mut addvspace_flex = (0.0f64, 0.0f64);
         let mut vspace_flex = (0.0f64, 0.0f64);
         let mut endlist_adjust = 0.0;
+        let mut penalty_before: Option<i32> = None;
         // `\endtrivlist` of the lists closed in the gap: each is
         // `\addvspace\@topsepadd` with its own level's `\topsep` (plus
         // `\partopsep` when that list opened in vertical mode), and
@@ -4626,6 +4650,11 @@ fn split_at_page_breaks<'p>(
                     }
                     if let Some(p) = prev_end {
                         endlist_adjust = list_end_adjust(index, p.end, gap, size, style);
+                    }
+                    // `\@endparenv`: `\addpenalty\@endparpenalty` before
+                    // its `\addvspace\@topsepadd`.
+                    if !style.is_beamer() {
+                        penalty_before = Some(LIST_PENALTY);
                     }
                 }
             }
@@ -4699,6 +4728,11 @@ fn split_at_page_breaks<'p>(
                                     addvspace_flex.1 += flex.1;
                                 }
                             } else {
+                                // `\addpenalty\@beginparpenalty` (the
+                                // `\@nbitem` branch above has none).
+                                if !style.is_beamer() {
+                                    penalty_before = Some(LIST_PENALTY);
+                                }
                                 let p = if list_vmode { seps.partopsep_skip } else { crate::style::Skip::default() };
                                 let open = (
                                     seps.topsep + outer_parskip + p.natural,
@@ -4729,6 +4763,10 @@ fn split_at_page_breaks<'p>(
                             }
                         }
                         _ => {
+                            // `\addpenalty\@itempenalty`, then `\addvspace\itemsep`.
+                            if !style.is_beamer() {
+                                penalty_before = Some(LIST_PENALTY);
+                            }
                             let itemsep = (seps.itemsep, seps.itemsep_skip.stretch, seps.itemsep_skip.shrink);
                             let skip = match list_end_skip.take() {
                                 Some(end) if end.0 >= itemsep.0 => end,
@@ -4929,6 +4967,7 @@ fn split_at_page_breaks<'p>(
                     addvspace_flex,
                     vspace_flex,
                     endlist_adjust: 0.0,
+                    penalty_before: None,
                     limitations,
                 });
             }
@@ -4993,6 +5032,7 @@ fn split_at_page_breaks<'p>(
                                 addvspace_flex: std::mem::take(&mut addvspace_flex),
                                 vspace_flex: std::mem::take(&mut vspace_flex),
                                 endlist_adjust: std::mem::take(&mut endlist_adjust),
+                                penalty_before: penalty_before.take(),
                                 limitations: std::mem::take(&mut limitations),
                             });
                             eject = false;
@@ -5023,6 +5063,7 @@ fn split_at_page_breaks<'p>(
                                 addvspace_flex: std::mem::take(&mut addvspace_flex),
                                 vspace_flex: std::mem::take(&mut vspace_flex),
                                 endlist_adjust: std::mem::take(&mut endlist_adjust),
+                                penalty_before: penalty_before.take(),
                                 limitations: std::mem::take(&mut limitations),
                             });
                             eject = true;
@@ -5049,6 +5090,7 @@ fn split_at_page_breaks<'p>(
                         addvspace_flex: std::mem::take(&mut addvspace_flex),
                         vspace_flex: std::mem::take(&mut vspace_flex),
                         endlist_adjust: std::mem::take(&mut endlist_adjust),
+                        penalty_before: penalty_before.take(),
                         limitations: std::mem::take(&mut limitations),
                     });
                     eject = false;
@@ -5067,6 +5109,7 @@ fn split_at_page_breaks<'p>(
                     addvspace_flex,
                     vspace_flex,
                     endlist_adjust,
+                    penalty_before: None,
                     limitations,
                 });
                 eject = false;
@@ -5099,6 +5142,7 @@ fn split_at_page_breaks<'p>(
                     addvspace_flex,
                     vspace_flex,
                     endlist_adjust,
+                    penalty_before: None,
                     limitations,
                 });
                 eject = false;

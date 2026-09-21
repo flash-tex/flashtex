@@ -1295,6 +1295,7 @@ fn caption_block(texts: &[&str], labels: &Labels, listing: &Listing, number: &st
             listing.keys.aboveskip.shrink + CAPTIONSKIP.shrink,
         ),
         endlist_adjust: 0.0,
+        penalty_before: None,
         list: None,
         // The caption is `\normalsize`, which is the body size already; the
         // leading it needs comes with `sized`, not from a `leading_pt` of

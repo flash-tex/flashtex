@@ -371,6 +371,7 @@ mod tests {
             addvspace_flex: (0.0, 0.0),
             vspace_flex: (0.0, 0.0),
             endlist_adjust: 0.0,
+            penalty_before: None,
             list: None,
             sized: None,
             leading_pt: None,

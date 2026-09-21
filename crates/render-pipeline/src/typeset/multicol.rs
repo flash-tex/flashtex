@@ -553,7 +553,7 @@ fn body_first_start(body: &[Block]) -> Option<usize> {
 /// Splits a paragraph whose lines straddle `at` (a preface that ends in
 /// the middle of a paragraph: `[...]` is blanked, not a `\par`).
 fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Block)> {
-    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, addvspace_flex, vspace_flex, endlist_adjust, list, sized, leading_pt } = b else { return None };
+    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, addvspace_flex, vspace_flex, endlist_adjust, penalty_before, list, sized, leading_pt } = b else { return None };
     let mut before: Vec<ParaPart> = Vec::new();
     let mut after: Vec<ParaPart> = Vec::new();
     for p in parts {
@@ -601,6 +601,7 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         addvspace_flex: *addvspace_flex,
         vspace_flex: *vspace_flex,
         endlist_adjust: *endlist_adjust,
+        penalty_before: *penalty_before,
         list: list.clone(),
         sized: *sized,
         leading_pt: *leading_pt,
@@ -617,6 +618,7 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         addvspace_flex: (0.0, 0.0),
         vspace_flex: (0.0, 0.0),
         endlist_adjust: 0.0,
+        penalty_before: None,
         list: None,
         sized: *sized,
         leading_pt: *leading_pt,
