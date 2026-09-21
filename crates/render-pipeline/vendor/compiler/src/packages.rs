@@ -113,6 +113,7 @@ pub const BUILT_IN_PACKAGES: &[(&str, &str)] = &[
     ("hyperref", "links are the PDF writer's; hyperref.sty needs \\pdfstartlink and \\special"),
     ("cleveref", "\\cref is crate::xref; cleveref.sty patches \\refstepcounter with \\protected@write"),
     ("natbib", "citations are crate::natbib; natbib.sty needs \\bibitem output"),
+    ("cite", "sorted, range-compressed citations with cite.sty's own separator glue are crate::bib; cite.sty needs \\futurelet on the token after \\cite and \\lastskip/\\lastpenalty"),
     ("biblatex", "citations are crate::biblatex; biblatex.sty is expl3 code"),
     // -- beamer --
     ("beamerthemedefault", "beamer themes are crates/class-geometry"),

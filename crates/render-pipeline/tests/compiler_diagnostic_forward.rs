@@ -299,12 +299,12 @@ fn a_mixed_package_list_is_trimmed_to_the_ones_this_crate_does_not_set() {
         return;
     }
     let r = render_one(
-        "\\documentclass{article}\\usepackage{amsmath,cite}\
+        "\\documentclass{article}\\usepackage{amsmath,mdframed}\
          \\begin{document}Body $x$.\\end{document}",
     );
     let d = by_needle(&r, "are recognised but not implemented");
     assert!(
-        d.message.starts_with("packages cite are recognised but not implemented"),
+        d.message.starts_with("packages mdframed are recognised but not implemented"),
         "{d:?}"
     );
     assert!(!d.message.contains("amsmath"), "amsmath is set by this crate: {d:?}");

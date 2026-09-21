@@ -4891,7 +4891,21 @@ fn split_at_page_breaks<'p>(
             .then(|| first.and_then(|f| texts.get(f.document.0).and_then(|t| run_in_heading_at(t, f.start))))
             .flatten();
         prev_styled = styled.is_some();
-        prev_vmode = matches!(block, CBlock::Heading { .. });
+        // A paragraph of nothing but `\label`s is a `\write` whatsit on the
+        // vertical list (`\label` in vertical mode is `\@bsphack` +
+        // `\protected@write`, no `\leavevmode`): TeX stays in vertical mode
+        // and `\@afterheading`'s `\@nobreaktrue` survives it, so a list
+        // right after `\section{..}\label{..}` still opens with `\@nbitem`,
+        // not `\addvspace\@topsep` -- pdflatex's `\showlists` of both
+        // (11pt article, `\topsep` 9pt + `\partopsep` 3pt): the heading's
+        // `\glue 10.84085 plus 0.94266`, then the `\write`, then `\glue
+        // -4.5 plus -1.0 minus -1.0` and the item's `\parskip` 4.5pt, the
+        // same 10.84085pt as without the label. Treating the label as a
+        // paragraph took `\topsep + \partopsep` = 12pt instead, 1.159pt
+        // too low (hyperref-toc page 4, every word).
+        let label_only = matches!(block, CBlock::Paragraph(inlines)
+            if !inlines.is_empty() && inlines.iter().all(|i| matches!(i, Inline::Label { .. })));
+        prev_vmode = matches!(block, CBlock::Heading { .. }) || (label_only && prev_vmode);
         match block {
             CBlock::Heading {
                 level,
@@ -11198,7 +11212,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                         Some(em) => (Item::Quad { em, plus_em: 0.0, minus_em: 0.0, style: quad_style() }, "\\hspace"),
                         None => (Item::HSpace { pt: *pt, stretch_pt: 0.0, shrink_pt: 0.0 }, "\\hspace"),
                     },
-                    Inline::TextGlue { em, .. } => (Item::Quad { em: *em, plus_em: 0.0, minus_em: 0.0, style: quad_style() }, if *em >= 2.0 { "\\qquad" } else { "\\quad" }),
+                    Inline::TextGlue { em, plus_em, minus_em, .. } => (Item::Quad { em: *em, plus_em: *plus_em, minus_em: *minus_em, style: quad_style() }, if *em >= 2.0 { "\\qquad" } else { "\\quad" }),
                     // `\hrulefill` and `\dotfill` (compiler `FillLeader`, #320)
                     // are `\leavevmode\leaders<box>\hfill\kern\z@`: the glue is
                     // exactly `\hfill`, so it is set here like any other, and
@@ -11644,6 +11658,17 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // Per-character sources. Macro replacement text shares the
                 // invocation span; keep that attribution for every char.
                 let citation = generated_citation(source, *span);
+                // A citation's text arrives as several runs, all with the
+                // command's span, and the compiler splits them exactly where
+                // the package's macros put a non-character token between two
+                // characters -- natbib's `\NAT@nmfmt{\NAT@nm}` is the group
+                // `{\NAT@up Hobby}`, the kernel's labels are `\hbox`es. TeX's
+                // lig/kern program stops at such a token (§1034-1040), so
+                // `Hobby}` then `,` is set without cmr's `y`-`,` kern of
+                // -0.0833 em (-0.91 pt at 10.95 pt, which moved every later
+                // word of natbib-review's citation lines 0.91 bp left). Such
+                // a run starts a segment of its own, like `{}` below.
+                let kern_break = std::cell::Cell::new(citation && prev_span == Some(*span) && matches!(items.last(), Some(Item::Word(_))));
                 // The compiler's input-ligature pass (`lexer::
                 // apply_text_ligatures`) makes the text of a word shorter
                 // than its bytes (`--` is one U+2013), so the sources are
@@ -11704,7 +11729,11 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     for (c, _) in run.iter() {
                         *factor = space_factor(*c, *factor);
                     }
-                    push_segment_in(items, text, srcs, style, source);
+                    if kern_break.replace(false) {
+                        push_segment_apart(items, text, srcs, style);
+                    } else {
+                        push_segment_in(items, text, srcs, style, source);
+                    }
                     run.clear();
                 };
                 for (ch, src) in chars {
@@ -11841,22 +11870,39 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     }
                 }
             }
+            // A `\penalty` in the horizontal list (`\linebreak`/
+            // `\nolinebreak`'s `\@no@lnbk`, amsmath's `\nobreakdash`,
+            // cite.sty's `\penalty\@m` before its thin glue). `unskip` is
+            // `\@no@lnbk`'s: the interword space in front of the command is
+            // removed here and re-read from the source for the next word,
+            // so it lands after the penalty as TeX's `\unskip ... \ ` puts
+            // it -- and glue after a penalty is not a break point (tex.web
+            // §866: only glue after a non-discardable node is), which is
+            // what makes `word \nolinebreak word` unbreakable there. The
+            // source gap is read from the previous text's end, so the
+            // marker itself advances nothing.
+            #[cfg(feature = "compiler-node-surface")]
+            Inline::Penalty { value, unskip, .. } => {
+                if *unskip && matches!(items.last(), Some(Item::Space { .. })) {
+                    items.pop();
+                }
+                items.push(Item::Penalty { value: *value, flagged: false });
+            }
             // Inlines only a re-pinned compiler emits. Every one of them is
-            // a zero-width marker in the horizontal list -- a penalty, a
-            // discretionary, a tab stop or jump, a page-number marker -- so
-            // producing no item is what the old pin already did for the same
-            // source, and the line breaker sees exactly the same sequence.
-            // `Marginpar` is the one that carries text; the pipeline has no
-            // margin column yet (GH-505), so its note is not set here either
-            // way. PRs #569 (penalties/discretionaries), GH-TABBING and
-            // GH-505 (marginpar) replace this arm.
+            // a zero-width marker in the horizontal list -- a discretionary,
+            // a tab stop or jump, a page-number marker -- so producing no
+            // item is what the old pin already did for the same source, and
+            // the line breaker sees exactly the same sequence. `Marginpar`
+            // is the one that carries text; the pipeline has no margin
+            // column yet (GH-505), so its note is not set here either way.
+            // PR #569 (discretionaries), GH-TABBING and GH-505 (marginpar)
+            // replace this arm.
             #[cfg(feature = "compiler-node-surface")]
             Inline::ThePage { .. }
             | Inline::PageNumbering { .. }
             | Inline::TabStop { .. }
             | Inline::TabJump { .. }
             | Inline::Marginpar { .. }
-            | Inline::Penalty { .. }
             | Inline::PagePenalty { .. }
             | Inline::Discretionary { .. } => {}
             // beamer overlay markers: no material, no gap of their own (the
@@ -12062,6 +12108,17 @@ fn space_style(
 /// Appends a segment to the current word or starts a new word.
 fn push_segment(items: &mut Vec<Item>, text: String, chars: Vec<CharSrc>, style: TextStyle) {
     push_segment_in(items, text, chars, style, "");
+}
+
+/// Appends a segment to the current word without joining the segment
+/// before it: the two are shaped apart, so no ligature or kern of the face
+/// runs across the boundary (a non-character token between them in TeX).
+fn push_segment_apart(items: &mut Vec<Item>, text: String, chars: Vec<CharSrc>, style: TextStyle) {
+    let segment = Segment { text, chars, style };
+    match items.last_mut() {
+        Some(Item::Word(word)) => word.segments.push(segment),
+        _ => items.push(Item::Word(Word { segments: vec![segment] })),
+    }
 }
 
 /// [`push_segment`] for a run read from `source`, which decides whether it

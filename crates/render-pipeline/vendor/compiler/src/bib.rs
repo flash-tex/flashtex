@@ -50,6 +50,9 @@ pub struct Bibliography {
     /// `\usepackage[...]{natbib}`'s resolved options, when the document
     /// loads it.
     natbib: Option<natbib::Options>,
+    /// `\usepackage[...]{cite}`'s resolved options (cite.sty, Arseneau),
+    /// when the document loads it.
+    cite: Option<CiteOptions>,
     /// natbib's `\NAT@stdbst`: an entry whose label carries no author-year
     /// data. `\NAT@force@numbers` (natbib.sty line 974) then makes the whole
     /// document numeric on the next run, which is the steady state a
@@ -63,6 +66,14 @@ impl Bibliography {
     /// does not load natbib, and `\cite` keeps its kernel meaning.
     pub fn natbib(&self) -> Option<&natbib::Options> {
         self.natbib.as_ref()
+    }
+
+    /// cite.sty's resolved options, once `\usepackage{cite}` has been seen
+    /// and natbib has not (natbib's `\cite` is the one that survives when
+    /// both are loaded, whichever order). `None` when the document does not
+    /// load it, and `\cite` keeps its kernel meaning.
+    pub fn cite(&self) -> Option<CiteOptions> {
+        self.cite.filter(|_| self.natbib.is_none())
     }
 
     /// natbib refused the bibliography's labels and fell back to numeric
@@ -152,6 +163,7 @@ struct RawItem {
 pub fn prescan<T: Borrow<Token>>(tokens: &[T], diags: &mut Vec<Diagnostic>) -> Bibliography {
     let mut bibliography = Bibliography::default();
     bibliography.natbib = natbib_options(tokens);
+    bibliography.cite = package_options(tokens, "cite").map(|options| CiteOptions::from_option_list(&options));
     let mut raw: Vec<RawItem> = Vec::new();
     let mut in_bibliography = false;
     let mut i = 0;
@@ -256,13 +268,21 @@ fn fill_natbib(
 /// options natbib resolves them to. The package list is comma-separated, so
 /// `\usepackage{amsmath,natbib}` counts (with no options).
 fn natbib_options<T: Borrow<Token>>(tokens: &[T]) -> Option<natbib::Options> {
+    package_options(tokens, "natbib").map(|options| natbib::Options::from_option_list(&options))
+}
+
+/// The `[options]` of the `\usepackage`/`\RequirePackage` that loads
+/// `name` anywhere in the token stream (the package list is comma-separated,
+/// so `\usepackage{amsmath,cite}` counts, with no options), or `None` when
+/// nothing loads it.
+fn package_options<T: Borrow<Token>>(tokens: &[T], name: &str) -> Option<String> {
     let mut i = 0;
     while i < tokens.len() {
-        let TokenKind::Command(name) = &tokens[i].borrow().kind else {
+        let TokenKind::Command(command) = &tokens[i].borrow().kind else {
             i += 1;
             continue;
         };
-        if name != "usepackage" && name != "RequirePackage" {
+        if command != "usepackage" && command != "RequirePackage" {
             i += 1;
             continue;
         }
@@ -273,12 +293,8 @@ fn natbib_options<T: Borrow<Token>>(tokens: &[T]) -> Option<natbib::Options> {
             cursor = after;
         }
         if let Some((packages, after)) = group_text(tokens, cursor) {
-            if packages
-                .split(',')
-                .map(str::trim)
-                .any(|package| package == "natbib")
-            {
-                return Some(natbib::Options::from_option_list(&options));
+            if packages.split(',').map(str::trim).any(|package| package == name) {
+                return Some(options);
             }
             i = after;
             continue;
@@ -390,19 +406,23 @@ pub fn cite_inlines(
     diags: &mut Vec<Diagnostic>,
 ) -> Vec<Inline> {
     let mut out = vec![text_run("[", span, TextStyle::default(), true)];
-    for (index, key) in keys.iter().enumerate() {
-        if index > 0 {
-            out.push(text_run(", ", span, TextStyle::default(), false));
-        }
-        match bibliography.resolve(key) {
-            Some(label) => out.push(text_run(label, span, TextStyle::default(), false)),
-            None => {
-                out.push(text_run("?", span, TextStyle::BOLD, false));
-                diags.push(Diagnostic::warning(
-                    format!("citation '{key}' is undefined"),
-                    Some(span),
-                    Some("rendered '?' in place of the undefined citation".into()),
-                ));
+    if let Some(options) = bibliography.cite() {
+        cite_sty_labels(keys, bibliography, options, span, diags, &mut out);
+    } else {
+        for (index, key) in keys.iter().enumerate() {
+            if index > 0 {
+                kernel_citea(span, &mut out);
+            }
+            match bibliography.resolve(key) {
+                Some(label) => out.push(text_run(label, span, TextStyle::default(), false)),
+                None => {
+                    out.push(text_run("?", span, TextStyle::BOLD, false));
+                    diags.push(Diagnostic::warning(
+                        format!("citation '{key}' is undefined"),
+                        Some(span),
+                        Some("rendered '?' in place of the undefined citation".into()),
+                    ));
+                }
             }
         }
     }
@@ -420,6 +440,161 @@ pub fn cite_inlines(
     }
     out.push(text_run("]", span, TextStyle::default(), false));
     out
+}
+
+/// The kernel's `\@citea` between two labels, `,\penalty\@m\ ` (latex.ltx
+/// `\@citex`): a comma, a penalty of 1000 -- the only break point, since
+/// glue after a penalty is none (tex.web §866) -- and a control space,
+/// interword glue at space factor 1000 whatever the comma set.
+fn kernel_citea(span: Span, out: &mut Vec<Inline>) {
+    out.push(text_run(",", span, TextStyle::default(), false));
+    out.push(Inline::Penalty { value: 1000, span, unskip: false });
+    out.push(text_run(" ", span, TextStyle::default(), false));
+}
+
+/// `\usepackage[<options>]{cite}` (cite.sty v5.5, Arseneau) as its options
+/// resolve. The package sorts a numeric key list, compresses three or more
+/// consecutive numbers into a range, and sets its own glue after the comma.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CiteOptions {
+    /// `\citepunct`'s glue after the comma: the default `\hskip.13em
+    /// plus.1em minus.1em` (cite.sty lines 46-47), `space`'s `\ ` (line
+    /// 403) or `nospace`'s nothing (line 402).
+    pub punct: CitePunct,
+    /// Not `nosort`: numeric entries in ascending order.
+    pub sort: bool,
+    /// Not `nocompress`: `1,2,3` is `1--3`.
+    pub compress: bool,
+}
+
+/// The cite.sty package options that leave the output as this module sets
+/// it (the parser's `package_matches_layout`).
+pub const CITE_IMPLEMENTED_OPTIONS: &[&str] = &["space", "nospace", "nosort", "nocompress", "sort", "compress", "adjust", "move", "verbose"];
+
+/// See [`CiteOptions::punct`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CitePunct {
+    /// `\hskip.13em plus.1em minus.1em`.
+    Thin,
+    /// `\ `, an interword space at space factor 1000.
+    Space,
+    /// No glue: `[1,2]` is one word.
+    None,
+}
+
+impl CiteOptions {
+    /// cite.sty's `\DeclareOption`s as `\ProcessOptions` runs them, in
+    /// declaration order (`nospace` line 402 before `space` line 403, so
+    /// `[space,nospace]` is `space`). `superscript`/`super`, `noadjust`,
+    /// `nomove`, `nobreak`, `biblabel`, `ref`, `verbose`, `adjust`, `sort`,
+    /// `compress`, `move` and `break` change nothing here.
+    pub fn from_option_list(options: &str) -> Self {
+        let given: Vec<&str> = options.split(',').map(str::trim).collect();
+        let punct = if given.contains(&"space") {
+            CitePunct::Space
+        } else if given.contains(&"nospace") {
+            CitePunct::None
+        } else {
+            CitePunct::Thin
+        };
+        CiteOptions { punct, sort: !given.contains(&"nosort"), compress: !given.contains(&"nocompress") }
+    }
+}
+
+/// cite.sty's `\citepunct` (lines 46-47): `,\penalty\citepunctpenalty
+/// \hskip.13emplus.1emminus.1em` -- a comma, a penalty of 1000 (`\@m`),
+/// then glue thinner than an interword space. pdflatex's `\showbox` of
+/// `\hbox{block~\cite{a,b}. The}` under T1 cmr10: `[` `1` `,` `\penalty
+/// 1000` `\glue 1.29973 plus 0.9998 minus 0.9998` `2` `]` `.` then the
+/// sentence space `\glue 4.44336 plus 4.99878 minus 0.37027`. `[space]`
+/// makes the glue `\ ` and `[nospace]` drops it; both keep the penalty.
+fn cite_punct(options: CiteOptions, span: Span, out: &mut Vec<Inline>) {
+    match options.punct {
+        CitePunct::Thin => {
+            out.push(text_run(",", span, TextStyle::default(), false));
+            out.push(Inline::Penalty { value: 1000, span, unskip: false });
+            out.push(Inline::TextGlue { em: 0.13, span, plus_em: 0.1, minus_em: 0.1 });
+        }
+        // `\def\citepunct{,\penalty\citepunctpenalty\ }` (line 403): the
+        // kernel's own shape.
+        CitePunct::Space => kernel_citea(span, out),
+        CitePunct::None => {
+            out.push(text_run(",", span, TextStyle::default(), false));
+            out.push(Inline::Penalty { value: 1000, span, unskip: false });
+        }
+    }
+}
+
+/// cite.sty's citation body (`\@cite@n`, `\@compress@cite`, lines
+/// 180-297): every key whose label is not a plain number is set at once,
+/// in order (`\@cite@dump@now`; the bold `?` of an undefined key too, line
+/// 109); the numeric ones are collected, sorted ascending (unless `nosort`)
+/// and, unless `nocompress`, a run of three or more consecutive numbers
+/// becomes `first\citedash last` -- `\citedash` is `\hbox{--}\penalty
+/// \citepunctpenalty` (line 51), an en dash then a penalty of 1000
+/// (pdflatex: `\cite{a,b,c}` is `[` `1` `\hbox(4.3045+0.0)x4.99878` (the
+/// `--` ligature) `\penalty 1000` `3` `]`); two consecutive numbers stay
+/// `1,2`. Entries are separated by [`cite_punct`].
+///
+/// A `[prefix]number[suffix]` label (`A12`, `12a`) is sortable in cite.sty
+/// too; here it is set in place like any other non-numeric label, which is
+/// the package's own behaviour for a label its number scan rejects.
+fn cite_sty_labels(
+    keys: &[String],
+    bibliography: &Bibliography,
+    options: CiteOptions,
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+    out: &mut Vec<Inline>,
+) {
+    let mut first = true;
+    let mut separate = |out: &mut Vec<Inline>| {
+        if !first {
+            cite_punct(options, span, out);
+        }
+        first = false;
+    };
+    let mut numbers: Vec<(u64, &str)> = Vec::new();
+    for key in keys {
+        match bibliography.resolve(key) {
+            Some(label) => match label.parse::<u64>() {
+                Ok(number) if label.bytes().all(|b| b.is_ascii_digit()) => numbers.push((number, label)),
+                _ => {
+                    separate(out);
+                    out.push(text_run(label, span, TextStyle::default(), false));
+                }
+            },
+            None => {
+                separate(out);
+                out.push(text_run("?", span, TextStyle::BOLD, false));
+                diags.push(Diagnostic::warning(
+                    format!("citation '{key}' is undefined"),
+                    Some(span),
+                    Some("rendered '?' in place of the undefined citation".into()),
+                ));
+            }
+        }
+    }
+    if options.sort {
+        numbers.sort_by_key(|(number, _)| *number);
+    }
+    let mut i = 0;
+    while i < numbers.len() {
+        let mut j = i;
+        while options.compress && j + 1 < numbers.len() && numbers[j + 1].0 == numbers[j].0 + 1 {
+            j += 1;
+        }
+        separate(out);
+        out.push(text_run(numbers[i].1, span, TextStyle::default(), false));
+        if j >= i + 2 {
+            out.push(text_run("\u{2013}", span, TextStyle::default(), false));
+            out.push(Inline::Penalty { value: 1000, span, unskip: false });
+            out.push(text_run(numbers[j].1, span, TextStyle::default(), false));
+            i = j + 1;
+        } else {
+            i += 1;
+        }
+    }
 }
 
 fn text_run(text: &str, span: Span, style: TextStyle, space_before: bool) -> Inline {
@@ -488,5 +663,61 @@ mod tests {
     fn bibitem_outside_thebibliography_is_not_registered() {
         let (bib, _) = scan(r"\bibitem{a}Stray.");
         assert_eq!(bib.resolve("a"), None);
+    }
+
+    /// The inlines of one `\cite`, spelled: text as itself, a penalty as
+    /// `<n>`, `TextGlue` as `<em plus minus>`.
+    fn spell(bib: &Bibliography, keys: &[&str]) -> String {
+        let keys: Vec<String> = keys.iter().map(|k| k.to_string()).collect();
+        let mut diags = Vec::new();
+        cite_inlines(&keys, None, bib, Span::new(0, 0), &mut diags)
+            .iter()
+            .map(|inline| match inline {
+                Inline::Text { text, .. } => text.clone(),
+                Inline::Penalty { value, .. } => format!("<{value}>"),
+                Inline::TextGlue { em, plus_em, minus_em, .. } => format!("<{em} plus {plus_em} minus {minus_em}>"),
+                other => panic!("{other:?}"),
+            })
+            .collect()
+    }
+
+    const BIB: &str = r"\begin{thebibliography}{9}\bibitem{a}A.\bibitem{b}B.\bibitem{c}C.\bibitem{d}D.\bibitem[Knu]{k}K.\end{thebibliography}";
+
+    /// cite.sty: `\citepunct` is `,\penalty\@m\hskip.13em plus.1em
+    /// minus.1em` (lines 46-47); three consecutive numbers are `1\citedash 3`
+    /// (`\hbox{--}\penalty 1000`, line 51); keys are sorted; a label that
+    /// is not a number is set at once, before the numbers; two consecutive
+    /// numbers stay apart. pdflatex `\showbox`: `[1,\penalty 1000 \glue
+    /// 1.29973 plus 0.9998 minus 0.9998 2]` and `[1 \hbox(--) \penalty 1000
+    /// 3]` under T1 cmr10.
+    #[test]
+    fn cite_package_sorts_compresses_and_separates_with_thin_glue() {
+        let (bib, _) = scan(&format!(r"\usepackage{{cite}}{BIB}"));
+        assert_eq!(spell(&bib, &["a", "b"]), "[1,<1000><0.13 plus 0.1 minus 0.1>2]");
+        assert_eq!(spell(&bib, &["c", "b", "a"]), "[1\u{2013}<1000>3]");
+        assert_eq!(spell(&bib, &["d", "b", "a"]), "[1,<1000><0.13 plus 0.1 minus 0.1>2,<1000><0.13 plus 0.1 minus 0.1>4]");
+        assert_eq!(spell(&bib, &["c", "k", "a"]), "[Knu,<1000><0.13 plus 0.1 minus 0.1>1,<1000><0.13 plus 0.1 minus 0.1>3]");
+        assert_eq!(spell(&bib, &["a", "b", "c", "d"]), "[1\u{2013}<1000>4]");
+    }
+
+    /// `[nosort]` keeps the given order (and still compresses a consecutive
+    /// run in that order, cite.sty lines 517-523); `[nocompress]` keeps every
+    /// number; `[space]` is the kernel's `,\penalty\@m\ ` and `[nospace]`
+    /// nothing after the comma's penalty. Without the package, `\cite` keeps
+    /// its kernel `,\penalty\@m\ ` (pdflatex `\showbox` of
+    /// `\hbox{\cite{a,b}}`: `[` `\hbox{1}` `,` `\penalty 1000` `\glue
+    /// 3.33333 plus 1.66666 minus 1.11111` `\hbox{2}` `]`, cmr10).
+    #[test]
+    fn cite_package_options_and_the_kernel_default() {
+        let (bib, _) = scan(&format!(r"\usepackage[nosort]{{cite}}{BIB}"));
+        assert_eq!(spell(&bib, &["c", "a", "b"]), "[3,<1000><0.13 plus 0.1 minus 0.1>1,<1000><0.13 plus 0.1 minus 0.1>2]");
+        assert_eq!(spell(&bib, &["b", "c", "d"]), "[2\u{2013}<1000>4]");
+        let (bib, _) = scan(&format!(r"\usepackage[nocompress,space]{{cite}}{BIB}"));
+        assert_eq!(spell(&bib, &["c", "a", "b"]), "[1,<1000> 2,<1000> 3]");
+        let (bib, _) = scan(&format!(r"\usepackage[nospace]{{cite}}{BIB}"));
+        assert_eq!(spell(&bib, &["a", "b"]), "[1,<1000>2]");
+        let (bib, _) = scan(BIB);
+        assert!(bib.cite().is_none());
+        assert_eq!(spell(&bib, &["c", "a", "b"]), "[3,<1000> 1,<1000> 2]");
     }
 }

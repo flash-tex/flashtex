@@ -643,7 +643,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 space_before: _,
             } => map_span(span, changes, deltas)?,
             Inline::LineBreak { span, skip_pt: _ } => map_span(span, changes, deltas)?,
-            Inline::TextGlue { em: _, span } => map_span(span, changes, deltas)?,
+            Inline::TextGlue { em: _, span, plus_em: _, minus_em: _ } => map_span(span, changes, deltas)?,
             Inline::Math {
                 list,
                 display: _,

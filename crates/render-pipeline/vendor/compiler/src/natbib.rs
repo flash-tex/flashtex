@@ -388,6 +388,24 @@ pub fn parse_label(raw: Option<&str>, counter: usize) -> Label {
 /// A run of citation text and whether it is natbib's bold recovery marker.
 type Run = (String, bool);
 
+/// The run that marks a non-character token between two runs of text:
+/// `\NAT@nmfmt{\NAT@nm}` is the group `{\NAT@up#1}` (line 287) and a
+/// number is `\mbox{...}` (line 457), and TeX's lig/kern program stops at
+/// the brace (tex.web §1034-1040), so `Hobby` and the `,` of `\NAT@aysep`
+/// after it are set without cmr's `y`-`,` kern. [`into_inlines`] ends the
+/// inline there; an empty run is not otherwise text, and no bold run is
+/// empty.
+fn group_break() -> Run {
+    (String::new(), true)
+}
+
+/// `name` between two [`group_break`]s.
+fn grouped(runs: &mut Vec<Run>, name: String) {
+    runs.push(group_break());
+    runs.push((name, false));
+    runs.push(group_break());
+}
+
 /// Builds the inlines for one natbib citation.
 ///
 /// `resolve` returns the `\bibcite` record for a key, or `None` for an
@@ -489,7 +507,8 @@ fn author_year_body(
         last_date = entry.date.clone();
         match kind.ctype {
             0 if entry.date.is_empty() => {
-                runs.push((format!("{citea}{name}"), false));
+                runs.push((citea.clone(), false));
+                grouped(&mut runs, name);
             }
             0 if previous_name.as_deref() == Some(name.as_str()) => {
                 // Same author as the entry before: `\NAT@yrsep` and then only
@@ -502,18 +521,22 @@ fn author_year_body(
                 }
             }
             0 if kind.swa => {
-                runs.push((
-                    format!("{citea}{name}{} {}", options.aysep, entry.date),
-                    false,
-                ));
+                runs.push((citea.clone(), false));
+                grouped(&mut runs, name);
+                runs.push((format!("{} {}", options.aysep, entry.date), false));
             }
             0 => {
                 // `\citet`: each entry carries its own parentheses, and the
                 // pre-note goes inside every one of them (line 578).
                 let pre = pre.map(|pre| format!("{pre} ")).unwrap_or_default();
-                runs.push((format!("{citea}{name} {open}{pre}{}", entry.date), false));
+                runs.push((citea.clone(), false));
+                grouped(&mut runs, name);
+                runs.push((format!(" {open}{pre}{}", entry.date), false));
             }
-            1 => runs.push((format!("{citea}{name}"), false)),
+            1 => {
+                runs.push((citea.clone(), false));
+                grouped(&mut runs, name);
+            }
             _ => runs.push((format!("{citea}{}", entry.date), false)),
         }
         // `\NAT@def@citea` / `\NAT@def@citea@close` (lines 599-601): the
@@ -585,7 +608,9 @@ fn numeric_body(
                     runs.push((format!("{} ", options.yrsep), false));
                 } else {
                     runs.push((citea.clone(), false));
+                    runs.push(group_break());
                     runs.push(name_or_marker(&name, key, span, diags));
+                    runs.push(group_break());
                     runs.push((format!(" {open}"), false));
                 }
                 if let Some(pre) = pre {
@@ -596,7 +621,9 @@ fn numeric_body(
             }
             1 => {
                 runs.push((citea.clone(), false));
+                runs.push(group_break());
                 runs.push(name_or_marker(&name, key, span, diags));
+                runs.push(group_break());
                 citea = format!("{} ", options.sep);
             }
             _ => {
@@ -683,14 +710,18 @@ fn note_text(raw: Option<&str>) -> Option<String> {
 /// first run carries `space_before`, exactly as `bib::cite_inlines` does.
 fn into_inlines(runs: Vec<Run>, span: Span) -> Vec<Inline> {
     let mut merged: Vec<Run> = Vec::new();
+    let mut apart = false;
     for (text, bold) in runs {
         if text.is_empty() {
+            // A [`group_break`]: the next run is an inline of its own.
+            apart |= bold;
             continue;
         }
         match merged.last_mut() {
-            Some((previous, previous_bold)) if *previous_bold == bold => previous.push_str(&text),
+            Some((previous, previous_bold)) if *previous_bold == bold && !apart => previous.push_str(&text),
             _ => merged.push((text, bold)),
         }
+        apart = false;
     }
     merged
         .into_iter()
@@ -841,6 +872,32 @@ mod tests {
             set("citet*", None, None, &["jones"]),
             "Jones, Baker, and Williams (1990)"
         );
+    }
+
+    /// The inlines of one citation, each as its own string.
+    fn runs_of(command: &str, keys: &[&str]) -> Vec<String> {
+        let kind = kind(command).unwrap();
+        let keys: Vec<String> = keys.iter().map(|key| (*key).to_string()).collect();
+        let mut diags = Vec::new();
+        cite_inlines(&Options::default(), kind, None, None, &keys, &library(), Span::new(0, 0), &mut diags)
+            .iter()
+            .map(|inline| match inline {
+                Inline::Text { text, .. } => text.clone(),
+                other => panic!("{other:?}"),
+            })
+            .collect()
+    }
+
+    /// `\NAT@nmfmt{\NAT@nm}` is the group `{\NAT@up#1}` (natbib.sty line
+    /// 287): the author list is an inline of its own, so no kern of the
+    /// face runs from its last letter into `\NAT@aysep` (pdflatex
+    /// `\showbox` of `\citep{hobby1986,frank1990}` at 10.95 pt: `y` `,`
+    /// with no `\kern-0.91251` between them, where a typed `y,` has one).
+    #[test]
+    fn the_author_list_is_a_group_of_its_own() {
+        assert_eq!(runs_of("citep", &["hobby", "frank"]), ["(", "Hobby", ", 1986; ", "Frank", ", 1990)"]);
+        assert_eq!(runs_of("citet", &["hobby"]), ["Hobby", " (1986)"]);
+        assert_eq!(runs_of("citeauthor", &["hobby", "frank"]), ["Hobby", "; ", "Frank"]);
     }
 
     #[test]

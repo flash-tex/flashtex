@@ -313,6 +313,10 @@ pub enum Inline {
     TextGlue {
         em: f64,
         span: Span,
+        /// Finite stretch and shrink, in the same ems (`\hskip.13em plus
+        /// .1em minus .1em`, cite.sty's `\citepunct`); zero for `\quad`.
+        plus_em: f64,
+        minus_em: f64,
     },
     Math {
         list: MathList,
@@ -6471,10 +6475,14 @@ impl P<'_> {
         "quad" => para.push(Inline::TextGlue {
             em: math::QUAD_EM,
             span,
+            plus_em: 0.0,
+            minus_em: 0.0,
         }),
         "qquad" => para.push(Inline::TextGlue {
             em: 2.0 * math::QUAD_EM,
             span,
+            plus_em: 0.0,
+            minus_em: 0.0,
         }),
         "thinspace" | "negthinspace" | "medspace" | "negmedspace" | "thickspace"
         | "negthickspace" | "enspace" => {
@@ -6487,7 +6495,7 @@ impl P<'_> {
             }
         }
         // `\def\enskip{\hskip.5em\relax}` (latex.ltx 9434): glue, like `\quad`.
-        "enskip" => para.push(Inline::TextGlue { em: 0.5, span }),
+        "enskip" => para.push(Inline::TextGlue { em: 0.5, span, plus_em: 0.0, minus_em: 0.0 }),
             _ => unreachable!("\\{name} is not in this command family"),
         }
     }
@@ -15472,6 +15480,15 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // biblatex's supported options are parsed by crate::biblatex; package
         // loading itself has no additional layout effect.
         "biblatex" => true,
+        // cite.sty's sorted, compressed `[1--3]` citations with its own
+        // `\citepunct` glue (`bib::cite_sty_labels`); `space`, `nospace`,
+        // `nosort` and `nocompress` are honoured; `superscript`/`super`,
+        // `noadjust`, `nomove`, `nobreak`, `ref` and `biblabel` change the
+        // output and keep the warning. `\cite@adjust`'s space in front of a citation written
+        // without one (`block\cite{a}`) is not modelled.
+        "cite" => options
+            .iter()
+            .all(|option| crate::bib::CITE_IMPLEMENTED_OPTIONS.contains(option)),
         // siunitx v3 numbers, units, quantities, lists, ranges and angles
         // (crate::siunitx); its options are \sisetup keys, and a key that
         // is not modelled gets its own diagnostic there.
@@ -21482,7 +21499,9 @@ mod tests {
         let (parsed, items) = items(source);
         assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
         let texts: Vec<&str> = items.iter().map(|i| i.text.as_str()).collect();
-        assert!(texts.windows(4).any(|w| w == ["[", "1", ", ", "2"]));
+        // `,\penalty\@m\ ` (latex.ltx `\@citex`): the comma, then the
+        // control space after the penalty.
+        assert!(texts.windows(5).any(|w| w == ["[", "1", ",", " ", "2"]), "{texts:?}");
     }
 
     #[test]
@@ -21510,10 +21529,12 @@ mod tests {
         let (parsed, items) = items(source);
         assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
         let texts: Vec<&str> = items.iter().map(|i| i.text.as_str()).collect();
-        assert!(texts.contains(&"[Knuth 1984]"));
-        assert!(texts
-            .windows(4)
-            .any(|w| w == ["[", "Knuth 1984", ", ", "1"]));
+        assert!(texts.contains(&"[Knuth 1984]"), "{texts:?}");
+        // The kernel's `,\penalty\@m\ ` between the labels.
+        assert!(
+            texts.windows(5).any(|w| w == ["[", "Knuth 1984", ",", " ", "1"]),
+            "{texts:?}"
+        );
     }
 
     #[test]

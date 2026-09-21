@@ -728,7 +728,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("raggedleft", "", "right-aligned following paragraphs"),
     ("RaggedLeft", "", "right-aligned following paragraphs (ragged2e form)"),
     ("indent", "", "accepted; the first-line indent is diagnosed, not drawn"),
-    ("cite", "[note]{keys}", "numbered citation from thebibliography entries, or biblatex's numeric citation when biblatex is loaded; natbib redefines it as \\citet, or as \\citep when an optional argument follows"),
+    ("cite", "[note]{keys}", "numbered citation from thebibliography entries, or biblatex's numeric citation when biblatex is loaded; natbib redefines it as \\citet, or as \\citep when an optional argument follows; with cite.sty loaded the keys are sorted, three or more consecutive numbers become a range, and the separator is cite's thin glue"),
     ("parencite", "[pre][post]{keys}", "biblatex parenthetical citation: [n] in numeric style"),
     ("textcite", "[pre][post]{keys}", "biblatex textual citation: Author [n] in numeric style"),
     ("autocite", "[pre][post]{keys}", "biblatex automatic citation, equivalent to \\parencite in this compiler"),
@@ -1489,6 +1489,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "natbib",
         "numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak",
         "\\citet/\\citep/\\citealt/\\citealp/\\citeauthor/\\citeyear/\\citeyearpar/\\citenum/\\citetext and the \\cite it redefines, with [Author(Year)] \\bibitem labels; sort, compress, super and openbib are diagnosed",
+    ),
+    (
+        "cite",
+        "space, nospace, nosort, nocompress, sort, compress, adjust, move, verbose",
+        "\\cite sorts numeric keys, compresses three or more consecutive numbers into a range and separates entries with cite.sty's \\citepunct glue; superscript, noadjust, nomove, nobreak, ref and biblabel are diagnosed",
     ),
     (
         "biblatex",
