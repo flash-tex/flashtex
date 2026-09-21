@@ -265,6 +265,7 @@
     {"name": "LaTeX", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "latex.ltx logo: L, kern -.36em, script-size A raised to the T height, kern -.15em, \\TeX", "renders": true},
     {"name": "LaTeXe", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "\\LaTeX, kern .15em, 2 and a text-style subscript varepsilon", "renders": true},
     {"name": "rule", "mode": "text", "origin": "text_dispatch", "arguments": "[raise]{dimension}{dimension}", "description": "filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \\textwidth, \\linewidth, \\columnwidth", "renders": true},
+    {"name": "mbox", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "kernel unbreakable box: the argument as one \\hbox at its natural width, never broken across lines (also in math)", "renders": true},
     {"name": "phantom", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "kernel invisible box: the argument's full width, height and depth, paints nothing (single-line; also in math)", "renders": true},
     {"name": "hphantom", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "kernel invisible box: the argument's width only, zero height and depth (single-line; also in math)", "renders": true},
     {"name": "vphantom", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "kernel invisible box: the argument's height and depth only, zero width (single-line; also in math)", "renders": true},
