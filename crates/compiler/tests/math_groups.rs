@@ -52,6 +52,11 @@ fn an_environment_forms_no_group_atom() {
 }
 
 #[test]
+fn dag_in_math_is_a_braced_dagger() {
+    assert_eq!(shape("$a\\dag b\\ddag c$"), ["symbol", "group", "symbol", "group", "symbol"]);
+}
+
+#[test]
 fn bmod_is_binary() {
     let list = atoms("$a\\bmod b$");
     let modulo = list.iter().find(|a| matches!(&a.nucleus, Nucleus::Text(t) if t == "mod")).expect("mod");

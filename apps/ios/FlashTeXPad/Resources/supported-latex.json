@@ -570,6 +570,8 @@
     {"name": "mathopen", "mode": "math", "origin": "math_structure", "arguments": "{math}", "description": "argument boxed as one atom of the forced class", "renders": true},
     {"name": "mathclose", "mode": "math", "origin": "math_structure", "arguments": "{math}", "description": "argument boxed as one atom of the forced class", "renders": true},
     {"name": "mathpunct", "mode": "math", "origin": "math_structure", "arguments": "{math}", "description": "argument boxed as one atom of the forced class", "renders": true},
+    {"name": "dag", "mode": "math", "origin": "math_structure", "arguments": "", "description": "latex.ltx `{\\dagger}`/`{\\ddagger}` in math: the cmsy mark as an ordinary atom", "renders": true},
+    {"name": "ddag", "mode": "math", "origin": "math_structure", "arguments": "", "description": "latex.ltx `{\\dagger}`/`{\\ddagger}` in math: the cmsy mark as an ordinary atom", "renders": true},
     {"name": "mathbf", "mode": "math", "origin": "math_structure", "arguments": "{text}", "description": "literal text in Times-Bold", "renders": true},
     {"name": "textbf", "mode": "math", "origin": "math_structure", "arguments": "{text}", "description": "literal text in Times-Bold", "renders": true},
     {"name": "mathit", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "letters and digits of a plain argument as Unicode mathematical italic, sans-serif or monospace; any other argument stays in the current math face", "renders": true},
