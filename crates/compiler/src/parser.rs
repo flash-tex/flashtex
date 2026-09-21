@@ -2286,6 +2286,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "hfil",
     "qedhere",
     "hspace",
+    "ensuremath",
     "hskip",
     // pdfTeX's glyph-to-Unicode primitives (see `pdf_unicode_noop`): engine
     // assignments, always defined, so a `\newcommand` of either name must
@@ -4852,6 +4853,10 @@ impl P<'_> {
             // amsthm `\qedhere` in running text (in math it never reaches
             // this dispatch; see `raw_qedhere`).
             "qedhere" => self.qedhere(span, para),
+            // latex.ltx `\ensuremath{<x>}` outside math is `$<x>$` (issue
+            // #846: user macros such as `\newcommand{\E}{\ensuremath{\mathbb
+            // E}}` are used in running text as often as in formulas).
+            "ensuremath" => self.ensuremath(span, para),
             // latex.ltx `\discretionary` is TeX's primitive; `\-` is
             // `\discretionary{\char\hyphenchar\font}{}{}`.
             "-" if self.tabbing_active() => self.tabbing_control("-", span, para),
@@ -11556,6 +11561,62 @@ impl P<'_> {
         };
         self.finish_math(
             open,
+            content_start,
+            content_end,
+            close_end,
+            found,
+            false,
+            space_before,
+            para,
+        );
+    }
+
+    /// `\ensuremath{<x>}` in text: `<x>` as inline math (latex.ltx:
+    /// `\ifmmode <x>\else $<x>$\fi`). The braced argument's tokens go to
+    /// `finish_math` exactly as `\(...\)`'s do, so the formula's span runs
+    /// from the command to the closing brace. A brace group cannot cross a
+    /// paragraph boundary; an unclosed one is closed there, as
+    /// `required_group_bounded` closes any other argument.
+    fn ensuremath(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let space_before = !para.is_empty() && self.space_precedes(self.i - 1);
+        self.skip_spaces();
+        if !matches!(self.peek().map(|t| &t.kind), Some(TokenKind::LBrace)) {
+            self.diags.push(Diagnostic::error(
+                "\\ensuremath requires a braced argument",
+                Some(span),
+                Some("used an empty argument and continued".into()),
+            ));
+            return;
+        }
+        self.i += 1;
+        let content_start = self.i;
+        let mut depth = 0usize;
+        while self.i < self.t.len() {
+            if paragraph_boundary_at(&self.t, self.i) {
+                break;
+            }
+            match &self.t[self.i].token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace if depth == 0 => break,
+                TokenKind::RBrace => depth -= 1,
+                _ => {}
+            }
+            self.i += 1;
+        }
+        let content_end = self.i;
+        let found = matches!(
+            self.t.get(self.i).map(|input| &input.token.kind),
+            Some(TokenKind::RBrace)
+        );
+        let close_end = if found {
+            let end = self.t[self.i].token.span.end;
+            self.i += 1;
+            end
+        } else {
+            span.end
+        };
+        self.finish_math(
+            span,
             content_start,
             content_end,
             close_end,
