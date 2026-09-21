@@ -1145,7 +1145,19 @@ pub fn parse_tokens_display(
     diagnostics: &mut Vec<Diagnostic>,
     display: bool,
 ) -> MathList {
-    let (list, unclosed) = parse_tokens_reporting_unclosed(tokens, packages, diagnostics, false, display);
+    parse_tokens_display_at(tokens, packages, diagnostics, display, false)
+}
+
+/// [`parse_tokens_display`] for a formula whose closing delimiter is known
+/// (`dollar_end`: see [`parse_formula_tokens`]).
+pub fn parse_tokens_display_at(
+    tokens: &[Token],
+    packages: MathPackages,
+    diagnostics: &mut Vec<Diagnostic>,
+    display: bool,
+    dollar_end: bool,
+) -> MathList {
+    let (list, unclosed) = parse_formula_tokens(tokens, packages, diagnostics, false, display, dollar_end);
     if let Some(open) = unclosed {
         diagnostics.push(Diagnostic::error(
             "math group is missing its closing brace",
@@ -1175,6 +1187,21 @@ pub fn parse_tokens_reporting_unclosed(
     cut_off: bool,
     display: bool,
 ) -> (MathList, Option<Span>) {
+    parse_formula_tokens(tokens, packages, diagnostics, cut_off, display, false)
+}
+
+/// [`parse_tokens_reporting_unclosed`] for a formula whose closing
+/// delimiter is known: `dollar_end` says it is `$` (or `$$`), which amsmath's
+/// ellipses see as their follower at the very end of the formula and answer
+/// with an extra thin space (`$a,\dots$`, `amsmath.sty` `\extra@`).
+pub fn parse_formula_tokens(
+    tokens: &[Token],
+    packages: MathPackages,
+    diagnostics: &mut Vec<Diagnostic>,
+    cut_off: bool,
+    display: bool,
+    dollar_end: bool,
+) -> (MathList, Option<Span>) {
     let split = split_word_tokens(tokens);
     let mut parser = MathParser {
         tokens: &split,
@@ -1188,6 +1215,7 @@ pub fn parse_tokens_reporting_unclosed(
         open_lefts: 0,
         dropped_lefts: 0,
         display,
+        dollar_end,
     };
     let list = parser.list(false);
     (list, parser.unclosed)
@@ -1258,6 +1286,31 @@ struct MathParser<'a> {
     /// it; it does not change for a nested group, script or fraction --
     /// `\if@display` is LaTeX's outer flag, not TeX's inner math style.
     display: bool,
+    /// The formula's tokens end at a closing `$` (or `$$`), which amsmath's
+    /// ellipses see as their follower at the very end (`\extra@`, see
+    /// `ellipsis`); `\)`, `\]` and `\end{...}` are macros that it does not
+    /// recognise, so every other end is an ordinary follower.
+    dollar_end: bool,
+}
+
+/// The token after an ellipsis, as amsmath's `\mdots@@`/`\extra@`/
+/// `\extrap@` classify it (see `MathParser::ellipsis`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DotsFollower {
+    Comma,
+    Semicolon,
+    Period,
+    /// `\keybin@`, `\not`, or a `\DOTSB` macro: `\dots` is `\dotsb@`.
+    Centred,
+    /// A `\DOTSI` macro: `\dots` is `\dotsi`.
+    Integral,
+    /// `\rightdelim@`.
+    RightDelim,
+    /// The closing `$`.
+    Dollar,
+    /// Any other command: decided by the class of its atom.
+    Command,
+    Other,
 }
 
 impl MathParser<'_> {
@@ -2274,17 +2327,10 @@ impl MathParser<'_> {
             | "Bigr" | "biggr" | "Biggr" | "bigm" | "Bigm" | "biggm" | "Biggm" => {
                 sized_delimiter(self.take_delimiter(&name, span), &name)
             }
-            // Only bare `\dots` auto-detects its form here: `resolve_dots`
-            // rewrites the marker to the centred symbol when the following
-            // non-space atom is class `Bin` or `Rel`. Every other spelling
-            // is a fixed choice in real amsmath (amsmath.dtx): `\dotsc`
-            // ("dots with commas") and `\dotso` ("other dots") are always
-            // baseline, like `\ldots`; `\cdots`/`\dotsb`/`\dotsm`/`\dotsi`
-            // are always centred — confirmed against the pdflatex oracle
-            // (`\dotsc + x`/`\dotso + x` are CMMI10 baseline, not centred).
-            "dots" => auto_dots_atom(span),
-            "ldots" | "dotsc" | "dotso" => text_atom("...".into(), span),
-            "cdots" | "dotsb" | "dotsm" | "dotsi" => symbol("⋅⋅⋅".into(), span),
+            // The ellipses: see `ellipsis` for amsmath's rules (issue #893).
+            "dots" | "ldots" | "dotsc" | "dotso" | "cdots" | "dotsb" | "dotsm" | "dotsi" => {
+                self.ellipsis(&name, span)
+            }
             // Symbol has no U+222C/U+222D: repeated real integral glyphs.
             "iint" => symbol("∫∫".into(), span),
             "lbrace" => symbol("{".into(), span),
@@ -3335,6 +3381,119 @@ impl MathParser<'_> {
 
     /// Parses a delimited sub-list (an optional argument, a grid cell). A
     /// group left open inside it closes at the sub-list's own delimiter.
+    /// `\dots`, `\ldots`, `\cdots` and amsmath's `\dotsc`/`\dotso`/`\dotsb`/
+    /// `\dotsm`/`\dotsi` (the command token already consumed).
+    ///
+    /// The kernel's `\dots` and `\ldots` are both `\mathellipsis`
+    /// (`latex.ltx` 10094-10095), low dots whatever follows, and its `\cdots`
+    /// is a fixed `\mathinner` of centred dots. amsmath (`amsmath.sty`
+    /// 497-629) looks at the token after each of them instead:
+    ///
+    /// * `\dots` is `\mdots@@`: before `,` it is `\dotsc`; before `\not`, one
+    ///   of `+ = < > - * :` (`\keybin@`), a `\mathchar` of class Bin or Rel,
+    ///   or a macro opening with `\DOTSB` (`\sum`, `\prod`, the big
+    ///   operators, the long arrows, `\iff`, ...) or with `\mathbin`/
+    ///   `\mathrel` it is `\dotsb@` = `\@cdots`; before a `\DOTSI` macro
+    ///   (`\int`, `\oint`, `\iint`, ...) it is `\dotsi`; before anything else
+    ///   `\dotso@`, the low dots.
+    /// * `\extra@` holds before a right delimiter (`)`, `]`, `\}`,
+    ///   `\rangle`, `\right`, `\bigr`, ... `\rightdelim@`) or the closing
+    ///   `$`, and then `\dotso@` and `\dotsc` add a thin space after the
+    ///   dots; `\cdots`/`\dotsb`/`\dotsm`/`\dotso` (`\extrap@`) add it there
+    ///   and also before `,`, `;` and `.`, and `\dotsc` before `;` and `.`.
+    /// * `\dotsi` is `\!\@cdots`; `\ldots` stays `\mathellipsis`.
+    ///
+    /// A command follower that is none of the named cases is settled by the
+    /// class of the atom it produces (`auto_dots_atom`, `resolve_dots`), which
+    /// stands in for `\mdots@@`'s `\mathchar` test. Robust commands and bare
+    /// `\mathrel`/`\mathbin` fail every one of amsmath's meaning tests, so
+    /// they are low dots however their atom is classed (pdflatex, TeX Live
+    /// 2026: `\dots\neq`, `\dots\notin`, `\dots\bmod`, `\dots\mathrel{R}`
+    /// are all CMMI10 baseline dots).
+    fn ellipsis(&mut self, name: &str, span: Span) -> MathAtom {
+        let low = || text_atom("...".into(), span);
+        let centred = || symbol("⋅⋅⋅".into(), span);
+        if !self.packages.amsmath {
+            return match name {
+                "dots" | "ldots" | "dotsc" | "dotso" => low(),
+                _ => centred(),
+            };
+        }
+        use DotsFollower as F;
+        let next = self.dots_follower();
+        let extra = matches!(next, F::RightDelim | F::Dollar);
+        let punct = matches!(next, F::Comma | F::Semicolon | F::Period);
+        let (atom, thin_after) = match name {
+            "ldots" => (low(), false),
+            "dotsi" => (centred(), false),
+            "cdots" | "dotsb" | "dotsm" => (centred(), extra || punct),
+            "dotso" => (low(), extra || punct),
+            "dotsc" => (low(), extra || matches!(next, F::Semicolon | F::Period)),
+            // `\dots`
+            _ => match next {
+                F::Comma => (low(), false),
+                F::Centred => (centred(), false),
+                F::Integral => return self.first_queued(vec![space(-3.0 / 18.0, span), centred()], span),
+                F::Command => (auto_dots_atom(span), false),
+                _ => (low(), extra),
+            },
+        };
+        if name == "dotsi" {
+            return self.first_queued(vec![space(-3.0 / 18.0, span), atom], span);
+        }
+        if thin_after {
+            self.pending.push(space(3.0 / 18.0, span));
+        }
+        atom
+    }
+
+    /// What amsmath's `\futurelet` after an ellipsis sees (see `ellipsis`):
+    /// the next token, spaces skipped as TeX skips them after a control
+    /// word.
+    fn dots_follower(&self) -> DotsFollower {
+        use DotsFollower as F;
+        let next = self.tokens[self.i.min(self.tokens.len())..]
+            .iter()
+            .find(|t| !matches!(t.kind, TokenKind::Space | TokenKind::Comment));
+        let Some(token) = next else {
+            return if self.dollar_end { F::Dollar } else { F::Other };
+        };
+        match &token.kind {
+            TokenKind::MathShift => F::Dollar,
+            TokenKind::Word(w) if token.control_symbol => match w.as_str() {
+                "}" => F::RightDelim,
+                _ => F::Other,
+            },
+            TokenKind::Word(w) => match w.chars().next() {
+                Some(',') => F::Comma,
+                Some(';') => F::Semicolon,
+                Some('.') => F::Period,
+                Some('+' | '=' | '<' | '>' | '-' | '*' | ':') => F::Centred,
+                Some(')' | ']') => F::RightDelim,
+                _ => F::Other,
+            },
+            TokenKind::Command(c) => match c.as_str() {
+                "not" => F::Centred,
+                // `\DOTSB` (amsmath.sty 325-347, 400-402, 632-648).
+                "sum" | "prod" | "coprod" | "bigvee" | "bigwedge" | "biguplus" | "bigcap" | "bigcup"
+                | "bigotimes" | "bigoplus" | "bigodot" | "bigsqcup" | "implies" | "impliedby" | "And"
+                | "longrightarrow" | "Longrightarrow" | "longleftarrow" | "Longleftarrow"
+                | "longleftrightarrow" | "Longleftrightarrow" | "mapsto" | "longmapsto"
+                | "hookrightarrow" | "hookleftarrow" | "iff" | "doteq" => F::Centred,
+                // `\DOTSI` (651-661).
+                "int" | "oint" | "iint" | "iiint" | "iiiint" | "idotsint" => F::Integral,
+                // `\rightdelim@` (577-593).
+                "rbrack" | "rbrace" | "rangle" | "rceil" | "rfloor" | "rgroup" | "rmoustache" | "right"
+                | "bigr" | "biggr" | "Bigr" | "Biggr" => F::RightDelim,
+                // Robust commands (their meaning is `\protect...`) and the
+                // bare class primitives: no test of `\mdots@@` matches.
+                "neq" | "ne" | "notin" | "bmod" | "pmod" | "pod" | "mod" | "mathrel" | "mathbin" => F::Other,
+                _ => F::Command,
+            },
+            _ => F::Other,
+        }
+    }
+
     fn sub_list(&mut self, tokens: &[Token]) -> MathList {
         let mut parser = MathParser {
             tokens,
@@ -3348,6 +3507,7 @@ impl MathParser<'_> {
             open_lefts: 0,
             dropped_lefts: 0,
             display: self.display,
+            dollar_end: false,
         };
         let list = parser.list(false);
         if let Some(open) = parser.unclosed {
@@ -4800,9 +4960,10 @@ fn text_atom(text: String, span: Span) -> MathAtom {
     }
 }
 
-/// A bare `\dots` atom whose baseline-vs-centred choice is still pending
-/// (issue #893): `resolve_dots` rewrites it once the following atom is
-/// known.
+/// An amsmath `\dots` followed by a command none of `\mdots@@`'s named
+/// cases covers (`MathParser::ellipsis`): the choice between the low and the
+/// centred dots waits for the atom that command produces, and `resolve_dots`
+/// makes it (issue #893).
 ///
 /// The pending marker is `class_override: Some(AtomClass::Inner)`, which
 /// `atom_class` maps to `Inner` -- exactly what the plain `Text("...")` it
@@ -4816,15 +4977,15 @@ fn auto_dots_atom(span: Span) -> MathAtom {
     atom
 }
 
-/// Resolve pending bare-`\dots` atoms (`auto_dots_atom`) in place: a pending
-/// atom becomes the centred `\cdots` symbol when the next
-/// non-space atom's class is `Bin` or `Rel` (explicit glue classifies as
-/// nothing and is skipped), and plain baseline `\ldots` otherwise -- before
-/// `,`, before close delimiters, and at the end of the list.
+/// Resolve pending `\dots` atoms (`auto_dots_atom`) in place: a pending atom
+/// becomes the centred `\cdots` symbol when the atom right after it -- the
+/// one its following command produced -- is class `Bin` or `Rel` (`\mdots@@`'s
+/// test of a `\mathchar`'s class), and plain baseline `\ldots` otherwise,
+/// glue (`\quad`) and the end of the list included.
 ///
-/// The class read is the raw `atom_class`, not the spacing-adjusted one: TeX
-/// decides from the following token's own class (`amsmath.sty` `\mdots@@`),
-/// so a `+` that spacing later demotes still centres the dots.
+/// The class read is the raw `atom_class`, not the spacing-adjusted one:
+/// amsmath decides from the following token's own class, so a relation that
+/// spacing later demotes still centres the dots.
 fn resolve_dots(list: &mut MathList) {
     for i in 0..list.atoms.len() {
         let pending = matches!(&list.atoms[i].nucleus, Nucleus::Text(text) if text == "...")
@@ -4832,10 +4993,10 @@ fn resolve_dots(list: &mut MathList) {
         if !pending {
             continue;
         }
-        let centred = list.atoms[i + 1..]
-            .iter()
-            .filter_map(atom_class)
-            .next()
+        let centred = list
+            .atoms
+            .get(i + 1)
+            .and_then(atom_class)
             .is_some_and(|class| matches!(class, AtomClass::Bin | AtomClass::Rel));
         let atom = &mut list.atoms[i];
         atom.class_override = None;
@@ -7036,40 +7197,61 @@ mod parse_tests {
         assert!(matches!(list.atoms[0].nucleus, Nucleus::Text(ref text) if text == "x"));
     }
 
-    /// Issue #893: bare `\dots` must choose the centred `\cdots` form when
-    /// the next non-space atom is class `Bin` or `Rel`, and the baseline
-    /// `\ldots` form otherwise. `\dotsc`/`\dotso` are fixed baseline in real
-    /// amsmath (pdflatex oracle: CMMI10 even before `Bin`/`Rel`) and never
-    /// move; neither do the explicit `\cdots`/`\ldots` spellings.
+    /// Issue #893: amsmath's `\dots` chooses the centred `\cdots` form from
+    /// the token after it (`\mdots@@`: `\keybin@`, `\not`, a Bin/Rel
+    /// `\mathchar`, a `\DOTSB`/`\DOTSI` macro) and the baseline `\ldots`
+    /// form otherwise; the kernel's `\dots` is `\mathellipsis`, always
+    /// baseline. `\dotsc`/`\dotso` are baseline and `\cdots`/`\dotsb`/
+    /// `\dotsm`/`\dotsi` centred whatever follows. Every row was checked
+    /// against pdflatex (TeX Live 2026, amsmath 2025/07/09 v2.17z).
     #[test]
     fn dots_chooses_centred_before_bin_or_rel_and_baseline_otherwise() {
-        // (source, centred?): the first atom whose nucleus is a dots form
-        // must be `Symbol("⋅⋅⋅")` when centred, `Text("...")` otherwise --
-        // the two existing branches the pipeline already lays out as the
-        // centred and baseline ellipsis respectively.
-        for (source, centred) in [
-            (r"\dots = \gcd(a,b)", true),
-            (r"a_1 + \dots + a_n", true),
-            (r"x \dots \le y", true),
-            (r"a_1, \dots, a_n", false),
-            (r"\cdots = \gcd(a,b)", true),
-            (r"\ldots = \gcd(a,b)", false),
+        // (source, amsmath?, centred?): the first atom whose nucleus is a
+        // dots form must be `Symbol("⋅⋅⋅")` when centred, `Text("...")`
+        // otherwise -- the two existing branches the pipeline already lays
+        // out as the centred and baseline ellipsis respectively.
+        for (source, amsmath, centred) in [
+            (r"\dots = \gcd(a,b)", true, true),
+            (r"a_1 + \dots + a_n", true, true),
+            (r"x \dots \le y", true, true),
+            (r"a_1, \dots, a_n", true, false),
+            (r"\cdots = \gcd(a,b)", true, true),
+            (r"\ldots = \gcd(a,b)", true, false),
             // Close delimiters and the end of a formula stay baseline.
-            (r"(a_1 + \dots)", false),
-            (r"a_n \dots", false),
+            (r"(a_1 + \dots)", true, false),
+            (r"a_n \dots", true, false),
             // \dotsc/\dotso are fixed baseline, never context-sensitive.
-            (r"\dotsc + x", false),
-            (r"\dotso = x", false),
-            (r"\dotsc, x", false),
-            // Explicit glue between the dots and the operator is skipped.
-            (r"\dots\,+ x", true),
+            (r"\dotsc + x", true, false),
+            (r"\dotso = x", true, false),
+            (r"\dotsc, x", true, false),
+            // Glue after the dots is what `\futurelet` sees: `\dotso@`.
+            (r"\dots\,+ x", true, false),
+            (r"\dots\quad = x", true, false),
+            // `\DOTSB`/`\DOTSI` macros, and a mathchar relation.
+            (r"a\dots\sum b", true, true),
+            (r"a\dots\bigcup b", true, true),
+            (r"a\dots\int b", true, true),
+            (r"a\dots\to b", true, true),
+            (r"a\dots\cup b", true, true),
+            // Robust commands and the bare class primitives match no test.
+            (r"a\dots\neq b", true, false),
+            (r"a\dots\notin b", true, false),
+            (r"a\dots\mathrel{R} b", true, false),
+            // Ordinary atoms and operator names.
+            (r"a\dots\lim b", true, false),
+            (r"a\dots\alpha", true, false),
             // The choice also applies inside a braced group.
-            (r"\frac{\dots + x}{y}", true),
-            (r"\frac{a, \dots, b}{y}", false),
+            (r"\frac{\dots + x}{y}", true, true),
+            (r"\frac{a, \dots, b}{y}", true, false),
+            // The kernel's `\dots` is `\mathellipsis` wherever it is.
+            (r"\dots = \gcd(a,b)", false, false),
+            (r"a_1 + \dots + a_n", false, false),
+            (r"x \dots \le y", false, false),
         ] {
+            let packages = MathPackages { amsmath, ..MathPackages::KERNEL };
             let mut diagnostics = Vec::new();
             let tokens = crate::lexer::tokenize(source);
-            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            let list = parse_tokens(&tokens, packages, &mut diagnostics);
             assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
             fn dots_nucleus(list: &MathList) -> Option<bool> {
                 for atom in &list.atoms {
@@ -7094,7 +7276,7 @@ mod parse_tests {
             assert_eq!(
                 dots_nucleus(&list),
                 Some(centred),
-                "{source}: wrong dots form in {:?}",
+                "{source} (amsmath {amsmath}): wrong dots form in {:?}",
                 list.atoms
                     .iter()
                     .map(|a| format!("{:?}", a.nucleus))
@@ -7116,6 +7298,54 @@ mod parse_tests {
                     .any(|item| item.text == "..." || item.text == "⋅⋅⋅"),
                 "{source}: no dots item laid out"
             );
+        }
+    }
+
+    /// Issue #893: amsmath's ellipses also add or remove glue around the
+    /// dots (`amsmath.sty` `\extra@`, `\extrap@`, `\dotsi`). The kerns are
+    /// the thin space pdflatex puts after `\dots` before a right delimiter
+    /// or the closing `$`, after `\cdots`/`\dotso` before `,`/`;`/`.` too,
+    /// after `\dotsc` before `;`/`.`, and the `\!` before `\dotsi`: each
+    /// shifts what follows by 1.66 bp at 10pt, which the pdflatex oracle
+    /// shows (`crates/render-pipeline/tests/math_dots_893.rs`).
+    #[test]
+    fn amsmath_ellipses_add_their_thin_spaces() {
+        const AMS: MathPackages = MathPackages { amsmath: true, ..MathPackages::KERNEL };
+        // (source, packages, closes with `$`, glue in mu in list order)
+        for (source, packages, dollar, glue) in [
+            (r"a,\dots", AMS, true, &[3.0][..]),
+            (r"a,\dots", AMS, false, &[][..]),
+            (r"a,\dots", MathPackages::KERNEL, true, &[][..]),
+            (r"(a,\dots)", AMS, false, &[3.0][..]),
+            (r"\{a\dots\}", AMS, false, &[3.0][..]),
+            (r"a\dots\rangle", AMS, false, &[3.0][..]),
+            (r"a\dots; b", AMS, false, &[][..]),
+            (r"a\ldots)", AMS, true, &[][..]),
+            (r"a\cdots, b", AMS, false, &[3.0][..]),
+            (r"a\cdots. b", AMS, false, &[3.0][..]),
+            (r"a\cdots b", AMS, false, &[][..]),
+            (r"a\dotsb", AMS, true, &[3.0][..]),
+            (r"a\dotsm, b", AMS, false, &[3.0][..]),
+            (r"a\dotso, b", AMS, false, &[3.0][..]),
+            (r"a\dotsc, b", AMS, false, &[][..]),
+            (r"a\dotsc; b", AMS, false, &[3.0][..]),
+            (r"a\dotsc) b", AMS, false, &[3.0][..]),
+            (r"a\dotsi b", AMS, false, &[-3.0][..]),
+            (r"a\dots\int b", AMS, false, &[-3.0][..]),
+        ] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(source);
+            let (list, _) = parse_formula_tokens(&tokens, packages, &mut diagnostics, false, false, dollar);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            let got: Vec<f64> = list
+                .atoms
+                .iter()
+                .filter_map(|a| match a.nucleus {
+                    Nucleus::Space { em, font_em: false } => Some((em * 18.0 * 1e6).round() / 1e6),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(got, glue, "{source} (amsmath {}, `$` {dollar})", packages.amsmath);
         }
     }
 }
