@@ -1396,7 +1396,28 @@ impl MathParser<'_> {
                     // first sum in display style. Flattened, the switch
                     // would govern the rest of the formula, so such a group
                     // stays one ordinary atom, as TeX makes every `{...}`.
-                    if self.switches_style(start) {
+                    //
+                    // Every other `{...}` is an ordinary atom as well
+                    // (TeX §1186), which is only the same as its contents
+                    // when those are ordinary atoms themselves (a single
+                    // one TeX unpacks outright). A group holding anything
+                    // else stays one atom: `a{=}b` and `a{+}b` set no space
+                    // around the operator, `${}+1$` and `${}={}$` space it
+                    // against the empty group, and `\mathbin{R}{=}b` keeps
+                    // the `R` binary (a relation after it would demote it).
+                    //
+                    // The `\begingroup` the engine puts around every
+                    // `\begin{...}` arrives as a brace too (it carries the
+                    // `\begin`'s span), but a semi-simple group forms no
+                    // atom: `\begin{bmatrix}..\end{bmatrix},` is an Inner
+                    // then a Punct, with the thin space between them.
+                    let semi_simple = self.tokens[start..]
+                        .iter()
+                        .find(|t| !matches!(t.kind, TokenKind::Space | TokenKind::Comment))
+                        .is_some_and(|t| matches!(&t.kind, TokenKind::Command(c) if c == "begin") && t.span == token.span);
+                    let ordinary = semi_simple
+                        || (!group.atoms.is_empty() && group.atoms.iter().all(|a| atom_class(a) == Some(AtomClass::Ord)));
+                    if self.switches_style(start) || !ordinary {
                         atoms.push(MathAtom {
                             nucleus: Nucleus::Group(group),
                             span: token.span,
@@ -2394,7 +2415,12 @@ impl MathParser<'_> {
             // keeps the full 5mu there and this keeps 1mu. That needs a
             // style-aware kern, which no atom here carries.
             "bmod" => {
-                self.pending.push(text_atom("mod".into(), span));
+                // `\mathbin{\operator@font mod}`: the class is stated on the
+                // atom, so a consumer need not re-derive it from the text.
+                self.pending.push(MathAtom {
+                    class_override: Some(AtomClass::Bin),
+                    ..text_atom("mod".into(), span)
+                });
                 self.pending.push(space(BMOD_EXTRA_MU / 18.0, span));
                 space(BMOD_EXTRA_MU / 18.0, span)
             }
@@ -7007,8 +7033,14 @@ mod parse_tests {
                 ..
             }
         ));
-        assert!(matches!(nuclei[2], Nucleus::Matrix { rows, .. } if rows.len() == 2));
-        assert!(matches!(nuclei[3], Nucleus::Fraction { .. }));
+        // `{n \choose k}` and `{a \over b}` are each a group (an ordinary
+        // atom, TeX §1186) around the generalized fraction.
+        let grouped = |n: &Nucleus| match n {
+            Nucleus::Group(list) if list.atoms.len() == 1 => Some(list.atoms[0].nucleus.clone()),
+            _ => None,
+        };
+        assert!(matches!(grouped(nuclei[2]), Some(Nucleus::Matrix { rows, .. }) if rows.len() == 2));
+        assert!(matches!(grouped(nuclei[3]), Some(Nucleus::Fraction { .. })));
         let laid = layout(&list, 12.0, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let question = laid.items.iter().find(|item| item.text == "?").unwrap();
@@ -8640,7 +8672,12 @@ mod spacing_tests {
             (list, diagnostics)
         };
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
-        assert_eq!(atom_class(&infix.atoms[0]), Some(AtomClass::Inner));
+        // The generalized fraction is Inner, and the group around it --
+        // `\frac`'s own braces or the author's -- makes it ordinary (§1186).
+        assert_eq!(infix.atoms.len(), 1);
+        assert_eq!(atom_class(&infix.atoms[0]), Some(AtomClass::Ord));
+        let Nucleus::Group(inner) = &infix.atoms[0].nucleus else { panic!("{:?}", infix.atoms[0].nucleus) };
+        assert_eq!(atom_class(&inner.atoms[0]), Some(AtomClass::Inner));
     }
 
     #[test]

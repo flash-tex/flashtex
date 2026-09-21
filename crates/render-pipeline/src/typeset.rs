@@ -9235,6 +9235,11 @@ pub fn convert_math_classed(
                     None if text_italic(&a.span) => sink.atom_corrected(text),
                     None => sink.atom(text),
                 };
+                // A class the compiler states on the atom: `\bmod`'s `mod` is
+                // `\mathbin{\operator@font mod}`.
+                if let Some(forced) = class(a) {
+                    atom.class = forced;
+                }
                 if let Some(limits) = op_limits(&a.span) {
                     atom.class = ml::AtomClass::Op;
                     atom.limits = limits;
