@@ -9863,7 +9863,11 @@ fn layout_kerned(runs: &[ml::MathList], glue: &[Option<f64>], style: ml::Style, 
     let mut limitations = Vec::new();
     let mut at = 0usize;
     for (i, l) in runs.iter().enumerate() {
-        let part = ml::layout_with_report(l, run_styles.get(i).copied().unwrap_or(style), metrics);
+        // Each run is classified as part of the whole formula: a Bin at a
+        // run's edge keeps the class the atoms across the glue give it
+        // (`\dots\,+b`: the `+` follows an Inner and is Bin on both sides).
+        let neighbours = run_neighbours(&all_atoms, &classes, at, at + l.atoms.len());
+        let part = ml::layout_in_context(l, run_styles.get(i).copied().unwrap_or(style), metrics, neighbours);
         limitations.extend(part.limitations);
         push(&mut children, &mut x, part.root);
         at += l.atoms.len();
@@ -9890,6 +9894,18 @@ fn layout_kerned(runs: &[ml::MathList], glue: &[Option<f64>], style: ml::Style, 
     }
 }
 
+/// The noads either side of the run `all_atoms[start..end]` of a formula
+/// cut at its top-level glue (`split_at_spaces`): the whole formula's class
+/// of the last noad before it and the own class of the first noad after it
+/// (`ml::Neighbours`). Glue atoms are not noads.
+fn run_neighbours(all_atoms: &[ml::Atom], classes: &[ml::AtomClass], start: usize, end: usize) -> ml::Neighbours {
+    let noad = |a: &ml::Atom| !(matches!(a.nucleus, ml::Nucleus::Glue { .. }) && a.superscript.is_none() && a.subscript.is_none());
+    ml::Neighbours {
+        before: (0..start.min(all_atoms.len())).rev().find(|&j| noad(&all_atoms[j])).map(|j| classes[j]),
+        after: all_atoms.get(end..).and_then(|rest| rest.iter().find(|a| noad(a))).map(|a| a.class),
+    }
+}
+
 /// `FLASHTEX_INLINE_MATH_BREAKS=0` keeps every inline formula one
 /// unbreakable box (the behaviour before break points existed), for the
 /// tests that compare the two and for bisecting a layout difference.
@@ -9910,7 +9926,8 @@ fn inline_math_breaks_enabled() -> bool {
 /// when there is a single run and no kern (`layout_with_report`), else
 /// `layout_kerned`'s *flat* hlist of every run's children with the kern
 /// and the inter-run spacing glue (when Rule 20 gives any) spliced in
-/// between. Rules 5/6 run per run, as the layout did.
+/// between. Rules 5/6 run per run in the context of the atoms across the
+/// glue (`run_neighbours`), as the layout did.
 ///
 /// With break points, `root` is flattened to one hbox of the children
 /// (all on the baseline, so the pieces re-hbox without a shift) and each
@@ -9934,7 +9951,9 @@ fn inline_break_points(root: &mut ml::MathBox, runs: &[ml::MathList], glue: &[Op
     let mut ci = 0usize;
     let mut at = 0usize;
     for (r, l) in runs.iter().enumerate() {
-        let classes = ml::layout::effective_classes(&l.atoms);
+        // The run's classes as `layout_kerned` laid it out: in the context
+        // of the atoms across the glue either side.
+        let classes = ml::layout::effective_classes_in(&l.atoms, run_neighbours(&all_atoms, &all_classes, at, at + l.atoms.len()));
         let kern_after = glue.get(r).copied().flatten().is_some();
         let explicit_after = if kern_after { split_penalty.get(r).copied().flatten() } else { None };
         let mut last_unit = None;
