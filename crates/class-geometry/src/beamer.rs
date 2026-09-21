@@ -606,6 +606,12 @@ pub struct Theme {
     /// the number in white `\tiny` over a ball.
     pub ball_items: bool,
     pub blocks: Option<RoundedBlocks>,
+    /// The `logo` beamercolor's foreground (`parent=palette secondary`,
+    /// `beamercolorthemedefault.sty` 104): `structure.fg!75!black` under
+    /// the default colour theme, white under whale (Madrid), where the
+    /// logo is therefore invisible on the white page. Measured
+    /// (`\showoutput`): `0.15 0.15 0.525 rg` and `1 g`.
+    pub logo_fg: Rgb,
 }
 
 /// The theme table.
@@ -622,6 +628,7 @@ pub fn theme(kind: ThemeKind) -> Theme {
             title_page: None,
             ball_items: false,
             blocks: None,
+            logo_fg: shade(STRUCTURE_RGB, 75.0),
         },
         ThemeKind::Madrid => {
             let em = crate::class::body_font(BaseSize::Pt11).em;
@@ -670,6 +677,7 @@ pub fn theme(kind: ThemeKind) -> Theme {
                     example_title_bg: shade(EXAMPLE_RGB, 75.0),
                     example_body_bg: tint(shade(EXAMPLE_RGB, 75.0), 10.0),
                 }),
+                logo_fg: WHITE,
             }
         }
     }
@@ -1061,6 +1069,50 @@ pub fn navigation_strip(theme: &Theme) -> NavigationStrip {
         baseline_above_bottom: foot_box + Sp::pt(2) + len("1.5pt"),
         height: len("5.5pt"),
         depth: len("1.5pt"),
+    }
+}
+
+/// Where `\logo{..}` sits on a frame page (`beamerouterthemedefault.sty`
+/// 138-145, `sidebar right` `[default]`, which infolines keeps: `\vfill
+/// \llap{\insertlogo\hskip0.1cm} \vskip2pt \llap{\usebeamertemplate***
+/// {navigation symbols}\hskip0.1cm} \vskip2pt`). The logo is an `\hbox`
+/// in the sidebar's `\Tiny` (4pt sans, `\baselineskip` 5pt, `\lineskip`
+/// and `\lineskiplimit` 0pt), its right edge `0.1cm` from the paper's
+/// right edge. Its baseline sits `2pt` + the logo's depth + the
+/// interline glue + the navigation box's height above the navigation
+/// box's baseline, which is `2pt` above the footline box
+/// ([`navigation_strip`]'s pictures' baseline less their `1.5pt` depth).
+///
+/// Measured (`\showoutput`, `\logo{\textbf{Fgy}}`): the navigation box
+/// is `\hbox(7.5+0.0)` and the interline glue `\lineskip` 0.0 (`5pt -
+/// 0.77777 - 7.5 < 0`); with the navigation symbols emptied the box is
+/// `\hbox(0.0+0.0)` and the glue `\baselineskip` 4.22223 (`5pt -
+/// 0.77777`). Content streams (`\logo{\textbf{FT}}`, depth 0): the logo
+/// at `354.642` (right edge `360.000` = `362.835 - 0.1cm`), baseline
+/// `260.669`bp from the top under the default theme (11.5pt above the
+/// paper bottom) and `252.035` under Madrid (+ the 8.66663pt footline).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LogoPlacement {
+    /// The logo's right edge from the paper's right edge (`0.1cm`).
+    pub right_inset: Sp,
+    /// The font size in force (`\Tiny`, 4pt).
+    pub size: Sp,
+    /// The logo's baseline above the paper's bottom edge.
+    pub baseline_above_bottom: Sp,
+}
+
+/// [`LogoPlacement`] for a logo `depth` deep, with or without the
+/// navigation symbols (`\setbeamertemplate{navigation symbols}{}`).
+pub fn logo_placement(theme: &Theme, navigation_symbols: bool, depth: Sp) -> LogoPlacement {
+    let foot_box = theme.footline.map_or(Sp::ZERO, |f| f.height + f.depth);
+    let nav_height = if navigation_symbols { len("7.5pt") } else { Sp::ZERO };
+    let baselineskip = Sp::pt(5);
+    // `\lineskiplimit` 0pt, `\lineskip` 0pt.
+    let glue = (baselineskip - depth - nav_height).max(Sp::ZERO);
+    LogoPlacement {
+        right_inset: len("0.1cm"),
+        size: Sp::pt(4),
+        baseline_above_bottom: foot_box + Sp::pt(2) + nav_height + glue + Sp::pt(2) + depth,
     }
 }
 
@@ -1486,6 +1538,25 @@ mod tests {
         assert_eq!(l.topsep.natural, Sp::pt(3));
         assert_eq!(l.itemsep.natural, Sp::pt(3));
         assert_eq!(l.parsep.natural, Sp::ZERO);
+    }
+
+    #[test]
+    fn logo_placement_numbers() {
+        let page_h = 272.126;
+        let d = logo_placement(&theme(ThemeKind::Default), true, Sp::ZERO);
+        assert!((page_h - bp(d.baseline_above_bottom) - 260.669).abs() < 0.002, "{}", bp(d.baseline_above_bottom));
+        assert!((362.835 - bp(d.right_inset) - 360.0).abs() < 0.002);
+        let m = logo_placement(&theme(ThemeKind::Madrid), true, Sp::ZERO);
+        assert!((page_h - bp(m.baseline_above_bottom) - 252.035).abs() < 0.002, "{}", bp(m.baseline_above_bottom));
+        // A deep logo pushes its baseline up by its depth; without the
+        // navigation symbols the `\baselineskip` glue makes the baseline
+        // distance 5pt + 2pt.
+        let deep = logo_placement(&theme(ThemeKind::Default), true, len("0.77777pt"));
+        assert_eq!(deep.baseline_above_bottom - d.baseline_above_bottom, len("0.77777pt"));
+        let bare = logo_placement(&theme(ThemeKind::Default), false, len("0.77777pt"));
+        assert_eq!(bare.baseline_above_bottom, Sp::pt(2) + Sp::pt(7));
+        assert_eq!(theme(ThemeKind::Default).logo_fg, PALETTE_SECONDARY_BG);
+        assert_eq!(theme(ThemeKind::Madrid).logo_fg, WHITE);
     }
 
     #[test]

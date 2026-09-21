@@ -1149,6 +1149,8 @@ pub struct BeamerDeck {
     pub short_author: Vec<Item>,
     pub short_institute: Vec<Item>,
     pub short_date: Vec<Item>,
+    /// `\logo{..}` (empty when the deck sets none).
+    pub logo: Vec<Item>,
 }
 
 /// The content pieces of a rich `\tag` (see `tag_content_pieces`), as a
@@ -3126,6 +3128,7 @@ pub fn adapt_cached(
         short_author: items_for(&d.short_author, false),
         short_institute: items_for(&d.short_institute, false),
         short_date: items_for(&d.short_date, false),
+        logo: items_for(&d.logo, false),
     });
     // One post-material switch the page builder lays out (slice 1): a
     // single bare `\twocolumn`/`\onecolumn` at a clean block boundary,

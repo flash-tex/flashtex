@@ -172,6 +172,25 @@ fn recolored(items: &[AItem], color: DeviceColor) -> Vec<AItem> {
         .collect()
 }
 
+/// `items` in `color` where they set no colour of their own
+/// (`\usebeamercolor[fg]{logo}` around `\insertlogo`: an explicit
+/// `\color` inside the logo wins).
+fn default_colored(items: &[AItem], color: DeviceColor) -> Vec<AItem> {
+    items
+        .iter()
+        .cloned()
+        .map(|item| match item {
+            AItem::Word(mut w) => {
+                for s in &mut w.segments {
+                    s.style.color.get_or_insert(color);
+                }
+                AItem::Word(w)
+            }
+            other => other,
+        })
+        .collect()
+}
+
 impl<'a> Context<'a> {
     /// The document's beamer theme (the default one outside beamer).
     pub(super) fn beamer_theme(&self) -> spec::Theme {
@@ -1049,6 +1068,19 @@ pub(super) fn page_chrome(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, pages
             let baseline = s.page_height_pt - frame_pt(strip.baseline_above_bottom);
             let block = ctx.paths_block(span, width, height, depth, x - text_x, navigation_symbol_shapes(&strip));
             front.push((block, baseline, 0.0));
+        }
+        // `\logo{..}` (`sidebar right`), right-aligned above the
+        // navigation symbols in the logo colour, on the same pages.
+        if let (Some(deck), None) = (deck, frame.plain) {
+            if !deck.logo.is_empty() {
+                let nav = ctx.style.class_geometry.as_ref().is_some_and(|g| g.beamer_navigation_symbols);
+                let fg = rgb_color(theme.logo_fg);
+                let size = frame_pt(spec::logo_placement(&theme, nav, flashtex_class_geometry::Sp::ZERO).size);
+                let (block, width, _, depth) = ctx.hbox_block(&default_colored(&deck.logo, fg), size);
+                let at = spec::logo_placement(&theme, nav, pt_sp(depth));
+                let x = s.page_width_pt - frame_pt(at.right_inset) - width;
+                back.push((block, s.page_height_pt - frame_pt(at.baseline_above_bottom), x - text_x));
+            }
         }
         if let (Some(foot), None) = (theme.footline, frame.plain) {
             let (ht, dp) = (frame_pt(foot.height), frame_pt(foot.depth));

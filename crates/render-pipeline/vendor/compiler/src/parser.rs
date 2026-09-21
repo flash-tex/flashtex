@@ -130,7 +130,10 @@ impl PageStyleName {
 /// friends, the full argument when no short form is given). The infolines
 /// outer theme (Madrid) sets them in its footline on every frame; the
 /// render pipeline lays that out (`typeset/beamer.rs`). `theme` is `None`
-/// under the default theme.
+/// under the default theme. `logo` is `\logo{..}`'s argument
+/// (`beamerbaseframecomponents.sty`: `\def\logo{\def\insertlogo}`, the
+/// last one wins; empty when the deck sets none), which the `sidebar
+/// right` template sets on every frame above the navigation symbols.
 #[derive(Debug, Clone, Default)]
 pub struct BeamerDeck {
     pub theme: Option<String>,
@@ -138,6 +141,7 @@ pub struct BeamerDeck {
     pub short_author: Vec<Inline>,
     pub short_institute: Vec<Inline>,
     pub short_date: Vec<Inline>,
+    pub logo: Vec<Inline>,
 }
 
 #[derive(Debug, Clone)]
@@ -3267,6 +3271,7 @@ pub fn parse_project_with(
         short_author: None,
         short_institute: None,
         short_date: None,
+        beamer_logo: None,
         beamer_frame_groups: Vec::new(),
         beamer_frame: None,
         beamer_columns_depth: 0,
@@ -3669,6 +3674,8 @@ struct P<'a> {
     short_author: Option<Vec<InputToken>>,
     short_institute: Option<Vec<InputToken>>,
     short_date: Option<Vec<InputToken>>,
+    /// beamer's `\logo{..}` (the last one), for [`BeamerDeck::logo`].
+    beamer_logo: Option<Vec<InputToken>>,
     /// `brace_stack.len()` when the body group of a `\frame{...}` command
     /// was entered: the `}` that brings the stack back to that depth ends
     /// the frame (`beamer_frame_end`).
@@ -4466,6 +4473,7 @@ impl P<'_> {
             // the body too (the default theme is the one modelled; see
             // `beamer_declaration`). Ahead of the preamble catch-all below.
             "subtitle" | "institute" => self.beamer_title_command(name, span),
+            "logo" => self.beamer_logo_command(span),
             "usetheme" | "usecolortheme" | "usefonttheme" | "useinnertheme" | "useoutertheme"
             | "setbeamertemplate" | "setbeamercolor" | "setbeamerfont" | "setbeamercovered"
             | "setbeamersize" | "beamertemplatenavigationsymbolsempty" => self.beamer_declaration(name, span),
@@ -10348,6 +10356,17 @@ impl P<'_> {
         }
     }
 
+    /// `\logo{..}` (`beamerbaseframecomponents.sty`: `\def\logo{\def
+    /// \insertlogo}`): stored for the frames' `sidebar right` template.
+    /// Where it is given does not matter; the last one sets every frame.
+    fn beamer_logo_command(&mut self, span: Span) {
+        if !self.beamer_command_available("logo", span) {
+            return;
+        }
+        let (tokens, _) = self.required_group("logo", span);
+        self.beamer_logo = Some(tokens);
+    }
+
     /// `\frame<spec>[options]{body}` (beamer, the command form of the
     /// `frame` environment: `\beamer@framecommand`): the head is read as
     /// for `\begin{frame}`, minus the `{title}{subtitle}` groups — the first
@@ -10415,12 +10434,18 @@ impl P<'_> {
             }
         };
         let [short_title, short_author, short_institute, short_date] = taken.map(&mut field);
+        let logo = self.beamer_logo.take();
+        let logo = match logo {
+            Some(tokens) => self.inlines_from_tokens(tokens, TextStyle::default()),
+            None => Vec::new(),
+        };
         Some(BeamerDeck {
             theme: self.beamer_theme.take(),
             short_title,
             short_author,
             short_institute,
             short_date,
+            logo,
         })
     }
 

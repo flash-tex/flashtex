@@ -161,3 +161,27 @@ fn frame_inside_a_frame_is_the_kernel_box() {
     });
     assert!(boxed, "{:?}", parsed.blocks);
 }
+
+/// `\logo{..}` (`beamerbaseframecomponents.sty`: `\def\logo{\def
+/// \insertlogo}`) sets nothing where it is written: the deck carries it
+/// for every frame's `sidebar right` template, the last one winning, in
+/// the preamble or the body. Outside beamer it is an unknown command.
+#[test]
+fn logo_is_carried_by_the_deck() {
+    let src = "\\documentclass{beamer}\n\\logo{First}\n\\logo{\\textbf{FT}}\n\\begin{document}\n\\begin{frame}\nBody.\n\\end{frame}\n\\end{document}\n";
+    let parsed = parse(src);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let logo = &parsed.beamer.as_ref().expect("a beamer deck").logo;
+    assert_eq!(text_of(logo), "FT", "{logo:?}");
+    assert!(logo.iter().any(|i| matches!(i, Inline::Text { style, .. } if style.bold)), "{logo:?}");
+    let out = compiled(src);
+    assert!(out.diagnostics.is_empty(), "{:?}", messages(&out));
+    let texts = page_texts(&out);
+    assert!(!texts[0].contains("First") && !texts[0].contains("FT"), "{texts:?}");
+
+    let none = parse(&deck("\\begin{frame}\nBody.\n\\end{frame}"));
+    assert!(none.beamer.as_ref().expect("a beamer deck").logo.is_empty());
+
+    let article = parse("\\documentclass{article}\n\\begin{document}\n\\logo{X}\n\\end{document}\n");
+    assert!(!article.diagnostics.is_empty(), "\\logo outside beamer is unknown");
+}

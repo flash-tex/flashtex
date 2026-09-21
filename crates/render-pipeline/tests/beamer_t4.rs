@@ -417,3 +417,37 @@ fn shadow(r: &Rendered, page: usize, right: f64, bottom: f64, blocks: usize) {
     // Widest (lightest) first within each shadow.
     assert!(greys[0] > greys[31], "{greys:?}");
 }
+
+/// `\logo{..}` on every frame page but `[plain]` ones, right-aligned
+/// 0.1cm from the paper edge above the navigation symbols in the `logo`
+/// colour, at `\Tiny` (4pt). Positions from the pdflatex content streams
+/// (TeX Live 2026): `\logo{\textbf{FT}}` at (354.642, 260.669) under the
+/// default theme, (354.642, 252.035) under Madrid (white: whale's
+/// `palette secondary` fg); with the navigation symbols emptied and a
+/// descender, `\logo{\textbf{Fgy} \color{red}R}` at (349.168, 263.160)
+/// and the red `R` at 357.262.
+#[test]
+fn logo_sits_above_the_navigation_symbols() {
+    if !lm_available() {
+        return;
+    }
+    let deck = |preamble: &str| {
+        format!("\\documentclass{{beamer}}\n{preamble}\n\\begin{{document}}\n\\begin{{frame}}\n  \\frametitle{{First}}\n  Some text on the frame.\n\\end{{frame}}\n\\begin{{frame}}[plain]\n  Plain.\n\\end{{frame}}\n\\end{{document}}\n")
+    };
+    let r = render_one(&deck("\\logo{\\textbf{FT}}"));
+    let w = words_of(&r);
+    at(&w, 1, "FT", 354.642, 260.669, 0.01);
+    assert_eq!(run_paint(&r, 1, "FT", 260.669), (0.15, 0.15, 0.525));
+    assert!(!w.iter().any(|x| x.page == 2 && x.text == "FT"), "a [plain] frame has no sidebar");
+
+    let r = render_one(&deck("\\usetheme{Madrid}\n\\logo{\\textbf{FT}}"));
+    let w = words_of(&r);
+    at(&w, 1, "FT", 354.642, 252.035, 0.01);
+    assert_eq!(run_paint(&r, 1, "FT", 252.035), (1.0, 1.0, 1.0));
+
+    let r = render_one(&deck("\\setbeamertemplate{navigation symbols}{}\n\\logo{\\textbf{Fgy} \\color{red}R}"));
+    let w = words_of(&r);
+    at(&w, 1, "Fgy", 349.168, 263.160, 0.01);
+    at(&w, 1, "R", 357.262, 263.160, 0.01);
+    assert_eq!(run_paint(&r, 1, "R", 263.160), (1.0, 0.0, 0.0));
+}
