@@ -1,11 +1,11 @@
 {
   "actor": "kabir-claude",
   "branch": null,
-  "gh_ref": null,
+  "gh_ref": "ae2d5a2f5d7ed3040bcbde4ec87a651027864969",
   "machine": "mac-m5pro-kabir",
   "note": null,
   "started_utc": "2026-09-21T07:03:58Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "PERF-DIGESTS-rerecord",
-  "updated_utc": "2026-09-21T08:16:51Z"
+  "updated_utc": "2026-09-21T08:50:59Z"
 }
