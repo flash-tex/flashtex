@@ -9019,10 +9019,10 @@ pub fn operator_thin_space_split(text: &str, at: usize) -> Option<(&'static str,
 /// (`:` and `^^A` are how `\showbox` names slots `"3A` and `"01`.) The
 /// grouping of the eight commands is the compiler's own
 /// (`crates/compiler/src/math.rs`): amsmath's `\dotsc`/`\dotso` are low dots
-/// and `\dotsb`/`\dotsm`/`\dotsi` are centred ones. Bare `\dots` follows the
-/// kernel's `\mathellipsis` and is low, which is what the compiler already
-/// assumes; amsmath makes `\dots` guess from what follows it, and neither
-/// side models that.
+/// and `\dotsb`/`\dotsm`/`\dotsi` are centred ones. Bare `\dots` is mapped
+/// to the low dot here only as a default: amsmath makes it guess from what
+/// follows it, the compiler resolves that guess (`resolve_dots`, #893), and
+/// [`convert_math_classed`] takes the dot from the resolved nucleus.
 ///
 /// `\vdots` and `\ddots` are here too, as [`MathDots::Vertical`] and
 /// [`MathDots::Diagonal`], but they are a different construction: not a run of
@@ -9109,6 +9109,18 @@ pub fn convert_math_classed(
             // atom (a thin space against each neighbour).
             N::Text(_) | N::Symbol(_) if ellipsis(&a.span).is_some() => match ellipsis(&a.span).expect("checked by the guard") {
                 MathDots::Inline(dot) => {
+                    // Which dot is the compiler's call, not the control
+                    // word's: bare `\dots` is amsmath's context-sensitive
+                    // one (`\mdots@@`, issue #893), which the compiler
+                    // resolves from what follows it (`resolve_dots`) into
+                    // the centred `Symbol("⋅⋅⋅")` or the low
+                    // `Text("...")`. Every other spelling arrives as the
+                    // form its name fixes, so this agrees with the word.
+                    let dot = match &a.nucleus {
+                        N::Symbol(s) if s == "\u{22C5}\u{22C5}\u{22C5}" => '\u{22C5}',
+                        N::Text(s) if s == "..." => '.',
+                        _ => dot,
+                    };
                     let dots = (0..3).map(|_| ml::Atom::new(ml::AtomClass::Punct, ml::Nucleus::Symbol(dot))).collect();
                     vec![ml::Atom::new(ml::AtomClass::Inner, ml::Nucleus::List(ml::MathList::new(dots)))]
                 }

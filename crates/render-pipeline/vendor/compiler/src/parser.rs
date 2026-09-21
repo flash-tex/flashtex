@@ -11735,12 +11735,21 @@ impl P<'_> {
                 raw.retain(|t| !matches!(&t.kind, TokenKind::Command(name) if name == "qedhere"));
             }
         }
-        let (list, unclosed) = math::parse_tokens_reporting_unclosed(
+        // A formula closed by `$`/`$$` ends at a token amsmath's ellipses
+        // look at (`math::parse_formula_tokens`); `\)`, `\]` and a closing
+        // brace are not that token.
+        let dollar_end = found
+            && matches!(
+                self.t.get(content_end).map(|input| &input.token.kind),
+                Some(TokenKind::MathShift)
+            );
+        let (list, unclosed) = math::parse_formula_tokens(
             &raw,
             self.math_packages,
             &mut self.diags,
             !found,
             display,
+            dollar_end,
         );
         // The span covers the opener through the close (or the last content
         // token). Expanded content can carry spans from before the opener or
@@ -13608,7 +13617,8 @@ impl P<'_> {
             }
             raw.push(input.token.clone());
         }
-        let list = math::parse_tokens_display(&raw, self.math_packages, &mut self.diags, if_display);
+        let dollar_end = found.is_some() && close == TokenKind::MathShift;
+        let list = math::parse_tokens_display_at(&raw, self.math_packages, &mut self.diags, if_display, dollar_end);
         let end_span = match found {
             Some(close_at) => {
                 let last = if doubled { close_at + 1 } else { close_at };
