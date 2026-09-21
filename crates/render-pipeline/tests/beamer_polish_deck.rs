@@ -276,3 +276,42 @@ fn table_of_contents_lists_the_sections_between_fills() {
     absent(&words, 1, "Contents");
     assert_eq!(words.iter().filter(|w| w.page == 1).count(), 6);
 }
+
+/// Sans math's other families (beamerbasefont.sty 205-238): the uppercase
+/// Greek letters are `operators` characters, so `OT1/cmss/m/n`; `\mathbf`
+/// is `cmss` `bx/n`; `\mathrm` stays `\rmdefault`. pdflatex (TeX Live
+/// 2026) on the probe below: `\Gamma` .. `\Omega` in CMSS10 at 56.343,
+/// 62.253, 71.343, 79.828, 86.495, 93.768, 101.495, 109.373, 117.858,
+/// 125.737, 134.222; `\mathbf{x}`, `\mathbf{A}`, `\mathbf{0}` in CMSSBX10
+/// at 246.279, 265.063, 287.613; `\mathrm{d}` in CMR10 at 317.395; the
+/// display's `\Delta` CMSS10 at 152.158 and `\mathbf{u}` CMSSBX10 at
+/// 161.249. The frame sits 0.104bp lower than pdflatex's (the display's
+/// `\sum` limits), so the baselines are held to 0.15.
+#[test]
+fn sans_math_greek_capitals_bold_and_roman() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}\n  \\frametitle{Greek}\n  Inline $\\Gamma \\Delta \\Theta \\Lambda \\Xi \\Pi \\Sigma \\Upsilon \\Phi \\Psi \\Omega$ and $\\alpha + \\beta = \\gamma$.\n  Bold $\\mathbf{x} + \\mathbf{A} = \\mathbf{0}$ and $\\mathrm{d}x$.\n  \\[ \\Delta \\mathbf{u} = \\sum_{i=1}^n \\Phi_i \\]\n\\end{frame}\n\\end{document}\n";
+    let r = render_one(src);
+    let words = words_of(&r);
+    // One run of the eleven letters (TeX's are one `operators` run too),
+    // from 56.343 to the end of `\Omega` (134.222 + 7.879).
+    let greek = "\u{393}\u{394}\u{398}\u{39B}\u{39E}\u{3A0}\u{3A3}\u{3A5}\u{3A6}\u{3A8}\u{3A9}";
+    at(&words, 1, greek, 56.343, 105.988, 0.15);
+    let run = words.iter().find(|w| w.page == 1 && w.text == greek).expect("greek run");
+    assert!(near(run.width, 142.101 - 56.343, 0.05), "{}", run.width);
+    let (_, name) = run_font(&r, 1, greek).expect("greek run");
+    assert!(name.contains("Sans") && !name.contains("Oblique"), "{name}");
+    for (text, x) in [("x", 246.279), ("A", 265.063), ("0", 287.613)] {
+        at(&words, 1, text, x, 105.988, 0.15);
+    }
+    for text in ["A", "0", "u"] {
+        let (_, name) = run_font(&r, 1, text).expect("bold run");
+        assert!(name.contains("Sans") && name.contains("Bold"), "{text}: {name}");
+    }
+    at(&words, 1, "d", 317.395, 105.988, 0.15);
+    let (_, name) = run_font(&r, 1, "d").expect("mathrm run");
+    assert!(name.contains("Roman") && !name.contains("Bold"), "{name}");
+    at(&words, 1, "u", 161.249, 138.334, 0.15);
+}

@@ -1944,6 +1944,9 @@ impl<'a> Context<'a> {
         // of them `Nucleus::Text`, but only a *whole* run of math characters
         // keeps the italic correction of its last character (§752).
         let text_italic = |sp: &Span| math_text_keeps_italic(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+        // `\mathrm{...}` against the operator names: under beamer's sans
+        // math the one is roman and the others sans.
+        let text_roman = |sp: &Span| math_text_is_mathrm(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // `\limsup`/`\liminf`: `lim`, a thin space, then `sup`/`inf`.
         let text_split = |sp: &Span| operator_thin_space_split(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // `\ldots`/`\cdots`: `\mathinner` of three Punct dots.
@@ -1965,7 +1968,7 @@ impl<'a> Context<'a> {
         // source-derived facts above.
         let switch = |sp: &Span| style_switch_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         let segments = split_at_spaces(list, &fence, sink.font_em_ratio(), &switch);
-        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits, &text_italic, &text_split, &ellipsis)).collect();
+        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits, &text_italic, &text_roman, &text_split, &ellipsis)).collect();
         // Glue at a top-level grid cell's own top level is split out like
         // the formula's; only deeper glue is dropped.
         let nested_glue_em: f64 = segments
@@ -8739,7 +8742,7 @@ pub fn convert_math_fenced(list: &flashtex_compiler::math::MathList, sink: &mut 
     // No source to read, so no source-derived fact: no fence, no forced
     // class, no operator limits, and no run shown to be a whole run of math
     // characters (so no italic correction).
-    convert_math_classed(list, sink, fence, &|_| None, &|_| None, &|_| false, &|_| None, &|_| None)
+    convert_math_classed(list, sink, fence, &|_| None, &|_| None, &|_| false, &|_| false, &|_| None, &|_| None)
 }
 
 /// Maps the compiler's own atom class onto math-layout's.
@@ -8927,6 +8930,20 @@ pub fn math_text_keeps_italic(text: &str, at: usize) -> bool {
     matches!(word, "mathrm" | "bmod" | "mod" | "pmod") || NAMED_OPERATORS.iter().any(|(name, _)| *name == word)
 }
 
+/// Whether the `Nucleus::Text` atom whose span starts at `at` is a
+/// `\mathrm{...}` run (re-read from the control word, like
+/// [`math_text_keeps_italic`]).
+pub fn math_text_is_mathrm(text: &str, at: usize) -> bool {
+    text.get(at..).is_some_and(|r| r.strip_prefix("\\mathrm").is_some_and(|t| !t.starts_with(|c: char| c.is_ascii_alphabetic())))
+}
+
+/// The eleven uppercase Greek letters of the `operators` family
+/// (fontmath.ltx: `\Gamma` .. `\Omega`, `\mathalpha` slots "00-"0A).
+fn is_upper_greek(s: &str) -> bool {
+    let mut chars = s.chars();
+    matches!((chars.next(), chars.next()), (Some('Γ' | 'Δ' | 'Θ' | 'Λ' | 'Ξ' | 'Π' | 'Σ' | 'Υ' | 'Φ' | 'Ψ' | 'Ω'), None))
+}
+
 /// The two log-like functions the kernel defines with a thin space inside
 /// them, split at it, re-read from the control word at the span like
 /// [`fence_of`].
@@ -9065,6 +9082,7 @@ pub fn convert_math_classed(
     class: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::AtomClass>,
     op_limits: &dyn Fn(&Span) -> Option<ml::Limits>,
     text_italic: &dyn Fn(&Span) -> bool,
+    text_roman: &dyn Fn(&Span) -> bool,
     text_split: &dyn Fn(&Span) -> Option<(&'static str, &'static str)>,
     ellipsis: &dyn Fn(&Span) -> Option<MathDots>,
 ) -> ml::MathList {
@@ -9080,7 +9098,7 @@ pub fn convert_math_classed(
         &list.atoms
     };
     for a in list_atoms {
-        let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class, op_limits, text_italic, text_split, ellipsis);
+        let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class, op_limits, text_italic, text_roman, text_split, ellipsis);
         let mut out: Vec<ml::Atom> = match &a.nucleus {
             // `\ldots`/`\cdots` and the amsmath spellings: TeX's
             // `\mathinner{\ldotp\ldotp\ldotp}` (`math_ellipsis_of`). The
@@ -9153,8 +9171,12 @@ pub fn convert_math_classed(
                         ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(ml::MathList::new(parts)))
                     }
                     // beamer sans math: `\operator@font` is
-                    // `\mathgroup\symoperators` = `OT1/cmss/m/n`.
-                    None if text_italic(&a.span) && sink.sans_math && text.bytes().all(|b| b.is_ascii_alphanumeric()) => {
+                    // `\mathgroup\symoperators` = `OT1/cmss/m/n`; `\mathrm`
+                    // stays `\rmdefault` (`beamerbasefont.sty` 223:
+                    // `\SetMathAlphabet{\mathrm}{normal}{..}{\rmdefault}`),
+                    // the roman run of the arm below. Measured (probe):
+                    // `\mathrm{d}` CMR10 6.061 wide.
+                    None if text_italic(&a.span) && sink.sans_math && !text_roman(&a.span) && text.bytes().all(|b| b.is_ascii_alphanumeric()) => {
                         sink.atom_in(text, crate::nfss::FontKey::new(crate::nfss::FamilyKind::Sf, crate::nfss::Series::M, crate::nfss::Shape::N))
                     }
                     None if text_italic(&a.span) => sink.atom_corrected(text),
@@ -9344,6 +9366,20 @@ pub fn convert_math_classed(
                 use crate::nfss::{FamilyKind, FontKey, Series, Shape};
                 vec![sink.atom_in(s, FontKey::new(FamilyKind::Sf, Series::M, Shape::It))]
             }
+            // beamer sans math: the uppercase Greek letters are
+            // `\mathalpha` characters of the `operators` family
+            // (fontmath.ltx `\DeclareMathSymbol{\Gamma}{\mathalpha}
+            // {operators}{"00}`), which beamerbasefont.sty 207 sets to
+            // `OT1/cmss/m/n`: a run in the sans upright shape, Ord.
+            // Measured (probe): `\Gamma` .. `\Omega` CMSS10, `\Gamma` 5.909
+            // and `\Delta` 9.091 wide, where the roman ones are 6.818 and
+            // 9.091.
+            N::Symbol(s) if sink.sans_math && class(a).is_none() && a.ams_symbol.is_none() && is_upper_greek(s) => {
+                use crate::nfss::{FamilyKind, FontKey, Series, Shape};
+                let mut atom = sink.atom_in(s, FontKey::new(FamilyKind::Sf, Series::M, Shape::N));
+                atom.class = ml::AtomClass::Ord;
+                vec![atom]
+            }
             N::Symbol(s) if sink.sans_math && class(a).is_none() && a.ams_symbol.is_none() && fence(&a.span).is_none() && sans_operator_class(s).is_some() => {
                 use crate::nfss::{FamilyKind, FontKey, Series, Shape};
                 let mut atom = sink.atom_in(s, FontKey::new(FamilyKind::Sf, Series::M, Shape::N));
@@ -9449,6 +9485,15 @@ pub fn convert_math_classed(
                 vec![frac]
             }
             N::Radical(r) => vec![ml::Atom::sqrt(sub(r, sink))],
+            // beamer sans math: `\mathbf` is `\mathfamilydefault`
+            // (`cmss`) `bx/n` (beamerbasefont.sty 224), a run in the bold
+            // sans text font, a single character included. Measured
+            // (probe): `\mathbf{x}`, `\mathbf{A}`, `\mathbf{0}` CMSSBX10.
+            N::Bold(text) if sink.sans_math => {
+                use crate::nfss::{FamilyKind, FontKey, Series, Shape};
+                let letters: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+                vec![sink.atom_in(&letters, FontKey::new(FamilyKind::Sf, Series::Bx, Shape::N))]
+            }
             // `\mathbf{...}` (fontmath.ltx OT1/cmr/bx/n): a run in the bold
             // roman text font; spaces in math take no part.
             N::Bold(text) => {
@@ -9993,6 +10038,8 @@ fn grid_pieces(
     // characters, re-read from the control word at the span.
     let text_italic = |sp: &Span| math_text_keeps_italic(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
     let text_italic = &text_italic;
+    let text_roman = |sp: &Span| math_text_is_mathrm(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+    let text_roman = &text_roman;
     let text_split = |sp: &Span| operator_thin_space_split(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
     let text_split = &text_split;
     let ellipsis = |sp: &Span| math_ellipsis_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
@@ -10004,7 +10051,7 @@ fn grid_pieces(
         let mut run: Vec<MathAtom> = Vec::new();
         let flush = |run: &mut Vec<MathAtom>, pieces: &mut Vec<GridPiece>, sink: &mut crate::mathtext::TextSink| {
             if !run.is_empty() {
-                pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class, op_limits, text_italic, text_split, ellipsis)));
+                pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class, op_limits, text_italic, text_roman, text_split, ellipsis)));
             }
         };
         for (a, top) in atoms.iter().zip(top_level_grids(atoms, fence)) {
@@ -10035,7 +10082,7 @@ fn grid_pieces(
                             _ => cell,
                         };
                         let parts = split_at_spaces(cell, fence, sink.font_em_ratio(), &|_| None);
-                        let runs = parts.iter().map(|(atoms, _, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class, op_limits, text_italic, text_split, ellipsis)).collect();
+                        let runs = parts.iter().map(|(atoms, _, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class, op_limits, text_italic, text_roman, text_split, ellipsis)).collect();
                         let glue = parts.iter().map(|(_, em, _)| *em).collect();
                         (runs, glue)
                     };
