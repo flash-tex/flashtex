@@ -185,7 +185,7 @@ pub fn prescan<T: Borrow<Token>>(tokens: &[T], diags: &mut Vec<Diagnostic>) -> B
                 let span = tokens[i].borrow().span;
                 let mut cursor = i + 1;
                 let mut label = None;
-                if let Some((text, after)) = optional_bracket_text(tokens, cursor) {
+                if let Some((text, after)) = optional_bracket_source(tokens, cursor) {
                     label = Some(text);
                     cursor = after;
                 }
@@ -393,6 +393,129 @@ pub(crate) fn optional_bracket_text<T: Borrow<Token>>(tokens: &[T], mut i: usize
     Some((content, i))
 }
 
+/// A `\bibitem`'s `[label]` as TeX source text, and the index just past it
+/// (#956).
+///
+/// The label is not plain text: natbib's `.bbl` labels read
+/// `{\citenamefont{Jones} \emph{et~al.}(1990)\citenamefont{Jones, Baker,
+/// and Williams}}`, and both natbib's `\@lbibitem` and the kernel's typeset
+/// what they cut out of it. [`optional_bracket_text`] flattens its tokens
+/// (braces dropped, commands kept as `\name`), which glued `\emph` to its
+/// argument and printed `\emphet~al.` literally, 1253 times in one revtex
+/// review. This keeps the source instead: braces, control words (with the
+/// space that ends one before a letter), control symbols and ties, so the
+/// caller can split it the way natbib does (at brace depth 0, see
+/// `natbib::parse_label`) and the parser can set each piece
+/// (`P::set_citation_source`).
+///
+/// The bracket is TeX's `[#1]` delimited argument: only a `]` at brace depth
+/// 0 ends it, and one brace pair around the whole argument is stripped
+/// (tex.web §392), which is why natbib labels are braced at all.
+pub(crate) fn optional_bracket_source<T: Borrow<Token>>(tokens: &[T], mut i: usize) -> Option<(String, usize)> {
+    while matches!(
+        tokens.get(i).map(|t| &t.borrow().kind),
+        Some(TokenKind::Space | TokenKind::Comment)
+    ) {
+        i += 1;
+    }
+    let TokenKind::Word(first) = &tokens.get(i)?.borrow().kind else {
+        return None;
+    };
+    if !first.starts_with('[') {
+        return None;
+    }
+    let mut out = String::new();
+    let mut depth = 0usize;
+    let start = i;
+    while i < tokens.len() {
+        let token = tokens[i].borrow();
+        match &token.kind {
+            TokenKind::Word(word) => {
+                let body = if i == start { &word[1..] } else { word.as_str() };
+                if token.control_symbol {
+                    out.push('\\');
+                    out.push_str(body);
+                } else {
+                    // A letter right after a control word would extend its
+                    // name when the source is read again.
+                    if body.starts_with(|c: char| c.is_alphabetic()) && ends_in_control_word(&out) {
+                        out.push(' ');
+                    }
+                    if depth == 0 {
+                        if let Some(close) = body.find(']') {
+                            out.push_str(&body[..close]);
+                            return Some((strip_outer_group(&out).to_string(), i + 1));
+                        }
+                    }
+                    out.push_str(body);
+                }
+            }
+            TokenKind::Command(name) => {
+                out.push('\\');
+                out.push_str(name);
+            }
+            TokenKind::LBrace => {
+                depth += 1;
+                out.push('{');
+            }
+            TokenKind::RBrace => {
+                depth = depth.saturating_sub(1);
+                out.push('}');
+            }
+            TokenKind::Space | TokenKind::ParBreak => out.push(' '),
+            TokenKind::MathShift => out.push('$'),
+            TokenKind::InlineMathOpen => out.push_str("\\("),
+            TokenKind::InlineMathClose => out.push_str("\\)"),
+            TokenKind::Superscript => out.push('^'),
+            TokenKind::Subscript => out.push('_'),
+            TokenKind::LineBreak => out.push_str("\\\\"),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Whether `source` ends in a control word (`\emph`), which a following
+/// letter would run into.
+fn ends_in_control_word(source: &str) -> bool {
+    let letters = source.len() - source.trim_end_matches(|c: char| c.is_ascii_alphabetic()).len();
+    letters > 0 && source[..source.len() - letters].ends_with('\\') && {
+        // `\\emph` is a line break and then letters.
+        let before = &source[..source.len() - letters - 1];
+        (before.len() - before.trim_end_matches('\\').len()) % 2 == 0
+    }
+}
+
+/// `{...}` spanning the whole of `source` loses that one pair, as a
+/// delimited macro argument does (tex.web §392); anything else is kept.
+fn strip_outer_group(source: &str) -> &str {
+    let Some(inner) = source.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
+        return source;
+    };
+    let mut depth = 0usize;
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            '{' => depth += 1,
+            '}' => match depth.checked_sub(1) {
+                Some(d) => depth = d,
+                // The first `{` closed before the end: `{a}b{c}`.
+                None => return source,
+            },
+            _ => {}
+        }
+    }
+    if depth == 0 {
+        inner
+    } else {
+        source
+    }
+}
+
 /// Builds the `Inline`s for one `\cite`/`\cite[note]{key1,key2,...}`:
 /// `[<label>, <label>, ..., note]`. An undefined key renders as a bold `?`
 /// (only the `?` is bold, matching real LaTeX's `\@citex`/`\bfseries ?`
@@ -430,7 +553,7 @@ pub fn cite_inlines(
         // `~` is TeX's tie: an ordinary interword space that just does not
         // break a line. This layout never breaks inside a `\cite` note, so a
         // plain space renders it faithfully.
-        let note = note.replace('~', " ");
+        let note = natbib::note_source(&note);
         out.push(text_run(
             &format!(", {note}"),
             span,
@@ -663,6 +786,34 @@ mod tests {
     fn bibitem_outside_thebibliography_is_not_registered() {
         let (bib, _) = scan(r"\bibitem{a}Stray.");
         assert_eq!(bib.resolve("a"), None);
+    }
+
+    /// #956: the label keeps its TeX source -- braces, control words and
+    /// the blank that ends one before a letter, control symbols, ties --
+    /// with the one brace pair around the whole argument stripped, and only
+    /// a `]` at depth 0 closing it.
+    #[test]
+    fn a_label_is_kept_as_tex_source() {
+        let label = |source: &str| {
+            let tokens = tokenize_document(source, DocumentId::default());
+            optional_bracket_source(&tokens, 0).map(|(text, _)| text)
+        };
+        assert_eq!(
+            label(r"[{\citenamefont{Jones} \emph{et~al.}(1990)\citenamefont{Jones and Baker}}]{k}").as_deref(),
+            Some(r"\citenamefont{Jones} \emph{et~al.}(1990)\citenamefont{Jones and Baker}")
+        );
+        assert_eq!(label(r#"[Gr{\"o}{\ss}er(1999)]"#).as_deref(), Some(r#"Gr{\"o}{\ss}er(1999)"#));
+        assert_eq!(label(r"[\ss er]").as_deref(), Some(r"\ss er"));
+        assert_eq!(label(r"[{a]b}(1990)]").as_deref(), Some(r"{a]b}(1990)"));
+        assert_eq!(label(r"[{a}b{c}]").as_deref(), Some(r"{a}b{c}"));
+        assert_eq!(label(r"[Knuth 1984]").as_deref(), Some("Knuth 1984"));
+        assert_eq!(label(r"{k}"), None);
+    }
+
+    #[test]
+    fn a_marked_up_kernel_label_resolves_to_its_source() {
+        let (bib, _) = scan(r"\begin{thebibliography}{9}\bibitem[\emph{Knuth} 1984]{tex}A.\end{thebibliography}");
+        assert_eq!(bib.resolve("tex"), Some(r"\emph{Knuth} 1984"));
     }
 
     /// The inlines of one `\cite`, spelled: text as itself, a penalty as

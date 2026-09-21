@@ -7685,6 +7685,13 @@ impl<'a, 't> SourceIndexes<'a, 't> {
 /// own bytes is kept as a character, so that coincidence would set the
 /// citation's spaces as blank glyphs (LMRoman10's 0.5 em instead of cmr10's
 /// 0.33333 em: 1.825 pt too wide per space at 11 pt, and cumulative).
+/// A run the compiler built from a `\bibitem` label (#956): a citation, or
+/// the kernel `[label]` marker of the entry itself, which carries the
+/// `\bibitem`'s span.
+fn citation_label_run(source: &str, span: Span) -> bool {
+    generated_citation(source, span) || source.get(span.start..span.end).is_some_and(|s| s.starts_with("\\bibitem"))
+}
+
 fn generated_citation(source: &str, span: Span) -> bool {
     let Some(text) = source.get(span.start..span.end) else {
         return false;
@@ -11713,9 +11720,19 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     style.medium = !cs.bold;
                     style.italic |= cs.italic;
                 }
+                // `\emph` in a citation label turning italic text upright.
+                let mut label_upright = false;
                 if compiler_weight {
                     style.bold = compiler_style.bold;
                     style.italic = compiler_style.italic;
+                } else if compiler_style.italic && citation_label_run(source, *span) {
+                    // #956: a citation's text shares the `\cite`'s span, so
+                    // the source there says nothing about the label's own
+                    // markup. The compiler sets that markup over an upright
+                    // base (`P::set_citation_source`), and `\emph{et~al.}`
+                    // switches the shape of whatever surrounds the citation.
+                    label_upright = style.italic;
+                    style.italic = !style.italic;
                 }
                 if has_space || pending_head_sep.get().is_some() {
                     // TeX sizes an interword space with the font current
@@ -11768,7 +11785,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 let check_icl = if reference_spans.contains(span) {
                     source.get(span.start..).is_some_and(|r| r.starts_with("\\eqref"))
                 } else {
-                    text_command_argument_at(source, span.start) && !styles_here.slanted_at(span.start) && !text.starts_with(['.', ','])
+                    (label_upright || text_command_argument_at(source, span.start) && !styles_here.slanted_at(span.start)) && !text.starts_with(['.', ','])
                 };
                 if check_icl && !style.literal {
                     let at = items.len() - usize::from(matches!(items.last(), Some(Item::Space { .. })));

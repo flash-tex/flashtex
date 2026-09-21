@@ -178,6 +178,20 @@ pub fn text_symbol(name: &str, enc: Encoding) -> Option<SymbolOutcome> {
     Some(SymbolOutcome::Char(ch))
 }
 
+/// The precomposed character a punctuation-named accent (`\"`, `\'`, `` \` ``,
+/// `\^`, `\~`, `\=`, `\.`) over `base` declares in the dfu tables (`\"o` is
+/// U+00F6), or `None` when there is none.
+pub fn symbol_accent(mark: char, base: char) -> Option<char> {
+    if !"\"'`^~=.".contains(mark) {
+        return None;
+    }
+    let key = format!("\\{mark}{base}");
+    UNICODE_DECLARATIONS
+        .iter()
+        .find(|(_, expansion, _)| *expansion == key)
+        .and_then(|(cp, ..)| char::from_u32(*cp))
+}
+
 /// Kernel text accents whose argument is one letter: `\c` cedilla, `\v`
 /// caron, `\u` breve, `\H` double acute, `\r` ring, `\k` ogonek, `\d` dot
 /// below, `\b` bar below. `\t` (a tie over two letters) is not among them.
