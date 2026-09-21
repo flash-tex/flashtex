@@ -352,8 +352,12 @@ pub fn parse_label(raw: Option<&str>, counter: usize) -> Label {
             num: counter.to_string(),
         };
     };
-    if let Some((short, rest)) = raw.split_once('(') {
-        if let Some((date, long)) = rest.split_once(')') {
+    // `\NAT@ifcmd#1(@)(@)\@nil` and `\NAT@split`/`\NAT@apalk` are
+    // delimited macro arguments, so only a `(`, `)` or `, ` at brace depth 0
+    // cuts the label: the label is TeX source (`bib::optional_bracket_source`),
+    // and `{\em Smith (ed.)}(1990)` is one author list.
+    if let Some((short, rest)) = split_top(raw, "(") {
+        if let Some((date, long)) = split_top(rest, ")") {
             let short = short.trim().to_string();
             let long = long.trim();
             return Label::AuthorYear(Entry {
@@ -369,7 +373,7 @@ pub fn parse_label(raw: Option<&str>, counter: usize) -> Label {
         }
     }
     // `\NAT@apalk#1, #2, #3\@nil`: the delimiter is a comma *and a space*.
-    if let Some((name, date)) = raw.split_once(", ") {
+    if let Some((name, date)) = split_top(raw, ", ") {
         let date = date.trim();
         if !date.is_empty() {
             return Label::Apalike(Entry {
@@ -383,6 +387,30 @@ pub fn parse_label(raw: Option<&str>, counter: usize) -> Label {
     Label::Standard {
         num: raw.to_string(),
     }
+}
+
+/// `source.split_once(delimiter)` at brace depth 0, skipping control
+/// symbols (`\{`), as TeX matches a macro's parameter delimiter.
+fn split_top<'a>(source: &'a str, delimiter: &str) -> Option<(&'a str, &'a str)> {
+    let bytes = source.as_bytes();
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => {
+                i += 2;
+                continue;
+            }
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            _ if depth == 0 && bytes[i..].starts_with(delimiter.as_bytes()) => {
+                return Some((&source[..i], &source[i + delimiter.len()..]));
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 /// A run of citation text and whether it is natbib's bold recovery marker.
@@ -701,9 +729,29 @@ fn undefined(key: &str, span: Span) -> Diagnostic {
 /// A `[...]` note as it is set: `~` is TeX's tie, an ordinary interword space
 /// that does not break. This layout never breaks inside a note, so a plain
 /// space renders it faithfully. An empty `[]` is `\if*#1*` — no note at all.
+///
+/// Citation runs are TeX source the parser sets (`P::set_citation_source`),
+/// while a note arrives already flattened to text, so the characters that
+/// would mean something there are escaped back: `50\%` stays `50%`.
 fn note_text(raw: Option<&str>) -> Option<String> {
-    raw.map(|note| note.replace('~', " "))
-        .filter(|note| !note.is_empty())
+    raw.map(note_source).filter(|note| !note.is_empty())
+}
+
+/// A flattened `[note]` as TeX source that sets the same text; see
+/// [`note_text`]. Shared with the kernel's `\cite[note]`.
+pub(crate) fn note_source(note: &str) -> String {
+    let mut out = String::with_capacity(note.len());
+    for c in note.chars() {
+        match c {
+            '~' => out.push(' '),
+            '%' | '#' | '&' | '$' | '^' | '_' => {
+                out.push('\\');
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Merges adjacent runs of the same weight into `Inline::Text`. Only the
@@ -1065,6 +1113,31 @@ mod tests {
             Label::Standard { num: "AWK".into() }
         );
         assert_eq!(parse_label(None, 4), Label::Standard { num: "4".into() });
+    }
+
+    /// #956: the label is TeX source, and `\NAT@ifcmd`/`\NAT@apalk` only
+    /// cut at a `(`, `)` or `, ` at brace depth 0.
+    #[test]
+    fn a_label_splits_at_brace_depth_zero() {
+        assert_eq!(
+            parse_label(Some(r"Jones \emph{et~al.}(1990)Jones, Baker, and Williams"), 1),
+            Label::AuthorYear(entry(r"Jones \emph{et~al.}", "1990", "Jones, Baker, and Williams", "1"))
+        );
+        assert_eq!(
+            parse_label(Some(r"{Smith (ed.)}(1990)"), 2),
+            Label::AuthorYear(entry("{Smith (ed.)}", "1990", "{Smith (ed.)}", "2"))
+        );
+        assert_eq!(
+            parse_label(Some(r"{Smith, Jones}, 1990"), 3),
+            Label::Apalike(entry("{Smith, Jones}", "1990", "{Smith, Jones}", "3"))
+        );
+        assert_eq!(split_top(r"a\{(b", "("), Some((r"a\{", "b")));
+    }
+
+    #[test]
+    fn a_note_is_escaped_back_to_source() {
+        assert_eq!(note_source("p.~5"), "p. 5");
+        assert_eq!(note_source("50%"), r"50\%");
     }
 
     #[test]

@@ -2979,6 +2979,83 @@ fn split_at_line_breaks(content: Vec<Inline>) -> Vec<Vec<Inline>> {
     lines
 }
 
+/// `\"o`, `\'{e}`, ... in a citation's re-read source (#956) as the
+/// precomposed character (`text_builtins::symbol_accent`). In running text
+/// the pipeline composes these from the two source bytes of the accent
+/// command, which a citation's runs do not point at.
+fn compose_accents(tokens: &mut Vec<Token>) {
+    let mut i = 0;
+    while i < tokens.len() {
+        let mark = match &tokens[i].kind {
+            TokenKind::Word(word) if tokens[i].control_symbol && word.chars().count() == 1 => word.chars().next(),
+            _ => None,
+        };
+        let Some(mark) = mark else {
+            i += 1;
+            continue;
+        };
+        // `\"o` (the rest of the word stays) or `\"{o}`.
+        let (base_at, braced) = match tokens.get(i + 1).map(|t| &t.kind) {
+            Some(TokenKind::LBrace) => (i + 2, true),
+            _ => (i + 1, false),
+        };
+        let Some(TokenKind::Word(word)) = tokens.get(base_at).map(|t| &t.kind) else {
+            i += 1;
+            continue;
+        };
+        let mut chars = word.chars();
+        let (Some(base), rest) = (chars.next(), chars.as_str().to_string()) else {
+            i += 1;
+            continue;
+        };
+        if tokens[base_at].control_symbol || (braced && (!rest.is_empty() || !matches!(tokens.get(base_at + 1).map(|t| &t.kind), Some(TokenKind::RBrace)))) {
+            i += 1;
+            continue;
+        }
+        let Some(composed) = text_builtins::symbol_accent(mark, base) else {
+            i += 1;
+            continue;
+        };
+        let end = if braced { base_at + 2 } else { base_at + 1 };
+        let mut token = tokens[i].clone();
+        token.kind = TokenKind::Word(format!("{composed}{rest}"));
+        token.control_symbol = false;
+        tokens.splice(i..end, [token]);
+        i += 1;
+    }
+}
+
+/// Moves a blank in front of a style command's group to the first word
+/// after it: `Jones \emph{et~al.}` reaches the dispatch as `Jones
+/// \emph{ et~al.}`. The compiler marks a word's `space_before` from the token
+/// right before it, and the pipeline reads the gap from the source, which a
+/// citation's runs do not point at; `set_citation_source` puts the blank
+/// back in the run's own font.
+fn blanks_before_words(tokens: Vec<Token>) -> Vec<Token> {
+    let mut out: Vec<Token> = Vec::with_capacity(tokens.len());
+    let mut held: Option<Token> = None;
+    for token in tokens {
+        match &token.kind {
+            TokenKind::Space if held.is_none() => {
+                held = Some(token);
+                continue;
+            }
+            TokenKind::LBrace => {}
+            TokenKind::Command(name) if style_command(name) || style_declaration(name) => {}
+            _ => {
+                if let Some(space) = held.take() {
+                    out.push(space);
+                }
+            }
+        }
+        out.push(token);
+    }
+    if let Some(space) = held {
+        out.push(space);
+    }
+    out
+}
+
 /// Whether the token at `index` in `tokens` sits directly against real
 /// source whitespace — a preceding `TokenKind::Space`/`ParBreak` — or is the
 /// first token, in which case there is nothing before it to glue against.
@@ -5991,13 +6068,15 @@ impl P<'_> {
                     kind.full = star;
                     self.push_natbib_cite(&options, kind, pre, note, &keys, full_span, para);
                 } else {
-                    para.extend(bib::cite_inlines(
+                    let inlines = bib::cite_inlines(
                         &keys,
                         note,
                         &self.bibliography,
                         full_span,
                         &mut self.diags,
-                    ));
+                    );
+                    let inlines = self.set_citation_source(inlines);
+                    para.extend(inlines);
                 }
 
             }
@@ -6198,8 +6277,31 @@ impl P<'_> {
                     if let Some(list) = self.list_stack.last_mut() {
                         list.count += 1;
                     }
-                    self.pending_item = Some(ItemLabel::Template { text: text.clone() });
-                    self.pending_item_label = Some((text, span));
+                    // A kernel `[label]` is TeX source (#956): `\@biblabel`
+                    // typesets it, so markup in it is set, not printed.
+                    let content = self.set_citation_source(vec![Inline::Text {
+                        text: text.clone(),
+                        span,
+                        style: TextStyle::default(),
+                        space_before: false,
+                    }]);
+                    match content.as_slice() {
+                        [Inline::Text { text: plain, .. }] if *plain == text => {
+                            self.pending_item = Some(ItemLabel::Template { text: text.clone() });
+                            self.pending_item_label = Some((text, span));
+                        }
+                        _ => {
+                            let plain: String = content
+                                .iter()
+                                .filter_map(|inline| match inline {
+                                    Inline::Text { text, space_before, .. } => Some(if *space_before { format!(" {text}") } else { text.clone() }),
+                                    _ => None,
+                                })
+                                .collect();
+                            self.pending_item = Some(ItemLabel::Explicit { content, text: plain.clone(), span });
+                            self.pending_item_label = Some((plain, span));
+                        }
+                    }
                 }
             }
 
@@ -7879,7 +7981,95 @@ impl P<'_> {
             span,
             &mut self.diags,
         );
+        let inlines = self.set_citation_source(inlines);
         para.extend(inlines);
+    }
+
+    /// Sets the TeX source a citation's runs carry (#956).
+    ///
+    /// A `\bibitem` label is source (`bib::optional_bracket_source`): natbib
+    /// cuts the author list and year out of it and `\cite` puts them in the
+    /// text, where TeX typesets them -- `\emph{et~al.}` is italic "et al."
+    /// with a tie, `{\"o}` is "ö", `{\ss}` is "ß". A run that holds any of
+    /// that markup is set here by the ordinary dispatch (`box_inlines`, as
+    /// `\mbox` sets its argument) in the run's own style and span; a run of
+    /// plain text (every numeric citation, every label without markup) is
+    /// left exactly as it was built.
+    ///
+    /// Everything here shares the citation's span, so what the pipeline
+    /// otherwise reads from the source bytes is resolved first:
+    ///
+    /// - a punctuation accent (`\"o`) is composed ([`compose_accents`]);
+    /// - the pieces of one style are joined again into one `Inline::Text`, as
+    ///   `natbib::into_inlines` made them, with their word spaces inside the
+    ///   text: the pipeline sets a citation's blanks as control spaces
+    ///   (`\NAT@spacechar`) and has no source gap to find one in. A blank
+    ///   between two styles goes with the run's own style, the font it is
+    ///   read in (`Jones \emph{et~al.}`, `\emph{a} b`);
+    /// - a tie becomes U+00A0, which the pipeline sets as an unbreakable
+    ///   interword space whatever the span.
+    fn set_citation_source(&mut self, inlines: Vec<Inline>) -> Vec<Inline> {
+        fn is_source(text: &str) -> bool {
+            text.contains(['\\', '{', '}', '~'])
+        }
+        if !inlines.iter().any(|inline| matches!(inline, Inline::Text { text, .. } if is_source(text))) {
+            return inlines;
+        }
+        let mut out = Vec::with_capacity(inlines.len());
+        for inline in inlines {
+            let Inline::Text { text, span, style, space_before } = inline else {
+                out.push(inline);
+                continue;
+            };
+            if !is_source(&text) {
+                out.push(Inline::Text { text, span, style, space_before });
+                continue;
+            }
+            let mut tokens = crate::lexer::tokenize(&text);
+            compose_accents(&mut tokens);
+            let tokens: Vec<InputToken> = blanks_before_words(tokens)
+                .into_iter()
+                .map(|mut token| {
+                    token.span = span;
+                    InputToken { token, definition: None, maps_to_invocation: true }
+                })
+                .collect();
+            let start = out.len();
+            let outer_style = std::mem::replace(&mut self.style, style);
+            let pieces = self.box_inlines(tokens);
+            self.style = outer_style;
+            for piece in pieces {
+                let Inline::Text { text: piece_text, style: piece_style, space_before: piece_space, .. } = piece else {
+                    out.push(piece);
+                    continue;
+                };
+                let mut piece_text = piece_text.replace('~', "\u{a0}");
+                let joined = out.len() > start;
+                if joined && piece_space {
+                    match out.last_mut() {
+                        Some(Inline::Text { text: last, style: last_style, .. }) if *last_style == piece_style || *last_style == style => last.push(' '),
+                        _ => piece_text.insert(0, ' '),
+                    }
+                }
+                match out.last_mut() {
+                    Some(Inline::Text { text: last, style: last_style, .. }) if joined && *last_style == piece_style => last.push_str(&piece_text),
+                    _ => out.push(Inline::Text {
+                        text: piece_text,
+                        span,
+                        style: piece_style,
+                        space_before: if joined { false } else { space_before || text.starts_with(' ') },
+                    }),
+                }
+            }
+            // A trailing blank (`\NAT@sep` and its space before the next
+            // entry) is not a word of its own for the pass above.
+            if text.ends_with(' ') {
+                if let Some(Inline::Text { text: last, .. }) = out[start..].iter_mut().rev().find(|i| matches!(i, Inline::Text { .. })) {
+                    last.push(' ');
+                }
+            }
+        }
+        out
     }
 
     /// One diagnostic per natbib option this implementation does not apply,
@@ -13450,13 +13640,15 @@ impl P<'_> {
                                         Some("rendered nothing for the empty citation".into()),
                                     ));
                                 } else {
-                                    content.extend(bib::cite_inlines(
+                                    let inlines = bib::cite_inlines(
                                         &keys,
                                         note,
                                         &self.bibliography,
                                         span,
                                         &mut self.diags,
-                                    ));
+                                    );
+                                    let inlines = self.set_citation_source(inlines);
+                                    content.extend(inlines);
                                 }
                             }
                             None => self.diags.push(Diagnostic::error(
