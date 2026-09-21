@@ -128,8 +128,7 @@ fn composite_and_extra_symbols_convert_with_texbook_classes() {
             (Ord, Some('c')),
             (Rel, Some('\u{22A5}')),
             (Ord, Some('d')),
-            (Rel, Some('\u{0338}')),
-            (Rel, Some('\u{2208}')),
+            (Rel, Some('\u{2209}')),
             (Ord, Some('e')),
         ]
     );
@@ -207,7 +206,7 @@ fn common_math_glyph_runs_use_semantic_unicode() {
     let (text, _) = math_run_text(
         r"$- * \ast \circ \cdot \setminus \neq \notin \mapsto \hookrightarrow \phi \varphi \mu \Delta \Omega \sum \prod \int \oint \cdots$",
     );
-    assert_eq!(text, "−∗∗∘⋅∖̸≠∈↦↪ϕφμΔΩ∑∏∫∮⋅⋅⋅");
+    assert_eq!(text, "−∗∗∘⋅∖\u{338}=∉↦↪ϕφμΔΩ∑∏∫∮⋅⋅⋅");
 }
 
 #[test]
@@ -538,15 +537,16 @@ fn mathtools_colons_match_pdflatex_vertical_oracle_without_spacing_changes() {
     }
 }
 
-/// `(cluster text, advance bp, ink left bp, ink right bp)` of every glyph on
+/// `(cluster text, advance bp, ink left bp, ink right bp, origin bp)` of every glyph on
 /// page 1, each measured against its own face — a negated relation is drawn
 /// from two faces at once (the relation from `lmr10`, the slash from Latin
 /// Modern Math), so the ink boxes only line up in absolute page coordinates.
-fn glyph_ink_x(body: &str) -> Vec<(String, f64, f64, f64)> {
+fn glyph_ink_x(body: &str) -> Vec<(String, f64, f64, f64, f64)> {
     use flashtex_render_pipeline::ids::GlyphId;
     use flashtex_render_pipeline::FontSet;
     let fonts = FontSet::with_default_dirs(&[]);
-    let r = render_one_with(&doc(body), &fonts);
+    // `article` at 10 pt, the size the cmsy10 ink offset below is for.
+    let r = render_one_with(&format!("\\documentclass{{article}}{}", doc(body)), &fonts);
     let mut out = Vec::new();
     // `Page::items` became an accessor with #294's page window: a resident
     // page yields its items, an elided page yields none.
@@ -569,6 +569,7 @@ fn glyph_ink_x(body: &str) -> Vec<(String, f64, f64, f64)> {
                 g.advance_x.to_bp(),
                 x + face.pt(i64::from(b.x_min), size),
                 x + face.pt(i64::from(b.x_max), size),
+                x,
             ));
         }
     }
@@ -582,46 +583,47 @@ fn glyph_ink_x(body: &str) -> Vec<(String, f64, f64, f64)> {
 /// `\hbox{$a\ne b$}` is `\hbox{$a=b$}`'s 22.91077 pt.
 ///
 /// The painting face draws that slash at U+0338, and U+0338 is a Unicode
-/// *combining* mark: it composes with the character *before* it, so its ink
-/// lies entirely to the LEFT of its own origin (Latin Modern Math puts it at
-/// x in [-4.58, -0.69] pt at 10 pt). Painted at TeX's box origin the slash
-/// therefore landed in the thick space in front of the relation — its ink
-/// ended 1.25 pt short of where the equals sign's ink began — so `\ne` and
-/// `\neq` drew a stroke floating in the gap instead of a struck-through `=`.
-/// That is the whole of "`\ne` and `\neq` don't work": the advances were
-/// already pdflatex's to the scaled point.
+/// *combining* mark: its ink lies entirely to the LEFT of its own origin
+/// (Latin Modern Math puts it at x in [-4.58, -0.69] pt at 10 pt), where
+/// cmsy's `negationslash` inks x in [1.39, 6.38] pt. Painted at TeX's box
+/// origin the slash landed in the thick space in front of the relation.
 ///
-/// The slash is kerned onto the relation's ink centre instead, which is what
-/// the amssymb negated sentinels already do and what this face's own
-/// precomposed negations look like (its U+2260/U+2209 ink boxes are exactly
-/// their base relation's). No box moves: the slash still advances zero.
+/// So it is moved to put its ink centre where cmsy's is -- 0.3885 em right
+/// of the origin the slash shares with the relation, whatever the relation
+/// (pdfTeX's `\not\in` and `\not<` are off-centre by the same token) --
+/// which for `=` is inside the equals sign. No box moves: the slash still
+/// advances zero. (`\notin` is not `\not\in`: see
+/// `tests/math_negation_mapsto.rs`.)
 #[test]
 fn the_negation_slash_is_painted_across_the_relation_it_negates() {
     if !lm_available() {
         return;
     }
-    for (body, relation) in [("$a \\neq b$", '='), ("$a \\ne b$", '='), ("$a \\notin b$", '\u{2208}')] {
+    let cmsy_centre_bp = 0.3885 * 10.0 / 1.00375;
+    for (body, relation) in [("$a \\neq b$", '='), ("$a \\ne b$", '='), ("$a \\not\\in b$", '\u{2208}'), ("$a \\not< b$", '<')] {
         let glyphs = glyph_ink_x(body);
         let slash = glyphs
             .iter()
-            .find(|(t, adv, _, _)| t.contains('\u{0338}') && *adv == 0.0)
+            .find(|(t, adv, ..)| t.contains('\u{0338}') && *adv == 0.0)
             .unwrap_or_else(|| panic!("{body}: no zero-width U+0338 glyph in {glyphs:?}"));
         let rel = glyphs
             .iter()
-            .find(|(t, adv, _, _)| t.contains(relation) && *adv > 0.0)
+            .find(|(t, adv, ..)| t.contains(relation) && *adv > 0.0)
             .unwrap_or_else(|| panic!("{body}: no {relation:?} glyph in {glyphs:?}"));
-        let (_, _, sl, sr) = *slash;
-        let (_, _, rl, rr) = *rel;
+        let (_, _, sl, sr, _) = *slash;
+        let (_, _, rl, rr, origin) = *rel;
         assert!(
-            sl >= rl - 0.01 && sr <= rr + 0.01,
-            "{body}: the slash's ink ({sl:.3}, {sr:.3}) bp is not inside the {relation:?} it negates ({rl:.3}, {rr:.3})"
-        );
-        assert!(
-            ((sl + sr) - (rl + rr)).abs() < 0.02,
-            "{body}: the slash's ink centre {:.3} bp is not the {relation:?}'s {:.3}",
+            ((sl + sr) / 2.0 - (origin + cmsy_centre_bp)).abs() < 0.02,
+            "{body}: the slash's ink centre {:.3} bp is not cmsy's, {:.3}",
             (sl + sr) / 2.0,
-            (rl + rr) / 2.0
+            origin + cmsy_centre_bp
         );
+        if relation == '=' {
+            assert!(
+                (sl + sr) / 2.0 > rl && (sl + sr) / 2.0 < rr,
+                "{body}: the slash's ink ({sl:.3}, {sr:.3}) bp does not strike the '=' ({rl:.3}, {rr:.3})"
+            );
+        }
     }
 }
 

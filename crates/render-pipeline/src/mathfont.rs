@@ -738,6 +738,8 @@ impl MathFonts {
             '*' => Some("\u{2217}"),
             '\u{03C6}' => Some("\u{03D5}"),
             '\u{03D5}' => Some("\u{03C6}"),
+            // `\mapstochar`, the bar of `\mapsto`/`\longmapsto`.
+            crate::mathtex::MAPSTOCHAR => Some("\u{21A6}"),
             _ => None,
         }
     }

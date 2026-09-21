@@ -346,6 +346,16 @@ impl MathRec {
         self.metrics.otf_glyph(g)
     }
 
+    /// The slash `\notin` overprints on its `\in` (`g`), as (glyph id,
+    /// offset from `g`'s origin); see [`TexMathMetrics::notin_slash`]. An
+    /// OpenType math font's U+2209 has its own slash.
+    pub fn notin_slash(&self, g: &ml::PositionedGlyph) -> Option<(u16, f64)> {
+        match &self.metrics {
+            MathProvider::Tex(t) if g.font_id.0 < crate::mathtext::RUN_FONT_BASE => t.notin_slash(g.size, g.width),
+            _ => None,
+        }
+    }
+
     /// Whether a placed glyph is one of the cmex extensible pieces tex.web
     /// §713 stacks for a delimiter taller than every fixed size.
     pub fn extensible_piece(&self, g: &ml::PositionedGlyph) -> bool {
@@ -1937,6 +1947,7 @@ impl<'a> Context<'a> {
         sink.amsfonts = self.ams_symbol_fonts;
         sink.amsmath = self.amsmath_loaded;
         sink.display = display;
+        sink.tex_metrics = matches!(fonts, MathProvider::Tex(_));
         sink.sans_math = self.style.class_geometry.as_ref().is_some_and(|g| g.beamer_sans_math);
         let texts = self.texts;
         let fence = |sp: &Span| fence_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
@@ -9485,7 +9496,7 @@ pub fn convert_math_classed(
                         }
                         None => {
                             flush(&mut run, &mut run_key, &mut parts, sink);
-                            parts.extend(symbol_atoms(c, None));
+                            parts.extend(symbol_atoms(c, None, sink.tex_metrics));
                         }
                     }
                 }
@@ -9539,7 +9550,7 @@ pub fn convert_math_classed(
                                 };
                                 vec![ml::Atom::new(forced, nucleus)]
                             }
-                            None => symbol_atoms(c, a.width_em),
+                            None => symbol_atoms(c, a.width_em, sink.tex_metrics),
                         },
                         Some(None) => vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Empty)],
                         None => {
@@ -9581,7 +9592,7 @@ pub fn convert_math_classed(
                 match (chars.next(), chars.next()) {
                     // One letter or digit: a math character (TeX §1186).
                     (Some(c), None) if alphanumeric(MathAlphabet::Bold, c).is_some() => {
-                        symbol_atoms(alphanumeric(MathAlphabet::Bold, c).expect("checked"), None)
+                        symbol_atoms(alphanumeric(MathAlphabet::Bold, c).expect("checked"), None, sink.tex_metrics)
                     }
                     _ => vec![sink.atom_in(&letters, MathAlphabet::Bold.text_key().expect("a text alphabet"))],
                 }
@@ -9767,7 +9778,7 @@ pub fn convert_math_classed(
     // plain symbol it would have been without the fence.
     for (left, body, left_span) in stack {
         if let Some(c) = left {
-            let delimiter = symbol_atoms(c, None);
+            let delimiter = symbol_atoms(c, None, sink.tex_metrics);
             #[cfg(feature = "math-glyph-spans")]
             let delimiter: Vec<ml::Atom> = delimiter.into_iter().map(|d| d.with_tag(math_tag(left_span))).collect();
             atoms.extend(delimiter);
@@ -10729,13 +10740,20 @@ fn sans_letter_runs(atoms: &[flashtex_compiler::math::MathAtom]) -> Vec<flashtex
     out
 }
 
-fn symbol_atoms(c: char, width_em: Option<f64>) -> Vec<ml::Atom> {
+/// The atoms a compiler symbol sets; `tex` is `TextSink::tex_metrics`.
+fn symbol_atoms(c: char, width_em: Option<f64>, tex: bool) -> Vec<ml::Atom> {
     match c {
         // The compiler spells \cdot as U+00B7; the Bin class and cmsy slot
         // are those of U+22C5.
         '\u{00B7}' => vec![ml::Atom::symbol('\u{22C5}')],
         '\u{2260}' => vec![ml::Atom::rel(crate::mathtex::NOT_SLASH), ml::Atom::symbol('=')],
-        '\u{2209}' => vec![ml::Atom::rel(crate::mathtex::NOT_SLASH), ml::Atom::symbol('\u{2208}')],
+        // `\notin` is not `\not\in`: latex.ltx sets `\mathrel{\mathpalette
+        // \c@ncel\in}`, cmmi's `/` overprinted on `\in` after a 1mu kern and
+        // centred with it, in a box as wide as `\in` and as tall as the
+        // slash. One relation whose box `TexMathMetrics` builds that way and
+        // whose slash the painter adds (`TexMathMetrics::notin_slash`); an
+        // OpenType math font sets its own U+2209.
+        '\u{2209}' => vec![ml::Atom::rel(c)],
         // A bare `\not` (compiler `COMMAND_GLYPHS` row `("not", "\u{0338}")`,
         // `fontmath.ltx` 432). It is the same zero-width cmsy `"36` atom the
         // two composites above expand to, and math-layout's `default_class`
@@ -10749,13 +10767,18 @@ fn symbol_atoms(c: char, width_em: Option<f64>) -> Vec<ml::Atom> {
         '\u{2205}' if width_em.is_some() => vec![ml::Atom::symbol(crate::mathfont::VARNOTHING_SENTINEL)],
         // `\mapsto` is `\mapstochar\rightarrow` (fontmath.ltx 340-341), two
         // adjacent `\mathrel`s: cmsy "37 has zero width and exactly the
-        // arrow's height/depth, so the pair is one relation with cmsy "21's
-        // box (`mathtex::extra_symbol_slot`). math-layout's `default_class`
-        // has no row for U+21A6, which made it an Ord painted from Latin
-        // Modern Math's 0.977em glyph with no `\thickmuskip` either side:
+        // arrow's height/depth, then cmsy "21, so pdfTeX paints two glyphs
+        // at the same origin (`mathtex::MAPSTOCHAR`). Adjacent relations
+        // take no space or break between them. An OpenType math font sets
+        // its own U+21A6, a relation too: math-layout's `default_class` has
+        // no row for it, and as an Ord with no `\thickmuskip` either side
         // `$x \mapsto |x|$` came out 6.3pt narrower than pdfTeX's and moved
         // a line break (inline-math p.2, `\tracingparagraphs` @@21 vs @@22).
+        '\u{21A6}' if tex => vec![ml::Atom::rel(crate::mathtex::MAPSTOCHAR), ml::Atom::rel('\u{2192}')],
         '\u{21A6}' => vec![ml::Atom::rel(c)],
+        // `\longmapsto` = `\mapstochar\longrightarrow`: the zero-width bar,
+        // then `\relbar\joinrel\rightarrow`.
+        '\u{27FC}' if tex => vec![long_arrow(&[(crate::mathtex::MAPSTOCHAR, 0.0), ('\u{2212}', 0.0), ('\u{2192}', -3.0)])],
         _ => match long_arrow_pieces(c) {
             Some(pieces) => vec![long_arrow(pieces)],
             None => vec![ml::Atom::symbol(c)],
@@ -10777,7 +10800,9 @@ fn long_arrow_pieces(c: char) -> Option<&'static [(char, f64)]> {
         '\u{27F8}' => &[('\u{21D0}', 0.0), ('=', -3.0)],        // \Longleftarrow
         '\u{27F9}' => &[('=', 0.0), ('\u{21D2}', -3.0)],        // \Longrightarrow
         '\u{27FA}' => &[('\u{21D0}', 0.0), ('\u{21D2}', -3.0)], // \Longleftrightarrow
-        // \longmapsto is \mapstochar\longrightarrow (amsmath.sty): the flag
+        // \longmapsto is \mapstochar\longrightarrow (amsmath.sty). Under an
+        // OpenType math font (under TeX's metrics `symbol_atoms` uses
+        // `mathtex::MAPSTOCHAR` instead) the flag
         // is U+2223, this compiler's \mid glyph, backed up by its own
         // advance (cmsy10 slot "6A is 0.277779em = 5.00002mu, so -5mu nets
         // +0.00002mu ≈ 1e-5pt) so it contributes zero width like pdfTeX's
@@ -13862,6 +13887,33 @@ fn vertical_assemblies(glyphs: &[ml::PositionedGlyph], m: &MathRec) -> (BTreeMap
     (runs, swallowed)
 }
 
+/// Where the cmsy design pdfTeX sets at `size` inks its two zero-width
+/// overprints, in ems right of the glyph origin: `\not`'s slash (`"36`,
+/// the centre of the `negationslash` ink box) and `\mapstochar`'s bar
+/// (`"37`, the left edge of the `mapsto` ink box). From lmsy5..lmsy10.pfb
+/// (the Type 1 fonts of those designs); cmsy's own outlines agree.
+fn cmsy_overprint_ink_em(size: f64) -> (f64, f64) {
+    let per_mille = match ml::cm::design_for(ml::cm::Family::Symbol, size).name {
+        "cmsy5" => (541.5, 125.0),
+        "cmsy6" => (481.0, 93.0),
+        "cmsy7" => (446.0, 78.0),
+        "cmsy8" => (412.5, 59.0),
+        "cmsy9" => (399.0, 57.0),
+        _ => (388.5, 56.0),
+    };
+    (per_mille.0 / 1000.0, per_mille.1 / 1000.0)
+}
+
+/// How far right of `\mapstochar`'s TeX origin its painted part (`b`, the
+/// bar end of Latin Modern Math's U+21A6 assembly) goes so its bar starts
+/// where the cmsy design's does, in pt at `size`.
+fn mapsto_bar_dx(face: &LoadedFace, b: &crate::fonts::Bounds, size: f64) -> f64 {
+    if b.empty {
+        return 0.0;
+    }
+    cmsy_overprint_ink_em(size).1 * size - face.pt(i64::from(b.x_min), size)
+}
+
 /// The centre of a glyph's painted ink, in pt from its own origin.
 fn ink_centre(face: &LoadedFace, b: &crate::fonts::Bounds, size: f64) -> f64 {
     face.pt(i64::from(b.x_min) + i64::from(b.x_max), size) / 2.0
@@ -14084,11 +14136,48 @@ fn math_items(
             // use, and it is what this face's own precomposed negations do:
             // Latin Modern Math's U+2260/U+2209/U+2270 ink boxes are exactly
             // their base relation's, the slash drawn inside them.
+            //
+            // Under TeX's metrics the slash is cmsy's own `\not`, overprinted
+            // at its origin whatever follows: its ink (lmsy10
+            // `negationslash`, 139..638/1000 em) is centred 0.3885 em right
+            // of the origin (`cmsy_overprint_ink_em`), so U+0338's ink
+            // centre goes there too. For `=` that is the `=`'s ink centre as
+            // well; for `\in` or `<` it is not, and pdfTeX's slash is
+            // off-centre on them just the same.
+            _ if g.ch == crate::mathtex::NOT_SLASH && matches!(m.metrics, MathProvider::Tex(_)) && !b.empty => {
+                (g.x + cmsy_overprint_ink_em(g.size).0 * g.size - ink_centre(&face, &b, g.size), adv)
+            }
             _ if g.ch == crate::mathtex::NOT_SLASH => {
                 (not_overlay_x(m, &face, &b, g, flat.glyphs.get(gi + 1)).unwrap_or(g.x), adv)
             }
+            // `\mapstochar` (cmsy "37, zero width): its part of Latin Modern
+            // Math's U+21A6 assembly inks the bar from its own origin, where
+            // lmsy10's `mapsto` starts it 56/1000 em in (as U+21A6 itself
+            // does). Moved by that, the bar lands on pdfTeX's ink; the box
+            // stays TeX's.
+            _ if g.ch == crate::mathtex::MAPSTOCHAR => (g.x + mapsto_bar_dx(&face, &b, g.size), adv),
             _ => (g.x, adv),
         };
+        // `\mapsto`'s arrow joins the `\mapstochar` bar painted at its
+        // origin just before it: one cluster, whose text is the one "↦".
+        let joins_bar = g.ch == '\u{2192}'
+            && gi > 0
+            && flat.glyphs[gi - 1].ch == crate::mathtex::MAPSTOCHAR
+            && (flat.glyphs[gi - 1].x - g.x).abs() < 1e-6
+            && r.glyphs.last().is_some_and(|last| last.cluster as usize + 1 == r.clusters.len());
+        if joins_bar {
+            let ci = r.clusters.len() - 1;
+            r.glyphs.push(Glyph {
+                gid,
+                origin_x: Tick::from_tex_pt(paint_x),
+                baseline_y: Tick::from_tex_pt(baseline_y),
+                advance_x: Tick::from_tex_pt(adv),
+                advance_y: Tick(0),
+                cluster: ci as u32,
+            });
+            r.clusters[ci].hit_rect.width = Tick::from_tex_pt(adv);
+            continue;
+        }
         let start = r.text.len();
         match m.run_glyph(g) {
             // A `\text` cluster keeps its whole source text (`ffi`).
@@ -14115,6 +14204,20 @@ fn math_items(
             advance_y: Tick(0),
             cluster: ci,
         });
+        // `\notin` (latex.ltx `\c@ncel`): cmmi's `/` overprinted on the
+        // `\in` just painted, in the same cluster.
+        if g.ch == '\u{2209}' {
+            if let Some((slash, dx)) = m.notin_slash(g) {
+                r.glyphs.push(Glyph {
+                    gid: slash,
+                    origin_x: Tick::from_tex_pt(g.x + dx),
+                    baseline_y: Tick::from_tex_pt(baseline_y),
+                    advance_x: Tick(0),
+                    advance_y: Tick(0),
+                    cluster: ci,
+                });
+            }
+        }
         // A negated amssymb relation Unicode spells as base + U+0338: the
         // painting face's combining long solidus, its ink centred on the
         // base's ink, in the same cluster.

@@ -79,6 +79,11 @@ fn handle_index(ch: char) -> Option<usize> {
 /// converted; each becomes an ordinary atom carrying a handle.
 #[derive(Default, Debug)]
 pub struct TextSink {
+    /// The formula is laid out from TeX's TFMs (`MathProvider::Tex`), so
+    /// symbols pdfTeX builds from several cmsy characters (`\mapsto`'s
+    /// `\mapstochar` and arrow) are built the same way; an OpenType math
+    /// font (`\setmathfont`) sets its own precomposed glyph instead.
+    pub tex_metrics: bool,
     pub texts: Vec<String>,
     /// Per text: `None` for `\text` (the document's text font), or the
     /// NFSS shape of a math alphabet run (`\mathbf`, `\mathsf`, ...; see

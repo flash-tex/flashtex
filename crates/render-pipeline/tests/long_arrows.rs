@@ -50,13 +50,13 @@ fn long_arrows_are_as_wide_as_pdftex_joins() {
         ("\\iff", 38.49976, "x⇐⇒y"),
         ("\\impliedby", 36.06642, "x⇐=y"),
         // GH-LONGMAPSTO-PIECES: `\longmapsto` is `\mapstochar\longrightarrow`,
-        // bit-for-bit as wide as `\longrightarrow` (the flag nets zero width).
+        // bit-for-bit as wide as `\longrightarrow` (the `\mapstochar` bar has no width).
         // Spelled as the literal U+27FC character because the vendored
         // compiler pin on this branch predates PR #603's `("longmapsto", "⟼")`
         // row, so the command does not reach the pipeline yet; the character
         // exercises the identical `symbol_atoms` path. Switch this row to
         // `"\\longmapsto"` when vendor/compiler is re-pinned past #603.
-        ("\u{27FC}", 29.9832, "x∣−→y"),
+        ("\u{27FC}", 29.9832, "x↦−→y"),
     ];
     for (arrow, pt, painted) in cases {
         let (xs, text) = formula(arrow);

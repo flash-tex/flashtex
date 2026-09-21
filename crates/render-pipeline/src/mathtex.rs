@@ -393,6 +393,20 @@ impl TexMathMetrics {
         Some((self.otf.face().clone(), gid))
     }
 
+    /// `\notin`'s slash over the `\in` box of width `width` at `size_pt`:
+    /// latex.ltx's `\c@ncel` is `\ooalign{$\hfil#1\mkern1mu/\hfil$\crcr
+    /// $#1\in$}`, so cmmi's `/` follows a 1mu kern and the pair is centred
+    /// on the `\in`. Returns the Latin Modern Math glyph `$a/b$` paints for
+    /// that `/` and its offset from the box's left edge.
+    pub fn notin_slash(&self, size_pt: f64, width: f64) -> Option<(u16, f64)> {
+        let i = (0..3).min_by(|&a, &b| (self.cm.sizes[a] - size_pt).abs().total_cmp(&(self.cm.sizes[b] - size_pt).abs()))?;
+        let at = self.cm.sizes[i];
+        let slash = mtfm::scale(self.cm.families[1][i].char(0x3D)?.width, at);
+        let mu = self.cm.families[2][i].fontdimen(6, at) / 18.0;
+        let gid = self.otf.face().face().glyph_id(MathFonts::math_char('/'))?;
+        Some((gid.0, (width - slash - mu).max(0.0) / 2.0 + mu))
+    }
+
     /// A symbol outside the CM tables (compiler pin `87df3e4a` lists
     /// `\cong`, `\propto`, `\aleph`, `\Re`, `\langle`, `\Longrightarrow`,
     /// ... that math-layout's `cm` slot table does not carry): Latin Modern
@@ -603,13 +617,22 @@ impl TexMathMetrics {
         // 0.777781em, read at `typeset::symbol_atoms` rather than re-scanning
         // the source for the control word.
         let width = if ch == crate::mathfont::VARNOTHING_SENTINEL { VARNOTHING_MSBM_EM * at } else { mtfm::scale(c.width, at) };
+        // `\notin`'s `\ooalign` is a `\vtop` whose first row is the slash:
+        // as tall as the slash, as deep as the `\in` (the rows overlap).
+        let height = match ch {
+            '\u{2209}' => {
+                let slash = self.cm.families[1][i].char(0x3D).map_or(0.0, |s| mtfm::scale(s.height, at));
+                mtfm::scale(c.height, at).max(slash)
+            }
+            _ => mtfm::scale(c.height, at),
+        };
         Some(Glyph {
             font_id,
             gid: u16::from(code),
             ch,
             size: at,
             width,
-            height: mtfm::scale(c.height, at),
+            height,
             depth: mtfm::scale(c.depth, at),
             italic: mtfm::scale(c.italic, at),
             skew: 0.0,
@@ -759,6 +782,22 @@ impl TexMathMetrics {
                 self.unmapped.borrow_mut().push((name, code, ch));
             }
             return gid;
+        }
+        if name.starts_with("cmsy") {
+            match ch {
+                // `\mapstochar`: the bar end of U+21A6's assembly.
+                MAPSTOCHAR => {
+                    let gid = self.otf.hassembly_parts('\u{21A6}').first().copied();
+                    if gid.is_none() {
+                        self.unmapped.borrow_mut().push((name, code, ch));
+                    }
+                    return gid;
+                }
+                // `\notin`: the `\in` it is built on; the slash is painted
+                // over it (`notin_slash`), not Latin Modern Math's U+2209.
+                '\u{2209}' => return base('\u{2208}'),
+                _ => {}
+            }
         }
         let result = if name.starts_with("cmex") {
             // Size chain in lmex: steps from the character's first cmex code
@@ -1004,6 +1043,14 @@ impl MathFontMetrics for TexMathMetrics {
 /// U+0338 and no compiler symbol uses it.
 pub const NOT_SLASH: char = '\u{0338}';
 
+/// `\mapstochar` (`fontmath.ltx`: `\mathchar"3237`, cmsy `"37`): the
+/// zero-width bar `\mapsto` and `\longmapsto` put before their arrow. Latin
+/// Modern Math has no glyph of its own for it; it paints the left part of
+/// U+21A6's horizontal assembly (the bar and a stub of shaft that the arrow
+/// overprints), placed where U+21A6 itself draws its bar
+/// ([`TexMathMetrics::mapstochar_paint`]).
+pub const MAPSTOCHAR: char = '\u{F8FE}';
+
 /// `\varnothing`'s advance in ems (msbm10.tfm char "3F, `CHARWD R 0.777781`):
 /// the same physical constant the compiler's `math::VARNOTHING_MSBM_EM`
 /// carries (crate-private there), read from the now-`pub` `MathAtom.width_em`
@@ -1015,13 +1062,14 @@ fn extra_symbol_slot(ch: char) -> Option<u8> {
     match ch {
         NOT_SLASH => Some(0x36),
         '\u{22A5}' => Some(0x3F),
-        // `\mapsto` = `\mapstochar\rightarrow` (fontmath.ltx 340-341). cmsy
-        // "37 (`\mapstochar`) is 0 wide with "21's height and depth
-        // (lmsy10.tfm: CHARWD 0, CHARHT 0.366875, CHARDP -0.133125 for both),
-        // so pdfTeX's box for the pair is `\rightarrow`'s, 1.000003em; the
-        // ink is Latin Modern Math's own U+21A6 (`otf_gid` looks the outline
-        // up by the character, not the slot). See `typeset::symbol_atoms`.
-        '\u{21A6}' => Some(0x21),
+        // `\mapsto` = `\mapstochar\rightarrow` (fontmath.ltx 340-341): two
+        // atoms (`typeset::symbol_atoms`), cmsy "37 of zero width and "21.
+        MAPSTOCHAR => Some(0x37),
+        // `\notin` (latex.ltx: `\mathrel{\mathpalette\c@ncel\in}`): the box
+        // is `\in`'s (cmsy "32) as tall as the overprinted slash
+        // (`symbol_family_glyph`); the slash is painted over it
+        // (`TexMathMetrics::notin_slash`).
+        '\u{2209}' => Some(0x32),
         // `\varnothing`'s box is still cmsy10's `\emptyset` slot 0x3B (the
         // compiler forces only the advance, `MathAtom.width_em`; see
         // `symbol_family_glyph`); the outline is painted from New Computer
