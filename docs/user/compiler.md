@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 482 text-mode and 580 math-mode command entries, 87 environments and 41 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 482 text-mode and 580 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -619,7 +619,7 @@ Canonical sources:
 | `\Huge` |  | size declaration from the class size table |
 | `\larger` | `{...}` | relsize: one step up the class size table from the size in effect; without an argument, a declaration for the rest of the scope |
 | `\smaller` | `{...}` | relsize: one step down the class size table from the size in effect; without an argument, a declaration for the rest of the scope |
-| `\cite` | `[note]{keys}` | numbered citation from thebibliography entries, or biblatex's numeric citation when biblatex is loaded; natbib redefines it as \citet, or as \citep when an optional argument follows |
+| `\cite` | `[note]{keys}` | numbered citation from thebibliography entries, or biblatex's numeric citation when biblatex is loaded; natbib redefines it as \citet, or as \citep when an optional argument follows; with cite.sty loaded the keys are sorted, three or more consecutive numbers become a range, and the separator is cite's thin glue |
 | `\parencite` | `[pre][post]{keys}` | biblatex parenthetical citation: [n] in numeric style |
 | `\textcite` | `[pre][post]{keys}` | biblatex textual citation: Author [n] in numeric style |
 | `\autocite` | `[pre][post]{keys}` | biblatex automatic citation, equivalent to \parencite in this compiler |
@@ -1201,6 +1201,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `siunitx` | `any \sisetup keys` | v3 \num, \unit, \qty, lists, ranges, \ang, \sisetup and \DeclareSIUnit; unmodelled keys are diagnosed |
 | `multicol` | `` | multicols and multicols* with preface, \columnbreak, \raggedcolumns (columns set by the render pipeline) |
 | `natbib` | `numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak` | \citet/\citep/\citealt/\citealp/\citeauthor/\citeyear/\citeyearpar/\citenum/\citetext and the \cite it redefines, with [Author(Year)] \bibitem labels; sort, compress, super and openbib are diagnosed |
+| `cite` | `space, nospace, nosort, nocompress, sort, compress, adjust, move, verbose` | \cite sorts numeric keys, compresses three or more consecutive numbers into a range and separates entries with cite.sty's \citepunct glue; superscript, noadjust, nomove, nobreak, ref and biblabel are diagnosed |
 | `biblatex` | `style=numeric, sorting=none, backend=biber` | basic project-relative .bib resources with numeric citations, textcite/parencite/autocite, citeauthor/citeyear, nocite and printbibliography; authoryear labels are minimal, alphabetic warns |
 | `ulem` | `normalem` | \uline: 0.4pt rule under the argument (single-line); \sout: 0.4pt strike at 0.55ex; \emph is not redefined |
 | `soul` | `` | \so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828); \st stays unsupported |
@@ -1296,6 +1297,7 @@ Any other package, or these packages with other options, is recorded and reporte
 | `hyperref` | links are the PDF writer's; hyperref.sty needs \pdfstartlink and \special |
 | `cleveref` | \cref is crate::xref; cleveref.sty patches \refstepcounter with \protected@write |
 | `natbib` | citations are crate::natbib; natbib.sty needs \bibitem output |
+| `cite` | sorted, range-compressed citations with cite.sty's own separator glue are crate::bib; cite.sty needs \futurelet on the token after \cite and \lastskip/\lastpenalty |
 | `biblatex` | citations are crate::biblatex; biblatex.sty is expl3 code |
 | `beamerthemedefault` | beamer themes are crates/class-geometry |
 
