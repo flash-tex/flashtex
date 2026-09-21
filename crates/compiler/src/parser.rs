@@ -1114,6 +1114,11 @@ pub enum Block {
     /// `layout::layout_converged`). `span` is the command.
     TableOfContents {
         span: Span,
+        /// beamer's `\tableofcontents[<options>]` key list
+        /// (`beamerbasetoc.sty`: `currentsection`, `hideallsubsections`,
+        /// `sectionstyle=..`, ...), verbatim; empty elsewhere (an article's
+        /// `\tableofcontents` takes no argument, so a `[` after it is text).
+        options: String,
     },
     /// `\maketitle`: `article.cls`'s `\@maketitle` (title/author/date block).
     /// `title`/`authors` are already-resolved inline content (never empty —
@@ -3272,6 +3277,7 @@ pub fn parse_project_with(
         short_institute: None,
         short_date: None,
         beamer_logo: None,
+        beamer_section_hooks: Default::default(),
         beamer_frame_groups: Vec::new(),
         beamer_frame: None,
         beamer_columns_depth: 0,
@@ -3676,6 +3682,12 @@ struct P<'a> {
     short_date: Option<Vec<InputToken>>,
     /// beamer's `\logo{..}` (the last one), for [`BeamerDeck::logo`].
     beamer_logo: Option<Vec<InputToken>>,
+    /// beamer's `\AtBeginSection`/`\AtBeginSubsection`/
+    /// `\AtBeginSubsubsection` hooks, by level - 1: the `[special]` code
+    /// run by a starred heading and the code run by every other one
+    /// (`beamerbasesection.sty` 231-237: without `[..]` both are the
+    /// argument).
+    beamer_section_hooks: [Option<(Vec<InputToken>, Vec<InputToken>)>; 3],
     /// `brace_stack.len()` when the body group of a `\frame{...}` command
     /// was entered: the `}` that brings the stack back to that depth ends
     /// the frame (`beamer_frame_end`).
@@ -4474,6 +4486,7 @@ impl P<'_> {
             // `beamer_declaration`). Ahead of the preamble catch-all below.
             "subtitle" | "institute" => self.beamer_title_command(name, span),
             "logo" => self.beamer_logo_command(span),
+            "AtBeginSection" | "AtBeginSubsection" | "AtBeginSubsubsection" => self.beamer_section_hook_command(name, span),
             "usetheme" | "usecolortheme" | "usefonttheme" | "useinnertheme" | "useoutertheme"
             | "setbeamertemplate" | "setbeamercolor" | "setbeamerfont" | "setbeamercovered"
             | "setbeamersize" | "beamertemplatenavigationsymbolsempty" => self.beamer_declaration(name, span),
@@ -5789,6 +5802,7 @@ impl P<'_> {
                 let title = self.inlines_from_tokens(tokens, TextStyle::default());
                 blocks.push(Block::BeamerSection { level, number, title, span: span.merge(title_span) });
                 self.finish_block_dependencies();
+                self.run_beamer_section_hook(level, starred, blocks, para);
                 return;
             }
             let (tokens, _) = self.required_group(name, span);
@@ -5924,7 +5938,8 @@ impl P<'_> {
     fn table_of_contents_command(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
             self.flush_paragraph(blocks, para);
             self.document_global_state = true;
-            blocks.push(Block::TableOfContents { span });
+            let options = if self.is_beamer_class() { self.optional_bracket_argument().map(|(raw, _)| raw).unwrap_or_default() } else { String::new() };
+            blocks.push(Block::TableOfContents { span, options });
             self.finish_block_dependencies();
     }
 
@@ -10365,6 +10380,51 @@ impl P<'_> {
         }
         let (tokens, _) = self.required_group("logo", span);
         self.beamer_logo = Some(tokens);
+    }
+
+    /// `\AtBeginSection[special]{code}` and its subsection forms
+    /// (`beamerbasesection.sty` 231-237, 300-305): stored; the matching
+    /// heading runs it ([`P::run_beamer_section_hook`]).
+    fn beamer_section_hook_command(&mut self, name: &str, span: Span) {
+        if !self.beamer_command_available(name, span) {
+            return;
+        }
+        let special = self.optional_bracket_tokens();
+        let (code, _) = self.required_group_bounded(name, span, true);
+        let level = match name {
+            "AtBeginSection" => 0,
+            "AtBeginSubsection" => 1,
+            _ => 2,
+        };
+        self.beamer_section_hooks[level] = Some((special.unwrap_or_else(|| code.clone()), code));
+    }
+
+    /// The `\AtBegin..` hook of a beamer heading, run where the heading
+    /// stands (`\beamer@section` ends with `\ifblank{#2}{\beamer@
+    /// atbeginsections}{\beamer@atbeginsection}`: a starred heading runs
+    /// the `[special]` code). The code is parsed as a stream of its own,
+    /// like an `\input` file, into the same block list, so a hook's
+    /// `\begin{frame}..\end{frame}` is an ordinary frame.
+    fn run_beamer_section_hook(&mut self, level: u8, starred: bool, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let Some((special, code)) = self.beamer_section_hooks.get(usize::from(level.saturating_sub(1))).and_then(|h| h.as_ref()) else {
+            return;
+        };
+        let tokens = if starred { special.clone() } else { code.clone() };
+        if tokens.iter().all(|t| matches!(t.token.kind, TokenKind::Space | TokenKind::Comment)) {
+            return;
+        }
+        // A fresh, unshared stream: edits to it are never logged against
+        // the (possibly lent) outer one.
+        let lent = std::mem::replace(&mut self.lent_from_cache, false);
+        let undo = std::mem::take(&mut self.undo);
+        let saved_tokens = std::mem::replace(&mut self.t, Rc::new(tokens));
+        let saved_index = std::mem::replace(&mut self.i, 0);
+        self.parse_stream(blocks, para);
+        self.flush_paragraph(blocks, para);
+        self.t = saved_tokens;
+        self.i = saved_index;
+        self.lent_from_cache = lent;
+        self.undo = undo;
     }
 
     /// `\frame<spec>[options]{body}` (beamer, the command form of the

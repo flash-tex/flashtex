@@ -2587,7 +2587,7 @@ impl LayoutCursor {
                 self.newline(body_size);
             }
             Block::VSpace { .. } | Block::PageBreak | Block::VFill | Block::Penalty { .. } => {}
-            Block::TableOfContents { span } => {
+            Block::TableOfContents { span, .. } => {
                 self.render_block(&Block::Heading {
                     level: 1,
                     number: String::new(),
