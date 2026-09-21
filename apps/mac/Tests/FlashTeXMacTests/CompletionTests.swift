@@ -94,7 +94,7 @@ final class CompletionTests: XCTestCase {
         let frac = Completion.suggestions(in: "\\fr", caretUTF16: 3, result: nil, projectClass: "article")
         XCTAssertEqual(labels(frac), ["\\frac{num}{den}"])
         XCTAssertEqual(frac.first?.insertText, "\\frac")
-        XCTAssertEqual(frac.first?.detail, "math · fraction; \\cfrac lays out as \\frac")
+        XCTAssertEqual(frac.first?.detail, "math · fraction")
         XCTAssertTrue(Completion.Vocabulary.entries.allSatisfy { !$0.description.contains("math mode only") },
                       "the mode is stated by the detail prefix, never repeated in the description")
         XCTAssertTrue(Completion.Vocabulary.entries.allSatisfy { ($0.mode == .math) == $0.detail.hasPrefix("math · ") })
@@ -132,20 +132,21 @@ final class CompletionTests: XCTestCase {
         // Innermost closer first, then the vocabulary's `e` commands in table
         // order (text entries, then math entries). The line/page control
         // parameters `\emergencystretch` and `\enlargethispage` (#568) are
-        // kernel commands, so they rank here in every document. letter.cls's
-        // enclosure line `\encl{text}` sits between them and `\enspace`: it
-        // is class-scoped (`Entry.requiresClass`), but this text declares no
-        // `\documentclass` and has no project root to read one from, so
-        // nothing gates it and it keeps its table place (the converse checks
-        // below are where the gate shows).
-        XCTAssertEqual(Array(labels(s).prefix(9)), ["\\end{itemize}", "\\end{document}", "\\emph{...}", "\\end{env}", "\\eqref{key}", "\\em", "\\emergencystretch=<dimen>", "\\enlargethispage*{dimension}", "\\encl{text}"])
+        // kernel commands, so they rank here in every document, as does the
+        // kernel's `\ensuremath` (#846). letter.cls's enclosure line
+        // `\encl{text}` sits between them and `\enspace`: it is class-scoped
+        // (`Entry.requiresClass`), but this text declares no `\documentclass`
+        // and has no project root to read one from, so nothing gates it and
+        // it keeps its table place (the converse checks below are where the
+        // gate shows).
+        XCTAssertEqual(Array(labels(s).prefix(10)), ["\\end{itemize}", "\\end{document}", "\\emph{...}", "\\end{env}", "\\eqref{key}", "\\ensuremath{math}", "\\em", "\\emergencystretch=<dimen>", "\\enlargethispage*{dimension}", "\\encl{text}"])
         // `\enspace`/`\enskip` are dual-mode entries (like `\quad`/`\qquad`): text
         // entries whose detail states their math behaviour without a `math ·`
         // prefix, so the math-only run starts only after them: two closers
-        // plus ten text entries (csquotes' `\enquote` last) fill the 12-entry
-        // cap, so no math entry (`\eqqcolon` would be next) survives it.
+        // plus ten text entries (`\enskip` last) fill the 12-entry cap, so no
+        // math entry survives it.
         XCTAssertEqual(s.count, 12, "\(labels(s))")
-        XCTAssertEqual(labels(s).last, "\\enquote{text}")
+        XCTAssertEqual(labels(s).last, "\\enskip")
         XCTAssertTrue(s.allSatisfy { !$0.detail.hasPrefix("math · ") }, "\(labels(s))")
         // The same text in an article — declared by the text itself, or by
         // the root document of the project it is included in — hides
@@ -159,7 +160,7 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(labels(included), labels(inArticle), "the root's class and the text's own gate the same way")
         let letter = "\\documentclass{letter}\n" + text
         let inLetter = Completion.suggestions(in: letter, caretUTF16: (letter as NSString).length, result: nil)
-        XCTAssertEqual(Array(labels(inLetter).prefix(9)).suffix(2), ["\\enlargethispage*{dimension}", "\\encl{text}"])
+        XCTAssertEqual(Array(labels(inLetter).prefix(10)).suffix(2), ["\\enlargethispage*{dimension}", "\\encl{text}"])
         guard let first = s.first else { return XCTFail("expected at least one suggestion") }
         XCTAssertEqual(first.kind, .environment)
         XCTAssertEqual(first.detail, "closes \\begin{itemize} at byte 17")
@@ -171,7 +172,7 @@ final class CompletionTests: XCTestCase {
         let s2 = Completion.suggestions(in: closed, caretUTF16: (closed as NSString).length, result: nil)
         // longtable's `\endfirsthead`/`\endhead`/`\endfoot`/`\endlastfoot`
         // (inventoried with #940) match `\en` too and follow the closers.
-        XCTAssertEqual(labels(s2).prefix(7), ["\\end{document}", "\\end{env}", "\\enlargethispage*{dimension}", "\\encl{text}", "\\enspace", "\\enskip", "\\enquote{text}"])
+        XCTAssertEqual(labels(s2).prefix(7), ["\\end{document}", "\\end{env}", "\\ensuremath{math}", "\\enlargethispage*{dimension}", "\\encl{text}", "\\enspace", "\\enskip"])
         let typed = closed + "d"
         XCTAssertEqual(labels(Completion.suggestions(in: typed, caretUTF16: (typed as NSString).length, result: nil)),
                        ["\\end{document}", "\\end{env}", "\\endfirsthead", "\\endhead", "\\endfoot", "\\endlastfoot"])
@@ -1624,7 +1625,7 @@ final class CompletionTests: XCTestCase {
         let items = try XCTUnwrap(tv.session?.items)
         let labels = items.map(\.label)
         XCTAssertEqual(labels, ["\\subsection{...}", "\\subsubsection{...}", "\\subparagraph{...}", "\\substack{a \\\\ b}", "\\sup", "\\subset", "\\subseteq",
-                                "\\supset", "\\supseteq", "\\sum", "\\succsim", "\\succcurlyeq"])
+                                "\\supset", "\\supseteq", "\\sum", "\\succ", "\\succeq"])
         guard labels.count == 12 else { return XCTFail("expected 12 suggestions, got \(labels.count)") }
         let back = labels.count - 2 // where two ⇧Tab from the top land
         let popup = tv.completionPopup
