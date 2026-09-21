@@ -1158,6 +1158,156 @@ pub fn plain_frame(theme: &Theme) -> PlainFrame {
     PlainFrame { head: Sp::ZERO, foot }
 }
 
+
+// ---------------------------------------------------------------------------
+// Polish (issue #944 leftovers): `beamerboxesrounded` corners and shadow.
+// ---------------------------------------------------------------------------
+
+/// The corner radius of a `beamerboxesrounded` head or body path
+/// (`beamerbaseboxes.sty` 76-82 and 227-233): the head path is
+/// `\pgfpathqmoveto{-4bp}{-1bp} \pgfpathqcurveto{-4bp}{1.2bp}{-2.2bp}{3bp}
+/// {0bp}{3bp}` then the top edge to `\bmb@width`, the mirrored arc through
+/// `(w+2.2bp, 3bp)`, `(w+4bp, 1.2bp)` down to `(w+4bp, -1bp)` -- a 4bp
+/// quarter circle whose cubic tangents are 2.2bp (pgf's 0.55 x r). The
+/// body path is the same shape mirrored below its origin. Measured (Madrid
+/// probe deck, content stream): `-4.00005 -1.0 m -4.00005 1.2 -2.20001
+/// 3.00003 0.0 3.00003 c 341.02087 3.00003 l 343.2209 3.00003 345.02094
+/// 1.2 345.02094 -1.0 c`.
+pub fn rounded_corner_radius() -> Sp {
+    len("4bp")
+}
+
+/// The cubic tangent length of the corner arc (`2.2bp`).
+pub fn rounded_corner_tangent() -> Sp {
+    len("2.2bp")
+}
+
+/// The 2pt colour transition between a rounded block's head and body
+/// (`beamerbaseboxes.sty` 108-119, 257-258): a 6pt `pgfpicture` on the
+/// vertical list right after the head box (`\nointerlineskip\vskip-1pt`
+/// before it, `\nointerlineskip\vskip-0.5pt` after) holding the
+/// `bmb@transition` vertical shading -- `color(0pt)=(lower.bg);
+/// color(2pt)=(lower.bg); color(4pt)=(upper.bg)` -- `\pgftext[left,base]`
+/// on the picture's baseline: `lower.bg` from that baseline to 2pt above
+/// it, then a linear fade to `upper.bg` at 4pt. The picture's baseline is
+/// `-1pt + 6pt` under the head box's baseline, so the fade spans 1pt to
+/// 3pt above the head box's baseline; the head fill (painted first) ends
+/// 2pt below it and the body box starts `-0.5pt` above the picture's
+/// baseline. Measured (probe): the picture at `1 0 0 1 10.909 181.765 cm`
+/// under a title baseline of 188.241 raised 1.5pt: 4.981bp = 5pt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Transition {
+    /// The picture's baseline below the head box's baseline (`5pt`).
+    pub baseline_below_head: Sp,
+    /// The fade's bottom edge above the picture's baseline (`2pt`).
+    pub fade_bottom: Sp,
+    /// The fade's top edge above the picture's baseline (`4pt`).
+    pub fade_top: Sp,
+    /// How many flat strips the pipeline paints the fade in: sixteen,
+    /// four per 144-dpi raster row of the 2pt fade (0.125pt each), each at
+    /// the mix of its midpoint. Measured (Madrid block probe against
+    /// pdflatex, pdftoppm 144 dpi): four strips left the seam rows up to
+    /// 11/255 lighter than the reference; sixteen bring them within 7.
+    pub steps: usize,
+    /// The body box's top above the picture's baseline (`0.5pt`).
+    pub body_top_above: Sp,
+}
+
+pub fn transition() -> Transition {
+    Transition { baseline_below_head: Sp::pt(5), fade_bottom: Sp::pt(2), fade_top: Sp::pt(4), steps: 16, body_top_above: len("0.5pt") }
+}
+
+/// The `shadow=true` drop shadow of a `beamerboxesrounded`
+/// (`beamerbaseboxes.sty` 148-189, 205-221), read off the reference
+/// content stream and its soft mask (`/pgfsmask` on a black rectangle
+/// `0 -7bp (w+8bp) x (h+6bp)` in the body picture's coordinates, `w` =
+/// `\bmb@width`, `h` = `\bmb@boxheight` = body box height + 4bp + head box
+/// height):
+///
+/// - the mask is a `pgfpicture` (fading) of five shadings and a black
+///   (transparent) rectangle over the box: `bmb@shadowvert` (`w-4bp` wide,
+///   8bp tall, `pgftransparent!100` at its bottom to `!0` at its top)
+///   `[left, at=(4bp,4bp)]`; `bmb@shadowhorz` (8bp wide, `h-5.5bp` tall,
+///   opaque at its left edge to transparent at 8bp) `[base, at=(w+4bp,
+///   7.5bp)]`; `bmb@shadowballlarge` (radius 8bp, opaque centre) at
+///   `(w, 8bp)`; two `bmb@shadowball`s (radius 4bp, 50% at the centre)
+///   at `(4bp, 4bp)` and `(w+4bp, h+2bp)`; the black rectangle `(4bp,
+///   8.1bp)` to `(w+4bp, h+6.1bp)`;
+/// - `\pgfsetfading{..}{\pgftransformshift{(0.5w+6bp, 0.5h-4bp)}}` puts
+///   the fading's centre there; its bounding box is `0..w+12bp` (the
+///   `\hskip4bp` after the picture) by `0..h+6.1bp`, so mask coordinates
+///   map onto body-picture coordinates shifted by `(0, -7.05bp)`
+///   (the reference writes `1.0 0.0 0.0 1.0 0.0 -7.05008 cm` around the
+///   `gs`).
+///
+/// Composed, the alpha outside the box is `0.5 - d/8bp` at distance `d`
+/// (0..4bp) from the box's bottom and right edges: the bottom shading is
+/// opaque 0.95bp above the box bottom (`-3bp`) and transparent 7.05bp
+/// below it, the right shading opaque at `w` and transparent at `w+8bp`
+/// with the box edge at `w+4bp`, the large ball concentric with the
+/// bottom-right corner arc (centre `(w, 1bp)`), and the two small balls
+/// end the bottom band 4bp from the left edge and the right band `5.05bp`
+/// under the box top (`h+2bp-7.05bp` above the body origin) as round
+/// caps. So the shadow is a round-capped stroke of the box's bottom and
+/// right edge, 4bp wide outside the box, fading from 50% black at the
+/// edge to nothing. The display list has no gradient paint: the pipeline
+/// paints [`Shadow::steps`] concentric opaque strokes on the white page
+/// ([`shadow_rings`]), widest and lightest first, at 0.125bp per ring
+/// (a quarter of a 144-dpi raster pixel, so the anti-aliased rings
+/// average to the linear fade; 0.5bp rings left a visible staircase).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shadow {
+    /// The visible band outside the box (`4bp`).
+    pub band: Sp,
+    /// Alpha of the black shadow at the box edge (`0.5`).
+    pub edge_alpha: f64,
+    /// The right band's round cap centre, below the `\bmb@boxheight` top:
+    /// `7.05bp - 2bp`.
+    pub cap_below_box_top: Sp,
+    /// The bottom band's round cap centre, from the box's left edge (`4bp`).
+    pub cap_from_left: Sp,
+    /// Concentric strokes the fade is painted in.
+    pub steps: usize,
+}
+
+pub fn shadow() -> Shadow {
+    Shadow { band: len("4bp"), edge_alpha: 0.5, cap_below_box_top: len("5.05bp"), cap_from_left: len("4bp"), steps: 32 }
+}
+
+/// `\bmb@boxheight` (`beamerbaseboxes.sty` 143-147): the body box's
+/// height, `4bp`, the head box's height (`\bmb@prevheight`; `-4.5pt` for
+/// an empty head). Measured (probe, two-line block): 25.737 + 4 + 9.797 =
+/// 39.534bp, the mask's black rectangle `4.00005 8.1001 341.02087
+/// 37.53387 re` being `h - 2bp` tall.
+pub fn rounded_box_height(body: Sp, head: Sp) -> Sp {
+    body + len("4bp") + head
+}
+
+/// `\bmb@prevheight` of a `beamerboxesrounded` with an empty head
+/// (`beamerbaseboxes.sty` 56-59): `-4.5pt`, the head `\hbox{}` being
+/// given `\ht 1.5pt`.
+pub fn rounded_empty_head_height() -> Sp {
+    Sp::ZERO - len("4.5pt")
+}
+
+/// The strokes that paint [`Shadow`] on a white page, widest first:
+/// `(stroke width, grey level)`. Ring `k` covers the distances
+/// `k..k+1` x `band/steps` from the edge (the stroke is centred on the
+/// edge, its inner half under the box's fills); its grey is the white
+/// page under black at the alpha of the ring's midpoint, `1 - edge_alpha
+/// x (1 - (k + 0.5)/steps)`.
+pub fn shadow_rings(shadow: &Shadow) -> Vec<(Sp, f64)> {
+    let steps = shadow.steps.max(1);
+    (0..steps)
+        .rev()
+        .map(|k| {
+            let width = Sp(shadow.band.0 * 2 * (k as i64 + 1) / steps as i64);
+            let alpha = shadow.edge_alpha * (1.0 - (k as f64 + 0.5) / steps as f64);
+            (width, 1.0 - alpha)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1336,5 +1486,25 @@ mod tests {
         assert_eq!(l.topsep.natural, Sp::pt(3));
         assert_eq!(l.itemsep.natural, Sp::pt(3));
         assert_eq!(l.parsep.natural, Sp::ZERO);
+    }
+
+    #[test]
+    fn rounded_box_numbers() {
+        assert_eq!(bp(rounded_corner_radius()), 4.0);
+        assert_eq!(bp(rounded_corner_tangent()), 2.2);
+        let t = transition();
+        assert_eq!(t.baseline_below_head, Sp::pt(5));
+        assert_eq!(t.fade_top - t.fade_bottom, Sp::pt(2));
+        // Probe: body 25.737bp, head 9.83331pt = 9.797bp.
+        let h = rounded_box_height(len("25.737bp"), len("9.83331pt"));
+        assert!((bp(h) - 39.534).abs() < 0.002, "{}", bp(h));
+        let rings = shadow_rings(&shadow());
+        assert_eq!(rings.len(), 32);
+        assert!((bp(rings[0].0) - 8.0).abs() < 1e-4);
+        assert!((rings[0].1 - (1.0 - 0.5 / 64.0)).abs() < 1e-9);
+        assert!((bp(rings[31].0) - 0.25).abs() < 1e-4);
+        assert!((rings[31].1 - (1.0 - 0.5 * 63.0 / 64.0)).abs() < 1e-9);
+        assert_eq!(t.steps, 16);
+        assert!((rounded_empty_head_height().to_pt() + 4.5).abs() < 1e-6);
     }
 }

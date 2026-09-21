@@ -55,6 +55,43 @@ fn run_paint(r: &Rendered, page: u32, text: &str, baseline: f64) -> (f64, f64, f
     best.map(|(_, p)| p).unwrap_or_else(|| panic!("no run {text:?} on page {page}"))
 }
 
+/// A filled path of `page` (1-based) whose points' bounding box is
+/// `(x, top, width, height)` within `tol` bp, painted `rgb` (a rounded
+/// block's head or body fill: the arcs' control points lie on the box).
+fn fill(r: &Rendered, page: usize, x: f64, top: f64, width: f64, height: f64, rgb: (f64, f64, f64), tol: f64) {
+    use flashtex_render_pipeline::display::{PathCmd, PathPaintOp};
+    let p = &r.v2.pages[page - 1];
+    let mut seen = Vec::new();
+    let found = p.resident_items().iter().any(|it| match it {
+        Item::Path(path) if matches!(path.op, PathPaintOp::Fill { .. }) => {
+            let mut b = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+            let mut add = |px: f64, py: f64| {
+                b.0 = b.0.min(px);
+                b.1 = b.1.min(py);
+                b.2 = b.2.max(px);
+                b.3 = b.3.max(py);
+            };
+            for c in &path.commands {
+                match *c {
+                    PathCmd::Move(px, py) | PathCmd::Line(px, py) => add(px.to_bp(), py.to_bp()),
+                    PathCmd::Cubic(_, _, _, _, px, py) => add(px.to_bp(), py.to_bp()),
+                    PathCmd::Close => {}
+                }
+            }
+            seen.push((b, (path.paint.r, path.paint.g, path.paint.b)));
+            (b.0 - x).abs() <= tol
+                && (b.1 - top).abs() <= tol
+                && (b.2 - b.0 - width).abs() <= tol
+                && (b.3 - b.1 - height).abs() <= tol
+                && (path.paint.r - rgb.0).abs() < 1e-6
+                && (path.paint.g - rgb.1).abs() < 1e-6
+                && (path.paint.b - rgb.2).abs() < 1e-6
+        }
+        _ => false,
+    });
+    assert!(found, "page {page}: no fill at ({x}, {top}) {width}x{height} in {rgb:?}; fills: {seen:?}");
+}
+
 /// The filled rectangle of `page` (1-based) at `(x, top, width, height)`
 /// within `tol` bp, painted `rgb`.
 fn rect(r: &Rendered, page: usize, x: f64, top: f64, width: f64, height: f64, rgb: (f64, f64, f64), tol: f64) {
@@ -251,9 +288,9 @@ fn madrid_frametitle_bar_and_body() {
 
 /// The rounded inner theme's title page: the `title` colour box inside a
 /// `beamerboxesrounded` (painted 59.758..113.832bp from the top, 6.909..
-/// 355.926 across; here a rectangle, the 4bp corner radius and the shadow
-/// not modelled), the title and subtitle in white and 2.23bp higher than
-/// under the default template, the author 4.49bp lower.
+/// 355.926 across, 4bp corner arcs, the `shadow=true` fade), the title
+/// and subtitle in white and 2.23bp higher than under the default
+/// template, the author 4.49bp lower.
 #[test]
 fn madrid_title_page_rounded_box() {
     if !lm_available() {
@@ -261,7 +298,9 @@ fn madrid_title_page_rounded_box() {
     }
     let r = render_one(&madrid_deck());
     let w = words_of(&r);
-    rect(&r, 1, 6.909, 59.758, 349.021, 54.074, (0.2, 0.2, 0.7), 0.5);
+    fill(&r, 1, 6.909, 59.758, 349.021, 54.074, (0.2, 0.2, 0.7), 0.5);
+    // The shadow: 4bp outside the right edge (355.926) and the bottom.
+    shadow(&r, 1, 355.926, 113.832, 1);
     at(&w, 1, "Incremental", 111.113, 83.181, 0.5);
     at(&w, 1, "Why", 92.660, 100.242, 0.5);
     at(&w, 1, "J.", 154.796, 142.283, 0.5);
@@ -298,8 +337,8 @@ fn madrid_plain_frame_has_no_footline() {
 /// pdflatex on the probe below (`\showoutput`: `\vbox(48.19664)`,
 /// `\vbox(32.46747)`, `\vbox(33.30078)`; the fills from the content
 /// stream: head 72.583..87.372bp, body ..118.600, x 6.909, 349.021
-/// wide). Drawn as two rectangles meeting at the 2pt gradient's middle;
-/// the 4bp corner radius and the shadow are not modelled.
+/// wide), with 4bp corner arcs, the 2pt head/body transition fade and
+/// the `shadow=true` drop shadow.
 #[test]
 fn madrid_rounded_blocks() {
     if !lm_available() {
@@ -317,8 +356,64 @@ fn madrid_rounded_blocks() {
     at(&w, 1, "Another", 10.909, 200.549, 0.5);
     assert_eq!(run_paint(&r, 1, "Plain", 83.885), (1.0, 1.0, 1.0));
     assert_eq!(run_paint(&r, 1, "The", 99.431), (0.0, 0.0, 0.0));
-    rect(&r, 1, 6.909, 72.583, 349.021, 87.372 - 72.583, (0.15, 0.15, 0.525), 0.5);
-    rect(&r, 1, 6.909, 87.372, 349.021, 118.600 - 87.372, (0.915, 0.915, 0.9525), 0.5);
-    rect(&r, 1, 6.909, 130.562, 349.021, 145.351 - 130.562, (0.75, 0.0, 0.0), 0.5);
-    rect(&r, 1, 6.909, 172.871, 349.021, 188.490 - 172.871, (0.0, 0.375, 0.0), 0.5);
+    fill(&r, 1, 6.909, 72.583, 349.021, 87.372 - 72.583, (0.15, 0.15, 0.525), 0.5);
+    fill(&r, 1, 6.909, 87.372, 349.021, 118.600 - 87.372, (0.915, 0.915, 0.9525), 0.5);
+    fill(&r, 1, 6.909, 130.562, 349.021, 145.351 - 130.562, (0.75, 0.0, 0.0), 0.5);
+    fill(&r, 1, 6.909, 172.871, 349.021, 188.490 - 172.871, (0.0, 0.375, 0.0), 0.5);
+    shadow(&r, 1, 355.926, 118.600, 3);
+    // The `bmb@transition` fade over the first block's head/body seam:
+    // `upper.bg` to `lower.bg` 1pt either side of the head fill's bottom edge (87.372),
+    // fading into `upper.bg` -- strips strictly between the two colours.
+    use flashtex_render_pipeline::display::{PathCmd, PathPaintOp};
+    let strips = r.v2.pages[0]
+        .resident_items()
+        .iter()
+        .filter(|it| match it {
+            Item::Path(p) if matches!(p.op, PathPaintOp::Fill { .. }) => {
+                let ys: Vec<f64> = p.commands.iter().filter_map(|c| match *c {
+                    PathCmd::Move(_, y) | PathCmd::Line(_, y) => Some(y.to_bp()),
+                    _ => None,
+                }).collect();
+                let (lo, hi) = ys.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |a, &y| (a.0.min(y), a.1.max(y)));
+                p.paint.r > 0.15 + 1e-6 && p.paint.r < 0.915 - 1e-6 && (p.paint.b - p.paint.r) > 0.0 && lo > 85.5 && hi < 89.5
+            }
+            _ => false,
+        })
+        .count();
+    assert_eq!(strips, 16, "transition strips over the first block's seam");
+}
+
+/// A `shadow=true` fade: `blocks` sets of grey round-capped strokes whose
+/// widest ring reaches 4bp past the box's right edge `right` and bottom
+/// edge `bottom` (bp from the page top), lightest outermost.
+fn shadow(r: &Rendered, page: usize, right: f64, bottom: f64, blocks: usize) {
+    use flashtex_render_pipeline::display::{LineCap, PathCmd, PathPaintOp};
+    let p = &r.v2.pages[page - 1];
+    let mut widest = Vec::new();
+    let mut greys = Vec::new();
+    for it in p.resident_items() {
+        let Item::Path(path) = it else { continue };
+        let PathPaintOp::Stroke(st) = &path.op else { continue };
+        // Ring greys are `1 - 0.5 x (1 - (k + 0.5)/32)`: odd multiples of
+        // 1/128 under white (the navigation symbols' strokes are not).
+        let k = (1.0 - path.paint.r) * 128.0;
+        if st.cap != LineCap::Round || path.paint.r != path.paint.g || (k - k.round()).abs() > 1e-6 || k.round() as i64 % 2 != 1 {
+            continue;
+        }
+        greys.push(path.paint.r);
+        if (st.width.to_bp() - 8.0).abs() < 0.01 {
+            let pts: Vec<(f64, f64)> = path.commands.iter().filter_map(|c| match *c {
+                PathCmd::Move(x, y) | PathCmd::Line(x, y) => Some((x.to_bp(), y.to_bp())),
+                PathCmd::Cubic(_, _, _, _, x, y) => Some((x.to_bp(), y.to_bp())),
+                PathCmd::Close => None,
+            }).collect();
+            let max_x = pts.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
+            let max_y = pts.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
+            widest.push((max_x, max_y));
+        }
+    }
+    assert_eq!(greys.len(), 32 * blocks, "shadow rings on page {page}: {greys:?}");
+    assert!(widest.iter().any(|&(x, y)| (x - right).abs() < 0.5 && (y - bottom).abs() < 0.5), "no shadow on ({right}, {bottom}): {widest:?}");
+    // Widest (lightest) first within each shadow.
+    assert!(greys[0] > greys[31], "{greys:?}");
 }

@@ -945,10 +945,13 @@ fn resolve_autobreak(style: &crate::style::Stylesheet, blocks: &mut [BuiltBlock]
 /// standard classes): the frametitle bar under the title, the infolines
 /// footline (three colour boxes with the short author `(institute)`, the
 /// short title, and the short date + `n / N` frame number at their `\tiny`
-/// baseline `1ex` above the paper bottom), and the Madrid title page's
-/// rounded title box (drawn as a rectangle: the 4bp corner radius and the
-/// shadow are not modelled). Bars and boxes go first on the page so the
-/// text paints over them. `[plain]` pages get no footline
+/// baseline `1ex` above the paper bottom), the Madrid title page's
+/// rounded title box and the rounded blocks (`beamerboxesrounded`: 4bp
+/// corner arcs, the 2pt head/body transition fade as sixteen strips and the
+/// `shadow=true` fade as 32 grey strokes -- [`rounded_head_shape`],
+/// [`rounded_body_shape`], [`rounded_rect_shape`], [`transition_shapes`],
+/// [`shadow_shapes`]). Bars and boxes go first on the page so the text
+/// paints over them. `[plain]` pages get no footline
 /// (`\thispagestyle{empty}`).
 pub(super) fn page_chrome(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, pages: &mut pl::Pages, line_dx: &mut [Vec<f64>], frames: &[OpenFrame], deck: Option<&adapter::BeamerDeck>) {
     let theme = ctx.beamer_theme();
@@ -988,31 +991,53 @@ pub(super) fn page_chrome(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, pages
                 if let (Some(t), Some(b)) = (top_line, bottom_line) {
                     let top = t.baseline_y - t.height - sep - frame_pt(r.above) + frame_pt(r.inset);
                     let bottom = b.baseline_y + b.depth + sep + frame_pt(r.below) - frame_pt(r.inset);
-                    let width = s.text_width_pt + 2.0 * frame_pt(r.overhang);
-                    front.push((ctx.rule_block_colored(span, width, bottom - top, -frame_pt(r.overhang), Some(rgb_color(r.bg))), bottom, 0.0));
+                    // An empty head: `\bmb@prevheight` is `-4.5pt` and the
+                    // body box starts `4bp + 1.5pt - 1pt` under the vbox
+                    // top, i.e. 0.5pt under the head picture's origin,
+                    // which is 3bp under the fill's top edge (no
+                    // transition: `\vskip-0.5pt` is inside the `\else`).
+                    let bp = |v: f64| v * 72.27 / 72.0;
+                    let body_origin = bottom - bp(3.0);
+                    let body_top = top + bp(3.0) + 0.5;
+                    let box_height = frame_pt(spec::rounded_box_height(pt_sp(body_origin - body_top), spec::rounded_empty_head_height()));
+                    let mut shapes = shadow_shapes(s.text_width_pt, bottom, body_origin, box_height);
+                    shapes.push(rounded_rect_shape(s.text_width_pt, bottom - top, rgb_color(r.bg)));
+                    front.push((ctx.paths_block(span, s.text_width_pt, bottom - top, bp(4.0) + 1.0, 0.0, shapes), bottom, 0.0));
                 }
             }
         }
-        // Rounded blocks on this page: the head fill from 1bp under the
-        // box top to 2pt under the head box's baseline, the body fill from
-        // there to 3bp under the body box's baseline, both overhanging
-        // `\textwidth` by 4bp (`beamerbaseboxes.sty` 77-107, 210-242).
+        // Rounded blocks on this page (`beamerbaseboxes.sty` 77-107,
+        // 210-242): the shadow, the head fill (rounded top corners) from
+        // 3bp above the head picture's origin to 2pt under the head box's
+        // baseline, the body fill (rounded bottom corners) from there to
+        // 3bp under the body box's baseline, both overhanging `\textwidth`
+        // by 4bp, and the 2pt transition fade over the seam.
         let recs: Vec<super::beamer_blocks::RoundedBlockRec> = ctx.rounded_blocks.iter().filter(|r| r.title_at >= frame.start && r.title_at <= frame.end_index()).cloned().collect();
         for r in recs {
             let Some(last_at) = r.last_at else { continue };
             let title = pages.pages[pi].lines.iter().find(|l| l.paragraph == r.title_at && l.line == 0);
             let last = pages.pages[pi].lines.iter().filter(|l| l.paragraph == last_at).last();
             let (Some(t), Some(b)) = (title, last) else { continue };
-            let bp4 = 4.0 * 72.27 / 72.0;
-            let bp1 = 72.27 / 72.0;
-            // The placed line's height is the glyphs'; the `\vskip4bp` sits
-            // above it.
-            let box_top = t.baseline_y - t.height - bp4;
-            let head_bottom = t.baseline_y + r.head_raise + 2.0;
-            let body_bottom = b.baseline_y + b.depth + 0.5 + 3.0 * bp1;
-            let width = s.text_width_pt + 2.0 * bp4;
-            front.push((ctx.rule_block_colored(span, width, head_bottom - (box_top + bp1), -bp4, Some(rgb_color(r.title_bg))), head_bottom, 0.0));
-            front.push((ctx.rule_block_colored(span, width, body_bottom - head_bottom, -bp4, Some(rgb_color(r.body_bg))), body_bottom, 0.0));
+            let bp = |v: f64| v * 72.27 / 72.0;
+            let tr = spec::transition();
+            // The placed line's height is the glyphs'; the head picture's
+            // origin (`{0bp}{-\ht\bmb@box}`) is the head box's top, the
+            // `\vskip4bp` above it.
+            let head_origin = t.baseline_y - t.height;
+            let head_baseline = t.baseline_y + r.head_raise;
+            let head_bottom = head_baseline + 2.0;
+            let trans_origin = head_baseline + frame_pt(tr.baseline_below_head);
+            let body_top = trans_origin - frame_pt(tr.body_top_above);
+            let body_origin = b.baseline_y + b.depth + 0.5;
+            let body_bottom = body_origin + bp(3.0);
+            let box_height = frame_pt(spec::rounded_box_height(pt_sp(body_origin - body_top), pt_sp(t.height + r.head_raise)));
+            let w = s.text_width_pt;
+            let mut shapes = shadow_shapes(w, body_bottom, body_origin, box_height);
+            shapes.push(rounded_head_shape(w, body_bottom - head_origin, body_bottom - head_bottom, rgb_color(r.title_bg)));
+            shapes.push(rounded_body_shape(w, body_bottom - head_bottom, rgb_color(r.body_bg)));
+            shapes.extend(transition_shapes(w, body_bottom - trans_origin, &tr, r.title_bg, r.body_bg));
+            let height = body_bottom - (head_origin - bp(3.0));
+            front.push((ctx.paths_block(span, w, height, bp(4.0) + 1.0, 0.0, shapes), body_bottom, 0.0));
         }
         // The navigation symbol strip (`sidebar right` `[default]`), on
         // every page with a head/foot (`[plain]` has `\thispagestyle
@@ -1102,6 +1127,155 @@ pub(super) fn page_chrome(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, pages
             blocks.push(block);
         }
     }
+}
+
+/// Points to `Sp` (the class-geometry unit).
+fn pt_sp(pt: f64) -> flashtex_class_geometry::Sp {
+    flashtex_class_geometry::Sp((pt * 65536.0).round() as i64)
+}
+
+/// A filled `beamerboxesrounded` head (`beamerbaseboxes.sty` 76-83): the
+/// rectangle from `-4bp` to `\bmb@width + 4bp` whose top corners are 4bp
+/// arcs, in a paths box whose origin is the text's left edge on the
+/// fill's bottom edge, y up. `origin_y` is the head picture's origin
+/// (the head box's top: the arcs run from 1bp under it, up to 3bp over
+/// it), `bottom_y` the fill's lower edge (2pt under the head box's
+/// baseline). Both in points above the box's baseline. Measured (probe,
+/// `Plain block`): the path from `y = -1` to `3` and down to `-11.78925`
+/// under `1 0 0 1 10.909 196.543 cm`, i.e. 72.583 to 87.372bp from the
+/// page top for a title baseline of 83.885.
+fn rounded_head_shape(width: f64, origin_y: f64, bottom_y: f64, color: DeviceColor) -> super::Shape {
+    use super::ShapeCmd::{Close, Cubic, Line, Move};
+    let r = frame_pt(spec::rounded_corner_radius());
+    let k = frame_pt(spec::rounded_corner_tangent());
+    let bp = |v: f64| v * 72.27 / 72.0;
+    let (w, y) = (width, origin_y);
+    super::Shape {
+        op: super::ShapeOp::Fill,
+        commands: vec![
+            Move(-r, y - bp(1.0)),
+            Cubic(-r, y + bp(1.2), -k, y + bp(3.0), 0.0, y + bp(3.0)),
+            Line(w, y + bp(3.0)),
+            Cubic(w + k, y + bp(3.0), w + r, y + bp(1.2), w + r, y - bp(1.0)),
+            Line(w + r, bottom_y),
+            Line(-r, bottom_y),
+            Close,
+        ],
+        color,
+    }
+}
+
+/// The body fill (`beamerbaseboxes.sty` 227-240): from `top_y` (where
+/// the head fill ends; the seam is under the transition fade) down to
+/// the box's baseline, 3bp under the body picture's origin, the bottom
+/// corners 4bp arcs. Measured: `-4.00005 1.0 m -4.00005 -1.2 -2.20001
+/// -3.00003 0.0 -3.00003 c 341.02087 -3.00003 l ... 345.02094 1.0 c
+/// 345.02094 25.73714 l` under `cm 10.909 156.526`: 118.600bp from the
+/// page top for a last body baseline of 112.980 (depth 2.129pt).
+fn rounded_body_shape(width: f64, top_y: f64, color: DeviceColor) -> super::Shape {
+    use super::ShapeCmd::{Close, Cubic, Line, Move};
+    let r = frame_pt(spec::rounded_corner_radius());
+    let k = frame_pt(spec::rounded_corner_tangent());
+    let bp = |v: f64| v * 72.27 / 72.0;
+    let w = width;
+    super::Shape {
+        op: super::ShapeOp::Fill,
+        commands: vec![
+            Move(-r, bp(4.0)),
+            Cubic(-r, bp(1.8), -k, 0.0, 0.0, 0.0),
+            Line(w, 0.0),
+            Cubic(w + k, 0.0, w + r, bp(1.8), w + r, bp(4.0)),
+            Line(w + r, top_y),
+            Line(-r, top_y),
+            Close,
+        ],
+        color,
+    }
+}
+
+/// The Madrid title page's box: an empty-headed `beamerboxesrounded`
+/// whose head path (`lower.bg`, `\ifdim\wd\bmb@box=0pt`) and body path
+/// share the colour and overlap (the head fill ends 3.5pt under its
+/// origin, the body fill starts 0.5pt under it), so the union is one
+/// rectangle with four 4bp corner arcs, `height` tall above the box's
+/// baseline. Measured (corpus `beamer-madrid` p1): head path `-4.00005
+/// -1.0 m ... 345.02094 -3.48697 l` under `cm 10.909 209.368`, body path
+/// `... 345.02094 47.5763 l` under `cm 10.909 161.294`: 59.758 to
+/// 113.832bp from the page top.
+fn rounded_rect_shape(width: f64, height: f64, color: DeviceColor) -> super::Shape {
+    use super::ShapeCmd::{Close, Cubic, Line, Move};
+    let r = frame_pt(spec::rounded_corner_radius());
+    let k = frame_pt(spec::rounded_corner_tangent());
+    let (w, h) = (width, height);
+    super::Shape {
+        op: super::ShapeOp::Fill,
+        commands: vec![
+            Move(-r, h - r),
+            Cubic(-r, h - r + k, -k, h, 0.0, h),
+            Line(w, h),
+            Cubic(w + k, h, w + r, h - r + k, w + r, h - r),
+            Line(w + r, r),
+            Cubic(w + r, r - k, w + k, 0.0, w, 0.0),
+            Line(0.0, 0.0),
+            Cubic(-k, 0.0, -r, r - k, -r, r),
+            Close,
+        ],
+        color,
+    }
+}
+
+/// The `bmb@transition` fade (`spec::transition`) as flat strips over the
+/// head/body seam: `origin_y` is the transition picture's baseline above
+/// the box's baseline; strip `i` of `steps` spans its share of the 2pt
+/// between `fade_bottom` and `fade_top` above that, in the colour mixed
+/// at its midpoint (`upper` at the top, `lower` at the bottom), the
+/// picture's `-4bp .. w+4bp` clip wide.
+fn transition_shapes(width: f64, origin_y: f64, tr: &spec::Transition, upper: spec::Rgb, lower: spec::Rgb) -> Vec<super::Shape> {
+    use super::ShapeCmd::{Close, Line, Move};
+    let r = frame_pt(spec::rounded_corner_radius());
+    let (bottom, top) = (origin_y + frame_pt(tr.fade_bottom), origin_y + frame_pt(tr.fade_top));
+    let steps = tr.steps.max(1);
+    let step = (top - bottom) / steps as f64;
+    (0..steps)
+        .map(|i| {
+            let (y0, y1) = (bottom + step * i as f64, bottom + step * (i + 1) as f64);
+            // 0 at the bottom (`lower.bg`), 1 at the top (`upper.bg`).
+            let t = (i as f64 + 0.5) / steps as f64;
+            let mix = |a: f64, b: f64| a + (b - a) * t;
+            let color = rgb_color((mix(lower.0, upper.0), mix(lower.1, upper.1), mix(lower.2, upper.2)));
+            super::Shape { op: super::ShapeOp::Fill, commands: vec![Move(-r, y0), Line(width + r, y0), Line(width + r, y1), Line(-r, y1), Close], color }
+        })
+        .collect()
+}
+
+/// The `shadow=true` drop shadow (`spec::shadow`): the box's right and
+/// bottom edges (with the 4bp bottom-right arc) as one path from the
+/// right band's cap centre, `cap_below_box_top` under the
+/// `\bmb@boxheight` top, down to the bottom band's cap centre 4bp from
+/// the left edge, stroked [`spec::shadow_rings`] times with round caps,
+/// widest and lightest first: each ring's outer half is the fade at its
+/// distance, the inner half is under the fills painted after it.
+/// `bottom_y` is the box's baseline (the fill's bottom edge) and
+/// `origin_y` the body picture's origin (3bp above it), both in points
+/// above the paths box's baseline; `box_height` is `\bmb@boxheight`.
+fn shadow_shapes(width: f64, bottom_y: f64, origin_y: f64, box_height: f64) -> Vec<super::Shape> {
+    use super::ShapeCmd::{Cubic, Line, Move};
+    let sh = spec::shadow();
+    let r = frame_pt(spec::rounded_corner_radius());
+    let k = frame_pt(spec::rounded_corner_tangent());
+    // Local y up from the fill's bottom edge.
+    let y0 = origin_y - bottom_y;
+    let cap_y = y0 + box_height - frame_pt(sh.cap_below_box_top);
+    let cap_x = frame_pt(sh.cap_from_left);
+    let w = width;
+    spec::shadow_rings(&sh)
+        .into_iter()
+        .map(|(stroke, grey)| super::Shape {
+            op: super::ShapeOp::Stroke { width: frame_pt(stroke), round_cap: true },
+            commands: vec![Move(w + r, cap_y), Line(w + r, r), Cubic(w + r, r - k, w + k, 0.0, w, 0.0), Line(cap_x, 0.0)],
+            color: rgb_color((grey, grey, grey)),
+        })
+        .collect()
 }
 
 /// The six navigation symbols as [`super::Shape`]s in the strip's own
