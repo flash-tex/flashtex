@@ -247,3 +247,67 @@ pub fn match_rules(want: &[Rule], got: &[Rule], tol_bp: f64) -> RuleMatch {
     out.extra = got.iter().zip(&used).filter(|(_, u)| !**u).map(|(q, _)| *q).collect();
     out
 }
+
+/// Every painted glyph of page 1 as (cluster text, origin x, baseline y) in
+/// bp, y from the page top.
+pub fn painted_glyphs(r: &Rendered) -> Vec<(String, f64, f64)> {
+    let mut out = Vec::new();
+    for item in r.v2.pages[0].resident_items() {
+        let flashtex_render_pipeline::display::Item::GlyphRun(run) = item else { continue };
+        for g in &run.glyphs {
+            let c = &run.clusters[g.cluster as usize];
+            out.push((run.text[c.text_start_byte..c.text_end_byte].to_string(), g.origin_x.to_bp(), g.baseline_y.to_bp()));
+        }
+    }
+    out
+}
+
+/// Renders `source` (one page, no error diagnostics) and matches every
+/// pdfTeX glyph of `expected` -- (identity, pdfTeX font, x bp, baseline y
+/// bp; a y of `0.0` pins x only, for cmex pieces hung from their top) -- to
+/// a distinct painted glyph with the same text within `tol_bp`, nearest
+/// first. The table is committed oracle evidence; pdflatex never runs here.
+pub fn assert_pdftex_glyphs(source: &str, expected: &[(&str, &str, f64, f64)], tol_bp: f64) {
+    let r = render_one(source);
+    let errors: Vec<_> = r
+        .v2
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == flashtex_render_pipeline::display::Severity::Error)
+        .map(|d| d.message.clone())
+        .collect();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(r.v2.pages.len(), 1);
+    let mut actual: Vec<(String, f64, f64, bool)> = painted_glyphs(&r).into_iter().map(|(t, x, y)| (t, x, y, false)).collect();
+    let mut misses = Vec::new();
+    for &(text, font, x, y) in expected {
+        let near = |ax: f64, ay: f64, tol: f64| (ax - x).abs() <= tol && (y == 0.0 || (ay - y).abs() <= tol);
+        let hit = actual
+            .iter()
+            .enumerate()
+            .filter(|(_, (t, ax, ay, used))| !used && t == text && near(*ax, *ay, tol_bp))
+            .min_by(|a, b| {
+                let d = |g: &(String, f64, f64, bool)| (g.1 - x).abs() + if y == 0.0 { 0.0 } else { (g.2 - y).abs() };
+                d(a.1).total_cmp(&d(b.1))
+            })
+            .map(|(i, _)| i);
+        match hit {
+            Some(i) => actual[i].3 = true,
+            None => {
+                let nearest: Vec<_> = actual
+                    .iter()
+                    .filter(|(_, ax, ay, _)| near(*ax, *ay, 8.0))
+                    .map(|(t, ax, ay, _)| format!("{t:?} ({ax:.3}, {ay:.3})"))
+                    .collect();
+                misses.push(format!("{text:?} ({font} at {x}, {y}): nearest {nearest:?}"));
+            }
+        }
+    }
+    assert!(
+        misses.is_empty(),
+        "{} of {} pdfTeX glyphs unmatched within {tol_bp} bp:\n{}",
+        misses.len(),
+        expected.len(),
+        misses.join("\n")
+    );
+}
