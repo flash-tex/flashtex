@@ -880,9 +880,21 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
-        &["frac", "cfrac"],
+        &["frac"],
         "{num}{den}",
-        "fraction; \\cfrac lays out as \\frac",
+        "fraction",
+        true,
+    ),
+    (
+        &["cfrac"],
+        "[pos]{num}{den}",
+        "amsmath continued fraction: display style at every level, a \\strut heading each numerator, \\kern-\\nulldelimiterspace after; [l]/[r] warn and centre",
+        true,
+    ),
+    (
+        &["strut"],
+        "",
+        "latex.ltx \\strutbox in a formula: an ordinary box of no width, 0.7/0.3 of the text size's baselineskip",
         true,
     ),
     (
@@ -1169,7 +1181,7 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
     (
         &["dots", "ldots", "dotsc", "dotso"],
         "",
-        "three periods",
+        "three periods; amsmath's \\dots centres before a binary operator or relation and adds its thin spaces (\\mdots@@)",
         true,
     ),
     (

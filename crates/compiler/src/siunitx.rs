@@ -1331,7 +1331,9 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
         | Nucleus::Text(_)
         | Nucleus::Space { .. }
         | Nucleus::Bold(_)
-        | Nucleus::Rule(_) => {}
+        | Nucleus::Rule(_)
+        | Nucleus::Strut
+        | Nucleus::Kern(_) => {}
         Nucleus::TextRun(pieces) => {
             for piece in pieces {
                 if let crate::math::TextPiece::Math(list) = piece {

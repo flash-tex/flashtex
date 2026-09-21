@@ -209,6 +209,17 @@ pub enum Nucleus {
     /// `\hbox` (see `text_builtins::TextRule`), an Ord box whose `em`/`ex`
     /// are the text font's at the formula's text size.
     Rule(crate::text_builtins::TextRule),
+    /// LaTeX's `\strut` in math, `\copy\strutbox` (latex.ltx 621): a box of
+    /// no width, `.7\baselineskip` high and `.3\baselineskip` deep, of the
+    /// text size the formula is set in (`\set@fontsize` rebuilds
+    /// `\strutbox` with every size change) and the same in every math
+    /// style. A box in a math list is an ordinary atom (TeX §1076). The
+    /// consumer supplies the `\baselineskip`; `\cfrac` puts one at the head
+    /// of every numerator.
+    Strut,
+    /// A fixed `\kern`, in pt: a kern node, which takes no part in atom
+    /// spacing (`\cfrac`'s trailing `\kern-\nulldelimiterspace`).
+    Kern(f64),
     /// `\mathbin{...}`, `\mathrel{...}`, and the rest of the `\math*` class
     /// family (TeXbook Chapter 17): an arbitrary math list boxed as a single
     /// atom, laid out like a bare `{...}` group. The enclosing [`MathAtom`]'s
@@ -409,6 +420,7 @@ pub(crate) fn append_math_reference_text(out: &mut String, list: &MathList, sour
                     out.push_str(raw);
                 }
             }
+            Nucleus::Strut | Nucleus::Kern(_) => {}
             Nucleus::SubArray { rows, .. } => {
                 if let Some(raw) = source_text(source, atom) {
                     out.push_str(raw);
@@ -535,6 +547,8 @@ fn reference_atom_end(atom: &MathAtom) -> usize {
         | Nucleus::Text(_)
         | Nucleus::Space { .. }
         | Nucleus::Rule(_)
+        | Nucleus::Strut
+        | Nucleus::Kern(_)
         | Nucleus::Bold(_) => {}
     }
     end
@@ -1375,7 +1389,22 @@ impl MathParser<'_> {
                 }
                 TokenKind::LBrace => {
                     self.i += 1;
-                    atoms.extend(self.list(true).atoms);
+                    let start = self.i;
+                    let group = self.list(true);
+                    // A style switch lasts to the end of its group (TeX
+                    // §1171): `${\displaystyle\sum_i} + \sum_j$` sets only the
+                    // first sum in display style. Flattened, the switch
+                    // would govern the rest of the formula, so such a group
+                    // stays one ordinary atom, as TeX makes every `{...}`.
+                    if self.switches_style(start) {
+                        atoms.push(MathAtom {
+                            nucleus: Nucleus::Group(group),
+                            span: token.span,
+                            ..space(0.0, token.span)
+                        });
+                    } else {
+                        atoms.extend(group.atoms);
+                    }
                 }
                 // Limit-placement switches produce no atom, so a following
                 // script still attaches to the operator (`\lim\limits_{x}`).
@@ -2484,18 +2513,38 @@ impl MathParser<'_> {
                     ams_symbol: None,
                 }
             }
-            // amsmath.sty 912: `\cfrac[c]{num}{den}` is
-            // `{\displaystyle\frac{\strut...num...}{den}}`, i.e. size-wise
-            // exactly `\dfrac` (`\genfrac{}{}{}0`): a display-style fraction,
-            // so every nesting level stays full height instead of shrinking
-            // like `\frac`. Only the size is modelled here: the `\strut`s,
-            // the `[l]`/`[r]` alignment fills and the trailing
-            // `\kern-\nulldelimiterspace` only centre the parts.
+            // amsmath.sty 912-914:
+            //
+            //   \DeclareRobustCommand{\cfrac}[3][c]{{\displaystyle\frac{%
+            //     \strut\ifx r#1\hfill\fi#2\ifx l#1\hfill\fi}{#3}}%
+            //     \kern-\nulldelimiterspace}
+            //
+            // A display-style fraction in an Ord group, so every nesting
+            // level stays full size instead of shrinking like `\frac` (issue
+            // #894); a `\strut` at the head of every numerator, so each level
+            // is the same height and depth whatever its numerator holds; and
+            // a kern taking back the `\nulldelimiterspace` the fraction adds
+            // on its right, 1.2pt per level (latex.ltx sets it once, at every
+            // size). The `[l]`/`[r]` `\hfill` shares the numerator's extra
+            // width with the two `\hss` of TeX's `rebox` (§715); that is not
+            // modelled, and the numerator stays centred.
             "cfrac" => {
-                let numerator = self.required_group(&name, span);
+                let position = self.raw_bracket_text();
+                let mut numerator = self.required_group(&name, span);
                 let denominator = self.required_group(&name, span);
+                if let Some(position) = position.as_deref().map(str::trim).filter(|p| matches!(*p, "l" | "r")) {
+                    self.diagnostics.push(Diagnostic::warning(
+                        format!("\\cfrac[{position}] alignment is not supported"),
+                        Some(span),
+                        Some("centred the numerator, as \\cfrac[c] does".into()),
+                    ));
+                }
+                numerator.atoms.insert(0, MathAtom { nucleus: Nucleus::Strut, ..space(0.0, span) });
+                self.pending.push(MathAtom { nucleus: Nucleus::Kern(-NULL_DELIMITER_SPACE_PT), ..space(0.0, span) });
                 gen_fraction(numerator, denominator, /*binom=*/ false, Some(MathStyle::Display), span)
             }
+            // latex.ltx 621: `\copy\strutbox`, a box and so an Ord atom.
+            "strut" => MathAtom { nucleus: Nucleus::Strut, ..space(0.0, span) },
             "frac" => {
                 let numerator = self.required_group("frac", span);
                 let denominator = self.required_group("frac", span);
@@ -3494,6 +3543,30 @@ impl MathParser<'_> {
         }
     }
 
+    /// Whether the braced group whose tokens run from `start` to the current
+    /// position (its closing brace included) holds a style switch at its own
+    /// level, outside any nested group or argument.
+    fn switches_style(&self, start: usize) -> bool {
+        let mut depth = 0usize;
+        for token in &self.tokens[start.min(self.i)..self.i] {
+            match &token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => depth = depth.saturating_sub(1),
+                TokenKind::Command(name)
+                    if depth == 0
+                        && matches!(
+                            name.as_str(),
+                            "displaystyle" | "textstyle" | "scriptstyle" | "scriptscriptstyle"
+                        ) =>
+                {
+                    return true
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     fn sub_list(&mut self, tokens: &[Token]) -> MathList {
         let mut parser = MathParser {
             tokens,
@@ -4281,6 +4354,10 @@ impl MathParser<'_> {
 
 /// amsmath's `\genfrac` shorthands: `\dfrac`/`\tfrac` (default rule, no
 /// delimiters) and `\binom`/`\dbinom`/`\tbinom` (zero rule, parentheses).
+/// `\nulldelimiterspace` (latex.ltx: `\nulldelimiterspace=1.2pt`), which
+/// no size change rescales.
+const NULL_DELIMITER_SPACE_PT: f64 = 1.2;
+
 fn gen_fraction(
     numerator: MathList,
     denominator: MathList,
@@ -5084,7 +5161,9 @@ fn atom_class(atom: &MathAtom) -> Option<AtomClass> {
         return Some(class);
     }
     Some(match &atom.nucleus {
-        Nucleus::Space { .. } if atom.superscript.is_none() && atom.subscript.is_none() => {
+        Nucleus::Space { .. } | Nucleus::Kern(_)
+            if atom.superscript.is_none() && atom.subscript.is_none() =>
+        {
             return None
         }
         Nucleus::Symbol(glyph) => symbol_class(glyph),
@@ -5967,6 +6046,20 @@ fn layout_nucleus(
                 descent: tb::sp_to_pt(b.depth),
             }
         }
+        // This crate's own layout knows no `\baselineskip`: the strut takes
+        // the standard classes' 1.2 times the text size (12pt at 10pt).
+        Nucleus::Strut => MathBox {
+            items: Vec::new(),
+            width: 0.0,
+            ascent: 0.7 * 1.2 * root_size,
+            descent: 0.3 * 1.2 * root_size,
+        },
+        Nucleus::Kern(pt) => MathBox {
+            items: Vec::new(),
+            width: *pt,
+            ascent: 0.0,
+            descent: 0.0,
+        },
         Nucleus::Phantom {
             body,
             horizontal,
@@ -6397,6 +6490,8 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
                 limits: *limits,
             },
             Nucleus::Rule(rule) => Nucleus::Rule(rule.clone()),
+            Nucleus::Strut => Nucleus::Strut,
+            Nucleus::Kern(pt) => Nucleus::Kern(*pt),
             Nucleus::ExtArrow {
                 arrow,
                 above,
@@ -7544,31 +7639,21 @@ mod unbraced_argument_tests {
     #[test]
     fn cfrac_is_a_display_style_genfraction_and_frac_is_untouched() {
         // Issue #894: `\cfrac` used to alias plain `\frac`, so a continued
-        // fraction shrank at every level. amsmath.sty 912 makes it
-        // `{\displaystyle\frac{...}{...}}`: a display-style fraction, exactly
-        // `\dfrac`'s shape (`\genfrac{}{}{}0`).
-        for (source, expected) in [
-            (r"\cfrac{a}{b}", Some(MathStyle::Display)),
-            (r"\dfrac{a}{b}", Some(MathStyle::Display)),
-            (r"\tfrac{a}{b}", Some(MathStyle::Text)),
-        ] {
+        // fraction shrank at every level. amsmath.sty 912-914 makes it
+        // `{\displaystyle\frac{\strut#2}{#3}}\kern-\nulldelimiterspace`: a
+        // display-style fraction whose numerator opens with a strut, then a
+        // 1.2pt negative kern.
+        let parse = |source: &str| {
             let mut diagnostics = Vec::new();
-            let list = parse_tokens(
-                &crate::lexer::tokenize(source),
-                MathPackages::KERNEL,
-                &mut diagnostics,
-            );
+            let list = parse_tokens(&crate::lexer::tokenize(source), MathPackages::KERNEL, &mut diagnostics);
+            (list, diagnostics)
+        };
+        for (source, expected) in [(r"\dfrac{a}{b}", Some(MathStyle::Display)), (r"\tfrac{a}{b}", Some(MathStyle::Text))] {
+            let (list, diagnostics) = parse(source);
             assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
             assert_eq!(list.atoms.len(), 1, "{source}: {:?}", list.atoms);
             match &list.atoms[0].nucleus {
-                Nucleus::GenFraction {
-                    numerator,
-                    denominator,
-                    thickness_pt,
-                    left,
-                    right,
-                    style,
-                } => {
+                Nucleus::GenFraction { numerator, denominator, thickness_pt, left, right, style } => {
                     assert_eq!(numerator.atoms[0].nucleus, Nucleus::Symbol("a".into()), "{source}");
                     assert_eq!(denominator.atoms[0].nucleus, Nucleus::Symbol("b".into()), "{source}");
                     assert_eq!(*thickness_pt, None, "{source}: a fraction rule, not a binom");
@@ -7578,6 +7663,36 @@ mod unbraced_argument_tests {
                 other => panic!("{source}: expected a generalized fraction, got {other:?}"),
             }
         }
+        for source in [r"\cfrac{a}{b}", r"\cfrac[c]{a}{b}"] {
+            let (list, diagnostics) = parse(source);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            let nuclei: Vec<_> = list.atoms.iter().map(|a| &a.nucleus).collect();
+            match nuclei.as_slice() {
+                [Nucleus::GenFraction { numerator, denominator, thickness_pt: None, left, right, style: Some(MathStyle::Display) }, Nucleus::Kern(kern)] => {
+                    let num: Vec<_> = numerator.atoms.iter().map(|a| &a.nucleus).collect();
+                    assert_eq!(num, [&Nucleus::Strut, &Nucleus::Symbol("a".into())], "{source}");
+                    assert_eq!(denominator.atoms[0].nucleus, Nucleus::Symbol("b".into()), "{source}");
+                    assert_eq!((left.as_str(), right.as_str()), ("", ""), "{source}");
+                    assert_eq!(*kern, -1.2, "{source}: \\kern-\\nulldelimiterspace");
+                }
+                other => panic!("{source}: expected a display fraction and a kern, got {other:?}"),
+            }
+        }
+        // `[l]`/`[r]` parse, centre, and say so.
+        let (list, diagnostics) = parse(r"\cfrac[l]{a}{b}");
+        assert!(matches!(list.atoms[0].nucleus, Nucleus::GenFraction { .. }), "{:?}", list.atoms);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(diagnostics[0].message.contains("\\cfrac[l]"), "{diagnostics:?}");
+        // `\strut` in a formula is its own atom; a group holding a style
+        // switch stays one atom, other groups flatten as before.
+        let (list, diagnostics) = parse(r"\strut x");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms[0].nucleus, Nucleus::Strut);
+        let (list, _) = parse(r"{\displaystyle\sum_i} + \sum_j");
+        assert!(matches!(&list.atoms[0].nucleus, Nucleus::Group(body) if body.atoms.len() == 2), "{:?}", list.atoms);
+        assert_eq!(list.atoms.len(), 3, "{:?}", list.atoms);
+        let (list, _) = parse(r"{a b} + {\frac{\displaystyle a}{b}}");
+        assert_eq!(list.atoms.len(), 4, "a switch inside an argument does not keep the outer group: {:?}", list.atoms);
         // Plain `\frac` keeps its own nucleus: same groups, no style.
         let mut diagnostics = Vec::new();
         let list = parse_tokens(
@@ -9190,7 +9305,7 @@ mod shift_tests {
                             })
                             .min()
                             .unwrap_or(usize::MAX),
-                        Nucleus::Space { .. } | Nucleus::Rule(_) => usize::MAX,
+                        Nucleus::Space { .. } | Nucleus::Rule(_) | Nucleus::Strut | Nucleus::Kern(_) => usize::MAX,
                         Nucleus::Fraction {
                             numerator,
                             denominator,
