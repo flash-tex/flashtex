@@ -31,6 +31,10 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
     "dasharrow", "dashleftarrow",
     "mathllap", "mathrlap", "mathclap",
     "cancel", "bcancel", "xcancel",
+    // Issue #846: the kernel/amsmath arms the real-document corpus dropped.
+    "backslash", "lvert", "rvert", "lVert", "rVert", "vert", "Vert", "ensuremath", "mkern",
+    "mskip", "medspace", "thickspace", "negmedspace", "negthickspace", "thinspace",
+    "negthinspace", "hdots", "rm", "bf", "it", "sf", "tt", "cal", "mit",
 ];
 
 /// Real LaTeX2e, amsmath/amssymb and widely used package commands this
@@ -58,7 +62,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "textquotedblleft", "textquotedblright", "slash",
     // Definitions, counters and programming.
     "def", "edef", "gdef", "let", "the", "makeatletter", "relax",
-    "expandafter", "csname", "endcsname", "ensuremath", "protect",
+    "expandafter", "csname", "endcsname", "protect",
     // Cross-references and links.
     "autoref", "nameref", "hyperref", "hyperlink", "hypertarget",
     // Colour and graphics packages.
@@ -67,12 +71,11 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "subcaption", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
     "mathscr", "pmb", "displaylimits", "cancelto",
-    "Vert", "vert", "backslash", "neg", "lnot",
-    "coprod", "bigcap", "bigcup", "bigvee", "bigwedge", "bigoplus", "bigotimes",
-    "hookleftarrow", "longmapsto", "nearrow", "searrow",
-    "star", "bullet", "flat", "natural", "sharp",
+    "neg", "lnot",
+    "hookleftarrow", "nearrow", "searrow",
+    "star", "flat", "natural", "sharp",
     "clubsuit", "diamondsuit", "heartsuit", "spadesuit",
-    "surd", "mathstrut", "varrho",
+    "surd", "mathstrut",
     // The geometry package is implemented; its `\geometry` command is not.
     "geometry",
     // fontspec (XeLaTeX/LuaLaTeX-only): recognised so unguarded use reports

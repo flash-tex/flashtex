@@ -153,6 +153,27 @@ pub const ADVANCES: &[(char, u16)] = &[
     // it, so `\neq` is exactly as wide as `=`. Latin Modern Math draws it at
     // U+0338 and gives it the same zero advance cmsy10 does.
     ('\u{0338}', 0), // ◌̸ \not
+    // Issue #846: LaTeX kernel symbols the real-document corpus dropped.
+    // pdfLaTeX sets them from cmmi/cmsy/cmex (`fontmath.ltx` 201, 247-262,
+    // 283, 320-324, 391); the render pipeline boxes those slots, and this
+    // resource draws them on the base-14 export route.
+    ('\u{03F1}', 488),  // \varrho
+    ('\u{2219}', 500),  // \bullet
+    ('\u{227A}', 778),  // \prec
+    ('\u{227B}', 778),  // \succ
+    ('\u{2AAF}', 778),  // \preceq
+    ('\u{2AB0}', 778),  // \succeq
+    ('\u{2210}', 944),  // \coprod
+    ('\u{22C1}', 833),  // \bigvee
+    ('\u{22C0}', 833),  // \bigwedge
+    ('\u{2A04}', 833),  // \biguplus
+    ('\u{22C2}', 833),  // \bigcap
+    ('\u{22C3}', 833),  // \bigcup
+    ('\u{2A02}', 1111), // \bigotimes
+    ('\u{2A01}', 1111), // \bigoplus
+    ('\u{2A00}', 1111), // \bigodot
+    ('\u{2A06}', 833),  // \bigsqcup
+    ('\u{27FC}', 1443), // \longmapsto
 ];
 
 /// The double-struck code point for `\mathbb{letter}`: the Mathematical
@@ -219,9 +240,10 @@ mod tests {
         assert_eq!(double_struck('A'), Some('\u{1D538}'));
         assert_eq!(double_struck('a'), None);
         assert_eq!(double_struck('1'), None);
-        // Total entry count: 85 on main plus `\diamond`'s U+22C4 (issue #591)
-        // and the four cmsy marks `\dagger`/`\ddagger`/`\S`/`\P` (#441).
-        assert_eq!(ADVANCES.len(), 90);
+        // Total entry count: 85 on main plus `\diamond`'s U+22C4 (issue #591),
+        // the four cmsy marks `\dagger`/`\ddagger`/`\S`/`\P` (#441) and the
+        // 17 kernel symbols of issue #846.
+        assert_eq!(ADVANCES.len(), 107);
     }
 
     #[test]

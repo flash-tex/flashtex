@@ -1700,18 +1700,142 @@ impl MathParser<'_> {
     ///
     /// pdflatex's own answer is `! Undefined control sequence`, which typesets
     /// nothing and carries on; this reports the missing `\usepackage` by name
-    /// — the actionable half — and falls back to the same literal recovery
-    /// every unsupported math command already uses, so the divergence is
-    /// visible in the output as well as in the diagnostics.
+    /// — the actionable half — and then recovers exactly as pdflatex and the
+    /// unknown-command path (issue #846) do: the command's name never
+    /// reaches the page. The zero-width classless atom is the same "nothing"
+    /// that path emits, so neighbours are spaced as if adjacent and a
+    /// following script still attaches.
     fn missing_package(&mut self, name: &str, package: &str, span: Span) -> MathAtom {
         self.diagnostics.push(Diagnostic::command_error(
             name,
             format!("\\{name} requires \\usepackage{{{package}}}"),
             Some(span),
-            Some("typeset the command literally and continued".into()),
+            Some("skipped the command and continued".into()),
         )
         .with_help(format!("add \\usepackage{{{package}}} in the preamble")));
-        symbol(format!("\\{name}"), span)
+        space(0.0, span)
+    }
+
+    /// `\mkern`/`\mskip`'s `<mu glue>`: an optional sign, a decimal number
+    /// and the unit `mu`, then optional `plus`/`minus` stretch and shrink
+    /// (each read and dropped). The lexer has already split the source
+    /// into one-character `Word` tokens, so `18mu` arrives as `1`, `8`,
+    /// `m`, `u`. Returns `None`, consuming nothing, when no mu length
+    /// follows.
+    fn take_mu_glue(&mut self) -> Option<f64> {
+        let (value, after) = self.scan_mu_length(self.i)?;
+        self.i = after;
+        for keyword in ["plus", "minus"] {
+            let mut cursor = self.i;
+            while matches!(self.tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::Space)) {
+                cursor += 1;
+            }
+            let spelled = keyword.chars().all(|expected| {
+                let hit = matches!(
+                    self.tokens.get(cursor).map(|t| &t.kind),
+                    Some(TokenKind::Word(w)) if w.len() == 1 && w.starts_with(expected)
+                );
+                cursor += 1;
+                hit
+            });
+            if spelled {
+                if let Some((_, after)) = self.scan_mu_length(cursor) {
+                    self.i = after;
+                }
+            }
+        }
+        Some(value)
+    }
+
+    /// A `<number>mu` starting at token `from` (spaces skipped): its value
+    /// and the token index after the unit.
+    fn scan_mu_length(&self, from: usize) -> Option<(f64, usize)> {
+        let word = |at: usize| match self.tokens.get(at).map(|t| &t.kind) {
+            Some(TokenKind::Word(w)) if w.len() == 1 => w.chars().next(),
+            _ => None,
+        };
+        let mut cursor = from;
+        while matches!(self.tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::Space)) {
+            cursor += 1;
+        }
+        let mut text = String::new();
+        while let Some(c) = word(cursor) {
+            if c.is_ascii_digit() || c == '.' || ((c == '-' || c == '+') && text.is_empty()) {
+                text.push(c);
+                cursor += 1;
+            } else {
+                break;
+            }
+        }
+        let value: f64 = text.parse().ok()?;
+        while matches!(self.tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::Space)) {
+            cursor += 1;
+        }
+        if word(cursor) == Some('m') && word(cursor + 1) == Some('u') {
+            Some((value, cursor + 2))
+        } else {
+            None
+        }
+    }
+
+    /// A LaTeX 2.09 font switch (`\rm`, `\bf`, `\cal`, ...) in math: the
+    /// tokens from here to the end of the current group are re-read as the
+    /// argument of the corresponding math alphabet (`\mathrm{...}`), the
+    /// switch's own span serving as the command's. The group ends at the
+    /// enclosing `}`, at a `\right` that closes an enclosing `\left` (a
+    /// `\left`/`\right` pair is a group in TeX), at an alignment `&` or
+    /// `\\`, or at the end of the formula.
+    fn rest_of_group_alphabet(&mut self, alphabet: &str, span: Span) -> MathAtom {
+        let start = self.i;
+        let mut end = start;
+        let mut depth = 0usize;
+        let mut lefts = 0usize;
+        while let Some(token) = self.tokens.get(end) {
+            match &token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace if depth == 0 => break,
+                TokenKind::RBrace => depth -= 1,
+                TokenKind::LineBreak if depth == 0 => break,
+                TokenKind::Word(w) if depth == 0 && w == "&" => break,
+                TokenKind::Command(c) if c == "left" => lefts += 1,
+                TokenKind::Command(c) if c == "right" => {
+                    if lefts == 0 && depth == 0 {
+                        break;
+                    }
+                    lefts = lefts.saturating_sub(1);
+                }
+                _ => {}
+            }
+            end += 1;
+        }
+        if self.tokens[start..end]
+            .iter()
+            .all(|t| matches!(t.kind, TokenKind::Space | TokenKind::Comment))
+        {
+            // `{\bf}` or a switch at the end of its group changes the font
+            // of nothing; pdflatex sets nothing too.
+            self.i = end;
+            return space(0.0, span);
+        }
+        let last_end = self.tokens[end - 1].span.end;
+        let last_document = self.tokens[end - 1].span.document;
+        let brace = |at: usize, kind: TokenKind| Token {
+            kind,
+            span: Span::in_document(last_document, at, at),
+            control_symbol: false,
+        };
+        let mut tokens = Vec::with_capacity(end - start + 3);
+        tokens.push(Token {
+            kind: TokenKind::Command(alphabet.into()),
+            span,
+            control_symbol: false,
+        });
+        tokens.push(brace(self.tokens[start].span.start, TokenKind::LBrace));
+        tokens.extend_from_slice(&self.tokens[start..end]);
+        tokens.push(brace(last_end, TokenKind::RBrace));
+        self.i = end;
+        let list = self.sub_list(&tokens);
+        self.first_queued(list.atoms, span)
     }
 
     fn command_atom(&mut self, name: String, span: Span) -> MathAtom {
@@ -2387,6 +2511,27 @@ impl MathParser<'_> {
                     ams_symbol: None,
                 }
             }
+            // fontmath.ltx: `\mathbf` is a math alphabet, so it changes the
+            // family of class-7 (variable-family) characters only — letters,
+            // digits, uppercase Greek. Lowercase Greek, symbols and operators
+            // keep their own font: `\mathbf{\sigma}` is σ unchanged, and the
+            // revtex idiom `{\bf a}_1 \cdot \bf\sigma` (issue #846) sets the
+            // vector as a plain σ. A non-plain argument is therefore parsed as
+            // math. Letters and digits inside it keep the italic/roman family
+            // here where pdflatex would embolden them, which is reported; the
+            // arm used to keep a control word's *name* as bold text instead
+            // (`\mathbf{\alpha}` printed `\alpha`), the #846 leak.
+            "mathbf" if !self.plain_text_argument() => {
+                let body = self.required_group(&name, span);
+                if list_has_ascii_alphanumeric(&body) {
+                    self.diagnostics.push(Diagnostic::warning(
+                        "\\mathbf with a non-plain argument: its letters and digits are not set bold",
+                        Some(span),
+                        Some("typeset the argument in the regular math fonts".into()),
+                    ));
+                }
+                self.group_atom(body, span)
+            }
             "mathbf" | "textbf" => {
                 let (pieces, argument_span) =
                     self.required_text_group_styled(&name, span, TextStyle::BOLD);
@@ -2746,6 +2891,137 @@ impl MathParser<'_> {
                     class_override: Some(AtomClass::Rel),
                     ..symbol(String::new(), span)
                 }
+            }
+            // `fontmath.ltx` 483-484: `\backslash` is `\mathord` at cmsy
+            // "6E — the very slot `\setminus` (`\mathbin`, line 251) draws.
+            // Same glyph, different class: `$G\backslash H$` has no glue
+            // around the bar where `$G\setminus H$` has 4mu a side, so the
+            // class is forced over the shared U+2216 exactly as `\bot`
+            // forces Ord over `\perp`'s glyph (issue #846).
+            "backslash" => MathAtom {
+                class_override: Some(AtomClass::Ord),
+                ..symbol("\u{2216}".into(), span)
+            },
+            // The six `vert` spellings are two glyphs — `\mid`'s U+2223 and
+            // `\|`'s U+2016 — in three different classes, and `symbol_class`
+            // is keyed by the glyph, so the class has to be forced on the
+            // atom (first written for #298, which never landed; carried
+            // here for issue #846, where `\Vert` was the fourth most
+            // frequent dropped kernel command).
+            //
+            // amsmath builds its four from the kernel's delimiter codes
+            // (`amsmath.sty` 182-209): `\lvert`/`\lVert` add `"4000000`,
+            // setting the class nibble to 4, `\mathopen`; `\rvert`/`\rVert`
+            // add `"1000000` on top of that for 5, `\mathclose`. The
+            // kernel's `\vert`/`\Vert` stay `\mathord` (`fontmath.ltx`
+            // 465-470), which is why they are not simply aliases of the
+            // amsmath pair.
+            //
+            // Measured at 10pt with TeX Live 2025 pdflatex under amsmath,
+            // against `\hbox{$abc$}` 13.90510pt and `\hbox{$a=b$}` 22.91077pt:
+            //
+            //   $a\lvert b\rvert c$  19.46068  abc + 2 glyphs, no spacing
+            //   $a\vert b\vert c$    19.46068  Ord lands on the same box here
+            //   $a\lVert b\rVert c$  23.90514  abc + 2 glyphs, no spacing
+            //   $a\mid b\mid c$      30.57152  abc + 2 glyphs + 20mu (Rel)
+            //   $a=\rvert b$         22.91084  a=b + glyph - 5mu
+            //   $a=\rVert b$         25.13307  a=b + glyph - 5mu
+            "lvert" | "rvert" | "lVert" | "rVert" | "vert" | "Vert" => {
+                let class = match name.as_str() {
+                    "lvert" | "lVert" => AtomClass::Open,
+                    "rvert" | "rVert" => AtomClass::Close,
+                    _ => AtomClass::Ord,
+                };
+                let glyph = if name.ends_with("Vert") { "‖" } else { "∣" };
+                MathAtom {
+                    class_override: Some(class),
+                    ..symbol(glyph.into(), span)
+                }
+            },
+            // latex.ltx `\ensuremath{<x>}` in math mode is `<x>`: `\relax`
+            // and the group, nothing else (issue #846: 56 uses in one
+            // amsart paper, every one from a macro such as
+            // `\newcommand{\E}{\ensuremath{\mathbb E}}`).
+            "ensuremath" => {
+                let body = self.required_group(&name, span);
+                self.group_atom(body, span)
+            }
+            // TeX's `\mkern<mu>` and `\mskip<mu glue>`: math glue in mu,
+            // 1/18 of the symbol font's quad at the current style — the
+            // same unit `\,` (3mu) already uses (`space(mu / 18.0)`).
+            // Stretch and shrink (`plus`/`minus`) are read and dropped; the
+            // formula's own glue never stretches here.
+            "mkern" | "mskip" => match self.take_mu_glue() {
+                Some(mu) => space(mu / 18.0, span),
+                None => {
+                    if !self.argument_cut_off() {
+                        self.diagnostics.push(Diagnostic::error(
+                            format!("\\{name} requires a length in mu"),
+                            Some(span),
+                            Some("used no space and continued".into()),
+                        ));
+                    }
+                    space(0.0, span)
+                }
+            },
+            // amsmath.sty 172-177: `\medspace`/`\thickspace` and their
+            // negatives are `\tmspace` — `\mskip` of `\medmuskip` (4mu) or
+            // `\thickmuskip` (5mu) in math. Base LaTeX2e defines none of
+            // the four (amsmath.sty 159-160 `\let`s them `\@undefined`
+            // before redefining them), so without the package pdflatex
+            // answers "Undefined control sequence" and typesets nothing.
+            "medspace" | "thickspace" | "negmedspace" | "negthickspace"
+                if !self.packages.amsmath =>
+            {
+                self.missing_package(&name, "amsmath", span)
+            }
+            "medspace" => space(4.0 / 18.0, span),
+            "thickspace" => space(5.0 / 18.0, span),
+            "negmedspace" => space(-4.0 / 18.0, span),
+            "negthickspace" => space(-5.0 / 18.0, span),
+            // latex.ltx `\thinspace` is `\kern .16667em` of the *text* font
+            // and `\negthinspace` its negative; amsmath (171-173) rebinds
+            // both to `\thinmuskip` (3mu), the same as `\,`/`\!`.
+            "thinspace" | "negthinspace" => {
+                let sign = if name == "thinspace" { 1.0 } else { -1.0 };
+                if self.packages.amsmath {
+                    space(sign * 3.0 / 18.0, span)
+                } else {
+                    text_space(sign * 0.16667, span)
+                }
+            }
+            // amsmath.sty 1105: `\let\hdots\@ldots` — the baseline dots,
+            // never the centred ones, and undefined without the package.
+            "hdots" if !self.packages.amsmath => self.missing_package(&name, "amsmath", span),
+            "hdots" => text_atom("...".into(), span),
+            // LaTeX 2.09's font switches inside math. The standard classes
+            // (`article.cls` 490-498, likewise amsart 437-441, revtex4
+            // 5923-5930, KOMA) declare them with `\DeclareOldFontCommand`,
+            // whose math branch (`latex.ltx` 14312-14321, `\@fontswitch`)
+            // runs the math alphabet with `\math@bgroup` let to `\relax`:
+            // the alphabet applies to the *rest of the current group*, not
+            // to one argument. `{\bf 1}_{S}` is `\mathbf{1}` with the
+            // subscript on the group, `${\cal H}_A$` is `\mathcal{H}`, and
+            // `\inf_{\sigma\in\rm SEP}` sets `SEP` upright. That is exactly
+            // how the tokens are re-read here: `\rm ...` becomes
+            // `\mathrm{...}` over the tokens up to the group's close (a
+            // `\left`/`\right` pair and an alignment boundary are groups
+            // too), and the existing alphabet arms typeset the result.
+            // `\cal`/`\mit` are `\@fontswitch\relax\mathcal`/`\mathnormal`
+            // (article.cls 497-498, revtex4 5930). Issue #846: `\cal`,
+            // `\rm` and `\bf` were 623 of the 864 dropped math commands in
+            // one revtex review and 159 of 270 in one amsart paper.
+            "rm" | "bf" | "it" | "sf" | "tt" | "cal" | "mit" => {
+                let alphabet = match name.as_str() {
+                    "rm" => "mathrm",
+                    "bf" => "mathbf",
+                    "it" => "mathit",
+                    "sf" => "mathsf",
+                    "tt" => "mathtt",
+                    "cal" => "mathcal",
+                    _ => "mathnormal",
+                };
+                self.rest_of_group_alphabet(alphabet, span)
             }
             // amssymb/amsfonts symbols take precedence over the older glyph
             // rows for the same names (`\square`, `\nleq`, ...): they carry
@@ -4443,6 +4719,35 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("bigtriangledown", "▽"),
     // `\bot` shares `\perp`'s exact base-14 Symbol glyph above with a forced
     // Ord class (see `command_atom`), so it is not a second row here.
+    //
+    // Issue #846: LaTeX kernel `\DeclareMathSymbol` rows the corpus dropped
+    // (379 `\varrho` in one revtex review; the big operators throughout).
+    // Family, slot and class are `fontmath.ltx`'s (TeX Live 2026), and
+    // math-layout already boxes every one from that slot (`cm::symbol_slot`,
+    // `mathlist::default_class`, pinned by its `tests/kernel_symbols.rs`
+    // against pdfTeX's widths); these rows only give the names their glyph.
+    // Latin Modern Math draws them on the base-14 export route.
+    ("varrho", "\u{03F1}"),   // 201: \mathord letters "25 (cmmi)
+    ("bullet", "\u{2219}"),   // 283: \mathbin symbols "0F
+    ("prec", "\u{227A}"),     // 321: \mathrel symbols "1E
+    ("succ", "\u{227B}"),     // 320: \mathrel symbols "1F
+    ("preceq", "\u{2AAF}"),   // 324: \mathrel symbols "16
+    ("succeq", "\u{2AB0}"),   // 323: \mathrel symbols "17
+    ("coprod", "\u{2210}"),    // 247: \mathop largesymbols "60
+    ("bigvee", "\u{22C1}"),    // 248: \mathop largesymbols "57
+    ("bigwedge", "\u{22C0}"),  // 249: \mathop largesymbols "56
+    ("biguplus", "\u{2A04}"),  // 250: \mathop largesymbols "55
+    ("bigcap", "\u{22C2}"),    // 251: \mathop largesymbols "54
+    ("bigcup", "\u{22C3}"),    // 252: \mathop largesymbols "53
+    ("bigotimes", "\u{2A02}"), // 257: \mathop largesymbols "4E
+    ("bigoplus", "\u{2A01}"),  // 258: \mathop largesymbols "4C
+    ("bigodot", "\u{2A00}"),   // 259: \mathop largesymbols "4A
+    ("bigsqcup", "\u{2A06}"),  // 262: \mathop largesymbols "46
+    // fontmath.ltx 391: `\longmapsto` is `\mapstochar\longrightarrow`, a
+    // `\mathrel` join; the render pipeline composes U+27FC from the
+    // zero-width `\mapstochar`, `\relbar` and the arrow head exactly as it
+    // composes `\longrightarrow`.
+    ("longmapsto", "\u{27FC}"),
 ];
 
 /// Named operators typeset as upright roman words (`\sin x`, `\lim_{x\to 0}`).
@@ -4471,6 +4776,17 @@ pub(crate) const DELIMITER_COMMANDS: &[&str] = &[
     "lceil",
     "rceil",
 ];
+
+/// Whether `list` sets an ASCII letter or digit as a symbol of its own,
+/// anywhere down its groups — the characters a math alphabet such as
+/// `\mathbf` would move to its family.
+fn list_has_ascii_alphanumeric(list: &MathList) -> bool {
+    list.atoms.iter().any(|atom| match &atom.nucleus {
+        Nucleus::Symbol(text) => text.chars().any(|c| c.is_ascii_alphanumeric()),
+        Nucleus::Group(body) => list_has_ascii_alphanumeric(body),
+        _ => false,
+    })
+}
 
 fn text_atom(text: String, span: Span) -> MathAtom {
     MathAtom {
@@ -4563,7 +4879,12 @@ fn takes_display_limits(nucleus: &Nucleus) -> bool {
             name.as_str(),
             "lim" | "liminf" | "limsup" | "max" | "min" | "sup" | "inf" | "det" | "gcd" | "Pr"
         ),
-        Nucleus::Symbol(glyph) => matches!(glyph.as_str(), "∑" | "∏"),
+        // Every `largesymbols` `\mathop` of fontmath.ltx 244-262 takes
+        // display limits (`\int`/`\oint` are `\nolimits`, plain.tex).
+        Nucleus::Symbol(glyph) => matches!(
+            glyph.as_str(),
+            "∑" | "∏" | "∐" | "⋁" | "⋀" | "⨄" | "⋂" | "⋃" | "⨂" | "⨁" | "⨀" | "⨆"
+        ),
         // amsmath wraps `\sideset` in an outer `\mathop` with the default
         // `\displaylimits`, so scripts after `#3` are display limits whatever
         // the inner operator (`\int`'s own `\nolimits` stays inside).
@@ -4655,6 +4976,9 @@ fn symbol_class(glyph: &str) -> AtomClass {
         // fontmath.ltx 301-302: `\sqsubseteq`/`\sqsupseteq`, `\mathrel` at
         // cmsy "76/"77 (kernel, not amssymb).
         | "⊑" | "⊒"
+        // fontmath.ltx 320-324: `\prec`/`\succ`/`\preceq`/`\succeq`,
+        // `\mathrel` at cmsy "1E/"1F/"16/"17; 391: `\longmapsto` (#846).
+        | "≺" | "≻" | "⪯" | "⪰" | "⟼"
         // fontmath.ltx 432: `\mathchardef\not="3236` — class 3, `\mathrel`.
         // The class matters even though the slash is zero width: TeX puts no
         // glue between two Rel atoms, so `\not=` is exactly as wide as `=`,
@@ -4673,11 +4997,15 @@ fn symbol_class(glyph: &str) -> AtomClass {
         | "⋄"
         // `\bigtriangledown`; `\bigtriangleup` shares `\triangle`'s glyph
         // (Ord by default here) and overrides its class to Bin instead.
-        | "▽" => Bin,
+        | "▽"
+        // fontmath.ltx 283: `\bullet`, `\mathbin` at cmsy "0F (#846).
+        | "∙" => Bin,
         "(" | "[" | "{" | "〈" | "⟨" | "⌊" | "⌈" => Open,
         ")" | "]" | "}" | "〉" | "⟩" | "!" | "?" | "⌋" | "⌉" => Close,
         "," | ";" => Punct,
-        "∑" | "∏" | "∫" | "∫∫" | "∫∫∫" | "∮" => Op,
+        "∑" | "∏" | "∫" | "∫∫" | "∫∫∫" | "∮"
+        // fontmath.ltx 247-262: the other `largesymbols` `\mathop`s (#846).
+        | "∐" | "⋁" | "⋀" | "⨄" | "⋂" | "⋃" | "⨂" | "⨁" | "⨀" | "⨆" => Op,
         "⋅⋅⋅" => Inner,
         _ => Ord,
     }
@@ -7264,22 +7592,121 @@ mod unbraced_argument_tests {
     }
 
     #[test]
-    fn unbraced_and_braced_control_sequence_argument_diagnose_the_same_way() {
-        // A control sequence isn't literal text: both the unbraced and
-        // braced forms report it and keep its name literally, consistently.
+    fn control_sequence_argument_of_mathbf_is_parsed_as_math() {
+        // Issue #846: `\mathbf` is a math alphabet, so a lowercase Greek
+        // letter (class 0, family 1) passes through it unchanged — pdflatex
+        // sets `$\mathbf{\alpha}$` and `$\mathbf\alpha$` as a plain α with
+        // no complaint. The name used to reach the page as bold text.
         for source in [r"\mathbf\alpha", r"\mathbf{\alpha}"] {
             let mut diagnostics = Vec::new();
             let tokens = crate::lexer::tokenize(source);
             let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
-            assert_eq!(diagnostics.len(), 1, "{source}: {diagnostics:?}");
-            assert!(
-                diagnostics[0]
-                    .message
-                    .contains("is not supported inside \\mathbf"),
-                "{source}: {diagnostics:?}"
-            );
-            assert_eq!(list.atoms[0].nucleus, Nucleus::Bold("\\alpha".into()));
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "{source}: {:?}", list.atoms);
+            assert_eq!(list.atoms[0].nucleus, Nucleus::Symbol("α".into()), "{source}");
         }
+        // Letters inside a non-plain argument are not emboldened here where
+        // pdflatex would set them from cmbx: that limitation is reported,
+        // and nothing is dropped or spelled out.
+        let mut diagnostics = Vec::new();
+        let tokens = crate::lexer::tokenize(r"\mathbf{x^2}");
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(
+            diagnostics[0].message.contains("not set bold"),
+            "{diagnostics:?}"
+        );
+        assert_eq!(list.atoms[0].nucleus, Nucleus::Symbol("x".into()));
+        assert!(list.atoms[0].superscript.is_some());
+    }
+
+    #[test]
+    fn old_font_switches_apply_to_the_rest_of_their_group() {
+        // Issue #846: `\DeclareOldFontCommand`'s math branch (latex.ltx
+        // 14312) runs the alphabet with `\math@bgroup` let to `\relax`, so
+        // the switch covers the rest of the enclosing group. The glyph
+        // origins are pinned against pdfTeX in the render pipeline
+        // (`tests/kernel_math_846.rs`); this pins where the group ends.
+        let parse = |src: &str| {
+            let mut diagnostics = Vec::new();
+            let list = parse_tokens(
+                &crate::lexer::tokenize(src),
+                MathPackages::KERNEL,
+                &mut diagnostics,
+            );
+            (list, diagnostics)
+        };
+        // `{\bf 1}_S`: the bold digit is the group's only atom, so the
+        // subscript attaches to it.
+        let (list, diagnostics) = parse(r"{\bf 1}_S + 2");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms[0].nucleus, Nucleus::Bold("1".into()));
+        assert!(list.atoms[0].subscript.is_some());
+        assert_eq!(list.atoms[2].nucleus, Nucleus::Symbol("2".into()), "{:?}", list.atoms);
+        // Unbraced: `\rm SEP` reaches the end of the formula.
+        let (list, _) = parse(r"\rm SEP");
+        assert_eq!(list.atoms[0].nucleus, Nucleus::Text("SEP".into()));
+        // A `\left`/`\right` pair is a group: `\rm` inside it stops at the
+        // `\right`, and the pair still closes.
+        let (list, diagnostics) = parse(r"\left( \rm ab \right) x");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(
+            list.atoms.iter().any(|a| a.nucleus == Nucleus::Text("ab".into())),
+            "{:?}",
+            list.atoms
+        );
+        assert_eq!(list.atoms.last().unwrap().nucleus, Nucleus::Symbol("x".into()));
+        // `\cal` is `\mathcal`: the script capital, with the subscript on
+        // the group.
+        let (list, diagnostics) = parse(r"{\cal H}_A");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(
+            matches!(&list.atoms[0].nucleus, Nucleus::Symbol(s) if s != "H" && s.chars().count() == 1),
+            "{:?}",
+            list.atoms
+        );
+        assert!(list.atoms[0].subscript.is_some());
+        // A switch with nothing after it sets nothing and is not an error.
+        let (list, diagnostics) = parse(r"a{\bf}");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 2, "{:?}", list.atoms);
+    }
+
+    #[test]
+    fn mkern_reads_mu_glue() {
+        // TeX: `\mkern18mu` is one quad (18 mu) of the symbol font; `\mskip`
+        // may carry stretch/shrink, which is read and dropped.
+        let parse = |src: &str| {
+            let mut diagnostics = Vec::new();
+            let list = parse_tokens(
+                &crate::lexer::tokenize(src),
+                MathPackages::KERNEL,
+                &mut diagnostics,
+            );
+            (list, diagnostics)
+        };
+        for (src, mu) in [
+            (r"a\mkern18mu b", 18.0),
+            (r"a\mkern-3mu b", -3.0),
+            (r"a\mkern 4.5mu b", 4.5),
+            (r"a\mskip 5mu plus 1mu minus 2mu b", 5.0),
+        ] {
+            let (list, diagnostics) = parse(src);
+            assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 3, "{src}: {:?}", list.atoms);
+            match &list.atoms[1].nucleus {
+                Nucleus::Space { em, font_em: false } => {
+                    assert!((em - mu / 18.0).abs() < 1e-12, "{src}: {em}")
+                }
+                other => panic!("{src}: {other:?}"),
+            }
+            assert_eq!(list.atoms[2].nucleus, Nucleus::Symbol("b".into()), "{src}");
+        }
+        // Missing unit: reported, no glue, the rest continues.
+        let (list, diagnostics) = parse(r"a\mkern b");
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(diagnostics[0].message.contains("requires a length in mu"));
+        assert_eq!(list.atoms.last().unwrap().nucleus, Nucleus::Symbol("b".into()));
     }
 
     #[test]
