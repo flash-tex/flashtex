@@ -346,7 +346,7 @@ class PdfDocument:
         sub = fdict.get("Subtype")
         base = str(fdict.get("BaseFont", ""))
         base_plain = re.sub(r"^[A-Z]{6}\+", "", base)
-        info = {"subtype": str(sub), "base": base_plain, "widths": {}, "text": {}, "missing_width": 0.0,
+        info = {"subtype": str(sub), "base": base_plain, "widths": {}, "text": {}, "names": {}, "missing_width": 0.0,
                 "unsupported": None}
         if sub not in ("Type1", "TrueType", "MMType1"):
             info["unsupported"] = f"font subtype {sub}"
@@ -360,6 +360,8 @@ class PdfDocument:
         desc = self.resolve(fdict.get("FontDescriptor"))
         if isinstance(desc, dict) and "MissingWidth" in desc:
             info["missing_width"] = float(self.resolve(desc["MissingWidth"])) / 1000.0
+        if isinstance(desc, dict):
+            info["names"].update(self._builtin_encoding(desc))
         table = _OT1 if base_plain.upper().startswith("CM") else _T1
         for code in range(256):
             if 32 <= code < 127:
@@ -378,8 +380,33 @@ class PdfDocument:
                     else:
                         name = str(item)
                         info["text"][code] = _GLYPH_TEXT.get(name) or _uni_name(name) or "?"
+                        info["names"][code] = name
                         code += 1
         return info
+
+    def _builtin_encoding(self, desc):
+        """code -> glyph name from an embedded Type 1 program's own
+        `/Encoding` (the cleartext part, `dup <code> /<name> put`).
+
+        pdfTeX writes no `/Encoding` for a font used in its built-in encoding
+        (every `cm*`/`msbm`/`cmex` font), so this is the only place the glyph
+        names of those codes are recorded. Only read by callers that want
+        glyph identity (`tools/parity`); `text` above is unchanged by it."""
+        ref = desc.get("FontFile")
+        if not isinstance(ref, Ref):
+            return {}
+        obj, stream = self.objects.get(ref[0], (None, None))
+        if not isinstance(obj, dict) or stream is None:
+            return {}
+        try:
+            data = self.decode(obj, stream)
+        except (PdfError, zlib.error):
+            return {}
+        n1 = self.resolve(obj.get("Length1"))
+        clear = data[:n1] if isinstance(n1, int) and n1 > 0 else data[:65536]
+        if re.search(rb"/Encoding\s+StandardEncoding", clear):
+            return {}
+        return {int(c): n.decode("latin-1") for c, n in re.findall(rb"dup\s+(\d+)\s*/([^\s/]+)\s+put", clear)}
 
 
 def _uni_name(name):
@@ -451,7 +478,8 @@ def page_glyphs(doc, page):
             adv = (w0 * size + tc + (tw if code == 32 else 0.0)) * th
             scale = m[0] / (size * th) if size * th else 1.0
             glyphs.append({"x": x, "y_top": height - y, "size": m[3], "font": font["base"],
-                           "text": font["text"].get(code, "?"), "advance": adv * scale, "bt": bt, "code": code})
+                           "text": font["text"].get(code, "?"), "advance": adv * scale, "bt": bt, "code": code,
+                           "name": font["names"].get(code)})
             tm = _mul((1, 0, 0, 1, adv, 0), tm)
 
     def adjust(n):
