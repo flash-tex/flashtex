@@ -267,8 +267,29 @@ fn fill_natbib(
 /// `\usepackage[options]{natbib}` anywhere in the token stream, as the
 /// options natbib resolves them to. The package list is comma-separated, so
 /// `\usepackage{amsmath,natbib}` counts (with no options).
+///
+/// A `\citestyle{<style>}` sets that style's punctuation (and turns the
+/// `.aux` hook off); otherwise, while the options leave `\bibstyle` live,
+/// the document's `\bibliographystyle{<style>}` does, because natbib reads
+/// the `\bibstyle{<style>}` it wrote to the `.aux` at `\begin{document}`
+/// (natbib.sty lines 288-291): `plainnat` makes every citation `[Knuth,
+/// 1984]`, before or after the command.
 fn natbib_options<T: Borrow<Token>>(tokens: &[T]) -> Option<natbib::Options> {
-    package_options(tokens, "natbib").map(|options| natbib::Options::from_option_list(&options))
+    let mut options = package_options(tokens, "natbib").map(|options| natbib::Options::from_option_list(&options))?;
+    if let Some(style) = command_argument(tokens, "citestyle") {
+        options.apply_bibstyle(style.trim());
+    } else if options.bibstyle {
+        if let Some(style) = command_argument(tokens, "bibliographystyle") {
+            options.apply_bibstyle(style.trim());
+        }
+    }
+    Some(options)
+}
+
+/// The braced argument of the first `\<name>` in the token stream.
+fn command_argument<T: Borrow<Token>>(tokens: &[T], name: &str) -> Option<String> {
+    let at = tokens.iter().position(|t| matches!(&t.borrow().kind, TokenKind::Command(command) if command == name))?;
+    group_text(tokens, at + 1).map(|(text, _)| text)
 }
 
 /// The `[options]` of the `\usepackage`/`\RequirePackage` that loads
