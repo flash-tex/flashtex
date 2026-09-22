@@ -366,6 +366,40 @@ fn incremental_expansion_reads_packages_like_a_full_run() {
     }
 }
 
+/// A package defining a new environment inside the standard
+/// "only define this if it isn't already defined" guard on a fresh load is
+/// a fresh definition, not a duplicate: no spurious "already defined"
+/// diagnostic. The guard's own existence check (`\csname` or
+/// `\@ifundefined`) leaves a `\relax` behind on a genuinely fresh name,
+/// which `\@ifdefinable` counts as undefined, like `\newcommand` does.
+#[test]
+fn ifundefined_guarded_newenvironment_on_fresh_load_is_not_a_duplicate() {
+    let cases = [
+        "\\ProvidesPackage{guarded}\\@ifundefined{myenv}{\\newenvironment{myenv}{B}{E}}{}",
+        "\\ProvidesPackage{guarded}\\expandafter\\ifx\\csname myenv\\endcsname\\relax\\newenvironment{myenv}{B}{E}\\fi",
+        "\\ProvidesPackage{guarded}\\let\\myenv\\relax\\newenvironment{myenv}{B}{E}",
+    ];
+    for sty in cases {
+        let (out, diags) = run(
+            "\\usepackage{guarded}\\begin{myenv}hi\\end{myenv}",
+            &[("guarded.sty", sty)],
+        );
+        assert!(diags.is_empty(), "{sty:?}: {diags:?}");
+        assert!(out.contains("BhiE"), "{sty:?}: {out:?}");
+    }
+    // A genuinely taken name is still refused, and `\relax` itself never is.
+    let (_, diags) = run(
+        "\\usepackage{guarded}",
+        &[("guarded.sty", "\\ProvidesPackage{guarded}\\def\\myenv{x}\\newenvironment{myenv}{B}{E}")],
+    );
+    assert_eq!(diags, vec!["Error: LaTeX Error: Command \\myenv already defined."]);
+    let (_, diags) = run(
+        "\\usepackage{guarded}",
+        &[("guarded.sty", "\\ProvidesPackage{guarded}\\newenvironment{relax}{B}{E}")],
+    );
+    assert_eq!(diags, vec!["Error: LaTeX Error: Command \\relax already defined."]);
+}
+
 /// In the document itself the four declarations are the host parser's
 /// (inert metadata); only inside a package or class file do they run.
 #[test]

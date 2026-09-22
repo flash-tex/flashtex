@@ -3255,7 +3255,14 @@ impl Engine {
     fn do_newenvironment(&mut self, kind: Primitive, span: Span) {
         let star = self.consume_star();
         let name = self.read_name_arg();
-        let exists = self.st.scopes.is_defined(&name);
+        // ltdefns.dtx `\@ifdefinable`: like `\newcommand` above, the name
+        // is taken when `\@ifundefined` says so, which counts a
+        // `\relax`-valued name as undefined -- the
+        // `\expandafter\ifx\csname name\endcsname\relax` guard idiom (and
+        // `\let\name\relax`) leaves `\relax` behind on a genuinely fresh
+        // name, so `\newenvironment` must not refuse it -- except `\relax`
+        // itself (`\@qrelax`), which is never definable.
+        let exists = !name.is_empty() && (name == "relax" || !self.st.scopes.is_undefined_or_relax(&name));
         match kind {
             Primitive::NewEnvironment if exists => {
                 self.err(format!("LaTeX Error: Command \\{name} already defined."), span);
