@@ -601,7 +601,7 @@ Canonical sources:
 | `\lfoot` | `[even]{...}` | fancyhdr: sets the left footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
 | `\cfoot` | `[even]{...}` | fancyhdr: sets the centre footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
 | `\rfoot` | `[even]{...}` | fancyhdr: sets the right footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
-| `\fancypagestyle` | `{style}{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
+| `\fancypagestyle` | `{style}{...}` | fancyhdr: defines a named page style from header/footer commands (\fancyhead, \fancyhf, \lhead and friends); \pagestyle{name} ships its fields like \pagestyle{fancy} |
 | `\pagenumbering` | `{style}` | resets the page counter to 1 and selects the \thepage/\pageref style (arabic, roman, Roman, alph, Alph); unknown styles fall back to arabic |
 | `\listfiles` |  | accepted no-op; there is no log stream |
 | `\centering` |  | centres the following paragraphs |
@@ -1260,7 +1260,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `ulem` | `normalem` | \uline: 0.4pt rule under the argument (single-line); \sout: 0.4pt strike at 0.55ex; \emph is not redefined |
 | `soul` | `` | \so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828); \st stays unsupported |
 | `relsize` | `` | \larger/\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size |
-| `fancyhdr` | `` | \pagestyle{fancy} ships the \fancyhead/\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \fancyhf clears all six fields; \lhead/\chead/\rhead and \lfoot/\cfoot/\rfoot set one field each (an optional even-page group is ignored one-sided); \fancypagestyle is diagnosed where it is used |
+| `fancyhdr` | `` | \pagestyle{fancy} ships the \fancyhead/\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \fancyhf clears all six fields; \lhead/\chead/\rhead and \lfoot/\cfoot/\rfoot set one field each (an optional even-page group is ignored one-sided); \fancypagestyle{name}{...} defines a named style whose fields \pagestyle{name} ships like fancy |
 | `titlesec` | `` | \titleformat{\section} headings take the format's face and size (unnumbered with an empty label) with the \titlerule after-code rule; other levels, printed labels, before-code and shapes beyond the implemented subset are diagnosed where they are used |
 | `tcolorbox` | `` | the tcolorbox environment with colback/colframe only (see the tcolorbox environment); every other key and every library option is diagnosed |
 | `xspace` | `` | \xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |

@@ -747,7 +747,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("lfoot", "[even]{...}", "fancyhdr: sets the left footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it"),
     ("cfoot", "[even]{...}", "fancyhdr: sets the centre footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it"),
     ("rfoot", "[even]{...}", "fancyhdr: sets the right footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it"),
-    ("fancypagestyle", "{style}{...}", "fancyhdr: recognised but not implemented (a later slice owns it)"),
+    ("fancypagestyle", "{style}{...}", "fancyhdr: defines a named page style from header/footer commands (\\fancyhead, \\fancyhf, \\lhead and friends); \\pagestyle{name} ships its fields like \\pagestyle{fancy}"),
     ("centering", "", "centres the following paragraphs"),
     ("Centering", "", "centres the following paragraphs (ragged2e form)"),
     ("raggedright", "", "left-aligned following paragraphs"),
@@ -1675,7 +1675,7 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "fancyhdr",
         "",
-        "\\pagestyle{fancy} ships the \\fancyhead/\\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \\fancyhf clears all six fields; \\lhead/\\chead/\\rhead and \\lfoot/\\cfoot/\\rfoot set one field each (an optional even-page group is ignored one-sided); \\fancypagestyle is diagnosed where it is used",
+        "\\pagestyle{fancy} ships the \\fancyhead/\\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \\fancyhf clears all six fields; \\lhead/\\chead/\\rhead and \\lfoot/\\cfoot/\\rfoot set one field each (an optional even-page group is ignored one-sided); \\fancypagestyle{name}{...} defines a named style whose fields \\pagestyle{name} ships like fancy",
     ),
     (
         "titlesec",
