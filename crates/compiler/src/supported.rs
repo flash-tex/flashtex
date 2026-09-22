@@ -1142,6 +1142,12 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["cancelto"],
+        "{value}{body}",
+        "cancel package: forward diagonal through the body with a smaller value label above its top end",
+        true,
+    ),
+    (
         &["dashrightarrow", "dasharrow", "dashleftarrow"],
         "",
         "amsfonts dashed arrow: two msam \\dabar@ pieces and a head in one relation",
@@ -1531,7 +1537,7 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "cancel",
         "",
-        "\\cancel (forward diagonal), \\bcancel (backward diagonal) and \\xcancel (X) through a math expression; \\cancelto is diagnosed",
+        "\\cancel (forward diagonal), \\bcancel (backward diagonal) and \\xcancel (X) through a math expression; \\cancelto{value}{body} adds a smaller value label above the diagonal",
     ),
     (
         "longtable",

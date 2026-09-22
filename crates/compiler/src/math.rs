@@ -2719,7 +2719,7 @@ impl MathParser<'_> {
                     ams_symbol: None,
                 }
             }
-            "cancel" | "bcancel" | "xcancel" if !self.packages.cancel => {
+            "cancel" | "bcancel" | "xcancel" | "cancelto" if !self.packages.cancel => {
                 self.missing_package(&name, "cancel", span)
             }
             "cancel" | "bcancel" | "xcancel" => {
@@ -2733,6 +2733,30 @@ impl MathParser<'_> {
                     nucleus: Nucleus::Framed { body, frame },
                     span,
                     superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                }
+            }
+            // cancel.sty's `\cancelto{value}{expr}` (`cancel.sty`
+            // 108-160): a forward-diagonal arrow through `expr` with
+            // `value` set one style smaller above its top end (the
+            // default `smaller` option). The strike reuses the
+            // `\cancel` forward slash (`Frame::Cancel`); the value
+            // rides as the atom's superscript, which math lays out
+            // one style smaller above-right — the same seat. The
+            // picture-mode arrowhead itself is not drawn.
+            "cancelto" => {
+                let value = self.required_group(&name, span);
+                let body = self.required_group(&name, span);
+                MathAtom {
+                    nucleus: Nucleus::Framed {
+                        body,
+                        frame: Frame::Cancel,
+                    },
+                    span,
+                    superscript: Some(value),
                     subscript: None,
                     class_override: None,
                     width_em: None,

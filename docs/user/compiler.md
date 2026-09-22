@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 487 text-mode and 620 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 487 text-mode and 621 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -1017,6 +1017,7 @@ Canonical sources:
 | `\cancel` | `{body}` | cancel package: diagonal line(s) through the body (forward slash, backward slash, or X) |
 | `\bcancel` | `{body}` | cancel package: diagonal line(s) through the body (forward slash, backward slash, or X) |
 | `\xcancel` | `{body}` | cancel package: diagonal line(s) through the body (forward slash, backward slash, or X) |
+| `\cancelto` | `{value}{body}` | cancel package: forward diagonal through the body with a smaller value label above its top end |
 | `\dashrightarrow` |  | amsfonts dashed arrow: two msam \dabar@ pieces and a head in one relation |
 | `\dasharrow` |  | amsfonts dashed arrow: two msam \dabar@ pieces and a head in one relation |
 | `\dashleftarrow` |  | amsfonts dashed arrow: two msam \dabar@ pieces and a head in one relation |
@@ -1224,7 +1225,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `array` | `` | tabular >{} <{} !{} m b w columns, \newcolumntype and \extrarowheight |
 | `tabularx` | `` | the tabularx environment and its X column, splitting the table's leftover width evenly |
 | `booktabs` | `` | \toprule, \midrule, \bottomrule, \cmidrule(trim), \addlinespace, \specialrule, \morecmidrules |
-| `cancel` | `` | \cancel (forward diagonal), \bcancel (backward diagonal) and \xcancel (X) through a math expression; \cancelto is diagnosed |
+| `cancel` | `` | \cancel (forward diagonal), \bcancel (backward diagonal) and \xcancel (X) through a math expression; \cancelto{value}{body} adds a smaller value label above the diagonal |
 | `longtable` | `` | the page-breaking longtable environment: \endfirsthead, \endhead, \endfoot, \endlastfoot, \caption, \kill, \\* |
 | `multirow` | `` | \multirow[vpos]{rows}[bigstruts]{width}[vmove]{text} in table entries |
 | `colortbl` | `` | \rowcolor, \cellcolor, >{\columncolor}, \arrayrulecolor, \doublerulesepcolor |
