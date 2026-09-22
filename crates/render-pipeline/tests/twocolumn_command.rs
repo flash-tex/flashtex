@@ -97,7 +97,7 @@ fn the_twocolumn_command_sets_the_abstract_and_its_boundary() {
         // (article.cls 386, `\if@twocolumn\else\endquotation\fi`), so the
         // `\begin{itemize}` beside it is not read in vertical mode and
         // takes no `\partopsep` — the point the issue makes about
-        // `abstractenv::end_is_endtrivlist` keying on class options.
+        // the compiler's `abstract_ends_trivlist` keying on class options.
         close(word(&words, "Bbb").baseline, item, &format!("{size} item baseline"));
         close(word(&words, "Ccc").baseline, after, &format!("{size} baseline after the list"));
     }

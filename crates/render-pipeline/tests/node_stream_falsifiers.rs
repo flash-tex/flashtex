@@ -230,7 +230,6 @@ fn site10_tie_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 11: accent composition requires the span to be a 2-byte `\\'` command"]
 fn site11_accent_from_macro() {
     falsify(Same, &doc("", "Caf\\'e ok."), &doc("\\newcommand\\cafe{Caf\\'e}\n", "\\cafe{} ok."));
 }
@@ -314,7 +313,6 @@ fn site22_list_closed_by_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 23: a trivlist environment's topsep is found from `\\begin{center}` bytes in the gap"]
 fn site23_center_opened_by_macro() {
     falsify(
         Same,

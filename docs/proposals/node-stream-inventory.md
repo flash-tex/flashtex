@@ -392,3 +392,33 @@ named above first.
     `fill`.
 
   Falsifiers `site13` and `site14` run un-ignored.
+
+## Slice 4 status
+
+- **Sites 23 and 11: migrated.** Each needed a compiler change.
+  - Site 23: `ParStart::trivlist` (`TrivlistStart { vmode }`) marks the
+    first block inside a `\trivlist` environment whose `\begin` ran since
+    the previous block, from the source or a macro body. `vmode` is
+    `\@trivlist`'s `\ifvmode` at the `\begin`. It covers `center`,
+    `flushleft`, `flushright`, `quote`, `quotation`, `verse`, `verbatim`,
+    `alltt` and beamer's in-flow `figure`/`table`. It also covers
+    `lstlisting`, whose display skips read the same mode. The pipeline's
+    `EnvOpen` is that field. Gone: the `\begin` search in the gap,
+    `gap_has_trivlist_end`, `VMODE_END_ENVS` and
+    `abstractenv::end_is_endtrivlist`. The compiler's own `\end` handling
+    (`end_paragraph_environment`, `abstract_ends_trivlist`) already left
+    vertical mode for the same environments.
+  - Site 11: the compiler composes a punctuation accent (`\'e`, `\"{o}`)
+    with the letter after it into the precomposed character
+    (`text_builtins::punctuation_accent`). This covers body text and
+    `inlines_from_tokens` (titles, captions, theorem notes). The set of
+    characters is the one the pipeline's `accent()` table composed. The
+    node's span is the command and the letter. An accent with no
+    precomposed character is not drawn, as before. The pipeline's
+    `pending_accent`, the two-byte span test and `accent()` are gone.
+    `tests/theorem_note_text.rs` now expects the note's runs `B`, `é`,
+    `zout` in place of `B`, `’`, `ezout`. The page is unchanged: pdflatex
+    sets that head's `For` at x 238.184 bp, and FlashTeX sets it at 238.182
+    bp before and after.
+
+  Falsifiers `site23` and `site11` run un-ignored.

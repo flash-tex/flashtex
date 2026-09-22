@@ -1062,15 +1062,20 @@ impl ParStarts {
         let mut map = std::collections::HashMap::new();
         if parsed.block_par_starts.len() == parsed.blocks.len() {
             for (block, start) in parsed.blocks.iter().zip(&parsed.block_par_starts) {
-                let content = match block {
-                    CBlock::Paragraph(content) | CBlock::Styled { content, .. } | CBlock::ListItem { content, .. } => content,
-                    _ => continue,
-                };
-                // The first few inlines: a lowering pass may drop the
-                // block's first (a `\markboth` argument's run).
-                for inline in content.iter().take(4) {
-                    let s = inline_span(inline);
+                let mut key = |s: Span| {
                     map.entry((s.document.0, s.start, s.end)).or_insert(*start);
+                };
+                match block {
+                    // The first few inlines: a lowering pass may drop the
+                    // block's first (a `\markboth` argument's run).
+                    CBlock::Paragraph(content) | CBlock::Styled { content, .. } | CBlock::ListItem { content, .. } => {
+                        content.iter().take(4).for_each(|i| key(inline_span(i)))
+                    }
+                    // Lowered to a `Styled` paragraph whose first run is the
+                    // first line ([`lower_blocks`]).
+                    CBlock::Verbatim { lines, .. } => lines.iter().take(1).for_each(|l| key(l.span)),
+                    CBlock::Alltt { lines, .. } => lines.iter().flatten().take(4).for_each(|i| key(inline_span(i))),
+                    _ => {}
                 }
             }
         }
@@ -4672,11 +4677,6 @@ fn split_at_page_breaks<'p>(
         // by a following heading's larger before-skip (`\addvspace`).
         // The hanging indent and the label box are the pipeline's too
         // (`list_margins`, from the same frames).
-        // The gap's own byte offset travels with it: `gap_has_trivlist_end`
-        // asks `\if@twocolumn` *at* the `\end{abstract}` it finds there.
-        let gap_base = |f: Span| -> usize {
-            prev_end.filter(|p| p.document == f.document && p.end <= f.start).map_or(0, |p| p.end)
-        };
         let is_heading = matches!(block, CBlock::Heading { .. });
         let mut addvspace_before = 0.0;
         let mut addvspace_flex = (0.0f64, 0.0f64);
@@ -4901,29 +4901,14 @@ fn split_at_page_breaks<'p>(
             CBlock::Styled { style, .. } => Some(ParaStyle::of(*style)),
             _ => None,
         };
-        // The environment opens here when the gap before the block holds
-        // its `\begin`; `\partopsep` applies when that `\begin` was read in
-        // vertical mode (nothing before it, or a blank line / `\par` between
-        // the previous material and it).
-        let env_open = styled.and_then(|_| {
-            let f = first?;
-            let gap = match prev_end {
-                Some(p) if p.document == f.document && p.end <= f.start => texts.get(f.document.0).and_then(|t| t.get(p.end..f.start))?,
-                Some(_) => return None,
-                None => texts.get(f.document.0).and_then(|t| t.get(..f.start))?,
-            };
-            let begin = rfind_command(gap, "begin")?;
-            let before = &gap[..begin];
-            // A preceding `\end{<trivlist>}` is `\@endparenv`, whose `\par`
-            // leaves vertical mode just as a blank line would, so this
-            // `\begin` takes `\partopsep` too ([`gap_has_trivlist_end`]).
-            let vmode = prev_vmode
-                || prev_end.is_none()
-                || has_blank_line(before)
-                || find_command(before, "par").is_some()
-                || gap_has_trivlist_end(before, &theorem_envs, style, f.document.0, gap_base(f));
-            Some(EnvOpen { vmode, skips: None })
-        });
+        // The environment opens here when the compiler saw its `\begin`
+        // (from the source or a macro body) since the previous block;
+        // `\partopsep` applies when that `\begin` was read in vertical mode
+        // (`TrivlistStart::vmode`: nothing before it, a blank line / `\par`,
+        // a heading, or the `\par` of an `\endtrivlist` or a theorem's end).
+        let env_open = styled
+            .and_then(|_| par_starts.of(inlines_of(block))?.trivlist)
+            .map(|t| EnvOpen { vmode: t.vmode, skips: None });
         // `\@endpe`: a plain paragraph right after `\end{...}` (no blank line
         // or `\par` between them) is not indented. A list's `\endtrivlist`
         // is `\@endparenv` too. The compiler reads it, macro-expanded
@@ -7310,69 +7295,6 @@ pub(crate) fn ends_trivlist_env_before(text: &str, at: usize) -> bool {
     let Some((name, after)) = rest.split_once('}') else { return false };
     let name = name.trim();
     after.trim().is_empty() && name != "abstract" && (LIST_ENVS.contains(&name) || TRIVLIST_ENVS.contains(&name))
-}
-
-/// The environments that are *not* a `\trivlist` but whose `\end` still
-/// ends with a `\par`, so TeX is in vertical mode after it all the same.
-///
-/// `lstlisting` is the measured one. It is emphatically not a `\trivlist` —
-/// `\lst@Init` opens no list, it sets the body as an ordinary paragraph
-/// under `\parshape` (which is why [`crate::listings`] clears the
-/// `flushleft` lowering's `env_open`) — so it must never join
-/// [`TRIVLIST_ENVS`]. But `\lst@DeInit` runs `\par\removelastskip` and then,
-/// for a display listing, `\par\penalty-50\vspace\lst@belowskip`
-/// (listings.sty 1802-1826), and that `\par` leaves vertical mode exactly as
-/// `\@endparenv`'s does. Measured: `\end{lstlisting}\begin{center}` (and
-/// `flushleft`, `flushright`, `quote`, `quotation`, `verse`, `itemize`,
-/// `enumerate`, `description`) was 1.993 bp short at 10 pt and 2.989 bp at
-/// 11 and 12 pt — one `\partopsep` — while `\end{lstlisting}\begin{thm}`,
-/// which takes no `\partopsep` at all, was already right.
-const VMODE_END_ENVS: [&str; 2] = ["lstlisting", "lstlisting*"];
-
-/// Whether `gap` closes an environment whose `\end` leaves TeX in vertical
-/// mode, so the `\begin` beside it takes `\partopsep` with no blank line
-/// between them.
-///
-/// `\@endparenv` ends `\par \addvspace\@topsepadd \@endpetrue`: the `\par`
-/// is what leaves vertical mode, and it does so for *every* `\trivlist`,
-/// not only the four [`LIST_ENVS`] the compiler reports as list items.
-/// `center`, `quote`, `quotation`, `verse` and an amsthm theorem are all
-/// `\trivlist`s too, so a `\begin` that directly follows one of their
-/// `\end`s is read in vertical mode and takes `\partopsep` — with no blank
-/// line and no explicit `\par` between them.
-///
-/// [`VMODE_END_ENVS`] reaches the same state by another route and is kept
-/// apart from [`TRIVLIST_ENVS`] for that reason: what this predicate is
-/// really asking is "is the next `\begin` read in vertical mode", and
-/// `\endtrivlist` is only the commonest way to get there.
-///
-/// Measured against pdflatex in `tests/vmode_boundary_skips.rs`: every one
-/// of these boundaries steps by `\baselineskip` + `\topsep` + `\partopsep`,
-/// never by `\topsep` alone.
-///
-/// `gap` starts at byte `base` of document `document`, which `abstract`
-/// needs: whether *that* `\end{abstract}` is an `\endtrivlist` depends on
-/// `\if@twocolumn` where it stands, and `\twocolumn`/`\onecolumn` can
-/// change that between two of them.
-fn gap_has_trivlist_end(
-    gap: &str,
-    theorem_envs: &std::collections::HashSet<String>,
-    style: &Stylesheet,
-    document: usize,
-    base: usize,
-) -> bool {
-    let Some(end) = rfind_command(gap, "end") else { return false };
-    let rest = gap[end + "\\end".len()..].trim_start();
-    let Some(rest) = rest.strip_prefix('{') else { return false };
-    let Some((name, _)) = rest.split_once('}') else { return false };
-    let name = name.trim();
-    if name == "abstract" {
-        // Whether this `\end` is an `\endtrivlist` depends on two-column
-        // mode where it stands, not on the name
-        // ([`crate::abstractenv::end_is_endtrivlist`]).
-        return crate::abstractenv::end_is_endtrivlist(style, document, base + end);
-    }
-    LIST_ENVS.contains(&name) || TRIVLIST_ENVS.contains(&name) || VMODE_END_ENVS.contains(&name) || theorem_envs.contains(name)
 }
 
 /// The `\setlist[<envs>]{<keys>}` calls of `source`, in order:
@@ -10156,25 +10078,6 @@ fn space_factor_with(ch: char, previous: u32, period_code: u32) -> u32 {
     }
 }
 
-fn accent(mark: char, base: char) -> Option<char> {
-    let table: &[(char, &str, &str)] = &[
-        ('"', "aeiouyAEIOUY", "äëïöüÿÄËÏÖÜŸ"),
-        ('\'', "aeiouyAEIOUYcnszCNSZ", "áéíóúýÁÉÍÓÚÝćńśźĆŃŚŹ"),
-        ('`', "aeiouAEIOU", "àèìòùÀÈÌÒÙ"),
-        ('^', "aeiouAEIOU", "âêîôûÂÊÎÔÛ"),
-        ('~', "anoANO", "ãñõÃÑÕ"),
-        ('=', "aeiouAEIOU", "āēīōūĀĒĪŌŪ"),
-        ('.', "zcegZCEG", "żċėġŻĊĖĠ"),
-    ];
-    for (m, bases, composed) in table {
-        if *m == mark {
-            let idx = bases.chars().position(|b| b == base)?;
-            return composed.chars().nth(idx);
-        }
-    }
-    None
-}
-
 /// [`items_from_inlines`] through the cross-request cache. The key covers
 /// the inlines (kinds, texts, relative spans, label/reference keys), the
 /// source bytes they sit in (gaps decide spaces, groups decide styles and
@@ -10479,7 +10382,6 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
     // suppressed automatic pair below can retract them exactly.
     let mut hfill_start = None;
     let mut factor = 1000u32;
-    let mut pending_accent: Option<(char, CharSrc)> = None;
     // The `\url{...}` whose runs are being assembled (its span) and the
     // characters of it seen so far, for `url_break_penalty` between runs.
     let mut url_run: Option<(Span, String)> = None;
@@ -10518,7 +10420,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
     // follows the interword space the gap's whitespace gives, as in
     // pdfTeX's list (`Liang.  \OT1/cmr/m/it/10.95 Word`: two glues).
     let pending_newblock = std::cell::Cell::new(false);
-    let mut space_between = |prev_end: Option<usize>, prev_span: Option<Span>, span: Span, text: Option<&str>, after_control_word: bool| -> bool {
+    let space_between = |prev_end: Option<usize>, prev_span: Option<Span>, span: Span, text: Option<&str>, after_control_word: bool| -> bool {
         let src = text_of(span.document);
         let mut c = cursor.get();
         let gap = token_gap(src, prev_end, prev_span, span, text, &mut c, &foreign);
@@ -10618,7 +10520,6 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     prev_end = Some(qe);
                     prev_span = Some(qspan);
                     factor = 1000;
-                    pending_accent = None;
                     after_control_word = true;
                     qedhere_used = true;
                 }
@@ -10660,7 +10561,6 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 after_control_word = end == span.end;
                 prev_end = Some(end);
                 prev_span = Some(Span::in_document(span.document, span.start, end));
-                pending_accent = None;
             }
             Inline::Marginpar { text, span, .. } => {
                 // `\marginpar` sets no mark: the note is placed in the
@@ -10685,7 +10585,6 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 after_control_word = end == span.end;
                 prev_end = Some(end);
                 prev_span = Some(Span::in_document(span.document, span.start, end));
-                pending_accent = None;
             }
             Inline::Tabular(t) => {
                 // `\leavevmode\hbox{...}`: one box, with the space before it
@@ -10965,7 +10864,6 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // characters, boxes appended in horizontal mode, rules and
                 // math). So `Name: \hrulefill{} Date:` keeps the colon's 2000
                 // and the blank after `{}` gets `\fontdimen7` too.
-                pending_accent = None;
                 // `\hspace{..}` ends with its argument's `}`: the blank after
                 // it is an ordinary space token (`a\hspace{1em} b`), not one
                 // skipped after a control word. From a macro the span is the
@@ -11048,7 +10946,6 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 prev_span = Some(*span);
                 // `\TeX` ends with `\@` and `\LaTeXe` with math: factor 1000.
                 factor = 1000;
-                pending_accent = None;
                 after_control_word = true;
             }
             Inline::Rule { rule, span, style: compiler_style, .. } => {
@@ -11065,7 +10962,6 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
                 factor = 1000;
-                pending_accent = None;
                 after_control_word = false;
             }
             Inline::Kern { amount, span, style: compiler_style } => {
@@ -11078,7 +10974,6 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     let mut gap_style = style;
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
-                    pending_accent = None;
                 }
                 // A kern leaves the space factor alone (§1061 applies only to
                 // characters and boxes); a control word eats the blanks after it.
@@ -11118,7 +11013,6 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     prev_end = Some(span.end);
                     prev_span = Some(*span);
                     factor = 1000;
-                    pending_accent = None;
                     after_control_word = false;
                     hfill_start = None;
                     continue;
@@ -11168,7 +11062,6 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
                 factor = 1000;
-                pending_accent = None;
                 after_control_word = false;
             }
             Inline::Text { span, glue_before: Some(InterwordGlue { kind: GlueKind::ControlSpace, .. }), .. } => {
@@ -11190,28 +11083,10 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
                 factor = 1000;
-                pending_accent = None;
                 after_control_word = true;
             }
             Inline::Text { text, span, .. } => {
                 let source = text_of(span.document);
-                // The compiler (pin `8c0d65e7`) runs its text-ligature pass
-                // over the accent command's own character too, so `\'` and
-                // `\`` arrive as the curly quotes; map them back.
-                let accent_mark = |t: &str| -> Option<char> {
-                    let mut it = t.chars();
-                    match (it.next(), it.next()) {
-                        (Some('\u{2019}'), None) => Some('\''),
-                        (Some('\u{2018}'), None) => Some('`'),
-                        (Some(c), None) if "\"'`^~=.".contains(c) => Some(c),
-                        _ => None,
-                    }
-                };
-                let accent_char = if span.end - span.start == 2 && source.as_bytes().get(span.start) == Some(&b'\\') {
-                    accent_mark(text)
-                } else {
-                    None
-                };
                 // Whether TeX appended interword glue in front of the run is the
                 // compiler's `glue_before` (PLAN1 slice 2): a space token read in
                 // horizontal mode, not after a control word or a line break.
@@ -11292,7 +11167,6 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                         // space factor: glue never changes `\spacefactor`.
                         items.push(Item::Space { style: gap_style, factor, no_break: false });
                     }
-                    pending_accent = None;
                 }
                 // LaTeX's `\check@icl`: a text font command whose font is
                 // upright (`\fontdimen1 = 0`) runs `\maybe@ic` before its
@@ -11311,19 +11185,6 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 }
                 prev_size_cpt = style.size_cpt;
                 ambient = node_style(compiler_style, size);
-                if let Some(mark) = accent_char {
-                    pending_accent = Some((
-                        mark,
-                        CharSrc {
-                            document: span.document,
-                            start: span.start,
-                            end: span.end,
-                        },
-                    ));
-                    prev_end = Some(span.end);
-                    prev_span = Some(*span);
-                    continue;
-                }
                 // A run of a `\url{...}` (the compiler splits the argument
                 // after every url.sty break character, `parser::url_pieces`,
                 // each run with the whole command's span): the break between
@@ -11377,7 +11238,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     ligature_char_sources(source, *span, text)
                 };
                 let exact = exact_sources.is_some();
-                let mut chars: Vec<(char, CharSrc)> = match exact_sources {
+                let chars: Vec<(char, CharSrc)> = match exact_sources {
                     Some(sources) => text.chars().zip(sources).collect(),
                     None => text
                         .chars()
@@ -11393,20 +11254,6 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                         })
                         .collect(),
                 };
-                if let Some((mark, msrc)) = pending_accent.take() {
-                    if let Some((first, fsrc)) = chars.first().copied() {
-                        if let Some(composed) = accent(mark, first) {
-                            chars[0] = (
-                                composed,
-                                CharSrc {
-                                    document: fsrc.document,
-                                    start: msrc.start,
-                                    end: fsrc.end,
-                                },
-                            );
-                        }
-                    }
-                }
                 // `--`, ``` `` ```, `''`, `` ?` `` are ligatures of the
                 // *input*, and verbatim suppresses them (`\@noligs`): they
                 // stay the characters that were typed. `\texttt` is not

@@ -150,7 +150,7 @@
 //! mode. Every two-column `\end{abstract}\begin{<trivlist>}` was one
 //! `\partopsep` long (1.992/2.989/2.988 bp) against #722, which was right.
 //! Whether that `\end` is an `\endtrivlist` is now a class-option question
-//! ([`flashtex_render_pipeline`]'s `abstractenv::end_is_endtrivlist`), not a
+//! (the compiler's `abstract_ends_trivlist`, read through `TrivlistStart::vmode`), not a
 //! name lookup. [`a_two_column_abstract_is_a_section_head_and_its_end_is_not_a_trivlist`].
 //!
 //! ## Oracle
