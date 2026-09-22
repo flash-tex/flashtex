@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-muse-lead",
+  "branch": null,
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": "955 backfill item 20, self-picked while Commander/parent down",
+  "started_utc": "2026-09-22T01:19:32Z",
+  "state": "claimed",
+  "task_id": "MUSE-beamer-seventh-fixture",
+  "updated_utc": "2026-09-22T01:19:32Z"
+}
