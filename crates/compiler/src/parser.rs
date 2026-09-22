@@ -2950,6 +2950,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "medskip",
     "smallskip",
     "vspace",
+    "addvspace",
     "hrule",
     "newpage",
     "clearpage",
@@ -5862,9 +5863,9 @@ impl P<'_> {
                 self.flush_paragraph(blocks, para);
                 self.read_par();
             }
-            "bigskip" | "medskip" | "smallskip" | "vspace" | "hrule" | "newpage" | "clearpage"
-            | "cleardoublepage" | "pagebreak" | "nopagebreak" | "vfill" | "columnbreak" | "newcolumn"
-            | "raggedcolumns" | "flushcolumns" | "penalty" | "nobreak" | "allowbreak"
+            "bigskip" | "medskip" | "smallskip" | "vspace" | "addvspace" | "hrule" | "newpage"
+            | "clearpage" | "cleardoublepage" | "pagebreak" | "nopagebreak" | "vfill" | "columnbreak"
+            | "newcolumn" | "raggedcolumns" | "flushcolumns" | "penalty" | "nobreak" | "allowbreak"
             | "goodbreak" | "filbreak" | "vskip" | "vfil" | "vss" | "kern" => {
                 self.vertical_command(name, span, blocks, para)
             }
@@ -7790,6 +7791,46 @@ impl P<'_> {
         }
     }
 
+    /// latex.ltx `\addvspace{<len>}` (`ltspace.dtx`): like `\vspace`, but the
+    /// new skip merges with immediately preceding vertical space instead of
+    /// adding on top of it. Real TeX compares `\lastskip` against the request
+    /// with `\ifdim` (natural lengths only): a larger request removes the
+    /// pending skip and takes its place wholesale, a negative request against
+    /// non-negative pending space reduces it in place
+    /// (`\advance\lastskip`), and anything else adds nothing. The pending
+    /// skip here is a trailing [`Block::VSpace`] whatever command produced it
+    /// (`\vspace`, `\bigskip`/`\medskip`/`\smallskip`, an earlier
+    /// `\addvspace`); inter-paragraph `\parskip` is not a block in this
+    /// compiler, so it never participates.
+    fn add_vertical_space(
+        &mut self,
+        blocks: &mut Vec<Block>,
+        pt: f64,
+        stretch_pt: f64,
+        shrink_pt: f64,
+    ) {
+        if let Some(Block::VSpace {
+            pt: prev_pt,
+            stretch_pt: prev_stretch_pt,
+            shrink_pt: prev_shrink_pt,
+        }) = blocks.last_mut()
+        {
+            if *prev_pt < pt {
+                *prev_pt = pt;
+                *prev_stretch_pt = stretch_pt;
+                *prev_shrink_pt = shrink_pt;
+            } else if pt < 0.0 && *prev_pt >= 0.0 {
+                *prev_pt += pt;
+            }
+        } else {
+            blocks.push(Block::VSpace {
+                pt,
+                stretch_pt,
+                shrink_pt,
+            });
+        }
+    }
+
     /// Vertical material and page/paragraph break control between and inside
     /// paragraphs (see [`P::command`]).
     #[inline(never)]
@@ -7883,6 +7924,29 @@ impl P<'_> {
                 None => self.diags.push(Diagnostic::error(
                     format!(
                         "\\vspace requires a recognised dimension, got '{}'",
+                        raw.trim()
+                    ),
+                    Some(span.merge(argument_span)),
+                    Some("ignored the vertical space and continued".into()),
+                )),
+            }
+        }
+        "addvspace" => {
+            // No starred form in real LaTeX: unlike `\vspace`, there is no
+            // `*` to consume, so the argument follows the command directly.
+            let (tokens, argument_span) = self.required_group(name, span);
+            // `dimen_source`, not `token_text`: see `hspace` above.
+            let raw = dimen_source(&tokens);
+            let units = self.font_setup().em_ex_sp(self.style);
+            match parse_glue_pt_current(&raw, units) {
+                Some((pt, stretch_pt, shrink_pt)) => {
+                    self.flush_paragraph(blocks, para);
+                    self.add_vertical_space(blocks, pt, stretch_pt, shrink_pt);
+                    self.finish_block_dependencies();
+                }
+                None => self.diags.push(Diagnostic::error(
+                    format!(
+                        "\\addvspace requires a recognised dimension, got '{}'",
                         raw.trim()
                     ),
                     Some(span.merge(argument_span)),
@@ -19952,6 +20016,165 @@ mod tests {
         let (parsed, got) = single_vspace_pt(r"One\vspace{1in}Two");
         assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
         assert_eq!(got, (72.27, 0.0, 0.0), "a bare dimension must not invent stretch/shrink");
+    }
+
+    /// A bare `\addvspace{10pt}` adds its space exactly like `\vspace{10pt}`
+    /// when no vertical space precedes it, glue argument included.
+    #[test]
+    fn bare_addvspace_adds_space_like_vspace() {
+        let (parsed, got) = single_vspace_pt(r"One\addvspace{10pt}Two");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(got, (10.0, 0.0, 0.0));
+        let em = 655_361.0 / 65_536.0;
+        let (parsed, glued) = single_vspace_pt(r"One\addvspace{1em plus 1pt minus 2pt}Two");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert!(
+            (glued.0 - em).abs() < 1e-9 && glued.1 == 1.0 && glued.2 == 2.0,
+            "\\addvspace must read every glue component like \\vspace: {glued:?}"
+        );
+        // The same gap reaches the page as `\vspace` with the same argument.
+        let baseline = items(r"One\vspace{10pt}Two").1;
+        let (parsed, candidate) = items(r"One\addvspace{10pt}Two");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let y = |set: &[crate::layout::TextItem]| {
+            set.iter()
+                .map(|item| (item.text.clone(), item.baseline_y_pt))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            y(&baseline),
+            y(&candidate),
+            "a bare \\addvspace must lay out exactly like \\vspace"
+        );
+    }
+
+    /// Adjacent `\addvspace` calls accumulate to the max, not the sum
+    /// (latex.ltx `\@xaddvskip`): a larger request replaces the pending skip,
+    /// a smaller one leaves it alone — in both orders.
+    #[test]
+    fn adjacent_addvspace_calls_accumulate_to_the_max() {
+        for (source, want) in [
+            (r"One\addvspace{10pt}\addvspace{20pt}Two", 20.0),
+            (r"One\addvspace{20pt}\addvspace{10pt}Two", 20.0),
+        ] {
+            let parsed = parse(source);
+            assert!(parsed.diagnostics.is_empty(), "{source}: {:?}", parsed.diagnostics);
+            let spaces: Vec<f64> = parsed
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    Block::VSpace { pt, .. } => Some(*pt),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                spaces,
+                [want],
+                "{source}: adjacent \\addvspace must merge to the max, not add"
+            );
+        }
+        // On the page the merged gap equals one `\vspace{20pt}`, not 30pt.
+        let single = items(r"One\vspace{20pt}Two").1;
+        let (parsed, merged) = items(r"One\addvspace{10pt}\addvspace{20pt}Two");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let y = |set: &[crate::layout::TextItem]| {
+            set.iter().map(|item| item.baseline_y_pt).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            y(&single),
+            y(&merged),
+            "merged \\addvspace gaps must match a single \\vspace of the max"
+        );
+    }
+
+    /// `\addvspace` merges with any immediately preceding vertical space, not
+    /// just an earlier `\addvspace`: a `\vspace` or `\bigskip` already at or
+    /// above the request holds, a smaller one is raised to the request.
+    #[test]
+    fn addvspace_merges_with_a_preceding_vspace_or_skip() {
+        for (source, want) in [
+            (r"One\vspace{20pt}\addvspace{10pt}Two", 20.0),
+            (r"One\vspace{5pt}\addvspace{10pt}Two", 10.0),
+            (r"One\bigskip\addvspace{20pt}Two", 20.0),
+            (r"One\bigskip\addvspace{5pt}Two", 12.0),
+        ] {
+            let parsed = parse(source);
+            assert!(parsed.diagnostics.is_empty(), "{source}: {:?}", parsed.diagnostics);
+            let spaces: Vec<f64> = parsed
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    Block::VSpace { pt, .. } => Some(*pt),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                spaces,
+                [want],
+                "{source}: \\addvspace must take the max with the pending skip"
+            );
+        }
+    }
+
+    /// `\addvspace` after real content just adds its length: with no pending
+    /// vertical space there is nothing to merge with, so one `VSpace` block
+    /// reaches the page exactly as `\vspace` in the same spot.
+    #[test]
+    fn addvspace_after_content_adds_its_length() {
+        let parsed = parse("One.\n\n\\addvspace{10pt}Two.");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let spaces: Vec<f64> = parsed
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::VSpace { pt, .. } => Some(*pt),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(spaces, [10.0]);
+        // Same page positions as `\vspace` there: the full length is added,
+        // nothing merged away.
+        let baseline = items("One.\n\n\\vspace{10pt}Two.").1;
+        let (parsed, candidate) = items("One.\n\n\\addvspace{10pt}Two.");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let y = |set: &[crate::layout::TextItem]| {
+            set.iter().map(|item| item.baseline_y_pt).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            y(&baseline),
+            y(&candidate),
+            "\\addvspace after content must lay out exactly like \\vspace"
+        );
+    }
+
+    /// A negative `\addvspace` against non-negative pending space reduces it
+    /// in place (source2e `\@xaddvskip`'s `\advance\lastskip` branch).
+    #[test]
+    fn negative_addvspace_reduces_pending_space() {
+        let parsed = parse(r"One\vspace{20pt}\addvspace{-5pt}Two");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let spaces: Vec<f64> = parsed
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::VSpace { pt, .. } => Some(*pt),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(spaces, [15.0]);
+    }
+
+    /// An unrecognised `\addvspace` dimension is diagnosed like `\vspace`'s.
+    #[test]
+    fn addvspace_rejects_an_unrecognised_dimension() {
+        let parsed = parse(r"One\addvspace{banana}Two");
+        assert!(
+            parsed.diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains("\\addvspace requires a recognised dimension")),
+            "{:?}",
+            parsed.diagnostics
+        );
     }
 
     #[test]

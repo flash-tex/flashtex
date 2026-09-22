@@ -622,6 +622,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("medskip", "", "ends the paragraph and adds 6pt of vertical space"),
     ("smallskip", "", "ends the paragraph and adds 3pt of vertical space"),
     ("vspace", "{dimension}", "ends the paragraph and adds fixed vertical space"),
+    ("addvspace", "{dimension}", "ends the paragraph and adds vertical space, keeping the larger of it and any immediately preceding space"),
     ("hrule", "", "full-measure horizontal rule"),
     ("newpage", "", "forces a page break"),
     ("pagestyle", "{style}", "records a page-style switch per page: fancy ships the fancyhead/fancyfoot fields, every other style renders no headers or footers"),

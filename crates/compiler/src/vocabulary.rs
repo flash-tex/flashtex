@@ -52,7 +52,7 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
 const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // LaTeX2e document structure and front matter.
     "part", "chapter", "appendix", "abstractname", "listoffigures",
-    "listoftables", "addvspace",
+    "listoftables",
     // Boxes, spacing, breaking and page control.
     "makebox", "fbox", "framebox", "parbox", "raisebox", "llap", "rlap", "linespread",
     "vbox", "newline", "smash",

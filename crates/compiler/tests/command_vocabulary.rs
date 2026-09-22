@@ -168,20 +168,25 @@ fn llap_and_rlap_are_known_unimplemented_not_flat_typos() {
 }
 
 #[test]
-fn addvspace_is_reported_as_unimplemented_not_unknown() {
-    // `\addvspace` has no dispatch arm and no `BUILT_INS` entry in this
-    // crate: real usage reports `unsupported_feature`, and the name stays
-    // known (not an unknown-command typo) via `KNOWN_UNIMPLEMENTED_COMMANDS`.
-    // That entry must stay until a real implementation lands.
+fn addvspace_is_implemented_so_it_is_known_without_the_unimplemented_list() {
+    // `\addvspace` has a real dispatch arm (`"addvspace" => ... vertical_command`)
+    // and a `BUILT_INS` entry, so it stays known for typo suggestions even
+    // though it is no longer listed as unimplemented.
     assert!(is_known_command("addvspace"));
+    // `is_known_command` alone would still pass here even if the
+    // `KNOWN_UNIMPLEMENTED_COMMANDS` removal were reverted, since `addvspace`
+    // is unconditionally known via `BUILT_INS` regardless. Assert the
+    // removal directly.
+    assert!(
+        !is_listed_as_unimplemented("addvspace"),
+        "addvspace must not be listed as unimplemented once it has a real dispatch arm"
+    );
     let parsed = parse(
         "\\documentclass{article}\\begin{document}Text\\addvspace{1em}More.\\end{document}",
     );
-    assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
-    let diag = &parsed.diagnostics[0];
-    assert_eq!(diag.code, Some(DiagnosticCode::UnsupportedFeature));
-    assert_eq!(
-        diag.message,
-        "\\addvspace is not supported by this compiler version"
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "{:?}",
+        parsed.diagnostics
     );
 }
