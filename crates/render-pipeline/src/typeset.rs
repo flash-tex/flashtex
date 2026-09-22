@@ -1348,6 +1348,9 @@ impl<'a> Context<'a> {
                 extra_space: dim(7),
             };
         }
+        if self.style.family == Family::Times {
+            return params::times_text_params(style.family, style.bold, style.italic).at(size);
+        }
         let design = design_size(self.style.family, size);
         params::text_params(self.style.family, style.bold, style.italic, design).at(size)
     }
@@ -12751,7 +12754,7 @@ pub fn assemble_windowed(
     revision: u64,
     documents: &[SourceDocument<'_>],
     style: &Stylesheet,
-    _fonts: &FontSet,
+    font_set: &FontSet,
     laid: Laid,
     mut diagnostics: Vec<Diagnostic>,
     cache: Option<&RenderCache>,
@@ -12996,6 +12999,9 @@ pub fn assemble_windowed(
     // Harvested in the block loop above, in the same block order, so this
     // vector is what it has always been.
     diagnostics.extend(unmapped_diags);
+    // Core 14 metric faces (`\usepackage{times}`) are drawn with their TeX
+    // Gyre program, so the list names a font the exact PDF route embeds.
+    crate::fonts::embed_core14_programs(font_set, &mut used, &mut pages);
     let fonts = used
         .values()
         .map(|f| FontResource {
