@@ -106,3 +106,6 @@ improvement cycles; completed checkpoints trigger useful next work.
   (proposal, kabir-claude ARCH-AUDIT, 2026-09-21): ranked plan for generating
   LaTeX-declared data, running real `.sty` code, removing `vendor/`, and the
   two structural rewrites (node-stream contract, generic page model).
+- [Node-stream inventory](proposals/node-stream-inventory.md) (PLAN1 slice 1,
+  2026-09-21): the 46 pipeline sites that re-derive layout facts from source
+  bytes, each with an ignored falsifier test, ranked for slice 2.
