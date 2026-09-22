@@ -10532,3 +10532,9 @@ mod lap_tests {
         }
     }
 }
+
+/// The class the hand-written [`symbol_class`] table gives a glyph, for the
+/// drift test that checks it against the generated `math_symbols` table.
+pub fn symbol_class_of(glyph: &str) -> AtomClass {
+    symbol_class(glyph)
+}
