@@ -49,14 +49,17 @@ import argparse
 import importlib.util
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CRATE = os.path.dirname(os.path.dirname(HERE))
+REPO = os.path.dirname(os.path.dirname(CRATE))
 FIXTURES = os.path.join(CRATE, "fixtures", "twocolumn-title")
 EXPECTED = os.path.join(FIXTURES, "expected")
+
+sys.path.insert(0, REPO)
+from tools.oracle import pdflatex as oracle  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("pageframe", os.path.join(CRATE, "tools", "page-frame-oracle", "generate.py"))
 pf = importlib.util.module_from_spec(_spec)
@@ -145,7 +148,7 @@ def main():
     os.makedirs(EXPECTED, exist_ok=True)
     if not os.path.isdir(os.path.join(FIXTURES, "images")):
         sys.exit(f"missing {FIXTURES}/images (copy the three PNGs from fixtures/float-notes/images)")
-    version = subprocess.run(["pdflatex", "--version"], capture_output=True, text=True).stdout.splitlines()[0]
+    version = oracle.pdftex_version()
     for name, src in fixtures().items():
         if args.names and name not in args.names:
             continue
@@ -176,20 +179,7 @@ def main():
 def run_pdflatex(tex_path, workdir):
     """pdflatex with the fixture directory as the working directory, so the
     fixtures' relative `images/...` paths resolve."""
-    name = os.path.splitext(os.path.basename(tex_path))[0]
-    cmd = [
-        "pdflatex",
-        "-interaction=nonstopmode",
-        "-halt-on-error",
-        f"-jobname={name}",
-        f"-output-directory={workdir}",
-        "\\pdfcompresslevel=0\\pdfobjcompresslevel=0\\input{" + tex_path + "}",
-    ]
-    for _ in range(2):
-        r = subprocess.run(cmd, cwd=FIXTURES, capture_output=True, text=True)
-        if r.returncode != 0:
-            sys.exit(f"pdflatex failed for {name}:\n{r.stdout[-3000:]}")
-    return os.path.join(workdir, name + ".pdf")
+    return oracle.run_pdflatex(tex_path, workdir, cwd=FIXTURES)
 
 
 if __name__ == "__main__":
