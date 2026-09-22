@@ -1873,8 +1873,16 @@ pub fn adapt_cached(
         }
         h.finish()
     };
-    let items_for = |inlines: &[Inline], heading: bool| -> Vec<Item> { items_cached(texts, inlines, &styles, labels, labels_fp, size, heading, false, cache) };
-    let items_for_weighted = |inlines: &[Inline], compiler_weight: bool| -> Vec<Item> { items_cached(texts, inlines, &styles, labels, labels_fp, size, false, compiler_weight, cache) };
+    // article.cls's `openbib` class option redefines `\newblock` from
+    // `\hskip .11em \@plus.33em \@minus.07em` to `\par` (plus the
+    // `\@openbib@code` list shape, whose net effect keeps each block's line
+    // aligned with the item text the pipeline's list indent already
+    // provides): each block starts its own line instead of following an
+    // interword space and short glue. Unset (the default), `\newblock`
+    // keeps today's Space + Quad exactly.
+    let openbib = style.class_geometry.as_ref().is_some_and(|g| g.options.openbib);
+    let items_for = |inlines: &[Inline], heading: bool| -> Vec<Item> { items_cached(texts, inlines, &styles, labels, labels_fp, size, heading, false, openbib, cache) };
+    let items_for_weighted = |inlines: &[Inline], compiler_weight: bool| -> Vec<Item> { items_cached(texts, inlines, &styles, labels, labels_fp, size, false, compiler_weight, openbib, cache) };
     let mut blocks = Vec::new();
     // Page-style, mark, `\chapter` and `\noindent` commands in the entry
     // document's body, read from the source: the compiler accepts the first
@@ -10707,7 +10715,8 @@ fn accent(mark: char, base: char) -> Option<char> {
 /// [`items_from_inlines`] through the cross-request cache. The key covers
 /// the inlines (kinds, texts, relative spans, label/reference keys), the
 /// source bytes they sit in (gaps decide spaces, groups decide styles and
-/// italic corrections), the style in force at the start, and the label
+/// italic corrections), the style in force at the start, the `openbib`
+/// flag (it changes what `\newblock` adapts to), and the label
 /// table; the value is relocated by the block's byte offset.
 #[allow(clippy::too_many_arguments)]
 fn items_cached(
@@ -10719,17 +10728,18 @@ fn items_cached(
     size: u32,
     heading: bool,
     compiler_weight: bool,
+    openbib: bool,
     cache: Option<&crate::incremental::RenderCache>,
 ) -> Vec<Item> {
     let Some(cache) = cache else {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true, openbib);
     };
     // Table items nest item lists the relocation does not walk.
     if inlines.iter().any(|i| matches!(i, Inline::Tabular(_))) {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true, openbib);
     }
     let Some(first) = inlines.first().map(inline_span) else {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true, openbib);
     };
     let document = first.document;
     let mut start = first.start;
@@ -10737,25 +10747,25 @@ fn items_cached(
     for i in inlines {
         let s = inline_span(i);
         if s.document != document {
-            return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
+            return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true, openbib);
         }
         start = start.min(s.start);
         end = end.max(s.end);
     }
     let Some(src) = texts.get(document.0) else {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true, openbib);
     };
     // Macro replacement text carries the invocation's span: the spacing
     // and weight of its words come from the definition (`macro_body`), so
     // a block holding one cannot be keyed by its own bytes alone.
     if inlines.iter().any(|i| is_invocation_span(src, inline_span(i))) {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true, openbib);
     }
     // `\\[<dimen>]` reads past the block's last span: the key covers the
     // rest of that line.
     let slice_end = src[end.min(src.len())..].find('\n').map_or(src.len(), |n| end + n + 1).max((end + 2).min(src.len()));
     let Some(slice) = src.get(start..slice_end) else {
-        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true, openbib);
     };
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -10766,6 +10776,7 @@ fn items_cached(
     size.hash(&mut h);
     heading.hash(&mut h);
     compiler_weight.hash(&mut h);
+    openbib.hash(&mut h);
     let no_styles = Styles::default();
     let st = styles.get(document.0).unwrap_or(&no_styles);
     let at = st.at(start);
@@ -10923,7 +10934,7 @@ fn items_cached(
     if let Some(a) = cache.adapted(key) {
         return crate::incremental::relocate_items(&a.items, start as isize - a.base as isize);
     }
-    let items = items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
+    let items = items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true, openbib);
     cache.insert_adapted(key, crate::incremental::AdaptedBlock { items: items.clone(), base: start });
     items
 }
@@ -10946,8 +10957,11 @@ fn items_cached(
 /// width by `hbox_runs`, never line-broken) passes `false`, so an enormous
 /// box keeps today's slow success instead of a spurious paragraph error;
 /// everything laid out through `break_paragraph` passes `true`.
+/// `openbib` is the `openbib` class option: set, `\newblock` adapts to a
+/// line break (article.cls redefines it as `\par`) instead of the default
+/// interword space plus `\hskip .11em \@plus.33em \@minus.07em` glue.
 #[allow(clippy::too_many_arguments)]
-fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: &[Styles], labels: &Labels, size: u32, heading: bool, compiler_weight: bool, bound: bool) -> Vec<Item> {
+fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: &[Styles], labels: &Labels, size: u32, heading: bool, compiler_weight: bool, bound: bool, openbib: bool) -> Vec<Item> {
     // `\ref`/`\pageref` become ordinary text attributed to the command's
     // bytes; `\label` becomes a zero-width marker.
     let mut resolved: Vec<std::borrow::Cow<Inline>> = Vec::with_capacity(inlines.len());
@@ -11006,6 +11020,8 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
     // space token, so only the source bytes still show it). The glue
     // follows the interword space the gap's whitespace gives, as in
     // pdfTeX's list (`Liang.  \OT1/cmr/m/it/10.95 Word`: two glues).
+    // Under the `openbib` class option `\newblock` is `\par` instead, so
+    // the block opens a new line (see `push_gap`).
     let pending_newblock = std::cell::Cell::new(false);
     let mut space_between = |prev_end: Option<usize>, prev_span: Option<Span>, span: Span, text: Option<&str>, after_control_word: bool| -> bool {
         let src = text_of(span.document);
@@ -11042,11 +11058,25 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             items.push(Item::HSpace { pt, stretch_pt, shrink_pt });
             return;
         }
+        if pending_newblock.take() {
+            if openbib {
+                // `openbib` redefines `\newblock` as `\par`: the block opens
+                // a new line, a `\\` with no extra skip at the item level
+                // (the paragraph split itself is not modelled). The gap's
+                // interword space goes with it, as TeX discards it at the
+                // paragraph end; the space the next gap gives opens the new
+                // line, where the breaker drops it like TeX.
+                items.push(Item::LineBreak { skip_pt: 0.0 });
+                return;
+            }
+            if space {
+                items.push(Item::Space { style, factor, no_break: false });
+            }
+            items.push(Item::Quad { em: 0.11, plus_em: 0.33, minus_em: 0.07, style });
+            return;
+        }
         if space {
             items.push(Item::Space { style, factor, no_break: false });
-        }
-        if pending_newblock.take() {
-            items.push(Item::Quad { em: 0.11, plus_em: 0.33, minus_em: 0.07, style });
         }
     };
 
@@ -11134,7 +11164,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                         if k > 0 {
                             note.push(Item::NoteParBreak);
                         }
-                        note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight, bound));
+                        note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight, bound, openbib));
                     }
                     note
                 });
@@ -11161,7 +11191,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     if k > 0 {
                         note.push(Item::NoteParBreak);
                     }
-                    note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight, bound));
+                    note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight, bound, openbib));
                 }
                 items.push(Item::Marginpar { text: note, span: *span });
                 after_control_word = end == span.end;
@@ -11180,7 +11210,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 after_control_word = false;
                 let src = text_of(span.document);
                 let lengths = crate::table::TableLengths::read(|name, base| length_at(src, name, size, span.start, base));
-                let mut items_of = |inlines: &[Inline], declared: bool| items_from_inlines_styled(texts, inlines, styles, labels, size, false, declared, bound);
+                let mut items_of = |inlines: &[Inline], declared: bool| items_from_inlines_styled(texts, inlines, styles, labels, size, false, declared, bound, openbib);
                 let table = crate::table::from_compiler(t, lengths, declared_size(t.style.size, size), &mut items_of);
                 items.push(Item::Table(Box::new(table)));
                 prev_end = Some(span.end);
@@ -11195,7 +11225,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                let content = items_from_inlines_styled(texts, &b.content, styles, labels, size, heading, compiler_weight, false);
+                let content = items_from_inlines_styled(texts, &b.content, styles, labels, size, heading, compiler_weight, false, openbib);
                 items.push(Item::ColorBox(Box::new(ColorBoxItem {
                     fill: b.fill,
                     frame: b.frame,
@@ -11215,7 +11245,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                let content = items_from_inlines_styled(texts, &u.content, styles, labels, size, heading, compiler_weight, false);
+                let content = items_from_inlines_styled(texts, &u.content, styles, labels, size, heading, compiler_weight, false, openbib);
                 items.push(Item::Underline(Box::new(UnderlineItem {
                     thickness_pt: u.thickness_pt,
                     geom: u.geom,
@@ -11239,7 +11269,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                let mut content = items_from_inlines_styled(texts, &p.content, styles, labels, size, heading, compiler_weight, false);
+                let mut content = items_from_inlines_styled(texts, &p.content, styles, labels, size, heading, compiler_weight, false, openbib);
                 crate::overlay::hide_items(&mut content);
                 items.extend(content);
                 prev_end = Some(span.end);
@@ -11256,7 +11286,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
                 let size_cpt = declared_size(t.style.size, size);
-                let mut content = items_from_inlines_styled(texts, &t.content, styles, labels, size, heading, compiler_weight, false);
+                let mut content = items_from_inlines_styled(texts, &t.content, styles, labels, size, heading, compiler_weight, false, openbib);
                 // `\fontsize\sf@size` replaces the declared size the
                 // argument inherited from the command's context.
                 if size_cpt != 0 {
@@ -11320,7 +11350,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                items.extend(items_from_inlines_styled(texts, &t.content, styles, labels, size, false, compiler_weight, bound));
+                items.extend(items_from_inlines_styled(texts, &t.content, styles, labels, size, false, compiler_weight, bound, openbib));
                 prev_end = Some(span.end);
                 prev_span = Some(span);
                 factor = 1000;
