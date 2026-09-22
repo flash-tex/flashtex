@@ -111,6 +111,7 @@ fn has_markers(items: &[AItem]) -> bool {
         AItem::ColorBox(b) => has_markers(&b.items),
         AItem::Underline(u) => has_markers(&u.items),
         AItem::TextScript(t) => has_markers(&t.items),
+        AItem::HBox(b) => has_markers(&b.items),
         _ => false,
     })
 }
@@ -308,6 +309,10 @@ fn restyle(item: &mut AItem, state: &mut State) {
         AItem::TextScript(t) => {
             let mut first = None;
             transform_items(&mut t.items, state, &mut first);
+        }
+        AItem::HBox(b) => {
+            let mut first = None;
+            transform_items(&mut b.items, state, &mut first);
         }
         // Formulas, tables and graphics carry no text style: a covered one
         // is flagged for the typesetter, which sets and measures it as

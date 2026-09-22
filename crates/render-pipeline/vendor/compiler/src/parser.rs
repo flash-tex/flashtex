@@ -547,6 +547,10 @@ pub enum Inline {
     /// Text-mode `\phantom`/`\hphantom`/`\vphantom` (see [`Phantom`]): an
     /// invisible box sized from the argument's typeset extent.
     Phantom(Box<Phantom>),
+    /// A plain `\hbox` of horizontal material at its natural width (see
+    /// [`HBox`]): text-mode `\mbox`, amsmath's text-mode `\text`, and each
+    /// label of a kernel `\cite`.
+    HBox(Box<HBox>),
     /// `\includegraphics` in running text: an image box (see
     /// `crate::graphics`). Figures and tables re-derive their graphics from
     /// the source instead.
@@ -900,6 +904,25 @@ pub struct Phantom {
     pub horizontal: bool,
     pub vertical: bool,
     /// From the command through the argument's closing brace.
+    pub span: Span,
+    /// See `Inline::Text::space_before`.
+    pub space_before: bool,
+}
+
+/// A plain `\hbox{...}` in running text (`Inline::HBox`): `content` set
+/// at its natural width as one box, so a line never breaks inside it and
+/// its glue neither stretches nor shrinks with the line's (TeX §649: an
+/// `\hbox` without `to`/`spread` is packed at its natural width).
+///
+/// latex.ltx makes one of `\mbox{#1}` (`\leavevmode\hbox{#1}`) and of
+/// every label `\@citex` sets (`\@cite@ofmt` is `\hbox`, an undefined key's
+/// `\hbox{\reset@font\bfseries ?}`); amsmath's `\text` in text mode is
+/// `\mbox`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HBox {
+    pub content: Vec<Inline>,
+    /// From the command through the argument's closing brace (a citation
+    /// label: the `\cite`'s span).
     pub span: Span,
     /// See `Inline::Text::space_before`.
     pub space_before: bool,
@@ -1924,6 +1947,14 @@ fn label_plain_text(content: &[Inline], source: Option<&str>) -> String {
         let (space_before, math) = match inline {
             Inline::Text { space_before, .. } => (*space_before, None),
             Inline::Math { list, space_before, .. } => (*space_before, Some(list)),
+            // An `\mbox`, or a kernel `\cite` label.
+            Inline::HBox(boxed) => {
+                if boxed.space_before && !text.is_empty() {
+                    text.push(' ');
+                }
+                text.push_str(&label_plain_text(&boxed.content, source));
+                continue;
+            }
             _ => continue,
         };
         if space_before && !text.is_empty() {
@@ -2453,6 +2484,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "LaTeX",
     "LaTeXe",
     "rule",
+    "mbox",
     "phantom",
     "hphantom",
     "vphantom",
@@ -5026,6 +5058,8 @@ impl P<'_> {
             // `\ifmmode...\else\expandafter\mbox\fi`): one unbreakable box
             // in the current style, with no diagnostic.
             "text" => self.text_command(span, para),
+            // Kernel `\mbox`: one unbreakable `\hbox` (see `mbox_command`).
+            "mbox" => self.mbox_command(name, span, para),
             // amsmath `\boxed{...}` in text mode (`\fbox` with math inside):
             // the argument boxed with a drawn frame, like the `frame`
             // environment.
@@ -6060,7 +6094,7 @@ impl P<'_> {
                         Some("rendered nothing for the empty citation".into()),
                     ));
                 } else if let Some(options) = natbib {
-                    let mut kind = if note.is_some() || options.numbers {
+                    let mut kind = if note.is_some() || options.numbers || options.cite_is_citep {
                         natbib::CITE_WITH_NOTE
                     } else {
                         natbib::CITE_PLAIN
@@ -6870,32 +6904,19 @@ impl P<'_> {
         );
     }
 
-    /// amsmath `\text{...}` in text mode: outside math it is simply
-    /// `\mbox{...}` (amsmath.dtx). The argument is parsed as a
-    /// restricted-horizontal-mode box in the current style — the same
-    /// `box_inlines` every other box argument uses — and spliced into
-    /// the paragraph, so declarations like `\Large` stay inside the box
-    /// exactly as in `\mbox`. The content already reached the page
-    /// through `unsupported`'s prose fallthrough; this arm retires the
-    /// false `unsupported_feature` error without moving a glyph. Like
-    /// `\leavevmode`, it starts the paragraph.
-    ///
-    /// Argument-edge spaces follow the engine's other box arguments
-    /// (`\textbf`, plain groups): a leading space survives on the first
-    /// inline's `space_before`; a trailing one is dropped (pdflatex
-    /// keeps it — a pre-existing engine limitation, not introduced
-    /// here).
-    fn text_command(&mut self, span: Span, para: &mut Vec<Inline>) {
-        // `\DeclareTextFontCommand`-style `\leavevmode\bgroup`.
+    /// Kernel text-mode `\mbox{...}` (latex.ltx `\leavevmode\hbox{#1}`):
+    /// the argument parsed as a restricted-horizontal-mode box in the
+    /// current style (`box_inlines`, as every other box argument) and kept
+    /// as one [`HBox`], so the line never breaks inside it and its blanks
+    /// keep their natural width. Like `\leavevmode`, it starts the
+    /// paragraph. Math mode has its own reader (`math.rs`).
+    fn mbox_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
         self.paragraph_started = true;
-        let site_space = self.space_precedes(self.i - 1);
-        let (tokens, _) = self.required_group("text", span);
-        // An argument-edge space is real interword glue inside the box
-        // (pdflatex sets `Before\text{ after}After.` as "Before
-        // afterAfter."), so only without one does the splice convention
-        // apply: the first piece keeps the command site's `space_before`
-        // (cf. soul's `\so` below), and a missing one invents no gap
-        // (`Before\text{X}After.` stays gapless, like `{X}`).
+        let space_before = self.space_precedes(self.i - 1);
+        let (tokens, argument_span) = self.required_group(name, span);
+        // Inside the box `space_before` means a blank inside the brace
+        // (`\mbox{ lead}`, glue in the box); without one the first piece
+        // is glued to the box's left edge.
         let leading_space = matches!(
             tokens.first().map(|input| &input.token.kind),
             Some(TokenKind::Space)
@@ -6903,20 +6924,25 @@ impl P<'_> {
         let mut content = self.box_inlines(tokens);
         if !leading_space {
             match content.first_mut() {
-                Some(Inline::Text {
-                    space_before: first,
-                    ..
-                }) => *first = site_space,
-                Some(Inline::Math {
-                    space_before: first,
-                    ..
-                }) => *first = site_space,
-                Some(Inline::ColorBox(boxed)) => boxed.space_before = site_space,
-                Some(Inline::Underline(underlined)) => underlined.space_before = site_space,
+                Some(Inline::Text { space_before, .. } | Inline::Math { space_before, .. }) => *space_before = false,
+                Some(Inline::ColorBox(boxed)) => boxed.space_before = false,
+                Some(Inline::Underline(underlined)) => underlined.space_before = false,
+                Some(Inline::HBox(inner)) => inner.space_before = false,
                 _ => {}
             }
         }
-        para.extend(content);
+        para.push(Inline::HBox(Box::new(HBox {
+            content,
+            span: span.merge(argument_span),
+            space_before,
+        })));
+    }
+
+    /// amsmath `\text{...}` in text mode: outside math it is simply
+    /// `\mbox{...}` (amsmath.dtx `\ifmmode...\else\expandafter\mbox\fi`),
+    /// one unbreakable [`HBox`] in the current style (`mbox_command`).
+    fn text_command(&mut self, span: Span, para: &mut Vec<Inline>) {
+        self.mbox_command("text", span, para);
     }
 
     /// amsmath `\boxed{...}` in text mode (`\fbox` with math inside):
@@ -8012,6 +8038,18 @@ impl P<'_> {
         fn is_source(text: &str) -> bool {
             text.contains(['\\', '{', '}', '~'])
         }
+        // A kernel label is an `\hbox` (`bib::cite_inlines`): its run is
+        // set inside the box.
+        let inlines: Vec<Inline> = inlines
+            .into_iter()
+            .map(|inline| match inline {
+                Inline::HBox(mut boxed) => {
+                    boxed.content = self.set_citation_source(std::mem::take(&mut boxed.content));
+                    Inline::HBox(boxed)
+                }
+                other => other,
+            })
+            .collect();
         if !inlines.iter().any(|inline| matches!(inline, Inline::Text { text, .. } if is_source(text))) {
             return inlines;
         }
@@ -16786,6 +16824,8 @@ fn inline_sets_a_box(inline: &Inline) -> bool {
         Inline::Discretionary { nobreak, .. } => !nobreak.is_empty(),
         Inline::ColorBox(b) => b.content.iter().any(inline_sets_a_box),
         Inline::Transform(b) => b.content.iter().any(inline_sets_a_box),
+        // An `\hbox` is a box even when empty: `\mbox{}` alone sets a line.
+        Inline::HBox(_) => true,
         Inline::Underline(u) => u.content.iter().any(inline_sets_a_box),
         Inline::TextScript(t) => t.content.iter().any(inline_sets_a_box),
         _ => false,
@@ -16845,6 +16885,7 @@ fn inline_span(inline: &Inline) -> Span {
         Inline::Underline(u) => u.span,
         Inline::TextScript(t) => t.span,
         Inline::Phantom(p) => p.span,
+        Inline::HBox(b) => b.span,
         Inline::Graphic(g) => g.span,
         Inline::Transform(t) => t.span,
     }
@@ -16921,16 +16962,24 @@ fn anchor_glyphless_paragraph(content: &mut Vec<Inline>, style: TextStyle) {
 fn inline_text(inlines: &[Inline]) -> String {
     let mut text = String::new();
     for inline in inlines {
-        if let Inline::Text {
-            text: word,
-            space_before,
-            ..
-        } = inline
-        {
-            if *space_before && !text.is_empty() {
-                text.push(' ');
+        match inline {
+            Inline::Text {
+                text: word,
+                space_before,
+                ..
+            } => {
+                if *space_before && !text.is_empty() {
+                    text.push(' ');
+                }
+                text.push_str(word);
             }
-            text.push_str(word);
+            Inline::HBox(boxed) => {
+                if boxed.space_before && !text.is_empty() {
+                    text.push(' ');
+                }
+                text.push_str(&inline_text(&boxed.content));
+            }
+            _ => {}
         }
     }
     text
@@ -21899,11 +21948,11 @@ mod tests {
     }
 
     #[test]
-    fn cite_note_is_appended_after_the_labels_and_a_tie_becomes_a_space() {
+    fn cite_note_is_appended_after_the_labels_and_a_tie_becomes_a_no_break_space() {
         let source = r"\cite[p.~2]{a}\begin{thebibliography}{9}\bibitem{a}A.\end{thebibliography}";
         let (parsed, items) = items(source);
         assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
-        assert!(items.iter().any(|i| i.text == ", p. 2"));
+        assert!(items.iter().any(|i| i.text == ", p.\u{a0}2"), "{items:?}");
     }
 
     #[test]
