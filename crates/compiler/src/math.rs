@@ -1417,7 +1417,16 @@ impl MathParser<'_> {
                         .is_some_and(|t| matches!(&t.kind, TokenKind::Command(c) if c == "begin") && t.span == token.span);
                     let ordinary = semi_simple
                         || (!group.atoms.is_empty() && group.atoms.iter().all(|a| atom_class(a) == Some(AtomClass::Ord)));
-                    if self.switches_style(start) || !ordinary {
+                    // A script after the group goes on the group's own Ord
+                    // noad, whose nucleus is the boxed sub-list (§1186
+                    // unpacks only a lone unscripted character): `{x'}^2`
+                    // and `{x_5}^{2-d}` are one legal script each on the
+                    // box, not a second script on the inner atom, and
+                    // `{ab}^2` raises the 2 from the box, not from `b`.
+                    let scripted = !semi_simple
+                        && self.next_is_script()
+                        && !(group.atoms.len() == 1 && group.atoms[0].superscript.is_none() && group.atoms[0].subscript.is_none());
+                    if self.switches_style(start) || !ordinary || scripted {
                         atoms.push(MathAtom {
                             nucleus: Nucleus::Group(group),
                             span: token.span,
@@ -1494,7 +1503,7 @@ impl MathParser<'_> {
                 // directly following `^{...}` into the same superscript.
                 TokenKind::Word(ref word) if word == "'" => {
                     let script = self.prime_script();
-                    if atoms.is_empty() {
+                    if !atoms.last().is_some_and(scripts_allowed) {
                         atoms.push(symbol(String::new(), token.span));
                     }
                     let atom = atoms.last_mut().expect("an atom to carry the primes");
@@ -1506,27 +1515,28 @@ impl MathParser<'_> {
                         ));
                     }
                 }
+                // tex.web §1176: a script goes on the tail noad when
+                // `scripts_allowed(tail)`; otherwise (the list is empty, or
+                // ends in glue or a kern) TeX appends a new Ord noad with an
+                // empty nucleus and sets the script on it. `$^1$`, `{}^{14}C`,
+                // `\mathrm{^{1}}` and `\,^2` are all legal TeX.
                 TokenKind::Superscript | TokenKind::Subscript => {
                     self.i += 1;
                     let script = self.script_argument(token.span);
-                    if let Some(atom) = atoms.last_mut() {
-                        let slot = if token.kind == TokenKind::Superscript {
-                            &mut atom.superscript
-                        } else {
-                            &mut atom.subscript
-                        };
-                        if slot.replace(script).is_some() {
-                            self.diagnostics.push(Diagnostic::error(
-                                "duplicate script on a math atom",
-                                Some(token.span),
-                                Some("used the last script and continued".into()),
-                            ));
-                        }
+                    if !atoms.last().is_some_and(scripts_allowed) {
+                        atoms.push(symbol(String::new(), token.span));
+                    }
+                    let atom = atoms.last_mut().expect("a noad to carry the script");
+                    let slot = if token.kind == TokenKind::Superscript {
+                        &mut atom.superscript
                     } else {
+                        &mut atom.subscript
+                    };
+                    if slot.replace(script).is_some() {
                         self.diagnostics.push(Diagnostic::error(
-                            "script marker has no preceding math atom",
+                            "duplicate script on a math atom",
                             Some(token.span),
-                            Some("ignored the unattached script".into()),
+                            Some("used the last script and continued".into()),
                         ));
                     }
                 }
@@ -3586,6 +3596,19 @@ impl MathParser<'_> {
     /// Whether the braced group whose tokens run from `start` to the current
     /// position (its closing brace included) holds a style switch at its own
     /// level, outside any nested group or argument.
+    /// Whether the next token that is not a space or comment starts a
+    /// script: `^`, `_` or a math `'` (spaces are ignored in math).
+    fn next_is_script(&self) -> bool {
+        self.tokens[self.i.min(self.tokens.len())..]
+            .iter()
+            .find(|t| !matches!(t.kind, TokenKind::Space | TokenKind::Comment))
+            .is_some_and(|t| match &t.kind {
+                TokenKind::Superscript | TokenKind::Subscript => true,
+                TokenKind::Word(w) => w == "'",
+                _ => false,
+            })
+    }
+
     fn switches_style(&self, start: usize) -> bool {
         let mut depth = 0usize;
         for token in &self.tokens[start.min(self.i)..self.i] {
@@ -4538,6 +4561,12 @@ pub fn math_alphabet_char(command: &str, ch: char) -> char {
         _ => None,
     };
     mapped.unwrap_or(ch)
+}
+
+/// tex.web `scripts_allowed`: a noad takes scripts, glue and kerns do not
+/// (a script after them opens a new empty Ord, §1176).
+fn scripts_allowed(atom: &MathAtom) -> bool {
+    !matches!(atom.nucleus, Nucleus::Space { .. } | Nucleus::Kern(_))
 }
 
 fn symbol(text: String, span: Span) -> MathAtom {
@@ -8188,8 +8217,9 @@ mod unbraced_argument_tests {
         assert!((laid.width - 0.0).abs() < 1e-9, "only-content has no width: {laid:?}");
         // A following script still parses and renders, as in pdflatex
         // (`$\notreal^2$` extracts as `2.`, `$a\notreal^2$` as `a2.`):
-        // it attaches to the zero-width atom instead of being dropped
-        // with a "script marker has no preceding math atom" diagnostic.
+        // the dropped command leaves glue, so the script opens an empty
+        // Ord (§1176) instead of being dropped with a "script marker has
+        // no preceding math atom" diagnostic.
         for (src, want) in [(r"\notreal^2", vec!["2"]), (r"a\notreal^2", vec!["a", "2"])] {
             let (list, diagnostics) = parse(src);
             assert_eq!(diagnostics.len(), 1, "{src}: {diagnostics:?}");
@@ -8199,7 +8229,7 @@ mod unbraced_argument_tests {
             );
             let mut layout_diagnostics = Vec::new();
             let laid = layout(&list, 10.0, &mut layout_diagnostics);
-            let texts: Vec<&str> = laid.items.iter().map(|item| item.text.as_str()).collect();
+            let texts: Vec<&str> = laid.items.iter().map(|item| item.text.as_str()).filter(|t| !t.is_empty()).collect();
             assert_eq!(texts, want, "{src}");
         }
         // Spacing: dropping must neither gain nor lose space versus the
@@ -10530,5 +10560,62 @@ mod lap_tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+}
+
+/// tex.web §1176 and §1186, pinned against pdfTeX in
+/// `crates/render-pipeline/tests/script_marker_oracle.rs`.
+#[cfg(test)]
+mod script_attachment_tests {
+    use super::*;
+
+    fn parse(source: &str) -> (MathList, Vec<Diagnostic>) {
+        let mut diagnostics = Vec::new();
+        let tokens = crate::lexer::tokenize(source);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+        (list, diagnostics)
+    }
+
+    fn is_empty_ord(atom: &MathAtom) -> bool {
+        matches!(&atom.nucleus, Nucleus::Symbol(s) if s.is_empty())
+    }
+
+    #[test]
+    fn a_script_with_nothing_before_it_opens_an_empty_ord() {
+        for src in ["^1", "_{2}", r"^\circ", r"\mathrm{^{1}}", "^*M'"] {
+            let (list, diagnostics) = parse(src);
+            assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
+            assert!(is_empty_ord(&list.atoms[0]), "{src}: {:?}", list.atoms);
+            let first = &list.atoms[0];
+            assert!(first.superscript.is_some() || first.subscript.is_some(), "{src}");
+        }
+    }
+
+    #[test]
+    fn a_script_after_glue_opens_an_empty_ord() {
+        for src in [r"a\,^2", r"a\quad_{i}"] {
+            let (list, diagnostics) = parse(src);
+            assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
+            let last = list.atoms.last().unwrap();
+            assert!(is_empty_ord(last), "{src}: {:?}", list.atoms);
+            assert!(matches!(list.atoms[1].nucleus, Nucleus::Space { .. }), "{src}");
+            assert!(list.atoms[1].superscript.is_none() && list.atoms[1].subscript.is_none(), "{src}");
+        }
+    }
+
+    #[test]
+    fn a_script_after_a_braced_group_goes_on_the_group() {
+        for src in ["{r'}^{2}", "{x^{}_5}^{2-d}", "{ab}^2", "{a_i}_j", "{f'}_1", "{a'}'"] {
+            let (list, diagnostics) = parse(src);
+            assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "{src}: {:?}", list.atoms);
+            assert!(matches!(list.atoms[0].nucleus, Nucleus::Group(_)), "{src}: {:?}", list.atoms);
+        }
+        // A lone unscripted character is unpacked (§1186): `{x}^2` is `x^2`.
+        let (list, _) = parse("{x}^2");
+        assert!(matches!(&list.atoms[0].nucleus, Nucleus::Symbol(s) if s == "x"), "{:?}", list.atoms);
+        // Without a following script an ordinary group still flattens.
+        let (list, _) = parse("{ab}c");
+        assert_eq!(list.atoms.len(), 3, "{:?}", list.atoms);
     }
 }
