@@ -8420,7 +8420,6 @@ impl P<'_> {
         }
 
         let author_groups = split_on_and(author_tokens);
-        let and_count = author_groups.len().saturating_sub(1);
         let mut author_content: Vec<Inline> = Vec::new();
         let mut wrote_author = false;
         for group in author_groups {
@@ -8441,13 +8440,12 @@ impl P<'_> {
         }
         // `\author{}` (or only blank `\and` slots) is an author that is given
         // but empty: pdfLaTeX sets an empty author box without a warning.
-        if and_count > 0 && wrote_author {
-            self.diags.push(Diagnostic::warning(
-                "multiple \\and-separated authors are typeset one per line; this compiler does not yet place them side by side in columns",
-                Some(author_span),
-                Some("stacked the authors vertically instead of in columns".into()),
-            ));
-        }
+        // No warning for `\and` here: the `LineBreak`s above mark the
+        // `\and` boundaries (their span is the whole `\author{...}` command,
+        // which is how layout tells them apart from `\\`), and the
+        // title-page layout sets each group in its own `tabular[t]{c}`
+        // column side by side, as `\@maketitle` does. (`\author{}` still
+        // sets its empty author box, silently like pdfLaTeX.)
 
         let date_content = match self.date.clone() {
             None => {
