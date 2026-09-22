@@ -57,7 +57,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "makebox", "fbox", "framebox", "parbox", "raisebox", "llap", "rlap", "linespread",
     "vbox", "newline", "smash",
     // Fonts and text symbols.
-    "selectfont", "fontsize", "fontfamily", "usefont",
+    "fontfamily", "usefont",
     "textemdash", "textendash", "textquoteleft", "textquoteright",
     "textquotedblleft", "textquotedblright", "slash",
     // Definitions, counters and programming.

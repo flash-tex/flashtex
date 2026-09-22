@@ -219,6 +219,8 @@
     {"name": "LARGE", "mode": "text", "origin": "text_size", "arguments": "", "description": "size declaration from the class size table", "renders": true},
     {"name": "huge", "mode": "text", "origin": "text_size", "arguments": "", "description": "size declaration from the class size table", "renders": true},
     {"name": "Huge", "mode": "text", "origin": "text_size", "arguments": "", "description": "size declaration from the class size table", "renders": true},
+    {"name": "fontsize", "mode": "text", "origin": "text_dispatch", "arguments": "{size}{skip}", "description": "NFSS: the size and baselineskip the next \\selectfont selects, exactly as given (resolved by the expansion engine)", "renders": true},
+    {"name": "selectfont", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "NFSS: applies the last \\fontsize (its family, series and shape commands are not implemented)", "renders": true},
     {"name": "larger", "mode": "text", "origin": "text_style", "arguments": "{...}", "description": "relsize: one step up the class size table from the size in effect; without an argument, a declaration for the rest of the scope", "renders": true},
     {"name": "smaller", "mode": "text", "origin": "text_style", "arguments": "{...}", "description": "relsize: one step down the class size table from the size in effect; without an argument, a declaration for the rest of the scope", "renders": true},
     {"name": "cite", "mode": "text", "origin": "text_dispatch", "arguments": "[note]{keys}", "description": "numbered citation from thebibliography entries, or biblatex's numeric citation when biblatex is loaded; natbib redefines it as \\citet, or as \\citep when an optional argument follows; with cite.sty loaded the keys are sorted, three or more consecutive numbers become a range, and the separator is cite's thin glue", "renders": true},
@@ -1413,7 +1415,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 223, "percent": 54.4},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 225, "percent": 54.9},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 22, "percent": 73.3},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 47, "percent": 46.1},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -1428,6 +1430,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 20, "percent": 8.3}
     ],
-    "total": {"canonical": 1314, "supported": 578, "percent": 44}
+    "total": {"canonical": 1314, "supported": 580, "percent": 44.1}
   }
 }

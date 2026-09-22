@@ -597,6 +597,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("LARGE", "", "size declaration from the class size table"),
     ("huge", "", "size declaration from the class size table"),
     ("Huge", "", "size declaration from the class size table"),
+    ("fontsize", "{size}{skip}", "NFSS: the size and baselineskip the next \\selectfont selects, exactly as given (resolved by the expansion engine)"),
+    ("selectfont", "", "NFSS: applies the last \\fontsize (its family, series and shape commands are not implemented)"),
     ("larger", "{...}", "relsize: one step up the class size table from the size in effect; without an argument, a declaration for the rest of the scope"),
     ("smaller", "{...}", "relsize: one step down the class size table from the size in effect; without an argument, a declaration for the rest of the scope"),
     ("par", "", "ends the paragraph"),
