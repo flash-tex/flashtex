@@ -790,6 +790,7 @@ fn text_inline(text: &str, span: Span, style: TextStyle, space_before: bool) -> 
         span,
         style,
         space_before,
+        boundary_before: false,
         glue_before: None,
     }
 }

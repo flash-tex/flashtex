@@ -725,6 +725,13 @@ impl P<'_> {
                     Some(column) => tokens.extend(siunitx_entry(raw.tokens, column)),
                     None => tokens.extend(raw.tokens),
                 }
+                // `\insert@column`'s `\unskip` after the entry: its trailing
+                // blank is no glue in front of the `<{}` tokens.
+                if !cell_decls.after.is_empty() {
+                    while matches!(tokens.last().map(|t| &t.token.kind), Some(TokenKind::Space | TokenKind::Comment)) {
+                        tokens.pop();
+                    }
+                }
                 tokens.extend(cell_decls.after);
                 let (tokens, cell_color, multirow) = self.strip_cell_commands(tokens, features);
                 let outer_alignment = self.declared_alignment.take();

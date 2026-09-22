@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use flashtex_compiler::math::MathList;
-use flashtex_compiler::parser::{Block as CBlock, FillLeader, Inline, ItemLabel, Parsed, UnderlineGeom};
+use flashtex_compiler::parser::{Block as CBlock, FillLeader, GlueKind, Inline, InterwordGlue, ItemLabel, Parsed, UnderlineGeom};
 use flashtex_compiler::text_builtins::{TextDimen, TextLogo, TextRule};
 use flashtex_compiler::{DocumentId, Span};
 
@@ -1323,7 +1323,8 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
         inlines
             .iter()
             .map(|i| match i {
-                Inline::Text { text, span, style, space_before, glue_before } => Inline::Text {
+                Inline::Text { text, span, style, space_before, glue_before, boundary_before } => Inline::Text {
+                    boundary_before: *boundary_before,
                     text: text.clone(),
                     span: *span,
                     style: CStyle {
@@ -1450,6 +1451,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
                             ..CStyle::default()
                         },
                         space_before: true,
+                        boundary_before: false,
                         glue_before: None,
                     });
                 }
@@ -3997,7 +3999,7 @@ fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut V
         // `\tag*` label gets them here too), every atom attributed to the
         // command's bytes.
         #[cfg(feature = "compiler-node-surface")]
-        Inline::Reference { key, page: false, equation: true, span, space_before, .. } if labels.rich_tags.contains_key(key) => {
+        Inline::Reference { key, page: false, equation: true, span, space_before, glue_before, .. } if labels.rich_tags.contains_key(key) => {
             use flashtex_compiler::math::{MathAtom, Nucleus};
             let content = labels.rich_tags[key].0.clone();
             let mut list = MathList {
@@ -4023,10 +4025,10 @@ fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut V
                 color: None,
                 size: None,
                 color_ranges: Vec::new(),
-                glue_before: None,
+                glue_before: *glue_before,
             }));
         }
-        Inline::Reference { key, page, equation, span, style, .. } => {
+        Inline::Reference { key, page, equation, span, style, glue_before, .. } => {
             let text = if *page {
                 labels.pages.get(key).map(|p| p.to_string())
             } else {
@@ -4049,10 +4051,11 @@ fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut V
                 // Interword gaps are read from the source bytes between
                 // spans here, never from the compiler's flag.
                 space_before: true,
-                glue_before: None,
+                boundary_before: false,
+                glue_before: *glue_before,
             }));
         }
-        Inline::CleverReference { keys, page, range, label_only, capitalise, span, style, .. } => {
+        Inline::CleverReference { keys, page, range, label_only, capitalise, span, style, glue_before, .. } => {
             let text = clever_reference_text(keys, labels, *page, *range, *label_only, *capitalise);
             reference_spans.push(*span);
             out.push(std::borrow::Cow::Owned(Inline::Text {
@@ -4062,7 +4065,8 @@ fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut V
                 // As for `Reference`: the gap comes from the source bytes
                 // between spans, not the compiler's flag.
                 space_before: true,
-                glue_before: None,
+                boundary_before: false,
+                glue_before: *glue_before,
             }));
         }
         Inline::Verbatim { text, span, space_before, style, glue_before } => {
@@ -4072,6 +4076,7 @@ fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut V
                 span: *span,
                 style: *style,
                 space_before: *space_before,
+                boundary_before: false,
                 glue_before: *glue_before,
             }));
         }
@@ -8537,6 +8542,35 @@ fn url_break_penalty(before: &str, next: char) -> Option<i32> {
     }
 }
 
+/// Feeds a compiler text style to the paragraph cache key: every field
+/// the items read, packed into one word (a derived `Hash` is a hasher call
+/// per field, per word of the block, on every keystroke), the colour and
+/// CJK run only when set.
+fn hash_style(s: &flashtex_compiler::parser::TextStyle, h: &mut impl std::hash::Hasher) {
+    use std::hash::Hash;
+    let key = |k: crate::nfss::FontKey| (k.family as u64) | (k.series as u64) << 2 | (k.shape as u64) << 4;
+    let flags = [s.bold, s.italic, s.slanted, s.small_caps, s.ams_tiny, s.medium, s.literal, s.italic_correction.before, s.italic_correction.after];
+    let mut word = key(s.font.key) | s.font.undefined.map_or(0, |u| 0x80 | key(u)) << 7 | s.size.map_or(0, |l| l as u64 + 1) << 15 | (s.family as u64) << 19;
+    for (i, flag) in flags.into_iter().enumerate() {
+        word |= u64::from(flag) << (21 + i);
+    }
+    h.write_u64(word);
+    if s.color.is_some() || s.cjk.is_some() {
+        (s.color, s.cjk).hash(h);
+    }
+}
+
+/// [`hash_style`] for the glue in front of a run.
+fn hash_glue(g: &Option<flashtex_compiler::parser::InterwordGlue>, h: &mut impl std::hash::Hasher) {
+    match g {
+        None => h.write_u8(0),
+        Some(g) => {
+            h.write_u8(1 + g.kind as u8);
+            hash_style(&g.style, h);
+        }
+    }
+}
+
 /// The style of a run from the compiler's node (PLAN1 slice 2): the NFSS
 /// font its font commands selected (`parser::TextStyle::font`, macro
 /// expansion included), and the size, colour, CJK run, verbatim and
@@ -10337,13 +10371,13 @@ fn items_cached(
             // in front's.
             Inline::Text { text, style, glue_before, .. } => {
                 text.hash(&mut h);
-                style.hash(&mut h);
-                glue_before.hash(&mut h);
+                hash_style(style, &mut h);
+                hash_glue(glue_before, &mut h);
             }
             // The tag is the whole payload.
             Inline::LineBreak { .. } => {}
             Inline::Math { list, display, number, color, size, glue_before, .. } => {
-                glue_before.hash(&mut h);
+                hash_glue(glue_before, &mut h);
                 color.hash(&mut h);
                 size.hash(&mut h);
                 display.hash(&mut h);
@@ -10359,7 +10393,7 @@ fn items_cached(
                 this_page.hash(&mut h);
             }
             Inline::Reference { key, page, equation, style, .. } => {
-                style.hash(&mut h);
+                hash_style(style, &mut h);
                 key.hash(&mut h);
                 page.hash(&mut h);
                 equation.hash(&mut h);
@@ -10379,8 +10413,8 @@ fn items_cached(
                 t.inline_lists().iter().map(|l| l.len()).sum::<usize>().hash(&mut h);
             }
             Inline::Verbatim { text, style, glue_before, .. } => {
-                style.hash(&mut h);
-                glue_before.hash(&mut h);
+                hash_style(style, &mut h);
+                hash_glue(glue_before, &mut h);
                 text.hash(&mut h);
             }
             Inline::ColorBox(b) => {
@@ -10400,21 +10434,21 @@ fn items_cached(
             }
             Inline::Logo { logo, style, .. } => {
                 logo.hash(&mut h);
-                style.hash(&mut h);
+                hash_style(style, &mut h);
             }
             Inline::Rule { rule, style, .. } => {
                 rule.hash(&mut h);
-                style.hash(&mut h);
+                hash_style(style, &mut h);
             }
             Inline::Kern { amount, style, .. } => {
                 amount.hash(&mut h);
-                style.hash(&mut h);
+                hash_style(style, &mut h);
             }
             // The leader is hashed: `\hfill` and `\hrulefill` differ only in
             // it, and they carry different diagnostics, so an edit between
             // them must not reuse the cached block.
             Inline::HFill { leader, style, .. } => {
-                style.hash(&mut h);
+                hash_style(style, &mut h);
                 match leader {
                     FillLeader::None => 0u8,
                     FillLeader::Rule => 1u8,
@@ -10423,11 +10457,11 @@ fn items_cached(
                 .hash(&mut h);
             }
             Inline::HSpace { pt, style, .. } => {
-                style.hash(&mut h);
+                hash_style(style, &mut h);
                 pt.to_bits().hash(&mut h);
             }
             Inline::TextGlue { em, style, .. } => {
-                style.hash(&mut h);
+                hash_style(style, &mut h);
                 em.to_bits().hash(&mut h);
             }
             Inline::MathRows { rows, aligned, .. } => {
@@ -10451,7 +10485,7 @@ fn items_cached(
             // Lowered by `lower_inline` like `Reference`, so every field
             // that selects its text is part of the key.
             Inline::CleverReference { keys, page, range, label_only, capitalise, linked, style, .. } => {
-                style.hash(&mut h);
+                hash_style(style, &mut h);
                 keys.hash(&mut h);
                 (page, range, label_only, capitalise, linked).hash(&mut h);
             }
@@ -10640,7 +10674,9 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             items.push(Item::HSpace { pt, stretch_pt, shrink_pt });
             return;
         }
-        if space {
+        // Glue never opens a list: TeX drops a space read in vertical mode
+        // (a mark or a `\label` before the first word sets nothing).
+        if space && !items.is_empty() {
             items.push(Item::Space { style, factor, no_break: false });
         }
         if pending_newblock.take() {
@@ -11082,7 +11118,10 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // the text size where it starts (`\check@mathfonts`).
                 let size_cpt = declared_size(*math_size, size);
                 // The glue is the current font's where the space sits.
-                let gap = space_between(prev_end, prev_span, *span, None, after_control_word);
+                // The space in front is the compiler's `glue_before`; the gap is
+                // still read for the cursor and `\newblock` (`space_between`).
+                let _ = space_between(prev_end, prev_span, *span, None, after_control_word);
+                let gap = glue_before.is_some();
                 let mut gap_style = glue_before.map_or(ambient, |g| node_style(&g.style, size));
                 gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, size_cpt);
                 push_gap(&mut items, gap, gap_style, factor);
@@ -11251,20 +11290,22 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 pending_accent = None;
                 after_control_word = false;
             }
-            Inline::Text { text, span, .. } if text == " " && text_of(span.document).get(span.start..span.end) == Some("\\ ") => {
-                // `\ ` (control space, lexed as the word " "): interword glue at
-                // space factor 1000 (§1041-1044), after which TeX skips blanks.
-                let has_space = space_between(prev_end, prev_span, *span, Some("\\ "), after_control_word);
-                let Inline::Text { style: compiler_style, glue_before, .. } = &**inline else { unreachable!() };
-                let mut style = node_style(compiler_style, size);
-                style.size_cpt = declared_size(compiler_style.size, size);
-                if has_space || pending_head_sep.get().is_some() {
-                    let mut gap_style = glue_before.map_or(ambient, |g| node_style(&g.style, size));
-                    gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
-                    push_gap(&mut items, has_space, gap_style, factor);
+            Inline::Text { span, glue_before: Some(InterwordGlue { kind: GlueKind::ControlSpace, .. }), .. } => {
+                // `\ ` (the compiler's control-space node, `GlueKind::
+                // ControlSpace`, from the source or a macro body): interword
+                // glue at space factor 1000 (§1041-1044), after which TeX
+                // skips blanks. A space read before it is not glue of its own
+                // (the compiler drops it), unless a theorem head's separator
+                // is pending.
+                let _ = space_between(prev_end, prev_span, *span, Some("\\ "), after_control_word);
+                let Inline::Text { style: compiler_style, .. } = &**inline else { unreachable!() };
+                let style = node_style(compiler_style, size);
+                if pending_head_sep.get().is_some() {
+                    push_gap(&mut items, false, style, factor);
                 }
                 items.push(Item::Space { style, factor: 1000, no_break: false });
                 prev_size_cpt = style.size_cpt;
+                ambient = style;
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
                 factor = 1000;
@@ -11290,7 +11331,17 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 } else {
                     None
                 };
-                let mut has_space = space_between(prev_end, prev_span, *span, Some(text), after_control_word);
+                // Whether TeX appended interword glue in front of the run is the
+                // compiler's `glue_before` (PLAN1 slice 2): a space token read in
+                // horizontal mode, not after a control word or a line break.
+                // The gap is still read for the macro-body cursor, `\newblock`,
+                // the CJK boundaries below, and one boundary the token stream
+                // does not show: the end of an `\input` file whose last line
+                // has no newline still ends with `\endlinechar`, a space.
+                let gap = space_between(prev_end, prev_span, *span, Some(text), after_control_word);
+                let Inline::Text { glue_before: text_glue, .. } = &**inline else { unreachable!() };
+                let crossed_input = prev_span.is_some_and(|p| p.document != span.document);
+                let mut has_space = text_glue.is_some() || crossed_input && gap;
                 after_control_word = false;
                 // A `CJK` environment boundary in the gap, and `CJK*`'s
                 // `\ignorespaces` after the previous CJK character
@@ -11425,8 +11476,12 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // `Hobby}` then `,` is set without cmr's `y`-`,` kern of
                 // -0.0833 em (-0.91 pt at 10.95 pt, which moved every later
                 // word of natbib-review's citation lines 0.91 bp left). Such
-                // a run starts a segment of its own, like `{}` below.
-                let kern_break = std::cell::Cell::new(citation && prev_span == Some(*span) && matches!(items.last(), Some(Item::Word(_))));
+                // a run starts a segment of its own.
+                // An empty group or `\relax` before the run (the compiler's
+                // `boundary_before`, `Shelf{}ful`, also from a macro body)
+                // stops the program the same way.
+                let Inline::Text { boundary_before, .. } = &**inline else { unreachable!() };
+                let kern_break = std::cell::Cell::new((citation && prev_span == Some(*span) || *boundary_before) && matches!(items.last(), Some(Item::Word(_))));
                 // The compiler's input-ligature pass (`lexer::
                 // apply_text_ligatures`) makes the text of a word shorter
                 // than its bytes (`--` is one U+2013), so the sources are
@@ -11490,7 +11545,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     if kern_break.replace(false) {
                         push_segment_apart(items, text, srcs, style);
                     } else {
-                        push_segment_in(items, text, srcs, style, source);
+                        push_segment(items, text, srcs, style);
                     }
                     run.clear();
                 };
@@ -11540,21 +11595,11 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     // no legal breakpoint at it (`~` is catcode 13 and
                     // expands to `\nobreakspace` = `\leavevmode\nobreak\ `,
                     // latex.ltx 9411-9418; `inputenc` maps a typed U+00A0
-                    // onto the same command).
-                    //
-                    // U+00A0 in the text is self-describing and needs no
-                    // lookback, which is the point: the `~` arm below can
-                    // only recognise a tie whose span covers its own byte,
-                    // and replacement text carries the *invocation's* span,
-                    // so `\newcommand{\fig}{Figure~7}` read `\fig` there and
-                    // set a literal tilde. It cannot be fixed by dropping
-                    // the span test either -- `\textasciitilde` produces the
-                    // same character and must stay a tilde. A compiler that
-                    // resolves the tie itself (`lexer::NO_BREAK_SPACE`)
-                    // removes the ambiguity; until `vendor/compiler` is
-                    // re-pinned past that change, the `~` arm still carries
-                    // every tie written directly in a source.
-                    if ch == NO_BREAK_SPACE || (ch == '~' && source.get(src.start..src.end) == Some("~")) {
+                    // onto the same command). The compiler hands every tie it
+                    // read over as U+00A0 (`parser::word_node`), from the
+                    // source or a macro body alike (`\newcommand{\fig}
+                    // {Figure~7}`), while `\textasciitilde` stays a `~`.
+                    if ch == NO_BREAK_SPACE {
                         flush(&mut run, &mut items, &mut factor);
                         items.push(Item::Space {
                             style,
@@ -11823,52 +11868,23 @@ fn inline_declared_size(inline: &Inline, base: u32) -> Option<u16> {
 }
 
 /// Appends a segment to the current word or starts a new word.
+///
+/// One segment is shaped as one string, with the face's ligature/kern
+/// program running across it, so a run in the same style joins the segment
+/// before it. Where TeX's lig/kern lookahead stops at a non-character token
+/// between two runs (§1034-1040) -- an empty group or `\relax`
+/// (`Inline::Text::boundary_before`): `-{}-` is two hyphens in `T1/cmtt`
+/// where `--` is the en dash of `ectt1095`'s `LIG O 55 O 25`, `f{}i` two
+/// letters -- the caller uses [`push_segment_apart`] instead. (A closing
+/// brace alone, `Schr\"{o}dinger`, stops the program too but leaves TeX's
+/// hyphenation pass one word, and a segment is the unit `typeset`
+/// hyphenates, so the compiler does not mark it.)
 fn push_segment(items: &mut Vec<Item>, text: String, chars: Vec<CharSrc>, style: TextStyle) {
-    push_segment_in(items, text, chars, style, "");
-}
-
-/// Appends a segment to the current word without joining the segment
-/// before it: the two are shaped apart, so no ligature or kern of the face
-/// runs across the boundary (a non-character token between them in TeX).
-fn push_segment_apart(items: &mut Vec<Item>, text: String, chars: Vec<CharSrc>, style: TextStyle) {
-    let segment = Segment { text, chars, style };
-    match items.last_mut() {
-        Some(Item::Word(word)) => word.segments.push(segment),
-        _ => items.push(Item::Word(Word { segments: vec![segment] })),
-    }
-}
-
-/// [`push_segment`] for a run read from `source`, which decides whether it
-/// joins the segment before it (see the empty-group rule inside).
-fn push_segment_in(items: &mut Vec<Item>, text: String, chars: Vec<CharSrc>, style: TextStyle, source: &str) {
     let segment = Segment { text, chars, style };
     match items.last_mut() {
         Some(Item::Word(word)) => {
             if let Some(last) = word.segments.last_mut() {
-                // One segment is shaped as one string, with the face's
-                // ligature/kern program running across it. An empty group
-                // between two runs is the token TeX's lig/kern lookahead
-                // stops at (§1034-1040: only a character token continues
-                // the program): `-{}-` is two hyphens in `T1/cmtt` where
-                // `--` is the en dash of `ectt1095`'s `LIG O 55 O 25`, and
-                // `f{}i` is two letters. As one string, `\texttt{-{}-set}`
-                // lost a hyphen's 5.66 pt on every such `description` item
-                // of `fixtures/real-world/listings-manual` (page 3). So the
-                // run starts a segment of its own there.
-                //
-                // Only the empty group, deliberately: a closing brace alone
-                // (`Schr\"{o}dinger`, `{Experi}ence`) stops the program too,
-                // but leaves TeX's hyphenation pass one word (§898 walks the
-                // character nodes, and a group leaves none), and a segment
-                // is also the unit `typeset` hyphenates — the kern it would
-                // save is worth less than the hyphenation points it would
-                // lose. `{}` inside a word is the idiom for "no ligature"
-                // and rarely wants a hyphen either side of it.
-                let empty_group = match (last.chars.last(), segment.chars.first()) {
-                    (Some(prev), Some(next)) => prev.document == next.document && source.get(prev.end..next.start) == Some("{}"),
-                    _ => false,
-                };
-                if last.style == style && !empty_group {
+                if last.style == style {
                     last.text.push_str(&segment.text);
                     last.chars.extend(segment.chars);
                     return;
@@ -11879,6 +11895,17 @@ fn push_segment_in(items: &mut Vec<Item>, text: String, chars: Vec<CharSrc>, sty
         _ => items.push(Item::Word(Word {
             segments: vec![segment],
         })),
+    }
+}
+
+/// Appends a segment to the current word without joining the segment
+/// before it: the two are shaped apart, so no ligature or kern of the face
+/// runs across the boundary (a non-character token between them in TeX).
+fn push_segment_apart(items: &mut Vec<Item>, text: String, chars: Vec<CharSrc>, style: TextStyle) {
+    let segment = Segment { text, chars, style };
+    match items.last_mut() {
+        Some(Item::Word(word)) => word.segments.push(segment),
+        _ => items.push(Item::Word(Word { segments: vec![segment] })),
     }
 }
 
@@ -11904,6 +11931,8 @@ fn ligature_char_sources(source: &str, span: Span, text: &str) -> Option<Vec<Cha
                 '\u{201D}' => "''",
                 '\u{00A1}' => "!`",
                 '\u{00BF}' => "?`",
+                // A tie (`parser::word_node`).
+                '\u{00A0}' => "~",
                 '\u{2018}' => "`",
                 '\u{2019}' => "'",
                 _ => return None,

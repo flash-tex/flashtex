@@ -389,8 +389,7 @@ impl P<'_> {
         let outer_par_leading_blocks = self.block_par_leading.len();
         let mut blocks = Vec::new();
         let mut para = Vec::new();
-        self.parse_stream(&mut blocks, &mut para);
-        self.flush_paragraph(&mut blocks, &mut para);
+        self.parse_detached(&mut blocks, &mut para);
         self.block_dependencies.truncate(outer_dependency_blocks);
         // The box's paragraphs never reach `blocks`: their leadings must not
         // reach `block_par_leading` either, which carries exactly one entry

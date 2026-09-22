@@ -288,6 +288,20 @@ pub enum Inline {
         /// Real TeX never inserts an inter-word gap that is not present in
         /// the source; see `layout::LayoutCursor::place`.
         space_before: bool,
+        /// The interword glue TeX appends in front of this run, with the
+        /// font it is read in (PLAN1 slice 2): the space token's font is
+        /// the one in force where the space was read, which is not this
+        /// run's when a group or a font command lies between them
+        /// (`\textbf{a} b`: a medium space; `a {\bfseries b}`: medium too;
+        /// `{\bfseries a b}`: bold). `None` when no space token was read
+        /// since the previous word. Set for the words of running text and of
+        /// flattened arguments (headings, captions, style arguments).
+        glue_before: Option<InterwordGlue>,
+        /// An empty group (`{}`, from the source or a macro body) or a
+        /// `\relax` stands between the previous word and this one with no
+        /// space: TeX's ligature/kern program stops there (§1034-1040), so
+        /// `Shelf{}ful` keeps its two `f`s apart.
+        boundary_before: bool,
     },
     LineBreak {
         span: Span,
@@ -321,6 +335,9 @@ pub enum Inline {
         /// .1em minus .1em`, cite.sty's `\citepunct`); zero for `\quad`.
         plus_em: f64,
         minus_em: f64,
+        /// The font in force at the command, whose quad the `em`s are
+        /// (PLAN1 slice 2).
+        style: TextStyle,
     },
     Math {
         list: MathList,
@@ -341,6 +358,9 @@ pub enum Inline {
         /// `\textcolor`, merged per colour in source order; an atom takes
         /// the colour of the range containing its span, else `color`.
         color_ranges: Vec<(Span, DeviceColor)>,
+        /// See `Inline::Text::glue_before`: the space before `$`, in the
+        /// font where it was read.
+        glue_before: Option<InterwordGlue>,
     },
     /// A multi-row display (`gather`, `align`, `eqnarray` and starred forms).
     /// `aligned` cells share tab stops across rows (`align` alternates
@@ -366,6 +386,11 @@ pub enum Inline {
         span: Span,
         /// See `Inline::Text::space_before`.
         space_before: bool,
+        /// The font in force where the reference is typeset (its text is
+        /// set in it; PLAN1 slice 2).
+        style: TextStyle,
+        /// See `Inline::Text::glue_before`.
+        glue_before: Option<InterwordGlue>,
     },
     /// A `cleveref`/`hyperref` reference whose label names are resolved after
     /// the document has been laid out. The compiler has no link backend yet;
@@ -381,6 +406,10 @@ pub enum Inline {
         span: Span,
         /// See `Inline::Text::space_before`.
         space_before: bool,
+        /// The font in force where the reference is typeset.
+        style: TextStyle,
+        /// See `Inline::Text::glue_before`.
+        glue_before: Option<InterwordGlue>,
     },
     /// `\thepage`: the current page's formatted number. The page is only
     /// known once the paragraph is set, so this resolves at layout time
@@ -420,6 +449,9 @@ pub enum Inline {
         /// What fills the glue: nothing (`\hfill`), a rule (`\hrulefill`)
         /// or dots (`\dotfill`).
         leader: FillLeader,
+        /// The font in force at the command: a leader's dots and rule are set
+        /// in it (PLAN1 slice 2).
+        style: TextStyle,
     },
     /// `\hspace{<dimen>}`/`\hspace*{<dimen>}` and `\hskip<glue>`: horizontal
     /// glue. `pt` is the fixed part, already converted (see `parse_dimen_pt`
@@ -448,6 +480,9 @@ pub enum Inline {
         stretch_fil: u8,
         shrink_pt: f64,
         shrink_fil: u8,
+        /// The font in force at the command (an `em` in it is this font's
+        /// quad; PLAN1 slice 2).
+        style: TextStyle,
     },
     /// `\=` inside `tabbing`: record the current horizontal position (the
     /// end of the placed content so far, excluding reserved inter-word
@@ -528,6 +563,11 @@ pub enum Inline {
         span: Span,
         /// See `Inline::Text::space_before`.
         space_before: bool,
+        /// `\verb`'s `\verbatim@font` (`\normalfont\ttfamily`) over the
+        /// size and colour in force, `literal` set (PLAN1 slice 2).
+        style: TextStyle,
+        /// See `Inline::Text::glue_before`.
+        glue_before: Option<InterwordGlue>,
     },
     /// xcolor `\colorbox`/`\fcolorbox` (see [`ColorBox`]).
     ColorBox(Box<ColorBox>),
@@ -1577,6 +1617,195 @@ pub struct TextStyle {
     /// alone. The render pipeline sizes the characters of a run that carries
     /// this from the family's subfont metrics (`render-pipeline/src/cjk.rs`).
     pub cjk: Option<CjkRun>,
+    /// The NFSS font the font commands read so far select (PLAN1 slice 2):
+    /// every `\bfseries`, `\itshape`, `\emph`, `\normalfont`, `\bf`, ... is
+    /// applied through [`crate::nfss`]'s change rules and substitutions in
+    /// the document's scheme ([`crate::nfss::Scheme::of`]: `lmodern`, T1)
+    /// as the parser reads it, whether it was written in the document or
+    /// came from a macro body, a `\let`, or a package file. Scoped like the
+    /// rest of the style. Only font *commands* move it: a block's own base
+    /// font (a heading's `\bfseries`, a description label's, a theorem
+    /// body's `\itshape`) is set by the compiler on `bold`/`italic` but
+    /// left out of here, because the render pipeline applies those bases
+    /// itself (`typeset::merge_style`). `bold`..`family` above stay the
+    /// Core 14 layout's approximation of the same commands.
+    pub font: crate::nfss::Selected,
+    /// `\mdseries`/`\textmd` was the last series choice: a bold base (a
+    /// heading, a description label) is then not applied to the text.
+    /// `\bfseries`/`\textbf` and the resets (`\normalfont`, `\bf`, `\it`,
+    /// ...) clear it; a heading's own `\normalfont` is read off `bold`,
+    /// since the compiler starts heading text bold.
+    pub medium: bool,
+    /// Verbatim text (`\verb`, the `verbatim` and `lstlisting` bodies,
+    /// `\lstinline`): set with every ligature and kern suppressed
+    /// (`\@noligs`) and each blank a control space, unlike `\texttt` over
+    /// the same characters.
+    pub literal: bool,
+    /// The italic corrections LaTeX's `\maybe@ic` puts around this run.
+    /// Set on one run only (the first or last of a text font command's
+    /// argument), never inherited: groups and later runs start clear.
+    pub italic_correction: ItalicCorrection,
+}
+
+/// One interword glue in horizontal mode ([`Inline::Text::glue_before`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InterwordGlue {
+    /// The font in force where the space was read: its `\fontdimen2..4`
+    /// (and `\fontdimen7` after a sentence end) size the glue.
+    pub style: TextStyle,
+    pub kind: GlueKind,
+}
+
+/// What produced an [`InterwordGlue`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GlueKind {
+    /// A space token (a blank, a newline, a macro body's space).
+    Normal,
+    /// `\ ` (TeX §1041-1044: the space factor is ignored).
+    ControlSpace,
+    /// `~`, `\nobreakspace`: a control space with no break allowed.
+    Tie,
+}
+
+/// [`P::attach_glue`] for a space read at `space` (its style), consumed
+/// here unless `inline` sets nothing.
+fn attach_space(inline: &mut Inline, space: &mut Option<TextStyle>) {
+    if space.is_none() || matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. }) || is_overlay_marker(inline) {
+        return;
+    }
+    let glue = space.take().map(|style| InterwordGlue { style: glue_style(style), kind: GlueKind::Normal });
+    if let Inline::Text { glue_before, .. }
+    | Inline::Math { glue_before, .. }
+    | Inline::Verbatim { glue_before, .. }
+    | Inline::Reference { glue_before, .. }
+    | Inline::CleverReference { glue_before, .. } = inline
+    {
+        if glue_before.is_none() {
+            *glue_before = glue;
+        }
+    }
+}
+
+/// A citation run's style in the text around it (`outer`). `bib` and
+/// `natbib` build their runs on `TextStyle::default()`, or on
+/// `TextStyle::BOLD` for an undefined key's `?` (latex.ltx `\@citex`,
+/// natbib alike: `\hbox{\reset@font\bfseries ?}`); TeX sets a label in the
+/// font in force at the `\cite`, and `\reset@font` (`\normalfont`) keeps
+/// the size and colour. A label's own markup (`\emph{et~al.}`) is then set
+/// over this (`P::set_citation_source`), so `\emph` turns upright inside
+/// italic text.
+fn citation_style(outer: TextStyle, run: TextStyle, scheme: crate::nfss::Scheme) -> TextStyle {
+    let base = TextStyle { italic_correction: ItalicCorrection::default(), ..outer };
+    if !run.bold {
+        return base;
+    }
+    let font = nfss_commands("bf").iter().fold(base.font, |f, c| f.then(scheme, *c));
+    TextStyle { bold: true, italic: false, slanted: false, small_caps: false, family: TextFamily::Roman, font, medium: false, ..base }
+}
+
+/// Whether the space token at `tokens[at]` is interword glue, given the
+/// material already set in the list (`set`): not in vertical mode (nothing
+/// set yet), not after a control word (TeX's state S skips it: `\LaTeX b`),
+/// and not after a line break or a display, whose lookahead
+/// (`\@ifstar`/`\@ifnextchar`, `\ignorespaces` after `\]`) skips it.
+fn space_is_glue(tokens: &[InputToken], at: usize, set: &[Inline]) -> bool {
+    // A `\label`, a `\pagestyle` or an overlay marker sets nothing: after
+    // `\section{..}\label{..}` the list is still in vertical mode.
+    let last = set.iter().rev().find(|i| !(matches!(i, Inline::Label { .. } | Inline::PageStyle { .. }) || is_overlay_marker(i)));
+    match last {
+        None | Some(Inline::LineBreak { .. } | Inline::Math { display: true, .. } | Inline::MathRows { .. }) => return false,
+        Some(_) => {}
+    }
+    let previous = tokens[..at].iter().rev().find(|t| !matches!(t.token.kind, TokenKind::Comment));
+    // After `\ ` too: a control space leaves TeX in state S.
+    let control_space = previous.is_some_and(|t| t.token.control_symbol && matches!(&t.token.kind, TokenKind::Word(w) if w == " "));
+    !control_space && !matches!(previous.map(|t| &t.token.kind), Some(TokenKind::Command(_)))
+}
+
+/// Pushes the text node of the word token `tokens[index]`, whose text
+/// (ligatures applied) is `text`, set in `style`, with the space read
+/// before it (`space`, taken). `\ ` is the control space's own node: its
+/// `glue_before` is `GlueKind::ControlSpace`; a space read before it is
+/// glue of its own (`a \ b` has two), carried by an empty run. A `~` is a
+/// tie, carried as U+00A0 (latex.ltx's active `~` is `\nobreakspace`:
+/// `\leavevmode\nobreak\ `), which the render pipeline sets as an
+/// unbreakable control space; `\~` is the accent and stays.
+#[allow(clippy::too_many_arguments)]
+fn push_word(target: &mut Vec<Inline>, tokens: &[InputToken], index: usize, text: String, style: TextStyle, space_before: bool, space: &mut Option<TextStyle>, tie: bool) {
+    let node = word_node(tokens, index, text, style, space_before, space, tie, target);
+    target.push(node);
+}
+
+/// [`push_word`]'s node (and, before a control space, the empty run of the
+/// space read before it, pushed onto `target` first).
+#[allow(clippy::too_many_arguments)]
+fn word_node(tokens: &[InputToken], index: usize, text: String, style: TextStyle, space_before: bool, space: &mut Option<TextStyle>, tie: bool, target: &mut Vec<Inline>) -> Inline {
+    let input = &tokens[index];
+    let control_symbol = input.token.control_symbol;
+    if control_symbol && text == " " {
+        if let Some(before) = space.take() {
+            let glue = InterwordGlue { style: glue_style(before), kind: GlueKind::Normal };
+            target.push(Inline::Text { text: String::new(), span: Span::in_document(input.token.span.document, input.token.span.start, input.token.span.start), style: before, space_before, glue_before: Some(glue), boundary_before: false });
+        }
+        let glue = InterwordGlue { style: glue_style(style), kind: GlueKind::ControlSpace };
+        return Inline::Text { text, span: input.token.span, style, space_before: false, glue_before: Some(glue), boundary_before: false };
+    }
+    let text = if tie && !control_symbol && text.contains('~') { text.replace('~', "\u{a0}") } else { text };
+    let glue_before = space.take().map(|style| InterwordGlue { style: glue_style(style), kind: GlueKind::Normal });
+    let boundary_before = glue_before.is_none() && empty_group_before(tokens, index);
+    Inline::Text { text, span: input.token.span, style, space_before, glue_before, boundary_before }
+}
+
+/// Whether an empty group or a `\relax` stands between the word token at
+/// `index` and the word before it, with nothing else but groups between
+/// ([`Inline::Text::boundary_before`]). A lone brace (`{Experi}ence`) is
+/// not one: it stops the lig/kern program too, but TeX still hyphenates
+/// the characters on both sides as one word.
+fn empty_group_before(tokens: &[InputToken], index: usize) -> bool {
+    let mut boundary = false;
+    let mut after_open = false;
+    for input in tokens[..index].iter().rev() {
+        match &input.token.kind {
+            TokenKind::Comment => {}
+            // Walking backwards: `}` then `{` is `{}`.
+            TokenKind::RBrace => after_open = true,
+            TokenKind::LBrace => {
+                boundary |= after_open;
+                after_open = false;
+            }
+            TokenKind::Command(name) if name == "relax" => {
+                boundary = true;
+                after_open = false;
+            }
+            TokenKind::Word(_) => return boundary,
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// A glue's font: the style in force, without a run's own marks.
+fn glue_style(style: TextStyle) -> TextStyle {
+    TextStyle { italic_correction: ItalicCorrection::default(), ..style }
+}
+
+/// The two `\maybe@ic` decisions of a text font command (latex.ltx
+/// `\DeclareTextFontCommand`, `\text@command`, `\check@nocorr@`,
+/// `\maybe@ic@`): `\textit{..}` is `\itshape\check@icl #1\check@icr`.
+/// Each one inserts `\/` (the italic correction of the character in front,
+/// under an interword space: `\sw@slant`) when the font in force where it
+/// runs is upright (`\fontdimen1 = 0`) and the next token is not in
+/// `\nocorrlist` (`,.`). Decided by the parser, which knows both the font
+/// and the next token; the render pipeline only places the kern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct ItalicCorrection {
+    /// `\check@icl`, before this run, the first of the argument: the
+    /// argument's own font is upright (`of \textbf{x}`: the kern of `f`).
+    pub before: bool,
+    /// `\check@icr` (`\aftergroup\maybe@ic`), after this run, the last of
+    /// the argument: the font after the command's group is upright
+    /// (`\textit{leaf} then`: the kern of `f`).
+    pub after: bool,
 }
 
 /// What a `CJK` environment puts on the text inside it (see
@@ -1863,7 +2092,167 @@ impl TextStyle {
         ams_tiny: false,
         color: None,
         cjk: None,
+        font: crate::nfss::Selected::NORMAL,
+        medium: false,
+        literal: false,
+        italic_correction: ItalicCorrection { before: false, after: false },
     };
+}
+
+/// The NFSS commands of a font command or declaration (latex.ltx 14213-14222
+/// `\DeclareTextFontCommand`, `\emph`, and `\DeclareOldFontCommand`'s LaTeX
+/// 2.09 forms, which reset first: `\bf` is `\normalfont\bfseries`).
+fn nfss_commands(name: &str) -> &'static [crate::nfss::Command] {
+    use crate::nfss::{Command as C, FamilyKind as F, Series as S, ShapeRequest as R};
+    match name {
+        "textbf" | "bfseries" => &[C::Series(S::Bx)],
+        "textmd" | "mdseries" => &[C::Series(S::M)],
+        "textit" | "itshape" => &[C::Shape(R::It)],
+        "textsl" | "slshape" => &[C::Shape(R::Sl)],
+        "textsc" | "scshape" => &[C::Shape(R::Sc)],
+        "textup" | "upshape" => &[C::Shape(R::Up)],
+        "textrm" | "rmfamily" => &[C::Family(F::Rm)],
+        "textsf" | "sffamily" => &[C::Family(F::Sf)],
+        "texttt" | "ttfamily" => &[C::Family(F::Tt)],
+        "textnormal" | "normalfont" => &[C::Normal],
+        "emph" | "em" => &[C::Emph],
+        "bf" => &[C::Normal, C::Series(S::Bx)],
+        "it" => &[C::Normal, C::Shape(R::It)],
+        "sl" => &[C::Normal, C::Shape(R::Sl)],
+        "sc" => &[C::Normal, C::Shape(R::Sc)],
+        "rm" => &[C::Normal, C::Family(F::Rm)],
+        "sf" => &[C::Normal, C::Family(F::Sf)],
+        "tt" => &[C::Normal, C::Family(F::Tt)],
+        _ => &[],
+    }
+}
+
+/// The text font commands (`\DeclareTextFontCommand`, latex.ltx
+/// 14213-14227): the ones that run `\check@icl`/`\check@icr`.
+fn text_font_command(name: &str) -> bool {
+    matches!(
+        name,
+        "textrm" | "textsf" | "texttt" | "textnormal" | "textbf" | "textmd" | "textit" | "textsl" | "textsc" | "textup" | "emph"
+    )
+}
+
+/// An open text font command group whose `\maybe@ic` checks run at its
+/// `}` ([`P::close_text_command_group`]).
+#[derive(Debug, Clone, Copy)]
+struct TextCommandGroup {
+    /// `brace_stack.len()` inside the group.
+    depth: usize,
+    /// `para.len()` when the group opened: the argument's runs follow.
+    start: usize,
+    /// [`P::paragraph_flushes`] when the group opened.
+    flushes: u64,
+    /// `\check@icl` applies (decided at the `{`).
+    before: bool,
+    /// `\check@icr` is armed (no `\nocorr` in the argument).
+    check_after: bool,
+}
+
+/// The index of the `}` closing the group whose content starts at `from`.
+fn group_close(tokens: &[InputToken], from: usize) -> usize {
+    let mut depth = 0usize;
+    for (offset, input) in tokens.get(from..).unwrap_or(&[]).iter().enumerate() {
+        match input.token.kind {
+            TokenKind::LBrace => depth += 1,
+            TokenKind::RBrace if depth == 0 => return from + offset,
+            TokenKind::RBrace => depth -= 1,
+            _ => {}
+        }
+    }
+    tokens.len()
+}
+
+/// `\text@command`/`\check@nocorr@` on a text font command's argument:
+/// whether `\check@icl` and `\check@icr` are `\maybe@ic` (`true`) or
+/// empty. An empty argument or a lone space runs neither; a leading
+/// `\nocorr` drops the left check, a `\nocorr` after the first token the
+/// right one (both when there are two).
+fn check_nocorr(argument: &[InputToken]) -> (bool, bool) {
+    let tokens: Vec<&InputToken> = argument.iter().filter(|t| !matches!(t.token.kind, TokenKind::Comment)).collect();
+    if tokens.is_empty() || tokens.iter().all(|t| matches!(t.token.kind, TokenKind::Space)) {
+        return (false, false);
+    }
+    let nocorr = |t: &&InputToken| matches!(&t.token.kind, TokenKind::Command(n) if n == "nocorr");
+    let first = tokens.iter().position(|t| !matches!(t.token.kind, TokenKind::Space)).unwrap_or(0);
+    let leading = nocorr(&tokens[first]);
+    let later = tokens[first + 1..].iter().any(nocorr);
+    (!leading, !later)
+}
+
+/// `\maybe@ic@`: `\/` is due when the font in force is upright
+/// (`\fontdimen1 = 0`) and the token `\futurelet` sees next is not in
+/// `\nocorrlist` (`,.`).
+fn maybe_ic_upright(style: TextStyle, scheme: crate::nfss::Scheme, next: Option<&InputToken>) -> bool {
+    if style.font.slanted(scheme) {
+        return false;
+    }
+    !matches!(next, Some(t) if !t.token.control_symbol && matches!(&t.token.kind, TokenKind::Word(w) if w.starts_with(['.', ','])))
+}
+
+/// The token at or after `index` that `\futurelet` sees: comments are not
+/// tokens.
+fn next_significant(tokens: &[InputToken], index: usize) -> Option<&InputToken> {
+    tokens.get(index..)?.iter().find(|t| !matches!(t.token.kind, TokenKind::Comment))
+}
+
+/// Puts `\check@icl`'s correction on the first of a text font command's
+/// runs and `\check@icr`'s on the last, when those are text: `\/` after
+/// anything but a character adds nothing. `outer_color` is the colour
+/// after the command's group: a last run in another colour is followed by
+/// the colour stack's pop (xcolor's `\aftergroup\reset@color`, a whatsit),
+/// which `\aftergroup\maybe@ic` then finds last on the list instead of the
+/// character (pdflatex sets no kern after `\emph{\color{blue} x}`).
+fn mark_italic_corrections(inlines: &mut [Inline], before: bool, after: bool, outer_color: Option<DeviceColor>) {
+    if before {
+        if let Some(Inline::Text { style, .. }) = inlines.first_mut() {
+            style.italic_correction.before = true;
+        }
+    }
+    if after {
+        if let Some(Inline::Text { style, .. }) = inlines.last_mut() {
+            if style.color == outer_color {
+                style.italic_correction.after = true;
+            }
+        }
+    }
+}
+
+/// latex.ltx `\verbatim@font`: `\normalfont\ttfamily`.
+const VERBATIM_FONT: [crate::nfss::Command; 2] =
+    [crate::nfss::Command::Normal, crate::nfss::Command::Family(crate::nfss::FamilyKind::Tt)];
+
+/// The style of `\verb`/`\lstinline` text set in `style`: latex.ltx `\verb`
+/// runs `\verbatim@font` (`\normalfont\ttfamily`) and `\@noligs` inside
+/// its group, so the size and colour stay and the face is upright medium
+/// typewriter.
+fn verbatim_style(style: TextStyle, scheme: crate::nfss::Scheme) -> TextStyle {
+    TextStyle {
+        bold: false,
+        italic: false,
+        slanted: false,
+        small_caps: false,
+        family: TextFamily::Mono,
+        font: VERBATIM_FONT.iter().fold(style.font, |f, c| f.then(scheme, *c)),
+        medium: false,
+        literal: true,
+        italic_correction: ItalicCorrection::default(),
+        ..style
+    }
+}
+
+/// Whether a font command's series choice is an explicit medium one
+/// (`Some(true)`), a bold one or a reset (`Some(false)`), or leaves the
+/// series alone (`None`); see [`TextStyle::medium`].
+fn medium_choice(name: &str) -> Option<bool> {
+    match name {
+        "textmd" | "mdseries" => Some(true),
+        "textbf" | "bfseries" | "bf" | "textnormal" | "normalfont" | "it" | "sl" | "sc" | "rm" | "sf" | "tt" => Some(false),
+        _ => None,
+    }
 }
 
 /// Argument-taking style commands (`\textbf{...}`).
@@ -1974,7 +2363,17 @@ fn label_plain_text(content: &[Inline], source: Option<&str>) -> String {
 /// the 10/11/12pt class table selector); only the relative `\larger` /
 /// `\smaller` steps read it, everything else resolves its level later in
 /// `layout` against the same body size.
-fn apply_style(style: TextStyle, name: &str, body_size_pt: f64) -> TextStyle {
+fn apply_style(style: TextStyle, name: &str, body_size_pt: f64, scheme: crate::nfss::Scheme) -> TextStyle {
+    let mut next = apply_style_flags(style, name, body_size_pt);
+    next.font = nfss_commands(name).iter().fold(style.font, |font, command| font.then(scheme, *command));
+    next.medium = medium_choice(name).unwrap_or(style.medium);
+    next.literal = style.literal;
+    next.italic_correction = ItalicCorrection::default();
+    next
+}
+
+/// [`apply_style`]'s Core 14 flags and size.
+fn apply_style_flags(style: TextStyle, name: &str, body_size_pt: f64) -> TextStyle {
     let mut next = style;
     match name {
         "textbf" | "bfseries" => next.bold = true,
@@ -2031,7 +2430,7 @@ fn apply_style(style: TextStyle, name: &str, body_size_pt: f64) -> TextStyle {
             }
         }
         "tt" | "rm" | "sf" => {
-            next = apply_style(TextStyle::default(), &format!("{name}family"), body_size_pt)
+            next = apply_style_flags(TextStyle::default(), &format!("{name}family"), body_size_pt)
         }
         "tiny" => next.size = Some(FontSizeLevel::Tiny),
         "scriptsize" => next.size = Some(FontSizeLevel::ScriptSize),
@@ -3453,6 +3852,9 @@ pub fn parse_project_with(
         beamer_pauses: 1,
         beamer_slides: 1,
         overlay_groups: Vec::new(),
+        text_command_groups: Vec::new(),
+        paragraph_flushes: 0,
+        last_space: None,
         pending_overlay_markers: Vec::new(),
         today: options.today,
         titlepage_option: false,
@@ -3880,6 +4282,14 @@ struct P<'a> {
     /// (`\uncover<2->{`) was entered: the `}` that brings the stack back to
     /// that depth pushes the [`Inline::OverlayEnd`].
     overlay_groups: Vec<usize>,
+    /// Text font command groups open in the token stream (see
+    /// [`TextCommandGroup`]), innermost last.
+    text_command_groups: Vec<TextCommandGroup>,
+    /// Paragraphs flushed so far, so a group can tell one ended inside it.
+    paragraph_flushes: u64,
+    /// The style in force at the last space token the main loop read since
+    /// the last word it emitted (`Inline::Text::glue_before`).
+    last_space: Option<TextStyle>,
     /// Overlay markers of a paragraph that held nothing else (`\pause` on a
     /// line of its own between blank lines): carried to the front of the
     /// next paragraph instead of setting an empty line.
@@ -4153,6 +4563,16 @@ impl P<'_> {
         blocks
     }
 
+    /// Parses the current stream into its own list and flushes it (a box's
+    /// or a note's text): the space the outer list read before the
+    /// construct stays pending there ([`Inline::Text::glue_before`]).
+    fn parse_detached(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let outer_space = self.last_space.take();
+        self.parse_stream(blocks, para);
+        self.flush_paragraph(blocks, para);
+        self.last_space = outer_space;
+    }
+
     fn parse_stream(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         if self.stream_depth >= STREAM_DEPTH_LIMIT {
             if !self.stream_depth_reported {
@@ -4167,9 +4587,17 @@ impl P<'_> {
             self.i = self.t.len();
             return;
         }
+        // A stream parsed into a fresh list (a table entry, a box's or a
+        // note's text) starts with no space pending; the space the outer
+        // list read before the construct stays the outer list's.
+        let fresh = para.is_empty();
+        let outer_space = if fresh { self.last_space.take() } else { None };
         self.stream_depth += 1;
         self.parse_stream_body(blocks, para);
         self.stream_depth -= 1;
+        if fresh {
+            self.last_space = outer_space;
+        }
     }
 
     fn parse_stream_body(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
@@ -4188,6 +4616,7 @@ impl P<'_> {
                 }
                 TokenKind::Space if !self.obeylines => {
                     self.i += 1;
+                    self.read_space(para);
                     continue;
                 }
                 TokenKind::Word(word)
@@ -4228,12 +4657,9 @@ impl P<'_> {
                                 ));
                             }
                         }
-                        para.push(Inline::Text {
-                            text: self.word_text(word),
-                            span,
-                            style: self.style,
-                            space_before,
-                        });
+                        let text = self.word_text(word);
+                        let tie = !self.alltt_active();
+                        push_word(para, &self.t, self.i - 1, text, self.style, space_before, &mut self.last_space, tie);
                     }
                     continue;
                 }
@@ -4242,6 +4668,7 @@ impl P<'_> {
             let input = self.t[self.i].clone();
             let tok = input.token;
             let render = self.in_body && !self.document_ended;
+            let before_len = para.len();
             match tok.kind {
                 TokenKind::ParBreak => {
                     self.i += 1;
@@ -4258,6 +4685,7 @@ impl P<'_> {
                 }
                 TokenKind::Space => {
                     self.i += 1;
+                    self.read_space(para);
                     // `\\obeylines`: a source newline ends the line, exactly
                     // like `\\\\` (an `Inline::LineBreak` with no skip). The
                     // lexer folds a lone newline into `Space`, so the newline
@@ -4341,12 +4769,9 @@ impl P<'_> {
                                 ));
                             }
                         }
-                        para.push(Inline::Text {
-                            text: self.word_text(&word),
-                            span: tok.span,
-                            style: self.style,
-                            space_before,
-                        });
+                        let text = self.word_text(&word);
+                        let tie = !self.alltt_active();
+                        push_word(para, &self.t, self.i - 1, text, self.style, space_before, &mut self.last_space, tie);
                     }
                 }
                 TokenKind::LineBreak => {
@@ -4422,6 +4847,11 @@ impl P<'_> {
                         self.close_parameter_scope(tok.span);
                         if let Some(style) = self.style_stack.pop() {
                             self.style = style;
+                        }
+                        if render {
+                            self.close_text_command_group(para);
+                        } else if self.text_command_groups.last().is_some_and(|g| g.depth == self.brace_stack.len() + 1) {
+                            self.text_command_groups.pop();
                         }
                         if let Some(alignment) = self.alignment_stack.pop() {
                             self.declared_alignment = alignment;
@@ -4518,9 +4948,18 @@ impl P<'_> {
                             text: verbatim_display(&text, starred),
                             span: tok.span,
                             space_before,
+                            glue_before: None,
+                            style: verbatim_style(self.style, self.nfss_scheme()),
                         });
                     }
                 }
+            }
+            // The space read in front of this token's material is its glue
+            // (`Inline::Text::glue_before`): symbols, `\url` runs, `\verb`,
+            // formulas and flattened arguments are emitted here, not by the
+            // word arms above.
+            if para.len() > before_len {
+                self.attach_glue(&mut para[before_len]);
             }
         }
     }
@@ -4546,6 +4985,8 @@ impl P<'_> {
             span,
             style: TextStyle::default(),
             space_before: true,
+            boundary_before: false,
+            glue_before: None,
         }];
         content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
         blocks.push(Block::FigureCaption { content });
@@ -4713,6 +5154,8 @@ impl P<'_> {
                         span,
                         style,
                         space_before: false,
+                        boundary_before: false,
+                        glue_before: None,
                     });
                 }
                 if !self.hangfrom_hang_indent_reported {
@@ -5016,7 +5459,7 @@ impl P<'_> {
             "larger" | "smaller" => self.relative_size_command(name, span, para),
             _ if style_command(name) => self.style_command_argument(name, span, para),
             _ if style_declaration(name) => {
-                self.style = apply_style(self.style, name, self.body_size_pt())
+                self.style = apply_style(self.style, name, self.body_size_pt(), self.nfss_scheme())
             }
             "hfill" | "hfil" | "hss" | "hrulefill" | "dotfill" | "linebreak" | "nolinebreak" | "hspace"
             | "noindent" | "indent" | "quad" | "qquad" | "thinspace" | "negthinspace" | "medspace"
@@ -5218,6 +5661,8 @@ impl P<'_> {
                 span,
                 style: self.style,
                 space_before,
+                boundary_before: false,
+                glue_before: None,
             });
         }
             _ => unreachable!("\\{name} is not in this command family"),
@@ -5494,7 +5939,7 @@ impl P<'_> {
         while i < format.len() {
             match &format[i].token.kind {
                 TokenKind::Command(name) if style_declaration(name) => {
-                    style = apply_style(style, name, body);
+                    style = apply_style(style, name, body, self.nfss_scheme());
                 }
                 // Headings in this layout always set flush left, so the
                 // resume's `\raggedright` is identity and stays silent;
@@ -5833,6 +6278,7 @@ impl P<'_> {
             self.finish_block_dependencies();
         } else {
             para.push(Inline::HFill {
+                style: self.style,
                 span,
                 leader: FillLeader::Rule,
             });
@@ -6101,6 +6547,8 @@ impl P<'_> {
                     equation: name == "eqref",
                     span: span.merge(argument_span),
                     space_before,
+                    glue_before: None,
+                    style: self.style,
                 });
             }
             "thepage" => {
@@ -6171,7 +6619,7 @@ impl P<'_> {
                         full_span,
                         &mut self.diags,
                     );
-                    let inlines = self.set_citation_source(inlines);
+                    let inlines = self.set_citation_source(inlines, self.style);
                     para.extend(inlines);
                 }
 
@@ -6380,7 +6828,9 @@ impl P<'_> {
                         span,
                         style: TextStyle::default(),
                         space_before: false,
-                    }]);
+                        boundary_before: false,
+                        glue_before: None,
+                    }], self.style);
                     match content.as_slice() {
                         [Inline::Text { text: plain, .. }] if *plain == text => {
                             self.pending_item = Some(ItemLabel::Template { text: text.clone() });
@@ -6516,17 +6966,57 @@ impl P<'_> {
         // `\leavevmode\bgroup`.
         self.paragraph_started = true;
         self.skip_spaces();
-        let next = apply_style(self.style, name, self.body_size_pt());
+        let next = apply_style(self.style, name, self.body_size_pt(), self.nfss_scheme());
+        let scheme = self.nfss_scheme();
         if let Some(open) = self.closed_group_start() {
             // Re-enter the argument as an ordinary group so math and
             // other commands inside it are parsed normally.
             self.i += 1;
+            if text_font_command(name) {
+                let close = group_close(&self.t, self.i);
+                let (icl, icr) = check_nocorr(&self.t[self.i..close]);
+                self.text_command_groups.push(TextCommandGroup {
+                    depth: self.brace_stack.len() + 1,
+                    start: para.len(),
+                    flushes: self.paragraph_flushes,
+                    before: icl && maybe_ic_upright(next, scheme, self.t.get(self.i)),
+                    check_after: icr,
+                });
+            }
             self.open_group(open);
             self.style = next;
         } else {
             let (tokens, _) = self.required_group(name, span);
-            para.extend(self.inlines_from_tokens(tokens, next));
+            let (icl, icr) = if text_font_command(name) { check_nocorr(&tokens) } else { (false, false) };
+            let before = icl && maybe_ic_upright(next, scheme, tokens.first());
+            let mut inlines = self.inlines_from_tokens(tokens, next);
+            let after = icr && maybe_ic_upright(self.style, scheme, next_significant(&self.t, self.i));
+            mark_italic_corrections(&mut inlines, before, after, self.style.color);
+            para.extend(inlines);
         }
+    }
+
+    /// The `}` of a text font command group re-entered by
+    /// [`P::style_command_argument`]: its `\check@icr` and the `\check@icl`
+    /// decided at the `{` land on the argument's runs, now that they are
+    /// known. `self.style` is the restored (outer) style and `self.i` the
+    /// token after the `}`.
+    fn close_text_command_group(&mut self, para: &mut [Inline]) {
+        while self.text_command_groups.last().is_some_and(|g| g.depth > self.brace_stack.len() + 1) {
+            self.text_command_groups.pop();
+        }
+        let Some(group) = self.text_command_groups.last() else { return };
+        if group.depth != self.brace_stack.len() + 1 {
+            return;
+        }
+        let Some(group) = self.text_command_groups.pop() else { return };
+        // A paragraph ended inside the argument: `\check@icr` is
+        // `\ifvmode\else..`, and the runs the check would reach are gone.
+        if group.flushes != self.paragraph_flushes || group.start > para.len() {
+            return;
+        }
+        let after = group.check_after && maybe_ic_upright(self.style, self.nfss_scheme(), next_significant(&self.t, self.i));
+        mark_italic_corrections(&mut para[group.start..], group.before, after, self.style.color);
     }
 
     /// `\hfill`, glue, breaks, discretionaries and fixed spaces in running
@@ -6536,9 +7026,9 @@ impl P<'_> {
         match name {
         // `\hss` is `0pt plus 1fil minus 1fil`: its shrink never matters in
         // a paragraph line set to its natural width or wider.
-        "hfill" | "hfil" | "hss" => para.push(Inline::HFill { span, leader: FillLeader::None }),
-        "hrulefill" => para.push(Inline::HFill { span, leader: FillLeader::Rule }),
-        "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots }),
+        "hfill" | "hfil" | "hss" => para.push(Inline::HFill { span, leader: FillLeader::None, style: self.style }),
+        "hrulefill" => para.push(Inline::HFill { span, leader: FillLeader::Rule, style: self.style }),
+        "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots, style: self.style }),
         // latex.ltx `\linebreak`/`\nolinebreak` (`\@no@lnbk`): a penalty of
         // `-\@getpen{n}`/`\@getpen{n}` with the space in front of the
         // command moved after it; in vertical mode, `\@nolnerr`.
@@ -6594,6 +7084,8 @@ impl P<'_> {
                     span: dash_span,
                     style: self.style,
                     space_before: false,
+                    boundary_before: false,
+                    glue_before: None,
                 });
                 if dashes == length {
                     self.i += 1;
@@ -6669,6 +7161,7 @@ impl P<'_> {
                         crate::layout::style_font(self.style),
                     );
                     para.push(Inline::HSpace {
+                        style: self.style,
                         pt,
                         space_before_pt: if space_before { word_space } else { 0.0 },
                         space_after_pt: if space_after { word_space } else { 0.0 },
@@ -6711,12 +7204,14 @@ impl P<'_> {
         // in math mode (`src/math.rs`); this arm covers the same commands
         // used directly in running text, 1em/2em of the body text size.
         "quad" => para.push(Inline::TextGlue {
+            style: self.style,
             em: math::QUAD_EM,
             span,
             plus_em: 0.0,
             minus_em: 0.0,
         }),
         "qquad" => para.push(Inline::TextGlue {
+            style: self.style,
             em: 2.0 * math::QUAD_EM,
             span,
             plus_em: 0.0,
@@ -6733,7 +7228,7 @@ impl P<'_> {
             }
         }
         // `\def\enskip{\hskip.5em\relax}` (latex.ltx 9434): glue, like `\quad`.
-        "enskip" => para.push(Inline::TextGlue { em: 0.5, span, plus_em: 0.0, minus_em: 0.0 }),
+        "enskip" => para.push(Inline::TextGlue { em: 0.5, span, plus_em: 0.0, minus_em: 0.0, style: self.style }),
             _ => unreachable!("\\{name} is not in this command family"),
         }
     }
@@ -6989,6 +7484,7 @@ impl P<'_> {
                 });
                 let word_space = crate::layout::word_space(size, crate::layout::style_font(self.style));
                 para.push(Inline::HSpace {
+                    style: self.style,
                     pt,
                     space_before_pt: if space_before { word_space } else { 0.0 },
                     space_after_pt: 0.0,
@@ -8201,7 +8697,7 @@ impl P<'_> {
             span,
             &mut self.diags,
         );
-        let inlines = self.set_citation_source(inlines);
+        let inlines = self.set_citation_source(inlines, self.style);
         para.extend(inlines);
     }
 
@@ -8228,18 +8724,23 @@ impl P<'_> {
     ///   read in (`Jones \emph{et~al.}`, `\emph{a} b`);
     /// - a tie becomes U+00A0, which the pipeline sets as an unbreakable
     ///   interword space whatever the span.
-    fn set_citation_source(&mut self, inlines: Vec<Inline>) -> Vec<Inline> {
+    fn set_citation_source(&mut self, inlines: Vec<Inline>, outer: TextStyle) -> Vec<Inline> {
         fn is_source(text: &str) -> bool {
             text.contains(['\\', '{', '}', '~'])
         }
         // A kernel label is an `\hbox` (`bib::cite_inlines`): its run is
-        // set inside the box.
+        // set inside the box. Every run is set in the font around the
+        // citation (`outer`), which `bib`/`natbib` build their runs without.
+        let scheme = self.nfss_scheme();
         let inlines: Vec<Inline> = inlines
             .into_iter()
             .map(|inline| match inline {
                 Inline::HBox(mut boxed) => {
-                    boxed.content = self.set_citation_source(std::mem::take(&mut boxed.content));
+                    boxed.content = self.set_citation_source(std::mem::take(&mut boxed.content), outer);
                     Inline::HBox(boxed)
+                }
+                Inline::Text { text, span, style, space_before, glue_before, boundary_before } => {
+                    Inline::Text { text, span, style: citation_style(outer, style, scheme), space_before, glue_before, boundary_before }
                 }
                 other => other,
             })
@@ -8249,12 +8750,12 @@ impl P<'_> {
         }
         let mut out = Vec::with_capacity(inlines.len());
         for inline in inlines {
-            let Inline::Text { text, span, style, space_before } = inline else {
+            let Inline::Text { text, span, style, space_before, glue_before, boundary_before } = inline else {
                 out.push(inline);
                 continue;
             };
             if !is_source(&text) {
-                out.push(Inline::Text { text, span, style, space_before });
+                out.push(Inline::Text { text, span, style, space_before, glue_before, boundary_before });
                 continue;
             }
             let mut tokens = crate::lexer::tokenize(&text);
@@ -8290,6 +8791,8 @@ impl P<'_> {
                         span,
                         style: piece_style,
                         space_before: if joined { false } else { space_before || text.starts_with(' ') },
+                        boundary_before: false,
+                        glue_before: if joined { None } else { glue_before },
                     }),
                 }
             }
@@ -8458,6 +8961,8 @@ impl P<'_> {
             linked,
             span: full_span,
             space_before,
+            glue_before: None,
+            style: self.style,
         });
     }
 
@@ -8691,6 +9196,8 @@ impl P<'_> {
                     span,
                     style: TextStyle::default(),
                     space_before: true,
+                    boundary_before: false,
+                    glue_before: None,
                 }])
             }
             Some((date_tokens, _)) => {
@@ -8908,6 +9415,8 @@ impl P<'_> {
                 span,
                 style: TextStyle::default(),
                 space_before: false,
+                boundary_before: false,
+                glue_before: None,
             }],
         }
     }
@@ -9088,6 +9597,8 @@ impl P<'_> {
             span: span.merge(argument_span),
             style: TextStyle::default(),
             space_before: false,
+            boundary_before: false,
+            glue_before: None,
         }];
         content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
         blocks.push(Block::Paragraph(content));
@@ -9394,6 +9905,8 @@ impl P<'_> {
                     span: heading_span,
                     style: TextStyle::BOLD,
                     space_before: false,
+                    boundary_before: false,
+                    glue_before: None,
                 }],
             });
             self.finish_block_dependencies();
@@ -9531,7 +10044,7 @@ impl P<'_> {
         // the surrounding style for the `\end` restore), exactly like
         // `begin_theorem` below.
         if size_env {
-            self.style = apply_style(self.style, &environment, self.body_size_pt());
+            self.style = apply_style(self.style, &environment, self.body_size_pt(), self.nfss_scheme());
         } else if let Some(run) = cjk_run {
             self.style.cjk = Some(run);
         } else if alltt_env {
@@ -9545,6 +10058,12 @@ impl P<'_> {
                 ams_tiny: self.style.ams_tiny,
                 color: self.style.color,
                 cjk: self.style.cjk,
+                // alltt.sty: `\verbatim@font` (`\normalfont\ttfamily`) and
+                // `\@noligs`.
+                font: VERBATIM_FONT.iter().fold(self.style.font, |f, c| f.then(self.nfss_scheme(), *c)),
+                medium: false,
+                literal: true,
+                italic_correction: ItalicCorrection::default(),
             };
             self.obeylines = true;
         }
@@ -9812,7 +10331,7 @@ impl P<'_> {
             // is suppressed. A stray `\end{proof}` pops nothing.
             let claimed = self.proof_qedhere.pop().unwrap_or(false);
             if !claimed {
-                para.push(Inline::HFill { span, leader: FillLeader::None });
+                para.push(Inline::HFill { span, leader: FillLeader::None, style: self.style });
                 // The closing "∎" is generated text placed at the end of the
                 // body: span it (empty) at the `\end` command instead of
                 // covering it, so the block's last span ends where the body
@@ -9833,6 +10352,8 @@ impl P<'_> {
                     // is `TextStyle::default()`, exactly as before.
                     style: self.style,
                     space_before: false,
+                    boundary_before: false,
+                    glue_before: None,
                 });
             }
             self.flush_paragraph(blocks, para);
@@ -10087,6 +10608,8 @@ impl P<'_> {
             span,
             style: head_style,
             space_before: true,
+            boundary_before: false,
+            glue_before: None,
         });
         if let Some(number) = number {
             para.push(Inline::Text {
@@ -10094,12 +10617,16 @@ impl P<'_> {
                 span,
                 style: head_style,
                 space_before: false,
+                boundary_before: false,
+                glue_before: None,
             });
             para.push(Inline::Text {
                 text: number,
                 span,
                 style: number_style,
                 space_before: false,
+                boundary_before: false,
+                glue_before: None,
             });
         }
         if let Some((note_tokens, note_span)) = note {
@@ -10116,6 +10643,8 @@ impl P<'_> {
                     span,
                     style: head_style,
                     space_before: false,
+                    boundary_before: false,
+                    glue_before: None,
                 });
                 // `\thm@notefont` (`\fontseries\mddefault\upshape`)
                 // changes series/shape only, so the note keeps the
@@ -10135,6 +10664,8 @@ impl P<'_> {
                     span: Span::in_document(note_span.document, note_span.start, note_span.start + 1),
                     style: note_style,
                     space_before: false,
+                    boundary_before: false,
+                    glue_before: None,
                 });
                 // Read like an `\item[<label>]`: every token that cannot be
                 // set is reported rather than dropped (a note is short
@@ -10149,6 +10680,8 @@ impl P<'_> {
                     span: Span::in_document(note_span.document, note_span.end - 1, note_span.end),
                     style: note_style,
                     space_before: false,
+                    boundary_before: false,
+                    glue_before: None,
                 });
             }
         }
@@ -10161,6 +10694,8 @@ impl P<'_> {
             span,
             style: head_style,
             space_before: false,
+            boundary_before: false,
+            glue_before: None,
         });
         self.style = TextStyle {
             size: ambient_size,
@@ -10199,6 +10734,8 @@ impl P<'_> {
                 ..TextStyle::default()
             },
             space_before: true,
+            boundary_before: false,
+            glue_before: None,
         });
         self.style = TextStyle {
             size: ambient_size,
@@ -10221,12 +10758,14 @@ impl P<'_> {
         if let Some(claimed) = self.proof_qedhere.last_mut() {
             *claimed = true;
         }
-        para.push(Inline::HFill { span, leader: FillLeader::None });
+        para.push(Inline::HFill { span, leader: FillLeader::None, style: self.style });
         para.push(Inline::Text {
             text: "\u{220E}".to_string(),
             span,
             style: self.style,
             space_before: false,
+            boundary_before: false,
+            glue_before: None,
         });
     }
 
@@ -10987,6 +11526,8 @@ impl P<'_> {
                 span,
                 style: TextStyle::default(),
                 space_before: true,
+                boundary_before: false,
+                glue_before: None,
             }],
             Some((tokens, _)) => self.inlines_from_tokens(tokens, TextStyle::default()),
         };
@@ -11489,6 +12030,7 @@ impl P<'_> {
             // Always its own line (see `layout::LayoutCursor::display_math`),
             // so whether real source whitespace preceded it is moot.
             space_before: true,
+            glue_before: None,
         });
         para.extend(labels.into_iter().map(|(key, span)| Inline::Label {
             key,
@@ -12252,6 +12794,7 @@ impl P<'_> {
             number_span: None,
             span: self.span_through(open, end),
             space_before,
+            glue_before: None,
         });
         for (key, span) in display_labels {
             self.document_global_state = true;
@@ -12483,7 +13026,7 @@ impl P<'_> {
             return;
         }
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-        let style = apply_style(self.style, "ttfamily", body);
+        let style = apply_style(self.style, "ttfamily", body, self.nfss_scheme());
         for (index, piece) in url_pieces(text).into_iter().enumerate() {
             match piece {
                 UrlPiece::Run(run) => para.push(Inline::Text {
@@ -12491,6 +13034,8 @@ impl P<'_> {
                     span,
                     style,
                     space_before: index == 0 && space_before,
+                    boundary_before: false,
+                    glue_before: None,
                 }),
                 UrlPiece::HyphenKern => para.push(Inline::Kern {
                     amount: crate::text_builtins::TextDimen {
@@ -13254,6 +13799,7 @@ impl P<'_> {
             self.i += 1;
         }
         para.push(Inline::HSpace {
+            style: self.style,
             pt: base_pt,
             space_before_pt: 0.0,
             space_after_pt: 0.0,
@@ -13294,6 +13840,38 @@ impl P<'_> {
         self.alignment_stack.push(self.declared_alignment);
         self.length_scopes.push(self.length_state());
         self.obeylines_stack.push(self.obeylines);
+    }
+
+    /// The interword glue of the space the main loop read before the word it
+    /// emits now ([`Inline::Text::glue_before`]).
+    fn take_glue(&mut self) -> Option<InterwordGlue> {
+        self.last_space.take().map(|style| InterwordGlue { style: glue_style(style), kind: GlueKind::Normal })
+    }
+
+    /// The main loop read the space token at `self.i - 1`: record it as the
+    /// glue in front of the next material when TeX appends one there
+    /// ([`space_is_glue`]; horizontal mode is an open paragraph or one a
+    /// command started).
+    fn read_space(&mut self, para: &[Inline]) {
+        let at = self.i - 1;
+        let horizontal = self.paragraph_started || !para.is_empty();
+        if horizontal && space_is_glue(&self.t, at, para) {
+            self.last_space = Some(self.style);
+        }
+    }
+
+    /// Gives the first inline a command emitted the space read before it:
+    /// on the node when it has a `glue_before`, and consumed either way
+    /// unless the inline sets nothing (a `\label`, an overlay marker, a
+    /// `\pagestyle`), which leaves the space to the material after it.
+    fn attach_glue(&mut self, inline: &mut Inline) {
+        attach_space(inline, &mut self.last_space);
+    }
+
+    /// The font definition files [`TextStyle::font`] is selected in:
+    /// `lmodern` loaded, and the text encoding `fontenc` set.
+    fn nfss_scheme(&self) -> crate::nfss::Scheme {
+        crate::nfss::Scheme::of(self.latin_modern, self.font_encoding == Encoding::T1)
     }
 
     /// The NFSS inputs `em`/`ex` depend on (see [`crate::font_units`]).
@@ -13389,16 +13967,31 @@ impl P<'_> {
         let mut style = base;
         let mut saved = Vec::new();
         let mut pending = None;
+        let mut pending_text_command = false;
         // Tokens already read as a siunitx command's arguments.
         let mut skip_until = 0usize;
+        // The style at the last space token since the last word (`glue_before`).
+        let mut last_space: Option<TextStyle> = None;
         for (index, input) in expanded.iter().enumerate() {
             if index < skip_until {
                 continue;
             }
             let space_before = preceded_by_space(&expanded, index);
+            let before_len = content.len();
+            if matches!(input.token.kind, TokenKind::Space) {
+                if space_is_glue(&expanded, index, &content) {
+                    last_space = Some(style);
+                }
+            }
             match &input.token.kind {
                 TokenKind::Command(name) if name == "color" || name == "textcolor" => {
-                    let (next, color) = self.flat_color(&expanded, index, style.color);
+                    let (mut next, color) = self.flat_color(&expanded, index, style.color);
+                    if name == "color" {
+                        // `\color`'s `\ignorespaces` (`P::color_declaration`).
+                        while matches!(expanded.get(next).map(|t| &t.token.kind), Some(TokenKind::Space | TokenKind::Comment)) {
+                            next += 1;
+                        }
+                    }
                     skip_until = next;
                     match color {
                         Some(color) if name == "color" => style.color = Some(color),
@@ -13470,6 +14063,7 @@ impl P<'_> {
                             number_span: None,
                             span,
                             space_before,
+                            glue_before: None,
                         });
                     }
                 }
@@ -13496,6 +14090,8 @@ impl P<'_> {
                                 equation: name == "eqref",
                                 span,
                                 space_before,
+                                glue_before: None,
+                                style,
                             });
                         }
                         None => self.diags.push(Diagnostic::error(
@@ -13580,21 +14176,42 @@ impl P<'_> {
                 }
                 TokenKind::Command(name) if style_command(name) => {
                     let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-                    pending = Some(apply_style(style, name, body));
+                    pending = Some(apply_style(style, name, body, self.nfss_scheme()));
+                    pending_text_command = text_font_command(name);
                 }
                 TokenKind::Command(name) if style_declaration(name) => {
                     let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-                    style = apply_style(style, name, body);
+                    style = apply_style(style, name, body, self.nfss_scheme());
                 }
                 TokenKind::LBrace => {
-                    saved.push(style);
+                    let mut group = None;
+                    let previous = style;
                     if let Some(next) = pending.take() {
+                        // A text font command's argument: its `\maybe@ic`
+                        // checks, as in `P::style_command_argument`.
+                        if std::mem::take(&mut pending_text_command) {
+                            let close = group_close(&expanded, index + 1);
+                            let (icl, icr) = check_nocorr(&expanded[index + 1..close]);
+                            group = Some(TextCommandGroup {
+                                depth: saved.len() + 1,
+                                start: content.len(),
+                                flushes: 0,
+                                before: icl && maybe_ic_upright(next, self.nfss_scheme(), expanded.get(index + 1)),
+                                check_after: icr,
+                            });
+                        }
                         style = next;
                     }
+                    saved.push((previous, group));
                 }
                 TokenKind::RBrace => {
-                    if let Some(previous) = saved.pop() {
+                    if let Some((previous, group)) = saved.pop() {
                         style = previous;
+                        if let Some(group) = group.filter(|g| g.start <= content.len()) {
+                            let after = group.check_after
+                                && maybe_ic_upright(style, self.nfss_scheme(), next_significant(&expanded, index + 1));
+                            mark_italic_corrections(&mut content[group.start..], group.before, after, style.color);
+                        }
                     }
                 }
                 TokenKind::Word(text)
@@ -13648,12 +14265,9 @@ impl P<'_> {
                             ));
                         }
                     }
-                    content.push(Inline::Text {
-                        text: self.word_text(&text),
-                        span: input.token.span,
-                        style,
-                        space_before,
-                    });
+                    let text = self.word_text(&text);
+                    let tie = !self.alltt_active();
+                    push_word(&mut content, &expanded, index, text, style, space_before, &mut last_space, tie);
                 }
                 TokenKind::LineBreak => content.push(Inline::LineBreak {
                     span: input.token.span,
@@ -13681,6 +14295,7 @@ impl P<'_> {
                             let word_space =
                                 crate::layout::word_space(size, crate::layout::style_font(style));
                             content.push(Inline::HSpace {
+                                style,
                                 pt,
                                 space_before_pt: if !content.is_empty() && space_before {
                                     word_space
@@ -13719,12 +14334,14 @@ impl P<'_> {
                 // comment.
                 TokenKind::Command(name) if name == "hfill" || name == "hfil" => {
                     content.push(Inline::HFill {
+                        style,
                         span: input.token.span,
                         leader: FillLeader::None,
                     })
                 }
                 TokenKind::Command(name) if name == "hrulefill" || name == "dotfill" => {
                     content.push(Inline::HFill {
+                        style,
                         span: input.token.span,
                         leader: if name == "hrulefill" { FillLeader::Rule } else { FillLeader::Dots },
                     })
@@ -13758,6 +14375,8 @@ impl P<'_> {
                     text: verbatim_display(text, *starred),
                     span: input.token.span,
                     space_before,
+                    glue_before: None,
+                    style: verbatim_style(style, self.nfss_scheme()),
                 }),
                 TokenKind::Command(name)
                     if text_builtins::TEXT_SYMBOLS.iter().any(|(n, _)| n == name) =>
@@ -13785,6 +14404,8 @@ impl P<'_> {
                     span: input.token.span,
                     style,
                     space_before,
+                    boundary_before: false,
+                    glue_before: None,
                 }),
                 // `$…$` and `\(…\)` are real inline math here, exactly as in
                 // body text: `\item[this is $2x$]`, `\section{A $2x$ B}`.
@@ -13929,7 +14550,7 @@ impl P<'_> {
                                         span,
                                         &mut self.diags,
                                     );
-                                    let inlines = self.set_citation_source(inlines);
+                                    let inlines = self.set_citation_source(inlines, style);
                                     content.extend(inlines);
                                 }
                             }
@@ -13954,6 +14575,9 @@ impl P<'_> {
                     }
                 }
                 _ => {}
+            }
+            if content.len() > before_len {
+                attach_space(&mut content[before_len], &mut last_space);
             }
         }
         content
@@ -14135,6 +14759,7 @@ impl P<'_> {
             number_span: None,
             span,
             space_before,
+            glue_before: None,
         });
         cursor
     }
@@ -14167,6 +14792,8 @@ impl P<'_> {
             span,
             style,
             space_before,
+            boundary_before: false,
+            glue_before: None,
         })
     }
 
@@ -14288,6 +14915,8 @@ impl P<'_> {
             span: full,
             style,
             space_before,
+            boundary_before: false,
+            glue_before: None,
         });
     }
 
@@ -14358,6 +14987,7 @@ impl P<'_> {
                 number_span: None,
                 span: full,
                 space_before,
+                glue_before: None,
             });
         }
         if let Some(rest) = leftover {
@@ -14402,6 +15032,8 @@ impl P<'_> {
                     span: Span::in_document(whole.document, head.end, whole.end),
                     style: self.style,
                     space_before: false,
+                    boundary_before: false,
+                    glue_before: None,
                 });
                 (vec![argument], head, leftover)
             }
@@ -14428,6 +15060,7 @@ impl P<'_> {
         let size = self.style.size.map_or(body, |level| crate::layout::size_declaration_pt(level, body));
         let word_space = crate::layout::word_space(size, crate::layout::style_font(self.style));
         para.push(Inline::HSpace {
+            style: self.style,
             pt: 0.0,
             space_before_pt: if space_before && !para.is_empty() { word_space } else { 0.0 },
             space_after_pt: if space_after { word_space } else { 0.0 },
@@ -14532,6 +15165,8 @@ impl P<'_> {
             span,
             style: self.style,
             space_before,
+            boundary_before: false,
+            glue_before: None,
         });
         // Parse the body at the next nesting level through the full parser
         // dispatch (`box_inlines` calls `parse_stream`), so nested
@@ -14546,6 +15181,8 @@ impl P<'_> {
             span: argument_span,
             style: self.style,
             space_before: false,
+            boundary_before: false,
+            glue_before: None,
         });
     }
 
@@ -14854,8 +15491,7 @@ impl P<'_> {
             self.i = 0;
             let mut blocks = Vec::new();
             let mut para = Vec::new();
-            self.parse_stream(&mut blocks, &mut para);
-            self.flush_paragraph(&mut blocks, &mut para);
+            self.parse_detached(&mut blocks, &mut para);
             self.block_dependencies.truncate(outer_dependency_blocks);
             self.block_par_leading.truncate(outer_par_leading_blocks);
             out.push(
@@ -15136,6 +15772,8 @@ impl P<'_> {
                 span: whole,
                 style: self.style,
                 space_before,
+                boundary_before: false,
+                glue_before: None,
             }),
             None => self.diags.push(Diagnostic::error(
                 format!("\\fnsymbol{{{name}}} value {value} is outside \\@fnsymbol's nine symbols"),
@@ -15191,8 +15829,7 @@ impl P<'_> {
         let outer_par_leading_blocks = self.block_par_leading.len();
         let mut blocks = Vec::new();
         let mut para = Vec::new();
-        self.parse_stream(&mut blocks, &mut para);
-        self.flush_paragraph(&mut blocks, &mut para);
+        self.parse_detached(&mut blocks, &mut para);
         self.block_dependencies.truncate(outer_dependency_blocks);
         self.block_par_leading.truncate(outer_par_leading_blocks);
         self.t = outer_tokens;
@@ -15273,6 +15910,8 @@ impl P<'_> {
         extra_gap_after_pt: f64,
     ) {
         self.paragraph_started = false;
+        self.paragraph_flushes += 1;
+        self.last_space = None;
         let label = self.pending_item_label.take();
         if paragraph.is_empty() && label.is_none() {
             return;
@@ -16578,6 +17217,7 @@ const SOUL_GLUE_SHRINK_FRAC: f64 = 1.0 / 3.0;
 fn soul_glue(em_frac: f64, em_pt: f64, span: Span) -> Inline {
     let pt = em_frac * em_pt;
     Inline::HSpace {
+        style: TextStyle::default(),
         pt,
         space_before_pt: 0.0,
         space_after_pt: 0.0,
@@ -16662,7 +17302,7 @@ fn space_out_letters(content: &[Inline], em_pt: f64) -> Vec<Inline> {
     // replaced space. `None` until the first letter lands.
     let mut word_end: Option<Span> = None;
     for inline in content {
-        if let Inline::Text { text, span, style, space_before } = inline {
+        if let Inline::Text { text, span, style, space_before, .. } = inline {
             let mut first = true;
             for c in text.chars() {
                 // A first character carrying the run's `space_before` opens a
@@ -16698,6 +17338,8 @@ fn space_out_letters(content: &[Inline], em_pt: f64) -> Vec<Inline> {
                     span: *span,
                     style: *style,
                     space_before: word_start && out.is_empty(),
+                    boundary_before: false,
+                    glue_before: None,
                 };
                 if !word_start
                     && is_spaced_letter(&piece)
@@ -20098,7 +20740,8 @@ mod tests {
         // Punctuation glues directly: "Foo." not "Foo .". (A typed `'`
         // ligates to U+2019, so the apostrophe case expects that.)
         for mark in [",", ".", "!", "?", ";", ":", "'", "/", "~", "-", ")"] {
-            let rendered = if mark == "'" { "’" } else { mark };
+            // A typed `~` is the tie, U+00A0 (`word_node`).
+            let rendered = match mark { "'" => "’", "~" => "\u{a0}", _ => mark };
             check(
                 &texts(&inlines(&format!("\\foo{mark}"))),
                 &["Foo", rendered],
@@ -20163,7 +20806,7 @@ mod tests {
         let tilde = texts(&inlines("\\foo~bar"));
         assert_eq!(
             tilde.iter().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
-            vec!["Foo", "~bar"],
+            vec!["Foo", "\u{a0}bar"],
             "{tilde:?}"
         );
         assert_eq!(tilde.last().map(|(_, before)| *before), Some(false), "{tilde:?}");

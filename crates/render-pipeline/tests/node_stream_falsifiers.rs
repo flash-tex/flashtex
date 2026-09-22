@@ -208,7 +208,6 @@ fn site06_italic_correction_before_eqref() {
 // ---- B. Interword glue and input conventions ------------------------------
 
 #[test]
-#[ignore = "PLAN1 site 7: token_gap invents an interword space before a dash produced by a macro"]
 fn site07_gap_before_macro_dash() {
     // The trees differ only in segmentation: the compiler splits `word`,
     // `—`, `and` at the macro boundary and gives both `space_before: false`,
@@ -217,19 +216,16 @@ fn site07_gap_before_macro_dash() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 8: a control space is recognised only when the span's bytes are `\\ `"]
 fn site08_control_space() {
     falsify(Same, &doc("", "A\\ B."), &doc("\\newcommand\\csp{\\ }\n", "A\\csp B."));
 }
 
 #[test]
-#[ignore = "PLAN1 site 9: push_segment_in breaks a ligature only for literal `{}` bytes between spans"]
 fn site09_empty_group_breaks_ligature() {
     falsify(Same, &doc("", "Shelf{}ful words."), &doc("\\newcommand\\nl{{}}\n", "Shelf\\nl ful words."));
 }
 
 #[test]
-#[ignore = "PLAN1 site 10: `~` is a tie only when the source byte is `~`"]
 fn site10_tie_from_macro() {
     falsify(Same, &doc("", "See Figure~7 and more words here."), &doc("\\newcommand\\fig{Figure~7}\n", "See \\fig{} and more words here."));
 }

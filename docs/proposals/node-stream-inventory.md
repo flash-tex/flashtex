@@ -317,3 +317,13 @@ named above first.
   `space_style` and `text_command_argument_at`. Falsifiers `site01`–`site04`
   and `site06` run un-ignored. The sizes of glue (`space_size`,
   `glue_size`, site 5) are still read from the gap.
+- **Interword glue (sites 7–10): migrated.** Whether a run has glue in
+  front is the compiler's `Inline::Text::glue_before` (horizontal mode, not
+  after a control word, a control space, a line break or a display), a
+  control space is a node with `GlueKind::ControlSpace`, a tie is U+00A0 in
+  the text, and `boundary_before` marks an empty group or `\relax`
+  between two words. `token_gap` still runs for the macro-body cursor, for
+  `\newblock`, for CJK environment boundaries, for the space at the end of
+  an `\input` file without a final newline, and for the gaps in front of
+  non-text inlines (boxes, notes, glue, logos), which carry no
+  `glue_before` yet. Falsifiers `site07`–`site10` run un-ignored.
