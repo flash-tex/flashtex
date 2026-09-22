@@ -311,7 +311,6 @@ pub const PRELUDE: &str = r"\catcode`\@=11
 \newcommand\familydefault{\rmdefault}
 \newcommand\seriesdefault{\mddefault}
 \newcommand\shapedefault{n}
-\def\baselinestretch{1}
 \def\@font@warning#1{\flashtex@latex@warning{LaTeX Font Warning: #1}}
 \def\@nomath#1{\relax\ifmmode
    \@font@warning{Command \noexpand#1invalid in math mode}\fi}
