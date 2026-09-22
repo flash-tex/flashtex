@@ -19,6 +19,12 @@
 //!
 //! `KNOWN` lists the formulas that fail today, by document and command, so a
 //! regression anywhere else fails the test and a fix has to remove its entry.
+//!
+//! The fonts and metrics are the repository's bundle only ([`bundled_fonts`]),
+//! never the ambient `FLASHTEX_*` environment or a host TeX Live: `KNOWN` had
+//! been recorded on a Mac whose default directories are MacTeX's (no
+//! `NewCMMath-Regular`, TeX Live's `eufm`), and CI, which exports the bundle,
+//! disagreed with it in both directions.
 
 mod common;
 
@@ -28,6 +34,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 const TOL_BP: f64 = 0.5;
+
+/// `apps/mac/Fonts` and its `texmf` metrics, exactly what the app bundle and
+/// CI provide, with no system font index: the same set on every machine.
+fn bundled_fonts() -> flashtex_render_pipeline::fonts::FontSet {
+    let fonts = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/mac/Fonts"));
+    let tfm = |sub: &str| fonts.join("texmf").join(sub);
+    let tfm_dirs = ["fonts/tfm/public/lm", "fonts/tfm/jknappen/ec", "fonts/tfm/public/amsfonts/symbols", "fonts/tfm/public/amsfonts/euler", "fonts/tfm/public/cm"].map(tfm).to_vec();
+    flashtex_render_pipeline::fonts::FontSet::with_dirs(vec![fonts.clone()], tfm_dirs).with_index_dirs(Vec::new())
+}
+
 const SIZE_TOL_BP: f64 = 0.05;
 
 /// (document, command or `*`): formulas known to fail, with the reason.
@@ -38,7 +54,6 @@ const SIZE_TOL_BP: f64 = 0.05;
 const KNOWN: &[(&str, &str, &str)] = &[
     // alphabets
     ("alphabets", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
-    ("alphabets", "mathbb", "advance: the width the engine gives it differs from the TFM"),
     ("alphabets", "mathit", "advance: the width the engine gives it differs from the TFM"),
     ("alphabets", "mathscr", "advance: the width the engine gives it differs from the TFM"),
     // amsfonts-composites
@@ -81,41 +96,13 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("amsmath-symbols", "varUpsilon", "unsupported: the engine drops the command"),
     ("amsmath-symbols", "varXi", "unsupported: the engine drops the command"),
     // amssymb-symbols
-    ("amssymb-symbols", "Finv", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "Game", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "backepsilon", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "bigstar", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "blacklozenge", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "blacktriangle", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "blacktriangledown", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "centerdot", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "circledS", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "diagdown", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "diagup", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "digamma", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "doublebarwedge", "geometry differs from pdfTeX"),
     ("amssymb-symbols", "ngeqq", "geometry differs from pdfTeX"),
     ("amssymb-symbols", "ngeqslant", "geometry differs from pdfTeX"),
     ("amssymb-symbols", "nleqq", "geometry differs from pdfTeX"),
     ("amssymb-symbols", "nleqslant", "geometry differs from pdfTeX"),
     ("amssymb-symbols", "nsubseteqq", "geometry differs from pdfTeX"),
     ("amssymb-symbols", "nsupseteqq", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "pitchfork", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "precapprox", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "precnapprox", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "precneqq", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "subseteqq", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "subsetneqq", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "succapprox", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "succnapprox", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "succneqq", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "supseteqq", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "supsetneqq", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "triangledown", "geometry differs from pdfTeX"),
     ("amssymb-symbols", "varnothing", "advance: the width the engine gives it differs from the TFM"),
-    ("amssymb-symbols", "varsubsetneqq", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "varsupsetneqq", "geometry differs from pdfTeX"),
-    ("amssymb-symbols", "vartriangle", "geometry differs from pdfTeX"),
     // kernel-accents
     ("kernel-accents", "vec", "advance: the width the engine gives it differs from the TFM"),
     // kernel-composites
@@ -426,7 +413,7 @@ fn run_doc(doc: &str) -> (usize, Vec<String>, BTreeMap<String, Vec<String>>) {
         offsets.push(range);
         pos += line.len();
     }
-    let r = render_docs(&[("main.tex", &tex)], "main.tex");
+    let r = render_one_with(&tex, &bundled_fonts());
     let errors: Vec<String> = r
         .v2
         .diagnostics

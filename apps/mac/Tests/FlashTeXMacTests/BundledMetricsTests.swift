@@ -59,12 +59,13 @@ final class BundledMetricsTests: XCTestCase {
         // (ectt/ecst/ecit/ectc) + 44 sans (ecss/ecsi/ecsx/ecso); the last two
         // groups take the 11 distinct sizes their .fd files reach, which
         // declare <5><6><7><8>#50800 so 5/6/7 pt share 0800 = 256.
-        // Plus 6 AMS symbols (msbm/msam at 5/7/10 pt) and 2 license files
-        // (ec, amsfonts). 59 + 256 + 6 + 2 = 323. Then the TS1 text
+        // Plus 6 AMS symbols (msbm/msam at 5/7/10 pt), 3 AMS Euler fraktur
+        // (eufm5/7/10, \mathfrak) and 2 license files (ec, amsfonts).
+        // 59 + 256 + 6 + 3 + 2 = 326. Then the TS1 text
         // companions of every ec* (189 tc*) and ec-lm* (56 ts1-lm*) file,
         // the 41 OT1 cm* files ot1cmr.fd/ot1cmss.fd load and Knuth's README:
-        // 323 + 189 + 56 + 41 + 1 = 610.
-        XCTAssertEqual(entries.count, 610)
+        // 326 + 189 + 56 + 41 + 1 = 613.
+        XCTAssertEqual(entries.count, 613)
         let pinnedPaths = Set(Self.pinned.map(\.path))
         var listed = Set<String>()
         for e in entries {
