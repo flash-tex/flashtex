@@ -275,7 +275,9 @@ fn fill_natbib(
 /// (natbib.sty lines 288-291): `plainnat` makes every citation `[Knuth,
 /// 1984]`, before or after the command.
 fn natbib_options<T: Borrow<Token>>(tokens: &[T]) -> Option<natbib::Options> {
-    let mut options = package_options(tokens, "natbib").map(|options| natbib::Options::from_option_list(&options))?;
+    // A REVTeX class loads natbib itself (`natbib::Options::revtex`).
+    let class = document_class(tokens).and_then(|(class, options)| natbib::Options::revtex(&class, &options));
+    let mut options = class.or_else(|| package_options(tokens, "natbib").map(|options| natbib::Options::from_option_list(&options)))?;
     if let Some(style) = command_argument(tokens, "citestyle") {
         options.apply_bibstyle(style.trim());
     } else if options.bibstyle {
@@ -284,6 +286,19 @@ fn natbib_options<T: Borrow<Token>>(tokens: &[T]) -> Option<natbib::Options> {
         }
     }
     Some(options)
+}
+
+/// The first `\documentclass[options]{class}`: the class and its option
+/// list as written.
+fn document_class<T: Borrow<Token>>(tokens: &[T]) -> Option<(String, String)> {
+    let at = tokens.iter().position(|t| matches!(&t.borrow().kind, TokenKind::Command(command) if command == "documentclass"))?;
+    let mut cursor = at + 1;
+    let mut options = String::new();
+    if let Some((text, after)) = optional_bracket_text(tokens, cursor) {
+        options = text;
+        cursor = after;
+    }
+    group_text(tokens, cursor).map(|(class, _)| (class.trim().to_string(), options))
 }
 
 /// The braced argument of the first `\<name>` in the token stream.

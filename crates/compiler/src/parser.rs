@@ -6094,7 +6094,7 @@ impl P<'_> {
                         Some("rendered nothing for the empty citation".into()),
                     ));
                 } else if let Some(options) = natbib {
-                    let mut kind = if note.is_some() || options.numbers {
+                    let mut kind = if note.is_some() || options.numbers || options.cite_is_citep {
                         natbib::CITE_WITH_NOTE
                     } else {
                         natbib::CITE_PLAIN

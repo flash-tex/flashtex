@@ -64,6 +64,9 @@ pub struct Options {
     /// punctuation option executes `nobibstyle`; `authoryear` executes
     /// `bibstyle` last (lines 236-263).
     pub bibstyle: bool,
+    /// `\let\cite\citep` (revtex's `rmp` journal): a bare `\cite` is
+    /// `\citep`, not natbib's `\citet`.
+    pub cite_is_citep: bool,
 }
 
 impl Default for Options {
@@ -82,6 +85,7 @@ impl Default for Options {
             compress: false,
             longnamesfirst: false,
             bibstyle: true,
+            cite_is_citep: false,
         }
     }
 }
@@ -223,6 +227,62 @@ impl Options {
         }
     }
 
+    /// natbib as the REVTeX classes load and configure it, or `None` for a
+    /// class that is not one of them. Every one of `revtex4.cls` (line
+    /// 5480), `revtex4-1.cls` (7021) and `revtex4-2.cls` (7042) runs
+    /// `\RequirePackage[sort&compress]{natbib}`; the society/journal
+    /// substyle then sets `\bibpunct`:
+    ///
+    /// - APS, the default society: `\bibpunct{[}{]}{,}{n}{}{,}`, numbered
+    ///   (`aps.rtx` 420, `aps4-1.rtx` 452, `aps4-2.rtx` 482);
+    /// - the `rmp` journal (`rmp.rtx` 195; `apsrmp4-1.rtx` 226,
+    ///   `apsrmp4-2.rtx` 235, also reached as the `apsrmp` society):
+    ///   `\bibpunct{(}{)}{;}{a}{,}{,}` and `\let\cite\citep`;
+    /// - the `prb` journal under `revtex4`/`revtex4-1`:
+    ///   `\bibpunct{}{}{,}{s}{}{\textsuperscript{,}}`, superscript numbers
+    ///   (`aps.rtx` 486, `aps4-1.rtx` 529); `revtex4-2`'s `prb` keeps the
+    ///   APS brackets (pdflatex: `[1]`).
+    ///
+    /// The other societies (`aip`, `aapm`, `sor`, `osa`) choose among
+    /// several forms per journal and are left at natbib's own defaults.
+    pub fn revtex(class: &str, class_options: &str) -> Option<Options> {
+        if !matches!(class, "revtex4" | "revtex4-1" | "revtex4-2") {
+            return None;
+        }
+        let given: Vec<&str> = class_options.split(',').map(str::trim).collect();
+        let mut options = Options::from_option_list("sort&compress");
+        let other_society = given.iter().any(|o| matches!(*o, "aip" | "aapm" | "sor" | "osa" | "osameet" | "opex" | "tops" | "josa"));
+        if other_society {
+            return Some(options);
+        }
+        if given.iter().any(|o| matches!(*o, "rmp" | "apsrmp")) {
+            options.apply_bibpunct("(", ")", ";", 'a', ",", ",");
+            options.cite_is_citep = true;
+        } else if given.contains(&"prb") && class != "revtex4-2" {
+            options.apply_bibpunct("", "", ",", 's', "", ",");
+        } else {
+            options.apply_bibpunct("[", "]", ",", 'n', "", ",");
+        }
+        // The class's `\bibpunct` runs after `\ProcessOptions`, and
+        // `\bibstyle@apsrev`/`apsrmp` are undefined, so the `.aux` hook
+        // changes nothing for the class's own styles.
+        Some(options)
+    }
+
+    /// `\bibpunct[, ]{open}{close}{sep}{mode}{aysep}{yrsep}` (natbib.sty
+    /// 292-303): mode `n` numbers, `s` superscript numbers, anything else
+    /// author-year.
+    fn apply_bibpunct(&mut self, open: &str, close: &str, sep: &str, mode: char, aysep: &str, yrsep: &str) {
+        self.open = open.into();
+        self.close = close.into();
+        self.sep = sep.into();
+        self.numbers = matches!(mode, 'n' | 's');
+        self.superscript = mode == 's';
+        self.aysep = aysep.into();
+        self.yrsep = yrsep.into();
+        self.cmt = ", ".into();
+    }
+
     /// natbib's `\bibstyle@<style>` (lines 206-234): the `\bibpunct` a
     /// bibliography style selects, applied by `\citestyle{<style>}` or, while
     /// [`Options::bibstyle`] holds, by `\bibliographystyle{<style>}`.
@@ -242,14 +302,7 @@ impl Options {
             "copernicus" | "egu" | "egs" | "pass" | "anngeo" | "nlinproc" => ("(", ")", ";", false, ",", ","),
             _ => return false,
         };
-        self.open = open.into();
-        self.close = close.into();
-        self.sep = sep.into();
-        self.numbers = numbers;
-        self.superscript = false;
-        self.aysep = aysep.into();
-        self.yrsep = yrsep.into();
-        self.cmt = ", ".into();
+        self.apply_bibpunct(open, close, sep, if numbers { 'n' } else { 'a' }, aysep, yrsep);
         true
     }
 }
