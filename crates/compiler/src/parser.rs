@@ -13891,7 +13891,8 @@ impl P<'_> {
     /// A kernel text accent (`text_builtins::TEXT_ACCENTS`): `\c{c}`,
     /// `\v{\i}`, `\k{}`, or unbraced `\v s`, where TeX reads one token so
     /// `\v sice` accents only the `s`. One text inline spans the command and
-    /// its argument and holds the character the dfu tables declare for it.
+    /// its argument and holds the character the dfu tables declare for it,
+    /// or the base letter plus a combining mark when they declare none.
     fn text_accent(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
         let space_before = self.space_precedes(self.i - 1);
         let style = self.style;
@@ -13981,12 +13982,25 @@ impl P<'_> {
         let text = match text_builtins::text_accent(name, &base, enc) {
             Some(AccentOutcome::Char(ch)) => ch.to_string(),
             Some(AccentOutcome::NoComposite) => {
-                self.diags.push(Diagnostic::warning(
-                    format!("\\{name}{{{base}}} has no precomposed character and \\accent is not implemented; the accent is not drawn"),
-                    Some(full),
-                    Some("typeset the letter without the accent".into()),
-                ));
-                bare()
+                let base_text = bare();
+                match (base_text.is_empty(), text_builtins::combining_mark(name)) {
+                    (false, Some(mark)) => {
+                        self.diags.push(Diagnostic::warning(
+                            format!("\\{name}{{{base}}} has no precomposed character, so the accent is drawn with a combining mark"),
+                            Some(full),
+                            Some("check the accent's placement in the output".into()),
+                        ));
+                        format!("{base_text}{mark}")
+                    }
+                    _ => {
+                        self.diags.push(Diagnostic::warning(
+                            format!("\\{name}{{{base}}} has no precomposed character and \\accent is not implemented; the accent is not drawn"),
+                            Some(full),
+                            Some("typeset the letter without the accent".into()),
+                        ));
+                        base_text
+                    }
+                }
             }
             Some(AccentOutcome::Unavailable(message)) => {
                 self.diags.push(Diagnostic::error(

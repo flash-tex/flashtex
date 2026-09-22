@@ -144,18 +144,47 @@ fn ogonek_needs_t1_like_latex() {
 }
 
 #[test]
-fn a_letter_without_a_declared_character_is_set_bare_with_a_warning() {
+fn a_letter_without_a_declared_character_uses_a_combining_mark() {
+    // No dfu table declares `\b a` or `\c x`: instead of the bare letter,
+    // the base is followed by the accent's Unicode combining mark. The
+    // command must lay out exactly like the combining mark typed directly,
+    // proving the shaper handles the fallback generically; the only extra
+    // diagnostics are the fallback warnings (the v1 Times face has no
+    // combining-mark glyphs, so both versions share its missing-glyph
+    // warnings, like any other character outside the face).
     let source = "\\b{a} and \\c{x} end.\n";
-    let out = compile(source);
-    assert_eq!(
-        messages(&out),
-        [
-            "\\b{a} has no precomposed character and \\accent is not implemented; the accent is not drawn",
-            "\\c{x} has no precomposed character and \\accent is not implemented; the accent is not drawn",
-        ]
-    );
-    let typed = "a and x end.\n";
-    assert_eq!(words_in(&out, source), words_in(&compile(typed), typed));
+    let typed = "a\u{331} and x\u{327} end.\n";
+    let (out, direct) = (compile(source), compile(typed));
+    assert_eq!(words_in(&out, source), words_in(&direct, typed));
+    let mut expected = vec![
+        "\\b{a} has no precomposed character, so the accent is drawn with a combining mark",
+        "\\c{x} has no precomposed character, so the accent is drawn with a combining mark",
+    ];
+    expected.extend(messages(&direct));
+    assert_eq!(messages(&out), expected);
+    let texts: Vec<&str> = out
+        .pages
+        .iter()
+        .flat_map(|p| p.items.iter())
+        .map(|i| i.text.as_str())
+        .collect();
+    assert!(texts.iter().any(|t| *t == "a\u{331}"), "{texts:?}");
+    assert!(texts.iter().any(|t| *t == "x\u{327}"), "{texts:?}");
+}
+
+#[test]
+fn an_accent_over_a_digit_without_a_precomposed_form_uses_a_combining_mark() {
+    // No dfu table declares a cedilla over a digit: the digit is followed
+    // by U+0327 COMBINING CEDILLA rather than set bare with no accent, and
+    // lays out exactly like the combining mark typed directly.
+    let source = "x \\c{5} end\n";
+    let typed = "x 5\u{327} end\n";
+    let (out, direct) = (compile(source), compile(typed));
+    assert_eq!(words_in(&out, source), words_in(&direct, typed));
+    let mut expected =
+        vec!["\\c{5} has no precomposed character, so the accent is drawn with a combining mark"];
+    expected.extend(messages(&direct));
+    assert_eq!(messages(&out), expected);
 }
 
 #[test]
@@ -174,6 +203,27 @@ fn a_bare_accent_warns_and_draws_nothing() {
     let source = "x \\v\n\ny end\n";
     let out = compile(source);
     assert_eq!(messages(&out), ["\\v has no letter to accent"]);
+}
+
+#[test]
+fn an_empty_base_with_no_spacing_mark_warns_and_draws_nothing() {
+    // `\b{}` declares no spacing mark, so there is no base to attach the
+    // combining mark to: the old bare warning stays and nothing is drawn.
+    let source = "x \\b{} end\n";
+    let out = compile(source);
+    assert_eq!(
+        messages(&out),
+        [
+            "\\b{} has no precomposed character and \\accent is not implemented; the accent is not drawn"
+        ]
+    );
+    let texts: Vec<&str> = out
+        .pages
+        .iter()
+        .flat_map(|p| p.items.iter())
+        .map(|i| i.text.as_str())
+        .collect();
+    assert_eq!(texts, ["x", "end"]);
 }
 
 #[test]

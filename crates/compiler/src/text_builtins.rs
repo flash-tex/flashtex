@@ -227,14 +227,36 @@ pub fn canonical_accent_name(name: &str) -> &str {
         .unwrap_or(name)
 }
 
+/// The Unicode combining diacritical mark that draws a [`TEXT_ACCENTS`]
+/// accent when the `*.dfu` tables declare no precomposed character for the
+/// base: `\c` is U+0327 COMBINING CEDILLA, `\v` U+030C COMBINING CARON,
+/// `\u` U+0306 COMBINING BREVE, `\H` U+030B COMBINING DOUBLE ACUTE ACCENT,
+/// `\r` U+030A COMBINING RING ABOVE, `\k` U+0328 COMBINING OGONEK, `\d`
+/// U+0323 COMBINING DOT BELOW and `\b` U+0331 COMBINING MACRON BELOW (the
+/// bar-below accent). `None` when `accent` is not a text accent.
+pub fn combining_mark(accent: &str) -> Option<char> {
+    Some(match accent {
+        "c" => '\u{327}',
+        "v" => '\u{30c}',
+        "u" => '\u{306}',
+        "H" => '\u{30b}',
+        "r" => '\u{30a}',
+        "k" => '\u{328}',
+        "d" => '\u{323}',
+        "b" => '\u{331}',
+        _ => return None,
+    })
+}
+
 /// What a text accent over one base typesets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccentOutcome {
     /// The precomposed character the `*.dfu` tables declare for
     /// `\<accent> <base>`, so text extraction round-trips.
     Char(char),
-    /// No declared character: pdfLaTeX builds it with `\accent`, which this
-    /// compiler does not draw yet.
+    /// No declared character: pdfLaTeX builds it with `\accent`. The parser
+    /// draws it as the base letter followed by [`combining_mark`], which the
+    /// shaper positions over the base generically.
     NoComposite,
     /// `LaTeX Error: Command \cmd unavailable in encoding E.` (`\k` in OT1).
     Unavailable(String),
@@ -781,6 +803,28 @@ mod tests {
             assert_eq!(canonical_accent_name(alias), *canonical);
         }
         assert_eq!(canonical_accent_name("v"), "v");
+    }
+
+    #[test]
+    fn every_text_accent_has_a_combining_mark() {
+        for (accent, expected) in [
+            ("c", '\u{327}'),
+            ("v", '\u{30c}'),
+            ("u", '\u{306}'),
+            ("H", '\u{30b}'),
+            ("r", '\u{30a}'),
+            ("k", '\u{328}'),
+            ("d", '\u{323}'),
+            ("b", '\u{331}'),
+        ] {
+            assert!(
+                TEXT_ACCENTS.contains(&accent),
+                "{accent} is not a text accent"
+            );
+            assert_eq!(combining_mark(accent), Some(expected), "\\{accent}");
+        }
+        assert_eq!(combining_mark("t"), None);
+        assert_eq!(combining_mark("'"), None);
     }
 
     #[test]
