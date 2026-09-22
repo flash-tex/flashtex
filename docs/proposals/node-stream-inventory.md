@@ -362,3 +362,22 @@ named above first.
   `site31` (the `\setlist` of a definition that is never called) run
   un-ignored. `site12` passed on the slice 2 base already and is
   un-ignored too.
+- **Adapter-only sites 5, 19, 24 and 30: migrated.** No compiler change was
+  needed for these four.
+  - Site 5: the `em` of a `\quad`/`\hspace{<n>em}` is set in the font of
+    the glue node's own `style` (size included). `glue_size` is gone. A
+    size environment now sets the size of explicit glue too, as it does
+    for text.
+  - Site 19: a heading's `\sectionmark` title is the plain text of its
+    compiler inlines (`mark_title`), not its source bytes.
+  - Site 24: a display is numbered when the compiler's `Inline::Math`
+    carries a `number`. The compiler numbers `equation`, including one a
+    macro opens. The `\begin{equation}` byte check is gone.
+  - Site 30: `\vspace`'s `em`/`ex` are the compiler's, read in the font
+    where the command stands. The gap re-read at the body size is gone.
+    `vspace_in_gap` stays for `abstractenv` (site 40). This fix moves
+    hw1's and hw2's first-page words after `\vspace{0.6em}` by 0.037 bp.
+    That is onto pdflatex: the words within 0.01 bp go from 29 to 124
+    (hw1 p1) and from 29 to 131 (hw2 p1).
+
+  Falsifiers `site05`, `site19`, `site24` and `site30` run un-ignored.

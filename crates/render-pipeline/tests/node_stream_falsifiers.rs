@@ -191,7 +191,6 @@ fn site04_declaration_macro_from_project_sty() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 5: glue_size scans the gap bytes for \\Large, so a size macro before \\quad is missed"]
 fn site05_quad_size_after_size_macro() {
     falsify(Same, &doc("", "A {\\Large\\quad x} y."), &doc("\\newcommand\\bigL{\\Large}\n", "A {\\bigL\\quad x} y."));
 }
@@ -284,7 +283,6 @@ fn site18_chapter_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 19: the running-head title is plain_text of the heading's source bytes"]
 fn site19_heading_mark_from_title_macro() {
     falsify(
         Same,
@@ -328,7 +326,6 @@ fn site23_center_opened_by_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 24: whether a display is numbered is read from `\\begin{equation}` bytes"]
 fn site24_equation_opened_by_macro() {
     falsify(
         Same,
@@ -383,7 +380,6 @@ fn site29_par_after_display_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 30: vspace_in_gap re-reads `\\vspace{..em}` bytes to resize the em"]
 fn site30_vspace_em_from_macro() {
     falsify(Same, &doc("", "A.\n\n{\\Large\\vspace{2em}}\nB."), &doc("\\newcommand\\gap{\\vspace{2em}}\n", "A.\n\n{\\Large\\gap}\nB."));
 }

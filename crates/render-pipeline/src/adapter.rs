@@ -2405,13 +2405,7 @@ pub fn adapt_cached(
                 } else {
                     number.to_string()
                 };
-                let title = match (content.first(), content.last()) {
-                    (Some(a), Some(b)) => {
-                        let (a, b) = (inline_span(a), inline_span(b));
-                        texts.get(a.document.0).and_then(|t| t.get(a.start..b.end)).map(plain_text).unwrap_or_default()
-                    }
-                    _ => String::new(),
-                };
+                let title = mark_title(texts, content);
                 // LaTeX `\@seccntformat`: the counter, then `\quad`, then the
                 // title; the number's bytes are the `\section` command's.
                 let mut items = Vec::new();
@@ -2796,9 +2790,9 @@ pub fn adapt_cached(
                                 }
                                 continue;
                             }
-                            // The compiler counts every closed display; LaTeX
-                            // numbers only the `equation` environment (or a
-                            // `\tag` in any display).
+                            // The compiler numbers the `equation` environment
+                            // (a macro-opened one too, PLAN1 site 24); a `\tag`
+                            // numbers any display.
                             let rest = texts.get(span.document.0).and_then(|t| t.get(span.start..)).unwrap_or("");
                             let mut tag = None;
                             let list = strip_tag(texts, &list, &mut tag, &mut limitations);
@@ -2807,9 +2801,7 @@ pub fn adapt_cached(
                             let number = match (tag, eqno) {
                                 (Some((t, _)), _) => Some((t, span)),
                                 (None, Some(n)) => Some(n),
-                                (None, None) => display_number(inlines, span)
-                                    .filter(|_| rest.starts_with("\\begin{equation}"))
-                                    .map(|(n, s)| (format!("({n})"), s)),
+                                (None, None) => display_number(inlines, span).map(|(n, s)| (format!("({n})"), s)),
                             };
                             let bracket = !amsmath && (rest.starts_with("\\[") || rest.starts_with("\\begin{displaymath}"));
                             let (list, qed_here) = strip_qedhere(texts, list);
@@ -4651,22 +4643,9 @@ fn split_at_page_breaks<'p>(
             _ => anchor_span(inlines_of(block)).or(item_label_span),
         };
         let mut eject = std::mem::take(&mut pending_eject) || matches!((prev_end, first), (Some(p), Some(f)) if gap_has_page_break(texts, p, f));
+        // `\vspace`'s `em`/`ex` are the compiler's, in the font where the
+        // command stands (PLAN1 site 30).
         let mut vspace_before = std::mem::take(&mut pending_vspace);
-        // The compiler evaluates `em`/`ex` in `\vspace` at a fixed 12pt;
-        // LaTeX uses the class's `\normalsize`. Re-read the commands in
-        // the gap before this unit when they are all there.
-        if vspace_before != 0.0 {
-            if let Some(f) = first {
-                let gap = match prev_end {
-                    Some(p) if p.document == f.document && p.end <= f.start => texts.get(f.document.0).and_then(|t| t.get(p.end..f.start)),
-                    Some(_) => None,
-                    None => texts.get(f.document.0).and_then(|t| t.get(..f.start)),
-                };
-                if let Some(pt) = gap.and_then(|g| vspace_in_gap(g, size)) {
-                    vspace_before = pt;
-                }
-            }
-        }
         // The compiler's list model (pin `42557b09`): every `\item`
         // paragraph is a `ListItem` with its nesting level and, for the
         // item's first paragraph, the marker text. Its `\setlist`
@@ -9892,6 +9871,37 @@ pub fn command_words(text: &str, span: Span) -> Vec<Item> {
 }
 
 /// Source text with runs of whitespace collapsed to one space.
+/// A heading's title as the plain text of its `\sectionmark`: the
+/// compiler's text runs, a space wherever TeX appends interword glue
+/// (PLAN1 site 19: a title from a macro body reads as what the macro set).
+/// An inline that is not text (a formula, a box) keeps the source text of
+/// its span, as the whole title did before.
+fn mark_title(texts: &[&str], content: &[Inline]) -> String {
+    let mut out = String::new();
+    let mut prev_end: Option<Span> = None;
+    for inline in content {
+        match inline {
+            Inline::Text { text, glue_before, space_before, .. } => {
+                if glue_before.is_some() || *space_before {
+                    out.push(' ');
+                }
+                out.push_str(text);
+            }
+            Inline::Label { .. } => {}
+            other => {
+                let span = inline_span(other);
+                let gap = prev_end.filter(|p| p.document == span.document && p.end <= span.start).and_then(|p| texts.get(span.document.0)?.get(p.end..span.start));
+                if gap.is_some_and(|g| g.chars().any(char::is_whitespace)) {
+                    out.push(' ');
+                }
+                out.push_str(texts.get(span.document.0).and_then(|t| t.get(span.start..span.end)).unwrap_or(""));
+            }
+        }
+        prev_end = Some(inline_span(inline));
+    }
+    plain_text(&out)
+}
+
 fn plain_text(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -10562,7 +10572,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
 
     // The first inline's span, for the over-long marker below.
     let first_span = resolved.first().map(|i| inline_span(i));
-    for (k, inline) in resolved.iter().enumerate() {
+    for inline in resolved.iter() {
         // Fail fast instead of failing slow: the breaker rejects any list
         // past `pl::MAX_ITEMS`, and assembling further only burns
         // superlinear work (`token_gap`'s source rescan per word, shaping
@@ -10874,15 +10884,10 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // between -- never a size established after the fill.
                 let mut fill_style = node_style(glue_font, size);
                 fill_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
-                // The font the glue's `em` is read in: the series/family
-                // in force at the command, the size from the compiler's
-                // scoping of the text around it.
-                let quad_style = || {
-                    let mut style = node_style(glue_font, size);
-                    let next_cpt = resolved[k + 1..].iter().find_map(|i| inline_declared_size(i, size)).unwrap_or(prev_size_cpt);
-                    style.size_cpt = glue_size(texts, prev_end, *span, prev_size_cpt, next_cpt);
-                    style
-                };
+                // The font the glue's `em` is read in: the compiler's font
+                // at the command, size included (PLAN1 site 5: a size
+                // declaration from a macro body counts too).
+                let quad_style = || node_style(glue_font, size);
                 let (item, word) = match &**inline {
                     // `em` is the current font's quad (`\fontdimen6`), which
                     // the compiler's `pt` cannot know: it converts at a fixed
@@ -11681,7 +11686,7 @@ fn size_env_par_leading(texts: &[&str], styles: &[Styles], inlines: &[Inline]) -
     st.size_env_at(src, span.end + par)
 }
 
-/// Gives the text, rules, kerns and tables inside a size environment the
+/// Gives the text, rules, kerns, tables and explicit glue inside a size environment the
 /// environment's size where the compiler left them at the surrounding size
 /// ([`Styles::size_env_at`]).
 fn apply_size_environments(texts: &[&str], styles: &[Styles], resolved: &mut [std::borrow::Cow<Inline>]) {
@@ -11694,6 +11699,7 @@ fn apply_size_environments(texts: &[&str], styles: &[Styles], resolved: &mut [st
         let no_size = match &**inline {
             Inline::Text { style, .. } | Inline::Logo { style, .. } | Inline::Rule { style, .. } | Inline::Kern { style, .. } => style.size.is_none(),
             Inline::Tabular(t) => t.style.size.is_none(),
+            Inline::TextGlue { style, .. } | Inline::HSpace { style, .. } | Inline::HFill { style, .. } => style.size.is_none(),
             _ => false,
         };
         if !no_size {
@@ -11703,32 +11709,9 @@ fn apply_size_environments(texts: &[&str], styles: &[Styles], resolved: &mut [st
         match inline.to_mut() {
             Inline::Text { style, .. } | Inline::Logo { style, .. } | Inline::Rule { style, .. } | Inline::Kern { style, .. } => style.size = Some(level),
             Inline::Tabular(t) => t.style.size = Some(level),
+            Inline::TextGlue { style, .. } | Inline::HSpace { style, .. } | Inline::HFill { style, .. } => style.size = Some(level),
             _ => {}
         }
-    }
-}
-
-/// The size declaration in force at an explicit glue command (`\quad`,
-/// `\hspace{<n>em}`) that carries no compiler style of its own, from the
-/// sizes of the text before (`prev_cpt`) and after (`next_cpt`) it: the
-/// previous text's, unless the bytes between that text and the command
-/// close a group or declare a size (`{\Large a}\quad b`, `a \Large\quad b`),
-/// in which case the size is the one the following text is read in.
-fn glue_size(texts: &[&str], prev_end: Option<usize>, span: Span, prev_cpt: u16, next_cpt: u16) -> u16 {
-    if prev_cpt == next_cpt {
-        return prev_cpt;
-    }
-    let Some(pe) = prev_end else { return next_cpt };
-    let Some(gap) = texts.get(span.document.0).and_then(|t| t.get(pe..span.start)) else { return prev_cpt };
-    let mut scan = CmdScan::new(gap);
-    let mut declares_size = false;
-    while let Some((_, cmd, _)) = scan.next() {
-        declares_size |= matches!(cmd, "tiny" | "scriptsize" | "footnotesize" | "small" | "normalsize" | "large" | "Large" | "LARGE" | "huge" | "Huge");
-    }
-    if declares_size || gap.contains('}') {
-        next_cpt
-    } else {
-        prev_cpt
     }
 }
 
@@ -12527,18 +12510,23 @@ mod tests {
     }
 
     #[test]
-    fn glue_takes_the_size_of_the_text_it_is_read_with() {
-        let src = "{\\Large a}\\quad b a\\quad{\\Large b} a \\Large\\quad b";
-        let at = |from: usize| src[from..].find("\\quad").unwrap() + from;
-        let q1 = at(0);
-        let q2 = at(q1 + 1);
-        let q3 = at(q2 + 1);
-        // `{\Large a}\quad b`: the group has closed, the following text's size.
-        assert_eq!(glue_size(&[src], Some(q1 - 1), Span::new(q1, q1 + 5), 1440, 0), 0);
-        // `a\quad{\Large b}`: nothing between the text and the glue.
-        assert_eq!(glue_size(&[src], Some(q2), Span::new(q2, q2 + 5), 0, 1440), 0);
-        // `a \Large\quad b`: a declaration before the glue.
-        assert_eq!(glue_size(&[src], Some(q3 - 7), Span::new(q3, q3 + 5), 0, 1440), 1440);
+    fn glue_takes_the_size_in_force_at_the_command() {
+        // The size of a `\quad`'s `em` is the compiler's font at the
+        // command (PLAN1 site 5), which scopes groups and declarations the
+        // way the removed gap scan approximated.
+        use flashtex_compiler::parser::FontSizeLevel as L;
+        let src = "\\documentclass{article}\\begin{document}{\\Large a}\\quad b a\\quad{\\Large b} a \\Large\\quad b\\end{document}";
+        let parsed = flashtex_compiler::parser::parse(src);
+        let sizes: Vec<Option<L>> = parsed
+            .blocks
+            .iter()
+            .flat_map(|b| inlines_of(b).iter())
+            .filter_map(|i| match i {
+                Inline::TextGlue { style, .. } => Some(style.size),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sizes, [None, None, Some(L::Large2)]);
     }
 
     #[test]
