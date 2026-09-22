@@ -1160,7 +1160,11 @@ fn setfontsize_takes_its_arguments_unexpanded() {
     // `\normalsize` must not recurse (it used to overflow the input stack).
     let (out, diags) = run_allow_diag(r"\makeatletter\def\normalsize{\@setfontsize\normalsize\@xpt\@xiipt}\normalsize\makeatother x");
     assert_eq!(diags, 0);
-    assert_eq!(out, "\\relax \\fontsize 1012\\selectfont x");
+    // `\fontsize`/`\selectfont` run in the engine (NFSS state) and come
+    // back to the host as `\flashtexfontsizedone{10}{12.0pt}` and
+    // `\flashtexselectfontdone` (the compiler maps them back to the real
+    // names); the `\relax` is `\size@update`'s glue terminator.
+    assert_eq!(out, "\\relax \\flashtexfontsizedone 1012.0pt\\relax \\flashtexselectfontdone x");
     // pdflatex: \meaning\@setfontsize
     assert_eq!(
         run(r"\makeatletter\meaning\@setfontsize\makeatother"),
@@ -1169,7 +1173,7 @@ fn setfontsize_takes_its_arguments_unexpanded() {
     // `\@currsize` remembers the size command.
     assert_eq!(
         run(r"\makeatletter\def\small{\@setfontsize\small\@ixpt{11}}\small\meaning\@currsize\makeatother"),
-        "\\relax \\fontsize 911\\selectfont macro:->\\@setfontsize \\small \\@ixpt {11}"
+        "\\relax \\flashtexfontsizedone 911.0pt\\relax \\flashtexselectfontdone macro:->\\@setfontsize \\small \\@ixpt {11}"
     );
 }
 
@@ -1196,6 +1200,52 @@ fn newinsert_allocates_downward_from_the_kernel_inserts() {
     // (`\relax` ends the glue scan: a `\the` right after `plus 12pt` is
     // expanded while TeX looks for `minus`, before the value is stored.)
     assert_eq!(run(r"\makeatletter\skip\footins 12pt plus 12pt\relax\the\skip\footins\makeatother"), "\\relax 12.0pt plus 12.0pt");
+}
+
+#[test]
+fn fontsize_records_the_nfss_size_state_and_selectfont_sets_baselineskip() {
+    // pdflatex (article, \makeatletter), `\f@size/\f@baselineskip/\the\baselineskip`:
+    //   at \begin{document}                       10/12.0pt/12.0pt
+    //   \fontsize{9}{11}\selectfont               9/11.0pt/11.0pt
+    //   \fontsize{9pt}{11pt}\selectfont           9/11.0pt/11.0pt
+    //   \fontsize{\@ixpt}{11}\selectfont          9/11.0pt/11.0pt
+    //   \@setfontsize\small\@ixpt{10.5}           9/10.5pt/10.5pt, \@currsize = \small
+    //   \fontsize{10.5}{13}\selectfont            10.5/13.0pt/13.0pt
+    // (`\baselinestretch` is the typesetter's here, so `\f@linespread` is
+    // what `\set@fontsize` was given: 1.)
+    // (The engine's own `\baselineskip` starts at 0pt; the compiler's class
+    // prelude sets it, so the probe sets it first.)
+    let probe = r"\f@size/\f@baselineskip/\the\baselineskip";
+    assert_eq!(run(&format!(r"\makeatletter\baselineskip=12pt {probe}\makeatother")), "10/12.0pt/12.0pt");
+    // `\fontsize` itself is the host's: it comes back as `\fontsize{9}{11.0pt}`
+    // (the NFSS-normalised values) followed by `\selectfont`.
+    assert_eq!(
+        run(&format!(r"\makeatletter\fontsize{{9}}{{11}}\selectfont{probe}\makeatother")),
+        "\\flashtexfontsizedone 911.0pt\\relax \\flashtexselectfontdone 9/11.0pt/11.0pt"
+    );
+    assert_eq!(
+        run(&format!(r"\makeatletter\fontsize{{9pt}}{{11pt}}\selectfont{probe}\makeatother")),
+        "\\flashtexfontsizedone 911.0pt\\relax \\flashtexselectfontdone 9/11.0pt/11.0pt"
+    );
+    assert_eq!(
+        run(&format!(r"\makeatletter\fontsize{{\@ixpt}}{{11}}\selectfont{probe}\makeatother")),
+        "\\flashtexfontsizedone 911.0pt\\relax \\flashtexselectfontdone 9/11.0pt/11.0pt"
+    );
+    assert_eq!(
+        run(&format!(r"\makeatletter\@setfontsize\small\@ixpt{{10.5}}{probe}\makeatother")),
+        "\\relax \\flashtexfontsizedone 910.5pt\\relax \\flashtexselectfontdone 9/10.5pt/10.5pt"
+    );
+    assert_eq!(
+        run(&format!(r"\makeatletter\fontsize{{10.5}}{{13}}\selectfont{probe}\makeatother")),
+        "\\flashtexfontsizedone 10.513.0pt\\relax \\flashtexselectfontdone 10.5/13.0pt/13.0pt"
+    );
+    // `\selectfont` with no pending size (`\fontfamily{ptm}\selectfont`)
+    // leaves `\baselineskip` alone: `\size@update` is `\relax` (which the
+    // host sees, as TeX's stomach would).
+    assert_eq!(
+        run(&format!(r"\makeatletter\baselineskip=12pt \selectfont{probe}\makeatother")),
+        "\\relax \\flashtexselectfontdone 10/12.0pt/12.0pt"
+    );
 }
 
 #[test]
