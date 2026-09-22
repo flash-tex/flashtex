@@ -4534,6 +4534,7 @@ impl P<'_> {
             "theoremstyle" => self.set_theorem_style(span),
             "begin" | "end" => self.environment(name, span, blocks, para),
             "input" | "include" => self.include(name, span, blocks, para),
+            "verbatiminput" => self.verbatim_input(name, span, blocks, para),
             // MacTeX writes package-version banners to the log for `\listfiles`;
             // this compiler has no log stream to write them to, so the honest
             // behaviour is a documented no-op rather than an "unsupported"
@@ -6969,6 +6970,56 @@ impl P<'_> {
         }
     }
 
+    /// `\input`/`\include`-style project-file lookup: a requested path
+    /// checked for emptiness and parent traversal, then resolved against
+    /// the project documents with the `.tex` fallback. Diagnoses exactly
+    /// as `\input` always has. Shared by `include` (which parses the file)
+    /// and `verbatim_input` (which typesets its raw bytes).
+    fn resolve_project_file(
+        &mut self,
+        command: &str,
+        span: Span,
+        requested: &str,
+    ) -> Option<usize> {
+        if requested.is_empty() {
+            self.diags.push(Diagnostic::error(
+                format!("\\{command} requires a non-empty project-relative path"),
+                Some(span),
+                Some("skipped the empty include and continued".into()),
+            ));
+            return None;
+        }
+        if !path_is_safe(requested) {
+            self.diags.push(Diagnostic::error(
+                format!(
+                    "rejected include path '{requested}': paths must be project-relative with no parent traversal"
+                ),
+                Some(span),
+                Some("skipped the unsafe include and continued".into()),
+            ));
+            return None;
+        }
+
+        let appended = format!("{requested}.tex");
+        let resolved = self
+            .document_by_path
+            .get(requested)
+            .copied()
+            .or_else(|| self.document_by_path.get(appended.as_str()).copied());
+        let Some(document_index) = resolved else {
+            self.diags.push(Diagnostic::error(
+                format!("included file not found: looked for '{requested}' and '{appended}'"),
+                Some(span),
+                Some("skipped the missing include and continued".into()),
+            )
+            .with_help(format!(
+                "add '{requested}' or '{appended}' to the project documents, or fix the \\input path"
+            )));
+            return None;
+        };
+        Some(document_index)
+    }
+
     fn include(
         &mut self,
         command: &str,
@@ -6988,40 +7039,7 @@ impl P<'_> {
         if requested == "glyphtounicode" || requested == "glyphtounicode.tex" {
             return;
         }
-        if requested.is_empty() {
-            self.diags.push(Diagnostic::error(
-                format!("\\{command} requires a non-empty project-relative path"),
-                Some(span),
-                Some("skipped the empty include and continued".into()),
-            ));
-            return;
-        }
-        if !path_is_safe(&requested) {
-            self.diags.push(Diagnostic::error(
-                format!(
-                    "rejected include path '{requested}': paths must be project-relative with no parent traversal"
-                ),
-                Some(span),
-                Some("skipped the unsafe include and continued".into()),
-            ));
-            return;
-        }
-
-        let appended = format!("{requested}.tex");
-        let resolved = self
-            .document_by_path
-            .get(requested.as_str())
-            .copied()
-            .or_else(|| self.document_by_path.get(appended.as_str()).copied());
-        let Some(document_index) = resolved else {
-            self.diags.push(Diagnostic::error(
-                format!("included file not found: looked for '{requested}' and '{appended}'"),
-                Some(span),
-                Some("skipped the missing include and continued".into()),
-            )
-            .with_help(format!(
-                "add '{requested}' or '{appended}' to the project documents, or fix the \\input path"
-            )));
+        let Some(document_index) = self.resolve_project_file(command, span, &requested) else {
             return;
         };
 
@@ -7074,6 +7092,39 @@ impl P<'_> {
         self.include_stack.pop();
         self.t = saved_tokens;
         self.i = saved_index;
+    }
+
+    /// `\verbatiminput{file}` (verbatim.sty): the named file's raw bytes
+    /// typeset exactly as a `verbatim` environment body. Lookup is
+    /// `\input`'s own resolution (`resolve_project_file`); rendering is the
+    /// `verbatim` environment's (`verbatim_display` over `Block::Verbatim`
+    /// lines). The file is never tokenized or expanded, so unlike `include`
+    /// there is no include-stack or cycle check: raw bytes cannot recurse.
+    /// A trailing newline ends the final line, mirroring how the
+    /// environment drops the newline before `\end{verbatim}` instead of
+    /// typesetting an extra empty line.
+    fn verbatim_input(
+        &mut self,
+        command: &str,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        self.flush_paragraph(blocks, para);
+        let starred = self.take_optional_star();
+        let (tokens, argument_span) = self.required_group(command, span);
+        let requested = token_text(&tokens).trim().to_string();
+        let Some(document_index) = self.resolve_project_file(command, span, &requested) else {
+            return;
+        };
+        let document = DocumentId(document_index);
+        let text = self.documents[document_index].text;
+        let body = text.strip_suffix('\n').unwrap_or(text);
+        blocks.push(Block::Verbatim {
+            lines: verbatim_lines(document, body, 0, starred),
+            span: span.merge(argument_span),
+        });
+        self.finish_block_dependencies();
     }
 
     fn document_class(&mut self, span: Span) {
@@ -10921,15 +10972,7 @@ impl P<'_> {
             trimmed_end -= 1;
         }
         let body = &source[content_start..trimmed_end];
-        let mut lines = Vec::new();
-        let mut line_start = content_start;
-        for raw_line in body.split('\n') {
-            lines.push(VerbatimLine {
-                text: verbatim_display(raw_line, starred),
-                span: Span::in_document(document, line_start, line_start + raw_line.len()),
-            });
-            line_start += raw_line.len() + 1;
-        }
+        let lines = verbatim_lines(document, body, content_start, starred);
         if !found {
             self.diags.push(Diagnostic::error(
                 format!("unterminated environment '{name}' — no matching \\end"),
@@ -17082,6 +17125,27 @@ fn verbatim_display(line: &str, starred: bool) -> String {
     out
 }
 
+/// One rendered line per `\n`-separated raw line, with byte-exact source
+/// spans: the shared line builder behind the `verbatim` environment and
+/// `\verbatiminput` (per-line rendering is `verbatim_display`).
+fn verbatim_lines(
+    document: DocumentId,
+    body: &str,
+    base: usize,
+    starred: bool,
+) -> Vec<VerbatimLine> {
+    let mut lines = Vec::new();
+    let mut line_start = base;
+    for raw_line in body.split('\n') {
+        lines.push(VerbatimLine {
+            text: verbatim_display(raw_line, starred),
+            span: Span::in_document(document, line_start, line_start + raw_line.len()),
+        });
+        line_start += raw_line.len() + 1;
+    }
+    lines
+}
+
 fn paragraph_style(environment: &str) -> Option<ParagraphStyle> {
     match environment {
         "center" => Some(ParagraphStyle::Center),
@@ -21458,6 +21522,92 @@ mod tests {
         };
         let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
         assert_eq!(texts, ["\u{B7}a", "abc\u{B7}\u{B7}X"]);
+    }
+
+    /// `\verbatiminput{file}` (verbatim.sty) reads the named file's raw
+    /// bytes and typesets them exactly as the `verbatim` environment would
+    /// wrap those same bytes: same `Block::Verbatim` line texts, plain and
+    /// starred alike. The fixture file ends with a newline, which ends its
+    /// last line rather than adding an empty one.
+    #[test]
+    fn verbatiminput_renders_the_file_like_the_verbatim_environment() {
+        let file = "100% \\foo ${x}\nline two\n";
+        let cases = [
+            (
+                "\\verbatiminput{data.tex}",
+                "\\begin{verbatim}\n100% \\foo ${x}\nline two\n\\end{verbatim}",
+            ),
+            (
+                "\\verbatiminput*{data.tex}",
+                "\\begin{verbatim*}\n100% \\foo ${x}\nline two\n\\end{verbatim*}",
+            ),
+        ];
+        for (command, environment) in cases {
+            let via_file = parse_project(
+                &[
+                    SourceDocument {
+                        path: "main.tex",
+                        text: command,
+                    },
+                    SourceDocument {
+                        path: "data.tex",
+                        text: file,
+                    },
+                ],
+                "main.tex",
+            );
+            assert!(
+                via_file.diagnostics.is_empty(),
+                "{:?}",
+                via_file.diagnostics
+            );
+            let via_environment = parse(environment);
+            assert!(
+                via_environment.diagnostics.is_empty(),
+                "{:?}",
+                via_environment.diagnostics
+            );
+            let (
+                Block::Verbatim {
+                    lines: from_file, ..
+                },
+                Block::Verbatim {
+                    lines: from_env, ..
+                },
+            ) = (&via_file.blocks[0], &via_environment.blocks[0])
+            else {
+                panic!(
+                    "expected two Block::Verbatim, got {:?} and {:?}",
+                    via_file.blocks[0], via_environment.blocks[0]
+                );
+            };
+            let (file_texts, env_texts): (Vec<&str>, Vec<&str>) = (
+                from_file.iter().map(|line| line.text.as_str()).collect(),
+                from_env.iter().map(|line| line.text.as_str()).collect(),
+            );
+            assert_eq!(file_texts, env_texts, "{command:?}");
+        }
+    }
+
+    /// A `\verbatiminput` of a file the project does not contain diagnoses
+    /// exactly like `\input` does.
+    #[test]
+    fn verbatiminput_of_a_missing_file_reports_like_input() {
+        let parsed = parse_project(
+            &[SourceDocument {
+                path: "main.tex",
+                text: "\\verbatiminput{nope.tex}",
+            }],
+            "main.tex",
+        );
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("included file not found")),
+            "{:?}",
+            parsed.diagnostics
+        );
     }
 
     #[test]

@@ -332,6 +332,7 @@ pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "column",
     "titleformat",
     "titlerule",
+    "verbatiminput",
     // Table rules, spans and colours handled by the tabular row scanner
     // (`parser::tabular`), not by a `parser::Parser::command` arm: `\hline`,
     // `\cline` and the booktabs rules at the start of a row, `\multicolumn`,
@@ -496,6 +497,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("end", "{env}", "closes the innermost open environment"),
     ("input", "{path}", "expands a project-relative document in place"),
     ("include", "{path}", "expands a project-relative document in place"),
+    ("verbatiminput", "{file}", "typesets a project-relative file's raw bytes as literal monospaced lines, like the verbatim environment; the starred form marks spaces visibly"),
     ("listfiles", "", "accepted no-op; there is no log stream"),
     ("section", "{...}", "numbered section heading; starred form unnumbered"),
     ("subsection", "{...}", "numbered subsection heading; starred form unnumbered"),

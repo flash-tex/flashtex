@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 487 text-mode and 620 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 488 text-mode and 620 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -821,6 +821,7 @@ Canonical sources:
 | `\column` | `{width}` | beamer column inside columns: a minipage of the given width (.5\textwidth, 4cm) set beside the others; optional [c\|t\|T\|b] alignment; needs \documentclass{beamer} |
 | `\titleformat` | `{\section}{format}{label}{sep}{before}[after]` | titlesec: \section headings take the format's face and size (an empty label prints no number); a \titlerule after-code draws the full-width rule; other levels are diagnosed (needs titlesec) |
 | `\titlerule` |  | titlesec: a rule filling the rest of the line, or the full text width between paragraphs (needs titlesec) |
+| `\verbatiminput` | `{file}` | typesets a project-relative file's raw bytes as literal monospaced lines, like the verbatim environment; the starred form marks spaces visibly |
 | `\hline` |  | table rule across the row, at the start of a row |
 | `\cline` | `{i-j}` | partial rule over columns i to j, at the start of a row |
 | `\multicolumn` | `{n}{spec}{text}` | entry spanning n columns with its own column specification |
