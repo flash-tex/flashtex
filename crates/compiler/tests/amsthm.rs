@@ -318,23 +318,62 @@ C.
 }
 
 #[test]
-fn unsupported_within_counter_warns_and_falls_back_to_a_plain_counter() {
-    let source = r"\newtheorem{theorem}{Theorem}[chapter]
+fn within_chapter_resets_per_chapter_and_prints_chapter_dot_number() {
+    let source = r"\documentclass{report}
+\newtheorem{lemma}{Lemma}[chapter]
+\begin{document}
+\chapter{One}
+\begin{lemma}
+A.
+\end{lemma}
+\begin{lemma}
+B.
+\end{lemma}
+\chapter{Two}
+\begin{lemma}
+C.
+\end{lemma}
+\end{document}";
+    let msgs = messages(source);
+    assert!(
+        !msgs
+            .iter()
+            .any(|m| m.contains("recognised but not implemented")),
+        "{msgs:?}"
+    );
+    assert!(
+        !msgs.iter().any(|m| m.contains("No counter")),
+        "{msgs:?}"
+    );
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"Lemma 1.1".to_string()), "{texts:?}");
+    assert!(texts.contains(&"Lemma 1.2".to_string()), "{texts:?}");
+    assert!(texts.contains(&"Lemma 2.1".to_string()), "{texts:?}");
+}
+
+#[test]
+fn unknown_within_counter_errors_and_falls_back_to_a_plain_counter() {
+    // `article` tracks no `chapter` counter, so this is LaTeX's "No counter
+    // defined" error; the environment still numbers plainly.
+    let source = r"\documentclass{article}
+\newtheorem{theorem}{Theorem}[chapter]
+\begin{document}
 \begin{theorem}
 A.
 \end{theorem}
 \begin{theorem}
 B.
-\end{theorem}";
+\end{theorem}
+\end{document}";
     let msgs = messages(source);
     assert!(
         msgs.iter()
-            .any(|m| m.contains("chapter") && m.contains("recognised but not implemented")),
+            .any(|m| m.contains("chapter") && m.contains("No counter")),
         "{msgs:?}"
     );
     let texts = plain_texts(source);
-    assert!(texts.contains(&"Theorem 1".to_string()));
-    assert!(texts.contains(&"Theorem 2".to_string()));
+    assert!(texts.contains(&"Theorem 1".to_string()), "{texts:?}");
+    assert!(texts.contains(&"Theorem 2".to_string()), "{texts:?}");
 }
 
 #[test]
