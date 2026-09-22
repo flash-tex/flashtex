@@ -350,3 +350,52 @@ fn unimplemented_options_keep_the_package_warning() {
         noisy.diagnostics
     );
 }
+
+/// natbib reads the `\bibstyle{<style>}` that `\bibliographystyle` writes to
+/// the `.aux` at `\begin{document}` and sets that style's `\bibpunct`
+/// (natbib.sty lines 206-234, 288-291), unless an option has executed
+/// `nobibstyle` (`round`, `numbers`, ...; `authoryear` executes `bibstyle`
+/// again); `\citestyle` sets it in the preamble. pdflatex (TeX Live 2026,
+/// natbib 8.31b, two runs), `pdftotext` of the paragraph
+/// `\citet{kp} \citep{kp} \citep{plass81,hobby} \citep[p.~7]{kp}`:
+#[test]
+fn the_bibliography_style_sets_the_citation_punctuation() {
+    let cases = [
+        ("", "", r"\bibliographystyle{plainnat}", "Knuth and Plass [1981] [Knuth and Plass, 1981] [Plass, 1981, Hobby, 1986] [Knuth and Plass, 1981, p. 7]"),
+        ("round", "", r"\bibliographystyle{plainnat}", "Knuth and Plass (1981) (Knuth and Plass, 1981) (Plass, 1981; Hobby, 1986) (Knuth and Plass, 1981, p. 7)"),
+        ("authoryear", "", r"\bibliographystyle{plainnat}", "Knuth and Plass [1981] [Knuth and Plass, 1981] [Plass, 1981, Hobby, 1986] [Knuth and Plass, 1981, p. 7]"),
+        ("", r"\citestyle{chicago}", "", "Knuth and Plass (1981) (Knuth and Plass, 1981) (Plass, 1981; Hobby, 1986) (Knuth and Plass, 1981, p. 7)"),
+        ("", "", r"\bibliographystyle{plain}", "Knuth and Plass [1] [1] [2, 3] [1, p. 7]"),
+        ("", "", r"\bibliographystyle{ieeetr}", "Knuth and Plass (1981) (Knuth and Plass, 1981) (Plass, 1981; Hobby, 1986) (Knuth and Plass, 1981, p. 7)"),
+    ];
+    let bib = r"\begin{thebibliography}{99}
+\bibitem[Knuth and Plass(1981)]{kp}
+D.~E. Knuth and M.~F. Plass.
+\bibitem[Plass(1981)]{plass81}
+M.~F. Plass.
+\bibitem[Hobby(1986)]{hobby}
+J.~D. Hobby.
+\end{thebibliography}";
+    for (options, preamble, after, expected) in cases {
+        let source = format!(
+            "\\documentclass[11pt]{{article}}\\usepackage[{options}]{{natbib}}{preamble}\\begin{{document}}\n\\citet{{kp}} \\citep{{kp}} \\citep{{plass81,hobby}} \\citep[p.~7]{{kp}}\n\n{bib}\n{after}\n\\end{{document}}"
+        );
+        let parsed = parse(&source);
+        let mut out = String::new();
+        for block in &parsed.blocks {
+            if let Block::Paragraph(inlines) = block {
+                for inline in inlines {
+                    if let Inline::Text { text, space_before, .. } = inline {
+                        if *space_before && !out.is_empty() && !out.ends_with(' ') {
+                            out.push(' ');
+                        }
+                        out.push_str(text);
+                    }
+                }
+                break;
+            }
+        }
+        let out = out.replace('\u{a0}', " ").split_whitespace().collect::<Vec<_>>().join(" ");
+        assert_eq!(out, expected, "[{options}] {preamble} {after}");
+    }
+}

@@ -57,6 +57,13 @@ pub struct Options {
     /// `longnamesfirst`: the first citation of an entry uses its long author
     /// list (`\ifNAT@longnames`, line 519).
     pub longnamesfirst: bool,
+    /// Whether `\bibstyle` is still natbib's `\csname bibstyle@#1\endcsname`
+    /// (line 288), so the `\bibstyle{<style>}` that `\bibliographystyle`
+    /// writes to the `.aux` sets the style's `\bibpunct` when the next run
+    /// reads it at `\begin{document}` ([`Options::apply_bibstyle`]). Every
+    /// punctuation option executes `nobibstyle`; `authoryear` executes
+    /// `bibstyle` last (lines 236-263).
+    pub bibstyle: bool,
 }
 
 impl Default for Options {
@@ -74,6 +81,7 @@ impl Default for Options {
             sort: false,
             compress: false,
             longnamesfirst: false,
+            bibstyle: true,
         }
     }
 }
@@ -197,12 +205,52 @@ impl Options {
                 self.compress = true;
             }
             "longnamesfirst" => self.longnamesfirst = true,
-            // `nobibstyle`/`bibstyle`/`sectionbib`/`nonamebreak`/`openbib`
-            // change the .bst hook, the bibliography heading level, an
-            // unbreakable name box or the bibliography's own paragraph
-            // shape — none of which changes a citation's characters.
+            "nobibstyle" => self.bibstyle = false,
+            "bibstyle" => self.bibstyle = true,
+            // `sectionbib`/`nonamebreak`/`openbib` change the bibliography
+            // heading level, an unbreakable name box or the bibliography's
+            // own paragraph shape — none of which changes a citation's
+            // characters.
             _ => {}
         }
+        // Lines 236-261: every punctuation option ends with
+        // `\ExecuteOptions{nobibstyle}` (`authoryear` then runs `bibstyle`).
+        if matches!(option, "numbers" | "super" | "round" | "square" | "angle" | "curly" | "comma" | "semicolon" | "colon") {
+            self.bibstyle = false;
+        }
+        if option == "authoryear" {
+            self.bibstyle = true;
+        }
+    }
+
+    /// natbib's `\bibstyle@<style>` (lines 206-234): the `\bibpunct` a
+    /// bibliography style selects, applied by `\citestyle{<style>}` or, while
+    /// [`Options::bibstyle`] holds, by `\bibliographystyle{<style>}`.
+    /// `\bibpunct[#1]{#2}{#3}{#4}{#5}{#6}{#7}` sets `\NAT@open`, `\NAT@close`,
+    /// `\NAT@sep`, the mode (`n` numbers, anything else author-year),
+    /// `\NAT@aysep`, `\NAT@yrsep`, and `\NAT@cmt` to its default `, `.
+    /// Returns whether the style is one natbib defines and this table
+    /// models; the ones that also redefine `\harvardand`, `\bibnumfmt` or
+    /// set superscripts (`agsm`, `kluwer`, `dcu`, `cospar`, `esa`,
+    /// `nature`) and `agu`'s tied year separator are left alone.
+    pub fn apply_bibstyle(&mut self, style: &str) -> bool {
+        let (open, close, sep, numbers, aysep, yrsep) = match style {
+            "plainnat" | "abbrvnat" | "unsrtnat" => ("[", "]", ",", false, ",", ","),
+            "plain" | "alpha" | "abbrv" | "unsrt" => ("[", "]", ",", true, "", ","),
+            "chicago" => ("(", ")", ";", false, ",", ","),
+            "named" => ("[", "]", ";", false, ",", ","),
+            "copernicus" | "egu" | "egs" | "pass" | "anngeo" | "nlinproc" => ("(", ")", ";", false, ",", ","),
+            _ => return false,
+        };
+        self.open = open.into();
+        self.close = close.into();
+        self.sep = sep.into();
+        self.numbers = numbers;
+        self.superscript = false;
+        self.aysep = aysep.into();
+        self.yrsep = yrsep.into();
+        self.cmt = ", ".into();
+        true
     }
 }
 

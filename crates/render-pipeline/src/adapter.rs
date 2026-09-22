@@ -7667,15 +7667,23 @@ impl<'t> SourceIndex<'t> {
 struct SourceIndexes<'a, 't> {
     texts: &'a [&'t str],
     theorem_envs: &'a std::collections::HashSet<String>,
+    /// [`natbib_author_year`] of the document, not of one file: a package
+    /// is loaded once, in the preamble, and holds for every file the
+    /// document reads -- the `.bbl` that `\bibliography` inputs never
+    /// loads natbib itself, so its `thebibliography` was set with the
+    /// class's `[n]` label-width geometry (15.5 bp too far right).
+    natbib_author_year: bool,
     cells: Vec<std::cell::OnceCell<SourceIndex<'t>>>,
     empty: std::cell::OnceCell<SourceIndex<'t>>,
 }
 
 impl<'a, 't> SourceIndexes<'a, 't> {
     fn new(texts: &'a [&'t str], theorem_envs: &'a std::collections::HashSet<String>) -> Self {
+        let natbib_author_year = texts.iter().find(|text| natbib_options(text).is_some()).is_some_and(|text| natbib_author_year(text));
         SourceIndexes {
             texts,
             theorem_envs,
+            natbib_author_year,
             cells: texts.iter().map(|_| std::cell::OnceCell::new()).collect(),
             empty: std::cell::OnceCell::new(),
         }
@@ -7683,7 +7691,7 @@ impl<'a, 't> SourceIndexes<'a, 't> {
 
     fn get(&self, document: usize) -> &SourceIndex<'t> {
         match self.texts.get(document) {
-            Some(text) => self.cells[document].get_or_init(|| SourceIndex::new(text, self.theorem_envs)),
+            Some(text) => self.cells[document].get_or_init(|| SourceIndex { natbib_author_year: self.natbib_author_year, ..SourceIndex::new(text, self.theorem_envs) }),
             None => self.empty.get_or_init(|| SourceIndex::new("", self.theorem_envs)),
         }
     }
@@ -12135,11 +12143,36 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             // source gap is read from the previous text's end, so the
             // marker itself advances nothing.
             #[cfg(feature = "compiler-node-surface")]
-            Inline::Penalty { value, unskip, .. } => {
+            Inline::Penalty { value, unskip, span } => {
                 if *unskip && matches!(items.last(), Some(Item::Space { .. })) {
                     items.pop();
                 }
+                // The primitive `\penalty<number>` (its span covers the
+                // number) and `\nobreak`/`\allowbreak` written in the
+                // source: the blank after the number or control word is
+                // TeX's optional space (§443) or the space after a control
+                // word, never glue, so the gap is read from the command's
+                // end (`60:\penalty0 3461` is one word). The blank before it
+                // is an interword space like any other.
+                let source = text_of(span.document);
+                let command = !*unskip
+                    && source.get(span.start..span.end).is_some_and(|s| {
+                        let name = s.strip_prefix('\\').map(|r| &r[..r.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(r.len())]);
+                        matches!(name, Some("penalty" | "nobreak" | "allowbreak"))
+                    });
+                if command {
+                    let has_space = space_between(prev_end, prev_span, *span, None, after_control_word);
+                    if has_space {
+                        let gap_style = space_style(texts, styles, prev_end, *span, style_at(styles_of(span.document), span.start));
+                        push_gap(&mut items, true, gap_style, factor);
+                    }
+                }
                 items.push(Item::Penalty { value: *value, flagged: false });
+                if command {
+                    prev_end = Some(span.end);
+                    prev_span = Some(*span);
+                    after_control_word = true;
+                }
             }
             // Inlines only a re-pinned compiler emits. Every one of them is
             // a zero-width marker in the horizontal list -- a discretionary,

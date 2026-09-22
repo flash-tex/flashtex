@@ -2421,7 +2421,13 @@ impl<'a> Context<'a> {
     /// after the fragment it ends so a letter–hyphen kern is included. A
     /// point inside a ligature (`of-fice`) needs the pre/post/no-break
     /// reconstitution and is skipped.
-    fn word_items(&mut self, seg: &adapter::Segment, size: f64, hyphenate: bool) -> Vec<(pl::Item, Option<usize>)> {
+    ///
+    /// `hyphenate` allows the Liang points (TeX §894: only a word after
+    /// glue, its first letter segment); `explicit` the empty discretionary
+    /// after a hyphen, which the main loop appends after every character
+    /// that is the font's `\hyphenchar` (§1039) wherever it stands, so
+    /// `60:\penalty0 3461--3466` may break after its dash.
+    fn word_items(&mut self, seg: &adapter::Segment, size: f64, hyphenate: bool, explicit: bool) -> Vec<(pl::Item, Option<usize>)> {
         if self.is_eqref_text(seg) {
             // An `\eqref` label is never hyphenated (no English patterns
             // match its parenthesised form); like a `\tag` display, a
@@ -2441,16 +2447,17 @@ impl<'a> Context<'a> {
         if let Some(items) = self.named_fallback_items(seg, size) {
             return items;
         }
-        if !hyphenate {
-            return self.whole_word(seg, size);
-        }
         let text = &seg.text;
-        let mut points: Vec<(usize, bool)> = Vec::new();
         // The adapter has already turned `--`/`---` into U+2013/U+2014: those
         // T1 ligatures end in the hyphen char, so TeX appends the empty
         // discretionary after them too (a break after an em dash).
         let is_dash = |c: char| matches!(c, '-' | '\u{2013}' | '\u{2014}');
-        if text.chars().any(is_dash) {
+        let dashed = text.chars().any(is_dash);
+        if !(if dashed { explicit } else { hyphenate }) {
+            return self.whole_word(seg, size);
+        }
+        let mut points: Vec<(usize, bool)> = Vec::new();
+        if dashed {
             let mut prev_dash = false;
             for (i, c) in text.char_indices() {
                 if prev_dash && !is_dash(c) {
@@ -2770,7 +2777,7 @@ impl<'a> Context<'a> {
                         j += 1;
                     }
                     let frag = adapter::Segment { text: seg.text[char_byte[i]..char_byte[j]].to_string(), chars: seg.chars[i..j].to_vec(), style: adapter::TextStyle { cjk: None, ..seg.style } };
-                    out.extend(self.word_items(&frag, size, hyphenate && i == 0));
+                    out.extend(self.word_items(&frag, size, hyphenate && i == 0, hyphenate && i == 0));
                     last_kern = 0;
                     i = j;
                 }
@@ -3561,15 +3568,12 @@ impl<'a> Context<'a> {
                         };
                         // The typewriter families declare `\hyphenchar\font=-1`
                         // (`ot1cmtt.fd`, `t1cmtt.fd`, `t1lmtt.fd`): no hyphens.
-                        let hyphenate = after_glue
-                            && !joined
-                            && !boxed
-                            && hyphenated_seg == Some(seg_idx)
-                            && seg.style.family != crate::nfss::FamilyKind::Tt;
+                        let explicit = !boxed && seg.style.family != crate::nfss::FamilyKind::Tt;
+                        let hyphenate = explicit && after_glue && !joined && hyphenated_seg == Some(seg_idx);
                         // A size declaration in force (`{\Large ...}`) sets
                         // this segment at its own size.
                         let seg_size = seg.style.size_or(size);
-                        for (item, rec) in self.word_items(&seg, seg_size, hyphenate) {
+                        for (item, rec) in self.word_items(&seg, seg_size, hyphenate, explicit) {
                             push(&mut out, &mut recs, item, rec);
                         }
                     }
@@ -7074,7 +7078,7 @@ impl<'a> Context<'a> {
                             text: w,
                             style,
                         };
-                        for (item, rec) in self.word_items(&seg, size, false) {
+                        for (item, rec) in self.word_items(&seg, size, false, false) {
                             match (item, rec) {
                                 (pl::Item::Box(run), Some(rec)) => {
                                     let advance = run.width;
