@@ -1442,13 +1442,14 @@ mod tests {
     fn superscript_leaves_notes_citenum_and_year_forms_on_the_baseline() {
         let options = Options::from_option_list("super");
         // `\NAT@citesuper` (lines 359-362): the notes stay on the baseline
-        // around the raised box, the post-note with a plain space.
+        // around the raised box; the note's own `~` tie is a non-breaking
+        // space (see the note-a-tie-does-not-break fix), not a plain space.
         assert_eq!(
             shapes(&cites_with(&options, "citep", Some("see"), Some("p.~7"), &["plass81"])),
             [
                 (false, "see ".to_string()),
                 (true, "2".to_string()),
-                (false, " p. 7".to_string())
+                (false, " p.\u{a0}7".to_string())
             ]
         );
         // `\citenum` deliberately unsets the raising (line 710).
