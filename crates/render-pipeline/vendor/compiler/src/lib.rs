@@ -28,6 +28,7 @@ mod legacy_format;
 pub mod lexer;
 pub mod lm_math;
 pub mod math;
+pub mod math_symbols;
 pub mod natbib;
 pub mod newcm_math;
 pub mod overlay;
