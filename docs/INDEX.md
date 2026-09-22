@@ -102,3 +102,7 @@ improvement cycles; completed checkpoints trigger useful next work.
 
 - [Issue #710 font metric sweep](evidence/font-metric-sweep-710.md): measured
   Latin Modern versus Computer Modern glyph metrics and gate watch list.
+- [Generated data and maintainability audit](proposals/generated-data-and-maintainability.md)
+  (proposal, kabir-claude ARCH-AUDIT, 2026-09-21): ranked plan for generating
+  LaTeX-declared data, running real `.sty` code, removing `vendor/`, and the
+  two structural rewrites (node-stream contract, generic page model).
