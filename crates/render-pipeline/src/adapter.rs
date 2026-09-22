@@ -9365,6 +9365,50 @@ fn optional_given(source: &str, inv: Span) -> bool {
     bytes.get(i) == Some(&b'[')
 }
 
+/// How far back [`enclosing_macro_arg`] looks for the invocation when the
+/// expansion opens the paragraph (no previous token bounds the search):
+/// paragraph-opening material before a call (`\noindent`, font groups, an
+/// `\item[...]`) is a few dozen bytes. A longer prefix misses and keeps
+/// today's call-site gap rather than risk a document-prefix scan per token.
+const ENCLOSING_LOOKBACK: usize = 512;
+
+/// The user-macro invocation whose argument list holds the token `span`
+/// starts at (`span.start`), searched in `src[from..span.start]`: the
+/// nearest `\<name>` outside comments that names a `\newcommand`-style
+/// macro (in `src` or, through `foreign`, in a package document) and whose
+/// [`macro_arg_index`] claims `span.start`, with its argument index.
+///
+/// [`token_gap`] seeds its body cursor from this when an expansion's first
+/// token is an argument — the body opens with `#k`, so no body word has
+/// seeded it yet — so the gap between two parameters is read from the
+/// definition (`#1 #2` holds a blank) rather than from the call site
+/// (`\two{a}{b}` holds `}{`). `None` when no invocation claims the token.
+fn enclosing_macro_arg<'a>(
+    src: &'a str,
+    span: Span,
+    from: usize,
+    foreign: &dyn Fn(Span) -> Option<(&'a str, usize)>,
+) -> Option<(Span, usize)> {
+    let window = src.get(from.min(span.start)..span.start)?;
+    let mut found = None;
+    let mut scan = CmdScan::new(window);
+    while let Some((off, name, _)) = scan.next() {
+        let bs = from.min(span.start) + off;
+        let inv = Span { document: span.document, start: bs, end: bs + 1 + name.len() };
+        let (def_src, before) = foreign(inv).unwrap_or((src, bs));
+        if macro_def(def_src, name, before).is_none() {
+            continue;
+        }
+        // Innermost wins: argument lists nest (`\outer{\inner{x}}`), while a
+        // closed call earlier in the window (`\drop{x}\two{a}`) does not
+        // claim what follows it, so the last claimant is the enclosing one.
+        if let Some((_, k)) = macro_arg_index(src, inv, span.start) {
+            found = Some((inv, k));
+        }
+    }
+    found
+}
+
 /// Where the reader stands inside a macro's replacement text: the
 /// invocation (`\name` span the compiler gives every replacement token)
 /// and the byte offset in its definition body after the last token read.
@@ -9542,6 +9586,46 @@ fn token_gap<'a>(
                 // them (the cursor stays after `#k`).
                 *cursor = Some(BodyCursor::new(c.inv, c.at));
                 return prev_end.zip(prev_span).and_then(|(pe, ps)| source_gap(pe, ps));
+            }
+        }
+    }
+    // The expansion's first token is an argument: the body opens with `#k`
+    // (or only bracings precede it), so no body word has seeded the cursor
+    // yet. Seed it from the invocation enclosing this token, so the gap
+    // between two parameters is read from the definition (`#1 #2` holds a
+    // blank) rather than from the call site (`\two{a}{b}` holds `}{`).
+    // Anything unclaimed keeps today's call-site gap below.
+    let seed_from = match (prev_end, prev_span) {
+        (Some(pe), Some(ps)) if ps.document == span.document && pe <= span.start => Some(pe),
+        _ => {
+            // The expansion opens the paragraph: only an argument brace can
+            // stand between the invocation and this token, so anything else
+            // skips the bounded lookback outright (a plain opening word
+            // costs a few bytes here, not a document-prefix scan).
+            let bytes = src.as_bytes();
+            let mut j = span.start.min(bytes.len());
+            while j > 0 && (bytes[j - 1] as char).is_whitespace() {
+                j -= 1;
+            }
+            (j > 0 && (bytes[j - 1] == b'{' || bytes[j - 1] == b'['))
+                .then(|| span.start.saturating_sub(ENCLOSING_LOOKBACK))
+        }
+    };
+    if let Some((inv, k)) = seed_from.and_then(|from| enclosing_macro_arg(src, span, from, foreign)) {
+        let (def_src, before) = foreign(inv).unwrap_or((src, inv.start));
+        if let Some(body) = control_word_at(src, inv.start, inv.end).and_then(|name| macro_body(def_src, name, before)) {
+            if let Some(p) = body.find(&format!("#{k}")) {
+                let body_gap = &body[..p];
+                let src_gap = prev_end.zip(prev_span).and_then(|(pe, ps)| source_gap(pe, ps));
+                // The glue takes the call site's font when the source read
+                // a space: a body blank after a control word is eaten by TeX
+                // anyway, and a second glue keeps the caller's font — the
+                // same `prefix` rule as a body word's gap above. (Without
+                // this, `\note` with body `\small\bfseries #1` painted the
+                // space before its argument bold and reflowed the line.)
+                let blank = body_gap.find(|c: char| c.is_whitespace()).filter(|_| src_gap.is_none());
+                *cursor = Some(BodyCursor { inv, at: p + digits(k), word: None, blank, default_at: None });
+                return Some(format!("{}{}", src_gap.unwrap_or_default(), body_gap));
             }
         }
     }
