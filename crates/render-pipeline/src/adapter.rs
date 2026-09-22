@@ -8647,13 +8647,6 @@ fn control_word_at(source: &str, at: usize, end: usize) -> Option<&str> {
     Some(&rest[..len])
 }
 
-/// Whether the bytes at `at` are exactly the control word `\<name>` (not
-/// a longer word: `\hfil` is not `\hfill`).
-fn is_control_word(source: &str, at: usize, name: &str) -> bool {
-    let bytes = source.as_bytes();
-    source.get(at..).is_some_and(|r| r.starts_with('\\') && r[1..].starts_with(name)) && !continues_word(bytes, at + 1 + name.len())
-}
-
 /// Whether `span` is a user-macro invocation (`\name` exactly, with a
 /// `\newcommand`-style definition in the source): the compiler gives every
 /// token of the replacement text this span.
@@ -10637,14 +10630,19 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             // the page chrome is the compiler layout's (fancyhdr, #849).
             Inline::PageStyle { .. } => {}
             Inline::Reference { .. } | Inline::CleverReference { .. } | Inline::Verbatim { .. } => unreachable!("lowered by lower_inline above"),
-            Inline::Footnote { number, span, mark, text, .. } => {
+            Inline::Footnote { number, span, mark, text, space_before, .. } => {
                 // `\@footnotemark` keeps the space factor; the space before
-                // the command is an ordinary interword space. The command's
-                // `[<n>]` and `{<text>}` are skipped for the gap that follows.
+                // the command is an ordinary interword space, when the
+                // compiler read one there (PLAN1 site 13: the gap bytes are a
+                // macro's own arguments when a macro sets the note). The
+                // command's `[<n>]` and `{<text>}` are skipped for the gap
+                // that follows. `space_between` still runs for the
+                // macro-body cursor.
                 let src = text_of(span.document);
                 let end = footnote_command_end(src, span.end);
                 let word = src.get(span.start..span.end).unwrap_or("\\footnote");
-                let gap = space_between(prev_end, prev_span, *span, Some(word), after_control_word);
+                let _ = space_between(prev_end, prev_span, *span, Some(word), after_control_word);
+                let gap = *space_before;
                 let mut gap_style = ambient;
                 gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
@@ -10923,8 +10921,10 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     Inline::HFill { leader: FillLeader::Dots, .. } => {
                         (Item::HFill { fill: true, leader: FillLeader::Dots, style: fill_style }, "\\dotfill")
                     }
-                    Inline::HFill { leader: FillLeader::None, .. } => {
-                        let fill = !is_control_word(text_of(span.document), span.start, "hfil");
+                    Inline::HFill { leader: FillLeader::None, order, .. } => {
+                        // `\hfil`/`\hss` are `fil`, `\hfill` is `fill`: the
+                        // compiler's order, not the span's bytes (PLAN1 site 14).
+                        let fill = *order >= 2;
                         (Item::HFill { fill, leader: FillLeader::None, style: fill_style }, if fill { "\\hfill" } else { "\\hfil" })
                     }
                     _ => unreachable!(),

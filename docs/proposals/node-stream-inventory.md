@@ -381,3 +381,14 @@ named above first.
     (hw1 p1) and from 29 to 131 (hw2 p1).
 
   Falsifiers `site05`, `site19`, `site24` and `site30` run un-ignored.
+- **Sites 13 and 14: migrated.**
+  - Site 13: the interword space in front of a footnote mark is the
+    compiler's `Inline::Footnote::space_before`, not the gap bytes. The
+    gap bytes were a two-argument macro's own arguments.
+  - Site 14: `Inline::HFill` gains `order` (TeX's order of infinity):
+    1 for `\hfil`/`\hss`, 2 for `\hfill`, the leader fills and amsthm's
+    QED fill. The pipeline reads that instead of `is_control_word`, which
+    is gone. `\hss` is now `fil`, as in TeX; before, it was treated as
+    `fill`.
+
+  Falsifiers `site13` and `site14` run un-ignored.

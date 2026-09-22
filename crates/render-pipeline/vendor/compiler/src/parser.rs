@@ -452,6 +452,10 @@ pub enum Inline {
         /// The font in force at the command: a leader's dots and rule are set
         /// in it (PLAN1 slice 2).
         style: TextStyle,
+        /// TeX's order of infinity of the stretch: 1 for `\hfil` and `\hss`
+        /// (`fil`), 2 for `\hfill` and the leader fills (`fill`), however
+        /// the command was reached (PLAN1 site 14).
+        order: u8,
     },
     /// `\hspace{<dimen>}`/`\hspace*{<dimen>}` and `\hskip<glue>`: horizontal
     /// glue. `pt` is the fixed part, already converted (see `parse_dimen_pt`
@@ -6348,6 +6352,7 @@ impl P<'_> {
                 style: self.style,
                 span,
                 leader: FillLeader::Rule,
+                order: 2,
             });
         }
     }
@@ -7100,9 +7105,9 @@ impl P<'_> {
         match name {
         // `\hss` is `0pt plus 1fil minus 1fil`: its shrink never matters in
         // a paragraph line set to its natural width or wider.
-        "hfill" | "hfil" | "hss" => para.push(Inline::HFill { span, leader: FillLeader::None, style: self.style }),
-        "hrulefill" => para.push(Inline::HFill { span, leader: FillLeader::Rule, style: self.style }),
-        "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots, style: self.style }),
+        "hfill" | "hfil" | "hss" => para.push(Inline::HFill { span, leader: FillLeader::None, style: self.style, order: if name == "hfill" { 2 } else { 1 } }),
+        "hrulefill" => para.push(Inline::HFill { span, leader: FillLeader::Rule, style: self.style, order: 2 }),
+        "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots, style: self.style, order: 2 }),
         // latex.ltx `\linebreak`/`\nolinebreak` (`\@no@lnbk`): a penalty of
         // `-\@getpen{n}`/`\@getpen{n}` with the space in front of the
         // command moved after it; in vertical mode, `\@nolnerr`.
@@ -10417,7 +10422,7 @@ impl P<'_> {
             // is suppressed. A stray `\end{proof}` pops nothing.
             let claimed = self.proof_qedhere.pop().unwrap_or(false);
             if !claimed {
-                para.push(Inline::HFill { span, leader: FillLeader::None, style: self.style });
+                para.push(Inline::HFill { span, leader: FillLeader::None, style: self.style, order: 2 });
                 // The closing "∎" is generated text placed at the end of the
                 // body: span it (empty) at the `\end` command instead of
                 // covering it, so the block's last span ends where the body
@@ -10870,7 +10875,7 @@ impl P<'_> {
         if let Some(claimed) = self.proof_qedhere.last_mut() {
             *claimed = true;
         }
-        para.push(Inline::HFill { span, leader: FillLeader::None, style: self.style });
+        para.push(Inline::HFill { span, leader: FillLeader::None, style: self.style, order: 2 });
         para.push(Inline::Text {
             text: "\u{220E}".to_string(),
             span,
@@ -14488,6 +14493,7 @@ impl P<'_> {
                         style,
                         span: input.token.span,
                         leader: FillLeader::None,
+                        order: if name == "hfill" { 2 } else { 1 },
                     })
                 }
                 TokenKind::Command(name) if name == "hrulefill" || name == "dotfill" => {
@@ -14495,6 +14501,7 @@ impl P<'_> {
                         style,
                         span: input.token.span,
                         leader: if name == "hrulefill" { FillLeader::Rule } else { FillLeader::Dots },
+                        order: 2,
                     })
                 }
                 // Inline math (`$...$`, with `$$...$$` display like the

@@ -242,13 +242,11 @@ fn site12_citation_through_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 13: footnote_command_end reads `[..]{..}` after the span, which is the macro's own arguments"]
 fn site13_footnote_in_two_argument_macro() {
     falsify(Same, &doc("", "Word\\footnote{Note.} more."), &doc("\\newcommand\\fn[2]{#1\\footnote{#2}}\n", "\\fn{Word}{Note.} more."));
 }
 
 #[test]
-#[ignore = "PLAN1 site 14: is_control_word tells \\hfil from \\hfill by the span's bytes"]
 fn site14_hfil_from_macro() {
     falsify(Same, &doc("", "\\noindent A\\hfil B\\hfill C"), &doc("\\newcommand\\hf{\\hfil}\n", "\\noindent A\\hf B\\hfill C"));
 }
