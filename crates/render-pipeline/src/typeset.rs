@@ -5287,7 +5287,19 @@ impl<'a> Context<'a> {
     /// `tabular`, an `itemize`, a display or a paragraph of prose is set
     /// inside a float exactly as it is outside one. Returns the range of
     /// `blocks` the body added.
-    pub(crate) fn box_blocks(&mut self, body: &[Block], out: &mut Vec<BuiltBlock>, float: Span, minipage: bool) -> std::ops::Range<usize> {
+    ///
+    /// `sectioning` is the `\@topnewpage` box (`\twocolumn[<material>]`),
+    /// whose `\@currbox` runs `\@sect` whole: a sectioning command is set
+    /// in the box, with the page loop's `\@startsection` skips. A float
+    /// box passes `false` and keeps refusing one: LaTeX forbids it there.
+    pub(crate) fn box_blocks(
+        &mut self,
+        body: &[Block],
+        out: &mut Vec<BuiltBlock>,
+        float: Span,
+        minipage: bool,
+        sectioning: bool,
+    ) -> std::ops::Range<usize> {
         // The box has a vertical list of its own: `\addvspace` compares
         // against what *it* left last (`\lastskip`), not against the page's
         // last block, so the body builds into its own vector.
@@ -5348,6 +5360,47 @@ impl<'a> Context<'a> {
                     blocks.push(b);
                     // A picture is set in a paragraph: `\everypar` has run.
                     minipage = false;
+                }
+                // `\@topnewpage`'s `\@currbox` runs `\@sect` whole, so a
+                // sectioning command in `\twocolumn[<material>]` is set in
+                // the box with the page loop's `\@startsection` skips (a
+                // float box falls through to the refusal below instead:
+                // LaTeX forbids it there). `\@sect`'s `\sectionmark` issues
+                // no page event here: the box is placed with
+                // `\box\@currbox`, never unboxed, so marks inside it never
+                // migrate to the page.
+                Block::Heading {
+                    level,
+                    items,
+                    eject_before,
+                    vspace_before,
+                    ..
+                } if sectioning => {
+                    if let Some(mut b) = self.heading_block(*level, items) {
+                        if *eject_before {
+                            b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                        }
+                        // `\@startsection`: `\addvspace{<before>}` — right after
+                        // another heading (`\@nobreak`) no skip at all; otherwise
+                        // only the excess over the skip the previous block left.
+                        if st.after_heading {
+                            b.vertical.space_before = None;
+                            if !*eject_before {
+                                b.vertical.penalty_before = None;
+                            }
+                        } else if let (Some(before), Some(prev)) = (b.vertical.space_before, blocks.last_mut()) {
+                            if let Some(last) = prev.vertical.space_after {
+                                if last.0 < before.0 {
+                                    prev.vertical.space_after = None;
+                                } else {
+                                    b.vertical.space_before = None;
+                                }
+                            }
+                        }
+                        add_vspace(&mut b.vertical, *vspace_before);
+                        blocks.push(b);
+                        st.after_heading = true;
+                    }
                 }
                 // Page-level material: LaTeX forbids it in a float box (a
                 // `\section` there would number and mark out of order, and
@@ -11068,7 +11121,7 @@ fn top_material_box(ctx: &mut Context, body: &[Block], blocks: &mut Vec<BuiltBlo
         let mut sub = Context::with_texts(ctx.fonts, &wide, ctx.paths, ctx.texts);
         sub.set_sources(ctx.sources);
         let mut sub_blocks: Vec<BuiltBlock> = Vec::new();
-        sub.box_blocks(body, &mut sub_blocks, span, false);
+        sub.box_blocks(body, &mut sub_blocks, span, false, true);
         absorb(ctx, sub, sub_blocks, blocks)
     };
     let p = page_params(ctx.style);
@@ -11218,7 +11271,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
         if n_columns > 1 {
             top_title = top_material_box(ctx, body, &mut blocks, *span);
         } else {
-            ctx.box_blocks(body, &mut blocks, *span, false);
+            ctx.box_blocks(body, &mut blocks, *span, false, true);
         }
     }
     // `\sectionmark`/`\chaptermark` as defined by the last `\ps@headings` or

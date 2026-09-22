@@ -3318,7 +3318,8 @@ fn is_material(b: &Block) -> bool {
 ///
 /// Returns `None`, leaving `blocks` untouched, when the material cannot be
 /// cut exactly: anything the box's page would already have set before it,
-/// a block other than a paragraph straddling a bracket, or material from
+/// a block other than a paragraph straddling a bracket, page-level material
+/// the box cannot set (a sectioning command it can), or material from
 /// another document (`\input` inside the argument).
 fn split_top_material(blocks: &mut Vec<Block>, document: flashtex_compiler::DocumentId, open: usize, close: usize) -> Option<Vec<Block>> {
     let mut top: Vec<Block> = Vec::new();
@@ -3408,10 +3409,17 @@ fn split_top_material(blocks: &mut Vec<Block>, document: flashtex_compiler::Docu
         }
     }
     // `Context::box_blocks` sets a box's body, and drops page-level
-    // material (a sectioning command, `longtable`) with a warning of its
-    // own. Rather than lose it, refuse the whole split and leave the
-    // argument where it was.
-    if top.iter().any(|b| !matches!(b, Block::Paragraph { .. } | Block::Rule { .. } | Block::Picture { .. })) {
+    // material it cannot set (`longtable`, `\maketitle`) with a warning of
+    // its own. Rather than lose it, refuse the whole split and leave the
+    // argument where it was. A sectioning command is set in the box the way
+    // `\@topnewpage` sets it (`\@sect` runs whole inside `\@currbox`), so a
+    // heading does not refuse the split.
+    if top.iter().any(|b| {
+        !matches!(
+            b,
+            Block::Paragraph { .. } | Block::Rule { .. } | Block::Picture { .. } | Block::Heading { .. }
+        )
+    }) {
         return None;
     }
     // The box's vertical list starts in vertical mode, so an environment

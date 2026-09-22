@@ -553,7 +553,7 @@ Canonical sources:
 | `\newpage` |  | forces a page break |
 | `\clearpage` |  | forces a page break |
 | `\cleardoublepage` |  | forces a page break (one-sided article) |
-| `\twocolumn` | `[material]` | starts a new two-column page (\clearpage, then \if@twocolumn); \textwidth, \parindent and the list margins keep the one-column class values, as in LaTeX. The optional full-width material above the columns is not implemented |
+| `\twocolumn` | `[material]` | starts a new two-column page (\clearpage, then \if@twocolumn); \textwidth, \parindent and the list margins keep the one-column class values, as in LaTeX. The optional material is set at the full \textwidth above both columns (\@topnewpage), including sectioning commands; other page-level material in the argument (\maketitle, longtable) stays in the column and is reported |
 | `\onecolumn` |  | starts a new one-column page (\clearpage, then \if@twocolumn false); \columnwidth becomes \textwidth |
 | `\pagebreak` | `[n]` | page-break penalty -\@getpen{n} (4: a forced break); in a paragraph, after the line it is set on |
 | `\nopagebreak` | `[n]` | page-break penalty \@getpen{n}; in a paragraph, after the line it is set on |
