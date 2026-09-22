@@ -369,6 +369,7 @@ fn approved_insertion_is_durable_and_retry_never_inserts_twice() {
         removed_text: "α".into(),
         replacement: "β".into(),
         document_before_sha256: before.source_sha256,
+        wrap: None,
     };
     let applied = controller
         .apply_reviewed(ApprovedEdit::from_explicit_user_approval(edit.clone()))
@@ -423,6 +424,7 @@ fn approved_edit_conflict_cannot_modify_source() {
         removed_text: "α".into(),
         replacement: "β".into(),
         document_before_sha256: before.source_sha256.clone(),
+        wrap: None,
     };
     assert!(controller
         .apply_reviewed(ApprovedEdit::from_explicit_user_approval(edit))
