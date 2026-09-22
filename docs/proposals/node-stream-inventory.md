@@ -336,3 +336,29 @@ named above first.
   (`gap_has_list_end`, `list_env_ends`). Each list's keys and `\setlist`
   state are still read from the source (site 21). Falsifiers `site16`,
   `site22` and `site29` run un-ignored.
+
+## Slice 3 status
+
+- **List stack (site 21): migrated.** Each `ListItem.lists` frame now
+  carries what the pipeline read from `\begin{..}` and `\setlist` bytes:
+  - `options`: the enumitem keys in force, parsed, with `em`/`ex` in the
+    font where the list starts (enumitem assigns them inside `\list`).
+    `\setlist` keeps its keys unparsed until then.
+  - `vmode`: `\@trivlist`'s `\ifvmode` at the `\begin`. It is true after a
+    `\par`, a heading, or the `\par` of an `\endtrivlist` or a theorem's
+    end, with no material since. A one-column abstract counts; a
+    two-column or title-page abstract does not.
+  - `widest_label`: `thebibliography`'s `{<widest>}`.
+
+  The `\begin` options keep their braces, and a braced group in a
+  shortlabels template is literal (`{A}-I` counts in roman). The pipeline
+  reads the list glue, the closing `\@topsepadd`, the `\endtrivlist`
+  adjustment, the margins, `labelsep`/`itemindent`, `style=nextline`, and
+  whether an `\item` opens its list, from these frames. `list_stack_at`,
+  `setlist_calls` and the `SourceIndex` list snapshots are gone from the
+  compiled path; `list_end_skip` keeps the scan for float bodies, which the
+  compiler never sees (site 41). A `leftmargin=\<register>` value is still
+  resolved by `length_register` (site 33). Falsifiers `site21` and
+  `site31` (the `\setlist` of a definition that is never called) run
+  un-ignored. `site12` passed on the slice 2 base already and is
+  un-ignored too.

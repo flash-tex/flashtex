@@ -237,7 +237,6 @@ fn site11_accent_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 12: citation_label_run recognises a citation from `\\cite` bytes at the span"]
 fn site12_citation_through_macro() {
     let bib = "\\begin{thebibliography}{9}\\bibitem{k} A. Author.\\end{thebibliography}";
     falsify(Same, &doc("", &format!("See \\cite{{k}} now.\n{bib}")), &doc("\\newcommand\\mc[1]{\\cite{#1}}\n", &format!("See \\mc{{k}} now.\n{bib}")));
@@ -301,7 +300,6 @@ fn site20_run_in_heading_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 21: the list stack (list_stack_at/SourceIndex) is lexed from `\\begin{itemize}` bytes"]
 fn site21_list_opened_by_macro() {
     falsify(
         Same,
@@ -391,7 +389,6 @@ fn site30_vspace_em_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 31: setlist_calls counts a \\setlist inside a definition that is never called"]
 fn site31_setlist_in_uncalled_definition() {
     falsify(
         Same,

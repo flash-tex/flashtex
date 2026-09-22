@@ -3831,6 +3831,9 @@ pub fn parse_project_with(
         list_stack: Vec::new(),
         list_frames: Vec::new(),
         setlists: Vec::new(),
+        vertical_mode: true,
+        vertical_since: 0,
+        two_column: false,
         resume_counters: HashMap::new(),
         resume_keys: HashMap::new(),
         pending_item_label: None,
@@ -4170,8 +4173,24 @@ struct P<'a> {
     /// Every open `\list`-based environment (lists and `quote`/`quotation`/
     /// `verse`), outermost first; see `Block::ListItem::lists`.
     list_frames: Vec<ListFrame>,
-    /// `\setlist[<target>]{<keys>}` calls so far, in order.
-    setlists: Vec<(lists::SetlistTarget, Vec<ListOption>)>,
+    /// `\setlist[<target>]{<keys>}` calls so far, in order, with their keys
+    /// unparsed: enumitem stores them and assigns them inside `\list`, so
+    /// their `em`/`ex` are the font's where each list starts.
+    setlists: Vec<(lists::SetlistTarget, String)>,
+    /// TeX is in vertical mode as far as the list environments need to know
+    /// ([`ListFrame::vmode`]): set by a `\par` (a blank line, `\par` from the
+    /// source or a macro), a display heading and the `\par` that ends an
+    /// `\endtrivlist` environment or a theorem; cleared when a paragraph
+    /// with material (or one `\noindent` started) is flushed without one, and
+    /// by `\item`.
+    vertical_mode: bool,
+    /// The inlines of the open paragraph that an `\endtrivlist` already
+    /// ended (the environment's `\par` ran, but this parser flushes them
+    /// later): only material after them leaves vertical mode again.
+    vertical_since: usize,
+    /// `\if@twocolumn`: the `twocolumn` class option, then each
+    /// `\twocolumn`/`\onecolumn`.
+    two_column: bool,
     /// enumitem `resume` state: the last counter value and the `\begin`
     /// keys of each environment name / `series@<name>`.
     resume_counters: HashMap<String, i64>,
@@ -6416,6 +6435,7 @@ impl P<'_> {
             }
         }
         self.document_global_state = true;
+        self.two_column = name == "twocolumn";
         // A preamble `\twocolumn`/`\onecolumn` is the usual way to ask for
         // the whole document, and its `\clearpage` has nothing to ship.
         if !self.in_body {
@@ -6537,6 +6557,8 @@ impl P<'_> {
                     content,
                 });
                 self.finish_block_dependencies();
+                // A display heading ends in vertical mode.
+                self.vertical_mode = true;
                 if let Some(format) = title_format.as_ref() {
                     if format.rule {
                         blocks.push(Block::Rule { span });
@@ -6794,6 +6816,10 @@ impl P<'_> {
                     .unwrap_or(0.0);
                 self.close_item_overlay(span, para);
                 self.flush_list_item(blocks, para, gap_before, 0.0);
+                // What follows `\item` is read as the item's text, not in
+                // the vertical mode a list's `\begin` would take
+                // `\partopsep` in.
+                self.vertical_mode = false;
                 match self.list_stack.last() {
                     Some(_) => {
                         // beamer: `\item<spec>[label]` or `\item[label]<spec>`;
@@ -7821,6 +7847,7 @@ impl P<'_> {
         }
         if option_list.contains(&"twocolumn") {
             self.twocolumn_option = true;
+            self.two_column = true;
         }
         let (tokens, _) = self.required_group("documentclass", span);
         let class = token_text(&tokens).trim().to_string();
@@ -8412,13 +8439,11 @@ impl P<'_> {
             .unwrap_or_default();
         let (tokens, argument_span) = self.required_group("setlist", span);
         let full_span = span.merge(argument_span);
-        let mut options = lists::parse_options(&token_source(&tokens), body, false);
-        if starred {
-            options.push(lists::ListOption::NoItemSep);
-        }
+        // `\setlist*` appends its keys to the ones already set (enumitem's
+        // `\enit@setlist@x`); like `\setlist`, they apply in order.
         self.setlists.push((
             lists::SetlistTarget::parse(&environments),
-            options,
+            token_source(&tokens),
         ));
         let envs: Vec<String> = if environments.trim().is_empty() {
             vec![
@@ -9886,7 +9911,7 @@ impl P<'_> {
                 self.declared_alignment = None;
             }
             if let Some(kind) = ListEnvironment::from_name(&environment) {
-                self.push_list_frame(kind, Vec::new(), span.merge(argument_span));
+                self.push_list_frame(kind, Vec::new(), span.merge(argument_span), None);
             }
         } else if matches!(
             environment.as_str(),
@@ -9894,7 +9919,7 @@ impl P<'_> {
         ) && self.in_body
         {
             self.flush_paragraph(blocks, para);
-            let mut options = self.optional_bracket_argument();
+            let mut options = self.optional_bracket_argument_braced();
             let mut begin_span = options
                 .as_ref()
                 .map_or(span.merge(argument_span), |(_, o)| span.merge(*o));
@@ -9907,7 +9932,7 @@ impl P<'_> {
                     let text = text.trim();
                     if let Some(inner) = text.strip_prefix('<').and_then(|t| t.strip_suffix('>')) {
                         default_overlay = Some(inner.to_string());
-                        options = self.optional_bracket_argument();
+                        options = self.optional_bracket_argument_braced();
                         if let Some((_, o)) = &options {
                             begin_span = begin_span.merge(*o);
                         }
@@ -9965,6 +9990,8 @@ impl P<'_> {
                 }],
             });
             self.finish_block_dependencies();
+            // `\section*{\refname}` leaves TeX in vertical mode.
+            self.vertical_mode = true;
             let spacing = self
                 .list_spacing
                 .get(&environment)
@@ -9973,7 +10000,7 @@ impl P<'_> {
             self.list_stack.push(OpenList {
                 kind: environment.clone(),
                 count: 0,
-                template: Some(widest_label),
+                template: Some(widest_label.clone()),
                 spacing,
                 start: blocks.len(),
                 counter: 0,
@@ -9985,7 +10012,7 @@ impl P<'_> {
                 default_overlay: None,
                 item_overlay_open: 0,
             });
-            self.push_list_frame(ListEnvironment::Bibliography, Vec::new(), heading_span);
+            self.push_list_frame(ListEnvironment::Bibliography, Vec::new(), heading_span, Some(widest_label));
         } else if environment == "subequations" && self.in_body {
             self.begin_subequations();
         } else if matches!(environment.as_str(), "multicols" | "multicols*") && self.in_body {
@@ -10370,6 +10397,10 @@ impl P<'_> {
             self.beamer_environment_end(&environment, span, blocks, para);
         } else if matches!(environment.as_str(), "figure" | "table") || self.theorems.contains_key(&environment) {
             self.flush_paragraph(blocks, para);
+            // A theorem is a `\trivlist`: its `\end` is `\endtrivlist`.
+            if self.theorems.contains_key(&environment) {
+                self.vertical_mode = true;
+            }
         } else if environment == "frame" {
             // Beamer slide end: close the paragraph and the frame. In other
             // classes `\end{frame}` never arrives here: the bordered-box
@@ -10412,6 +10443,8 @@ impl P<'_> {
                 });
             }
             self.flush_paragraph(blocks, para);
+            // amsthm's `proof` is a `\trivlist`.
+            self.vertical_mode = true;
         }
         if environment == "document" && self.has_document {
             self.flush_paragraph(blocks, para);
@@ -10464,8 +10497,24 @@ impl P<'_> {
             environment.as_str(),
             "itemize" | "enumerate" | "description" | "thebibliography" | "center" | "flushleft" | "flushright" | "quote" | "quotation" | "verse" | "abstract"
         ) {
-            self.end_paragraph_environment();
+            let before = (self.vertical_mode, self.vertical_since);
+            self.end_paragraph_environment(para.len());
+            if environment == "abstract" && !self.abstract_ends_trivlist() {
+                self.vertical_mode = before.0;
+                self.vertical_since = before.1;
+            }
         }
+    }
+
+    /// Whether `\end{abstract}` is an `\endtrivlist` here: only in the
+    /// one-column, no-title-page form (article.cls 366-386: `\if@titlepage`
+    /// first, then `\if@twocolumn\else\endquotation\fi`; a title-page
+    /// abstract ends `\par\vfil\null\endtitlepage`, a two-column one with
+    /// nothing at all). `book` has no `abstract`.
+    fn abstract_ends_trivlist(&self) -> bool {
+        let class = self.document_class.as_deref().unwrap_or("article");
+        let titlepage = self.titlepage_option || (matches!(class, "report" | "book") && !self.class_options.as_deref().is_some_and(|o| o.split(',').any(|o| o.trim() == "notitlepage")));
+        class != "book" && !titlepage && !self.two_column
     }
 
     /// `\CJKfamily{<family>}` (CJK.sty 738-760, `\CJK@selFam`): selects the
@@ -11797,7 +11846,7 @@ impl P<'_> {
         });
         self.finish_block_dependencies();
         // `\endverbatim` is `\endtrivlist`.
-        self.end_paragraph_environment();
+        self.end_paragraph_environment(0);
     }
 
     /// Consume a reconstituted `\\end{name}` (the four tokens the
@@ -13197,6 +13246,17 @@ impl P<'_> {
     /// Like LaTeX's `]`-delimited argument, a `]` inside braces does not
     /// close it: `[caption={[short]long}]` is one option.
     fn optional_bracket_argument(&mut self) -> Option<(String, Span)> {
+        self.optional_bracket_argument_with(false)
+    }
+
+    /// [`Self::optional_bracket_argument`] keeping the argument's braces,
+    /// for a key list whose braces protect commas and literal text
+    /// (enumitem's `label={a,b}`, a shortlabels `{A}-I`).
+    fn optional_bracket_argument_braced(&mut self) -> Option<(String, Span)> {
+        self.optional_bracket_argument_with(true)
+    }
+
+    fn optional_bracket_argument_with(&mut self, keep_braces: bool) -> Option<(String, Span)> {
         self.skip_spaces();
         let first = self.peek()?;
         let TokenKind::Word(first_word) = &first.kind else {
@@ -13259,8 +13319,18 @@ impl P<'_> {
                     raw.push('\\');
                     raw.push_str(name);
                 }
-                TokenKind::LBrace => depth += 1,
-                TokenKind::RBrace => depth = depth.saturating_sub(1),
+                TokenKind::LBrace => {
+                    depth += 1;
+                    if keep_braces {
+                        raw.push('{');
+                    }
+                }
+                TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1);
+                    if keep_braces {
+                        raw.push('}');
+                    }
+                }
                 _ => {}
             }
             index += 1;
@@ -13925,13 +13995,18 @@ impl P<'_> {
     /// `\noindent` read before it is spent too: its empty paragraph ended.
     fn read_par(&mut self) {
         self.par_seen = true;
+        self.vertical_mode = true;
         self.noindent_pending = false;
     }
 
     /// Latex.ltx's `\@endpe` at the `\end` of a list or `\trivlist`
     /// environment (`\@endparenv`): the next paragraph starts without its
     /// indent box unless a `\par` comes first.
-    fn end_paragraph_environment(&mut self) {
+    /// `ended` is how many inlines of the open paragraph the environment's
+    /// `\par` has already ended.
+    fn end_paragraph_environment(&mut self, ended: usize) {
+        self.vertical_mode = true;
+        self.vertical_since = ended;
         self.noindent_pending = true;
         self.par_seen = false;
     }
@@ -15990,6 +16065,13 @@ impl P<'_> {
         extra_gap_before_pt: f64,
         extra_gap_after_pt: f64,
     ) {
+        // A paragraph that set material (or that `\noindent` started) ends
+        // here without a `\par`, so TeX is still in horizontal mode; the
+        // `\par` callers set it back ([`P::read_par`]).
+        let since = std::mem::take(&mut self.vertical_since);
+        if (self.paragraph_started && since == 0) || paragraph.iter().skip(since).any(sets_material) {
+            self.vertical_mode = false;
+        }
         self.paragraph_started = false;
         self.paragraph_flushes += 1;
         self.last_space = None;
@@ -16369,7 +16451,7 @@ impl P<'_> {
         (depth(kind), depth(self.list_frames.len()))
     }
 
-    fn push_list_frame(&mut self, environment: ListEnvironment, options: Vec<ListOption>, begin_span: Span) {
+    fn push_list_frame(&mut self, environment: ListEnvironment, options: Vec<ListOption>, begin_span: Span, widest_label: Option<String>) {
         let (kind_depth, list_depth) = self.next_list_depths(environment);
         // latex.ltx `\list`: `\ifnum \@listdepth >5 \@toodeep`; `itemize` and
         // `enumerate` check their own depth `>\thr@@` first. The list is still
@@ -16391,11 +16473,16 @@ impl P<'_> {
             self.dropped_list_frames += 1;
             return;
         }
+        // Every caller has flushed the paragraph the `\begin` ends, so the
+        // mode is what that flush left.
+        let vmode = self.vertical_mode;
         self.list_frames.push(ListFrame {
             environment,
             kind_depth,
             options,
             begin_span,
+            vmode,
+            widest_label,
         });
     }
 
@@ -16406,17 +16493,19 @@ impl P<'_> {
         let Some(kind) = ListEnvironment::from_name(environment) else {
             return;
         };
-        let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+        // enumitem assigns the keys inside `\list`: `em`/`ex` are the
+        // current font's where the list starts.
+        let units = self.font_setup().em_ex_sp(self.style);
         let (kind_depth, list_depth) = self.next_list_depths(kind);
         let mut effective: Vec<ListOption> = self
             .setlists
             .iter()
             .filter(|(target, _)| target.applies(kind, kind_depth, list_depth))
-            .flat_map(|(_, options)| options.iter().cloned())
+            .flat_map(|(_, keys)| lists::parse_options_in(keys, units, false))
             .collect();
         let begin_options = options
             .as_deref()
-            .map(|text| lists::parse_options(text, body, true))
+            .map(|text| lists::parse_options_in(text, units, true))
             .unwrap_or_default();
         let start_of = |options: &[ListOption]| {
             options.iter().rev().find_map(|option| match option {
@@ -16479,7 +16568,7 @@ impl P<'_> {
             default_overlay: None,
             item_overlay_open: 0,
         });
-        self.push_list_frame(kind, effective, begin_span);
+        self.push_list_frame(kind, effective, begin_span, None);
     }
 
     /// The next non-space token starts a `<dimen>` (`=2pt`, `2pt`, `-.5em`):
@@ -17149,14 +17238,9 @@ fn enumitem_label(template: &str, count: u32) -> String {
             text.replace(command, &counter(*style))
         });
     }
-    match template.char_indices().find(|(_, c)| "aAiI1".contains(*c)) {
-        Some((index, style)) => format!(
-            "{}{}{}",
-            &template[..index],
-            counter(style),
-            &template[index + style.len_utf8()..]
-        ),
-        None => template.to_string(),
+    match lists::short_label_parts(template) {
+        Some((prefix, style, suffix)) => format!("{prefix}{}{suffix}", counter(style)),
+        None => template.chars().filter(|c| !matches!(c, '{' | '}')).collect(),
     }
 }
 
@@ -17182,10 +17266,7 @@ fn enumitem_label_style(template: &str) -> char {
         .find(|(command, _)| label.contains(command))
         .map_or('1', |(_, style)| *style);
     }
-    template
-        .char_indices()
-        .find(|(_, c)| "aAiI1".contains(*c))
-        .map_or('1', |(_, style)| style)
+    lists::short_label_parts(template).map_or('1', |(_, style, _)| style)
 }
 
 fn alphabetic(count: u32, base: u8) -> String {

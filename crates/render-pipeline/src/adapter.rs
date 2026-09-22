@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use flashtex_compiler::math::MathList;
-use flashtex_compiler::parser::{Block as CBlock, FillLeader, GlueKind, Inline, InterwordGlue, ItemLabel, Parsed, UnderlineGeom};
+use flashtex_compiler::parser::{Block as CBlock, FillLeader, GlueKind, Inline, InterwordGlue, ItemLabel, ListFrame, ListLength, ListOption, Parsed, UnderlineGeom};
 use flashtex_compiler::text_builtins::{TextDimen, TextLogo, TextRule};
 use flashtex_compiler::{DocumentId, Span};
 
@@ -4459,11 +4459,16 @@ fn split_at_page_breaks<'p>(
     // for the closing skip too).
     let mut prev_list = false;
     // The compiler's list frames of the previous `\item` unit.
-    let mut prev_frames: Vec<flashtex_compiler::parser::ListFrame> = Vec::new();
-    let mut list_vmode = false;
-    // The same, per nesting level (index = depth - 1), for the closing
-    // skips of several lists that end together.
-    let mut list_vmode_by_depth: Vec<bool> = Vec::new();
+    let mut prev_frames: Vec<ListFrame> = Vec::new();
+    // The compiler's list frames of the last `\item` unit, whatever came
+    // after it: a labelled item whose innermost list is not among them
+    // opens that list.
+    let mut item_frames: Vec<ListFrame> = Vec::new();
+    // Whether each open list's `\begin` was read in vertical mode, by its
+    // `begin_span` (`\@topsepadd` keeps `\partopsep` for the closing skip
+    // too): the compiler's [`ListFrame::vmode`], or a previous unit that
+    // left TeX in vertical mode.
+    let mut list_vmode: Vec<(Span, bool)> = Vec::new();
     // `tikzpicture` environments per document, and those already emitted.
     let pictures: Vec<Vec<flashtex_vector_graphics::tikz::PictureSource>> = texts.iter().map(|t| flashtex_vector_graphics::tikz::find_pictures(t)).collect();
     let mut emitted_pictures: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
@@ -4619,8 +4624,8 @@ fn split_at_page_breaks<'p>(
                 prev_styled = false;
                 prev_list = false;
                 prev_frames = Vec::new();
-                list_vmode = false;
-                list_vmode_by_depth.clear();
+                item_frames = Vec::new();
+                list_vmode.clear();
                 continue;
             }
             _ => {}
@@ -4668,8 +4673,10 @@ fn split_at_page_breaks<'p>(
         // itemsep/topsep gaps are attached to whichever paragraph the
         // *next* `\item`/`\end` flushes, so an item holding a display
         // (which ends the paragraph early) carries them on the wrong
-        // block, and `em` in them is the compiler's fixed 12pt body; the
-        // pipeline sets the list's vertical glue from the source instead:
+        // block; the pipeline sets the list's vertical glue from each
+        // item's `ListItem.lists` frames instead (the enumitem keys in
+        // force, parsed, and whether the `\begin` was read in vertical
+        // mode):
         //
         // `\@item` of the first item: `\addvspace\@topsep` (`\topsep` +
         // the outer `\parskip`, + `\partopsep` when `\begin` was read in
@@ -4685,19 +4692,11 @@ fn split_at_page_breaks<'p>(
         // `\parsep`. `\end{...}`: `\@endparenv` adds `\@topsepadd`, absorbed
         // by a following heading's larger before-skip (`\addvspace`).
         // The hanging indent and the label box are the pipeline's too
-        // (`list_margins`): the compiler reports `leftmargin` as
-        // unimplemented.
+        // (`list_margins`, from the same frames).
         // The gap's own byte offset travels with it: `gap_has_trivlist_end`
         // asks `\if@twocolumn` *at* the `\end{abstract}` it finds there.
         let gap_base = |f: Span| -> usize {
             prev_end.filter(|p| p.document == f.document && p.end <= f.start).map_or(0, |p| p.end)
-        };
-        let gap_before = |f: Span| -> Option<&str> {
-            match prev_end {
-                Some(p) if p.document == f.document && p.end <= f.start => texts.get(f.document.0).and_then(|t| t.get(p.end..f.start)),
-                Some(_) => None,
-                None => texts.get(f.document.0).and_then(|t| t.get(..f.start)),
-            }
         };
         let is_heading = matches!(block, CBlock::Heading { .. });
         let mut addvspace_before = 0.0;
@@ -4714,98 +4713,70 @@ fn split_at_page_breaks<'p>(
         // The lists closed since the previous unit, innermost first: the
         // compiler's frames the previous `\item` sat in and this block does
         // not (PLAN1 slice 2; an `\end` from a macro body counts too).
-        let frames: &[flashtex_compiler::parser::ListFrame] = match block {
+        let frames: &[ListFrame] = match block {
             CBlock::ListItem { lists, .. } => lists,
             _ => &[],
         };
         let common = prev_frames.iter().zip(frames).take_while(|(a, b)| a.begin_span == b.begin_span).count();
-        let closed: Vec<&'static str> =
-            prev_frames[common.min(prev_frames.len())..].iter().rev().map(|f| f.environment.name()).filter(|n| LIST_ENVS.contains(n)).collect();
-        if prev_list && !is_heading {
-            if let Some(&env) = closed.last() {
-                let index = indexes.get(prev_end.map_or(0, |p| p.document.0));
-                let stack = prev_end.map_or(&[][..], |p| index.list_stack(p.end));
-                let topsepadd = |seps: &ListSeps, vmode: bool| {
-                    let p = if vmode { seps.partopsep_skip } else { crate::style::Skip::default() };
-                    (seps.topsep + p.natural, seps.topsep_skip.stretch + p.stretch, seps.topsep_skip.shrink + p.shrink)
-                };
-                for (k, &closed) in closed.iter().enumerate() {
-                    let Some(depth) = stack.len().checked_sub(k).filter(|d| *d > 0) else { break };
-                    let (open, keys) = stack[depth - 1];
-                    if open != closed {
-                        break;
-                    }
-                    let keys = if open == "thebibliography" { "" } else { keys };
-                    let seps = list_seps_from(&index.setlist, open, depth, size, style, keys);
-                    let skip = topsepadd(&seps, list_vmode_by_depth.get(depth - 1).copied().unwrap_or(list_vmode));
-                    list_end_skip = Some(match list_end_skip {
-                        Some(kept) if kept.0 >= skip.0 => kept,
-                        _ => skip,
-                    });
-                }
-                if list_end_skip.is_none() {
-                    // No open list to match (a list closed in another
-                    // document): the outermost level's skip.
-                    let begin_keys = stack.last().map_or("", |(e, keys)| if *e == env && *e != "thebibliography" { keys } else { "" });
-                    list_end_skip = Some(topsepadd(&list_seps_from(&index.setlist, env, 1, size, style, begin_keys), list_vmode));
-                }
-                endlist_adjust = list_end_adjust(index, stack, closed.len(), size, style);
-                // `\@endparenv`: `\addpenalty\@endparpenalty` before
-                // its `\addvspace\@topsepadd`.
-                if !style.is_beamer() {
-                    penalty_before = Some(LIST_PENALTY);
-                }
+        // Innermost first.
+        let closed: Vec<&ListFrame> = prev_frames[common.min(prev_frames.len())..].iter().rev().filter(|f| modelled_list(f)).collect();
+        if prev_list && !is_heading && !closed.is_empty() {
+            let open = modelled_lists(&prev_frames);
+            let topsepadd = |seps: &ListSeps, vmode: bool| {
+                let p = if vmode { seps.partopsep_skip } else { crate::style::Skip::default() };
+                (seps.topsep + p.natural, seps.topsep_skip.stretch + p.stretch, seps.topsep_skip.shrink + p.shrink)
+            };
+            for (k, frame) in closed.iter().enumerate() {
+                let depth = open.len() - k;
+                let seps = list_seps_of(&frame.options, depth, size, style);
+                let vmode = list_vmode.iter().rev().find(|(at, _)| *at == frame.begin_span).map_or(frame.vmode, |(_, v)| *v);
+                let skip = topsepadd(&seps, vmode);
+                list_end_skip = Some(match list_end_skip {
+                    Some(kept) if kept.0 >= skip.0 => kept,
+                    _ => skip,
+                });
+            }
+            endlist_adjust = list_end_adjust(&open, closed.len(), size, style);
+            // `\@endparenv`: `\addpenalty\@endparpenalty` before
+            // its `\addvspace\@topsepadd`.
+            if !style.is_beamer() {
+                penalty_before = Some(LIST_PENALTY);
             }
         }
         let mut list = None;
         let mut label_inlines: Option<&'p [Inline]> = None;
-        if let CBlock::ListItem { level, label, item, .. } = block {
+        if let CBlock::ListItem { level, label, item, lists, .. } = block {
             let anchor = label.as_ref().map(|(_, span)| *span).or(first);
             if let Some(at) = anchor {
                 let index = indexes.get(at.document.0);
-                let stack = index.list_stack(at.start);
-                let (env, begin_keys) = stack.last().map_or(("enumerate", ""), |(env, keys)| (env, if *env == "thebibliography" { "" } else { keys }));
-                let seps = list_seps_from(&index.setlist, env, stack.len().max(1), size, style, begin_keys);
+                // The compiler's frames of the lists this item sits in
+                // (PLAN1 slice 3: a `\begin` from a macro body counts too).
+                let stack = modelled_lists(lists);
+                let innermost = stack.last().copied();
+                let env = innermost.map_or("enumerate", |f| f.environment.name());
+                let seps = list_seps_of(innermost.map_or(&[][..], |f| &f.options), stack.len().max(1), size, style);
                 // `\@outerparskip`: the `\parskip` in force when `\begin`
                 // was read — the enclosing list's `\parsep` when nested.
                 let outer_parskip_skip = match stack.len() {
-                    n if n > 1 => list_seps_from(&index.setlist, stack[n - 2].0, n - 1, size, style, "").parsep_skip,
+                    n if n > 1 => list_seps_of(&stack[n - 2].options, n - 1, size, style).parsep_skip,
                     _ => style.parskip,
                 };
                 let outer_parskip = outer_parskip_skip.natural;
                 if label.is_some() {
-                    let opens = gap_before(at).and_then(|g| rfind_command(g, "begin").map(|b| (g, b, at.document.0, gap_base(at)))).or_else(|| {
-                        // `\begin{thebibliography}{<widest>}` is the span of
-                        // the compiler's own `References` heading, so the
-                        // gap after that heading holds no `\begin`: look
-                        // from the heading's start (`\@nbitem` follows).
-                        let p = prev_end.filter(|p| prev_vmode && p.document == at.document && p.start < at.start)?;
-                        let g = texts.get(p.document.0)?.get(p.start..at.start)?;
-                        let b = rfind_command(g, "begin")?;
-                        g[b..].strip_prefix("\\begin").is_some_and(|r| r.trim_start().starts_with("{thebibliography}")).then_some((g, b, p.document.0, p.start))
-                    });
+                    // The item opens its list when the last `\item` was not
+                    // in it.
+                    let opens = innermost.filter(|f| !item_frames.iter().any(|g| g.begin_span == f.begin_span));
                     match opens {
-                        Some((g, b, gap_doc, gap_base)) if list_env_after_begin(&g[b..]) => {
-                            let before = &g[..b];
-                            // `\endtrivlist`'s `\@endparenv` leaves TeX in
-                            // vertical mode, so a `\begin{<list>}` that
-                            // directly follows another `\trivlist`'s `\end`
-                            // is read in vertical mode too and takes
-                            // `\partopsep` — no blank line or `\par` needed.
-                            // That is every list, but also `center`,
-                            // `quote`, `quotation`, `verse` and a theorem
-                            // ([`gap_has_trivlist_end`]).
-                            list_vmode = prev_vmode
-                                || prev_end.is_none()
-                                || has_blank_line(before)
-                                || find_command(before, "par").is_some()
-                                || gap_has_trivlist_end(before, &theorem_envs, style, gap_doc, gap_base);
-                            if let Some(i) = stack.len().checked_sub(1) {
-                                if list_vmode_by_depth.len() <= i {
-                                    list_vmode_by_depth.resize(i + 1, false);
-                                }
-                                list_vmode_by_depth[i] = list_vmode;
-                            }
+                        Some(frame) => {
+                            // `\@trivlist`'s `\ifvmode` at the `\begin`: after
+                            // a `\par`, a blank line, a heading, or the
+                            // `\par` of another `\trivlist`'s `\end`
+                            // (`\@endparenv`) -- that is every list, but also
+                            // `center`, `quote`, `quotation`, `verse` and a
+                            // theorem -- as the compiler read it.
+                            let vmode = frame.vmode || prev_vmode || prev_end.is_none();
+                            list_vmode.retain(|(at, _)| lists.iter().any(|f| f.begin_span == *at));
+                            list_vmode.push((frame.begin_span, vmode));
                             if prev_vmode {
                                 // `\@nbitem`: `\addvspace{\@outerparskip - \parskip}`.
                                 // A negative `\addvspace` is never absorbed:
@@ -4831,7 +4802,7 @@ fn split_at_page_breaks<'p>(
                                 if !style.is_beamer() {
                                     penalty_before = Some(LIST_PENALTY);
                                 }
-                                let p = if list_vmode { seps.partopsep_skip } else { crate::style::Skip::default() };
+                                let p = if vmode { seps.partopsep_skip } else { crate::style::Skip::default() };
                                 let open = (
                                     seps.topsep + outer_parskip + p.natural,
                                     seps.topsep_skip.stretch + outer_parskip_skip.stretch + p.stretch,
@@ -4860,7 +4831,7 @@ fn split_at_page_breaks<'p>(
                                 vspace_flex.1 -= seps.parsep_skip.shrink;
                             }
                         }
-                        _ => {
+                        None => {
                             // `\addpenalty\@itempenalty`, then `\addvspace\itemsep`.
                             if !style.is_beamer() {
                                 penalty_before = Some(LIST_PENALTY);
@@ -4884,7 +4855,7 @@ fn split_at_page_breaks<'p>(
                 let natbib_bib = env == "thebibliography"
                     && index.natbib_author_year
                     && label.as_ref().is_none_or(|(text, _)| text.is_empty());
-                let (margins, labelsep_pt, itemindent_pt) = list_margins(index, texts.get(at.document.0).copied().unwrap_or(""), at.start, size, natbib_bib, style);
+                let (margins, labelsep_pt, itemindent_pt) = list_margins(index, &stack, texts.get(at.document.0).copied().unwrap_or(""), at.start, size, natbib_bib, style);
                 // The explicit label's inlines; `adapt_cached` converts
                 // them to items (the styles and label table live there).
                 label_inlines = match item {
@@ -4916,7 +4887,9 @@ fn split_at_page_breaks<'p>(
                     label: label.clone(),
                     label_items: None,
                     description: env == "description",
-                    nextline: list_style_nextline(&index.setlist, env, begin_keys),
+                    // enumitem's `style=nextline`: the label takes a line of
+                    // its own.
+                    nextline: innermost.and_then(ListFrame::style).is_some_and(|v| v.trim() == "nextline"),
                     label_symbol,
                     label_bold,
                     llap: matches!(env, "itemize" | "enumerate"),
@@ -4941,6 +4914,9 @@ fn split_at_page_breaks<'p>(
         let closed_list = prev_list;
         prev_list = list.is_some();
         prev_frames = frames.to_vec();
+        if list.is_some() {
+            item_frames = frames.to_vec();
+        }
         let limitations = std::mem::take(&mut pending_limitations);
         let styled = match block {
             CBlock::Styled { style, .. } => Some(ParaStyle::of(*style)),
@@ -5204,8 +5180,8 @@ fn split_at_page_breaks<'p>(
                 });
                 eject = false;
                 prev_vmode = true;
-                list_vmode = false;
-                list_vmode_by_depth.clear();
+                item_frames = Vec::new();
+                list_vmode.clear();
             }
             // beamer Tier 3: every edge is vertical-mode material that ends
             // a paragraph (`\par` in the templates) and, like `\end{frame}`,
@@ -5243,8 +5219,8 @@ fn split_at_page_breaks<'p>(
                 prev_styled = false;
                 prev_list = false;
                 prev_frames = Vec::new();
-                list_vmode = false;
-                list_vmode_by_depth.clear();
+                item_frames = Vec::new();
+                list_vmode.clear();
             }
             CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak | CBlock::BeamerFrameBegin { .. } | CBlock::BeamerTitlePage { .. } => unreachable!("handled above"),
             CBlock::Verbatim { .. } | CBlock::Alltt { .. } | CBlock::TableOfContents { .. } | CBlock::TitleBlock { .. } | CBlock::VFill | CBlock::LetterBlock { .. } => unreachable!("lowered by lower_blocks"),
@@ -7069,6 +7045,7 @@ struct ListSeps {
     parsep_skip: crate::style::Skip,
 }
 
+#[cfg(test)]
 fn list_seps(source: &str, env: &str, depth: usize, size: u32, style: &Stylesheet) -> ListSeps {
     list_seps_with(source, env, depth, size, style, "")
 }
@@ -7081,8 +7058,9 @@ fn list_seps_with(source: &str, env: &str, depth: usize, size: u32, style: &Styl
     list_seps_from(&setlist_calls(source), env, depth, size, style, begin_keys)
 }
 
-/// [`list_seps_with`] given the source's [`setlist_calls`].
-fn list_seps_from(calls: &[(&str, &str)], env: &str, depth: usize, size: u32, style: &Stylesheet, begin_keys: &str) -> ListSeps {
+/// The class's (or beamer's) glue of list level `depth`, before any
+/// enumitem key.
+fn class_list_seps(depth: usize, size: u32, style: &Stylesheet) -> ListSeps {
     let base = match size {
         12 => flashtex_document_style::BaseSize::Pt12,
         11 => flashtex_document_style::BaseSize::Pt11,
@@ -7126,6 +7104,72 @@ fn list_seps_from(calls: &[(&str, &str)], env: &str, depth: usize, size: u32, st
             seps.itemsep = seps.itemsep_skip.natural;
         }
     }
+    seps
+}
+
+impl ListSeps {
+    fn set_topsep(&mut self, skip: crate::style::Skip) {
+        self.topsep = skip.natural;
+        self.topsep_skip = skip;
+    }
+    fn set_partopsep(&mut self, skip: crate::style::Skip) {
+        self.partopsep = skip.natural;
+        self.partopsep_skip = skip;
+    }
+    fn set_itemsep(&mut self, skip: crate::style::Skip) {
+        self.itemsep = skip.natural;
+        self.itemsep_skip = skip;
+    }
+    fn set_parsep(&mut self, skip: crate::style::Skip) {
+        self.parsep = skip.natural;
+        self.parsep_skip = skip;
+    }
+}
+
+/// [`class_list_seps`] with the enumitem keys of the compiler's
+/// [`ListFrame::options`] (every matching `\setlist`, then the `\begin`
+/// keys, their `em`/`ex` evaluated where the list starts) applied in order:
+/// `nosep` zeroes `topsep`/`partopsep`/`itemsep`/`parsep`, `noitemsep`
+/// zeroes `itemsep`/`parsep`.
+fn list_seps_of(options: &[ListOption], depth: usize, size: u32, style: &Stylesheet) -> ListSeps {
+    let mut seps = class_list_seps(depth, size, style);
+    let skip = |s: &flashtex_compiler::parser::ListSkip| crate::style::Skip::new(s.pt, s.plus, s.minus);
+    for option in options {
+        match option {
+            ListOption::NoSep => {
+                seps.set_topsep(crate::style::Skip::default());
+                seps.set_partopsep(crate::style::Skip::default());
+                seps.set_itemsep(crate::style::Skip::fixed(0.0));
+                seps.set_parsep(crate::style::Skip::fixed(0.0));
+            }
+            ListOption::NoItemSep => {
+                seps.set_itemsep(crate::style::Skip::fixed(0.0));
+                seps.set_parsep(crate::style::Skip::fixed(0.0));
+            }
+            ListOption::TopSep(s) => seps.set_topsep(skip(s)),
+            ListOption::PartopSep(s) => seps.set_partopsep(skip(s)),
+            ListOption::ItemSep(s) => seps.set_itemsep(skip(s)),
+            ListOption::ParSep(s) => seps.set_parsep(skip(s)),
+            _ => {}
+        }
+    }
+    seps
+}
+
+/// The compiler's frames of the `\list` environments this module models
+/// ([`LIST_ENVS`]), outermost first: the stack the list glue and margins
+/// are read from.
+fn modelled_lists(frames: &[ListFrame]) -> Vec<&ListFrame> {
+    frames.iter().filter(|f| modelled_list(f)).collect()
+}
+
+fn modelled_list(frame: &ListFrame) -> bool {
+    LIST_ENVS.contains(&frame.environment.name())
+}
+
+/// [`list_seps_with`] given the source's [`setlist_calls`].
+fn list_seps_from(calls: &[(&str, &str)], env: &str, depth: usize, size: u32, style: &Stylesheet, begin_keys: &str) -> ListSeps {
+    let mut seps = class_list_seps(depth, size, style);
     let all_keys = calls.iter().filter(|(envs, _)| setlist_names(envs, env)).map(|(_, keys)| *keys).chain(std::iter::once(begin_keys));
     for keys in all_keys {
         for (key, value) in list_keys(keys) {
@@ -7174,39 +7218,6 @@ fn list_seps_from(calls: &[(&str, &str)], env: &str, depth: usize, size: u32, st
     seps
 }
 
-/// Whether the innermost list's effective enumitem `style` is `nextline`:
-/// the last `style=` key among the `\setlist`s naming `env` (document
-/// order) and the list's own `\begin{<env>}[<keys>]` wins, exactly like
-/// [`list_seps_with`]; `sameline`/`standard`/`normal` (and no key at all)
-/// keep the default same-line label, so only `nextline` returns true.
-/// Read from the source rather than the compiler's `ListFrame` because this
-/// pipeline builds against a `vendor/compiler` pin that predates
-/// `ListOption::Style` (see [`ListGeom::nextline`]).
-/// Takes the index's precomputed `\setlist` calls rather than the source.
-/// Re-scanning here would undo #623: `setlist_calls` walks the whole document,
-/// and this runs once per list, which is exactly the quadratic shape that made
-/// a 450-section warm edit take 16 s.
-fn list_style_nextline(calls: &[(&str, &str)], env: &str, begin_keys: &str) -> bool {
-    let all_keys = calls
-        .iter()
-        .filter(|(envs, _)| setlist_names(envs, env))
-        .map(|(_, keys)| *keys)
-        .chain(std::iter::once(begin_keys));
-    let mut style: Option<&str> = None;
-    for keys in all_keys {
-        for (key, value) in list_keys(keys) {
-            if key == "style" {
-                style = Some(value);
-            }
-        }
-    }
-    style.is_some_and(|v| {
-        let v = v.trim();
-        let v = v.strip_prefix('{').and_then(|v| v.strip_suffix('}')).map_or(v, str::trim);
-        v == "nextline"
-    })
-}
-
 /// The `\list`/`\trivlist` environments whose `\item`s the compiler reports
 /// as `CBlock::ListItem` and whose `\@trivlist` glue this module derives.
 /// `description` is one of them: article.cls builds it with `\list{}{...}`
@@ -7216,25 +7227,18 @@ fn list_style_nextline(calls: &[(&str, &str)], env: &str, begin_keys: &str) -> b
 /// differ, and those are the typesetter's business ([`ListGeom::description`]).
 pub(crate) const LIST_ENVS: [&str; 4] = ["itemize", "enumerate", "description", "thebibliography"];
 
-/// Whether `rest` (starting at a `\begin`) opens one of [`LIST_ENVS`].
-fn list_env_after_begin(rest: &str) -> bool {
-    let after = rest.strip_prefix("\\begin").unwrap_or(rest).trim_start();
-    LIST_ENVS.iter().any(|env| after.starts_with(&format!("{{{env}}}")))
-}
-
 /// `\endtrivlist` for each of the `closed` innermost lists of `stack` (the
 /// lists open where the previous unit ended), innermost first: when the
 /// list leaves a positive `\lastskip` it becomes `\lastskip + \parskip -
 /// \@outerparskip` — the closing list's `\parsep` less the `\parskip`
 /// outside it (the enclosing list's `\parsep`, or the document's). The
 /// summed change, in points.
-fn list_end_adjust(index: &SourceIndex, stack: &[(&str, &str)], closed: usize, size: u32, style: &Stylesheet) -> f64 {
+fn list_end_adjust(stack: &[&ListFrame], closed: usize, size: u32, style: &Stylesheet) -> f64 {
     let mut adjust = 0.0;
     for k in 0..closed {
         let Some(depth) = stack.len().checked_sub(k).filter(|d| *d > 0) else { break };
-        let env = stack[depth - 1].0;
-        let parsep = list_seps_from(&index.setlist, env, depth, size, style, "").parsep;
-        let outer = if depth > 1 { list_seps_from(&index.setlist, stack[depth - 2].0, depth - 1, size, style, "").parsep } else { style.parskip.natural };
+        let parsep = list_seps_of(&stack[depth - 1].options, depth, size, style).parsep;
+        let outer = if depth > 1 { list_seps_of(&stack[depth - 2].options, depth - 1, size, style).parsep } else { style.parskip.natural };
         adjust += parsep - outer;
     }
     adjust
@@ -7434,6 +7438,11 @@ fn setlist_names(envs: &str, env: &str) -> bool {
 
 /// The `itemize`/`enumerate` environments open at byte `at` of `source`,
 /// outermost first: `(environment, `\begin` optional argument)`.
+///
+/// Only [`list_end_skip`] reads this, for a float body: floats are masked
+/// out of the source before the compiler runs (PLAN1 site 41), so their
+/// lists have no `ListItem` frames. Every compiled list's stack is its
+/// frames.
 fn list_stack_at(source: &str, at: usize) -> Vec<(&str, &str)> {
     let mut stack: Vec<(&str, &str)> = Vec::new();
     let mut from = 0;
@@ -7506,28 +7515,21 @@ fn begin_end_commands(source: &str) -> Vec<(usize, bool)> {
 /// What [`split_at_page_breaks`] reads from one source document for every
 /// block, computed in one forward pass per call.
 ///
-/// [`list_stack_at`] and `in_theorem_environment` rescan the source from
-/// byte 0 each time, and [`setlist_calls`] and [`natbib_author_year`] scan
-/// all of it, so asking them once per block made the split quadratic in the
-/// document's length (#613: 16 s of adapt time at 450 sections). The index
-/// answers the same questions from prefix snapshots with a binary search,
-/// and returns what those functions return at every byte offset
-/// (`source_index_matches_prefix_scans` checks this).
-struct SourceIndex<'t> {
-    /// [`setlist_calls`] of the source.
-    setlist: Vec<(&'t str, &'t str)>,
+/// `in_theorem_environment` rescans the source from byte 0 each time, and
+/// [`natbib_author_year`] scans all of it, so asking them once per block made
+/// the split quadratic in the document's length (#613: 16 s of adapt time at
+/// 450 sections). The index answers the same questions from prefix snapshots
+/// with a binary search, and returns what those functions return at every
+/// byte offset (`source_index_matches_prefix_scans` checks this). The list
+/// stack and the enumitem keys are the compiler's `ListItem.lists` frames
+/// (PLAN1 slice 3), not a scan.
+struct SourceIndex {
     /// [`natbib_author_year`] of the source.
     natbib_author_year: bool,
     /// The document loads `enumerate` (tools) and not enumitem, so an
     /// `enumerate` environment's `[<template>]` is enumerate.sty's
     /// ([`enumerate_sty_widest`]).
     enumerate_package: bool,
-    /// For each `\begin`/`\end` of a [`LIST_ENVS`] environment, in source
-    /// order, the byte just past its control word: [`list_stack_at`] reads
-    /// the command at offset `at` when this is `<= at`.
-    list_marks: Vec<usize>,
-    /// `list_stacks[k]`: the list stack after the first `k` list marks.
-    list_stacks: Vec<Vec<(&'t str, &'t str)>>,
     /// For each named `\begin{..}`/`\end{..}`, in source order, the byte of
     /// the `}` closing its name: `in_theorem_environment` matches the
     /// command at offset `at` only when the name is complete before `at`.
@@ -7538,37 +7540,9 @@ struct SourceIndex<'t> {
     in_theorem: Vec<bool>,
 }
 
-impl<'t> SourceIndex<'t> {
-    fn new(source: &'t str, theorem_envs: &std::collections::HashSet<String>) -> Self {
+impl SourceIndex {
+    fn new(source: &str, theorem_envs: &std::collections::HashSet<String>) -> Self {
         let commands = begin_end_commands(source);
-        // `list_stack_at`: the environment name must follow the command
-        // directly (after blanks), and the `\begin` options come after it.
-        let mut stack: Vec<(&str, &str)> = Vec::new();
-        let (mut list_marks, mut list_stacks) = (Vec::new(), vec![Vec::new()]);
-        for &(pos, is_begin) in &commands {
-            let len = if is_begin { "\\begin".len() } else { "\\end".len() };
-            let rest = source[pos + len..].trim_start();
-            let Some(inner) = rest.strip_prefix('{') else { continue };
-            let Some(close) = inner.find('}') else { continue };
-            let env = inner[..close].trim();
-            if !LIST_ENVS.contains(&env) {
-                continue;
-            }
-            if is_begin {
-                let after = inner[close + 1..].trim_start();
-                let options = match (env, after.strip_prefix('['), after.strip_prefix('{')) {
-                    ("thebibliography", _, Some(o)) => o.find('}').map_or("", |c| &o[..c]),
-                    ("thebibliography", _, None) => "",
-                    (_, Some(o), _) => o.find(']').map_or("", |c| &o[..c]),
-                    _ => "",
-                };
-                stack.push((env, options));
-            } else if stack.last().is_some_and(|(open, _)| *open == env) {
-                stack.pop();
-            }
-            list_marks.push(pos + len);
-            list_stacks.push(stack.clone());
-        }
         // `in_theorem_environment`: the name is between the first `{` after
         // the command and the first `}` after that, wherever they are.
         let mut open: Vec<&str> = Vec::new();
@@ -7589,19 +7563,11 @@ impl<'t> SourceIndex<'t> {
             in_theorem.push(theorems_open > 0);
         }
         SourceIndex {
-            setlist: setlist_calls(source),
             natbib_author_year: natbib_author_year(source),
             enumerate_package: package_options(source, "enumerate").is_some() && package_options(source, "enumitem").is_none(),
-            list_marks,
-            list_stacks,
             theorem_marks,
             in_theorem,
         }
-    }
-
-    /// [`list_stack_at`]`(source, at)`.
-    fn list_stack(&self, at: usize) -> &[(&'t str, &'t str)] {
-        &self.list_stacks[self.list_marks.partition_point(|&mark| mark <= at)]
     }
 
     /// `in_theorem_environment(source, at, theorem_envs)`, given
@@ -7623,8 +7589,8 @@ struct SourceIndexes<'a, 't> {
     /// loads natbib itself, so its `thebibliography` was set with the
     /// class's `[n]` label-width geometry (15.5 bp too far right).
     natbib_author_year: bool,
-    cells: Vec<std::cell::OnceCell<SourceIndex<'t>>>,
-    empty: std::cell::OnceCell<SourceIndex<'t>>,
+    cells: Vec<std::cell::OnceCell<SourceIndex>>,
+    empty: std::cell::OnceCell<SourceIndex>,
 }
 
 impl<'a, 't> SourceIndexes<'a, 't> {
@@ -7642,7 +7608,7 @@ impl<'a, 't> SourceIndexes<'a, 't> {
         }
     }
 
-    fn get(&self, document: usize) -> &SourceIndex<'t> {
+    fn get(&self, document: usize) -> &SourceIndex {
         match self.texts.get(document) {
             Some(text) => self.cells[document].get_or_init(|| SourceIndex { natbib_author_year: self.natbib_author_year, ..SourceIndex::new(text, self.theorem_envs) }),
             None => self.empty.get_or_init(|| SourceIndex::new("", self.theorem_envs)),
@@ -7863,11 +7829,11 @@ fn length_register(source: &str, at: usize, name: &str, size: u32, em_ex: Option
     found.map(|(_, value)| value)
 }
 
-/// `\leftmargin` of every list open at byte `at` (outermost first): the
-/// class's `\leftmargin<i>` unless a `\setlist` naming the environment or
-/// the `\begin` options set enumitem's `leftmargin` (`*` = the widest
-/// label's width plus `\labelsep`; a `<dimen>` or a `\settowidth`/
-/// `\setlength` register as given).
+/// `\leftmargin` of every list in `stack` (the compiler's frames, outermost
+/// first): the class's `\leftmargin<i>` unless the frame's enumitem keys
+/// (every matching `\setlist`, then the `\begin` options) set `leftmargin`
+/// (`*` = the widest label's width plus `\labelsep`; a `<dimen>` or a
+/// `\settowidth`/`\setlength` register as given).
 ///
 /// Also returns the innermost itemize/enumerate's enumitem `labelsep=` (if
 /// set) and `itemindent=` (points, zero if unset). With `leftmargin=*`
@@ -7878,11 +7844,10 @@ fn length_register(source: &str, at: usize, name: &str, size: u32, em_ex: Option
 /// the label while `itemindent` moves the first line and its label.
 ///
 /// `source` is read only by the `leftmargin=\<register>` arm
-/// ([`length_register`], a prefix scan guarded by that rare key); everything
-/// per-block comes from the precomputed [`SourceIndex`].
-fn list_margins(index: &SourceIndex, source: &str, at: usize, size: u32, natbib_bib: bool, style: &Stylesheet) -> (Vec<ListMargin>, Option<f64>, f64) {
+/// ([`length_register`], a prefix scan guarded by that rare key: the
+/// compiler keeps a register value as `ListOption::Other`).
+fn list_margins(index: &SourceIndex, stack: &[&ListFrame], source: &str, at: usize, size: u32, natbib_bib: bool, style: &Stylesheet) -> (Vec<ListMargin>, Option<f64>, f64) {
     let family = style.family;
-    let calls = &index.setlist;
     let em_ex = list_em_ex(size, family);
     // The class sets `\leftmargin<i>` while it loads, before `fontenc`, so
     // its `em` is OT1 `cmr`'s quad (Latin Modern's), not the EC font's
@@ -7895,17 +7860,23 @@ fn list_margins(index: &SourceIndex, source: &str, at: usize, size: u32, natbib_
         let em = if beamer { 2.0 } else { article_leftmargin_em(depth) };
         ListMargin::Fixed(parse_dimen_in(&format!("{em}em"), size, class_em_ex).unwrap_or(0.0))
     };
+    enum LeftMargin<'a> {
+        Star,
+        Pt(f64),
+        Register(&'a str),
+        Class,
+    }
     let (mut labelsep_pt, mut itemindent_pt) = (None, 0.0);
-    let margins = index
-        .list_stack(at)
+    let margins = stack
         .iter()
         .enumerate()
-        .map(|(i, (env, options))| {
+        .map(|(i, frame)| {
             let depth = i + 1;
+            let env = frame.environment.name();
             // `\list` resets `\itemindent` but not `\labelsep`, so a
             // `labelsep=` stays in force in the lists nested inside.
             itemindent_pt = 0.0;
-            if *env == "thebibliography" {
+            if env == "thebibliography" {
                 // natbib's author-year `\@bibsetup` (`\NAT@bibsetup`,
                 // natbib.sty line 642) replaces the class's label-width
                 // geometry with `\leftmargin\bibhang`; its `\@biblabel` is
@@ -7917,31 +7888,29 @@ fn list_margins(index: &SourceIndex, source: &str, at: usize, size: u32, natbib_
                 // latex.ltx/article.cls `\thebibliography`:
                 // `\settowidth\labelwidth{\@biblabel{#1}}`,
                 // `\leftmargin\labelwidth \advance\leftmargin\labelsep`.
-                return ListMargin::Widest(format!("[{}]", options.trim()));
+                return ListMargin::Widest(format!("[{}]", frame.widest_label.as_deref().unwrap_or("").trim()));
             }
-            let mut leftmargin: Option<&str> = None;
+            let mut leftmargin: Option<LeftMargin> = None;
             let mut label_key: Option<&str> = None;
             let mut widest: Option<&str> = None;
-            let begin_keys = options.contains('=');
-            let all_keys = calls
-                .iter()
-                .filter(|(envs, _)| setlist_names(envs, env))
-                .map(|(_, keys)| *keys)
-                .chain(begin_keys.then_some(*options));
-            let item_list = matches!(*env, "itemize" | "enumerate");
-            for keys in all_keys {
-                for (key, value) in list_keys(keys) {
-                    match key {
-                        "leftmargin" => leftmargin = Some(value),
-                        "label" => label_key = Some(value),
-                        "widest" => widest = (!value.is_empty()).then_some(value),
-                        "labelsep" if item_list => labelsep_pt = parse_dimen_in(value, size, em_ex).or(labelsep_pt),
-                        "itemindent" if item_list => itemindent_pt = parse_dimen_in(value, size, em_ex).unwrap_or(itemindent_pt),
-                        _ => {}
+            let mut template: Option<&str> = None;
+            let item_list = matches!(env, "itemize" | "enumerate");
+            for option in &frame.options {
+                match option {
+                    ListOption::LeftMargin(ListLength::Star) => leftmargin = Some(LeftMargin::Star),
+                    ListOption::LeftMargin(ListLength::Pt(pt)) => leftmargin = Some(LeftMargin::Pt(*pt)),
+                    ListOption::LeftMargin(ListLength::Bang) => leftmargin = Some(LeftMargin::Class),
+                    ListOption::Other { key, value: Some(value) } if key == "leftmargin" => {
+                        leftmargin = Some(if value.starts_with('\\') { LeftMargin::Register(value) } else { LeftMargin::Class })
                     }
+                    ListOption::Label(label) => label_key = Some(label),
+                    ListOption::Widest(value) => widest = value.as_deref().filter(|v| !v.is_empty()),
+                    ListOption::ShortLabel(label) => template = Some(label),
+                    ListOption::LabelSep(ListLength::Pt(pt)) if item_list => labelsep_pt = Some(*pt),
+                    ListOption::ItemIndent(ListLength::Pt(pt)) if item_list => itemindent_pt = *pt,
+                    _ => {}
                 }
             }
-            let template = (!begin_keys && !options.is_empty()).then_some(*options);
             // enumerate.sty (not enumitem): the template sets this depth's
             // `\leftmargin` to the width of the label at counter value 7
             // plus `\labelsep` (`\@@enum@`, enumerate.sty lines 79-82);
@@ -7949,13 +7918,13 @@ fn list_margins(index: &SourceIndex, source: &str, at: usize, size: u32, natbib_
             // 25.74338pt = `\wd\hbox{(vii)}` 20.26837pt + 5.475pt where the
             // class's `\leftmargini` is 27.37506pt. Deeper than
             // `\@enumdepth` 4 is `\@toodeep`, an error, not a list.
-            if let (Some(template), "enumerate", true) = (template, *env, index.enumerate_package) {
+            if let (Some(template), "enumerate", true) = (template, env, index.enumerate_package) {
                 if depth <= 4 {
                     return ListMargin::Widest(enumerate_sty_widest(template));
                 }
             }
             match leftmargin {
-                Some("*") => {
+                Some(LeftMargin::Star) => {
                     let label = widest_label(env, depth, label_key, template, widest);
                     if labelsep_pt.is_none() && itemindent_pt == 0.0 {
                         ListMargin::Widest(label)
@@ -7963,9 +7932,9 @@ fn list_margins(index: &SourceIndex, source: &str, at: usize, size: u32, natbib_
                         ListMargin::WidestSep { label, labelsep_pt, itemindent_pt }
                     }
                 }
-                Some(register) if register.starts_with('\\') => length_register(source, at, register, size, em_ex).unwrap_or_else(|| class_margin(depth)),
-                Some(dimen) => parse_dimen_in(dimen, size, em_ex).map_or_else(|| class_margin(depth), ListMargin::Fixed),
-                None => class_margin(depth),
+                Some(LeftMargin::Register(register)) => length_register(source, at, register, size, em_ex).unwrap_or_else(|| class_margin(depth)),
+                Some(LeftMargin::Pt(pt)) => ListMargin::Fixed(pt),
+                Some(LeftMargin::Class) | None => class_margin(depth),
             }
         })
         .collect();
@@ -12027,11 +11996,7 @@ mod tests {
             for at in 0..=source.len() {
                 let boundary = source.is_char_boundary(at);
                 assert_eq!(index.in_theorem(boundary, at), in_theorem_environment(source, at, &envs), "in_theorem at {at} of {source:?}");
-                if boundary {
-                    assert_eq!(index.list_stack(at), &list_stack_at(source, at)[..], "list stack at {at} of {source:?}");
-                }
             }
-            assert_eq!(index.setlist, setlist_calls(source));
             assert_eq!(index.natbib_author_year, natbib_author_year(source));
         }
     }
