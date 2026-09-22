@@ -419,6 +419,14 @@ pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("AtEndOfClass", "{code}", "runs code when the current .cls file ends"),
     ("typeout", "{text}", "accepted no-op; there is no terminal"),
     ("wlog", "{text}", "accepted no-op; there is no log stream"),
+    // TeX's parameters and LaTeX's kernel lengths (`\textwidth`, `\parskip`,
+    // `\topsep`, `\hsize`, `\pdfoutput`, `\pdfpagewidth`, ...) are registers
+    // of the expansion engine, started from the class's measured values
+    // (`crate::kernel_lengths`): an assignment, `\setlength`, `\addtolength`,
+    // `\the`, `\advance`, `0.5\textwidth` and `\ifdim` all resolve there. A
+    // bare register with no assignment is TeX's "Missing number" and is not
+    // a command of its own, so the registers are not rows here.
+    ("glueexpr", "<glue expression>", "e-TeX glue expression (+, -, * and / by an integer, parentheses), also what \\setlength and \\addtolength evaluate their argument with"),
 ];
 
 /// Names of [`EXPANSION_COMMANDS`]: the expansion pass executes these, so the
@@ -599,7 +607,12 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("qedhere", "", "amsthm end-of-proof box on this line, flush right; the automatic box at \\end{proof} is suppressed"),
     ("hspace", "{dimension}", "fixed horizontal space; starred form identical"),
     ("ensuremath", "{math}", "the argument as inline math (latex.ltx: `$...$` when not already in math mode)"),
-    ("hskip", "<glue>", "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll"),
+    ("hskip", "<glue>", "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll (the expansion pass scans the glue with TeX's grammar: registers, \\p@, \\@plus, 0.5\\textwidth, em of the current font)"),
+    ("vskip", "<glue>", "TeX vertical glue without braces (scanned like \\hskip): ends the paragraph and adds the glue; an infinite stretch fills the page like \\vfil"),
+    ("kern", "<dimen>", "TeX kern (scanned like \\hskip): a fixed horizontal space in a paragraph, vertical space between paragraphs"),
+    ("hss", "", "infinite-stretch horizontal glue (0pt plus 1fil minus 1fil), as \\hfil"),
+    ("vfil", "", "vertical glue filling the rest of the page (same order as \\vfill)"),
+    ("vss", "", "vertical glue filling the rest of the page (0pt plus 1fil minus 1fil), as \\vfil"),
     ("quad", "", "1em of horizontal space"),
     ("qquad", "", "2em of horizontal space"),
     ("bigskip", "", "ends the paragraph and adds 12pt of vertical space"),
@@ -1299,6 +1312,30 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (&["ensuremath"], "{math}", "the argument itself (already in math mode)", true),
+    (
+        &["kern", "hskip"],
+        "<dimen> / <glue>",
+        "TeX kern/glue inside a formula: a fixed horizontal space of the operand's natural points (the expansion pass scans it; stretch and shrink are dropped)",
+        true,
+    ),
+    (
+        &["hspace"],
+        "{dimension}",
+        "fixed horizontal space inside a formula (latex.ltx's \\hskip); em/ex in the text font, other units in points; starred form identical",
+        true,
+    ),
+    (
+        &["hfil", "hfill", "hss", "hfilneg"],
+        "",
+        "infinite glue inside a formula: nothing, as a formula box is set at its natural width",
+        true,
+    ),
+    (
+        &["vspace"],
+        "{dimension}",
+        "consumed with a warning: the vertical adjustment after the line is not inserted",
+        true,
+    ),
     (
         &["mkern", "mskip"],
         "<mu glue>",

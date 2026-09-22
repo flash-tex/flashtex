@@ -178,6 +178,18 @@ pub enum Primitive {
     Divide,
     Numexpr,
     Dimexpr,
+    /// e-TeX `\glueexpr`: a glue-valued expression (`+`/`-` of glue terms,
+    /// `*`/`/` by an integer, parentheses, a terminating `\relax`).
+    Glueexpr,
+    /// TeX's `\hskip`/`\vskip` `<glue>`, `\kern` `<dimen>` and `\penalty`
+    /// `<number>`: the operand is scanned here, with expansion, exactly as
+    /// TeX's stomach scans it (tex.web §1057-§1060, §1102), and the command
+    /// is re-emitted for the typesetter with the operand in canonical `\the`
+    /// text (see `Engine::emit_with_operand`).
+    Hskip,
+    Vskip,
+    Kern,
+    Penalty,
     // -- LaTeX layer (built on the primitives above) --
     NewCommand,
     RenewCommand,
@@ -206,6 +218,11 @@ pub enum Primitive {
     AlphUpper,
     Fnsymbol,
     NewLength,
+    /// LaTeX's `\setlength{<register>}{<glue>}` (`SetLength(false)`) and
+    /// `\addtolength` (`SetLength(true)`): the value is read with
+    /// `\glueexpr` semantics, so calc's `+`/`-`/`*`/`/` chains and a
+    /// register's `plus`/`minus` both work (see `Engine::do_setlength`).
+    SetLength(bool),
     SetToWidth,
     SetToHeight,
     SetToDepth,

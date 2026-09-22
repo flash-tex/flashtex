@@ -125,12 +125,18 @@ pub struct Expansion {
 /// the parser resolves against its own `footnote`/`mpfootnote` counters
 /// that the engine never defines) are removed, so they pass through.
 ///
-/// `\\setlength`/`\\addtolength` keep the kernel meaning when `#1` is already
-/// defined (a `\\newlength` skip, so `\\the` can read it back). An undefined
-/// target (`\\textwidth`, `\\parindent`, `\\fboxsep`, ...) is rewritten to a
-/// host command the converter maps back, so the parser sees the original
-/// name with its argument still a control sequence, not consumed as a
-/// skip assignment, which would yield `\\addtolength{\\}`.
+/// `\\setlength`/`\\addtolength` are the engine's (`Primitive::SetLength`):
+/// every kernel length is a register there, set from the class's measured
+/// defaults ([`class_prelude`]), so the assignment executes with TeX's own
+/// `<glue>` grammar (`\\p@`, `\\@plus`, `0.5\\textwidth`, `\\dimexpr`) and
+/// `\\the`/`\\ifdim`/`\\advance` read it back. The lengths this parser keeps
+/// a copy of ([`crate::parser::OBSERVED_LENGTHS`]) are observed: the engine
+/// emits a `\\flashtexlengthset{\\name}{<value>}` marker after each
+/// assignment, which the converter hands the parser as the marker command
+/// (see its `length_marker` arm). A target that is no register (a package
+/// length the parser models, `\\LTleft`, `\\headrulewidth`) comes back as
+/// `\\flashtexsetlength{#1}{#2}`, mapped to the original command, so the
+/// parser sees the name with its argument still a control sequence.
 ///
 /// `\\AtBeginDocument` keeps the kernel queuing behavior, but wraps each
 /// queued chunk in `\\flashtexatbeginstart...\\flashtexatbeginend` markers
@@ -194,8 +200,6 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\newif\\ifluatex\\luatexfalse
 \\let\\ifXeTeX\\ifxetex
 \\let\\ifLuaTeX\\ifluatex
-\\def\\setlength#1#2{\\ifdefined#1#1 #2\\relax\\else\\flashtexsetlength{#1}{#2}\\fi}%
-\\def\\addtolength#1#2{\\ifdefined#1\\advance#1 #2\\relax\\else\\flashtexaddtolength{#1}{#2}\\fi}%
 \\def\\setlist{\\flashtexsetlist}%
 \\makeatletter
 \\protected\\def\\newtoggle#1{\\@ifundefined{etb@tgl@#1}{\\expandafter\\let\\csname etb@tgl@#1\\endcsname\\@secondoftwo}{\\etb@err@toggledefined}}%
@@ -742,16 +746,22 @@ impl<'d> Converter<'d> {
     fn push_char(&mut self, c: char, at: Placement) {
         self.last_span = at.span;
         if let Some(word) = &mut self.word {
+            // Characters the engine synthesized from one token (`\the`'s
+            // digits, the canonical operand of `\hskip`/`\kern`/`\penalty`,
+            // a length marker's value) all carry that token's span: an
+            // identical span is contiguous too, so `12.0pt` reaches the
+            // parser as one word, as the source text `12pt` would.
             let contiguous = word.maps == at.maps
                 && if at.maps {
                     word.span == at.span
                         && match (word.definition, at.definition) {
-                            (Some(a), Some(b)) => a.document == b.document && a.end == b.start,
+                            (Some(a), Some(b)) => a.document == b.document && (a.end == b.start || a == b),
                             (None, None) => true,
                             _ => false,
                         }
                 } else {
-                    word.span.document == at.span.document && word.span.end == at.span.start
+                    word.span.document == at.span.document
+                        && (word.span.end == at.span.start || word.span == at.span)
                 };
             if contiguous {
                 word.text.push(c);
@@ -883,16 +893,135 @@ fn configure_with_fonts(engine: &mut Engine, fonts: DocumentFonts, reader: Packa
         setup: fonts.setup,
         preamble_latin_modern: fonts.preamble_latin_modern,
     }));
+    // The class's measured lengths, then the names whose assignments come
+    // back as markers for the parser (see `HOST_PRELUDE`).
+    engine.run_host_prelude(&class_prelude(&fonts.class));
+    for name in crate::parser::OBSERVED_LENGTHS {
+        engine.observe_register(name);
+    }
 }
 
 /// The document-wide font inputs the engine needs before it executes any
-/// `\setlength`: the class size option, `fontenc` and `lmodern`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// `\setlength`: the class size option, `fontenc` and `lmodern`, and the
+/// class itself (whose measured lengths the engine's registers start from).
+#[derive(Debug, Clone, PartialEq)]
 struct DocumentFonts {
     setup: crate::font_units::FontSetup,
     /// `lmodern` was loaded before `\usepackage[T1]{fontenc}`, whose
     /// `\selectfont` then switches the preamble to Latin Modern already.
     preamble_latin_modern: bool,
+    class: ClassSetup,
+}
+
+/// The `\documentclass` the entry names, with its options, and the
+/// `\LoadClass` a project class file makes (see [`class_prelude`]).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct ClassSetup {
+    pub name: String,
+    pub options: String,
+    pub loaded: Option<(String, String)>,
+}
+
+/// The engine's starting register values for a document: the kernel
+/// lengths, TeX parameters, float counters and float-fraction macros as
+/// pdflatex has them at `\begin{document}` under the document's class,
+/// size and layout options (`crate::kernel_lengths`, measured by
+/// `scripts/gen_kernel_lengths.py`), as TeX text for a host prelude.
+///
+/// The class is the entry's `\documentclass` when the table has it, else
+/// the class a project `.cls` `\LoadClass`es (the project file then sets its
+/// own values on top, exactly as it does in LaTeX), else `article` for the
+/// kernel-level values only: such a class allocates its own caption skips
+/// and float fractions (or none), so none are declared for it. A size the
+/// table lacks takes the nearest measured one; `a4paper`/`letterpaper`,
+/// `twocolumn`/`onecolumn` and `twoside`/`oneside` select the measured
+/// combination, the class's defaults filling in what the document leaves
+/// unsaid.
+pub(crate) fn class_prelude(class: &ClassSetup) -> String {
+    use crate::kernel_lengths::{ClassDefaults, CLASSES};
+    let by_name = |name: &str| CLASSES.iter().find(|c| c.class == name.trim());
+    let (defaults, exact, options): (&ClassDefaults, bool, String) = match by_name(&class.name) {
+        Some(c) => (c, true, class.options.clone()),
+        None => match class.loaded.as_ref().and_then(|(name, opts)| by_name(name).map(|c| (c, opts))) {
+            Some((c, opts)) => (c, true, format!("{},{}", class.options, opts)),
+            None => (by_name("article").expect("article is measured"), false, class.options.clone()),
+        },
+    };
+    let mut size: Option<f64> = None;
+    let mut a4 = None;
+    let mut twocolumn = None;
+    let mut twoside = None;
+    for option in options.split(',').map(str::trim) {
+        let option = option.strip_prefix("fontsize=").unwrap_or(option);
+        match option {
+            "a4paper" => a4 = Some(true),
+            "letterpaper" => a4 = Some(false),
+            "twocolumn" => twocolumn = Some(true),
+            "onecolumn" => twocolumn = Some(false),
+            "twoside" => twoside = Some(true),
+            "oneside" => twoside = Some(false),
+            _ => {
+                if let Some(pt) = option.strip_suffix("pt").and_then(|v| v.parse::<f64>().ok()) {
+                    size.get_or_insert(pt);
+                }
+            }
+        }
+    }
+    let pt_of = |s: &str| s.strip_suffix("pt").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+    let wanted = size.unwrap_or_else(|| pt_of(defaults.size));
+    let nearest = defaults
+        .rows
+        .iter()
+        .map(|r| r.size)
+        .min_by(|a, b| (pt_of(a) - wanted).abs().partial_cmp(&(pt_of(b) - wanted).abs()).unwrap())
+        .unwrap_or(defaults.size);
+    let want = |given: Option<bool>, default: Option<bool>| given.or(default);
+    let (a4, twocolumn, twoside) = (
+        want(a4, defaults.a4paper),
+        want(twocolumn, defaults.twocolumn),
+        want(twoside, defaults.twoside),
+    );
+    let row = defaults.rows.iter().find(|r| {
+        r.size == nearest
+            && (r.a4paper.is_none() || r.a4paper == a4)
+            && (r.twocolumn.is_none() || r.twocolumn == twocolumn)
+            && (r.twoside.is_none() || r.twoside == twoside)
+    });
+    let mut text = String::from("\\makeatletter\n");
+    let declared: HashSet<&str> = if exact { defaults.class_lengths.iter().copied().collect() } else { HashSet::new() };
+    for name in &declared {
+        text.push_str(&format!("\\newskip\\{name}\n"));
+    }
+    let mut registers: Vec<(&str, &str)> = defaults.registers.to_vec();
+    let mut macros: Vec<(&str, &str)> = if exact { defaults.macros.to_vec() } else { Vec::new() };
+    if let Some(row) = row {
+        for (key, value) in row.delta {
+            match key.strip_prefix('\\') {
+                Some(macro_name) => {
+                    if let Some(entry) = macros.iter_mut().find(|(n, _)| *n == macro_name) {
+                        entry.1 = value;
+                    }
+                }
+                None => {
+                    if let Some(entry) = registers.iter_mut().find(|(n, _)| n == key) {
+                        entry.1 = value;
+                    }
+                }
+            }
+        }
+    }
+    for (name, value) in registers {
+        let class_only = defaults.class_lengths.contains(&name);
+        if class_only && !declared.contains(name) {
+            continue;
+        }
+        text.push_str(&format!("\\{name}={value}\n"));
+    }
+    for (name, value) in macros {
+        text.push_str(&format!("\\def\\{name}{{{value}}}\n"));
+    }
+    text.push_str("\\makeatother\n");
+    text
 }
 
 /// The words of `tokens` from `index` up to the next `{`, and the words of
@@ -925,6 +1054,7 @@ fn document_fonts(documents: &[SourceDocument<'_>], entry: usize) -> DocumentFon
     let mut t1 = false;
     let mut latin_modern = false;
     let mut preamble_latin_modern = false;
+    let mut class = ClassSetup::default();
     let order = std::iter::once(entry).chain((0..documents.len()).filter(|i| *i != entry));
     for document_index in order {
         let Some(document) = documents.get(document_index) else {
@@ -942,8 +1072,22 @@ fn document_fonts(documents: &[SourceDocument<'_>], entry: usize) -> DocumentFon
                 continue;
             };
             match name.as_str() {
-                "documentclass" | "LoadClass" if class_pt.is_none() => {
+                "documentclass" | "LoadClass" => {
                     let (options, group) = option_and_group_words(&tokens, index + 1);
+                    // The first `\documentclass` names the class (with its
+                    // options); a project class's first `\LoadClass` the one
+                    // its values build on (see `class_prelude`).
+                    if name == "documentclass" {
+                        if class.name.is_empty() {
+                            class.name = group.trim().to_string();
+                            class.options = options.clone();
+                        }
+                    } else if class.loaded.is_none() {
+                        class.loaded = Some((group.trim().to_string(), options.clone()));
+                    }
+                    if class_pt.is_some() {
+                        continue;
+                    }
                     class_pt = options.split(',').find_map(|option| match option.trim() {
                         "10pt" => Some(10.0),
                         "11pt" => Some(11.0),
@@ -993,6 +1137,7 @@ fn document_fonts(documents: &[SourceDocument<'_>], entry: usize) -> DocumentFon
     DocumentFonts {
         setup: crate::font_units::FontSetup::new(class_pt, t1, latin_modern),
         preamble_latin_modern: preamble_latin_modern && t1,
+        class,
     }
 }
 
@@ -1244,6 +1389,17 @@ impl<'d> Converter<'d> {
                     "flashtexaddtolength" => {
                         conv.push(TokenKind::Command("addtolength".to_string()), at)
                     }
+                    // The engine's observed-register markers
+                    // (`Engine::observe_register`): `{\name}{<\the text>}`
+                    // follows, read by the parser's `length_marker` arm.
+                    "flashtexlengthset" | "flashtexlengthadd" | "flashtexlengthassign" => {
+                        conv.push(TokenKind::Command(name.clone()), at)
+                    }
+                    // Ends the operand of an engine-scanned `\hskip`/
+                    // `\vskip`/`\kern`/`\penalty` (`Engine::emit_with_operand`):
+                    // the pending word closes with no space after it, as
+                    // TeX consumed the one optional space itself.
+                    "flashtexwordbreak" => conv.flush_word(),
                     // `do_flashtex_setlist`'s absorbed-and-spliced command.
                     "flashtexsetlistdone" => conv.push(TokenKind::Command("setlist".to_string()), at),
                     // `do_flashtex_space`'s absorbed-and-spliced commands.
@@ -1716,8 +1872,9 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
     let masked: &str = prepared[entry].text.as_ref();
     let fonts = document_fonts(documents, entry);
     let reader = package_reader(documents, prepared);
+    let init_fonts = fonts.clone();
     let init: Rc<dyn Fn(&mut Engine)> = Rc::new(move |engine| {
-        configure_with_fonts(engine, fonts, reader.clone());
+        configure_with_fonts(engine, init_fonts.clone(), reader.clone());
     });
     let expander = IncrementalExpander::with_host(masked, limits, CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);

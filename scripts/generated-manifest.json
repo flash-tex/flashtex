@@ -3,8 +3,10 @@
   "sha256": {
     "crates/compiler/scripts/canonical_latex.py": "99db12cdc7f5d16107bb58b7226e49f48fd692820084d0036ccf1388bfcf7a7b",
     "crates/compiler/scripts/color_names.py": "b3b6a07f4c6a37e860acf921b4f1cf4a6496d5d4ee07e692a1733bb8256f57c3",
+    "crates/compiler/scripts/gen_kernel_lengths.py": "39a3b0c1e056f9809fd54c438151be4f628d5ba5927ba04ea32a99bd95e689ac",
     "crates/compiler/scripts/gen_text_fontdimens.py": "cc9e925a142a6f923aaf3a7b24a76da33fb065f9333686ab193158d4247265b9",
     "crates/compiler/src/color_names.rs": "370bace474c10ddd571aa1508adfde10183973d1439128eca8be39b5a6415be9",
+    "crates/compiler/src/kernel_lengths.rs": "a01ecfc94f4d3bdf99aa483daafc59a2782d7171da49f1159d176b9b52d3782a",
     "crates/compiler/src/text_fontdimens.rs": "a5a7ead9d7672a52e254244cc496106b91214f218ff08bc50deba3c200c3f5cb",
     "crates/compiler/supported/canonical-latex.tsv": "816e35f3f03e4bad9f1af2608f16b2a5fa69472b3d9516e528539ed298586831",
     "crates/font-engine/src/generated.rs": "35ac3f2984df78169a5a8bdf1c27a8ace1ca894e26b44a78a09db8e6b8f08325",

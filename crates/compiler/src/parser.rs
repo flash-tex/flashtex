@@ -2723,6 +2723,11 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "hspace",
     "ensuremath",
     "hskip",
+    "vskip",
+    "kern",
+    "hss",
+    "vfil",
+    "vss",
     // pdfTeX's glyph-to-Unicode primitives (see `pdf_unicode_noop`): engine
     // assignments, always defined, so a `\newcommand` of either name must
     // keep failing exactly as in real TeX.
@@ -3099,6 +3104,39 @@ fn is_length_name(name: &str) -> bool {
         || FACTOR_LENGTHS.contains(&name)
 }
 
+/// The registers whose assignments the expansion engine reports back
+/// (`Engine::observe_register`, see `expansion::HOST_PRELUDE`): every
+/// length this parser keeps a copy of or diagnoses by name (the preamble
+/// page lengths, the table and box lengths, `\parskip`/`\parindent`, the
+/// list lengths, the TeX skip and dimen parameters) and the line/page-
+/// breaking integer parameters it hands the layout (`BreakParameter`). The
+/// marker arrives as `\flashtexlengthset{\name}{<value>}` (via `\setlength`/
+/// `\addtolength`) or `\flashtexlengthassign` (a TeX assignment), with the
+/// value already resolved by the engine, and is read by
+/// `Parser::length_marker`. A kernel length outside this list
+/// (`\leftmargini`, `\jot`, `\@topnum`) is the engine's alone.
+pub const OBSERVED_LENGTHS: &[&str] = &[
+    // Page geometry and paragraphs (`PREAMBLE_LENGTHS`).
+    "paperwidth", "paperheight", "textwidth", "textheight", "oddsidemargin", "evensidemargin",
+    "topmargin", "headheight", "headsep", "footskip", "marginparwidth", "marginparsep",
+    "columnsep", "parindent", "parskip", "linewidth", "columnwidth", "hsize",
+    // Tables and boxes.
+    "tabcolsep", "arrayrulewidth", "doublerulesep", "fboxsep", "fboxrule",
+    // TeX skip and dimen parameters (`FACTOR_LENGTHS`).
+    "baselineskip", "lineskip", "abovedisplayskip", "belowdisplayskip",
+    "abovedisplayshortskip", "belowdisplayshortskip", "leftskip", "rightskip", "topskip",
+    "splittopskip", "tabskip", "spaceskip", "xspaceskip", "parfillskip", "mathsurround",
+    "lineskiplimit", "maxdepth", "splitmaxdepth", "boxmaxdepth", "hfuzz", "vfuzz",
+    "delimitershortfall", "nulldelimiterspace", "scriptspace", "predisplaysize",
+    "displaywidth", "displayindent", "overfullrule", "hangindent", "hoffset", "voffset",
+    "emergencystretch", "vsize",
+    // List lengths.
+    "topsep", "partopsep", "itemsep", "parsep", "labelsep", "labelwidth", "leftmargin",
+    "rightmargin", "itemindent", "listparindent", "footnotesep", "unitlength",
+    // Line- and page-breaking integer parameters.
+    "tolerance", "pretolerance", "looseness", "widowpenalty", "clubpenalty", "interlinepenalty",
+];
+
 /// Lengths a `\begin{list}` decl assigns (`\setlength{\leftmargin}{...}`):
 /// read on the innermost open list rather than warned about. Anything else
 /// list-shaped (`\parsep`, `\itemindent`, ...) keeps the historic warning.
@@ -3210,6 +3248,21 @@ fn parse_dimen_pt_with_units(text: &str, em_pt: f64, ex_pt: f64) -> Option<f64> 
     }
     let split = text.len() - unit_len;
     let (number, unit) = text.split_at(split);
+    // Points take TeX's own fixed-point reading (`scan_dimen` §452, via
+    // `scale_decimal`): the canonical `12.00002pt` the expansion engine
+    // prints for a register round-trips to its exact scaled points, and a
+    // literal `1.5pt` is the same 98304sp TeX reads.
+    if unit == "pt" {
+        let digits = number.trim();
+        let unsigned = digits.trim_start_matches(['+', '-']);
+        let negative = digits[..digits.len() - unsigned.len()].matches('-').count() % 2 == 1;
+        let (int, frac) = unsigned.split_once(['.', ',']).unwrap_or((unsigned, ""));
+        if !unsigned.is_empty() && int.bytes().chain(frac.bytes()).all(|b| b.is_ascii_digit()) {
+            let int = if int.is_empty() { 0 } else { int.parse().ok()? };
+            let sp = flashtex_tex_expansion::scale_decimal(int, frac, 65536.0);
+            return Some((if negative { -sp } else { sp }) as f64 / 65536.0);
+        }
+    }
     let value: f64 = number.trim().parse().ok()?;
     // TeX: The Program §458. `in`/`cm`/`mm`/`bp` share the 7227 numerator
     // (72.27 pt per inch); `dd`/`cc` are Didot; `sp` is 2^-16 pt.
@@ -4969,6 +5022,13 @@ impl P<'_> {
             }
             return;
         }
+        // The expansion engine's marker after an assignment to a register
+        // this parser observes (`OBSERVED_LENGTHS`): the same kind of
+        // internal side channel, consumed here for the same reason.
+        if name == "flashtexlengthset" || name == "flashtexlengthadd" || name == "flashtexlengthassign" {
+            self.length_marker(name, span);
+            return;
+        }
 
         if name == "global" {
             self.pending_global = true;
@@ -5401,7 +5461,7 @@ impl P<'_> {
             _ if style_declaration(name) => {
                 self.style = apply_style(self.style, name, self.body_size_pt(), self.nfss_scheme())
             }
-            "hfill" | "hfil" | "hrulefill" | "dotfill" | "linebreak" | "nolinebreak" | "hspace"
+            "hfill" | "hfil" | "hss" | "hrulefill" | "dotfill" | "linebreak" | "nolinebreak" | "hspace"
             | "noindent" | "indent" | "quad" | "qquad" | "thinspace" | "negthinspace" | "medspace"
             | "negmedspace" | "thickspace" | "negthickspace" | "enspace" | "enskip"
             | "nobreakdash" | "discretionary" => {
@@ -5435,7 +5495,9 @@ impl P<'_> {
             "bigskip" | "medskip" | "smallskip" | "vspace" | "hrule" | "newpage" | "clearpage"
             | "cleardoublepage" | "pagebreak" | "nopagebreak" | "vfill" | "columnbreak" | "newcolumn"
             | "raggedcolumns" | "flushcolumns" | "penalty" | "nobreak" | "allowbreak"
-            | "goodbreak" | "filbreak" => self.vertical_command(name, span, blocks, para),
+            | "goodbreak" | "filbreak" | "vskip" | "vfil" | "vss" | "kern" => {
+                self.vertical_command(name, span, blocks, para)
+            }
             // Kernel text symbols (`text_builtins::TEXT_SYMBOLS`; the
             // `text_symbol_arms_match_the_builtin_table` test keeps them equal).
             "AA" | "aa" | "AE" | "ae" | "OE" | "oe" | "O" | "o" | "L" | "l" | "ss" | "SS"
@@ -6962,7 +7024,9 @@ impl P<'_> {
     #[inline(never)]
     fn horizontal_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
         match name {
-        "hfill" | "hfil" => para.push(Inline::HFill { span, leader: FillLeader::None, style: self.style }),
+        // `\hss` is `0pt plus 1fil minus 1fil`: its shrink never matters in
+        // a paragraph line set to its natural width or wider.
+        "hfill" | "hfil" | "hss" => para.push(Inline::HFill { span, leader: FillLeader::None, style: self.style }),
         "hrulefill" => para.push(Inline::HFill { span, leader: FillLeader::Rule, style: self.style }),
         "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots, style: self.style }),
         // latex.ltx `\linebreak`/`\nolinebreak` (`\@no@lnbk`): a penalty of
@@ -7078,7 +7142,12 @@ impl P<'_> {
             // `<factor>\<length>` (`2\parindent`) still parses (issue #835).
             let raw = dimen_source(&tokens);
             let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-            match parse_dimen_pt_current(&raw, self.font_setup().em_ex_sp(self.style)) {
+            // A skip register spliced by the engine's shim brings its
+            // whole glue (`\hspace{\fill}` is `0.0pt plus 1.0fill`): the
+            // stretch and shrink ride on the node, as `\hskip`'s do.
+            let units = self.font_setup().em_ex_sp(self.style);
+            let (natural, (stretch_pt, stretch_fil), (shrink_pt, shrink_fil)) = split_glue_text(&raw, units);
+            match parse_dimen_pt_current(&natural, units) {
                 Some(pt) => {
                     let space_after = matches!(
                         self.t.get(self.i).map(|input| &input.token.kind),
@@ -7097,10 +7166,10 @@ impl P<'_> {
                         space_before_pt: if space_before { word_space } else { 0.0 },
                         space_after_pt: if space_after { word_space } else { 0.0 },
                         span: span.merge(argument_span),
-                        stretch_pt: 0.0,
-                        stretch_fil: 0,
-                        shrink_pt: 0.0,
-                        shrink_fil: 0,
+                        stretch_pt,
+                        stretch_fil,
+                        shrink_pt,
+                        shrink_fil,
                     });
                 }
                 None => self.diags.push(Diagnostic::error(
@@ -7347,10 +7416,85 @@ impl P<'_> {
             });
             self.finish_block_dependencies();
         }
-        "vfill" => {
+        // `\vfil` and `\vss` (`0pt plus 1fil [minus 1fil]`) fill the page
+        // like `\vfill` (`plus 1fill`): the page builder has one infinite
+        // order.
+        "vfill" | "vfil" | "vss" => {
             self.flush_paragraph(blocks, para);
             blocks.push(Block::VFill);
             self.finish_block_dependencies();
+        }
+        // TeX's `\vskip<glue>`, which the expansion engine has already
+        // scanned and re-emitted in canonical `\the` text (`5.0pt plus
+        // 2.0pt`): the same vertical glue `\vspace{<glue>}` sets, ending the
+        // paragraph first; an infinite stretch fills the page like `\vfil`.
+        "vskip" => {
+            let units = self.font_setup().em_ex_sp(self.style);
+            let Some((pt, (stretch_pt, stretch_fil), (shrink_pt, _))) = self.glue_words(units) else {
+                self.diags.push(Diagnostic::error(
+                    "\\vskip requires a glue spec such as '1em' or '1em plus 2pt minus 1pt'",
+                    Some(span),
+                    Some("ignored the \\vskip with no usable glue and continued".into()),
+                ));
+                return;
+            };
+            self.flush_paragraph(blocks, para);
+            if stretch_fil > 0 {
+                if pt != 0.0 {
+                    blocks.push(Block::VSpace {
+                        pt,
+                        stretch_pt: 0.0,
+                        shrink_pt,
+                    });
+                }
+                blocks.push(Block::VFill);
+            } else {
+                blocks.push(Block::VSpace {
+                    pt,
+                    stretch_pt,
+                    shrink_pt,
+                });
+            }
+            self.finish_block_dependencies();
+        }
+        // TeX's `\kern<dimen>` (canonical text from the engine, as `\vskip`):
+        // in a paragraph a fixed horizontal space that no line break may
+        // take (like `\hspace*`), between paragraphs vertical space.
+        "kern" => {
+            let space_before = !para.is_empty() && self.space_precedes(self.i - 1);
+            let Some(pt) = self.dimen_value() else {
+                self.diags.push(Diagnostic::error(
+                    "\\kern needs a dimension (Missing number, treated as zero)",
+                    Some(span),
+                    Some("used no kern".into()),
+                ));
+                return;
+            };
+            if para.is_empty() {
+                blocks.push(Block::VSpace {
+                    pt,
+                    stretch_pt: 0.0,
+                    shrink_pt: 0.0,
+                });
+                self.finish_block_dependencies();
+            } else {
+                let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+                let size = self.style.size.map_or(body, |level| {
+                    crate::layout::size_declaration_pt(level, body)
+                });
+                let word_space = crate::layout::word_space(size, crate::layout::style_font(self.style));
+                para.push(Inline::HSpace {
+                    style: self.style,
+                    pt,
+                    space_before_pt: if space_before { word_space } else { 0.0 },
+                    space_after_pt: 0.0,
+                    span,
+                    stretch_pt: 0.0,
+                    stretch_fil: 0,
+                    shrink_pt: 0.0,
+                    shrink_fil: 0,
+                });
+            }
         }
         // multicol.sty 919-950: `\columnbreak[n]` and `\newcolumn` end a
         // column of `multicols` (set by the render pipeline); outside the
@@ -7804,6 +7948,52 @@ impl P<'_> {
         self.length_command("addtolength", span, true);
     }
 
+    /// The expansion engine's marker after an assignment to one of
+    /// [`OBSERVED_LENGTHS`]: `{\name}{<value>}` with the value already
+    /// resolved by the engine's own scanner (`6.0pt plus 2.0pt`, `200`):
+    /// `0.5\textwidth`, `\p@`, `\@plus`, `em` in the current font and a
+    /// `calc` chain have all been evaluated there. `marker` says whether it
+    /// came from `\setlength`, `\addtolength` or a TeX assignment (the
+    /// value is the new total either way), which only picks the
+    /// diagnostic's wording. The integer parameters go
+    /// to the layout as `BreakParameter`s; every length takes the path
+    /// `\setlength{\name}{<pt>}` always took.
+    fn length_marker(&mut self, marker: &str, span: Span) {
+        let global = std::mem::take(&mut self.pending_global);
+        let (target_tokens, _) = self.required_group("setlength", span);
+        let (value_tokens, value_span) = self.required_group("setlength", span);
+        let span = span.merge(value_span);
+        let target = token_text(&target_tokens)
+            .trim()
+            .trim_start_matches('\\')
+            .to_string();
+        let raw = dimen_source(&value_tokens);
+        let parameter: Option<fn(i32) -> BreakParameter> = match target.as_str() {
+            "tolerance" => Some(BreakParameter::Tolerance),
+            "pretolerance" => Some(BreakParameter::Pretolerance),
+            "looseness" => Some(BreakParameter::Looseness),
+            "widowpenalty" => Some(BreakParameter::WidowPenalty),
+            "clubpenalty" => Some(BreakParameter::ClubPenalty),
+            "interlinepenalty" => Some(BreakParameter::InterlinePenalty),
+            _ => None,
+        };
+        if let Some(parameter) = parameter {
+            let value = raw
+                .trim()
+                .parse::<i64>()
+                .unwrap_or(0)
+                .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+            self.assign_parameter(parameter(value), span);
+            return;
+        }
+        let command = match marker {
+            "flashtexlengthset" => "setlength",
+            "flashtexlengthadd" => "addtolength",
+            _ => "",
+        };
+        self.apply_length_value(command, &target, &raw, span, false, global);
+    }
+
     fn length_command(&mut self, command: &str, span: Span, add: bool) {
         // `\global\setlength{\x}{..}`: `\setlength` is a macro, so TeX
         // applies the prefix to the register assignment it expands to.
@@ -7963,6 +8153,11 @@ impl P<'_> {
         let in_preamble = self.has_document && !self.in_body;
         let in_list = !self.list_stack.is_empty();
         let units = self.font_setup().em_ex_sp(self.style);
+        // The engine's markers carry the register's whole `\the` text, glue
+        // included (`6.0pt plus 2.0pt minus 1.0pt`); this parser keeps the
+        // natural part.
+        let natural = glue_natural_text(raw);
+        let raw = natural.as_deref().unwrap_or(raw);
         // A `calc` `+`/`-` chain (`1pt + 2\baselineskip`) sums its terms
         // before the single-dimen path below runs. A lone dimension has no
         // operator, so the common case falls through byte-for-byte as before;
@@ -8119,7 +8314,7 @@ impl P<'_> {
             // A TeX assignment or `\addtolength` is accepted without noise
             // (the layout still does not indent). `\setlength{\parindent}{nonzero}`
             // keeps the existing "not implemented" warning.
-            "parindent" if in_preamble && (add || command.is_empty()) => {}
+            "parindent" if in_preamble && (add || command != "setlength") => {}
             "parindent" if in_preamble => self.diags.push(Diagnostic::warning(
                 "\\parindent is recognised but paragraph indentation is not implemented",
                 Some(span),
@@ -13451,6 +13646,53 @@ impl P<'_> {
         }
     }
 
+    /// TeX's `<glue>` in the canonical words the expansion engine emits for
+    /// `\vskip` (`5.0pt plus 2.0pt minus 1.0pt`, `0.0pt plus 1.0fil`): the
+    /// natural dimension, then optional `plus`/`minus` clauses with their
+    /// `<fil dimen>` (value and infinity order). `None`, consuming nothing,
+    /// when the next word is no dimension.
+    fn glue_words(&mut self, units: (i64, i64)) -> Option<(f64, (f64, u8), (f64, u8))> {
+        self.skip_spaces();
+        let Some(Token {
+            kind: TokenKind::Word(word),
+            ..
+        }) = self.peek().cloned()
+        else {
+            return None;
+        };
+        let pt = parse_dimen_pt_current(&word, units)?;
+        self.i += 1;
+        let mut stretch = (0.0, 0u8);
+        let mut shrink = (0.0, 0u8);
+        for _ in 0..2 {
+            let mut cursor = self.i;
+            while matches!(self.t.get(cursor).map(|t| &t.token.kind), Some(TokenKind::Space)) {
+                cursor += 1;
+            }
+            let Some(TokenKind::Word(keyword)) = self.t.get(cursor).map(|t| &t.token.kind) else {
+                break;
+            };
+            let slot = match keyword.as_str() {
+                "plus" => &mut stretch,
+                "minus" => &mut shrink,
+                _ => break,
+            };
+            let mut after = cursor + 1;
+            while matches!(self.t.get(after).map(|t| &t.token.kind), Some(TokenKind::Space)) {
+                after += 1;
+            }
+            let Some(TokenKind::Word(dimen)) = self.t.get(after).map(|t| &t.token.kind) else {
+                break;
+            };
+            let Some(value) = parse_fil_dimen_pt_current(dimen, units) else {
+                break;
+            };
+            *slot = value;
+            self.i = after + 1;
+        }
+        Some((pt, stretch, shrink))
+    }
+
     /// Reads TeX's `<glue>` after `\hskip`: one dimension word, then up to
     /// one `plus` and one `minus` clause (either order) each followed by a
     /// `<fil dimen>` word. Words are read atomically — a number split from
@@ -17242,6 +17484,42 @@ fn titleformat_glue(tokens: &[InputToken], mut i: usize) -> Option<(String, usiz
     }
 }
 
+/// The natural part of canonical glue text (`6.0pt plus 2.0pt minus 1.0pt`
+/// gives `6.0pt`), or `None` when `raw` carries no `plus`/`minus` clause.
+pub(crate) fn glue_natural_text(raw: &str) -> Option<String> {
+    let cut = [" plus ", " minus "]
+        .iter()
+        .filter_map(|keyword| raw.find(keyword))
+        .min()?;
+    Some(raw[..cut].trim().to_string())
+}
+
+/// Canonical glue text split for `\hspace`: the natural part and the
+/// `plus`/`minus` clauses as `(value, infinity order)` (see
+/// [`parse_fil_dimen_pt_current`]). Text with no clause is returned whole
+/// with zero stretch and shrink.
+fn split_glue_text(raw: &str, units: (i64, i64)) -> (String, (f64, u8), (f64, u8)) {
+    let Some(cut) = [" plus ", " minus "].iter().filter_map(|keyword| raw.find(keyword)).min() else {
+        return (raw.to_string(), (0.0, 0), (0.0, 0));
+    };
+    let natural = raw[..cut].trim().to_string();
+    let mut stretch = (0.0, 0u8);
+    let mut shrink = (0.0, 0u8);
+    let mut words = raw[cut..].split_whitespace();
+    while let Some(keyword) = words.next() {
+        let slot = match keyword {
+            "plus" => &mut stretch,
+            "minus" => &mut shrink,
+            _ => break,
+        };
+        match words.next().and_then(|dimen| parse_fil_dimen_pt_current(dimen, units)) {
+            Some(value) => *slot = value,
+            None => break,
+        }
+    }
+    (natural, stretch, shrink)
+}
+
 fn dimen_source(tokens: &[InputToken]) -> String {
     let mut result = String::new();
     for input in tokens {
@@ -18752,7 +19030,9 @@ mod tests {
                 (Hfuzz(0.5), false),
                 (Tolerance(1000), false),
                 (Looseness(-1), true),
-                (EmergencyStretch(30.0), true),
+                // `\emergencystretch 3em` is the engine's: 3 quads of cmr10
+                // (655361sp each), `\the` 30.00005pt, read back exactly.
+                (EmergencyStretch(1_966_083.0 / 65_536.0), true),
                 (WidowPenalty(10000), true),
                 (ClubPenalty(10000), true),
                 (InterlinePenalty(5), true),
@@ -18764,7 +19044,9 @@ mod tests {
                 (Tolerance(200), false),
                 (EmergencyStretch(0.0), false),
                 (Hfuzz(0.1), false),
-                (EmergencyStretch(15.0), false),
+                // `\setlength{\emergencystretch}{1.5em}`: 983041sp, `\the`
+                // 15.00002pt.
+                (EmergencyStretch(983_041.0 / 65_536.0), false),
                 (FlushBottom(false), false),
                 (FlushBottom(true), false),
                 (
@@ -20883,12 +21165,24 @@ mod tests {
 
     #[test]
     fn hskip_unrecognised_base_leaves_prose_in_place() {
+        // The expansion engine scans the glue as TeX's stomach does, so a
+        // word where a dimension is due is pdflatex's own pair of errors
+        // ("Missing number" on the `b`, "Illegal unit" on the unit scan),
+        // the glue is 0pt, and the word stays in the input as prose.
         let (parsed, items) = items(r"A\hskip banana B");
         assert!(
             parsed
                 .diagnostics
                 .iter()
-                .any(|d| d.message.contains(r"\hskip requires a recognised dimension")),
+                .any(|d| d.message == "Missing number, treated as zero."),
+            "{:?}",
+            parsed.diagnostics
+        );
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message == "Illegal unit of measure (pt inserted)."),
             "{:?}",
             parsed.diagnostics
         );
@@ -22890,9 +23184,12 @@ mod tests {
         assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
         for block in &parsed.blocks {
             if let Block::ListItem { extra_gap_before_pt, extra_gap_after_pt, .. } = block {
-                // 0.6 of the 10pt class leading (12pt).
-                assert!((extra_gap_before_pt - 7.2).abs() < 1e-9, "{extra_gap_before_pt}");
-                assert!((extra_gap_after_pt - 7.2).abs() < 1e-9, "{extra_gap_after_pt}");
+                // 0.6 of the 10pt class leading (12pt), in TeX's fixed point:
+                // `\the\dimexpr0.6\baselineskip\relax` is 7.20007pt (471864sp),
+                // which is what the engine's `<factor><internal dimen>` gives.
+                let oracle = 471_864.0 / 65_536.0;
+                assert!((extra_gap_before_pt - oracle).abs() < 1e-9, "{extra_gap_before_pt}");
+                assert!((extra_gap_after_pt - oracle).abs() < 1e-9, "{extra_gap_after_pt}");
                 return;
             }
         }

@@ -288,15 +288,6 @@ pub enum Inline {
         /// Real TeX never inserts an inter-word gap that is not present in
         /// the source; see `layout::LayoutCursor::place`.
         space_before: bool,
-        /// The interword glue TeX appends in front of this run, with the
-        /// font it is read in (PLAN1 slice 2): the space token's font is
-        /// the one in force where the space was read, which is not this
-        /// run's when a group or a font command lies between them
-        /// (`\textbf{a} b`: a medium space; `a {\bfseries b}`: medium too;
-        /// `{\bfseries a b}`: bold). `None` when no space token was read
-        /// since the previous word. Set for the words of running text and of
-        /// flattened arguments (headings, captions, style arguments).
-        glue_before: Option<InterwordGlue>,
     },
     LineBreak {
         span: Span,
@@ -330,9 +321,6 @@ pub enum Inline {
         /// .1em minus .1em`, cite.sty's `\citepunct`); zero for `\quad`.
         plus_em: f64,
         minus_em: f64,
-        /// The font in force at the command, whose quad the `em`s are
-        /// (PLAN1 slice 2).
-        style: TextStyle,
     },
     Math {
         list: MathList,
@@ -353,9 +341,6 @@ pub enum Inline {
         /// `\textcolor`, merged per colour in source order; an atom takes
         /// the colour of the range containing its span, else `color`.
         color_ranges: Vec<(Span, DeviceColor)>,
-        /// See `Inline::Text::glue_before`: the space before `$`, in the
-        /// font where it was read.
-        glue_before: Option<InterwordGlue>,
     },
     /// A multi-row display (`gather`, `align`, `eqnarray` and starred forms).
     /// `aligned` cells share tab stops across rows (`align` alternates
@@ -381,9 +366,6 @@ pub enum Inline {
         span: Span,
         /// See `Inline::Text::space_before`.
         space_before: bool,
-        /// The font in force where the reference is typeset (its text is
-        /// set in it; PLAN1 slice 2).
-        style: TextStyle,
     },
     /// A `cleveref`/`hyperref` reference whose label names are resolved after
     /// the document has been laid out. The compiler has no link backend yet;
@@ -399,8 +381,6 @@ pub enum Inline {
         span: Span,
         /// See `Inline::Text::space_before`.
         space_before: bool,
-        /// The font in force where the reference is typeset.
-        style: TextStyle,
     },
     /// `\thepage`: the current page's formatted number. The page is only
     /// known once the paragraph is set, so this resolves at layout time
@@ -440,9 +420,6 @@ pub enum Inline {
         /// What fills the glue: nothing (`\hfill`), a rule (`\hrulefill`)
         /// or dots (`\dotfill`).
         leader: FillLeader,
-        /// The font in force at the command: a leader's dots and rule are set
-        /// in it (PLAN1 slice 2).
-        style: TextStyle,
     },
     /// `\hspace{<dimen>}`/`\hspace*{<dimen>}` and `\hskip<glue>`: horizontal
     /// glue. `pt` is the fixed part, already converted (see `parse_dimen_pt`
@@ -471,9 +448,6 @@ pub enum Inline {
         stretch_fil: u8,
         shrink_pt: f64,
         shrink_fil: u8,
-        /// The font in force at the command (an `em` in it is this font's
-        /// quad; PLAN1 slice 2).
-        style: TextStyle,
     },
     /// `\=` inside `tabbing`: record the current horizontal position (the
     /// end of the placed content so far, excluding reserved inter-word
@@ -554,11 +528,6 @@ pub enum Inline {
         span: Span,
         /// See `Inline::Text::space_before`.
         space_before: bool,
-        /// `\verb`'s `\verbatim@font` (`\normalfont\ttfamily`) over the
-        /// size and colour in force, `literal` set (PLAN1 slice 2).
-        style: TextStyle,
-        /// See `Inline::Text::glue_before`.
-        glue_before: Option<InterwordGlue>,
     },
     /// xcolor `\colorbox`/`\fcolorbox` (see [`ColorBox`]).
     ColorBox(Box<ColorBox>),
@@ -1608,109 +1577,6 @@ pub struct TextStyle {
     /// alone. The render pipeline sizes the characters of a run that carries
     /// this from the family's subfont metrics (`render-pipeline/src/cjk.rs`).
     pub cjk: Option<CjkRun>,
-    /// The NFSS font the font commands read so far select (PLAN1 slice 2):
-    /// every `\bfseries`, `\itshape`, `\emph`, `\normalfont`, `\bf`, ... is
-    /// applied through [`crate::nfss`]'s change rules and substitutions in
-    /// the document's scheme ([`crate::nfss::Scheme::of`]: `lmodern`, T1)
-    /// as the parser reads it, whether it was written in the document or
-    /// came from a macro body, a `\let`, or a package file. Scoped like the
-    /// rest of the style. Only font *commands* move it: a block's own base
-    /// font (a heading's `\bfseries`, a description label's, a theorem
-    /// body's `\itshape`) is set by the compiler on `bold`/`italic` but
-    /// left out of here, because the render pipeline applies those bases
-    /// itself (`typeset::merge_style`). `bold`..`family` above stay the
-    /// Core 14 layout's approximation of the same commands.
-    pub font: crate::nfss::Selected,
-    /// `\mdseries`/`\textmd` was the last series choice: a bold base (a
-    /// heading, a description label) is then not applied to the text.
-    /// `\bfseries`/`\textbf` and the resets (`\normalfont`, `\bf`, `\it`,
-    /// ...) clear it; a heading's own `\normalfont` is read off `bold`,
-    /// since the compiler starts heading text bold.
-    pub medium: bool,
-    /// Verbatim text (`\verb`, the `verbatim` and `lstlisting` bodies,
-    /// `\lstinline`): set with every ligature and kern suppressed
-    /// (`\@noligs`) and each blank a control space, unlike `\texttt` over
-    /// the same characters.
-    pub literal: bool,
-    /// The italic corrections LaTeX's `\maybe@ic` puts around this run.
-    /// Set on one run only (the first or last of a text font command's
-    /// argument), never inherited: groups and later runs start clear.
-    pub italic_correction: ItalicCorrection,
-}
-
-/// One interword glue in horizontal mode ([`Inline::Text::glue_before`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct InterwordGlue {
-    /// The font in force where the space was read: its `\fontdimen2..4`
-    /// (and `\fontdimen7` after a sentence end) size the glue.
-    pub style: TextStyle,
-    pub kind: GlueKind,
-}
-
-/// What produced an [`InterwordGlue`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum GlueKind {
-    /// A space token (a blank, a newline, a macro body's space).
-    Normal,
-    /// `\ ` (TeX §1041-1044: the space factor is ignored).
-    ControlSpace,
-    /// `~`, `\nobreakspace`: a control space with no break allowed.
-    Tie,
-}
-
-/// [`P::attach_glue`] for a space read at `space` (its style), consumed
-/// here unless `inline` sets nothing.
-fn attach_space(inline: &mut Inline, space: &mut Option<TextStyle>) {
-    if space.is_none() || matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. }) || is_overlay_marker(inline) {
-        return;
-    }
-    let glue = space.take().map(|style| InterwordGlue { style: glue_style(style), kind: GlueKind::Normal });
-    if let Inline::Text { glue_before, .. } | Inline::Math { glue_before, .. } | Inline::Verbatim { glue_before, .. } = inline {
-        if glue_before.is_none() {
-            *glue_before = glue;
-        }
-    }
-}
-
-/// A citation run's style in the text around it (`outer`). `bib` and
-/// `natbib` build their runs on `TextStyle::default()`, or on
-/// `TextStyle::BOLD` for an undefined key's `?` (latex.ltx `\@citex`,
-/// natbib alike: `\hbox{\reset@font\bfseries ?}`); TeX sets a label in the
-/// font in force at the `\cite`, and `\reset@font` (`\normalfont`) keeps
-/// the size and colour. A label's own markup (`\emph{et~al.}`) is then set
-/// over this (`P::set_citation_source`), so `\emph` turns upright inside
-/// italic text.
-fn citation_style(outer: TextStyle, run: TextStyle, scheme: crate::nfss::Scheme) -> TextStyle {
-    let base = TextStyle { italic_correction: ItalicCorrection::default(), ..outer };
-    if !run.bold {
-        return base;
-    }
-    let font = nfss_commands("bf").iter().fold(base.font, |f, c| f.then(scheme, *c));
-    TextStyle { bold: true, italic: false, slanted: false, small_caps: false, family: TextFamily::Roman, font, medium: false, ..base }
-}
-
-/// A glue's font: the style in force, without a run's own marks.
-fn glue_style(style: TextStyle) -> TextStyle {
-    TextStyle { italic_correction: ItalicCorrection::default(), ..style }
-}
-
-/// The two `\maybe@ic` decisions of a text font command (latex.ltx
-/// `\DeclareTextFontCommand`, `\text@command`, `\check@nocorr@`,
-/// `\maybe@ic@`): `\textit{..}` is `\itshape\check@icl #1\check@icr`.
-/// Each one inserts `\/` (the italic correction of the character in front,
-/// under an interword space: `\sw@slant`) when the font in force where it
-/// runs is upright (`\fontdimen1 = 0`) and the next token is not in
-/// `\nocorrlist` (`,.`). Decided by the parser, which knows both the font
-/// and the next token; the render pipeline only places the kern.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
-pub struct ItalicCorrection {
-    /// `\check@icl`, before this run, the first of the argument: the
-    /// argument's own font is upright (`of \textbf{x}`: the kern of `f`).
-    pub before: bool,
-    /// `\check@icr` (`\aftergroup\maybe@ic`), after this run, the last of
-    /// the argument: the font after the command's group is upright
-    /// (`\textit{leaf} then`: the kern of `f`).
-    pub after: bool,
 }
 
 /// What a `CJK` environment puts on the text inside it (see
@@ -1997,167 +1863,7 @@ impl TextStyle {
         ams_tiny: false,
         color: None,
         cjk: None,
-        font: crate::nfss::Selected::NORMAL,
-        medium: false,
-        literal: false,
-        italic_correction: ItalicCorrection { before: false, after: false },
     };
-}
-
-/// The NFSS commands of a font command or declaration (latex.ltx 14213-14222
-/// `\DeclareTextFontCommand`, `\emph`, and `\DeclareOldFontCommand`'s LaTeX
-/// 2.09 forms, which reset first: `\bf` is `\normalfont\bfseries`).
-fn nfss_commands(name: &str) -> &'static [crate::nfss::Command] {
-    use crate::nfss::{Command as C, FamilyKind as F, Series as S, ShapeRequest as R};
-    match name {
-        "textbf" | "bfseries" => &[C::Series(S::Bx)],
-        "textmd" | "mdseries" => &[C::Series(S::M)],
-        "textit" | "itshape" => &[C::Shape(R::It)],
-        "textsl" | "slshape" => &[C::Shape(R::Sl)],
-        "textsc" | "scshape" => &[C::Shape(R::Sc)],
-        "textup" | "upshape" => &[C::Shape(R::Up)],
-        "textrm" | "rmfamily" => &[C::Family(F::Rm)],
-        "textsf" | "sffamily" => &[C::Family(F::Sf)],
-        "texttt" | "ttfamily" => &[C::Family(F::Tt)],
-        "textnormal" | "normalfont" => &[C::Normal],
-        "emph" | "em" => &[C::Emph],
-        "bf" => &[C::Normal, C::Series(S::Bx)],
-        "it" => &[C::Normal, C::Shape(R::It)],
-        "sl" => &[C::Normal, C::Shape(R::Sl)],
-        "sc" => &[C::Normal, C::Shape(R::Sc)],
-        "rm" => &[C::Normal, C::Family(F::Rm)],
-        "sf" => &[C::Normal, C::Family(F::Sf)],
-        "tt" => &[C::Normal, C::Family(F::Tt)],
-        _ => &[],
-    }
-}
-
-/// The text font commands (`\DeclareTextFontCommand`, latex.ltx
-/// 14213-14227): the ones that run `\check@icl`/`\check@icr`.
-fn text_font_command(name: &str) -> bool {
-    matches!(
-        name,
-        "textrm" | "textsf" | "texttt" | "textnormal" | "textbf" | "textmd" | "textit" | "textsl" | "textsc" | "textup" | "emph"
-    )
-}
-
-/// An open text font command group whose `\maybe@ic` checks run at its
-/// `}` ([`P::close_text_command_group`]).
-#[derive(Debug, Clone, Copy)]
-struct TextCommandGroup {
-    /// `brace_stack.len()` inside the group.
-    depth: usize,
-    /// `para.len()` when the group opened: the argument's runs follow.
-    start: usize,
-    /// [`P::paragraph_flushes`] when the group opened.
-    flushes: u64,
-    /// `\check@icl` applies (decided at the `{`).
-    before: bool,
-    /// `\check@icr` is armed (no `\nocorr` in the argument).
-    check_after: bool,
-}
-
-/// The index of the `}` closing the group whose content starts at `from`.
-fn group_close(tokens: &[InputToken], from: usize) -> usize {
-    let mut depth = 0usize;
-    for (offset, input) in tokens.get(from..).unwrap_or(&[]).iter().enumerate() {
-        match input.token.kind {
-            TokenKind::LBrace => depth += 1,
-            TokenKind::RBrace if depth == 0 => return from + offset,
-            TokenKind::RBrace => depth -= 1,
-            _ => {}
-        }
-    }
-    tokens.len()
-}
-
-/// `\text@command`/`\check@nocorr@` on a text font command's argument:
-/// whether `\check@icl` and `\check@icr` are `\maybe@ic` (`true`) or
-/// empty. An empty argument or a lone space runs neither; a leading
-/// `\nocorr` drops the left check, a `\nocorr` after the first token the
-/// right one (both when there are two).
-fn check_nocorr(argument: &[InputToken]) -> (bool, bool) {
-    let tokens: Vec<&InputToken> = argument.iter().filter(|t| !matches!(t.token.kind, TokenKind::Comment)).collect();
-    if tokens.is_empty() || tokens.iter().all(|t| matches!(t.token.kind, TokenKind::Space)) {
-        return (false, false);
-    }
-    let nocorr = |t: &&InputToken| matches!(&t.token.kind, TokenKind::Command(n) if n == "nocorr");
-    let first = tokens.iter().position(|t| !matches!(t.token.kind, TokenKind::Space)).unwrap_or(0);
-    let leading = nocorr(&tokens[first]);
-    let later = tokens[first + 1..].iter().any(nocorr);
-    (!leading, !later)
-}
-
-/// `\maybe@ic@`: `\/` is due when the font in force is upright
-/// (`\fontdimen1 = 0`) and the token `\futurelet` sees next is not in
-/// `\nocorrlist` (`,.`).
-fn maybe_ic_upright(style: TextStyle, scheme: crate::nfss::Scheme, next: Option<&InputToken>) -> bool {
-    if style.font.slanted(scheme) {
-        return false;
-    }
-    !matches!(next, Some(t) if !t.token.control_symbol && matches!(&t.token.kind, TokenKind::Word(w) if w.starts_with(['.', ','])))
-}
-
-/// The token at or after `index` that `\futurelet` sees: comments are not
-/// tokens.
-fn next_significant(tokens: &[InputToken], index: usize) -> Option<&InputToken> {
-    tokens.get(index..)?.iter().find(|t| !matches!(t.token.kind, TokenKind::Comment))
-}
-
-/// Puts `\check@icl`'s correction on the first of a text font command's
-/// runs and `\check@icr`'s on the last, when those are text: `\/` after
-/// anything but a character adds nothing. `outer_color` is the colour
-/// after the command's group: a last run in another colour is followed by
-/// the colour stack's pop (xcolor's `\aftergroup\reset@color`, a whatsit),
-/// which `\aftergroup\maybe@ic` then finds last on the list instead of the
-/// character (pdflatex sets no kern after `\emph{\color{blue} x}`).
-fn mark_italic_corrections(inlines: &mut [Inline], before: bool, after: bool, outer_color: Option<DeviceColor>) {
-    if before {
-        if let Some(Inline::Text { style, .. }) = inlines.first_mut() {
-            style.italic_correction.before = true;
-        }
-    }
-    if after {
-        if let Some(Inline::Text { style, .. }) = inlines.last_mut() {
-            if style.color == outer_color {
-                style.italic_correction.after = true;
-            }
-        }
-    }
-}
-
-/// latex.ltx `\verbatim@font`: `\normalfont\ttfamily`.
-const VERBATIM_FONT: [crate::nfss::Command; 2] =
-    [crate::nfss::Command::Normal, crate::nfss::Command::Family(crate::nfss::FamilyKind::Tt)];
-
-/// The style of `\verb`/`\lstinline` text set in `style`: latex.ltx `\verb`
-/// runs `\verbatim@font` (`\normalfont\ttfamily`) and `\@noligs` inside
-/// its group, so the size and colour stay and the face is upright medium
-/// typewriter.
-fn verbatim_style(style: TextStyle, scheme: crate::nfss::Scheme) -> TextStyle {
-    TextStyle {
-        bold: false,
-        italic: false,
-        slanted: false,
-        small_caps: false,
-        family: TextFamily::Mono,
-        font: VERBATIM_FONT.iter().fold(style.font, |f, c| f.then(scheme, *c)),
-        medium: false,
-        literal: true,
-        italic_correction: ItalicCorrection::default(),
-        ..style
-    }
-}
-
-/// Whether a font command's series choice is an explicit medium one
-/// (`Some(true)`), a bold one or a reset (`Some(false)`), or leaves the
-/// series alone (`None`); see [`TextStyle::medium`].
-fn medium_choice(name: &str) -> Option<bool> {
-    match name {
-        "textmd" | "mdseries" => Some(true),
-        "textbf" | "bfseries" | "bf" | "textnormal" | "normalfont" | "it" | "sl" | "sc" | "rm" | "sf" | "tt" => Some(false),
-        _ => None,
-    }
 }
 
 /// Argument-taking style commands (`\textbf{...}`).
@@ -2268,17 +1974,7 @@ fn label_plain_text(content: &[Inline], source: Option<&str>) -> String {
 /// the 10/11/12pt class table selector); only the relative `\larger` /
 /// `\smaller` steps read it, everything else resolves its level later in
 /// `layout` against the same body size.
-fn apply_style(style: TextStyle, name: &str, body_size_pt: f64, scheme: crate::nfss::Scheme) -> TextStyle {
-    let mut next = apply_style_flags(style, name, body_size_pt);
-    next.font = nfss_commands(name).iter().fold(style.font, |font, command| font.then(scheme, *command));
-    next.medium = medium_choice(name).unwrap_or(style.medium);
-    next.literal = style.literal;
-    next.italic_correction = ItalicCorrection::default();
-    next
-}
-
-/// [`apply_style`]'s Core 14 flags and size.
-fn apply_style_flags(style: TextStyle, name: &str, body_size_pt: f64) -> TextStyle {
+fn apply_style(style: TextStyle, name: &str, body_size_pt: f64) -> TextStyle {
     let mut next = style;
     match name {
         "textbf" | "bfseries" => next.bold = true,
@@ -2335,7 +2031,7 @@ fn apply_style_flags(style: TextStyle, name: &str, body_size_pt: f64) -> TextSty
             }
         }
         "tt" | "rm" | "sf" => {
-            next = apply_style_flags(TextStyle::default(), &format!("{name}family"), body_size_pt)
+            next = apply_style(TextStyle::default(), &format!("{name}family"), body_size_pt)
         }
         "tiny" => next.size = Some(FontSizeLevel::Tiny),
         "scriptsize" => next.size = Some(FontSizeLevel::ScriptSize),
@@ -2628,6 +2324,11 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "hspace",
     "ensuremath",
     "hskip",
+    "vskip",
+    "kern",
+    "hss",
+    "vfil",
+    "vss",
     // pdfTeX's glyph-to-Unicode primitives (see `pdf_unicode_noop`): engine
     // assignments, always defined, so a `\newcommand` of either name must
     // keep failing exactly as in real TeX.
@@ -3004,6 +2705,39 @@ fn is_length_name(name: &str) -> bool {
         || FACTOR_LENGTHS.contains(&name)
 }
 
+/// The registers whose assignments the expansion engine reports back
+/// (`Engine::observe_register`, see `expansion::HOST_PRELUDE`): every
+/// length this parser keeps a copy of or diagnoses by name (the preamble
+/// page lengths, the table and box lengths, `\parskip`/`\parindent`, the
+/// list lengths, the TeX skip and dimen parameters) and the line/page-
+/// breaking integer parameters it hands the layout (`BreakParameter`). The
+/// marker arrives as `\flashtexlengthset{\name}{<value>}` (via `\setlength`/
+/// `\addtolength`) or `\flashtexlengthassign` (a TeX assignment), with the
+/// value already resolved by the engine, and is read by
+/// `Parser::length_marker`. A kernel length outside this list
+/// (`\leftmargini`, `\jot`, `\@topnum`) is the engine's alone.
+pub const OBSERVED_LENGTHS: &[&str] = &[
+    // Page geometry and paragraphs (`PREAMBLE_LENGTHS`).
+    "paperwidth", "paperheight", "textwidth", "textheight", "oddsidemargin", "evensidemargin",
+    "topmargin", "headheight", "headsep", "footskip", "marginparwidth", "marginparsep",
+    "columnsep", "parindent", "parskip", "linewidth", "columnwidth", "hsize",
+    // Tables and boxes.
+    "tabcolsep", "arrayrulewidth", "doublerulesep", "fboxsep", "fboxrule",
+    // TeX skip and dimen parameters (`FACTOR_LENGTHS`).
+    "baselineskip", "lineskip", "abovedisplayskip", "belowdisplayskip",
+    "abovedisplayshortskip", "belowdisplayshortskip", "leftskip", "rightskip", "topskip",
+    "splittopskip", "tabskip", "spaceskip", "xspaceskip", "parfillskip", "mathsurround",
+    "lineskiplimit", "maxdepth", "splitmaxdepth", "boxmaxdepth", "hfuzz", "vfuzz",
+    "delimitershortfall", "nulldelimiterspace", "scriptspace", "predisplaysize",
+    "displaywidth", "displayindent", "overfullrule", "hangindent", "hoffset", "voffset",
+    "emergencystretch", "vsize",
+    // List lengths.
+    "topsep", "partopsep", "itemsep", "parsep", "labelsep", "labelwidth", "leftmargin",
+    "rightmargin", "itemindent", "listparindent", "footnotesep", "unitlength",
+    // Line- and page-breaking integer parameters.
+    "tolerance", "pretolerance", "looseness", "widowpenalty", "clubpenalty", "interlinepenalty",
+];
+
 /// Lengths a `\begin{list}` decl assigns (`\setlength{\leftmargin}{...}`):
 /// read on the innermost open list rather than warned about. Anything else
 /// list-shaped (`\parsep`, `\itemindent`, ...) keeps the historic warning.
@@ -3115,6 +2849,21 @@ fn parse_dimen_pt_with_units(text: &str, em_pt: f64, ex_pt: f64) -> Option<f64> 
     }
     let split = text.len() - unit_len;
     let (number, unit) = text.split_at(split);
+    // Points take TeX's own fixed-point reading (`scan_dimen` §452, via
+    // `scale_decimal`): the canonical `12.00002pt` the expansion engine
+    // prints for a register round-trips to its exact scaled points, and a
+    // literal `1.5pt` is the same 98304sp TeX reads.
+    if unit == "pt" {
+        let digits = number.trim();
+        let unsigned = digits.trim_start_matches(['+', '-']);
+        let negative = digits[..digits.len() - unsigned.len()].matches('-').count() % 2 == 1;
+        let (int, frac) = unsigned.split_once(['.', ',']).unwrap_or((unsigned, ""));
+        if !unsigned.is_empty() && int.bytes().chain(frac.bytes()).all(|b| b.is_ascii_digit()) {
+            let int = if int.is_empty() { 0 } else { int.parse().ok()? };
+            let sp = flashtex_tex_expansion::scale_decimal(int, frac, 65536.0);
+            return Some((if negative { -sp } else { sp }) as f64 / 65536.0);
+        }
+    }
     let value: f64 = number.trim().parse().ok()?;
     // TeX: The Program §458. `in`/`cm`/`mm`/`bp` share the 7227 numerator
     // (72.27 pt per inch); `dd`/`cc` are Didot; `sp` is 2^-16 pt.
@@ -3704,9 +3453,6 @@ pub fn parse_project_with(
         beamer_pauses: 1,
         beamer_slides: 1,
         overlay_groups: Vec::new(),
-        text_command_groups: Vec::new(),
-        paragraph_flushes: 0,
-        last_space: None,
         pending_overlay_markers: Vec::new(),
         today: options.today,
         titlepage_option: false,
@@ -4134,14 +3880,6 @@ struct P<'a> {
     /// (`\uncover<2->{`) was entered: the `}` that brings the stack back to
     /// that depth pushes the [`Inline::OverlayEnd`].
     overlay_groups: Vec<usize>,
-    /// Text font command groups open in the token stream (see
-    /// [`TextCommandGroup`]), innermost last.
-    text_command_groups: Vec<TextCommandGroup>,
-    /// Paragraphs flushed so far, so a group can tell one ended inside it.
-    paragraph_flushes: u64,
-    /// The style in force at the last space token the main loop read since
-    /// the last word it emitted (`Inline::Text::glue_before`).
-    last_space: Option<TextStyle>,
     /// Overlay markers of a paragraph that held nothing else (`\pause` on a
     /// line of its own between blank lines): carried to the front of the
     /// next paragraph instead of setting an empty line.
@@ -4450,7 +4188,6 @@ impl P<'_> {
                 }
                 TokenKind::Space if !self.obeylines => {
                     self.i += 1;
-                    self.last_space = Some(self.style);
                     continue;
                 }
                 TokenKind::Word(word)
@@ -4496,7 +4233,6 @@ impl P<'_> {
                             span,
                             style: self.style,
                             space_before,
-                            glue_before: self.take_glue(),
                         });
                     }
                     continue;
@@ -4506,7 +4242,6 @@ impl P<'_> {
             let input = self.t[self.i].clone();
             let tok = input.token;
             let render = self.in_body && !self.document_ended;
-            let before_len = para.len();
             match tok.kind {
                 TokenKind::ParBreak => {
                     self.i += 1;
@@ -4523,7 +4258,6 @@ impl P<'_> {
                 }
                 TokenKind::Space => {
                     self.i += 1;
-                    self.last_space = Some(self.style);
                     // `\\obeylines`: a source newline ends the line, exactly
                     // like `\\\\` (an `Inline::LineBreak` with no skip). The
                     // lexer folds a lone newline into `Space`, so the newline
@@ -4612,7 +4346,6 @@ impl P<'_> {
                             span: tok.span,
                             style: self.style,
                             space_before,
-                            glue_before: self.take_glue(),
                         });
                     }
                 }
@@ -4689,11 +4422,6 @@ impl P<'_> {
                         self.close_parameter_scope(tok.span);
                         if let Some(style) = self.style_stack.pop() {
                             self.style = style;
-                        }
-                        if render {
-                            self.close_text_command_group(para);
-                        } else if self.text_command_groups.last().is_some_and(|g| g.depth == self.brace_stack.len() + 1) {
-                            self.text_command_groups.pop();
                         }
                         if let Some(alignment) = self.alignment_stack.pop() {
                             self.declared_alignment = alignment;
@@ -4790,18 +4518,9 @@ impl P<'_> {
                             text: verbatim_display(&text, starred),
                             span: tok.span,
                             space_before,
-                            glue_before: None,
-                            style: verbatim_style(self.style, self.nfss_scheme()),
                         });
                     }
                 }
-            }
-            // The space read in front of this token's material is its glue
-            // (`Inline::Text::glue_before`): symbols, `\url` runs, `\verb`,
-            // formulas and flattened arguments are emitted here, not by the
-            // word arms above.
-            if para.len() > before_len {
-                self.attach_glue(&mut para[before_len]);
             }
         }
     }
@@ -4827,7 +4546,6 @@ impl P<'_> {
             span,
             style: TextStyle::default(),
             space_before: true,
-            glue_before: None,
         }];
         content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
         blocks.push(Block::FigureCaption { content });
@@ -4861,6 +4579,13 @@ impl P<'_> {
             {
                 self.current_counter = Some(text);
             }
+            return;
+        }
+        // The expansion engine's marker after an assignment to a register
+        // this parser observes (`OBSERVED_LENGTHS`): the same kind of
+        // internal side channel, consumed here for the same reason.
+        if name == "flashtexlengthset" || name == "flashtexlengthadd" || name == "flashtexlengthassign" {
+            self.length_marker(name, span);
             return;
         }
 
@@ -4988,7 +4713,6 @@ impl P<'_> {
                         span,
                         style,
                         space_before: false,
-                        glue_before: None,
                     });
                 }
                 if !self.hangfrom_hang_indent_reported {
@@ -5292,9 +5016,9 @@ impl P<'_> {
             "larger" | "smaller" => self.relative_size_command(name, span, para),
             _ if style_command(name) => self.style_command_argument(name, span, para),
             _ if style_declaration(name) => {
-                self.style = apply_style(self.style, name, self.body_size_pt(), self.nfss_scheme())
+                self.style = apply_style(self.style, name, self.body_size_pt())
             }
-            "hfill" | "hfil" | "hrulefill" | "dotfill" | "linebreak" | "nolinebreak" | "hspace"
+            "hfill" | "hfil" | "hss" | "hrulefill" | "dotfill" | "linebreak" | "nolinebreak" | "hspace"
             | "noindent" | "indent" | "quad" | "qquad" | "thinspace" | "negthinspace" | "medspace"
             | "negmedspace" | "thickspace" | "negthickspace" | "enspace" | "enskip"
             | "nobreakdash" | "discretionary" => {
@@ -5328,7 +5052,9 @@ impl P<'_> {
             "bigskip" | "medskip" | "smallskip" | "vspace" | "hrule" | "newpage" | "clearpage"
             | "cleardoublepage" | "pagebreak" | "nopagebreak" | "vfill" | "columnbreak" | "newcolumn"
             | "raggedcolumns" | "flushcolumns" | "penalty" | "nobreak" | "allowbreak"
-            | "goodbreak" | "filbreak" => self.vertical_command(name, span, blocks, para),
+            | "goodbreak" | "filbreak" | "vskip" | "vfil" | "vss" | "kern" => {
+                self.vertical_command(name, span, blocks, para)
+            }
             // Kernel text symbols (`text_builtins::TEXT_SYMBOLS`; the
             // `text_symbol_arms_match_the_builtin_table` test keeps them equal).
             "AA" | "aa" | "AE" | "ae" | "OE" | "oe" | "O" | "o" | "L" | "l" | "ss" | "SS"
@@ -5492,7 +5218,6 @@ impl P<'_> {
                 span,
                 style: self.style,
                 space_before,
-                glue_before: None,
             });
         }
             _ => unreachable!("\\{name} is not in this command family"),
@@ -5769,7 +5494,7 @@ impl P<'_> {
         while i < format.len() {
             match &format[i].token.kind {
                 TokenKind::Command(name) if style_declaration(name) => {
-                    style = apply_style(style, name, body, self.nfss_scheme());
+                    style = apply_style(style, name, body);
                 }
                 // Headings in this layout always set flush left, so the
                 // resume's `\raggedright` is identity and stays silent;
@@ -6108,7 +5833,6 @@ impl P<'_> {
             self.finish_block_dependencies();
         } else {
             para.push(Inline::HFill {
-                style: self.style,
                 span,
                 leader: FillLeader::Rule,
             });
@@ -6377,7 +6101,6 @@ impl P<'_> {
                     equation: name == "eqref",
                     span: span.merge(argument_span),
                     space_before,
-                    style: self.style,
                 });
             }
             "thepage" => {
@@ -6448,7 +6171,7 @@ impl P<'_> {
                         full_span,
                         &mut self.diags,
                     );
-                    let inlines = self.set_citation_source(inlines, self.style);
+                    let inlines = self.set_citation_source(inlines);
                     para.extend(inlines);
                 }
 
@@ -6657,8 +6380,7 @@ impl P<'_> {
                         span,
                         style: TextStyle::default(),
                         space_before: false,
-                        glue_before: None,
-                    }], self.style);
+                    }]);
                     match content.as_slice() {
                         [Inline::Text { text: plain, .. }] if *plain == text => {
                             self.pending_item = Some(ItemLabel::Template { text: text.clone() });
@@ -6794,57 +6516,17 @@ impl P<'_> {
         // `\leavevmode\bgroup`.
         self.paragraph_started = true;
         self.skip_spaces();
-        let next = apply_style(self.style, name, self.body_size_pt(), self.nfss_scheme());
-        let scheme = self.nfss_scheme();
+        let next = apply_style(self.style, name, self.body_size_pt());
         if let Some(open) = self.closed_group_start() {
             // Re-enter the argument as an ordinary group so math and
             // other commands inside it are parsed normally.
             self.i += 1;
-            if text_font_command(name) {
-                let close = group_close(&self.t, self.i);
-                let (icl, icr) = check_nocorr(&self.t[self.i..close]);
-                self.text_command_groups.push(TextCommandGroup {
-                    depth: self.brace_stack.len() + 1,
-                    start: para.len(),
-                    flushes: self.paragraph_flushes,
-                    before: icl && maybe_ic_upright(next, scheme, self.t.get(self.i)),
-                    check_after: icr,
-                });
-            }
             self.open_group(open);
             self.style = next;
         } else {
             let (tokens, _) = self.required_group(name, span);
-            let (icl, icr) = if text_font_command(name) { check_nocorr(&tokens) } else { (false, false) };
-            let before = icl && maybe_ic_upright(next, scheme, tokens.first());
-            let mut inlines = self.inlines_from_tokens(tokens, next);
-            let after = icr && maybe_ic_upright(self.style, scheme, next_significant(&self.t, self.i));
-            mark_italic_corrections(&mut inlines, before, after, self.style.color);
-            para.extend(inlines);
+            para.extend(self.inlines_from_tokens(tokens, next));
         }
-    }
-
-    /// The `}` of a text font command group re-entered by
-    /// [`P::style_command_argument`]: its `\check@icr` and the `\check@icl`
-    /// decided at the `{` land on the argument's runs, now that they are
-    /// known. `self.style` is the restored (outer) style and `self.i` the
-    /// token after the `}`.
-    fn close_text_command_group(&mut self, para: &mut [Inline]) {
-        while self.text_command_groups.last().is_some_and(|g| g.depth > self.brace_stack.len() + 1) {
-            self.text_command_groups.pop();
-        }
-        let Some(group) = self.text_command_groups.last() else { return };
-        if group.depth != self.brace_stack.len() + 1 {
-            return;
-        }
-        let Some(group) = self.text_command_groups.pop() else { return };
-        // A paragraph ended inside the argument: `\check@icr` is
-        // `\ifvmode\else..`, and the runs the check would reach are gone.
-        if group.flushes != self.paragraph_flushes || group.start > para.len() {
-            return;
-        }
-        let after = group.check_after && maybe_ic_upright(self.style, self.nfss_scheme(), next_significant(&self.t, self.i));
-        mark_italic_corrections(&mut para[group.start..], group.before, after, self.style.color);
     }
 
     /// `\hfill`, glue, breaks, discretionaries and fixed spaces in running
@@ -6852,9 +6534,11 @@ impl P<'_> {
     #[inline(never)]
     fn horizontal_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
         match name {
-        "hfill" | "hfil" => para.push(Inline::HFill { span, leader: FillLeader::None, style: self.style }),
-        "hrulefill" => para.push(Inline::HFill { span, leader: FillLeader::Rule, style: self.style }),
-        "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots, style: self.style }),
+        // `\hss` is `0pt plus 1fil minus 1fil`: its shrink never matters in
+        // a paragraph line set to its natural width or wider.
+        "hfill" | "hfil" | "hss" => para.push(Inline::HFill { span, leader: FillLeader::None }),
+        "hrulefill" => para.push(Inline::HFill { span, leader: FillLeader::Rule }),
+        "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots }),
         // latex.ltx `\linebreak`/`\nolinebreak` (`\@no@lnbk`): a penalty of
         // `-\@getpen{n}`/`\@getpen{n}` with the space in front of the
         // command moved after it; in vertical mode, `\@nolnerr`.
@@ -6910,7 +6594,6 @@ impl P<'_> {
                     span: dash_span,
                     style: self.style,
                     space_before: false,
-                    glue_before: None,
                 });
                 if dashes == length {
                     self.i += 1;
@@ -6967,7 +6650,12 @@ impl P<'_> {
             // `<factor>\<length>` (`2\parindent`) still parses (issue #835).
             let raw = dimen_source(&tokens);
             let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-            match parse_dimen_pt_current(&raw, self.font_setup().em_ex_sp(self.style)) {
+            // A skip register spliced by the engine's shim brings its
+            // whole glue (`\hspace{\fill}` is `0.0pt plus 1.0fill`): the
+            // stretch and shrink ride on the node, as `\hskip`'s do.
+            let units = self.font_setup().em_ex_sp(self.style);
+            let (natural, (stretch_pt, stretch_fil), (shrink_pt, shrink_fil)) = split_glue_text(&raw, units);
+            match parse_dimen_pt_current(&natural, units) {
                 Some(pt) => {
                     let space_after = matches!(
                         self.t.get(self.i).map(|input| &input.token.kind),
@@ -6981,15 +6669,14 @@ impl P<'_> {
                         crate::layout::style_font(self.style),
                     );
                     para.push(Inline::HSpace {
-                        style: self.style,
                         pt,
                         space_before_pt: if space_before { word_space } else { 0.0 },
                         space_after_pt: if space_after { word_space } else { 0.0 },
                         span: span.merge(argument_span),
-                        stretch_pt: 0.0,
-                        stretch_fil: 0,
-                        shrink_pt: 0.0,
-                        shrink_fil: 0,
+                        stretch_pt,
+                        stretch_fil,
+                        shrink_pt,
+                        shrink_fil,
                     });
                 }
                 None => self.diags.push(Diagnostic::error(
@@ -7024,14 +6711,12 @@ impl P<'_> {
         // in math mode (`src/math.rs`); this arm covers the same commands
         // used directly in running text, 1em/2em of the body text size.
         "quad" => para.push(Inline::TextGlue {
-            style: self.style,
             em: math::QUAD_EM,
             span,
             plus_em: 0.0,
             minus_em: 0.0,
         }),
         "qquad" => para.push(Inline::TextGlue {
-            style: self.style,
             em: 2.0 * math::QUAD_EM,
             span,
             plus_em: 0.0,
@@ -7048,7 +6733,7 @@ impl P<'_> {
             }
         }
         // `\def\enskip{\hskip.5em\relax}` (latex.ltx 9434): glue, like `\quad`.
-        "enskip" => para.push(Inline::TextGlue { em: 0.5, span, plus_em: 0.0, minus_em: 0.0, style: self.style }),
+        "enskip" => para.push(Inline::TextGlue { em: 0.5, span, plus_em: 0.0, minus_em: 0.0 }),
             _ => unreachable!("\\{name} is not in this command family"),
         }
     }
@@ -7236,10 +6921,84 @@ impl P<'_> {
             });
             self.finish_block_dependencies();
         }
-        "vfill" => {
+        // `\vfil` and `\vss` (`0pt plus 1fil [minus 1fil]`) fill the page
+        // like `\vfill` (`plus 1fill`): the page builder has one infinite
+        // order.
+        "vfill" | "vfil" | "vss" => {
             self.flush_paragraph(blocks, para);
             blocks.push(Block::VFill);
             self.finish_block_dependencies();
+        }
+        // TeX's `\vskip<glue>`, which the expansion engine has already
+        // scanned and re-emitted in canonical `\the` text (`5.0pt plus
+        // 2.0pt`): the same vertical glue `\vspace{<glue>}` sets, ending the
+        // paragraph first; an infinite stretch fills the page like `\vfil`.
+        "vskip" => {
+            let units = self.font_setup().em_ex_sp(self.style);
+            let Some((pt, (stretch_pt, stretch_fil), (shrink_pt, _))) = self.glue_words(units) else {
+                self.diags.push(Diagnostic::error(
+                    "\\vskip requires a glue spec such as '1em' or '1em plus 2pt minus 1pt'",
+                    Some(span),
+                    Some("ignored the \\vskip with no usable glue and continued".into()),
+                ));
+                return;
+            };
+            self.flush_paragraph(blocks, para);
+            if stretch_fil > 0 {
+                if pt != 0.0 {
+                    blocks.push(Block::VSpace {
+                        pt,
+                        stretch_pt: 0.0,
+                        shrink_pt,
+                    });
+                }
+                blocks.push(Block::VFill);
+            } else {
+                blocks.push(Block::VSpace {
+                    pt,
+                    stretch_pt,
+                    shrink_pt,
+                });
+            }
+            self.finish_block_dependencies();
+        }
+        // TeX's `\kern<dimen>` (canonical text from the engine, as `\vskip`):
+        // in a paragraph a fixed horizontal space that no line break may
+        // take (like `\hspace*`), between paragraphs vertical space.
+        "kern" => {
+            let space_before = !para.is_empty() && self.space_precedes(self.i - 1);
+            let Some(pt) = self.dimen_value() else {
+                self.diags.push(Diagnostic::error(
+                    "\\kern needs a dimension (Missing number, treated as zero)",
+                    Some(span),
+                    Some("used no kern".into()),
+                ));
+                return;
+            };
+            if para.is_empty() {
+                blocks.push(Block::VSpace {
+                    pt,
+                    stretch_pt: 0.0,
+                    shrink_pt: 0.0,
+                });
+                self.finish_block_dependencies();
+            } else {
+                let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+                let size = self.style.size.map_or(body, |level| {
+                    crate::layout::size_declaration_pt(level, body)
+                });
+                let word_space = crate::layout::word_space(size, crate::layout::style_font(self.style));
+                para.push(Inline::HSpace {
+                    pt,
+                    space_before_pt: if space_before { word_space } else { 0.0 },
+                    space_after_pt: 0.0,
+                    span,
+                    stretch_pt: 0.0,
+                    stretch_fil: 0,
+                    shrink_pt: 0.0,
+                    shrink_fil: 0,
+                });
+            }
         }
         // multicol.sty 919-950: `\columnbreak[n]` and `\newcolumn` end a
         // column of `multicols` (set by the render pipeline); outside the
@@ -7693,6 +7452,52 @@ impl P<'_> {
         self.length_command("addtolength", span, true);
     }
 
+    /// The expansion engine's marker after an assignment to one of
+    /// [`OBSERVED_LENGTHS`]: `{\name}{<value>}` with the value already
+    /// resolved by the engine's own scanner (`6.0pt plus 2.0pt`, `200`):
+    /// `0.5\textwidth`, `\p@`, `\@plus`, `em` in the current font and a
+    /// `calc` chain have all been evaluated there. `marker` says whether it
+    /// came from `\setlength`, `\addtolength` or a TeX assignment (the
+    /// value is the new total either way), which only picks the
+    /// diagnostic's wording. The integer parameters go
+    /// to the layout as `BreakParameter`s; every length takes the path
+    /// `\setlength{\name}{<pt>}` always took.
+    fn length_marker(&mut self, marker: &str, span: Span) {
+        let global = std::mem::take(&mut self.pending_global);
+        let (target_tokens, _) = self.required_group("setlength", span);
+        let (value_tokens, value_span) = self.required_group("setlength", span);
+        let span = span.merge(value_span);
+        let target = token_text(&target_tokens)
+            .trim()
+            .trim_start_matches('\\')
+            .to_string();
+        let raw = dimen_source(&value_tokens);
+        let parameter: Option<fn(i32) -> BreakParameter> = match target.as_str() {
+            "tolerance" => Some(BreakParameter::Tolerance),
+            "pretolerance" => Some(BreakParameter::Pretolerance),
+            "looseness" => Some(BreakParameter::Looseness),
+            "widowpenalty" => Some(BreakParameter::WidowPenalty),
+            "clubpenalty" => Some(BreakParameter::ClubPenalty),
+            "interlinepenalty" => Some(BreakParameter::InterlinePenalty),
+            _ => None,
+        };
+        if let Some(parameter) = parameter {
+            let value = raw
+                .trim()
+                .parse::<i64>()
+                .unwrap_or(0)
+                .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+            self.assign_parameter(parameter(value), span);
+            return;
+        }
+        let command = match marker {
+            "flashtexlengthset" => "setlength",
+            "flashtexlengthadd" => "addtolength",
+            _ => "",
+        };
+        self.apply_length_value(command, &target, &raw, span, false, global);
+    }
+
     fn length_command(&mut self, command: &str, span: Span, add: bool) {
         // `\global\setlength{\x}{..}`: `\setlength` is a macro, so TeX
         // applies the prefix to the register assignment it expands to.
@@ -7852,6 +7657,11 @@ impl P<'_> {
         let in_preamble = self.has_document && !self.in_body;
         let in_list = !self.list_stack.is_empty();
         let units = self.font_setup().em_ex_sp(self.style);
+        // The engine's markers carry the register's whole `\the` text, glue
+        // included (`6.0pt plus 2.0pt minus 1.0pt`); this parser keeps the
+        // natural part.
+        let natural = glue_natural_text(raw);
+        let raw = natural.as_deref().unwrap_or(raw);
         // A `calc` `+`/`-` chain (`1pt + 2\baselineskip`) sums its terms
         // before the single-dimen path below runs. A lone dimension has no
         // operator, so the common case falls through byte-for-byte as before;
@@ -8008,7 +7818,7 @@ impl P<'_> {
             // A TeX assignment or `\addtolength` is accepted without noise
             // (the layout still does not indent). `\setlength{\parindent}{nonzero}`
             // keeps the existing "not implemented" warning.
-            "parindent" if in_preamble && (add || command.is_empty()) => {}
+            "parindent" if in_preamble && (add || command != "setlength") => {}
             "parindent" if in_preamble => self.diags.push(Diagnostic::warning(
                 "\\parindent is recognised but paragraph indentation is not implemented",
                 Some(span),
@@ -8391,7 +8201,7 @@ impl P<'_> {
             span,
             &mut self.diags,
         );
-        let inlines = self.set_citation_source(inlines, self.style);
+        let inlines = self.set_citation_source(inlines);
         para.extend(inlines);
     }
 
@@ -8418,23 +8228,18 @@ impl P<'_> {
     ///   read in (`Jones \emph{et~al.}`, `\emph{a} b`);
     /// - a tie becomes U+00A0, which the pipeline sets as an unbreakable
     ///   interword space whatever the span.
-    fn set_citation_source(&mut self, inlines: Vec<Inline>, outer: TextStyle) -> Vec<Inline> {
+    fn set_citation_source(&mut self, inlines: Vec<Inline>) -> Vec<Inline> {
         fn is_source(text: &str) -> bool {
             text.contains(['\\', '{', '}', '~'])
         }
         // A kernel label is an `\hbox` (`bib::cite_inlines`): its run is
-        // set inside the box. Every run is set in the font around the
-        // citation (`outer`), which `bib`/`natbib` build their runs without.
-        let scheme = self.nfss_scheme();
+        // set inside the box.
         let inlines: Vec<Inline> = inlines
             .into_iter()
             .map(|inline| match inline {
                 Inline::HBox(mut boxed) => {
-                    boxed.content = self.set_citation_source(std::mem::take(&mut boxed.content), outer);
+                    boxed.content = self.set_citation_source(std::mem::take(&mut boxed.content));
                     Inline::HBox(boxed)
-                }
-                Inline::Text { text, span, style, space_before, glue_before } => {
-                    Inline::Text { text, span, style: citation_style(outer, style, scheme), space_before, glue_before }
                 }
                 other => other,
             })
@@ -8444,12 +8249,12 @@ impl P<'_> {
         }
         let mut out = Vec::with_capacity(inlines.len());
         for inline in inlines {
-            let Inline::Text { text, span, style, space_before, glue_before } = inline else {
+            let Inline::Text { text, span, style, space_before } = inline else {
                 out.push(inline);
                 continue;
             };
             if !is_source(&text) {
-                out.push(Inline::Text { text, span, style, space_before, glue_before });
+                out.push(Inline::Text { text, span, style, space_before });
                 continue;
             }
             let mut tokens = crate::lexer::tokenize(&text);
@@ -8485,7 +8290,6 @@ impl P<'_> {
                         span,
                         style: piece_style,
                         space_before: if joined { false } else { space_before || text.starts_with(' ') },
-                        glue_before: if joined { None } else { glue_before },
                     }),
                 }
             }
@@ -8654,7 +8458,6 @@ impl P<'_> {
             linked,
             span: full_span,
             space_before,
-            style: self.style,
         });
     }
 
@@ -8888,7 +8691,6 @@ impl P<'_> {
                     span,
                     style: TextStyle::default(),
                     space_before: true,
-                    glue_before: None,
                 }])
             }
             Some((date_tokens, _)) => {
@@ -9106,7 +8908,6 @@ impl P<'_> {
                 span,
                 style: TextStyle::default(),
                 space_before: false,
-                glue_before: None,
             }],
         }
     }
@@ -9287,7 +9088,6 @@ impl P<'_> {
             span: span.merge(argument_span),
             style: TextStyle::default(),
             space_before: false,
-            glue_before: None,
         }];
         content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
         blocks.push(Block::Paragraph(content));
@@ -9594,7 +9394,6 @@ impl P<'_> {
                     span: heading_span,
                     style: TextStyle::BOLD,
                     space_before: false,
-                    glue_before: None,
                 }],
             });
             self.finish_block_dependencies();
@@ -9732,7 +9531,7 @@ impl P<'_> {
         // the surrounding style for the `\end` restore), exactly like
         // `begin_theorem` below.
         if size_env {
-            self.style = apply_style(self.style, &environment, self.body_size_pt(), self.nfss_scheme());
+            self.style = apply_style(self.style, &environment, self.body_size_pt());
         } else if let Some(run) = cjk_run {
             self.style.cjk = Some(run);
         } else if alltt_env {
@@ -9746,12 +9545,6 @@ impl P<'_> {
                 ams_tiny: self.style.ams_tiny,
                 color: self.style.color,
                 cjk: self.style.cjk,
-                // alltt.sty: `\verbatim@font` (`\normalfont\ttfamily`) and
-                // `\@noligs`.
-                font: VERBATIM_FONT.iter().fold(self.style.font, |f, c| f.then(self.nfss_scheme(), *c)),
-                medium: false,
-                literal: true,
-                italic_correction: ItalicCorrection::default(),
             };
             self.obeylines = true;
         }
@@ -10019,7 +9812,7 @@ impl P<'_> {
             // is suppressed. A stray `\end{proof}` pops nothing.
             let claimed = self.proof_qedhere.pop().unwrap_or(false);
             if !claimed {
-                para.push(Inline::HFill { span, leader: FillLeader::None, style: self.style });
+                para.push(Inline::HFill { span, leader: FillLeader::None });
                 // The closing "∎" is generated text placed at the end of the
                 // body: span it (empty) at the `\end` command instead of
                 // covering it, so the block's last span ends where the body
@@ -10040,7 +9833,6 @@ impl P<'_> {
                     // is `TextStyle::default()`, exactly as before.
                     style: self.style,
                     space_before: false,
-                    glue_before: None,
                 });
             }
             self.flush_paragraph(blocks, para);
@@ -10295,7 +10087,6 @@ impl P<'_> {
             span,
             style: head_style,
             space_before: true,
-            glue_before: None,
         });
         if let Some(number) = number {
             para.push(Inline::Text {
@@ -10303,14 +10094,12 @@ impl P<'_> {
                 span,
                 style: head_style,
                 space_before: false,
-                glue_before: None,
             });
             para.push(Inline::Text {
                 text: number,
                 span,
                 style: number_style,
                 space_before: false,
-                glue_before: None,
             });
         }
         if let Some((note_tokens, note_span)) = note {
@@ -10327,7 +10116,6 @@ impl P<'_> {
                     span,
                     style: head_style,
                     space_before: false,
-                    glue_before: None,
                 });
                 // `\thm@notefont` (`\fontseries\mddefault\upshape`)
                 // changes series/shape only, so the note keeps the
@@ -10347,7 +10135,6 @@ impl P<'_> {
                     span: Span::in_document(note_span.document, note_span.start, note_span.start + 1),
                     style: note_style,
                     space_before: false,
-                    glue_before: None,
                 });
                 // Read like an `\item[<label>]`: every token that cannot be
                 // set is reported rather than dropped (a note is short
@@ -10362,7 +10149,6 @@ impl P<'_> {
                     span: Span::in_document(note_span.document, note_span.end - 1, note_span.end),
                     style: note_style,
                     space_before: false,
-                    glue_before: None,
                 });
             }
         }
@@ -10375,7 +10161,6 @@ impl P<'_> {
             span,
             style: head_style,
             space_before: false,
-            glue_before: None,
         });
         self.style = TextStyle {
             size: ambient_size,
@@ -10414,7 +10199,6 @@ impl P<'_> {
                 ..TextStyle::default()
             },
             space_before: true,
-            glue_before: None,
         });
         self.style = TextStyle {
             size: ambient_size,
@@ -10437,13 +10221,12 @@ impl P<'_> {
         if let Some(claimed) = self.proof_qedhere.last_mut() {
             *claimed = true;
         }
-        para.push(Inline::HFill { span, leader: FillLeader::None, style: self.style });
+        para.push(Inline::HFill { span, leader: FillLeader::None });
         para.push(Inline::Text {
             text: "\u{220E}".to_string(),
             span,
             style: self.style,
             space_before: false,
-            glue_before: None,
         });
     }
 
@@ -11204,7 +10987,6 @@ impl P<'_> {
                 span,
                 style: TextStyle::default(),
                 space_before: true,
-                glue_before: None,
             }],
             Some((tokens, _)) => self.inlines_from_tokens(tokens, TextStyle::default()),
         };
@@ -11707,7 +11489,6 @@ impl P<'_> {
             // Always its own line (see `layout::LayoutCursor::display_math`),
             // so whether real source whitespace preceded it is moot.
             space_before: true,
-            glue_before: None,
         });
         para.extend(labels.into_iter().map(|(key, span)| Inline::Label {
             key,
@@ -12471,7 +12252,6 @@ impl P<'_> {
             number_span: None,
             span: self.span_through(open, end),
             space_before,
-            glue_before: None,
         });
         for (key, span) in display_labels {
             self.document_global_state = true;
@@ -12703,7 +12483,7 @@ impl P<'_> {
             return;
         }
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-        let style = apply_style(self.style, "ttfamily", body, self.nfss_scheme());
+        let style = apply_style(self.style, "ttfamily", body);
         for (index, piece) in url_pieces(text).into_iter().enumerate() {
             match piece {
                 UrlPiece::Run(run) => para.push(Inline::Text {
@@ -12711,7 +12491,6 @@ impl P<'_> {
                     span,
                     style,
                     space_before: index == 0 && space_before,
-                    glue_before: None,
                 }),
                 UrlPiece::HyphenKern => para.push(Inline::Kern {
                     amount: crate::text_builtins::TextDimen {
@@ -13322,6 +13101,53 @@ impl P<'_> {
         }
     }
 
+    /// TeX's `<glue>` in the canonical words the expansion engine emits for
+    /// `\vskip` (`5.0pt plus 2.0pt minus 1.0pt`, `0.0pt plus 1.0fil`): the
+    /// natural dimension, then optional `plus`/`minus` clauses with their
+    /// `<fil dimen>` (value and infinity order). `None`, consuming nothing,
+    /// when the next word is no dimension.
+    fn glue_words(&mut self, units: (i64, i64)) -> Option<(f64, (f64, u8), (f64, u8))> {
+        self.skip_spaces();
+        let Some(Token {
+            kind: TokenKind::Word(word),
+            ..
+        }) = self.peek().cloned()
+        else {
+            return None;
+        };
+        let pt = parse_dimen_pt_current(&word, units)?;
+        self.i += 1;
+        let mut stretch = (0.0, 0u8);
+        let mut shrink = (0.0, 0u8);
+        for _ in 0..2 {
+            let mut cursor = self.i;
+            while matches!(self.t.get(cursor).map(|t| &t.token.kind), Some(TokenKind::Space)) {
+                cursor += 1;
+            }
+            let Some(TokenKind::Word(keyword)) = self.t.get(cursor).map(|t| &t.token.kind) else {
+                break;
+            };
+            let slot = match keyword.as_str() {
+                "plus" => &mut stretch,
+                "minus" => &mut shrink,
+                _ => break,
+            };
+            let mut after = cursor + 1;
+            while matches!(self.t.get(after).map(|t| &t.token.kind), Some(TokenKind::Space)) {
+                after += 1;
+            }
+            let Some(TokenKind::Word(dimen)) = self.t.get(after).map(|t| &t.token.kind) else {
+                break;
+            };
+            let Some(value) = parse_fil_dimen_pt_current(dimen, units) else {
+                break;
+            };
+            *slot = value;
+            self.i = after + 1;
+        }
+        Some((pt, stretch, shrink))
+    }
+
     /// Reads TeX's `<glue>` after `\hskip`: one dimension word, then up to
     /// one `plus` and one `minus` clause (either order) each followed by a
     /// `<fil dimen>` word. Words are read atomically — a number split from
@@ -13428,7 +13254,6 @@ impl P<'_> {
             self.i += 1;
         }
         para.push(Inline::HSpace {
-            style: self.style,
             pt: base_pt,
             space_before_pt: 0.0,
             space_after_pt: 0.0,
@@ -13469,26 +13294,6 @@ impl P<'_> {
         self.alignment_stack.push(self.declared_alignment);
         self.length_scopes.push(self.length_state());
         self.obeylines_stack.push(self.obeylines);
-    }
-
-    /// The interword glue of the space the main loop read before the word it
-    /// emits now ([`Inline::Text::glue_before`]).
-    fn take_glue(&mut self) -> Option<InterwordGlue> {
-        self.last_space.take().map(|style| InterwordGlue { style: glue_style(style), kind: GlueKind::Normal })
-    }
-
-    /// Gives the first inline a command emitted the space read before it:
-    /// on the node when it has a `glue_before`, and consumed either way
-    /// unless the inline sets nothing (a `\label`, an overlay marker, a
-    /// `\pagestyle`), which leaves the space to the material after it.
-    fn attach_glue(&mut self, inline: &mut Inline) {
-        attach_space(inline, &mut self.last_space);
-    }
-
-    /// The font definition files [`TextStyle::font`] is selected in:
-    /// `lmodern` loaded, and the text encoding `fontenc` set.
-    fn nfss_scheme(&self) -> crate::nfss::Scheme {
-        crate::nfss::Scheme::of(self.latin_modern, self.font_encoding == Encoding::T1)
     }
 
     /// The NFSS inputs `em`/`ex` depend on (see [`crate::font_units`]).
@@ -13584,29 +13389,16 @@ impl P<'_> {
         let mut style = base;
         let mut saved = Vec::new();
         let mut pending = None;
-        let mut pending_text_command = false;
         // Tokens already read as a siunitx command's arguments.
         let mut skip_until = 0usize;
-        // The style at the last space token since the last word (`glue_before`).
-        let mut last_space: Option<TextStyle> = None;
         for (index, input) in expanded.iter().enumerate() {
             if index < skip_until {
                 continue;
             }
             let space_before = preceded_by_space(&expanded, index);
-            let before_len = content.len();
-            if matches!(input.token.kind, TokenKind::Space) {
-                last_space = Some(style);
-            }
             match &input.token.kind {
                 TokenKind::Command(name) if name == "color" || name == "textcolor" => {
-                    let (mut next, color) = self.flat_color(&expanded, index, style.color);
-                    if name == "color" {
-                        // `\color`'s `\ignorespaces` (`P::color_declaration`).
-                        while matches!(expanded.get(next).map(|t| &t.token.kind), Some(TokenKind::Space | TokenKind::Comment)) {
-                            next += 1;
-                        }
-                    }
+                    let (next, color) = self.flat_color(&expanded, index, style.color);
                     skip_until = next;
                     match color {
                         Some(color) if name == "color" => style.color = Some(color),
@@ -13678,7 +13470,6 @@ impl P<'_> {
                             number_span: None,
                             span,
                             space_before,
-                            glue_before: None,
                         });
                     }
                 }
@@ -13705,7 +13496,6 @@ impl P<'_> {
                                 equation: name == "eqref",
                                 span,
                                 space_before,
-                                style,
                             });
                         }
                         None => self.diags.push(Diagnostic::error(
@@ -13790,42 +13580,21 @@ impl P<'_> {
                 }
                 TokenKind::Command(name) if style_command(name) => {
                     let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-                    pending = Some(apply_style(style, name, body, self.nfss_scheme()));
-                    pending_text_command = text_font_command(name);
+                    pending = Some(apply_style(style, name, body));
                 }
                 TokenKind::Command(name) if style_declaration(name) => {
                     let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-                    style = apply_style(style, name, body, self.nfss_scheme());
+                    style = apply_style(style, name, body);
                 }
                 TokenKind::LBrace => {
-                    let mut group = None;
-                    let previous = style;
+                    saved.push(style);
                     if let Some(next) = pending.take() {
-                        // A text font command's argument: its `\maybe@ic`
-                        // checks, as in `P::style_command_argument`.
-                        if std::mem::take(&mut pending_text_command) {
-                            let close = group_close(&expanded, index + 1);
-                            let (icl, icr) = check_nocorr(&expanded[index + 1..close]);
-                            group = Some(TextCommandGroup {
-                                depth: saved.len() + 1,
-                                start: content.len(),
-                                flushes: 0,
-                                before: icl && maybe_ic_upright(next, self.nfss_scheme(), expanded.get(index + 1)),
-                                check_after: icr,
-                            });
-                        }
                         style = next;
                     }
-                    saved.push((previous, group));
                 }
                 TokenKind::RBrace => {
-                    if let Some((previous, group)) = saved.pop() {
+                    if let Some(previous) = saved.pop() {
                         style = previous;
-                        if let Some(group) = group.filter(|g| g.start <= content.len()) {
-                            let after = group.check_after
-                                && maybe_ic_upright(style, self.nfss_scheme(), next_significant(&expanded, index + 1));
-                            mark_italic_corrections(&mut content[group.start..], group.before, after, style.color);
-                        }
                     }
                 }
                 TokenKind::Word(text)
@@ -13884,7 +13653,6 @@ impl P<'_> {
                         span: input.token.span,
                         style,
                         space_before,
-                        glue_before: last_space.take().map(|s| InterwordGlue { style: glue_style(s), kind: GlueKind::Normal }),
                     });
                 }
                 TokenKind::LineBreak => content.push(Inline::LineBreak {
@@ -13913,7 +13681,6 @@ impl P<'_> {
                             let word_space =
                                 crate::layout::word_space(size, crate::layout::style_font(style));
                             content.push(Inline::HSpace {
-                                style,
                                 pt,
                                 space_before_pt: if !content.is_empty() && space_before {
                                     word_space
@@ -13952,14 +13719,12 @@ impl P<'_> {
                 // comment.
                 TokenKind::Command(name) if name == "hfill" || name == "hfil" => {
                     content.push(Inline::HFill {
-                        style,
                         span: input.token.span,
                         leader: FillLeader::None,
                     })
                 }
                 TokenKind::Command(name) if name == "hrulefill" || name == "dotfill" => {
                     content.push(Inline::HFill {
-                        style,
                         span: input.token.span,
                         leader: if name == "hrulefill" { FillLeader::Rule } else { FillLeader::Dots },
                     })
@@ -13993,8 +13758,6 @@ impl P<'_> {
                     text: verbatim_display(text, *starred),
                     span: input.token.span,
                     space_before,
-                    glue_before: None,
-                    style: verbatim_style(style, self.nfss_scheme()),
                 }),
                 TokenKind::Command(name)
                     if text_builtins::TEXT_SYMBOLS.iter().any(|(n, _)| n == name) =>
@@ -14022,7 +13785,6 @@ impl P<'_> {
                     span: input.token.span,
                     style,
                     space_before,
-                    glue_before: None,
                 }),
                 // `$…$` and `\(…\)` are real inline math here, exactly as in
                 // body text: `\item[this is $2x$]`, `\section{A $2x$ B}`.
@@ -14167,7 +13929,7 @@ impl P<'_> {
                                         span,
                                         &mut self.diags,
                                     );
-                                    let inlines = self.set_citation_source(inlines, style);
+                                    let inlines = self.set_citation_source(inlines);
                                     content.extend(inlines);
                                 }
                             }
@@ -14192,9 +13954,6 @@ impl P<'_> {
                     }
                 }
                 _ => {}
-            }
-            if content.len() > before_len {
-                attach_space(&mut content[before_len], &mut last_space);
             }
         }
         content
@@ -14376,7 +14135,6 @@ impl P<'_> {
             number_span: None,
             span,
             space_before,
-            glue_before: None,
         });
         cursor
     }
@@ -14409,7 +14167,6 @@ impl P<'_> {
             span,
             style,
             space_before,
-            glue_before: None,
         })
     }
 
@@ -14531,7 +14288,6 @@ impl P<'_> {
             span: full,
             style,
             space_before,
-            glue_before: None,
         });
     }
 
@@ -14602,7 +14358,6 @@ impl P<'_> {
                 number_span: None,
                 span: full,
                 space_before,
-                glue_before: None,
             });
         }
         if let Some(rest) = leftover {
@@ -14647,7 +14402,6 @@ impl P<'_> {
                     span: Span::in_document(whole.document, head.end, whole.end),
                     style: self.style,
                     space_before: false,
-                    glue_before: None,
                 });
                 (vec![argument], head, leftover)
             }
@@ -14674,7 +14428,6 @@ impl P<'_> {
         let size = self.style.size.map_or(body, |level| crate::layout::size_declaration_pt(level, body));
         let word_space = crate::layout::word_space(size, crate::layout::style_font(self.style));
         para.push(Inline::HSpace {
-            style: self.style,
             pt: 0.0,
             space_before_pt: if space_before && !para.is_empty() { word_space } else { 0.0 },
             space_after_pt: if space_after { word_space } else { 0.0 },
@@ -14779,7 +14532,6 @@ impl P<'_> {
             span,
             style: self.style,
             space_before,
-            glue_before: None,
         });
         // Parse the body at the next nesting level through the full parser
         // dispatch (`box_inlines` calls `parse_stream`), so nested
@@ -14794,7 +14546,6 @@ impl P<'_> {
             span: argument_span,
             style: self.style,
             space_before: false,
-            glue_before: None,
         });
     }
 
@@ -15385,7 +15136,6 @@ impl P<'_> {
                 span: whole,
                 style: self.style,
                 space_before,
-                glue_before: None,
             }),
             None => self.diags.push(Diagnostic::error(
                 format!("\\fnsymbol{{{name}}} value {value} is outside \\@fnsymbol's nine symbols"),
@@ -15523,8 +15273,6 @@ impl P<'_> {
         extra_gap_after_pt: f64,
     ) {
         self.paragraph_started = false;
-        self.paragraph_flushes += 1;
-        self.last_space = None;
         let label = self.pending_item_label.take();
         if paragraph.is_empty() && label.is_none() {
             return;
@@ -16830,7 +16578,6 @@ const SOUL_GLUE_SHRINK_FRAC: f64 = 1.0 / 3.0;
 fn soul_glue(em_frac: f64, em_pt: f64, span: Span) -> Inline {
     let pt = em_frac * em_pt;
     Inline::HSpace {
-        style: TextStyle::default(),
         pt,
         space_before_pt: 0.0,
         space_after_pt: 0.0,
@@ -16915,7 +16662,7 @@ fn space_out_letters(content: &[Inline], em_pt: f64) -> Vec<Inline> {
     // replaced space. `None` until the first letter lands.
     let mut word_end: Option<Span> = None;
     for inline in content {
-        if let Inline::Text { text, span, style, space_before, .. } = inline {
+        if let Inline::Text { text, span, style, space_before } = inline {
             let mut first = true;
             for c in text.chars() {
                 // A first character carrying the run's `space_before` opens a
@@ -16951,7 +16698,6 @@ fn space_out_letters(content: &[Inline], em_pt: f64) -> Vec<Inline> {
                     span: *span,
                     style: *style,
                     space_before: word_start && out.is_empty(),
-                    glue_before: None,
                 };
                 if !word_start
                     && is_spaced_letter(&piece)
@@ -17094,6 +16840,42 @@ fn titleformat_glue(tokens: &[InputToken], mut i: usize) -> Option<(String, usiz
         Some(TokenKind::Word(word)) => Some((word.clone(), i + 1)),
         _ => None,
     }
+}
+
+/// The natural part of canonical glue text (`6.0pt plus 2.0pt minus 1.0pt`
+/// gives `6.0pt`), or `None` when `raw` carries no `plus`/`minus` clause.
+pub(crate) fn glue_natural_text(raw: &str) -> Option<String> {
+    let cut = [" plus ", " minus "]
+        .iter()
+        .filter_map(|keyword| raw.find(keyword))
+        .min()?;
+    Some(raw[..cut].trim().to_string())
+}
+
+/// Canonical glue text split for `\hspace`: the natural part and the
+/// `plus`/`minus` clauses as `(value, infinity order)` (see
+/// [`parse_fil_dimen_pt_current`]). Text with no clause is returned whole
+/// with zero stretch and shrink.
+fn split_glue_text(raw: &str, units: (i64, i64)) -> (String, (f64, u8), (f64, u8)) {
+    let Some(cut) = [" plus ", " minus "].iter().filter_map(|keyword| raw.find(keyword)).min() else {
+        return (raw.to_string(), (0.0, 0), (0.0, 0));
+    };
+    let natural = raw[..cut].trim().to_string();
+    let mut stretch = (0.0, 0u8);
+    let mut shrink = (0.0, 0u8);
+    let mut words = raw[cut..].split_whitespace();
+    while let Some(keyword) = words.next() {
+        let slot = match keyword {
+            "plus" => &mut stretch,
+            "minus" => &mut shrink,
+            _ => break,
+        };
+        match words.next().and_then(|dimen| parse_fil_dimen_pt_current(dimen, units)) {
+            Some(value) => *slot = value,
+            None => break,
+        }
+    }
+    (natural, stretch, shrink)
 }
 
 fn dimen_source(tokens: &[InputToken]) -> String {
@@ -18606,7 +18388,9 @@ mod tests {
                 (Hfuzz(0.5), false),
                 (Tolerance(1000), false),
                 (Looseness(-1), true),
-                (EmergencyStretch(30.0), true),
+                // `\emergencystretch 3em` is the engine's: 3 quads of cmr10
+                // (655361sp each), `\the` 30.00005pt, read back exactly.
+                (EmergencyStretch(1_966_083.0 / 65_536.0), true),
                 (WidowPenalty(10000), true),
                 (ClubPenalty(10000), true),
                 (InterlinePenalty(5), true),
@@ -18618,7 +18402,9 @@ mod tests {
                 (Tolerance(200), false),
                 (EmergencyStretch(0.0), false),
                 (Hfuzz(0.1), false),
-                (EmergencyStretch(15.0), false),
+                // `\setlength{\emergencystretch}{1.5em}`: 983041sp, `\the`
+                // 15.00002pt.
+                (EmergencyStretch(983_041.0 / 65_536.0), false),
                 (FlushBottom(false), false),
                 (FlushBottom(true), false),
                 (
@@ -20736,12 +20522,24 @@ mod tests {
 
     #[test]
     fn hskip_unrecognised_base_leaves_prose_in_place() {
+        // The expansion engine scans the glue as TeX's stomach does, so a
+        // word where a dimension is due is pdflatex's own pair of errors
+        // ("Missing number" on the `b`, "Illegal unit" on the unit scan),
+        // the glue is 0pt, and the word stays in the input as prose.
         let (parsed, items) = items(r"A\hskip banana B");
         assert!(
             parsed
                 .diagnostics
                 .iter()
-                .any(|d| d.message.contains(r"\hskip requires a recognised dimension")),
+                .any(|d| d.message == "Missing number, treated as zero."),
+            "{:?}",
+            parsed.diagnostics
+        );
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message == "Illegal unit of measure (pt inserted)."),
             "{:?}",
             parsed.diagnostics
         );
@@ -22743,9 +22541,12 @@ mod tests {
         assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
         for block in &parsed.blocks {
             if let Block::ListItem { extra_gap_before_pt, extra_gap_after_pt, .. } = block {
-                // 0.6 of the 10pt class leading (12pt).
-                assert!((extra_gap_before_pt - 7.2).abs() < 1e-9, "{extra_gap_before_pt}");
-                assert!((extra_gap_after_pt - 7.2).abs() < 1e-9, "{extra_gap_after_pt}");
+                // 0.6 of the 10pt class leading (12pt), in TeX's fixed point:
+                // `\the\dimexpr0.6\baselineskip\relax` is 7.20007pt (471864sp),
+                // which is what the engine's `<factor><internal dimen>` gives.
+                let oracle = 471_864.0 / 65_536.0;
+                assert!((extra_gap_before_pt - oracle).abs() < 1e-9, "{extra_gap_before_pt}");
+                assert!((extra_gap_after_pt - oracle).abs() < 1e-9, "{extra_gap_after_pt}");
                 return;
             }
         }
