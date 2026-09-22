@@ -11,6 +11,7 @@
 pub mod beamer;
 pub mod class;
 pub mod frame;
+pub mod generated;
 pub mod geometry;
 pub mod pagestyle;
 pub mod sections;
