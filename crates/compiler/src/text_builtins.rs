@@ -192,6 +192,27 @@ pub fn symbol_accent(mark: char, base: char) -> Option<char> {
         .and_then(|(cp, ..)| char::from_u32(*cp))
 }
 
+/// A punctuation accent (`\"`, `\'`, `` \` ``, `\^`, `\~`, `\=`, `\.`)
+/// over one letter of running text, as the precomposed character the
+/// Latin Modern text fonts carry. `None` leaves the accent and the letter
+/// as they are. The set is the one the render pipeline composed from the
+/// command's two source bytes before the compiler did it on the token
+/// stream (PLAN1 site 11), so an accent a macro body produces composes too.
+pub fn punctuation_accent(mark: char, base: char) -> Option<char> {
+    let table: &[(char, &str, &str)] = &[
+        ('"', "aeiouyAEIOUY", "äëïöüÿÄËÏÖÜŸ"),
+        ('\'', "aeiouyAEIOUYcnszCNSZ", "áéíóúýÁÉÍÓÚÝćńśźĆŃŚŹ"),
+        ('`', "aeiouAEIOU", "àèìòùÀÈÌÒÙ"),
+        ('^', "aeiouAEIOU", "âêîôûÂÊÎÔÛ"),
+        ('~', "anoANO", "ãñõÃÑÕ"),
+        ('=', "aeiouAEIOU", "āēīōūĀĒĪŌŪ"),
+        ('.', "zcegZCEG", "żċėġŻĊĖĠ"),
+    ];
+    let (_, bases, composed) = table.iter().find(|(m, ..)| *m == mark)?;
+    let index = bases.chars().position(|b| b == base)?;
+    composed.chars().nth(index)
+}
+
 /// Kernel text accents whose argument is one letter: `\c` cedilla, `\v`
 /// caron, `\u` breve, `\H` double acute, `\r` ring, `\k` ogonek, `\d` dot
 /// below, `\b` bar below. `\t` (a tie over two letters) is not among them.

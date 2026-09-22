@@ -1664,11 +1664,29 @@ pub struct ParStart {
     /// block after a display environment continues the paragraph the
     /// display interrupted (no indent, no `\parskip`).
     pub par_before: bool,
+    /// This block is the first one inside a `\trivlist` environment
+    /// (`center`, `flushleft`, `flushright`, `quote`, `quotation`, `verse`,
+    /// `verbatim`, `alltt`, beamer's in-flow `figure`/`table`; also
+    /// `lstlisting`, whose display skips read the same mode) whose `\begin`
+    /// ran since the previous block, from the source or a macro body:
+    /// `\@trivlist` adds `\@topsep` in front of it. When several such
+    /// `\begin`s ran, the innermost's.
+    pub trivlist: Option<TrivlistStart>,
+}
+
+/// How a `\trivlist` environment began ([`ParStart::trivlist`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TrivlistStart {
+    /// `\@trivlist`'s `\ifvmode` at the `\begin`: TeX was in vertical mode
+    /// (at the start of the body, after a `\par`, a heading, or the `\par`
+    /// of an `\endtrivlist` or a theorem's end), so `\@topsepadd` takes
+    /// `\partopsep` too.
+    pub vmode: bool,
 }
 
 impl Default for ParStart {
     fn default() -> Self {
-        ParStart { indent: true, par_before: true }
+        ParStart { indent: true, par_before: true, trivlist: None }
     }
 }
 
@@ -3497,6 +3515,93 @@ fn split_at_line_breaks(content: Vec<Inline>) -> Vec<Vec<Inline>> {
     lines
 }
 
+/// A punctuation accent composed with the letter after it ([`accent_at`]).
+struct ComposedAccent {
+    /// The precomposed character ([`text_builtins::punctuation_accent`]).
+    text: String,
+    /// The command and the letter (the command alone when a macro's
+    /// argument supplied the letter from another document).
+    span: Span,
+    /// The first token after the letter, or the letter's own token when the
+    /// rest of its word stays ([`Self::rest`]).
+    resume: usize,
+    /// The rest of the letter's word and its span, which the token at
+    /// `resume` becomes.
+    rest: Option<(String, Span)>,
+}
+
+/// Whether the word token at `at` is a punctuation accent (`\'e`,
+/// `\"{o}`: the control symbols `\" \' \` \^ \~ \= \.`), from the source or a
+/// macro body. `None` when it is not one; `Some(None)` when the letter
+/// after it has no precomposed character, and the accent is not drawn
+/// (TeX's `\accent` is not implemented; the letter is set without it);
+/// otherwise the composed character. The render pipeline used to compose
+/// these from the command's two source bytes, which a macro body's tokens
+/// do not point at (PLAN1 site 11). `tabbing`'s `\=`, `\'` and `` \` `` are
+/// the caller's to exclude.
+fn accent_at(tokens: &[InputToken], at: usize) -> Option<Option<ComposedAccent>> {
+    let accent = tokens.get(at)?;
+    let TokenKind::Word(word) = &accent.token.kind else { return None };
+    let mut chars = word.chars();
+    let (Some(mark), None) = (chars.next(), chars.next()) else { return None };
+    if !accent.token.control_symbol || !"\"'`^~=.".contains(mark) {
+        return None;
+    }
+    let span = accent.token.span;
+    let braced = matches!(tokens.get(at + 1).map(|t| &t.token.kind), Some(TokenKind::LBrace));
+    let base_at = if braced { at + 2 } else { at + 1 };
+    let base = tokens.get(base_at).filter(|t| !t.token.control_symbol);
+    let Some(TokenKind::Word(w)) = base.map(|t| &t.token.kind) else { return Some(None) };
+    let first = w.chars().next()?;
+    if braced && (w.len() != first.len_utf8() || !matches!(tokens.get(base_at + 1).map(|t| &t.token.kind), Some(TokenKind::RBrace))) {
+        return Some(None);
+    }
+    let Some(composed) = text_builtins::punctuation_accent(mark, first) else { return Some(None) };
+    let word_span = tokens[base_at].token.span;
+    // A macro's argument can come from another document than its body.
+    let join = |a: Span, b: Span| if a.document == b.document { a.merge(b) } else { a };
+    if braced {
+        let close = tokens[base_at + 1].token.span;
+        return Some(Some(ComposedAccent { text: composed.to_string(), span: join(span, close), resume: base_at + 2, rest: None }));
+    }
+    let exact = word_span.end - word_span.start == w.len();
+    let base_end = if exact { word_span.start + first.len_utf8() } else { word_span.end };
+    let letter = Span::in_document(word_span.document, word_span.start, base_end);
+    let (resume, rest) = if w.len() == first.len_utf8() {
+        (base_at + 1, None)
+    } else {
+        let rest_span = if exact { Span::in_document(word_span.document, base_end, word_span.end) } else { word_span };
+        (base_at, Some((w[first.len_utf8()..].to_string(), rest_span)))
+    };
+    Some(Some(ComposedAccent { text: composed.to_string(), span: join(span, letter), resume, rest }))
+}
+
+/// [`accent_at`] over a whole token list: each punctuation accent becomes
+/// one word token of its composed character, or is dropped.
+fn compose_text_accents(tokens: &mut Vec<InputToken>) {
+    let mut i = 0;
+    while i < tokens.len() {
+        match accent_at(tokens, i) {
+            None => i += 1,
+            Some(None) => {
+                tokens.remove(i);
+            }
+            Some(Some(accent)) => {
+                let mut token = tokens[i].clone();
+                token.token.kind = TokenKind::Word(accent.text);
+                token.token.span = accent.span;
+                token.token.control_symbol = false;
+                if let Some((rest, span)) = accent.rest {
+                    tokens[accent.resume].token.kind = TokenKind::Word(rest);
+                    tokens[accent.resume].token.span = span;
+                }
+                tokens.splice(i..accent.resume, [token]);
+                i += 1;
+            }
+        }
+    }
+}
+
 /// `\"o`, `\'{e}`, ... in a citation's re-read source (#956) as the
 /// precomposed character (`text_builtins::symbol_accent`). In running text
 /// the pipeline composes these from the two source bytes of the accent
@@ -3811,6 +3916,7 @@ pub fn parse_project_with(
         block_par_starts: Vec::new(),
         par_seen: false,
         noindent_pending: false,
+        trivlist_pending: None,
         current_dependencies: BTreeMap::new(),
         documents,
         document_by_path: documents
@@ -4143,6 +4249,9 @@ struct P<'a> {
     /// vertical mode, or `\@endpe` after a list or trivlist environment
     /// (cleared by `\par`).
     noindent_pending: bool,
+    /// A paragraph-shape `\trivlist` environment began since the last block
+    /// was pushed ([`ParStart::trivlist`]).
+    trivlist_pending: Option<TrivlistStart>,
     current_dependencies: BTreeMap<String, (usize, Vec<TokenKind>)>,
     documents: &'a [SourceDocument<'a>],
     document_by_path: HashMap<&'a str, usize>,
@@ -4724,9 +4833,9 @@ impl P<'_> {
                                 ));
                             }
                         }
-                        let text = self.word_text(word);
-                        let tie = !self.alltt_active();
-                        push_word(para, &self.t, self.i - 1, text, self.style, space_before, &mut self.last_space, tie);
+                        let at = self.i - 1;
+                        let plain = self.word_text(word);
+                        self.push_word_or_accent(para, at, plain, space_before);
                     }
                     continue;
                 }
@@ -4837,9 +4946,9 @@ impl P<'_> {
                                 ));
                             }
                         }
-                        let text = self.word_text(&word);
-                        let tie = !self.alltt_active();
-                        push_word(para, &self.t, self.i - 1, text, self.style, space_before, &mut self.last_space, tie);
+                        let at = self.i - 1;
+                        let plain = self.word_text(&word);
+                        self.push_word_or_accent(para, at, plain, space_before);
                     }
                 }
                 TokenKind::LineBreak => {
@@ -9902,6 +10011,8 @@ impl P<'_> {
         } else if alltt_env {
             let vmode = para.is_empty();
             self.flush_paragraph(blocks, para);
+            // alltt.sty: `\trivlist \item\relax`.
+            self.trivlist_pending = Some(TrivlistStart { vmode: self.vertical_mode });
             self.alltt_stack.push(AllttFrame {
                 lines: Vec::new(),
                 span: span.merge(argument_span),
@@ -9910,6 +10021,8 @@ impl P<'_> {
             });
         } else if let (Some(style), true) = (paragraph_style(&environment), self.in_body) {
             self.flush_paragraph(blocks, para);
+            // `\@trivlist`'s `\ifvmode`: the flush above left the mode.
+            self.trivlist_pending = Some(TrivlistStart { vmode: self.vertical_mode });
             self.paragraph_styles.push(style);
             // An inner alignment environment overrides an outer declaration.
             if style != ParagraphStyle::Quote {
@@ -11777,6 +11890,9 @@ impl P<'_> {
         para: &mut Vec<Inline>,
     ) {
         self.flush_paragraph(blocks, para);
+        // `\verbatim` is `\@verbatim`'s `\trivlist \item\relax`; listings
+        // opens no list, but its display skips read the same mode.
+        self.trivlist_pending = Some(TrivlistStart { vmode: self.vertical_mode });
         let starred = name.ends_with('*');
         let mut content_start = argument_span.end;
         if name == "lstlisting" {
@@ -14105,6 +14221,7 @@ impl P<'_> {
         // argument never reaches the main token loop, so its lookahead runs
         // here on the same flattened token list instead.
         resolve_xspace(&mut tokens);
+        compose_text_accents(&mut tokens);
         let outer_tokens = std::mem::replace(&mut self.t, std::rc::Rc::new(tokens));
         let outer_index = std::mem::replace(&mut self.i, 0);
         let mut expanded = Vec::new();
@@ -15078,6 +15195,30 @@ impl P<'_> {
         });
     }
 
+    /// [`push_word`] for the word token at `at` (its text `plain`), or the
+    /// composed character when it is a punctuation accent ([`accent_at`]).
+    fn push_word_or_accent(&mut self, para: &mut Vec<Inline>, at: usize, plain: String, space_before: bool) {
+        let tie = !self.alltt_active();
+        let accent = if self.tabbing_active() { None } else { accent_at(&self.t, at) };
+        match accent {
+            None => push_word(para, &self.t, at, plain, self.style, space_before, &mut self.last_space, tie),
+            Some(None) => {}
+            Some(Some(accent)) => {
+                self.i = accent.resume;
+                if let Some((rest, span)) = accent.rest {
+                    if let Some(input) = self.token_mut(accent.resume) {
+                        input.token.kind = TokenKind::Word(rest);
+                        input.token.span = span;
+                    }
+                }
+                push_word(para, &self.t, at, accent.text, self.style, space_before, &mut self.last_space, tie);
+                if let Some(Inline::Text { span, .. }) = para.last_mut() {
+                    *span = accent.span;
+                }
+            }
+        }
+    }
+
     fn text_symbol(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
         let space_before = self.space_precedes(self.i - 1);
         let style = self.style;
@@ -15643,6 +15784,7 @@ impl P<'_> {
         let outer_item = self.pending_item.take();
         let outer_dependency_blocks = self.block_dependencies.len();
         let outer_par_leading_blocks = self.block_par_leading.len();
+        let outer_trivlist = self.trivlist_pending.take();
         let mut out = Vec::with_capacity(segments.len());
         for segment in segments {
             self.t = std::rc::Rc::new(segment.clone());
@@ -15653,6 +15795,7 @@ impl P<'_> {
             self.block_dependencies.truncate(outer_dependency_blocks);
             self.block_par_leading.truncate(outer_par_leading_blocks);
             self.block_par_starts.truncate(outer_par_leading_blocks);
+            self.trivlist_pending = None;
             out.push(
                 blocks
                     .into_iter()
@@ -15670,6 +15813,7 @@ impl P<'_> {
         self.style = outer_style;
         self.pending_item_label = outer_label;
         self.pending_item = outer_item;
+        self.trivlist_pending = outer_trivlist;
         out
     }
 
@@ -15986,12 +16130,14 @@ impl P<'_> {
         let outer_item = self.pending_item.take();
         let outer_dependency_blocks = self.block_dependencies.len();
         let outer_par_leading_blocks = self.block_par_leading.len();
+        let outer_trivlist = self.trivlist_pending.take();
         let mut blocks = Vec::new();
         let mut para = Vec::new();
         self.parse_detached(&mut blocks, &mut para);
         self.block_dependencies.truncate(outer_dependency_blocks);
         self.block_par_leading.truncate(outer_par_leading_blocks);
         self.block_par_starts.truncate(outer_par_leading_blocks);
+        self.trivlist_pending = outer_trivlist;
         self.t = outer_tokens;
         self.i = outer_index;
         self.style = outer_style;
@@ -16025,7 +16171,11 @@ impl P<'_> {
         // `flush_list_item` leaves a non-`None` value here.
         self.block_par_leading
             .push(std::mem::take(&mut self.next_block_par_leading));
-        self.block_par_starts.push(ParStart { indent: !self.noindent_pending, par_before: self.par_seen });
+        self.block_par_starts.push(ParStart {
+            indent: !self.noindent_pending,
+            par_before: self.par_seen,
+            trivlist: self.trivlist_pending.take(),
+        });
         self.noindent_pending = false;
         self.par_seen = false;
         self.block_dependencies.push(

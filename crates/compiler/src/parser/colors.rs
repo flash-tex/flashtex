@@ -387,6 +387,7 @@ impl P<'_> {
         let outer_item = self.pending_item.take();
         let outer_dependency_blocks = self.block_dependencies.len();
         let outer_par_leading_blocks = self.block_par_leading.len();
+        let outer_trivlist = self.trivlist_pending.take();
         let mut blocks = Vec::new();
         let mut para = Vec::new();
         self.parse_detached(&mut blocks, &mut para);
@@ -396,6 +397,7 @@ impl P<'_> {
         // per pushed block (see `argument_inlines`).
         self.block_par_leading.truncate(outer_par_leading_blocks);
         self.block_par_starts.truncate(outer_par_leading_blocks);
+        self.trivlist_pending = outer_trivlist;
         self.t = outer_tokens;
         self.i = outer_index;
         self.style = outer_style;
