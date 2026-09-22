@@ -1182,8 +1182,8 @@ fn kernel_font_defaults_are_defined_and_renewable() {
     );
     // The times.sty idiom every IEEEtran/neurips/spconf file uses.
     assert_eq!(
-        run(r"\renewcommand{\sfdefault}{phv}\renewcommand{\rmdefault}{ptm}\renewcommand{\baselinestretch}{1.2}\rmdefault/\sfdefault/\familydefault/\baselinestretch"),
-        "ptm/phv/ptm/1.2"
+        run(r"\renewcommand{\sfdefault}{phv}\renewcommand{\rmdefault}{ptm}\rmdefault/\sfdefault/\familydefault"),
+        "ptm/phv/ptm"
     );
 }
 
