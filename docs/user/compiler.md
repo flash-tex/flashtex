@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 487 text-mode and 620 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 488 text-mode and 620 math-mode command entries, 87 environments and 43 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -788,6 +788,7 @@ Canonical sources:
 | `\text` | `{...}` | amsmath text in text mode: outside math simply \mbox, the argument as one unbreakable box in the current style |
 | `\boxed` | `{...}` | amsmath box in text mode: the argument with a drawn frame (\fbox with math inside) |
 | `\enquote` | `{text}` | csquotes: wraps text in typographic quotation marks; nesting alternates double \u{201c}\u{201d} and single \u{2018}\u{2019} (needs csquotes) |
+| `\todo` | `{...}` | todonotes margin note: the plain form sets its argument like \marginpar (needs todonotes; options, \listoftodos and \missingfigure stay unsupported) |
 | `\frametitle` | `{...}` | beamer frame title (\Large, structure colour, in the frametitle box at the top of the slide); optional <overlay> and [short] read past; needs \documentclass{beamer} |
 | `\framesubtitle` | `{...}` | beamer frame subtitle (\footnotesize, under the frame title); needs \documentclass{beamer} |
 | `\alert` | `<overlay>{...}` | beamer alert text in red on the slides the <overlay> spec selects (every slide without one); needs \documentclass{beamer} |
@@ -1237,6 +1238,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `biblatex` | `style=numeric, sorting=none, backend=biber` | basic project-relative .bib resources with numeric citations, textcite/parencite/autocite, citeauthor/citeyear, nocite and printbibliography; authoryear labels are minimal, alphabetic warns |
 | `ulem` | `normalem` | \uline: 0.4pt rule under the argument (single-line); \sout: 0.4pt strike at 0.55ex; \emph is not redefined |
 | `soul` | `` | \so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828); \st stays unsupported |
+| `todonotes` | `` | \todo{text}: the plain form is set as a margin note like \marginpar; options, \listoftodos and \missingfigure stay unsupported |
 | `relsize` | `` | \larger/\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size |
 | `fancyhdr` | `` | \pagestyle{fancy} ships the \fancyhead/\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \fancyhf clears all six fields; \lhead/\chead/\rhead and \lfoot/\cfoot/\rfoot set one field each (an optional even-page group is ignored one-sided); \fancypagestyle is diagnosed where it is used |
 | `titlesec` | `` | \titleformat{\section} headings take the format's face and size (unnumbered with an empty label) with the \titlerule after-code rule; other levels, printed labels, before-code and shapes beyond the implemented subset are diagnosed where they are used |
@@ -1285,6 +1287,7 @@ Any other package, or these packages with other options, is recorded and reporte
 | `relsize` | \larger/\smaller are parser font state; relsize.sty needs \fontdimen |
 | `ulem` | \uline/\sout are parser decorations; ulem.sty needs \hbox and \vrule |
 | `soul` | \so/\hl are parser decorations; soul.sty needs \hbox and \discretionary |
+| `todonotes` | plain \todo is a parser margin note; todonotes.sty needs \marginpar and TikZ for its coloured boxes |
 | `textcomp` | text symbols are the Unicode text tables; the file needs \DeclareTextSymbol |
 | `appendix` | \appendix is parser state |
 | `lipsum` | \lipsum text is a parser table |

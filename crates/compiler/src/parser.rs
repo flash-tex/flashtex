@@ -4955,6 +4955,10 @@ impl P<'_> {
             "footnote" | "footnotemark" | "footnotetext" => self.footnote(name, span, para),
             "fnsymbol" => self.fnsymbol_command(span, para),
             "marginpar" => self.marginpar(span, para),
+            // todonotes `\todo{text}` (needs the package): a margin note
+            // through the `\marginpar` machinery below. `\listoftodos` and
+            // `\missingfigure` stay unrecognised (unknown-command error).
+            "todo" => self.todo_command(span, para),
             "par" if self.alltt_active() => self.alltt_line_break(para),
             "par" => self.flush_paragraph(blocks, para),
             "bigskip" | "medskip" | "smallskip" | "vspace" | "hrule" | "newpage" | "clearpage"
@@ -14880,18 +14884,61 @@ impl P<'_> {
     /// Margin placement breaks pages, so incremental block reuse is
     /// disabled (the same conservative rule `\label`/`\ref` use).
     fn marginpar(&mut self, span: Span, para: &mut Vec<Inline>) {
+        self.margin_note("marginpar", span, para);
+    }
+
+    /// todonotes `\todo{text}` (the plain form only): with
+    /// `\usepackage{todonotes}` this is a margin note through the shared
+    /// `\marginpar` machinery below, so it positions exactly like one.
+    /// Without the package the name is an ordinary undefined name (a
+    /// user's own `\newcommand{\todo}` wins, as for soul's `\so`/`\hl`),
+    /// diagnosed here while the argument is kept as plain text.
+    /// todonotes options (`\todo[color=...]{...}`), `\listoftodos` and
+    /// `\missingfigure` are out of scope and stay unimplemented.
+    fn todo_command(&mut self, span: Span, para: &mut Vec<Inline>) {
+        if !self.packages.iter().any(|package| package == "todonotes") {
+            let (tokens, argument_span) = self.required_group("todo", span);
+            let full = span.merge(argument_span);
+            self.diags.push(Diagnostic::command_error(
+                "todo",
+                "\\todo needs \\usepackage{todonotes}",
+                Some(full),
+                Some("typeset the argument as plain text".into()),
+            ));
+            para.extend(self.box_inlines(tokens));
+            return;
+        }
+        self.margin_note("todo", span, para);
+    }
+
+    /// The shared margin-note body behind `\marginpar` and `\todo`: `name`
+    /// is the command as written, used for the argument diagnostics. A
+    /// present `[...]` is consumed and reported rather than set (todonotes
+    /// options are out of scope; only the plain `\todo{text}` form is).
+    fn margin_note(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
         let space_before = self.space_precedes(self.i - 1);
         self.document_global_state = true;
         if let Some((_, raw_span)) = self.optional_bracket_argument() {
+            let (message, help) = if name == "marginpar" {
+                (
+                    "\\marginpar's optional [left] argument is ignored: the note is always set in the right margin",
+                    "used the required {right} argument instead",
+                )
+            } else {
+                (
+                    "\\todo's optional [options] argument is not supported: only the plain \\todo{text} form is set",
+                    "used the required {text} argument instead",
+                )
+            };
             self.diags.push(Diagnostic::warning(
-                "\\marginpar's optional [left] argument is ignored: the note is always set in the right margin",
+                message,
                 Some(raw_span),
-                Some("used the required {right} argument instead".into()),
+                Some(help.into()),
             ));
         }
         // Like `\@footnotetext`, the argument is `\long`: a blank line
         // inside it is a paragraph break in the note, not its end.
-        let (tokens, _) = self.required_group_bounded("marginpar", span, true);
+        let (tokens, _) = self.required_group_bounded(name, span, true);
         let text = self.argument_inlines(tokens, span, TextStyle::default());
         para.push(Inline::Marginpar { text, span, space_before });
     }
@@ -15933,6 +15980,11 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // `\so` and `\hl` are implemented (soul takes no package options);
         // `\st` stays unsupported if used.
         "soul" => options.is_empty(),
+        // todonotes' plain `\todo{text}` is a `\marginpar` note (see
+        // `todo_command`); options (`disable`, `colorinlistoftodos`, ...)
+        // change real output and keep the warning, as do the unimplemented
+        // `\listoftodos`/`\missingfigure` where they are used.
+        "todonotes" => options.is_empty(),
         // `\larger`/`\smaller` are implemented above, so loading the
         // package is silent (same rule as `ulem`); relsize takes no options.
         "relsize" => options.is_empty(),
