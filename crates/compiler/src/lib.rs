@@ -27,6 +27,7 @@ pub mod kernel_lengths;
 pub mod layout;
 mod legacy_format;
 pub mod lexer;
+pub mod lipsum;
 pub mod lm_math;
 pub mod math;
 pub mod math_symbols;
