@@ -4,8 +4,9 @@
 //! aligns rows at dynamically recorded tab stops — genuinely different from
 //! `tabular`'s column-spec model. Slice 1 covers the common case: fixed
 //! stops set on a first `\kill`-terminated setup row, then content rows
-//! using `\>` to jump between them. `\<`, `\+` and `\-` are a follow-up
-//! slice (they warn and are ignored here).
+//! using `\>` to jump between them. A later slice adds `\+`/`\-` (the
+//! indent level new rows start at); `\<` is still a follow-up (it warns
+//! and is ignored here).
 
 use flashtex_compiler::incremental::compile_full;
 use flashtex_compiler::layout::{self, Font, LayoutConstraints, TextItem, BODY_SIZE_PT, MARGIN_PT};
@@ -181,30 +182,121 @@ fn jump_without_a_stop_warns_and_stays() {
 }
 
 #[test]
-fn deferred_commands_warn_and_are_ignored() {
-    // `\<`, `\+`, `\-` belong to a follow-up slice: they must warn
-    // explicitly rather than typesetting as text, and the row still lays
-    // out around them.
-    let out = compiled("\\begin{tabbing}\na \\< b \\+ c \\- d\n\\end{tabbing}\n");
-    assert_eq!(out.diagnostics.len(), 3, "{:#?}", out.diagnostics);
-    for (diagnostic, needle) in out.diagnostics.iter().zip(["\\<", "\\+", "\\-"]) {
-        assert!(
-            diagnostic.message.contains("not implemented yet")
-                && diagnostic.message.contains(needle),
-            "{diagnostic:#?}"
-        );
-    }
+fn deferred_command_warns_and_is_ignored() {
+    // `\<` still belongs to a follow-up slice: it must warn explicitly
+    // rather than typesetting as text, and the row still lays out around
+    // it. (`\+`/`\-` are implemented below and warn no more.)
+    let out = compiled("\\begin{tabbing}\na \\< b\n\\end{tabbing}\n");
+    assert_eq!(out.diagnostics.len(), 1, "{:#?}", out.diagnostics);
+    assert!(
+        out.diagnostics[0].message.contains("not implemented yet")
+            && out.diagnostics[0].message.contains("\\<"),
+        "{:#?}",
+        out.diagnostics
+    );
     let items: Vec<TextItem> = out
         .pages
         .iter()
         .flat_map(|page| page.items.clone())
         .collect();
     let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
-    assert_eq!(texts, vec!["a", "b", "c", "d"]);
+    assert_eq!(texts, vec!["a", "b"]);
     assert!(
         items.windows(2).all(|pair| pair[0].x_pt < pair[1].x_pt
             && pair[0].baseline_y_pt == pair[1].baseline_y_pt),
         "one laid-out row: {items:#?}"
+    );
+}
+
+#[test]
+fn plus_and_minus_move_the_stop_new_rows_start_at() {
+    // Two stops from the setup row; `\+`/`\-` between rows move the level
+    // subsequent rows begin at. A `\+` inside a row only affects the rows
+    // after it (real LaTeX's `\@nxttabmar`), so `b` still starts at the
+    // margin while `c`, `d`, `e` start at stops 1, 2, 1.
+    let out = compiled(
+        "\\begin{tabbing}\nLongest \\= middle \\= short \\kill\na \\\\\n\\+ b \\\\\n\\+ c \\\\\n\\- d \\\\\ne\n\\end{tabbing}\n",
+    );
+    assert!(
+        out.diagnostics
+            .iter()
+            .all(|d| !d.message.contains("not implemented")),
+        "{:#?}",
+        out.diagnostics
+    );
+    assert!(out.diagnostics.is_empty(), "{:#?}", out.diagnostics);
+    let items: Vec<TextItem> = out
+        .pages
+        .iter()
+        .flat_map(|page| page.items.clone())
+        .collect();
+    let stop1 = MARGIN_PT + width("Longest");
+    let stop2 = stop1 + space() + width("middle");
+    close(item_with(&items, "a", 0).x_pt, MARGIN_PT, "row before any \\+");
+    close(
+        item_with(&items, "b", 0).x_pt,
+        MARGIN_PT,
+        "\\+ takes effect on later rows, not its own",
+    );
+    close(item_with(&items, "c", 0).x_pt, stop1, "one \\+ in effect");
+    close(item_with(&items, "d", 0).x_pt, stop2, "two \\+ in effect");
+    close(item_with(&items, "e", 0).x_pt, stop1, "\\- steps back one stop");
+}
+
+#[test]
+fn indent_matches_the_same_layout_reached_with_explicit_jumps() {
+    // The indented rows above must land exactly where explicit `\>`
+    // jumps from the margin land: the two spellings are interchangeable.
+    let indented = items_of(
+        "\\begin{tabbing}\nLongest \\= middle \\= short \\kill\na \\\\\n\\+ b \\\\\n\\+ c \\\\\n\\- d \\\\\ne\n\\end{tabbing}\n",
+    );
+    let explicit = items_of(
+        "\\begin{tabbing}\nLongest \\= middle \\= short \\kill\na \\\\\nb \\\\\n\\> c \\\\\n\\> \\> d \\\\\n\\> e\n\\end{tabbing}\n",
+    );
+    for text in ["a", "b", "c", "d", "e"] {
+        close(
+            item_with(&indented, text, 0).x_pt,
+            item_with(&explicit, text, 0).x_pt,
+            format!("{text} starts at the same column either way").as_str(),
+        );
+    }
+}
+
+#[test]
+fn minus_at_the_margin_stays_at_the_margin() {
+    // `\-` with no indent level to give up saturates at the margin rather
+    // than warning or going negative (real LaTeX errors here; this engine
+    // stays silent, like its other clamped tabbing cases).
+    let out = compiled("\\begin{tabbing}\n\\- a\n\\end{tabbing}\n");
+    assert!(out.diagnostics.is_empty(), "{:#?}", out.diagnostics);
+    let items: Vec<TextItem> = out
+        .pages
+        .iter()
+        .flat_map(|page| page.items.clone())
+        .collect();
+    close(item_with(&items, "a", 0).x_pt, MARGIN_PT, "\\- at zero");
+}
+
+#[test]
+fn plus_past_the_last_stop_saturates_at_the_deepest_stop() {
+    // One stop only, but two levels of `\+`: the row starts at the
+    // deepest known stop rather than warning or running off the line.
+    let out = compiled("\\begin{tabbing}\nstop \\= rest \\kill\nx \\+ \\+ \\\\\nb\n\\end{tabbing}\n");
+    assert!(out.diagnostics.is_empty(), "{:#?}", out.diagnostics);
+    let items: Vec<TextItem> = out
+        .pages
+        .iter()
+        .flat_map(|page| page.items.clone())
+        .collect();
+    close(
+        item_with(&items, "x", 0).x_pt,
+        MARGIN_PT,
+        "row carrying the \\+ stays at the margin",
+    );
+    close(
+        item_with(&items, "b", 0).x_pt,
+        MARGIN_PT + width("stop"),
+        "over-indent saturates at the only stop",
     );
 }
 

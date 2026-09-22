@@ -2397,11 +2397,13 @@ impl LayoutCursor {
             // `tabbing`: rows align at dynamically recorded stops, not at
             // columns from a spec. Stops persist across the rows in source
             // order: every `\=` (on live and `\kill`ed rows alike) records
-            // the current row position, and every `\>` jumps right to the
-            // next recorded stop. Like `LetterBlock`, rows break where the
-            // source's `\\` (or `\kill`, or a blank line) puts them; an
-            // overlong row still wraps on overflow through `place`'s usual
-            // check, exactly as a `LetterBlock` row does.
+            // the current row position, every `\>` jumps right to the
+            // next recorded stop, and every row starts at its `\+`/`\-`
+            // indent stop (level 0 is the left margin). Like `LetterBlock`,
+            // rows break where the source's `\\` (or `\kill`, or a blank
+            // line) puts them; an overlong row still wraps on overflow
+            // through `place`'s usual check, exactly as a `LetterBlock`
+            // row does.
             Block::Tabbing { lines, .. } => {
                 self.justify = false;
                 let mut stops: Vec<f64> = Vec::new();
@@ -2414,6 +2416,19 @@ impl LayoutCursor {
                         self.newline(body_size);
                     }
                     let undo = TabbingUndo::capture(self);
+                    // The row's `\+`/`\-` indent: start at the recorded
+                    // stop, like a `\>` from the margin. A level past the
+                    // stops known so far saturates at the deepest one, and
+                    // a stop left of the row start never moves it back.
+                    if line.indent > 0 {
+                        let level = line.indent.min(stops.len()).saturating_sub(1);
+                        if let Some(stop) = stops.get(level) {
+                            let delta = *stop - self.content_end;
+                            if delta > 1e-6 {
+                                self.hspace(delta, 0.0, 0.0);
+                            }
+                        }
+                    }
                     for inline in &line.content {
                         match inline {
                             Inline::TabStop { .. } => {

@@ -1145,12 +1145,13 @@ pub enum Block {
     /// A `tabbing` environment (plain LaTeX2e kernel, not a package): rows
     /// of text aligned at tab stops. Unlike `tabular` there is no column
     /// spec: `\=` records the current horizontal position as a stop,
-    /// `\>` jumps right to the next recorded stop, `\\` ends a row back
-    /// at the left margin, and `\kill` ends a row that registers its
-    /// stops but produces no output (the usual dummy setup line). Stops
-    /// persist across the environment's rows in source order. `\<`, `\+`
-    /// and `\-` are not implemented yet (a follow-up slice); they warn
-    /// and are ignored.
+    /// `\>` jumps right to the next recorded stop, `\\` ends a row, and
+    /// `\kill` ends a row that registers its stops but produces no output
+    /// (the usual dummy setup line). Stops persist across the environment's
+    /// rows in source order. `\+` moves the stop new rows start at one
+    /// stop right and `\-` one stop left (each row keeps the level current
+    /// when it began); `\<` is not implemented yet (a follow-up slice) —
+    /// it warns and is ignored.
     Tabbing {
         lines: Vec<TabbingLine>,
         span: Span,
@@ -1460,10 +1461,15 @@ pub enum LetterPart {
 /// One row of a [`Block::Tabbing`]: the inline content up to the row's
 /// `\\` or `\kill` (including [`Inline::TabStop`] / [`Inline::TabJump`]
 /// markers). `killed` rows register their stops but produce no output.
+/// `indent` is the number of the tab stop the row starts at (0 is the left
+/// margin): `\+`/`\-` move the level new rows start at, and each row keeps
+/// the level that was current when the row *began* (a `\+` inside the row
+/// itself only affects the rows after it, as in real LaTeX).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TabbingLine {
     pub content: Vec<Inline>,
     pub killed: bool,
+    pub indent: usize,
 }
 
 /// One open `alltt` environment. The paragraph buffer is the current source
@@ -3849,10 +3855,15 @@ struct LetterDeclarations {
 
 /// One open `tabbing` environment: its finished rows so far, plus the
 /// `\begin{tabbing}` span for the eventual [`Block::Tabbing`].
+/// `indent_next` is the level `\+`/`\-` move new rows to (real LaTeX's
+/// `\@nxttabmar`); `indent_cur` is the level the row currently being
+/// accumulated started at (`\@curtabmar`), stamped onto it when it drains.
 #[derive(Debug, Clone)]
 struct TabbingFrame {
     lines: Vec<TabbingLine>,
     span: Span,
+    indent_next: usize,
+    indent_cur: usize,
 }
 
 /// One open `itemize`/`enumerate`/`description`/`thebibliography`.
@@ -8877,17 +8888,27 @@ impl P<'_> {
         match word {
             "=" => para.push(Inline::TabStop { span }),
             ">" => para.push(Inline::TabJump { span }),
-            // A follow-up slice owns `\<` (jump to the previous stop, even
-            // leftwards) and `\+`/`\-` (the indent level new rows start
-            // at); warn and ignore rather than typesetting them as text.
-            "<" | "+" | "-" => {
-                let what = match word {
-                    "<" => "the previous-tab-stop command `\\<`",
-                    "+" => "the indent-increase command `\\+`",
-                    _ => "the indent-decrease command `\\-`",
-                };
+            // `\+` moves the level new rows start at one stop right,
+            // `\-` one stop left (real LaTeX's `\@nxttabmar`): the row
+            // being accumulated keeps its own starting level, so these
+            // only affect the rows after it. They emit no inline of their
+            // own. `\-` at the margin saturates rather than warning.
+            "+" => {
+                if let Some(frame) = self.tabbing_stack.last_mut() {
+                    frame.indent_next = frame.indent_next.saturating_add(1);
+                }
+            }
+            "-" => {
+                if let Some(frame) = self.tabbing_stack.last_mut() {
+                    frame.indent_next = frame.indent_next.saturating_sub(1);
+                }
+            }
+            // `\<` (jump to the previous stop, even leftwards at the start
+            // of a line) is a follow-up slice; warn and ignore rather than
+            // typesetting it as text.
+            "<" => {
                 self.diags.push(Diagnostic::warning(
-                    format!("{what} in tabbing is not implemented yet"),
+                    "the previous-tab-stop command `\\<` in tabbing is not implemented yet".to_string(),
                     Some(span),
                     Some("ignored the command and continued".into()),
                 ));
@@ -8898,12 +8919,18 @@ impl P<'_> {
 
     /// End the current `tabbing` row: drain the paragraph buffer into the
     /// open frame. `killed` rows (`\kill`) register their `\=` stops but
-    /// produce no output; `\\` and blank lines end ordinary rows.
+    /// produce no output; `\\` and blank lines end ordinary rows. The row
+    /// keeps the indent level it started at; the next row starts a new
+    /// line at whatever `\+`/`\-` moved the level to meanwhile (real
+    /// LaTeX's `\@startline` copying `\@nxttabmar` into `\@curtabmar`).
     fn end_tabbing_line(&mut self, killed: bool, para: &mut Vec<Inline>) {
         if let Some(frame) = self.tabbing_stack.last_mut() {
+            let indent = frame.indent_cur;
+            frame.indent_cur = frame.indent_next;
             frame.lines.push(TabbingLine {
                 content: std::mem::take(para),
                 killed,
+                indent,
             });
         }
     }
@@ -8918,6 +8945,7 @@ impl P<'_> {
                 lines.push(TabbingLine {
                     content: last,
                     killed: false,
+                    indent: frame.indent_cur,
                 });
             }
             if !lines.is_empty() {
@@ -9218,6 +9246,8 @@ impl P<'_> {
             self.tabbing_stack.push(TabbingFrame {
                 lines: Vec::new(),
                 span: span.merge(argument_span),
+                indent_next: 0,
+                indent_cur: 0,
             });
         } else if environment == "frame" && self.in_body && self.is_beamer_class() {
             // Beamer slide (issue #841): a page break plus the optional
