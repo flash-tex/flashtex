@@ -1975,9 +1975,95 @@ pub enum FontSizeLevel {
     Huge1,
     /// `\Huge`.
     Huge2,
+    /// NFSS `\fontsize{<size>}{<skip>}\selectfont`: the exact `\f@size`
+    /// and `\f@baselineskip` the expansion engine resolved, not the
+    /// nearest named level.
+    Explicit(ExplicitSize),
+}
+
+/// A size `\fontsize` selected ([`FontSizeLevel::Explicit`]), in scaled
+/// points so the style stays `Eq`/`Hash`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ExplicitSize {
+    /// `\f@size`, as the document asked for it.
+    pub size_sp: i32,
+    /// The size of the font `\selectfont` loads for it: `size_sp` itself
+    /// for a family whose `.fd` scales to any size (Latin Modern's ranges,
+    /// Times), else LaTeX's size substitution to the nearest size the
+    /// family's `.fd` declares (`\fontsize{13}{15}` in OT1 `cmr` loads
+    /// `cmr12`: "Font shape `OT1/cmr/m/n' in size <13> not available,
+    /// size <12> substituted").
+    pub font_sp: i32,
+    /// `\f@baselineskip` (its natural width).
+    pub baselineskip_sp: i32,
+}
+
+/// The sizes `ot1cmr.fd` and its siblings declare (`<5><6><7><8><9><10>
+/// <12>gen*cmr<10.95>cmr10<14.4>cmr12<17.28><20.74><24.88>cmr17`), and the
+/// two more `t1cmr.fd`'s EC fonts add (`<29.86><35.83>`).
+const CM_OT1_SIZES: [f64; 12] = [5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 10.95, 12.0, 14.4, 17.28, 20.74, 24.88];
+const CM_T1_EXTRA_SIZES: [f64; 2] = [29.86, 35.83];
+
+/// LaTeX's size substitution (`\try@size@substitution`): the declared size
+/// nearest `pt`, the smaller one on a tie.
+fn substituted_size(pt: f64, t1: bool) -> f64 {
+    let extra: &[f64] = if t1 { &CM_T1_EXTRA_SIZES } else { &[] };
+    CM_OT1_SIZES
+        .iter()
+        .chain(extra)
+        .copied()
+        .fold(None, |best: Option<f64>, size| match best {
+            Some(b) if (b - pt).abs() <= (size - pt).abs() => Some(b),
+            _ => Some(size),
+        })
+        .unwrap_or(pt)
+}
+
+/// `\fontsize`'s two arguments as the engine hands them back (`13`,
+/// `15.0pt`); `font_sp` is `size_sp` until `\selectfont` resolves it.
+fn explicit_size(size: &str, skip: &str) -> Option<ExplicitSize> {
+    let sp = |text: &str| {
+        let text = text.trim();
+        let number = text.strip_suffix("pt").unwrap_or(text).trim();
+        number.parse::<f64>().ok().filter(|pt| pt.is_finite() && *pt > 0.0).map(|pt| (pt * 65536.0).round() as i32)
+    };
+    let size_sp = sp(size)?;
+    Some(ExplicitSize { size_sp, font_sp: size_sp, baselineskip_sp: sp(skip)? })
+}
+
+impl ExplicitSize {
+    /// `\f@size`.
+    pub fn size_pt(self) -> f64 {
+        f64::from(self.size_sp) / 65536.0
+    }
+
+    /// The loaded font's size ([`Self::font_sp`]), which sets the glyphs
+    /// and their `em`.
+    pub fn font_pt(self) -> f64 {
+        f64::from(self.font_sp) / 65536.0
+    }
+
+    pub fn baselineskip_pt(self) -> f64 {
+        f64::from(self.baselineskip_sp) / 65536.0
+    }
 }
 
 impl FontSizeLevel {
+    /// The named level itself, or for an [`FontSizeLevel::Explicit`] size
+    /// the named level (`None` is `\normalsize`) whose size at
+    /// `body_size_pt` is closest: what `\larger`/`\smaller` and the AMS
+    /// ladder step from.
+    pub(crate) fn named(self, body_size_pt: f64) -> Option<FontSizeLevel> {
+        let FontSizeLevel::Explicit(size) = self else { return Some(self) };
+        let pt = size.font_pt();
+        let at = |level: Option<FontSizeLevel>| level.map_or(body_size_pt, |l| crate::layout::size_declaration_pt(l, body_size_pt));
+        Self::ORDER
+            .iter()
+            .copied()
+            .min_by(|a, b| (at(*a) - pt).abs().total_cmp(&(at(*b) - pt).abs()))
+            .flatten()
+    }
+
     /// The ten `\tiny`..`\Huge` levels in table order (`None` is
     /// `\normalsize`), shared by the closest-match search below.
     const ORDER: [Option<FontSizeLevel>; 10] = [
@@ -2121,7 +2207,7 @@ impl FontSizeLevel {
     /// tiny, huge, Huge`): the first level in this order wins any tie for
     /// closest to the step's target.
     fn scan_rank(level: Option<FontSizeLevel>) -> usize {
-        match level {
+        match level.and_then(|l| l.named(crate::layout::BODY_SIZE_PT)) {
             None => 0,
             Some(FontSizeLevel::Small) => 1,
             Some(FontSizeLevel::FootnoteSize) => 2,
@@ -2132,6 +2218,8 @@ impl FontSizeLevel {
             Some(FontSizeLevel::Tiny) => 7,
             Some(FontSizeLevel::Huge1) => 8,
             Some(FontSizeLevel::Huge2) => 9,
+            // `named` never returns an explicit size.
+            Some(FontSizeLevel::Explicit(_)) => 0,
         }
     }
 }
@@ -2909,6 +2997,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "LARGE",
     "huge",
     "Huge",
+    "fontsize",
+    "selectfont",
     "larger",
     "smaller",
     "cite",
@@ -3949,6 +4039,7 @@ pub fn parse_project_with(
         par_seen: false,
         noindent_pending: false,
         trivlist_pending: None,
+        pending_font_size: None,
         current_dependencies: BTreeMap::new(),
         documents,
         document_by_path: documents
@@ -4288,6 +4379,9 @@ struct P<'a> {
     /// A paragraph-shape `\trivlist` environment began since the last block
     /// was pushed ([`ParStart::trivlist`]).
     trivlist_pending: Option<TrivlistStart>,
+    /// The size the last `\fontsize` recorded, which `\selectfont` applies
+    /// ([`FontSizeLevel::Explicit`]).
+    pending_font_size: Option<ExplicitSize>,
     current_dependencies: BTreeMap<String, (usize, Vec<TokenKind>)>,
     documents: &'a [SourceDocument<'a>],
     document_by_path: HashMap<&'a str, usize>,
@@ -5670,6 +5764,19 @@ impl P<'_> {
             // `style_command_argument` (which always demands a group) this
             // path consumes no braces itself.
             "larger" | "smaller" => self.relative_size_command(name, span, para),
+            // NFSS `\fontsize{<size>}{<skip>}` then `\selectfont`: the
+            // expansion engine ran both (`\set@fontsize`, `\size@update`)
+            // and hands them back with `\f@size` and `\f@baselineskip`
+            // resolved (`expansion.rs` `flashtexfontsizedone`). The size
+            // takes effect at `\selectfont`, scoped like `\Large`.
+            "fontsize" => self.font_size_command(span),
+            "selectfont" => {
+                if let Some(mut size) = self.pending_font_size {
+                    size.font_sp = self.nfss_font_sp(size.size_sp);
+                    self.style.size = Some(FontSizeLevel::Explicit(size));
+                    self.style.ams_tiny = false;
+                }
+            }
             _ if style_command(name) => self.style_command_argument(name, span, para),
             _ if style_declaration(name) => {
                 self.style = apply_style(self.style, name, self.body_size_pt(), self.nfss_scheme())
@@ -8200,6 +8307,13 @@ impl P<'_> {
             .trim_start_matches('\\')
             .to_string();
         let raw = dimen_source(&value_tokens);
+        // `\selectfont`'s `\size@update` sets `\baselineskip` from
+        // `\f@baselineskip` (then scales it by `\f@linespread`: two
+        // markers) right before the hand-back: the size node carries that
+        // value ([`ExplicitSize::baselineskip_sp`]).
+        if target == "baselineskip" && self.selectfont_follows() {
+            return;
+        }
         // `\setcounter{secnumdepth}` (`OBSERVED_COUNTERS`).
         if target == "c@secnumdepth" {
             self.secnumdepth = raw.trim().parse::<i64>().ok().or(self.secnumdepth);
@@ -14292,6 +14406,8 @@ impl P<'_> {
         let mut pending_text_command = false;
         // Tokens already read as a siunitx command's arguments.
         let mut skip_until = 0usize;
+        // The last `\fontsize`, for the next `\selectfont`.
+        let mut pending_font_size: Option<ExplicitSize> = None;
         // The style at the last space token since the last word (`glue_before`).
         let mut last_space: Option<TextStyle> = None;
         for (index, input) in expanded.iter().enumerate() {
@@ -14504,6 +14620,34 @@ impl P<'_> {
                 TokenKind::Command(name) if style_declaration(name) => {
                     let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
                     style = apply_style(style, name, body, self.nfss_scheme());
+                }
+                // NFSS `\fontsize{..}{..}\selectfont`, as in the body
+                // ([`P::font_size_command`]).
+                TokenKind::Command(name) if name == "fontsize" => {
+                    if let Some((size, _, after)) = siunitx_group_at(&expanded, index + 1) {
+                        if let Some((skip, _, after)) = siunitx_group_at(&expanded, after) {
+                            pending_font_size = explicit_size(&size, &skip);
+                            skip_until = after;
+                        }
+                    }
+                }
+                // A register assignment the engine ran inside the argument
+                // (`\selectfont`'s `\baselineskip`, a `\setlength`): its
+                // `{\name}{<value>}` marker sets nothing here and is not
+                // text.
+                TokenKind::Command(name)
+                    if matches!(name.as_str(), "flashtexlengthset" | "flashtexlengthadd" | "flashtexlengthassign") =>
+                {
+                    if let Some((_, _, after)) = siunitx_group_at(&expanded, index + 1) {
+                        skip_until = siunitx_group_at(&expanded, after).map_or(after, |(_, _, end)| end);
+                    }
+                }
+                TokenKind::Command(name) if name == "selectfont" => {
+                    if let Some(mut size) = pending_font_size {
+                        size.font_sp = self.nfss_font_sp(size.size_sp);
+                        style.size = Some(FontSizeLevel::Explicit(size));
+                        style.ams_tiny = false;
+                    }
                 }
                 TokenKind::LBrace => {
                     let mut group = None;
@@ -15265,6 +15409,49 @@ impl P<'_> {
                     *span = accent.span;
                 }
             }
+        }
+    }
+
+    /// Whether `\selectfont`'s hand-back follows, with nothing but further
+    /// register markers before it ([`Self::length_marker`]).
+    fn selectfont_follows(&self) -> bool {
+        for input in self.t.iter().skip(self.i).take(48) {
+            match &input.token.kind {
+                TokenKind::Command(c) if c == "selectfont" => return true,
+                TokenKind::Command(c) if c.starts_with("flashtexlength") || c == "baselineskip" || c == "global" => {}
+                TokenKind::LBrace | TokenKind::RBrace | TokenKind::Word(_) => {}
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// [`ExplicitSize::font_sp`] for `size_sp` in the document's text fonts:
+    /// Computer Modern's `.fd` files declare a fixed set of sizes, Latin
+    /// Modern's and the scalable families' (`times`, `mathptmx`, `helvet`,
+    /// ...) any size.
+    fn nfss_font_sp(&self, size_sp: i32) -> i32 {
+        const SCALABLE: [&str; 12] = ["times", "mathptmx", "helvet", "courier", "newtxtext", "newtxmath", "mathpazo", "palatino", "tgtermes", "tgheros", "charter", "libertine"];
+        if self.latin_modern || self.packages.iter().any(|p| SCALABLE.contains(&p.as_str())) {
+            return size_sp;
+        }
+        let pt = substituted_size(f64::from(size_sp) / 65536.0, self.font_encoding == Encoding::T1);
+        (pt * 65536.0).round() as i32
+    }
+
+    /// `\fontsize{<f@size>}{<f@baselineskip>}` as the engine hands it back
+    /// ([`FontSizeLevel::Explicit`]): records the size for the next
+    /// `\selectfont`.
+    fn font_size_command(&mut self, span: Span) {
+        let (size_tokens, _) = self.required_group("fontsize", span);
+        let (skip_tokens, skip_span) = self.required_group("fontsize", span);
+        match explicit_size(&token_text(&size_tokens), &token_text(&skip_tokens)) {
+            Some(size) => self.pending_font_size = Some(size),
+            None => self.diags.push(Diagnostic::warning(
+                "\\fontsize requires a size and a baselineskip the engine could resolve",
+                Some(span.merge(skip_span)),
+                Some("kept the current size".into()),
+            )),
         }
     }
 

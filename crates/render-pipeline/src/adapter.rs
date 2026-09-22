@@ -8260,11 +8260,30 @@ fn hash_style(s: &flashtex_compiler::parser::TextStyle, h: &mut impl std::hash::
     use std::hash::Hash;
     let key = |k: crate::nfss::FontKey| (k.family as u64) | (k.series as u64) << 2 | (k.shape as u64) << 4;
     let flags = [s.bold, s.italic, s.slanted, s.small_caps, s.ams_tiny, s.medium, s.literal, s.italic_correction.before, s.italic_correction.after];
-    let mut word = key(s.font.key) | s.font.undefined.map_or(0, |u| 0x80 | key(u)) << 7 | s.size.map_or(0, |l| l as u64 + 1) << 15 | (s.family as u64) << 19;
+    use flashtex_compiler::parser::FontSizeLevel as L;
+    // Four bits: `None` 0, the nine named levels 1..=9, an explicit
+    // `\fontsize` 15 (its value follows).
+    let size = match s.size {
+        None => 0,
+        Some(L::Tiny) => 1,
+        Some(L::ScriptSize) => 2,
+        Some(L::FootnoteSize) => 3,
+        Some(L::Small) => 4,
+        Some(L::Large1) => 5,
+        Some(L::Large2) => 6,
+        Some(L::Large3) => 7,
+        Some(L::Huge1) => 8,
+        Some(L::Huge2) => 9,
+        Some(L::Explicit(_)) => 15,
+    };
+    let mut word = key(s.font.key) | s.font.undefined.map_or(0, |u| 0x80 | key(u)) << 7 | size << 15 | (s.family as u64) << 19;
     for (i, flag) in flags.into_iter().enumerate() {
         word |= u64::from(flag) << (21 + i);
     }
     h.write_u64(word);
+    if let Some(L::Explicit(explicit)) = s.size {
+        explicit.hash(h);
+    }
     if s.color.is_some() || s.cjk.is_some() {
         (s.color, s.cjk).hash(h);
     }
@@ -8354,6 +8373,8 @@ fn par_leading_pt(leading: ParLeading, base: flashtex_document_style::BaseSize) 
     use flashtex_compiler::parser::FontSizeLevel as L;
     use flashtex_document_style::SizeName as N;
     let name = match leading? {
+        // `\fontsize{..}{<skip>}\selectfont`: its own `\f@baselineskip`.
+        L::Explicit(size) => return Some(size.baselineskip_pt()),
         L::Tiny => N::Tiny,
         L::ScriptSize => N::ScriptSize,
         L::FootnoteSize => N::FootnoteSize,
@@ -8378,6 +8399,11 @@ fn par_leading_pt(leading: ParLeading, base: flashtex_document_style::BaseSize) 
 fn declared_size(level: Option<flashtex_compiler::parser::FontSizeLevel>, base: u32) -> u16 {
     use flashtex_compiler::parser::FontSizeLevel as L;
     let Some(level) = level else { return 0 };
+    // `\fontsize{<size>}{..}\selectfont`: the engine's exact `\f@size`, as
+    // the family's `.fd` loads it (`ExplicitSize::font_sp`).
+    if let L::Explicit(size) = level {
+        return (size.font_pt() * 100.0).round().clamp(1.0, f64::from(u16::MAX)) as u16;
+    }
     // tiny, scriptsize, footnotesize, small, large, Large, LARGE, huge, Huge
     let table: [[u16; 3]; 9] = [
         [500, 600, 600],
@@ -8405,6 +8431,7 @@ fn declared_size(level: Option<flashtex_compiler::parser::FontSizeLevel>, base: 
         L::Large3 => 6,
         L::Huge1 => 7,
         L::Huge2 => 8,
+        L::Explicit(_) => unreachable!("returned above"),
     };
     table[row][col]
 }

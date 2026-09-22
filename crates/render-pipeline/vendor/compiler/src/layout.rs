@@ -3333,6 +3333,10 @@ fn heading_size(level: u8, body_size: f64) -> f64 {
 /// compiler's own body size is a literal 11pt rather than real LaTeX's
 /// 10.95pt normalsize (`class_size_pt`'s documented approximation).
 pub(crate) fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f64 {
+    // `\fontsize` selects its size outright.
+    if let FontSizeLevel::Explicit(size) = level {
+        return size.font_pt();
+    }
     // tiny, scriptsize, footnotesize, small, large, Large, LARGE, huge, Huge
     // (normalsize is handled by the caller before reaching here).
     const SIZE_10PT: [f64; 9] = [5.0, 7.0, 8.0, 9.0, 12.0, 14.4, 17.28, 20.74, 24.88];
@@ -3355,6 +3359,7 @@ pub(crate) fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f6
         FontSizeLevel::Large3 => 6,
         FontSizeLevel::Huge1 => 7,
         FontSizeLevel::Huge2 => 8,
+        FontSizeLevel::Explicit(_) => unreachable!("returned above"),
     };
     table[index]
 }
@@ -3435,7 +3440,7 @@ pub(crate) fn ams_size_declaration_pt(rung: usize, body_size_pt: f64) -> (f64, f
 /// rung 5). `\scriptsize`/`\footnotesize` sit on the `\SMALL`/`\Small`
 /// rungs, exactly as the class's own aliases do.
 pub(crate) fn ams_rung(level: Option<FontSizeLevel>) -> usize {
-    match level {
+    match level.and_then(|l| l.named(BODY_SIZE_PT)) {
         Some(FontSizeLevel::Tiny) => 1,
         Some(FontSizeLevel::ScriptSize) => 2,
         Some(FontSizeLevel::FootnoteSize) => 3,
@@ -3446,6 +3451,8 @@ pub(crate) fn ams_rung(level: Option<FontSizeLevel>) -> usize {
         Some(FontSizeLevel::Large3) => 8,
         Some(FontSizeLevel::Huge1) => 9,
         Some(FontSizeLevel::Huge2) => 10,
+        // `named` never returns an explicit size.
+        Some(FontSizeLevel::Explicit(_)) => 5,
     }
 }
 
@@ -3483,7 +3490,9 @@ pub(crate) fn size_declaration_pt_for_class(
     body_size_pt: f64,
     ams: bool,
 ) -> f64 {
-    if ams {
+    if let FontSizeLevel::Explicit(size) = level {
+        size.font_pt()
+    } else if ams {
         ams_size_declaration_pt(ams_rung(Some(level)), body_size_pt).0
     } else {
         size_declaration_pt(level, body_size_pt)
