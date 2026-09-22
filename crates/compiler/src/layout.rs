@@ -3053,21 +3053,24 @@ impl LayoutCursor {
     }
 
     /// Stamp fancyhdr running heads and rules onto every page that shipped
-    /// under `\pagestyle{fancy}` (latex.ltx `\@outputpage`'s head/foot
-    /// lines, in this layout's fixed frame). Header lines go AHEAD of the
-    /// page's body items and footer lines AFTER them, so content-stream
-    /// order matches pdflatex (`pdftotext` reads header, body, footer). A
-    /// page under any other style is untouched; with all six fields empty
-    /// only the default head rule draws, exactly as the oracle does.
+    /// under `\pagestyle{fancy}` or scrlayer-scrpage's
+    /// `\pagestyle{scrheadings}` (latex.ltx `\@outputpage`'s head/foot
+    /// lines, in this layout's fixed frame; `scrheadings` fills the same
+    /// six fields -- see [`PageStyleName::ships_fancy_chrome`]). Header
+    /// lines go AHEAD of the page's body items and footer lines AFTER
+    /// them, so content-stream order matches pdflatex (`pdftotext` reads
+    /// header, body, footer). A page under any other style is untouched;
+    /// with all six fields empty only the default head rule draws,
+    /// exactly as the oracle does.
     fn stamp_fancy_chrome(&mut self) {
         self.ship_page_style();
-        if !self.page_chrome.contains(&PageStyleName::Fancy) {
+        if !self.page_chrome.iter().any(|style| style.ships_fancy_chrome()) {
             return;
         }
         let size = self.constraints.font_size_pt;
         let measure = self.constraints.measure_pt;
         for index in 0..self.pages.len() {
-            if self.page_chrome.get(index) != Some(&PageStyleName::Fancy) {
+            if !self.page_chrome.get(index).is_some_and(|style| style.ships_fancy_chrome()) {
                 continue;
             }
             let (number_style, number) = self

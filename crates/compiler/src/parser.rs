@@ -90,15 +90,17 @@ pub enum FillLeader {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// A page style named by `\pagestyle`/`\thispagestyle`: the kernel's four
-/// plus fancyhdr's `fancy`. `Unknown` keeps any other name accepted and
-/// silent, exactly as `\pagestyle` has always treated styles this layout
-/// does not render.
+/// plus fancyhdr's `fancy` and scrlayer-scrpage's `scrheadings` (a thin
+/// adapter over fancyhdr's fields; see `fancy_single_command`).
+/// `Unknown` keeps any other name accepted and silent, exactly as
+/// `\pagestyle` has always treated styles this layout does not render.
 pub enum PageStyleName {
     Empty,
     Plain,
     Headings,
     MyHeadings,
     Fancy,
+    Scrheadings,
     Unknown,
 }
 
@@ -110,8 +112,16 @@ impl PageStyleName {
             "headings" => PageStyleName::Headings,
             "myheadings" => PageStyleName::MyHeadings,
             "fancy" => PageStyleName::Fancy,
+            "scrheadings" => PageStyleName::Scrheadings,
             _ => PageStyleName::Unknown,
         }
+    }
+
+    /// Whether a page shipping under this style gets fancyhdr's running
+    /// heads and rules: `fancy`, and scrlayer-scrpage's `scrheadings`,
+    /// which fills the same six slots (see `fancy_single_command`).
+    pub fn ships_fancy_chrome(&self) -> bool {
+        matches!(self, PageStyleName::Fancy | PageStyleName::Scrheadings)
     }
 }
 
@@ -2997,6 +3007,10 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "lfoot",
     "cfoot",
     "rfoot",
+    "ihead",
+    "ohead",
+    "ifoot",
+    "ofoot",
     "fancypagestyle",
     "pagenumbering",
     "listfiles",
@@ -5585,15 +5599,16 @@ impl P<'_> {
             }
             // `\pagestyle` / `\thispagestyle` record a zero-width marker
             // (see `pagestyle_command`), in the preamble exactly as in the
-            // body: only `fancy` draws anything yet.
+            // body: only `fancy` and `scrheadings` draw anything yet.
             "pagestyle" | "thispagestyle" => self.pagestyle_command(name, span, para),
             // fancyhdr's core field commands (see `fancy_command`), in the
             // preamble -- where header setup belongs -- and in the body.
             "fancyhead" | "fancyfoot" | "fancyhf" => self.fancy_command(name, span),
-            // fancyhdr's single-slot field commands (see
+            // fancyhdr's single-slot field commands plus scrlayer-scrpage's
+            // `\ihead` / `\ohead` / `\ifoot` / `\ofoot` (see
             // `fancy_single_command`), in the preamble -- where header
             // setup belongs -- and in the body.
-            "lhead" | "chead" | "rhead" | "lfoot" | "cfoot" | "rfoot" => {
+            "lhead" | "chead" | "rhead" | "lfoot" | "cfoot" | "rfoot" | "ihead" | "ohead" | "ifoot" | "ofoot" => {
                 self.fancy_single_command(name, span)
             }
             // fancyhdr's later slice (see `fancy_later_command`): recognised
@@ -6084,18 +6099,19 @@ impl P<'_> {
     /// documents usually declare them). A zero-width marker records the
     /// switch at this document position, so layout ships each page under
     /// the style in force for it (`\thispagestyle` only its own page).
-    /// Only `fancy` draws anything here (see [`FancyHdr`]); every other
-    /// style keeps the long-standing honest no-op, so "no visible effect"
-    /// still holds for them. Only `fancy` sets document-global state: the
-    /// incremental path replays no marker side effects and stamps no
-    /// chrome, which is output-identical exactly when no page can ship
-    /// under `fancy` -- while `empty`/`plain` markers forced a full
-    /// recompile on every keystroke for nothing.
+    /// Only `fancy` and scrlayer-scrpage's `scrheadings` draw anything
+    /// here (see [`FancyHdr`]); every other style keeps the long-standing
+    /// honest no-op, so "no visible effect" still holds for them. Only
+    /// those two set document-global state: the incremental path replays
+    /// no marker side effects and stamps no chrome, which is
+    /// output-identical exactly when no page can ship under either --
+    /// while `empty`/`plain` markers forced a full recompile on every
+    /// keystroke for nothing.
     #[inline(never)]
     fn pagestyle_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
         let (tokens, _) = self.required_group(name, span);
         let style = PageStyleName::parse(&token_text(&tokens));
-        if style == PageStyleName::Fancy {
+        if style.ships_fancy_chrome() {
             self.document_global_state = true;
         }
         para.push(Inline::PageStyle {
@@ -6161,16 +6177,23 @@ impl P<'_> {
     }
 
     /// fancyhdr's single-slot field commands `\lhead` / `\chead` /
-    /// `\rhead` and `\lfoot` / `\cfoot` / `\rfoot` (fancyhdr.sty): one
-    /// mandatory group filling one running-head slot -- the odd-page field
-    /// this one-sided layout always ships. The oracle also takes an
+    /// `\rhead` and `\lfoot` / `\cfoot` / `\rfoot` (fancyhdr.sty), plus
+    /// scrlayer-scrpage's `\ihead` / `\chead` / `\ohead` and `\ifoot` /
+    /// `\cfoot` / `\ofoot` (scrlayer-scrpage.sty): one mandatory group
+    /// filling one running-head slot -- the odd-page field this one-sided
+    /// layout always ships. Inner maps to the left slot and outer to the
+    /// right one (on odd pages inner *is* left; even pages never ship
+    /// here, exactly as for fancyhdr's positions -- see
+    /// `fancy_position_slots`), centre to the centre, so `\ihead{X}`
+    /// stores exactly what `\lhead{X}` stores. The oracle also takes an
     /// optional `[even]` group first, stored into the even-page field;
     /// even pages never ship here (`\@outputpage` always uses
     /// `\@oddhead`; see `fancy_position_slots`), so the bracket is
-    /// consumed and ignored, and `\lhead{X}` stores exactly what
-    /// `\fancyhead[L]{X}` stores. Silent on success: the fields are read
-    /// back when a `fancy` page ships. Without `\usepackage{fancyhdr}`
-    /// the command names what is missing, as `fancy_command` does.
+    /// consumed and ignored. Silent on success: the fields are read back
+    /// when a `fancy` or `scrheadings` page ships. Without the command's
+    /// own package the command names what is missing, as `fancy_command`
+    /// does (`\chead` / `\cfoot` belong to both packages, so either one
+    /// satisfies them).
     #[inline(never)]
     fn fancy_single_command(&mut self, name: &str, span: Span) {
         let bracket = self.optional_bracket_argument();
@@ -6179,10 +6202,27 @@ impl P<'_> {
         if let Some((_, bracket_span)) = bracket.as_ref() {
             whole = span.merge(*bracket_span).merge(argument_span);
         }
-        if !self.packages.iter().any(|package| package == "fancyhdr") {
+        // The package each single-slot command belongs to: scrlayer's
+        // inner/outer pair needs `scrlayer-scrpage`, fancyhdr's left/right
+        // pair needs `fancyhdr`, and the shared centre pair takes either.
+        let providers: &[&str] = match name {
+            "ihead" | "ohead" | "ifoot" | "ofoot" => &["scrlayer-scrpage"],
+            "chead" | "cfoot" => &["fancyhdr", "scrlayer-scrpage"],
+            _ => &["fancyhdr"],
+        };
+        if !self
+            .packages
+            .iter()
+            .any(|package| providers.iter().any(|provider| package == provider))
+        {
+            let missing = providers
+                .iter()
+                .map(|provider| format!("\\usepackage{{{provider}}}"))
+                .collect::<Vec<_>>()
+                .join(" or ");
             self.diags.push(Diagnostic::command_error(
                 name,
-                format!("\\{name} needs \\usepackage{{fancyhdr}}"),
+                format!("\\{name} needs {missing}"),
                 Some(whole),
                 Some("ignored the command".into()),
             ));
@@ -6196,7 +6236,7 @@ impl P<'_> {
         let content = self.argument_inlines(tokens, span, style);
         self.in_body = was_in_body;
         let slot = match name {
-            "lhead" | "lfoot" => 0,
+            "lhead" | "lfoot" | "ihead" | "ifoot" => 0,
             "chead" | "cfoot" => 1,
             _ => 2,
         };
@@ -17650,10 +17690,18 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // fancyhdr's core (`\pagestyle{fancy}`, `\fancyhf`,
         // `\fancyhead`/`\fancyfoot`, the rule widths) is implemented
         // above, so loading the package is silent; what is not modelled
-        // (`\lhead` and friends, `\fancypagestyle`) reports itself where
-        // it is used instead (see `fancy_later_command`). fancyhdr.sty
-        // takes no package options of its own.
+        // (`\fancypagestyle`) reports itself where it is used instead
+        // (see `fancy_later_command`). fancyhdr.sty takes no package
+        // options of its own.
         "fancyhdr" => options.is_empty(),
+        // scrlayer-scrpage's basic layer (`\pagestyle{scrheadings}` plus
+        // `\ihead`/`\chead`/`\ohead` and `\ifoot`/`\cfoot`/`\ofoot`) is a
+        // thin adapter over fancyhdr's six slots (see
+        // `fancy_single_command`), so loading the package is silent;
+        // anything beyond those six commands and the page style (options,
+        // layers) is out of scope and keeps the load diagnostic below.
+        // scrlayer-scrpage.sty takes no modelled options here.
+        "scrlayer-scrpage" => options.is_empty(),
         // titlesec's `\titleformat{\section}` and `\titlerule` are
         // implemented above, so loading the package is silent; what is not
         // modelled (other levels, printed labels, before-code, `\titlespacing`
