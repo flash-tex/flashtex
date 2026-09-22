@@ -320,5 +320,29 @@ pub const PRELUDE: &str = r"\catcode`\@=11
     \fi
     \fontsize{#2}{#3}\selectfont}
 \def\@setsize#1#2#3#4{\@setfontsize#1{#4}{#2}}
+\def\@defaultunits{\afterassignment\remove@to@nnil}
+\def\remove@to@nnil#1\@nnil{}
+\catcode`P=12 \catcode`T=12
+\lowercase{\def\@rem@pt@def{\def\rem@pt##1.##2PT{##1\ifnum##2>\z@.##2\fi}}}
+\@rem@pt@def
+\catcode`P=11 \catcode`T=11
+\def\strip@pt{\expandafter\rem@pt\the}
+\def\f@size{10}
+\def\f@baselineskip{12.0pt}
+\def\f@linespread{1}
+\let\size@update\relax
+\def\set@fontsize#1#2#3{%
+    \@defaultunits\@tempdimb#2pt\relax\@nnil
+    \edef\f@size{\strip@pt\@tempdimb}%
+    \@defaultunits\@tempskipa#3pt\relax\@nnil
+    \edef\f@baselineskip{\the\@tempskipa}%
+    \edef\f@linespread{#1}%
+    \def\size@update{%
+      \baselineskip\f@baselineskip\relax
+      \baselineskip\f@linespread\baselineskip
+      \let\size@update\relax}%
+    }
+\def\fontsize#1#2{\set@fontsize\f@linespread{#1}{#2}\flashtexfontsizedone{\f@size}{\f@baselineskip}}
+\def\selectfont{\size@update\flashtexselectfontdone}
 \catcode`\@=12
 ";

@@ -2192,6 +2192,23 @@ impl Engine {
         }
     }
 
+    /// One undelimited macro argument (tex.web §392): the next non-space
+    /// token, or every token of the group it opens. Unlike `read_cs_arg`
+    /// the group is kept whole, for arguments that are more than one
+    /// token (`\setlength{\skip\footins}{...}`).
+    fn read_undelimited_arg(&mut self) -> Vec<Token> {
+        self.skip_spaces();
+        let Some(t) = self.next_raw_token() else {
+            return Vec::new();
+        };
+        if matches!(t.kind, TokenKind::Char(_, CatCode::BeginGroup)) {
+            self.push_tokens(vec![t]);
+            self.scan_braced_group(false)
+        } else {
+            vec![t]
+        }
+    }
+
     /// Fully expand and execute `toks` in a group, collecting the content
     /// tokens they produce (used for `\settowidth`'s box content and
     /// `\label`'s `\@currentlabel`). Bounded by a frozen sentinel so the
@@ -4770,12 +4787,42 @@ impl Engine {
     fn do_setlength(&mut self, tok: Token, add: bool) {
         let cmd = if add { "addtolength" } else { "setlength" };
         let global = self.take_assignment_prefixes(cmd);
-        let target = self.read_cs_arg();
+        // Both arguments are undelimited (`\def\setlength#1#2{#1 #2\relax}`):
+        // a braced group or a single token each. The target keeps every
+        // token of its group, because `\setlength{\skip\footins}{...}`
+        // (neurips_*, lipics, paperstyle) names the register with two.
+        let target = self.read_undelimited_arg();
         self.skip_spaces();
         let has_group = matches!(self.peek_one().map(|t| t.kind), Some(TokenKind::Char(_, CatCode::BeginGroup)));
-        let value = if has_group { self.scan_braced_group(false) } else { Vec::new() };
-        let register = target.as_ref().and_then(|t| match strip_let(self.meaning_of_token(t)) {
+        let value = if has_group {
+            self.scan_braced_group(false)
+        } else {
+            // `\setlength\leftmargini\parindent` (lipics): the one token.
+            self.next_raw_token().into_iter().collect()
+        };
+        let first = target.iter().position(|t| !matches!(t.kind, TokenKind::Char(_, CatCode::Space)));
+        let register = first.and_then(|i| match strip_let(self.meaning_of_token(&target[i])) {
             Meaning::RegisterAlias(kind, idx) if kind != RegisterKind::Toks => Some((kind, idx)),
+            Meaning::Primitive(p @ (Primitive::Count | Primitive::Dimen | Primitive::Skip)) => {
+                // `\skip<number>`: the number is the rest of the group,
+                // scanned in isolation so nothing after the command is read.
+                let kind = match p {
+                    Primitive::Count => RegisterKind::Count,
+                    Primitive::Dimen => RegisterKind::Dimen,
+                    _ => RegisterKind::Skip,
+                };
+                let mut rest: Vec<Pending> =
+                    target[i + 1..].iter().map(|tok| Pending { tok: tok.clone(), frozen: false, origin: None }).collect();
+                rest.push(Pending { tok: Token::synthetic(TokenKind::ControlSequence(SENTINEL.into())), frozen: true, origin: None });
+                self.push_pending(rest);
+                let idx = self.scan_number() as u16;
+                while let Some(t) = self.next_raw_token() {
+                    if t.is_cs(SENTINEL) {
+                        break;
+                    }
+                }
+                Some((kind, idx))
+            }
             _ => None,
         });
         let Some((kind, idx)) = register else {
@@ -4804,7 +4851,7 @@ impl Engine {
             self.push_tokens(out);
             return;
         };
-        let target = target.unwrap();
+        let target = target[first.unwrap()].clone();
         // `<value>\relax`: the expression scanner stops at (and consumes)
         // the `\relax`; anything it leaves stays in the input, as the
         // kernel macro's `#1 #2\relax` would leave it.
@@ -5058,6 +5105,13 @@ impl Engine {
                         let idx = self.scan_number() as u16;
                         self.st.scopes.dimen(idx)
                     }
+                    // `\skip<number>` where an integer is wanted: TeX
+                    // coerces the glue to its natural part (tex.web §413).
+                    Meaning::Primitive(Primitive::Skip) => {
+                        self.next_raw_token();
+                        let idx = self.scan_number() as u16;
+                        self.st.scopes.skip(idx).value
+                    }
                     Meaning::Primitive(Primitive::Numexpr) => {
                         self.next_raw_token();
                         self.scan_expr(false)
@@ -5229,6 +5283,14 @@ impl Engine {
                         self.next_raw_token();
                         let idx = self.scan_number() as u16;
                         let v = self.st.scopes.dimen(idx);
+                        return if neg { -v } else { v };
+                    }
+                    // `\skip<number>` where a `<dimen>` is wanted: its
+                    // natural part (`\skip\footins` in jheppub/IEEEtran).
+                    Meaning::Primitive(Primitive::Skip) => {
+                        self.next_raw_token();
+                        let idx = self.scan_number() as u16;
+                        let v = self.st.scopes.skip(idx).value;
                         return if neg { -v } else { v };
                     }
                     Meaning::Primitive(Primitive::Dimexpr) => {
@@ -5454,6 +5516,13 @@ impl Engine {
                 match strip_let(self.meaning_of_token(&t)) {
                     Meaning::RegisterAlias(RegisterKind::Skip, idx) => {
                         self.next_raw_token();
+                        return self.st.scopes.skip(idx);
+                    }
+                    // `\skip\@mpfootins = \skip\footins` (IEEEtran, jheppub,
+                    // jcappub): the whole glue of `\skip<number>`.
+                    Meaning::Primitive(Primitive::Skip) => {
+                        self.next_raw_token();
+                        let idx = self.scan_number() as u16;
                         return self.st.scopes.skip(idx);
                     }
                     Meaning::Primitive(Primitive::Glueexpr) => {

@@ -405,5 +405,10 @@ fn a_project_class_uses_the_kernel_switches_font_defaults_and_setfontsize() {
     );
     let unexpected: Vec<&String> = diags.iter().filter(|d| !d.contains("has no \\LoadClass")).collect();
     assert!(unexpected.is_empty(), "{diags:?}");
-    assert_eq!(out, "\\fontsize 1012\\selectfont \\documentclass [a4paper]article \\document two/ptm/a4\\enddocument");
+    // `\fontsize`/`\selectfont` run in the engine and come back to the
+    // host as `\flashtexfontsizedone{10}{12.0pt}`/`\flashtexselectfontdone`.
+    assert_eq!(
+        out,
+        "\\flashtexfontsizedone 1012.0pt\\flashtexselectfontdone \\documentclass [a4paper]article \\document two/ptm/a4\\enddocument"
+    );
 }
