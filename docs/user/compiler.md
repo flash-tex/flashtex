@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 487 text-mode and 620 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 488 text-mode and 620 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -505,6 +505,7 @@ Canonical sources:
 | `\graphicspath` | `{{dir/}...}` | image search directories; no material |
 | `\hypersetup` | `{key=value,...}` | hyperref options; PDF annotations, outline and metadata only, so nothing is typeset for them |
 | `\lstset` | `{key=value,...}` | listings defaults, global from that point on; the key names are checked and nothing is typeset here |
+| `\lstinputlisting` | `[options]{file}` | the named project file's lines as literal monospaced lines, exactly as an lstlisting body holding the same bytes (listings) |
 | `\allowdisplaybreaks` | `[0-4]` | amsmath page-break permission inside displays; no material |
 | `\url` | `{url}` | monospaced URL text, breaking as url.sty does; links are not clickable |
 | `\href` | `{url}{text}` | link text; links are not clickable |

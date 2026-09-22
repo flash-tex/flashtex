@@ -2281,6 +2281,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "graphicspath",
     "hypersetup",
     "lstset",
+    "lstinputlisting",
     "allowdisplaybreaks",
     "url",
     "href",
@@ -4910,6 +4911,12 @@ impl P<'_> {
             "printbibliography" => self.print_bibliography(span, blocks, para),
             "item" | "bibitem" => self.item_command(name, span, blocks, para),
             "includegraphics" => self.include_graphics(span, para),
+            // listings.sty's `\lstinputlisting[options]{file}`: the named
+            // project file's bytes through the same verbatim path as an
+            // inline `lstlisting` body (see `lstinputlisting`). Placed
+            // after the preamble guard, so preamble use is reported there
+            // like any other body-only command.
+            "lstinputlisting" => self.lstinputlisting(span, blocks, para),
             "scalebox" | "resizebox" | "rotatebox" | "reflectbox" => {
                 self.transform_box(name, span, para)
             }
@@ -7074,6 +7081,72 @@ impl P<'_> {
         self.include_stack.pop();
         self.t = saved_tokens;
         self.i = saved_index;
+    }
+
+    /// `\lstinputlisting[options]{file}` (listings.sty): the named project
+    /// file's bytes through the same verbatim path as an inline `lstlisting`
+    /// body. The file is read literally — never tokenized or expanded — and
+    /// split with [`verbatim_lines`], so its lines match an `lstlisting`
+    /// environment holding the same bytes. Path handling (empty, unsafe,
+    /// missing, `.tex` fallback) mirrors [`P::include`].
+    fn lstinputlisting(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        self.flush_paragraph(blocks, para);
+        if let Some((options, options_span)) = self.optional_bracket_argument() {
+            if !options.trim().is_empty() {
+                self.diags.push(Diagnostic::warning(
+                    "lstlisting options are not implemented; typeset as plain verbatim",
+                    Some(options_span),
+                    Some("ignored the options and typeset the body literally".into()),
+                ));
+            }
+        }
+        let (tokens, _) = self.required_group("lstinputlisting", span);
+        let requested = token_text(&tokens).trim().to_string();
+        if requested.is_empty() {
+            self.diags.push(Diagnostic::error(
+                "\\lstinputlisting requires a non-empty project-relative path",
+                Some(span),
+                Some("skipped the empty listing and continued".into()),
+            ));
+            return;
+        }
+        if !path_is_safe(&requested) {
+            self.diags.push(Diagnostic::error(
+                format!(
+                    "rejected listing path '{requested}': paths must be project-relative with no parent traversal"
+                ),
+                Some(span),
+                Some("skipped the unsafe listing and continued".into()),
+            ));
+            return;
+        }
+        let appended = format!("{requested}.tex");
+        let resolved = self
+            .document_by_path
+            .get(requested.as_str())
+            .copied()
+            .or_else(|| self.document_by_path.get(appended.as_str()).copied());
+        let Some(document_index) = resolved else {
+            self.diags.push(Diagnostic::error(
+                format!("listed file not found: looked for '{requested}' and '{appended}'"),
+                Some(span),
+                Some("skipped the missing listing and continued".into()),
+            )
+            .with_help(format!(
+                "add '{requested}' or '{appended}' to the project documents, or fix the \\lstinputlisting path"
+            )));
+            return;
+        };
+        // The file's bytes are the body: one trailing newline is not a line,
+        // the same newline `verbatim_environment` drops before `\end{...}`.
+        let text: &str = self.documents[document_index].text;
+        let document = DocumentId(document_index);
+        let body = text.strip_suffix('\n').unwrap_or(text);
+        blocks.push(Block::Verbatim {
+            lines: verbatim_lines(body, document, 0, false),
+            span: Span::in_document(document, 0, text.len()),
+        });
+        self.finish_block_dependencies();
     }
 
     fn document_class(&mut self, span: Span) {
@@ -10921,15 +10994,7 @@ impl P<'_> {
             trimmed_end -= 1;
         }
         let body = &source[content_start..trimmed_end];
-        let mut lines = Vec::new();
-        let mut line_start = content_start;
-        for raw_line in body.split('\n') {
-            lines.push(VerbatimLine {
-                text: verbatim_display(raw_line, starred),
-                span: Span::in_document(document, line_start, line_start + raw_line.len()),
-            });
-            line_start += raw_line.len() + 1;
-        }
+        let lines = verbatim_lines(body, document, content_start, starred);
         if !found {
             self.diags.push(Diagnostic::error(
                 format!("unterminated environment '{name}' — no matching \\end"),
@@ -17080,6 +17145,30 @@ fn verbatim_display(line: &str, starred: bool) -> String {
         }
     }
     out
+}
+
+/// Splits an already-trimmed verbatim body into display lines: each raw
+/// `\n`-separated line through [`verbatim_display`], with spans covering
+/// that line's bytes from `base` in `document`. Shared by
+/// `verbatim_environment` (an inline `verbatim`/`lstlisting` body, whose
+/// `base` is the body's offset in its own document) and `P::lstinputlisting`
+/// (a file's bytes, whose `base` is 0 in the file's document).
+fn verbatim_lines(
+    body: &str,
+    document: DocumentId,
+    base: usize,
+    starred: bool,
+) -> Vec<VerbatimLine> {
+    let mut lines = Vec::new();
+    let mut line_start = base;
+    for raw_line in body.split('\n') {
+        lines.push(VerbatimLine {
+            text: verbatim_display(raw_line, starred),
+            span: Span::in_document(document, line_start, line_start + raw_line.len()),
+        });
+        line_start += raw_line.len() + 1;
+    }
+    lines
 }
 
 fn paragraph_style(environment: &str) -> Option<ParagraphStyle> {
