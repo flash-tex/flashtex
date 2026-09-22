@@ -1047,6 +1047,12 @@ pub struct MathPackages {
     /// Base LaTeX2e does not define these names (`cancel.sty` is a standalone
     /// package, measured as not loading amsmath).
     pub cancel: bool,
+    /// `derivative` is loaded, providing `\odv` and `\pdv` (with the
+    /// optional `[n]` order argument).
+    ///
+    /// Base LaTeX2e does not define these names, so without the package
+    /// pdflatex answers "Undefined control sequence".
+    pub derivative: bool,
 }
 
 /// Packages that load amsmath, so that `\usepackage{X}` alone gives amsmath's
@@ -1138,6 +1144,7 @@ impl MathPackages {
         amsfonts: false,
         mathtools: false,
         cancel: false,
+        derivative: false,
     };
 
     /// Folds one `\documentclass` name in.
@@ -1153,6 +1160,7 @@ impl MathPackages {
         self.amsmath |= AMSMATH_PACKAGES.contains(&package);
         self.mathtools |= package == "mathtools";
         self.cancel |= package == "cancel";
+        self.derivative |= package == "derivative";
         let amssymb = AMSSYMB_PACKAGES.contains(&package);
         self.amssymb |= amssymb;
         // `amssymb.sty` line 8 is `\RequirePackage{amsfonts}`, so anything
@@ -2744,6 +2752,14 @@ impl MathParser<'_> {
                     limits: None,
                 }
             }
+            // `derivative.sty`'s `\odv` (ordinary) and `\pdv` (partial):
+            // `\odv{y}{x}` is `dy/dx`, `\pdv[2]{f}{x}` is `∂²f/∂x²`, each
+            // a `\frac`-shaped fraction like the one above. Without the
+            // package pdflatex answers "Undefined control sequence".
+            "odv" | "pdv" if !self.packages.derivative => {
+                self.missing_package(&name, "derivative", span)
+            }
+            "odv" | "pdv" => self.derivative_command(&name, span),
             "begin" => self.grid_environment(span),
             "sqrt" => {
                 let index = self.optional_bracket_list();
@@ -3425,6 +3441,53 @@ impl MathParser<'_> {
                     space(0.0, span)
                 }
             },
+        }
+    }
+
+    /// `derivative.sty`'s `\odv{function}{variable}` and
+    /// `\pdv[order]{function}{variable}` (the command token already
+    /// consumed): an ordinary-derivative `d` (upright, as the package's
+    /// `\mathrm{d}`) or partial-derivative `∂` head over a `\frac`-shaped
+    /// fraction. With no order (`\odv{y}{x}`) the fraction is `dy/dx`;
+    /// with one (`\odv[2]{y}{x}`) the numerator head carries it (`d²y`)
+    /// and the variable carries it in the denominator (`dx²`), matching
+    /// the package's documented output. An empty order (`\odv[]{y}{x}`)
+    /// is the same as no order.
+    fn derivative_command(&mut self, name: &str, span: Span) -> MathAtom {
+        let order = self.optional_bracket_list().filter(|list| !list.atoms.is_empty());
+        let function = self.required_group(name, span);
+        let variable = self.required_group(name, span);
+        let head = || {
+            if name == "pdv" {
+                symbol("∂".into(), span)
+            } else {
+                text_atom("d".into(), span)
+            }
+        };
+        let mut numerator_head = head();
+        numerator_head.superscript = order.clone();
+        let numerator = MathList {
+            atoms: std::iter::once(numerator_head).chain(function.atoms).collect(),
+        };
+        let mut denominator_atoms = vec![head()];
+        let mut variable_atoms = variable.atoms;
+        match variable_atoms.last_mut() {
+            // A variable with its own superscript (as in `\odv[2]{y}{x^3}`)
+            // keeps it; the order only fills in where none was written.
+            Some(last) if last.superscript.is_none() => last.superscript = order.clone(),
+            None => denominator_atoms[0].superscript = order.clone(),
+            _ => {}
+        }
+        denominator_atoms.append(&mut variable_atoms);
+        let denominator = MathList { atoms: denominator_atoms };
+        MathAtom {
+            nucleus: Nucleus::Fraction { numerator, denominator },
+            span,
+            superscript: None,
+            subscript: None,
+            class_override: Some(AtomClass::Ord),
+            width_em: None,
+            ams_symbol: None,
         }
     }
 
@@ -8098,6 +8161,7 @@ mod unbraced_argument_tests {
         amsfonts: true,
         mathtools: false,
         cancel: false,
+        derivative: false,
     };
 
     #[test]
@@ -8954,6 +9018,7 @@ mod spacing_tests {
         amsfonts: true,
         mathtools: false,
         cancel: false,
+        derivative: false,
     };
 
     fn width_with(source: &str, size: f64, packages: MathPackages) -> f64 {
@@ -8970,6 +9035,7 @@ mod spacing_tests {
         amsfonts: false,
         mathtools: true,
         cancel: false,
+        derivative: false,
     };
 
     fn x(b: &MathBox, text: &str) -> f64 {
@@ -9773,6 +9839,7 @@ mod package_gating_tests {
         amsfonts: true,
         mathtools: false,
         cancel: false,
+        derivative: false,
     };
     const AMSFONTS: MathPackages = MathPackages {
         amsmath: false,
@@ -9780,6 +9847,7 @@ mod package_gating_tests {
         amsfonts: true,
         mathtools: false,
         cancel: false,
+        derivative: false,
     };
     const AMSMATH: MathPackages = MathPackages {
         amsmath: true,
@@ -9787,6 +9855,7 @@ mod package_gating_tests {
         amsfonts: false,
         mathtools: false,
         cancel: false,
+        derivative: false,
     };
     const MATHTOOLS: MathPackages = MathPackages {
         amsmath: true,
@@ -9794,6 +9863,7 @@ mod package_gating_tests {
         amsfonts: false,
         mathtools: true,
         cancel: false,
+        derivative: false,
     };
 
     fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
@@ -10413,6 +10483,7 @@ mod package_gating_tests {
                 amsfonts: true,
                 mathtools: false,
                 cancel: false,
+                derivative: false,
             }
         );
         assert_eq!(
@@ -10423,6 +10494,7 @@ mod package_gating_tests {
                 amsfonts: true,
                 mathtools: false,
                 cancel: false,
+                derivative: false,
             }
         );
         assert_eq!(class("article"), MathPackages::KERNEL);
@@ -10442,6 +10514,7 @@ mod double_bar_tests {
         amsfonts: false,
         mathtools: false,
         cancel: false,
+        derivative: false,
     };
 
     /// The glyph texts a formula lays out, in order.
@@ -10698,6 +10771,7 @@ mod lap_tests {
         amsfonts: false,
         mathtools: true,
         cancel: false,
+        derivative: false,
     };
 
     /// `amsmath` without `mathtools`: the lap family is still undefined.
@@ -10707,6 +10781,7 @@ mod lap_tests {
         amsfonts: false,
         mathtools: false,
         cancel: false,
+        derivative: false,
     };
 
     fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
@@ -10926,4 +11001,114 @@ mod script_attachment_tests {
 /// drift test that checks it against the generated `math_symbols` table.
 pub fn symbol_class_of(glyph: &str) -> AtomClass {
     symbol_class(glyph)
+}
+
+#[cfg(test)]
+mod derivative_tests {
+    use super::*;
+
+    /// A document that loaded `derivative`: `\odv`/`\pdv` exist. Base
+    /// LaTeX2e defines neither name.
+    const DERIVATIVE: MathPackages = MathPackages {
+        derivative: true,
+        ..MathPackages::KERNEL
+    };
+
+    fn parse(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(&crate::lexer::tokenize(source), packages, &mut diagnostics);
+        (list, diagnostics)
+    }
+
+    /// The numerator and denominator of a parsed `\odv`/`\pdv`, after
+    /// asserting it is one ordinary `\frac`-shaped atom.
+    fn fraction_of(list: &MathList) -> (&MathList, &MathList) {
+        assert_eq!(list.atoms.len(), 1, "{list:?}");
+        let atom = &list.atoms[0];
+        assert_eq!(atom_class(atom), Some(AtomClass::Ord));
+        match &atom.nucleus {
+            Nucleus::Fraction { numerator, denominator } => (numerator, denominator),
+            other => panic!("expected a fraction, got {other:?}"),
+        }
+    }
+
+    /// The plain glyph of each atom's nucleus (`d`, `∂`, `x`, ...).
+    fn glyphs(list: &MathList) -> Vec<String> {
+        list.atoms
+            .iter()
+            .map(|atom| match &atom.nucleus {
+                Nucleus::Symbol(s) | Nucleus::Text(s) => s.clone(),
+                other => panic!("expected a plain glyph, got {other:?}"),
+            })
+            .collect()
+    }
+
+    /// The plain glyphs of an atom's superscript, or `None` when it has none.
+    fn superscript(atom: &MathAtom) -> Option<Vec<String>> {
+        atom.superscript.as_ref().map(glyphs)
+    }
+
+    #[test]
+    fn odv_without_order_is_dy_over_dx() {
+        let (list, diagnostics) = parse(r"\odv{y}{x}", DERIVATIVE);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (numerator, denominator) = fraction_of(&list);
+        // `dy`: the upright differential head, then the function.
+        assert_eq!(glyphs(numerator), ["d", "y"]);
+        assert!(numerator.atoms.iter().all(|atom| atom.superscript.is_none()));
+        assert!(matches!(&numerator.atoms[0].nucleus, Nucleus::Text(_)));
+        // `dx`: the same head, then the variable.
+        assert_eq!(glyphs(denominator), ["d", "x"]);
+        assert!(denominator.atoms.iter().all(|atom| atom.superscript.is_none()));
+    }
+
+    #[test]
+    fn pdv_with_order_is_partial_squared_f_over_partial_x_squared() {
+        let (list, diagnostics) = parse(r"\pdv[2]{f}{x}", DERIVATIVE);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (numerator, denominator) = fraction_of(&list);
+        // `∂²f`: the partial head carries the order, then the function.
+        assert_eq!(glyphs(numerator), ["∂", "f"]);
+        assert_eq!(superscript(&numerator.atoms[0]), Some(vec!["2".to_string()]));
+        assert!(numerator.atoms[1].superscript.is_none());
+        // `∂x²`: a plain head, then the variable carrying the order.
+        assert_eq!(glyphs(denominator), ["∂", "x"]);
+        assert!(denominator.atoms[0].superscript.is_none());
+        assert_eq!(superscript(&denominator.atoms[1]), Some(vec!["2".to_string()]));
+    }
+
+    #[test]
+    fn odv_with_order_superscripts_the_head_and_the_variable() {
+        let (list, diagnostics) = parse(r"\odv[2]{y}{x}", DERIVATIVE);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (numerator, denominator) = fraction_of(&list);
+        assert_eq!(glyphs(numerator), ["d", "y"]);
+        assert_eq!(superscript(&numerator.atoms[0]), Some(vec!["2".to_string()]));
+        assert_eq!(glyphs(denominator), ["d", "x"]);
+        assert_eq!(superscript(&denominator.atoms[1]), Some(vec!["2".to_string()]));
+        // An empty order is the same as no order.
+        let (plain, diagnostics) = parse(r"\odv[]{y}{x}", DERIVATIVE);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (numerator, denominator) = fraction_of(&plain);
+        assert!(numerator.atoms.iter().all(|atom| atom.superscript.is_none()));
+        assert!(denominator.atoms.iter().all(|atom| atom.superscript.is_none()));
+    }
+
+    #[test]
+    fn odv_and_pdv_need_the_derivative_package() {
+        for source in [r"\odv{y}{x}", r"\pdv[2]{f}{x}"] {
+            let (_, diagnostics) = parse(source, MathPackages::KERNEL);
+            assert_eq!(diagnostics.len(), 1, "{source}: {diagnostics:?}");
+            assert!(
+                diagnostics[0].message.contains(r"\usepackage{derivative}"),
+                "{source}: {:?}",
+                diagnostics[0].message
+            );
+        }
+        let mut packages = MathPackages::KERNEL;
+        packages.load_package("derivative");
+        assert!(packages.derivative);
+        let (_, diagnostics) = parse(r"\odv{y}{x}", packages);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
 }
