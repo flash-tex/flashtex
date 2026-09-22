@@ -1051,6 +1051,42 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["mathellipsis"],
+        "",
+        "the kernel's low ellipsis (\\mathinner{\\ldotp\\ldotp\\ldotp}), fontmath.ltx 512",
+        true,
+    ),
+    (
+        &["bowtie"],
+        "",
+        "\\triangleright and \\triangleleft joined by \\joinrel as one relation, fontmath.ltx 366",
+        true,
+    ),
+    (
+        &["relbar", "Relbar"],
+        "",
+        "the single/double arrow shaft as a relation (\\mathrel{\\smash-} / \\mathrel{=}), fontmath.ltx 355-357",
+        true,
+    ),
+    (
+        &["joinrel"],
+        "",
+        "\\mathrel{\\mkern-3mu}: the kern that joins two relations, fontmath.ltx 353",
+        true,
+    ),
+    (
+        &["surd"],
+        "",
+        "the radical sign as an ordinary symbol ({\\mathchar\"1270}), fontmath.ltx 242",
+        true,
+    ),
+    (
+        &["Join"],
+        "",
+        "amsfonts \\rtimes overprinted on \\ltimes (msbm \"6F, -13.8mu, \"6E) as a relation; requires amsfonts/amssymb",
+        true,
+    ),
+    (
         &["bot", "bigtriangleup"],
         "",
         "shared symbol glyph with its own atom class (Ord / Bin)",
@@ -1796,6 +1832,36 @@ pub fn inventory() -> Inventory {
             arguments: "",
             description: format!("symbol {glyph}"),
             glyph: Some(glyph),
+            renders: true,
+            requires_class: None,
+        });
+    }
+    // Every kernel `\DeclareMathSymbol` / `\DeclareMathDelimiter` with a
+    // drawable character (`crate::math_symbols`, generated from
+    // `fontmath.ltx`) that no arm or glyph row above already lists.
+    for row in crate::math_symbols::SYMBOLS {
+        if row.provider != crate::math_symbols::Provider::Kernel
+            || row.character
+            || math::declared_kernel_symbol(row.name).is_none()
+            || commands.iter().any(|c| c.mode == Mode::Math && c.name == row.name)
+            || crate::amssymb::by_name(row.name).is_some()
+        {
+            continue;
+        }
+        let class = format!("{:?}", row.class).to_lowercase();
+        commands.push(Command {
+            name: row.name,
+            mode: Mode::Math,
+            origin: Origin::MathSymbol,
+            arguments: "",
+            description: format!(
+                "symbol {} (\\math{class}, {} \"{:02X}; {})",
+                row.text,
+                row.font.tfm10(),
+                row.slot,
+                row.source
+            ),
+            glyph: Some(row.text),
             renders: true,
             requires_class: None,
         });
