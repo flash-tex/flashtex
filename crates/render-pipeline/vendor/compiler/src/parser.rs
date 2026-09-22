@@ -11664,10 +11664,11 @@ impl P<'_> {
         // `brace_opens_text_group`) starts suppression — an ordinary math
         // group like `x^{a` never does.
         let mut depth = 0usize;
+        let mut arrays = 0usize;
         while self.i < self.t.len() {
             // Unterminated math ends with its paragraph (TeX: "Missing $
             // inserted"), never at a `$` pages later.
-            if paragraph_boundary_at(&self.t, self.i) {
+            if math_paragraph_boundary_at(&self.t, self.i, &mut arrays) {
                 content_end = self.i;
                 break;
             }
@@ -11725,8 +11726,9 @@ impl P<'_> {
         // one — but only a group opened by a text-mode-switching command
         // suppresses it (see `brace_opens_text_group`).
         let mut depth = 0usize;
+        let mut arrays = 0usize;
         while self.i < self.t.len() {
-            if paragraph_boundary_at(&self.t, self.i) {
+            if math_paragraph_boundary_at(&self.t, self.i, &mut arrays) {
                 break;
             }
             match &self.t[self.i].token.kind {
@@ -11832,8 +11834,9 @@ impl P<'_> {
         // one — but only a group opened by a text-mode-switching command
         // suppresses it (see `brace_opens_text_group`).
         let mut depth = 0usize;
+        let mut arrays = 0usize;
         while self.i < self.t.len() {
-            if paragraph_boundary_at(&self.t, self.i) {
+            if math_paragraph_boundary_at(&self.t, self.i, &mut arrays) {
                 break;
             }
             match &self.t[self.i].token.kind {
@@ -17164,6 +17167,39 @@ fn environment_name_at(tokens: &[InputToken], index: usize) -> Option<&str> {
         (TokenKind::LBrace, TokenKind::Word(name), TokenKind::RBrace) => Some(name),
         _ => None,
     }
+}
+
+/// latex.ltx `\@array` runs `\let\par\@empty`, so inside `array`, `cases`
+/// and the amsmath `matrix` family (all built on `\array`) a blank line is
+/// nothing and the formula goes on; `aligned`, `gathered`, `split` and
+/// `smallmatrix` keep TeX's "Missing $ inserted" (pdflatex, TeX Live 2026).
+fn ignores_par_in_math(environment: &str) -> bool {
+    matches!(
+        environment,
+        "array" | "cases" | "matrix" | "pmatrix" | "bmatrix" | "Bmatrix" | "vmatrix" | "Vmatrix"
+    )
+}
+
+/// [`paragraph_boundary_at`] for a formula's own scan: `arrays` counts the
+/// `\@array` environments open at `index` (updated here as their `\begin`
+/// and `\end` pass), inside which a blank line or `\par` is `\@empty`.
+fn math_paragraph_boundary_at(tokens: &[InputToken], index: usize, arrays: &mut usize) -> bool {
+    if let Some(environment) = environment_name_at(tokens, index).filter(|e| ignores_par_in_math(e)) {
+        if matches!(&tokens[index].token.kind, TokenKind::Command(name) if name == "begin") {
+            *arrays += 1;
+        } else {
+            *arrays = arrays.saturating_sub(1);
+        }
+    }
+    let empty_par = match tokens.get(index).map(|input| &input.token.kind) {
+        Some(TokenKind::ParBreak) => true,
+        Some(TokenKind::Command(name)) => name == "par",
+        _ => false,
+    };
+    if *arrays > 0 && empty_par {
+        return false;
+    }
+    paragraph_boundary_at(tokens, index)
 }
 
 /// Whether the token at `index` ends the paragraph for error recovery, the

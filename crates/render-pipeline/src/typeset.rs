@@ -2468,6 +2468,24 @@ impl<'a> Context<'a> {
         // inside a ligature (the dash ligatures end at the hyphen).
         let ligature_of = |o: usize| shaped.clusters.iter().find(|c| c.text_range.start < o && o < c.text_range.end).map(|c| c.text_range.clone());
         points.retain(|(o, auto)| *o > 0 && *o < text.len() && (boundaries.contains(o) || (*auto && ligature_of(*o).is_some())));
+        // One hyphen per ligature: when two Liang points fall inside the
+        // same ligature (`coefficents`, `ef|f|i` in the `ffi` glyph), the
+        // reconstitution builds the discretionary at the first and resumes
+        // after the ligature, so the second is lost (§913-918; pdflatex
+        // `\showhyphens` gives `co-ef-fi-cents` with the ligature and
+        // `co-ef-f-i-cents` under `\pdfnoligatures`). Keeping both also
+        // put the next point inside the ligature's range.
+        let mut kept_lig: Option<std::ops::Range<usize>> = None;
+        points.retain(|&(o, auto)| {
+            let lig = ligature_of(o).filter(|_| auto);
+            if let (Some(l), Some(k)) = (&lig, &kept_lig) {
+                if l == k {
+                    return false;
+                }
+            }
+            kept_lig = lig;
+            true
+        });
         if points.is_empty() {
             return self.whole_word(seg, size);
         }
