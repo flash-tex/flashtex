@@ -101,7 +101,7 @@ final class EditorDiagnosticsPartialOutputTests: XCTestCase {
     private func compiler() throws -> URL {
         guard let path = ProcessInfo.processInfo.environment["FLASHTEX_COMPILER"],
               FileManager.default.isExecutableFile(atPath: path) else {
-            throw XCTSkip("set FLASHTEX_COMPILER=crates/compiler/target/release/flashtex-compiler (cargo build --release in crates/compiler)")
+            throw XCTSkip("set FLASHTEX_COMPILER=target/release/flashtex-compiler (cargo build --release -p flashtex-compiler)")
         }
         return URL(fileURLWithPath: path)
     }
