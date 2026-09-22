@@ -51,42 +51,52 @@ cd crates/render-pipeline && cargo test --release --test declared_math_oracle
 DECLARED_MATH_VERBOSE=1 cargo test --release --test declared_math_oracle kernel_symbols
 ```
 
-## Coverage (slice 1, 2026-09-21, pdfTeX 1.40.29 / TeX Live 2026, engine at this commit)
+## Coverage (pdfTeX 1.40.29 / TeX Live 2026)
 
 Counts are formulas; "declared" is what the sources declare and every one of
-them is tested. Failing commands are listed by name in `KNOWN`.
+them is tested. Failing commands are listed by name in `KNOWN`. Slice 1 is the
+engine before the switch-over to the generated table; slice 2 is after it
+(kernel commands resolved through `math_symbols`, math-layout's slots and
+classes from `cm_slots`, the kernel joins `\bowtie`/`\relbar`/`\Relbar`/
+`\joinrel`/`\surd`/`\mathellipsis` and amsfonts' `\Join` as arms).
 
-| document | formulas | passing | failing | failing commands |
+| document | formulas | slice 1 passing | slice 2 passing | slice 2 failing commands |
 |---|---:|---:|---:|---:|
-| kernel-symbols | 1192 | 776 | 416 | 64 |
-| kernel-delimiters | 302 | 89 | 213 | 20 |
-| kernel-accents | 42 | 36 | 6 | 2 |
-| kernel-composites | 148 | 40 | 108 | 20 |
-| spacing | 198 | 198 | 0 | 0 |
-| alphabets | 25 | 21 | 4 | 4 |
-| latexsym-symbols | 84 | 3 | 81 | 12 |
-| amsfonts-symbols | 110 | 64 | 46 | 11 |
-| amsfonts-delimiters | 44 | 4 | 40 | 5 |
-| amsfonts-composites | 16 | 0 | 16 | 4 |
-| amssymb-symbols | 828 | 690 | 138 | 35 |
-| amssymb-accents | 8 | 8 | 0 | 0 |
-| amsmath-symbols | 92 | 4 | 88 | 12 |
-| amsmath-delimiters | 24 | 8 | 16 | 4 |
-| amsmath-accents | 3 | 0 | 3 | 1 |
-| stmaryrd-symbols | 816 | 0 | 816 | 104 |
-| stmaryrd-delimiters | 34 | 0 | 34 | 3 |
-| stmaryrd-composites | 64 | 0 | 64 | 9 |
-| **total** | **4030** | **1941** | **2089** | |
+| kernel-symbols | 1016 | 760 | 964 | 14 |
+| kernel-delimiters | 198 | 76 | 102 | 20 |
+| kernel-accents | 42 | 36 | 39 | 1 |
+| kernel-composites | 116 | 32 | 53 | 17 |
+| spacing | 198 | 198 | 198 | 0 |
+| alphabets | 24 | 21 | 21 | 4 |
+| latexsym-symbols | 44 | 3 | 3 | 12 |
+| amsfonts-symbols | 92 | 64 | 64 | 11 |
+| amsfonts-delimiters | 24 | 4 | 4 | 5 |
+| amsfonts-composites | 12 | 0 | 4 | 2 |
+| amssymb-symbols | 828 | 690 | 690 | 35 |
+| amssymb-accents | 8 | 8 | 8 | 0 |
+| amsmath-symbols | 48 | 4 | 4 | 12 |
+| amsmath-delimiters | 24 | 2 | 8 | 4 |
+| amsmath-accents | 3 | 0 | 3 | 0 |
+| stmaryrd-symbols | 412 | 0 | 0 | 104 |
+| stmaryrd-delimiters | 12 | 0 | 0 | 3 |
+| stmaryrd-composites | 32 | 0 | 0 | 9 |
+| **total** | **3133** | **1898** | **2165** | |
 
-Failure classes (from the `KNOWN` reasons): unsupported commands the engine
-drops (184 commands: all of stmaryrd and latexsym's lasy glyphs, amsmath's
-`\varGamma` family, and 54 kernel declarations such as `\clubsuit`, `\flat`,
-`\imath`, `\lgroup`, `\lmoustache`, `\braceld`; the compiler drift test
-`tests/math_symbols_drift.rs` lists the kernel ones), atom class not carried to
-the pipeline (`\gg`, `\ll`, `\asymp`, `\nearrow`, `\uparrow`, the harpoons,
-`\amalg`, `\dashv`, `\bigtriangledown` are spaced as Ord), OpenType advances
-where pdfTeX uses the TFM's (`\Re`, `\Im`, `\aleph`, `\ell` at scriptscript
-size, `\big\backslash`, `\mathit` digits), `\mathhexbox` symbols scaled to the
-script size (`\yen`, `\checkmark`, `\circledR`, `\maltese`), and composites the
+(The slice-1 column counts formulas the way slice 2 does; the slice-1 commit
+message's "1941 of 4030" counted every diagnostic and alias line as well.)
+
+Failure classes after slice 2 (from the `KNOWN` reasons): unsupported
+commands the engine drops (136 commands: all of stmaryrd, latexsym's lasy
+glyphs, amsmath's `\varGamma` family, and the kernel pieces with no glyph
+in a bundled face -- `\lhook`, `\rhook`, `\mapstochar`, `\Arrowvert`, cmex
+"7A-"7D `\lmoustache`/`\rmoustache`/`\braceld`..`\braceru`); composites the
 engine draws as one glyph where pdfTeX builds them from pieces (`\cong`,
-`\doteq`, `\bowtie`, `\models`, `\hookrightarrow`, `\angle`, `\rightleftharpoons`).
+`\doteq`, `\models`, `\hookrightarrow`, `\angle`, `\hbar`, `\mapsto`,
+`\notin`, `\ne`, `\rightleftharpoons`, `\surd`, `\mathellipsis`,
+`\mathsterling`); the arrow delimiters (`\uparrow` family, `\vert`,
+`\Vert`, `\arrowvert`, `\bracevert`, `\lgroup`/`\rgroup`, `\backslash`,
+`<`/`>`) under `\big`..`\Bigg` and `\left`/`\right`; OpenType advances
+where pdfTeX uses the TFM's (`\Re`, `\Im`, `\smallint`, `\not`, `\vec`,
+`\mathbb`, `\mathit` digits, `\mathscr`); `\mathhexbox` symbols scaled to
+the script size (`\yen`, `\checkmark`, `\circledR`, `\maltese`); and
+`\phi`/`\varphi`, whose slots the engine paints with each other's character.

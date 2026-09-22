@@ -36,13 +36,20 @@ const SIZE_TOL_BP: f64 = 0.05;
 /// records these; the switch-over to `math_symbols` removes entries.
 #[rustfmt::skip]
 const KNOWN: &[(&str, &str, &str)] = &[
-    // amsmath-accents
-    ("amsmath-accents", "mathring", "geometry differs from pdfTeX"),
+    // alphabets
+    ("alphabets", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
+    ("alphabets", "mathbb", "advance: the width the engine gives it differs from the TFM"),
+    ("alphabets", "mathit", "advance: the width the engine gives it differs from the TFM"),
+    ("alphabets", "mathscr", "advance: the width the engine gives it differs from the TFM"),
     // amsfonts-composites
-    ("amsfonts-composites", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
-    ("amsfonts-composites", "Join", "unsupported: the engine drops the command"),
     ("amsfonts-composites", "dashleftarrow", "composite: pdfTeX builds it from pieces the engine draws differently"),
     ("amsfonts-composites", "dashrightarrow", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    // amsfonts-delimiters
+    ("amsfonts-delimiters", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
+    ("amsfonts-delimiters", "llcorner", "advance: the width the engine gives it differs from the TFM"),
+    ("amsfonts-delimiters", "lrcorner", "advance: the width the engine gives it differs from the TFM"),
+    ("amsfonts-delimiters", "ulcorner", "advance: the width the engine gives it differs from the TFM"),
+    ("amsfonts-delimiters", "urcorner", "advance: the width the engine gives it differs from the TFM"),
     // amsfonts-symbols
     ("amsfonts-symbols", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
     ("amsfonts-symbols", "checkmark", "size: a text-size \\mathhexbox symbol is scaled to the script size"),
@@ -60,28 +67,6 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("amsmath-delimiters", "lvert", "geometry differs from pdfTeX"),
     ("amsmath-delimiters", "rVert", "geometry differs from pdfTeX"),
     ("amsmath-delimiters", "rvert", "geometry differs from pdfTeX"),
-    // kernel-accents
-    ("kernel-accents", "mathring", "geometry differs from pdfTeX"),
-    ("kernel-accents", "vec", "advance: the width the engine gives it differs from the TFM"),
-    // amsfonts-delimiters
-    ("amsfonts-delimiters", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
-    ("amsfonts-delimiters", "llcorner", "advance: the width the engine gives it differs from the TFM"),
-    ("amsfonts-delimiters", "lrcorner", "advance: the width the engine gives it differs from the TFM"),
-    ("amsfonts-delimiters", "ulcorner", "advance: the width the engine gives it differs from the TFM"),
-    ("amsfonts-delimiters", "urcorner", "advance: the width the engine gives it differs from the TFM"),
-    // latexsym-symbols
-    ("latexsym-symbols", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
-    ("latexsym-symbols", "Box", "advance: the width the engine gives it differs from the TFM"),
-    ("latexsym-symbols", "Diamond", "unsupported: the engine drops the command"),
-    ("latexsym-symbols", "Join", "unsupported: the engine drops the command"),
-    ("latexsym-symbols", "leadsto", "unsupported: the engine drops the command"),
-    ("latexsym-symbols", "lhd", "unsupported: the engine drops the command"),
-    ("latexsym-symbols", "mho", "unsupported: the engine drops the command"),
-    ("latexsym-symbols", "rhd", "unsupported: the engine drops the command"),
-    ("latexsym-symbols", "sqsubset", "unsupported: the engine drops the command"),
-    ("latexsym-symbols", "sqsupset", "unsupported: the engine drops the command"),
-    ("latexsym-symbols", "unlhd", "unsupported: the engine drops the command"),
-    ("latexsym-symbols", "unrhd", "unsupported: the engine drops the command"),
     // amsmath-symbols
     ("amsmath-symbols", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
     ("amsmath-symbols", "varDelta", "unsupported: the engine drops the command"),
@@ -95,67 +80,6 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("amsmath-symbols", "varTheta", "unsupported: the engine drops the command"),
     ("amsmath-symbols", "varUpsilon", "unsupported: the engine drops the command"),
     ("amsmath-symbols", "varXi", "unsupported: the engine drops the command"),
-    // kernel-composites
-    ("kernel-composites", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
-    ("kernel-composites", "Relbar", "unsupported: the engine drops the command"),
-    ("kernel-composites", "angle", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("kernel-composites", "bowtie", "unsupported: the engine drops the command"),
-    ("kernel-composites", "cong", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("kernel-composites", "doteq", "unsupported: the engine drops the command"),
-    ("kernel-composites", "hbar", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("kernel-composites", "hookleftarrow", "unsupported: the engine drops the command"),
-    ("kernel-composites", "hookrightarrow", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("kernel-composites", "longmapsto", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("kernel-composites", "mapsto", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("kernel-composites", "mathellipsis", "unsupported: the engine drops the command"),
-    ("kernel-composites", "mathsterling", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("kernel-composites", "models", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("kernel-composites", "ne", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("kernel-composites", "neq", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("kernel-composites", "notin", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("kernel-composites", "relbar", "unsupported: the engine drops the command"),
-    ("kernel-composites", "rightleftharpoons", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("kernel-composites", "surd", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    // alphabets
-    ("alphabets", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
-    ("alphabets", "mathbb", "advance: the width the engine gives it differs from the TFM"),
-    ("alphabets", "mathit", "advance: the width the engine gives it differs from the TFM"),
-    ("alphabets", "mathscr", "advance: the width the engine gives it differs from the TFM"),
-    // kernel-delimiters
-    ("kernel-delimiters", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
-    ("kernel-delimiters", "<", "advance: the width the engine gives it differs from the TFM"),
-    ("kernel-delimiters", ">", "advance: the width the engine gives it differs from the TFM"),
-    ("kernel-delimiters", "Arrowvert", "unsupported: the engine drops the command"),
-    ("kernel-delimiters", "Downarrow", "class: the pipeline spaces it as Ord (no Rel/Bin glue)"),
-    ("kernel-delimiters", "Uparrow", "class: the pipeline spaces it as Ord (no Rel/Bin glue)"),
-    ("kernel-delimiters", "Updownarrow", "unsupported: the engine drops the command"),
-    ("kernel-delimiters", "Vert", "geometry differs from pdfTeX"),
-    ("kernel-delimiters", "arrowvert", "unsupported: the engine drops the command"),
-    ("kernel-delimiters", "backslash", "advance: the width the engine gives it differs from the TFM"),
-    ("kernel-delimiters", "bracevert", "unsupported: the engine drops the command"),
-    ("kernel-delimiters", "downarrow", "class: the pipeline spaces it as Ord (no Rel/Bin glue)"),
-    ("kernel-delimiters", "lgroup", "unsupported: the engine drops the command"),
-    ("kernel-delimiters", "lmoustache", "unsupported: the engine drops the command"),
-    ("kernel-delimiters", "rgroup", "unsupported: the engine drops the command"),
-    ("kernel-delimiters", "rmoustache", "unsupported: the engine drops the command"),
-    ("kernel-delimiters", "uparrow", "class: the pipeline spaces it as Ord (no Rel/Bin glue)"),
-    ("kernel-delimiters", "updownarrow", "unsupported: the engine drops the command"),
-    ("kernel-delimiters", "vert", "geometry differs from pdfTeX"),
-    ("kernel-delimiters", "|", "geometry differs from pdfTeX"),
-    // stmaryrd-delimiters
-    ("stmaryrd-delimiters", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
-    ("stmaryrd-delimiters", "llbracket", "unsupported: the engine drops the command"),
-    ("stmaryrd-delimiters", "rrbracket", "unsupported: the engine drops the command"),
-    // stmaryrd-composites
-    ("stmaryrd-composites", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
-    ("stmaryrd-composites", "Longarrownot", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("stmaryrd-composites", "Longmapsfrom", "unsupported: the engine drops the command"),
-    ("stmaryrd-composites", "Longmapsto", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("stmaryrd-composites", "Mapsfrom", "unsupported: the engine drops the command"),
-    ("stmaryrd-composites", "Mapsto", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("stmaryrd-composites", "longarrownot", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("stmaryrd-composites", "longmapsfrom", "unsupported: the engine drops the command"),
-    ("stmaryrd-composites", "mapsfrom", "unsupported: the engine drops the command"),
     // amssymb-symbols
     ("amssymb-symbols", "Finv", "geometry differs from pdfTeX"),
     ("amssymb-symbols", "Game", "geometry differs from pdfTeX"),
@@ -192,71 +116,87 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("amssymb-symbols", "varsubsetneqq", "geometry differs from pdfTeX"),
     ("amssymb-symbols", "varsupsetneqq", "geometry differs from pdfTeX"),
     ("amssymb-symbols", "vartriangle", "geometry differs from pdfTeX"),
+    // kernel-accents
+    ("kernel-accents", "vec", "advance: the width the engine gives it differs from the TFM"),
+    // kernel-composites
+    ("kernel-composites", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
+    ("kernel-composites", "angle", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("kernel-composites", "cong", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("kernel-composites", "doteq", "unsupported: the engine drops the command"),
+    ("kernel-composites", "hbar", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("kernel-composites", "hookleftarrow", "unsupported: the engine drops the command"),
+    ("kernel-composites", "hookrightarrow", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("kernel-composites", "longmapsto", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("kernel-composites", "mapsto", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("kernel-composites", "mathellipsis", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("kernel-composites", "mathsterling", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("kernel-composites", "models", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("kernel-composites", "ne", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("kernel-composites", "neq", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("kernel-composites", "notin", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("kernel-composites", "rightleftharpoons", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("kernel-composites", "surd", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    // kernel-delimiters
+    ("kernel-delimiters", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
+    ("kernel-delimiters", "<", "geometry differs from pdfTeX"),
+    ("kernel-delimiters", ">", "geometry differs from pdfTeX"),
+    ("kernel-delimiters", "Arrowvert", "unsupported: the engine drops the command"),
+    ("kernel-delimiters", "Downarrow", "geometry differs from pdfTeX"),
+    ("kernel-delimiters", "Uparrow", "geometry differs from pdfTeX"),
+    ("kernel-delimiters", "Updownarrow", "geometry differs from pdfTeX"),
+    ("kernel-delimiters", "Vert", "geometry differs from pdfTeX"),
+    ("kernel-delimiters", "arrowvert", "geometry differs from pdfTeX"),
+    ("kernel-delimiters", "backslash", "geometry differs from pdfTeX"),
+    ("kernel-delimiters", "bracevert", "geometry differs from pdfTeX"),
+    ("kernel-delimiters", "downarrow", "geometry differs from pdfTeX"),
+    ("kernel-delimiters", "lgroup", "advance: the width the engine gives it differs from the TFM"),
+    ("kernel-delimiters", "lmoustache", "unsupported: the engine drops the command"),
+    ("kernel-delimiters", "rgroup", "advance: the width the engine gives it differs from the TFM"),
+    ("kernel-delimiters", "rmoustache", "unsupported: the engine drops the command"),
+    ("kernel-delimiters", "uparrow", "geometry differs from pdfTeX"),
+    ("kernel-delimiters", "updownarrow", "geometry differs from pdfTeX"),
+    ("kernel-delimiters", "vert", "geometry differs from pdfTeX"),
+    ("kernel-delimiters", "|", "geometry differs from pdfTeX"),
     // kernel-symbols
-    ("kernel-symbols", "*", "class: the pipeline spaces it as Ord (no Rel/Bin glue)"),
     ("kernel-symbols", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
     ("kernel-symbols", "Im", "advance: the width the engine gives it differs from the TFM"),
     ("kernel-symbols", "Re", "advance: the width the engine gives it differs from the TFM"),
-    ("kernel-symbols", "aleph", "advance: the width the engine gives it differs from the TFM"),
-    ("kernel-symbols", "amalg", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "asymp", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "bigtriangledown", "class: the pipeline spaces it as Ord (no Rel/Bin glue)"),
-    ("kernel-symbols", "bigtriangleup", "advance: the width the engine gives it differs from the TFM"),
     ("kernel-symbols", "braceld", "unsupported: the engine drops the command"),
     ("kernel-symbols", "bracelu", "unsupported: the engine drops the command"),
     ("kernel-symbols", "bracerd", "unsupported: the engine drops the command"),
     ("kernel-symbols", "braceru", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "cdotp", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "clubsuit", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "dashv", "class: the pipeline spaces it as Ord (no Rel/Bin glue)"),
-    ("kernel-symbols", "diamondsuit", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "ell", "advance: the width the engine gives it differs from the TFM"),
-    ("kernel-symbols", "flat", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "frown", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "gg", "class: the pipeline spaces it as Ord (no Rel/Bin glue)"),
-    ("kernel-symbols", "heartsuit", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "imath", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "intop", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "jmath", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "ldotp", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "leftharpoondown", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "leftharpoonup", "unsupported: the engine drops the command"),
     ("kernel-symbols", "lhook", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "ll", "class: the pipeline spaces it as Ord (no Rel/Bin glue)"),
-    ("kernel-symbols", "lnot", "unsupported: the engine drops the command"),
     ("kernel-symbols", "mapstochar", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "mathdollar", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "natural", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "nearrow", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "neg", "unsupported: the engine drops the command"),
     ("kernel-symbols", "not", "advance: the width the engine gives it differs from the TFM"),
-    ("kernel-symbols", "nwarrow", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "ointop", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "owns", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "phi", "identity: the engine paints a different character for the slot"),
-    ("kernel-symbols", "propto", "class: the pipeline spaces it as Ord (no Rel/Bin glue)"),
     ("kernel-symbols", "rhook", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "rightharpoondown", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "rightharpoonup", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "searrow", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "sharp", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "simeq", "class: the pipeline spaces it as Ord (no Rel/Bin glue)"),
-    ("kernel-symbols", "smallint", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "smile", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "spadesuit", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "star", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "swarrow", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "top", "advance: the width the engine gives it differs from the TFM"),
-    ("kernel-symbols", "triangle", "advance: the width the engine gives it differs from the TFM"),
-    ("kernel-symbols", "triangleleft", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "triangleright", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "uplus", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "varbigtriangledown", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "varbigtriangleup", "unsupported: the engine drops the command"),
-    ("kernel-symbols", "varphi", "identity: the engine paints a different character for the slot"),
-    ("kernel-symbols", "vdash", "class: the pipeline spaces it as Ord (no Rel/Bin glue)"),
-    ("kernel-symbols", "wp", "advance: the width the engine gives it differs from the TFM"),
-    ("kernel-symbols", "wr", "unsupported: the engine drops the command"),
+    ("kernel-symbols", "smallint", "advance: the width the engine gives it differs from the TFM"),
+    // latexsym-symbols
+    ("latexsym-symbols", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
+    ("latexsym-symbols", "Box", "advance: the width the engine gives it differs from the TFM"),
+    ("latexsym-symbols", "Diamond", "unsupported: the engine drops the command"),
+    ("latexsym-symbols", "Join", "unsupported: the engine drops the command"),
+    ("latexsym-symbols", "leadsto", "unsupported: the engine drops the command"),
+    ("latexsym-symbols", "lhd", "unsupported: the engine drops the command"),
+    ("latexsym-symbols", "mho", "unsupported: the engine drops the command"),
+    ("latexsym-symbols", "rhd", "unsupported: the engine drops the command"),
+    ("latexsym-symbols", "sqsubset", "unsupported: the engine drops the command"),
+    ("latexsym-symbols", "sqsupset", "unsupported: the engine drops the command"),
+    ("latexsym-symbols", "unlhd", "unsupported: the engine drops the command"),
+    ("latexsym-symbols", "unrhd", "unsupported: the engine drops the command"),
+    // stmaryrd-composites
+    ("stmaryrd-composites", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
+    ("stmaryrd-composites", "Longarrownot", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("stmaryrd-composites", "Longmapsfrom", "unsupported: the engine drops the command"),
+    ("stmaryrd-composites", "Longmapsto", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("stmaryrd-composites", "Mapsfrom", "unsupported: the engine drops the command"),
+    ("stmaryrd-composites", "Mapsto", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("stmaryrd-composites", "longarrownot", "composite: pdfTeX builds it from pieces the engine draws differently"),
+    ("stmaryrd-composites", "longmapsfrom", "unsupported: the engine drops the command"),
+    ("stmaryrd-composites", "mapsfrom", "unsupported: the engine drops the command"),
+    // stmaryrd-delimiters
+    ("stmaryrd-delimiters", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
+    ("stmaryrd-delimiters", "llbracket", "unsupported: the engine drops the command"),
+    ("stmaryrd-delimiters", "rrbracket", "unsupported: the engine drops the command"),
     // stmaryrd-symbols
     ("stmaryrd-symbols", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
     ("stmaryrd-symbols", "Arrownot", "unsupported: the engine drops the command"),
@@ -444,7 +384,17 @@ fn identity_ok(engine: &str, declared: &[String]) -> bool {
     // painted under the character they negate or extend, whose text the
     // engine's cluster carries; any text stands for them.
     let mark = declared.iter().any(|t| t == "\u{0338}" || t == "\u{F8FE}");
-    declared.is_empty() || mark || declared.iter().any(|t| t == engine)
+    // The compiler spells cmmi "1E `\phi` as U+03C6 and "27 `\varphi` as
+    // U+03D5 (the declaration table keeps that convention) and the pipeline
+    // corrects the extracted text to Unicode's naming, U+03D5 `\phi` /
+    // U+03C6 `\varphi` (`mathfont::extraction_text`); either spelling names
+    // the slot.
+    let phi_swap = |t: &str| match t {
+        "\u{03C6}" => engine == "\u{03D5}",
+        "\u{03D5}" => engine == "\u{03C6}",
+        _ => false,
+    };
+    declared.is_empty() || mark || declared.iter().any(|t| t == engine || phi_swap(t))
 }
 
 #[derive(Debug, Clone)]
@@ -461,7 +411,7 @@ fn line_of(offsets: &[(usize, usize)], byte: usize) -> Option<usize> {
     offsets.iter().position(|&(s, e)| byte >= s && byte < e)
 }
 
-fn run_doc(doc: &str) -> (Vec<String>, BTreeMap<String, Vec<String>>) {
+fn run_doc(doc: &str) -> (usize, Vec<String>, BTreeMap<String, Vec<String>>) {
     let tex = std::fs::read_to_string(fixture_dir().join(format!("{doc}.tex"))).unwrap();
     let expected = parse_expected(&std::fs::read_to_string(fixture_dir().join(format!("expected/{doc}.txt"))).unwrap());
     // Byte range of every formula line (`NNNN $...$\par`).
@@ -575,14 +525,14 @@ fn run_doc(doc: &str) -> (Vec<String>, BTreeMap<String, Vec<String>>) {
     if !errors.is_empty() {
         failures.entry("*diagnostics".into()).or_default().extend(errors);
     }
-    (passed, failures)
+    (expected.len(), passed, failures)
 }
 
 fn check(doc: &str) {
     if !lm_available() {
         return;
     }
-    let (passed, failures) = run_doc(doc);
+    let (total, passed, failures) = run_doc(doc);
     let known: BTreeSet<&str> = KNOWN.iter().filter(|(d, _, _)| *d == doc).map(|(_, n, _)| *n).collect();
     let all_known = known.contains("*");
     let unexpected: Vec<_> = failures
@@ -590,7 +540,7 @@ fn check(doc: &str) {
         .filter(|(n, _)| !all_known && !known.contains(n.as_str()))
         .collect();
     let stale: Vec<_> = known.iter().filter(|n| **n != "*" && !failures.contains_key(**n)).collect();
-    let n_fail: usize = failures.values().map(|v| v.len()).sum();
+    let n_fail = total - passed.len();
     eprintln!(
         "declared-math {doc}: {} formulas passed, {n_fail} failed in {} commands ({} known), {} unexpected",
         passed.len(),

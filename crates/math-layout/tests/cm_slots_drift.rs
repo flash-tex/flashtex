@@ -8,7 +8,7 @@
 //! the test too. Characters the hand table does not map at all are reported
 //! as a count (they are what the switch-over supplies).
 
-use flashtex_math_layout::cm::{delimiter_slot, symbol_slot, Family};
+use flashtex_math_layout::cm::{hand_delimiter_slot, hand_symbol_slot, Family};
 use flashtex_math_layout::cm_slots::{DECLARED_DELIMITERS, DECLARED_SLOTS, SHARED_TEXT};
 use std::collections::BTreeSet;
 
@@ -33,8 +33,8 @@ fn hand_symbol_slots_agree_with_the_declarations() {
     let mut wrong = Vec::new();
     let mut unmapped = Vec::new();
     let mut agreeing = 0;
-    for &(ch, family, slot, name) in DECLARED_SLOTS {
-        match symbol_slot(ch) {
+    for &(ch, family, slot, _, name) in DECLARED_SLOTS {
+        match hand_symbol_slot(ch) {
             Some((f, s)) if (f, s) == (family, slot) => agreeing += 1,
             Some((f, s)) => wrong.push((
                 name,
@@ -61,10 +61,10 @@ fn hand_symbol_slots_agree_with_the_declarations() {
 
 #[test]
 fn shared_text_rows_name_a_different_slot_than_the_first_declaration() {
-    for &(ch, family, slot, name) in SHARED_TEXT {
+    for &(ch, family, slot, _, name) in SHARED_TEXT {
         let first = DECLARED_SLOTS.iter().find(|(c, ..)| *c == ch);
         assert!(first.is_some(), "{ch:?} (\\{name}) has no first declaration");
-        let (_, f, s, _) = first.unwrap();
+        let (_, f, s, _, _) = first.unwrap();
         assert_ne!((*f, *s), (family, slot), "{ch:?} (\\{name}) is not actually shared");
     }
 }
@@ -75,7 +75,7 @@ fn hand_delimiter_slots_agree_with_the_declarations() {
     let mut wrong = Vec::new();
     let mut unmapped = Vec::new();
     for &(ch, family, slot, large, name) in DECLARED_DELIMITERS {
-        match delimiter_slot(ch) {
+        match hand_delimiter_slot(ch) {
             Some(((f, s), l)) if (f, s, l) == (family, slot, large) => {}
             Some(((f, s), l)) => wrong.push((
                 name,
