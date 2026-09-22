@@ -28,8 +28,10 @@
 //! directly below the (nearly full) body instead. The glue stretch and shrink
 //! of `\skip\footins`, the depth of the last body line, and TeX's
 //! insertion-split penalties are not modelled. Nested `\footnote` text is
-//! diagnosed and dropped (its mark stays), and footnotes in headings or
-//! captions are not recognised yet.
+//! diagnosed and dropped (its mark stays). A `\footnote` in a heading or
+//! caption marks and collects exactly like one in body text; unlike real
+//! LaTeX the note is not duplicated wherever the heading text is reused
+//! (table of contents, running headers).
 
 use super::{
     emit, glyph_width, round2, Font, LayoutCursor, Page, RuleGeometry, TextItem, LINE_SPACING,
@@ -821,6 +823,113 @@ mod tests {
         assert!((subscript_drop(10.0, 0.683 * 12.0) - tall).abs() < 1e-9);
         // Empty argument degrades to `sub1`, never negative.
         assert_eq!(subscript_drop(10.0, 0.0), 1.5);
+    }
+
+    #[test]
+    fn section_heading_footnote_marks_and_collects_like_body_text() {
+        let source = "\\section{Title\\footnote{A note.}}\nBody text.\n";
+        let output = compile(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        let pages = &output.pages;
+        assert_eq!(pages.len(), 1);
+        // The heading keeps its size; the note text is not set as a heading.
+        let title = find(pages, source, "Title").1;
+        assert_eq!(title.font_size_pt, 17.0);
+        // The running-text mark: glued to the heading, raised, spanning
+        // `\footnote` — plus the footnote's own mark, exactly as in body.
+        let mark_start = source.find("\\footnote").unwrap();
+        let marks: Vec<&TextItem> = items(pages)
+            .into_iter()
+            .map(|(_, item)| item)
+            .filter(|item| item.span.start == mark_start && item.rule.is_none())
+            .collect();
+        assert_eq!(marks.len(), 2, "heading mark and footnote mark");
+        let text_mark = marks[0];
+        assert_eq!(text_mark.text, "1");
+        assert_eq!(text_mark.font_size_pt, 8.0);
+        let title_end = title.x_pt + glyph_width("Title", 17.0, Font::TimesBold);
+        assert!((text_mark.x_pt - title_end).abs() < 0.02);
+        assert_eq!(
+            text_mark.baseline_y_pt,
+            round2(title.baseline_y_pt - SUP2_RAISE_EM * 12.0)
+        );
+        // The note sits in the normal footnote area at the page bottom.
+        let note = find(pages, source, "note.").1;
+        assert_eq!(note.font_size_pt, 10.0);
+        assert_eq!(note.baseline_y_pt, TEXT_BOTTOM_PT);
+        assert_eq!(marks[1].text, "1");
+        let rule = items(pages)
+            .into_iter()
+            .find_map(|(_, item)| item.rule.filter(|_| item.span.start == mark_start))
+            .expect("footnote rule");
+        assert_eq!(rule.y_pt, round2(TEXT_BOTTOM_PT - 8.4 - 3.0));
+    }
+
+    #[test]
+    fn caption_footnote_marks_and_collects() {
+        let source = "\\begin{figure}\n\\caption{Cap\\footnote{Cap note.}}\n\\end{figure}\nBody.\n";
+        let output = compile(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        let pages = &output.pages;
+        let mark_start = source.find("\\footnote").unwrap();
+        let marks: Vec<&TextItem> = items(pages)
+            .into_iter()
+            .map(|(_, item)| item)
+            .filter(|item| item.span.start == mark_start && item.rule.is_none())
+            .collect();
+        assert_eq!(marks.len(), 2, "caption mark and footnote mark");
+        assert_eq!(marks[0].text, "1");
+        let note = find(pages, source, "Cap note.").1;
+        assert_eq!(note.font_size_pt, 10.0);
+        assert_eq!(note.baseline_y_pt, TEXT_BOTTOM_PT);
+        assert!(items(pages)
+            .into_iter()
+            .any(|(_, item)| item.rule.is_some() && item.span.start == mark_start));
+    }
+
+    #[test]
+    fn heading_footnotes_share_the_body_counter() {
+        let source = "First\\footnote{one}\n\\section{Title\\footnote{two}}\nBody.\n";
+        let parsed = parser::parse(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let mut numbers = Vec::new();
+        for block in &parsed.blocks {
+            let content = match block {
+                Block::Paragraph(inlines)
+                | Block::Heading {
+                    content: inlines, ..
+                } => inlines,
+                _ => continue,
+            };
+            for inline in content {
+                if let Inline::Footnote { number, .. } = inline {
+                    numbers.push(number.clone());
+                }
+            }
+        }
+        assert_eq!(numbers, ["1", "2"]);
+    }
+
+    #[test]
+    fn table_of_contents_does_not_duplicate_a_heading_footnote() {
+        let source = "\\tableofcontents\n\\section{Title\\footnote{A note.}}\nBody.\n";
+        let constraints = LayoutConstraints::default();
+        let mut session = Session::new();
+        session.compile(source, constraints);
+        let output = session.compile(source, constraints).output;
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        let mark_start = source.find("\\footnote").unwrap();
+        let marks: Vec<&TextItem> = output
+            .pages
+            .iter()
+            .flat_map(|page| &page.items)
+            .filter(|item| item.span.start == mark_start && item.rule.is_none())
+            .collect();
+        assert_eq!(
+            marks.len(),
+            2,
+            "heading mark and footnote mark only: {marks:?}"
+        );
     }
 
     #[test]

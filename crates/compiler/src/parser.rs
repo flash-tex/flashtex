@@ -13068,8 +13068,10 @@ impl P<'_> {
     /// because a label is short enough that a silent drop leaves nothing at
     /// all on the page (`\item[$\alpha$]` used to produce no label run and no
     /// diagnostic). Headings and captions keep the older lenient behaviour —
-    /// they carry `\label`, `\protect`, `\footnotemark` and friends that are
-    /// correctly ignored here, and reporting those would flood.
+    /// they carry `\label`, `\protect` and friends that are correctly
+    /// ignored here, and reporting those would flood. `\footnote` (and
+    /// `\footnotemark`/`\footnotetext`) are real footnotes here, handled by
+    /// the same handler body text uses.
     ///
     /// `if_display_context` is `\intertext`/`\shortintertext`'s mode: it
     /// reports amsmath's `\if@display` conditional (which stays true inside
@@ -13199,6 +13201,32 @@ impl P<'_> {
                 // literal "sec:a" instead of the number. Emit the same
                 // `Inline::Reference` the main token loop builds, so resolution and
                 // the undefined-reference `??` behave identically in both places.
+                // `\footnote`/`\footnotemark`/`\footnotetext` reach here
+                // whenever they sit in a heading, a caption or a style
+                // argument, because those are flattened into a token list
+                // instead of being re-parsed. Without this arm the command
+                // was dropped and its braced argument survived as ordinary
+                // text, so `\section{Title\footnote{A note.}}` typeset
+                // "TitleA note." as the heading with no mark and no note.
+                // Point the main token cursor at this run and reuse the
+                // ordinary `footnote` handler (as the `\label` arm below
+                // does), so numbering, the mark and the page-bottom note
+                // behave exactly as in body text.
+                TokenKind::Command(name)
+                    if !report_unsupported
+                        && matches!(
+                            name.as_str(),
+                            "footnote" | "footnotemark" | "footnotetext"
+                        ) =>
+                {
+                    let outer_tokens =
+                        std::mem::replace(&mut self.t, std::rc::Rc::clone(&expanded));
+                    let outer_index = std::mem::replace(&mut self.i, index + 1);
+                    self.footnote(name, input.token.span, &mut content);
+                    skip_until = self.i;
+                    self.t = outer_tokens;
+                    self.i = outer_index;
+                }
                 TokenKind::Command(name) if matches!(name.as_str(), "ref" | "pageref" | "eqref") => {
                     match siunitx_group_at(&expanded, index + 1) {
                         Some((raw, argument_span, after)) => {
