@@ -2190,6 +2190,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "ang",
     "sisetup",
     "DeclareSIUnit",
+    "part",
     "section",
     "subsection",
     "subsubsection",
@@ -4861,6 +4862,9 @@ impl P<'_> {
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
             "chapter" if self.chapter_class => self.chapter(span, blocks, para),
+            // `\part` in every standard class (article as well as
+            // report/book), so unlike `\chapter` this arm is ungated.
+            "part" => self.part(span, blocks, para),
             // `\paragraph`/`\subparagraph` are `\@startsection` with a
             // *negative* after-skip (article.cls 406-414), and `\@xsect`'s
             // negative branch never sets the head as a block of its own: it
@@ -8614,6 +8618,42 @@ impl P<'_> {
             self.current_dependencies.clear();
         } else {
             blocks.push(Block::Paragraph(content));
+            self.finish_block_dependencies();
+        }
+    }
+
+    /// `\part[*][<short>]{<title>}` in every standard class:
+    /// `\refstepcounter{part}` for the numbered form (`\thepart` is
+    /// `\Roman{part}`, which resets nothing — chapters and sections run
+    /// on across parts), and nothing stepped or labelled for the starred
+    /// form. The head itself is layout: like the other sectioning
+    /// commands it is kept as a `Block::Heading` — level 0, above
+    /// `\section`'s 1 — in bold.
+    fn part(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let starred = self.take_optional_star();
+        if !starred {
+            let _short = self.optional_bracket_argument();
+        }
+        let (tokens, _) = self.required_group("part", span);
+        self.flush_paragraph(blocks, para);
+        self.document_global_state = true;
+        let number = if starred {
+            String::new()
+        } else {
+            let number = self.counters.step("part").unwrap_or_default();
+            self.set_current_counter("part", Some(number.clone()));
+            number
+        };
+        let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
+        if content.is_empty() {
+            self.current_dependencies.clear();
+        } else {
+            blocks.push(Block::Heading {
+                level: 0,
+                number,
+                number_span: span,
+                content,
+            });
             self.finish_block_dependencies();
         }
     }
@@ -18230,6 +18270,39 @@ mod tests {
             })
             .collect();
         assert_eq!(numbers, ["1", "", "1.1"]);
+    }
+
+    #[test]
+    fn part_headings_number_in_roman_and_starred_part_skips_numbering() {
+        let parsed = parse(r"\part{Foo}\part*{Bar}\part{Baz}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let headings: Vec<(u8, &str, String)> = parsed
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Heading { level, number, content, .. } => Some((
+                    *level,
+                    number.as_str(),
+                    content
+                        .iter()
+                        .filter_map(|inline| match inline {
+                            Inline::Text { text, .. } => Some(text.clone()),
+                            _ => None,
+                        })
+                        .collect(),
+                )),
+                _ => None,
+            })
+            .collect();
+        // Level 0 sits above `\section`'s 1; `\thepart` is `\Roman{part}`.
+        assert_eq!(
+            headings,
+            [
+                (0, "I", "Foo".to_string()),
+                (0, "", "Bar".to_string()),
+                (0, "II", "Baz".to_string()),
+            ]
+        );
     }
 
     #[test]

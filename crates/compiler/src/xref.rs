@@ -327,17 +327,32 @@ pub struct Counters {
 const THE_DEPTH: usize = 16;
 
 impl Counters {
-    /// article.cls: `section`, `subsection` numbered within `section`, and
+    /// article.cls: `part` (printed `\Roman`, resetting and reset by
+    /// nothing), `section`, `subsection` numbered within `section`, and
     /// `subsubsection` numbered within `subsection` (`\thesubsection` is
     /// `\thesection.\arabic{subsection}`), plus the body counters every
     /// class defines ([`Counters::define_body_counters`]).
     pub fn article() -> Self {
         let mut counters = Counters::default();
+        counters.define_part();
         counters.define("section", None);
         counters.number_within("subsection", "section");
         counters.number_within("subsubsection", "subsection");
         counters.define_body_counters();
         counters
+    }
+
+    /// Every standard class's `part` counter: `\newcounter{part}` with
+    /// `\thepart` as `\@Roman\c@part` (article/report/book.cls). It
+    /// numbers nothing within itself and nothing resets it, so stepping
+    /// it (LaTeX's `\refstepcounter{part}` in `\@part`) only advances the
+    /// part number `\label`/`\ref` read.
+    fn define_part(&mut self) {
+        self.define("part", None);
+        self.set_representation(
+            "part",
+            vec![Piece::Value("part".to_string(), NumberStyle::RomanUpper)],
+        );
     }
 
     /// The class counters outside sectioning that article.cls leaves
@@ -362,6 +377,7 @@ impl Counters {
     /// `\chapter`, is "1", not "0.1".
     pub fn report() -> Self {
         let mut counters = Counters::default();
+        counters.define_part();
         counters.define("chapter", None);
         counters.number_within("section", "chapter");
         counters.number_within("subsection", "section");

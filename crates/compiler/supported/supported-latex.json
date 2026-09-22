@@ -18,6 +18,7 @@
     {"name": "ang", "mode": "text", "origin": "text_dispatch", "arguments": "[options]{degrees;minutes;seconds}", "description": "siunitx angle with degree, minute and second marks", "renders": true},
     {"name": "sisetup", "mode": "text", "origin": "text_dispatch", "arguments": "{options}", "description": "siunitx settings for the following commands (document-global in this model)", "renders": true},
     {"name": "DeclareSIUnit", "mode": "text", "origin": "text_dispatch", "arguments": "[options]{\\name}{units}", "description": "defines a siunitx unit macro usable inside \\unit and \\qty", "renders": true},
+    {"name": "part", "mode": "text", "origin": "text_dispatch", "arguments": "[short]{...}", "description": "numbered part heading in roman numerals; starred form unnumbered", "renders": true},
     {"name": "section", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "numbered section heading; starred form unnumbered", "renders": true},
     {"name": "subsection", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "numbered subsection heading; starred form unnumbered", "renders": true},
     {"name": "subsubsection", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "numbered subsubsection heading; starred form unnumbered", "renders": true},
@@ -1347,7 +1348,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 222, "percent": 54.1},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 223, "percent": 54.4},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 22, "percent": 73.3},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 47, "percent": 46.1},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -1362,6 +1363,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 20, "percent": 8.3}
     ],
-    "total": {"canonical": 1314, "supported": 577, "percent": 43.9}
+    "total": {"canonical": 1314, "supported": 578, "percent": 44}
   }
 }
