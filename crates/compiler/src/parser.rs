@@ -196,6 +196,9 @@ struct SectionTitleFormat {
     /// the rule starts at the left margin on its own line below the title,
     /// not as leaders after the title text.
     rule: bool,
+    /// The after-code `\titlerule[<thickness>]`: the rule's height in points
+    /// (`None` draws the default thickness).
+    rule_thickness_pt: Option<f64>,
     /// The after-code's `\vspace` total, applied additively after the rule.
     /// Measured: `\vspace{-5pt}` pulls the body up the full 4.98pt.
     after_pt: f64,
@@ -1065,6 +1068,10 @@ pub enum Block {
     /// `\hrule`: a full-measure-width rule at the current line.
     Rule {
         span: Span,
+        /// titlesec `\titlerule[<thickness>]`: the rule's height in points.
+        /// `None` draws the default thickness; `\hrule` always leaves this
+        /// unset.
+        thickness_pt: Option<f64>,
     },
     /// `\newpage`: force the next block onto a fresh page.
     PageBreak,
@@ -5479,9 +5486,9 @@ impl P<'_> {
                 Some("set the heading flush left anyway".into()),
             ));
         }
-        let (rule, after_pt) = match after {
+        let (rule, rule_thickness_pt, after_pt) = match after {
             Some((tokens, bracket_span)) => self.scan_titleformat_after(&tokens, bracket_span),
-            None => (false, 0.0),
+            None => (false, None, 0.0),
         };
         // `\@startsection`-style `\addvspace`: the format's space only adds
         // what exceeds the class beforeskip it adjoins.
@@ -5491,6 +5498,7 @@ impl P<'_> {
             print_number: starred,
             before_extra_pt: (before_pt - beforeskip).max(0.0),
             rule,
+            rule_thickness_pt,
             after_pt,
         });
     }
@@ -5501,7 +5509,11 @@ impl P<'_> {
     /// (vertical space after the rule) and a black `\color` (the rule's own
     /// colour, already the default). Anything else is reported and ignored;
     /// returns the rule flag and the summed space.
-    fn scan_titleformat_after(&mut self, tokens: &[InputToken], span: Span) -> (bool, f64) {
+    fn scan_titleformat_after(
+        &mut self,
+        tokens: &[InputToken],
+        span: Span,
+    ) -> (bool, Option<f64>, f64) {
         let units = self.font_setup().em_ex_sp(self.style);
         let blanks = |tokens: &[InputToken], mut i: usize| {
             while matches!(
@@ -5513,6 +5525,7 @@ impl P<'_> {
             i
         };
         let mut rule = false;
+        let mut rule_thickness_pt: Option<f64> = None;
         let mut after_pt = 0.0;
         let mut thick = false;
         let mut unhandled: Vec<String> = Vec::new();
@@ -5526,14 +5539,40 @@ impl P<'_> {
             match &tokens[i].token.kind {
                 TokenKind::Command(name) if name == "titlerule" => {
                     rule = true;
-                    // A star or `[thickness]` after it is not representable
-                    // on the rule node (see `title_rule`).
-                    let next = blanks(tokens, i + 1);
-                    if matches!(
+                    // titlesec.sty `\ttl@rule`: `[...]` is the rule's height
+                    // (default `.4\p@`), parsed here and carried on the rule
+                    // node. The star form (`\ttl@row`: `[width]{pattern}`
+                    // leaders) is not representable, nor is an unparseable
+                    // bracket (see `title_rule`).
+                    let mut next = blanks(tokens, i + 1);
+                    // A `*` glued to the bracket (`*[1in]`) lexes as one
+                    // word: like `\@ifstar`, any leading `*` is the star.
+                    let starred = matches!(
                         tokens.get(next).map(|input| &input.token.kind),
-                        Some(TokenKind::Word(word)) if word == "*" || word.starts_with('[')
-                    ) {
+                        Some(TokenKind::Word(word)) if word.starts_with('*')
+                    );
+                    if starred {
                         thick = true;
+                        next = blanks(tokens, next + 1);
+                    }
+                    // On the star form the bracket is a leader width, not a
+                    // thickness: it stays unapplied (warned above).
+                    let has_thickness = !starred
+                        && matches!(
+                            tokens.get(next).map(|input| &input.token.kind),
+                            Some(TokenKind::Word(word)) if word.starts_with('[')
+                        );
+                    if has_thickness {
+                        match titleformat_bracket(tokens, next).and_then(|text| {
+                            parse_glue_pt_current(text.trim(), units).map(|(pt, _, _)| pt)
+                        }) {
+                            Some(pt) => {
+                                if rule_thickness_pt.is_none() {
+                                    rule_thickness_pt = Some(pt);
+                                }
+                            }
+                            None => thick = true,
+                        }
                     }
                 }
                 TokenKind::Command(name) if name == "vspace" || name == "vskip" => {
@@ -5607,7 +5646,7 @@ impl P<'_> {
                 Some("drew the default rule and continued".into()),
             ));
         }
-        (rule, after_pt)
+        (rule, rule_thickness_pt, after_pt)
     }
 
     /// The `[...]` after an unstarred `\titleformat` as tokens. This is not
@@ -5708,9 +5747,12 @@ impl P<'_> {
     /// rule at the current line. Inside a paragraph it is
     /// `\leaders\hrule\hfill` — the exact node `\hrulefill` already emits —
     /// and between paragraphs `\ifvmode` takes `\titleline`, a full-width
-    /// rule, which is the existing [`Block::Rule`]. The star and
-    /// `[thickness]` forms draw the default rule with a warning: the rule
-    /// nodes carry no thickness.
+    /// rule, which is the existing [`Block::Rule`]. The unstarred
+    /// `[thickness]` form (default `.4\p@`) is carried on the
+    /// [`Block::Rule`] between paragraphs; the star form (`\ttl@row`:
+    /// `[width]{pattern}` leaders), an unparseable bracket, and any
+    /// thickness inside a paragraph draw the default rule with a warning:
+    /// the fill leaders carry no thickness.
     #[inline(never)]
     fn title_rule(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         let starred = self.take_optional_star();
@@ -5724,7 +5766,20 @@ impl P<'_> {
             ));
             return;
         }
-        if starred || bracket.is_some() {
+        // On the star form the bracket is a leader width, not a thickness,
+        // so only the unstarred bracket parses as one.
+        let units = self.font_setup().em_ex_sp(self.style);
+        let thickness_pt = if starred {
+            None
+        } else {
+            bracket
+                .as_ref()
+                .and_then(|(raw, _)| parse_glue_pt_current(raw.trim(), units).map(|(pt, _, _)| pt))
+        };
+        let unapplied = starred
+            || (bracket.is_some() && thickness_pt.is_none())
+            || (!para.is_empty() && thickness_pt.is_some());
+        if unapplied {
             self.diags.push(Diagnostic::warning(
                 "\\titlerule with a star or [thickness] draws the default rule: custom widths and thicknesses are not applied",
                 Some(span),
@@ -5733,7 +5788,7 @@ impl P<'_> {
         }
         if para.is_empty() {
             self.flush_paragraph(blocks, para);
-            blocks.push(Block::Rule { span });
+            blocks.push(Block::Rule { span, thickness_pt });
             self.finish_block_dependencies();
         } else {
             para.push(Inline::HFill {
@@ -5949,7 +6004,10 @@ impl P<'_> {
                 self.finish_block_dependencies();
                 if let Some(format) = title_format.as_ref() {
                     if format.rule {
-                        blocks.push(Block::Rule { span });
+                        blocks.push(Block::Rule {
+                            span,
+                            thickness_pt: format.rule_thickness_pt,
+                        });
                         self.finish_block_dependencies();
                     }
                     if format.after_pt != 0.0 {
@@ -6737,7 +6795,10 @@ impl P<'_> {
         }
         "hrule" => {
             self.flush_paragraph(blocks, para);
-            blocks.push(Block::Rule { span });
+            blocks.push(Block::Rule {
+                span,
+                thickness_pt: None,
+            });
             self.finish_block_dependencies();
         }
         "newpage" => {
@@ -16558,6 +16619,55 @@ fn titleformat_glue(tokens: &[InputToken], mut i: usize) -> Option<(String, usiz
         Some(TokenKind::Word(word)) => Some((word.clone(), i + 1)),
         _ => None,
     }
+}
+
+/// The `[...]` after `\titlerule` in a `\titleformat` after-code (titlesec.sty
+/// `\ttl@rule@i`'s `[<thickness>]`): the bracket's raw text, or `None` when it
+/// never closes. `tokens[i]` is the word holding the opening `[` (anything
+/// before it in that word is already skipped by the caller). A `]` inside a
+/// `{...}` group only closes the bracket at depth 0, mirroring
+/// `titleformat_after_group`; the tail after the closing `]` stays in
+/// the stream for the after-code walk, which ignores non-command text anyway.
+fn titleformat_bracket(tokens: &[InputToken], i: usize) -> Option<String> {
+    let mut text = String::new();
+    let mut depth = 0usize;
+    let mut first = true;
+    let mut j = i;
+    while let Some(input) = tokens.get(j) {
+        match &input.token.kind {
+            TokenKind::LBrace => {
+                depth += 1;
+                text.push('{');
+            }
+            TokenKind::RBrace => {
+                depth = depth.saturating_sub(1);
+                text.push('}');
+            }
+            TokenKind::Word(word) => {
+                let body = if first {
+                    word.strip_prefix('[').unwrap_or(word.as_str())
+                } else {
+                    word.as_str()
+                };
+                if depth == 0 {
+                    if let Some(close) = body.find(']') {
+                        text.push_str(&body[..close]);
+                        return Some(text);
+                    }
+                }
+                text.push_str(body);
+            }
+            TokenKind::Command(name) => {
+                text.push('\\');
+                text.push_str(name);
+            }
+            TokenKind::Space | TokenKind::ParBreak => text.push(' '),
+            _ => {}
+        }
+        first = false;
+        j += 1;
+    }
+    None
 }
 
 fn dimen_source(tokens: &[InputToken]) -> String {

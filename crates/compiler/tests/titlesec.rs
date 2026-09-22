@@ -32,6 +32,8 @@
 //! Unicode codepoint for copy-paste/ATS) with zero visible effect, hence the
 //! silent no-ops below.
 
+use flashtex_compiler::incremental::compile_full;
+use flashtex_compiler::layout::LayoutConstraints;
 use flashtex_compiler::parser::{parse, Block, FillLeader, Inline};
 
 /// The resume's own titlesec lines, verbatim.
@@ -43,6 +45,47 @@ fn resume_doc(body: &str) -> String {
     format!(
         "\\documentclass[letterpaper,11pt]{{article}}\n{RESUME_PREAMBLE}\\begin{{document}}\n{body}\n\\end{{document}}\n"
     )
+}
+
+/// A minimal titlesec document with a caller-chosen `\titleformat` after-code.
+fn titleformat_doc(after: &str, body: &str) -> String {
+    format!(
+        "\\documentclass[letterpaper,11pt]{{article}}\n\
+         \\usepackage{{titlesec}}\n\
+         \\titleformat{{\\section}}{{\\scshape\\raggedright\\large}}{{}}{{0em}}{{}}[{after}]\n\
+         \\begin{{document}}\n{body}\n\\end{{document}}\n"
+    )
+}
+
+/// The thickness of the after-code rule block of a `\section` document.
+fn after_code_thickness(blocks: &[Block]) -> Option<f64> {
+    match &blocks[1] {
+        Block::Rule { thickness_pt, .. } => *thickness_pt,
+        other => panic!("second block is not the after-code rule: {other:?}"),
+    }
+}
+
+/// The height of the laid-out after-code rule, if exactly one rule is drawn.
+fn laid_out_rule_height(source: &str) -> f64 {
+    let out = compile_full(source, LayoutConstraints::default());
+    assert!(
+        out.diagnostics.is_empty(),
+        "unexpected diagnostics: {:?}",
+        out.diagnostics
+    );
+    let mut heights = out
+        .pages
+        .iter()
+        .flat_map(|page| page.items.iter())
+        .filter_map(|item| item.rule.map(|geometry| geometry.height_pt));
+    let height = heights
+        .next()
+        .unwrap_or_else(|| panic!("no laid-out rule item in {out:?}"));
+    assert!(
+        heights.next().is_none(),
+        "more than one laid-out rule item in {out:?}"
+    );
+    height
 }
 
 fn heading_text(content: &[Inline]) -> (String, Vec<String>) {
@@ -226,6 +269,95 @@ fn input_glyphtounicode_is_a_silent_noop() {
         "{:?}",
         parsed.diagnostics
     );
+}
+
+#[test]
+fn titlerule_thickness_sets_the_after_code_rule_height() {
+    // titlesec.sty `\ttl@rule@i[<thickness>]`: an explicit thickness replaces
+    // the default rule height instead of warning that custom thicknesses are
+    // not applied. The braces are real syntax, not test padding: the
+    // after-code is a TeX delimited `[#2]` argument (titlesec.sty
+    // `\ttl@format@iii`), so a bare `[\titlerule[3pt]]` ends the after-code
+    // at the inner `]` and fails in pdflatex (`Missing \begin{document}`);
+    // the braced `[{\titlerule[3pt]}]` draws a filled 358.655 x 2.989 rectangle
+    // (3 TeX pt = 2.989bp) where bare `\titlerule` strokes `0.398 w`.
+    let source = titleformat_doc(
+        "[{\\titlerule[3pt]}]",
+        "\\section{Education}\nBody text here.\n",
+    );
+    let parsed = parse(&source);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "explicit [thickness] should be silent: {:?}",
+        parsed.diagnostics
+    );
+    assert_eq!(after_code_thickness(&parsed.blocks), Some(3.0));
+    assert_eq!(
+        laid_out_rule_height(&source),
+        3.0,
+        "the drawn rule uses the explicit thickness"
+    );
+}
+
+#[test]
+fn titlerule_without_thickness_stays_default_and_silent() {
+    let source = titleformat_doc("[\\titlerule]", "\\section{Education}\nBody text here.\n");
+    let parsed = parse(&source);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "unexpected diagnostics: {:?}",
+        parsed.diagnostics
+    );
+    assert_eq!(after_code_thickness(&parsed.blocks), None);
+    assert_eq!(laid_out_rule_height(&source), 0.5);
+}
+
+#[test]
+fn titlerule_star_and_garbage_thickness_still_draw_the_default_rule() {
+    // The star form (`\ttl@row`: `[width]{pattern}` leaders) is a different
+    // rule, and an unparseable bracket has no height to apply: both keep the
+    // default rule and the warning.
+    for after in [
+        "[\\titlerule*]",
+        "[{\\titlerule*[1in]{x}}]",
+        "[{\\titlerule[thick]}]",
+        // No brace protection: the after-code (a delimited `[#2]` argument)
+        // ends at the inner `]`, so the thickness never arrives intact.
+        "[\\titlerule[3pt]]",
+    ] {
+        let parsed = parse(&titleformat_doc(after, "\\section{Education}\nBody.\n"));
+        assert_eq!(after_code_thickness(&parsed.blocks), None, "{after}");
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("custom widths and thicknesses are not applied")),
+            "{after}: expected the default-rule warning, got {:?}",
+            parsed.diagnostics
+        );
+    }
+}
+
+#[test]
+fn direct_titlerule_thickness_applies_between_paragraphs() {
+    // The same `[thickness]` on a body-level `\titlerule` (titlesec.sty
+    // `\titleline` branch) rides the rule block it already emits.
+    let source = "\\documentclass{article}\n\\usepackage{titlesec}\n\\begin{document}\nBefore.\n\n\\titlerule[2pt]\n\nAfter.\n\\end{document}\n";
+    let parsed = parse(source);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "explicit [thickness] should be silent: {:?}",
+        parsed.diagnostics
+    );
+    let thickness = parsed
+        .blocks
+        .iter()
+        .find_map(|block| match block {
+            Block::Rule { thickness_pt, .. } => Some(*thickness_pt),
+            _ => None,
+        })
+        .expect("no rule block");
+    assert_eq!(thickness, Some(2.0));
 }
 
 #[test]

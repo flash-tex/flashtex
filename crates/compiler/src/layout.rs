@@ -2724,7 +2724,7 @@ impl LayoutCursor {
                 }
                 self.style = None;
             }
-            Block::Rule { span } => {
+            Block::Rule { span, thickness_pt } => {
                 let width = self.constraints.measure_pt;
                 let item = TextItem {
                     text: math::FRACTION_RULE_CHAR.to_string(),
@@ -2736,7 +2736,7 @@ impl LayoutCursor {
                     rule: Some(RuleGeometry {
                         y_pt: round2(self.y),
                         width_pt: round2(width),
-                        height_pt: 0.5,
+                        height_pt: thickness_pt.unwrap_or(0.5),
                     }),
                 };
                 self.pages
