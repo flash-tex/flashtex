@@ -44,7 +44,8 @@
       8,
       9,
       10,
-      12
+      12,
+      17
     ],
     "ec-lmtt": [
       8,
@@ -238,6 +239,11 @@
       "path": "fonts/tfm/public/lm/rm-lmr9.tfm",
       "sha256": "ef6f318763d0052fc82dde4d73071a894ab6dfaa06890800ddd9b4a65657c0df",
       "byte_length": 11884
+    },
+    {
+      "path": "fonts/tfm/public/lm/rm-lmr17.tfm",
+      "sha256": "f404bd1bd2b76b1ad534597ceb6abdc39fd8e57e3a955eeae27c09f39ee51d37",
+      "byte_length": 11948
     },
     {
       "path": "fonts/tfm/public/lm/ec-lmtt8.tfm",
