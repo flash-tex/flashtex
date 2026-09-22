@@ -24,7 +24,8 @@
 #   <platform>   e.g. macos-arm64, linux-x86_64
 #   <out-dir>    where the .tar.gz is written (created)
 #   --bin        a built binary to include (default: flashtex and the four
-#                helpers from crates/*/target/release when present)
+#                helpers from each crate's target dir (scripts/crate-target-dir.sh)
+#                when present)
 #   --fonts-dir  flat directory of .otf faces + GUST-FONT-LICENSE.TXT
 #                (default: apps/mac/Fonts, the pinned vendored set)
 #   --texmf-root rooted texmf tree with fonts/tfm/public/lm and
@@ -54,7 +55,7 @@ die() { echo "package-cli.sh: $*" >&2; exit 1; }
 
 if [[ ${#BINS[@]} -eq 0 ]]; then
   for p in flashtex-cli/flashtex render-pipeline/flashtex-render compiler/flashtex-compiler pdf/flashtex-pdf pdf/flashtex-pdf-exact; do
-    BINS+=("$REPO_ROOT/crates/${p%%/*}/target/release/${p##*/}")
+    BINS+=("$("$REPO_ROOT/scripts/crate-target-dir.sh" "$REPO_ROOT/crates/${p%%/*}")/release/${p##*/}")
   done
 fi
 [[ -d "$FONTS_DIR" ]] || die "fonts dir not found: $FONTS_DIR"
