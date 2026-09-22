@@ -63,8 +63,9 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // Definitions, counters and programming.
     "def", "edef", "gdef", "let", "the", "makeatletter", "relax",
     "expandafter", "csname", "endcsname", "protect",
-    // Cross-references and links.
-    "autoref", "nameref", "hyperref", "hyperlink", "hypertarget",
+    // Cross-references and links (`\autoref`/`\nameref` are implemented in
+    // `parser.rs`, so they are known via `BUILT_INS`, not this list).
+    "hyperref", "hyperlink", "hypertarget",
     // Colour and graphics packages.
     "tikz",
     "usetikzlibrary", "draw", "node", "fill", "path",

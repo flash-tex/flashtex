@@ -533,6 +533,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("label", "{key}", "names the current section, equation or figure number"),
     ("ref", "{key}", "number of the labelled item"),
     ("pageref", "{key}", "page number of the labelled item, in the \\pagenumbering style in force at the label"),
+    ("autoref", "*{key}", "hyperref type name and number of the labelled item (Section 1, Figure 2); starred form identical, links are not clickable"),
+    ("nameref", "*{key}", "hyperref title of the labelled section or caption; other labels fall back to the number; starred form identical, links are not clickable"),
     ("thepage", "", "current page's number, resolved when the page is set, in the \\pagenumbering style in force here"),
     ("cref", "*{key list}", "cleveref lower-case named references; consecutive ranges are compressed"),
     ("Cref", "*{key list}", "cleveref capitalised named references; consecutive ranges are compressed"),

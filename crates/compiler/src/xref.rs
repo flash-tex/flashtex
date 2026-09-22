@@ -198,6 +198,50 @@ pub fn cleveref_kind(kind: &str) -> &str {
     }
 }
 
+/// hyperref `\autoref`'s English type name for a label kind: the counter
+/// name the `\label` was attached to (`Inline::Label::kind`). hyperref
+/// spells these lowercase (`\sectionautorefname` is "section"); this
+/// compiler capitalises, matching `\Cref` and the task contract (`Section
+/// 1`, `Figure 2`, `Table 1`, `Equation (4)`, `Chapter 1`).
+pub fn autoref_name(kind: &str) -> String {
+    match kind {
+        "part" => "Part".to_string(),
+        "chapter" => "Chapter".to_string(),
+        "section" | "subsection" | "subsubsection" => "Section".to_string(),
+        "paragraph" | "subparagraph" => "Paragraph".to_string(),
+        "appendix" => "Appendix".to_string(),
+        "equation" => "Equation".to_string(),
+        "figure" => "Figure".to_string(),
+        "table" => "Table".to_string(),
+        "footnote" => "Footnote".to_string(),
+        "item" => "Item".to_string(),
+        "page" => "Page".to_string(),
+        // A custom counter (a theorem, ...): hyperref warns "no autoref
+        // name"; this compiler degrades to the capitalised counter name.
+        kind => capitalize_first(kind),
+    }
+}
+
+/// Whether `\nameref` prints the label's recorded title for this kind:
+/// sectioning units print the heading, floats print the caption (hyperref's
+/// `\@currentlabelname`); anything else (equations, theorems, ...) falls
+/// back to the number, exactly like `\ref`.
+pub fn nameref_uses_title(kind: &str) -> bool {
+    matches!(
+        kind,
+        "part"
+            | "chapter"
+            | "appendix"
+            | "section"
+            | "subsection"
+            | "subsubsection"
+            | "paragraph"
+            | "subparagraph"
+            | "figure"
+            | "table"
+    )
+}
+
 fn capitalize_first(text: &str) -> String {
     let mut chars = text.chars();
     let Some(first) = chars.next() else {
@@ -730,6 +774,21 @@ mod tests {
         counters.set_value("equation", value);
         counters.set_representation("equation", saved);
         assert_eq!(counters.step("equation").as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn autoref_names_cover_the_standard_counters_and_capitalise_custom_ones() {
+        assert_eq!(autoref_name("section"), "Section");
+        assert_eq!(autoref_name("subsection"), "Section");
+        assert_eq!(autoref_name("chapter"), "Chapter");
+        assert_eq!(autoref_name("figure"), "Figure");
+        assert_eq!(autoref_name("table"), "Table");
+        assert_eq!(autoref_name("equation"), "Equation");
+        assert_eq!(autoref_name("theorem"), "Theorem");
+        assert!(nameref_uses_title("section"));
+        assert!(nameref_uses_title("figure"));
+        assert!(!nameref_uses_title("equation"));
+        assert!(!nameref_uses_title("theorem"));
     }
 
     #[test]
