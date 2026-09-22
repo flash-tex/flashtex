@@ -6402,6 +6402,24 @@ fn assign_param(p: &mut PageParams, name: &str, v: Glue, add: bool) {
     }
 }
 
+/// Whether the source is a REVTeX document of the `rmp` journal (or the
+/// `apsrmp` society), whose natbib is author-year (compiler
+/// `natbib::Options::revtex`, `rmp.rtx`/`apsrmp4-*.rtx`
+/// `\bibpunct{(}{)}{;}{a}{,}{,}`).
+fn revtex_author_year(source: &str) -> bool {
+    let Some(at) = find_command(source, "documentclass") else { return false };
+    let rest = source[at + "\\documentclass".len()..].trim_start();
+    let (options, rest) = match rest.strip_prefix('[') {
+        Some(inner) => match inner.find(']') {
+            Some(end) => (&inner[..end], inner[end + 1..].trim_start()),
+            None => return false,
+        },
+        None => ("", rest),
+    };
+    let class = rest.strip_prefix('{').and_then(|r| r.find('}').map(|end| r[..end].trim()));
+    matches!(class, Some("revtex4" | "revtex4-1" | "revtex4-2")) && options.split(',').map(str::trim).any(|o| o == "rmp" || o == "apsrmp")
+}
+
 /// `\documentclass[opts]{...}` options, if the source has a class line.
 pub fn class_options(source: &str) -> Option<String> {
     let at = find_command(source, "documentclass")?;
@@ -7679,7 +7697,10 @@ struct SourceIndexes<'a, 't> {
 
 impl<'a, 't> SourceIndexes<'a, 't> {
     fn new(texts: &'a [&'t str], theorem_envs: &'a std::collections::HashSet<String>) -> Self {
-        let natbib_author_year = texts.iter().find(|text| natbib_options(text).is_some()).is_some_and(|text| natbib_author_year(text));
+        // A REVTeX class loads natbib itself; its `rmp` journal is
+        // author-year (compiler `natbib::Options::revtex`).
+        let revtex_rmp = texts.iter().any(|text| revtex_author_year(text));
+        let natbib_author_year = revtex_rmp || texts.iter().find(|text| natbib_options(text).is_some()).is_some_and(|text| natbib_author_year(text));
         SourceIndexes {
             texts,
             theorem_envs,
