@@ -169,6 +169,15 @@ pub(crate) struct State {
     pub group_limit_reported: bool,
     /// The same for "conditional nesting limit exceeded".
     pub conditional_limit_reported: bool,
+    /// Register names the host wants told about (`Engine::observe_register`):
+    /// every assignment to one emits a `\flashtexlengthset`/
+    /// `\flashtexlengthassign{<name>}{<\the text>}` marker into the output
+    /// (see `Engine::note_register_assigned`).
+    pub observed_registers: Rc<HashSet<String>>,
+    /// The register assignment being performed comes from `\setlength` (1)
+    /// or `\addtolength` (2); its marker is then `\flashtexlengthset`/
+    /// `\flashtexlengthadd`. 0 for a plain TeX assignment.
+    pub via_setlength: u8,
 }
 
 impl State {
@@ -210,8 +219,12 @@ impl State {
             pending_font_switch,
             group_limit_reported,
             conditional_limit_reported,
+            observed_registers,
+            via_setlength,
         } = self;
         conditionals == &new.conditionals
+            && *via_setlength == new.via_setlength
+            && (Rc::ptr_eq(observed_registers, &new.observed_registers) || observed_registers == &new.observed_registers)
             && *pending_global == new.pending_global
             && *pending_long == new.pending_long
             && *pending_outer == new.pending_outer
@@ -334,6 +347,11 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("divide", Primitive::Divide),
     ("numexpr", Primitive::Numexpr),
     ("dimexpr", Primitive::Dimexpr),
+    ("glueexpr", Primitive::Glueexpr),
+    ("hskip", Primitive::Hskip),
+    ("vskip", Primitive::Vskip),
+    ("kern", Primitive::Kern),
+    ("penalty", Primitive::Penalty),
     ("newcommand", Primitive::NewCommand),
     ("renewcommand", Primitive::RenewCommand),
     ("providecommand", Primitive::ProvideCommand),
@@ -361,6 +379,8 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("Alph", Primitive::AlphUpper),
     ("fnsymbol", Primitive::Fnsymbol),
     ("newlength", Primitive::NewLength),
+    ("setlength", Primitive::SetLength(false)),
+    ("addtolength", Primitive::SetLength(true)),
     ("settowidth", Primitive::SetToWidth),
     ("settoheight", Primitive::SetToHeight),
     ("settodepth", Primitive::SetToDepth),
@@ -478,6 +498,11 @@ pub struct Engine {
     measurer: Rc<dyn BoxMeasurer>,
     /// Set by `\end{document}` or a hard resource limit.
     stopped: bool,
+    /// Span of the last non-space source token `next_raw` handed out and
+    /// the caller kept (a peek restores the previous value), so an operand
+    /// scanned by `\hskip`/`\kern`/`\penalty` can be re-emitted with the
+    /// span it covers (`emit_with_operand`).
+    last_read_span: Option<Span>,
     /// The largest main-memory size (pending token lists, one macro
     /// expansion) checked against `max_output_tokens` without stopping.
     /// With `steps` and the output count it tells whether a run would
@@ -548,6 +573,7 @@ impl Engine {
             metrics: Rc::new(DefaultFontMetrics),
             measurer: Rc::new(DefaultBoxMeasurer),
             stopped: false,
+            last_read_span: None,
             peak_memory: 0,
             memory_stop: false,
             emit_queue: Vec::new(),
@@ -610,6 +636,20 @@ impl Engine {
     /// the prefix to the register the command assigns.
     pub fn declare_host_assignment(&mut self, name: &str) {
         self.st.scopes.assign_cs(name, Meaning::Primitive(Primitive::HostAssignment), true);
+    }
+
+    /// Observe a register by name: every assignment to `\name` (a plain
+    /// TeX assignment, `\advance`/`\multiply`/`\divide`, `\setlength`/
+    /// `\addtolength`, `\settowidth`) then emits, in the output at that
+    /// point, `[\global]\flashtexlengthset{\name}{<\the text>}` (via
+    /// `\setlength`), `...\flashtexlengthadd{..}{..}` (via `\addtolength`;
+    /// the value is the new total) or `...\flashtexlengthassign{\name}
+    /// {<\the text>}` (any other form), so a host that keeps its own copy of
+    /// the length (page geometry, list spacing) hears the new value in
+    /// stream order. Restores at group end are silent: the host scopes its
+    /// copy by the same groups. Part of the checkpointed state.
+    pub fn observe_register(&mut self, name: &str) {
+        Rc::make_mut(&mut self.st.observed_registers).insert(name.to_string());
     }
 
     /// Declare a host font command (see [`FontSwitch`]). The command is
@@ -996,6 +1036,11 @@ impl Engine {
     /// a closing token and re-reading the forbidden token afterwards.
     pub(crate) fn next_raw(&mut self) -> Option<Pending> {
         let p = self.next_raw_unchecked();
+        if let Some(p) = &p {
+            if !p.tok.span.is_synthetic() && !matches!(p.tok.kind, TokenKind::Char(_, CatCode::Space)) {
+                self.last_read_span = Some(p.tok.span);
+            }
+        }
         if self.st.scanner_status == ScannerStatus::Normal {
             return p;
         }
@@ -2097,9 +2142,11 @@ impl Engine {
     }
 
     fn peek_one(&mut self) -> Option<Token> {
+        let read = self.last_read_span;
         let p = self.next_raw()?;
         let t = p.tok.clone();
         self.push_pending(vec![p]);
+        self.last_read_span = read;
         Some(t)
     }
 
@@ -2109,9 +2156,11 @@ impl Engine {
     /// to digits works as a `<number>`, not just literal digit
     /// characters).
     fn peek_one_expanding(&mut self) -> Option<Token> {
+        let read = self.last_read_span;
         let p = self.next_expanding_raw()?;
         let t = p.tok.clone();
         self.push_pending(vec![p]);
+        self.last_read_span = read;
         Some(t)
     }
 
@@ -2653,6 +2702,33 @@ impl Engine {
                 }
                 Step::Continue
             }
+            // e-TeX `\glueexpr` in main control is not an assignment
+            // (`\glueexpr` is an internal glue): TeX would report "You
+            // can't use `\glueexpr' in vertical mode"; the expression is
+            // scanned and dropped so the input stays in step.
+            Glueexpr => {
+                let _ = self.scan_glue_expr();
+                Step::Continue
+            }
+            Hskip | Vskip => {
+                let g = self.scan_glue();
+                self.emit_with_operand(tok, &glue_to_string(g));
+                Step::Continue
+            }
+            Kern => {
+                let v = self.scan_dimen();
+                self.emit_with_operand(tok, &format!("{}pt", print_scaled(v)));
+                Step::Continue
+            }
+            Penalty => {
+                let n = self.scan_number();
+                self.emit_with_operand(tok, &n.to_string());
+                Step::Continue
+            }
+            SetLength(add) => {
+                self.do_setlength(tok, add);
+                Step::Continue
+            }
             Advance | Multiply | Divide => {
                 self.do_arith(p);
                 Step::Continue
@@ -2842,9 +2918,15 @@ impl Engine {
                     _ => self.measurer.depth(&content),
                 };
                 if let Some(t) = target {
-                    match self.meaning_of_token(&t) {
-                        Meaning::RegisterAlias(RegisterKind::Skip, idx) => self.st.scopes.set_skip(idx, Glue::fixed(v), false),
-                        Meaning::RegisterAlias(RegisterKind::Dimen, idx) => self.st.scopes.set_dimen(idx, v, false),
+                    match strip_let(self.meaning_of_token(&t)) {
+                        Meaning::RegisterAlias(RegisterKind::Skip, idx) => {
+                            self.st.scopes.set_skip(idx, Glue::fixed(v), false);
+                            self.note_register_assigned(&t, RegisterKind::Skip, idx, false);
+                        }
+                        Meaning::RegisterAlias(RegisterKind::Dimen, idx) => {
+                            self.st.scopes.set_dimen(idx, v, false);
+                            self.note_register_assigned(&t, RegisterKind::Dimen, idx, false);
+                        }
                         _ => self.err("Missing number, treated as zero.", t.span),
                     }
                 }
@@ -3965,7 +4047,93 @@ impl Engine {
     // ---- registers --------------------------------------------------------
 
     fn handle_register_ref(&mut self, tok: Token, kind: RegisterKind, idx: u16) -> Step {
+        // A register token that no `<optional equals><number>` follows
+        // (`\parbox{\textwidth}`, `\hspace{2\parindent}`, `\rule{\linewidth}
+        // {.4pt}`, `\hbox to\hsize{`): in real TeX such a token only ever
+        // reaches the stomach inside a macro's argument scan, where it is a
+        // complete `<internal dimen>`; a host that typesets those commands
+        // itself receives the register by name instead of an assignment
+        // that would report "Missing number" and zero the register.
+        if kind != RegisterKind::Toks && !self.prefix_pending() && !self.assignment_follows() {
+            return Step::Emit(tok);
+        }
         self.finish_register_assignment_or_pass(tok, kind, idx)
+    }
+
+    /// Whether the next token (spaces skipped) can start the
+    /// `<optional equals><number|dimen|glue>` of a register assignment
+    /// (tex.web §1224-§1228): an `=`, a sign, a digit, a decimal point, an
+    /// integer-constant prefix, or an internal quantity.
+    fn assignment_follows(&mut self) -> bool {
+        self.skip_spaces();
+        let Some(t) = self.peek_one_expanding() else {
+            return false;
+        };
+        match &t.kind {
+            TokenKind::Char(c, _) => *c == '=' || c.is_ascii_digit() || matches!(c, '+' | '-' | '.' | ',' | '\'' | '"' | '`'),
+            TokenKind::ControlSequence(_) | TokenKind::ActiveChar(_) => matches!(
+                strip_let(self.meaning_of_token(&t)),
+                Meaning::RegisterAlias(RegisterKind::Count | RegisterKind::Dimen | RegisterKind::Skip, _)
+                    | Meaning::CharDef(_)
+                    | Meaning::MathCharDef(_)
+                    | Meaning::Primitive(
+                        Primitive::Count
+                            | Primitive::Dimen
+                            | Primitive::Skip
+                            | Primitive::Numexpr
+                            | Primitive::Dimexpr
+                            | Primitive::Glueexpr
+                            | Primitive::Catcode
+                            | Primitive::Uccode
+                            | Primitive::Lccode
+                            | Primitive::IntPar(_)
+                    )
+            ),
+            _ => false,
+        }
+    }
+
+    /// After a register assignment (`\parskip=6pt`, `\advance`, `\setlength`,
+    /// `\settowidth`): when the host observes `tok`'s name, hand it a
+    /// `[\global]\flashtexlengthset{<\name>}{<\the text>}` marker (`...assign`
+    /// for a plain TeX assignment) in the output, so a typesetter that keeps
+    /// its own copy of the length hears the new value in stream order. The
+    /// marker carries the register token's span.
+    fn note_register_assigned(&mut self, tok: &Token, kind: RegisterKind, idx: u16, global: bool) {
+        let via_setlength = std::mem::take(&mut self.st.via_setlength);
+        let TokenKind::ControlSequence(name) = &tok.kind else {
+            return;
+        };
+        if !self.st.observed_registers.contains(name.as_str()) {
+            return;
+        }
+        let value = match kind {
+            RegisterKind::Count => self.st.scopes.count(idx).to_string(),
+            RegisterKind::Dimen => format!("{}pt", print_scaled(self.st.scopes.dimen(idx))),
+            RegisterKind::Skip => glue_to_string(self.st.scopes.skip(idx)),
+            RegisterKind::Toks => return,
+        };
+        let marker = match via_setlength {
+            1 => "flashtexlengthset",
+            2 => "flashtexlengthadd",
+            _ => "flashtexlengthassign",
+        };
+        let at = tok.span;
+        let mut out = Vec::new();
+        if global {
+            out.push(Token::new(TokenKind::ControlSequence("global".into()), at));
+        }
+        out.push(Token::new(TokenKind::ControlSequence(marker.into()), at));
+        out.push(Token::new(TokenKind::Char('{', CatCode::BeginGroup), at));
+        out.push(tok.clone());
+        out.push(Token::new(TokenKind::Char('}', CatCode::EndGroup), at));
+        out.push(Token::new(TokenKind::Char('{', CatCode::BeginGroup), at));
+        out.extend(chars_as_other(&value, at));
+        out.push(Token::new(TokenKind::Char('}', CatCode::EndGroup), at));
+        // emit_queue is a stack: push in reverse.
+        for t in out.into_iter().rev() {
+            self.emit_queue.push(t);
+        }
     }
 
     /// After reading `\count<idx>` (or a `\countdef`-alias) in main
@@ -3983,14 +4151,17 @@ impl Engine {
             RegisterKind::Count => {
                 let v = self.scan_number();
                 self.st.scopes.set_count(idx, v, global);
+                self.note_register_assigned(&tok, kind, idx, global);
             }
             RegisterKind::Dimen => {
                 let v = self.scan_dimen();
                 self.st.scopes.set_dimen(idx, v, global);
+                self.note_register_assigned(&tok, kind, idx, global);
             }
             RegisterKind::Skip => {
                 let v = self.scan_glue();
                 self.st.scopes.set_skip(idx, v, global);
+                self.note_register_assigned(&tok, kind, idx, global);
             }
             RegisterKind::Toks => {
                 // `\toks0={...}` or `\toks0=\toks1` / `\toks0=\the\toks1`.
@@ -4421,6 +4592,10 @@ impl Engine {
                 let v = self.scan_expr(true);
                 chars_as_other(&format!("{}pt", print_scaled(v)), tok.span)
             }
+            Meaning::Primitive(Primitive::Glueexpr) => {
+                let v = self.scan_glue_expr();
+                chars_as_other(&glue_to_string(v), tok.span)
+            }
             _ => {
                 // An internal quantity this crate doesn't model (e.g.
                 // `\the\parindent`, `\the\font`): pass `\the` and the
@@ -4560,10 +4735,210 @@ impl Engine {
             }
             _ => unreachable!(),
         }
+        self.note_register_assigned(&tok, kind, idx, global);
         self.finish_assignment();
     }
 
+    /// LaTeX's `\setlength{<register>}{<value>}` and `\addtolength`
+    /// (`add`). `<register>` is read like a macro's undelimited parameter
+    /// (`{\parskip}` or `\parskip`); `<value>` is absorbed unexpanded and
+    /// then scanned as an e-TeX `\glueexpr` (`+`/`-` chains, `*`/`/` by an
+    /// integer, parentheses), which is a superset of the kernel's plain
+    /// `<glue>` and covers what calc's `\setlength` computes for `+ - * /`
+    /// (calc's `\real`, `\ratio` and `\widthof` are outside it and report
+    /// "Missing number"). A dimen register takes the natural part, a count
+    /// register the natural part in scaled points, as TeX's coercions do.
+    /// `\global` applies to the assignment, as `\setlength` is a macro in
+    /// LaTeX. A target that is not a register is handed to the host: as
+    /// `\flashtexsetlength{<target>}{<value>}` (`\flashtexaddtolength`)
+    /// when the host declared that name, else as the kernel macro's own
+    /// `<target> <value>\relax` (`\advance<target> <value>\relax`).
+    fn do_setlength(&mut self, tok: Token, add: bool) {
+        let cmd = if add { "addtolength" } else { "setlength" };
+        let global = self.take_assignment_prefixes(cmd);
+        let target = self.read_cs_arg();
+        self.skip_spaces();
+        let has_group = matches!(self.peek_one().map(|t| t.kind), Some(TokenKind::Char(_, CatCode::BeginGroup)));
+        let value = if has_group { self.scan_braced_group(false) } else { Vec::new() };
+        let register = target.as_ref().and_then(|t| match strip_let(self.meaning_of_token(t)) {
+            Meaning::RegisterAlias(kind, idx) if kind != RegisterKind::Toks => Some((kind, idx)),
+            _ => None,
+        });
+        let Some((kind, idx)) = register else {
+            let fallback = format!("flashtex{cmd}");
+            let mut out = Vec::new();
+            if self.st.scopes.is_defined(&fallback) {
+                if global {
+                    out.push(Token::new(TokenKind::ControlSequence("global".into()), tok.span));
+                }
+                out.push(Token::new(TokenKind::ControlSequence(fallback), tok.span));
+                out.push(Token::new(TokenKind::Char('{', CatCode::BeginGroup), tok.span));
+                out.extend(target);
+                out.push(Token::new(TokenKind::Char('}', CatCode::EndGroup), tok.span));
+                out.push(Token::new(TokenKind::Char('{', CatCode::BeginGroup), tok.span));
+                out.extend(value);
+                out.push(Token::new(TokenKind::Char('}', CatCode::EndGroup), tok.span));
+            } else {
+                if add {
+                    out.push(Token::new(TokenKind::ControlSequence("advance".into()), tok.span));
+                }
+                out.extend(target);
+                out.push(Token::new(TokenKind::Char(' ', CatCode::Space), tok.span));
+                out.extend(value);
+                out.push(Token::new(TokenKind::ControlSequence("relax".into()), tok.span));
+            }
+            self.push_tokens(out);
+            return;
+        };
+        let target = target.unwrap();
+        // `<value>\relax`: the expression scanner stops at (and consumes)
+        // the `\relax`; anything it leaves stays in the input, as the
+        // kernel macro's `#1 #2\relax` would leave it.
+        let mut scan = value;
+        scan.push(Token::new(TokenKind::ControlSequence("relax".into()), tok.span));
+        self.push_tokens(scan);
+        let g = self.scan_glue_expr();
+        match kind {
+            RegisterKind::Count => {
+                let v = if add { tex_wrapping_add(self.st.scopes.count(idx), g.value) } else { g.value };
+                self.st.scopes.set_count(idx, v, global);
+            }
+            RegisterKind::Dimen => {
+                let v = if add { tex_wrapping_add(self.st.scopes.dimen(idx), g.value) } else { g.value };
+                self.st.scopes.set_dimen(idx, v, global);
+            }
+            RegisterKind::Skip => {
+                let v = if add { add_glue(self.st.scopes.skip(idx), g) } else { g };
+                self.st.scopes.set_skip(idx, v, global);
+            }
+            RegisterKind::Toks => {}
+        }
+        self.st.via_setlength = if add { 2 } else { 1 };
+        self.note_register_assigned(&target, kind, idx, global);
+        self.finish_assignment();
+    }
+
+    /// e-TeX's `\glueexpr` (etex.web §... `scan_expr` with `glue_val`):
+    /// `<term> (+|- <term>)*`, `<term>` = `<factor> (* <number> | /
+    /// <number>)*`, `<factor>` = `<glue>` or a parenthesised expression;
+    /// a terminating `\relax` is consumed. A `*`/`/` scales every
+    /// component, `/` rounding as e-TeX's `fract`.
+    pub fn scan_glue_expr(&mut self) -> Glue {
+        let v = self.glue_expr_sum();
+        self.skip_spaces();
+        if let Some(t) = self.peek_one_expanding() {
+            if t.is_cs("relax") {
+                self.next_raw_token();
+            }
+        }
+        if v.value.abs() > TEX_MAX_DIMEN || v.stretch.abs() > TEX_MAX_DIMEN || v.shrink.abs() > TEX_MAX_DIMEN {
+            self.err("Arithmetic overflow.", Span::synthetic());
+            return Glue::fixed(0);
+        }
+        v
+    }
+
+    fn glue_expr_sum(&mut self) -> Glue {
+        let mut acc = self.glue_expr_prod();
+        loop {
+            self.skip_spaces();
+            match self.peek_one_expanding() {
+                Some(t) if matches!(t.kind, TokenKind::Char('+', _)) => {
+                    self.next_raw_token();
+                    acc = add_glue(acc, self.glue_expr_prod());
+                }
+                Some(t) if matches!(t.kind, TokenKind::Char('-', _)) => {
+                    self.next_raw_token();
+                    let g = self.glue_expr_prod();
+                    acc = add_glue(acc, scale_glue(g, |x| x.saturating_neg()));
+                }
+                _ => break,
+            }
+        }
+        acc
+    }
+
+    fn glue_expr_prod(&mut self) -> Glue {
+        let mut acc = self.glue_expr_atom();
+        loop {
+            self.skip_spaces();
+            match self.peek_one_expanding() {
+                Some(t) if matches!(t.kind, TokenKind::Char('*', _)) => {
+                    self.next_raw_token();
+                    let f = self.expr_atom(false);
+                    self.skip_spaces();
+                    if let Some(t2) = self.peek_one_expanding() {
+                        if matches!(t2.kind, TokenKind::Char('/', _)) {
+                            self.next_raw_token();
+                            let d = self.expr_atom(false);
+                            acc = scale_glue(acc, |x| rounded_div(x.saturating_mul(f), d));
+                            continue;
+                        }
+                    }
+                    acc = scale_glue(acc, |x| x.saturating_mul(f));
+                }
+                Some(t) if matches!(t.kind, TokenKind::Char('/', _)) => {
+                    self.next_raw_token();
+                    let d = self.expr_atom(false);
+                    acc = scale_glue(acc, |x| rounded_div(x, d));
+                }
+                _ => break,
+            }
+        }
+        acc
+    }
+
+    fn glue_expr_atom(&mut self) -> Glue {
+        self.skip_spaces();
+        if let Some(t) = self.peek_one_expanding() {
+            if matches!(t.kind, TokenKind::Char('(', _)) {
+                self.next_raw_token();
+                let v = self.glue_expr_sum();
+                self.skip_spaces();
+                if let Some(t2) = self.peek_one_expanding() {
+                    if matches!(t2.kind, TokenKind::Char(')', _)) {
+                        self.next_raw_token();
+                    }
+                }
+                return v;
+            }
+        }
+        self.scan_glue()
+    }
+
+    /// `\hskip`/`\vskip`/`\kern`/`\penalty`: scan the operand as TeX's
+    /// stomach does and hand the typesetter the command followed by the
+    /// operand's canonical `\the` text (`12.0pt plus 1.0fil`, `10000`) and
+    /// a `\flashtexwordbreak` marker, so a host that groups characters into
+    /// words ends the operand there: TeX has already consumed the one
+    /// optional space after the operand (`\penalty0 4741` sets `4741` right
+    /// after the penalty), so no space may be re-inserted. Every emitted
+    /// token carries the command's own span.
+    fn emit_with_operand(&mut self, tok: Token, operand: &str) {
+        // The command's span through the last source token its operand
+        // consumed (`\penalty10000`), when both come from the same source
+        // and the operand followed the command.
+        let span = match self.last_read_span {
+            Some(last)
+                if !tok.span.is_synthetic()
+                    && last.source_id == tok.span.source_id
+                    && last.end >= tok.span.end =>
+            {
+                Span { source_id: tok.span.source_id, start: tok.span.start, end: last.end }
+            }
+            _ => tok.span,
+        };
+        let mut out = vec![Token::new(tok.kind.clone(), span)];
+        out.extend(chars_as_other(operand, span));
+        out.push(Token::new(TokenKind::ControlSequence("flashtexwordbreak".into()), span));
+        // emit_queue is a stack: push in reverse.
+        for t in out.into_iter().rev() {
+            self.emit_queue.push(t);
+        }
+    }
+
     fn maybe_consume_keyword(&mut self, kw: &str) -> bool {
+        let read = self.last_read_span;
         let mut consumed = Vec::new();
         for expect in kw.chars() {
             match self.next_expanding_raw() {
@@ -4572,11 +4947,13 @@ impl Engine {
                     consumed.push(p);
                     if !matches_char {
                         self.push_pending(consumed);
+                        self.last_read_span = read;
                         return false;
                     }
                 }
                 None => {
                     self.push_pending(consumed);
+                    self.last_read_span = read;
                     return false;
                 }
             }
@@ -4674,6 +5051,10 @@ impl Engine {
                     Meaning::Primitive(Primitive::Dimexpr) => {
                         self.next_raw_token();
                         self.scan_expr(true)
+                    }
+                    Meaning::Primitive(Primitive::Glueexpr) => {
+                        self.next_raw_token();
+                        self.scan_glue_expr().value
                     }
                     Meaning::Primitive(Primitive::Catcode) => {
                         self.next_raw_token();
@@ -4841,6 +5222,13 @@ impl Engine {
                         let v = self.scan_expr(true);
                         return if neg { -v } else { v };
                     }
+                    // `<internal glue>` where a `<dimen>` is wanted: its
+                    // natural part (tex.web §451, `glue_val` coerced).
+                    Meaning::Primitive(Primitive::Glueexpr) => {
+                        self.next_raw_token();
+                        let v = self.scan_glue_expr().value;
+                        return if neg { -v } else { v };
+                    }
                     Meaning::RegisterAlias(RegisterKind::Count, _)
                     | Meaning::CharDef(_)
                     | Meaning::MathCharDef(_)
@@ -4919,6 +5307,10 @@ impl Engine {
                         self.next_raw_token();
                         Some(self.scan_expr(true))
                     }
+                    Meaning::Primitive(Primitive::Glueexpr) => {
+                        self.next_raw_token();
+                        Some(self.scan_glue_expr().value)
+                    }
                     _ => None,
                 };
                 if let Some(v) = v {
@@ -4936,6 +5328,41 @@ impl Engine {
             -sp
         } else {
             sp
+        }
+    }
+
+    /// An `<internal dimen>` at the next (expanded) token -- a dimen or skip
+    /// register alias, `\dimen<n>`, `\dimexpr`, `\glueexpr` -- consumed and
+    /// returned in scaled points (a skip's natural part), or `None` with
+    /// nothing consumed.
+    fn internal_dimen_value(&mut self) -> Option<i64> {
+        let t = self.peek_one_expanding()?;
+        if !matches!(t.kind, TokenKind::ControlSequence(_) | TokenKind::ActiveChar(_)) {
+            return None;
+        }
+        match strip_let(self.meaning_of_token(&t)) {
+            Meaning::RegisterAlias(RegisterKind::Dimen, idx) => {
+                self.next_raw_token();
+                Some(self.st.scopes.dimen(idx))
+            }
+            Meaning::RegisterAlias(RegisterKind::Skip, idx) => {
+                self.next_raw_token();
+                Some(self.st.scopes.skip(idx).value)
+            }
+            Meaning::Primitive(Primitive::Dimen) => {
+                self.next_raw_token();
+                let idx = self.scan_number() as u16;
+                Some(self.st.scopes.dimen(idx))
+            }
+            Meaning::Primitive(Primitive::Dimexpr) => {
+                self.next_raw_token();
+                Some(self.scan_expr(true))
+            }
+            Meaning::Primitive(Primitive::Glueexpr) => {
+                self.next_raw_token();
+                Some(self.scan_glue_expr().value)
+            }
+            _ => None,
         }
     }
 
@@ -4963,32 +5390,63 @@ impl Engine {
 
     fn read_unit_name(&mut self) -> String {
         // `true` prefix (e.g. `truept`) is accepted and ignored (no
-        // magnification here).
+        // magnification here). Like tex.web §458's chain of
+        // `scan_keyword`s, only a unit's own letters are consumed: after
+        // `\hskip banana` the word stays whole for the typesetter, and the
+        // empty name is the caller's "Illegal unit of measure".
         self.maybe_consume_keyword("true");
-        let mut s = String::new();
-        for _ in 0..2 {
-            match self.peek_one_expanding() {
-                Some(t) => match t.kind {
-                    TokenKind::Char(c, CatCode::Letter) | TokenKind::Char(c, CatCode::Other) if c.is_ascii_alphabetic() => {
-                        s.push(c);
-                        self.next_raw_token();
-                    }
-                    _ => break,
-                },
-                None => break,
+        for unit in ["em", "ex", "pt", "in", "pc", "cm", "mm", "bp", "dd", "cc", "sp"] {
+            if self.maybe_consume_keyword_exact(unit) {
+                return unit.to_string();
             }
         }
-        s.to_ascii_lowercase()
+        String::new()
+    }
+
+    /// [`Engine::maybe_consume_keyword`] without the trailing `skip_spaces`:
+    /// TeX's `scan_keyword` leaves what follows the keyword alone, and the
+    /// one optional space after a unit is the caller's `<one optional
+    /// space>` (§458), read with expansion, so `\dimen0=1in \the\dimen0`
+    /// stops at the space and the `\the` sees the new value.
+    fn maybe_consume_keyword_exact(&mut self, kw: &str) -> bool {
+        let read = self.last_read_span;
+        let mut consumed = Vec::new();
+        for expect in kw.chars() {
+            match self.next_expanding_raw() {
+                Some(p) => {
+                    let matches_char = matches!(p.tok.kind, TokenKind::Char(c, _) if c.eq_ignore_ascii_case(&expect));
+                    consumed.push(p);
+                    if !matches_char {
+                        self.push_pending(consumed);
+                        self.last_read_span = read;
+                        return false;
+                    }
+                }
+                None => {
+                    self.push_pending(consumed);
+                    self.last_read_span = read;
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     pub fn scan_glue(&mut self) -> Glue {
         self.skip_spaces();
-        // `\skip0=\skip1` copies the whole glue.
+        // `\skip0=\skip1` copies the whole glue; so does `\glueexpr`.
         if let Some(t) = self.peek_one_expanding() {
             if let TokenKind::ControlSequence(_) = t.kind {
-                if let Meaning::RegisterAlias(RegisterKind::Skip, idx) = self.meaning_of_token(&t) {
-                    self.next_raw_token();
-                    return self.st.scopes.skip(idx);
+                match strip_let(self.meaning_of_token(&t)) {
+                    Meaning::RegisterAlias(RegisterKind::Skip, idx) => {
+                        self.next_raw_token();
+                        return self.st.scopes.skip(idx);
+                    }
+                    Meaning::Primitive(Primitive::Glueexpr) => {
+                        self.next_raw_token();
+                        return self.scan_glue_expr();
+                    }
+                    _ => {}
                 }
             }
         }
@@ -5073,6 +5531,18 @@ impl Engine {
             let v = scale_decimal(int_val, &frac, 65536.0);
             self.skip_one_optional_space();
             return (if neg { -v } else { v }, fil);
+        }
+        // `<internal dimen>` (`plus\p@`) or `<factor><internal dimen>`
+        // (`plus 2\p@`, `minus .5\baselineskip`): tex.web §455, the same
+        // as in a finite `<dimen>`.
+        if let Some(v) = self.internal_dimen_value() {
+            let r = if int_part.is_empty() && frac.is_empty() {
+                v
+            } else {
+                let n = self.clamped_number(&int_part, 10, Span::synthetic());
+                scale_internal_dimen(n, &frac, v)
+            };
+            return (if neg { -r } else { r }, 0);
         }
         let unit = self.read_unit_name();
         let int_val = self.clamped_number(&int_part, 10, Span::synthetic());
@@ -6105,6 +6575,11 @@ fn primitive_name(p: Primitive) -> &'static str {
         Divide => "divide",
         Numexpr => "numexpr",
         Dimexpr => "dimexpr",
+        Glueexpr => "glueexpr",
+        Hskip => "hskip",
+        Vskip => "vskip",
+        Kern => "kern",
+        Penalty => "penalty",
         NewCommand => "newcommand",
         RenewCommand => "renewcommand",
         ProvideCommand => "providecommand",
@@ -6132,6 +6607,8 @@ fn primitive_name(p: Primitive) -> &'static str {
         AlphUpper => "Alph",
         Fnsymbol => "fnsymbol",
         NewLength => "newlength",
+        SetLength(false) => "setlength",
+        SetLength(true) => "addtolength",
         SetToWidth => "settowidth",
         SetToHeight => "settoheight",
         SetToDepth => "settodepth",
@@ -6484,6 +6961,33 @@ pub(crate) fn print_scaled(sp: i64) -> String {
     out
 }
 
+/// `a + b` as `\advance` adds glue (tex.web §1239): natural parts add; a
+/// stretch/shrink of a higher infinity order replaces the lower one, the
+/// same order adds.
+fn add_glue(a: Glue, b: Glue) -> Glue {
+    let mut g = a;
+    g.value = tex_wrapping_add(g.value, b.value);
+    if b.stretch_fil == g.stretch_fil {
+        g.stretch = tex_wrapping_add(g.stretch, b.stretch);
+    } else if b.stretch_fil > g.stretch_fil {
+        g.stretch = b.stretch;
+        g.stretch_fil = b.stretch_fil;
+    }
+    if b.shrink_fil == g.shrink_fil {
+        g.shrink = tex_wrapping_add(g.shrink, b.shrink);
+    } else if b.shrink_fil > g.shrink_fil {
+        g.shrink = b.shrink;
+        g.shrink_fil = b.shrink_fil;
+    }
+    g
+}
+
+/// Every component of `g` through `f` (`\glueexpr`'s `*` and `/`, and
+/// negation).
+fn scale_glue(g: Glue, f: impl Fn(i64) -> i64) -> Glue {
+    Glue { value: f(g.value), stretch: f(g.stretch), shrink: f(g.shrink), ..g }
+}
+
 fn glue_to_string(g: Glue) -> String {
     let mut s = format!("{}pt", print_scaled(g.value));
     if g.stretch != 0 {
@@ -6542,7 +7046,7 @@ fn is_format_level(p: Primitive) -> bool {
         Newif | Newcount | Newdimen | Newskip | Newtoks | NewCommand | RenewCommand | ProvideCommand | DeclareRobustCommand
             | NewEnvironment | RenewEnvironment | NewTheorem | Begin | End | NewCounter | SetCounter | AddToCounter | StepCounter
             | RefStepCounter | AddToReset | RemoveFromReset | CounterWithin | CounterWithout | Label | Value | Arabic
-            | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol | NewLength | SetToWidth | SetToHeight
+            | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol | NewLength | SetLength(_) | SetToWidth | SetToHeight
             | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | FlashtexHspace | FlashtexVspace
             | Verb | StopInput | LoadFiles(_) | InputPackageFile
             | EmitPassThrough | LatexError | LatexWarning | PreambleDeclaration(_)
@@ -6587,33 +7091,48 @@ impl Engine {
         ] {
             st.scopes.assign_cs(name, Meaning::Primitive(prim), true);
         }
-        let (year, month, day, minutes) = civil_now();
-        for (i, (name, kind)) in TEX_PARAMS.iter().enumerate() {
-            let idx = TEX_PARAM_BASE + i as u16;
-            st.scopes.assign_cs(name, Meaning::RegisterAlias(*kind, idx), true);
-            let initial = match *name {
-                "tolerance" => 10000,
-                "mag" => 1000,
-                "maxdeadcycles" => 25,
-                "hangafter" => 1,
-                "year" => year,
-                "month" => month,
-                "day" => day,
-                "time" => minutes,
-                _ => 0,
-            };
-            if *kind == RegisterKind::Count && initial != 0 {
-                st.scopes.set_count(idx, initial, true);
-            }
-        }
         Self::from_parts(Rc::from(source), 0, LexState::NewLine, st, limits)
     }
 }
 
+/// Bind [`TEX_PARAMS`] as register aliases with INITEX's initial values
+/// (tex.web §240: `\tolerance` 10000, `\mag` 1000, `\maxdeadcycles` 25,
+/// `\hangafter` 1, the date). The mu-glue parameters are bound only in
+/// INITEX mode (`with_mu`): this crate's glue scanner has no `mu` unit,
+/// so in LaTeX mode `\thinmuskip` & co. stay undefined and pass through to
+/// the typesetter, which sets them by name.
+fn bind_tex_params(scopes: &mut Scopes, with_mu: bool) {
+    let (year, month, day, minutes) = civil_now();
+    for (i, (name, kind)) in TEX_PARAMS.iter().enumerate() {
+        if !with_mu && matches!(*name, "thinmuskip" | "medmuskip" | "thickmuskip") {
+            continue;
+        }
+        let idx = TEX_PARAM_BASE + i as u16;
+        scopes.assign_cs(name, Meaning::RegisterAlias(*kind, idx), true);
+        let initial = match *name {
+            "tolerance" => 10000,
+            "mag" => 1000,
+            "maxdeadcycles" => 25,
+            "hangafter" => 1,
+            "year" => year,
+            "month" => month,
+            "day" => day,
+            "time" => minutes,
+            _ => 0,
+        };
+        if *kind == RegisterKind::Count && initial != 0 {
+            scopes.set_count(idx, initial, true);
+        }
+    }
+}
+
 /// TeX's (and e-TeX's/pdfTeX's commonly used) internal parameters, modelled
-/// in INITEX mode as registers at reserved indices `TEX_PARAM_BASE..`
-/// (printed by name in `\meaning`). In the default LaTeX-mode engine they
-/// stay undefined and pass through to the typesetter, which owns them.
+/// as registers at reserved indices `TEX_PARAM_BASE..` (printed by name in
+/// `\meaning`), in INITEX mode and in the default LaTeX-mode engine alike.
+/// A parameter's value reaches the typesetter through the host's observed
+/// registers (`Engine::observe_register`); a bare parameter token that no
+/// assignment follows (`\parbox{\hsize}`) passes through by name (see
+/// `Engine::handle_register_ref`).
 const TEX_PARAM_BASE: u16 = 60000;
 const TEX_PARAMS: &[(&str, RegisterKind)] = {
     use RegisterKind::*;
@@ -6682,6 +7201,7 @@ fn base_state(tex_only: bool) -> State {
     if tex_only {
         scopes.assign_cs("end", Meaning::Primitive(Primitive::StopInput), true);
     }
+    bind_tex_params(&mut scopes, tex_only);
     State {
         scopes,
         conditionals: ConditionalStack::default(),
@@ -6706,6 +7226,8 @@ fn base_state(tex_only: bool) -> State {
         pending_font_switch: None,
         group_limit_reported: false,
         conditional_limit_reported: false,
+        observed_registers: Rc::new(HashSet::new()),
+        via_setlength: 0,
     }
 }
 
@@ -6721,6 +7243,28 @@ const KERNEL_COUNTERS: &[&str] = &[
     "figure",
     "table",
     "parentequation",
+    // latex.ltx's own `\newcounter`s (ltcounts/ltpage/ltfloat/ltlists/
+    // ltsect/ltfntcmd): `page`, the float limits, the footnote and list
+    // counters, `part` and the two lower sectioning levels, and the
+    // sectioning/contents depths. Same rule: register only, so
+    // `\setcounter{secnumdepth}{2}` is an assignment (not "No counter
+    // 'secnumdepth' defined") while `\thepage` & co. still pass through.
+    "page",
+    "topnumber",
+    "bottomnumber",
+    "totalnumber",
+    "dbltopnumber",
+    "footnote",
+    "mpfootnote",
+    "enumi",
+    "enumii",
+    "enumiii",
+    "enumiv",
+    "part",
+    "paragraph",
+    "subparagraph",
+    "secnumdepth",
+    "tocdepth",
 ];
 
 /// Build the state every document starts from: primitives bound, then the

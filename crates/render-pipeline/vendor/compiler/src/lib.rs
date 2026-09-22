@@ -23,6 +23,7 @@ mod font_units;
 pub mod graphics;
 pub mod incremental;
 pub mod json;
+pub mod kernel_lengths;
 pub mod layout;
 mod legacy_format;
 pub mod lexer;

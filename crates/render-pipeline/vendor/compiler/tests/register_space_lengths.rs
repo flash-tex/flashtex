@@ -75,30 +75,35 @@ fn vspace_pt(source: &str) -> f64 {
 #[test]
 fn setlength_topsep_factor_baselineskip_parses() {
     // set0.tex line: `\setlength{\topsep}{0.6\baselineskip}` (oracle 8.16008pt).
-    // The compiler owns no page-geometry values, so like `\textwidth` this
-    // parses (no error) and warns `unsupported length expression`.
+    // The engine resolves it (its `\baselineskip` is the class's 13.6pt);
+    // outside any list this parser has nothing to apply it to and says so.
     let source = "\\documentclass[11pt]{article}\\begin{document}\\setlength{\\topsep}{0.6\\baselineskip}x\\end{document}";
     let rest = no_recognised_dimension_error(source);
     assert!(
-        rest.iter().any(|m| m.contains("unsupported length expression")),
+        rest.iter().any(|m| m.contains("\\setlength{\\topsep} is recognised but not implemented here")),
         "{rest:?}"
     );
+    let the = paragraph_text("\\documentclass[11pt]{article}\\begin{document}\\the\\dimexpr0.6\\baselineskip\\relax\\end{document}");
+    assert_eq!(the, "8.16008pt", "oracle: 8.16008pt");
 }
 
 #[test]
 fn factor_lengths_parse_anywhere_a_dimension_is_accepted() {
     // Oracle: `2\parindent` at 11pt is 34.0pt; `-.5\textwidth` is -180.0pt.
-    // Unvalued references parse to zero (the preamble-length convention).
+    // The engine's registers carry the class values, so both resolve.
     let h = "\\documentclass[11pt]{article}\\begin{document}x\\hspace{2\\parindent}y\\end{document}";
-    assert_eq!(hspace_pt(h), 0.0);
+    assert_eq!(hspace_pt(h), 34.0);
     // The other edge: spaces around the factor and the name.
     let spaced = "\\documentclass[11pt]{article}\\begin{document}x\\hspace{ 2 \\parindent }y\\end{document}";
-    assert_eq!(hspace_pt(spaced), 0.0);
-    // A negative factor parses too.
+    assert_eq!(hspace_pt(spaced), 34.0);
+    let neg_h = "\\documentclass{article}\\begin{document}x\\hspace{-.5\\textwidth}y\\end{document}";
+    assert_eq!(hspace_pt(neg_h), -172.5);
+    // A negative factor parses in `\setlength` too (outside a list the
+    // parser has nothing to apply `\topsep` to).
     let neg = "\\documentclass{article}\\begin{document}\\setlength{\\topsep}{-.5\\textwidth}x\\end{document}";
     let rest = no_recognised_dimension_error(neg);
     assert!(
-        rest.iter().any(|m| m.contains("unsupported length expression")),
+        rest.iter().any(|m| m.contains("recognised but not implemented here")),
         "{rest:?}"
     );
     // A bare `\baselineskip` (factor 1) parses as well.
@@ -114,14 +119,18 @@ fn bare_factor_with_no_unit_still_errors() {
     assert!(
         found
             .iter()
-            .any(|m| m.contains("requires a recognised dimension")),
+            .any(|m| m == "Illegal unit of measure (pt inserted)."),
         "{found:?}"
     );
 }
 
-/// A dimension in `pt`, from text of the form `6.57007pt`.
+/// A dimension in `pt`, from text of the form `6.57007pt`, read as TeX reads
+/// it (`print_scaled` output round-trips to the register's exact sp).
 fn pt(text: &str) -> f64 {
-    text.strip_suffix("pt").expect("pt suffix").parse().expect("a number")
+    let number = text.strip_suffix("pt").expect("pt suffix");
+    let (int, frac) = number.split_once('.').unwrap_or((number, ""));
+    let sp = flashtex_tex_expansion::scale_decimal(int.parse().expect("an integer"), frac, 65536.0);
+    sp as f64 / 65536.0
 }
 
 /// The body text of the first paragraph (for `\the` probes).

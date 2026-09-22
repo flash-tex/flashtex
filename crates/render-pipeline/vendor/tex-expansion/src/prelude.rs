@@ -110,7 +110,119 @@ pub const PRELUDE: &str = r"\catcode`\@=11
 \def\restore@protect{\let\protect\@@protect}
 \def\@currentlabel{}
 \def\@currenvir{document}
-\def\p@{}
+\newdimen\p@ \p@=1pt
+\def\@plus{plus}
+\def\@minus{minus}
+\newdimen\maxdimen \maxdimen=16383.99999pt
+\newskip\z@skip \z@skip=0pt plus0pt minus0pt
+\newskip\@flushglue \@flushglue=0pt plus 1fil
+\newskip\fill \fill=0pt plus 1fill
+\newskip\hideskip \hideskip=-1000pt plus 1fill
+\mathchardef\@Mi=10001
+\mathchardef\@Mii=10002
+\mathchardef\@Miii=10003
+\mathchardef\@Miv=10004
+\def\@vpt{5}
+\def\@vipt{6}
+\def\@viipt{7}
+\def\@viiipt{8}
+\def\@ixpt{9}
+\def\@xpt{10}
+\def\@xipt{10.95}
+\def\@xiipt{12}
+\def\@xivpt{14.4}
+\def\@xviipt{17.28}
+\def\@xxpt{20.74}
+\def\@xxvpt{24.88}
+\newcount\@tempcnta
+\newcount\@tempcntb
+\newcount\@lowpenalty
+\newcount\@medpenalty
+\newcount\@highpenalty
+\newcount\@beginparpenalty
+\newcount\@endparpenalty
+\newcount\@itempenalty
+\newcount\@clubpenalty
+\newcount\@topnum
+\newcount\@botnum
+\newcount\@dbltopnum
+\newcount\@listdepth
+\newcount\@enumdepth
+\newcount\@itemdepth
+\newcount\interfootnotelinepenalty \interfootnotelinepenalty=100
+\newdimen\@tempdima
+\newdimen\@tempdimb
+\newdimen\@tempdimc
+\newskip\@tempskipa
+\newskip\@tempskipb
+\newdimen\paperwidth
+\newdimen\paperheight
+\newdimen\textwidth
+\newdimen\textheight
+\newdimen\oddsidemargin
+\newdimen\evensidemargin
+\newdimen\topmargin
+\newdimen\headheight
+\newdimen\headsep
+\newdimen\footskip
+\newdimen\marginparwidth
+\newdimen\marginparsep
+\newdimen\marginparpush
+\newdimen\columnwidth
+\newdimen\columnsep
+\newdimen\columnseprule
+\newdimen\linewidth
+\newdimen\leftmargin
+\newdimen\rightmargin
+\newdimen\listparindent
+\newdimen\itemindent
+\newdimen\labelwidth
+\newdimen\labelsep
+\newdimen\leftmargini
+\newdimen\leftmarginii
+\newdimen\leftmarginiii
+\newdimen\leftmarginiv
+\newdimen\leftmarginv
+\newdimen\leftmarginvi
+\newdimen\footnotesep
+\newdimen\jot
+\newdimen\arraycolsep
+\newdimen\tabcolsep
+\newdimen\arrayrulewidth
+\newdimen\doublerulesep
+\newdimen\fboxsep
+\newdimen\fboxrule
+\newdimen\unitlength \unitlength=1pt
+\newdimen\@maxdepth
+\newdimen\@wholewidth
+\newdimen\@halfwidth
+\newdimen\@totalleftmargin
+\newdimen\@colht
+\newdimen\@colroom
+\newdimen\@pageht
+\newdimen\@pagedp
+\newdimen\@textmin
+\newdimen\@textfloatsheight
+\newskip\topsep
+\newskip\partopsep
+\newskip\itemsep
+\newskip\parsep
+\newskip\@topsep
+\newskip\@topsepadd
+\newskip\floatsep
+\newskip\textfloatsep
+\newskip\intextsep
+\newskip\dblfloatsep
+\newskip\dbltextfloatsep
+\newskip\@fptop
+\newskip\@fpsep
+\newskip\@fpbot
+\newskip\@dblfptop
+\newskip\@dblfpsep
+\newskip\@dblfpbot
+\newskip\smallskipamount
+\newskip\medskipamount
+\newskip\bigskipamount
 \long\def\@for#1:=#2\do#3{%
   \expandafter\def\expandafter\@fortmp\expandafter{#2}%
   \ifx\@fortmp\@empty \else
@@ -128,8 +240,6 @@ pub const PRELUDE: &str = r"\catcode`\@=11
 \long\def\@tforloop#1#2\@@#3#4{\def#3{#1}\ifx #3\@nnil
        \expandafter\@fornoop \else
       #4\relax\expandafter\@tforloop\fi#2\@@#3{#4}}
-\def\setlength#1#2{#1 #2\relax}
-\def\addtolength#1#2{\advance#1 #2\relax}
 \DeclareRobustCommand{\MakeUppercase}[1]{{\protected@edef\reserved@a{#1}\expandafter\uppercase\expandafter{\reserved@a}}}
 \DeclareRobustCommand{\MakeLowercase}[1]{{\protected@edef\reserved@a{#1}\expandafter\lowercase\expandafter{\reserved@a}}}
 \let\uppercase@\uppercase
