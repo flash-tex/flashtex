@@ -323,6 +323,73 @@ fn a_non_compliant_bibitem_forces_numeric_citations() {
     );
 }
 
+/// `super`/`superscript` raise the numbers (`\NAT@citesuper`, natbib.sty
+/// line 359): `\citep` is one `\textsuperscript` box instead of bracketed
+/// baseline text, and the option itself is silent now.
+#[test]
+fn the_superscript_option_raises_citep_numbers() {
+    fn inlines_with(options: &str, body: &str) -> Vec<Inline> {
+        let source = format!(
+            "\\documentclass[11pt]{{article}}\\usepackage[{options}]{{natbib}}\\begin{{document}}\n{body}\n\n{}\n\\end{{document}}",
+            bibliography()
+        );
+        let parsed = parse(&source);
+        assert!(
+            !parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("natbib") && d.message.contains("not implemented")),
+            "[{options}] is implemented and must stay silent: {:?}",
+            parsed.diagnostics
+        );
+        parsed
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                Block::Paragraph(inlines) => Some(inlines.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+    fn shapes(inlines: &[Inline]) -> Vec<(bool, String)> {
+        inlines
+            .iter()
+            .map(|inline| match inline {
+                Inline::TextScript(script) => (
+                    script.superscript,
+                    script
+                        .content
+                        .iter()
+                        .map(|inner| match inner {
+                            Inline::Text { text, .. } => text.clone(),
+                            _ => String::new(),
+                        })
+                        .collect(),
+                ),
+                Inline::Text { text, .. } => (false, text.clone()),
+                _ => (false, String::new()),
+            })
+            .collect()
+    }
+    for option in ["super", "superscript"] {
+        assert_eq!(
+            shapes(&inlines_with(option, r"\citep{plass81}")),
+            [(true, "2".to_string())],
+            "[{option}] raises the number"
+        );
+        assert_eq!(
+            shapes(&inlines_with(option, r"\cite{plass81}")),
+            [(true, "2".to_string())],
+            "[{option}] raises \\cite too"
+        );
+    }
+    // The default is unchanged: bracketed baseline text.
+    assert_eq!(
+        shapes(&inlines_with("numbers", r"\citep{plass81}")),
+        [(false, "[2]".to_string())]
+    );
+}
+
 /// The options this implementation reproduces are silent; the ones it parses
 /// but does not apply keep the package warning and say which they are.
 #[test]
