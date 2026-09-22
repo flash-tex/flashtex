@@ -1219,7 +1219,28 @@ impl<'a> Context<'a> {
             );
             return None;
         };
-        let sizes = MathSizes::unicode_math(text_pt, &constants);
+        // `\setmathfont[Scale=..]`, like a text family's `Scale=`
+        // (`Context::named_scale`): the math sizes are the scaled text
+        // size's unicode-math sizes, so every glyph metric (advances and
+        // boxes through `LoadedFace::pt`, the Appendix G parameters through
+        // `MathParams::from_opentype`) scales with it.
+        let scale = match sel.scale {
+            crate::fonts::Scale::Factor(f) => f,
+            which @ (crate::fonts::Scale::MatchLowercase | crate::fonts::Scale::MatchUppercase) => {
+                let lowercase = which == crate::fonts::Scale::MatchLowercase;
+                let main = match self.style.fontspec.text {
+                    Some(t) => self.named_face(t, TextStyle { named: Some(t), ..TextStyle::default() }, text_pt, span),
+                    _ => self.class_face(TextStyle::default(), text_pt, span),
+                };
+                let (a, b) = (crate::fonts::height_em(&face, lowercase), crate::fonts::height_em(&main, lowercase));
+                if a > 0.0 && b > 0.0 {
+                    b / a
+                } else {
+                    1.0
+                }
+            }
+        };
+        let sizes = MathSizes::unicode_math(text_pt * scale, &constants);
         let Some(m) = MathFonts::named(face.clone(), sizes) else {
             let src = self.source(span);
             self.report_once(

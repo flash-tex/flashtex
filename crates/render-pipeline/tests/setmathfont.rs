@@ -237,6 +237,33 @@ fn a_missing_family_or_a_body_setmathfont_keeps_tex_metrics_byte_for_byte() {
     assert!(glyphs(&scaled).iter().any(|g| g.font == "LatinModernMath-Regular" && g.text == "("));
 }
 
+/// `\\setmathfont[Scale=..]` scales the math glyph metrics like a text
+/// family's `Scale=`: a factor of 1.2 widens every advance by 1.2, and a
+/// `Scale`-only selection draws no ignored-option note.
+#[test]
+fn setmathfont_scale_factor_scales_math_glyph_metrics() {
+    if !common::lm_available() {
+        return;
+    }
+    let s = Staged::new("math-scale", &LM_MATH_SET);
+    let fonts = s.fonts();
+    let body = "$f(x) = 2$";
+    let r0 = render_with(&doc("\\setmathfont{Latin Modern Math}", body), &fonts, &RenderOptions::default());
+    let r1 = render_with(&doc("\\setmathfont[Scale=1.2]{Latin Modern Math}", body), &fonts, &RenderOptions::default());
+    let d = codes(&r1);
+    assert!(!d.iter().any(|(c, m)| c == "fontspec_feature_ignored" && m.contains("Scale")), "{d:?}");
+    let (g0, g1) = (glyphs(&r0), glyphs(&r1));
+    let adv = |text: &str, gs: &[Placed], glyph: &str| -> f64 {
+        let f = formula(text, gs, "f(x)");
+        find(&f, glyph).advance
+    };
+    let (plain, scaled) = (doc("\\setmathfont{Latin Modern Math}", body), doc("\\setmathfont[Scale=1.2]{Latin Modern Math}", body));
+    for needle in ["=", "2", "("] {
+        let (a0, a1) = (adv(&plain, &g0, needle), adv(&scaled, &g1, needle));
+        assert!(close(a1 / a0, 1.2, 0.001), "{needle}: {a0} -> {a1}");
+    }
+}
+
 /// The LuaTeX oracle numbers for Latin Modern Math at 10 pt (the box walk
 /// described in the module comment), against this pipeline's own layout
 /// of the same formulas under `\setmathfont{Latin Modern Math}`.

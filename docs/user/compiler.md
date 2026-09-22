@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 487 text-mode and 620 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 487 text-mode and 626 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -991,6 +991,12 @@ Canonical sources:
 | `\mathit` | `{...}` | letters and digits of a plain argument as Unicode mathematical italic, sans-serif or monospace; any other argument stays in the current math face |
 | `\mathsf` | `{...}` | letters and digits of a plain argument as Unicode mathematical italic, sans-serif or monospace; any other argument stays in the current math face |
 | `\mathtt` | `{...}` | letters and digits of a plain argument as Unicode mathematical italic, sans-serif or monospace; any other argument stays in the current math face |
+| `\symbf` | `{...}` | unicode-math alphabet selectors: a plain argument as Unicode mathematical bold, bold italic, bold sans, sans, italic or monospace (needs \usepackage{unicode-math}); any other argument stays in the current math face |
+| `\symbfit` | `{...}` | unicode-math alphabet selectors: a plain argument as Unicode mathematical bold, bold italic, bold sans, sans, italic or monospace (needs \usepackage{unicode-math}); any other argument stays in the current math face |
+| `\symbfsf` | `{...}` | unicode-math alphabet selectors: a plain argument as Unicode mathematical bold, bold italic, bold sans, sans, italic or monospace (needs \usepackage{unicode-math}); any other argument stays in the current math face |
+| `\symsf` | `{...}` | unicode-math alphabet selectors: a plain argument as Unicode mathematical bold, bold italic, bold sans, sans, italic or monospace (needs \usepackage{unicode-math}); any other argument stays in the current math face |
+| `\symit` | `{...}` | unicode-math alphabet selectors: a plain argument as Unicode mathematical bold, bold italic, bold sans, sans, italic or monospace (needs \usepackage{unicode-math}); any other argument stays in the current math face |
+| `\symtt` | `{...}` | unicode-math alphabet selectors: a plain argument as Unicode mathematical bold, bold italic, bold sans, sans, italic or monospace (needs \usepackage{unicode-math}); any other argument stays in the current math face |
 | `\mathrm` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
 | `\mathnormal` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
 | `\boldsymbol` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
