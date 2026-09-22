@@ -15808,11 +15808,10 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // array.sty's preamble builder, column types and row strut are
         // implemented (parser/tabular.rs, crate::tabular); no options.
         "array" => options.is_empty(),
-        // ifthen's conditionals (`\ifthenelse` with its tests, `\newif`
-        // switches with `\newboolean`/`\setboolean`) run in the expansion
-        // pass, so loading the package is silent. The one gap reports
-        // itself where it is used instead: `\whiledo` is not implemented
-        // and is diagnosed as an unknown command at its own span.
+        // ifthen's conditionals (`\ifthenelse` with its tests, `\whiledo`
+        // loops over the same tests, `\newif` switches with
+        // `\newboolean`/`\setboolean`) run in the expansion pass, so
+        // loading the package is silent.
         "ifthen" => options.is_empty(),
         // etoolbox's toggle booleans (`\newtoggle`/`\providetoggle`,
         // `\toggletrue`/`\togglefalse`, `\iftoggle`) run in the expansion
