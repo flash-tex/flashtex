@@ -1088,6 +1088,12 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["symbf", "symbfit", "symbfsf", "symsf", "symit", "symtt"],
+        "{...}",
+        "unicode-math alphabet selectors: a plain argument as Unicode mathematical bold, bold italic, bold sans, sans, italic or monospace (needs \\usepackage{unicode-math}); any other argument stays in the current math face",
+        true,
+    ),
+    (
         &[
             "mathrm",
             "mathnormal",

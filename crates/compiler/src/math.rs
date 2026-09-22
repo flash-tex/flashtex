@@ -1015,6 +1015,14 @@ pub struct MathPackages {
     /// Base LaTeX2e does not define these names (`cancel.sty` is a standalone
     /// package, measured as not loading amsmath).
     pub cancel: bool,
+    /// `unicode-math` is loaded, so its `\\sym..` math-alphabet selectors
+    /// exist (`\\symbf`, `\\symbfit`, `\\symbfsf`, `\\symsf`, `\\symit`,
+    /// `\\symtt`).
+    ///
+    /// These are unicode-math's own commands (no kernel definition), so
+    /// without the package they are undefined, like the gated alphabets
+    /// above.
+    pub unicode_math: bool,
 }
 
 /// Packages that load amsmath, so that `\usepackage{X}` alone gives amsmath's
@@ -1106,6 +1114,7 @@ impl MathPackages {
         amsfonts: false,
         mathtools: false,
         cancel: false,
+        unicode_math: false,
     };
 
     /// Folds one `\documentclass` name in.
@@ -1121,6 +1130,7 @@ impl MathPackages {
         self.amsmath |= AMSMATH_PACKAGES.contains(&package);
         self.mathtools |= package == "mathtools";
         self.cancel |= package == "cancel";
+        self.unicode_math |= package == "unicode-math";
         let amssymb = AMSSYMB_PACKAGES.contains(&package);
         self.amssymb |= amssymb;
         // `amssymb.sty` line 8 is `\RequirePackage{amsfonts}`, so anything
@@ -2344,6 +2354,29 @@ impl MathParser<'_> {
                     let letters: String = text.chars().filter(|c| !c.is_whitespace()).collect();
                     self.first_queued(split_hyphen_runs(&letters, span, text_atom), span)
                 } else if matches!(&*name, "mathit" | "mathsf" | "mathtt") && self.plain_text_argument() {
+                    let (text, argument_span) = self.required_text_group_string(&name, span);
+                    let span = span.merge(argument_span);
+                    let glyphs: String = text
+                        .chars()
+                        .filter(|c| !c.is_whitespace())
+                        .map(|c| math_alphabet_char(&name, c))
+                        .collect();
+                    self.first_queued(split_hyphen_runs(&glyphs, span, symbol), span)
+                } else {
+                    let body = self.required_group(&name, span);
+                    self.group_atom(body, span)
+                }
+            }
+            // unicode-math's `\\sym..` alphabet selectors: the same
+            // mechanism as `\\mathit`/`\\mathsf` above (a plain argument as
+            // Unicode mathematical alphanumerics in one atom, any other
+            // argument keeping the surrounding math letters), gated on the
+            // package like the amsfonts alphabets below.
+            "symbf" | "symbfit" | "symbfsf" | "symsf" | "symit" | "symtt" if !self.packages.unicode_math => {
+                self.missing_package(&name, "unicode-math", span)
+            }
+            "symbf" | "symbfit" | "symbfsf" | "symsf" | "symit" | "symtt" => {
+                if self.plain_text_argument() {
                     let (text, argument_span) = self.required_text_group_string(&name, span);
                     let span = span.merge(argument_span);
                     let glyphs: String = text
@@ -4519,15 +4552,28 @@ pub(crate) const KERNEL_RIGHTLEFTHARPOONS_EM: f64 = 1.000002;
 pub fn math_alphabet_char(command: &str, ch: char) -> char {
     let offset = |base: u32, first: char| char::from_u32(base + (ch as u32 - first as u32));
     let mapped = match (command, ch) {
-        ("mathsf", 'A'..='Z') => offset(0x1D5A0, 'A'),
-        ("mathsf", 'a'..='z') => offset(0x1D5BA, 'a'),
-        ("mathsf", '0'..='9') => offset(0x1D7E2, '0'),
-        ("mathtt", 'A'..='Z') => offset(0x1D670, 'A'),
-        ("mathtt", 'a'..='z') => offset(0x1D68A, 'a'),
-        ("mathtt", '0'..='9') => offset(0x1D7F6, '0'),
-        ("mathit", 'h') => Some('\u{210E}'),
-        ("mathit", 'A'..='Z') => offset(0x1D434, 'A'),
-        ("mathit", 'a'..='z') => offset(0x1D44E, 'a'),
+        ("mathsf", 'A'..='Z') | ("symsf", 'A'..='Z') => offset(0x1D5A0, 'A'),
+        ("mathsf", 'a'..='z') | ("symsf", 'a'..='z') => offset(0x1D5BA, 'a'),
+        ("mathsf", '0'..='9') | ("symsf", '0'..='9') => offset(0x1D7E2, '0'),
+        ("mathtt", 'A'..='Z') | ("symtt", 'A'..='Z') => offset(0x1D670, 'A'),
+        ("mathtt", 'a'..='z') | ("symtt", 'a'..='z') => offset(0x1D68A, 'a'),
+        ("mathtt", '0'..='9') | ("symtt", '0'..='9') => offset(0x1D7F6, '0'),
+        ("mathit", 'h') | ("symit", 'h') => Some('\u{210E}'),
+        ("mathit", 'A'..='Z') | ("symit", 'A'..='Z') => offset(0x1D434, 'A'),
+        ("mathit", 'a'..='z') | ("symit", 'a'..='z') => offset(0x1D44E, 'a'),
+        // unicode-math's bold alphabets (its `LATIN_BASE`/`DIGIT_BASE`):
+        // bold, bold italic (no digits in Unicode: unchanged) and bold
+        // sans. The `\\sym..` names are the package's spelling; the plain
+        // `\\symsf`/`\\symit`/`\\symtt` rows above are its aliases of the
+        // kernel alphabets.
+        ("symbf", 'A'..='Z') => offset(0x1D400, 'A'),
+        ("symbf", 'a'..='z') => offset(0x1D41A, 'a'),
+        ("symbf", '0'..='9') => offset(0x1D7CE, '0'),
+        ("symbfit", 'A'..='Z') => offset(0x1D468, 'A'),
+        ("symbfit", 'a'..='z') => offset(0x1D482, 'a'),
+        ("symbfsf", 'A'..='Z') => offset(0x1D5D4, 'A'),
+        ("symbfsf", 'a'..='z') => offset(0x1D5EE, 'a'),
+        ("symbfsf", '0'..='9') => offset(0x1D7EC, '0'),
         ("mathfrak", 'C') => Some('\u{212D}'),
         ("mathfrak", 'H') => Some('\u{210C}'),
         ("mathfrak", 'I') => Some('\u{2111}'),
@@ -7767,6 +7813,7 @@ mod unbraced_argument_tests {
         amsfonts: true,
         mathtools: false,
         cancel: false,
+        unicode_math: false,
     };
 
     #[test]
@@ -7798,6 +7845,62 @@ mod unbraced_argument_tests {
         );
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(list.atoms[0].nucleus, Nucleus::Symbol("x".into()));
+    }
+
+    /// unicode-math's `\\sym..` selectors map a plain argument to the same
+    /// Unicode mathematical alphanumerics `unimath` maps them to, and need
+    /// the package: without it they are undefined, like the amsfonts
+    /// alphabets.
+    #[test]
+    fn sym_alphabets_need_unicode_math_and_map_plain_letters() {
+        const UNICODE_MATH: MathPackages = MathPackages {
+            unicode_math: true,
+            ..MathPackages::KERNEL
+        };
+        for (source, expected) in [
+            (r"\symbf{Ab1}", "\u{1D400}\u{1D41B}\u{1D7CF}"),
+            (r"\symbfit{Az}", "\u{1D468}\u{1D49B}"),
+            (r"\symbfit{1}", "1"),
+            // No bold-italic digits in Unicode: unchanged, as unicode-math does.
+            (r"\symbfsf{Az09}", "\u{1D5D4}\u{1D607}\u{1D7EC}\u{1D7F5}"),
+            (r"\symsf{Ab1}", "\u{1D5A0}\u{1D5BB}\u{1D7E3}"),
+            (r"\symit{h}", "\u{210E}"),
+            (r"\symtt{T}", "\u{1D683}"),
+        ] {
+            let mut diagnostics = Vec::new();
+            let list = parse_tokens(
+                &crate::lexer::tokenize(source),
+                UNICODE_MATH,
+                &mut diagnostics,
+            );
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "{source}: {:?}", list.atoms);
+            assert_eq!(list.atoms[0].nucleus, Nucleus::Symbol(expected.into()), "{source}");
+        }
+        // Any other argument keeps the surrounding math letters.
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(
+            &crate::lexer::tokenize(r"\symbf{x^2}"),
+            UNICODE_MATH,
+            &mut diagnostics,
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms[0].nucleus, Nucleus::Symbol("x".into()));
+        // Without the package each selector is an error, like `\\mathbb`
+        // without amsfonts.
+        for name in ["symbf", "symbfit", "symbfsf", "symsf", "symit", "symtt"] {
+            let mut diagnostics = Vec::new();
+            parse_tokens(
+                &crate::lexer::tokenize(&format!("\\{name}{{R}}")),
+                MathPackages::KERNEL,
+                &mut diagnostics,
+            );
+            assert_eq!(
+                diagnostics.first().map(|d| d.message.as_str()),
+                Some(format!("\\{name} requires \\usepackage{{unicode-math}}").as_str()),
+                "\\{name}"
+            );
+        }
     }
 
     #[test]
@@ -8622,6 +8725,7 @@ mod spacing_tests {
         amsfonts: true,
         mathtools: false,
         cancel: false,
+        unicode_math: false,
     };
 
     fn width_with(source: &str, size: f64, packages: MathPackages) -> f64 {
@@ -8638,6 +8742,7 @@ mod spacing_tests {
         amsfonts: false,
         mathtools: true,
         cancel: false,
+        unicode_math: false,
     };
 
     fn x(b: &MathBox, text: &str) -> f64 {
@@ -9441,6 +9546,7 @@ mod package_gating_tests {
         amsfonts: true,
         mathtools: false,
         cancel: false,
+        unicode_math: false,
     };
     const AMSFONTS: MathPackages = MathPackages {
         amsmath: false,
@@ -9448,6 +9554,7 @@ mod package_gating_tests {
         amsfonts: true,
         mathtools: false,
         cancel: false,
+        unicode_math: false,
     };
     const AMSMATH: MathPackages = MathPackages {
         amsmath: true,
@@ -9455,6 +9562,7 @@ mod package_gating_tests {
         amsfonts: false,
         mathtools: false,
         cancel: false,
+        unicode_math: false,
     };
     const MATHTOOLS: MathPackages = MathPackages {
         amsmath: true,
@@ -9462,6 +9570,7 @@ mod package_gating_tests {
         amsfonts: false,
         mathtools: true,
         cancel: false,
+        unicode_math: false,
     };
 
     fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
@@ -10081,6 +10190,7 @@ mod package_gating_tests {
                 amsfonts: true,
                 mathtools: false,
                 cancel: false,
+                unicode_math: false,
             }
         );
         assert_eq!(
@@ -10091,6 +10201,7 @@ mod package_gating_tests {
                 amsfonts: true,
                 mathtools: false,
                 cancel: false,
+                unicode_math: false,
             }
         );
         assert_eq!(class("article"), MathPackages::KERNEL);
@@ -10110,6 +10221,7 @@ mod double_bar_tests {
         amsfonts: false,
         mathtools: false,
         cancel: false,
+        unicode_math: false,
     };
 
     /// The glyph texts a formula lays out, in order.
@@ -10366,6 +10478,7 @@ mod lap_tests {
         amsfonts: false,
         mathtools: true,
         cancel: false,
+        unicode_math: false,
     };
 
     /// `amsmath` without `mathtools`: the lap family is still undefined.
@@ -10375,6 +10488,7 @@ mod lap_tests {
         amsfonts: false,
         mathtools: false,
         cancel: false,
+        unicode_math: false,
     };
 
     fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {

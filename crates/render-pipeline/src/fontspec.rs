@@ -52,7 +52,8 @@
 //! builds the `MathProvider::Otf` provider; a document naming none stays on
 //! TeX's metrics. The math font is per document: unicode-math itself
 //! documents that `\setmathfont` in the body is not honoured, so one there
-//! is noted and ignored. `Scale=` and `range=` are noted as not applied.
+//! is noted and ignored. `Scale=` scales the math sizes like a text
+//! family's; `range=` is noted as not applied.
 
 use flashtex_compiler::Span;
 
@@ -82,11 +83,13 @@ pub struct Settings {
 }
 
 /// Where the document's OpenType math font comes from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MathSelection {
     /// The family as the index matches it.
     pub family: String,
     pub source: MathSource,
+    /// `\setmathfont[Scale=..]`, like the text families' `Scale=`.
+    pub scale: Scale,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -588,20 +591,44 @@ fn scan(text: &str, is_entry: bool, settings: &mut Settings, limitations: &mut V
                         format!("\\setmathfont{{{family}}} in an included file is not applied: only the entry document's preamble selects the math font"),
                     ));
                 } else {
-                    // `range=`, `Scale=` and every other option: not applied.
-                    let ignored: Vec<&str> = split_top_level(&c.options, ',').into_iter().map(str::trim).filter(|o| !o.is_empty()).collect();
+                    // `Scale=` is applied to the math sizes; `range=` and
+                    // every other option are not.
+                    let o = Options::parse(&c.options);
+                    let mut ignored = o.ignored;
+                    if o.bold.is_some() {
+                        ignored.push("BoldFont".to_string());
+                    }
+                    if o.italic.is_some() {
+                        ignored.push("ItalicFont".to_string());
+                    }
+                    if o.bold_italic.is_some() {
+                        ignored.push("BoldItalicFont".to_string());
+                    }
+                    if o.upright.is_some() {
+                        ignored.push("UprightFont".to_string());
+                    }
+                    if o.oldstyle.is_some() {
+                        ignored.push("Numbers".to_string());
+                    }
+                    if o.tex_ligatures.is_some() {
+                        ignored.push("Ligatures".to_string());
+                    }
                     if !ignored.is_empty() {
                         limitations.push((
                             "fontspec_feature_ignored",
                             span(c),
                             format!(
-                                "\\setmathfont{{{family}}}: option{} {} not applied (the family is; `range=` and `Scale=` have no effect yet)",
+                                "\\setmathfont{{{family}}}: option{} {} not applied (the family and `Scale=` are; `range=` has no effect yet)",
                                 if ignored.len() == 1 { "" } else { "s" },
                                 ignored.join(", ")
                             ),
                         ));
                     }
-                    settings.math = Some(MathSelection { family: family.to_string(), source: MathSource::SetMathFont });
+                    settings.math = Some(MathSelection {
+                        family: family.to_string(),
+                        source: MathSource::SetMathFont,
+                        scale: o.scale.unwrap_or_default(),
+                    });
                 }
             }
         }
@@ -653,14 +680,14 @@ pub fn apply(texts: &[&str], entry: usize, blocks: &mut [Block], style: &mut Sty
     // The manifest first, so the document's own commands override it; the
     // package's default below both.
     if unicode_math {
-        settings.math = Some(MathSelection { family: UNICODE_MATH_DEFAULT.to_string(), source: MathSource::UnicodeMath });
+        settings.math = Some(MathSelection { family: UNICODE_MATH_DEFAULT.to_string(), source: MathSource::UnicodeMath, scale: Scale::default() });
     }
     if let Some(f) = manifest {
         settings.text = f.text.as_deref().map(|n| settings.intern(NamedSpec::new(n)));
         settings.sans = f.sans.as_deref().map(|n| settings.intern(NamedSpec::new(n)));
         settings.mono = f.mono.as_deref().map(|n| settings.intern(NamedSpec::new(n)));
         if let Some(m) = f.math.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
-            settings.math = Some(MathSelection { family: m.to_string(), source: MathSource::Manifest });
+            settings.math = Some(MathSelection { family: m.to_string(), source: MathSource::Manifest, scale: Scale::default() });
         }
     }
     let scans: Vec<DocScan> = texts
@@ -875,5 +902,30 @@ mod tests {
         let id = scope_at(std::slice::from_ref(&s3), 0, at("\\end{document}") - 1, FamilyKind::Rm).unwrap();
         assert_eq!(settings.families[usize::from(id)].scale, Scale::Factor(2.0));
         assert!(lim.is_empty(), "{lim:?}");
+    }
+
+    #[test]
+    fn setmathfont_keeps_scale_and_notes_only_the_rest() {
+        let text = "\\documentclass{article}\n\\setmathfont[Scale=1.2]{Latin Modern Math}\n\\begin{document}\n$x$\n\\end{document}\n";
+        let mut settings = Settings::default();
+        let mut lim = Vec::new();
+        scan(text, true, &mut settings, &mut lim, 0);
+        let math = settings.math.expect("the preamble selection");
+        assert_eq!(math.family, "Latin Modern Math");
+        assert_eq!(math.scale, Scale::Factor(1.2));
+        assert!(lim.is_empty(), "{lim:?}");
+        // `range=` (and anything else unknown) is still noted, naming the
+        // option; the family and its `Scale=` still apply.
+        let text = "\\documentclass{article}\n\\setmathfont[Scale=MatchLowercase,range=\\int,BoldFont=X]{Latin Modern Math}\n\\begin{document}\n$x$\n\\end{document}\n";
+        let mut settings = Settings::default();
+        let mut lim = Vec::new();
+        scan(text, true, &mut settings, &mut lim, 0);
+        let math = settings.math.expect("the preamble selection");
+        assert_eq!(math.scale, Scale::MatchLowercase);
+        assert_eq!(lim.len(), 1, "{lim:?}");
+        assert_eq!(lim[0].0, "fontspec_feature_ignored");
+        assert!(lim[0].2.contains("range="), "{}", lim[0].2);
+        assert!(lim[0].2.contains("BoldFont"), "{}", lim[0].2);
+        assert!(lim[0].2.contains("Scale="), "{}", lim[0].2);
     }
 }
