@@ -721,7 +721,8 @@ pub enum Block {
         /// its paragraph (see [`UnitKind::Picture`]): the box starts
         /// `\parindent` in, exactly where an ordinary paragraph's first
         /// line would. `false` after `\noindent`, a heading, `\end{...}`,
-        /// in a caption, a styled environment or a list item.
+        /// in a caption, a styled environment or a list item; `\indent`
+        /// forces it back on outside the structural suppressions.
         indent: bool,
         /// A compiler `ListItem` picture's `\list` geometry: the box starts
         /// at the hanging indent, where the item's text starts.
@@ -1876,10 +1877,11 @@ pub fn adapt_cached(
     let items_for = |inlines: &[Inline], heading: bool| -> Vec<Item> { items_cached(texts, inlines, &styles, labels, labels_fp, size, heading, false, cache) };
     let items_for_weighted = |inlines: &[Inline], compiler_weight: bool| -> Vec<Item> { items_cached(texts, inlines, &styles, labels, labels_fp, size, false, compiler_weight, cache) };
     let mut blocks = Vec::new();
-    // Page-style, mark, `\chapter` and `\noindent` commands in the entry
-    // document's body, read from the source: the compiler accepts the first
-    // two as no-ops, sets the arguments of marks and `\chapter` as body text
-    // (dropped here) and ignores `\noindent`.
+    // Page-style, mark, `\chapter`, `\noindent` and `\indent` commands in
+    // the entry document's body, read from the source: the compiler accepts
+    // the first two as no-ops, sets the arguments of marks and `\chapter`
+    // as body text (dropped here) and ignores `\noindent`/`\indent` (their
+    // indent decision is remade below).
     let entry_doc = DocumentId(entry);
     let has_chapters = style.class_geometry.as_ref().is_some_and(|d| d.chapter.is_some());
     let book = style.class_geometry.as_ref().is_some_and(|d| d.options.kind == flashtex_class_geometry::ClassKind::Book);
@@ -1919,8 +1921,8 @@ pub fn adapt_cached(
     // The same structural commands in `\input`/`\include`d documents (one
     // list per document, empty for the entry): a `\chapter` in
     // `chapters/one.tex` is as much a chapter as one in the entry file.
-    // `\maketitle`, `\noindent`, contents lists and nested `\input`s stay
-    // entry-only, as before.
+    // `\maketitle`, `\noindent`/`\indent`, contents lists and nested
+    // `\input`s stay entry-only, as before.
     let included_commands: Vec<Vec<BodyCommand>> = texts
         .iter()
         .enumerate()
@@ -1941,6 +1943,9 @@ pub fn adapt_cached(
     let mut seen_included = vec![false; texts.len()];
     let mut next_command = 0usize;
     let mut noindent_at: Option<usize> = None;
+    // `\indent`'s mirror image: the end offset of the latest `\indent`
+    // whose paragraph has not been lowered yet.
+    let mut indent_at: Option<usize> = None;
     // The `\input`/`\include`d document whose units are being laid out.
     let mut input_doc: Option<DocumentId> = None;
     // The `\include` whose file is being read: its closing `\clearpage`
@@ -2162,6 +2167,7 @@ pub fn adapt_cached(
                         span: Span::in_document(cmd_doc, cmd.start, cmd.end),
                     }),
                     BodyKind::NoIndent => noindent_at = Some(cmd.end),
+                    BodyKind::Indent => indent_at = Some(cmd.end),
                     BodyKind::Chapter { starred, title } => {
                         if !*starred {
                             // In the reading-order space `list_blocks` sorts
@@ -2639,9 +2645,15 @@ pub fn adapt_cached(
                     && noindent_at.take().is_some_and(|end| {
                         span.document == entry_doc && source.get(end..span.start).is_some_and(noindent_reaches)
                     });
+                // `\indent`'s mirror image, consumed exactly like `\noindent`
+                // above so it cannot leak into a later paragraph.
+                let force_indent = initial
+                    && indent_at.take().is_some_and(|end| {
+                        span.document == entry_doc && source.get(end..span.start).is_some_and(noindent_reaches)
+                    });
                 // The paragraph path's indent decision verbatim (a picture
                 // carries no run-in head, so that arm is empty).
-                let indent = initial && !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent;
+                let indent = initial && (!after_heading || force_indent) && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && (!noindent || force_indent);
                 blocks.push(Block::Picture {
                     document,
                     picture,
@@ -2937,6 +2949,14 @@ pub fn adapt_cached(
                 let noindent = noindent_at.take().is_some_and(|end| {
                     first_span.is_some_and(|f| f.document == entry_doc && source.get(end..f.start).is_some_and(noindent_reaches))
                 });
+                // `\indent`'s mirror image: force the `\parindent` box for
+                // this paragraph. The reach check is `\noindent`'s own —
+                // both commands start the paragraph where they stand (TeX
+                // §1091 `new_graf`), so whatever ends one (a blank line, an
+                // explicit `\par`, an environment boundary) ends the other.
+                let force_indent = indent_at.take().is_some_and(|end| {
+                    first_span.is_some_and(|f| f.document == entry_doc && source.get(end..f.start).is_some_and(noindent_reaches))
+                });
                 // `\centering` sets `\parindent 0pt`; a list item's first
                 // paragraph carries no indent and `\list` sets
                 // `\parindent\listparindent` (0pt in article) for the
@@ -2966,7 +2986,14 @@ pub fn adapt_cached(
                     parts,
                     indent: match run_in_indent {
                         Some(indent) => indent,
-                        None => !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent,
+                        // `\indent` lifts `\@afterheading`'s suppression and
+                        // wins over `\noindent` (in TeX both orders leave the
+                        // box: `\indent` in horizontal mode adds it while
+                        // `\noindent` there is a no-op). The structural
+                        // suppressions stand: inside a list or a centred
+                        // environment `\parindent` itself is zero, so TeX's
+                        // box is empty there too.
+                        None => (!after_heading || force_indent) && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && (!noindent || force_indent),
                     },
                     style: styled.unwrap_or_default(),
                     env_open,
@@ -3802,8 +3829,9 @@ fn clear_page_blocks(texts: &[&str], blocks: &[Block]) -> Vec<usize> {
         .collect()
 }
 
-/// Whether a `\noindent` whose source ends where `gap` starts still governs
-/// the paragraph whose first material starts where `gap` ends (#958).
+/// Whether a `\noindent` — or, mirror-image, an `\indent` — whose source
+/// ends where `gap` starts still governs the paragraph whose first material
+/// starts where `gap` ends (#958).
 ///
 /// `\noindent` in vertical mode is TeX's `new_graf` without the indent box
 /// (§1091): the paragraph starts right there and everything up to the next
@@ -9791,6 +9819,9 @@ pub enum BodyKind {
     /// `\chapter[*][short]{title}`: `title` is the argument's inner range.
     Chapter { starred: bool, title: (usize, usize) },
     NoIndent,
+    /// `\indent`: force the following paragraph's `\parindent` box, the
+    /// mirror image of [`BodyKind::NoIndent`].
+    Indent,
     /// `\maketitle` (laid out from the compiler's `TitleBlock`).
     MakeTitle,
     /// book.cls `\frontmatter`/`\mainmatter`/`\backmatter`.
@@ -9823,7 +9854,7 @@ pub enum Matter {
 }
 
 /// `\pagestyle`, `\thispagestyle`, `\markboth`, `\markright`, `\noindent`,
-/// `\maketitle`, `\input`/`\include`, (when the class has chapters)
+/// `\indent`, `\maketitle`, `\input`/`\include`, (when the class has chapters)
 /// `\chapter` and (book) `\frontmatter`/`\mainmatter`/`\backmatter` after
 /// `\begin{document}`, in source order, skipping comments.
 pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyCommand> {
@@ -9905,6 +9936,7 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
                 group(k).map(|(s, e, after)| (BodyKind::Part { starred, short, title: (s, e) }, after))
             }
             "noindent" => Some((BodyKind::NoIndent, j)),
+            "indent" => Some((BodyKind::Indent, j)),
             "tableofcontents" => Some((BodyKind::ContentsList(crate::toc::ListKind::Toc), j)),
             "listoffigures" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lof), j)),
             "listoftables" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lot), j)),
@@ -12814,6 +12846,71 @@ mod tests {
             .unwrap()
             .indent;
         assert_eq!(indent, flashtex_class_geometry::Sp::ZERO);
+    }
+
+    /// The `indent` flag of every plain paragraph block, in order.
+    fn paragraph_indents(src: &str) -> Vec<bool> {
+        adapted(src)
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph { indent, .. } => Some(*indent),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// `\indent` forces the first-line indent box for the paragraph that
+    /// follows it — including immediately after a heading, where
+    /// `\@afterheading` suppresses it — the mirror image of `\noindent`.
+    #[test]
+    fn indent_forces_first_line_indent_after_heading() {
+        assert_eq!(
+            paragraph_indents("\\documentclass{article}\\begin{document}\\section{X}Text.\\end{document}"),
+            vec![false],
+            "control: no indent right after a heading",
+        );
+        assert_eq!(
+            paragraph_indents("\\documentclass{article}\\begin{document}\\section{X}\\indent Text.\\end{document}"),
+            vec![true],
+            "`\\indent` after a heading draws the indent box",
+        );
+    }
+
+    /// `\indent` only governs the immediately following paragraph: a blank
+    /// line ends the started (empty, discarded) paragraph first.
+    #[test]
+    fn indent_does_not_reach_past_a_blank_line() {
+        assert_eq!(
+            paragraph_indents("\\documentclass{article}\\begin{document}\\section{X}\\indent\n\nText.\\end{document}"),
+            vec![false],
+        );
+    }
+
+    /// `\noindent` still suppresses ordinary paragraphs, and `\indent`
+    /// wins when both govern the same one (in TeX both orders leave the
+    /// box: `\indent` in horizontal mode adds it, `\noindent` there is a
+    /// no-op).
+    #[test]
+    fn noindent_suppression_is_unchanged_and_loses_to_indent() {
+        assert_eq!(
+            paragraph_indents("\\documentclass{article}\\begin{document}One.\n\nTwo.\\end{document}"),
+            vec![true, true],
+            "control: ordinary paragraphs are indented",
+        );
+        assert_eq!(
+            paragraph_indents("\\documentclass{article}\\begin{document}One.\n\n\\noindent Two.\\end{document}"),
+            vec![true, false],
+            "`\\noindent` still suppresses",
+        );
+        assert_eq!(
+            paragraph_indents("\\documentclass{article}\\begin{document}\\noindent\\indent Two.\\end{document}"),
+            vec![true],
+        );
+        assert_eq!(
+            paragraph_indents("\\documentclass{article}\\begin{document}\\indent\\noindent Two.\\end{document}"),
+            vec![true],
+        );
     }
 
     fn article_tw() -> f64 {
