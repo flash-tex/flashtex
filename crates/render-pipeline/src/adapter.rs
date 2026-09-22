@@ -1323,7 +1323,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
         inlines
             .iter()
             .map(|i| match i {
-                Inline::Text { text, span, style, space_before } => Inline::Text {
+                Inline::Text { text, span, style, space_before, glue_before } => Inline::Text {
                     text: text.clone(),
                     span: *span,
                     style: CStyle {
@@ -1331,6 +1331,10 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
                         ..*style
                     },
                     space_before: *space_before,
+                    glue_before: glue_before.map(|g| flashtex_compiler::parser::InterwordGlue {
+                        style: CStyle { size: Some(g.style.size.unwrap_or(size)), ..g.style },
+                        ..g
+                    }),
                 },
                 other => other.clone(),
             })
@@ -1437,15 +1441,20 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
                     content.push(Inline::Text {
                         text: line.text.clone(),
                         span: line.span,
+                        // `verbatim`/`lstlisting` lines: `\verbatim@font`
+                        // (`\normalfont\ttfamily`) and `\@noligs`.
                         style: CStyle {
                             family: TextFamily::Mono,
+                            font: crate::nfss::Selected { key: crate::nfss::FontKey::new(crate::nfss::FamilyKind::Tt, crate::nfss::Series::M, crate::nfss::Shape::N), undefined: None },
+                            literal: true,
                             ..CStyle::default()
                         },
                         space_before: true,
+                        glue_before: None,
                     });
                 }
                 // The text itself is now typewriter and literal (see
-                // `style_intervals`/`TextStyle::literal`), so the old
+                // `TextStyle::literal`), so the old
                 // "no monospaced face" limitation no longer applies, and an
                 // `lstlisting` gets its limitation from `crate::listings` —
                 // the pass that knows which keys it applied and which it did
@@ -1845,24 +1854,9 @@ pub fn adapt_cached(
     });
     style.nfss = crate::nfss::Scheme::for_document(&parsed.packages, t1_encoding(source));
     style.input = crate::inputenc::InputSetup::for_project(texts, entry);
-    // A project package or class file's macros wrap font declarations
-    // around their arguments in every document that invokes them.
-    let styles: Vec<Styles> = texts
-        .iter()
-        .enumerate()
-        .map(|(index, t)| {
-            let mut intervals = style_intervals(t);
-            for (package, _) in &parsed.package_files {
-                if package.0 != index {
-                    if let Some(defs) = texts.get(package.0) {
-                        intervals.extend(macro_argument_intervals_defined_in(t, defs));
-                    }
-                }
-            }
-            intervals.sort_by_key(|(start, _, _, _)| *start);
-            Styles::new(t, intervals, style.nfss)
-        })
-        .collect();
+    // Fonts come from the compiler's nodes (`parser::TextStyle::font`);
+    // what is still read per document is the size environments.
+    let styles: Vec<Styles> = texts.iter().map(|t| Styles::new(t)).collect();
     let labels_fp = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -3967,7 +3961,7 @@ fn unsupported_inlines(inline: &Inline, out: &mut Vec<(&'static str, Span, Strin
         Inline::Verbatim { .. } => {
             // `\verb`/`\verb*`/`\lstinline` are typeset in the typewriter
             // family with ligatures, kerns and stretchable blanks
-            // suppressed (`style_intervals`, `TextStyle::literal`), so
+            // suppressed (the compiler's `TextStyle::literal`), so
             // there is nothing to report. Measured against pdflatex at
             // 12 pt T1: `\verb"ftxc --version"` 86.4289 pt, the oracle's
             // 86.4289 pt. (`\lstinline` is then re-set the way listings
@@ -3995,7 +3989,6 @@ fn unsupported_inlines(inline: &Inline, out: &mut Vec<(&'static str, Span, Strin
 /// tabular becomes its cells' inlines in reading order with `\\` between
 /// rows; `\verb` becomes `Mono` text. Everything else is borrowed.
 fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut Vec<Span>, out: &mut Vec<std::borrow::Cow<'a, Inline>>) {
-    use flashtex_compiler::parser::{TextFamily, TextStyle as CStyle};
     match inline {
         // amsmath `\eqref` to a rich `\tag` (#441): `\textup{\tagform@{..}}`
         // sets the tag's content again -- its text pieces upright, its
@@ -4004,7 +3997,7 @@ fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut V
         // `\tag*` label gets them here too), every atom attributed to the
         // command's bytes.
         #[cfg(feature = "compiler-node-surface")]
-        Inline::Reference { key, page: false, equation: true, span, space_before } if labels.rich_tags.contains_key(key) => {
+        Inline::Reference { key, page: false, equation: true, span, space_before, .. } if labels.rich_tags.contains_key(key) => {
             use flashtex_compiler::math::{MathAtom, Nucleus};
             let content = labels.rich_tags[key].0.clone();
             let mut list = MathList {
@@ -4030,9 +4023,10 @@ fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut V
                 color: None,
                 size: None,
                 color_ranges: Vec::new(),
+                glue_before: None,
             }));
         }
-        Inline::Reference { key, page, equation, span, .. } => {
+        Inline::Reference { key, page, equation, span, style, .. } => {
             let text = if *page {
                 labels.pages.get(key).map(|p| p.to_string())
             } else {
@@ -4042,37 +4036,43 @@ fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut V
             // amsmath `\eqref`: the value in parentheses (compiler's flag).
             let text = if *equation { format!("({text})") } else { text };
             reference_spans.push(*span);
+            // The value is set in the font in force at the command. amsmath's
+            // `\eqref` is `\textup{\tagform@{..}}`: `\textup`'s `\check@icl`
+            // runs in an upright font before a macro, so it always puts the
+            // italic correction of the character in front (`see \eqref`).
+            let mut style = *style;
+            style.italic_correction.before = *equation;
             out.push(std::borrow::Cow::Owned(Inline::Text {
                 text,
                 span: *span,
-                style: Default::default(),
+                style,
                 // Interword gaps are read from the source bytes between
                 // spans here, never from the compiler's flag.
                 space_before: true,
+                glue_before: None,
             }));
         }
-        Inline::CleverReference { keys, page, range, label_only, capitalise, span, .. } => {
+        Inline::CleverReference { keys, page, range, label_only, capitalise, span, style, .. } => {
             let text = clever_reference_text(keys, labels, *page, *range, *label_only, *capitalise);
             reference_spans.push(*span);
             out.push(std::borrow::Cow::Owned(Inline::Text {
                 text,
                 span: *span,
-                style: Default::default(),
+                style: *style,
                 // As for `Reference`: the gap comes from the source bytes
                 // between spans, not the compiler's flag.
                 space_before: true,
+                glue_before: None,
             }));
         }
-        Inline::Verbatim { text, span, space_before } => {
+        Inline::Verbatim { text, span, space_before, style, glue_before } => {
             reference_spans.push(*span);
             out.push(std::borrow::Cow::Owned(Inline::Text {
                 text: text.clone(),
                 span: *span,
-                style: CStyle {
-                    family: TextFamily::Mono,
-                    ..CStyle::default()
-                },
+                style: *style,
                 space_before: *space_before,
+                glue_before: *glue_before,
             }));
         }
         other => out.push(std::borrow::Cow::Borrowed(other)),
@@ -8310,36 +8310,19 @@ fn has_blank_line(source: &str) -> bool {
     false
 }
 
-/// One font command's content interval: start and end byte, the NFSS
-/// command, and whether LaTeX's `\maybe@ic` italic correction can follow
-/// its end (see [`Styles::closes_at`]).
-type StyleInterval = (usize, usize, crate::nfss::Command, bool);
-
 /// `\url{...}` and `\nolinkurl{...}` (`url.sty`, which `hyperref` loads):
-/// their argument is read as *raw source bytes*, and the URL is set in the
-/// typewriter family.
-///
-/// Two things follow for [`style_intervals`], and both are why these are not
-/// ordinary [`text_font_command`] entries:
-///
-/// 1. The argument is **opaque**. url.sty makes every character of a URL
-///    "other" before it is read, so `%`, `#`, `_`, `&` and `\` inside it are
-///    literal (the compiler does the same in `parser::url_argument`). The
-///    style scan must not treat a `%` in `\url{.../a%20b}` as a comment, or
-///    everything to the end of that line — including a following `\textbf{}`
-///    — silently loses its style.
-/// 2. The interval covers the **whole command**, from the backslash through
-///    the closing brace, not just the braced argument. The compiler gives
-///    every run it splits a URL into the span of the entire `\url{...}`
-///    (`parser::push_url_text`), and the style is looked up at `span.start`,
-///    which is the backslash.
+/// their argument is read as *raw source bytes* (url.sty makes every
+/// character of a URL "other", so `%`, `#`, `_`, `&` and `\` inside it are
+/// literal; the compiler does the same in `parser::url_argument`), and the
+/// URL is set in the typewriter family. The compiler gives every run it
+/// splits a URL into the span of the entire `\url{...}`
+/// (`parser::push_url_text`), from the backslash through the closing brace.
 fn url_command(name: &str) -> bool {
     matches!(name, "url" | "nolinkurl")
 }
 
-/// A verbatim construct's extent in the source: `whole` is every byte the
-/// style interval must cover and the scanner must skip, `body` is the
-/// literal text inside it.
+/// A verbatim construct's extent in the source: `whole` is every byte a
+/// scan for markup must skip, `body` is the literal text inside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct VerbatimSpan {
     whole: (usize, usize),
@@ -8350,18 +8333,13 @@ struct VerbatimSpan {
 /// character after the command (and after `\lstinline`'s optional
 /// `[...]`) being the delimiter, which then closes the argument.
 ///
-/// Like [`url_command`] these cannot be [`text_font_command`] entries,
-/// for the same two reasons plus a third:
-///
-/// 1. The argument is **opaque** — more so than a URL's, because `\verb`
-///    ends at a *character*, not a brace. `\verb|{|` and `\verb|%|` are
-///    legal, and scanning them as LaTeX corrupts the `groups` stack and
-///    starts a comment that eats the rest of the line's styles.
-/// 2. The interval covers the **whole command**, because the compiler
-///    gives `Inline::Verbatim` the span of the entire `\verb|...|` and the
-///    style is looked up at `span.start`.
-/// 3. The body is **literal** (`TextStyle::literal`), which no font
-///    command implies: `\texttt` ligates `--` and `\verb` must not.
+/// The argument is **opaque** — more so than a URL's, because `\verb` ends
+/// at a *character*, not a brace. `\verb|{|` and `\verb|%|` are legal, and
+/// a scan reading them as LaTeX corrupts its brace stack and starts a
+/// comment that eats the rest of the line. The compiler gives
+/// `Inline::Verbatim` the span of the entire `\verb|...|`, and its text is
+/// **literal** (`TextStyle::literal`), which no font command implies:
+/// `\texttt` ligates `--` and `\verb` must not.
 fn verb_command(name: &str) -> bool {
     matches!(name, "verb" | "lstinline")
 }
@@ -8468,35 +8446,6 @@ fn matching_bracket(bytes: &[u8], open: usize) -> Option<usize> {
     None
 }
 
-/// The end of a `\url`/`\nolinkurl` argument that starts at the `{` at
-/// `open`: the matching `}`, counting nested braces and reading `\{` / `\}`
-/// as literal characters rather than grouping. This mirrors
-/// `compiler::parser::url_argument` byte for byte, so the interval this
-/// produces covers exactly the bytes that compiler put in the URL's span.
-/// `None` when the argument is never closed.
-fn url_argument_end(bytes: &[u8], open: usize) -> Option<usize> {
-    let mut depth = 1usize;
-    let mut i = open + 1;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' if matches!(bytes.get(i + 1), Some(b'{' | b'}')) => i += 2,
-            b'{' => {
-                depth += 1;
-                i += 1;
-            }
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i);
-                }
-                i += 1;
-            }
-            _ => i += 1,
-        }
-    }
-    None
-}
-
 /// Whether the inline whose span is `span` is one of the runs the compiler
 /// splits a `\url{...}`/`\nolinkurl{...}` into (`parser::push_url_text`:
 /// every run carries the span of the whole command, backslash through
@@ -8588,74 +8537,19 @@ fn url_break_penalty(before: &str, next: char) -> Option<i32> {
     }
 }
 
-/// The NFSS commands of a text font command with a braced argument
-/// (latex.ltx 14213-14222 `\DeclareTextFontCommand`, and `\emph`).
-fn text_font_command(name: &str) -> Option<&'static [crate::nfss::Command]> {
-    use crate::nfss::{Command as C, FamilyKind as F, Series as S, ShapeRequest as R};
-    Some(match name {
-        "textbf" => &[C::Series(S::Bx)],
-        "textmd" => &[C::Series(S::M)],
-        "textit" => &[C::Shape(R::It)],
-        "textsl" => &[C::Shape(R::Sl)],
-        "textsc" => &[C::Shape(R::Sc)],
-        "textup" => &[C::Shape(R::Up)],
-        "textrm" => &[C::Family(F::Rm)],
-        "textsf" => &[C::Family(F::Sf)],
-        "texttt" => &[C::Family(F::Tt)],
-        "textnormal" => &[C::Normal],
-        "emph" => &[C::Emph],
-        _ => return None,
-    })
-}
-
-/// Whether byte `at` of `source` opens the braced argument of a text font
-/// command (`\textbf{`, `\emph {`): the byte before it is `{` and the
-/// control word before that is one of [`text_font_command`].
-fn text_command_argument_at(source: &str, at: usize) -> bool {
-    let bytes = source.as_bytes();
-    if at == 0 || bytes.get(at - 1) != Some(&b'{') {
-        return false;
-    }
-    let mut end = at - 1;
-    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
-        end -= 1;
-    }
-    let mut start = end;
-    while start > 0 && bytes[start - 1].is_ascii_alphabetic() {
-        start -= 1;
-    }
-    start > 0 && start < end && bytes[start - 1] == b'\\' && text_font_command(&source[start..end]).is_some()
-}
-
-/// The NFSS commands of a font declaration. Its group's end never takes an
-/// italic correction: LaTeX adds `\/` only through `\text@command`'s
-/// `\maybe@ic` (`\textit`, `\emph`, ...), and `{\itshape leaf} then` sets
-/// no kern after `leaf` (pdfLaTeX). The LaTeX
-/// 2.09 forms reset first: `\bf` is `\normalfont\bfseries` (latex.ltx
-/// `\DeclareOldFontCommand`).
-fn font_declaration(name: &str) -> Option<&'static [crate::nfss::Command]> {
-    use crate::nfss::{Command as C, FamilyKind as F, Series as S, ShapeRequest as R};
-    Some(match name {
-        "bfseries" => &[C::Series(S::Bx)],
-        "itshape" => &[C::Shape(R::It)],
-        "slshape" => &[C::Shape(R::Sl)],
-        "em" => &[C::Emph],
-        "mdseries" => &[C::Series(S::M)],
-        "scshape" => &[C::Shape(R::Sc)],
-        "upshape" => &[C::Shape(R::Up)],
-        "rmfamily" => &[C::Family(F::Rm)],
-        "sffamily" => &[C::Family(F::Sf)],
-        "ttfamily" => &[C::Family(F::Tt)],
-        "normalfont" => &[C::Normal],
-        "bf" => &[C::Normal, C::Series(S::Bx)],
-        "it" => &[C::Normal, C::Shape(R::It)],
-        "sl" => &[C::Normal, C::Shape(R::Sl)],
-        "sc" => &[C::Normal, C::Shape(R::Sc)],
-        "rm" => &[C::Normal, C::Family(F::Rm)],
-        "sf" => &[C::Normal, C::Family(F::Sf)],
-        "tt" => &[C::Normal, C::Family(F::Tt)],
-        _ => return None,
-    })
+/// The style of a run from the compiler's node (PLAN1 slice 2): the NFSS
+/// font its font commands selected (`parser::TextStyle::font`, macro
+/// expansion included), and the size, colour, CJK run, verbatim and
+/// `\mdseries` marks it carries. A block's base font (a heading's
+/// `\bfseries`) is not in it; `typeset::merge_style` adds that.
+fn node_style(cs: &flashtex_compiler::parser::TextStyle, size: u32) -> TextStyle {
+    let mut style = TextStyle { undefined: cs.font.undefined, ..TextStyle::default() }.with_key(cs.font.key);
+    style.size_cpt = declared_size(cs.size, size);
+    style.color = cs.color;
+    style.cjk = cs.cjk;
+    style.literal = cs.literal;
+    style.medium = cs.medium;
+    style
 }
 
 /// beamer's nested list bodies (`beamerfontthemedefault.sty` 105-106:
@@ -8771,27 +8665,8 @@ fn declared_size(level: Option<flashtex_compiler::parser::FontSizeLevel>, base: 
     table[row][col]
 }
 
-/// Content intervals of the font commands in source byte offsets, in
-/// document order: text font commands (`\textsf{}`, `\emph{}`, ...) over
-/// their braced argument, declarations (`\scshape`, `\ttfamily`, `\bf`,
-/// ...) to the end of the innermost group. Family, series and shape only:
-/// size declarations are read from the compiler's `TextStyle::size` (see
-/// [`declared_size`]).
-/// Every verbatim construct in `source`, in order and non-overlapping.
-///
-/// This is a separate scan from [`style_intervals`] because the two need it
-/// for different reasons — the style scan must *skip* these bytes, while the
-/// item builder must know that the text it is laying out is literal — and
-/// because it has to run before the style scan can trust its own comment and
-/// brace state: a `%` or a `{` inside `\verb|%|` or a `lstlisting` body is a
-/// character, and reading it as LaTeX silently drops the style of everything
-/// after it.
-fn literal_spans(source: &str) -> Vec<VerbatimSpan> {
-    literal_spans_of(source, verbatim_environment)
-}
-
 /// The byte ranges a scan for LaTeX markup must not look inside: every
-/// [`literal_spans`] construct plus the environments whose body pdflatex
+/// verbatim construct (`verb_command`, `verbatim_environment`) plus the environments whose body pdflatex
 /// never reads as markup though the compiler does not set them literally —
 /// `minted` (a listing) and `comment` (verbatim.sty's discarded body).
 /// `%` comments are not included; callers skip those line by line.
@@ -8863,245 +8738,6 @@ fn environment_name(source: &str, at: usize) -> Option<(&str, usize)> {
     }
     let close = source[i..].find('}')? + i;
     Some((&source[i + 1..close], close + 1))
-}
-
-/// The font intervals of `source`: its own brace groups and font commands
-/// ([`source_style_intervals`]) plus the declarations user macros wrap
-/// around their arguments ([`macro_argument_intervals`]).
-fn style_intervals(source: &str) -> Vec<StyleInterval> {
-    let mut out = source_style_intervals(source);
-    out.extend(macro_argument_intervals(source));
-    // Stable: at one start byte the invocation site's intervals stay before
-    // the ones the definition adds, and those before an argument's own.
-    out.sort_by_key(|(start, _, _, _)| *start);
-    out
-}
-
-/// The font declarations a user macro's definition wraps around each of its
-/// parameters, laid over that argument's bytes at every invocation.
-///
-/// The compiler gives an argument's tokens their own source span, so the
-/// style lookup (`Styles::at`) reads the argument's bytes — which sit outside
-/// every group the *definition* opened. For
-/// `\newcommand{\note}[1]{{\small\bfseries #1}}`, `\note{words}` set `words`
-/// medium where pdfLaTeX sets them in `SFBX0900`: the size came through (the
-/// compiler scopes sizes) and the series did not. Here the definition body's
-/// own intervals that contain `#k` are re-applied to argument `k`, in body
-/// order, between the invocation site's style and the argument's own
-/// commands — the order TeX applies them in.
-///
-/// Definitions with a default optional argument (`[n][default]`) are skipped,
-/// because their `#1` is the bracketed argument and not a brace group; so is
-/// an undelimited (unbraced) argument.
-fn macro_argument_intervals(source: &str) -> Vec<StyleInterval> {
-    macro_argument_intervals_defined_in(source, source)
-}
-
-/// [`macro_argument_intervals`] for definitions read from `defs_source`
-/// -- `source` itself, or a project package or class file the compiler
-/// loaded for it (`Parsed::package_files`), whose macros the document
-/// invokes from its first byte on. A definition of the same name in
-/// `source` takes over from its own position.
-fn macro_argument_intervals_defined_in(source: &str, defs_source: &str) -> Vec<StyleInterval> {
-    let bytes = source.as_bytes();
-    let same = std::ptr::eq(source, defs_source);
-    let defs = macro_definitions(defs_source);
-    let own: Vec<MacroDef> = if same { Vec::new() } else { macro_definitions(source) };
-    let mut out = Vec::new();
-    for (index, def) in defs.iter().enumerate() {
-        let name = &defs_source[def.name.clone()];
-        // A later definition of the same name takes over from its position.
-        let until = if same {
-            defs[index + 1..].iter().find(|d| defs_source[d.name.clone()] == *name).map_or(bytes.len(), |d| d.at)
-        } else {
-            own.iter().find(|d| source[d.name.clone()] == *name).map_or(bytes.len(), |d| d.at)
-        };
-        let header = &defs_source[def.name.end..def.body.start - 1];
-        if header.matches('[').count() > 1 {
-            continue;
-        }
-        let body = &defs_source[def.body.clone()];
-        let body_intervals = source_style_intervals(body);
-        // For each parameter the body uses, the body intervals around it:
-        // the command, whether its group closes right after `#k` (italic
-        // correction), and whether it is outside every group of the body,
-        // so that it stays in force after the invocation too.
-        let mut params: Vec<(usize, Vec<(crate::nfss::Command, bool, bool)>)> = Vec::new();
-        for k in 1..=9usize {
-            let Some(p) = body.find(&format!("#{k}")) else { continue };
-            let chain: Vec<_> = body_intervals.iter().filter(|(s, e, _, _)| *s <= p && p < *e).map(|(_, e, c, ic)| (*c, *ic && *e == p + 2, *e >= body.len())).collect();
-            if !chain.is_empty() {
-                params.push((k, chain));
-            }
-        }
-        let Some(arity) = params.iter().map(|(k, _)| *k).max() else { continue };
-        let mut from = if same { def.body.end } else { 0 };
-        // (A redefinition nested inside this body ends the range before it
-        // starts.)
-        while from < until {
-            let Some(at) = find_command(&source[from..until], name) else { break };
-            let inv = from + at;
-            from = inv + 1 + name.len();
-            // The argument bytes of this invocation, brace groups only.
-            let mut i = from;
-            let mut args = Vec::new();
-            while args.len() < arity {
-                while i < bytes.len() && (bytes[i] as char).is_whitespace() {
-                    i += 1;
-                }
-                if bytes.get(i) != Some(&b'{') {
-                    break;
-                }
-                let Some(close) = matching_brace(bytes, i) else { break };
-                args.push((i + 1, close));
-                i = close + 1;
-            }
-            for (k, chain) in &params {
-                if let Some(&(start, end)) = args.get(k - 1) {
-                    for &(c, correction, leaks) in chain {
-                        if leaks {
-                            // As an ungrouped declaration written at the call
-                            // site: to the end of the enclosing group, or to
-                            // the next `\end` outside any.
-                            let to = enclosing_group_end(source, inv).unwrap_or_else(|| find_command(&source[i..], "end").map_or(bytes.len(), |e| i + e));
-                            out.push((start, to, c, false));
-                        } else {
-                            out.push((start, end, c, correction));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    out
-}
-
-/// The closing brace of the innermost brace group containing byte `at`
-/// (escaped `\{`/`\}` are not groups), or `None` at the top level.
-fn enclosing_group_end(source: &str, at: usize) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let escaped = |j: usize| j > 0 && bytes[j - 1] == b'\\';
-    let mut depth = 0usize;
-    let mut j = at;
-    while j > 0 {
-        j -= 1;
-        match bytes[j] {
-            b'}' if !escaped(j) => depth += 1,
-            b'{' if !escaped(j) => {
-                if depth == 0 {
-                    return matching_brace(bytes, j);
-                }
-                depth -= 1;
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// The font intervals spelled in `source` itself (see [`style_intervals`]).
-fn source_style_intervals(source: &str) -> Vec<StyleInterval> {
-    let mut out = Vec::new();
-    let bytes = source.as_bytes();
-    let literal = literal_spans(source);
-    let mut next_literal = 0usize;
-    let mut i = 0;
-    let mut in_comment = false;
-    // Open brace groups (byte of `{`): a declaration (`\bfseries`,
-    // `\Large`, ...) lasts to the end of the innermost one, or to the next
-    // `\end{...}`/the document end outside any group.
-    let mut groups: Vec<usize> = Vec::new();
-    while i < bytes.len() {
-        // A verbatim construct starting here: typewriter over the whole of
-        // it, and its bytes are skipped rather than scanned (see
-        // `literal_spans`). The interval covers the whole command because
-        // the compiler spans `\verb|...|` and the `\begin{verbatim}` block
-        // from the backslash, and the style is looked up at `span.start`.
-        while next_literal < literal.len() && literal[next_literal].whole.1 <= i {
-            next_literal += 1;
-        }
-        if let Some(span) = literal.get(next_literal) {
-            if span.whole.0 == i && !in_comment {
-                use crate::nfss::{Command as C, FamilyKind as F};
-                out.push((span.whole.0, span.whole.1, C::Family(F::Tt), false));
-                i = span.whole.1;
-                next_literal += 1;
-                continue;
-            }
-        }
-        let c = bytes[i];
-        if in_comment {
-            if c == b'\n' {
-                in_comment = false;
-            }
-            i += 1;
-            continue;
-        }
-        match c {
-            b'%' => {
-                in_comment = true;
-                i += 1;
-            }
-            b'{' => {
-                groups.push(i);
-                i += 1;
-            }
-            b'}' => {
-                groups.pop();
-                i += 1;
-            }
-            b'\\' => {
-                let rest = &source[i..];
-                // The control word's letters.
-                let word_end = i + 1 + rest[1..].bytes().take_while(u8::is_ascii_alphabetic).count();
-                let name = &source[i + 1..word_end];
-                if url_command(name) {
-                    // `\url{...}`: typewriter over the whole command, and the
-                    // argument's bytes are skipped rather than scanned (see
-                    // `url_command`).
-                    let mut j = word_end;
-                    while j < bytes.len() && (bytes[j] as char).is_whitespace() {
-                        j += 1;
-                    }
-                    if j < bytes.len() && bytes[j] == b'{' {
-                        if let Some(close) = url_argument_end(bytes, j) {
-                            use crate::nfss::{Command as C, FamilyKind as F};
-                            out.push((i, close + 1, C::Family(F::Tt), false));
-                            i = close + 1;
-                            continue;
-                        }
-                    }
-                    i = word_end;
-                    continue;
-                }
-                if let Some(commands) = text_font_command(name) {
-                    let mut j = word_end;
-                    while j < bytes.len() && (bytes[j] as char).is_whitespace() {
-                        j += 1;
-                    }
-                    if j < bytes.len() && bytes[j] == b'{' {
-                        if let Some(close) = matching_brace(bytes, j) {
-                            out.extend(commands.iter().map(|c| (j + 1, close, *c, true)));
-                        }
-                    }
-                    i = word_end;
-                    continue;
-                }
-                if let Some(commands) = font_declaration(name) {
-                    let end = match groups.last() {
-                        Some(&open) => matching_brace(bytes, open).unwrap_or(bytes.len()),
-                        None => find_command(&source[word_end..], "end").map_or(bytes.len(), |e| word_end + e),
-                    };
-                    out.extend(commands.iter().map(|c| (word_end, end, *c, false)));
-                }
-                i = word_end.max(i + 2);
-            }
-            _ => i += 1,
-        }
-    }
-    // Stable: the `\normalfont` of `\bf` stays before its `\bfseries`.
-    out.sort_by_key(|(start, _, _, _)| *start);
-    out
 }
 
 fn continues_word(bytes: &[u8], at: usize) -> bool {
@@ -9416,25 +9052,15 @@ fn optional_given(source: &str, inv: Span) -> bool {
 struct BodyCursor {
     inv: Span,
     at: usize,
-    /// Where the last token was found in the body (`None` when its place is
-    /// not known), for the font the body's own commands put it in
-    /// ([`Styles::in_body`]).
-    word: Option<usize>,
-    /// The first blank of the gap read before the last token, when that gap
-    /// lies wholly inside the body: the interword space is set in the font in
-    /// force there.
-    blank: Option<usize>,
     /// The reader stands inside the optional argument's default text
     /// (`[n][default]`, invoked without `[..]`), at this byte offset of it;
-    /// `at` is then the body offset after the `#1` being read. `word` and
-    /// `blank` point at that `#1`: the font in force there is the
-    /// default's.
+    /// `at` is then the body offset after the `#1` being read.
     default_at: Option<usize>,
 }
 
 impl BodyCursor {
     fn new(inv: Span, at: usize) -> BodyCursor {
-        BodyCursor { inv, at, word: None, blank: None, default_at: None }
+        BodyCursor { inv, at, default_at: None }
     }
 }
 
@@ -9503,8 +9129,7 @@ fn token_gap<'a>(
                     return prev_end.map(|_| " ".to_string());
                 };
                 let gap = &body[start..pos];
-                let blank = gap.find(|c: char| c.is_whitespace()).filter(|_| prefix.is_none()).map(|off| start + off);
-                *cursor = Some(BodyCursor { inv: span, at: box_end(body, pos).unwrap_or(pos), word: None, blank, default_at: None });
+                *cursor = Some(BodyCursor { inv: span, at: box_end(body, pos).unwrap_or(pos), default_at: None });
                 return Some(match prefix {
                     Some(before) => format!("{before}{gap}"),
                     None => gap.to_string(),
@@ -9516,7 +9141,6 @@ fn token_gap<'a>(
                 Some(name) if name.chars().all(|c| c.is_ascii_alphabetic()) => find_command(rest, name),
                 _ => rest.find(text),
             };
-            let is_blank = |c: char| c.is_whitespace();
             // The default of the optional argument (`[n][default]`, invoked
             // without `[..]`): the compiler spans its tokens at the
             // invocation like the body's, but they are not in the body --
@@ -9527,9 +9151,8 @@ fn token_gap<'a>(
                 // is found there before the body is searched.
                 if let Some(d) = default_at {
                     if let Some(p) = default.get(d..).and_then(find_text) {
-                        let param = start - digits(1);
                         let gap = &default[d..d + p];
-                        *cursor = Some(BodyCursor { inv: span, at: start, word: Some(param), blank: gap.find(is_blank).map(|_| param), default_at: Some(d + p + text.len()) });
+                        *cursor = Some(BodyCursor { inv: span, at: start, default_at: Some(d + p + text.len()) });
                         return Some(gap.to_string());
                     }
                 }
@@ -9542,8 +9165,7 @@ fn token_gap<'a>(
                     if in_body.is_none_or(|w| param < w) {
                         let body_gap = &body[start..param];
                         let gap = &default[..p];
-                        let blank = body_gap.find(is_blank).map(|off| start + off).or_else(|| gap.find(is_blank).map(|_| param)).filter(|_| prefix.is_none());
-                        *cursor = Some(BodyCursor { inv: span, at: param + digits(1), word: Some(param), blank, default_at: Some(p + text.len()) });
+                        *cursor = Some(BodyCursor { inv: span, at: param + digits(1), default_at: Some(p + text.len()) });
                         return Some(match prefix {
                             Some(before) => format!("{before}{body_gap}{gap}"),
                             None => format!("{body_gap}{gap}"),
@@ -9555,8 +9177,7 @@ fn token_gap<'a>(
                 Some(p) => {
                     let pos = start + p;
                     let gap = &body[start..pos];
-                    let blank = gap.find(is_blank).filter(|_| prefix.is_none()).map(|off| start + off);
-                    *cursor = Some(BodyCursor { inv: span, at: pos + text.len(), word: Some(pos), blank, default_at: None });
+                    *cursor = Some(BodyCursor { inv: span, at: pos + text.len(), default_at: None });
                     return Some(match prefix {
                         Some(before) => format!("{before}{gap}"),
                         None => gap.to_string(),
@@ -9578,8 +9199,7 @@ fn token_gap<'a>(
                 if let Some(p) = body.get(c.at..).and_then(|rest| rest.find(&format!("#{k}"))) {
                     let pos = c.at + p;
                     let gap = body[c.at..pos].to_string();
-                    let blank = gap.find(|c: char| c.is_whitespace()).map(|off| c.at + off);
-                    *cursor = Some(BodyCursor { blank, ..BodyCursor::new(c.inv, pos + digits(k)) });
+                    *cursor = Some(BodyCursor::new(c.inv, pos + digits(k)));
                     return Some(gap);
                 }
                 // Further tokens of the same argument: the source between
@@ -10366,18 +9986,11 @@ fn plain_text(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The style groups of one document, indexed for point queries: the
-/// intervals in source order (sorted by start, properly nested), the
-/// running maximum of their ends (so a backward scan can stop as soon as no
-/// earlier group can still contain the position), and the ends sorted.
+/// What the pipeline still reads from one document's source around the
+/// compiler's styles: its size environments. Fonts, verbatim and the
+/// italic corrections come from the nodes (`parser::TextStyle`).
 #[derive(Debug, Clone, Default)]
 struct Styles {
-    intervals: Vec<(usize, usize, crate::nfss::Command)>,
-    max_end: Vec<usize>,
-    ends: Vec<usize>,
-    /// Verbatim bodies, in order (`literal_spans`), for [`Styles::literal_at`].
-    literal: Vec<VerbatimSpan>,
-    scheme: crate::nfss::Scheme,
     /// Size environments (`\begin{small}...\end{small}`), in order of their
     /// `\begin`: the byte of the `\begin`, the body's bytes and the size.
     size_envs: Vec<SizeEnv>,
@@ -10445,17 +10058,8 @@ fn size_environments(source: &str) -> Vec<SizeEnv> {
 }
 
 impl Styles {
-    fn new(source: &str, intervals: Vec<StyleInterval>, scheme: crate::nfss::Scheme) -> Styles {
-        let mut max_end = Vec::with_capacity(intervals.len());
-        let mut m = 0;
-        for (_, end, _, _) in &intervals {
-            m = m.max(*end);
-            max_end.push(m);
-        }
-        let mut ends: Vec<usize> = intervals.iter().filter(|i| i.3).map(|i| i.1).collect();
-        ends.sort_unstable();
-        let intervals = intervals.into_iter().map(|(s, e, c, _)| (s, e, c)).collect();
-        Styles { intervals, max_end, ends, literal: literal_spans(source), scheme, size_envs: size_environments(source) }
+    fn new(source: &str) -> Styles {
+        Styles { size_envs: size_environments(source) }
     }
 
     /// The size a size environment gives the text at byte `at` when the
@@ -10473,96 +10077,6 @@ impl Styles {
         }
         env.level
     }
-
-    /// Whether the text an inline spanning from `at` typesets is verbatim.
-    ///
-    /// Two shapes answer yes, because the compiler spans the two verbatim
-    /// constructs differently:
-    ///
-    /// * `at` is inside a verbatim *body* — a `verbatim`/`lstlisting` line,
-    ///   which the compiler spans at its own bytes.
-    /// * `at` is exactly where a `\verb`/`\lstinline` starts. That span is
-    ///   the whole command (`parser::Inline::Verbatim` carries the span of
-    ///   `\verb|...|` from the backslash), so no byte of it is in the body
-    ///   and the containment test alone would miss every `\verb`.
-    ///
-    /// Constructs do not overlap and are in source order, so one binary
-    /// search on each start byte finds the only candidate.
-    fn literal_at(&self, at: usize) -> bool {
-        let i = self.literal.partition_point(|s| s.body.0 <= at);
-        if i > 0 && at < self.literal[i - 1].body.1 {
-            return true;
-        }
-        let j = self.literal.partition_point(|s| s.whole.0 < at);
-        self.literal.get(j).is_some_and(|s| s.whole.0 == at)
-    }
-
-    /// The style in force at byte `at`: the font commands of every interval
-    /// containing it, applied outermost (earliest) first through NFSS
-    /// selection (`crate::nfss::apply`), so order matters exactly as in
-    /// LaTeX (`\textsc{\emph{x}}` is not `\emph{\textsc{x}}`).
-    fn at(&self, at: usize) -> TextStyle {
-        self.at_then(at, std::iter::empty())
-    }
-
-    /// The style of a token of a user macro's replacement text, invoked at
-    /// byte `at`, that sits at byte `offset` of the definition `body`: the
-    /// call site's font, then the body's own groups and commands around the
-    /// token (`\newcommand{\x}{\textbf{Note:}}` sets `Note:` bold — the
-    /// compiler spans the token at the invocation, whose bytes are not in
-    /// the `\textbf` group).
-    fn in_body(&self, at: usize, body: &str, offset: usize) -> TextStyle {
-        let inner = source_style_intervals(body);
-        self.at_then(at, inner.into_iter().filter(|(s, e, _, _)| *s <= offset && offset < *e).map(|(_, _, c, _)| c))
-    }
-
-    /// [`Styles::at`] with `extra` commands applied after the chain in force
-    /// at `at`.
-    fn at_then(&self, at: usize, extra: impl Iterator<Item = crate::nfss::Command>) -> TextStyle {
-        let p = self.intervals.partition_point(|(start, _, _)| *start <= at);
-        let mut chain = Vec::new();
-        let mut i = p;
-        while i > 0 {
-            i -= 1;
-            if self.max_end[i] <= at {
-                break;
-            }
-            let (_, end, command) = self.intervals[i];
-            if at < end {
-                chain.push(command);
-            }
-        }
-        chain.reverse();
-        chain.extend(extra);
-        let mut key = crate::nfss::FontKey::default();
-        let mut undefined = None;
-        for command in chain {
-            let s = crate::nfss::apply(self.scheme, key, command);
-            key = s.key;
-            undefined = s.undefined.or(undefined);
-        }
-        TextStyle { undefined, ..TextStyle::default() }.with_key(key)
-    }
-
-    /// Whether the font in force at byte `at` is slanted (`\fontdimen1 >
-    /// 0`): the loaded shape after `sub*`/`ssub*`.
-    fn slanted_at(&self, at: usize) -> bool {
-        self.slanted(self.at(at))
-    }
-
-    /// Whether `style`'s loaded font is slanted (see [`Styles::slanted_at`]).
-    fn slanted(&self, style: TextStyle) -> bool {
-        crate::nfss::terminal(self.scheme, crate::nfss::select(self.scheme, style.key()).key).0.slanted()
-    }
-
-    /// Whether a style group's content ends exactly at `at`.
-    fn closes_at(&self, at: usize) -> bool {
-        self.ends.binary_search(&at).is_ok()
-    }
-}
-
-fn style_at(styles: &Styles, at: usize) -> TextStyle {
-    styles.at(at)
 }
 
 /// Whether the bytes between two consecutive inlines contain an interword
@@ -10810,12 +10324,6 @@ fn items_cached(
     size.hash(&mut h);
     heading.hash(&mut h);
     compiler_weight.hash(&mut h);
-    let no_styles = Styles::default();
-    let st = styles.get(document.0).unwrap_or(&no_styles);
-    let at = st.at(start);
-    at.bold.hash(&mut h);
-    at.italic.hash(&mut h);
-    (at.slanted, at.caps, at.family, at.undefined, st.scheme).hash(&mut h);
     inlines.len().hash(&mut h);
     for i in inlines {
         let s = inline_span(i);
@@ -10824,18 +10332,18 @@ fn items_cached(
         // number: see `incremental::tag`.
         crate::incremental::tag(i, &mut h);
         match i {
-            Inline::Text { text, style, .. } => {
+            // The font is the compiler's, whatever defined it (a macro
+            // body, a package), so the node's style keys it, and the space
+            // in front's.
+            Inline::Text { text, style, glue_before, .. } => {
                 text.hash(&mut h);
-                style.color.hash(&mut h);
-                style.cjk.hash(&mut h);
-                // A macro argument's font comes from the definition, which
-                // may sit outside the hashed slice (`macro_argument_intervals`).
-                let here = st.at(s.start);
-                (here.bold, here.italic, here.slanted, here.caps, here.family, here.undefined).hash(&mut h);
+                style.hash(&mut h);
+                glue_before.hash(&mut h);
             }
             // The tag is the whole payload.
             Inline::LineBreak { .. } => {}
-            Inline::Math { list, display, number, color, size, .. } => {
+            Inline::Math { list, display, number, color, size, glue_before, .. } => {
+                glue_before.hash(&mut h);
                 color.hash(&mut h);
                 size.hash(&mut h);
                 display.hash(&mut h);
@@ -10850,7 +10358,8 @@ fn items_cached(
                 (*style as u8).hash(&mut h);
                 this_page.hash(&mut h);
             }
-            Inline::Reference { key, page, equation, .. } => {
+            Inline::Reference { key, page, equation, style, .. } => {
+                style.hash(&mut h);
                 key.hash(&mut h);
                 page.hash(&mut h);
                 equation.hash(&mut h);
@@ -10869,7 +10378,9 @@ fn items_cached(
                 t.entries.len().hash(&mut h);
                 t.inline_lists().iter().map(|l| l.len()).sum::<usize>().hash(&mut h);
             }
-            Inline::Verbatim { text, .. } => {
+            Inline::Verbatim { text, style, glue_before, .. } => {
+                style.hash(&mut h);
+                glue_before.hash(&mut h);
                 text.hash(&mut h);
             }
             Inline::ColorBox(b) => {
@@ -10902,7 +10413,8 @@ fn items_cached(
             // The leader is hashed: `\hfill` and `\hrulefill` differ only in
             // it, and they carry different diagnostics, so an edit between
             // them must not reuse the cached block.
-            Inline::HFill { leader, .. } => {
+            Inline::HFill { leader, style, .. } => {
+                style.hash(&mut h);
                 match leader {
                     FillLeader::None => 0u8,
                     FillLeader::Rule => 1u8,
@@ -10910,10 +10422,12 @@ fn items_cached(
                 }
                 .hash(&mut h);
             }
-            Inline::HSpace { pt, .. } => {
+            Inline::HSpace { pt, style, .. } => {
+                style.hash(&mut h);
                 pt.to_bits().hash(&mut h);
             }
-            Inline::TextGlue { em, .. } => {
+            Inline::TextGlue { em, style, .. } => {
+                style.hash(&mut h);
                 em.to_bits().hash(&mut h);
             }
             Inline::MathRows { rows, aligned, .. } => {
@@ -10936,7 +10450,8 @@ fn items_cached(
             }
             // Lowered by `lower_inline` like `Reference`, so every field
             // that selects its text is part of the key.
-            Inline::CleverReference { keys, page, range, label_only, capitalise, linked, .. } => {
+            Inline::CleverReference { keys, page, range, label_only, capitalise, linked, style, .. } => {
+                style.hash(&mut h);
                 keys.hash(&mut h);
                 (page, range, label_only, capitalise, linked).hash(&mut h);
             }
@@ -11058,9 +10573,8 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
     // The compiler's size declaration in force at the previous text
     // inline, for the interword space read after it.
     let mut prev_size_cpt = 0u16;
+    let mut ambient = TextStyle::default();
     let text_of = |d: DocumentId| -> &str { texts.get(d.0).copied().unwrap_or("") };
-    let no_styles = Styles::default();
-    let styles_of = |d: DocumentId| -> &Styles { styles.get(d.0).unwrap_or(&no_styles) };
 
     // Where the reader stands in a macro's replacement text (`token_gap`).
     let cursor: std::cell::Cell<Option<BodyCursor>> = std::cell::Cell::new(None);
@@ -11139,7 +10653,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
     for (k, inline) in resolved.iter().enumerate() {
         // Fail fast instead of failing slow: the breaker rejects any list
         // past `pl::MAX_ITEMS`, and assembling further only burns
-        // superlinear work (`space_style`'s source rescan per word, shaping
+        // superlinear work (`token_gap`'s source rescan per word, shaping
         // and the breaker itself) on a paragraph that cannot be set.
         // `typeset` expands the marker back into an over-limit list, so this
         // surfaces as the same `paragraph_layout_error` a full assembly
@@ -11176,13 +10690,13 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 if let Some((qs, qe)) = gap_found {
                     let qspan = Span::in_document(here.document, qs, qe);
                     let gap = space_between(prev_end, prev_span, qspan, Some("\\qedhere"), after_control_word);
-                    let mut gap_style = space_style(texts, styles, prev_end, qspan, TextStyle::default());
+                    let mut gap_style = ambient;
                     gap_style.size_cpt = space_size(texts, prev_end, qspan, prev_size_cpt, 0);
                     push_gap(&mut items, gap, gap_style, factor);
-                    let mut fill_style = style_at(styles_of(here.document), qs);
+                    let mut fill_style = ambient;
                     fill_style.size_cpt = space_size(texts, prev_end, qspan, prev_size_cpt, 0);
                     items.push(Item::HFill { fill: true, leader: FillLeader::None, style: fill_style });
-                    let mut qed_style = style_at(styles_of(here.document), qs);
+                    let mut qed_style = ambient;
                     qed_style.size_cpt = fill_style.size_cpt;
                     prev_size_cpt = qed_style.size_cpt;
                     items.push(Item::QedBox { style: qed_style, span: qspan });
@@ -11209,7 +10723,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 let end = footnote_command_end(src, span.end);
                 let word = src.get(span.start..span.end).unwrap_or("\\footnote");
                 let gap = space_between(prev_end, prev_span, *span, Some(word), after_control_word);
-                let mut gap_style = space_style(texts, styles, prev_end, *span, TextStyle::default());
+                let mut gap_style = ambient;
                 gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 let note = text.as_ref().map(|t| {
@@ -11237,7 +10751,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 let end = footnote_command_end(src, span.end);
                 let word = src.get(span.start..span.end).unwrap_or("\\marginpar");
                 let gap = space_between(prev_end, prev_span, *span, Some(word), after_control_word);
-                let mut gap_style = space_style(texts, styles, prev_end, *span, TextStyle::default());
+                let mut gap_style = ambient;
                 gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 let mut note = Vec::new();
@@ -11258,7 +10772,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // read like a formula's.
                 let span = t.span;
                 let gap = space_between(prev_end, prev_span, span, None, after_control_word);
-                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                let mut gap_style = node_style(&t.style, size);
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
@@ -11275,7 +10789,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // `\leavevmode\hbox{...}` like a tabular: one box.
                 let span = b.span;
                 let gap = space_between(prev_end, prev_span, span, None, after_control_word);
-                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                let mut gap_style = ambient;
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
@@ -11295,7 +10809,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             Inline::Underline(u) => {
                 let span = u.span;
                 let gap = space_between(prev_end, prev_span, span, None, after_control_word);
-                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                let mut gap_style = ambient;
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
@@ -11315,7 +10829,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             Inline::HBox(b) => {
                 let span = b.span;
                 let gap = space_between(prev_end, prev_span, span, None, after_control_word);
-                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                let mut gap_style = ambient;
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
@@ -11335,7 +10849,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             Inline::Phantom(p) => {
                 let span = p.span;
                 let gap = space_between(prev_end, prev_span, span, None, after_control_word);
-                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                let mut gap_style = ambient;
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
@@ -11351,7 +10865,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // like one, and the space factor after it is 1000.
                 let span = t.span;
                 let gap = space_between(prev_end, prev_span, span, None, after_control_word);
-                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                let mut gap_style = node_style(&t.style, size);
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
@@ -11404,7 +10918,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // tabular or a `\colorbox`.
                 let span = g.span;
                 let gap = space_between(prev_end, prev_span, span, None, after_control_word);
-                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                let mut gap_style = ambient;
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
@@ -11416,7 +10930,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             Inline::Transform(t) => {
                 let span = t.span;
                 let gap = space_between(prev_end, prev_span, span, None, after_control_word);
-                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                let mut gap_style = ambient;
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
@@ -11425,7 +10939,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 prev_span = Some(span);
                 factor = 1000;
             }
-            Inline::HFill { span, .. } | Inline::HSpace { span, .. } | Inline::TextGlue { span, .. } => {
+            Inline::HFill { span, style: glue_font, .. } | Inline::HSpace { span, style: glue_font, .. } | Inline::TextGlue { span, style: glue_font, .. } => {
                 hfill_start = Some(items.len());
                 // Explicit horizontal glue: the interword space read before
                 // it stays (TeX keeps both glue nodes). `TextGlue` is the
@@ -11437,25 +10951,22 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // invocation's span, and the next token's gap must start
                 // after the word, not before it.
                 // The font the fill's leader is set in: the family, series
-                // and shape at the fill's own bytes (like `Kern`), with the
-                // size declaration in force at the fill's own span. Like
-                // every other gap-style site here, that size goes through
-                // `space_size`, not the raw previous-text size: a size group
-                // that already closed before the fill (`{\Large A}\dotfill`)
-                // leaves the fill at the ambient size.
-                // `Inline::HFill` carries no compiler style of its own, and
-                // the source scan is family/series/shape only, so there is
-                // no per-position size to resolve with `declared_size`; the
+                // and shape in force at the command (the compiler's
+                // `style`), with the size declaration read at the fill's own
+                // span. Like every other gap-style site here, that size goes
+                // through `space_size`, not the raw previous-text size: a
+                // size group that already closed before the fill (`{\Large
+                // A}\dotfill`) leaves the fill at the ambient size; the
                 // `next_cpt` is 0 (no declared size: ambient), and the size
                 // is only the previous text's when no group closed in
                 // between -- never a size established after the fill.
-                let mut fill_style = style_at(styles_of(span.document), span.start);
+                let mut fill_style = node_style(glue_font, size);
                 fill_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
                 // The font the glue's `em` is read in: the series/family
-                // from the source's declarations at the command, the size
-                // from the compiler's scoping of the text around it.
+                // in force at the command, the size from the compiler's
+                // scoping of the text around it.
                 let quad_style = || {
-                    let mut style = style_at(styles_of(span.document), span.start);
+                    let mut style = node_style(glue_font, size);
                     let next_cpt = resolved[k + 1..].iter().find_map(|i| inline_declared_size(i, size)).unwrap_or(prev_size_cpt);
                     style.size_cpt = glue_size(texts, prev_end, *span, prev_size_cpt, next_cpt);
                     style
@@ -11502,7 +11013,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     _ => unreachable!(),
                 };
                 let gap = space_between(prev_end, prev_span, *span, Some(word), after_control_word);
-                let mut gap_style = space_style(texts, styles, prev_end, *span, TextStyle::default());
+                let mut gap_style = ambient;
                 gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 // The `\leavevmode` that opens `\hrulefill`/`\dotfill`: an
@@ -11550,7 +11061,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // recognises the row spans); the environment's span ends
                 // the preceding text like `\[`.
                 let gap = space_between(prev_end, prev_span, *span, None, after_control_word);
-                let mut gap_style = space_style(texts, styles, prev_end, *span, TextStyle::default());
+                let mut gap_style = ambient;
                 gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
@@ -11566,13 +11077,13 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 prev_span = Some(*span);
                 factor = 1000;
             }
-            Inline::Math { list, span, size: math_size, .. } => {
+            Inline::Math { list, span, size: math_size, glue_before, .. } => {
                 // `{\small $x$}`: the formula is set with the math fonts of
                 // the text size where it starts (`\check@mathfonts`).
                 let size_cpt = declared_size(*math_size, size);
                 // The glue is the current font's where the space sits.
                 let gap = space_between(prev_end, prev_span, *span, None, after_control_word);
-                let mut gap_style = space_style(texts, styles, prev_end, *span, TextStyle::default());
+                let mut gap_style = glue_before.map_or(ambient, |g| node_style(&g.style, size));
                 gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, size_cpt);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
@@ -11600,14 +11111,14 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // `\LaTeX` is a control word: the blanks after it are eaten.
                 let word = format!("\\{}", logo.command());
                 let has_space = space_between(prev_end, prev_span, *span, Some(&word), after_control_word);
-                let mut style = style_at(styles_of(span.document), span.start);
+                let mut style = node_style(compiler_style, size);
                 style.size_cpt = declared_size(compiler_style.size, size);
                 if heading {
                     style.medium = !compiler_style.bold;
                     style.italic |= compiler_style.italic;
                 }
                 if has_space || pending_head_sep.get().is_some() {
-                    let mut gap_style = space_style(texts, styles, prev_end, *span, style);
+                    let mut gap_style = style;
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
                 }
@@ -11622,10 +11133,10 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             }
             Inline::Rule { rule, span, style: compiler_style, .. } => {
                 let has_space = space_between(prev_end, prev_span, *span, Some("\\rule"), after_control_word);
-                let mut style = style_at(styles_of(span.document), span.start);
+                let mut style = node_style(compiler_style, size);
                 style.size_cpt = declared_size(compiler_style.size, size);
                 if has_space || pending_head_sep.get().is_some() {
-                    let mut gap_style = space_style(texts, styles, prev_end, *span, style);
+                    let mut gap_style = style;
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
                 }
@@ -11641,10 +11152,10 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 let source = text_of(span.document);
                 let word = kern_command_text(source, *span, amount);
                 let has_space = space_between(prev_end, prev_span, *span, word.as_deref(), after_control_word);
-                let mut style = style_at(styles_of(span.document), span.start);
+                let mut style = node_style(compiler_style, size);
                 style.size_cpt = declared_size(compiler_style.size, size);
                 if has_space || pending_head_sep.get().is_some() {
-                    let mut gap_style = space_style(texts, styles, prev_end, *span, style);
+                    let mut gap_style = style;
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
                     pending_accent = None;
@@ -11693,7 +11204,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     continue;
                 }
                 let Inline::Text { style: compiler_style, .. } = &**inline else { unreachable!() };
-                let mut style = style_at(styles_of(span.document), span.start);
+                let mut style = node_style(compiler_style, size);
                 style.size_cpt = declared_size(compiler_style.size, size);
                 prev_size_cpt = style.size_cpt;
                 // amsthm.sty 273-279, `\qed` in text:
@@ -11744,11 +11255,11 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // `\ ` (control space, lexed as the word " "): interword glue at
                 // space factor 1000 (§1041-1044), after which TeX skips blanks.
                 let has_space = space_between(prev_end, prev_span, *span, Some("\\ "), after_control_word);
-                let mut style = style_at(styles_of(span.document), span.start);
-                let Inline::Text { style: compiler_style, .. } = &**inline else { unreachable!() };
+                let Inline::Text { style: compiler_style, glue_before, .. } = &**inline else { unreachable!() };
+                let mut style = node_style(compiler_style, size);
                 style.size_cpt = declared_size(compiler_style.size, size);
                 if has_space || pending_head_sep.get().is_some() {
-                    let mut gap_style = space_style(texts, styles, prev_end, *span, style);
+                    let mut gap_style = glue_before.map_or(ambient, |g| node_style(&g.style, size));
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
                 }
@@ -11796,83 +11307,51 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                         None => {}
                     }
                 }
-                // A word of a user macro's replacement text, found in the
-                // definition body: the body's own font commands apply to it.
-                let in_body = cursor.get().filter(|c| c.inv == *span).and_then(|c| Some((body_of(source, *span)?, c.word?)));
-                let mut style = match in_body {
-                    Some((body, offset)) => styles_of(span.document).in_body(span.start, body, offset),
-                    None => style_at(styles_of(span.document), span.start),
-                };
-                // Verbatim text: no ligatures, no kerns, rigid blanks. The
-                // span of a `\verb|...|` starts at the backslash, so the
-                // body byte is what decides — `span.start` is the `\`.
-                style.literal = styles_of(span.document).literal_at(span.start);
-                // `\tiny`..`\Huge` come from the compiler's scoping.
-                let Inline::Text { style: compiler_style, .. } = &**inline else { unreachable!() };
-                style.size_cpt = declared_size(compiler_style.size, size);
-                style.color = compiler_style.color;
-                style.cjk = compiler_style.cjk;
+                // The run's font is the compiler's (PLAN1 slice 2): every font
+                // command it read, macro-expanded or not, is in
+                // `TextStyle::font`, together with the size, colour, CJK run
+                // and verbatim marks.
+                let Inline::Text { style: compiler_style, glue_before, .. } = &**inline else { unreachable!() };
+                let mut style = node_style(compiler_style, size);
                 if heading {
                     // `\@startsection` sets `\bfseries`; the compiler's
                     // heading styles start bold and `\normalfont`/
                     // `\mdseries` in the title clears it.
-                    let Inline::Text { style: cs, .. } = &**inline else { unreachable!() };
-                    style.medium = !cs.bold;
-                    style.italic |= cs.italic;
+                    style.medium = !compiler_style.bold;
+                    style.italic |= compiler_style.italic;
                 }
-                // `\emph` in a citation label turning italic text upright.
-                let mut label_upright = false;
+                // A citation's runs, its label markup (`\emph{et~al.}`, an
+                // undefined key's `\reset@font\bfseries ?`) included, are
+                // set by the compiler in the font around the `\cite`
+                // (`parser::citation_style`).
                 if compiler_weight {
                     style.bold = compiler_style.bold;
                     style.italic = compiler_style.italic;
-                } else if compiler_style.italic && citation_label_run(source, *span) {
-                    // #956: a citation's text shares the `\cite`'s span, so
-                    // the source there says nothing about the label's own
-                    // markup. The compiler sets that markup over an upright
-                    // base (`P::set_citation_source`), and `\emph{et~al.}`
-                    // switches the shape of whatever surrounds the citation.
-                    label_upright = style.italic;
-                    style.italic = !style.italic;
-                }
-                // An undefined citation's `\hbox{\reset@font\bfseries ?}`
-                // (latex.ltx `\@citex`, natbib alike), and `\textbf` in a
-                // label: bold, which the `\cite`'s span cannot show either.
-                if !compiler_weight && compiler_style.bold && citation_label_run(source, *span) {
-                    style.bold = true;
-                    if matches!(&**inline, Inline::Text { text, .. } if text == "?") {
-                        style.italic = false;
-                    }
                 }
                 if has_space || pending_head_sep.get().is_some() {
                     // TeX sizes an interword space with the font current
                     // where the space token is read ("Plain, \textbf{bold}"
                     // gets a regular space, "\textbf{bold words}" a bold one,
-                    // "\textbf{\emph{x}} y" a regular one). A blank of a
-                    // macro body is read in the body's font there.
-                    let body_blank = cursor.get().and_then(|c| {
-                        let blank = c.blank?;
-                        let body = body_of(source, c.inv)?;
-                        Some(styles_of(span.document).in_body(c.inv.start, body, blank))
-                    });
-                    let mut gap_style = match body_blank {
-                        // A heading's weight comes from the compiler at the
-                        // word (`medium`), as for the word itself.
-                        Some(blank_style) => TextStyle { size_cpt: style.size_cpt, color: style.color, medium: style.medium, ..blank_style },
-                        None => space_style(texts, styles, prev_end, *span, style),
+                    // "\textbf{\emph{x}} y" a regular one): the compiler's
+                    // `glue_before`, else the font the last run was set in.
+                    let mut gap_style = match glue_before {
+                        Some(glue) => {
+                            let mut gap_style = node_style(&glue.style, size);
+                            if heading {
+                                // `\subsection*{Bonus \hfill \normalfont[1
+                                // bonus point]}`: a space read after the
+                                // declaration is `ecrm1200`'s 3.90bp, not the
+                                // head's `ecbx1200` 4.48bp.
+                                gap_style.medium = !glue.style.bold;
+                                gap_style.italic |= glue.style.italic;
+                            }
+                            gap_style
+                        }
+                        None => ambient,
                     };
                     if compiler_weight {
                         gap_style.bold = style.bold;
                         gap_style.italic = style.italic;
-                    }
-                    // `\subsection*{Bonus \hfill \normalfont[1 bonus point]}`:
-                    // a space with `\normalfont` words on both sides was read
-                    // after the declaration, so it is `ecrm1200`'s 3.90bp and
-                    // not the head's `ecbx1200` 4.48bp. The source intervals
-                    // do not carry the head's weight, so the neighbours'
-                    // compiler weight decides; a space next to a bold word
-                    // keeps the head font (`A {\normalfont B} C`).
-                    if heading && style.medium && matches!(items.last(), Some(Item::Word(w)) if w.segments.last().is_some_and(|s| s.style.medium)) {
-                        gap_style.medium = true;
                     }
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
@@ -11887,15 +11366,11 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // upright (`\fontdimen1 = 0`) runs `\maybe@ic` before its
                 // argument, and `\sw@slant` puts the italic correction of
                 // the character before it *under* the interword space
-                // (`of \textbf{x}`: `f`, kern 0.7922 pt, space). amsmath's
-                // `\eqref` is `\textup{\tagform@{..}}`, so it always does.
-                // Not when the argument opens with a `\nocorrlist` token.
-                let styles_here = styles_of(span.document);
-                let check_icl = if reference_spans.contains(span) {
-                    source.get(span.start..).is_some_and(|r| r.starts_with("\\eqref"))
-                } else {
-                    (label_upright || text_command_argument_at(source, span.start) && !styles_here.slanted_at(span.start)) && !text.starts_with(['.', ','])
-                };
+                // (`of \textbf{x}`: `f`, kern 0.7922 pt, space). The
+                // compiler decides it (`TextStyle::italic_correction`;
+                // amsmath's `\eqref`, `\textup{\tagform@{..}}`, always does,
+                // and so does a citation label's `\emph` turning upright).
+                let check_icl = compiler_style.italic_correction.before;
                 if check_icl && !style.literal {
                     let at = items.len() - usize::from(matches!(items.last(), Some(Item::Space { .. })));
                     if at > 0 && matches!(items[at - 1], Item::Word(_)) {
@@ -11903,6 +11378,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     }
                 }
                 prev_size_cpt = style.size_cpt;
+                ambient = node_style(compiler_style, size);
                 if let Some(mark) = accent_char {
                     pending_accent = Some((
                         mark,
@@ -12097,30 +11573,12 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 if is_url_run {
                     factor = 1000;
                 }
-                // A style group closing right after this text: LaTeX's
-                // \text@command appends \/ (`\maybe@ic`) unless the next
-                // token is in \nocorrlist (`,` and `.`) or the enclosing
-                // font is itself slanted (`\fontdimen1 > 0`).
-                if let Some((body, offset)) = in_body {
-                    // The same inside a macro body (`\newcommand{\x}{\textit{Note}}`):
-                    // the group closes in the body, and the next token is the
-                    // body's next byte, or what follows the invocation.
-                    let end = offset + text.len();
-                    let next = body.as_bytes().get(end + 1).or(source.as_bytes().get(span.end));
-                    if source_style_intervals(body).iter().any(|i| i.3 && i.1 == end)
-                        && body.as_bytes().get(end) == Some(&b'}')
-                        && !matches!(next, Some(b'.') | Some(b','))
-                        && !styles_of(span.document).slanted(styles_of(span.document).in_body(span.start, body, end + 1))
-                        && matches!(items.last(), Some(Item::Word(_)))
-                    {
-                        items.push(Item::ItalicCorrection);
-                    }
-                } else if styles_of(span.document).closes_at(span.end)
-                    && source.as_bytes().get(span.end) == Some(&b'}')
-                    && !matches!(source.as_bytes().get(span.end + 1), Some(b'.') | Some(b','))
-                    && !styles_of(span.document).slanted_at(span.end + 1)
-                    && matches!(items.last(), Some(Item::Word(_)))
-                {
+                // A text font command's group closing right after this run:
+                // LaTeX's `\check@icr` appends `\/` (`\maybe@ic`) unless the
+                // next token is in `\nocorrlist` (`,` and `.`) or the font
+                // after the group is slanted (`\fontdimen1 > 0`). The
+                // compiler decides it (`TextStyle::italic_correction`).
+                if compiler_style.italic_correction.after && matches!(items.last(), Some(Item::Word(_))) {
                     items.push(Item::ItalicCorrection);
                 }
                 // A text symbol the compiler set from a control word (`\AA`,
@@ -12184,7 +11642,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 if command {
                     let has_space = space_between(prev_end, prev_span, *span, None, after_control_word);
                     if has_space {
-                        let gap_style = space_style(texts, styles, prev_end, *span, style_at(styles_of(span.document), span.start));
+                        let gap_style = ambient;
                         push_gap(&mut items, true, gap_style, factor);
                     }
                 }
@@ -12361,54 +11819,6 @@ fn inline_declared_size(inline: &Inline, base: u32) -> Option<u16> {
             Some(declared_size(style.size, base))
         }
         _ => None,
-    }
-}
-
-/// The style in force where TeX reads the space token between the previous
-/// inline (ending at `prev_end`) and `span`: the first whitespace byte of
-/// the gap, which sits inside or outside the closing braces around it.
-/// `fallback` when the gap cannot be located.
-fn space_style(
-    texts: &[&str],
-    styles: &[Styles],
-    prev_end: Option<usize>,
-    span: Span,
-    fallback: TextStyle,
-) -> TextStyle {
-    let Some(pe) = prev_end else { return fallback };
-    let Some(src) = texts.get(span.document.0) else { return fallback };
-    let no_styles = Styles::default();
-    let intervals = styles.get(span.document.0).unwrap_or(&no_styles);
-    let Some(gap) = src.get(pe..span.start) else { return fallback };
-    // After a replacement token of a user macro (whose span is the `\name`
-    // of the invocation) the bytes up to an argument are the call's earlier
-    // arguments, not what TeX read: `\pair{\textit{a b}}{c}`'s body space
-    // before `#2` is not in `a b`'s italic. Read the call site's font.
-    //
-    // Only the last backslash before `pe` can open an invocation span
-    // ending there (an earlier one would leave a `\` inside the span, which
-    // `control_word_at` rejects), and such a span is `\` plus an alphabetic
-    // name, so walking back over the trailing alphabetic run finds that
-    // backslash exactly when a whole-prefix `rfind` would find one that
-    // matters — in word-length time instead of document-prefix time. A
-    // backslash followed by anything else fails `is_invocation_span` either
-    // way, so stopping at the first non-alphabetic byte changes nothing.
-    let bs = {
-        let bytes = src.as_bytes();
-        let mut k = pe.min(bytes.len());
-        while k > 0 && bytes[k - 1].is_ascii_alphabetic() {
-            k -= 1;
-        }
-        (k > 0 && bytes[k - 1] == b'\\').then(|| k - 1)
-    };
-    if let Some(bs) = bs {
-        if is_invocation_span(src, Span { document: span.document, start: bs, end: pe }) {
-            return style_at(intervals, bs);
-        }
-    }
-    match gap.find(|c: char| c.is_whitespace()) {
-        Some(off) => style_at(intervals, pe + off),
-        None => style_at(intervals, pe),
     }
 }
 
@@ -13204,7 +12614,7 @@ mod tests {
     fn size_environments_give_their_size_until_a_declaration() {
         use flashtex_compiler::parser::FontSizeLevel as L;
         let src = "\\begin{document}\\begin{small}@a{\\Large @b}@c\\normalsize @d\\end{small}@e\\begin{Large}@f\\end{Large}\\end{document}";
-        let styles = Styles::new(src, Vec::new(), crate::nfss::Scheme::LmT1);
+        let styles = Styles::new(src);
         let at = |marker: &str| src.find(marker).unwrap();
         assert_eq!(styles.size_env_at(src, at("@a")), Some(L::Small));
         // A closed group's declaration is undone; one still open wins.
@@ -13621,43 +13031,39 @@ mod tests {
         assert_eq!(url_break_penalty("a?&", 'b'), None, "the `&` after a Bin is an Ord");
     }
 
-    /// The typewriter family covers the whole `\url{...}`, not just its
-    /// braced argument: the compiler gives every run it splits the URL into
-    /// the span of the entire command (`parser::push_url_text`), and the
-    /// style is read at that span's first byte, the backslash.
+    /// The typewriter family covers the whole `\url{...}` and nothing after
+    /// it: the compiler sets every run it splits the URL into in `\ttfamily`
+    /// over the font around it (`parser::P::url_text`), and the text after
+    /// the command is back in the outer font.
     #[test]
-    fn the_url_style_interval_starts_at_the_backslash_and_ends_at_the_brace() {
-        let src = "x \\url{ab} y";
-        let intervals = style_intervals(src);
-        let url = intervals
-            .iter()
-            .find(|(_, _, c, _)| matches!(c, crate::nfss::Command::Family(crate::nfss::FamilyKind::Tt)))
-            .expect("the URL contributes a typewriter interval");
-        assert_eq!(&src[url.0..url.1], "\\url{ab}", "{intervals:?}");
-        // The text after the URL is outside it.
-        assert_eq!(Styles::new(src, intervals, crate::nfss::Scheme::LmT1).at(src.find('y').unwrap()).family,
-                   crate::nfss::FamilyKind::Rm);
+    fn the_url_runs_are_typewriter_and_the_text_after_them_is_not() {
+        let it = items("x \\url{ab} y");
+        assert_eq!(families(&it), "rtr", "{it:?}");
     }
 
     /// A macro body's declarations around `#k` cover argument `k` at each
-    /// call (`macro_argument_intervals`), and a redefinition nested inside
-    /// the body (whose position is before the body's end) does not panic.
+    /// call, and nothing around the call; a redefinition nested inside the
+    /// body does not panic. The compiler expands the macro, so the font
+    /// comes with the tokens (`parser::TextStyle::font`).
     #[test]
     fn a_macro_body_declaration_covers_its_argument() {
-        let src = "\\newcommand{\\note}[1]{{\\bfseries #1}}\nA \\note{bold} C";
-        let st = Styles::new(src, style_intervals(src), crate::nfss::Scheme::LmT1);
-        assert!(st.at(src.find("bold").unwrap()).bold);
-        assert!(!st.at(src.find('C').unwrap()).bold);
-        assert!(!st.at(src.find('A').unwrap()).bold);
-        let nested = "\\newcommand{\\a}[1]{\\def\\a{x}{\\bfseries #1}}\n\\a{y} z";
-        let _ = style_intervals(nested);
+        let it = items("\\newcommand{\\note}[1]{{\\bfseries #1}}\nA \\note{bold} C");
+        let bold: Vec<(String, bool)> = it
+            .iter()
+            .filter_map(|i| match i {
+                Item::Word(w) => Some(w.segments.iter().map(|s| (s.text.clone(), s.style.bold))),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(bold, vec![("A".to_string(), false), ("bold".to_string(), true), ("C".to_string(), false)], "{it:?}");
+        let _ = items("\\newcommand{\\a}[1]{\\def\\a{x}{\\bfseries #1}}\n\\a{y} z");
     }
 
     /// `\verb`, the `verbatim` environment and `lstlisting` are set in the
-    /// typewriter family, like `\url` and for the same reason: the compiler
-    /// marks the run mono (`parser::Inline::Verbatim`, `Block::Verbatim`)
-    /// but the pipeline re-derives the family from the source, and these
-    /// were in none of its tables.
+    /// typewriter family, like `\url`: the compiler marks the run
+    /// (`parser::Inline::Verbatim`'s `\verbatim@font` style,
+    /// `Block::Verbatim`).
     ///
     /// `\lstinline` is not `\verb`: listings sets it in the `basicstyle`
     /// face, and the default `basicstyle={}` changes nothing, so the face

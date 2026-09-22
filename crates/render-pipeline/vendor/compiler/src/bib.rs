@@ -680,7 +680,7 @@ fn cite_punct(options: CiteOptions, span: Span, out: &mut Vec<Inline>) {
         CitePunct::Thin => {
             out.push(text_run(",", span, TextStyle::default(), false));
             out.push(Inline::Penalty { value: 1000, span, unskip: false });
-            out.push(Inline::TextGlue { em: 0.13, span, plus_em: 0.1, minus_em: 0.1 });
+            out.push(Inline::TextGlue { em: 0.13, span, plus_em: 0.1, minus_em: 0.1, style: TextStyle::default() });
         }
         // `\def\citepunct{,\penalty\citepunctpenalty\ }` (line 403): the
         // kernel's own shape.
@@ -770,6 +770,7 @@ fn text_run(text: &str, span: Span, style: TextStyle, space_before: bool) -> Inl
         span,
         style,
         space_before,
+        glue_before: None,
     }
 }
 

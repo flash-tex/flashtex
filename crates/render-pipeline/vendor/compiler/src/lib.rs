@@ -31,6 +31,7 @@ pub mod math;
 pub mod math_symbols;
 pub mod natbib;
 pub mod newcm_math;
+pub mod nfss;
 pub mod overlay;
 pub mod package_definitions;
 pub mod packages;

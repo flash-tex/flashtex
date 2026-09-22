@@ -158,6 +158,10 @@ impl P<'_> {
         if let Some(color) = self.color_argument("color", span) {
             self.style.color = Some(color);
         }
+        // color.sty/xcolor.sty end `\color` with `\ignorespaces`: a blank
+        // after it is no interword glue (pdflatex's `\showbox` of `a
+        // \emph{\color{blue} x}` has one glue, the one before `\emph`).
+        self.skip_spaces();
     }
 
     /// `\textcolor[model]{colour}{text}` = `{\color[model]{colour}text}`.

@@ -17,8 +17,9 @@ docs="$compiler/../../docs/user/compiler.md"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
 
 cargo build --quiet --manifest-path "$compiler/Cargo.toml" --bin flashtex-compiler
-bin="$compiler/target/debug/flashtex-compiler"
-if [ -n "${CARGO_TARGET_DIR:-}" ]; then bin="$CARGO_TARGET_DIR/debug/flashtex-compiler"; fi
+# The compiler is a root-workspace member: it builds into the repository's
+# target/ (or CARGO_TARGET_DIR), not crates/compiler/target.
+bin="$("$compiler/../../scripts/crate-target-dir.sh" "$compiler")/debug/flashtex-compiler"
 
 "$bin" --supported json > "$compiler/supported/supported-latex.json"
 "$bin" --supported coverage > "$compiler/supported/coverage.md"

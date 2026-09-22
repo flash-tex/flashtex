@@ -163,19 +163,16 @@ use Tree::{Differs, Same};
 // ---- A. Style scope -------------------------------------------------------
 
 #[test]
-#[ignore = "PLAN1 site 1: source_style_intervals reads \\bfseries only from literal bytes, not from a \\def body"]
 fn site01_declaration_from_def_body() {
     falsify(Same, &doc("", "Some {\\bfseries bold words} here."), &doc("\\def\\B{\\bfseries}\n", "Some {\\B bold words} here."));
 }
 
 #[test]
-#[ignore = "PLAN1 site 2: source_style_intervals applies a depth-0 declaration in a preamble \\let to the whole document"]
 fn site02_preamble_let_leaks_declaration() {
     falsify(Same, &doc("", "Some plain words here."), &doc("\\let\\B\\bfseries\n", "Some plain words here."));
 }
 
 #[test]
-#[ignore = "PLAN1 site 3: macro_argument_intervals_defined_in follows one level of user macro, not two"]
 fn site03_nested_argument_wrapper() {
     falsify(
         Same,
@@ -185,7 +182,6 @@ fn site03_nested_argument_wrapper() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 4: a font declaration macro defined in a project .sty is not seen by the style scan"]
 fn site04_declaration_macro_from_project_sty() {
     falsify_docs(
         Same,
@@ -201,7 +197,6 @@ fn site05_quad_size_after_size_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 6: \\check@icl before \\eqref is detected from the bytes at the span"]
 fn site06_italic_correction_before_eqref() {
     falsify(
         Same,

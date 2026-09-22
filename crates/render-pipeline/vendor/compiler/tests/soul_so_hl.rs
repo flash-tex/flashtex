@@ -664,6 +664,7 @@ fn so_inner_glue_replaces_source_space_with_stretch() {
                 stretch_fil,
                 shrink_pt,
                 shrink_fil,
+                ..
             } => Some((
                 *pt, *space_before_pt, *space_after_pt, *span, *stretch_pt, *stretch_fil,
                 *shrink_pt, *shrink_fil,

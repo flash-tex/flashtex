@@ -305,3 +305,15 @@ Site 21 (the list stack) is the one site where the field already exists
 (`ListItem.lists`) and only the adapter must change. It is a good fourth
 item if slice 2 has room. Sites 15, 25, 32 and 46 need the compiler fixes
 named above first.
+
+## Slice 2 status
+
+- **Style scope (sites 1–4 and 6): migrated.** The compiler's
+  `TextStyle::font` (the `nfss` state, now `flashtex_compiler::nfss`),
+  `medium`, `literal` and `italic_correction`, `Inline::Text::glue_before`
+  for the font of the space in front, and `style` on references, `\verb`
+  and horizontal glue replace `source_style_intervals`,
+  `macro_argument_intervals_defined_in`, `Styles::in_body`/`at`,
+  `space_style` and `text_command_argument_at`. Falsifiers `site01`–`site04`
+  and `site06` run un-ignored. The sizes of glue (`space_size`,
+  `glue_size`, site 5) are still read from the gap.
