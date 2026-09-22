@@ -1198,3 +1198,33 @@ fn newinsert_allocates_downward_from_the_kernel_inserts() {
     assert_eq!(run(r"\makeatletter\skip\footins 12pt plus 12pt\relax\the\skip\footins\makeatother"), "\\relax 12.0pt plus 12.0pt");
 }
 
+#[test]
+fn skip_number_is_an_internal_glue_dimen_and_integer() {
+    // pdflatex (article, \makeatletter), the idioms of neurips_*.sty,
+    // lipics-v2021.cls, paperstyle2024.sty, IEEEtran.cls, jheppub.sty and
+    // jcappub.sty:
+    //   \setlength{\skip\footins}{9\p@ \@plus 4\p@ \@minus 2\p@}
+    //     -> \the\skip\footins = 9.0pt plus 4.0pt minus 2.0pt
+    //   \skip\@mpfootins = \skip\footins -> the whole glue is copied
+    //   \newdimen\xx \xx=\skip\footins   -> 9.0pt (natural part)
+    //   \newcount\cc \cc=\skip\footins   -> 589824 (sp)
+    //   \addtolength{\skip\footins}{1pt} -> 10.0pt plus 4.0pt minus 2.0pt
+    //   \setlength\leftmargini \parindent -> 15.0pt (both arguments unbraced)
+    let pre = r"\makeatletter\setlength{\skip\footins}{9\p@ \@plus 4\p@ \@minus 2\p@}";
+    assert_eq!(run(&format!(r"{pre}\the\skip\footins\makeatother")), "9.0pt plus 4.0pt minus 2.0pt");
+    assert_eq!(
+        run(&format!(r"{pre}\skip\@mpfootins = \skip\footins\the\skip\@mpfootins\makeatother")),
+        "9.0pt plus 4.0pt minus 2.0pt"
+    );
+    assert_eq!(run(&format!(r"{pre}\newdimen\xx \xx=\skip\footins\the\xx\makeatother")), "9.0pt");
+    assert_eq!(run(&format!(r"{pre}\newcount\cc \cc=\skip\footins\the\cc\makeatother")), "589824");
+    assert_eq!(
+        run(&format!(r"{pre}\addtolength{{\skip\footins}}{{1pt}}\the\skip\footins\makeatother")),
+        "10.0pt plus 4.0pt minus 2.0pt"
+    );
+    assert_eq!(
+        run(r"\newlength{\pind}\setlength{\pind}{15pt}\setlength\leftmargini \pind\the\leftmargini"),
+        "15.0pt"
+    );
+}
+
