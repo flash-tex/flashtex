@@ -438,30 +438,70 @@ def raster_compare(ref_pdf, cand_pdf, work):
 STRUCTURAL_CS = {"\\usepackage", "\\documentclass", "\\begin", "\\end", "\\RequirePackage"}
 
 
+CONTEXTS = [
+    (re.compile(r"not supported in math mode|requires math mode"), "in math mode"),
+    (re.compile(r"outside math mode"), "outside math"),
+    (re.compile(r"in the document preamble"), "in the preamble"),
+    (re.compile(r"(?:supported|allowed) inside \\([A-Za-z@]+)"), "inside \\{0}"),
+    (re.compile(r"requires a recognised dimension"), "dimension argument"),
+    (re.compile(r"requires a braced argument"), "unbraced argument"),
+    (re.compile(r"was given an empty"), "empty argument"),
+]
+LOADED_HERE = re.compile(r"\[note: ([^\]\s]+) is loaded here\]")
+LEADING_CS = re.compile(r"^\s*(?:LaTeX Error: )?(?:Command |Environment )?\\([A-Za-z@]+\*?)")
+
+
 def diag_causes(d):
-    """Groupable cause keys for one diagnostic: `<code>: <kind> <name>` for
-    each construct its message names (`rwc.named_constructs`, after the
-    `[help: ...]`/`[note: ...]` tails are dropped; `\\usepackage` and friends
-    only when nothing more specific is named), else `<code>: <normalised
-    message>`."""
+    """Groupable cause keys for one diagnostic.
+
+    `<code>: cs \\name (<context>) <- <file>`: the construct is the message's
+    leading control sequence when it starts with one (so `\\setlength requires
+    a recognised dimension, got '2\\p@'` names `\\setlength`, not `\\p`), else
+    every construct `rwc.named_constructs` finds after the `[help: ...]`
+    tails are dropped (`\\usepackage` and friends only when nothing more
+    specific is named). `<context>` is the reason family (in math mode, in the
+    preamble, inside \\textit, dimension argument, ...) and `<- file` the
+    `.sty`/`.cls` FlashTeX was reading when it fired (`[note: F is loaded
+    here]`). Without a construct: `<code>: <normalised message>`."""
     code = d.get("code") or "diagnostic"
-    msg = re.sub(r"\s*\[(help|note|hint)[^\]]*\]", "", d.get("message") or "")
-    names = set(rwc.named_constructs(msg))
-    m = re.search(r"(?:document class|class)\s+[`'\"]?([A-Za-z0-9@_.\-]+)", msg)
+    raw = d.get("message") or ""
+    if re.search(r"further \d+ similar diagnostics? (were )?suppressed", raw):
+        return []  # a count of the diagnostics already keyed, not a cause
+    m = re.search(r"font ([A-Za-z0-9-]+) \([0-9a-f]+\) is format core14-afm", raw)
     if m:
-        names.add(("class", m.group(1)))
-    m = re.search(r"package\s+[`'\"]?([A-Za-z0-9@_.\-]+)[`'\"]?", msg, re.I)
-    if m and not any(k == "package" for k, _ in names) and m.group(1) not in ("is", "are", "file"):
-        names.add(("package", m.group(1)))
-    specific = {n for n in names if not (n[0] == "cs" and n[1] in STRUCTURAL_CS)}
-    if specific:
-        names = specific
+        return [f"{code}: base-14 font {m.group(1)} has no program to embed (exact PDF route refuses it)"]
+    via = LOADED_HERE.search(raw)
+    via = f" <- {rwc.diag_key(via.group(1))}" if via else ""
+    msg = re.sub(r"\s*\[(help|note|hint)[^\]]*\]", "", raw)
+    ctx = ""
+    for rx, label in CONTEXTS:
+        m = rx.search(msg)
+        if m:
+            ctx = " (" + label.format(*m.groups()) + ")"
+            break
     if code == "missing_glyph":
         m = re.match(r"(U\+[0-9A-F]+)", msg)
         return [f"{code}: {m.group(1) if m else rwc.diag_key(msg)[:60]}"]
+    lead = LEADING_CS.match(msg)
+    m_env = re.match(r"^\s*(?:LaTeX Error: )?Environment ([A-Za-z@*]+) undefined", msg)
+    if m_env:
+        names = {("env", m_env.group(1))}
+    elif lead:
+        names = {("cs", "\\" + lead.group(1))}
+    else:
+        names = set(rwc.named_constructs(msg))
+        m = re.search(r"\bdocument class\s+[`'\"]?([A-Za-z0-9@_.\-]+)", msg)
+        if m:
+            names.add(("class", m.group(1)))
+        m = re.search(r"package\s+[`'\"]?([A-Za-z0-9@_.\-]+)[`'\"]?", msg, re.I)
+        if m and not any(k == "package" for k, _ in names) and m.group(1) not in ("is", "are", "file"):
+            names.add(("package", m.group(1)))
+        specific = {n for n in names if not (n[0] == "cs" and n[1] in STRUCTURAL_CS)}
+        if specific:
+            names = specific
     if names:
-        return [f"{code}: {kind} {name}" for kind, name in sorted(names)]
-    return [f"{code}: {rwc.diag_key(msg)[:90]}"]
+        return sorted(f"{code}: {kind} {name}{ctx if kind in ('cs', 'env') else ''}{via}" for kind, name in names)
+    return [f"{code}: {rwc.diag_key(msg)[:90]}{via}"]
 
 
 def source_texts(doc):
@@ -614,7 +654,7 @@ def causes_for(result, texts):
         for d in diags:
             if d.get("severity") == "error":
                 keys.update(diag_causes(d))
-        return sorted(keys) or ["engine: error count without error diagnostics"]
+        return sorted(keys) or ["engine: error count without a keyed error diagnostic"]
     if lvl >= 4:
         return []
     keys = set()
@@ -787,6 +827,26 @@ def score_safe(doc, cfg):
 
 # ----------------------------------------------------------------------------
 # aggregation
+
+
+def slim_record(r, keep=25):
+    """What documents.json keeps of a scored record: diagnostics become
+    counts per (severity, code, normalised message), top `keep`; the
+    project's definition lists (only needed for grouping) are dropped. An
+    arXiv document can carry thousands of diagnostics, which made the file
+    40 MB."""
+    r.pop("_errors", None)
+    cand = r.get("candidate")
+    if cand and isinstance(cand.get("diagnostics"), list):
+        c = collections.Counter((d.get("severity"), d.get("code"), rwc.diag_key(d.get("message") or "")[:200])
+                                for d in cand["diagnostics"])
+        cand["diagnostic_count"] = len(cand["diagnostics"])
+        cand["diagnostics"] = [{"severity": s, "code": k, "message": m, "count": n}
+                               for (s, k, m), n in c.most_common(keep)]
+    facts = r.get("facts")
+    if facts:
+        r["facts"] = {"class": facts.get("class"), "packages": facts.get("packages")}
+    return r
 
 
 def summarize(results):
@@ -1161,7 +1221,7 @@ def main(argv=None):
                        for t in tiers}
     for t in tiers:
         for r in results[t]:
-            r.pop("_errors", None)
+            slim_record(r)
     write_report(out_dir, meta, tiers_out, causes, constructs, per_tier_causes)
     with open(os.path.join(out_dir, "scoreboard.json"), "w", encoding="utf-8") as f:
         json.dump({"schema": "flashtex-parity/1", "meta": meta,

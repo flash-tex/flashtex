@@ -32,19 +32,65 @@ DEF_CS = re.compile(
     rb"providerobustcmd|DeclareMathSymbol|DeclareMathAlphabet|DeclareMathDelimiter|DeclareMathAccent|"
     rb"DeclareMathRadical|DeclareTextCommand|DeclareTextSymbol|DeclareTextAccent|DeclareTextCommandDefault|"
     rb"DeclareTextSymbolDefault|DeclareOldFontCommand|DeclareFontShape|DeclareMathVersion|DeclarePairedDelimiter|"
-    rb"DeclarePairedDelimiterX|NewCommandCopy|newsiamthm|newsiamremark)\*?\s*\{?\s*\\([A-Za-z@]+)")
+    rb"DeclarePairedDelimiterX|NewCommandCopy|newsiamthm|newsiamremark|DeclareTextFontCommand|DeclareFixedFont|"
+    rb"DeclareSymbolFontAlphabet|newlength)\*?\s*\{?\s*\\([A-Za-z@]+)")
+# `\let\author\relax` (\maketitle's cleanup) and `\let\x\@undefined` undefine, they do not define
+UNDEFINE_TAIL = re.compile(rb"\s*=?\s*\\(relax|@empty|@undefined|undefined|@gobble)(?![A-Za-z@])")
 DEF_ENV = re.compile(
     rb"\\(?:newenvironment|renewenvironment|provideenvironment|NewDocumentEnvironment|DeclareDocumentEnvironment|"
     rb"RenewDocumentEnvironment|newtheorem|newaliascnt|newcounter|NewEnviron|newtcolorbox|newmdenv)\*?\s*\{([A-Za-z@*]+)\}")
-KERNEL_FILES = re.compile(r"^(latex\.ltx|ltx.*|fontdef\.ltx|.*\.ltx)$")
+# The kernel's own files (`latex.ltx`, `fontmath.ltx`, `latex-lab-*.ltx`, ...);
+# *not* `ltx*.sty` (revtex's ltxfront/ltxutil, ltxtools) nor `mylatexformat`.
+KERNEL_FILES = re.compile(r"^(?!mylatexformat)[A-Za-z0-9-]+\.ltx$")
 REQUIRE_RE = re.compile(rb"\\(?:RequirePackage|usepackage|LoadClass|LoadClassWithOptions|RequirePackageWithOptions)"
                         rb"\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}|\\input\s*\{?([A-Za-z0-9_.\-]+)"
                         rb"|\\use(tikz|pgf)library\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}")
-INDEX_VERSION = 3
+REG_DEF = re.compile(rb"\\(?:newcount|newdimen|newskip|newmuskip|newtoks|newbox|newlength|countdef|dimendef|skipdef|"
+                     rb"toksdef|chardef|mathchardef)\s*\{?\s*\\([A-Za-z@]+)")
+INDEX_VERSION = 6
+
+# TeX82 + e-TeX + pdfTeX primitives a document is likely to use directly. A
+# construct here is not "defined" by any file; it is engine vocabulary.
+# (`\end` is left out: LaTeX redefines it, and its errors are environment errors.)
+PRIMITIVES = set("""
+above abovedisplayshortskip abovedisplayskip abovewithdelims accent adjdemerits advance afterassignment aftergroup
+atop atopwithdelims badness baselineskip batchmode begingroup belowdisplayshortskip belowdisplayskip binoppenalty
+botmark box boxmaxdepth brokenpenalty catcode char chardef cleaders closein closeout clubpenalty copy count countdef
+cr crcr csname day deadcycles def defaulthyphenchar defaultskewchar delcode delimiter delimiterfactor delimitershortfall
+dimen dimendef discretionary displayindent displaylimits displaystyle displaywidowpenalty displaywidth divide
+doublehyphendemerits dp dump edef else emergencystretch endcsname endgroup endinput endlinechar eqno errhelp
+errmessage errorcontextlines errorstopmode escapechar everycr everydisplay everyhbox everyjob everymath everypar
+everyvbox exhyphenpenalty expandafter fam fi finalhyphendemerits firstmark floatingpenalty font fontdimen fontname
+futurelet gdef global globaldefs halign hangafter hangindent hbadness hbox hfil hfill hfilneg hfuzz hoffset holdinginserts
+hrule hsize hskip hss ht hyphenation hyphenchar hyphenpenalty if ifcase ifcat ifdim ifeof iffalse ifhbox ifhmode ifinner
+ifmmode ifnum ifodd iftrue ifvbox ifvmode ifvoid ifx ignorespaces immediate indent input inputlineno insert insertpenalties
+interlinepenalty jobname kern language lastbox lastkern lastpenalty lastskip lccode leaders left lefthyphenmin leftskip leqno
+let limits linepenalty lineskip lineskiplimit long looseness lower lowercase mag mark mathaccent mathbin mathchar
+mathchardef mathchoice mathclose mathcode mathinner mathop mathopen mathord mathpunct mathrel mathsurround maxdeadcycles
+maxdepth meaning medmuskip message middle mkern month moveleft moveright mskip multiply muskip muskipdef newlinechar noalign
+noboundary noexpand noindent nolimits nonscript nonstopmode nulldelimiterspace nullfont number omit openin openout or outer
+output outputpenalty over overfullrule overline overwithdelims pagedepth pagefilllstretch pagefillstretch pagefilstretch
+pagegoal pageshrink pagestretch pagetotal par parfillskip parindent parshape parskip patterns pausing penalty
+postdisplaypenalty predisplaypenalty predisplaysize pretolerance prevdepth prevgraf radical raise read relax relpenalty
+right righthyphenmin rightskip romannumeral scriptfont scriptscriptfont scriptscriptstyle scriptspace scriptstyle
+scrollmode setbox setlanguage sfcode shipout show showbox showboxbreadth showboxdepth showlists showthe skewchar skip
+skipdef spacefactor spaceskip span special splitbotmark splitfirstmark splitmaxdepth splittopskip string tabskip textfont
+textstyle the thickmuskip thinmuskip time toks toksdef tolerance topmark topskip tracingcommands tracinglostchars
+tracingmacros tracingonline tracingoutput tracingpages tracingparagraphs tracingrestores tracingstats uccode uchyph
+underline unhbox unhcopy unkern unpenalty unskip unvbox unvcopy uppercase vadjust valign vbadness vbox vcenter vfil vfill
+vfilneg vfuzz voffset vrule vsize vskip vsplit vss vtop wd widowpenalty write xdef xleaders xspaceskip year
+detokenize dimexpr glueexpr numexpr muexpr protected unexpanded ifdefined ifcsname unless scantokens eTeXversion
+lastlinefit interactionmode showtokens readline pdfstrcmp pdfoutput pdfpagewidth pdfpageheight pdfminorversion
+pdfcompresslevel pdfobjcompresslevel pdfinfo pdfcatalog pdfsavepos pdflastxpos pdflastypos pdfliteral pdfximage
+pdfrefximage pdfsetmatrix pdfstartlink pdfendlink pdfdest pdfoutline pdfadjustspacing pdfprotrudechars pdfglyphtounicode
+pdfgentounicode pdfsuppresswarningpagegroup pdfpkresolution pdfmapfile pdfmapline
+""".split())
 
 
-def _scan(data, cs, env, tag):
+def _scan(data, cs, env, tag, reg=None):
     for m in DEF_CS.finditer(data):
+        if m.group(1) and b"let" in m.group(0)[:12] and UNDEFINE_TAIL.match(data, m.end()):
+            continue
         name = (m.group(1) or m.group(2)).decode("latin-1")
         cs.setdefault(name, set()).add(tag)
         if name.startswith("end") and len(name) > 3:
@@ -53,6 +99,9 @@ def _scan(data, cs, env, tag):
     for m in DEF_ENV.finditer(data):
         name = m.group(1).decode("latin-1")
         env.setdefault(name, set()).add(tag)
+    if reg is not None:
+        for m in REG_DEF.finditer(data):
+            reg.add(m.group(1).decode("latin-1"))
 
 
 def _requires(data):
@@ -79,7 +128,7 @@ def texlive_index(texmf, cache):
             j = json.load(f)
         if j.get("texmf") == texmf and j.get("stamp") == stamp:
             return j
-    cs, env, req = {}, {}, {}
+    cs, env, req, kreg = {}, {}, {}, set()
     for sub in ("tex/latex", "tex/generic"):
         root = os.path.join(texmf, sub)
         for dirpath, dirnames, files in os.walk(root):
@@ -92,12 +141,13 @@ def texlive_index(texmf, cache):
                         data = fh.read()
                 except OSError:
                     continue
-                _scan(data, cs, env, f)
+                _scan(data, cs, env, f, kreg if KERNEL_FILES.match(f) else None)
                 r = _requires(data)
                 if r:
                     req.setdefault(os.path.splitext(f)[0], set()).update(r)
     j = {"texmf": texmf, "stamp": stamp, "cs": {k: sorted(v) for k, v in cs.items()},
-         "env": {k: sorted(v) for k, v in env.items()}, "requires": {k: sorted(v) for k, v in req.items()}}
+         "env": {k: sorted(v) for k, v in env.items()}, "requires": {k: sorted(v) for k, v in req.items()},
+         "kernel_registers": sorted(kreg)}
     os.makedirs(cache, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(j, f)
@@ -111,7 +161,8 @@ LOAD_RE = re.compile(r"\\(documentclass|usepackage|RequirePackage|LoadClass|uset
 def project_facts(root):
     """What the project itself loads and defines: {"class", "packages",
     "cs_tex", "cs_sty", "env_tex", "env_sty"} (names, no backslash)."""
-    facts = {"class": None, "packages": [], "cs_tex": set(), "cs_sty": set(), "env_tex": set(), "env_sty": set()}
+    facts = {"class": None, "packages": [], "cs_tex": set(), "cs_sty": set(), "env_tex": set(), "env_sty": set(),
+             "local_files": set()}
     for dirpath, _, files in os.walk(root):
         for f in files:
             if not f.endswith((".tex", ".sty", ".cls", ".ltx", ".def", ".clo")):
@@ -122,6 +173,8 @@ def project_facts(root):
             except OSError:
                 continue
             kind = "tex" if f.endswith(".tex") else "sty"
+            if kind == "sty":
+                facts["local_files"].add(f)
             cs, env = {}, {}
             _scan(data, cs, env, f)
             facts["cs_" + kind].update(cs)
@@ -176,49 +229,84 @@ def closure(facts, index, depth=4):
 
 def definer(kind, name, facts, index, loaded=None):
     """Group label for construct `name` (kind "cs" or "env") in a document
-    with `facts` (from project_facts); None when no definer is found in the
-    project, the document's load closure or the kernel."""
+    with `facts` (from project_facts); None when nothing is found.
+
+    Precedence, first match wins:
+      1. a TeX primitive (`\\vskip`, `\\kern`, `\\baselineskip`) -> one group;
+      2. a project-local .sty/.cls that defines it (FlashTeX does not read it);
+      3. the document class or a file the class loads (a class *redefines*
+         kernel commands: amsart's `\\author`, `\\email`);
+      4. a LaTeX kernel register (`\\textwidth`, `\\topsep`) -> one group;
+      5. a LaTeX kernel command -> `LaTeX kernel: \\name`, one key per command
+         (the kernel is too big to be one lane);
+      6. a macro the document defines itself;
+      7. the package the document loads whose closure reaches a definer
+         shallowest (packages *patch* kernel commands, so they come after it).
+    """
     if kind == "cs":
         name = name.lstrip("\\").rstrip("*")
+        if name in PRIMITIVES:
+            return "TeX primitive"
     if name in facts.get(f"{kind}_sty", ()):
-        return "project .sty/.cls (not read)"
-    if name in facts.get(f"{kind}_tex", ()):
-        return "project macro (defined in the document)"
-    files = (index or {}).get(kind, {}).get(name)
-    if not files:
-        return None
+        return "project .sty/.cls (read, incompletely)"
+    files = (index or {}).get(kind, {}).get(name) or []
     if loaded is None:
         loaded = closure(facts, index)
+    cls = facts.get("class")
     hits = [f for f in files if os.path.splitext(f)[0] in loaded]
-    if hits:
-        # shallowest load first; a LaTeX package over a plain .tex input; a
-        # package the document loads over its class (a class drags in
-        # option-conditional alternatives such as amstex)
-        cls = facts.get("class")
 
-        def key(f):
-            d, root = loaded[os.path.splitext(f)[0]]
-            return (d, f.endswith(".tex"), root == cls and d > 0, f)
-        best = min(hits, key=key)
-        d, root = loaded[os.path.splitext(best)[0]]
+    def key(f):
+        # shallowest load first; a LaTeX file over a plain .tex input; below
+        # the class itself, a package the document loads over one the class
+        # drags in (amsart loads amstex for an option the document never sets)
+        d, root = loaded[os.path.splitext(f)[0]]
+        return (d, f.endswith(".tex"), root == cls and d > 0, f)
+    best_root = loaded[os.path.splitext(min(hits, key=key))[0]][1] if hits else None
+    if cls and best_root == cls:
+        return f"class {cls}"
+    if kind == "cs":
+        if index is not None and "_kreg" not in index:
+            index["_kreg"] = set(index.get("kernel_registers", ()))
+        if name in (index or {}).get("_kreg", ()):
+            return "LaTeX kernel register (length/skip/count)"
+    if any(KERNEL_FILES.match(f) for f in files):
+        return "LaTeX kernel: " + ("\\" + name if kind == "cs" else f"environment {name}")
+    if name in facts.get(f"{kind}_tex", ()):
+        return "project macro (defined in the document)"
+    if hits:
         # grouped by what the document itself loads: that is what a lane implements
-        return ("class " if root == cls else "package ") + root
-    for f in files:
-        if KERNEL_FILES.match(f):
-            return "LaTeX kernel"
+        return "package " + best_root
     return None
 
 
-KEY_RE = re.compile(r"^[^:]+: (cs|env) (\S+)$")
+KEY_RE = re.compile(r"^[^:]+: (cs|env) (\S+)(?: \(([^)]*)\))?(?: <- (\S+))?$")
+VIA_RE = re.compile(r" <- (\S+)$")
 
 
 def group_of(key, facts, index, loaded=None):
-    """Group label for a blocker key; the key itself when it names no
-    construct or none is found."""
+    """Group label for a blocker key (see `parity.diag_causes` for its
+    shape); the key itself when it names nothing groupable.
+
+    A key that fired while FlashTeX was reading a `.sty`/`.cls` (`<- file`)
+    belongs to that file: `project .sty/.cls (read, incompletely)` when the
+    file is the project's own, else its package/class. Otherwise the named
+    construct's definer (`definer`); a kernel command keeps its context
+    (`LaTeX kernel: \\hspace (in math mode)` is a different fix from an
+    unknown `\\hspace`)."""
     m = KEY_RE.match(key)
+    via = VIA_RE.search(key)
+    if via:
+        f = via.group(1)
+        local = set(facts.get("local_files") or ())
+        if f in local or re.sub(r"<N>", "", f) in {re.sub(r"\d+", "", x) for x in local}:
+            return "project .sty/.cls (read, incompletely)"
+        base, ext = os.path.splitext(f)
+        return ("class " if ext == ".cls" else "package ") + base
     if m:
         label = definer(m.group(1), m.group(2), facts, index, loaded)
         if label:
+            if label.startswith("LaTeX kernel: ") and m.group(3):
+                label += f" ({m.group(3)})"
             return label
     m = re.match(r"^[^:]+: package (\S+)$", key)
     if m:

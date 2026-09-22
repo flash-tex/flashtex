@@ -1,6 +1,6 @@
 {
  "flashtex_version": "flashtex 0.1.0 (351f1db1ae08)",
- "generated": "2026-09-22T00:32:35Z",
+ "generated": "2026-09-22T02:21:00Z",
  "levels": {
   "divergence-probes/min-abstract": 3,
   "divergence-probes/min-bigdelim-12pt": 3,
@@ -82,5 +82,6 @@
   "real-world/twelvept-plain": 2,
   "real-world/unicode-accents": 1
  },
+ "raster": "none",
  "schema": "flashtex-parity-baseline/1"
 }

@@ -209,13 +209,38 @@ class Localise(unittest.TestCase):
                                                  "unsupported_feature: package listings"])
         self.assertEqual(parity.diag_causes({"code": "compiler", "message": "LaTeX Error: Command \\x undefined."}),
                          ["compiler: cs \\x"])
+        self.assertEqual(parity.diag_causes({"code": "unsupported_feature", "message":
+                         "\\setlength requires a recognised dimension, got '2\\p@' [note: neurips_2024.sty is loaded here]"}),
+                         ["unsupported_feature: cs \\setlength (dimension argument) <- neurips_<N>.sty"])
+        self.assertEqual(parity.diag_causes({"code": "unknown_command", "message":
+                         "\\hspace is not supported in math mode [note: this command] [help: \\hspace is a text command]"}),
+                         ["unknown_command: cs \\hspace (in math mode)"])
+
+    def test_meta_and_export_diagnostics(self):
+        self.assertEqual(parity.diag_causes({"code": "unknown_command",
+                                             "message": "further 12 similar diagnostics suppressed"}), [])
+        self.assertEqual(parity.diag_causes({"code": "output", "message":
+                         "pdf: payload.pages[0].items[0]: font Times-Roman (e0272e1c) is format core14-afm, which carries"}),
+                         ["output: base-14 font Times-Roman has no program to embed (exact PDF route refuses it)"])
+
+    def test_context_and_loaded_file_grouping(self):
+        facts = {"class": "article", "packages": [], "local_files": ["neurips_2024.sty"]}
+        idx = {"cs": {"hspace": ["latex.ltx"]}, "env": {}, "requires": {}}
+        g = lambda k: definers.group_of(k, facts, idx)  # noqa: E731
+        self.assertEqual(g("unsupported_feature: cs \\setlength (dimension argument) <- neurips_<N>.sty"),
+                         "project .sty/.cls (read, incompletely)")
+        self.assertEqual(g("unknown_command: cs \\x <- lipics-v2021.cls"), "class lipics-v2021")
+        self.assertEqual(g("unknown_command: cs \\hspace (in math mode)"), "LaTeX kernel: \\hspace (in math mode)")
 
 
 class Definers(unittest.TestCase):
-    INDEX = {"cs": {"text": ["amstex.sty", "amstext.sty"], "subjclass": ["amsart.cls"], "raisebox": ["latex.ltx"],
+    INDEX = {"cs": {"text": ["amstex.sty", "amstext.sty"], "subjclass": ["amsart.cls"],
+                    "raisebox": ["hyperref.sty", "latex.ltx"], "myop": ["hyperref.sty"],
+                    "author": ["latex.ltx", "amsart.cls"],
                     "autoref": ["hyperref.sty"], "arrow": ["tikzlibrarycd.code.tex"]},
              "env": {"alignat": ["amsmath.sty"]},
-             "requires": {"amsart": ["amsmath", "amstex"], "amsmath": ["amstext"], "tikz-cd": ["tikzlibrarycd.code"]}}
+             "requires": {"amsart": ["amsmath", "amstex"], "amsmath": ["amstext"], "tikz-cd": ["tikzlibrarycd.code"]},
+             "kernel_registers": ["textwidth"]}
     FACTS = {"class": "amsart", "packages": ["amsmath", "tikz-cd"], "cs_tex": ["myop"], "cs_sty": ["styop"],
              "env_tex": [], "env_sty": []}
 
@@ -225,6 +250,10 @@ class Definers(unittest.TestCase):
                        cs, env, "t.sty")
         self.assertTrue({"foo", "bar", "qux", "endqux"} <= set(cs))
         self.assertTrue({"baz", "qux"} <= set(env))
+        cs = {}
+        definers._scan(b"\\global\\let\\author\\relax\\let\\copy\\orig\\DeclareTextFontCommand{\\texttt}{x}",
+                       cs, {}, "a.cls")
+        self.assertEqual(set(cs), {"copy", "texttt"})
         self.assertEqual(definers._requires(b"\\RequirePackage[x]{a,b}\\usetikzlibrary{cd}"),
                          {"a", "b", "tikzlibrarycd.code"})
 
@@ -234,11 +263,16 @@ class Definers(unittest.TestCase):
         self.assertEqual(g("unsupported_feature: cs \\text"), "package amsmath")   # amstext via amsmath, not amstex via the class
         self.assertEqual(g("syntax_error: env alignat"), "package amsmath")
         self.assertEqual(g("compiler: cs \\arrow"), "package tikz-cd")
-        self.assertEqual(g("compiler: cs \\raisebox"), "LaTeX kernel")
+        self.assertEqual(g("compiler: cs \\raisebox"), "LaTeX kernel: \\raisebox")   # kernel before the patching package
         self.assertEqual(g("compiler: cs \\autoref"), "compiler: cs \\autoref")   # hyperref is not loaded
+        self.assertFalse(definers.KERNEL_FILES.match("ltxfront.sty"))
+        self.assertTrue(definers.KERNEL_FILES.match("latex-lab-amsmath.ltx"))
         self.assertEqual(g("compiler: cs \\myop"), "project macro (defined in the document)")
-        self.assertEqual(g("compiler: cs \\styop"), "project .sty/.cls (not read)")
+        self.assertEqual(g("compiler: cs \\styop"), "project .sty/.cls (read, incompletely)")
         self.assertEqual(g("unsupported_feature: package listings"), "package listings")
+        self.assertEqual(g("syntax_error: cs \\author"), "class amsart")               # the class redefines it
+        self.assertEqual(g("unsupported_feature: cs \\vskip"), "TeX primitive")
+        self.assertEqual(g("unknown_command: cs \\textwidth"), "LaTeX kernel register (length/skip/count)")
         self.assertEqual(g("placement: first divergence in display math"), "placement: first divergence in display math")
 
 

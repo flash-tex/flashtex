@@ -232,7 +232,14 @@ class PdfDocument:
 
     def _scan(self):
         d = self.data
-        for m in re.finditer(rb"(?<![0-9])(\d+)\s+(\d+)\s+obj\b", d):
+        headers = list(re.finditer(rb"(?<![0-9])(\d+)\s+(\d+)\s+obj\b", d))
+        # (num, gen) -> offset just past `obj`, so an indirect /Length is one
+        # lookup; a regex over the whole file per stream was quadratic (670 s
+        # on a 24-page arXiv reference with 6000 streams).
+        self._offsets = {}
+        for m in headers:
+            self._offsets.setdefault((int(m.group(1)), int(m.group(2))), m.end())
+        for m in headers:
             num = int(m.group(1))
             lx = _Lexer(d, m.end())
             obj = lx.object()
@@ -271,7 +278,10 @@ class PdfDocument:
                 self._expand_objstm(obj, stream)
 
     def _direct_length(self, ref):
-        m = re.search(rb"(?<![0-9])%d\s+%d\s+obj\s+(\d+)" % ref, self.data)
+        pos = self._offsets.get((ref[0], ref[1]))
+        if pos is None:
+            return None
+        m = re.compile(rb"\s+(\d+)").match(self.data, pos)
         return int(m.group(1)) if m else None
 
     def _expand_objstm(self, obj, stream):
