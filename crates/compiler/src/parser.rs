@@ -15950,9 +15950,10 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // `title_format`). Only a bare load is silent: titlesec's options
         // (`explicit`, `compact`, ...) change real output.
         "titlesec" => options.is_empty(),
-        // cancel.sty: \cancel, \bcancel, \xcancel are implemented
-        // (math.rs Frame::Cancel/BCancel/XCancel); \cancelto is diagnosed
-        // where used. cancel takes no package options.
+        // cancel.sty: \cancel, \bcancel, \xcancel and
+        // \cancelto{value}{body} are implemented (math.rs
+        // Frame::Cancel, the value as the atom's superscript).
+        // cancel takes no package options.
         "cancel" => options.is_empty(),
         // `\enquote` is implemented; csquotes' style/language options
         // (`style=`, `autostyle`, ...) are not modelled, so only a bare load

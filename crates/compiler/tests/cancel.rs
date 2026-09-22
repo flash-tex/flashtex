@@ -1,4 +1,4 @@
-//! Tests for the cancel package: `\cancel`, `\bcancel`, `\xcancel`.
+//! Tests for the cancel package: `\cancel`, `\bcancel`, `\xcancel`, `\cancelto`.
 
 use flashtex_compiler::incremental::compile_full;
 use flashtex_compiler::layout::LayoutConstraints;
@@ -65,6 +65,66 @@ fn cancel_without_package_reports_missing_package() {
     assert!(
         messages.iter().any(|m| m.contains("requires") && m.contains("cancel")),
         "expected a missing-package diagnostic for cancel, got: {messages:?}"
+    );
+}
+
+#[test]
+fn cancelto_parses_without_error() {
+    let out = compile(&preamble("$\\cancelto{0}{x}$"));
+    assert!(
+        out.diagnostics.is_empty(),
+        "\\cancelto{{0}}{{x}} diagnostics: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn cancelto_without_package_reports_missing_package() {
+    let out = compile("\\documentclass{article}\n\\begin{document}\n$\\cancelto{0}{x}$\n\\end{document}");
+    assert!(
+        !out.diagnostics.is_empty(),
+        "\\cancelto without \\usepackage{{cancel}} should produce a diagnostic"
+    );
+    let messages: Vec<&str> = out.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert!(
+        messages.iter().any(|m| m.contains("requires") && m.contains("cancel")),
+        "expected a missing-package diagnostic for cancelto, got: {messages:?}"
+    );
+}
+
+#[test]
+fn cancelto_produces_cancel_frame_with_value_superscript() {
+    let mut packages = MathPackages::KERNEL;
+    packages.load_package("cancel");
+
+    let mut diagnostics = Vec::new();
+    let source = r"\cancelto{0}{x}";
+    let tokens = flashtex_compiler::lexer::tokenize(source);
+    let list = math::parse_tokens(&tokens, packages, &mut diagnostics);
+    assert!(diagnostics.is_empty(), "\\cancelto: {diagnostics:?}");
+    assert_eq!(list.atoms.len(), 1, "\\cancelto: {:?}", list.atoms);
+    let atom = &list.atoms[0];
+    match &atom.nucleus {
+        Nucleus::Framed { body, frame } => {
+            assert_eq!(*frame, Frame::Cancel, "\\cancelto frame");
+            assert_eq!(body.atoms.len(), 1, "\\cancelto body: {:?}", body.atoms);
+            assert_eq!(
+                body.atoms[0].nucleus,
+                Nucleus::Symbol("x".into()),
+                "\\cancelto body"
+            );
+        }
+        other => panic!("\\cancelto: expected Framed nucleus, got {other:?}"),
+    }
+    let value = atom
+        .superscript
+        .as_ref()
+        .expect("\\cancelto value annotation attached as superscript");
+    assert_eq!(value.atoms.len(), 1, "\\cancelto value: {value:?}");
+    assert_eq!(
+        value.atoms[0].nucleus,
+        Nucleus::Symbol("0".into()),
+        "\\cancelto value"
     );
 }
 

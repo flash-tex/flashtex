@@ -30,7 +30,7 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
     "underrightarrow", "underleftarrow", "underleftrightarrow", "Bbb", "bold", "dashrightarrow",
     "dasharrow", "dashleftarrow",
     "mathllap", "mathrlap", "mathclap",
-    "cancel", "bcancel", "xcancel",
+    "cancel", "bcancel", "xcancel", "cancelto",
     // Issue #846: the kernel/amsmath arms the real-document corpus dropped.
     "backslash", "lvert", "rvert", "lVert", "rVert", "vert", "Vert", "ensuremath", "mkern",
     "mskip", "medspace", "thickspace", "negmedspace", "negthickspace", "thinspace",
@@ -70,7 +70,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "usetikzlibrary", "draw", "node", "fill", "path",
     "subcaption", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
-    "mathscr", "pmb", "displaylimits", "cancelto",
+    "mathscr", "pmb", "displaylimits",
     "neg", "lnot",
     "hookleftarrow", "nearrow", "searrow",
     "star", "flat", "natural", "sharp",
