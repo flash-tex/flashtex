@@ -156,6 +156,9 @@ pub struct PathsRec {
     pub span: Span,
     /// beamer covered material: the box keeps its space, nothing is painted.
     pub hidden: bool,
+    /// beamer `\visible`/`\invisible`-covered material: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
+    pub unpainted: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -190,6 +193,9 @@ pub struct GraphicRec {
     pub span: Span,
     /// beamer covered material: the box keeps its space, nothing is painted.
     pub hidden: bool,
+    /// beamer `\visible`/`\invisible`-covered material: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
+    pub unpainted: bool,
 }
 
 /// A laid-out `\textsuperscript`/`\textsubscript`: the script-size content
@@ -247,6 +253,9 @@ pub struct TableRec {
     pub span: Span,
     /// beamer covered material: the box keeps its space, nothing is painted.
     pub hidden: bool,
+    /// beamer `\visible`/`\invisible`-covered material: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
+    pub unpainted: bool,
 }
 
 #[derive(Clone)]
@@ -308,6 +317,9 @@ pub struct MathRec {
     pub continues: bool,
     /// beamer covered material: the box keeps its space, nothing is painted.
     pub hidden: bool,
+    /// beamer `\visible`/`\invisible`-covered material: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
+    pub unpainted: bool,
     /// Paint for glyphs and rules whose source span lies inside a byte
     /// range of this formula's document (xcolor `\textcolor`/`\color` in
     /// math); the innermost range wins, unpainted leaves stay black.
@@ -2182,6 +2194,7 @@ impl<'a> Context<'a> {
             inline_breaks,
             continues: false,
             hidden: false,
+            unpainted: false,
             #[cfg(feature = "math-glyph-spans")]
             span_paints: Vec::new(),
         });
@@ -3565,7 +3578,7 @@ impl<'a> Context<'a> {
                     let glue = self.space_glue(style, style.size_or(size), *factor);
                     push(&mut out, &mut recs, pl::Item::Glue(glue), None);
                 }
-                AItem::Math { list, span, hidden, size_cpt } => {
+                AItem::Math { list, span, hidden, unpainted, size_cpt } => {
                     // `size`, not the body size: math inside a footnote is set
                     // with that size's math fonts (`math_fonts_at`), and math
                     // under a size declaration (`{\small $x$}`) with the
@@ -3577,6 +3590,11 @@ impl<'a> Context<'a> {
                         if *hidden || base.hidden {
                             if let BoxRec::Math(mi) = self.recs[rec] {
                                 self.maths[mi].hidden = true;
+                            }
+                        }
+                        if *unpainted || base.unpainted {
+                            if let BoxRec::Math(mi) = self.recs[rec] {
+                                self.maths[mi].unpainted = true;
                             }
                         }
                         for (item, rec) in self.math_pieces(rec, size, *span) {
@@ -3815,8 +3833,8 @@ impl<'a> Context<'a> {
                     let (run, rec) = self.color_box(cb, size);
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                 }
-                AItem::Graphic { options, path, span, hidden } => {
-                    if let Some((run, rec)) = self.graphic_box(options, path, *span, size, *hidden || base.hidden) {
+                AItem::Graphic { options, path, span, hidden, unpainted } => {
+                    if let Some((run, rec)) = self.graphic_box(options, path, *span, size, *hidden || base.hidden, *unpainted || base.unpainted) {
                         push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                     }
                 }
@@ -3945,7 +3963,7 @@ impl<'a> Context<'a> {
     /// standalone graphic, for running text: `demo`/`draft` paint a
     /// placeholder, a file that cannot be read keeps its `width=`/`height=`
     /// size empty and is reported.
-    fn graphic_box(&mut self, options: &str, file: &str, span: Span, size: f64, hidden: bool) -> Option<(pl::GlyphRun, usize)> {
+    fn graphic_box(&mut self, options: &str, file: &str, span: Span, size: f64, hidden: bool, unpainted: bool) -> Option<(pl::GlyphRun, usize)> {
         use crate::graphics::{self, GKey};
         let s = self.style;
         let tp = self.text_params(TextStyle::default(), size);
@@ -3974,7 +3992,7 @@ impl<'a> Context<'a> {
             }
         };
         let rec = if gmode.demo {
-            GraphicRec { gbox: graphics::demo_box(&keys), resource: None, placeholder: Some(floatpage::Placeholder::DemoRule), span, hidden }
+            GraphicRec { gbox: graphics::demo_box(&keys), resource: None, placeholder: Some(floatpage::Placeholder::DemoRule), span, hidden, unpainted }
         } else {
             let loaded = match self.images {
                 Some((options, cache)) => cache.borrow_mut().load(options, file, page),
@@ -3984,19 +4002,19 @@ impl<'a> Context<'a> {
                 Ok((resource, info)) => {
                     let gbox = graphics::size_box(info.width_bp / graphics::BP_PER_PT, info.height_bp / graphics::BP_PER_PT, &keys);
                     let (resource, placeholder) = if draft { (None, Some(floatpage::Placeholder::DraftFrame)) } else { (Some(resource), None) };
-                    GraphicRec { gbox, resource, placeholder, span, hidden }
+                    GraphicRec { gbox, resource, placeholder, span, hidden, unpainted }
                 }
                 Err(msg) if draft => {
                     let nat = graphics::MISSING_NATURAL_BP / graphics::BP_PER_PT;
                     let sources = vec![self.source(span)];
                     self.emit(None, Diagnostic::warning("image_unavailable", format!("{msg}; the `draft` option keeps its 1 in natural size, as pdfTeX does"), sources));
-                    GraphicRec { gbox: graphics::size_box(nat, nat, &keys), resource: None, placeholder: Some(floatpage::Placeholder::DraftFrame), span, hidden }
+                    GraphicRec { gbox: graphics::size_box(nat, nat, &keys), resource: None, placeholder: Some(floatpage::Placeholder::DraftFrame), span, hidden, unpainted }
                 }
                 Err(msg) => match requested() {
                     Some(gbox) => {
                         let sources = vec![self.source(span)];
                         self.emit(None, Diagnostic::error("image_unavailable", format!("{msg} (its requested size is kept empty)"), sources));
-                        GraphicRec { gbox, resource: None, placeholder: None, span, hidden }
+                        GraphicRec { gbox, resource: None, placeholder: None, span, hidden, unpainted }
                     }
                     None => {
                         let sources = vec![self.source(span)];
@@ -4025,7 +4043,7 @@ impl<'a> Context<'a> {
                 pieces.push(TablePiece { x: p.x, baseline: p.baseline, block });
             }
         }
-        self.recs.push(BoxRec::Table(Rc::new(TableRec { pieces, rules: geometry.rules, fills: geometry.fills, span: t.span, hidden: t.hidden })));
+        self.recs.push(BoxRec::Table(Rc::new(TableRec { pieces, rules: geometry.rules, fills: geometry.fills, span: t.span, hidden: t.hidden, unpainted: t.unpainted })));
         let run = pl::GlyphRun {
             font: MATH_SENTINEL,
             size,
@@ -4204,7 +4222,7 @@ impl<'a> Context<'a> {
                     .map(|r| crate::table::PlacedRule { top: r.top - base, ..r.clone() })
                     .collect()
             };
-            let rec = TableRec { pieces, rules: cut(&chunk.geometry.rules), fills: cut(&chunk.geometry.fills), span, hidden: false };
+            let rec = TableRec { pieces, rules: cut(&chunk.geometry.rules), fills: cut(&chunk.geometry.fills), span, hidden: false, unpainted: false };
             let (height, depth) = (base - top, bottom - base);
             ctx.recs.push(BoxRec::Table(Rc::new(rec)));
             let run = pl::GlyphRun {
@@ -4706,8 +4724,8 @@ impl<'a> Context<'a> {
                 // An explicit `\item[...]` sets its own content (math,
                 // styles); every other label is plain text or a symbol.
                 let nb = match geom.label_items.as_deref().filter(|items| !items.is_empty()) {
-                    Some(items) => self.label_box_items(items, size, bold, geom.hidden),
-                    None => self.label_box(text, *span, size, bold, geom.label_symbol, geom.hidden, geom.alerted, geom.level),
+                    Some(items) => self.label_box_items(items, size, bold, geom.hidden, geom.unpainted),
+                    None => self.label_box(text, *span, size, bold, geom.label_symbol, geom.hidden, geom.unpainted, geom.alerted, geom.level),
                 };
                 if let Some(nb) = nb {
                     let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
@@ -5027,6 +5045,7 @@ impl<'a> Context<'a> {
                 g.labelsep_pt.map(f64::to_bits).hash(&mut h);
                 g.itemindent_pt.to_bits().hash(&mut h);
                 g.hidden.hash(&mut h);
+                g.unpainted.hash(&mut h);
                 h.finish()
             });
             for (part_index, part) in parts.iter().enumerate() {
@@ -5549,7 +5568,7 @@ impl<'a> Context<'a> {
     /// 50.17bp on beamer-default p3; a level-2 label at x 58.78bp in the
     /// `\small` body's 9.96pt, its `\hbox(6.9986+0.0)` = 0.54986 x 10 +
     /// 1.5, on the `beamer-polish` probe deck's p2).
-    fn beamer_triangle_box(&mut self, span: Span, size: f64, color: Option<flashtex_compiler::color::DeviceColor>, hidden: bool, raise_pt: f64) -> Option<NumberBox> {
+    fn beamer_triangle_box(&mut self, span: Span, size: f64, color: Option<flashtex_compiler::color::DeviceColor>, hidden: bool, unpainted: bool, raise_pt: f64) -> Option<NumberBox> {
         const MSAM_TRIANGLE_WIDTH_EM: f64 = 0.777781;
         #[allow(non_snake_case)]
         let RAISE_PT: f64 = raise_pt;
@@ -5558,7 +5577,7 @@ impl<'a> Context<'a> {
         let seg = adapter::Segment {
             text: text.to_string(),
             chars: vec![adapter::CharSrc { document: span.document, start: span.start, end: span.end }],
-            style: TextStyle { color, hidden, ..TextStyle::default() },
+            style: TextStyle { color, hidden, unpainted, ..TextStyle::default() },
         };
         let math = self.fonts.resolve(self.style.family, Role::Math, size);
         let (mut run, rec) = if math.substituted.is_none() { self.text_box_in(&seg, size, math.face)? } else { self.text_box(&seg, size)? };
@@ -5611,7 +5630,7 @@ impl<'a> Context<'a> {
     /// the `\item` command's bytes: the words of `text` in the
     /// list's label style (`\descriptionlabel`'s `\bfseries` for a
     /// `description`), separated by interword glue at natural width.
-    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool, symbol: bool, hidden: bool, alerted: bool, level: u8) -> Option<NumberBox> {
+    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool, symbol: bool, hidden: bool, unpainted: bool, alerted: bool, level: u8) -> Option<NumberBox> {
         let text = if symbol && text == "⋅" { "·" } else { text };
         // beamer (`beamerinnerthemedefault.sty` 200-210): every itemize
         // level's label is `\raise1.25pt\hbox{$\blacktriangleright$}` (msam10
@@ -5627,13 +5646,13 @@ impl<'a> Context<'a> {
             let color = Some(if alerted { crate::overlay::alert_color() } else { beamer::structure_color() });
             let ball = self.beamer_theme().ball_items;
             let boxed = if symbol && ball {
-                Some(self.beamer_ball_item(span, hidden))
+                Some(self.beamer_ball_item(span, hidden, unpainted))
             } else if symbol {
-                self.beamer_triangle_box(span, size, color, hidden, if level >= 2 { 1.5 } else { 1.25 })
+                self.beamer_triangle_box(span, size, color, hidden, unpainted, if level >= 2 { 1.5 } else { 1.25 })
             } else if ball {
-                self.beamer_ball_number(text, span, hidden)
+                self.beamer_ball_number(text, span, hidden, unpainted)
             } else {
-                self.word_box(text, span, size, TextStyle { bold, color, hidden, ..TextStyle::default() }, false)
+                self.word_box(text, span, size, TextStyle { bold, color, hidden, unpainted, ..TextStyle::default() }, false)
             };
             if let Some(nb) = &boxed {
                 for (_, rec, _) in &nb.pieces {
@@ -5659,8 +5678,8 @@ impl<'a> Context<'a> {
     /// list's label style, every box at its natural position. What
     /// [`Self::label_box`] does for a plain-text label, for content that
     /// `word_box` cannot set (`\item[$\alpha$]`, issue #676).
-    fn label_box_items(&mut self, items: &[AItem], size: f64, bold: bool, hidden: bool) -> Option<NumberBox> {
-        let (mut list, mut recs, _, _) = self.hlist(items, size, TextStyle { bold, hidden, ..TextStyle::default() }, ParaStyle::Plain);
+    fn label_box_items(&mut self, items: &[AItem], size: f64, bold: bool, hidden: bool, unpainted: bool) -> Option<NumberBox> {
+        let (mut list, mut recs, _, _) = self.hlist(items, size, TextStyle { bold, hidden, unpainted, ..TextStyle::default() }, ParaStyle::Plain);
         // `hlist` ends with TeX's paragraph end (`\penalty10000
         // \parfillskip \penalty-10000`); this is an `\hbox`, not a paragraph.
         if matches!(list.last_chunk::<3>(), Some([pl::Item::Penalty(_), pl::Item::Glue(_), pl::Item::Penalty(_)])) {
@@ -5767,10 +5786,10 @@ impl<'a> Context<'a> {
         let description = list_geom.is_some_and(|g| g.description);
         let linewidth = s.text_width_pt - hang;
         let label = list_geom
-            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol, g.label_items.as_deref(), g.hidden, g.alerted, g.level)))
-            .and_then(|((text, span), bold, symbol, items, hidden, alerted, level)| match items.filter(|items| !items.is_empty()) {
-                Some(items) => self.label_box_items(items, size, bold, hidden),
-                None => self.label_box(text, *span, size, bold, symbol, hidden, alerted, level),
+            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol, g.label_items.as_deref(), g.hidden, g.unpainted, g.alerted, g.level)))
+            .and_then(|((text, span), bold, symbol, items, hidden, unpainted, alerted, level)| match items.filter(|items| !items.is_empty()) {
+                Some(items) => self.label_box_items(items, size, bold, hidden, unpainted),
+                None => self.label_box(text, *span, size, bold, symbol, hidden, unpainted, alerted, level),
             });
         let mut width = hang + if bracket { 0.6 * linewidth } else { 0.0 };
         let (mut runs, mut items, mut recs) = (Vec::new(), Vec::new(), Vec::new());
@@ -5898,15 +5917,15 @@ impl<'a> Context<'a> {
     /// drawn as vector paths (beamer's navigation symbols). The line's
     /// baseline is the box's.
     pub(super) fn paths_block(&mut self, span: Span, width: f64, height: f64, depth: f64, x: f64, shapes: Vec<Shape>) -> BuiltBlock {
-        let (run, rec) = self.paths_box(span, width, height, depth, shapes, false);
+        let (run, rec) = self.paths_box(span, width, height, depth, shapes, false, false);
         self.one_box_block(run, rec, x, height, depth)
     }
 
     /// A [`BoxRec::Paths`] box of `width` x `height` + `depth` holding
     /// `shapes`, as one item of a horizontal list (a beamer `items[ball]`
     /// label's disc).
-    pub(super) fn paths_box(&mut self, span: Span, width: f64, height: f64, depth: f64, shapes: Vec<Shape>, hidden: bool) -> (pl::GlyphRun, usize) {
-        self.recs.push(BoxRec::Paths(Rc::new(PathsRec { shapes, span, hidden })));
+    pub(super) fn paths_box(&mut self, span: Span, width: f64, height: f64, depth: f64, shapes: Vec<Shape>, hidden: bool, unpainted: bool) -> (pl::GlyphRun, usize) {
+        self.recs.push(BoxRec::Paths(Rc::new(PathsRec { shapes, span, hidden, unpainted })));
         let run = pl::GlyphRun {
             font: MATH_SENTINEL,
             size: self.style.body_size_pt,
@@ -8519,6 +8538,7 @@ fn merge_style(base: TextStyle, s: TextStyle) -> TextStyle {
         undefined: s.undefined.or(base.undefined),
         color: s.color.or(base.color),
         hidden: s.hidden || base.hidden,
+        unpainted: s.unpainted || base.unpainted,
         named: s.named.or(base.named),
         cjk: s.cjk.or(base.cjk),
     }
@@ -8538,6 +8558,7 @@ fn merge_base(style: TextStyle, base: TextStyle) -> TextStyle {
         undefined: style.undefined.or(base.undefined),
         color: style.color.or(base.color),
         hidden: style.hidden || base.hidden,
+        unpainted: style.unpainted || base.unpainted,
         named: style.named.or(base.named),
         cjk: style.cjk.or(base.cjk),
     }
@@ -13013,7 +13034,8 @@ fn assemble_block(
             // it paints depends on `\setbeamercovered`: nothing (`invisible`,
             // the default) or its colours mixed `pct!bg` (`transparent`),
             // images excepted (pdflatex draws a covered image at full
-            // strength under `transparent`).
+            // strength under `transparent`). `\visible`/`\invisible`-covered
+            // material (`unpainted`) is never painted, in either mode.
             let hidden = match &recs[rec] {
                 BoxRec::Text { style, .. } => style.hidden,
                 BoxRec::Math(mi) => maths[*mi].hidden,
@@ -13022,7 +13044,15 @@ fn assemble_block(
                 BoxRec::Paths(p) => p.hidden,
                 _ => false,
             };
-            if hidden && covered == Covered::Invisible {
+            let unpainted = match &recs[rec] {
+                BoxRec::Text { style, .. } => style.unpainted,
+                BoxRec::Math(mi) => maths[*mi].unpainted,
+                BoxRec::Table(t) => t.unpainted,
+                BoxRec::Graphic(g) => g.unpainted,
+                BoxRec::Paths(p) => p.unpainted,
+                _ => false,
+            };
+            if unpainted || hidden && covered == Covered::Invisible {
                 continue;
             }
             let painted_from = items.len();

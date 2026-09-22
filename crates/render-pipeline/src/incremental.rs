@@ -380,6 +380,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                     (seg.style.slanted, seg.style.caps, seg.style.family, seg.style.undefined).hash(h);
                     seg.style.literal.hash(h);
                     seg.style.hidden.hash(h);
+                    seg.style.unpainted.hash(h);
                     seg.style.named.hash(h);
                     for c in &seg.chars {
                         (c.start.wrapping_sub(base)).hash(h);
@@ -396,11 +397,12 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 factor.hash(h);
                 no_break.hash(h);
             }
-            Item::Math { list, span, hidden, size_cpt } => {
+            Item::Math { list, span, hidden, unpainted, size_cpt } => {
                 hash_math(list, h);
                 (span.start.wrapping_sub(base)).hash(h);
                 (span.end.wrapping_sub(base)).hash(h);
                 hidden.hash(h);
+                unpainted.hash(h);
                 size_cpt.hash(h);
             }
             Item::LineBreak { skip_pt } => {
@@ -472,12 +474,13 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
             Item::ColorBox(b) => {
                 format!("{b:?}").hash(h);
             }
-            Item::Graphic { options, path, span, hidden } => {
+            Item::Graphic { options, path, span, hidden, unpainted } => {
                 options.hash(h);
                 path.hash(h);
                 (span.start.wrapping_sub(base)).hash(h);
                 (span.end.wrapping_sub(base)).hash(h);
                 hidden.hash(h);
+                unpainted.hash(h);
             }
             Item::Lap { items } => {
                 hash_items(items, base, h);
