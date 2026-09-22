@@ -15,9 +15,10 @@ use super::{
 use crate::diagnostics::Diagnostic;
 use crate::lexer::{Token, TokenKind};
 use crate::tabular::{
-    Align, BookRule, BoxAlign, Cell, ColorFill, ColorSpec, ColumnTemplate, Entry, FontDimen, Length,
-    Longtable, LongtableAlign, LongtableSection, Material, Multirow, MultirowPos, MultirowWidth,
-    Row, Tabular, VerticalPosition, ARRAYRULEWIDTH_PT, DOUBLERULESEP_PT, TABCOLSEP_PT,
+    Align, BookRule, BoxAlign, Cell, ColorFill, ColorSpec, ColumnTemplate, Entry, ExtraColsep,
+    FontDimen, Length, Longtable, LongtableAlign, LongtableSection, Material, Multirow,
+    MultirowPos, MultirowWidth, Row, Tabular, VerticalPosition, ARRAYRULEWIDTH_PT,
+    DOUBLERULESEP_PT, TABCOLSEP_PT,
 };
 use crate::Span;
 
@@ -280,7 +281,7 @@ struct Preamble {
     pending_color: Option<ColorFill>,
     placed: bool,
     first_amp: bool,
-    fill: bool,
+    extra: ExtraColsep,
 }
 
 /// Prepends a declaration as array.sty's `\save@decl` does
@@ -301,14 +302,14 @@ impl Preamble {
             pending_color: None,
             placed: false,
             first_amp: true,
-            fill: false,
+            extra: ExtraColsep::None,
         }
     }
 
     fn finish(mut self) -> (Vec<ColumnTemplate>, Vec<Decls>) {
         if !self.first_amp {
             // `\tabskip\z@skip` precedes the preamble's `\cr`.
-            self.current.fill_after = false;
+            self.current.extra_after = ExtraColsep::None;
             self.columns.push(self.current);
             self.decls.push(self.current_decls);
         }
@@ -373,7 +374,7 @@ impl Preamble {
         if self.first_amp {
             self.first_amp = false;
         } else {
-            self.current.fill_after = self.fill;
+            self.current.extra_after = self.extra;
             let done = std::mem::replace(&mut self.current, empty_template(Align::Left));
             self.columns.push(done);
             self.decls.push(std::mem::take(&mut self.current_decls));
@@ -387,7 +388,7 @@ fn empty_template(align: Align) -> ColumnTemplate {
         before: Vec::new(),
         align,
         after: Vec::new(),
-        fill_after: false,
+        extra_after: ExtraColsep::None,
         color: None,
     }
 }
@@ -2166,15 +2167,19 @@ impl P<'_> {
             if value == "fill" {
                 // Inside `\multicolumn` the assignment is local to the entry.
                 if !multicolumn {
-                    pre.fill = true;
+                    pre.extra = ExtraColsep::Fill;
                 }
-            } else if parse_dimen_pt_at(value, self.body_pt()) == Some(0.0) {
+            } else if let Some(pt) = parse_dimen_pt_at(value, self.body_pt()) {
                 if !multicolumn {
-                    pre.fill = false;
+                    pre.extra = if pt == 0.0 {
+                        ExtraColsep::None
+                    } else {
+                        ExtraColsep::Fixed(pt)
+                    };
                 }
             } else {
                 self.diags.push(Diagnostic::warning(
-                    format!("\\extracolsep{{{value}}} is not implemented; only \\fill and 0pt are"),
+                    format!("\\extracolsep{{{value}}} is not implemented; only fixed lengths and \\fill are"),
                     Some(input.token.span),
                     Some("ignored the inter-column space".into()),
                 ));
