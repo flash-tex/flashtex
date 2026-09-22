@@ -16,7 +16,10 @@
 //!    the proposal): the entry's closure, then the entry directory's own
 //!    package files, then each manifest `texinputs` directory in turn. The
 //!    file is executed through the expansion engine (`crate::expansion`);
-//! 3. otherwise the command passes through to the parser, whose "recognised
+//! 3. otherwise, for the packages flipped off the built-in list so far
+//!    (just `appendix`), the vendored real file ([`APPENDIX_STY`]), so a
+//!    document needs no TeX Live install to run it;
+//! 4. otherwise the command passes through to the parser, whose "recognised
 //!    but not implemented" warning names what was searched
 //!    ([`search_description`]).
 //!
@@ -66,7 +69,6 @@ pub const BUILT_IN_PACKAGES: &[(&str, &str)] = &[
     ("ulem", "\\uline/\\sout are parser decorations; ulem.sty needs \\hbox and \\vrule"),
     ("soul", "\\so/\\hl are parser decorations; soul.sty needs \\hbox and \\discretionary"),
     ("textcomp", "text symbols are the Unicode text tables; the file needs \\DeclareTextSymbol"),
-    ("appendix", "\\appendix is parser state"),
     ("lipsum", "\\lipsum text is a parser table"),
     ("verbatim", "verbatim and comment environments are read by the lexer; verbatim.sty needs \\catcode tricks on \\obeylines output"),
     ("comment", "the comment environment is read by the lexer"),
@@ -175,18 +177,37 @@ pub fn is_package_file(path: &str) -> bool {
     path.ends_with(".sty") || path.ends_with(".cls")
 }
 
+/// The real `appendix.sty` (v1.2c), vendored from TeX Live 2026 into
+/// `tex-expansion/vendor-packages/` with its provenance header: the first
+/// package flipped from a built-in no-op to running the real file through
+/// the expansion engine. Like the hyphenation patterns, it is read with
+/// `include_str!` so a document needs no TeX Live install; the bytes past
+/// the provenance header are byte-for-byte the upstream file.
+pub const APPENDIX_STY: &str = include_str!("../../tex-expansion/vendor-packages/appendix.sty");
+
 /// The engine's package reader for a project: owns `files`, the
 /// `(path, text)` of every `.sty`/`.cls` document in project order (the
 /// closure outlives the borrow, and travels with incremental checkpoints;
 /// the text is the one the expansion pass prepared, verbatim regions
-/// blanked, like an `\input` file's), declines built-in names, and
-/// resolves the rest exactly as [`resolve`] does.
+/// blanked, like an `\input` file's), declines built-in names, resolves
+/// the rest exactly as [`resolve`] does, and falls back to the vendored
+/// real file for the flipped packages ([`APPENDIX_STY`]) when the project
+/// has no file of its own.
 pub fn reader(files: Vec<(String, String)>) -> PackageReader {
     Rc::new(move |name, ext| {
-        if is_built_in(name, ext) || name.is_empty() || !crate::parser::path_is_safe(name) {
+        if name.is_empty() || !crate::parser::path_is_safe(name) {
             return None;
         }
-        files.iter().find(|(path, _)| path_names(path, name, ext)).map(|(_, text)| text.clone())
+        if is_built_in(name, ext) {
+            return None;
+        }
+        if let Some((_, text)) = files.iter().find(|(path, _)| path_names(path, name, ext)) {
+            return Some(text.clone());
+        }
+        if ext == "sty" && name == "appendix" {
+            return Some(APPENDIX_STY.to_string());
+        }
+        None
     })
 }
 
