@@ -183,6 +183,9 @@ pub enum Primitive {
     RenewCommand,
     ProvideCommand,
     DeclareRobustCommand,
+    /// etoolbox's `\patchcmd{\cmd}{search}{replace}{success}{failure}`
+    /// (see `expand.rs::do_patchcmd`).
+    PatchCmd,
     NewEnvironment,
     RenewEnvironment,
     NewTheorem,

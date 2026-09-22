@@ -15817,10 +15817,11 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // etoolbox's toggle booleans (`\newtoggle`/`\providetoggle`,
         // `\toggletrue`/`\togglefalse`, `\iftoggle`) run in the expansion
         // pass (see expansion's `HOST_PRELUDE`), so loading the package is
-        // silent. Everything else etoolbox ships (`\patchcmd`,
-        // `\AtEndPreamble`, list processing, robust-command variants) is
-        // not implemented and is diagnosed as an unknown command where it
-        // is used.
+        // silent, as does `\patchcmd` (an engine primitive over the
+        // patched macro's stored replacement text). Everything else
+        // etoolbox ships (`\AtEndPreamble`, list processing,
+        // robust-command variants) is not implemented and is diagnosed
+        // as an unknown command where it is used.
         "etoolbox" => options.is_empty(),
         // Engine-test packages (`iftex`, and the legacy `ifxetex`/`ifluatex`
         // shims): their `\ifxetex`/`\ifluatex` switches are defined false in

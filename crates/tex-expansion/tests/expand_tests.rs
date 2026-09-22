@@ -336,6 +336,48 @@ fn providecommand_keeps_existing() {
 }
 
 #[test]
+fn patchcmd_replaces_and_runs_success() {
+    assert_eq!(
+        run(r"\newcommand{\greet}{Hello}\patchcmd{\greet}{Hello}{Hi}{ok}{fail}\greet"),
+        "okHi"
+    );
+}
+
+#[test]
+fn patchcmd_failure_leaves_macro_unchanged() {
+    assert_eq!(
+        run(r"\newcommand{\greet}{Hello}\patchcmd{\greet}{Nope}{X}{ok}{fail}\greet"),
+        "failHello"
+    );
+}
+
+#[test]
+fn patchcmd_replaces_first_occurrence_only() {
+    assert_eq!(run(r"\def\a{aXa}\patchcmd{\a}{a}{b}{ok}{fail}\a"), "okbXa");
+}
+
+#[test]
+fn patchcmd_keeps_parameters() {
+    assert_eq!(
+        run(r"\newcommand{\greet}[1]{Hello #1}\patchcmd{\greet}{Hello}{Hi}{ok}{fail}\greet{World}"),
+        "okHi World"
+    );
+}
+
+#[test]
+fn patchcmd_search_for_param_slot_matches_it() {
+    assert_eq!(
+        run(r"\newcommand{\greet}[1]{Hello #1}\patchcmd{\greet}{#1}{#1!}{ok}{fail}\greet{World}"),
+        "okHello World!"
+    );
+}
+
+#[test]
+fn patchcmd_undefined_runs_failure() {
+    assert_eq!(run(r"\patchcmd{\nosuch}{a}{b}{ok}{fail}"), "fail");
+}
+
+#[test]
 fn newenvironment_expands_begin_end() {
     assert_eq!(
         run(r"\newenvironment{myenv}{[BEGIN]}{[END]}\begin{myenv}content\end{myenv}"),
