@@ -882,6 +882,13 @@ fn configure(engine: &mut Engine) {
     }
     engine.declare_host_command("flashtexhspacedone");
     engine.declare_host_command("flashtexvspacedone");
+    // NFSS `\fontsize`/`\selectfont` run in the engine (`\set@fontsize`
+    // records `\f@size`/`\f@baselineskip`, `\size@update` sets
+    // `\baselineskip`), then hand the command back under these names so
+    // the parser sees `\fontsize{<f@size>}{<f@baselineskip>}` and
+    // `\selectfont` exactly as it did.
+    engine.declare_host_command("flashtexfontsizedone");
+    engine.declare_host_command("flashtexselectfontdone");
 }
 
 /// The expansion engine's `em`/`ex` come from the text font its tracked font
@@ -1047,6 +1054,18 @@ pub(crate) fn class_prelude(class: &ClassSetup) -> String {
             text.push_str(&format!("\\@{flag}true\n"));
         }
     }
+    // NFSS's record of `\normalsize` after the class's size option
+    // (`size1x.clo`: `\@setfontsize\normalsize\@xpt\@xiipt` etc.), which
+    // `\fontsize`/`\@setfontsize` then update: `\f@size` 10/10.95/12 and
+    // `\f@baselineskip` 12/13.6/14.5pt (pdflatex `\typeout` at
+    // `\begin{document}` for the three options).
+    let (f_size, f_baselineskip) = options.split(',').map(str::trim).fold(("10", "12.0pt"), |acc, option| match option {
+        "10pt" => ("10", "12.0pt"),
+        "11pt" => ("10.95", "13.6pt"),
+        "12pt" => ("12", "14.5pt"),
+        _ => acc,
+    });
+    text.push_str(&format!("\\def\\f@size{{{f_size}}}\\def\\f@baselineskip{{{f_baselineskip}}}\n"));
     text.push_str("\\makeatother\n");
     text
 }
@@ -1447,6 +1466,8 @@ impl<'d> Converter<'d> {
                     // `do_flashtex_space`'s absorbed-and-spliced commands.
                     "flashtexhspacedone" => conv.push(TokenKind::Command("hspace".to_string()), at),
                     "flashtexvspacedone" => conv.push(TokenKind::Command("vspace".to_string()), at),
+                    "flashtexfontsizedone" => conv.push(TokenKind::Command("fontsize".to_string()), at),
+                    "flashtexselectfontdone" => conv.push(TokenKind::Command("selectfont".to_string()), at),
                     "flashtexbegintabular" | "flashtexbegintabularstar" | "flashtexbeginarray" => {
                         let env = match name.as_str() {
                             "flashtexbegintabular" => "tabular",
