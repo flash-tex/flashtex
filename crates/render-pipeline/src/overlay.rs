@@ -380,6 +380,7 @@ mod tests {
             list: None,
             sized: None,
             leading_pt: None,
+            hang: None,
         }
     }
 

@@ -618,6 +618,7 @@ fn page_head_block(texts: &[&str], document: usize, range: Range) -> Block {
         list: None,
         sized: None,
         leading_pt: None,
+        hang: None,
     }
 }
 
@@ -668,6 +669,7 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
         // The head's leading travels on its `SizedPara`, which resizes the
         // whole paragraph; nothing here is a compiler-observed `\par`.
         leading_pt: None,
+        hang: None,
     }
 }
 
