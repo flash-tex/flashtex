@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 494 text-mode and 678 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 494 text-mode and 679 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -1087,8 +1087,9 @@ Canonical sources:
 | `\textstyle` |  | accepted without changing size |
 | `\scriptstyle` |  | accepted without changing size |
 | `\scriptscriptstyle` |  | accepted without changing size |
-| `\limits` |  | accepted without changing script placement |
-| `\nolimits` |  | accepted without changing script placement |
+| `\limits` |  | set a named operator's script placement (`MathAtom::limits`) |
+| `\nolimits` |  | set a named operator's script placement (`MathAtom::limits`) |
+| `\displaylimits` |  | set a named operator's script placement (`MathAtom::limits`) |
 | `\nonumber` |  | accepted without effect |
 | `\notag` |  | accepted without effect |
 | `\middle` |  | accepted without effect |
