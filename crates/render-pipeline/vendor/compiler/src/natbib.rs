@@ -727,8 +727,10 @@ fn undefined(key: &str, span: Span) -> Diagnostic {
 }
 
 /// A `[...]` note as it is set: `~` is TeX's tie, an ordinary interword space
-/// that does not break. This layout never breaks inside a note, so a plain
-/// space renders it faithfully. An empty `[]` is `\if*#1*` — no note at all.
+/// that does not break, so it becomes U+00A0, which the pipeline sets as
+/// exactly that; a plain blank in the note is a break point like any other
+/// (`\cite[p.~5]{k}` breaks before `p.`, never after it). An empty `[]` is
+/// `\if*#1*` — no note at all.
 ///
 /// Citation runs are TeX source the parser sets (`P::set_citation_source`),
 /// while a note arrives already flattened to text, so the characters that
@@ -743,7 +745,7 @@ pub(crate) fn note_source(note: &str) -> String {
     let mut out = String::with_capacity(note.len());
     for c in note.chars() {
         match c {
-            '~' => out.push(' '),
+            '~' => out.push('\u{a0}'),
             '%' | '#' | '&' | '$' | '^' | '_' => {
                 out.push('\\');
                 out.push(c);
@@ -865,11 +867,11 @@ mod tests {
     fn one_optional_argument_is_the_post_note_not_the_pre_note() {
         assert_eq!(
             set("citep", None, Some("p.~7"), &["kp"]),
-            "(Knuth and Plass, 1981, p. 7)"
+            "(Knuth and Plass, 1981, p.\u{a0}7)"
         );
         assert_eq!(
             set("citep", Some("see"), Some("p.~7"), &["kp"]),
-            "(see Knuth and Plass, 1981, p. 7)"
+            "(see Knuth and Plass, 1981, p.\u{a0}7)"
         );
         assert_eq!(
             set("citep", Some("see"), None, &["kp"]),
@@ -877,11 +879,11 @@ mod tests {
         );
         assert_eq!(
             set("citet", None, Some("p.~7"), &["kp"]),
-            "Knuth and Plass (1981, p. 7)"
+            "Knuth and Plass (1981, p.\u{a0}7)"
         );
         assert_eq!(
             set("citet", Some("see"), Some("p.~7"), &["kp"]),
-            "Knuth and Plass (see 1981, p. 7)"
+            "Knuth and Plass (see 1981, p.\u{a0}7)"
         );
     }
 
@@ -890,12 +892,12 @@ mod tests {
         assert_eq!(set("citealt", None, None, &["kp"]), "Knuth and Plass 1981");
         assert_eq!(
             set("citealt", None, Some("p.~7"), &["kp"]),
-            "Knuth and Plass 1981, p. 7"
+            "Knuth and Plass 1981, p.\u{a0}7"
         );
         assert_eq!(set("citealp", None, None, &["kp"]), "Knuth and Plass, 1981");
         assert_eq!(
             set("citealp", None, Some("p.~7"), &["kp"]),
-            "Knuth and Plass, 1981, p. 7"
+            "Knuth and Plass, 1981, p.\u{a0}7"
         );
     }
 
@@ -960,7 +962,7 @@ mod tests {
         );
         assert_eq!(
             set("citep", Some("see"), Some("p.~7"), &["plass81", "hobby"]),
-            "(see Plass, 1981; Hobby, 1986, p. 7)"
+            "(see Plass, 1981; Hobby, 1986, p.\u{a0}7)"
         );
         assert_eq!(
             set("citeauthor", None, None, &["plass81", "hobby"]),
@@ -1068,7 +1070,7 @@ mod tests {
         let (text, _) = set_with(&options, "citet", None, None, &["plass81"]);
         assert_eq!(text, "Plass [2]");
         let (text, _) = set_with(&options, "citep", None, Some("p.~7"), &["plass81"]);
-        assert_eq!(text, "[2, p. 7]");
+        assert_eq!(text, "[2, p.\u{a0}7]");
     }
 
     #[test]
@@ -1136,7 +1138,7 @@ mod tests {
 
     #[test]
     fn a_note_is_escaped_back_to_source() {
-        assert_eq!(note_source("p.~5"), "p. 5");
+        assert_eq!(note_source("p.~5"), "p.\u{a0}5");
         assert_eq!(note_source("50%"), r"50\%");
     }
 

@@ -4756,6 +4756,15 @@ impl<'a> Context<'a> {
                         lead.push((pl::Item::kern(nb.width - at), None));
                     }
                     lead.push((pl::Item::kern(labelsep), None));
+                    // `\@item`'s `\everypar`: `\box\@labels \penalty\z@`, so
+                    // the line may break right after the label. It is taken
+                    // when a label wider than the line leaves no room for
+                    // the first word (a long author-year `\bibitem[...]`
+                    // label; `\emergencystretch` makes the label's own line
+                    // feasible).
+                    if !geom.nextline {
+                        lead.push((pl::Item::penalty(0), None));
+                    }
                     // enumitem `style=nextline` (`\enit@postlabel@i`'s
                     // `\newline`): the label takes a line of its own, so a
                     // `\\` follows it and the body starts on the next line

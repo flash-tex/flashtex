@@ -1947,6 +1947,14 @@ fn label_plain_text(content: &[Inline], source: Option<&str>) -> String {
         let (space_before, math) = match inline {
             Inline::Text { space_before, .. } => (*space_before, None),
             Inline::Math { list, space_before, .. } => (*space_before, Some(list)),
+            // An `\mbox`, or a kernel `\cite` label.
+            Inline::HBox(boxed) => {
+                if boxed.space_before && !text.is_empty() {
+                    text.push(' ');
+                }
+                text.push_str(&label_plain_text(&boxed.content, source));
+                continue;
+            }
             _ => continue,
         };
         if space_before && !text.is_empty() {
@@ -8030,6 +8038,18 @@ impl P<'_> {
         fn is_source(text: &str) -> bool {
             text.contains(['\\', '{', '}', '~'])
         }
+        // A kernel label is an `\hbox` (`bib::cite_inlines`): its run is
+        // set inside the box.
+        let inlines: Vec<Inline> = inlines
+            .into_iter()
+            .map(|inline| match inline {
+                Inline::HBox(mut boxed) => {
+                    boxed.content = self.set_citation_source(std::mem::take(&mut boxed.content));
+                    Inline::HBox(boxed)
+                }
+                other => other,
+            })
+            .collect();
         if !inlines.iter().any(|inline| matches!(inline, Inline::Text { text, .. } if is_source(text))) {
             return inlines;
         }
@@ -16939,16 +16959,24 @@ fn anchor_glyphless_paragraph(content: &mut Vec<Inline>, style: TextStyle) {
 fn inline_text(inlines: &[Inline]) -> String {
     let mut text = String::new();
     for inline in inlines {
-        if let Inline::Text {
-            text: word,
-            space_before,
-            ..
-        } = inline
-        {
-            if *space_before && !text.is_empty() {
-                text.push(' ');
+        match inline {
+            Inline::Text {
+                text: word,
+                space_before,
+                ..
+            } => {
+                if *space_before && !text.is_empty() {
+                    text.push(' ');
+                }
+                text.push_str(word);
             }
-            text.push_str(word);
+            Inline::HBox(boxed) => {
+                if boxed.space_before && !text.is_empty() {
+                    text.push(' ');
+                }
+                text.push_str(&inline_text(&boxed.content));
+            }
+            _ => {}
         }
     }
     text
@@ -21884,11 +21912,11 @@ mod tests {
     }
 
     #[test]
-    fn cite_note_is_appended_after_the_labels_and_a_tie_becomes_a_space() {
+    fn cite_note_is_appended_after_the_labels_and_a_tie_becomes_a_no_break_space() {
         let source = r"\cite[p.~2]{a}\begin{thebibliography}{9}\bibitem{a}A.\end{thebibliography}";
         let (parsed, items) = items(source);
         assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
-        assert!(items.iter().any(|i| i.text == ", p. 2"));
+        assert!(items.iter().any(|i| i.text == ", p.\u{a0}2"), "{items:?}");
     }
 
     #[test]

@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use crate::diagnostics::Diagnostic;
 use crate::lexer::{Token, TokenKind};
 use crate::natbib;
-use crate::parser::{Inline, TextStyle};
+use crate::parser::{HBox, Inline, TextStyle};
 use crate::Span;
 
 /// One `\bibitem`'s resolved citation label — the bracket content `\cite`
@@ -537,9 +537,9 @@ pub fn cite_inlines(
                 kernel_citea(span, &mut out);
             }
             match bibliography.resolve(key) {
-                Some(label) => out.push(text_run(label, span, TextStyle::default(), false)),
+                Some(label) => out.push(label_box(text_run(label, span, TextStyle::default(), false), span)),
                 None => {
-                    out.push(text_run("?", span, TextStyle::BOLD, false));
+                    out.push(label_box(text_run("?", span, TextStyle::BOLD, false), span));
                     diags.push(Diagnostic::warning(
                         format!("citation '{key}' is undefined"),
                         Some(span),
@@ -551,8 +551,7 @@ pub fn cite_inlines(
     }
     if let Some(note) = note {
         // `~` is TeX's tie: an ordinary interword space that just does not
-        // break a line. This layout never breaks inside a `\cite` note, so a
-        // plain space renders it faithfully.
+        // break a line (U+00A0, see `natbib::note_text`).
         let note = natbib::note_source(&note);
         out.push(text_run(
             &format!(", {note}"),
@@ -563,6 +562,15 @@ pub fn cite_inlines(
     }
     out.push(text_run("]", span, TextStyle::default(), false));
     out
+}
+
+/// One label of a kernel `\cite` as latex.ltx `\@citex` sets it:
+/// `\@cite@ofmt{\csname b@\@citeb\endcsname}` with `\let\@cite@ofmt\hbox`,
+/// and an undefined key's `\hbox{\reset@font\bfseries ?}`. A line never
+/// breaks inside a label and its blanks keep their natural width; the
+/// breaks are the `\penalty\@m` between labels and the blank after `,`.
+fn label_box(run: Inline, span: Span) -> Inline {
+    Inline::HBox(Box::new(HBox { content: vec![run], span, space_before: false }))
 }
 
 /// The kernel's `\@citea` between two labels, `,\penalty\@m\ ` (latex.ltx
@@ -817,16 +825,21 @@ mod tests {
     }
 
     /// The inlines of one `\cite`, spelled: text as itself, a penalty as
-    /// `<n>`, `TextGlue` as `<em plus minus>`.
+    /// `<n>`, `TextGlue` as `<em plus minus>`, an `\hbox` as `\hbox{..}`.
     fn spell(bib: &Bibliography, keys: &[&str]) -> String {
         let keys: Vec<String> = keys.iter().map(|k| k.to_string()).collect();
         let mut diags = Vec::new();
-        cite_inlines(&keys, None, bib, Span::new(0, 0), &mut diags)
+        spell_inlines(&cite_inlines(&keys, None, bib, Span::new(0, 0), &mut diags))
+    }
+
+    fn spell_inlines(inlines: &[Inline]) -> String {
+        inlines
             .iter()
             .map(|inline| match inline {
                 Inline::Text { text, .. } => text.clone(),
                 Inline::Penalty { value, .. } => format!("<{value}>"),
                 Inline::TextGlue { em, plus_em, minus_em, .. } => format!("<{em} plus {plus_em} minus {minus_em}>"),
+                Inline::HBox(b) => format!("\\hbox{{{}}}", spell_inlines(&b.content)),
                 other => panic!("{other:?}"),
             })
             .collect()
@@ -869,6 +882,8 @@ mod tests {
         assert_eq!(spell(&bib, &["a", "b"]), "[1,<1000>2]");
         let (bib, _) = scan(BIB);
         assert!(bib.cite().is_none());
-        assert_eq!(spell(&bib, &["c", "a", "b"]), "[3,<1000> 1,<1000> 2]");
+        assert_eq!(spell(&bib, &["c", "a", "b"]), r"[\hbox{3},<1000> \hbox{1},<1000> \hbox{2}]");
+        // An undefined key is `\hbox{\reset@font\bfseries ?}`.
+        assert_eq!(spell(&bib, &["zz"]), r"[\hbox{?}]");
     }
 }

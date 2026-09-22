@@ -11805,6 +11805,15 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     label_upright = style.italic;
                     style.italic = !style.italic;
                 }
+                // An undefined citation's `\hbox{\reset@font\bfseries ?}`
+                // (latex.ltx `\@citex`, natbib alike), and `\textbf` in a
+                // label: bold, which the `\cite`'s span cannot show either.
+                if !compiler_weight && compiler_style.bold && citation_label_run(source, *span) {
+                    style.bold = true;
+                    if matches!(&**inline, Inline::Text { text, .. } if text == "?") {
+                        style.italic = false;
+                    }
+                }
                 if has_space || pending_head_sep.get().is_some() {
                     // TeX sizes an interword space with the font current
                     // where the space token is read ("Plain, \textbf{bold}"
