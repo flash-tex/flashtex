@@ -207,6 +207,36 @@ fn overlapping_and_alternative_phases_are_excluded_from_coverage() {
     assert!(Phases::NAMES.contains(&"typeset"));
 }
 
+/// An `--only`-restricted run leaves baseline cases unmeasured, and without
+/// `--allow-unmeasured` that must fail loudly with the case names — not pass
+/// silently. With nothing excluded and nothing refused there is no error.
+#[test]
+fn the_unmeasured_gate_names_excluded_and_refused_cases() {
+    let s = |x: &str| x.to_string();
+    // A full run: nothing excluded, nothing refused.
+    assert!(crate::unmeasured_gate_error(&[], &[]).is_none());
+    // A subset run: the excluded cases are named.
+    let err = crate::unmeasured_gate_error(&[s("hw2"), s("tikz-heavy")], &[]).expect("subset run must fail the gate");
+    assert!(err.contains("hw2"), "unmeasured cases must be named: {err}");
+    assert!(err.contains("tikz-heavy"), "unmeasured cases must be named: {err}");
+    assert!(err.contains("--allow-unmeasured"), "the error must point at the acknowledgement flag: {err}");
+    // A refused measurement fails the gate too, even with no --only.
+    let err = crate::unmeasured_gate_error(&[], &[("refused".into(), "font diagnostics".into())]).expect("refused case must fail the gate");
+    assert!(err.contains("refused"), "unmeasured cases must be named: {err}");
+    // Both halves appear together.
+    let err = crate::unmeasured_gate_error(&[s("hw2")], &[("refused".into(), "font diagnostics".into())]).expect("partial run must fail the gate");
+    assert!(err.contains("hw2") && err.contains("refused"), "both halves must be named: {err}");
+}
+
+#[test]
+fn excluded_ids_is_the_corpus_minus_the_selection() {
+    let s = |x: &str| x.to_string();
+    let all = vec![s("hw1"), s("hw2"), s("tikz-heavy")];
+    assert!(crate::excluded_ids(&all, &all).is_empty(), "selecting everything excludes nothing");
+    assert_eq!(crate::excluded_ids(&all, &[s("hw1")]), vec![s("hw2"), s("tikz-heavy")]);
+    assert!(crate::excluded_ids(&[], &[]).is_empty());
+}
+
 /// `unicode-accents` opens with multi-byte characters in its first prose line.
 /// An anchor computed as "ten bytes into the line" landed inside one of them
 /// and `String::insert_str` panicked, taking the whole suite down with it.
