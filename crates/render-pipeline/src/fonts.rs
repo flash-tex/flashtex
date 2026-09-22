@@ -405,6 +405,17 @@ impl Discovery {
                 push(PathBuf::from(format!("{}/{AMS_EULER_TFM_DIR}", &d[..at])));
             }
         }
+        // ...and next to every explicit metrics directory of a TeX tree, as
+        // for `public/cm` above: the Mac app and CI name the bundled tree's
+        // `public/lm`/`jknappen/ec` in `FLASHTEX_TFM_DIRS` and ship `eufm`
+        // beside them. Without this only a host TeX Live's copy was found,
+        // so `\mathfrak` differed between a Mac with MacTeX and one without.
+        for d in &explicit {
+            let d = d.to_string_lossy();
+            if let Some(at) = d.find("/fonts/tfm/") {
+                push(PathBuf::from(format!("{}/{AMS_EULER_TFM_DIR}", &d[..at])));
+            }
+        }
         dirs
     }
 }
