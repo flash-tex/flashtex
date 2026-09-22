@@ -1299,6 +1299,7 @@ impl LayoutCursor {
                     span,
                     style,
                     space_before,
+                    ..
                 } => {
                     let text_size = style.size.map_or(size, |level| {
                         size_declaration_pt(level, self.constraints.font_size_pt)
@@ -1383,6 +1384,7 @@ impl LayoutCursor {
                     equation,
                     span,
                     space_before,
+                    ..
                 } => {
                     let text = match self.resolved_labels.get(key) {
                         Some(value) => {
@@ -1506,6 +1508,7 @@ impl LayoutCursor {
                     text,
                     span,
                     space_before,
+                    ..
                 } => {
                     if !space_before {
                         m.x = m.content_end;
@@ -1895,6 +1898,7 @@ impl LayoutCursor {
                     span,
                     style,
                     space_before,
+                    glue_before,
                 } if !section => Inline::Text {
                     text,
                     span,
@@ -1903,6 +1907,7 @@ impl LayoutCursor {
                         ..style
                     },
                     space_before,
+                    glue_before,
                 },
                 other => other,
             })
@@ -2598,6 +2603,7 @@ impl LayoutCursor {
                         span: *span,
                         style: TextStyle::BOLD,
                         space_before: true,
+                        glue_before: None,
                     }],
                 });
                 let entries = std::mem::take(&mut self.resolved_toc);
@@ -2687,6 +2693,7 @@ impl LayoutCursor {
                     span: *span,
                     style: TextStyle::default(),
                     space_before: true,
+                    glue_before: None,
                 }];
                 caption.extend(content.iter().cloned());
                 self.render_block(&Block::FigureCaption { content: caption });
@@ -4025,6 +4032,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 span,
                 style,
                 space_before,
+                ..
             } => {
                 // A `\tiny`..`\Huge` declaration is always relative to the
                 // document's own body size, not to `size` (which can already
@@ -4141,6 +4149,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 equation,
                 span,
                 space_before,
+                ..
             } => match c.resolved_labels.get(key) {
                 Some(value) => {
                     let text = if *page {
@@ -4192,7 +4201,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     *space_before,
                 );
             }
-            Inline::HFill { leader, span } => c.mark_hfill(*leader, size, font, *span),
+            Inline::HFill { leader, span, .. } => c.mark_hfill(*leader, size, font, *span),
             Inline::HSpace {
                 pt,
                 space_before_pt,
@@ -4233,6 +4242,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 text,
                 span,
                 space_before,
+                ..
             } => c.place(text.clone(), size, *span, Font::Courier, *space_before),
             // The Core 14 layout has no box model: the content is set inline.
             Inline::ColorBox(b) => emit(c, &b.content, size, font),

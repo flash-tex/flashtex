@@ -641,9 +641,10 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 span,
                 style: _,
                 space_before: _,
+                glue_before: _,
             } => map_span(span, changes, deltas)?,
             Inline::LineBreak { span, skip_pt: _ } => map_span(span, changes, deltas)?,
-            Inline::TextGlue { em: _, span, plus_em: _, minus_em: _ } => map_span(span, changes, deltas)?,
+            Inline::TextGlue { em: _, span, plus_em: _, minus_em: _, style: _ } => map_span(span, changes, deltas)?,
             Inline::Math {
                 list,
                 display: _,
@@ -654,6 +655,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 color: _,
                 size: _,
                 color_ranges,
+                glue_before: _,
             } => {
                 shift_math_list(list, changes, deltas)?;
                 for (range, _) in color_ranges.iter_mut() {
@@ -700,6 +702,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 equation: _,
                 span,
                 space_before: _,
+                style: _,
             } => map_span(span, changes, deltas)?,
             Inline::CleverReference { span, .. } => map_span(span, changes, deltas)?,
             Inline::ThePage { span, .. } => map_span(span, changes, deltas)?,
@@ -763,6 +766,8 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 text: _,
                 span,
                 space_before: _,
+                style: _,
+                glue_before: _,
             } => map_span(span, changes, deltas)?,
             Inline::ColorBox(b) => {
                 map_span(&mut b.span, changes, deltas)?;
