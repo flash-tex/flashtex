@@ -770,6 +770,7 @@ fn text_run(text: &str, span: Span, style: TextStyle, space_before: bool) -> Inl
         span,
         style,
         space_before,
+        boundary_before: false,
         glue_before: None,
     }
 }

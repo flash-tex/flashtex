@@ -1899,6 +1899,7 @@ impl LayoutCursor {
                     style,
                     space_before,
                     glue_before,
+                    boundary_before,
                 } if !section => Inline::Text {
                     text,
                     span,
@@ -1907,6 +1908,7 @@ impl LayoutCursor {
                         ..style
                     },
                     space_before,
+                    boundary_before,
                     glue_before,
                 },
                 other => other,
@@ -2603,6 +2605,7 @@ impl LayoutCursor {
                         span: *span,
                         style: TextStyle::BOLD,
                         space_before: true,
+                        boundary_before: false,
                         glue_before: None,
                     }],
                 });
@@ -2693,6 +2696,7 @@ impl LayoutCursor {
                     span: *span,
                     style: TextStyle::default(),
                     space_before: true,
+                    boundary_before: false,
                     glue_before: None,
                 }];
                 caption.extend(content.iter().cloned());

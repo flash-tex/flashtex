@@ -297,6 +297,11 @@ pub enum Inline {
         /// since the previous word. Set for the words of running text and of
         /// flattened arguments (headings, captions, style arguments).
         glue_before: Option<InterwordGlue>,
+        /// An empty group (`{}`, from the source or a macro body) or a
+        /// `\relax` stands between the previous word and this one with no
+        /// space: TeX's ligature/kern program stops there (§1034-1040), so
+        /// `Shelf{}ful` keeps its two `f`s apart.
+        boundary_before: bool,
     },
     LineBreak {
         span: Span,
@@ -384,6 +389,8 @@ pub enum Inline {
         /// The font in force where the reference is typeset (its text is
         /// set in it; PLAN1 slice 2).
         style: TextStyle,
+        /// See `Inline::Text::glue_before`.
+        glue_before: Option<InterwordGlue>,
     },
     /// A `cleveref`/`hyperref` reference whose label names are resolved after
     /// the document has been laid out. The compiler has no link backend yet;
@@ -401,6 +408,8 @@ pub enum Inline {
         space_before: bool,
         /// The font in force where the reference is typeset.
         style: TextStyle,
+        /// See `Inline::Text::glue_before`.
+        glue_before: Option<InterwordGlue>,
     },
     /// `\thepage`: the current page's formatted number. The page is only
     /// known once the paragraph is set, so this resolves at layout time
@@ -1665,7 +1674,12 @@ fn attach_space(inline: &mut Inline, space: &mut Option<TextStyle>) {
         return;
     }
     let glue = space.take().map(|style| InterwordGlue { style: glue_style(style), kind: GlueKind::Normal });
-    if let Inline::Text { glue_before, .. } | Inline::Math { glue_before, .. } | Inline::Verbatim { glue_before, .. } = inline {
+    if let Inline::Text { glue_before, .. }
+    | Inline::Math { glue_before, .. }
+    | Inline::Verbatim { glue_before, .. }
+    | Inline::Reference { glue_before, .. }
+    | Inline::CleverReference { glue_before, .. } = inline
+    {
         if glue_before.is_none() {
             *glue_before = glue;
         }
@@ -1687,6 +1701,87 @@ fn citation_style(outer: TextStyle, run: TextStyle, scheme: crate::nfss::Scheme)
     }
     let font = nfss_commands("bf").iter().fold(base.font, |f, c| f.then(scheme, *c));
     TextStyle { bold: true, italic: false, slanted: false, small_caps: false, family: TextFamily::Roman, font, medium: false, ..base }
+}
+
+/// Whether the space token at `tokens[at]` is interword glue, given the
+/// material already set in the list (`set`): not in vertical mode (nothing
+/// set yet), not after a control word (TeX's state S skips it: `\LaTeX b`),
+/// and not after a line break or a display, whose lookahead
+/// (`\@ifstar`/`\@ifnextchar`, `\ignorespaces` after `\]`) skips it.
+fn space_is_glue(tokens: &[InputToken], at: usize, set: &[Inline]) -> bool {
+    // A `\label`, a `\pagestyle` or an overlay marker sets nothing: after
+    // `\section{..}\label{..}` the list is still in vertical mode.
+    let last = set.iter().rev().find(|i| !(matches!(i, Inline::Label { .. } | Inline::PageStyle { .. }) || is_overlay_marker(i)));
+    match last {
+        None | Some(Inline::LineBreak { .. } | Inline::Math { display: true, .. } | Inline::MathRows { .. }) => return false,
+        Some(_) => {}
+    }
+    let previous = tokens[..at].iter().rev().find(|t| !matches!(t.token.kind, TokenKind::Comment));
+    // After `\ ` too: a control space leaves TeX in state S.
+    let control_space = previous.is_some_and(|t| t.token.control_symbol && matches!(&t.token.kind, TokenKind::Word(w) if w == " "));
+    !control_space && !matches!(previous.map(|t| &t.token.kind), Some(TokenKind::Command(_)))
+}
+
+/// Pushes the text node of the word token `tokens[index]`, whose text
+/// (ligatures applied) is `text`, set in `style`, with the space read
+/// before it (`space`, taken). `\ ` is the control space's own node: its
+/// `glue_before` is `GlueKind::ControlSpace`; a space read before it is
+/// glue of its own (`a \ b` has two), carried by an empty run. A `~` is a
+/// tie, carried as U+00A0 (latex.ltx's active `~` is `\nobreakspace`:
+/// `\leavevmode\nobreak\ `), which the render pipeline sets as an
+/// unbreakable control space; `\~` is the accent and stays.
+#[allow(clippy::too_many_arguments)]
+fn push_word(target: &mut Vec<Inline>, tokens: &[InputToken], index: usize, text: String, style: TextStyle, space_before: bool, space: &mut Option<TextStyle>, tie: bool) {
+    let node = word_node(tokens, index, text, style, space_before, space, tie, target);
+    target.push(node);
+}
+
+/// [`push_word`]'s node (and, before a control space, the empty run of the
+/// space read before it, pushed onto `target` first).
+#[allow(clippy::too_many_arguments)]
+fn word_node(tokens: &[InputToken], index: usize, text: String, style: TextStyle, space_before: bool, space: &mut Option<TextStyle>, tie: bool, target: &mut Vec<Inline>) -> Inline {
+    let input = &tokens[index];
+    let control_symbol = input.token.control_symbol;
+    if control_symbol && text == " " {
+        if let Some(before) = space.take() {
+            let glue = InterwordGlue { style: glue_style(before), kind: GlueKind::Normal };
+            target.push(Inline::Text { text: String::new(), span: Span::in_document(input.token.span.document, input.token.span.start, input.token.span.start), style: before, space_before, glue_before: Some(glue), boundary_before: false });
+        }
+        let glue = InterwordGlue { style: glue_style(style), kind: GlueKind::ControlSpace };
+        return Inline::Text { text, span: input.token.span, style, space_before: false, glue_before: Some(glue), boundary_before: false };
+    }
+    let text = if tie && !control_symbol && text.contains('~') { text.replace('~', "\u{a0}") } else { text };
+    let glue_before = space.take().map(|style| InterwordGlue { style: glue_style(style), kind: GlueKind::Normal });
+    let boundary_before = glue_before.is_none() && empty_group_before(tokens, index);
+    Inline::Text { text, span: input.token.span, style, space_before, glue_before, boundary_before }
+}
+
+/// Whether an empty group or a `\relax` stands between the word token at
+/// `index` and the word before it, with nothing else but groups between
+/// ([`Inline::Text::boundary_before`]). A lone brace (`{Experi}ence`) is
+/// not one: it stops the lig/kern program too, but TeX still hyphenates
+/// the characters on both sides as one word.
+fn empty_group_before(tokens: &[InputToken], index: usize) -> bool {
+    let mut boundary = false;
+    let mut after_open = false;
+    for input in tokens[..index].iter().rev() {
+        match &input.token.kind {
+            TokenKind::Comment => {}
+            // Walking backwards: `}` then `{` is `{}`.
+            TokenKind::RBrace => after_open = true,
+            TokenKind::LBrace => {
+                boundary |= after_open;
+                after_open = false;
+            }
+            TokenKind::Command(name) if name == "relax" => {
+                boundary = true;
+                after_open = false;
+            }
+            TokenKind::Word(_) => return boundary,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// A glue's font: the style in force, without a run's own marks.
@@ -4415,6 +4510,16 @@ impl P<'_> {
         blocks
     }
 
+    /// Parses the current stream into its own list and flushes it (a box's
+    /// or a note's text): the space the outer list read before the
+    /// construct stays pending there ([`Inline::Text::glue_before`]).
+    fn parse_detached(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let outer_space = self.last_space.take();
+        self.parse_stream(blocks, para);
+        self.flush_paragraph(blocks, para);
+        self.last_space = outer_space;
+    }
+
     fn parse_stream(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         if self.stream_depth >= STREAM_DEPTH_LIMIT {
             if !self.stream_depth_reported {
@@ -4429,9 +4534,17 @@ impl P<'_> {
             self.i = self.t.len();
             return;
         }
+        // A stream parsed into a fresh list (a table entry, a box's or a
+        // note's text) starts with no space pending; the space the outer
+        // list read before the construct stays the outer list's.
+        let fresh = para.is_empty();
+        let outer_space = if fresh { self.last_space.take() } else { None };
         self.stream_depth += 1;
         self.parse_stream_body(blocks, para);
         self.stream_depth -= 1;
+        if fresh {
+            self.last_space = outer_space;
+        }
     }
 
     fn parse_stream_body(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
@@ -4450,7 +4563,7 @@ impl P<'_> {
                 }
                 TokenKind::Space if !self.obeylines => {
                     self.i += 1;
-                    self.last_space = Some(self.style);
+                    self.read_space(para);
                     continue;
                 }
                 TokenKind::Word(word)
@@ -4491,13 +4604,9 @@ impl P<'_> {
                                 ));
                             }
                         }
-                        para.push(Inline::Text {
-                            text: self.word_text(word),
-                            span,
-                            style: self.style,
-                            space_before,
-                            glue_before: self.take_glue(),
-                        });
+                        let text = self.word_text(word);
+                        let tie = !self.alltt_active();
+                        push_word(para, &self.t, self.i - 1, text, self.style, space_before, &mut self.last_space, tie);
                     }
                     continue;
                 }
@@ -4523,7 +4632,7 @@ impl P<'_> {
                 }
                 TokenKind::Space => {
                     self.i += 1;
-                    self.last_space = Some(self.style);
+                    self.read_space(para);
                     // `\\obeylines`: a source newline ends the line, exactly
                     // like `\\\\` (an `Inline::LineBreak` with no skip). The
                     // lexer folds a lone newline into `Space`, so the newline
@@ -4607,13 +4716,9 @@ impl P<'_> {
                                 ));
                             }
                         }
-                        para.push(Inline::Text {
-                            text: self.word_text(&word),
-                            span: tok.span,
-                            style: self.style,
-                            space_before,
-                            glue_before: self.take_glue(),
-                        });
+                        let text = self.word_text(&word);
+                        let tie = !self.alltt_active();
+                        push_word(para, &self.t, self.i - 1, text, self.style, space_before, &mut self.last_space, tie);
                     }
                 }
                 TokenKind::LineBreak => {
@@ -4827,6 +4932,7 @@ impl P<'_> {
             span,
             style: TextStyle::default(),
             space_before: true,
+            boundary_before: false,
             glue_before: None,
         }];
         content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
@@ -4988,6 +5094,7 @@ impl P<'_> {
                         span,
                         style,
                         space_before: false,
+                        boundary_before: false,
                         glue_before: None,
                     });
                 }
@@ -5492,6 +5599,7 @@ impl P<'_> {
                 span,
                 style: self.style,
                 space_before,
+                boundary_before: false,
                 glue_before: None,
             });
         }
@@ -6377,6 +6485,7 @@ impl P<'_> {
                     equation: name == "eqref",
                     span: span.merge(argument_span),
                     space_before,
+                    glue_before: None,
                     style: self.style,
                 });
             }
@@ -6657,6 +6766,7 @@ impl P<'_> {
                         span,
                         style: TextStyle::default(),
                         space_before: false,
+                        boundary_before: false,
                         glue_before: None,
                     }], self.style);
                     match content.as_slice() {
@@ -6910,6 +7020,7 @@ impl P<'_> {
                     span: dash_span,
                     style: self.style,
                     space_before: false,
+                    boundary_before: false,
                     glue_before: None,
                 });
                 if dashes == length {
@@ -8433,8 +8544,8 @@ impl P<'_> {
                     boxed.content = self.set_citation_source(std::mem::take(&mut boxed.content), outer);
                     Inline::HBox(boxed)
                 }
-                Inline::Text { text, span, style, space_before, glue_before } => {
-                    Inline::Text { text, span, style: citation_style(outer, style, scheme), space_before, glue_before }
+                Inline::Text { text, span, style, space_before, glue_before, boundary_before } => {
+                    Inline::Text { text, span, style: citation_style(outer, style, scheme), space_before, glue_before, boundary_before }
                 }
                 other => other,
             })
@@ -8444,12 +8555,12 @@ impl P<'_> {
         }
         let mut out = Vec::with_capacity(inlines.len());
         for inline in inlines {
-            let Inline::Text { text, span, style, space_before, glue_before } = inline else {
+            let Inline::Text { text, span, style, space_before, glue_before, boundary_before } = inline else {
                 out.push(inline);
                 continue;
             };
             if !is_source(&text) {
-                out.push(Inline::Text { text, span, style, space_before, glue_before });
+                out.push(Inline::Text { text, span, style, space_before, glue_before, boundary_before });
                 continue;
             }
             let mut tokens = crate::lexer::tokenize(&text);
@@ -8485,6 +8596,7 @@ impl P<'_> {
                         span,
                         style: piece_style,
                         space_before: if joined { false } else { space_before || text.starts_with(' ') },
+                        boundary_before: false,
                         glue_before: if joined { None } else { glue_before },
                     }),
                 }
@@ -8654,6 +8766,7 @@ impl P<'_> {
             linked,
             span: full_span,
             space_before,
+            glue_before: None,
             style: self.style,
         });
     }
@@ -8888,6 +9001,7 @@ impl P<'_> {
                     span,
                     style: TextStyle::default(),
                     space_before: true,
+                    boundary_before: false,
                     glue_before: None,
                 }])
             }
@@ -9106,6 +9220,7 @@ impl P<'_> {
                 span,
                 style: TextStyle::default(),
                 space_before: false,
+                boundary_before: false,
                 glue_before: None,
             }],
         }
@@ -9287,6 +9402,7 @@ impl P<'_> {
             span: span.merge(argument_span),
             style: TextStyle::default(),
             space_before: false,
+            boundary_before: false,
             glue_before: None,
         }];
         content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
@@ -9594,6 +9710,7 @@ impl P<'_> {
                     span: heading_span,
                     style: TextStyle::BOLD,
                     space_before: false,
+                    boundary_before: false,
                     glue_before: None,
                 }],
             });
@@ -10040,6 +10157,7 @@ impl P<'_> {
                     // is `TextStyle::default()`, exactly as before.
                     style: self.style,
                     space_before: false,
+                    boundary_before: false,
                     glue_before: None,
                 });
             }
@@ -10295,6 +10413,7 @@ impl P<'_> {
             span,
             style: head_style,
             space_before: true,
+            boundary_before: false,
             glue_before: None,
         });
         if let Some(number) = number {
@@ -10303,6 +10422,7 @@ impl P<'_> {
                 span,
                 style: head_style,
                 space_before: false,
+                boundary_before: false,
                 glue_before: None,
             });
             para.push(Inline::Text {
@@ -10310,6 +10430,7 @@ impl P<'_> {
                 span,
                 style: number_style,
                 space_before: false,
+                boundary_before: false,
                 glue_before: None,
             });
         }
@@ -10327,6 +10448,7 @@ impl P<'_> {
                     span,
                     style: head_style,
                     space_before: false,
+                    boundary_before: false,
                     glue_before: None,
                 });
                 // `\thm@notefont` (`\fontseries\mddefault\upshape`)
@@ -10347,6 +10469,7 @@ impl P<'_> {
                     span: Span::in_document(note_span.document, note_span.start, note_span.start + 1),
                     style: note_style,
                     space_before: false,
+                    boundary_before: false,
                     glue_before: None,
                 });
                 // Read like an `\item[<label>]`: every token that cannot be
@@ -10362,6 +10485,7 @@ impl P<'_> {
                     span: Span::in_document(note_span.document, note_span.end - 1, note_span.end),
                     style: note_style,
                     space_before: false,
+                    boundary_before: false,
                     glue_before: None,
                 });
             }
@@ -10375,6 +10499,7 @@ impl P<'_> {
             span,
             style: head_style,
             space_before: false,
+            boundary_before: false,
             glue_before: None,
         });
         self.style = TextStyle {
@@ -10414,6 +10539,7 @@ impl P<'_> {
                 ..TextStyle::default()
             },
             space_before: true,
+            boundary_before: false,
             glue_before: None,
         });
         self.style = TextStyle {
@@ -10443,6 +10569,7 @@ impl P<'_> {
             span,
             style: self.style,
             space_before: false,
+            boundary_before: false,
             glue_before: None,
         });
     }
@@ -11204,6 +11331,7 @@ impl P<'_> {
                 span,
                 style: TextStyle::default(),
                 space_before: true,
+                boundary_before: false,
                 glue_before: None,
             }],
             Some((tokens, _)) => self.inlines_from_tokens(tokens, TextStyle::default()),
@@ -12711,6 +12839,7 @@ impl P<'_> {
                     span,
                     style,
                     space_before: index == 0 && space_before,
+                    boundary_before: false,
                     glue_before: None,
                 }),
                 UrlPiece::HyphenKern => para.push(Inline::Kern {
@@ -13477,6 +13606,18 @@ impl P<'_> {
         self.last_space.take().map(|style| InterwordGlue { style: glue_style(style), kind: GlueKind::Normal })
     }
 
+    /// The main loop read the space token at `self.i - 1`: record it as the
+    /// glue in front of the next material when TeX appends one there
+    /// ([`space_is_glue`]; horizontal mode is an open paragraph or one a
+    /// command started).
+    fn read_space(&mut self, para: &[Inline]) {
+        let at = self.i - 1;
+        let horizontal = self.paragraph_started || !para.is_empty();
+        if horizontal && space_is_glue(&self.t, at, para) {
+            self.last_space = Some(self.style);
+        }
+    }
+
     /// Gives the first inline a command emitted the space read before it:
     /// on the node when it has a `glue_before`, and consumed either way
     /// unless the inline sets nothing (a `\label`, an overlay marker, a
@@ -13596,7 +13737,9 @@ impl P<'_> {
             let space_before = preceded_by_space(&expanded, index);
             let before_len = content.len();
             if matches!(input.token.kind, TokenKind::Space) {
-                last_space = Some(style);
+                if space_is_glue(&expanded, index, &content) {
+                    last_space = Some(style);
+                }
             }
             match &input.token.kind {
                 TokenKind::Command(name) if name == "color" || name == "textcolor" => {
@@ -13705,6 +13848,7 @@ impl P<'_> {
                                 equation: name == "eqref",
                                 span,
                                 space_before,
+                                glue_before: None,
                                 style,
                             });
                         }
@@ -13879,13 +14023,9 @@ impl P<'_> {
                             ));
                         }
                     }
-                    content.push(Inline::Text {
-                        text: self.word_text(&text),
-                        span: input.token.span,
-                        style,
-                        space_before,
-                        glue_before: last_space.take().map(|s| InterwordGlue { style: glue_style(s), kind: GlueKind::Normal }),
-                    });
+                    let text = self.word_text(&text);
+                    let tie = !self.alltt_active();
+                    push_word(&mut content, &expanded, index, text, style, space_before, &mut last_space, tie);
                 }
                 TokenKind::LineBreak => content.push(Inline::LineBreak {
                     span: input.token.span,
@@ -14022,6 +14162,7 @@ impl P<'_> {
                     span: input.token.span,
                     style,
                     space_before,
+                    boundary_before: false,
                     glue_before: None,
                 }),
                 // `$…$` and `\(…\)` are real inline math here, exactly as in
@@ -14409,6 +14550,7 @@ impl P<'_> {
             span,
             style,
             space_before,
+            boundary_before: false,
             glue_before: None,
         })
     }
@@ -14531,6 +14673,7 @@ impl P<'_> {
             span: full,
             style,
             space_before,
+            boundary_before: false,
             glue_before: None,
         });
     }
@@ -14647,6 +14790,7 @@ impl P<'_> {
                     span: Span::in_document(whole.document, head.end, whole.end),
                     style: self.style,
                     space_before: false,
+                    boundary_before: false,
                     glue_before: None,
                 });
                 (vec![argument], head, leftover)
@@ -14779,6 +14923,7 @@ impl P<'_> {
             span,
             style: self.style,
             space_before,
+            boundary_before: false,
             glue_before: None,
         });
         // Parse the body at the next nesting level through the full parser
@@ -14794,6 +14939,7 @@ impl P<'_> {
             span: argument_span,
             style: self.style,
             space_before: false,
+            boundary_before: false,
             glue_before: None,
         });
     }
@@ -15103,8 +15249,7 @@ impl P<'_> {
             self.i = 0;
             let mut blocks = Vec::new();
             let mut para = Vec::new();
-            self.parse_stream(&mut blocks, &mut para);
-            self.flush_paragraph(&mut blocks, &mut para);
+            self.parse_detached(&mut blocks, &mut para);
             self.block_dependencies.truncate(outer_dependency_blocks);
             self.block_par_leading.truncate(outer_par_leading_blocks);
             out.push(
@@ -15385,6 +15530,7 @@ impl P<'_> {
                 span: whole,
                 style: self.style,
                 space_before,
+                boundary_before: false,
                 glue_before: None,
             }),
             None => self.diags.push(Diagnostic::error(
@@ -15441,8 +15587,7 @@ impl P<'_> {
         let outer_par_leading_blocks = self.block_par_leading.len();
         let mut blocks = Vec::new();
         let mut para = Vec::new();
-        self.parse_stream(&mut blocks, &mut para);
-        self.flush_paragraph(&mut blocks, &mut para);
+        self.parse_detached(&mut blocks, &mut para);
         self.block_dependencies.truncate(outer_dependency_blocks);
         self.block_par_leading.truncate(outer_par_leading_blocks);
         self.t = outer_tokens;
@@ -16951,6 +17096,7 @@ fn space_out_letters(content: &[Inline], em_pt: f64) -> Vec<Inline> {
                     span: *span,
                     style: *style,
                     space_before: word_start && out.is_empty(),
+                    boundary_before: false,
                     glue_before: None,
                 };
                 if !word_start
@@ -20312,7 +20458,8 @@ mod tests {
         // Punctuation glues directly: "Foo." not "Foo .". (A typed `'`
         // ligates to U+2019, so the apostrophe case expects that.)
         for mark in [",", ".", "!", "?", ";", ":", "'", "/", "~", "-", ")"] {
-            let rendered = if mark == "'" { "’" } else { mark };
+            // A typed `~` is the tie, U+00A0 (`word_node`).
+            let rendered = match mark { "'" => "’", "~" => "\u{a0}", _ => mark };
             check(
                 &texts(&inlines(&format!("\\foo{mark}"))),
                 &["Foo", rendered],
@@ -20377,7 +20524,7 @@ mod tests {
         let tilde = texts(&inlines("\\foo~bar"));
         assert_eq!(
             tilde.iter().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
-            vec!["Foo", "~bar"],
+            vec!["Foo", "\u{a0}bar"],
             "{tilde:?}"
         );
         assert_eq!(tilde.last().map(|(_, before)| *before), Some(false), "{tilde:?}");

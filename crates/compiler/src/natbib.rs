@@ -886,6 +886,7 @@ fn into_inlines(runs: Vec<Run>, span: Span) -> Vec<Inline> {
                 TextStyle::default()
             },
             space_before: index == 0,
+            boundary_before: false,
             glue_before: None,
         })
         .collect()
