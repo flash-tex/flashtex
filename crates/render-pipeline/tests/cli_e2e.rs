@@ -224,12 +224,13 @@ fn display_list_v2_is_a_sibling_line_only_when_negotiated() {
     assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("recovered"));
 }
 
-/// The `compile_result` oversize refusal (`protocol::handle_line`): when the
-/// envelope cannot fit the reply limit it is refused *without being
-/// serialised*, and the refusal still names the exact byte count the line
-/// would have had -- the count a permissive run actually produces.
+/// The `compile_result` oversize path (`protocol::handle_line`): when the
+/// envelope cannot fit the reply limit, page content is trimmed to fit *without
+/// being serialised first*, while the diagnostics, the status and every page
+/// frame survive -- and the trim notice still names the exact byte count the
+/// line would have had, the count a permissive run actually produces.
 #[test]
-fn oversize_compile_result_refusal_names_the_exact_line_length() {
+fn oversize_compile_result_trims_content_and_keeps_diagnostics() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");
         return;
@@ -240,7 +241,7 @@ fn oversize_compile_result_refusal_names_the_exact_line_length() {
     }
     text.push_str("\\end{document}\n");
 
-    // The permissive run: the exact line the tiny-limit run must refuse.
+    // The permissive run: the exact line the tiny-limit run must trim.
     let raw = {
         let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-render"))
             .stdin(Stdio::piped())
@@ -255,18 +256,34 @@ fn oversize_compile_result_refusal_names_the_exact_line_length() {
     };
     let line = raw.lines().next().expect("one compile_result line");
     let ok = json::parse(line).unwrap();
-    let pages = ok.get("payload").unwrap().get("pages").and_then(|v| v.as_arr()).map(Vec::len).unwrap();
+    let ok_payload = ok.get("payload").unwrap();
+    let pages = ok_payload.get("pages").and_then(|v| v.as_arr()).map(Vec::len).unwrap();
     assert!(pages > 0, "the permissive run renders pages");
+    let items: usize = ok_payload
+        .get("pages")
+        .and_then(|v| v.as_arr())
+        .unwrap()
+        .iter()
+        .map(|p| p.get("items").and_then(|v| v.as_arr()).map(Vec::len).unwrap_or(0))
+        .sum();
     let full_len = line.len();
     let limit = 2000;
     assert!(full_len > limit, "the document must overflow the tiny limit (got {full_len} bytes)");
 
     let (replies, _) = run_env(&[], &compile_line("big", &text, None), &[("FLASHTEX_MAX_REPLY_BYTES", "2000")]);
     assert_eq!(replies.len(), 1);
+    assert!(json::write(&replies[0]).len() <= limit, "the trimmed line fits the limit");
     let p = replies[0].get("payload").unwrap();
-    assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("failed"));
+    assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("recovered"), "shed content is not a clean ok");
+    let got_pages = p.get("pages").and_then(|v| v.as_arr()).unwrap();
+    assert_eq!(got_pages.len(), pages, "every page frame survives trimming");
+    for page in got_pages {
+        assert!(page.get("number").is_some() && page.get("width_pt").is_some() && page.get("height_pt").is_some(), "{page:?}");
+    }
+    let got_items: usize = got_pages.iter().map(|p| p.get("items").and_then(|v| v.as_arr()).map(Vec::len).unwrap_or(0)).sum();
+    assert!(got_items < items, "page content was shed ({items} -> {got_items})");
     let diags = p.get("diagnostics").and_then(|v| v.as_arr()).unwrap();
-    let expected = format!("compile_result would be {full_len} bytes for {pages} pages, over the {limit}-byte reply limit; split the project or compile fewer pages");
+    let expected = format!("compile_result would be {full_len} bytes for {pages} pages, over the {limit}-byte reply limit; page content trimmed to fit, diagnostics and page count kept");
     assert!(
         diags.iter().any(|d| d.get("message").and_then(|v| v.as_str()) == Some(expected.as_str())),
         "expected {expected:?} in {diags:?}"
@@ -336,7 +353,8 @@ fn tex_file_mode_renders_without_json_and_reports_readably() {
 }
 
 /// The product bug `display-list-v2-window` exists for: a document too big for
-/// the reply limit gets **no reply at all**, and a window gives it one.
+/// the reply limit gets only a trimmed `compile_result` of page frames, and a
+/// window gives it full content.
 ///
 /// The real case is the 500 KB corpus document -- 385 pages, a 20 339 674-byte
 /// `compile_result` and a 152 MB `display_list` against the 16 MiB limit, so
@@ -386,23 +404,28 @@ fn a_document_over_the_reply_limit_has_a_reply_when_a_window_is_negotiated() {
 
     // (a) Today's consumer: the v2 sibling is over the limit so it is declined
     // without being serialised, and the v1 `compile_result` that would have
-    // carried the pages instead is over the limit too. The request ends
-    // `failed`. Not slow -- failed.
+    // carried the pages instead is over the limit too -- so its page content
+    // is trimmed to fit, while diagnostics, status and the page count survive.
     let (replies, _) = run_env(&[], &compile_line("today", &text, Some(plain)), &limit);
     assert_eq!(replies.len(), 1, "the declined sibling is not sent");
+    assert!(json::write(&replies[0]).len() <= limit_bytes, "the trimmed line fits the limit");
     let p = replies[0].get("payload").unwrap();
-    assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("failed"), "the bug: no reply for a long document");
-    assert_eq!(p.get("pages").and_then(|v| v.as_arr()).map(Vec::len), Some(0), "a failed reply carries no pages");
-    // The producer's refusal states the size it could not send; read it back,
-    // so "the document does not fit" is a checked fact and not an assumption
+    assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("recovered"), "trimmed, not failed");
+    assert_eq!(
+        p.get("pages").and_then(|v| v.as_arr()).map(Vec::len),
+        Some(total_pages),
+        "every page frame survives trimming"
+    );
+    // The trim notice states the size it could not send; read it back, so
+    // "the document does not fit" is a checked fact and not an assumption
     // about how big a page is.
     let message = p
         .get("diagnostics")
         .and_then(|v| v.as_arr())
-        .and_then(|d| d.first())
+        .and_then(|diags| diags.iter().find(|d| d.get("code").and_then(|v| v.as_str()) == Some("compile_result_trimmed")))
         .and_then(|d| d.get("message"))
         .and_then(|v| v.as_str())
-        .unwrap_or_default()
+        .unwrap_or_else(|| panic!("expected a compile_result_trimmed notice in {:?}", p.get("diagnostics")))
         .to_string();
     let whole_bytes: usize = message
         .split_whitespace()
@@ -443,7 +466,7 @@ fn a_document_over_the_reply_limit_has_a_reply_when_a_window_is_negotiated() {
     }
 
     // (c) A window the limit still cannot carry is narrowed to what fits and
-    // served, rather than declined into the `failed` of (a).
+    // served, rather than trimmed down to page frames like the reply of (a).
     let wide = with_window_field(&compile_line("wide", &text, Some(with_window)), 1, 64);
     let (replies, _) = run_env(&[], &wide, &limit);
     assert_eq!(replies.len(), 2, "narrowed, not declined");
@@ -454,11 +477,17 @@ fn a_document_over_the_reply_limit_has_a_reply_when_a_window_is_negotiated() {
 
     // (d) The capability listed with no window field is an unwindowed reply
     // (proposal §4) -- the consumer has to say where the viewer is -- so the
-    // long document still fails, and the name is absent from the echo.
+    // long document's page content is trimmed to fit, and the name is absent
+    // from the echo.
     let (replies, _) = run_env(&[], &compile_line("nofield", &text, Some(with_window)), &limit);
     assert_eq!(replies.len(), 1);
     let p = replies[0].get("payload").unwrap();
-    assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("failed"));
+    assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("recovered"), "trimmed, not failed");
+    assert_eq!(
+        p.get("pages").and_then(|v| v.as_arr()).map(Vec::len),
+        Some(total_pages),
+        "page frames survive without a window"
+    );
     let echoed: Vec<&str> = p.get("layout_capabilities").and_then(|v| v.as_arr()).unwrap().iter().filter_map(|v| v.as_str()).collect();
     assert!(!echoed.contains(&"display-list-v2-window"), "not echoed when no window was served: {echoed:?}");
 }

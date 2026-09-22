@@ -581,6 +581,44 @@ fn result_envelope(id: &str, payload: Value) -> Value {
     v
 }
 
+/// Oversize-`compile_result` trimming (`handle_line_inner`): when the envelope
+/// cannot fit the reply limit, shrink the reply by shedding the largest fields
+/// first -- `metadata`, then page `items` back-to-front -- while always keeping
+/// the `diagnostics` array, the `status` and every page frame, so the page
+/// count survives. An `ok` status becomes `recovered` (the declined-`display_list`
+/// precedent in `handle_line_inner`); `recovered` and `failed` are untouched. A
+/// warning diagnostic records the full byte count the reply would have had and
+/// what was shed. Returns whether the (possibly trimmed) reply fits `limit`;
+/// false -- only when even bare frames plus diagnostics exceed it -- means the
+/// caller must fall back to the `failed` refusal.
+fn trim_v1_to_fit(v1: &mut crate::v1::V1Payload, id: &str, limit: usize) -> bool {
+    let full_len = v1.envelope_len(id);
+    if full_len <= limit {
+        return true;
+    }
+    let pages = v1.pages.len();
+    v1.metadata = None;
+    if v1.status == "ok" {
+        v1.status = "recovered";
+    }
+    v1.diagnostics.push(crate::display::Diagnostic::warning(
+        "compile_result_trimmed",
+        format!(
+            "compile_result would be {full_len} bytes for {pages} pages, over the {limit}-byte reply limit; page content trimmed to fit, diagnostics and page count kept",
+        ),
+        Vec::new(),
+    ));
+    // Back-to-front: early pages keep their items; every page frame stays, so
+    // the page count (and page numbers) survive whatever is shed.
+    while v1.envelope_len(id) > limit {
+        let Some(pg) = v1.pages.iter_mut().rev().find(|p| !p.items.is_empty()) else {
+            break;
+        };
+        pg.items.clear();
+    }
+    v1.envelope_len(id) <= limit
+}
+
 /// The runtime-v1 worker loop: requests on `input`, one reply per line on
 /// `output` (plus the `display_list` line when negotiated), until EOF or a
 /// write failure. A block cache lives across requests so a keystroke
@@ -1057,22 +1095,36 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
     let line = match line.filter(|l| l.len() <= limit) {
         Some(line) => line,
         None => {
+            // Oversize: shed page content (`trim_v1_to_fit`) rather than the
+            // diagnostics -- error/warning information is most needed exactly
+            // for the large documents that overflow. Only when even bare page
+            // frames plus diagnostics exceed the limit is the reply refused.
+            // The refusal names the full, untrimmed byte count, so it is read
+            // before trimming mutates `v1`.
             let len = line_len.unwrap_or_else(|| v1.envelope_len(&id));
-            let pages = rendered.v2.pages.len();
-            return Reply {
-                line: json::write(&failed(
-                    &id,
-                    &project_id,
-                    revision,
-                    &format!(
-                        "compile_result would be {len} bytes for {pages} pages, over the {limit}-byte reply limit; split the project or compile fewer pages",
-                    ),
-                    accepted.map(|a| a.into_iter().filter(|c| !crate::v1::is_display_list_family(c)).collect()),
-                )),
-                extra_lines: Vec::new(),
-                rendered: Some(rendered),
-                id,
-            };
+            let trimmed = trim_v1_to_fit(&mut v1, &id, limit)
+                .then(|| v1.write_envelope(&id))
+                .filter(|l| l.len() <= limit);
+            match trimmed {
+                Some(line) => line,
+                None => {
+                    let pages = rendered.v2.pages.len();
+                    return Reply {
+                        line: json::write(&failed(
+                            &id,
+                            &project_id,
+                            revision,
+                            &format!(
+                                "compile_result would be {len} bytes for {pages} pages, over the {limit}-byte reply limit; split the project or compile fewer pages",
+                            ),
+                            accepted.map(|a| a.into_iter().filter(|c| !crate::v1::is_display_list_family(c)).collect()),
+                        )),
+                        extra_lines: Vec::new(),
+                        rendered: Some(rendered),
+                        id,
+                    };
+                }
+            }
         }
     };
     Reply {
@@ -1189,5 +1241,145 @@ mod includegraphics_read_tests {
             diagnostics.iter().all(|d| d.code != "read_error"),
             "discovery must never try to open the graphic's content: {diagnostics:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod oversize_trim_tests {
+    //! The oversize-`compile_result` path (`trim_v1_to_fit`): trimming a reply
+    //! to fit the size budget sheds page content, never the `diagnostics`
+    //! array, the `status` or the page frames (so the page count survives).
+
+    use super::*;
+    use crate::display::{Diagnostic, SourceRange};
+    use crate::v1::{V1Item, V1Page, V1Payload};
+
+    fn src(path: &str, a: usize, b: usize) -> SourceRange {
+        SourceRange {
+            path: std::rc::Rc::from(path),
+            start_byte: a,
+            end_byte: b,
+        }
+    }
+
+    fn item(text: &str) -> V1Item {
+        V1Item::Text {
+            text: text.to_string(),
+            x_pt: 72.0,
+            baseline_y_pt: 700.0,
+            font_size_pt: 10.0,
+            source: Some(src("main.tex", 0, text.len())),
+            font: None,
+        }
+    }
+
+    /// Four content-heavy pages with an error and a warning, as a `recovered`
+    /// reply for a large document would carry them.
+    fn big_payload() -> V1Payload {
+        let pages = (1..=4)
+            .map(|n: u32| V1Page {
+                number: n,
+                width_pt: 612.0,
+                height_pt: 792.0,
+                items: (0..50).map(|i| item(&format!("page {n} item {i} with enough words to cost bytes on the wire "))).collect(),
+            })
+            .collect();
+        let mut metadata = Value::obj();
+        metadata.set("packages", Value::Arr(Vec::new()));
+        V1Payload {
+            project_id: "trim".into(),
+            revision: 3,
+            status: "recovered",
+            pages,
+            diagnostics: vec![
+                Diagnostic::error("undefined_control_sequence", "\\alpah failed here", vec![src("main.tex", 10, 16)]),
+                Diagnostic::warning("overfull_hbox", "a long line spilled", vec![src("main.tex", 40, 90)]),
+            ],
+            accepted: Some(vec!["rules-v1".into()]),
+            metadata: Some(metadata),
+        }
+    }
+
+    /// The smallest the payload can get by shedding: no metadata, no items.
+    fn bare_len(v1: &V1Payload, id: &str) -> usize {
+        let mut bare = v1.clone();
+        bare.metadata = None;
+        for pg in &mut bare.pages {
+            pg.items.clear();
+        }
+        bare.envelope_len(id)
+    }
+
+    #[test]
+    fn trimming_an_oversized_reply_keeps_diagnostics_status_and_page_count() {
+        let mut v1 = big_payload();
+        let id = "big";
+        let full_len = v1.envelope_len(id);
+        let items_before: usize = v1.pages.iter().map(|p| p.items.len()).sum();
+        assert!(items_before > 0);
+        // A budget between the bare frames and the full reply: trimming must
+        // shed content, and must still fit.
+        let limit = (bare_len(&v1, id) + full_len) / 2;
+        assert!(limit < full_len, "the reply must overflow the budget (full {full_len}, limit {limit})");
+
+        assert!(trim_v1_to_fit(&mut v1, id, limit), "frames plus diagnostics fit the budget");
+        let line = v1.write_envelope(id);
+        assert!(line.len() <= limit, "the trimmed line is within the budget ({} > {limit})", line.len());
+
+        // The diagnostics array survives, plus the notice recording the trim.
+        for code in ["undefined_control_sequence", "overfull_hbox", "compile_result_trimmed"] {
+            assert!(v1.diagnostics.iter().any(|d| d.code == code), "diagnostic {code:?} survives: {:?}", v1.diagnostics);
+        }
+        let notice = v1.diagnostics.iter().find(|d| d.code == "compile_result_trimmed").unwrap();
+        assert!(
+            notice.message.contains(&format!("{full_len} bytes")),
+            "the notice names the full byte count the reply would have had: {:?}",
+            notice.message
+        );
+        // The `recovered` status and every page frame survive; only items shed.
+        assert_eq!(v1.status, "recovered");
+        assert_eq!(v1.pages.iter().map(|p| p.number).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
+        let items_after: usize = v1.pages.iter().map(|p| p.items.len()).sum();
+        assert!(items_after < items_before, "page content was shed ({items_before} -> {items_after})");
+        // Back-to-front: the first page keeps its content.
+        assert_eq!(v1.pages[0].items.len(), 50, "early pages keep their items: {:?}", v1.pages[0].items.len());
+    }
+
+    #[test]
+    fn trimming_an_ok_reply_marks_it_recovered() {
+        let mut v1 = big_payload();
+        v1.status = "ok";
+        v1.diagnostics.clear();
+        let id = "ok";
+        let full_len = v1.envelope_len(id);
+        let limit = (bare_len(&v1, id) + full_len) / 2;
+        assert!(trim_v1_to_fit(&mut v1, id, limit));
+        assert_eq!(v1.status, "recovered", "shed content is not a clean ok");
+        assert_eq!(v1.pages.len(), 4);
+        assert!(v1.write_envelope(id).len() <= limit);
+    }
+
+    #[test]
+    fn a_reply_within_budget_is_untouched() {
+        let mut v1 = big_payload();
+        let id = "small";
+        let full_len = v1.envelope_len(id);
+        assert!(trim_v1_to_fit(&mut v1, id, full_len));
+        assert_eq!(v1.diagnostics.len(), 2, "no trim notice when nothing was shed");
+        assert_eq!(v1.status, "recovered");
+        assert!(v1.metadata.is_some());
+        assert!(v1.pages.iter().all(|p| p.items.len() == 50));
+    }
+
+    #[test]
+    fn trimming_fails_only_when_diagnostics_alone_exceed_the_budget() {
+        let mut v1 = big_payload();
+        v1.pages.clear();
+        v1.metadata = None;
+        v1.diagnostics = vec![Diagnostic::error("huge", "x".repeat(5000), Vec::new())];
+        assert!(!trim_v1_to_fit(&mut v1, "huge", 1000), "bare frames plus diagnostics still overflow");
+        // Even then the diagnostics are not shed by the trim itself; the
+        // caller falls back to the `failed` refusal.
+        assert!(v1.diagnostics.iter().any(|d| d.code == "huge"));
     }
 }
