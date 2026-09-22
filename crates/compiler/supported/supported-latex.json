@@ -1339,7 +1339,6 @@
     {"name": "ulem", "why": "\\uline/\\sout are parser decorations; ulem.sty needs \\hbox and \\vrule"},
     {"name": "soul", "why": "\\so/\\hl are parser decorations; soul.sty needs \\hbox and \\discretionary"},
     {"name": "textcomp", "why": "text symbols are the Unicode text tables; the file needs \\DeclareTextSymbol"},
-    {"name": "appendix", "why": "\\appendix is parser state"},
     {"name": "lipsum", "why": "\\lipsum text is a parser table"},
     {"name": "verbatim", "why": "verbatim and comment environments are read by the lexer; verbatim.sty needs \\catcode tricks on \\obeylines output"},
     {"name": "comment", "why": "the comment environment is read by the lexer"},

@@ -1311,7 +1311,6 @@ Any other package, or these packages with other options, is recorded and reporte
 | `ulem` | \uline/\sout are parser decorations; ulem.sty needs \hbox and \vrule |
 | `soul` | \so/\hl are parser decorations; soul.sty needs \hbox and \discretionary |
 | `textcomp` | text symbols are the Unicode text tables; the file needs \DeclareTextSymbol |
-| `appendix` | \appendix is parser state |
 | `lipsum` | \lipsum text is a parser table |
 | `verbatim` | verbatim and comment environments are read by the lexer; verbatim.sty needs \catcode tricks on \obeylines output |
 | `comment` | the comment environment is read by the lexer |
