@@ -38,6 +38,7 @@ pub mod protocol;
 pub mod supported;
 pub mod tabular;
 pub mod siunitx;
+pub mod siunitx_generated;
 pub mod text_builtins;
 mod text_fontdimens;
 pub mod theorems;
