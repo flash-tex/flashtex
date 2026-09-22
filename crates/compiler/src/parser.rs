@@ -6591,19 +6591,12 @@ impl P<'_> {
         // no-op rather than a fabricated indent to cancel. It still
         // starts the paragraph (TeX §1091 `new_graf`), as `\indent` does.
         "noindent" => self.paragraph_started = true,
-        // The opposite request: unlike \noindent above, this one is not a
-        // coincidental match with real LaTeX's output — \indent asks for
-        // a first-line indent that this layout has no way to draw (see
-        // `set_length`'s `\parindent` handling), so it is named honestly
-        // via a diagnostic rather than silently accepted.
-        "indent" => {
-            self.paragraph_started = true;
-            self.diags.push(Diagnostic::warning(
-                "\\indent is recognised but paragraph indentation is not implemented",
-                Some(span),
-                Some("the paragraph was not given a first-line indent".into()),
-            ))
-        }
+        // The mirror image: start the paragraph (TeX §1091 `new_graf`)
+        // with its first-line indent box. The box itself is drawn
+        // downstream — the render pipeline reads `\indent` from the source
+        // and sets the paragraph's indent flag — so, like `\noindent`
+        // above, there is nothing to push here.
+        "indent" => self.paragraph_started = true,
         // Text-mode horizontal glue. `\quad`/`\qquad` are also implemented
         // in math mode (`src/math.rs`); this arm covers the same commands
         // used directly in running text, 1em/2em of the body text size.
@@ -18184,19 +18177,16 @@ mod tests {
     }
 
     #[test]
-    fn indent_is_named_honestly_since_first_line_indentation_is_not_implemented() {
+    fn indent_starts_the_paragraph_without_a_diagnostic() {
         let (parsed, items) = items(r"\indent Indented paragraph");
         assert!(
-            parsed
-                .diagnostics
-                .iter()
-                .any(|d| d.message.contains("\\indent") && d.message.contains("not implemented")),
+            parsed.diagnostics.is_empty(),
             "{:?}",
             parsed.diagnostics
         );
         assert!(
             items.iter().any(|item| item.text == "Indented"),
-            "the paragraph text must still be typeset even though the indent itself is not"
+            "the paragraph text must still be typeset; the indent box itself is drawn downstream"
         );
     }
 
