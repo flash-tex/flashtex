@@ -13,6 +13,7 @@ pub mod ams;
 pub mod ams_tfm;
 pub mod boxes;
 pub mod cm;
+pub mod cm_slots;
 pub mod cm_tfm;
 #[doc(hidden)]
 pub mod fixtures;
