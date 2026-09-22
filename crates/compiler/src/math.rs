@@ -730,6 +730,20 @@ fn text_command_style(name: &str, style: TextStyle) -> Option<TextStyle> {
     })
 }
 
+/// Face declarations (`\itshape`, `\bfseries`) inside a math text group.
+/// Unlike the argument-taking commands above, a declaration takes no
+/// argument: it switches the face for the rest of the enclosing box, the
+/// same mapping text-mode `\mbox` applies through `box_inlines`
+/// (`\bfseries` sets bold, `\itshape` sets italic), so the caller updates
+/// its running style instead of consuming a braced argument.
+fn text_declaration_style(name: &str, style: TextStyle) -> Option<TextStyle> {
+    Some(match name {
+        "bfseries" => style.bold(),
+        "itshape" => style.italic(),
+        _ => return None,
+    })
+}
+
 /// Which extensible arrow an [`Nucleus::ExtArrow`] draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ExtArrow {
@@ -4147,7 +4161,7 @@ impl MathParser<'_> {
         &mut self,
         command: &str,
         open: Span,
-        style: TextStyle,
+        mut style: TextStyle,
     ) -> (Vec<TextPiece>, Span) {
         let mut pieces = Vec::new();
         let mut depth = 1usize;
@@ -4206,7 +4220,9 @@ impl MathParser<'_> {
                 // into a diagnostic).
                 TokenKind::Command(name) if name == "flashtexcurrentlabel" => {}
                 TokenKind::Command(name) => {
-                    if let Some(nested_style) = text_command_style(&name, style) {
+                    if let Some(declared) = text_declaration_style(&name, style) {
+                        style = declared;
+                    } else if let Some(nested_style) = text_command_style(&name, style) {
                         let (nested, nested_span) =
                             self.required_text_group_styled(&name, token.span, nested_style);
                         end = nested_span;
