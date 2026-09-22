@@ -1049,6 +1049,41 @@ pub struct SizedPara {
 /// builds against a `vendor/compiler` that predates the name.
 pub type ParLeading = Option<flashtex_compiler::parser::FontSizeLevel>;
 
+/// How each compiler paragraph starts (`Parsed::block_par_starts`, PLAN1
+/// slice 2): `\noindent`, `\@endpe`, and whether a `\par` came before it,
+/// keyed by the spans of the block's first few inlines (a unit is found by
+/// its own first inline, which a lowering pass may have dropped). Empty
+/// when the compiler's list is not one entry per block ([`block_leadings`]).
+#[derive(Debug, Default)]
+struct ParStarts(std::collections::HashMap<(usize, usize, usize), flashtex_compiler::parser::ParStart>);
+
+impl ParStarts {
+    fn new(parsed: &Parsed) -> ParStarts {
+        let mut map = std::collections::HashMap::new();
+        if parsed.block_par_starts.len() == parsed.blocks.len() {
+            for (block, start) in parsed.blocks.iter().zip(&parsed.block_par_starts) {
+                let content = match block {
+                    CBlock::Paragraph(content) | CBlock::Styled { content, .. } | CBlock::ListItem { content, .. } => content,
+                    _ => continue,
+                };
+                // The first few inlines: a lowering pass may drop the
+                // block's first (a `\markboth` argument's run).
+                for inline in content.iter().take(4) {
+                    let s = inline_span(inline);
+                    map.entry((s.document.0, s.start, s.end)).or_insert(*start);
+                }
+            }
+        }
+        ParStarts(map)
+    }
+
+    /// The start of the paragraph whose first inline is `inlines[0]`.
+    fn of(&self, inlines: &[Inline]) -> Option<flashtex_compiler::parser::ParStart> {
+        let s = inline_span(inlines.first()?);
+        self.0.get(&(s.document.0, s.start, s.end)).copied()
+    }
+}
+
 /// One [`ParLeading`] per block, from the compiler's `block_par_leading`.
 ///
 /// The compiler's contract is one entry per pushed block, in `blocks` order,
@@ -1912,6 +1947,7 @@ pub fn adapt_cached(
     #[cfg(not(feature = "par-leading"))]
     let leadings: Vec<ParLeading> = vec![None; parsed.blocks.len()];
     let paired: Vec<(CBlock, ParLeading)> = parsed.blocks.iter().cloned().zip(leadings).collect();
+    let par_starts = ParStarts::new(parsed);
     let (mut lowered, mut limitations, stashed, letter_spans) = lower_blocks(texts, &paired, stash_titles);
     let mut stashed = stashed.into_iter();
     let title_of = |(title, authors, date): StashedTitle, span: Span| Block::Title {
@@ -1947,7 +1983,6 @@ pub fn adapt_cached(
     let mut next_included = vec![0usize; texts.len()];
     let mut seen_included = vec![false; texts.len()];
     let mut next_command = 0usize;
-    let mut noindent_at: Option<usize> = None;
     // The `\input`/`\include`d document whose units are being laid out.
     let mut input_doc: Option<DocumentId> = None;
     // The `\include` whose file is being read: its closing `\clearpage`
@@ -2039,7 +2074,7 @@ pub fn adapt_cached(
         docs
     };
     // One pass per unit, then one (`None`) for the commands after the last.
-    for mut next in split_at_page_breaks(texts, &lowered, size, &style).into_iter().map(Some).chain([None]) {
+    for mut next in split_at_page_breaks(&par_starts, texts, &lowered, size, &style).into_iter().map(Some).chain([None]) {
         // Does this unit continue the theorem-like environment that the
         // previous block left open? Only a paragraph inside it that is not
         // itself a fresh `\item` does.
@@ -2168,7 +2203,6 @@ pub fn adapt_cached(
                         event: event.clone(),
                         span: Span::in_document(cmd_doc, cmd.start, cmd.end),
                     }),
-                    BodyKind::NoIndent => noindent_at = Some(cmd.end),
                     BodyKind::Chapter { starred, title } => {
                         if !*starred {
                             // In the reading-order space `list_blocks` sorts
@@ -2632,20 +2666,12 @@ pub fn adapt_cached(
                 centered,
                 initial,
                 after_env,
+                noindent,
                 theorem_item,
                 list,
                 caption,
                 styled,
             } => {
-                let span = Span::in_document(document, picture.start, picture.end);
-                // `\noindent` right before the picture's first material, the
-                // same check paragraphs use below: `\noindent` is entry-only,
-                // as there. A mid-paragraph picture never consumes it: the
-                // paragraph's own unit comes first and takes it.
-                let noindent = initial
-                    && noindent_at.take().is_some_and(|end| {
-                        span.document == entry_doc && source.get(end..span.start).is_some_and(noindent_reaches)
-                    });
                 // The paragraph path's indent decision verbatim (a picture
                 // carries no run-in head, so that arm is empty).
                 let indent = initial && !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent;
@@ -2884,7 +2910,7 @@ pub fn adapt_cached(
                 // empty opener line, no indent after the display).
                 let first_span = anchor_span(inlines.iter());
                 let starts_display = matches!(parts.first(), Some(ParaPart::Display { .. } | ParaPart::Rows { .. }));
-                if let (Some(Block::Paragraph { parts: prev_parts, style: prev_style, list: prev_list, .. }), Some(f), Some(p)) = (blocks.last_mut(), first_span, prev_para_end) {
+                if let (Some(Block::Paragraph { parts: prev_parts, style: prev_style, list: prev_list, .. }), Some(_), Some(_)) = (blocks.last_mut(), first_span, prev_para_end) {
                     // Labels only, or a `label_line` (labels then one space).
                     let label_only = |p: &ParaPart| matches!(p, ParaPart::Lines(items) if items.iter().all(|i| matches!(i, Item::Label { .. } | Item::Space { .. })));
                     // A display's `\label` is flushed after it as a part of
@@ -2904,7 +2930,7 @@ pub fn adapt_cached(
                         && same_list
                         && !caption
                         && env_open.is_none();
-                    if same_flow && (starts_display || prev_ends_display) && gap_continues(texts, p, f) {
+                    if same_flow && (starts_display || prev_ends_display) && par_starts.of(inlines).is_some_and(|s| !s.par_before) {
                         if only_labels {
                             // A `\label` outside the display, still in the
                             // paragraph's horizontal mode (`\begin{subequations}
@@ -2940,10 +2966,9 @@ pub fn adapt_cached(
                     continue;
                 }
                 prev_para_end = inlines.iter().map(inline_span).last();
-                // `\noindent` right before the paragraph's first material.
-                let noindent = noindent_at.take().is_some_and(|end| {
-                    first_span.is_some_and(|f| f.document == entry_doc && source.get(end..f.start).is_some_and(noindent_reaches))
-                });
+                // `\noindent` before the paragraph's first material (the
+                // compiler's `ParStart::indent`, from the source or a macro).
+                let noindent = par_starts.of(inlines).is_some_and(|s| !s.indent);
                 // `\centering` sets `\parindent 0pt`; a list item's first
                 // paragraph carries no indent and `\list` sets
                 // `\parindent\listparindent` (0pt in article) for the
@@ -3812,68 +3837,6 @@ fn clear_page_blocks(texts: &[&str], blocks: &[Block]) -> Vec<usize> {
         .collect()
 }
 
-/// Whether a `\noindent` whose source ends where `gap` starts still governs
-/// the paragraph whose first material starts where `gap` ends (#958).
-///
-/// `\noindent` in vertical mode is TeX's `new_graf` without the indent box
-/// (§1091): the paragraph starts right there and everything up to the next
-/// `\par` belongs to it. What sits between the command and the first
-/// material the pipeline sees therefore only matters when it ends that
-/// paragraph: a blank line or an explicit `\par` (the empty paragraph is
-/// discarded, §1096, and the next one is indented as usual), or an
-/// environment boundary (`\begin{center}`, a list, ... start with `\par`).
-/// Anything else is paragraph material that sets nothing before the first
-/// word: group braces, a font or size declaration (`\noindent{\small A}`,
-/// `\noindent\small A`, `\noindent\textbf{A}`), a comment, or the first
-/// argument of a command whose text comes later (`\textcolor{red}{A}`).
-/// Only whitespace used to be accepted, so all of those were indented.
-fn noindent_reaches(gap: &str) -> bool {
-    let bytes = gap.as_bytes();
-    let mut i = 0;
-    // Newlines since the last non-blank character: two make a blank line,
-    // i.e. `\par`. A comment's own line end is skipped with it.
-    let mut newlines = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' => {
-                while i < bytes.len() && bytes[i] != b'\n' {
-                    i += 1;
-                }
-                i += 1;
-                continue;
-            }
-            b'\n' => {
-                newlines += 1;
-                if newlines >= 2 {
-                    return false;
-                }
-            }
-            b' ' | b'\t' | b'\r' => {}
-            b'\\' => {
-                newlines = 0;
-                let start = i + 1;
-                let mut j = start;
-                while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
-                    j += 1;
-                }
-                if j == start {
-                    // A control symbol (`\,`, `\%`): one character.
-                    i = start + 1;
-                    continue;
-                }
-                if matches!(&gap[start..j], "par" | "begin" | "end") {
-                    return false;
-                }
-                i = j;
-                continue;
-            }
-            _ => newlines = 0,
-        }
-        i += 1;
-    }
-    true
-}
-
 /// The first inline that sits at a real source position: a `\pagestyle` /
 /// `\thispagestyle` marker rides in the paragraph with the command's own
 /// span (for `\maketitle`, before the title's text), so it must not anchor
@@ -4433,6 +4396,9 @@ enum UnitKind<'p> {
         /// without a blank line continues in the same paragraph,
         /// unindented -- the same signal paragraphs carry.
         after_env: bool,
+        /// `\noindent` before the paragraph the picture opens (the
+        /// compiler's `ParStart::indent`).
+        noindent: bool,
         /// The picture is the `\item` of an amsthm theorem-like
         /// environment: not indented, as a paragraph would not be.
         theorem_item: bool,
@@ -4471,6 +4437,7 @@ fn gap_has_page_break(texts: &[&str], prev: Span, next: Span) -> bool {
 }
 
 fn split_at_page_breaks<'p>(
+    par_starts: &ParStarts,
     texts: &[&str],
     blocks: &'p [(CBlock, ParLeading)],
     size: u32,
@@ -4491,6 +4458,8 @@ fn split_at_page_breaks<'p>(
     // `\begin` was read in vertical mode (`\@topsepadd` keeps `\partopsep`
     // for the closing skip too).
     let mut prev_list = false;
+    // The compiler's list frames of the previous `\item` unit.
+    let mut prev_frames: Vec<flashtex_compiler::parser::ListFrame> = Vec::new();
     let mut list_vmode = false;
     // The same, per nesting level (index = depth - 1), for the closing
     // skips of several lists that end together.
@@ -4649,6 +4618,7 @@ fn split_at_page_breaks<'p>(
                 prev_vmode = false;
                 prev_styled = false;
                 prev_list = false;
+                prev_frames = Vec::new();
                 list_vmode = false;
                 list_vmode_by_depth.clear();
                 continue;
@@ -4741,43 +4711,49 @@ fn split_at_page_breaks<'p>(
         // successive `\addvspace`s keep the larger natural skip — so does a
         // following `\item`'s `\addvspace\itemsep`. (natural, stretch, shrink)
         let mut list_end_skip: Option<(f64, f64, f64)> = None;
+        // The lists closed since the previous unit, innermost first: the
+        // compiler's frames the previous `\item` sat in and this block does
+        // not (PLAN1 slice 2; an `\end` from a macro body counts too).
+        let frames: &[flashtex_compiler::parser::ListFrame] = match block {
+            CBlock::ListItem { lists, .. } => lists,
+            _ => &[],
+        };
+        let common = prev_frames.iter().zip(frames).take_while(|(a, b)| a.begin_span == b.begin_span).count();
+        let closed: Vec<&'static str> =
+            prev_frames[common.min(prev_frames.len())..].iter().rev().map(|f| f.environment.name()).filter(|n| LIST_ENVS.contains(n)).collect();
         if prev_list && !is_heading {
-            if let Some(gap) = first.and_then(gap_before) {
-                if let Some(env) = gap_has_list_end(gap) {
-                    let index = indexes.get(prev_end.map_or(0, |p| p.document.0));
-                    let stack = prev_end.map_or(&[][..], |p| index.list_stack(p.end));
-                    let topsepadd = |seps: &ListSeps, vmode: bool| {
-                        let p = if vmode { seps.partopsep_skip } else { crate::style::Skip::default() };
-                        (seps.topsep + p.natural, seps.topsep_skip.stretch + p.stretch, seps.topsep_skip.shrink + p.shrink)
-                    };
-                    for (k, closed) in list_env_ends(gap).enumerate() {
-                        let Some(depth) = stack.len().checked_sub(k).filter(|d| *d > 0) else { break };
-                        let (open, keys) = stack[depth - 1];
-                        if open != closed {
-                            break;
-                        }
-                        let keys = if open == "thebibliography" { "" } else { keys };
-                        let seps = list_seps_from(&index.setlist, open, depth, size, style, keys);
-                        let skip = topsepadd(&seps, list_vmode_by_depth.get(depth - 1).copied().unwrap_or(list_vmode));
-                        list_end_skip = Some(match list_end_skip {
-                            Some(kept) if kept.0 >= skip.0 => kept,
-                            _ => skip,
-                        });
+            if let Some(&env) = closed.last() {
+                let index = indexes.get(prev_end.map_or(0, |p| p.document.0));
+                let stack = prev_end.map_or(&[][..], |p| index.list_stack(p.end));
+                let topsepadd = |seps: &ListSeps, vmode: bool| {
+                    let p = if vmode { seps.partopsep_skip } else { crate::style::Skip::default() };
+                    (seps.topsep + p.natural, seps.topsep_skip.stretch + p.stretch, seps.topsep_skip.shrink + p.shrink)
+                };
+                for (k, &closed) in closed.iter().enumerate() {
+                    let Some(depth) = stack.len().checked_sub(k).filter(|d| *d > 0) else { break };
+                    let (open, keys) = stack[depth - 1];
+                    if open != closed {
+                        break;
                     }
-                    if list_end_skip.is_none() {
-                        // No open list to match (a list closed in another
-                        // document): the outermost level's skip.
-                        let begin_keys = stack.last().map_or("", |(e, keys)| if *e == env && *e != "thebibliography" { keys } else { "" });
-                        list_end_skip = Some(topsepadd(&list_seps_from(&index.setlist, env, 1, size, style, begin_keys), list_vmode));
-                    }
-                    if let Some(p) = prev_end {
-                        endlist_adjust = list_end_adjust(index, p.end, gap, size, style);
-                    }
-                    // `\@endparenv`: `\addpenalty\@endparpenalty` before
-                    // its `\addvspace\@topsepadd`.
-                    if !style.is_beamer() {
-                        penalty_before = Some(LIST_PENALTY);
-                    }
+                    let keys = if open == "thebibliography" { "" } else { keys };
+                    let seps = list_seps_from(&index.setlist, open, depth, size, style, keys);
+                    let skip = topsepadd(&seps, list_vmode_by_depth.get(depth - 1).copied().unwrap_or(list_vmode));
+                    list_end_skip = Some(match list_end_skip {
+                        Some(kept) if kept.0 >= skip.0 => kept,
+                        _ => skip,
+                    });
+                }
+                if list_end_skip.is_none() {
+                    // No open list to match (a list closed in another
+                    // document): the outermost level's skip.
+                    let begin_keys = stack.last().map_or("", |(e, keys)| if *e == env && *e != "thebibliography" { keys } else { "" });
+                    list_end_skip = Some(topsepadd(&list_seps_from(&index.setlist, env, 1, size, style, begin_keys), list_vmode));
+                }
+                endlist_adjust = list_end_adjust(index, stack, closed.len(), size, style);
+                // `\@endparenv`: `\addpenalty\@endparpenalty` before
+                // its `\addvspace\@topsepadd`.
+                if !style.is_beamer() {
+                    penalty_before = Some(LIST_PENALTY);
                 }
             }
         }
@@ -4964,6 +4940,7 @@ fn split_at_page_breaks<'p>(
         }
         let closed_list = prev_list;
         prev_list = list.is_some();
+        prev_frames = frames.to_vec();
         let limitations = std::mem::take(&mut pending_limitations);
         let styled = match block {
             CBlock::Styled { style, .. } => Some(ParaStyle::of(*style)),
@@ -4994,19 +4971,9 @@ fn split_at_page_breaks<'p>(
         });
         // `\@endpe`: a plain paragraph right after `\end{...}` (no blank line
         // or `\par` between them) is not indented. A list's `\endtrivlist`
-        // is `\@endparenv` too.
-        let after_env = styled.is_none()
-            && (prev_styled || closed_list)
-            && first.zip(prev_end).is_some_and(|(f, p)| {
-                p.document == f.document
-                    && p.end <= f.start
-                    && texts.get(f.document.0).and_then(|t| t.get(p.end..f.start)).is_some_and(|gap| {
-                        (prev_styled || gap_has_list_end(gap).is_some()) && rfind_command(gap, "end").is_some_and(|end| {
-                            let after = gap[end..].split_once('}').map_or("", |(_, rest)| rest);
-                            !has_blank_line(after) && find_command(after, "par").is_none()
-                        })
-                    })
-            });
+        // is `\@endparenv` too. The compiler reads it, macro-expanded
+        // `\end`s and `\par`s included (`ParStart::indent`).
+        let after_env = styled.is_none() && (prev_styled || closed_list) && par_starts.of(inlines_of(block)).is_some_and(|s| !s.indent);
         // The `\item` of an amsthm theorem-like environment: the gap before
         // this block holds its `\begin{...}` (only the environment's first
         // paragraph, so later ones keep the ambient `\parindent`).
@@ -5141,6 +5108,7 @@ fn split_at_page_breaks<'p>(
                                     centered,
                                     initial,
                                     after_env,
+                                    noindent: initial && par_starts.of(inlines).is_some_and(|s| !s.indent),
                                     // Only the environment's first unit
                                     // carries the `\item`, as for paragraphs.
                                     theorem_item: std::mem::take(&mut theorem_item),
@@ -5274,6 +5242,7 @@ fn split_at_page_breaks<'p>(
                 prev_vmode = false;
                 prev_styled = false;
                 prev_list = false;
+                prev_frames = Vec::new();
                 list_vmode = false;
                 list_vmode_by_depth.clear();
             }
@@ -5570,17 +5539,6 @@ fn truncate_auto_pair(items: &mut Vec<Item>, texts: &[&str]) -> bool {
         items.pop();
     }
     true
-}
-
-/// Whether the source between two consecutive pieces of material keeps TeX
-/// in the same paragraph (no blank line, no `\par`).
-fn gap_continues(texts: &[&str], prev: Span, next: Span) -> bool {
-    prev.document == next.document
-        && prev.end <= next.start
-        && texts
-            .get(next.document.0)
-            .and_then(|t| t.get(prev.end..next.start))
-            .is_some_and(|gap| !has_blank_line(gap) && find_command(gap, "par").is_none())
 }
 
 #[allow(dead_code)]
@@ -7264,25 +7222,17 @@ fn list_env_after_begin(rest: &str) -> bool {
     LIST_ENVS.iter().any(|env| after.starts_with(&format!("{{{env}}}")))
 }
 
-/// `\endtrivlist` for every `\end{itemize}`/`\end{enumerate}` in `gap`
-/// (which starts at byte `gap_start` of `source`), innermost first: when
-/// the list leaves a positive `\lastskip` it becomes `\lastskip +
-/// \parskip - \@outerparskip` — the closing list's `\parsep` less the
-/// `\parskip` outside it (the enclosing list's `\parsep`, or the
-/// document's). The summed change, in points.
-fn list_end_adjust(index: &SourceIndex, gap_start: usize, gap: &str, size: u32, style: &Stylesheet) -> f64 {
+/// `\endtrivlist` for each of the `closed` innermost lists of `stack` (the
+/// lists open where the previous unit ended), innermost first: when the
+/// list leaves a positive `\lastskip` it becomes `\lastskip + \parskip -
+/// \@outerparskip` — the closing list's `\parsep` less the `\parskip`
+/// outside it (the enclosing list's `\parsep`, or the document's). The
+/// summed change, in points.
+fn list_end_adjust(index: &SourceIndex, stack: &[(&str, &str)], closed: usize, size: u32, style: &Stylesheet) -> f64 {
     let mut adjust = 0.0;
-    let mut from = 0;
-    while let Some(at) = find_command(&gap[from..], "end") {
-        let abs = from + at;
-        from = abs + 1;
-        let rest = gap[abs + "\\end".len()..].trim_start();
-        if !LIST_ENVS.iter().any(|env| rest.starts_with(&format!("{{{env}}}"))) {
-            continue;
-        }
-        let stack = index.list_stack(gap_start + abs);
-        let Some(&(env, _)) = stack.last() else { continue };
-        let depth = stack.len();
+    for k in 0..closed {
+        let Some(depth) = stack.len().checked_sub(k).filter(|d| *d > 0) else { break };
+        let env = stack[depth - 1].0;
         let parsep = list_seps_from(&index.setlist, env, depth, size, style, "").parsep;
         let outer = if depth > 1 { list_seps_from(&index.setlist, stack[depth - 2].0, depth - 1, size, style, "").parsep } else { style.parskip.natural };
         adjust += parsep - outer;
@@ -7290,7 +7240,6 @@ fn list_end_adjust(index: &SourceIndex, gap_start: usize, gap: &str, size: u32, 
     adjust
 }
 
-/// The environment of the last `\end{itemize}`/`\end{enumerate}` in `gap`.
 /// The `\endtrivlist` glue (`\addvspace\@topsepadd`) of the list that
 /// `run` closes at its very end, in points; 0 when it closes none.
 ///
@@ -7333,28 +7282,6 @@ pub(crate) fn list_end_skip(source: &str, run: &std::ops::Range<usize>, body_siz
     };
     let seps = list_seps_with(source, env, 1, size, style, begin_keys);
     seps.topsep + if vmode { seps.partopsep } else { 0.0 }
-}
-
-/// The list environments `\end`ed in `gap`, in source order.
-fn list_env_ends(gap: &str) -> impl Iterator<Item = &'static str> + '_ {
-    let mut from = 0;
-    std::iter::from_fn(move || {
-        while let Some(at) = find_command(&gap[from..], "end") {
-            let abs = from + at;
-            from = abs + 1;
-            let rest = gap[abs + "\\end".len()..].trim_start();
-            if let Some(env) = LIST_ENVS.into_iter().find(|env| rest.strip_prefix('{').is_some_and(|r| r.starts_with(&format!("{env}}}")))) {
-                return Some(env);
-            }
-        }
-        None
-    })
-}
-
-fn gap_has_list_end(gap: &str) -> Option<&'static str> {
-    let end = rfind_command(gap, "end")?;
-    let rest = gap[end + "\\end".len()..].trim_start();
-    LIST_ENVS.into_iter().find(|env| rest.strip_prefix('{').is_some_and(|r| r.starts_with(&format!("{env}}}"))))
 }
 
 /// The paragraph-shape environments that are a `\trivlist` or a `\list` but
@@ -7721,24 +7648,6 @@ impl<'a, 't> SourceIndexes<'a, 't> {
             None => self.empty.get_or_init(|| SourceIndex::new("", self.theorem_envs)),
         }
     }
-}
-
-/// Whether the text at `span` was generated by a `\cite`-family command
-/// rather than copied from the source.
-///
-/// Every run of a citation carries the whole command's span, and the
-/// generated text can coincidentally be exactly as long as the command:
-/// `\citet{knuthplass1981}` is 22 bytes and sets the 22 characters of
-/// "Knuth and Plass (1981)". A blank in *generated* text stands for a space
-/// token — interword glue of `\fontdimen2` — while a blank in the source's
-/// own bytes is kept as a character, so that coincidence would set the
-/// citation's spaces as blank glyphs (LMRoman10's 0.5 em instead of cmr10's
-/// 0.33333 em: 1.825 pt too wide per space at 11 pt, and cumulative).
-/// A run the compiler built from a `\bibitem` label (#956): a citation, or
-/// the kernel `[label]` marker of the entry itself, which carries the
-/// `\bibitem`'s span.
-fn citation_label_run(source: &str, span: Span) -> bool {
-    generated_citation(source, span) || source.get(span.start..span.end).is_some_and(|s| s.starts_with("\\bibitem"))
 }
 
 fn generated_citation(source: &str, span: Span) -> bool {
@@ -9488,7 +9397,6 @@ pub enum BodyKind {
     Event(ChromeEvent),
     /// `\chapter[*][short]{title}`: `title` is the argument's inner range.
     Chapter { starred: bool, title: (usize, usize) },
-    NoIndent,
     /// `\maketitle` (laid out from the compiler's `TitleBlock`).
     MakeTitle,
     /// book.cls `\frontmatter`/`\mainmatter`/`\backmatter`.
@@ -9520,7 +9428,7 @@ pub enum Matter {
     Back,
 }
 
-/// `\pagestyle`, `\thispagestyle`, `\markboth`, `\markright`, `\noindent`,
+/// `\pagestyle`, `\thispagestyle`, `\markboth`, `\markright`,
 /// `\maketitle`, `\input`/`\include`, (when the class has chapters)
 /// `\chapter` and (book) `\frontmatter`/`\mainmatter`/`\backmatter` after
 /// `\begin{document}`, in source order, skipping comments.
@@ -9602,7 +9510,6 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
                 }
                 group(k).map(|(s, e, after)| (BodyKind::Part { starred, short, title: (s, e) }, after))
             }
-            "noindent" => Some((BodyKind::NoIndent, j)),
             "tableofcontents" => Some((BodyKind::ContentsList(crate::toc::ListKind::Toc), j)),
             "listoffigures" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lof), j)),
             "listoftables" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lot), j)),

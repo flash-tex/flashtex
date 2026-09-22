@@ -264,7 +264,6 @@ fn site15_url_through_macro() {
 // ---- C. Paragraph and vertical structure ----------------------------------
 
 #[test]
-#[ignore = "PLAN1 site 16: body_commands finds \\noindent in the bytes only"]
 fn site16_noindent_from_macro() {
     falsify(Same, &doc("", "First para.\n\n\\noindent Second para."), &doc("\\newcommand\\noi{\\noindent}\n", "First para.\n\n\\noi Second para."));
 }
@@ -312,7 +311,6 @@ fn site21_list_opened_by_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 22: the \\@endpe no-indent after a list is found from `\\end{..}` bytes in the gap"]
 fn site22_list_closed_by_macro() {
     falsify(
         Same,
@@ -382,7 +380,6 @@ fn site28_newtheorem_through_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 29: gap_continues looks for a blank line or `\\par` bytes after a display"]
 fn site29_par_after_display_from_macro() {
     falsify(Same, &doc("", "Text\n\\[x\\]\n\\par\nnext."), &doc("\\newcommand\\pr{\\par}\n", "Text\n\\[x\\]\n\\pr\nnext."));
 }

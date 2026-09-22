@@ -327,3 +327,12 @@ named above first.
   an `\input` file without a final newline, and for the gaps in front of
   non-text inlines (boxes, notes, glue, logos), which carry no
   `glue_before` yet. Falsifiers `site07`–`site10` run un-ignored.
+- **Paragraph indent (sites 16, 22 and 29): migrated.** The compiler's
+  `Parsed::block_par_starts` (one `ParStart { indent, par_before }` per
+  block, kept like `block_par_leading`) replaces the `\noindent` arm of
+  `body_commands`, `noindent_reaches`, the `after_env` gap scan and
+  `gap_continues`; the lists a paragraph closes come from the previous
+  `\item`'s `ListItem.lists` frames instead of `\end{..}` bytes in the gap
+  (`gap_has_list_end`, `list_env_ends`). Each list's keys and `\setlist`
+  state are still read from the source (site 21). Falsifiers `site16`,
+  `site22` and `site29` run un-ignored.
