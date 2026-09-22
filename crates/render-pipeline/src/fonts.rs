@@ -1148,6 +1148,104 @@ pub struct FontSet {
     named: RefCell<Vec<NamedSpec>>,
     /// Named faces resolved so far, by (id, bold, italic).
     named_faces: RefCell<BTreeMap<(u16, bool, bool), Result<NamedResolution, String>>>,
+    /// The font program each Core 14 face is drawn with on output
+    /// ([`FontSet::core14_program`]), looked up once per face.
+    core14_programs: RefCell<Vec<(Core14, Option<Rc<Core14Program>>)>>,
+}
+
+/// The TeX Gyre OpenType face that draws a Core 14 metric face on output:
+/// Termes for Times, Heros for Helvetica, Cursor for Courier (GUST Font
+/// License; the URW Nimbus designs pdfTeX's psnfss maps embed, extended by
+/// GUST). Symbol has none.
+pub fn core14_program_file(which: Core14) -> Option<&'static str> {
+    Some(match which {
+        Core14::TimesRoman => "texgyretermes-regular.otf",
+        Core14::TimesBold => "texgyretermes-bold.otf",
+        Core14::TimesItalic => "texgyretermes-italic.otf",
+        Core14::TimesBoldItalic => "texgyretermes-bolditalic.otf",
+        Core14::Helvetica => "texgyreheros-regular.otf",
+        Core14::Courier => "texgyrecursor-regular.otf",
+        Core14::Symbol => return None,
+    })
+}
+
+/// Host TeX trees' TeX Gyre directories, probed after the font search
+/// list (which holds the bundled copies) for [`core14_program_file`].
+pub const TEX_GYRE_DIRS: [&str; 6] = [
+    "/usr/local/texlive/2026/texmf-dist/fonts/opentype/public/tex-gyre",
+    "/usr/local/texlive/2026basic/texmf-dist/fonts/opentype/public/tex-gyre",
+    "/usr/local/texlive/2025/texmf-dist/fonts/opentype/public/tex-gyre",
+    "/usr/local/texlive/2025basic/texmf-dist/fonts/opentype/public/tex-gyre",
+    "/usr/share/texmf/fonts/opentype/public/tex-gyre",
+    "/usr/share/texlive/texmf-dist/fonts/opentype/public/tex-gyre",
+];
+
+/// A Core 14 face's output program: the OpenType face and, per Core 14
+/// glyph id, the program's glyph for the same character.
+///
+/// Layout keeps the Core 14 AFM metrics, which are the widths and kerns
+/// pdfTeX sets Times/Helvetica/Courier with (psnfss `ptmr8t`/`ptmr7t`,
+/// `phvr8t`, `pcrr8t` were generated from the same Adobe AFMs; every
+/// ASCII width agrees to 0.01/1000 em). Only the glyph ids and the font a
+/// run names change, so the display list carries a program the exact PDF
+/// route can embed, as pdfTeX embeds URW's Nimbus faces for these names.
+pub struct Core14Program {
+    pub face: Rc<LoadedFace>,
+    /// Indexed by Core 14 glyph id (0 is `.notdef` and maps to 0).
+    gids: Vec<u16>,
+}
+
+impl Core14Program {
+    /// The program's glyph for Core 14 glyph `gid`.
+    pub fn gid(&self, gid: u16) -> Option<u16> {
+        self.gids.get(usize::from(gid)).copied().filter(|g| *g != 0)
+    }
+}
+
+/// The program character for an AFM character TeX Gyre encodes under
+/// another code point: the modifier macron U+02C9 as U+00AF, the increment
+/// U+2206 as U+0394, Adobe's private-use `commaaccent` U+F6C3 as U+0326.
+fn core14_program_alternate(ch: char) -> Option<char> {
+    match ch {
+        '\u{02C9}' => Some('\u{00AF}'),
+        '\u{2206}' => Some('\u{0394}'),
+        '\u{F6C3}' => Some('\u{0326}'),
+        _ => None,
+    }
+}
+
+/// Redraws every glyph run of a Core 14 face in `used` with its program
+/// ([`FontSet::core14_program`]): the run names the program's `font_id`
+/// and each glyph its program glyph id; origins and advances (the AFM
+/// metrics layout placed them with) are untouched, and `used` lists the
+/// program instead of the metric face. A face without a program keeps its
+/// runs as they are. Decided per face, never per glyph, so a windowed
+/// render names the same fonts as the whole document.
+pub fn embed_core14_programs(fonts: &FontSet, used: &mut BTreeMap<Rc<str>, Rc<LoadedFace>>, pages: &mut [crate::display::Page]) {
+    let programs: Vec<(Rc<str>, Rc<Core14Program>)> =
+        used.values().filter_map(|f| fonts.core14_program(f).map(|p| (f.font_id.clone(), p))).collect();
+    if programs.is_empty() {
+        return;
+    }
+    for (id, p) in &programs {
+        used.remove(id);
+        used.entry(p.face.font_id.clone()).or_insert_with(|| p.face.clone());
+    }
+    for page in pages.iter_mut() {
+        let Some(items) = page.items_mut() else { continue };
+        for item in items.iter_mut() {
+            let crate::display::Item::GlyphRun(run) = item else { continue };
+            let Some((_, p)) = programs.iter().find(|(id, _)| *id == run.font_id) else { continue };
+            // Every Core 14 glyph has a program glyph (checked when the
+            // program was loaded), so the whole run moves.
+            for g in &mut run.glyphs {
+                if let Some(to) = p.gid(g.gid) {
+                    g.gid = to;
+                }
+            }
+            run.font_id = p.face.font_id.clone();
+        }
+    }
 }
 
 pub struct Resolved {
@@ -1245,6 +1343,7 @@ impl FontSet {
             index: RefCell::new(None),
             named: RefCell::new(Vec::new()),
             named_faces: RefCell::new(BTreeMap::new()),
+            core14_programs: RefCell::new(Vec::new()),
         }
     }
 
@@ -1594,7 +1693,17 @@ impl FontSet {
     /// `Rc`). Both outline formats are accepted: `CFF ` faces get this
     /// crate's charstring bounds, `glyf` faces their glyph headers.
     pub fn load_file(&self, file: &FontFile) -> Result<Rc<LoadedFace>, String> {
-        let name = file.display_name();
+        self.load_path(file.display_name(), &file.path, file.face_index)
+    }
+
+    /// [`FontSet::load_file`] by path: face `face_index` of `path`, loaded
+    /// once under `name`.
+    fn load_path(&self, name: String, path: &Path, face_index: u32) -> Result<Rc<LoadedFace>, String> {
+        struct File {
+            path: PathBuf,
+            face_index: u32,
+        }
+        let file = File { path: path.to_path_buf(), face_index };
         if let Some(existing) = self.by_name(&name) {
             return Ok(existing);
         }
@@ -1685,6 +1794,46 @@ impl FontSet {
             feature_maps: RefCell::new(BTreeMap::new()),
         };
         self.insert(name, loaded)
+    }
+
+    /// The program `face` (a Core 14 metric face) is drawn with on output,
+    /// when one is found and covers every glyph of the face; `None` for any
+    /// other face, for Symbol, and when the file is missing (the exact PDF
+    /// route then still refuses the Core 14 face, as before). Looked up in
+    /// the font search list (the bundled `Fonts` directory), then in each
+    /// Latin Modern TeX directory's `tex-gyre` sibling, then in
+    /// [`TEX_GYRE_DIRS`].
+    pub fn core14_program(&self, face: &LoadedFace) -> Option<Rc<Core14Program>> {
+        let FaceKind::Core14(core14) = &face.kind else { return None };
+        let which = core14.which();
+        if let Some((_, p)) = self.core14_programs.borrow().iter().find(|(w, _)| *w == which) {
+            return p.clone();
+        }
+        let program = self.load_core14_program(core14).map(Rc::new);
+        self.core14_programs.borrow_mut().push((which, program.clone()));
+        program
+    }
+
+    fn load_core14_program(&self, core14: &Core14Face) -> Option<Core14Program> {
+        let file = core14_program_file(core14.which())?;
+        let mut dirs: Vec<PathBuf> = self.search.dirs().to_vec();
+        for d in self.search.dirs() {
+            let s = d.to_string_lossy();
+            if let Some(at) = s.find("/fonts/opentype/public/lm") {
+                dirs.push(PathBuf::from(format!("{}/fonts/opentype/public/tex-gyre", &s[..at])));
+            }
+        }
+        dirs.extend(TEX_GYRE_DIRS.iter().map(PathBuf::from));
+        let path = dirs.iter().map(|d| d.join(file)).find(|p| p.is_file())?;
+        let face = self.load_path(file.trim_end_matches(".otf").to_string(), &path, 0).ok()?;
+        let otf = face.otf()?;
+        let mut gids = vec![0u16; usize::from(core14.num_glyphs())];
+        for (gid, slot) in gids.iter_mut().enumerate().skip(1) {
+            let ch = core14.char_for(flashtex_font_engine::GlyphId(gid as u16))?;
+            let g = otf.glyph_id(ch).or_else(|| core14_program_alternate(ch).and_then(|a| otf.glyph_id(a)))?;
+            *slot = g.0;
+        }
+        Some(Core14Program { face, gids })
     }
 
     /// Loads an explicit file name from the bounded search list.
