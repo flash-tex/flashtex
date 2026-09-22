@@ -23,18 +23,16 @@ const KNOWN_TEXT: &[(&str, &str)] = &[];
 /// declared class, with the reason.
 const KNOWN_CLASS: &[(&str, &str)] = &[];
 
-/// Declared kernel commands the compiler's inventory does not list yet
-/// (slice 1 of the generated-table work records them; the switch-over to
-/// the generated table supplies them and shrinks this list).
+/// Declared kernel commands the compiler's inventory does not list: the
+/// pieces with no character of their own (`fontmath.ltx` 340, 374-375, 462:
+/// `\mapstochar` is zero-width cmsy "37, `\lhook`/`\rhook` cmmi "2C/"2D,
+/// `\Arrowvert` cmsy "6B with cmex "3D) and the radical sign itself.
+/// cmex "7A-"7D (`\lmoustache`, `\rmoustache`, the brace tips) are
+/// excluded by `math::declared_kernel_symbol` because no bundled face paints
+/// them at the TFM's advance (tools/kernel-math-gap).
 const KNOWN_MISSING_KERNEL: &[&str] = &[
-    "Arrowvert", "Updownarrow", "amalg", "arrowvert", "asymp", "braceld", "bracelu", "bracerd",
-    "braceru", "bracevert", "cdotp", "clubsuit", "diamondsuit", "flat", "frown", "heartsuit",
-    "imath", "intop", "jmath", "ldotp", "leftharpoondown", "leftharpoonup", "lgroup", "lhook",
-    "lmoustache", "lnot", "mapstochar", "mathdollar", "natural", "nearrow", "neg", "nwarrow",
-    "ointop", "owns", "rgroup", "rhook", "rightharpoondown", "rightharpoonup", "rmoustache",
-    "searrow", "sharp", "smallint", "smile", "spadesuit", "sqrtsign", "star", "swarrow",
-    "triangleleft", "triangleright", "updownarrow", "uplus", "varbigtriangledown",
-    "varbigtriangleup", "wr",
+    "Arrowvert", "braceld", "bracelu", "bracerd", "braceru", "lhook", "lmoustache", "mapstochar",
+    "rhook", "rmoustache", "sqrtsign",
 ];
 
 fn hand_glyph(name: &str) -> Option<&'static str> {

@@ -611,6 +611,10 @@ def compiler_source(d, rows):
     return "\n".join(o) + "\n"
 
 
+def layout_class(r):
+    return "Ord" if r["class"] == "alpha" else CLASSES[r["class"]]
+
+
 def layout_source(rows):
     fam = {"operators": "Roman", "letters": "Italic", "symbols": "Symbol", "largesymbols": "Extension"}
     o = []
@@ -626,10 +630,12 @@ def layout_source(rows):
     o.append("//! listed and the rest are in `SHARED_TEXT`.")
     o.append("")
     o.append("use crate::cm::Family;")
+    o.append("use crate::mathlist::AtomClass;")
     o.append("")
-    o.append("/// (character, family, slot, command) for every kernel `\\DeclareMathSymbol`,")
-    o.append("/// `\\DeclareMathAccent` and the small variant of every `\\DeclareMathDelimiter`.")
-    o.append("pub const DECLARED_SLOTS: &[(char, Family, u8, &str)] = &[")
+    o.append("/// (character, family, slot, declared class, command) for every kernel")
+    o.append("/// `\\DeclareMathSymbol`, `\\DeclareMathAccent` and the small variant of every")
+    o.append("/// `\\DeclareMathDelimiter` (`\\mathalpha` is `Ord`).")
+    o.append("pub const DECLARED_SLOTS: &[(char, Family, u8, AtomClass, &str)] = &[")
     first = {}
     shared = []
     # `\DeclareMathSymbol` sets the character's `\mathcode`; a
@@ -650,14 +656,14 @@ def layout_source(rows):
                 shared.append((ch, r))
             continue
         first[ch] = key
-        o.append(f"    ('{rs(ch)}', Family::{fam[r['font']]}, 0x{r['slot']:02X}, {rs_str(r['name'])}),")
+        o.append(f"    ('{rs(ch)}', Family::{fam[r['font']]}, 0x{r['slot']:02X}, AtomClass::{layout_class(r)}, {rs_str(r['name'])}),")
     o.append("];")
     o.append("")
     o.append("/// Commands whose text another command already maps to a different slot;")
     o.append("/// the engine keeps these apart by the command, not the character.")
-    o.append("pub const SHARED_TEXT: &[(char, Family, u8, &str)] = &[")
+    o.append("pub const SHARED_TEXT: &[(char, Family, u8, AtomClass, &str)] = &[")
     for ch, r in shared:
-        o.append(f"    ('{rs(ch)}', Family::{fam[r['font']]}, 0x{r['slot']:02X}, {rs_str(r['name'])}),")
+        o.append(f"    ('{rs(ch)}', Family::{fam[r['font']]}, 0x{r['slot']:02X}, AtomClass::{layout_class(r)}, {rs_str(r['name'])}),")
     o.append("];")
     o.append("")
     o.append("/// The large (cmex) variant of every kernel `\\DeclareMathDelimiter`, keyed by")

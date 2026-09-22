@@ -71,11 +71,11 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "subcaption", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
     "mathscr", "pmb", "displaylimits", "cancelto",
-    "neg", "lnot",
-    "hookleftarrow", "nearrow", "searrow",
-    "star", "flat", "natural", "sharp",
-    "clubsuit", "diamondsuit", "heartsuit", "spadesuit",
-    "surd", "mathstrut",
+    // `\hookleftarrow` is `\leftarrow\joinrel\rhook` and cmmi "2D `\rhook`
+    // has no glyph in a bundled face (tools/kernel-math-gap); the other
+    // kernel symbols once listed here come from the generated declaration
+    // table (`crate::math_symbols`) now.
+    "hookleftarrow", "mathstrut",
     // The geometry package is implemented; its `\geometry` command is not.
     "geometry",
     // fontspec (XeLaTeX/LuaLaTeX-only): recognised so unguarded use reports

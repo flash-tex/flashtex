@@ -2395,6 +2395,39 @@ impl MathParser<'_> {
             "dots" | "ldots" | "dotsc" | "dotso" | "cdots" | "dotsb" | "dotsm" | "dotsi" => {
                 self.ellipsis(&name, span)
             }
+            // fontmath.ltx 512: `\mathellipsis` is `\mathinner{\ldotp\ldotp
+            // \ldotp}`, the kernel's own low dots, which amsmath's `\dots`
+            // rules never touch.
+            "mathellipsis" => text_atom("...".into(), span),
+            // The kernel's `\mathrel` joins (`crate::math_symbols::COMPOSITES`,
+            // fontmath.ltx 366-381): relations glued with `\joinrel`
+            // (`\mathrel{\mkern-3mu}`), each a Rel-class group so that the
+            // inner kern replaces the Rel-Rel spacing rather than adding to it
+            // (the `\coloneqq` convention below).
+            //
+            // `\bowtie` = `\mathrel\triangleright\joinrel\mathrel\triangleleft`
+            // (cmmi "2E and "2F, fontmath.ltx 265/264).
+            "bowtie" => rel_join(vec![symbol("\u{25B7}".into(), span), mkern(-3.0, span), symbol("\u{25C1}".into(), span)], span),
+            // `\relbar` = `\mathrel{\smash-}`, `\Relbar` = `\mathrel{=}`: the
+            // arrow shafts (the `\smash` only matters for a shaft taller
+            // than its arrowhead, which cmsy's `-` is not).
+            "relbar" => MathAtom { class_override: Some(AtomClass::Rel), ..symbol(MINUS_SIGN.into(), span) },
+            "Relbar" => MathAtom { class_override: Some(AtomClass::Rel), ..symbol("=".into(), span) },
+            // `\joinrel` = `\mathrel{\mkern-3mu}`.
+            "joinrel" => rel_join(vec![mkern(-3.0, span)], span),
+            // fontmath.ltx 242: `\surd` is `{\mathchar"1270}`, the radical sign
+            // (cmsy "70) braced into an ordinary atom.
+            "surd" => MathAtom { class_override: Some(AtomClass::Ord), ..symbol("\u{221A}".into(), span) },
+            // amsfonts.sty 161: `\Join` is `\mathrel{msbm "6F \mkern-13.8mu msbm "6E}`
+            // (`\rtimes` overprinted on `\ltimes`) once amsfonts/amssymb is
+            // loaded; latexsym's own lasy "31 glyph is not bundled.
+            "Join" => {
+                if !(self.packages.amsfonts || self.packages.amssymb) {
+                    return self.missing_package(&name, "amsfonts", span);
+                }
+                let piece = |slot: u8| crate::amssymb::by_slot(crate::amssymb::SymbolFont::Msbm, slot).expect("msbm slot in the generated table");
+                rel_join(vec![ams_atom(piece(0x6F), span), mkern(-13.8, span), ams_atom(piece(0x6E), span)], span)
+            }
             // Symbol has no U+222C/U+222D: repeated real integral glyphs.
             "iint" => symbol("∫∫".into(), span),
             "lbrace" => symbol("{".into(), span),
@@ -3177,7 +3210,10 @@ impl MathParser<'_> {
                     };
                     self.missing_package(&name, package, span)
                 }
-                (None, Some(glyph)) => symbol(glyph.into(), span),
+                (None, Some(glyph)) => match declared_kernel_symbol(&name) {
+                    Some(row) => declared_atom(row, span),
+                    None => symbol(glyph.into(), span),
+                },
                 (None, None) => {
                     // Issue #846: pdflatex answers "Undefined control
                     // sequence" and typesets nothing for a command it
@@ -3723,7 +3759,13 @@ impl MathParser<'_> {
                 "rbrace" => Some("}"),
                 "vert" => Some("|"),
                 "Vert" => Some("‖"),
-                other => command_glyph(other).filter(|_| DELIMITER_COMMANDS.contains(&other)),
+                // Any `\DeclareMathDelimiter` of the kernel (`\lgroup`,
+                // `\lmoustache`, `\bracevert`, `\Updownarrow`, ...), else the
+                // hand-listed fence names.
+                other => match declared_kernel_symbol(other) {
+                    Some(row) if row.kind == crate::math_symbols::Kind::Delimiter => Some(row.text),
+                    _ => command_glyph(other).filter(|_| DELIMITER_COMMANDS.contains(&other)),
+                },
             };
             if let Some(glyph) = glyph {
                 self.i += 1;
@@ -4635,6 +4677,15 @@ fn mkern(mu: f64, span: Span) -> MathAtom {
     space(mu / 18.0, span)
 }
 
+/// `\mathrel{...}` over a list: one Rel-class group atom.
+fn rel_join(atoms: Vec<MathAtom>, span: Span) -> MathAtom {
+    MathAtom {
+        nucleus: Nucleus::Group(MathList { atoms }),
+        class_override: Some(AtomClass::Rel),
+        ..symbol(String::new(), span)
+    }
+}
+
 /// Scales a delimiter taken by `\big`..`\Biggm`. The null delimiter (a zero
 /// space) and an empty recovery glyph are left as they are.
 /// An amssymb/amsfonts symbol (`crate::amssymb`): its Unicode text as the
@@ -5133,11 +5184,48 @@ pub const FRACTION_RULE_CHAR: char = '\u{2500}';
 /// The glyph a math-mode ASCII `-` renders as (U+2212, Symbol `minus`).
 pub const MINUS_SIGN: &str = "\u{2212}";
 
+/// The kernel (`fontmath.ltx`) declaration of a control word the engine sets
+/// as one glyph: a `\DeclareMathSymbol`, or the small variant of a
+/// `\DeclareMathDelimiter`, whose text a bundled face carries
+/// (`crate::math_symbols`, generated from the declarations). Composites
+/// (`\cong`, `\bowtie`, `\models`, ...) are `\def`s, not declarations, and
+/// keep their own arms; pieces with no character of their own (`\lhook`,
+/// `\rhook`, `\mapstochar`, `\Arrowvert`) are not drawable on their own.
+pub(crate) fn declared_kernel_symbol(name: &str) -> Option<&'static crate::math_symbols::MathSymbol> {
+    use crate::math_symbols::{Face, Kind, SymbolFont};
+    crate::math_symbols::kernel(name).filter(|s| {
+        matches!(s.kind, Kind::Symbol | Kind::Delimiter)
+            && !s.text.is_empty()
+            && s.face == Face::LatinModernMath
+            // cmex "7A-"7D (`\lmoustache`/`\rmoustache` and the four brace
+            // tips `\braceld`..`\braceru`): no bundled face has a glyph at
+            // the TFM's 4.5pt advance (tools/kernel-math-gap), so the box
+            // would be right and the ink wrong; they stay unsupported.
+            && !(s.font == SymbolFont::LargeSymbols && (0x7A..=0x7D).contains(&s.slot))
+    })
+}
+
+/// A declared kernel symbol as an atom: its text, with the declared class
+/// forced where the glyph-keyed [`symbol_class`] would give another (the
+/// same character can be declared under two classes -- `\triangle` is Ord
+/// and `\bigtriangleup` Bin on the same U+25B3).
+fn declared_atom(row: &'static crate::math_symbols::MathSymbol, span: Span) -> MathAtom {
+    let declared = row.class.atom_class();
+    MathAtom {
+        class_override: (symbol_class(row.text) != declared).then_some(declared),
+        ..symbol(row.text.into(), span)
+    }
+}
+
+/// The glyph a control word sets: the kernel declaration's text, else the
+/// hand-written `COMMAND_GLYPHS` row (composites and package symbols).
 fn command_glyph(name: &str) -> Option<&'static str> {
-    COMMAND_GLYPHS
-        .iter()
-        .find(|(command, _)| *command == name)
-        .map(|(_, glyph)| *glyph)
+    declared_kernel_symbol(name).map(|s| s.text).or_else(|| {
+        COMMAND_GLYPHS
+            .iter()
+            .find(|(command, _)| *command == name)
+            .map(|(_, glyph)| *glyph)
+    })
 }
 
 pub fn layout(list: &MathList, size: f64, diagnostics: &mut Vec<Diagnostic>) -> MathBox {
