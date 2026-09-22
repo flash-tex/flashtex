@@ -36,6 +36,35 @@ fn sections_and_subsections_number_and_reset() {
 }
 
 #[test]
+fn part_headings_feed_references_with_roman_numbers() {
+    let result = compile_full(
+        r"\part{Foo}\label{p:foo}\part*{Bar}\part{Baz}See \ref{p:foo}.",
+        LayoutConstraints::default(),
+    );
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("\\part")),
+        "{:?}",
+        result.diagnostics
+    );
+    let output: Vec<_> = result
+        .pages
+        .iter()
+        .flat_map(|page| page.items.iter().map(|item| item.text.clone()))
+        .collect();
+    // The "I" is the first part's heading number and its `\ref`.
+    assert_eq!(
+        output.iter().filter(|text| text.as_str() == "I").count(),
+        2,
+        "{output:?}"
+    );
+    assert!(output.iter().any(|text| text == "II"), "{output:?}");
+    assert!(!output.iter().any(|text| text == "??"), "{output:?}");
+}
+
+#[test]
 fn backward_and_forward_references_resolve() {
     let output = texts(
         r"Forward \ref{sec:two}. \section{One}\label{sec:one} Back \ref{sec:one}. \section{Two}\label{sec:two}",

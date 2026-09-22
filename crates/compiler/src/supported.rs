@@ -497,6 +497,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("input", "{path}", "expands a project-relative document in place"),
     ("include", "{path}", "expands a project-relative document in place"),
     ("listfiles", "", "accepted no-op; there is no log stream"),
+    ("part", "[short]{...}", "numbered part heading in roman numerals; starred form unnumbered"),
     ("section", "{...}", "numbered section heading; starred form unnumbered"),
     ("subsection", "{...}", "numbered subsection heading; starred form unnumbered"),
     ("frametitle", "{...}", "beamer frame title (\\Large, structure colour, in the frametitle box at the top of the slide); optional <overlay> and [short] read past; needs \\documentclass{beamer}"),
