@@ -443,6 +443,7 @@ fn text_probe(name: &str, arguments: &str) -> String {
         "sout" => "\\usepackage{ulem}\\sout{x}".into(),
         "so" => "\\usepackage{soul}\\so{x}".into(),
         "hl" => "\\usepackage{soul}\\hl{x}".into(),
+        "todo" => "\\usepackage{todonotes}\\todo{x}".into(),
         // Table rules, spans and colours only exist inside a table: probe
         // each where TeX allows it, with the package that defines it.
         "hline" => "\\begin{tabular}{cc}a&b\\\\\\hline c&d\\end{tabular}".into(),

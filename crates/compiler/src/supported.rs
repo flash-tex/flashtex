@@ -299,6 +299,7 @@ pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "text",
     "boxed",
     "enquote",
+    "todo",
     "frametitle",
     "framesubtitle",
     "alert",
@@ -670,6 +671,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("so", "{...}", "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)"),
     ("hl", "{...}", "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)"),
     ("enquote", "{text}", "csquotes: wraps text in typographic quotation marks; nesting alternates double \\u{201c}\\u{201d} and single \\u{2018}\\u{2019} (needs csquotes)"),
+    ("todo", "{...}", "todonotes margin note: the plain form sets its argument like \\marginpar (needs todonotes; options, \\listoftodos and \\missingfigure stay unsupported)"),
     ("CJKfamily", "{family}", "CJKutf8: selects the CJK family (min, goth, maru, gbsn, gkai, bsmi, bkai, mj) for the rest of the group inside a CJK environment; an unknown family sets nothing, as pdflatex's C70/song substitution does"),
     ("CJKspace", "", "CJKutf8: a source blank after a CJK character is an interword space again (undoes \\CJKnospace / CJK*)"),
     ("CJKnospace", "", "CJKutf8: a source blank after a CJK character is ignored, as in the CJK* environment"),
@@ -1592,6 +1594,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "soul",
         "",
         "\\so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \\hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828); \\st stays unsupported",
+    ),
+    (
+        "todonotes",
+        "",
+        "\\todo{text}: the plain form is set as a margin note like \\marginpar; options, \\listoftodos and \\missingfigure stay unsupported",
     ),
     (
         "relsize",
