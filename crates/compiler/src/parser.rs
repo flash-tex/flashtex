@@ -2931,8 +2931,8 @@ fn letter_parskip_pt(class_size_pt: Option<f64>) -> f64 {
 /// `letter_parskip_pt` convention. An unrecognised size keeps the standard
 /// classes' own 10pt default. The `plus 2pt` stretch is not modelled:
 /// `parskip_pt` is rigid, so only the natural length is stored. The
-/// package's `\parindent` (0pt) needs no state: this engine never indents
-/// paragraphs, so a zero `\parindent` is already exact.
+/// package's `\parindent` (0pt) needs no state: the render pipeline reads it
+/// from the source, so the compiler keeps only `\parskip`.
 fn parskip_package_default_pt(class_size_pt: Option<f64>) -> f64 {
     match class_size_pt {
         Some(size) if size == 11.0 => 6.8,
@@ -6593,9 +6593,10 @@ impl P<'_> {
         "noindent" => self.paragraph_started = true,
         // The opposite request: unlike \noindent above, this one is not a
         // coincidental match with real LaTeX's output — \indent asks for
-        // a first-line indent that this layout has no way to draw (see
-        // `set_length`'s `\parindent` handling), so it is named honestly
-        // via a diagnostic rather than silently accepted.
+        // an explicit per-paragraph indent box, which neither this layout
+        // nor the render pipeline draws (unlike the ambient `\parindent`,
+        // which the pipeline does honour), so it is named honestly via a
+        // diagnostic rather than silently accepted.
         "indent" => {
             self.paragraph_started = true;
             self.diags.push(Diagnostic::warning(
@@ -7135,9 +7136,10 @@ impl P<'_> {
         }
         // letter.cls lines 91-92 replace the standard classes' paragraph
         // shape outright: `\parskip 0.7em` (rigid, in the class body font)
-        // and `\parindent 0pt`. This engine never indents paragraphs, so
-        // only the skip has to be carried; a later `\setlength{\parskip}`
-        // still wins, exactly as it would in real LaTeX.
+        // and `\parindent 0pt`. The indent needs no compiler state (the
+        // render pipeline reads it from the source), so only the skip has
+        // to be carried; a later `\setlength{\parskip}` still wins,
+        // exactly as it would in real LaTeX.
         if self.is_letter_class() && self.parskip_pt.is_none() {
             self.parskip_pt = Some(letter_parskip_pt(self.class_size_pt));
         }
@@ -7270,8 +7272,9 @@ impl P<'_> {
 
     /// `\setlength{\parskip}{..}` and `\setlength{\parindent}{..}` in the
     /// preamble. `em`/`ex` resolve against the active style's compiler font
-    /// metrics. This engine never indents paragraphs, so only a zero
-    /// `\parindent` is exact.
+    /// metrics. `\parindent` (any value) is honoured by the render pipeline,
+    /// which reads it from the source; only `\parskip` is also kept as
+    /// compiler state.
     /// Page-geometry lengths (`\textwidth`, `\oddsidemargin`, ...) are
     /// accepted in the preamble without a diagnostic; the render pipeline
     /// applies them from the source.
@@ -7594,16 +7597,14 @@ impl P<'_> {
                     *slot = if add { *slot + pt } else { pt };
                 }
             }
-            "parindent" if in_preamble && pt == 0.0 => {}
-            // A TeX assignment or `\addtolength` is accepted without noise
-            // (the layout still does not indent). `\setlength{\parindent}{nonzero}`
-            // keeps the existing "not implemented" warning.
-            "parindent" if in_preamble && (add || command.is_empty()) => {}
-            "parindent" if in_preamble => self.diags.push(Diagnostic::warning(
-                "\\parindent is recognised but paragraph indentation is not implemented",
-                Some(span),
-                Some("paragraphs are not indented".into()),
-            )),
+            // `\parindent` at any value, via `\setlength`, `\addtolength`
+            // or a TeX assignment: the render pipeline applies it from the
+            // source (`apply_preamble_lengths` in the pipeline's adapter,
+            // including `\addtolength` accumulation and the class default),
+            // so every preamble form is accepted silently here. The
+            // compiler's own layout preview does not draw a first-line
+            // indent; that preview is not what ships to the page.
+            "parindent" if in_preamble => {}
             name if in_preamble && is_preamble_length(name) => {}
             name if is_table_length(name) => {}
             _ => self.diags.push(Diagnostic::warning(

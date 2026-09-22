@@ -127,13 +127,29 @@ fn preamble_setlength_space_form_and_length_reference() {
 }
 
 #[test]
+fn nonzero_parindent_setlength_is_accepted_without_a_diagnostic() {
+    // The render pipeline applies `\parindent` from the source (the class
+    // default, `\setlength`, `\addtolength` and TeX assignments), so a
+    // nonzero preamble value is honoured rather than "not implemented".
+    for preamble in [
+        "\\setlength{\\parindent}{15pt}",
+        "\\setlength{\\parindent}{2em}",
+        "\\setlength{\\parindent}{0pt}",
+    ] {
+        let src = format!(
+            "\\documentclass{{article}}{preamble}\\begin{{document}}One\n\nTwo\\end{{document}}"
+        );
+        assert_no_diagnostics(&src);
+    }
+}
+
+#[test]
 fn unimplemented_lengths_are_reported_not_silently_ignored() {
     let (_, messages) = compile(
-        "\\documentclass{article}\\setlength{\\parindent}{15pt}\\setlength{\\textwidth}{5in}\
+        "\\documentclass{article}\\setlength{\\textwidth}{5in}\
          \\begin{document}x\\setlength{\\parskip}{1em}\\setlength{\\parskip}{banana}\\end{document}",
     );
     for expected in [
-        "\\parindent is recognised but paragraph indentation is not implemented",
         "\\setlength{\\parskip} is recognised but not implemented here",
         "\\setlength requires a recognised dimension, got 'banana'",
     ] {
