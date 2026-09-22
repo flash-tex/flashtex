@@ -70,7 +70,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "usetikzlibrary", "draw", "node", "fill", "path",
     "subcaption", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
-    "mathscr", "pmb", "displaylimits", "cancelto",
+    "mathscr", "pmb", "cancelto",
     // `\hookleftarrow` is `\leftarrow\joinrel\rhook` and cmmi "2D `\rhook`
     // has no glyph in a bundled face (tools/kernel-math-gap); the other
     // kernel symbols once listed here come from the generated declaration

@@ -502,7 +502,6 @@ fn site44_tikzpicture_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 45: typeset.rs operator_limits_of reads `\\lim` bytes at the atom's span"]
 fn site45_operator_limits_from_macro() {
     falsify(Same, &doc("", "\\[\\lim_{n\\to\\infty} a_n\\]"), &doc("\\newcommand\\lm{\\lim}\n", "\\[\\lm_{n\\to\\infty} a_n\\]"));
 }

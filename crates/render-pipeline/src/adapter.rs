@@ -3971,6 +3971,7 @@ fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut V
                     class_override: None,
                     width_em: None,
                     ams_symbol: None,
+                    limits: None,
                 }],
             };
             crate::incremental::respan_math(&mut list, *span);

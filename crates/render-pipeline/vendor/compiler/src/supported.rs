@@ -1261,9 +1261,9 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
-        &["limits", "nolimits"],
+        &["limits", "nolimits", "displaylimits"],
         "",
-        "accepted without changing script placement",
+        "set a named operator's script placement (`MathAtom::limits`)",
         true,
     ),
     (

@@ -1985,12 +1985,12 @@ impl<'a> Context<'a> {
         // the kernel declares each with, plus any `\limits`/`\nolimits`
         // switch after it -- none of which the compiler's `Nucleus::Text`
         // carries, so all of it is re-read from the source at the span.
-        let op_limits = |sp: &Span| operator_limits_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+        let op_limits = operator_limits;
         // `\lim`/`\mathrm{...}`/`\bmod` against `\text{...}`/`\tag{...}` and
         // against a one-character siunitx unit run: the compiler spells all
         // of them `Nucleus::Text`, but only a *whole* run of math characters
         // keeps the italic correction of its last character (§752).
-        let text_italic = |sp: &Span| math_text_keeps_italic(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+        let text_italic = |a: &flashtex_compiler::math::MathAtom| text_atom_keeps_italic(texts, a);
         // `\mathrm{...}` against the operator names: under beamer's sans
         // math the one is roman and the others sans.
         let text_roman = |sp: &Span| math_text_is_mathrm(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
@@ -1998,7 +1998,7 @@ impl<'a> Context<'a> {
         // in every math style (see `math_text_box_of`).
         let text_box = |sp: &Span| math_text_box_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // `\limsup`/`\liminf`: `lim`, a thin space, then `sup`/`inf`.
-        let text_split = |sp: &Span| operator_thin_space_split(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+        let text_split = operator_thin_space_split;
         // `\ldots`/`\cdots`: `\mathinner` of three Punct dots.
         let ellipsis = |sp: &Span| math_ellipsis_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // `\quad`/`\qquad`/`\,`/`\:`/`\;`/`\!` (compiler `Space { em }`) at
@@ -8908,87 +8908,24 @@ pub fn class_override_of(text: &str, at: usize) -> Option<ml::AtomClass> {
     })
 }
 
-/// The named operators of the LaTeX kernel's "Log-like functions"
-/// (`latex.ltx` 15523-15556), and the limit placement each is declared with.
+/// The limit placement of a named operator (`\lim`, `\sin`, `\max`, ...),
+/// `None` for every other atom: the compiler's [`MathAtom::limits`]
+/// (`flashtex_compiler::math`), which carries the kernel's declaration
+/// (latex.ltx 15523-15556: the ten bare `\mathop{\operator@font ...}` keep
+/// TeX's default `\displaylimits`, the rest are `\nolimits`) with any
+/// `\limits`/`\nolimits`/`\displaylimits` after the operator applied. A
+/// macro that expands to `\lim` carries it too (PLAN1 site 45); the control
+/// word at the span used to be read back instead. `\mathrm{lim}` is an
+/// ordinary run of the same letters and carries none.
 ///
-/// The ten defined as a bare `\mathop{\operator@font ...}` -- no `\nolimits`
-/// after it -- keep TeX's default `\displaylimits`: limits over and under in
-/// display style, scripts beside in text style. The rest are declared
-/// `\mathop{...}\nolimits` and keep their scripts beside them at every style.
-/// `\sgn` is not a kernel command at all; the compiler accepts it anyway, and
-/// the amsmath spelling everyone writes for it (`\DeclareMathOperator{\sgn}`,
-/// no star) is `\nolimits`, so that is the row it gets here.
-const NAMED_OPERATORS: &[(&str, ml::Limits)] = &[
-    ("lim", ml::Limits::DisplayLimits),
-    ("liminf", ml::Limits::DisplayLimits),
-    ("limsup", ml::Limits::DisplayLimits),
-    ("max", ml::Limits::DisplayLimits),
-    ("min", ml::Limits::DisplayLimits),
-    ("sup", ml::Limits::DisplayLimits),
-    ("inf", ml::Limits::DisplayLimits),
-    ("det", ml::Limits::DisplayLimits),
-    ("gcd", ml::Limits::DisplayLimits),
-    ("Pr", ml::Limits::DisplayLimits),
-    ("sin", ml::Limits::NoLimits),
-    ("cos", ml::Limits::NoLimits),
-    ("tan", ml::Limits::NoLimits),
-    ("cot", ml::Limits::NoLimits),
-    ("sec", ml::Limits::NoLimits),
-    ("csc", ml::Limits::NoLimits),
-    ("arcsin", ml::Limits::NoLimits),
-    ("arccos", ml::Limits::NoLimits),
-    ("arctan", ml::Limits::NoLimits),
-    ("sinh", ml::Limits::NoLimits),
-    ("cosh", ml::Limits::NoLimits),
-    ("tanh", ml::Limits::NoLimits),
-    ("coth", ml::Limits::NoLimits),
-    ("log", ml::Limits::NoLimits),
-    ("ln", ml::Limits::NoLimits),
-    ("lg", ml::Limits::NoLimits),
-    ("exp", ml::Limits::NoLimits),
-    ("deg", ml::Limits::NoLimits),
-    ("dim", ml::Limits::NoLimits),
-    ("ker", ml::Limits::NoLimits),
-    ("arg", ml::Limits::NoLimits),
-    ("hom", ml::Limits::NoLimits),
-    ("sgn", ml::Limits::NoLimits),
-];
-
-/// The limit placement of the named operator (`\lim`, `\sin`, `\max`, ...)
-/// whose control word starts at `at`, or `None` when the atom at that span
-/// did not come from one.
-///
-/// The compiler turns every one of them into an upright [`Nucleus::Text`] run
-/// (`text_atom(operator, span)`) and keeps neither TeX's `\mathop` class nor
-/// the `\limits`/`\nolimits`/`\displaylimits` switch that may follow: its
-/// parser drops those switches without producing an atom, so that a following
-/// script still attaches to the operator. Both facts are therefore re-read
-/// from the source at the atom's span, exactly as [`fence_of`] and
-/// [`class_override_of`] do for the other things a pinned compiler does not
-/// carry.
-///
-/// Reading the *control word* rather than matching the letters is what keeps
-/// `\mathrm{lim}` out: it also arrives as `Nucleus::Text("lim")`, but it is an
-/// ordinary atom in TeX and its span starts at `\mathrm`.
-pub fn operator_limits_of(text: &str, at: usize) -> Option<ml::Limits> {
-    let rest = text.get(at..)?.strip_prefix('\\')?;
-    let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
-    let declared = NAMED_OPERATORS.iter().find(|(name, _)| *name == &rest[..word_len]).map(|(_, limits)| *limits)?;
-    // `\lim\limits_{n}`, `\max\nolimits_{k}`: the switch overrides the
-    // declaration (TeXbook p. 144). Only an immediately following switch
-    // counts, as in TeX, where it is read by `\mathop`'s scanner.
-    let after = rest[word_len..].trim_start_matches([' ', '\t', '\r', '\n']);
-    for (switch, limits) in [
-        ("nolimits", ml::Limits::NoLimits),
-        ("limits", ml::Limits::Limits),
-        ("displaylimits", ml::Limits::DisplayLimits),
-    ] {
-        match after.strip_prefix('\\').and_then(|a| a.strip_prefix(switch)) {
-            Some(tail) if !tail.starts_with(|c: char| c.is_ascii_alphabetic()) => return Some(limits),
-            _ => {}
-        }
-    }
-    Some(declared)
+/// [`MathAtom::limits`]: flashtex_compiler::math::MathAtom::limits
+pub fn operator_limits(atom: &flashtex_compiler::math::MathAtom) -> Option<ml::Limits> {
+    use flashtex_compiler::math::Limits;
+    Some(match atom.limits? {
+        Limits::Limits => ml::Limits::Limits,
+        Limits::NoLimits => ml::Limits::NoLimits,
+        Limits::DisplayLimits => ml::Limits::DisplayLimits,
+    })
 }
 
 /// Whether the `Nucleus::Text` atom whose span starts at `at` is a *complete*
@@ -9037,7 +8974,13 @@ pub fn math_text_keeps_italic(text: &str, at: usize) -> bool {
     // `\mathrm{lim}` is one `text_atom` of all the letters, so it is whole;
     // `\bmod`/`\mod`/`\pmod` likewise put `mod` (and `(mod`, `)`) in runs of
     // their own. Every log-like function is a whole word by construction.
-    matches!(word, "mathrm" | "bmod" | "mod" | "pmod") || NAMED_OPERATORS.iter().any(|(name, _)| *name == word)
+    matches!(word, "mathrm" | "bmod" | "mod" | "pmod")
+}
+
+/// [`math_text_keeps_italic`] for an atom: a named operator's run is whole
+/// by construction ([`operator_limits`]), whatever produced it.
+fn text_atom_keeps_italic(texts: &[&str], atom: &flashtex_compiler::math::MathAtom) -> bool {
+    atom.limits.is_some() || math_text_keeps_italic(texts.get(atom.span.document.0).copied().unwrap_or(""), atom.span.start)
 }
 
 /// Whether the `Nucleus::Text` atom whose span starts at `at` is a
@@ -9120,12 +9063,11 @@ fn is_upper_greek(s: &str) -> bool {
 ///  - `sup` and `inf` likewise end runs, so `\liminf` takes `f`'s 0.84708 pt
 ///    correction at the end -- pdfTeX's box is 32.60657 pt and closes with
 ///    `\kern0.84708`.
-pub fn operator_thin_space_split(text: &str, at: usize) -> Option<(&'static str, &'static str)> {
-    let rest = text.get(at..)?.strip_prefix('\\')?;
-    let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
-    match &rest[..word_len] {
-        "limsup" => Some(("lim", "sup")),
-        "liminf" => Some(("lim", "inf")),
+pub fn operator_thin_space_split(atom: &flashtex_compiler::math::MathAtom) -> Option<(&'static str, &'static str)> {
+    atom.limits?;
+    match &atom.nucleus {
+        flashtex_compiler::math::Nucleus::Text(text) if text == "limsup" => Some(("lim", "sup")),
+        flashtex_compiler::math::Nucleus::Text(text) if text == "liminf" => Some(("lim", "inf")),
         _ => None,
     }
 }
@@ -9224,18 +9166,18 @@ fn text_piece_key(style: flashtex_compiler::math::TextStyle) -> Option<crate::nf
 
 /// [`convert_math_fenced`] with `class` giving the forced class of a
 /// `Group` (`\mathbin{...}`) or class-overridden symbol atom at a span, and
-/// `op_limits` the limit placement of a named operator at a span
-/// ([`operator_limits_of`]).
+/// `op_limits` the limit placement of a named operator
+/// ([`operator_limits`]).
 pub fn convert_math_classed(
     list: &flashtex_compiler::math::MathList,
     sink: &mut crate::mathtext::TextSink,
     fence: &dyn Fn(&Span) -> Option<Fence>,
     class: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::AtomClass>,
-    op_limits: &dyn Fn(&Span) -> Option<ml::Limits>,
-    text_italic: &dyn Fn(&Span) -> bool,
+    op_limits: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::Limits>,
+    text_italic: &dyn Fn(&flashtex_compiler::math::MathAtom) -> bool,
     text_roman: &dyn Fn(&Span) -> bool,
     text_box: &dyn Fn(&Span) -> Option<MathTextBox>,
-    text_split: &dyn Fn(&Span) -> Option<(&'static str, &'static str)>,
+    text_split: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<(&'static str, &'static str)>,
     ellipsis: &dyn Fn(&Span) -> Option<MathDots>,
     switch: &dyn Fn(&Span) -> Option<ml::Style>,
 ) -> ml::MathList {
@@ -9337,9 +9279,9 @@ pub fn convert_math_classed(
             // codes `\mathrm` moves to family 0.
             #[cfg(feature = "math-font-kerns")]
             N::Text(text)
-                if text_italic(&a.span)
-                    && op_limits(&a.span).is_none()
-                    && text_split(&a.span).is_none()
+                if text_italic(a)
+                    && op_limits(a).is_none()
+                    && text_split(a).is_none()
                     && matches!(text.as_bytes(), [c] if c.is_ascii_alphanumeric()) =>
             {
                 vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::TextChar(char::from(text.as_bytes()[0])))]
@@ -9348,7 +9290,7 @@ pub fn convert_math_classed(
                 // `\limsup`/`\liminf` are `lim\,sup` and `lim\,inf`: one
                 // operator whose nucleus is a list of two math-character runs
                 // with 3mu between them (`operator_thin_space_split`).
-                let mut atom = match text_split(&a.span) {
+                let mut atom = match text_split(a) {
                     Some((head, tail)) => {
                         let parts = vec![sink.atom_corrected(head), ml::Atom::glue(3.0, 0.0), sink.atom_corrected(tail)];
                         ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(ml::MathList::new(parts)))
@@ -9359,10 +9301,10 @@ pub fn convert_math_classed(
                     // `\SetMathAlphabet{\mathrm}{normal}{..}{\rmdefault}`),
                     // the roman run of the arm below. Measured (probe):
                     // `\mathrm{d}` CMR10 6.061 wide.
-                    None if text_italic(&a.span) && sink.sans_math && !text_roman(&a.span) && text.bytes().all(|b| b.is_ascii_alphanumeric()) => {
+                    None if text_italic(a) && sink.sans_math && !text_roman(&a.span) && text.bytes().all(|b| b.is_ascii_alphanumeric()) => {
                         sink.atom_in(text, crate::nfss::FontKey::new(crate::nfss::FamilyKind::Sf, crate::nfss::Series::M, crate::nfss::Shape::N))
                     }
-                    None if text_italic(&a.span) => sink.atom_corrected(text),
+                    None if text_italic(a) => sink.atom_corrected(text),
                     None => sink.atom(text),
                 };
                 // A class the compiler states on the atom: `\bmod`'s `mod` is
@@ -9370,7 +9312,7 @@ pub fn convert_math_classed(
                 if let Some(forced) = class(a) {
                     atom.class = forced;
                 }
-                if let Some(limits) = op_limits(&a.span) {
+                if let Some(limits) = op_limits(a) {
                     atom.class = ml::AtomClass::Op;
                     atom.limits = limits;
                 }
@@ -10261,20 +10203,19 @@ fn grid_pieces(
     sink: &mut crate::mathtext::TextSink,
     fence: &dyn Fn(&Span) -> Option<Fence>,
     class: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::AtomClass>,
-    op_limits: &dyn Fn(&Span) -> Option<ml::Limits>,
+    op_limits: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::Limits>,
     texts: &[&str],
 ) -> Vec<GridPiece> {
     use flashtex_compiler::math::{MathAtom, MathList as CList, Nucleus as N};
     // As in `math_box`: which `Nucleus::Text` atoms are whole runs of math
     // characters, re-read from the control word at the span.
-    let text_italic = |sp: &Span| math_text_keeps_italic(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+    let text_italic = |a: &MathAtom| text_atom_keeps_italic(texts, a);
     let text_italic = &text_italic;
     let text_roman = |sp: &Span| math_text_is_mathrm(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
     let text_roman = &text_roman;
     let text_box = |sp: &Span| math_text_box_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
     let text_box = &text_box;
-    let text_split = |sp: &Span| operator_thin_space_split(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
-    let text_split = &text_split;
+    let text_split = &operator_thin_space_split;
     let ellipsis = |sp: &Span| math_ellipsis_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
     let ellipsis = &ellipsis;
     let switch = |sp: &Span| style_switch_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);

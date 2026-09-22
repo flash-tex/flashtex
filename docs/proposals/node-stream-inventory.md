@@ -422,3 +422,20 @@ named above first.
     bp before and after.
 
   Falsifiers `site23` and `site11` run un-ignored.
+- **Site 45 (named operators): migrated.** The compiler's
+  `MathAtom::limits` gives each `\lim`/`\sin`/... atom its declared
+  placement. A following `\limits`/`\nolimits`/`\displaylimits` is applied.
+  The pipeline takes from it:
+  - the `\mathop` class and the limits (`operator_limits`);
+  - that the run keeps its last letter's italic correction
+    (`text_atom_keeps_italic`);
+  - the `\limsup`/`\liminf` thin-space split (`operator_thin_space_split`,
+    from the atom's text).
+
+  `operator_limits_of` and `NAMED_OPERATORS` are gone.
+  `math_text_keeps_italic` still reads `\mathrm`/`\bmod`/`\mod`/`\pmod`
+  at the span. The rest of the atom-span family is still read from bytes:
+  `fence_of`, `style_switch_of`, `class_override_of` (without the
+  `math-class-override` feature), `math_text_box_of`,
+  `math_text_is_mathrm` and `math_ellipsis_of`. Falsifier `site45` runs
+  un-ignored.

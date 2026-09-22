@@ -139,6 +139,24 @@ pub struct MathAtom {
     /// font slot and math class, which a TFM-driven layout boxes from the
     /// AMS font metrics while `nucleus` keeps the Unicode text.
     pub ams_symbol: Option<&'static crate::amssymb::AmsSymbol>,
+    /// A named operator's `\mathop` (`\lim`, `\sin`, ... [`OPERATOR_NAMES`]):
+    /// where its scripts go, as the kernel declares it (`\nolimits` for the
+    /// log-like functions, the default `\displaylimits` for `\lim`, `\max`,
+    /// `\det`, ...), with a `\limits`/`\nolimits`/`\displaylimits` right after
+    /// it applied (TeXbook p. 144). `None` for every other atom, including
+    /// `\mathrm{lim}`, which is an ordinary run of the same letters.
+    pub limits: Option<Limits>,
+}
+
+/// A `\mathop`'s limit placement ([`MathAtom::limits`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Limits {
+    /// `\limits`: over and under the operator in every style.
+    Limits,
+    /// `\nolimits`: beside it, as scripts.
+    NoLimits,
+    /// `\displaylimits`: over and under in display style only.
+    DisplayLimits,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1438,8 +1456,17 @@ impl MathParser<'_> {
                 }
                 // Limit-placement switches produce no atom, so a following
                 // script still attaches to the operator (`\lim\limits_{x}`).
-                TokenKind::Command(ref switch) if switch == "limits" || switch == "nolimits" => {
+                // After a named operator they set its placement (TeX
+                // §1159: the tail noad, when it is an Op noad).
+                TokenKind::Command(ref switch) if matches!(switch.as_str(), "limits" | "nolimits" | "displaylimits") => {
                     self.i += 1;
+                    if let Some(limits) = atoms.last_mut().and_then(|a| a.limits.as_mut()) {
+                        *limits = match switch.as_str() {
+                            "limits" => Limits::Limits,
+                            "nolimits" => Limits::NoLimits,
+                            _ => Limits::DisplayLimits,
+                        };
+                    }
                 }
                 // xcolor in math: `\color[model]{c}` recolours the rest of the
                 // group, `\textcolor[model]{c}{body}` its body. The atoms are
@@ -1482,6 +1509,7 @@ impl MathParser<'_> {
                             class_override: None,
                             width_em: None,
                             ams_symbol: None,
+                            limits: None,
                         }],
                     };
                 }
@@ -2017,7 +2045,14 @@ impl MathParser<'_> {
             _ => name,
         };
         if let Some(operator) = OPERATOR_NAMES.iter().find(|op| **op == name) {
-            return text_atom(operator.to_string(), span);
+            // latex.ltx declares the log-like functions `\mathop{..}\nolimits`
+            // except these, which keep `\mathop`'s default `\displaylimits`.
+            let declared = if matches!(*operator, "lim" | "liminf" | "limsup" | "max" | "min" | "sup" | "inf" | "det" | "gcd" | "Pr") {
+                Limits::DisplayLimits
+            } else {
+                Limits::NoLimits
+            };
+            return MathAtom { limits: Some(declared), ..text_atom(operator.to_string(), span) };
         }
         match name.as_str() {
             // Plain TeX's `\iff` and mathtools's `\implies`/`\impliedby` are
@@ -2166,6 +2201,7 @@ impl MathParser<'_> {
                 class_override: Some(AtomClass::Ord),
                 width_em: None,
                 ams_symbol: None,
+                limits: None,
                 ..symbol("⊥".into(), span)
             },
             // `\bigtriangleup` renders `\triangle`'s exact glyph (U+25B3) but
@@ -2174,6 +2210,7 @@ impl MathParser<'_> {
                 class_override: Some(AtomClass::Bin),
                 width_em: None,
                 ams_symbol: None,
+                limits: None,
                 ..symbol("△".into(), span)
             },
             // latex.ltx: `\DeclareRobustCommand{\dag}{\ifmmode{\dagger}\else
@@ -2213,6 +2250,7 @@ impl MathParser<'_> {
                     class_override: Some(class),
                     width_em: None,
                     ams_symbol: None,
+                    limits: None,
                 }
             }
             // amsopn.sty: `\operatorname` is `\qopname\newmcodes@ o` (`\nolimits`),
@@ -2233,6 +2271,7 @@ impl MathParser<'_> {
                     class_override: None,
                     width_em: None,
                     ams_symbol: None,
+                    limits: None,
                 }
             }
             "rule" => {
@@ -2261,6 +2300,7 @@ impl MathParser<'_> {
                         class_override: None,
                         width_em: None,
                         ams_symbol: None,
+                        limits: None,
                     },
                     _ => {
                         self.diagnostics.push(Diagnostic::error(
@@ -2291,6 +2331,7 @@ impl MathParser<'_> {
                     class_override: None,
                     width_em: None,
                     ams_symbol: None,
+                    limits: None,
                 }
             }
             // mathtools' lap family needs `\usepackage{mathtools}`:
@@ -2335,6 +2376,7 @@ impl MathParser<'_> {
                     class_override: None,
                     width_em: None,
                     ams_symbol: None,
+                    limits: None,
                 }
             }
             "xrightarrow" | "xleftarrow" | "xleftrightarrow" => {
@@ -2359,6 +2401,7 @@ impl MathParser<'_> {
                     class_override: None,
                     width_em: None,
                     ams_symbol: None,
+                    limits: None,
                 }
             }
             "substack" => {
@@ -2371,6 +2414,7 @@ impl MathParser<'_> {
                     class_override: None,
                     width_em: None,
                     ams_symbol: None,
+                    limits: None,
                 }
             }
             // Upright roman is already the math default in this subset, and
@@ -2634,6 +2678,7 @@ impl MathParser<'_> {
                     class_override: None,
                     width_em: None,
                     ams_symbol: None,
+                    limits: None,
                 }
             }
             // amsmath.sty 912-914:
@@ -2682,6 +2727,7 @@ impl MathParser<'_> {
                     class_override: Some(AtomClass::Ord),
                     width_em: None,
                     ams_symbol: None,
+                    limits: None,
                 }
             }
             "begin" => self.grid_environment(span),
@@ -2695,6 +2741,7 @@ impl MathParser<'_> {
                     class_override: None,
                     width_em: None,
                     ams_symbol: None,
+                    limits: None,
                 };
                 match index {
                     // The root index sits as a raised script ahead of the sign.
@@ -2727,6 +2774,7 @@ impl MathParser<'_> {
                     class_override: None,
                     width_em: None,
                     ams_symbol: None,
+                    limits: None,
                 }
             }
             // fontmath.ltx: `\mathbf` is a math alphabet, so it changes the
@@ -2768,6 +2816,7 @@ impl MathParser<'_> {
                         class_override: None,
                         width_em: None,
                         ams_symbol: None,
+                        limits: None,
                     }
                 }
             }
@@ -2800,6 +2849,7 @@ impl MathParser<'_> {
                     class_override: None,
                     width_em: None,
                     ams_symbol: None,
+                    limits: None,
                 }
             }
             "cancel" | "bcancel" | "xcancel" if !self.packages.cancel => {
@@ -2820,6 +2870,7 @@ impl MathParser<'_> {
                     class_override: None,
                     width_em: None,
                     ams_symbol: None,
+                    limits: None,
                 }
             }
             // amsthm `\qedhere`: the end-of-proof box for this display
@@ -2848,6 +2899,7 @@ impl MathParser<'_> {
                     class_override: None,
                     width_em: None,
                     ams_symbol: None,
+                    limits: None,
                 });
                 text_space(INTERIM_TAG_GAP_EM, span)
             }
@@ -2922,6 +2974,7 @@ impl MathParser<'_> {
                     class_override: None,
                     width_em: None,
                     ams_symbol: None,
+                    limits: None,
                 }
             }
             "textit" | "textrm" | "textnormal" | "mbox" | "hbox" => {
@@ -2936,6 +2989,7 @@ impl MathParser<'_> {
                     class_override: None,
                     width_em: None,
                     ams_symbol: None,
+                    limits: None,
                 }
             }
             "quad" => text_space(QUAD_EM, span),
@@ -3830,6 +3884,7 @@ impl MathParser<'_> {
             class_override: None,
             width_em: None,
             ams_symbol: None,
+            limits: None,
         }
     }
 
@@ -3865,6 +3920,7 @@ impl MathParser<'_> {
             class_override: Some(AtomClass::Ord),
             width_em: None,
             ams_symbol: None,
+            limits: None,
         }
     }
 
@@ -4428,6 +4484,7 @@ impl MathParser<'_> {
             class_override: None,
             width_em: None,
             ams_symbol: None,
+            limits: None,
             span,
             superscript: None,
             subscript: None,
@@ -4600,6 +4657,7 @@ fn gen_fraction(
         class_override: None,
         width_em: None,
         ams_symbol: None,
+        limits: None,
     }
 }
 
@@ -4730,6 +4788,7 @@ fn symbol(text: String, span: Span) -> MathAtom {
         class_override: None,
         width_em: None,
         ams_symbol: None,
+        limits: None,
     }
 }
 
@@ -4742,6 +4801,7 @@ fn bold(text: String, span: Span) -> MathAtom {
         class_override: None,
         width_em: None,
         ams_symbol: None,
+        limits: None,
     }
 }
 
@@ -4843,6 +4903,7 @@ pub(crate) fn ams_atom(ams: &'static crate::amssymb::AmsSymbol, span: Span) -> M
         }),
         width_em: Some(ams.width_em),
         ams_symbol: Some(ams),
+        limits: None,
         ..symbol(ams.text.into(), span)
     }
 }
@@ -4902,6 +4963,7 @@ fn left_right_delimiter(atom: MathAtom, role: DelimiterRole) -> MathAtom {
         class_override: atom.class_override,
         width_em: atom.width_em,
         ams_symbol: atom.ams_symbol,
+        limits: None,
     }
 }
 
@@ -4922,6 +4984,7 @@ pub fn varepsilon_list(span: Span) -> MathList {
             class_override: None,
             width_em: None,
             ams_symbol: None,
+            limits: None,
         }],
     }
 }
@@ -4963,6 +5026,7 @@ fn space(em: f64, span: Span) -> MathAtom {
         class_override: None,
         width_em: None,
         ams_symbol: None,
+        limits: None,
     }
 }
 
@@ -5284,6 +5348,7 @@ fn text_atom(text: String, span: Span) -> MathAtom {
         class_override: None,
         width_em: None,
         ams_symbol: None,
+        limits: None,
     }
 }
 
@@ -5910,6 +5975,7 @@ fn with_delimiter_scale(atom: &MathAtom, scale: f64) -> MathAtom {
         class_override: atom.class_override,
         width_em: atom.width_em,
         ams_symbol: atom.ams_symbol,
+        limits: None,
     }
 }
 
@@ -5931,6 +5997,7 @@ fn layout_nucleus(
                 class_override: atom.class_override,
                 width_em: atom.width_em,
                 ams_symbol: atom.ams_symbol,
+                limits: None,
             },
             size,
             root_size,
@@ -6808,6 +6875,7 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
         class_override: atom.class_override,
         width_em: atom.width_em,
         ams_symbol: atom.ams_symbol,
+        limits: None,
     }
 }
 
