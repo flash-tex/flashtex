@@ -3,9 +3,9 @@
   "branch": null,
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": "generated-data-and-maintainability plan item 7, stability gate",
+  "note": "on closer inspection this eprintln is a gated debug trace (FLASHTEX_TRACE_PAGES), not a user-facing diagnostic -- converting it to Diagnostic would misroute internal trace output into LaTeX-source warnings. Flagging to Commander instead of guessing.",
   "started_utc": "2026-09-22T02:13:48Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "PLAN7-pagebuild-diagnostics",
-  "updated_utc": "2026-09-22T02:13:48Z"
+  "updated_utc": "2026-09-22T02:14:31Z"
 }
