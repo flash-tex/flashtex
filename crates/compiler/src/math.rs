@@ -8729,6 +8729,26 @@ mod spacing_tests {
         assert_eq!(alone.items[0].text, "†");
     }
 
+    /// latex.ltx `\DeclareRobustCommand{\dag}{\ifmmode{\dagger}\else
+    /// \textdagger\fi}` (and `\ddag` with `\ddagger`): in math `\dag` is
+    /// a braced `\dagger` — an ordinary atom around the cmsy Bin mark
+    /// (TeX §1186 unpacks only an ordinary group), so `$a\dag b$` sets
+    /// no space where `$a\dagger b$` sets medium space on each side.
+    /// `laid_out_with` asserts the empty diagnostics: neither command is
+    /// a math-mode misuse.
+    #[test]
+    fn dag_marks_in_math_are_ordinary_not_binary() {
+        for (command, glyph) in [("dag", "†"), ("ddag", "‡")] {
+            let b = laid_out(&format!("a\\{command} b"), SIZE);
+            close(x(&b, glyph), width("a", SIZE));
+            close(x(&b, "b"), x(&b, glyph) + width(glyph, SIZE));
+            close(width(glyph, SIZE), 0.444 * SIZE);
+        }
+        let alone = laid_out(r"\dag", SIZE);
+        assert_eq!(alone.items.len(), 1, "{:?}", alone.items);
+        assert_eq!(alone.items[0].text, "†");
+    }
+
     /// Issue #591 (`\diamond`/`\Diamond`, follow-up to #516's `\Box`):
     /// `\diamond` is the kernel cmsy `\mathbin` (U+22C4 ⋄), always
     /// available. `\Diamond` has no kernel definition — `amsfonts.sty:153`
