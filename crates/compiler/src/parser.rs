@@ -1651,6 +1651,21 @@ pub struct TextStyle {
     pub italic_correction: ItalicCorrection,
 }
 
+/// One entry of [`Parsed::length_assignments`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct LengthAssignment {
+    /// The register, without its backslash (`parindent`).
+    pub name: String,
+    /// The register's new value as the engine's `\the` prints it
+    /// (`0.0pt`, `6.0pt plus 2.0pt`): references, `em`/`ex` in the font
+    /// in force and `\addtolength`'s sum are already resolved.
+    pub value: String,
+    /// The assignment (a macro's invocation when a macro ran it).
+    pub span: Span,
+    /// Read before `\begin{document}`.
+    pub preamble: bool,
+}
+
 /// How a block's paragraph starts ([`Parsed::block_par_starts`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ParStart {
@@ -2595,6 +2610,16 @@ pub struct Parsed {
     pub class_size_pt: Option<f64>,
     /// `\setlength{\parskip}{..}` from the preamble, in points.
     pub parskip_pt: Option<f64>,
+    /// Every assignment the document ran to a page-geometry or paragraph
+    /// length (`\textwidth`, `\parindent`, `\parskip`, ...), in execution
+    /// order: `\setlength`, `\addtolength` and TeX assignments, from the
+    /// source, a macro body or a package, at brace depth 0 or `\global`.
+    /// One inside a definition that never runs is not here.
+    pub length_assignments: Vec<LengthAssignment>,
+    /// `\c@secnumdepth` after the last `\setcounter`/`\addtocounter` the
+    /// document ran on it; `None` when it never ran one (the class's value
+    /// stands).
+    pub secnumdepth: Option<i64>,
     /// Package names mentioned by valid `\usepackage` commands.
     pub packages: Vec<String>,
     /// One dependency list per block, in `blocks` order.
@@ -3188,6 +3213,11 @@ pub const OBSERVED_LENGTHS: &[&str] = &[
     // Line- and page-breaking integer parameters.
     "tolerance", "pretolerance", "looseness", "widowpenalty", "clubpenalty", "interlinepenalty",
 ];
+
+/// Counters whose `\setcounter`/`\addtocounter` the engine reports like
+/// an [`OBSERVED_LENGTHS`] assignment (`\flashtexlengthassign{\c@<name>}`):
+/// [`Parsed::secnumdepth`].
+pub const OBSERVED_COUNTERS: &[&str] = &["c@secnumdepth"];
 
 /// Lengths a `\begin{list}` decl assigns (`\setlength{\leftmargin}{...}`):
 /// read on the innermost open list rather than warned about. Anything else
@@ -3907,6 +3937,8 @@ pub fn parse_project_with(
         seen_documentclass: false,
         class_size_pt: None,
         parskip_pt: None,
+        length_assignments: Vec::new(),
+        secnumdepth: None,
         packages: Vec::new(),
         math_packages: MathPackages::KERNEL,
         font_encoding: Encoding::OT1,
@@ -4089,6 +4121,8 @@ pub fn parse_project_with(
         package_definitions: expanded.package_records,
         class_size_pt: p.class_size_pt,
         parskip_pt: p.parskip_pt,
+        length_assignments: p.length_assignments,
+        secnumdepth: p.secnumdepth,
         packages: p.packages,
         block_dependencies: p.block_dependencies,
         block_par_leading: p.block_par_leading,
@@ -4199,6 +4233,8 @@ struct P<'a> {
     seen_documentclass: bool,
     class_size_pt: Option<f64>,
     parskip_pt: Option<f64>,
+    length_assignments: Vec<LengthAssignment>,
+    secnumdepth: Option<i64>,
     packages: Vec<String>,
     /// The loaded packages that redefine math commands (`math::MathPackages`),
     /// folded in as `\documentclass` and `\usepackage` are read. Math parsed
@@ -8164,6 +8200,19 @@ impl P<'_> {
             .trim_start_matches('\\')
             .to_string();
         let raw = dimen_source(&value_tokens);
+        // `\setcounter{secnumdepth}` (`OBSERVED_COUNTERS`).
+        if target == "c@secnumdepth" {
+            self.secnumdepth = raw.trim().parse::<i64>().ok().or(self.secnumdepth);
+            return;
+        }
+        if is_preamble_length(&target) && (global || self.brace_stack.is_empty()) {
+            self.length_assignments.push(LengthAssignment {
+                name: target.clone(),
+                value: raw.trim().to_string(),
+                span,
+                preamble: !self.in_body,
+            });
+        }
         let parameter: Option<fn(i32) -> BreakParameter> = match target.as_str() {
             "tolerance" => Some(BreakParameter::Tolerance),
             "pretolerance" => Some(BreakParameter::Pretolerance),

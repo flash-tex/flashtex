@@ -896,7 +896,7 @@ fn configure_with_fonts(engine: &mut Engine, fonts: DocumentFonts, reader: Packa
     // The class's measured lengths, then the names whose assignments come
     // back as markers for the parser (see `HOST_PRELUDE`).
     engine.run_host_prelude(&class_prelude(&fonts.class));
-    for name in crate::parser::OBSERVED_LENGTHS {
+    for name in crate::parser::OBSERVED_LENGTHS.iter().chain(crate::parser::OBSERVED_COUNTERS) {
         engine.observe_register(name);
     }
 }
