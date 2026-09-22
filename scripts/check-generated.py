@@ -81,6 +81,11 @@ GENERATORS = {
         ["crates/compiler/src/color_names.rs"],
         lambda: ["crates/compiler/scripts/color_names.py", "--check"]
         + (["--texbin", os.environ["FLASHTEX_TEXBIN"]] if "FLASHTEX_TEXBIN" in os.environ else [])),
+    "compiler kernel lengths": (
+        "crates/compiler/scripts/gen_kernel_lengths.py",
+        ["crates/compiler/src/kernel_lengths.rs"],
+        lambda: ["crates/compiler/scripts/gen_kernel_lengths.py", "--check"]
+        + (["--texbin", os.environ["FLASHTEX_TEXBIN"]] if "FLASHTEX_TEXBIN" in os.environ else [])),
     "compiler canonical latex": (
         "crates/compiler/scripts/canonical_latex.py",
         ["crates/compiler/supported/canonical-latex.tsv"],

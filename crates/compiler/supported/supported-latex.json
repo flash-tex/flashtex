@@ -112,7 +112,12 @@
     {"name": "qedhere", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "amsthm end-of-proof box on this line, flush right; the automatic box at \\end{proof} is suppressed", "renders": true},
     {"name": "hspace", "mode": "text", "origin": "text_dispatch", "arguments": "{dimension}", "description": "fixed horizontal space; starred form identical", "renders": true},
     {"name": "ensuremath", "mode": "text", "origin": "text_dispatch", "arguments": "{math}", "description": "the argument as inline math (latex.ltx: `$...$` when not already in math mode)", "renders": true},
-    {"name": "hskip", "mode": "text", "origin": "text_dispatch", "arguments": "<glue>", "description": "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll", "renders": true},
+    {"name": "hskip", "mode": "text", "origin": "text_dispatch", "arguments": "<glue>", "description": "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll (the expansion pass scans the glue with TeX's grammar: registers, \\p@, \\@plus, 0.5\\textwidth, em of the current font)", "renders": true},
+    {"name": "vskip", "mode": "text", "origin": "text_dispatch", "arguments": "<glue>", "description": "TeX vertical glue without braces (scanned like \\hskip): ends the paragraph and adds the glue; an infinite stretch fills the page like \\vfil", "renders": true},
+    {"name": "kern", "mode": "text", "origin": "text_dispatch", "arguments": "<dimen>", "description": "TeX kern (scanned like \\hskip): a fixed horizontal space in a paragraph, vertical space between paragraphs", "renders": true},
+    {"name": "hss", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "infinite-stretch horizontal glue (0pt plus 1fil minus 1fil), as \\hfil", "renders": true},
+    {"name": "vfil", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "vertical glue filling the rest of the page (same order as \\vfill)", "renders": true},
+    {"name": "vss", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "vertical glue filling the rest of the page (0pt plus 1fil minus 1fil), as \\vfil", "renders": true},
     {"name": "pdfgentounicode", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "pdfTeX glyph-to-Unicode switch: accepted no-op, copy-paste metadata with no visible output", "renders": true},
     {"name": "pdfglyphtounicode", "mode": "text", "origin": "text_dispatch", "arguments": "{name}{hex}", "description": "pdfTeX glyph-to-Unicode mapping: accepted no-op, copy-paste metadata with no visible output", "renders": true},
     {"name": "strut", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \\strutbox)", "renders": true},
@@ -485,6 +490,7 @@
     {"name": "AtEndOfClass", "mode": "text", "origin": "expansion", "arguments": "{code}", "description": "runs code when the current .cls file ends", "renders": true},
     {"name": "typeout", "mode": "text", "origin": "expansion", "arguments": "{text}", "description": "accepted no-op; there is no terminal", "renders": true},
     {"name": "wlog", "mode": "text", "origin": "expansion", "arguments": "{text}", "description": "accepted no-op; there is no log stream", "renders": true},
+    {"name": "glueexpr", "mode": "text", "origin": "expansion", "arguments": "<glue expression>", "description": "e-TeX glue expression (+, -, * and / by an integer, parentheses), also what \\setlength and \\addtolength evaluate their argument with", "renders": true},
     {"name": "\\", "mode": "text", "origin": "control_symbol", "arguments": "", "description": "line break; an optional [length] is consumed", "renders": true},
     {"name": "-", "mode": "text", "origin": "control_symbol", "arguments": "", "description": "discretionary hyphen: a break point, invisible unless the line breaks there", "renders": true},
     {"name": ",", "mode": "text", "origin": "control_symbol", "arguments": "", "description": "text kern .16667em (\\thinspace)", "renders": true},
@@ -683,6 +689,14 @@
     {"name": "rvert", "mode": "math", "origin": "math_structure", "arguments": "", "description": "amsmath closing single/double bar (\\mathclose: no glue before it)", "renders": true},
     {"name": "rVert", "mode": "math", "origin": "math_structure", "arguments": "", "description": "amsmath closing single/double bar (\\mathclose: no glue before it)", "renders": true},
     {"name": "ensuremath", "mode": "math", "origin": "math_structure", "arguments": "{math}", "description": "the argument itself (already in math mode)", "renders": true},
+    {"name": "kern", "mode": "math", "origin": "math_structure", "arguments": "<dimen> / <glue>", "description": "TeX kern/glue inside a formula: a fixed horizontal space of the operand's natural points (the expansion pass scans it; stretch and shrink are dropped)", "renders": true},
+    {"name": "hskip", "mode": "math", "origin": "math_structure", "arguments": "<dimen> / <glue>", "description": "TeX kern/glue inside a formula: a fixed horizontal space of the operand's natural points (the expansion pass scans it; stretch and shrink are dropped)", "renders": true},
+    {"name": "hspace", "mode": "math", "origin": "math_structure", "arguments": "{dimension}", "description": "fixed horizontal space inside a formula (latex.ltx's \\hskip); em/ex in the text font, other units in points; starred form identical", "renders": true},
+    {"name": "hfil", "mode": "math", "origin": "math_structure", "arguments": "", "description": "infinite glue inside a formula: nothing, as a formula box is set at its natural width", "renders": true},
+    {"name": "hfill", "mode": "math", "origin": "math_structure", "arguments": "", "description": "infinite glue inside a formula: nothing, as a formula box is set at its natural width", "renders": true},
+    {"name": "hss", "mode": "math", "origin": "math_structure", "arguments": "", "description": "infinite glue inside a formula: nothing, as a formula box is set at its natural width", "renders": true},
+    {"name": "hfilneg", "mode": "math", "origin": "math_structure", "arguments": "", "description": "infinite glue inside a formula: nothing, as a formula box is set at its natural width", "renders": true},
+    {"name": "vspace", "mode": "math", "origin": "math_structure", "arguments": "{dimension}", "description": "consumed with a warning: the vertical adjustment after the line is not inserted", "renders": true},
     {"name": "mkern", "mode": "math", "origin": "math_structure", "arguments": "<mu glue>", "description": "math glue in mu (1/18 of the symbol font's quad); plus/minus stretch is read and dropped", "renders": true},
     {"name": "mskip", "mode": "math", "origin": "math_structure", "arguments": "<mu glue>", "description": "math glue in mu (1/18 of the symbol font's quad); plus/minus stretch is read and dropped", "renders": true},
     {"name": "medspace", "mode": "math", "origin": "math_structure", "arguments": "", "description": "amsmath 4mu/5mu glue and their negatives (\\tmspace); undefined without amsmath", "renders": true},
@@ -1398,7 +1412,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 222, "percent": 54.1},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 223, "percent": 54.4},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 22, "percent": 73.3},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 47, "percent": 46.1},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -1413,6 +1427,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 20, "percent": 8.3}
     ],
-    "total": {"canonical": 1314, "supported": 577, "percent": 43.9}
+    "total": {"canonical": 1314, "supported": 578, "percent": 44}
   }
 }

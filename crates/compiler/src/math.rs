@@ -1863,6 +1863,12 @@ impl MathParser<'_> {
     /// A `<number>mu` starting at token `from` (spaces skipped): its value
     /// and the token index after the unit.
     fn scan_mu_length(&self, from: usize) -> Option<(f64, usize)> {
+        self.scan_unit_length(from, "mu")
+    }
+
+    /// A `<number><unit>` starting at token `from` (spaces skipped), for a
+    /// fixed `unit`: its value and the token index after the unit.
+    fn scan_unit_length(&self, from: usize, unit: &str) -> Option<(f64, usize)> {
         let word = |at: usize| match self.tokens.get(at).map(|t| &t.kind) {
             Some(TokenKind::Word(w)) if w.len() == 1 => w.chars().next(),
             _ => None,
@@ -1884,11 +1890,45 @@ impl MathParser<'_> {
         while matches!(self.tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::Space)) {
             cursor += 1;
         }
-        if word(cursor) == Some('m') && word(cursor + 1) == Some('u') {
-            Some((value, cursor + 2))
+        let spelled = unit.chars().enumerate().all(|(i, expected)| word(cursor + i) == Some(expected));
+        if spelled {
+            Some((value, cursor + unit.len()))
         } else {
             None
         }
+    }
+
+    /// `<number>pt` in a formula's one-character `Word` tokens (the
+    /// canonical text the expansion pass emits for `\kern`/`\hskip`), then
+    /// optional `plus`/`minus` clauses with a `<fil dimen>` (`2.0pt`,
+    /// `1.0fil`, `1.0fill`), read and dropped. `None`, consuming nothing,
+    /// when no such dimension follows.
+    fn take_pt_glue(&mut self) -> Option<f64> {
+        let (value, after) = self.scan_unit_length(self.i, "pt")?;
+        self.i = after;
+        for keyword in ["plus", "minus"] {
+            let mut cursor = self.i;
+            while matches!(self.tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::Space)) {
+                cursor += 1;
+            }
+            let spelled = keyword.chars().all(|expected| {
+                let hit = matches!(
+                    self.tokens.get(cursor).map(|t| &t.kind),
+                    Some(TokenKind::Word(w)) if w.len() == 1 && w.starts_with(expected)
+                );
+                cursor += 1;
+                hit
+            });
+            if spelled {
+                for unit in ["filll", "fill", "fil", "pt"] {
+                    if let Some((_, after)) = self.scan_unit_length(cursor, unit) {
+                        self.i = after;
+                        break;
+                    }
+                }
+            }
+        }
+        Some(value)
     }
 
     /// A LaTeX 2.09 font switch (`\rm`, `\bf`, `\cal`, ...) in math: the
@@ -3129,6 +3169,76 @@ impl MathParser<'_> {
             // same unit `\,` (3mu) already uses (`space(mu / 18.0)`).
             // Stretch and shrink (`plus`/`minus`) are read and dropped; the
             // formula's own glue never stretches here.
+            // TeX's `\kern<dimen>` and `\hskip<glue>` inside a formula: the
+            // expansion pass has scanned the operand and hands over its
+            // canonical `\the` text (`12.0pt plus 1.0fil`), so a fixed
+            // horizontal space of that many points is set. Stretch and
+            // shrink are dropped, as for `\mskip`: a formula's own glue
+            // never stretches here. An `em` has already become points
+            // there, measured on the text font as TeX's §455 does in math.
+            "kern" | "hskip" => match self.take_pt_glue() {
+                Some(pt) => MathAtom {
+                    nucleus: Nucleus::Kern(pt),
+                    ..space(0.0, span)
+                },
+                None => {
+                    if !self.argument_cut_off() {
+                        self.diagnostics.push(Diagnostic::error(
+                            format!("\\{name} requires a dimension"),
+                            Some(span),
+                            Some("used no space and continued".into()),
+                        ));
+                    }
+                    space(0.0, span)
+                }
+            },
+            // LaTeX's `\hspace{<glue>}` in a formula is a `\hskip` (latex.ltx
+            // `\@hspace`); the star only guards a line break. A register
+            // argument arrives spliced to its value by the engine's shim, a
+            // literal keeps its units: `em`/`ex` are the text font's (a
+            // `font_em` space), everything else is points.
+            "hspace" => {
+                if matches!(self.tokens.get(self.i).map(|t| &t.kind), Some(TokenKind::Word(w)) if w == "*") {
+                    self.i += 1;
+                }
+                let (text, argument_span) = self.raw_group_text(&name, span);
+                let natural = crate::parser::glue_natural_text(&text).unwrap_or_else(|| text.trim().to_string());
+                match hspace_atom(&natural, span) {
+                    Some(atom) => atom,
+                    None => {
+                        self.diagnostics.push(Diagnostic::error(
+                            format!("\\hspace requires a recognised dimension, got '{}'", text.trim()),
+                            Some(span.merge(argument_span)),
+                            Some("used no space and continued".into()),
+                        ));
+                        space(0.0, span)
+                    }
+                }
+            }
+            // Infinite glue inside a formula: a `$...$` box and a display's
+            // own box are set at their natural width, so `\hfil`/`\hfill`/
+            // `\hss` contribute nothing there (they stretch only in an
+            // enclosing `\hbox to`, which this layout has no formula in).
+            "hfil" | "hfill" | "hss" | "hfilneg" => MathAtom {
+                nucleus: Nucleus::Kern(0.0),
+                ..space(0.0, span)
+            },
+            // `\vspace` in a formula is latex.ltx's `\@vspace` in horizontal
+            // mode: a `\vadjust` adding the glue after the current line.
+            // This layout has no vertical adjustment inside a formula, so
+            // the argument is consumed and the missing space is named.
+            "vspace" => {
+                if matches!(self.tokens.get(self.i).map(|t| &t.kind), Some(TokenKind::Word(w)) if w == "*") {
+                    self.i += 1;
+                }
+                let (_, argument_span) = self.raw_group_text(&name, span);
+                self.diagnostics.push(Diagnostic::warning(
+                    "\\vspace in math mode is recognised but the vertical space after this line is not inserted",
+                    Some(span.merge(argument_span)),
+                    Some("consumed the argument and continued".into()),
+                ));
+                space(0.0, span)
+            }
             "mkern" | "mskip" => match self.take_mu_glue() {
                 Some(mu) => space(mu / 18.0, span),
                 None => {
@@ -4814,6 +4924,26 @@ pub fn varepsilon_list(span: Span) -> MathList {
             ams_symbol: None,
         }],
     }
+}
+
+/// `\hspace`'s dimension text inside a formula: `em`/`ex` of the text font
+/// as a `font_em` space (`ex` by Computer Modern's x-height ratio, cmr10's
+/// 4.30555/10), any other unit in points; `None` for text that is no
+/// dimension.
+fn hspace_atom(text: &str, span: Span) -> Option<MathAtom> {
+    let text = text.trim();
+    let number = |s: &str| s.trim().parse::<f64>().ok();
+    if let Some(em) = text.strip_suffix("em").and_then(number) {
+        return Some(text_space(em, span));
+    }
+    if let Some(ex) = text.strip_suffix("ex").and_then(number) {
+        return Some(text_space(ex * 0.430_555, span));
+    }
+    let pt = crate::parser::parse_dimen_pt_at(text, crate::layout::BODY_SIZE_PT)?;
+    Some(MathAtom {
+        nucleus: Nucleus::Kern(pt),
+        ..space(0.0, span)
+    })
 }
 
 /// `\hskip<em>em`: glue in ems of the current text font (`\quad`).
