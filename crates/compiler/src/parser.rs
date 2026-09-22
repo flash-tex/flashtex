@@ -356,6 +356,10 @@ pub enum Inline {
         value: String,
         /// cleveref's label type (`section`, `equation`, `figure`, ...).
         kind: String,
+        /// The section or caption title in force at the `\label`, for
+        /// `\nameref` (hyperref's `\@currentlabelname`). Empty when the
+        /// label was not attached to a titled unit.
+        title: String,
         span: Span,
     },
     Reference {
@@ -363,6 +367,26 @@ pub enum Inline {
         page: bool,
         /// amsmath `\eqref`: the value is typeset in parentheses.
         equation: bool,
+        span: Span,
+        /// See `Inline::Text::space_before`.
+        space_before: bool,
+    },
+    /// hyperref `\nameref`: the section or caption title the label points
+    /// to, resolved after layout like [`Inline::Reference`]. The compiler
+    /// has no link backend yet, so like [`Inline::CleverReference`] this
+    /// typesets the text only.
+    NameReference {
+        key: String,
+        span: Span,
+        /// See `Inline::Text::space_before`.
+        space_before: bool,
+    },
+    /// hyperref `\autoref`: the English type name of what the label points
+    /// to (`Section`, `Figure`, ...) followed by its number, resolved after
+    /// layout like [`Inline::Reference`]. Text only; see
+    /// [`Inline::NameReference`].
+    AutoReference {
+        key: String,
         span: Span,
         /// See `Inline::Text::space_before`.
         space_before: bool,
@@ -2258,6 +2282,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "pageref",
     "thepage",
     "eqref",
+    "autoref",
+    "nameref",
     "cref",
     "Cref",
     "crefrange",
@@ -3310,6 +3336,7 @@ pub fn parse_project_with(
         chapter_class: false,
         current_counter: None,
         current_counter_kind: None,
+        current_label_title: None,
         seen_labels: HashMap::new(),
         list_stack: Vec::new(),
         list_frames: Vec::new(),
@@ -3629,6 +3656,10 @@ struct P<'a> {
     chapter_class: bool,
     current_counter: Option<String>,
     current_counter_kind: Option<String>,
+    /// Plain-text title of the most recent sectioning heading or float
+    /// caption, recorded on the next `\label` for `\nameref` (hyperref's
+    /// `\@currentlabelname`). `None` until the first titled unit.
+    current_label_title: Option<String>,
     seen_labels: HashMap<String, Span>,
     /// Environment name, item count, an enumitem label template if given,
     /// the `\setlist` spacing resolved when this list's `\begin` ran, and the
@@ -4456,6 +4487,7 @@ impl P<'_> {
         self.flush_paragraph(blocks, para);
         let number = self.counters.step(kind).unwrap_or_default();
         self.set_current_counter(kind, Some(number.clone()));
+        self.current_label_title = Some(token_text(&tokens).trim().to_string());
         let mut content = vec![Inline::Text {
             text: format!("{label} {number}:"),
             span,
@@ -4895,7 +4927,9 @@ impl P<'_> {
             "note" => self.beamer_note(name, span),
             "frame" => self.beamer_frame_command(name, span, blocks, para),
             "column" => self.beamer_column_command(name, span, blocks, para),
-            "label" | "ref" | "pageref" | "eqref" | "thepage" => self.label_or_reference_command(name, span, para),
+            "label" | "ref" | "pageref" | "eqref" | "thepage" | "autoref" | "nameref" => {
+                self.label_or_reference_command(name, span, para)
+            }
             "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
             | "labelcref" => self.clever_reference(name, span, para),
             "tableofcontents" => self.table_of_contents_command(span, blocks, para),
@@ -5886,6 +5920,7 @@ impl P<'_> {
                     number = self.counters.step(name).unwrap_or_default();
                     self.set_current_counter(name, Some(number.clone()));
                 }
+                self.current_label_title = Some(token_text(&tokens).trim().to_string());
                 let title = self.inlines_from_tokens(tokens, TextStyle::default());
                 blocks.push(Block::BeamerSection { level, number, title, span: span.merge(title_span) });
                 self.finish_block_dependencies();
@@ -5914,6 +5949,7 @@ impl P<'_> {
             if !starred {
                 self.set_current_counter(name, Some(number.clone()));
             }
+            self.current_label_title = Some(token_text(&tokens).trim().to_string());
             // titlesec replaces the default `\Large\bfseries` with the
             // recorded format (an unbold format really is unbold); without a
             // recording the base is unchanged.
@@ -5964,7 +6000,7 @@ impl P<'_> {
             }
     }
 
-    /// `\label`, `\ref`, `\pageref` and `\eqref`.
+    /// `\label`, `\ref`, `\pageref`, `\eqref`, `\autoref` and `\nameref`.
     #[inline(never)]
     fn label_or_reference_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
         match name {
@@ -5990,6 +6026,7 @@ impl P<'_> {
                         key,
                         value: self.current_counter.clone().unwrap_or_default(),
                         kind: self.current_counter_kind.clone().unwrap_or_default(),
+                        title: self.current_label_title.clone().unwrap_or_default(),
                         span,
                     });
                 }
@@ -6006,6 +6043,22 @@ impl P<'_> {
                     span: span.merge(argument_span),
                     space_before,
                 });
+            }
+            "autoref" | "nameref" => {
+                // hyperref's `\autoref*`/`\nameref*` are the text without the
+                // link; this compiler has no link backend, so the star only
+                // has to be consumed.
+                let _ = self.take_optional_star();
+                let space_before = self.space_precedes(self.i - 1);
+                let (tokens, argument_span) = self.required_group(name, span);
+                let key = token_text(&tokens).trim().to_string();
+                self.document_global_state = true;
+                let span = span.merge(argument_span);
+                if name == "autoref" {
+                    para.push(Inline::AutoReference { key, span, space_before });
+                } else {
+                    para.push(Inline::NameReference { key, span, space_before });
+                }
             }
             "thepage" => {
                 // `\thepage`: the current page's formatted number. The
@@ -8609,6 +8662,7 @@ impl P<'_> {
             self.footnote_counter = 0;
             self.set_current_counter("chapter", Some(number));
         }
+        self.current_label_title = Some(token_text(&tokens).trim().to_string());
         let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
         if content.is_empty() {
             self.current_dependencies.clear();
@@ -11262,6 +11316,7 @@ impl P<'_> {
             key,
             value: tag.clone().unwrap_or_else(|| number.clone()),
             kind: "equation".into(),
+            title: String::new(),
             span,
         }));
         self.flush_paragraph(blocks, para);
@@ -11591,6 +11646,7 @@ impl P<'_> {
                             self.counters.the("equation").unwrap_or_default()
                         }),
                         kind: "equation".into(),
+                        title: String::new(),
                         span: label_span,
                     });
                 }
@@ -11623,6 +11679,7 @@ impl P<'_> {
                     key,
                     value: value.clone(),
                     kind: "equation".into(),
+                    title: String::new(),
                     span: label_span,
                 });
             }
@@ -12031,6 +12088,7 @@ impl P<'_> {
                 key,
                 value,
                 kind,
+                title: self.current_label_title.clone().unwrap_or_default(),
                 span,
             });
         }
@@ -13215,6 +13273,33 @@ impl P<'_> {
                                 span,
                                 space_before,
                             });
+                        }
+                        None => self.diags.push(Diagnostic::error(
+                            format!("\\{name} requires an argument"),
+                            Some(input.token.span),
+                            Some("rendered nothing for the reference".into()),
+                        )),
+                    }
+                }
+                // `\autoref`/`\nameref` reach here in the same flattened
+                // contexts as `\ref` above. Emit the same inlines the main
+                // token loop builds, so resolution and the
+                // undefined-reference `??` behave identically in both places.
+                TokenKind::Command(name) if matches!(name.as_str(), "autoref" | "nameref") => {
+                    match siunitx_group_at(&expanded, index + 1) {
+                        Some((raw, argument_span, after)) => {
+                            skip_until = after;
+                            let span = if argument_span.document == input.token.span.document {
+                                input.token.span.merge(argument_span)
+                            } else {
+                                input.token.span
+                            };
+                            let key = raw.trim().to_string();
+                            if name == "autoref" {
+                                content.push(Inline::AutoReference { key, span, space_before });
+                            } else {
+                                content.push(Inline::NameReference { key, span, space_before });
+                            }
                         }
                         None => self.diags.push(Diagnostic::error(
                             format!("\\{name} requires an argument"),
@@ -16777,6 +16862,8 @@ fn inline_sets_a_box(inline: &Inline) -> bool {
         | Inline::Graphic(_)
         | Inline::Reference { .. }
         | Inline::CleverReference { .. }
+        | Inline::NameReference { .. }
+        | Inline::AutoReference { .. }
         | Inline::ThePage { .. }
         | Inline::Footnote { .. } => true,
         Inline::HFill { leader, .. } => !matches!(leader, FillLeader::None),
@@ -16818,6 +16905,8 @@ fn inline_span(inline: &Inline) -> Span {
         | Inline::Label { span, .. }
         | Inline::Reference { span, .. }
         | Inline::CleverReference { span, .. }
+        | Inline::NameReference { span, .. }
+        | Inline::AutoReference { span, .. }
         | Inline::ThePage { span, .. }
         | Inline::PageNumbering { span, .. }
         | Inline::PageStyle { span, .. }

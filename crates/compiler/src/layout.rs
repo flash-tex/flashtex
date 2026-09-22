@@ -88,6 +88,9 @@ struct ReferenceValue {
     /// switch changes displayed references without disturbing them.
     page_text: String,
     kind: String,
+    /// The section or caption title in force at the `\label`: what
+    /// `\nameref` prints for titled units.
+    title: String,
 }
 
 /// article.cls `\l@section`/`\l@subsection`/`\l@subsubsection` geometry:
@@ -1435,6 +1438,38 @@ impl LayoutCursor {
                         *label_only,
                         *capitalise,
                     );
+                    let text_font = if unresolved { Font::TimesBold } else { font };
+                    if !space_before {
+                        m.x = m.content_end;
+                    }
+                    let (w, _) =
+                        shaped_width(&text, size, text_font, *span, &mut self.diagnostics);
+                    m.ascent = m.ascent.max(size);
+                    m.descent = m.descent.max(size * (LINE_SPACING - 1.0));
+                    m.content_end = m.x + w;
+                    m.x += w + word_space(size, text_font);
+                }
+                Inline::NameReference { key, span, space_before } => {
+                    let (text, unresolved) = match self.resolved_labels.get(key) {
+                        Some(value) => (nameref_text(value), false),
+                        None => ("??".to_string(), true),
+                    };
+                    let text_font = if unresolved { Font::TimesBold } else { font };
+                    if !space_before {
+                        m.x = m.content_end;
+                    }
+                    let (w, _) =
+                        shaped_width(&text, size, text_font, *span, &mut self.diagnostics);
+                    m.ascent = m.ascent.max(size);
+                    m.descent = m.descent.max(size * (LINE_SPACING - 1.0));
+                    m.content_end = m.x + w;
+                    m.x += w + word_space(size, text_font);
+                }
+                Inline::AutoReference { key, span, space_before } => {
+                    let (text, unresolved) = match self.resolved_labels.get(key) {
+                        Some(value) => (autoref_text(value), false),
+                        None => ("??".to_string(), true),
+                    };
                     let text_font = if unresolved { Font::TimesBold } else { font };
                     if !space_before {
                         m.x = m.content_end;
@@ -3737,6 +3772,9 @@ fn visit_inline_references(inlines: &[Inline], visitor: &mut impl FnMut(&str, Sp
     for inline in inlines {
         match inline {
             Inline::Reference { key, span, .. } => visitor(key, *span),
+            Inline::NameReference { key, span, .. } | Inline::AutoReference { key, span, .. } => {
+                visitor(key, *span)
+            }
             Inline::CleverReference { keys, span, .. } => {
                 for key in keys {
                     if !key.is_empty() {
@@ -3767,6 +3805,29 @@ struct CleverReferenceItem {
     page_text: String,
     kind: String,
     raw_kind: String,
+}
+
+/// hyperref `\autoref`: the English type name for what the label points to
+/// (`crate::xref::autoref_name`) followed by its number. Equations keep
+/// their parentheses (`Equation (4)`), like `\eqref` and `\cref`.
+fn autoref_text(value: &ReferenceValue) -> String {
+    let name = crate::xref::autoref_name(&value.kind);
+    if value.kind == "equation" {
+        format!("{name} ({})", value.number)
+    } else {
+        format!("{name} {}", value.number)
+    }
+}
+
+/// hyperref `\nameref`: the section or caption title the label points to.
+/// Anything without a recorded title (equations, theorems, ...) falls back
+/// to the number, exactly like `\ref`.
+fn nameref_text(value: &ReferenceValue) -> String {
+    if crate::xref::nameref_uses_title(&value.kind) && !value.title.is_empty() {
+        value.title.clone()
+    } else {
+        value.number.clone()
+    }
 }
 
 fn clever_reference_text(
@@ -4093,7 +4154,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 }
             }
             Inline::MathRows { rows, aligned, .. } => c.display_rows(rows, *aligned, size),
-            Inline::Label { key, value, kind, .. } => {
+            Inline::Label { key, value, kind, title, .. } => {
                 c.collected_labels.insert(
                     key.clone(),
                     ReferenceValue {
@@ -4101,6 +4162,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                         page: c.pages.len() as u32,
                         page_text: c.page_style.format(c.page_value),
                         kind: kind.clone(),
+                        title: title.clone(),
                     },
                 );
             }
@@ -4188,6 +4250,32 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     if unresolved { Font::TimesBold } else { font },
                     *space_before,
                 );
+            }
+            Inline::NameReference { key, span, space_before } => {
+                match c.resolved_labels.get(key) {
+                    Some(value) => c.place(nameref_text(value), size, *span, font, *space_before),
+                    // `\@setref`: an undefined key typesets a bold `??`.
+                    None => c.place(
+                        "??".to_string(),
+                        size,
+                        *span,
+                        Font::TimesBold,
+                        *space_before,
+                    ),
+                }
+            }
+            Inline::AutoReference { key, span, space_before } => {
+                match c.resolved_labels.get(key) {
+                    Some(value) => c.place(autoref_text(value), size, *span, font, *space_before),
+                    // `\@setref`: an undefined key typesets a bold `??`.
+                    None => c.place(
+                        "??".to_string(),
+                        size,
+                        *span,
+                        Font::TimesBold,
+                        *space_before,
+                    ),
+                }
             }
             Inline::HFill { leader, span } => c.mark_hfill(*leader, size, font, *span),
             Inline::HSpace {
