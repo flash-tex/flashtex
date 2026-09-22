@@ -398,13 +398,11 @@ fn site32_pagestyle_from_macro() {
 // ---- D. Preamble facts ----------------------------------------------------
 
 #[test]
-#[ignore = "PLAN1 site 33: apply_preamble_lengths never expands a preamble macro that calls \\setlength"]
 fn site33_preamble_setlength_from_macro() {
     falsify(Same, &doc("\\setlength{\\parindent}{0pt}\n", "Para one.\n\nPara two."), &doc("\\newcommand\\np{\\setlength{\\parindent}{0pt}}\\np\n", "Para one.\n\nPara two."));
 }
 
 #[test]
-#[ignore = "PLAN1 site 34: counter() takes a \\setcounter inside an uncalled definition as in force"]
 fn site34_setcounter_in_uncalled_definition() {
     falsify(Same, &doc("", "\\section{A}Text."), &doc("\\newcommand\\scn{\\setcounter{secnumdepth}{0}}\n", "\\section{A}Text."));
 }

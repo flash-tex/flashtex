@@ -439,3 +439,35 @@ named above first.
   `math-class-override` feature), `math_text_box_of`,
   `math_text_is_mathrm` and `math_ellipsis_of`. Falsifier `site45` runs
   un-ignored.
+- **Sites 33 and 34 (preamble lengths, `secnumdepth`): migrated.**
+  - Site 33: `Parsed::length_assignments` lists every assignment the
+    document ran to a page-geometry or paragraph length. The expansion
+    engine's observed-register markers supply it, with `\setlength`,
+    `\addtolength` and TeX assignments already resolved to `\the` text.
+    It counts an assignment from the source, a macro body, a class file or
+    a package. It skips one at brace depth > 0 unless it is `\global`.
+    `apply_preamble_lengths` applies these in order and no longer scans
+    the source. It still reads the root document for the position of the
+    last `\geometry` (site 35). Gone: its `CmdScan` walk over
+    `\setlength`/`\len=` bytes, the second scan of a project class file,
+    `setlength_args`, `read_assignment_dimen` and `PREAMBLE_LENGTHS`. This
+    moves `inline-math`, `hw1` and `hw2` onto pdflatex. Their
+    `\parskip{0.65em}` is now the engine's `em` in the font in force.
+    `inline-math` p1 goes from 3 to 725 words within 0.01 bp, and its
+    median dy shift from +0.162 to +0.000 bp. `hw1` p2 goes from 141 to
+    145, by a shift below 0.001 bp.
+  - Site 34: `Parsed::secnumdepth` is `\c@secnumdepth` after the last
+    `\setcounter`/`\addtocounter` the document ran. The engine now reports
+    the counter commands on an observed `\c@<name>` register
+    (tex-expansion `note_counter_assigned`), and the compiler observes
+    `c@secnumdepth` (`OBSERVED_COUNTERS`). A negative value is now honoured
+    (clamped to 0). Before, it failed the `u8` parse and the class default
+    stood. `adapter::counter` is gone.
+  - Not migrated: an enumitem `leftmargin=\<register>` is still resolved
+    by `length_register`, which reads the source. User length registers
+    (`\newlength`) are not observed, and a `\settowidth` value needs the
+    typesetter's measurement. `\columnseprule` is also still read by
+    `setlength(source, "columnseprule")`, because the engine does not
+    observe it.
+
+  Falsifiers `site33` and `site34` run un-ignored.

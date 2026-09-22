@@ -1791,17 +1791,9 @@ pub fn adapt_cached(
     // the frame from `doc.flags`.
     let columns = crate::columns::ColumnMode::scan(source, entry, resolved.flags.twocolumn);
     resolved.set_twocolumn(columns.start());
-    // A project class file's `\setlength`s run before the preamble's, as
-    // the class is read first.
-    let class_assigned = parsed
-        .class_file
-        .and_then(|id| texts.get(id.0).copied())
-        .map(|class_text| apply_preamble_lengths(class_text, &mut resolved, size, family, setup.geometry.is_some()));
-    let mut assigned = apply_preamble_lengths(source, &mut resolved, size, family, setup.geometry.is_some());
-    if let Some(class_assigned) = class_assigned {
-        assigned.parindent |= class_assigned.parindent;
-        assigned.parskip |= class_assigned.parskip;
-    }
+    // A project class file's `\setlength`s ran before the preamble's, as
+    // the class is read first: the compiler lists them in that order.
+    let assigned = apply_preamble_lengths(&parsed.length_assignments, source, entry, &mut resolved, size, family, setup.geometry.is_some());
     let mut style = Stylesheet::from_resolved(&resolved, family);
     style.columns = columns;
     // apply_preamble_lengths is the source of truth for `\parindent` /
@@ -1888,7 +1880,10 @@ pub fn adapt_cached(
     // for the same heading. `\documentclass`-less input (the visual-oracle
     // harness and the Mac app send body-only documents, and `resolve` hands
     // those article geometry regardless) keeps the caller's default.
-    let secnumdepth = counter(source, "secnumdepth").unwrap_or_else(|| {
+    // The value is the compiler's (`Parsed::secnumdepth`): the last
+    // `\setcounter`/`\addtocounter` the document ran, not one inside a
+    // definition that never runs (PLAN1 site 34).
+    let secnumdepth = parsed.secnumdepth.map(|n| n.clamp(0, i64::from(u8::MAX)) as u8).unwrap_or_else(|| {
         match (&style.class_geometry, explicit_class.is_some()) {
             (Some(d), true) => d.secnumdepth.clamp(0, i32::from(u8::MAX)) as u8,
             _ => options.default_secnumdepth,
@@ -5662,38 +5657,29 @@ const GEOMETRY_LENGTHS: &[&str] = &[
     "columnsep",
 ];
 
-const PREAMBLE_LENGTHS: &[&str] = &[
-    "paperwidth",
-    "paperheight",
-    "textwidth",
-    "textheight",
-    "oddsidemargin",
-    "evensidemargin",
-    "topmargin",
-    "headheight",
-    "headsep",
-    "footskip",
-    "marginparwidth",
-    "marginparsep",
-    "columnsep",
-    "parindent",
-    "parskip",
-    "columnseprule",
-];
-
 struct LengthAssigns {
     parindent: bool,
     parskip: bool,
 }
 
-/// Apply preamble `\setlength` / `\addtolength` / `\len=<dimen>` after the
-/// class defaults and the geometry package, in source order.
+/// Apply the document's `\setlength` / `\addtolength` / `\len=<dimen>`
+/// assignments to the page and paragraph lengths after the class defaults
+/// and the geometry package, in the order they ran: the compiler's
+/// [`Parsed::length_assignments`] (PLAN1 site 33), each already resolved
+/// by the expansion engine. A macro that sets a length counts, a
+/// definition that is never called does not, and one inside a brace group
+/// is local and does not either.
 ///
-/// Known limits (see ignored tests): `\input`/`\include` files are not in
-/// `source`, so their assignments are missed; `\makeatletter` `\@setlength`
-/// is missed because [`next_command`] only collects ASCII letters.
+/// A page length (`GEOMETRY_LENGTHS`) counts only in the preamble. In the
+/// root document it is ignored when `geometry` is loaded after it, matching
+/// LaTeX. `source` is the root document, read for that position only (PLAN1
+/// site 35).
+///
+/// [`Parsed::length_assignments`]: flashtex_compiler::parser::Parsed::length_assignments
 fn apply_preamble_lengths(
+    assignments: &[flashtex_compiler::parser::LengthAssignment],
     source: &str,
+    entry: usize,
     doc: &mut ResolvedDocument,
     size: u32,
     family: crate::fonts::Family,
@@ -5704,49 +5690,19 @@ fn apply_preamble_lengths(
     let em_ex = ec_em_ex(size, family);
     let mut assigned = LengthAssigns { parindent: false, parskip: false };
     let mut params = doc.params;
-    let mut scan = CmdScan::new(source);
-    while let Some((at, name, depth)) = scan.next() {
-        if depth != 0 {
-            continue;
-        }
-        let after_name = at + 1 + name.len();
-        if matches!(name, "newcommand" | "renewcommand" | "providecommand" | "def" | "gdef" | "edef" | "xdef") {
-            scan.skip_to(skip_macro_definition(source, name, after_name));
-            continue;
-        }
-        if name == "setlength" || name == "addtolength" {
-            if let Some((target, raw)) = setlength_args(source, after_name) {
-                let page = GEOMETRY_LENGTHS.contains(&target.as_str());
-                if page && at >= preamble_end {
-                    continue;
-                }
-                if page && last_geometry.is_some_and(|g| at < g) {
-                    continue;
-                }
-                if let Some(v) = parse_assignment_glue(&raw, &params, size, em_ex) {
-                    assign_param(&mut params, &target, v, name == "addtolength");
-                    assigned.parindent |= target == "parindent";
-                    assigned.parskip |= target == "parskip";
-                }
-            }
-            continue;
-        }
-        if !PREAMBLE_LENGTHS.contains(&name) {
-            continue;
-        }
+    for assignment in assignments {
+        let name = assignment.name.as_str();
         let page = GEOMETRY_LENGTHS.contains(&name);
-        if page && at >= preamble_end {
+        if page && !assignment.preamble {
             continue;
         }
-        if page && last_geometry.is_some_and(|g| at < g) {
+        if page && assignment.span.document.0 == entry && last_geometry.is_some_and(|g| assignment.span.start < g) {
             continue;
         }
-        if let Some(raw) = read_assignment_dimen(source, after_name) {
-            if let Some(v) = parse_assignment_glue(&raw, &params, size, em_ex) {
-                assign_param(&mut params, name, v, false);
-                assigned.parindent |= name == "parindent";
-                assigned.parskip |= name == "parskip";
-            }
+        if let Some(v) = parse_assignment_glue(&assignment.value, &params, size, em_ex) {
+            assign_param(&mut params, name, v, false);
+            assigned.parindent |= name == "parindent";
+            assigned.parskip |= name == "parskip";
         }
     }
     if assigned.parindent {
@@ -6045,11 +6001,8 @@ fn skip_macro_definition(source: &str, name: &str, mut i: usize) -> usize {
     i
 }
 
-fn setlength_args(source: &str, i: usize) -> Option<(String, String)> {
-    setlength_args_end(source, i).map(|(target, value, _)| (target, value))
-}
-
-/// [`setlength_args`] and the byte after the value's closing brace.
+/// A `\setlength{<target>}{<value>}`'s target and value, and the byte
+/// after the value's closing brace.
 fn setlength_args_end(source: &str, mut i: usize) -> Option<(String, String, usize)> {
     i = skip_ws(source, i);
     let b = source.as_bytes();
@@ -6093,11 +6046,7 @@ fn usepackage_arg(source: &str, mut i: usize) -> Option<(String, String)> {
     Some((opts, arg))
 }
 
-fn read_assignment_dimen(source: &str, i: usize) -> Option<String> {
-    read_assignment_dimen_end(source, i).map(|(raw, _)| raw)
-}
-
-/// [`read_assignment_dimen`] and the byte after the dimension.
+/// A TeX assignment's dimension (`\len=<dimen>`) and the byte after it.
 fn read_assignment_dimen_end(source: &str, mut i: usize) -> Option<(String, usize)> {
     i = skip_ws(source, i);
     let b = source.as_bytes();
@@ -6344,25 +6293,6 @@ pub fn class_size(options: &str) -> u32 {
         .filter_map(|n| n.parse::<u32>().ok())
         .find(|n| matches!(n, 10 | 11 | 12))
         .unwrap_or(10)
-}
-
-/// `\setcounter{<name>}{<n>}`, the last one in the source.
-pub fn counter(source: &str, name: &str) -> Option<u8> {
-    let mut from = 0;
-    let mut value = None;
-    while let Some(at) = find_command(&source[from..], "setcounter") {
-        let abs = from + at;
-        let rest = source[abs + "\\setcounter".len()..].trim_start();
-        if let Some(r) = rest.strip_prefix('{').and_then(|r| r.strip_prefix(name)).and_then(|r| r.strip_prefix('}')) {
-            if let Some(r) = r.trim_start().strip_prefix('{') {
-                if let Some(end) = r.find('}') {
-                    value = r[..end].trim().parse::<u8>().ok().or(value);
-                }
-            }
-        }
-        from = abs + 1;
-    }
-    value
 }
 
 /// `\setlength{\parindent}{<dim>}` in points; `em` is resolved against the
@@ -12434,8 +12364,11 @@ mod tests {
         let setup = document_setup(&src, true, "");
         let mut resolved = flashtex_class_geometry::resolve(&setup);
         let t0 = std::time::Instant::now();
+        let parsed = flashtex_compiler::parser::parse(&src);
         apply_preamble_lengths(
+            &parsed.length_assignments,
             &src,
+            0,
             &mut resolved,
             10,
             crate::fonts::Family::ComputerModern,

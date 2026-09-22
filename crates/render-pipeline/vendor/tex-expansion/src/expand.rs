@@ -2788,6 +2788,7 @@ impl Engine {
                 let v = self.scan_counter_value_arg();
                 if let Some(idx) = self.counter_register(&name) {
                     self.st.scopes.set_count(idx, v, true);
+                    self.note_counter_assigned(&name, tok.span, idx);
                     self.finish_assignment();
                 } else {
                     self.err(format!("LaTeX Error: No counter '{name}' defined."), tok.span);
@@ -2799,6 +2800,7 @@ impl Engine {
                 let v = self.scan_counter_value_arg();
                 if let Some(idx) = self.counter_register(&name) {
                     self.st.scopes.set_count(idx, self.st.scopes.count(idx) + v, true);
+                    self.note_counter_assigned(&name, tok.span, idx);
                     self.finish_assignment();
                 } else {
                     self.err(format!("LaTeX Error: No counter '{name}' defined."), tok.span);
@@ -4090,6 +4092,18 @@ impl Engine {
                     )
             ),
             _ => false,
+        }
+    }
+
+    /// After `\setcounter`/`\addtocounter`, which assign `\c@<name>`
+    /// globally: when the host observes `\c@<name>`, the same
+    /// `\global\flashtexlengthassign{\c@<name>}{<value>}` marker as a TeX
+    /// assignment to it, at the command's span.
+    fn note_counter_assigned(&mut self, name: &str, at: Span, idx: u16) {
+        let register = format!("c@{name}");
+        if self.st.observed_registers.contains(register.as_str()) {
+            let tok = Token::new(TokenKind::ControlSequence(register), at);
+            self.note_register_assigned(&tok, RegisterKind::Count, idx, true);
         }
     }
 
