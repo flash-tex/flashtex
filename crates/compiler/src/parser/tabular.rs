@@ -1566,6 +1566,7 @@ impl P<'_> {
         // The entry's blocks are folded into the enclosing paragraph, so they
         // must not leave leadings of their own behind.
         self.block_par_leading.truncate(par_leading_count);
+        self.block_par_starts.truncate(par_leading_count);
 
         while self.brace_stack.len() > brace_depth {
             let open = self.brace_stack.pop().expect("length checked");

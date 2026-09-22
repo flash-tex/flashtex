@@ -395,6 +395,7 @@ impl P<'_> {
         // reach `block_par_leading` either, which carries exactly one entry
         // per pushed block (see `argument_inlines`).
         self.block_par_leading.truncate(outer_par_leading_blocks);
+        self.block_par_starts.truncate(outer_par_leading_blocks);
         self.t = outer_tokens;
         self.i = outer_index;
         self.style = outer_style;

@@ -1647,6 +1647,27 @@ pub struct TextStyle {
     pub italic_correction: ItalicCorrection,
 }
 
+/// How a block's paragraph starts ([`Parsed::block_par_starts`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ParStart {
+    /// TeX's `new_graf` puts the `\parindent` box: false after `\noindent`
+    /// in vertical mode, and after latex.ltx's `\@endpe` (the `\end` of a
+    /// list or `\trivlist` environment with no `\par` before the next
+    /// paragraph, whose `\everypar` removes the box).
+    pub indent: bool,
+    /// A `\par` (a blank line, or `\par` itself, from the source or a macro
+    /// body) came between the previous block and this one. Without one, a
+    /// block after a display environment continues the paragraph the
+    /// display interrupted (no indent, no `\parskip`).
+    pub par_before: bool,
+}
+
+impl Default for ParStart {
+    fn default() -> Self {
+        ParStart { indent: true, par_before: true }
+    }
+}
+
 /// One interword glue in horizontal mode ([`Inline::Text::glue_before`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InterwordGlue {
@@ -1670,7 +1691,7 @@ pub enum GlueKind {
 /// [`P::attach_glue`] for a space read at `space` (its style), consumed
 /// here unless `inline` sets nothing.
 fn attach_space(inline: &mut Inline, space: &mut Option<TextStyle>) {
-    if space.is_none() || matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. }) || is_overlay_marker(inline) {
+    if space.is_none() || !sets_material(inline) {
         return;
     }
     let glue = space.take().map(|style| InterwordGlue { style: glue_style(style), kind: GlueKind::Normal });
@@ -1708,10 +1729,16 @@ fn citation_style(outer: TextStyle, run: TextStyle, scheme: crate::nfss::Scheme)
 /// set yet), not after a control word (TeX's state S skips it: `\LaTeX b`),
 /// and not after a line break or a display, whose lookahead
 /// (`\@ifstar`/`\@ifnextchar`, `\ignorespaces` after `\]`) skips it.
+/// Whether `inline` puts material on the list, so that TeX is in horizontal
+/// mode after it: a `\label`, a `\pagestyle` or an overlay marker sets
+/// nothing (after `\section{..}\label{..}` the list is still in vertical
+/// mode).
+fn sets_material(inline: &Inline) -> bool {
+    !(matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. }) || is_overlay_marker(inline))
+}
+
 fn space_is_glue(tokens: &[InputToken], at: usize, set: &[Inline]) -> bool {
-    // A `\label`, a `\pagestyle` or an overlay marker sets nothing: after
-    // `\section{..}\label{..}` the list is still in vertical mode.
-    let last = set.iter().rev().find(|i| !(matches!(i, Inline::Label { .. } | Inline::PageStyle { .. }) || is_overlay_marker(i)));
+    let last = set.iter().rev().find(|i| sets_material(i));
     match last {
         None | Some(Inline::LineBreak { .. } | Inline::Math { display: true, .. } | Inline::MathRows { .. }) => return false,
         Some(_) => {}
@@ -2555,6 +2582,9 @@ pub struct Parsed {
     /// paragraph (a heading sets its own leading) and for paragraphs whose
     /// `\par` ran at `\normalsize`.
     pub block_par_leading: Vec<ParLeading>,
+    /// One [`ParStart`] per block, in `blocks` order (PLAN1 slice 2): how
+    /// the paragraph a block opens starts, as the parser read it.
+    pub block_par_starts: Vec<ParStart>,
     /// Exact preamble bytes. A change invalidates every cached block.
     pub preamble_source: String,
     /// False for recovery/unsupported cases whose state effects are not proven.
@@ -3774,6 +3804,9 @@ pub fn parse_project_with(
         block_dependencies: Vec::new(),
         block_par_leading: Vec::new(),
         next_block_par_leading: None,
+        block_par_starts: Vec::new(),
+        par_seen: false,
+        noindent_pending: false,
         current_dependencies: BTreeMap::new(),
         documents,
         document_by_path: documents
@@ -3946,6 +3979,7 @@ pub fn parse_project_with(
         packages: p.packages,
         block_dependencies: p.block_dependencies,
         block_par_leading: p.block_par_leading,
+        block_par_starts: p.block_par_starts,
         preamble_source,
         incremental_safe,
         document_global_state: p.document_global_state,
@@ -4092,6 +4126,16 @@ struct P<'a> {
     /// [`P::flush_list_item`] and consumed by the same
     /// `finish_block_dependencies` call that closes the block.
     next_block_par_leading: ParLeading,
+    /// One [`ParStart`] per pushed block, kept in step like
+    /// `block_par_leading`.
+    block_par_starts: Vec<ParStart>,
+    /// A `\par` (a blank line, or `\par` from the source or a macro) was
+    /// read since the last block was pushed.
+    par_seen: bool,
+    /// The next paragraph starts without its indent box: `\noindent` in
+    /// vertical mode, or `\@endpe` after a list or trivlist environment
+    /// (cleared by `\par`).
+    noindent_pending: bool,
     current_dependencies: BTreeMap<String, (usize, Vec<TokenKind>)>,
     documents: &'a [SourceDocument<'a>],
     document_by_path: HashMap<&'a str, usize>,
@@ -4680,6 +4724,7 @@ impl P<'_> {
                             self.end_tabbing_line(false, para);
                         } else {
                             self.flush_paragraph(blocks, para);
+                            self.read_par();
                         }
                     }
                 }
@@ -5491,7 +5536,10 @@ impl P<'_> {
             "fnsymbol" => self.fnsymbol_command(span, para),
             "marginpar" => self.marginpar(span, para),
             "par" if self.alltt_active() => self.alltt_line_break(para),
-            "par" => self.flush_paragraph(blocks, para),
+            "par" => {
+                self.flush_paragraph(blocks, para);
+                self.read_par();
+            }
             "bigskip" | "medskip" | "smallskip" | "vspace" | "hrule" | "newpage" | "clearpage"
             | "cleardoublepage" | "pagebreak" | "nopagebreak" | "vfill" | "columnbreak" | "newcolumn"
             | "raggedcolumns" | "flushcolumns" | "penalty" | "nobreak" | "allowbreak"
@@ -7186,7 +7234,14 @@ impl P<'_> {
         // model, so there is nothing for \noindent to suppress: an honest
         // no-op rather than a fabricated indent to cancel. It still
         // starts the paragraph (TeX §1091 `new_graf`), as `\indent` does.
-        "noindent" => self.paragraph_started = true,
+        "noindent" => {
+            // In vertical mode `\noindent` starts the paragraph without its
+            // indent box; in horizontal mode it does nothing.
+            if !para.iter().any(sets_material) && !self.paragraph_started {
+                self.noindent_pending = true;
+            }
+            self.paragraph_started = true;
+        }
         // The opposite request: unlike \noindent above, this one is not a
         // coincidental match with real LaTeX's output — \indent asks for
         // a first-line indent that this layout has no way to draw (see
@@ -10403,6 +10458,14 @@ impl P<'_> {
             }
             self.restore_length_scope();
         }
+        // `\endtrivlist` is `\@endparenv` for every list and `\trivlist`
+        // environment article.cls builds on them.
+        if matches!(
+            environment.as_str(),
+            "itemize" | "enumerate" | "description" | "thebibliography" | "center" | "flushleft" | "flushright" | "quote" | "quotation" | "verse" | "abstract"
+        ) {
+            self.end_paragraph_environment();
+        }
     }
 
     /// `\CJKfamily{<family>}` (CJK.sty 738-760, `\CJK@selFam`): selects the
@@ -11733,6 +11796,8 @@ impl P<'_> {
             span: Span::in_document(document, open.start, tag_end),
         });
         self.finish_block_dependencies();
+        // `\endverbatim` is `\endtrivlist`.
+        self.end_paragraph_environment();
     }
 
     /// Consume a reconstituted `\\end{name}` (the four tokens the
@@ -13842,12 +13907,6 @@ impl P<'_> {
         self.obeylines_stack.push(self.obeylines);
     }
 
-    /// The interword glue of the space the main loop read before the word it
-    /// emits now ([`Inline::Text::glue_before`]).
-    fn take_glue(&mut self) -> Option<InterwordGlue> {
-        self.last_space.take().map(|style| InterwordGlue { style: glue_style(style), kind: GlueKind::Normal })
-    }
-
     /// The main loop read the space token at `self.i - 1`: record it as the
     /// glue in front of the next material when TeX appends one there
     /// ([`space_is_glue`]; horizontal mode is an open paragraph or one a
@@ -13858,6 +13917,23 @@ impl P<'_> {
         if horizontal && space_is_glue(&self.t, at, para) {
             self.last_space = Some(self.style);
         }
+    }
+
+    /// A `\par` was read (after the paragraph it ends was flushed): the next
+    /// block does not continue it, and a pending `\@endpe` is cancelled
+    /// (latex.ltx `\@doendpe` redefines `\par` to reset `\everypar`). A
+    /// `\noindent` read before it is spent too: its empty paragraph ended.
+    fn read_par(&mut self) {
+        self.par_seen = true;
+        self.noindent_pending = false;
+    }
+
+    /// Latex.ltx's `\@endpe` at the `\end` of a list or `\trivlist`
+    /// environment (`\@endparenv`): the next paragraph starts without its
+    /// indent box unless a `\par` comes first.
+    fn end_paragraph_environment(&mut self) {
+        self.noindent_pending = true;
+        self.par_seen = false;
     }
 
     /// Gives the first inline a command emitted the space read before it:
@@ -15494,6 +15570,7 @@ impl P<'_> {
             self.parse_detached(&mut blocks, &mut para);
             self.block_dependencies.truncate(outer_dependency_blocks);
             self.block_par_leading.truncate(outer_par_leading_blocks);
+            self.block_par_starts.truncate(outer_par_leading_blocks);
             out.push(
                 blocks
                     .into_iter()
@@ -15832,6 +15909,7 @@ impl P<'_> {
         self.parse_detached(&mut blocks, &mut para);
         self.block_dependencies.truncate(outer_dependency_blocks);
         self.block_par_leading.truncate(outer_par_leading_blocks);
+        self.block_par_starts.truncate(outer_par_leading_blocks);
         self.t = outer_tokens;
         self.i = outer_index;
         self.style = outer_style;
@@ -15865,6 +15943,9 @@ impl P<'_> {
         // `flush_list_item` leaves a non-`None` value here.
         self.block_par_leading
             .push(std::mem::take(&mut self.next_block_par_leading));
+        self.block_par_starts.push(ParStart { indent: !self.noindent_pending, par_before: self.par_seen });
+        self.noindent_pending = false;
+        self.par_seen = false;
         self.block_dependencies.push(
             std::mem::take(&mut self.current_dependencies)
                 .into_iter()
