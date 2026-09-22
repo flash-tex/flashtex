@@ -28,10 +28,14 @@ rm-lmr8 80bcbfd8…, license 49ea6cb9…); `scripts/bundle-texmf.py check Fonts/
 re-verifies them and `make-app.sh` refuses to package on any mismatch. Bold,
 italic and the other design sizes have no metrics here yet.
 
-`texmf/SUPPLEMENTARY-METRICS.json` pins 23 further text TFMs in the same
+`texmf/SUPPLEMENTARY-METRICS.json` pins 24 further text TFMs in the same
 directory (`ec-lmr{5,6,7,8,9,17}`, `ec-lmbx{5,6,7,8,9,10,12}`,
-`ec-lmri{7,8,9,10,12}`, `ec-lmbxi10`, `rm-lmr{5,7,9,10}`) for the other design
-sizes and the bold/italic faces. They are not in the Commander's manifest: copied
+`ec-lmri{7,8,9,10,12}`, `ec-lmbxi10`, `rm-lmr{5,7,9,10,17}`) for the other design
+sizes and the bold/italic faces. `rm-lmr17` is the cmr17-design roman of math at
+`\Large` and above (fontmath.ltx 81-83, a 12 pt `\section` title's formula);
+without it that math fell back to the body's 12 pt metrics. It was added later
+than the rest, from the same MacTeX 2026 tree (whose `rm-lmr10.tfm` matches this
+pin byte-for-byte), without the CTAN `lm.zip` cross-check. They are not in the Commander's manifest: copied
 from the same MacTeX 2026 tree (TeX Live `lm` rev 77682, catalogue 2.005,
 MANIFEST 2.004) and byte-identical to the CTAN `lm.zip` copy on the build
 machine, but not verified against the pinned 2.004 archive hash; see the

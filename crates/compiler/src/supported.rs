@@ -660,6 +660,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("LaTeXe", "", "\\LaTeX, kern .15em, 2 and a text-style subscript varepsilon"),
     ("rule", "[raise]{dimension}{dimension}", "filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \\textwidth, \\linewidth, \\columnwidth"),
     ("strut", "", "zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \\strutbox)"),
+    ("mbox", "{...}", "kernel unbreakable box: the argument as one \\hbox at its natural width, never broken across lines (also in math)"),
     ("phantom", "{...}", "kernel invisible box: the argument's full width, height and depth, paints nothing (single-line; also in math)"),
     ("hphantom", "{...}", "kernel invisible box: the argument's width only, zero height and depth (single-line; also in math)"),
     ("vphantom", "{...}", "kernel invisible box: the argument's height and depth only, zero width (single-line; also in math)"),
@@ -1047,6 +1048,42 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         &["iff", "implies", "impliedby"],
         "",
         "long double arrow between thick (5mu) spaces",
+        true,
+    ),
+    (
+        &["mathellipsis"],
+        "",
+        "the kernel's low ellipsis (\\mathinner{\\ldotp\\ldotp\\ldotp}), fontmath.ltx 512",
+        true,
+    ),
+    (
+        &["bowtie"],
+        "",
+        "\\triangleright and \\triangleleft joined by \\joinrel as one relation, fontmath.ltx 366",
+        true,
+    ),
+    (
+        &["relbar", "Relbar"],
+        "",
+        "the single/double arrow shaft as a relation (\\mathrel{\\smash-} / \\mathrel{=}), fontmath.ltx 355-357",
+        true,
+    ),
+    (
+        &["joinrel"],
+        "",
+        "\\mathrel{\\mkern-3mu}: the kern that joins two relations, fontmath.ltx 353",
+        true,
+    ),
+    (
+        &["surd"],
+        "",
+        "the radical sign as an ordinary symbol ({\\mathchar\"1270}), fontmath.ltx 242",
+        true,
+    ),
+    (
+        &["Join"],
+        "",
+        "amsfonts \\rtimes overprinted on \\ltimes (msbm \"6F, -13.8mu, \"6E) as a relation; requires amsfonts/amssymb",
         true,
     ),
     (
@@ -1795,6 +1832,36 @@ pub fn inventory() -> Inventory {
             arguments: "",
             description: format!("symbol {glyph}"),
             glyph: Some(glyph),
+            renders: true,
+            requires_class: None,
+        });
+    }
+    // Every kernel `\DeclareMathSymbol` / `\DeclareMathDelimiter` with a
+    // drawable character (`crate::math_symbols`, generated from
+    // `fontmath.ltx`) that no arm or glyph row above already lists.
+    for row in crate::math_symbols::SYMBOLS {
+        if row.provider != crate::math_symbols::Provider::Kernel
+            || row.character
+            || math::declared_kernel_symbol(row.name).is_none()
+            || commands.iter().any(|c| c.mode == Mode::Math && c.name == row.name)
+            || crate::amssymb::by_name(row.name).is_some()
+        {
+            continue;
+        }
+        let class = format!("{:?}", row.class).to_lowercase();
+        commands.push(Command {
+            name: row.name,
+            mode: Mode::Math,
+            origin: Origin::MathSymbol,
+            arguments: "",
+            description: format!(
+                "symbol {} (\\math{class}, {} \"{:02X}; {})",
+                row.text,
+                row.font.tfm10(),
+                row.slot,
+                row.source
+            ),
+            glyph: Some(row.text),
             renders: true,
             requires_class: None,
         });

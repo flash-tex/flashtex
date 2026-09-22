@@ -85,8 +85,13 @@ final class EditorDiagnosticsPartialOutputTests: XCTestCase {
         /// command: `\Z`/`\R` (4 per section) and `\problem` (3 per section).
         static var viaMacro: Int { 7 * problems }
         /// Diagnostics whose recovery says the compiler skipped something:
-        /// the body and macro commands (7 per section) and the preamble one.
-        static var skippedRegion: Int { 7 * problems + 1 }
+        /// the body and macro commands (7 per section), the preamble one,
+        /// and every unsupported math command -- `\hwin` (3 per section) and
+        /// the `\hwbolt` of each `\Z`/`\R` expansion (4 per section). Math
+        /// mode drops an unresolved command rather than typesetting its name
+        /// (#856), and its recovery has said "skipped the command and
+        /// continued" since 8bf063de8; only the package warning is not a skip.
+        static var skippedRegion: Int { 7 * problems + 1 + mathCommandCount + 4 * problems }
         /// Every diagnostic the fixture yields: the two categories above --
         /// which already account for the 4 `\hwbolt` per section, via `\Z`
         /// and `\R` -- plus the single package warning. The preamble asks for

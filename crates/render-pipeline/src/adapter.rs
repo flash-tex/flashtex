@@ -275,6 +275,9 @@ pub enum Item {
     Underline(Box<UnderlineItem>),
     /// `\textsuperscript`/`\textsubscript` (compiler `Inline::TextScript`).
     TextScript(Box<TextScriptItem>),
+    /// A plain `\hbox` at its natural width (compiler `Inline::HBox`:
+    /// `\mbox`, text-mode `\text`, a kernel `\cite` label).
+    HBox(Box<HBoxItem>),
     /// A beamer overlay marker (compiler `Inline::OverlayBegin`/
     /// `OverlayEnd`/`Onslide`): no material. `crate::overlay::expand_frames`
     /// reads and removes them when it sets a frame once per slide; the
@@ -379,6 +382,14 @@ pub struct ColorBoxItem {
 pub struct UnderlineItem {
     pub thickness_pt: f64,
     pub geom: UnderlineGeom,
+    pub items: Vec<Item>,
+    pub span: Span,
+}
+
+/// A plain `\hbox{...}` (see [`Item::HBox`]): `items` set as one line at
+/// their natural width (`typeset::Context::plain_hbox`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HBoxItem {
     pub items: Vec<Item>,
     pub span: Span,
 }
@@ -3535,6 +3546,7 @@ fn math_colors(blocks: &[flashtex_compiler::parser::Block]) -> std::collections:
                 Inline::Underline(u) => walk(&u.content, out),
                 Inline::TextScript(t) => walk(&t.content, out),
                 Inline::Phantom(p) => walk(&p.content, out),
+                Inline::HBox(b) => walk(&b.content, out),
                 _ => {}
             }
         }
@@ -3584,6 +3596,7 @@ fn item_source_span(item: &Item) -> Option<Span> {
         Item::ColorBox(b) => Some(b.span),
         Item::Underline(u) => Some(u.span),
         Item::TextScript(t) => Some(t.span),
+        Item::HBox(b) => Some(b.span),
         Item::Lap { items } => {
             let mut spans = items.iter().filter_map(item_source_span);
             let first = spans.next()?;
@@ -3663,6 +3676,7 @@ fn marginpar_from(items: &[Item], entry: usize, at: usize) -> bool {
         Item::ColorBox(b) => marginpar_from(&b.items, entry, at),
         Item::Underline(u) => marginpar_from(&u.items, entry, at),
         Item::TextScript(t) => marginpar_from(&t.items, entry, at),
+        Item::HBox(b) => marginpar_from(&b.items, entry, at),
         Item::Footnote { text, .. } => text.as_ref().is_some_and(|t| marginpar_from(t, entry, at)),
         Item::Table(t) => t.entries.iter().any(|e| match e {
             crate::table::TableEntry::Row { cells, .. } => cells.iter().any(|c| marginpar_from(&c.items, entry, at)),
@@ -3903,6 +3917,7 @@ fn inline_span(i: &Inline) -> Span {
         Inline::Underline(u) => u.span,
         Inline::TextScript(t) => t.span,
         Inline::Phantom(p) => p.span,
+        Inline::HBox(b) => b.span,
         Inline::Graphic(g) => g.span,
         Inline::Transform(t) => t.span,
         // Nodes only a re-pinned compiler emits; all of them carry the
@@ -6387,6 +6402,24 @@ fn assign_param(p: &mut PageParams, name: &str, v: Glue, add: bool) {
     }
 }
 
+/// Whether the source is a REVTeX document of the `rmp` journal (or the
+/// `apsrmp` society), whose natbib is author-year (compiler
+/// `natbib::Options::revtex`, `rmp.rtx`/`apsrmp4-*.rtx`
+/// `\bibpunct{(}{)}{;}{a}{,}{,}`).
+fn revtex_author_year(source: &str) -> bool {
+    let Some(at) = find_command(source, "documentclass") else { return false };
+    let rest = source[at + "\\documentclass".len()..].trim_start();
+    let (options, rest) = match rest.strip_prefix('[') {
+        Some(inner) => match inner.find(']') {
+            Some(end) => (&inner[..end], inner[end + 1..].trim_start()),
+            None => return false,
+        },
+        None => ("", rest),
+    };
+    let class = rest.strip_prefix('{').and_then(|r| r.find('}').map(|end| r[..end].trim()));
+    matches!(class, Some("revtex4" | "revtex4-1" | "revtex4-2")) && options.split(',').map(str::trim).any(|o| o == "rmp" || o == "apsrmp")
+}
+
 /// `\documentclass[opts]{...}` options, if the source has a class line.
 pub fn class_options(source: &str) -> Option<String> {
     let at = find_command(source, "documentclass")?;
@@ -7652,15 +7685,26 @@ impl<'t> SourceIndex<'t> {
 struct SourceIndexes<'a, 't> {
     texts: &'a [&'t str],
     theorem_envs: &'a std::collections::HashSet<String>,
+    /// [`natbib_author_year`] of the document, not of one file: a package
+    /// is loaded once, in the preamble, and holds for every file the
+    /// document reads -- the `.bbl` that `\bibliography` inputs never
+    /// loads natbib itself, so its `thebibliography` was set with the
+    /// class's `[n]` label-width geometry (15.5 bp too far right).
+    natbib_author_year: bool,
     cells: Vec<std::cell::OnceCell<SourceIndex<'t>>>,
     empty: std::cell::OnceCell<SourceIndex<'t>>,
 }
 
 impl<'a, 't> SourceIndexes<'a, 't> {
     fn new(texts: &'a [&'t str], theorem_envs: &'a std::collections::HashSet<String>) -> Self {
+        // A REVTeX class loads natbib itself; its `rmp` journal is
+        // author-year (compiler `natbib::Options::revtex`).
+        let revtex_rmp = texts.iter().any(|text| revtex_author_year(text));
+        let natbib_author_year = revtex_rmp || texts.iter().find(|text| natbib_options(text).is_some()).is_some_and(|text| natbib_author_year(text));
         SourceIndexes {
             texts,
             theorem_envs,
+            natbib_author_year,
             cells: texts.iter().map(|_| std::cell::OnceCell::new()).collect(),
             empty: std::cell::OnceCell::new(),
         }
@@ -7668,7 +7712,7 @@ impl<'a, 't> SourceIndexes<'a, 't> {
 
     fn get(&self, document: usize) -> &SourceIndex<'t> {
         match self.texts.get(document) {
-            Some(text) => self.cells[document].get_or_init(|| SourceIndex::new(text, self.theorem_envs)),
+            Some(text) => self.cells[document].get_or_init(|| SourceIndex { natbib_author_year: self.natbib_author_year, ..SourceIndex::new(text, self.theorem_envs) }),
             None => self.empty.get_or_init(|| SourceIndex::new("", self.theorem_envs)),
         }
     }
@@ -10840,6 +10884,9 @@ fn items_cached(
             Inline::Phantom(p) => {
                 format!("{p:?}").hash(&mut h);
             }
+            Inline::HBox(b) => {
+                format!("{b:?}").hash(&mut h);
+            }
             Inline::Logo { logo, style, .. } => {
                 logo.hash(&mut h);
                 style.hash(&mut h);
@@ -10926,6 +10973,43 @@ fn items_cached(
     let items = items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     cache.insert_adapted(key, crate::incremental::AdaptedBlock { items: items.clone(), base: start });
     items
+}
+
+/// The blanks just inside an `\\hbox`'s braces (`\\mbox{ lead}`,
+/// `\\mbox{trail }`). TeX keeps both: restricted horizontal mode appends a
+/// space token as interword glue wherever it stands, so pdfTeX's box is
+/// `glue, lead` and `trail, glue`. The compiler's content starts at its
+/// first word and ends at its last, so the list built from it has neither;
+/// they are read from the source between the braces and the content. The
+/// glue is the adjacent word's font's, the trailing one at the space factor
+/// that word leaves (`\\mbox{end. }` is a sentence space).
+fn hbox_edge_spaces(src: &str, span: Span, content: &[Inline], items: &mut Vec<Item>) {
+    let (Some(first), Some(last)) = (content.first().map(inline_span), content.last().map(inline_span)) else {
+        return;
+    };
+    let inside = |s: Span| s.document == span.document && s.start >= span.start && s.end <= span.end;
+    if !inside(first) || !inside(last) || span.end == 0 || src.as_bytes().get(span.end - 1) != Some(&b'}') {
+        return;
+    }
+    let blank = |g: Option<&str>| g.is_some_and(|g| !g.is_empty() && g.chars().all(|c| c == ' ' || c == '\t' || c == '\n' || c == '\r'));
+    let open = src.get(span.start..first.start).and_then(|s| s.rfind('{')).map(|i| span.start + i + 1);
+    if let (Some(open), Some(Item::Word(w))) = (open, items.first()) {
+        if blank(src.get(open..first.start)) {
+            if let Some(seg) = w.segments.first() {
+                let style = seg.style;
+                items.insert(0, Item::Space { style, factor: 1000, no_break: false });
+            }
+        }
+    }
+    if let Some(Item::Word(w)) = items.last() {
+        if blank(src.get(last.end..span.end - 1)) {
+            if let Some(seg) = w.segments.last() {
+                let style = seg.style;
+                let factor = w.segments.iter().flat_map(|s| s.text.chars()).fold(1000, |f, ch| space_factor(ch, f));
+                items.push(Item::Space { style, factor, no_break: false });
+            }
+        }
+    }
 }
 
 /// Converts the compiler inlines into words, spaces, math and line breaks.
@@ -11222,6 +11306,22 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     items: content,
                     span,
                 })));
+                prev_end = Some(span.end);
+                prev_span = Some(span);
+                factor = 1000;
+            }
+            // A plain `\hbox` (compiler `Inline::HBox`): `\leavevmode\hbox`,
+            // one box like a `\colorbox` without the colour.
+            Inline::HBox(b) => {
+                let span = b.span;
+                let gap = space_between(prev_end, prev_span, span, None, after_control_word);
+                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                push_gap(&mut items, gap, gap_style, factor);
+                after_control_word = false;
+                let mut content = items_from_inlines_styled(texts, &b.content, styles, labels, size, heading, compiler_weight, false);
+                hbox_edge_spaces(text_of(span.document), span, &b.content, &mut content);
+                items.push(Item::HBox(Box::new(HBoxItem { items: content, span })));
                 prev_end = Some(span.end);
                 prev_span = Some(span);
                 factor = 1000;
@@ -11734,6 +11834,15 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     label_upright = style.italic;
                     style.italic = !style.italic;
                 }
+                // An undefined citation's `\hbox{\reset@font\bfseries ?}`
+                // (latex.ltx `\@citex`, natbib alike), and `\textbf` in a
+                // label: bold, which the `\cite`'s span cannot show either.
+                if !compiler_weight && compiler_style.bold && citation_label_run(source, *span) {
+                    style.bold = true;
+                    if matches!(&**inline, Inline::Text { text, .. } if text == "?") {
+                        style.italic = false;
+                    }
+                }
                 if has_space || pending_head_sep.get().is_some() {
                     // TeX sizes an interword space with the font current
                     // where the space token is read ("Plain, \textbf{bold}"
@@ -12055,11 +12164,36 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             // source gap is read from the previous text's end, so the
             // marker itself advances nothing.
             #[cfg(feature = "compiler-node-surface")]
-            Inline::Penalty { value, unskip, .. } => {
+            Inline::Penalty { value, unskip, span } => {
                 if *unskip && matches!(items.last(), Some(Item::Space { .. })) {
                     items.pop();
                 }
+                // The primitive `\penalty<number>` (its span covers the
+                // number) and `\nobreak`/`\allowbreak` written in the
+                // source: the blank after the number or control word is
+                // TeX's optional space (§443) or the space after a control
+                // word, never glue, so the gap is read from the command's
+                // end (`60:\penalty0 3461` is one word). The blank before it
+                // is an interword space like any other.
+                let source = text_of(span.document);
+                let command = !*unskip
+                    && source.get(span.start..span.end).is_some_and(|s| {
+                        let name = s.strip_prefix('\\').map(|r| &r[..r.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(r.len())]);
+                        matches!(name, Some("penalty" | "nobreak" | "allowbreak"))
+                    });
+                if command {
+                    let has_space = space_between(prev_end, prev_span, *span, None, after_control_word);
+                    if has_space {
+                        let gap_style = space_style(texts, styles, prev_end, *span, style_at(styles_of(span.document), span.start));
+                        push_gap(&mut items, true, gap_style, factor);
+                    }
+                }
                 items.push(Item::Penalty { value: *value, flagged: false });
+                if command {
+                    prev_end = Some(span.end);
+                    prev_span = Some(*span);
+                    after_control_word = true;
+                }
             }
             // Inlines only a re-pinned compiler emits. Every one of them is
             // a zero-width marker in the horizontal list -- a discretionary,

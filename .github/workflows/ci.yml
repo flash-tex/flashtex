@@ -187,6 +187,19 @@ jobs:
       - name: cargo test --release
         working-directory: crates/${{ matrix.crate }}
         run: cargo test --release --locked --no-fail-fast
+      # Parity scoreboard, fixtures tier (tools/parity/README.md): the committed
+      # fixtures against their committed pdflatex references through the CLI
+      # just built. No TeX needed; ~3 s. macOS only, because the baseline was
+      # recorded on macOS (unicode-accents paints CJK from system fonts).
+      - name: parity scoreboard tests
+        if: matrix.crate == 'flashtex-cli'
+        run: python3 -m unittest discover -s tools/parity -p 'test_*.py'
+      - name: parity scoreboard (fixtures) holds its baseline
+        if: matrix.crate == 'flashtex-cli' && runner.os == 'macOS'
+        run: >-
+          python3 tools/parity/parity.py --tier fixtures --raster none -j 3
+          --out "$RUNNER_TEMP/parity" --work "$RUNNER_TEMP/parity-work"
+          --check-baseline tools/parity/baseline-fixtures.json
 
   mac-app:
     name: mac app (swift build + test)
