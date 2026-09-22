@@ -1176,7 +1176,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `invisibleenv` | text | beamer <overlay> environment: the body is covered on the slides the spec selects; needs \documentclass{beamer} |
 | `alertenv` | text | beamer <overlay> environment: the body in the alert colour on the slides the spec selects; needs \documentclass{beamer} |
 | `actionenv` | text | beamer <overlay> environment: with a plain spec, uncoverenv; needs \documentclass{beamer} |
-| `tcolorbox` | text | tcolorbox with colback/colframe only, sized to its content like \fcolorbox (0.5mm rule, 1mm padding, black!5!white fill, black!75!white frame); other keys warn and are ignored, corners stay square, no title, one-line bodies only |
+| `tcolorbox` | text | tcolorbox with colback/colframe/title, sized to its content like \fcolorbox (0.5mm rule, 1mm padding, black!5!white fill, black!75!white frame); title= draws a frame-colour bar with white text above the box; other keys warn and are ignored, corners stay square, one-line bodies only |
 | `center` | text | centred paragraphs |
 | `flushleft` | text | left-aligned paragraphs |
 | `flushright` | text | right-aligned paragraphs |
@@ -1266,7 +1266,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `relsize` | `` | \larger/\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size |
 | `fancyhdr` | `` | \pagestyle{fancy} ships the \fancyhead/\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \fancyhf clears all six fields; \lhead/\chead/\rhead and \lfoot/\cfoot/\rfoot set one field each (an optional even-page group is ignored one-sided); \fancypagestyle is diagnosed where it is used |
 | `titlesec` | `` | \titleformat{\section} headings take the format's face and size (unnumbered with an empty label) with the \titlerule after-code rule; other levels, printed labels, before-code and shapes beyond the implemented subset are diagnosed where they are used |
-| `tcolorbox` | `` | the tcolorbox environment with colback/colframe only (see the tcolorbox environment); every other key and every library option is diagnosed |
+| `tcolorbox` | `` | the tcolorbox environment with colback/colframe/title (see the tcolorbox environment); every other key and every library option is diagnosed |
 | `xspace` | `` | \xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
 | `ifthen` | `` | \ifthenelse with \equal, \NOT, \AND, \OR, \isodd, \isundefined, \lengthtest and \boolean tests, and \newif conditionals with \newboolean/\setboolean; \whiledo loops are diagnosed where they are used |
 | `csquotes` | `` | \enquote: typographic quotation marks, alternating double/single on nesting |

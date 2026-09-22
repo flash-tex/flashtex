@@ -10281,7 +10281,7 @@ impl P<'_> {
                 self.frame_environment(span, argument_span, space_before, para);
                 return;
             }
-            // tcolorbox's `colback`/`colframe` box (see
+            // tcolorbox's `colback`/`colframe`/`title` box (see
             // `colors::P::tcolorbox_environment`): consumed synchronously
             // through its `\end`, so like `frame` nothing is pushed on the
             // environment stacks for it.
@@ -17689,8 +17689,8 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // package is silent; its key=value options (`skip=`, `indent=`,
         // `parfill=`, `tocskip=`) keep the warning below.
         "parskip" => options.is_empty(),
-        // tcolorbox's `colback`/`colframe` box is implemented above (an
-        // `\fcolorbox` in environment form with tcolorbox's own defaults),
+        // tcolorbox's `colback`/`colframe`/`title` box is implemented above
+        // (an `\fcolorbox` in environment form with tcolorbox's own defaults),
         // so loading the package is silent; a library option (`most`,
         // `skins`, ...) is not, because libraries change real output and
         // keep the warning (the same rule `amsmath` follows).

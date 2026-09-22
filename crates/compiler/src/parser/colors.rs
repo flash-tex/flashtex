@@ -11,7 +11,7 @@
 use super::{environment_end_at, environment_name_at, token_text, Block, ColorBox, Inline, InputToken, TextStyle, P};
 use crate::color::{ColorError, Colors, DeviceColor};
 use crate::diagnostics::Diagnostic;
-use crate::lexer::{Token, TokenKind};
+use crate::lexer::{tokenize, Token, TokenKind};
 use crate::Span;
 
 impl P<'_> {
@@ -245,16 +245,21 @@ impl P<'_> {
     /// See [`P::TCB_BOXRULE_PT`].
     const TCB_BOXSEP_PT: f64 = 72.27 / 25.4;
 
-    /// `\begin{tcolorbox}[key=value,...] body \end{tcolorbox}` (slice 1): an
-    /// `\fcolorbox` in environment form with tcolorbox's own defaults. Only
-    /// `colback`/`colframe` are honoured, resolved through
-    /// `self.resolve_color` exactly like `\colorbox`'s colours (tcolorbox
-    /// declares both as `.colorlet`, i.e. xcolor expressions); every other
-    /// key — `title` (a second region, deferred), `boxrule`, `sharp corners`,
-    /// watermarks, libraries — warns once and is ignored. The box is flushed
-    /// onto its own paragraph, but its content is `box_inlines`' flattened
-    /// single-line run: bodies longer than one line over- rather than
-    /// re-flow (the block-level follow-up), exactly like `\colorbox`.
+    /// `\begin{tcolorbox}[key=value,...] body \end{tcolorbox}`: an `\fcolorbox`
+    /// in environment form with tcolorbox's own defaults. `colback`/`colframe`
+    /// are honoured, resolved through `self.resolve_color` exactly like
+    /// `\colorbox`'s colours (tcolorbox declares both as `.colorlet`, i.e.
+    /// xcolor expressions), and `title=<text>` draws a title bar directly
+    /// above the box: a second `ColorBox` with the frame colour as its fill
+    /// (tcolorbox.sty's default, where `title filled=false` leaves the title
+    /// on the frame-coloured band) carrying the title parsed with the
+    /// ordinary dispatch in white (`coltitle=white`; `fonttitle` is empty by
+    /// default, so no extra face). Every other key — `boxrule`,
+    /// `sharp corners`, watermarks, libraries — warns once and is ignored.
+    /// Each box is flushed onto its own paragraph, but its content is
+    /// `box_inlines`' flattened single-line run: bodies longer than one line
+    /// over- rather than re-flow (the block-level follow-up), exactly like
+    /// `\colorbox`.
     pub(super) fn tcolorbox_environment(
         &mut self,
         open: Span,
@@ -272,7 +277,7 @@ impl P<'_> {
             ));
         }
         let begin_span = open.merge(argument_span);
-        let (fill, frame) = self.tcolorbox_options(begin_span);
+        let (fill, frame, title) = self.tcolorbox_options(begin_span);
         // The body runs to the matching `\end{tcolorbox}`; nested boxes nest,
         // exactly like the bordered-box `frame` environment.
         let mut depth = 1usize;
@@ -311,6 +316,26 @@ impl P<'_> {
             }
         };
         self.i = after;
+        // A `title=<text>` draws its bar first: the same box machinery with
+        // the frame colour as fill, so the generic pipeline paints it like
+        // any other box. The body box below keeps its own paragraph (with a
+        // normal inter-paragraph gap, not merged into one frame: closing
+        // that gap needs layout support, out of scope here).
+        let titled = title.is_some();
+        if let Some(title) = title {
+            self.flush_paragraph(blocks, para);
+            para.push(Inline::ColorBox(Box::new(ColorBox {
+                fill: frame,
+                frame: Some(frame),
+                content: title,
+                fboxsep_pt: Self::TCB_BOXSEP_PT,
+                fboxrule_pt: Self::TCB_BOXRULE_PT,
+                span: begin_span.merge(end_span),
+                space_before,
+                highlight: None,
+            })));
+            self.flush_paragraph(blocks, para);
+        }
         let content = self.box_inlines(body);
         // A display box, not an in-paragraph one: the paragraphs around it
         // close before and open after, so the box is its own paragraph.
@@ -322,17 +347,18 @@ impl P<'_> {
             fboxsep_pt: Self::TCB_BOXSEP_PT,
             fboxrule_pt: Self::TCB_BOXRULE_PT,
             span: begin_span.merge(end_span),
-            space_before,
+            space_before: space_before && !titled,
             highlight: None,
         })));
         self.flush_paragraph(blocks, para);
     }
 
-    /// The `[key=value,...]` of `\begin{tcolorbox}`: `(colback, colframe)`.
-    /// Defaults are tcolorbox.sty's own reset values (`colback=black!5!white`,
-    /// `colframe=black!75!white`); anything unresolvable falls back to plain
-    /// white/black, and any other key warns once and is ignored.
-    fn tcolorbox_options(&mut self, span: Span) -> (DeviceColor, DeviceColor) {
+    /// The `[key=value,...]` of `\begin{tcolorbox}`:
+    /// `(colback, colframe, title)`. Defaults are tcolorbox.sty's own reset
+    /// values (`colback=black!5!white`, `colframe=black!75!white`); anything
+    /// unresolvable falls back to plain white/black, and any other key warns
+    /// once and is ignored.
+    fn tcolorbox_options(&mut self, span: Span) -> (DeviceColor, DeviceColor, Option<Vec<Inline>>) {
         let current = self.style.color;
         let mut fill = self
             .resolve_color("tcolorbox", None, "black!5!white", span, current)
@@ -340,10 +366,14 @@ impl P<'_> {
         let mut frame = self
             .resolve_color("tcolorbox", None, "black!75!white", span, current)
             .unwrap_or(DeviceColor::BLACK);
-        let Some((options, options_span)) = self.optional_bracket_argument() else {
-            return (fill, frame);
+        let Some((tokens, options_span)) = self.tcolorbox_bracket_tokens() else {
+            return (fill, frame, None);
         };
+        // The tokens (not the brace-stripping raw text) are the source, so
+        // `title={a, b}` and `colback=[rgb]{1,0,0}` stay one entry each.
+        let options = tcolorbox_options_text(&tokens);
         let mut unknown = Vec::new();
+        let mut title = None;
         for (key, value) in tcolorbox_option_pairs(&options) {
             let Some(value) = value else {
                 unknown.push(key);
@@ -361,20 +391,169 @@ impl P<'_> {
                         .resolve_color("tcolorbox", None, &value, options_span, current)
                         .unwrap_or(DeviceColor::BLACK)
                 }
+                // The last `title` wins, like any other pgfkeys value.
+                "title" => title = self.tcolorbox_title(&value, options_span),
                 _ => unknown.push(key),
             }
         }
         if !unknown.is_empty() {
             self.diags.push(Diagnostic::warning(
                 format!(
-                    "tcolorbox keys {} are not implemented; rendered the box with colback/colframe only",
+                    "tcolorbox keys {} are not implemented; rendered the box with colback/colframe/title only",
                     unknown.join(", ")
                 ),
                 Some(options_span),
                 Some("ignored the other keys".into()),
             ));
         }
-        (fill, frame)
+        (fill, frame, title)
+    }
+
+    /// The `[...]` of `\begin{tcolorbox}` as its own tokens, `{...}` groups
+    /// intact. This mirrors [`P::optional_bracket_argument`]'s consumption
+    /// (same tail rewrite when body text hugs the `]`, same missing-close
+    /// error) but keeps the tokens: the shared
+    /// [`P::optional_bracket_tokens_spanned`] re-lexes from the
+    /// brace-stripping raw text exactly in that hugging case, which would
+    /// shred `title={a, b}` at its inner comma.
+    fn tcolorbox_bracket_tokens(&mut self) -> Option<(Vec<InputToken>, Span)> {
+        self.skip_spaces();
+        let first = self.peek()?;
+        let TokenKind::Word(first_word) = &first.kind else {
+            return None;
+        };
+        if !first_word.starts_with('[') {
+            return None;
+        }
+        let start = first.span.start;
+        let document = first.span.document;
+        let mut end = first.span.end;
+        let mut out = Vec::new();
+        let mut depth = 0usize;
+        let mut found = false;
+        let mut index = self.i;
+        while index < self.t.len() {
+            let input = self.t[index].clone();
+            end = input.token.span.end;
+            match &input.token.kind {
+                TokenKind::Word(word) => {
+                    // The `[` opens the argument, so the first word's first
+                    // byte is skipped; every later word starts at byte 0.
+                    let from = usize::from(index == self.i).min(word.len());
+                    let body = &word[from..];
+                    if depth == 0 {
+                        if let Some(close) = body.find(']') {
+                            let head = body[..close].to_string();
+                            let tail = body[close + 1..].to_string();
+                            let span = input.token.span;
+                            let literal = span.end - span.start == word.len();
+                            if literal && !tail.is_empty() {
+                                end = span.start + from + close + 1;
+                            }
+                            if !head.is_empty() {
+                                let mut head_token = input.clone();
+                                head_token.token.kind = TokenKind::Word(head);
+                                if literal {
+                                    head_token.token.span = Span::in_document(
+                                        span.document,
+                                        span.start + from,
+                                        span.start + from + close,
+                                    );
+                                }
+                                out.push(head_token);
+                            }
+                            if tail.is_empty() {
+                                self.i = index + 1;
+                            } else {
+                                if let Some(slot) = self.token_mut(index) {
+                                    if literal {
+                                        slot.token.span = Span::in_document(
+                                            span.document,
+                                            end,
+                                            span.end,
+                                        );
+                                    }
+                                    slot.token.kind = TokenKind::Word(tail);
+                                }
+                                self.i = index;
+                            }
+                            found = true;
+                            break;
+                        }
+                    }
+                    // Not the closing word (or nested in braces): keep it
+                    // whole here; the leading `[` comes off below.
+                    out.push(input);
+                }
+                TokenKind::LBrace => {
+                    depth += 1;
+                    out.push(input);
+                }
+                TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1);
+                    out.push(input);
+                }
+                _ => out.push(input),
+            }
+            index += 1;
+        }
+        if !found {
+            self.i = index;
+        }
+        let span = Span::in_document(document, start, end);
+        if !found {
+            self.diags.push(
+                Diagnostic::error(
+                    "optional argument is missing its closing ']'",
+                    Some(span),
+                    Some("used the text through end of input as the option".into()),
+                )
+                .with_help("add a closing ']'"),
+            );
+        }
+        // The `[` opens the argument, so it comes off the first word (a
+        // consumer reading the gaps from the source must not find it).
+        if let Some(first) = out.first_mut() {
+            if let TokenKind::Word(word) = &mut first.token.kind {
+                if word.starts_with('[') {
+                    let literal = first.token.span.end - first.token.span.start == word.len();
+                    word.remove(0);
+                    if literal {
+                        first.token.span.start += 1;
+                    }
+                }
+            }
+        }
+        out.retain(|t| !matches!(&t.token.kind, TokenKind::Word(w) if w.is_empty()));
+        Some((out, span))
+    }
+
+    /// `title=<text>` parsed with the ordinary dispatch in the style in force
+    /// at `\begin{tcolorbox}`, recoloured white (tcolorbox.sty's reset
+    /// `coltitle=white`; `fonttitle` is empty, so no extra face is added and
+    /// an explicit `\color` or face command inside still wins). One outer
+    /// brace pair is unwrapped first, so `title={a, b}` sets `a, b`. An
+    /// empty title shows no bar at all (`\iftcb@hasTitle` is false), and a
+    /// bare `title` with no `=` never reaches here: it warns as unknown.
+    fn tcolorbox_title(&mut self, value: &str, span: Span) -> Option<Vec<Inline>> {
+        let text = strip_outer_braces(value.trim());
+        if text.trim().is_empty() {
+            return None;
+        }
+        // Re-lexed from the (already macro-expanded) option text: custom
+        // macros arrive expanded, while `\textbf`, `\textit`, math and
+        // friends parse as usual. Every token points at the option list,
+        // which contains the title.
+        let tokens: Vec<InputToken> = tokenize(text)
+            .into_iter()
+            .map(|mut token| {
+                token.span = span;
+                InputToken { token, definition: None, maps_to_invocation: false }
+            })
+            .collect();
+        let mut style = self.style;
+        style.color = Some(DeviceColor::WHITE);
+        Some(self.argument_inlines(tokens, span, style))
     }
 
     /// A box argument parsed with the ordinary dispatch as one group in the
@@ -555,6 +734,59 @@ fn color_argument_tokens(tokens: &[Token], mut i: usize) -> Option<(usize, Optio
         }
     }
     None
+}
+
+/// The `[...]` of `\begin{tcolorbox}` as text for
+/// [`tcolorbox_option_pairs`], rebuilt from the bracket's own tokens so
+/// `{...}` groups survive (the raw [`P::optional_bracket_argument`] text
+/// drops them, which used to shred `title={a, b}` and `colback=[rgb]{1,0,0}`
+/// at their inner commas). Words, spaces and `\commands` round-trip as
+/// written; `\\` and `$` likewise, so titles re-lex faithfully.
+fn tcolorbox_options_text(tokens: &[InputToken]) -> String {
+    let mut out = String::new();
+    for token in tokens {
+        match &token.token.kind {
+            TokenKind::Word(word) => out.push_str(word),
+            TokenKind::Space | TokenKind::ParBreak => out.push(' '),
+            TokenKind::Command(name) => {
+                out.push('\\');
+                out.push_str(name);
+            }
+            TokenKind::LineBreak => out.push_str("\\\\"),
+            TokenKind::LBrace => out.push('{'),
+            TokenKind::RBrace => out.push('}'),
+            TokenKind::MathShift => out.push('$'),
+            TokenKind::Comment | TokenKind::Verb { .. } => {}
+            _ => {}
+        }
+    }
+    out
+}
+
+/// One outer `{...}` pair off a `title=<text>` value (`title={a, b}` sets
+/// `a, b`), left alone when the outer braces do not match (an unbalanced
+/// value keeps its characters rather than losing one end).
+fn strip_outer_braces(value: &str) -> &str {
+    let bytes = value.as_bytes();
+    if bytes.len() >= 2 && bytes[0] == b'{' && bytes[bytes.len() - 1] == b'}' {
+        let mut depth = 0usize;
+        for (i, byte) in bytes.iter().enumerate() {
+            match byte {
+                b'{' => depth += 1,
+                b'}' => depth -= 1,
+                _ => {}
+            }
+            // The opening brace closes before the end: `{a}{b}` is not one
+            // group, so nothing is stripped.
+            if depth == 0 && i < bytes.len() - 1 {
+                return value;
+            }
+        }
+        if depth == 0 {
+            return &value[1..value.len() - 1];
+        }
+    }
+    value
 }
 
 /// The `key=value` pairs of a `\begin{tcolorbox}[...]` option list: entries
