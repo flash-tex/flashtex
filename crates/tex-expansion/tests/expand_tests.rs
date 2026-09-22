@@ -1134,3 +1134,67 @@ fn newtheorem_declaration_inside_a_group_is_globally_visible() {
     assert!(out.contains(r"\x "), "{out:?}");
     assert!(out.contains(r"\endx "), "{out:?}");
 }
+
+
+// The LaTeX kernel's own `\newif` switches, font defaults, `\@setfontsize`
+// and `\newinsert` allocation are in the prelude, so a project's `.cls`/
+// `.sty` that tests or redefines them behaves as under pdflatex (oracle
+// probes p1-p4 of lane PARITY-CLS-STY-READING, TeX Live 2026).
+
+#[test]
+fn kernel_switches_are_predefined() {
+    // pdflatex: `\if@compatibility` false, `\if@filesw` true, the rest false.
+    assert_eq!(
+        run(r"\makeatletter\if@compatibility compat\else nocompat\fi\space\if@filesw fw\else nofw\fi\space\if@twoside two\else one\fi\space\@mparswitchtrue\if@mparswitch mp\else nomp\fi\makeatother"),
+        "nocompat fw one mp"
+    );
+    // `\if@compatibility\else ... \fi` is the classes' guard around their
+    // `\DeclareOption`s: no "Extra \else".
+    assert_eq!(run(r"\makeatletter\if@compatibility\else B\fi\makeatother"), "B");
+}
+
+#[test]
+fn setfontsize_takes_its_arguments_unexpanded() {
+    // A class's `\def\normalsize{\@setfontsize\normalsize\@xpt\@xiipt}`:
+    // `#1` is `\normalsize` itself, taken as a token, so calling
+    // `\normalsize` must not recurse (it used to overflow the input stack).
+    let (out, diags) = run_allow_diag(r"\makeatletter\def\normalsize{\@setfontsize\normalsize\@xpt\@xiipt}\normalsize\makeatother x");
+    assert_eq!(diags, 0);
+    assert_eq!(out, "\\relax \\fontsize 1012\\selectfont x");
+    // pdflatex: \meaning\@setfontsize
+    assert_eq!(
+        run(r"\makeatletter\meaning\@setfontsize\makeatother"),
+        "macro:#1#2#3->\\@nomath #1\\ifx \\protect \\@typeset@protect \\let \\@currsize #1\\fi \\fontsize {#2}{#3}\\selectfont "
+    );
+    // `\@currsize` remembers the size command.
+    assert_eq!(
+        run(r"\makeatletter\def\small{\@setfontsize\small\@ixpt{11}}\small\meaning\@currsize\makeatother"),
+        "\\relax \\fontsize 911\\selectfont macro:->\\@setfontsize \\small \\@ixpt {11}"
+    );
+}
+
+#[test]
+fn kernel_font_defaults_are_defined_and_renewable() {
+    // pdflatex: cmr/cmss/cmtt/cmr/m/n/b/OT1
+    assert_eq!(
+        run(r"\rmdefault/\sfdefault/\ttdefault/\familydefault/\seriesdefault/\shapedefault/\bfdefault/\encodingdefault"),
+        "cmr/cmss/cmtt/cmr/m/n/b/OT1"
+    );
+    // The times.sty idiom every IEEEtran/neurips/spconf file uses.
+    assert_eq!(
+        run(r"\renewcommand{\sfdefault}{phv}\renewcommand{\rmdefault}{ptm}\renewcommand{\baselinestretch}{1.2}\rmdefault/\sfdefault/\familydefault/\baselinestretch"),
+        "ptm/phv/ptm/1.2"
+    );
+}
+
+#[test]
+fn newinsert_allocates_downward_from_the_kernel_inserts() {
+    // pdflatex: \footins is 253 (\@mpfootins took 254); the first
+    // `\newinsert` of a class gets 252, and `\skip\footins` is skip 253.
+    assert_eq!(run(r"\makeatletter\number\footins\makeatother"), "253");
+    assert_eq!(run(r"\makeatletter\newinsert\myins\number\myins/\number\@mpfootins\makeatother"), "252/254");
+    // (`\relax` ends the glue scan: a `\the` right after `plus 12pt` is
+    // expanded while TeX looks for `minus`, before the value is stored.)
+    assert_eq!(run(r"\makeatletter\skip\footins 12pt plus 12pt\relax\the\skip\footins\makeatother"), "\\relax 12.0pt plus 12.0pt");
+}
+

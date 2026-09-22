@@ -863,6 +863,10 @@ fn configure(engine: &mut Engine) {
         engine.declare_host_command(name);
     }
     engine.declare_host_command("include");
+    for name in KERNEL_ENVIRONMENTS {
+        engine.declare_host_command(name);
+        engine.declare_host_command(&format!("end{name}"));
+    }
     // `\global\setlength{\parskip}{..}` is valid LaTeX: `\setlength` is a
     // macro, so TeX applies the prefix to the register assignment.
     engine.declare_host_assignment("flashtexsetlength");
@@ -1020,9 +1024,47 @@ pub(crate) fn class_prelude(class: &ClassSetup) -> String {
     for (name, value) in macros {
         text.push_str(&format!("\\def\\{name}{{{value}}}\n"));
     }
+    // The kernel switches the standard classes set from their options
+    // (`\@twosidetrue`, `\@twocolumntrue`, `\@titlepagetrue`, `\@openrighttrue`
+    // in classes.dtx), so a project's `.cls`/`.sty` that tests
+    // `\if@twoside`/`\if@titlepage` sees the class's answer. The switches
+    // themselves live in the engine prelude; `\if@titlepage` and
+    // `\if@openright` are class-level `\newif`s.
+    let is_report_like = matches!(defaults.class.trim(), "report" | "book");
+    text.push_str("\\newif\\if@titlepage\n\\newif\\if@openright\n");
+    let titlepage = options.split(',').map(str::trim).fold(is_report_like, |acc, option| match option {
+        "titlepage" => true,
+        "notitlepage" => false,
+        _ => acc,
+    });
+    let openright = options.split(',').map(str::trim).fold(is_report_like, |acc, option| match option {
+        "openright" => true,
+        "openany" => false,
+        _ => acc,
+    });
+    for (flag, on) in [("twoside", twoside == Some(true)), ("twocolumn", twocolumn == Some(true)), ("titlepage", titlepage), ("openright", openright)] {
+        if on {
+            text.push_str(&format!("\\@{flag}true\n"));
+        }
+    }
     text.push_str("\\makeatother\n");
     text
 }
+
+/// Environments `latex.ltx` and the standard classes define in TeX, which
+/// this parser sets itself: declared to the engine as host commands
+/// (`\name`/`\endname`), so `\renewenvironment{abstract}` in a project's
+/// `.sty` redefines them, as in LaTeX, instead of reporting "Environment
+/// abstract undefined". Package environments (`proof`, `align`,
+/// `lstlisting`, ...) are not here: without their package a document's own
+/// `\newenvironment{proof}` must succeed, exactly as in real LaTeX.
+const KERNEL_ENVIRONMENTS: &[&str] = &[
+    "document", "abstract", "titlepage", "array", "center", "flushleft", "flushright",
+    "description", "displaymath", "enumerate", "eqnarray", "eqnarray*", "equation", "figure", "figure*",
+    "filecontents", "filecontents*", "itemize", "list", "lrbox", "math", "minipage", "picture", "quotation",
+    "quote", "samepage", "sloppypar", "tabbing", "table", "table*", "tabular", "tabular*", "thebibliography",
+    "theindex", "trivlist", "verbatim", "verbatim*", "verse",
+];
 
 /// The words of `tokens` from `index` up to the next `{`, and the words of
 /// that brace group.
