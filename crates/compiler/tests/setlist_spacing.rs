@@ -366,6 +366,103 @@ fn setlist_star_matches_setlist_with_an_explicit_noitemsep_equivalent() {
 }
 
 #[test]
+fn setlist_noitemsep_zeroes_itemsep_but_keeps_topsep() {
+    // `noitemsep` (enumitem.sty: `\itemsep` and `\parsep` zero; the engine
+    // has no `\parsep`, so observably `itemsep` goes to zero).
+    let parsed = parser::parse(&doc(
+        r"\setlist[enumerate]{itemsep=10pt,topsep=8pt,noitemsep}",
+    ));
+    let gaps: Vec<(f64, f64)> = parsed
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::ListItem {
+                extra_gap_before_pt,
+                extra_gap_after_pt,
+                ..
+            } => Some((*extra_gap_before_pt, *extra_gap_after_pt)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(gaps, vec![(8.0, 0.0), (0.0, 0.0), (0.0, 8.0)]);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "{:?}",
+        parsed
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn setlist_nosep_zeroes_itemsep_and_topsep() {
+    // `nosep` (enumitem.sty: `\partopsep`, `\topsep`, `\itemsep`, `\parsep`
+    // zero; the engine has no `\parsep`/`\partopsep`, so observably
+    // `itemsep` and `topsep` go to zero).
+    let parsed = parser::parse(&doc(
+        r"\setlist[enumerate]{itemsep=10pt,topsep=8pt,nosep}",
+    ));
+    let gaps: Vec<(f64, f64)> = parsed
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::ListItem {
+                extra_gap_before_pt,
+                extra_gap_after_pt,
+                ..
+            } => Some((*extra_gap_before_pt, *extra_gap_after_pt)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(gaps, vec![(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)]);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "{:?}",
+        parsed
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn setlist_keys_apply_in_order_so_a_later_key_wins() {
+    // enumitem reads the keys left to right: an explicit `itemsep` after
+    // `noitemsep` restores the gap, and vice versa.
+    let restored = parser::parse(&doc(r"\setlist[enumerate]{noitemsep,itemsep=10pt}"));
+    let gaps: Vec<(f64, f64)> = restored
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::ListItem {
+                extra_gap_before_pt,
+                extra_gap_after_pt,
+                ..
+            } => Some((*extra_gap_before_pt, *extra_gap_after_pt)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(gaps, vec![(0.0, 0.0), (10.0, 0.0), (10.0, 0.0)]);
+    let zeroed = parser::parse(&doc(r"\setlist[enumerate]{itemsep=10pt,noitemsep}"));
+    let gaps: Vec<(f64, f64)> = zeroed
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::ListItem {
+                extra_gap_before_pt,
+                extra_gap_after_pt,
+                ..
+            } => Some((*extra_gap_before_pt, *extra_gap_after_pt)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(gaps, vec![(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)]);
+}
+
+#[test]
 fn setlist_without_an_environment_argument_applies_to_both_list_types() {
     let source = r"\documentclass{article}\setlist{itemsep=6pt}\begin{document}\begin{itemize}\item One\item Two\end{itemize}\end{document}";
     let baseline = reply(&compile_line(

@@ -7846,10 +7846,14 @@ impl P<'_> {
     /// override. The optional argument names which environments the given
     /// keys apply to (a comma list; omitted means every list). `itemsep`,
     /// `topsep` and `leftmargin` (an explicit dimension, or `*`) change
-    /// layout; every other recognised enumitem key (`label`, `parsep`,
-    /// `partopsep`, ...) has no equivalent in this layout engine and is
-    /// reported once, by name. The starred form applies the given keys and
-    /// then forces compact spacing (`itemsep=0pt`, as `noitemsep`).
+    /// layout, as do the `noitemsep` (`itemsep=0pt`) and `nosep`
+    /// (`itemsep=0pt,topsep=0pt`) shorthands; enumitem's `\parsep`/`\partopsep`
+    /// halves of those shorthands have no equivalent in this layout engine
+    /// and stay at the default. Every other recognised enumitem key
+    /// (`label`, `parsep`, `partopsep`, ...) is reported once, by name. The
+    /// starred form applies the given keys and then forces compact spacing
+    /// (`itemsep=0pt`, as `noitemsep`). Keys apply left to right, so a later
+    /// key overrides an earlier one.
     fn set_list(&mut self, span: Span) {
         // `em` is the document's body size here, as in `\setlength`.
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
@@ -7911,6 +7915,18 @@ impl P<'_> {
                     leftmargin = value
                         .and_then(parse_dimen_pt)
                         .map(LeftMarginSetting::Explicit);
+                }
+                // enumitem.sty `noitemsep`: `\itemsep` and `\parsep` zero
+                // (the engine has no `\parsep`, so observably `itemsep=0pt`).
+                "noitemsep" if value.is_none_or(|v| v == "true") => {
+                    itemsep_pt = Some(0.0);
+                }
+                // enumitem.sty `nosep`: `\partopsep`, `\topsep`, `\itemsep`
+                // and `\parsep` zero (the engine has no `\parsep`/`\partopsep`,
+                // so observably `itemsep=0pt,topsep=0pt`).
+                "nosep" if value.is_none_or(|v| v == "true") => {
+                    itemsep_pt = Some(0.0);
+                    topsep_pt = Some(0.0);
                 }
                 _ if !ignored_keys.iter().any(|seen| seen == key) => {
                     ignored_keys.push(key.to_string());
