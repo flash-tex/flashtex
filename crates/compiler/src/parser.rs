@@ -5905,6 +5905,9 @@ impl P<'_> {
             // csquotes `\enquote`: wraps the argument in language-appropriate
             // quotation marks, alternating double/single on nesting.
             "enquote" => self.enquote_command(span, para),
+            // lipsum `\lipsum` (needs the package): placeholder paragraphs
+            // from the bundled table (see `crate::lipsum`).
+            "lipsum" => self.lipsum_command(span, blocks, para),
             // Kernel text-mode `\textsuperscript` / `\textsubscript`
             // (latex.ltx `ltmisc.dtx`): no package needed, unlike ulem's
             // commands above.
@@ -15948,6 +15951,68 @@ impl P<'_> {
         });
     }
 
+    /// lipsum `\lipsum*[<range>]`: one paragraph block per selected
+    /// paragraph of `crate::lipsum` (`\lipsum[1-3]`, `\lipsum[1,4]`, bare
+    /// `\lipsum` for the default range). Without lipsum the use is
+    /// diagnosed and sets nothing, like soul's commands above; a
+    /// malformed or out-of-range spec is diagnosed the same way. The
+    /// star is consumed (its exact spacing effect is not modelled).
+    ///
+    /// Like soul's `\so`/`\hl`, the name stays out of `BUILT_INS` on
+    /// purpose: it is a package command, not a kernel one, so a document
+    /// that `\newcommand{\lipsum}` without loading lipsum keeps its own
+    /// definition. A bare use without the package names what is missing.
+    fn lipsum_command(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let _starred = self.take_optional_star();
+        let (spec, full) = match self.optional_bracket_argument() {
+            Some((raw, bracket_span)) => (raw, span.merge(bracket_span)),
+            None => (
+                format!("{}-{}", crate::lipsum::DEFAULT_RANGE.0, crate::lipsum::DEFAULT_RANGE.1),
+                span,
+            ),
+        };
+        if !self.packages.iter().any(|package| package == "lipsum") {
+            self.diags.push(Diagnostic::command_error(
+                "lipsum",
+                "\\lipsum needs \\usepackage{lipsum}".to_string(),
+                Some(full),
+                Some("skipped the command".into()),
+            ));
+            return;
+        }
+        let selected = match crate::lipsum::select(&spec) {
+            Ok(selected) => selected,
+            Err(error) => {
+                self.diags.push(Diagnostic::command_error(
+                    "lipsum",
+                    error.message(),
+                    Some(full),
+                    Some("skipped the command".into()),
+                ));
+                return;
+            }
+        };
+        // Any running paragraph ends first, exactly as a blank line would;
+        // each selected paragraph then flushes through the same path as
+        // ordinary text, so lists and overlay markers treat it identically.
+        // Words become one run each with `space_before` glue, the parser's
+        // own model of typed text (see the `TokenKind::Word` arm).
+        self.flush_paragraph(blocks, para);
+        for index in selected {
+            for (n, word) in crate::lipsum::PARAGRAPHS[index].split_whitespace().enumerate() {
+                para.push(Inline::Text {
+                    text: self.word_text(word),
+                    span,
+                    style: self.style,
+                    space_before: n > 0,
+                    boundary_before: false,
+                    glue_before: None,
+                });
+            }
+            self.flush_paragraph(blocks, para);
+        }
+    }
+
     /// soul `\so{text}` (letterspacing) or `\hl{text}` (highlight). Without
     /// soul, the package commands diagnose and typeset the argument as
     /// plain text, like the ulem commands above.
@@ -17669,6 +17734,10 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // (`style=`, `autostyle`, ...) are not modelled, so only a bare load
         // is silent.
         "csquotes" => options.is_empty(),
+        // `\lipsum` is implemented (crate::lipsum); lipsum.sty takes no
+        // package options of its own (its knobs are `\setlipsum` keys, not
+        // modelled), so only a bare load is silent.
+        "lipsum" => options.is_empty(),
         // CJKutf8.sty (its `\RequirePackage[encapsulated]{CJK}` and the
         // fontenc options it passes through) is the `CJK` environment,
         // `\CJKfamily` and the space switches; `\usepackage{CJK}` alone

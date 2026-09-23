@@ -299,6 +299,7 @@ pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "text",
     "boxed",
     "enquote",
+    "lipsum",
     "frametitle",
     "framesubtitle",
     "alert",
@@ -687,6 +688,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("so", "{...}", "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)"),
     ("hl", "{...}", "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)"),
     ("enquote", "{text}", "csquotes: wraps text in typographic quotation marks; nesting alternates double \\u{201c}\\u{201d} and single \\u{2018}\\u{2019} (needs csquotes)"),
+    ("lipsum", "[range]", "lipsum placeholder paragraphs 1-7 (default 1-7): one paragraph per selected number; comma-separated n or n-m (needs lipsum)"),
     ("CJKfamily", "{family}", "CJKutf8: selects the CJK family (min, goth, maru, gbsn, gkai, bsmi, bkai, mj) for the rest of the group inside a CJK environment; an unknown family sets nothing, as pdflatex's C70/song substitution does"),
     ("CJKspace", "", "CJKutf8: a source blank after a CJK character is an interword space again (undoes \\CJKnospace / CJK*)"),
     ("CJKnospace", "", "CJKutf8: a source blank after a CJK character is ignored, as in the CJK* environment"),
@@ -1704,6 +1706,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "csquotes",
         "",
         "\\enquote: typographic quotation marks, alternating double/single on nesting",
+    ),
+    (
+        "lipsum",
+        "",
+        "\\lipsum[range] sets the bundled placeholder paragraphs 1-7 (default 1-7), one paragraph per selected number; a malformed or out-of-range spec is diagnosed where it is used",
     ),
     (
         "CJKutf8",

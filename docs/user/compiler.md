@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 497 text-mode and 679 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 498 text-mode and 679 math-mode command entries, 87 environments and 43 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -796,6 +796,7 @@ Canonical sources:
 | `\text` | `{...}` | amsmath text in text mode: outside math simply \mbox, the argument as one unbreakable box in the current style |
 | `\boxed` | `{...}` | amsmath box in text mode: the argument with a drawn frame (\fbox with math inside) |
 | `\enquote` | `{text}` | csquotes: wraps text in typographic quotation marks; nesting alternates double \u{201c}\u{201d} and single \u{2018}\u{2019} (needs csquotes) |
+| `\lipsum` | `[range]` | lipsum placeholder paragraphs 1-7 (default 1-7): one paragraph per selected number; comma-separated n or n-m (needs lipsum) |
 | `\frametitle` | `{...}` | beamer frame title (\Large, structure colour, in the frametitle box at the top of the slide); optional <overlay> and [short] read past; needs \documentclass{beamer} |
 | `\framesubtitle` | `{...}` | beamer frame subtitle (\footnotesize, under the frame title); needs \documentclass{beamer} |
 | `\alert` | `<overlay>{...}` | beamer alert text in red on the slides the <overlay> spec selects (every slide without one); needs \documentclass{beamer} |
@@ -1270,6 +1271,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `xspace` | `` | \xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
 | `ifthen` | `` | \ifthenelse with \equal, \NOT, \AND, \OR, \isodd, \isundefined, \lengthtest and \boolean tests, and \newif conditionals with \newboolean/\setboolean; \whiledo loops are diagnosed where they are used |
 | `csquotes` | `` | \enquote: typographic quotation marks, alternating double/single on nesting |
+| `lipsum` | `` | \lipsum[range] sets the bundled placeholder paragraphs 1-7 (default 1-7), one paragraph per selected number; a malformed or out-of-range spec is diagnosed where it is used |
 | `CJKutf8` | `` | the CJK and CJK* environments with the UTF8 encoding and the min, goth, maru, gbsn, gkai, bsmi, bkai and mj families: each CJK character is a 1 em box with the family's subfont height and depth, \CJKglue (0pt plus 0.08\baselineskip) between characters and CJK.enc's no-break rules around punctuation; painted from an installed CJK font (Hiragino, Songti, ...) named in one diagnostic; \CJKfamily, \CJKspace, \CJKnospace and \CJKtilde; other encodings and families, vertical text and CJKpunct are diagnosed |
 | `CJK` | `encapsulated` | the package CJKutf8 loads; accepted with the same environment and commands (the body is read as UTF-8 either way) |
 | `calc` | `` | \setlength/\addtolength accept +/- chains of dimensions (1pt + 2\baselineskip); *, /, parentheses and \widthof/\heightof/\depthof/\totalheightof are not parsed |
