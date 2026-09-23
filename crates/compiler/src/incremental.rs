@@ -876,7 +876,8 @@ fn shift_math_list(list: &mut MathList, changes: &[ChangedBytes], deltas: &[isiz
             Nucleus::Phantom { body, .. }
             | Nucleus::Operator { body, .. }
             | Nucleus::Lap { body, .. }
-            | Nucleus::Pmb { body } => shift_math_list(body, changes, deltas)?,
+            | Nucleus::Pmb { body }
+            | Nucleus::Smash { body, .. } => shift_math_list(body, changes, deltas)?,
             Nucleus::ExtArrow { above, below, .. } => {
                 shift_math_list(above, changes, deltas)?;
                 shift_math_list(below, changes, deltas)?;

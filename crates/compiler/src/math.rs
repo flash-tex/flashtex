@@ -334,6 +334,19 @@ pub enum Nucleus {
     /// A box in a math list is an ordinary atom (TeX §1076), so the advance
     /// and the vertical box are the body's own; only the ink is tripled.
     Pmb { body: MathList },
+    /// `\smash`, `\smash[t]`, `\smash[b]` (amsmath.sty 931-949; the kernel's
+    /// latex.ltx `\smash` smashes both sides): `body` painted at its natural
+    /// width with the height (`top`, amsmath's `t`) and/or depth (`bottom`,
+    /// amsmath's `b`) zeroed. Both false is the box amsmath ships for an
+    /// option it does not know (`\csname mb@...\endcsname` stays `\relax`),
+    /// so it keeps the natural box, silently, like pdflatex. A box in a
+    /// math list is an ordinary atom (TeX §1076): the advance stays the
+    /// body's own and only the vertical box shrinks.
+    Smash {
+        body: MathList,
+        top: bool,
+        bottom: bool,
+    },
 }
 
 /// amsbsy.sty's `\pmb@` overprint offsets, in mu: the first copy at −0.8mu,
@@ -479,7 +492,8 @@ pub(crate) fn append_math_reference_text(out: &mut String, list: &MathList, sour
             | Nucleus::Phantom { body, .. }
             | Nucleus::Operator { body, .. }
             | Nucleus::Lap { body, .. }
-            | Nucleus::Pmb { body } => {
+            | Nucleus::Pmb { body }
+            | Nucleus::Smash { body, .. } => {
                 append_math_reference_text(out, body, source)
             }
             Nucleus::ExtArrow { above, below, .. } => {
@@ -543,7 +557,8 @@ fn reference_atom_end(atom: &MathAtom) -> usize {
         | Nucleus::Operator { body, .. }
         | Nucleus::Accent { body, .. }
         | Nucleus::Lap { body, .. }
-        | Nucleus::Pmb { body } => extend(body),
+        | Nucleus::Pmb { body }
+        | Nucleus::Smash { body, .. } => extend(body),
         Nucleus::TextRun(pieces) => {
             for piece in pieces {
                 if let TextPiece::Math(list) = piece {
@@ -2480,6 +2495,10 @@ impl MathParser<'_> {
                     limits: None,
                 }
             }
+            // `\smash`, `\smash[t]`, `\smash[b]`: parsed by `smash`
+            // below (kept out of line so this dispatch — which every
+            // nested math group recurses through — keeps its frame).
+            "smash" => self.smash(span),
             // amsmath's `\pmb` (poor-man's bold): undefined without the
             // package, where pdflatex answers "Undefined control sequence"
             // (the same gate `\mod` and `\hdots` above use).
@@ -3749,6 +3768,44 @@ impl MathParser<'_> {
                 first
             }
             None => space(0.0, span),
+        }
+    }
+
+    /// `\smash`, `\smash[t]`, `\smash[b]` (amsmath.sty 931-949; the
+    /// kernel's latex.ltx `\smash` smashes both sides): the body painted
+    /// at its natural width with the commanded sides zeroed. A separate
+    /// method so the command dispatch above — which every nested math
+    /// group recurses through — keeps its frame (see
+    /// `deeply_nested_input_does_not_blow_the_stack`).
+    ///
+    /// The `[t]`/`[b]` option is amsmath's redefinition, so without
+    /// amsmath no bracket is consumed: the kernel's `\smash#1` takes the
+    /// next token, and `required_group` takes that same single token —
+    /// pdflatex smashes just `[` and typesets `b]{y}`. An option amsmath
+    /// does not know leaves `\csname mb@...\endcsname` as `\relax`,
+    /// shipping the natural box with no error, as pdflatex does.
+    fn smash(&mut self, span: Span) -> MathAtom {
+        let option = self
+            .packages
+            .amsmath
+            .then(|| self.raw_bracket_text())
+            .flatten();
+        let (top, bottom) = match option.as_deref() {
+            None | Some("tb") => (true, true),
+            Some("t") => (true, false),
+            Some("b") => (false, true),
+            Some(_) => (false, false),
+        };
+        let body = self.required_group("smash", span);
+        MathAtom {
+            nucleus: Nucleus::Smash { body, top, bottom },
+            span,
+            superscript: None,
+            subscript: None,
+            class_override: None,
+            width_em: None,
+            ams_symbol: None,
+            limits: None,
         }
     }
 
@@ -6665,6 +6722,21 @@ fn layout_nucleus(
                 descent: base.descent,
             }
         }
+        // `\smash[t|b]`: the body's box with the commanded sides zeroed —
+        // the width and the ink stay the body's own, so neighbours are
+        // spaced exactly as if the nucleus were set once. The opposite of
+        // `Phantom` above (cleared ink, kept box): here the items stay and
+        // only the vertical box shrinks.
+        Nucleus::Smash { body, top, bottom } => {
+            let mut b = layout_list(body, size, root_size, level, diagnostics);
+            if *top {
+                b.ascent = 0.0;
+            }
+            if *bottom {
+                b.descent = 0.0;
+            }
+            b
+        }
         Nucleus::Operator { body, .. } => layout_list(body, size, root_size, level, diagnostics),
         // Approximated as the arrow glyph with its labels stacked over and
         // under it (render-pipeline builds amsmath's stretched arrow).
@@ -7057,6 +7129,11 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
             },
             Nucleus::Pmb { body } => Nucleus::Pmb {
                 body: shift_list(body, delta),
+            },
+            Nucleus::Smash { body, top, bottom } => Nucleus::Smash {
+                body: shift_list(body, delta),
+                top: *top,
+                bottom: *bottom,
             },
             Nucleus::Operator { body, limits } => Nucleus::Operator {
                 body: shift_list(body, delta),
@@ -9918,6 +9995,7 @@ mod shift_tests {
                         | Nucleus::Phantom { body, .. }
                         | Nucleus::Lap { body, .. }
                         | Nucleus::Pmb { body }
+                        | Nucleus::Smash { body, .. }
                         | Nucleus::Operator { body, .. } => min_start(body),
                         Nucleus::GenFraction {
                             numerator,
@@ -11232,6 +11310,202 @@ mod pmb_mathstrut_tests {
         close(offs[1].1, -pt(PMB_RAISE_MU));
         close(offs[2].0, pt(PMB_DX_MU[2]));
         close(offs[2].1, 0.0);
+    }
+}
+
+/// Kernel `\smash{...}` (latex.ltx `\mathsm@sh`/`\finsm@sh`: the body kept
+/// at its natural width with its height and depth zeroed) and amsmath's
+/// `[t]`/`[b]`/`[tb]` option (amsmath.sty 931-949: zero only the height,
+/// only the depth, or both). The ink is still painted: the opposite of
+/// `\phantom`, which reserves the box but paints nothing.
+#[cfg(test)]
+mod smash_math_tests {
+    use super::*;
+
+    const AMSMATH: MathPackages = MathPackages {
+        amsmath: true,
+        ..MathPackages::KERNEL
+    };
+
+    fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(&crate::lexer::tokenize(source), packages, &mut diagnostics);
+        (list, diagnostics)
+    }
+
+    /// Parse, then lay out inline and display: every stage must stay quiet.
+    fn laid_out_both(source: &str, packages: MathPackages) -> (MathBox, MathBox) {
+        let (list, mut diagnostics) = parsed(source, packages);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        let inline = layout(&list, 10.0, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{source} inline: {diagnostics:?}");
+        let display = layout_display(&list, 10.0, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{source} display: {diagnostics:?}");
+        (inline, display)
+    }
+
+    fn close(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+    }
+
+    /// The issue's repro parses with zero diagnostics in inline and display
+    /// math: `$\sqrt{\smash[b]{y}}$`, `$\vphantom{\int}x$`,
+    /// `$\sqrt{\mathstrut a}$`.
+    #[test]
+    fn repro_parses_with_zero_diagnostics() {
+        laid_out_both(r"\sqrt{\smash[b]{y}}", AMSMATH);
+        laid_out_both(r"\vphantom{\int}x", AMSMATH);
+        laid_out_both(r"\sqrt{\mathstrut a}", AMSMATH);
+        laid_out_both(r"\sqrt{\smash{y}}", AMSMATH);
+        laid_out_both(r"\sqrt{\smash[t]{y}}", AMSMATH);
+        laid_out_both(r"\smash{y}", MathPackages::KERNEL);
+    }
+
+    /// pdflatex oracle (TeX Live 2026, 10pt article with amsmath, measured
+    /// with `\setbox0=\hbox{$...$}\typeout{\the\ht0 \the\dp0 \the\wd0}`):
+    /// `\sqrt{y}`: ht=7.0305pt dp=3.36946pt wd=13.59496pt;
+    /// `\sqrt{\smash{y}}` and `[tb]`: ht=5.84995pt dp=4.55002pt;
+    /// `\sqrt{\smash[t]{y}}`: ht=4.87773pt dp=5.52223pt;
+    /// `\sqrt{\smash[b]{y}}`: ht=8.00272pt dp=2.39725pt;
+    /// every `\sqrt{y}` variant: wd=13.59496pt;
+    /// `\sqrt{\mathstrut a}`: ht=9.35pt dp=3.05008pt wd=15.2859pt;
+    /// `\sqrt{\frac{a}{b}}`: ht=8.60141pt dp=3.79868pt wd=16.73766pt;
+    /// `\sqrt{\smash{\frac{a}{b}}}`: ht=5.84995pt dp=4.55002pt wd=15.071pt;
+    /// `\sqrt{\smash[t]{\frac{a}{b}}}`: ht=4.12575pt dp=6.27422pt;
+    /// `\sqrt{\smash[b]{\frac{a}{b}}}`: ht=9.32555pt dp=1.07442pt.
+    /// Width invariance is exact in both engines: smashing never changes
+    /// the advance, so every variant of one radicand shares one width.
+    #[test]
+    fn smash_preserves_width_like_pdflatex() {
+        // Small radicand: one width for plain, full, t, b and tb smashes.
+        let widths: Vec<f64> = [
+            r"\sqrt{y}",
+            r"\sqrt{\smash{y}}",
+            r"\sqrt{\smash[t]{y}}",
+            r"\sqrt{\smash[b]{y}}",
+            r"\sqrt{\smash[tb]{y}}",
+        ]
+        .iter()
+        .map(|source| laid_out_both(source, AMSMATH).0.width)
+        .collect();
+        for width in &widths[1..] {
+            close(*width, widths[0]);
+        }
+        // Tall radicand: smashing keeps the full fraction width too.
+        let plain = laid_out_both(r"\sqrt{\frac{a}{b}}", AMSMATH).0;
+        for source in [
+            r"\sqrt{\smash{\frac{a}{b}}}",
+            r"\sqrt{\smash[t]{\frac{a}{b}}}",
+            r"\sqrt{\smash[b]{\frac{a}{b}}}",
+        ] {
+            close(laid_out_both(source, AMSMATH).0.width, plain.width);
+        }
+        // The ink is still painted: same items as the plain radicand.
+        let smashed = laid_out_both(r"\sqrt{\smash{\frac{a}{b}}}", AMSMATH).0;
+        assert_eq!(smashed.items.len(), plain.items.len(), "{smashed:?}");
+    }
+
+    /// `\smash` zeroes only the commanded sides of its own box. At the
+    /// nucleus level the mapping is exact: full smash clears height and
+    /// depth, `[t]` clears only the height, `[b]` only the depth, and an
+    /// option amsmath does not know (`\mb@t`/`\mb@b`/`\mb@tb` cover exactly
+    /// `t`, `b`, `tb`) ships the natural box silently — pdflatex reports
+    /// `$\smash[x]{y}$` identical to `$y$` (ht=4.30554pt dp=1.94444pt,
+    /// while `$\smash[b]{y}$` is ht=4.30554pt dp=0.0pt) with no error.
+    #[test]
+    fn smash_zeroes_only_the_commanded_sides() {
+        fn nucleus_box(source: &str) -> MathBox {
+            let (list, mut diagnostics) = parsed(source, AMSMATH);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "{source}: {list:?}");
+            let laid = layout_nucleus(&list.atoms[0], 10.0, 10.0, 0, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            laid
+        }
+        let body = nucleus_box("y");
+        assert!(body.ascent > 0.0 && body.descent > 0.0, "{body:?}");
+        let full = nucleus_box(r"\smash{y}");
+        close(full.width, body.width);
+        assert_eq!(full.items.len(), body.items.len(), "{full:?}");
+        close(full.ascent, 0.0);
+        close(full.descent, 0.0);
+        let top = nucleus_box(r"\smash[t]{y}");
+        close(top.width, body.width);
+        close(top.ascent, 0.0);
+        close(top.descent, body.descent);
+        let bottom = nucleus_box(r"\smash[b]{y}");
+        close(bottom.width, body.width);
+        close(bottom.ascent, body.ascent);
+        close(bottom.descent, 0.0);
+        let bogus = nucleus_box(r"\smash[x]{y}");
+        close(bogus.width, body.width);
+        close(bogus.ascent, body.ascent);
+        close(bogus.descent, body.descent);
+    }
+
+    /// The zeroing is observable end to end once the content outgrows the
+    /// math list's font-size headroom: smashing the fraction radicand drops
+    /// the radical box back towards the headroom on exactly the commanded
+    /// sides, the same mapping pdflatex shows (tall oracle above: `[t]`
+    /// lowers only the height, `[b]` only the depth). Absolute heights
+    /// differ — this engine's radical is fixed-height and its lists carry
+    /// headroom, while TeX grows the sign by Rule 11 — so this asserts the
+    /// mapping, exactly, not pdflatex's points.
+    #[test]
+    fn smash_moves_only_the_commanded_side_of_a_tall_radicand() {
+        let plain = laid_out_both(r"\sqrt{\frac{a}{b}}", AMSMATH).0;
+        assert!(plain.ascent > 10.0 && plain.descent > 2.0, "{plain:?}");
+        let full = laid_out_both(r"\sqrt{\smash{\frac{a}{b}}}", AMSMATH).0;
+        close(full.width, plain.width);
+        close(full.ascent, 10.0);
+        close(full.descent, 2.0);
+        let top = laid_out_both(r"\sqrt{\smash[t]{\frac{a}{b}}}", AMSMATH).0;
+        close(top.width, plain.width);
+        close(top.ascent, 10.0);
+        close(top.descent, plain.descent);
+        let bottom = laid_out_both(r"\sqrt{\smash[b]{\frac{a}{b}}}", AMSMATH).0;
+        close(bottom.width, plain.width);
+        close(bottom.ascent, plain.ascent);
+        close(bottom.descent, 2.0);
+    }
+
+    /// The `[t]`/`[b]` option is amsmath's redefinition: under plain article
+    /// pdflatex feeds the kernel `\smash#1`, which smashes just `[` and
+    /// typesets `b]{y}` (`NOAMS-SMASH-B ht=9.35pt dp=3.05008pt
+    /// wd=25.10884pt`, wider than the 13.59496pt amsmath box). So without
+    /// amsmath the bracket must not be consumed as an option: the formula
+    /// is more than the one smashed atom, with zero diagnostics either way.
+    #[test]
+    fn bracket_option_needs_amsmath() {
+        let (list, diagnostics) = parsed(r"\smash[b]{y}", AMSMATH);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 1, "{list:?}");
+        assert!(
+            matches!(&list.atoms[0].nucleus, Nucleus::Smash { .. }),
+            "{list:?}"
+        );
+        let (list, diagnostics) = parsed(r"\smash[b]{y}", MathPackages::KERNEL);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        // The kernel's `\smash#1` smashes just `[` and typesets `b]y`.
+        assert_eq!(list.atoms.len(), 4, "{list:?}");
+        let [smashed, b, close, y] = &list.atoms[..] else {
+            panic!("{list:?}");
+        };
+        let Nucleus::Smash { body, top, bottom } = &smashed.nucleus else {
+            panic!("{list:?}");
+        };
+        assert!(*top && *bottom, "{list:?}");
+        assert_eq!(body.atoms.len(), 1, "{list:?}");
+        assert!(
+            matches!(&body.atoms[0].nucleus, Nucleus::Symbol(s) if s == "["),
+            "{list:?}"
+        );
+        for (atom, want) in [(b, "b"), (close, "]"), (y, "y")] {
+            assert!(
+                matches!(&atom.nucleus, Nucleus::Symbol(s) if s == want),
+                "{list:?}"
+            );
+        }
     }
 }
 

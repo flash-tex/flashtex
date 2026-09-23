@@ -31,8 +31,9 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
     "dasharrow", "dashleftarrow",
     "mathllap", "mathrlap", "mathclap",
     "cancel", "bcancel", "xcancel",
-    // amsmath `\pmb` (poor-man's bold) and kernel `\mathstrut` (`\vphantom{(})`).
-    "pmb", "mathstrut",
+    // amsmath `\pmb` (poor-man's bold), kernel `\mathstrut` (`\vphantom{(})`)
+    // and kernel `\smash` (amsmath's `[t]`/`[b]` option included).
+    "pmb", "mathstrut", "smash",
     // Issue #846: the kernel/amsmath arms the real-document corpus dropped.
     "backslash", "lvert", "rvert", "lVert", "rVert", "vert", "Vert", "ensuremath", "mkern",
     "mskip", "medspace", "thickspace", "negmedspace", "negthickspace", "thinspace",
@@ -57,7 +58,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "listoftables", "addvspace",
     // Boxes, spacing, breaking and page control.
     "makebox", "fbox", "framebox", "parbox", "raisebox", "llap", "rlap", "linespread",
-    "vbox", "newline", "smash",
+    "vbox", "newline",
     // Fonts and text symbols.
     "fontfamily", "usefont",
     "textemdash", "textendash", "textquoteleft", "textquoteright",
