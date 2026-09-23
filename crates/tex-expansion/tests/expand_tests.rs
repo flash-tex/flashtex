@@ -1342,3 +1342,61 @@ fn providecommand_of_a_kernel_counter_representation_is_a_no_op() {
     let out = tokens_to_display_string(&r.tokens);
     assert!(!out.contains("flashtexthe"), "{out}");
 }
+
+
+// ---- host commands a package or class provides ---------------------------
+//
+// `Engine::declare_host_command_after(name, file)`: siunitx's `\si` and
+// letter.cls's `\cc` exist only once that file is loaded (its `\ver@<file>`
+// record is made whether the engine reads the file or declines it to the
+// host), so a document without siunitx defines `\newcommand{\si}{\sigma}`
+// exactly as LaTeX does (oracle: `newcommand_si_without_siunitx` in
+// tests/oracle/manifest.json; the collision with siunitx loaded is
+// `\@ifdefinable`'s ordinary "already defined", `err_newcommand_defined`).
+
+fn run_declaring(src: &str, name: &str, file: &str) -> (Vec<Token>, Vec<String>) {
+    let mut engine = Engine::new(src);
+    engine.declare_host_command_after(name, file);
+    let tokens = engine.run();
+    let messages = engine.take_diagnostics().into_iter().map(|d| d.message).collect();
+    (tokens, messages)
+}
+
+#[test]
+fn a_package_host_command_is_free_until_the_package_is_loaded() {
+    let (tokens, messages) = run_declaring(r"\newcommand{\si}{sigma}\begin{document}\si\end{document}", "si", "siunitx.sty");
+    assert_eq!(messages, Vec::<String>::new(), "{messages:?}");
+    let out = text(&tokens);
+    assert!(out.contains("sigma") && !out.contains(r"\si"), "{out}");
+}
+
+#[test]
+fn a_package_host_command_collides_once_the_package_is_loaded() {
+    let (tokens, messages) = run_declaring(
+        r"\usepackage{siunitx}\newcommand{\si}{sigma}\begin{document}\si{m}\end{document}",
+        "si",
+        "siunitx.sty",
+    );
+    assert_eq!(messages, ["LaTeX Error: Command \\si already defined."], "{messages:?}");
+    // The host command passes through untouched.
+    let out = tokens_to_display_string(&tokens);
+    assert!(out.contains(r"\si {m}"), "{out}");
+}
+
+#[test]
+fn a_class_host_command_is_declared_by_documentclass() {
+    let (_, messages) = run_declaring(
+        r"\documentclass{letter}\newcommand{\cc}{C}\begin{document}\cc{x}\end{document}",
+        "cc",
+        "letter.cls",
+    );
+    assert_eq!(messages, ["LaTeX Error: Command \\cc already defined."], "{messages:?}");
+    let (tokens, messages) = run_declaring(
+        r"\documentclass{article}\newcommand{\cc}{C}\begin{document}\cc{x}\end{document}",
+        "cc",
+        "letter.cls",
+    );
+    assert_eq!(messages, Vec::<String>::new(), "{messages:?}");
+    let out = text(&tokens);
+    assert!(out.contains("Cx") && !out.contains(r"\cc"), "{out}");
+}
