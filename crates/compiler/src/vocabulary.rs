@@ -30,6 +30,12 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
     "underrightarrow", "underleftarrow", "underleftrightarrow", "Bbb", "bold", "dashrightarrow",
     "dasharrow", "dashleftarrow",
     "mathllap", "mathrlap", "mathclap",
+    // mathtools' sixteen further extensible arrows (`math.rs` gates each on
+    // `\usepackage{mathtools}`, like the lap family above).
+    "xmapsto", "xhookleftarrow", "xhookrightarrow", "xLeftarrow", "xRightarrow",
+    "xLeftrightarrow", "xLongleftarrow", "xLongrightarrow", "xlongleftarrow",
+    "xlongrightarrow", "xleftharpoonup", "xleftharpoondown", "xrightharpoonup",
+    "xrightharpoondown", "xleftrightharpoons", "xrightleftharpoons",
     "cancel", "bcancel", "xcancel",
     // amsmath `\pmb` (poor-man's bold), kernel `\mathstrut` (`\vphantom{(})`)
     // and kernel `\smash` (amsmath's `[t]`/`[b]` option included).

@@ -5001,6 +5001,9 @@ struct OpenList {
     /// (its default action and every `<action>@<spec>`): the next `\item`
     /// or the list's end pushes that many [`Inline::OverlayEnd`]s.
     item_overlay_open: usize,
+    /// Whether [`lists::MISSING_ITEM_MESSAGE`] already fired for this list
+    /// (pdflatex reports it at most once per list).
+    missing_item_reported: bool,
 }
 
 /// Extra vertical space `\setlist{itemsep=...,topsep=...}` adds on top of
@@ -8551,6 +8554,26 @@ impl P<'_> {
             self.i += 1;
             if text_font_command(name) {
                 let close = group_close(&self.t, self.i);
+                // `\text@command` is short (latex.ltx
+                // `\DeclareTextFontCommand`): a blank line or `\par`
+                // anywhere in the argument — even inside nested braces —
+                // is pdflatex's "Paragraph ended before \text@command was
+                // complete." The group below still reads as usual, so this
+                // only adds the diagnostic.
+                if let Some(offset) = self.t[self.i..close].iter().position(|input| {
+                    matches!(input.token.kind, TokenKind::ParBreak)
+                        || matches!(&input.token.kind, TokenKind::Command(cmd) if cmd == "par")
+                }) {
+                    let at = self.t[self.i + offset].token.span;
+                    self.diags.push(
+                        Diagnostic::error(
+                            "Paragraph ended before \\text@command was complete.",
+                            Some(at),
+                            Some("left the argument open across the paragraph break and continued".into()),
+                        )
+                        .with_code(crate::diagnostics::DiagnosticCode::SyntaxError),
+                    );
+                }
                 let (icl, icr) = check_nocorr(&self.t[self.i..close]);
                 self.text_command_groups.push(TextCommandGroup {
                     depth: self.brace_stack.len() + 1,
@@ -9326,15 +9349,32 @@ impl P<'_> {
     }
 
     fn document_class(&mut self, span: Span) {
-        // Any invocation counts as "seen" for `\DocumentMetadata` ordering —
-        // even `\documentclass{}` with an empty argument, which warns below
-        // and records no class name.
-        self.seen_documentclass = true;
+        // Like `\usepackage` below, `\documentclass` is `\@onlypreamble`:
+        // after `\begin{document}` it errors and changes nothing. The check
+        // runs after the arguments are consumed so the braced class name
+        // cannot leak as body text.
+        let misplaced = self.has_document && self.in_body;
         let options = self.optional_bracket_argument();
         let option_list: Vec<&str> = options
             .as_ref()
             .map(|(options, _)| options.split(',').map(str::trim).collect())
             .unwrap_or_default();
+        let (tokens, argument_span) = self.required_group("documentclass", span);
+        if misplaced {
+            self.diags.push(
+                Diagnostic::error(
+                    "LaTeX Error: Can be used only in preamble.",
+                    Some(span.merge(argument_span)),
+                    Some("ignored the misplaced \\documentclass and continued".into()),
+                )
+                .with_help("move \\documentclass before \\begin{document}"),
+            );
+            return;
+        }
+        // Any invocation counts as "seen" for `\DocumentMetadata` ordering —
+        // even `\documentclass{}` with an empty argument, which warns below
+        // and records no class name.
+        self.seen_documentclass = true;
         if self.class_size_pt.is_none() {
             self.class_size_pt = option_list.iter().find_map(|option| match *option {
                 "10pt" => Some(10.0),
@@ -9352,7 +9392,6 @@ impl P<'_> {
             self.twocolumn_option = true;
             self.two_column = true;
         }
-        let (tokens, _) = self.required_group("documentclass", span);
         let class = token_text(&tokens).trim().to_string();
         if class.is_empty() {
             self.diags.push(Diagnostic::warning(
@@ -10497,6 +10536,23 @@ impl P<'_> {
             .map(|(options, _)| options)
             .unwrap_or_default();
         let (tokens, argument_span) = self.required_group("usepackage", span);
+        // Real LaTeX (`\@onlypreamble`): `\usepackage` after
+        // `\begin{document}` is `! LaTeX Error: Can be used only in
+        // preamble.` and loads nothing (measured TeX Live 2026: `align`
+        // stays undefined after a body `\usepackage{amsmath}`). Fragments
+        // without a document environment never leave the preamble, so every
+        // position counts as preamble there.
+        if self.has_document && self.in_body {
+            self.diags.push(
+                Diagnostic::error(
+                    "LaTeX Error: Can be used only in preamble.",
+                    Some(span.merge(argument_span)),
+                    Some("ignored the misplaced \\usepackage and continued".into()),
+                )
+                .with_help("move \\usepackage before \\begin{document}"),
+            );
+            return;
+        }
         let packages: Vec<String> = token_text(&tokens)
             .split(',')
             .map(str::trim)
@@ -11686,6 +11742,7 @@ impl P<'_> {
                 begin_options: Vec::new(),
                 default_overlay: None,
                 item_overlay_open: 0,
+                missing_item_reported: false,
             });
             self.push_list_frame(ListEnvironment::Bibliography, Vec::new(), heading_span, Some(widest_label));
         } else if environment == "subequations" && self.in_body {
@@ -12026,8 +12083,20 @@ impl P<'_> {
                     template,
                     spacing,
                     start,
+                    missing_item_reported,
                     ..
                 } = open;
+                // pdflatex `\@noitemerr` (`\endtrivlist`'s `\if@newlist`): an
+                // `itemize`/`enumerate`/`description` with no `\item` at all
+                // errors at `\end` (pre-`\item` material already reported
+                // when it flushed, at most once per list).
+                if lists::reports_missing_item(&kind) && count == 0 && !missing_item_reported {
+                    self.diags.push(Diagnostic::error(
+                        lists::MISSING_ITEM_MESSAGE,
+                        Some(span),
+                        Some("left the list without items".into()),
+                    ));
+                }
                 if spacing.leftmargin == LeftMarginSetting::Widest && count > 0 {
                     let labels: Vec<String> = if kind == "enumerate" {
                         // An alphabetic counter has only 26 possible single-
@@ -18120,6 +18189,39 @@ impl P<'_> {
         let mut content = std::mem::take(paragraph);
         // A paragraph of only horizontal glue still sets a line (issue #843).
         anchor_glyphless_paragraph(&mut content, self.style);
+        // pdflatex `\@noitemerr` (see `lists::MISSING_ITEM_MESSAGE`):
+        // material flushed before the first `\item` of an
+        // `itemize`/`enumerate`/`description` errors, at most once per list
+        // (a list with no `\item` at all errors at `\end` below instead).
+        // Past the early returns above, no pending label means the paragraph
+        // is non-empty; the material check keeps glue-only paragraphs on the
+        // `\end` path, as in pdflatex.
+        let missing_item_span = if label.is_none() && content.iter().any(sets_material) {
+            if let Some(list) = self.list_stack.last_mut() {
+                if lists::reports_missing_item(&list.kind)
+                    && list.count == 0
+                    && !list.missing_item_reported
+                {
+                    list.missing_item_reported = true;
+                    let first = inline_span(&content[0]);
+                    let last = inline_span(&content[content.len() - 1]);
+                    Some(first.merge(last))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(span) = missing_item_span {
+            self.diags.push(Diagnostic::error(
+                lists::MISSING_ITEM_MESSAGE,
+                Some(span),
+                Some("typeset the text without an item".into()),
+            ));
+        }
         // A list level is "current" only once its first `\item` has been
         // seen (`count > 0`); text typed directly inside `itemize`/
         // `enumerate` before any `\item` falls back to an ordinary
@@ -18581,6 +18683,7 @@ impl P<'_> {
             begin_options,
             default_overlay: None,
             item_overlay_open: 0,
+            missing_item_reported: false,
         });
         self.push_list_frame(kind, effective, begin_span, None);
     }
@@ -21470,6 +21573,71 @@ mod tests {
         );
         assert_eq!(parsed.diagnostics.len(), 1);
         assert!(parsed.diagnostics[0].message.contains("amsmath"));
+    }
+
+    /// Preamble-only commands after `\begin{document}` (measured against
+    /// TeX Live 2026 pdflatex: `! LaTeX Error: Can be used only in
+    /// preamble.`, and the package is not loaded — `align` stays undefined
+    /// after a body `\usepackage{amsmath}`).
+    #[test]
+    fn preamble_only_commands_error_in_body_and_load_nothing() {
+        let parsed = parse(
+            "\\documentclass{article}\n\\begin{document}\n\\usepackage{amsmath}\nx\n\\end{document}\n",
+        );
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message == "LaTeX Error: Can be used only in preamble."),
+            "body \\usepackage must error like pdflatex: {:?}",
+            parsed.diagnostics
+        );
+        assert!(
+            !parsed.packages.iter().any(|package| package == "amsmath"),
+            "body \\usepackage must not load the package: {:?}",
+            parsed.packages
+        );
+        // Behavioural "not loaded" check: the kernel has no `\pod`, so it
+        // must still be rejected exactly as without the package.
+        let pod = parse(
+            "\\documentclass{article}\n\\begin{document}\n\\usepackage{amsmath}\n$a\\pod{b}$\n\\end{document}\n",
+        );
+        assert!(
+            pod.diagnostics
+                .iter()
+                .any(|d| d.message == "\\pod requires \\usepackage{amsmath}"),
+            "body \\usepackage must not enable amsmath commands: {:?}",
+            pod.diagnostics
+        );
+        // The argument is consumed (not typeset) and the body text survives.
+        let (_, items) = items(
+            "\\documentclass{article}\n\\begin{document}\n\\usepackage{amsmath}\nx\n\\end{document}\n",
+        );
+        assert!(
+            items.iter().any(|item| item.text == "x"),
+            "body text after the misplaced \\usepackage must still be typeset"
+        );
+        assert!(
+            !items.iter().any(|item| item.text.contains("amsmath")),
+            "the package argument must not leak as body text"
+        );
+
+        let class_parsed = parse(
+            "\\documentclass{article}\n\\begin{document}\nhello\n\\documentclass{report}\n\\end{document}\n",
+        );
+        assert!(
+            class_parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message == "LaTeX Error: Can be used only in preamble."),
+            "body \\documentclass must error like pdflatex: {:?}",
+            class_parsed.diagnostics
+        );
+        assert_eq!(
+            class_parsed.document_class.as_deref(),
+            Some("article"),
+            "body \\documentclass must not replace the class"
+        );
     }
 
     #[test]
