@@ -2551,6 +2551,7 @@ impl LayoutCursor {
                 number,
                 number_span,
                 content,
+                style: _,
             } => {
                 if self.collect_toc && !number.is_empty() {
                     self.collected_toc.push(TocEntry {
@@ -2600,6 +2601,7 @@ impl LayoutCursor {
                     level: 1,
                     number: String::new(),
                     number_span: *span,
+                    style: TextStyle::BOLD,
                     content: vec![Inline::Text {
                         text: "Contents".to_string(),
                         span: *span,
@@ -3319,16 +3321,51 @@ fn heading_after_skip(level: u8, body_size: f64) -> f64 {
     body_ex(body_size) * if level == 1 { 2.3 } else { 1.5 }
 }
 
-/// The before/after skips the render pipeline gives a [`crate::parser::Block::Heading`]
-/// of `level` on its own (article.cls's `\@startsection` table, the natural
-/// parts): 3.5ex/2.3ex for `\section`, 3.25ex/1.5ex for the two levels
-/// below, and 3.25ex before with no vertical after-skip for the run-in
-/// `\paragraph`/`\subparagraph` levels. A class-defined `\@startsection`
-/// (`parser::P::startsection_marker`) expresses its own skips as the
-/// difference from these, the way a `\vspace` next to a heading would.
-pub(crate) fn class_heading_skips(level: u8, body_size: f64) -> (f64, f64) {
-    let after = if level >= 4 { 0.0 } else { heading_after_skip(level, body_size) };
-    (heading_before_skip(level, body_size), after)
+/// The x-height of the class's `\normalsize` roman font — the unit
+/// `article.cls` writes its `\@startsection` skips in — for the three
+/// `\documentclass` size options: cmr10, cmr10.95 and cmr12 `\fontdimen5`.
+/// `None` is the standard classes' default, 10pt:
+/// [`crate::parser::Parsed::class_size_pt`] only records an *explicit*
+/// option, and [`BODY_SIZE_PT`] (12pt) is the v1 layout's own nominal size,
+/// not this document's body size.
+///
+/// These are the render pipeline's three values
+/// (`flashtex_document_style::fonts::size_params(..).normal.x_height`), and
+/// they have to stay the pipeline's, to the last digit:
+/// [`class_heading_skips_at_ex`] is what a class-defined heading's skips are
+/// expressed as a *difference* from, and the pipeline adds that difference
+/// back to its own value — so any disagreement is a constant error on every
+/// such heading, at every skip. Two of the three are pdflatex's `\showthe`
+/// to five decimals; 10.95pt's is the pipeline's 4.71457 rather than
+/// pdflatex's 4.71468, 1.1e-4pt out, because agreeing with the pipeline is
+/// what keeps the difference zero.
+pub(crate) fn class_body_ex_pt(class_size_pt: Option<f64>) -> f64 {
+    match class_size_pt {
+        Some(size) if size > 11.5 => 5.16667,
+        Some(size) if size > 10.5 => 4.71457,
+        _ => 4.30554,
+    }
+}
+
+/// The before/after skips the render pipeline gives a
+/// [`crate::parser::Block::Heading`] of `level` on its own (article.cls's
+/// `\@startsection` table, the natural parts): 3.5ex/2.3ex for `\section`,
+/// 3.25ex/1.5ex for the two levels below, and 3.25ex before with no
+/// vertical after-skip for the run-in `\paragraph`/`\subparagraph` levels.
+/// A class-defined `\@startsection` (`parser::P::startsection_marker`)
+/// expresses its own skips as the difference from these, the way a
+/// `\vspace` next to a heading would.
+///
+/// `body_ex_pt` is the body font's own `ex` ([`class_body_ex_pt`]), not an
+/// approximation of it from a point size.
+pub(crate) fn class_heading_skips_at_ex(level: u8, body_ex_pt: f64) -> (f64, f64) {
+    let before = body_ex_pt * if level == 1 { 3.5 } else { 3.25 };
+    let after = if level >= 4 {
+        0.0
+    } else {
+        body_ex_pt * if level == 1 { 2.3 } else { 1.5 }
+    };
+    (before, after)
 }
 
 fn heading_size(level: u8, body_size: f64) -> f64 {

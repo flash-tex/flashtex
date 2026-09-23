@@ -489,6 +489,7 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             number: _,
             number_span,
             content,
+            style: _,
         } => {
             map_span(number_span, changes, deltas)?;
             shift_inlines(content, changes, deltas)

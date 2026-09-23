@@ -5808,8 +5808,15 @@ impl<'a> Context<'a> {
             let number: Vec<AItem> = items[..quad_at.unwrap_or(0)].iter().filter(|i| !matches!(i, AItem::Label { .. })).cloned().collect();
             let bold = TextStyle { bold: h.bold, ..TextStyle::default() };
             let (runs, ..) = self.hlist(&number, h.size_pt, bold, ParaStyle::Plain);
+            // `\@svsec`'s `\quad` is the number's own quad: a class
+            // `\@startsection` whose `#6` selects a size sets the number
+            // at that size (adapter `Item::Quad { style }`), and the hang
+            // has to be the width that size really produces.
             let quad = match quad_at.map(|q| &items[q]) {
-                Some(AItem::Quad { em, .. }) => em * self.text_params(bold, h.size_pt).quad,
+                Some(AItem::Quad { em, style, .. }) => {
+                    let style = merge_style(bold, *style);
+                    em * self.text_params(style, style.size_or(h.size_pt)).quad
+                }
                 _ => 0.0,
             };
             runs.iter().map(|i| if let pl::Item::Box(run) = i { run.width } else { 0.0 }).sum::<f64>() + quad

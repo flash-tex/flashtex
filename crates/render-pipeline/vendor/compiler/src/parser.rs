@@ -759,6 +759,15 @@ pub const CMR_EX_PER_EM: f64 = 0.430554;
 /// ulem.sty `\def\sout{\bgroup \ULdepth=-.55ex \ULset}`.
 pub const SOUT_RAISE_EX: f64 = 0.55;
 
+/// Two vertical skips are the same skip below this, in points. It is the
+/// tolerance for comparing a skip the engine printed with `\the` (five
+/// decimals) against one computed here as an `f64` product rather than in
+/// TeX's sp arithmetic: those two disagree by up to a few scaled points
+/// (1sp = 1/65536pt ≈ 1.5e-5pt) on a value they mean identically. At 1e-4pt
+/// = 6.5sp this is five thousand times finer than the 0.5bp glyph gate, so
+/// no difference it hides can move a glyph.
+const SKIP_EPSILON_PT: f64 = 1e-4;
+
 /// Depth below the baseline of a descender-bearing text hbox, in em.
 /// pdflatex-measured (cmr10, 10pt): `\underline{g}`, `j`, `p`, `q`, `y` and
 /// capital `Q` each report `\dp` 3.94434pt = d + 5\theta with
@@ -1060,6 +1069,17 @@ pub enum Block {
         number: String,
         number_span: Span,
         content: Vec<Inline>,
+        /// The declarations in force around the *whole* head, the number
+        /// included: `\@sect` runs `#6{\@hangfrom{\hskip #3\relax\@svsec}
+        /// #8}`, so `\@startsection`'s `#6` styles `\@svsec` (the number
+        /// and its `\quad`) exactly as it styles the title. A size here is
+        /// therefore the number's size, in place of the one the pipeline
+        /// gives that heading level. The standard classes' own sectioning
+        /// reports [`TextStyle::BOLD`], whose `size` is `None`: the number
+        /// keeps the level's size, as it did before this field existed.
+        /// It is not the style of `content`'s first run — a size *inside*
+        /// the title (`\section{\small Foo}`) leaves the number alone.
+        style: TextStyle,
     },
     FigureCaption {
         content: Vec<Inline>,
@@ -6456,7 +6476,7 @@ impl P<'_> {
         };
         // `\@startsection`-style `\addvspace`: the format's space only adds
         // what exceeds the class beforeskip it adjoins.
-        let beforeskip = crate::layout::heading_before_skip(1, self.body_size_pt());
+        let beforeskip = crate::layout::class_heading_skips_at_ex(1, crate::layout::class_body_ex_pt(self.class_size_pt)).0;
         self.section_title_format = Some(SectionTitleFormat {
             style,
             print_number: starred,
@@ -6938,6 +6958,11 @@ impl P<'_> {
                     },
                     number_span: span,
                     content,
+                    // `\@startsection`'s `#6` for the standard classes'
+                    // own `\section` & co. (titlesec's recorded format
+                    // when there is one): no size of its own, so the
+                    // number keeps the level's.
+                    style: base,
                 });
                 self.finish_block_dependencies();
                 // A display heading ends in vertical mode.
@@ -7028,6 +7053,17 @@ impl P<'_> {
                 Some("set the heading flush left anyway".into()),
             ));
         }
+        // `\@sect` runs `#6` in a group whose font is still the body font,
+        // so a `#6` that selects no size at all (`{\bfseries}`) or selects
+        // `\normalsize` sets the head at the *body* size -- not at the size
+        // the pipeline gives that heading level. No `FontSizeLevel` variant
+        // names `\normalsize` (`None` is "the block's own size"), so say it
+        // as `\fontsize` would ([`P::class_normalsize`]): article's
+        // `{\normalsize\bfseries}` `\subsection` then really is 10pt on
+        // 12pt leading rather than `\large`'s 12pt on 14pt.
+        if base.size.is_none() {
+            base.size = self.class_normalsize().map(FontSizeLevel::Explicit);
+        }
         self.flush_paragraph(blocks, para);
         // `\@sect`: `\refstepcounter{name}` and `\@svsec` = `\@seccntformat{name}`
         // (`\the<name>\quad`) when the level is within `\c@secnumdepth`.
@@ -7096,11 +7132,27 @@ impl P<'_> {
             self.current_dependencies.clear();
             return;
         }
-        let (class_before, class_after) = crate::layout::class_heading_skips(level, body);
+        // The standard-class skips this class's own are expressed as a
+        // difference from, in the body font's `ex` at the document's real
+        // body size — not `body_size_pt()`, whose fallback is the v1
+        // layout's nominal 12pt, which made every class-defined heading's
+        // skips 12/10 of the pipeline's (`\section` 18.085pt against
+        // 15.069pt: 3.02pt of the before-skip and 1.98pt of the after-skip
+        // lost on every heading of `fixtures/divergence-probes/min-startsection`).
+        let (class_before, class_after) =
+            crate::layout::class_heading_skips_at_ex(level, crate::layout::class_body_ex_pt(self.class_size_pt));
         // `\@startsection`: `\addvspace{|#4|}` (the sign only decides
         // `\@afterindent`).
+        //
+        // The skips arrive as the engine's `\the` text, rounded to five
+        // decimals, and the class values above are an `f64` product rather
+        // than TeX's own sp arithmetic, so a class that writes exactly the
+        // standard skips still differs from them by ~1e-5pt. That is well
+        // under one scaled point (1.5e-5pt) and cannot move a glyph;
+        // emitting a `Block::VSpace` for it would only add the class's
+        // stretch and shrink a second time on top of the pipeline's.
         let before_pt = before.0.abs();
-        if (before_pt - class_before).abs() > 1e-6 {
+        if (before_pt - class_before).abs() > SKIP_EPSILON_PT {
             blocks.push(Block::VSpace {
                 pt: before_pt - class_before,
                 stretch_pt: before.1.abs(),
@@ -7108,15 +7160,24 @@ impl P<'_> {
             });
             self.finish_block_dependencies();
         }
+        // `\@sect` sets the head as `#6{\@hangfrom{..\@svsec}#8\@@par}`:
+        // the title's `\par` runs under the last size `#6` (or the title
+        // itself) selected, so that size's `\baselineskip` is the glue
+        // above the head's first line and between its lines -- `\large`'s
+        // 14pt where the pipeline's level would give `\Large`'s 18pt. Same
+        // `flat_run_end_size` the standard-class branch reports, without
+        // its `!= base.size` filter: here the size usually *is* `#6`'s.
+        self.next_block_par_leading = self.flat_run_end_size;
         blocks.push(Block::Heading {
             level,
             number,
             number_span: span.merge(title_span),
             content,
+            style: base,
         });
         self.finish_block_dependencies();
         self.vertical_mode = true;
-        if (after.0 - class_after).abs() > 1e-6 {
+        if (after.0 - class_after).abs() > SKIP_EPSILON_PT {
             blocks.push(Block::VSpace {
                 pt: after.0 - class_after,
                 stretch_pt: after.1,
@@ -10612,6 +10673,8 @@ impl P<'_> {
                 level: 1,
                 number: String::new(),
                 number_span: heading_span,
+                // `\section*{\refname}`: article.cls's own style.
+                style: TextStyle::BOLD,
                 content: vec![Inline::Text {
                     text: "References".to_string(),
                     span: heading_span,
@@ -14171,6 +14234,28 @@ impl P<'_> {
     /// else 10pt (`em` in the breaking parameters is the body font's quad).
     fn latex_body_pt(&self) -> f64 {
         self.class_size_pt.unwrap_or(10.0)
+    }
+
+    /// The class's `\normalsize` named the way `\fontsize` names a size:
+    /// `\f@size`/`\f@baselineskip` from `size1x.clo` — 10/12pt, 10.95/13.6pt
+    /// or 12/14.5pt, the same three `expansion::class_prelude` seeds.
+    ///
+    /// `\@startsection`'s `#6` runs in a group whose font is the body font,
+    /// so a `#6` that declares no size (`{\bfseries}`) or declares
+    /// `\normalsize` sets its head at *this* size — which no
+    /// [`FontSizeLevel`] variant names, `None` meaning "whatever the block's
+    /// own size is" (for a heading, the pipeline's size for its level).
+    /// `None` here for a class size the three `.clo` tables do not cover
+    /// (the AMS classes' 8pt/9pt), which leaves that older behaviour alone.
+    fn class_normalsize(&self) -> Option<ExplicitSize> {
+        let sp = |pt: f64| (pt * 65536.0).round() as i32;
+        let (size_pt, baselineskip_pt) = match self.class_size_pt {
+            Some(pt) if pt > 11.5 => (12.0, 14.5),
+            Some(pt) if pt > 10.5 => (10.95, 13.6),
+            Some(pt) if pt < 9.5 => return None,
+            _ => (10.0, 12.0),
+        };
+        Some(ExplicitSize { size_sp: sp(size_pt), font_sp: sp(size_pt), baselineskip_sp: sp(baselineskip_pt) })
     }
 
     /// `<factor>\baselineskip` (`\enlargethispage{2\baselineskip}`), with the
