@@ -119,7 +119,7 @@ impl Command {
         match (self.requires_class, class) {
             (None, _) => true,
             (Some(_), None) => true,
-            (Some(required), Some(class)) => required.split(',').any(|c| c == class),
+            (Some(required), Some(class)) => required.split(',').any(|c| c.trim() == class),
         }
     }
 }
@@ -143,7 +143,7 @@ impl Environment {
         match (self.requires_class, class) {
             (None, _) => true,
             (Some(_), None) => true,
-            (Some(required), Some(class)) => required.split(',').any(|c| c == class),
+            (Some(required), Some(class)) => required.split(',').any(|c| c.trim() == class),
         }
     }
 }

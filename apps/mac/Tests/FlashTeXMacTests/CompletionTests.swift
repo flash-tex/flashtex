@@ -153,6 +153,19 @@ final class CompletionTests: XCTestCase {
         // letter.cls keeps its \address; the AMS-only names stay hidden there.
         XCTAssertTrue(offers("letter", "\\addr", "\\address{lines}"))
         XCTAssertFalse(offers("letter", "\\ema", "\\email[note]{text}"))
+        // #1068 review: neither the exact spelling nor an earlier use in the
+        // text reopens the gate in an article; under amsart both still offer.
+        func anyEmail(_ cls: String, _ fragment: String) -> Bool {
+            let t = "\\documentclass{\(cls)}\n\\begin{document}\n" + fragment
+            return Completion.suggestions(in: t, caretUTF16: (t as NSString).length, result: nil).contains { $0.insertText == "\\email" }
+        }
+        XCTAssertFalse(anyEmail("article", "\\email"))
+        XCTAssertFalse(anyEmail("article", "\\email{x} \\ema"))
+        XCTAssertTrue(anyEmail("amsart", "\\email"))
+        XCTAssertTrue(anyEmail("amsart", "\\email{x} \\ema"))
+        // Comma-list tokens are trimmed.
+        XCTAssertTrue(LaTeXVocabulary.classOffers("letter, amsart", documentClass: "amsart"))
+        XCTAssertFalse(LaTeXVocabulary.classOffers("letter, amsart", documentClass: "article"))
     }
 
     func testUnclosedEnvironmentSuggestsEndFirst() {
@@ -565,14 +578,14 @@ final class CompletionTests: XCTestCase {
         XCTAssertTrue(offered("\\al", in: "").contains("\\alert"))
         XCTAssertTrue(offered("\\op", in: "").contains("\\opening"))
 
-        // Two escape hatches keep the command reachable in a document of
-        // another class: the name typed out in full, and a file that already
-        // uses it (completed from its own text, below the universal entry).
-        XCTAssertEqual(offered("\\frametitle", in: article).first, "\\frametitle")
+        // No escape hatches (#1068 review): in an article pdflatex has no
+        // `\frametitle`, so neither the name typed out in full nor an
+        // earlier use in the file brings it back into the list.
+        XCTAssertFalse(offered("\\frametitle", in: article).contains("\\frametitle"))
         let fragment = article + "\\frametitle{Earlier}\n\\fra"
         XCTAssertEqual(Completion.suggestions(in: fragment, caretUTF16: (fragment as NSString).length, result: nil)
-                         .map(\.insertText), ["\\frac", "\\frametitle"],
-                       "a document that already uses it completes it from its own text, below the universal entry")
+                         .map(\.insertText), ["\\frac"],
+                       "a use in an article is itself an error there; completion does not repeat it")
     }
 
     /// The project layer resolves the class an included file inherits:

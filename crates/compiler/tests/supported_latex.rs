@@ -778,6 +778,11 @@ fn class_scope_matches_the_parser_gate() {
         }
         assert!(command.offered_in_class(None), "an unknown class gates nothing");
     }
+    // A class list's tokens are trimmed (`"letter, amsart"`).
+    let mut spaced = inventory.commands.iter().find(|c| c.name == "address").unwrap().clone();
+    spaced.requires_class = Some("letter, amsart");
+    assert!(spaced.offered_in_class(Some("amsart")) && spaced.offered_in_class(Some("letter")));
+    assert!(!spaced.offered_in_class(Some("article")));
     for name in supported::BEAMER_CLASS_COMMANDS {
         let command = inventory
             .commands

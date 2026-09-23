@@ -129,10 +129,7 @@ enum Completion {
             /// (included chapters and frames), and a strict rule would take
             /// `\frametitle` away from exactly the files that use it.
             func offered(inClass documentClass: String?) -> Bool {
-                guard let requiresClass, let documentClass else { return true }
-                // A command of several classes lists them comma-separated
-                // (the AMS top matter: `amsart,amsbook,amsproc`).
-                return requiresClass.split(separator: ",").contains { $0 == documentClass }
+                LaTeXVocabulary.classOffers(requiresClass, documentClass: documentClass)
             }
 
             var label: String { "\\" + name + arguments }
@@ -874,12 +871,12 @@ enum Completion {
         //    this text declares, else the project root's (`projectClass`: an
         //    included chapter or slide file declares none, and its root
         //    does), else unknown, which gates nothing (`Entry.offered`). The
-        //    name typed out in full is never hidden (`name == prefix`), and a
-        //    fragment that really uses one still completes it below, from the
-        //    document's own text.
+        //    gate has no exceptions: neither the name typed out in full nor
+        //    one the document already uses (3. below) brings `\email` back
+        //    into an article, where pdflatex has no such command.
         let documentClass = documentClass(in: text) ?? projectClass
         func inThisClass(_ name: String) -> Bool {
-            name == prefix || Vocabulary.byName[name]?.offered(inClass: documentClass) ?? true
+            Vocabulary.byName[name]?.offered(inClass: documentClass) ?? true
         }
         /// 0 the exact spelling, 1 a project declaration, 2 a math command,
         /// 3 everything else. Only consulted when `mathMode` is on.
@@ -940,7 +937,7 @@ enum Completion {
         //    document (`declaredHere`) nor the project declares, with the
         //    compiler's own diagnostic when it named the command at this
         //    revision.
-        for name in scan.commands where !offered.contains(name) {
+        for name in scan.commands where !offered.contains(name) && inThisClass(name) {
             var detail = "not supported by the compiler"
             if let message = metadata?.diagnosticsByCommand[name] { detail += " — " + message }
             out.append(Suggestion(label: "\\" + name, insertText: "\\" + name, kind: .command, detail: detail))
