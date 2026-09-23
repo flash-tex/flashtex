@@ -8205,6 +8205,31 @@ impl P<'_> {
         None
     }
 
+    /// Whether `env` is a float.sty `\newfloat` environment (`\@captype`
+    /// for `\caption`; see `P::caption_float_type`). Only true after a
+    /// gated `\newfloat` (or a pre-declaring `\floatname`) registered it,
+    /// so an undeclared environment still takes the "not implemented" arm.
+    fn is_declared_float(&self, env: &str) -> bool {
+        self.declared_floats.iter().any(|f| f.environment == env)
+    }
+
+    /// float.sty is the only package that defines these commands:
+    /// without `\usepackage{float}` pdflatex stops at "Undefined control
+    /// sequence", so the command is diagnosed and ignored instead of
+    /// declaring anything. The arguments are still consumed, for recovery.
+    fn float_command_available(&mut self, name: &str, span: Span) -> bool {
+        if self.packages.iter().any(|package| package == "float") {
+            return true;
+        }
+        self.diags.push(Diagnostic::command_error(
+            name,
+            format!("\\{name} needs \\usepackage{{float}}"),
+            Some(span),
+            Some("ignored the command".into()),
+        ));
+        false
+    }
+
     /// float.sty `\newfloat{<env>}{<placement>}{<ext>}[<within>]`,
     /// `\floatname{<env>}{<name>}`, `\floatstyle{<style>}` and
     /// `\floatplacement{<env>}{<placement>}`. Only what `\caption` reads is
@@ -8221,6 +8246,9 @@ impl P<'_> {
                 let _ = self.required_group(name, span);
                 let within = self.optional_bracket_argument().map(|(text, _)| text.trim().to_string());
                 if environment.is_empty() {
+                    return;
+                }
+                if !self.float_command_available(name, span) {
                     return;
                 }
                 // `\@ifundefined{fname@#1}{\floatname{#1}{#1}}`: an earlier
@@ -8258,6 +8286,9 @@ impl P<'_> {
                 let environment = token_text(&env_tokens).trim().to_string();
                 let (label_tokens, _) = self.required_group(name, span);
                 let label = token_text(&label_tokens).trim().to_string();
+                if !self.float_command_available(name, span) {
+                    return;
+                }
                 match self.declared_floats.iter_mut().rev().find(|f| f.environment == environment) {
                     Some(float) => float.label = label,
                     // `\floatname` before `\newfloat` (`\@namedef{fname@#1}`
@@ -8273,6 +8304,9 @@ impl P<'_> {
             "floatstyle" => {
                 let (tokens, argument_span) = self.required_group(name, span);
                 let style = token_text(&tokens);
+                if !self.float_command_available(name, span) {
+                    return;
+                }
                 match style.trim() {
                     "plain" | "plaintop" => self.float_style = FloatStyle::Plain,
                     "ruled" => self.float_style = FloatStyle::Ruled,
@@ -8287,6 +8321,9 @@ impl P<'_> {
             "floatplacement" => {
                 let _ = self.required_group(name, span);
                 let _ = self.required_group(name, span);
+                if !self.float_command_available(name, span) {
+                    return;
+                }
             }
             _ => unreachable!("\\{name} is not in this command family"),
         }
@@ -12182,7 +12219,19 @@ impl P<'_> {
             // other class take the arms below.
             self.beamer_environment_begin(&environment, span, argument_span, blocks, para);
         } else if matches!(environment.as_str(), "figure" | "table") && self.in_body {
+            // latex.ltx `\@float`: the placement (`[htbp]`, float.sty's
+            // `[H]` with the package) is the float's own argument, never
+            // body text.
             self.flush_paragraph(blocks, para);
+            let _ = self.optional_bracket_argument();
+        } else if self.in_body && self.is_declared_float(&environment) {
+            // float.sty `\newfloat{<env>}`: the same in-flow float as
+            // `figure`/`table`, with its own counter and caption name (see
+            // `P::caption_float_type`). The placement is consumed like
+            // theirs, and the body parses as ordinary blocks, so there is
+            // no "not implemented" warning for a declared environment.
+            self.flush_paragraph(blocks, para);
+            let _ = self.optional_bracket_argument();
         } else if alltt_env {
             let vmode = para.is_empty();
             self.flush_paragraph(blocks, para);
@@ -12760,7 +12809,10 @@ impl P<'_> {
             self.flush_paragraph(blocks, para);
         } else if self.is_beamer_block_environment(&environment) {
             self.beamer_environment_end(&environment, span, blocks, para);
-        } else if matches!(environment.as_str(), "figure" | "table") || self.theorems.contains_key(&environment) {
+        } else if matches!(environment.as_str(), "figure" | "table")
+            || self.theorems.contains_key(&environment)
+            || self.is_declared_float(&environment)
+        {
             self.flush_paragraph(blocks, para);
             // A theorem is a `\trivlist`: its `\end` is `\endtrivlist`.
             if self.theorems.contains_key(&environment) {
