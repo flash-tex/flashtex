@@ -3067,6 +3067,17 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "graphicspath",
     "hypersetup",
     "lstset",
+    "usetikzlibrary",
+    "usepgflibrary",
+    "usepgfplotslibrary",
+    "pgfplotsset",
+    "pgfkeys",
+    "pgfkeysalso",
+    "pgfqkeys",
+    "pgfdeclarelayer",
+    "pgfsetlayers",
+    "pgfmathsetseed",
+    "pgfmathdeclarerandomlist",
     "lstlistoflistings",
     "allowdisplaybreaks",
     "url",
@@ -5944,6 +5955,32 @@ impl P<'_> {
             // `\bfseries`, `\itshape` and `\tiny` out of `basicstyle=`,
             // `keywordstyle=`, `commentstyle=` and `numberstyle=`.
             "lstset" => self.lstset(span),
+            // `\usetikzlibrary{list}` / `\usetikzlibrary[list]` (tikz.code.tex:
+            // `\usepgflibrary` under the `tikz/` prefix; the bracket form
+            // takes the bracket alone), `\usepgflibrary` and pgfplots'
+            // `\usepgfplotslibrary`: library loading, which reads code
+            // and typesets nothing, in the preamble where every real TikZ
+            // document puts it (2501.07009v1, 2501.07277v2 and 27 more of
+            // the parity arxiv tier) and in the body, where TikZ allows it.
+            // Which libraries are loaded is not recorded: the picture
+            // reader (`flashtex-vector-graphics`) reports the keys it
+            // cannot use per picture, which is the honest signal.
+            //
+            // Before this, `\usetikzlibrary` was the first error of 17
+            // arxiv documents (`cause 7: package tikz`), and each list
+            // then read as preamble material.
+            "usetikzlibrary" | "usepgflibrary" | "usepgfplotslibrary" => self.pgf_setup_command(name, span, true, 1),
+            // pgf/pgfplots setup with braced parameters and no material:
+            // `\pgfplotsset{keys}` (pgfplots.sty `\pgfqkeys{/pgfplots}`),
+            // `\pgfkeys{keys}`, `\pgfkeysalso{keys}` and `\pgfqkeys{path}{keys}`
+            // (pgfkeys.code.tex),
+            // `\pgfdeclarelayer{name}` / `\pgfsetlayers{list}` (pgfcorelayers),
+            // `\pgfmathsetseed{n}` and `\pgfmathdeclarerandomlist{name}{items}`
+            // (pgfmathfunctions.random). Global from where they run, like
+            // `\tikzset`; each picture re-reads what it needs from the
+            // source, so the parser only consumes the arguments.
+            "pgfplotsset" | "pgfkeys" | "pgfkeysalso" | "pgfdeclarelayer" | "pgfsetlayers" | "pgfmathsetseed" => self.pgf_setup_command(name, span, false, 1),
+            "pgfqkeys" | "pgfmathdeclarerandomlist" => self.pgf_setup_command(name, span, false, 2),
             "crefname" | "Crefname" => self.cleveref_name(name, span),
             // Line- and page-breaking parameters (TeX integer and dimension
             // assignments, and the latex.ltx declarations made of them), in
@@ -15037,6 +15074,23 @@ impl P<'_> {
             Some(span.merge(argument_span)),
             Some("read the key list and typeset nothing for it".into()),
         ));
+    }
+
+    /// A TikZ/pgf setup command that reads its arguments and typesets
+    /// nothing, in the preamble or the body: `groups` braced arguments, or,
+    /// when `library`, either those or one `[list]` (tikz.code.tex
+    /// `\usetikzlibrary` is `\pgfutil@ifnextchar[{\use@tikzlibrary}
+    /// {\use@@tikzlibrary}`: the bracket form takes the bracket only and
+    /// never a following group, which stays ordinary text). A missing
+    /// braced argument is reported by `required_group` as for any other
+    /// command.
+    fn pgf_setup_command(&mut self, name: &str, span: Span, library: bool, groups: usize) {
+        if library && self.optional_bracket_argument().is_some() {
+            return;
+        }
+        for _ in 0..groups {
+            let _ = self.required_group(name, span);
+        }
     }
 
     /// Emits the one honest "links are not clickable yet" diagnostic the
@@ -24794,6 +24848,92 @@ mod tests {
             items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
             ["Body", "text."],
             "\\lstset contributes no material"
+        );
+    }
+
+    /// `\usetikzlibrary` heads the preamble of nearly every TikZ document
+    /// (29 of the parity arxiv tier's documents; it was the first error of
+    /// 17 of them). Like `\lstset` it loads code and typesets nothing, so
+    /// both forms -- `{list}` and `[list]` -- are accepted in the preamble
+    /// and the body, and the pgf
+    /// setup commands (`\pgfplotsset`, `\pgfdeclarelayer`/`\pgfsetlayers`,
+    /// `\pgfkeys`, `\pgfmathdeclarerandomlist`, ...) with them. Nothing in
+    /// their arguments may reach the page or be reported (before this,
+    /// `\usetikzlibrary` errored and its list was read as preamble
+    /// material).
+    #[test]
+    fn usetikzlibrary_and_pgf_setup_commands_are_accepted_and_typeset_nothing() {
+        let source = concat!(
+            r"\documentclass{article}",
+            "\n",
+            r"\usepackage{tikz}",
+            "\n",
+            "\\usetikzlibrary{arrows.meta, positioning,\n  calc, decorations.pathreplacing}",
+            "\n",
+            r"\usetikzlibrary[shapes.geometric]",
+            "\n",
+            r"\usepgfplotslibrary{groupplots}",
+            "\n",
+            r"\pgfplotsset{compat=1.18, every axis/.append style={font=\small}}",
+            "\n",
+            r"\pgfdeclarelayer{background}\pgfsetlayers{background,main}",
+            "\n",
+            r"\pgfkeys{/pgf/number format/.cd, fixed, precision=2}\pgfkeysalso{/tikz/.cd, thick}",
+            "\n",
+            r"\pgfqkeys{/tikz}{every node/.style={font=\footnotesize}}",
+            "\n",
+            r"\pgfmathsetseed{42}\pgfmathdeclarerandomlist{colors}{{red}{blue}{green}}",
+            "\n",
+            r"\begin{document}",
+            "\n",
+            r"\usetikzlibrary{fit} Body text.",
+            "\n",
+            r"\end{document}",
+            "\n",
+        );
+        let (parsed, items) = items(source);
+        // `\usepackage{tikz}` still says honestly that this compiler does
+        // not implement the package; nothing else may be reported.
+        let other: Vec<&str> = parsed
+            .diagnostics
+            .iter()
+            .map(|d| d.message.as_str())
+            .filter(|m| !m.starts_with("packages tikz"))
+            .collect();
+        assert!(other.is_empty(), "only the package notice may remain: {other:?}");
+        assert_eq!(
+            items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+            ["Body", "text."],
+            "library loading and pgf setup contribute no material"
+        );
+    }
+
+    /// `\usetikzlibrary[list]` takes the bracket alone (tikz.code.tex
+    /// `\use@tikzlibrary[#1]`), so a following group is ordinary text;
+    /// `\usetikzlibrary` with neither form reports the missing argument
+    /// like any other command.
+    #[test]
+    fn usetikzlibrary_bracket_form_leaves_a_following_group_alone() {
+        let source = concat!(
+            r"\documentclass{article}\usepackage{tikz}",
+            "\n",
+            r"\begin{document}",
+            "\n",
+            r"\usetikzlibrary[calc]{Kept} \usetikzlibrary",
+            "\n",
+            r"\end{document}",
+            "\n",
+        );
+        let (parsed, items) = items(source);
+        assert_eq!(
+            items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+            ["Kept"],
+            "the group after the bracket form is body text"
+        );
+        assert!(
+            parsed.diagnostics.iter().any(|d| d.message == "\\usetikzlibrary requires a braced argument"),
+            "{:?}",
+            parsed.diagnostics
         );
     }
 
