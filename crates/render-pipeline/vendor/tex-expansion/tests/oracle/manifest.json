@@ -755,6 +755,18 @@
     "mode": "latex-err",
     "setup": "\\newcommand*\\zz[1]{}"
   },
+  "err_newcommand_theequation": {
+    "expected": "LaTeX Error: Command \\theequation already defined.",
+    "expr": "\\newcommand{\\theequation}{A\\arabic{equation}}",
+    "mode": "latex-err",
+    "setup": ""
+  },
+  "err_newcommand_thetheorem": {
+    "expected": "LaTeX Error: Command \\thetheorem already defined.",
+    "expr": "\\newcommand{\\thetheorem}{A\\arabic{theorem}}",
+    "mode": "latex-err",
+    "setup": "\\newtheorem{theorem}{Theorem}"
+  },
   "err_newcounter_defined": {
     "expected": "LaTeX Error: Command \\c@zc already defined.",
     "expr": "\\newcounter{zc}",
@@ -855,6 +867,12 @@
     "expected": "You can't use a prefix with `the letter x'.",
     "expr": "\\global x",
     "mode": "tex-err",
+    "setup": ""
+  },
+  "err_renewcommand_theequation_ok": {
+    "expected": "",
+    "expr": "\\renewcommand{\\theequation}{A\\arabic{equation}}",
+    "mode": "latex-err",
     "setup": ""
   },
   "err_renewcommand_undefined": {
@@ -1804,6 +1822,12 @@
     "expr": "\\expandafter\\meaning\\csname\\string\\zz\\endcsname",
     "mode": "latex-write",
     "setup": "\\newcommand*\\zz[1][d]{(#1)}"
+  },
+  "newcommand_si_without_siunitx": {
+    "expected": "sigma",
+    "expr": "\\si",
+    "mode": "latex-render",
+    "setup": "\\newcommand{\\si}{sigma}"
   },
   "newcommand_star_meaning": {
     "expected": "macro:#1->(#1)",
