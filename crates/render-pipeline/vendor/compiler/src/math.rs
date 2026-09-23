@@ -265,6 +265,12 @@ pub enum Nucleus {
     /// exists so a multi-atom argument stays one atom for spacing purposes
     /// instead of flattening into the surrounding list.
     Group(MathList),
+    /// `\mathchoice{D}{T}{S}{SS}` (TeX §1174): four math lists, in the order
+    /// display, text, script, scriptscript. The layout keeps only the one for
+    /// the style current where the choice sits and splices its atoms into the
+    /// enclosing list in place of this atom (TeX §731), so they space like
+    /// the surrounding atoms rather than as one boxed atom.
+    Choice(Box<[MathList; 4]>),
     /// amsmath `\genfrac{left}{right}{thickness}{style}{num}{den}`
     /// (`amsmath.sty` lines 237-312) and its shorthands: `\dfrac`/`\tfrac`
     /// (no delimiters, display/text style), `\binom`/`\dbinom`/`\tbinom`
@@ -505,6 +511,13 @@ pub(crate) fn append_math_reference_text(out: &mut String, list: &MathList, sour
             | Nucleus::Smash { body, .. } => {
                 append_math_reference_text(out, body, source)
             }
+            Nucleus::Choice(lists) => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    append_math_reference_text(out, &lists[1], source);
+                }
+            }
             Nucleus::ExtArrow { above, below, .. } => {
                 if let Some(raw) = source_text(source, atom) {
                     out.push_str(raw);
@@ -568,6 +581,11 @@ fn reference_atom_end(atom: &MathAtom) -> usize {
         | Nucleus::Lap { body, .. }
         | Nucleus::Pmb { body }
         | Nucleus::Smash { body, .. } => extend(body),
+        Nucleus::Choice(lists) => {
+            for list in lists.iter() {
+                extend(list);
+            }
+        }
         Nucleus::TextRun(pieces) => {
             for piece in pieces {
                 if let TextPiece::Math(list) = piece {
@@ -2681,6 +2699,25 @@ impl MathParser<'_> {
                         ));
                         space(0.0, full)
                     }
+                }
+            }
+            // TeX primitive (§1171): four required math-list arguments.
+            "mathchoice" => {
+                let lists = [
+                    self.required_group(&name, span),
+                    self.required_group(&name, span),
+                    self.required_group(&name, span),
+                    self.required_group(&name, span),
+                ];
+                MathAtom {
+                    nucleus: Nucleus::Choice(Box::new(lists)),
+                    span,
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                    limits: None,
                 }
             }
             "phantom" | "hphantom" | "vphantom" => {
@@ -7318,6 +7355,10 @@ fn layout_nucleus(
         // `\mathbin{...}` and kin: laid out exactly like a bare `{...}`
         // group; only the enclosing atom's forced class differs.
         Nucleus::Group(body) => layout_list(body, size, root_size, level, diagnostics),
+        // This base-14 layout tracks script depth but not display style, so a
+        // top-level choice takes the text branch here; render-pipeline's
+        // math-layout path selects all four by the real style.
+        Nucleus::Choice(lists) => layout_list(&lists[level.min(2) + 1], size, root_size, level, diagnostics),
         // The compiler's own (base-14) layout has no delimiter sizing or
         // style changes: a delimited `\genfrac` is set like the grid `\binom`
         // used to be, an undelimited one like `\frac`.
@@ -7931,6 +7972,7 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
                 body: shift_list(body, delta),
             },
             Nucleus::Group(inner) => Nucleus::Group(shift_list(inner, delta)),
+            Nucleus::Choice(lists) => Nucleus::Choice(Box::new(lists.clone().map(|l| shift_list(&l, delta)))),
             Nucleus::GenFraction {
                 numerator,
                 denominator,
@@ -9545,6 +9587,24 @@ mod unbraced_argument_tests {
     }
 
     #[test]
+    fn mathchoice_parses_its_four_lists_in_style_order() {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(
+            &crate::lexer::tokenize(r"a\mathchoice{D}{T}{S}{Q}b"),
+            MathPackages::KERNEL,
+            &mut diagnostics,
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 3, "{:?}", list.atoms);
+        let Nucleus::Choice(lists) = &list.atoms[1].nucleus else {
+            panic!("{:?}", list.atoms[1].nucleus)
+        };
+        let firsts: Vec<_> = lists.iter().map(|l| l.atoms[0].nucleus.clone()).collect();
+        assert_eq!(firsts, ["D", "T", "S", "Q"].map(|c| Nucleus::Symbol(c.into())));
+        assert_eq!(list.atoms[2].nucleus, Nucleus::Symbol("b".into()));
+    }
+
+    #[test]
     fn unknown_math_command_is_dropped_but_still_diagnosed() {
         // Issue #846. In math mode pdflatex answers "Undefined control
         // sequence" and typesets nothing. Measured with
@@ -10850,6 +10910,7 @@ mod shift_tests {
                         | Nucleus::Pmb { body }
                         | Nucleus::Smash { body, .. }
                         | Nucleus::Operator { body, .. } => min_start(body),
+                        Nucleus::Choice(lists) => lists.iter().map(min_start).min().unwrap_or(usize::MAX),
                         Nucleus::GenFraction {
                             numerator,
                             denominator,

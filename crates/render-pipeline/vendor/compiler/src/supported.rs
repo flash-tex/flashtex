@@ -410,6 +410,8 @@ pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("long", "", "prefix: the following definition accepts \\par in arguments"),
     ("protected", "", "e-TeX prefix: the following macro is not expanded inside \\edef-like contexts"),
     ("providecommand", "{\\name}[n][default]{body}", "defines the macro only when \\name is undefined"),
+    ("DeclareTextCommandDefault", "{\\cmd}[n][default]{body}", "declares a text command's default expansion, used when no encoding-specific declaration applies"),
+    ("ProvideTextCommandDefault", "{\\cmd}[n][default]{body}", "declares a text command's default expansion only when none is declared yet"),
     ("DeclareRobustCommand", "{\\name}[n][default]{body}", "defines or redefines a macro (robustness is not modelled separately)"),
     ("newenvironment", "{env}[n][default]{begin}{end}", "defines an environment run by \\begin{env}/\\end{env}"),
     ("renewenvironment", "{env}[n][default]{begin}{end}", "redefines an environment"),
