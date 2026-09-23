@@ -406,10 +406,25 @@ fn beamer_probe(name: &str, arguments: &str) -> Option<String> {
     }
 }
 
+/// The AMS classes' top-matter commands exist only under amsart/amsbook/
+/// amsproc: exercised in a minimal amsart document, before `\maketitle`.
+fn ams_probe(name: &str, arguments: &str) -> Option<String> {
+    match name {
+        "curraddr" | "email" | "urladdr" | "subjclass" | "keywords" | "dedicatory" => Some(format!(
+            "\\documentclass{{amsart}}\n\\title{{T}}\\author{{A}}\n{}\n\\begin{{document}}\n\\maketitle\nBody.\n\\end{{document}}\n",
+            with_arguments(name, arguments, "1pt")
+        )),
+        _ => None,
+    }
+}
+
 /// A compilable use of `\name` built from its argument shape.
 fn text_probe(name: &str, arguments: &str) -> String {
     if let Some(letter) = letter_probe(name, arguments) {
         return letter;
+    }
+    if let Some(ams) = ams_probe(name, arguments) {
+        return ams;
     }
     if let Some(beamer) = beamer_probe(name, arguments) {
         return beamer;
