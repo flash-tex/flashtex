@@ -653,7 +653,12 @@ impl Engine {
         };
         let option_tokens: Vec<Pending> = options.clone().unwrap_or_default();
         let version_tokens: Vec<Pending> = version.clone().unwrap_or_default();
-        let verbatim = found.iter().all(|f| !f) && passed.iter().all(|p| !p);
+        // A class file's `\LoadClass[\@fontsize]{article}` is never handed
+        // over verbatim: its options are whatever the class computed (a
+        // macro, `\PassOptionsToClass`), and `\@onefilewithoptions` reads
+        // them expanded, so the typesetting layer must get the resolved
+        // `\opt@article.cls` (`12pt`), not the tokens `\@fontsize`.
+        let verbatim = kind != LoadKind::LoadClass && found.iter().all(|f| !f) && passed.iter().all(|p| !p);
         let mut queue: Vec<Pending> = Vec::new();
         if kind.is_class() {
             // `\@fileswith@pti@ns`: the first class load fixes the global

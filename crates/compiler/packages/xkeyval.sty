@@ -1,0 +1,93 @@
+%% xkeyval.sty -- FlashTeX subset, NOT the upstream file.
+%%
+%% The option and key commands custom classes use, written for FlashTeX's
+%% expansion engine (the upstream xkeyval.tex needs \@onelevel@sanitize,
+%% \XKV@ifstar and a generic \input the engine does not model). Keys are
+%% keyval keys (\define@key / \setkeys are engine primitives), so only the
+%% default prefix `KV' exists. Semantics measured against pdfTeX 1.40.29 /
+%% xkeyval 2.9 (TeX Live 2026):
+%%   - \DeclareOptionX[<prefix>]<<family>>{key}[default]{code}: the family
+%%     defaults to <\@currname.\@currext>; without [default] the default
+%%     value is empty (so `flag' alone is accepted).
+%%   - \DeclareOptionX*{code}: runs for an undeclared option with
+%%     \CurrentOption set to the option as given (`foo=bar').
+%%   - \ProcessOptionsX: a class processes its own option list, a package
+%%     its own; \ProcessOptionsX* makes a package first take the global
+%%     class options that are its declared keys (unstarred, a package
+%%     ignores them: measured). Values come from the space-stripped lists, as in pdfTeX
+%%     (`name=Jacob Strieb' gives `JacobStrieb').
+%%   - \ExecuteOptionsX, \define@cmdkey, \key@ifundefined.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{xkeyval}[2026/09/23 v2.9 FlashTeX subset]
+\def\XKV@fam{\@currname.\@currext}
+% \DeclareOptionX
+\def\DeclareOptionX{\@ifstar\XKV@dox@star\XKV@dox}
+\def\XKV@dox@star#1{%
+  \expandafter\def\csname XKV@doxs@\@currname.\@currext\endcsname{#1}}
+\def\XKV@dox{\@testopt\XKV@dox@a{KV}}
+\def\XKV@dox@a[#1]{\@ifnextchar<\XKV@dox@b{\XKV@dox@b<\@currname.\@currext>}}
+\def\XKV@dox@b<#1>#2{\@ifnextchar[{\XKV@dox@c{#1}{#2}}{\XKV@dox@c{#1}{#2}[]}}
+\def\XKV@dox@c#1#2[#3]{%
+  \edef\XKV@tempa{#1}%
+  \expandafter\define@key\expandafter{\XKV@tempa}{#2}[#3]}
+% \ExecuteOptionsX[<prefix>]<<families>>{list}
+\def\ExecuteOptionsX{\@testopt\XKV@eox{KV}}
+\def\XKV@eox[#1]{\@ifnextchar<\XKV@eox@a{\XKV@eox@a<\@currname.\@currext>}}
+\def\XKV@eox@a<#1>#2{%
+  \edef\XKV@tempa{#1}%
+  \expandafter\setkeys\expandafter{\XKV@tempa}{#2}}
+% \ProcessOptionsX[*][<prefix>]<<families>>
+\def\ProcessOptionsX{\@ifstar{\let\XKV@st\@ne\XKV@pox}{\let\XKV@st\z@\XKV@pox}}
+\def\XKV@pox{\@testopt\XKV@pox@a{KV}}
+\def\XKV@pox@a[#1]{\@ifnextchar<\XKV@pox@b{\XKV@pox@b<\@currname.\@currext>}}
+\def\XKV@pox@b<#1>{%
+  \edef\XKV@fam{#1}%
+  \ifx\@currext\@clsextension\else
+    \ifx\@classoptionslist\relax\else\ifx\XKV@st\@ne
+      \let\XKV@global\@ne
+      \@for\XKV@opt:=\@classoptionslist\do{\XKV@one}%
+    \fi\fi
+  \fi
+  \let\XKV@global\z@
+  \edef\XKV@list{\@ifundefined{opt@\@currname.\@currext}{}%
+    {\csname opt@\@currname.\@currext\endcsname}}%
+  \@for\XKV@opt:=\XKV@list\do{\XKV@one}%
+  \let\@unprocessedoptions\relax}
+\def\XKV@one{\ifx\XKV@opt\@empty\else
+  \expandafter\XKV@split\XKV@opt==\@nil\fi}
+\def\XKV@split#1=#2=#3\@nil{%
+  \@ifundefined{KV@\XKV@fam @#1}%
+    {\ifx\XKV@global\@ne\else\XKV@unknown\fi}%
+    {\def\XKV@tempa{#3}%
+     \ifx\XKV@tempa\@empty
+       \@ifundefined{KV@\XKV@fam @#1@default}%
+         {\PackageError{xkeyval}{No value specified for key `#1'}\@ehc}%
+         {\csname KV@\XKV@fam @#1@default\endcsname}%
+     \else
+       \csname KV@\XKV@fam @#1\endcsname{#2}%
+     \fi}}
+\def\XKV@unknown{%
+  \let\CurrentOption\XKV@opt
+  \@ifundefined{XKV@doxs@\@currname.\@currext}%
+    {\ifx\@currext\@clsextension\else
+       \PackageError{xkeyval}{`\CurrentOption' undefined in families
+         `\XKV@fam'}\@ehc
+     \fi}%
+    {\csname XKV@doxs@\@currname.\@currext\endcsname}}
+% \define@cmdkey[<prefix>]{family}[<mp>]{key}[default]{code}: setting the
+% key defines \<mp><key> (mp defaults to cmd<prefix>@<family>@) to the value.
+\def\define@cmdkey{\@testopt\XKV@dck{KV}}
+\def\XKV@dck[#1]#2{\@testopt{\XKV@dck@a{#2}}{cmd#1@#2@}}
+\def\XKV@dck@a#1[#2]#3{\@ifnextchar[{\XKV@dck@b{#1}{#2}{#3}}{\XKV@dck@b{#1}{#2}{#3}[\@nil]}}
+\def\XKV@dck@b#1#2#3[#4]#5{%
+  \def\XKV@tempa{#4}%
+  \ifx\XKV@tempa\XKV@nnil
+    \define@key{#1}{#3}{\expandafter\def\csname#2#3\endcsname{##1}#5}%
+  \else
+    \define@key{#1}{#3}[#4]{\expandafter\def\csname#2#3\endcsname{##1}#5}%
+  \fi}
+\def\XKV@nnil{\@nil}
+% \key@ifundefined[<prefix>]{families}{key}{undefined}{defined}
+\def\key@ifundefined{\@testopt\XKV@kiu{KV}}
+\def\XKV@kiu[#1]#2#3{\@ifundefined{#1@#2@#3}}
+\endinput

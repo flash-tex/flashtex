@@ -18,7 +18,9 @@
 //!    file is executed through the expansion engine (`crate::expansion`);
 //! 3. otherwise, for the packages flipped off the built-in list so far
 //!    (just `appendix`), the vendored real file ([`APPENDIX_STY`]), so a
-//!    document needs no TeX Live install to run it;
+//!    document needs no TeX Live install to run it; and for `xkeyval` and
+//!    `kvoptions`, FlashTeX's own subsets of them ([`XKEYVAL_STY`],
+//!    [`KVOPTIONS_STY`]);
 //! 4. otherwise the command passes through to the parser, whose "recognised
 //!    but not implemented" warning names what was searched
 //!    ([`search_description`]).
@@ -185,6 +187,17 @@ pub fn is_package_file(path: &str) -> bool {
 /// the provenance header are byte-for-byte the upstream file.
 pub const APPENDIX_STY: &str = include_str!("../../tex-expansion/vendor-packages/appendix.sty");
 
+/// FlashTeX's own subsets of `xkeyval.sty` and `kvoptions.sty` (not the
+/// upstream files, whose support code the engine does not model): the
+/// class-option commands custom `.cls` files use -- `\DeclareOptionX`,
+/// `\ProcessOptionsX`, `\define@cmdkey`, and kvoptions' `\Declare…Option`
+/// family with `\ProcessKeyvalOptions` -- written in TeX on the engine's
+/// keyval primitives and measured against pdfTeX (see each file's header).
+/// Served, like [`APPENDIX_STY`], only when the project has no file of its
+/// own of that name.
+pub const XKEYVAL_STY: &str = include_str!("../packages/xkeyval.sty");
+pub const KVOPTIONS_STY: &str = include_str!("../packages/kvoptions.sty");
+
 /// The engine's package reader for a project: owns `files`, the
 /// `(path, text)` of every `.sty`/`.cls` document in project order (the
 /// closure outlives the borrow, and travels with incremental checkpoints;
@@ -204,8 +217,13 @@ pub fn reader(files: Vec<(String, String)>) -> PackageReader {
         if let Some((_, text)) = files.iter().find(|(path, _)| path_names(path, name, ext)) {
             return Some(text.clone());
         }
-        if ext == "sty" && name == "appendix" {
-            return Some(APPENDIX_STY.to_string());
+        if ext == "sty" {
+            match name {
+                "appendix" => return Some(APPENDIX_STY.to_string()),
+                "xkeyval" => return Some(XKEYVAL_STY.to_string()),
+                "kvoptions" => return Some(KVOPTIONS_STY.to_string()),
+                _ => {}
+            }
         }
         None
     })
