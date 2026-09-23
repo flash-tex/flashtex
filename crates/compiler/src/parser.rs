@@ -5382,6 +5382,18 @@ impl P<'_> {
                     // came from a macro body and the bytes after `span` are
                     // the invocation's arguments. Consuming it here (so it is
                     // never typeset as text) is unchanged.
+                    //
+                    // `\\*`: latex.ltx `\@normalcr` is `\@ifstar` — an
+                    // optional star selects the no-page-break variant,
+                    // then an optional `[<dimen>]` adds the extra space.
+                    // The star carries no
+                    // page model in this layout (like `\hspace`'s star, both
+                    // forms parse identically), but it must be consumed —
+                    // glued or not (`\\*[5mm]` lexes as one word `*[5mm]`,
+                    // `\\ *` with the space skipped) — so it never reaches
+                    // the page as text and the `[<length>]` after it is
+                    // still reported on the node.
+                    let _star = self.take_star_prefix();
                     let skip_pt = self.skip_line_break_length();
                     if render {
                         para.push(Inline::LineBreak {
