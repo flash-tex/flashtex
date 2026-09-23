@@ -1336,6 +1336,7 @@ impl<'a> Interp<'a> {
             "circle" => st.shape = Shape::Circle,
             "ellipse" => st.shape = Shape::Ellipse,
             "rectangle" => st.shape = Shape::Rectangle,
+            "coordinate" => st.shape = Shape::Coordinate,
             "shape" => match val_s {
                 "circle" => st.shape = Shape::Circle,
                 "rectangle" => st.shape = Shape::Rectangle,
