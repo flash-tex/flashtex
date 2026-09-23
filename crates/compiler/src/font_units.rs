@@ -183,6 +183,31 @@ pub(crate) fn font_switches() -> Vec<(&'static str, tex::FontSwitch)> {
     switches
 }
 
+/// The NFSS request an engine font selector stands for: the family slot,
+/// series and shape its bits record (before any `.fd` substitution), the
+/// size declaration in force (`None` for `\normalsize`), and whether
+/// `\begin{document}` has run.
+pub(crate) fn selector_request(font: u32) -> (crate::nfss::FontKey, Option<FontSizeLevel>, bool) {
+    use crate::nfss::{FamilyKind, FontKey, Series, Shape};
+    let family = match font & FAMILY {
+        SANS => FamilyKind::Sf,
+        MONO => FamilyKind::Tt,
+        _ => FamilyKind::Rm,
+    };
+    let series = if font & BOLD != 0 { Series::Bx } else { Series::M };
+    let shape = if font & SMALL_CAPS != 0 {
+        Shape::Sc
+    } else if font & SLANTED != 0 {
+        Shape::Sl
+    } else if font & ITALIC != 0 {
+        Shape::It
+    } else {
+        Shape::N
+    };
+    let level = ((font & SIZE) as usize).checked_sub(1).and_then(|i| SIZE_LEVELS.get(i).copied());
+    (FontKey::new(family, series, shape), level, font & BODY != 0)
+}
+
 /// The expansion engine's `em`/`ex`: [`FontSetup`] for the selector the
 /// engine tracked. `lmodern` only replaces the preamble's already-selected
 /// Computer Modern when a later `\selectfont` (fontenc) ran.

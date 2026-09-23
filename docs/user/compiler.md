@@ -905,9 +905,9 @@ Canonical sources:
 | `\value` | `{counter}` | a counter's value in a number context |
 | `\Alph` | `{counter}` | a counter as an upper-case letter |
 | `\newlength` | `{\name}` | allocates a skip register |
-| `\settowidth` | `{\name}{text}` | sets a length from text measured by the expansion pass's box measurer (an approximation) |
-| `\settoheight` | `{\name}{text}` | sets a length from text height (an approximation, as \settowidth) |
-| `\settodepth` | `{\name}{text}` | sets a length from text depth (an approximation, as \settowidth) |
+| `\settowidth` | `{\name}{text}` | sets a length to the natural width of \hbox{text}, from the fonts' TFM metrics (text; math is not measured yet and is reported) |
+| `\settoheight` | `{\name}{text}` | sets a length to the height of \hbox{text} (as \settowidth) |
+| `\settodepth` | `{\name}{text}` | sets a length to the depth of \hbox{text} (as \settowidth) |
 | `\AtBeginDocument` | `{code}` | stores code that runs at \begin{document} |
 | `\AtEndDocument` | `{code}` | stores code that runs at \end{document} |
 | `\makeatother` |  | makes @ an other character again |

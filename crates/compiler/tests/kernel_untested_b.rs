@@ -201,7 +201,6 @@ fn scriptstyle_is_consumed_without_visible_output() {
     assert_eq!(items[1].font_size_pt, items[0].font_size_pt);
 }
 
-#[ignore = "known bug (supervisor to file issue): `\\settodepth` stores 0pt, no BoxMeasurer wired — `\\newlength{\\mydepth}\\settodepth{\\mydepth}{g}\\the\\mydepth` renders `0.0pt` instead of a positive descender depth"]
 #[test]
 fn settodepth_stores_the_depth_in_a_length_register() {
     let output = compile(r"\newlength{\mydepth}\settodepth{\mydepth}{g}\the\mydepth");
@@ -213,7 +212,6 @@ fn settodepth_stores_the_depth_in_a_length_register() {
     assert!(value > 0.0, "a descender has positive depth: {rendered:?}");
 }
 
-#[ignore = "known bug (supervisor to file issue): `\\settoheight` stores 0pt, no BoxMeasurer wired — `\\newlength{\\myheight}\\settoheight{\\myheight}{Ag}\\the\\myheight` renders `0.0pt` instead of a positive capital height"]
 #[test]
 fn settoheight_stores_the_height_in_a_length_register() {
     let output = compile(r"\newlength{\myheight}\settoheight{\myheight}{Ag}\the\myheight");
@@ -225,7 +223,6 @@ fn settoheight_stores_the_height_in_a_length_register() {
     assert!(value > 0.0, "a capital has positive height: {rendered:?}");
 }
 
-#[ignore = "known bug (supervisor to file issue): `\\settowidth` stores 0pt, no BoxMeasurer wired — `\\newlength{\\mywidth}\\settowidth{\\mywidth}{Hi}\\the\\mywidth` and the `HiHiHi` variant both render `0.0pt` instead of positive, growing widths"]
 #[test]
 fn settowidth_stores_the_width_and_grows_with_the_text() {
     let short = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{Hi}\the\mywidth");

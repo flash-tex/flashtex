@@ -11,6 +11,7 @@
 
 pub mod amssymb;
 pub mod bib;
+mod box_measure;
 pub mod biblatex;
 mod char_table;
 pub mod color;
