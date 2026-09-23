@@ -6,11 +6,13 @@
 //! inner is left and outer is right, so `\ihead` fills the same field as
 //! fancyhdr's `\lhead` and `\ohead` the same as `\rhead`. This layout is
 //! always one-sided (see `fancy_position_slots`), so the adapter maps
-//! inner to slot 0, centre to slot 1, outer to slot 2, and pages shipping
-//! under `scrheadings` stamp the same chrome as `fancy` pages.
+//! inner to slot 0, centre to slot 1, outer to slot 2. The fields are
+//! shared, but the chrome is KOMA's, not fancyhdr's: `scrheadings` draws
+//! no head rule by default and sets headers/footers slanted (the same
+//! face an explicit `\textsl` selects, since Core 14 has no oblique).
 
 use flashtex_compiler::incremental::{compile_full, CompileOutput};
-use flashtex_compiler::layout::{LayoutConstraints, TextItem};
+use flashtex_compiler::layout::{Font, LayoutConstraints, TextItem};
 use flashtex_compiler::parser::parse;
 
 fn compile(text: &str) -> CompileOutput {
@@ -48,10 +50,33 @@ fn words(out: &CompileOutput) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The face each typeset word was set in, in stream order.
+fn word_fonts(out: &CompileOutput) -> Vec<(String, Font)> {
+    out.pages
+        .first()
+        .map(|page| {
+            page.items
+                .iter()
+                .filter(|item| !item.text.is_empty())
+                .map(|item| (item.text.clone(), item.font))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn rule_count(out: &CompileOutput) -> usize {
+    out.pages
+        .first()
+        .map(|page| page.items.iter().filter(|item| item.rule.is_some()).count())
+        .unwrap_or_default()
+}
+
 #[test]
 fn scrheadings_header_matches_fancyhdr_header_layout() {
-    // The acceptance case: inner/centre/outer under `scrheadings` lays out
-    // exactly like left/centre/right under `fancy`.
+    // The acceptance case: inner/centre/outer under `scrheadings` fills
+    // the same slots as left/centre/right under `fancy`. The chrome is
+    // KOMA's, so the oracle is `fancy` with an explicit `\textsl` face and
+    // the head rule removed -- item-identical down to slot coordinates.
     let scr = "\\documentclass{article}\n\
          \\usepackage{scrlayer-scrpage}\n\
          \\pagestyle{scrheadings}\n\
@@ -64,9 +89,10 @@ fn scrheadings_header_matches_fancyhdr_header_layout() {
     let fancy = "\\documentclass{article}\n\
          \\usepackage{fancyhdr}\n\
          \\pagestyle{fancy}\n\
-         \\lhead{Left Field}\n\
-         \\chead{Centre Field}\n\
-         \\rhead{Right Field}\n\
+         \\setlength{\\headrulewidth}{0pt}\n\
+         \\lhead{\\textsl{Left Field}}\n\
+         \\chead{\\textsl{Centre Field}}\n\
+         \\rhead{\\textsl{Right Field}}\n\
          \\begin{document}\n\
          Body text on page one.\n\
          \\end{document}\n";
@@ -93,16 +119,20 @@ fn scrheadings_header_matches_fancyhdr_header_layout() {
         ],
     );
     // Same layout down to slot coordinates: inner sat in the left slot,
-    // outer in the right slot, centre in the centre slot.
+    // outer in the right slot, centre in the centre slot, all slanted with
+    // no head rule.
     assert_eq!(
         page_keys(&scr_out),
         page_keys(&fancy_out),
-        "scrheadings \\ihead/\\chead/\\ohead must lay out like fancyhdr \\lhead/\\chead/\\rhead"
+        "scrheadings \\ihead/\\chead/\\ohead must lay out like slanted rule-free fancyhdr \\lhead/\\chead/\\rhead"
     );
 }
 
 #[test]
 fn scrheadings_footer_matches_fancyhdr_footer_layout() {
+    // Same slot-sharing argument for the footer, against the slanted
+    // oracle (both draw no foot rule by default; the oracle also drops
+    // `fancy`'s head rule, which draws even with empty header fields).
     let scr = "\\documentclass{article}\n\
          \\usepackage{scrlayer-scrpage}\n\
          \\pagestyle{scrheadings}\n\
@@ -115,9 +145,10 @@ fn scrheadings_footer_matches_fancyhdr_footer_layout() {
     let fancy = "\\documentclass{article}\n\
          \\usepackage{fancyhdr}\n\
          \\pagestyle{fancy}\n\
-         \\lfoot{Left}\n\
-         \\cfoot{Centre}\n\
-         \\rfoot{Right}\n\
+         \\setlength{\\headrulewidth}{0pt}\n\
+         \\lfoot{\\textsl{Left}}\n\
+         \\cfoot{\\textsl{Centre}}\n\
+         \\rfoot{\\textsl{Right}}\n\
          \\begin{document}\n\
          Body.\n\
          \\end{document}\n";
@@ -137,7 +168,78 @@ fn scrheadings_footer_matches_fancyhdr_footer_layout() {
     assert_eq!(
         page_keys(&scr_out),
         page_keys(&fancy_out),
-        "scrheadings \\ifoot/\\cfoot/\\ofoot must lay out like fancyhdr \\lfoot/\\cfoot/\\rfoot"
+        "scrheadings \\ifoot/\\cfoot/\\ofoot must lay out like slanted fancyhdr \\lfoot/\\cfoot/\\rfoot"
+    );
+}
+
+#[test]
+fn scrheadings_renders_no_head_rule_and_slanted_headers_unlike_fancy() {
+    // The review finding: `scrheadings` must not alias `fancy`'s chrome.
+    // Real pdflatex draws no head rule under `scrheadings` and sets the
+    // header slanted, where `fancy` draws its 0.4pt rule and stays
+    // upright. Same fields, same body, distinct rendering.
+    let scr = "\\documentclass{article}\n\
+         \\usepackage{scrlayer-scrpage}\n\
+         \\pagestyle{scrheadings}\n\
+         \\ihead{Head Mark}\n\
+         \\ohead{Page \\thepage}\n\
+         \\begin{document}\n\
+         Body text.\n\
+         \\end{document}\n";
+    let fancy = "\\documentclass{article}\n\
+         \\usepackage{fancyhdr}\n\
+         \\pagestyle{fancy}\n\
+         \\lhead{Head Mark}\n\
+         \\rhead{Page \\thepage}\n\
+         \\begin{document}\n\
+         Body text.\n\
+         \\end{document}\n";
+    let scr_out = compile(scr);
+    assert!(
+        scr_out.diagnostics.is_empty(),
+        "scrheadings setup must be silent: {:?}",
+        scr_out.diagnostics
+    );
+    let fancy_out = compile(fancy);
+    assert!(
+        fancy_out.diagnostics.is_empty(),
+        "fancyhdr setup must be silent: {:?}",
+        fancy_out.diagnostics
+    );
+    assert_eq!(scr_out.pages.len(), 1);
+    assert_eq!(fancy_out.pages.len(), 1);
+    // Same content in the same stream order.
+    assert_eq!(words(&scr_out), words(&fancy_out));
+    assert_eq!(
+        words(&scr_out),
+        ["Head", "Mark", "Page", "1", "Body", "text."],
+    );
+    // No head rule under `scrheadings`; the 0.4pt rule under `fancy`.
+    assert_eq!(rule_count(&scr_out), 0, "scrheadings must draw no head rule");
+    assert_eq!(rule_count(&fancy_out), 1, "fancy must draw its head rule");
+    // Slanted headers (including `\thepage`) under `scrheadings`,
+    // upright under `fancy`; the body stays upright in both.
+    assert_eq!(
+        word_fonts(&scr_out),
+        [
+            ("Head".to_string(), Font::TimesItalic),
+            ("Mark".to_string(), Font::TimesItalic),
+            ("Page".to_string(), Font::TimesItalic),
+            ("1".to_string(), Font::TimesItalic),
+            ("Body".to_string(), Font::TimesRoman),
+            ("text.".to_string(), Font::TimesRoman),
+        ],
+    );
+    assert_eq!(
+        word_fonts(&fancy_out),
+        [
+            ("Head".to_string(), Font::TimesRoman),
+            ("Mark".to_string(), Font::TimesRoman),
+            ("Page".to_string(), Font::TimesRoman),
+            ("1".to_string(), Font::TimesRoman),
+            ("Body".to_string(), Font::TimesRoman),
+            ("text.".to_string(), Font::TimesRoman),
+        ],
     );
 }
 

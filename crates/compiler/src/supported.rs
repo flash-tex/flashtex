@@ -624,7 +624,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("vspace", "{dimension}", "ends the paragraph and adds fixed vertical space"),
     ("hrule", "", "full-measure horizontal rule"),
     ("newpage", "", "forces a page break"),
-    ("pagestyle", "{style}", "records a page-style switch per page: fancy and scrheadings ship the fancyhead/fancyfoot fields, every other style renders no headers or footers"),
+    ("pagestyle", "{style}", "records a page-style switch per page: fancy ships the fancyhead/fancyfoot fields upright with the 0.4pt head rule, scrheadings ships the same fields slanted with no head rule, every other style renders no headers or footers"),
     ("noindent", "", "accepted no-op; paragraphs are never indented"),
     ("subsubsection", "{...}", "numbered subsubsection heading; starred form unnumbered"),
     ("paragraph", "{...}", "run-in heading: bold, flush, set into the first line of the paragraph that follows it"),
@@ -739,7 +739,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("newcolumn", "", "multicol: ends the current column of multicols, filling it"),
     ("raggedcolumns", "", "multicol: columns keep their natural height"),
     ("flushcolumns", "", "multicol: columns are stretched to one height (the default)"),
-    ("thispagestyle", "{style}", "records a one-page style switch: fancy and scrheadings ship the fancyhead/fancyfoot fields, every other style renders no headers or footers"),
+    ("thispagestyle", "{style}", "records a one-page style switch: fancy ships the fancyhead/fancyfoot fields upright with the 0.4pt head rule, scrheadings ships the same fields slanted with no head rule, every other style renders no headers or footers"),
     ("pagenumbering", "{style}", "resets the page counter to 1 and selects the \\thepage/\\pageref style (arabic, roman, Roman, alph, Alph); unknown styles fall back to arabic"),
     ("fancyhead", "[pos]{...}", "fancyhdr: sets the header fields for positions L, C, R (combinable with E/O, as in [LE,RO]); empty content clears them"),
     ("fancyfoot", "[pos]{...}", "fancyhdr: sets the footer fields for positions L, C, R (combinable with E/O, as in [LE,RO]); empty content clears them"),
@@ -1687,7 +1687,7 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "scrlayer-scrpage",
         "",
-        "\\pagestyle{scrheadings} ships the same six fields as \\pagestyle{fancy} with the 0.4pt head rule; \\ihead/\\chead/\\ohead and \\ifoot/\\cfoot/\\ofoot set one field each (inner is the left slot and outer the right slot one-sided); options and layers beyond these six commands and the page style are diagnosed where they are used",
+        "\\pagestyle{scrheadings} ships the same six fields as \\pagestyle{fancy} but KOMA's way: no head rule and the slanted pageheadfoot face; \\ihead/\\chead/\\ohead and \\ifoot/\\cfoot/\\ofoot set one field each (inner is the left slot and outer the right slot one-sided); options and layers beyond these six commands and the page style are diagnosed where they are used",
     ),
     (
         "titlesec",

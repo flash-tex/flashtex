@@ -117,9 +117,11 @@ impl PageStyleName {
         }
     }
 
-    /// Whether a page shipping under this style gets fancyhdr's running
-    /// heads and rules: `fancy`, and scrlayer-scrpage's `scrheadings`,
-    /// which fills the same six slots (see `fancy_single_command`).
+    /// Whether a page shipping under this style gets the six running-head
+    /// slots: `fancy`, and scrlayer-scrpage's `scrheadings`, which fills
+    /// the same six slots (see `fancy_single_command`) but renders them
+    /// KOMA's way -- no head or foot rule, slanted `pageheadfoot` face
+    /// (see `layout::LayoutCursor::stamp_fancy_chrome`).
     pub fn ships_fancy_chrome(&self) -> bool {
         matches!(self, PageStyleName::Fancy | PageStyleName::Scrheadings)
     }

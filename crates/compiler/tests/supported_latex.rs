@@ -94,9 +94,9 @@ fn arm_line(line: &str) -> Option<ArmLine> {
         let end = rest.find('"')?;
         let name = &rest[..end];
         // A control-word arm is letters only; a package arm may carry a
-        // digit (`CJKutf8`, `\usepackage{CJKutf8}`), never as its first
-        // character.
-        if name.is_empty() || !name.starts_with(|c: char| c.is_ascii_alphabetic()) || !name.chars().all(|c| c.is_ascii_alphanumeric()) {
+        // digit (`CJKutf8`, `\usepackage{CJKutf8}`) or a hyphen
+        // (`scrlayer-scrpage`), never as its first character.
+        if name.is_empty() || !name.starts_with(|c: char| c.is_ascii_alphabetic()) || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
             return None;
         }
         names.push(name.to_string());
