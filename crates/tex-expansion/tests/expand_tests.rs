@@ -291,6 +291,46 @@ fn ifthenelse_inside_macro_body() {
 }
 
 #[test]
+fn ifthenelse_numeric_comparison() {
+    // The ifthen `<number> <relation> <number>` test: counters via
+    // \value, plain constants, and register operands.
+    assert_eq!(run(r"\newcounter{sec}\setcounter{sec}{2}\ifthenelse{\value{sec} < 3}{YES}{NO}"), "YES");
+    assert_eq!(run(r"\newcounter{sec}\setcounter{sec}{3}\ifthenelse{\value{sec} < 3}{YES}{NO}"), "NO");
+    assert_eq!(run(r"\newcounter{sec}\setcounter{sec}{3}\ifthenelse{\value{sec} = 3}{YES}{NO}"), "YES");
+    assert_eq!(run(r"\ifthenelse{3 < 5}{YES}{NO}"), "YES");
+    assert_eq!(run(r"\ifthenelse{5 > 7}{YES}{NO}"), "NO");
+}
+
+#[test]
+fn whiledo_counts_up() {
+    // Acceptance: each iteration's body is typeset in sequence while the
+    // counter increments, with no "unimplemented \whiledo" diagnostic
+    // (`run` fails on any diagnostic).
+    assert_eq!(run(r"\newcounter{i}\setcounter{i}{0}\whiledo{\value{i} < 3}{\arabic{i}\stepcounter{i}}"), "012");
+}
+
+#[test]
+fn whiledo_false_at_once_emits_nothing() {
+    assert_eq!(run(r"\newcounter{i}\setcounter{i}{5}\whiledo{\value{i} < 3}{X}"), "");
+}
+
+#[test]
+fn whiledo_reevaluates_non_numeric_tests() {
+    // The test is re-expanded every iteration, not just once.
+    assert_eq!(
+        run(r"\newcounter{i}\setcounter{i}{0}\whiledo{\NOT{\equal{\arabic{i}}{3}}}{\arabic{i}\stepcounter{i}}"),
+        "012"
+    );
+}
+
+#[test]
+fn whiledo_infinite_loop_is_diagnosed() {
+    let (out, diags) = run_allow_diag(r"\whiledo{\equal{a}{a}}{x}");
+    assert_eq!(diags, 1);
+    assert_eq!(out, "x".repeat(10_000));
+}
+
+#[test]
 fn catcode_and_makeatletter() {
     assert_eq!(run(r"\makeatletter\def\foo@bar{X}\foo@bar\makeatother"), "X");
 }

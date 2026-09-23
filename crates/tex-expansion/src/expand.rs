@@ -330,6 +330,7 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("ifthenelse", Primitive::Ifthenelse),
     ("newboolean", Primitive::NewBoolean),
     ("setboolean", Primitive::SetBoolean),
+    ("whiledo", Primitive::Whiledo),
     ("count", Primitive::Count),
     ("dimen", Primitive::Dimen),
     ("skip", Primitive::Skip),
@@ -2660,6 +2661,10 @@ impl Engine {
             }
             SetBoolean => {
                 self.do_setboolean(tok.span);
+                Step::Continue
+            }
+            Whiledo => {
+                self.do_whiledo(tok.span);
                 Step::Continue
             }
             Count | Dimen | Skip | Toks => {
@@ -6091,12 +6096,48 @@ impl Engine {
         self.push_tokens(if truth { true_branch } else { false_branch });
     }
 
+    /// The `ifthen` package's `\whiledo{test}{body}`: evaluate `test`
+    /// with the shared `\ifthenelse` test parser, and while it holds,
+    /// expand one `body` copy and re-evaluate. Each iteration's body is
+    /// expanded eagerly (assignments like `\stepcounter` execute before
+    /// the next test, as with the chosen `\ifthenelse` branch spliced
+    /// back into the input). Capped so a test that never turns false
+    /// is diagnosed instead of hanging the IDE.
+    fn do_whiledo(&mut self, span: Span) {
+        let test = self.scan_braced_group(false);
+        let body = self.scan_braced_group(false);
+        let mut out = Vec::new();
+        for _ in 0..WHILEDO_MAX_ITERATIONS {
+            if !self.eval_test_group(test.clone(), span) {
+                self.push_tokens(out);
+                return;
+            }
+            out.extend(self.expand_fully(body.clone(), false));
+        }
+        self.err(
+            format!(
+                "\\whiledo loop did not terminate within {} iterations; loop aborted.",
+                WHILEDO_MAX_ITERATIONS
+            ),
+            span,
+        );
+        self.push_tokens(out);
+    }
+
     /// Evaluate already-scanned raw test tokens as an `\ifthenelse` test.
     /// The tokens are evaluated on a temporary input source which is
     /// discarded afterwards, so trailing spaces or macro-expansion
     /// leftovers never leak into the surrounding stream (the same
     /// sandboxing pattern as `scan_counter_value_arg`).
-    fn eval_test_group(&mut self, test: Vec<Token>, span: Span) -> bool {
+    fn eval_test_group(&mut self, mut test: Vec<Token>, span: Span) -> bool {
+        // A test that does not end on a `}` (the numeric `<number>
+        // <relation> <number>` comparison) would otherwise peek past the
+        // end of these tokens into live input -- and the peeked token is
+        // pushed back onto a temporary source this function pops,
+        // silently eating live input. Terminate with `\relax` (the same
+        // sandboxing pattern as `eval_number_group`/`eval_lengthtest`)
+        // so every scan stops inside the test.
+        test.push(Token::synthetic(TokenKind::ControlSequence("relax".into())));
         self.prune_exhausted();
         let depth = self.sources.len();
         self.push_tokens(test);
@@ -6130,18 +6171,32 @@ impl Engine {
                 return self.eval_test_group(if truth { t_branch } else { f_branch }, t.span);
             }
         }
-        let tok = match self.next_expanding_raw() {
-            Some(p) => p.tok,
+        let pending = match self.next_expanding_raw() {
+            Some(p) => p,
             None => {
                 self.err("Missing test for \\ifthenelse.", span);
                 return false;
             }
         };
+        let tok = pending.tok.clone();
+        if tok.is_cs("relax") && tok.span.is_synthetic() {
+            // The sandbox terminator (see `eval_test_group`): the test
+            // was empty.
+            self.err("Missing test for \\ifthenelse.", span);
+            return false;
+        }
         let name = match &tok.kind {
             TokenKind::ControlSequence(n) => n.clone(),
             _ => {
-                self.err("Missing test for \\ifthenelse.", tok.span);
-                return false;
+                // Anything else may open a `<number> <relation> <number>`
+                // comparison (`3 < 5`); only what cannot is still a
+                // missing test.
+                if !self.ifthen_starts_number(&tok) {
+                    self.err("Missing test for \\ifthenelse.", tok.span);
+                    return false;
+                }
+                self.push_pending(vec![pending]);
+                return self.eval_numeric_test();
             }
         };
         match name.as_str() {
@@ -6174,10 +6229,58 @@ impl Engine {
             "lengthtest" => self.eval_lengthtest(),
             "boolean" => self.eval_boolean(&tok),
             _ => {
+                // An unknown control sequence may still open a numeric
+                // comparison (`\value{i} < 3` arrives here as `\c@i`; so
+                // do `\count` registers and `\chardef` constants).
+                if self.ifthen_starts_number(&tok) {
+                    self.push_pending(vec![pending]);
+                    return self.eval_numeric_test();
+                }
                 self.err(format!("Unknown test `\\{name}' in \\ifthenelse."), tok.span);
                 false
             }
         }
+    }
+
+    /// Whether `tok` (already expanded) can open an ifthen numeric
+    /// comparison: a constant-starting character, or a control sequence
+    /// whose meaning `scan_number` accepts as a `<number>`.
+    fn ifthen_starts_number(&self, tok: &Token) -> bool {
+        match &tok.kind {
+            TokenKind::Char(c, _) => matches!(c, '0'..='9' | '\'' | '"' | '`' | '+' | '-'),
+            TokenKind::ControlSequence(_) | TokenKind::ActiveChar(_) => {
+                match self.meaning_of_token(tok) {
+                    Meaning::RegisterAlias(
+                        RegisterKind::Count | RegisterKind::Dimen | RegisterKind::Skip,
+                        _,
+                    ) => true,
+                    Meaning::CharDef(_) | Meaning::MathCharDef(_) => true,
+                    Meaning::Primitive(p) => matches!(
+                        p,
+                        Primitive::Count
+                            | Primitive::Dimen
+                            | Primitive::Numexpr
+                            | Primitive::Dimexpr
+                            | Primitive::IntPar(_)
+                            | Primitive::Catcode
+                            | Primitive::Uccode
+                            | Primitive::Lccode
+                    ),
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// The ifthen package's numeric test `<number> <relation> <number>`
+    /// (e.g. `\value{i} < 3`): scanned with `\ifnum`'s machinery, so
+    /// registers, `\value{...}` and user macros work as operands.
+    fn eval_numeric_test(&mut self) -> bool {
+        let a = self.scan_number();
+        let rel = self.scan_relation("ifthenelse");
+        let b = self.scan_number();
+        apply_relation(a, b, rel)
     }
 
     /// Read a `{...}` group and scan it as a `<number>` on a temporary
@@ -6455,6 +6558,7 @@ fn meaning_is_expandable(m: &Meaning, expand_only: bool) -> bool {
                 | Fi
                 | Unless
                 | Ifthenelse
+                | Whiledo
                 | Value
                 | Arabic
                 | RomanLower
@@ -6641,6 +6745,7 @@ fn primitive_name(p: Primitive) -> &'static str {
         Ifthenelse => "ifthenelse",
         NewBoolean => "newboolean",
         SetBoolean => "setboolean",
+        Whiledo => "whiledo",
         Count => "count",
         Dimen => "dimen",
         Skip => "skip",
@@ -6712,6 +6817,12 @@ fn primitive_name(p: Primitive) -> &'static str {
         IntPar(IntParam::Font) => "flashtex@font",
     }
 }
+
+/// Safety cap on the iterations of a single `\whiledo` loop: a test that
+/// never turns false is diagnosed instead of hanging the IDE. (The
+/// engine's global step and output limits still bound
+/// pathological-but-terminating loops.)
+const WHILEDO_MAX_ITERATIONS: usize = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Relation {

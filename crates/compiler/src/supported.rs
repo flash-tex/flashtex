@@ -1697,7 +1697,7 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "ifthen",
         "",
-        "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used",
+        "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest, \\boolean and numeric-comparison tests, \\whiledo loops over the same tests, and \\newif conditionals with \\newboolean/\\setboolean",
     ),
     (
         "csquotes",

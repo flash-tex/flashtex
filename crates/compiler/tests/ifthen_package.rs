@@ -1,6 +1,7 @@
-//! Issue #521: the `ifthen` package's conditionals (`\ifthenelse`, `\newif`
-//! switches) run in the expansion pass, so a document using them directly in
-//! the body must compile with no `unsupported_feature` diagnostic.
+//! Issue #521: the `ifthen` package's conditionals (`\ifthenelse`,
+//! `\whiledo`, `\newif` switches) run in the expansion pass, so a document
+//! using them directly in the body must compile with no
+//! `unsupported_feature` diagnostic.
 
 use flashtex_compiler::json::{self, Value};
 use flashtex_compiler::protocol::handle_line;
@@ -48,6 +49,25 @@ fn messages(diags: &[Value]) -> Vec<(String, String, String)> {
 #[test]
 fn ifthenelse_and_newif_in_the_body_are_supported() {
     let diags = compile("ifthen2.tex", REPRO);
+    let found = messages(&diags);
+    let unsupported: Vec<_> = found
+        .iter()
+        .filter(|(_, code, _)| code == "unsupported_feature")
+        .collect();
+    assert!(
+        unsupported.is_empty(),
+        "unsupported_feature diagnostics remain: {unsupported:?} (all: {found:?})"
+    );
+    let errors: Vec<_> = found.iter().filter(|(sev, _, _)| sev == "error").collect();
+    assert!(errors.is_empty(), "error diagnostics remain: {errors:?} (all: {found:?})");
+}
+
+#[test]
+fn whiledo_loop_in_the_body_is_supported() {
+    let diags = compile(
+        "whiledo.tex",
+        "\\documentclass{article}\n\\usepackage{ifthen}\n\\begin{document}\n\\newcounter{i}\\setcounter{i}{0}\n\\whiledo{\\value{i} < 3}{\\arabic{i}\\stepcounter{i}}\n\\end{document}\n",
+    );
     let found = messages(&diags);
     let unsupported: Vec<_> = found
         .iter()

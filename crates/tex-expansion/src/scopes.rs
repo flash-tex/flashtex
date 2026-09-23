@@ -161,6 +161,9 @@ pub enum Primitive {
     /// The `ifthen` package's `\newboolean{name}` / `\setboolean{name}`.
     NewBoolean,
     SetBoolean,
+    /// The `ifthen` package's `\whiledo{test}{body}`: expansion-time
+    /// loop over the `\ifthenelse` tests, with an iteration cap.
+    Whiledo,
     Count,
     Dimen,
     Skip,
