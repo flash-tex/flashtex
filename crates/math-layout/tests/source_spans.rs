@@ -91,6 +91,7 @@ fn tag_everything(list: &mut MathList, next: &mut usize) {
                 }
             }
             Nucleus::SubArray { rows, .. } => rows.iter_mut().for_each(|r| tag_everything(r, next)),
+            Nucleus::Choice(lists) => lists.iter_mut().for_each(|l| tag_everything(l, next)),
             Nucleus::ExtArrow { above, below, .. } => {
                 tag_everything(above, next);
                 tag_everything(below, next);

@@ -968,6 +968,12 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["mathchoice"],
+        "{display}{text}{script}{scriptscript}",
+        "TeX primitive: sets the one of its four math lists that matches the current math style",
+        true,
+    ),
+    (
         &["phantom", "hphantom", "vphantom"],
         "{x}",
         "empty box with the width and/or height and depth of the argument",

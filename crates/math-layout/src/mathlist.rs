@@ -258,6 +258,13 @@ pub enum Nucleus {
         style: crate::style::Style,
         body: MathList,
     },
+    /// `\mathchoice{D}{T}{S}{SS}` (tex.web §1174): four lists in the order
+    /// display, text, script, scriptscript. `mlist_to_hlist` replaces the
+    /// choice with the list for the style it is in and splices that list's
+    /// atoms into the enclosing one (§731), so they take part in its spacing.
+    /// A choice carrying scripts (which TeX would give to a new empty noad)
+    /// is boxed as an ordinary atom instead.
+    Choice(Box<[MathList; 4]>),
     /// `\hat{base}` and friends; `accent` is the accent symbol.
     Accent { accent: char, base: MathList },
     /// `\left l body \right r`. `None` is a null delimiter.
