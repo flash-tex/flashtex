@@ -5,13 +5,16 @@
 //!
 //! Pins, against the pipeline's own documented geometry (article 10pt:
 //! `\textwidth` 345pt, `\columnsep` 10pt, `\footnoterule` `0.4\columnwidth`;
-//! no TeX runs here):
+//! `\footskip` 30pt) and pdflatex-measured page-foot positions (MacTeX 2026,
+//! `NOTE_BL_BP`/`RULE_TOP_BP` below; no TeX runs here):
 //! * zero `multicol` diagnostics;
 //! * the body in two column bands (wrapped lines starting at the left
 //!   margin and one column plus one `\columnsep` right of it, everything
 //!   inside `\textwidth`);
-//! * the note on one full-width line below the body (too long to fit a
-//!   column width without wrapping), under a full-width-fraction rule.
+//! * the note on one full-width line at the page foot (too long to fit a
+//!   column width without wrapping): one `\footskip` above the page-number
+//!   footer, at the pdflatex-measured baseline, under a
+//!   full-width-fraction rule.
 
 mod common;
 
@@ -21,6 +24,13 @@ const PT_TO_BP: f64 = 72.0 / 72.27;
 const TEXTWIDTH_BP: f64 = 345.0 * PT_TO_BP;
 const COL_STEP_BP: f64 = (167.5 + 10.0) * PT_TO_BP;
 const RULE_BP: f64 = 0.4 * 345.0 * PT_TO_BP;
+const FOOTSKIP_BP: f64 = 30.0 * PT_TO_BP;
+/// pdflatex page-foot positions for `INNER_DOC` (paper-top bp, pyMuPDF
+/// `origin`/`drawings` on MacTeX 2026 output): the note baseline and the
+/// `\footnoterule` top. `OUTER_DOC` shares the page geometry and its note
+/// is the same single line, so the same baseline applies.
+const NOTE_BL_BP: f64 = 672.70;
+const RULE_TOP_BP: f64 = 663.24;
 
 const INNER_DOC: &str = r"\documentclass{article}
 \usepackage{multicol}
@@ -110,10 +120,28 @@ fn check_columns_and_foot(r: &flashtex_render_pipeline::Rendered) {
         );
     }
 
-    // The note below the body, past the `\@makefntext` mark box (1.8em).
+    // The page-foot anchor (the LaTeX footnote invariant): the note's
+    // baseline sits at the bottom of the text area — one `\footskip` above
+    // the page-number footer and at the pdflatex-measured page-foot
+    // baseline — not right under wherever the column body happens to end.
+    // ("Below the body" alone is too weak: it passes with the note stapled
+    // to the body's natural bottom, ~460bp above the foot.)
     assert!(
         note_bl > body_bottom,
         "note not below the body: {note_bl} vs {body_bottom}"
+    );
+    let footer = words
+        .iter()
+        .find(|w| w.text == "1" && w.baseline > note_bl + 1.0)
+        .unwrap_or_else(|| panic!("no page-number footer below the note ({note_bl})"));
+    assert!(
+        (footer.baseline - note_bl - FOOTSKIP_BP).abs() <= 0.5,
+        "note not at the page foot: note {note_bl}, footer {}",
+        footer.baseline
+    );
+    assert!(
+        (note_bl - NOTE_BL_BP).abs() <= 0.5,
+        "note baseline off the pdflatex page foot: {note_bl} vs {NOTE_BL_BP}"
     );
     assert!(
         (note[0].x - left) >= 10.0 && (note[0].x - left) <= 20.0,
@@ -140,6 +168,10 @@ fn check_columns_and_foot(r: &flashtex_render_pipeline::Rendered) {
     assert!(
         rule.1 > body_bottom && rule.1 < note_bl,
         "rule not between body and note: {rule:?}"
+    );
+    assert!(
+        (rule.1 - RULE_TOP_BP).abs() <= 0.5,
+        "rule not at the pdflatex page foot: {rule:?} vs {RULE_TOP_BP}"
     );
 }
 

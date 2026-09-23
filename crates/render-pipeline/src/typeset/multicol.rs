@@ -2186,12 +2186,13 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
 
 /// Each [`paginate`] page's footnote area for `footnotes::place`: the
 /// notes anchored on the page's lines, in page order, under `\skip\footins`
-/// and the `\footnoterule`, stacked at their natural size. The columns
-/// above are already set (a balanced ending is short, so the notes land in
-/// the leftover space, as in pdflatex); a full page of columns keeps its
-/// height and the notes staple below it. A note whose anchor line is on no
-/// page (only when the machine dropped material) joins the last page.
-pub(super) fn footnote_areas(pages: &[BuiltPage], ins: &Insertions) -> Vec<Option<InsertArea>> {
+/// and the `\footnoterule`, stacked at their natural size and anchored at
+/// the page foot (`vsize`, the page's own bottom margin): the fill between
+/// the column body and the notes is `pagebuild::make_column`'s `\vfil`
+/// shift, so a balanced ending that stops high still reads its notes at
+/// the foot, as in pdflatex. A note whose anchor line is on no page (only
+/// when the machine dropped material) joins the last page.
+pub(super) fn footnote_areas(pages: &[BuiltPage], ins: &Insertions, vsize: f64) -> Vec<Option<InsertArea>> {
     let mut seen = std::collections::HashSet::new();
     let mut areas: Vec<Option<InsertArea>> = Vec::with_capacity(pages.len());
     for page in pages {
@@ -2205,7 +2206,7 @@ pub(super) fn footnote_areas(pages: &[BuiltPage], ins: &Insertions) -> Vec<Optio
                 }
             }
         }
-        areas.push(area_of(page, &notes, ins));
+        areas.push(area_of(page, &notes, ins, vsize));
     }
     // Stragglers: anchored notes on no page.
     let rest: Vec<&Vec<VItem>> = ins
@@ -2222,17 +2223,22 @@ pub(super) fn footnote_areas(pages: &[BuiltPage], ins: &Insertions) -> Vec<Optio
                     append_notes(&mut area, &rest);
                     Some(area)
                 }
-                None => area_of(page, &rest, ins),
+                None => area_of(page, &rest, ins, vsize),
             };
         }
     }
     areas
 }
 
-/// The footnote area under `page`'s own material for `notes` (`None` when
-/// the page has no note of its own), mirroring `pagebuild::make_column`'s
-/// note pass at its natural glue setting.
-fn area_of(page: &BuiltPage, notes: &[&Vec<VItem>], ins: &Insertions) -> Option<InsertArea> {
+/// The footnote area for `page`'s own `notes` (`None` when the page has no
+/// note of its own): `\skip\footins`, the `\footnoterule` and the notes at
+/// their natural glue setting, then the whole area shifted down so the
+/// last note baseline lands on `vsize` — mirroring `pagebuild::make_column`
+/// pass 2, whose `\vfil` absorbs `vsize - natural` before the skip (a short
+/// page's ratio is 0 there, so the skip and notes keep natural size here
+/// too). An overfull page (`natural > vsize`, which `make_column` shrinks)
+/// keeps shift 0: the notes staple below the body.
+fn area_of(page: &BuiltPage, notes: &[&Vec<VItem>], ins: &Insertions, vsize: f64) -> Option<InsertArea> {
     if notes.iter().all(|v| v.is_empty()) {
         return None;
     }
@@ -2273,6 +2279,14 @@ fn area_of(page: &BuiltPage, notes: &[&Vec<VItem>], ins: &Insertions) -> Option<
                 area_d = 0.0;
             }
             VItem::Penalty(_) => {}
+        }
+    }
+    // Anchor at the page foot: the fill `make_column`'s `\vfil` would hold.
+    let shift = (vsize - y).max(0.0);
+    if shift > 0.0 {
+        area.rule_top += shift;
+        for l in &mut area.lines {
+            l.baseline += shift;
         }
     }
     Some(area)

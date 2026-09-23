@@ -12011,7 +12011,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
         // The region bodies' anchors are adopted now: prepare every note at
         // full width and set the anchored ones at the page foot.
         if let Some(ins) = footnotes::prepare(ctx, &mut blocks, &params, footnote_split) {
-            let areas = multicol::footnote_areas(&b, &ins);
+            let areas = multicol::footnote_areas(&b, &ins, params.vsize);
             footnotes::place(ctx, &mut blocks, &mut b, areas, footnote_split);
         }
         (b, Vec::new(), Vec::new())
