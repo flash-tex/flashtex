@@ -2132,6 +2132,28 @@ impl MathParser<'_> {
         }
     }
 
+    /// An amsmath variant capital (`\varGamma`..`\varOmega`): the declared
+    /// row's text and class once the package is loaded, else the
+    /// missing-package diagnostic pdflatex's "Undefined control sequence"
+    /// becomes here. A separate method (not an inline arm) so `command_atom`
+    /// — which `\frac` recurses through past the depth the robustness suite
+    /// calibrates — keeps its stack frame.
+    fn var_greek_atom(&mut self, name: &str, span: Span) -> MathAtom {
+        if !self.packages.amsmath {
+            return self.missing_package(name, "amsmath", span);
+        }
+        let row = crate::math_symbols::declarations(name)
+            .find(|s| s.provider == crate::math_symbols::Provider::Amsmath)
+            .expect("varGamma..varOmega are amsmath declarations");
+        // Base-14 has no glyph for these texts (U+1D6E4..U+1D6FA), so shaping
+        // them would only warn and paint .notdef: box the declared cmmi10
+        // advance instead, as `ams_atom` does with the msam/msbm advance.
+        MathAtom {
+            width_em: Some(row.width_em),
+            ..declared_atom(row, span)
+        }
+    }
+
     /// `\mkern`/`\mskip`'s `<mu glue>`: an optional sign, a decimal number
     /// and the unit `mu`, then optional `plus`/`minus` stretch and shrink
     /// (each read and dropped). The lexer has already split the source
@@ -3429,6 +3451,17 @@ impl MathParser<'_> {
                 width_em: Some(VARNOTHING_MSBM_EM),
                 ..symbol("∅".into(), span)
             },
+            // amsmath.sty 385-395: `\varGamma`..`\varOmega` are
+            // `\DeclareMathSymbol{...}{\mathord}{letters}{"00}`.."0A} — the
+            // CMMI10 italic capitals at slots 0x00-0x0A. Base LaTeX2e defines
+            // none of the eleven, so without the package pdflatex answers
+            // "Undefined control sequence" (measured, TeX Live 2026). The
+            // lookup lives in `var_greek_atom` rather than inline so this
+            // dispatch — which `\frac` recurses through — keeps its frame.
+            "varGamma" | "varDelta" | "varTheta" | "varLambda" | "varXi" | "varPi"
+            | "varSigma" | "varUpsilon" | "varPhi" | "varPsi" | "varOmega" => {
+                self.var_greek_atom(&name, span)
+            }
             "hat" => self.accent_atom(Accent::Hat, span),
             "bar" => self.accent_atom(Accent::Bar, span),
             "vec" => self.accent_atom(Accent::Vec, span),
