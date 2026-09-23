@@ -468,6 +468,18 @@ pub(crate) fn expansion_command_names() -> impl Iterator<Item = &'static str> {
 
 /// (name, arguments, description) for every `parser::BUILT_INS` entry that
 /// renders, plus the lexer's `\\`.
+/// The braced arguments a text-mode command takes, from its signature in
+/// [`TEXT_COMMANDS`] (`{key}`, `[options]{number}` -> 1; `{...}{...}` -> 2).
+/// The expansion engine reads a host command's arguments as absorbed
+/// (nothing inside starts a paragraph), the way the macro would.
+pub(crate) fn braced_arity(name: &str) -> u8 {
+    TEXT_COMMANDS
+        .iter()
+        .find(|(n, _, _)| *n == name)
+        .map(|(_, signature, _)| signature.matches('{').count().min(9) as u8)
+        .unwrap_or(0)
+}
+
 const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("documentclass", "[options]{class}", "records the class and its 10pt/11pt/12pt size option; only the document body is typeset"),
     ("NeedsTeXFormat", "{format}[date]", "accepted no-op; the format requirement is metadata with no visible output"),
@@ -568,6 +580,13 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("beamertemplatenavigationsymbolsempty", "", "beamer: removes the navigation symbol strip the renderer draws at the bottom right of every non-plain frame page; needs \\documentclass{beamer}"),
     ("column", "{width}", "beamer column inside columns: a minipage of the given width (.5\\textwidth, 4cm) set beside the others; optional [c|t|T|b] alignment; needs \\documentclass{beamer}"),
     ("label", "{key}", "names the current section, equation or figure number"),
+    ("endgraf", "", "plain.tex \\let\\endgraf\\par: ends the paragraph; unlike the \\par token it is not what a short macro's runaway check rejects"),
+    ("parbox", "[position][height][inner-position]{width}{text}", "a box of the given width set flush left on one line (ltboxes.dtx \\parbox); text longer than the width overflows instead of wrapping"),
+    ("makebox", "[width][position]{text}", "a box of the given width (natural width without one) with the text placed by position l/c/r/s (ltboxes.dtx \\makebox)"),
+    ("llap", "{text}", "plain.tex \\llap: a zero-width box with the text hanging to the left of the current point"),
+    ("rlap", "{text}", "plain.tex \\rlap: a zero-width box with the text hanging to the right of the current point"),
+    ("unskip", "", "removes the glue before it; a source blank before a command never becomes glue here, so it is accepted as a no-op"),
+    ("relsize", "{steps}", "relsize.sty: the current size scaled by 1.2 to the signed power, rounded to the nearest class size; needs \\usepackage{relsize}"),
     ("ref", "{key}", "number of the labelled item"),
     ("pageref", "{key}", "page number of the labelled item, in the \\pagenumbering style in force at the label"),
     ("thepage", "", "current page's number, resolved when the page is set, in the \\pagenumbering style in force here"),

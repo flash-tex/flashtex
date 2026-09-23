@@ -606,7 +606,7 @@ pub fn cite_inlines(
 /// breaks inside a label and its blanks keep their natural width; the
 /// breaks are the `\penalty\@m` between labels and the blank after `,`.
 fn label_box(run: Inline, span: Span) -> Inline {
-    Inline::HBox(Box::new(HBox { content: vec![run], span, space_before: false }))
+    Inline::HBox(Box::new(HBox { content: vec![run], span, space_before: false, width_pt: None, align: crate::parser::BoxAlign::default() }))
 }
 
 /// The kernel's `\@citea` between two labels, `,\penalty\@m\ ` (latex.ltx

@@ -133,37 +133,22 @@ fn expansion_commands_are_known_without_the_unimplemented_list() {
 }
 
 #[test]
-fn llap_and_rlap_are_known_unimplemented_not_flat_typos() {
-    // Issue #835: `\llap`/`\rlap` are real kernel commands (zero-width
-    // boxes overhanging left/right), so the typo suggester must not offer
-    // `\flat`. They stay listed as unimplemented until a real
-    // implementation lands.
+fn llap_and_rlap_are_implemented_so_they_are_known_without_the_unimplemented_list() {
+    // Issue #835 kept `\llap`/`\rlap` (real kernel commands: zero-width
+    // boxes overhanging left/right) listed as unimplemented so the typo
+    // suggester never offered `\flat`. They are set now (a zero-width
+    // `HBox` aligned right/left), so the listing must go and the names
+    // stay known; a use reports nothing.
     for name in ["llap", "rlap"] {
         assert!(is_known_command(name), "{name}");
         assert!(
-            is_listed_as_unimplemented(name),
-            "{name} must stay listed as unimplemented until it is implemented"
+            !is_listed_as_unimplemented(name),
+            "{name} must not be listed as unimplemented once it is implemented"
         );
         let parsed = parse(&format!(
             "\\documentclass{{article}}\\begin{{document}}\\{name}{{x}}y\\end{{document}}",
         ));
-        assert_eq!(
-            parsed.diagnostics.len(),
-            1,
-            "{name}: {:?}",
-            parsed.diagnostics
-        );
-        let diag = &parsed.diagnostics[0];
-        assert_eq!(diag.code, Some(DiagnosticCode::UnsupportedFeature));
-        assert_eq!(
-            diag.message,
-            format!("\\{name} is not supported by this compiler version")
-        );
-        assert!(
-            diag.help.is_none(),
-            "{name}: no misleading suggestion, got {:?}",
-            diag.help
-        );
+        assert!(parsed.diagnostics.is_empty(), "{name}: {:?}", parsed.diagnostics);
     }
 }
 

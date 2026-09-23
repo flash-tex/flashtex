@@ -1,0 +1,30 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\begin{document}
+
+Body text before the algorithm, at the full measure.
+
+\begin{algorithm}[H]
+\SetKwInOut{Input}{Input}\SetKwInOut{Output}{Output}
+\SetKwFunction{Merge}{Merge}
+\SetKwData{Best}{best}
+\Input{A sequence $a_1, \dots, a_n$ and a bound $k$}
+\Output{The value \Best}
+\Best $\gets$ $-\infty$\;
+\For{$i \gets 1$ \KwTo $n$}{
+  \eIf{$a_i > k$}{
+    \Best $\gets$ \Merge{\Best, $a_i$}\tcp*{keep the larger}
+  }{
+    \While{$a_i < 0$}{
+      $a_i \gets a_i + k$\;
+    }
+  }
+}
+\Return \Best\;
+\caption{A bounded merge}
+\end{algorithm}
+
+Body text after the algorithm.
+\end{document}

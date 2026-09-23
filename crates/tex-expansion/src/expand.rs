@@ -23,7 +23,7 @@ use crate::macro_def::{BodyPart, MacroDef, MacroFlags, ParamPart};
 use crate::package_defs::{DefinitionCapture, DefinitionKind, PackageDefinition};
 use crate::prelude::PRELUDE;
 use crate::registers::{absolute_unit_sp_per_unit, scale_decimal, scale_internal_dimen, DefaultFontMetrics, FontMetrics, FontSwitch, Glue};
-use crate::scopes::{IntParam, Meaning, Primitive, RegisterKind, Scopes};
+use crate::scopes::{BoxDimen, IntParam, Meaning, Primitive, RegisterKind, Scopes};
 use crate::span::Span;
 use crate::token::{Token, TokenKind};
 
@@ -361,6 +361,29 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("vskip", Primitive::Vskip),
     ("kern", Primitive::Kern),
     ("penalty", Primitive::Penalty),
+    ("hrule", Primitive::Rule(false)),
+    ("vrule", Primitive::Rule(true)),
+    ("setbox", Primitive::Setbox),
+    ("box", Primitive::BoxUse(false)),
+    ("copy", Primitive::BoxUse(true)),
+    ("unhbox", Primitive::UnboxUse(false)),
+    ("unvbox", Primitive::UnboxUse(false)),
+    ("unhcopy", Primitive::UnboxUse(true)),
+    ("unvcopy", Primitive::UnboxUse(true)),
+    ("wd", Primitive::BoxDimen(BoxDimen::Width)),
+    ("ht", Primitive::BoxDimen(BoxDimen::Height)),
+    ("dp", Primitive::BoxDimen(BoxDimen::Depth)),
+    ("newbox", Primitive::Newbox),
+    ("newsavebox", Primitive::Newbox),
+    ("sbox", Primitive::Sbox),
+    ("savebox", Primitive::Savebox),
+    ("usebox", Primitive::Usebox),
+    ("flashtex@lrboxbegin", Primitive::LrboxBegin),
+    ("flashtex@lrboxend", Primitive::LrboxEnd),
+    ("flashtex@everyparend", Primitive::EveryparEnd),
+    ("flashtex@rawgroup", Primitive::RawGroup),
+    ("flashtex@rawopen", Primitive::RawBrace(true)),
+    ("flashtex@rawclose", Primitive::RawBrace(false)),
     ("newcommand", Primitive::NewCommand),
     ("renewcommand", Primitive::RenewCommand),
     ("providecommand", Primitive::ProvideCommand),
@@ -397,6 +420,7 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("setkeys", Primitive::SetKeys),
     ("flashtexsetlist", Primitive::FlashtexSetlist),
     ("flashtexhspace", Primitive::FlashtexHspace),
+    ("flashtexparbox", Primitive::FlashtexParbox),
     ("flashtexvspace", Primitive::FlashtexVspace),
     ("verb", Primitive::Verb),
     ("flashtex@stop", Primitive::StopInput),
@@ -546,6 +570,50 @@ pub struct Engine {
     /// A definer read from a package file at its outermost level is
     /// running: what it defines is recorded (`package_defs.rs`).
     pub(crate) capture: Option<DefinitionCapture>,
+    /// Box registers being set (`\setbox`/`\sbox`/`lrbox`), innermost
+    /// last: everything the main loop emits goes into the top capture
+    /// instead of the output until its group closes (see
+    /// [`Engine::observe_output`]).
+    box_captures: Vec<BoxCapture>,
+    /// Output tokens still to pass through untouched by the captures'
+    /// bookkeeping: a `\box`/`\copy` replay of a register's content is
+    /// already-typeset material, so it neither starts a paragraph nor
+    /// counts towards a capture's group depth.
+    replay_remaining: usize,
+    /// `\wd\foo=<dimen>` assignments, shadowing the measured value.
+    box_dimen_overrides: HashMap<(u16, BoxDimen), i64>,
+    /// An `lrbox` just closed: its register and content, assigned by the
+    /// `\endgroup` that ends the environment (see `LrboxEnd`).
+    pending_lrbox: Option<(u16, Vec<Token>)>,
+    /// Braced arguments the host's commands take
+    /// ([`Engine::declare_host_arity`]): a macro absorbs them before
+    /// anything reaches the stomach, so nothing inside one starts a
+    /// paragraph (`\label{x}` in vertical mode leaves TeX in vertical
+    /// mode).
+    host_arity: HashMap<String, u8>,
+    /// Braced arguments of the host command just emitted still to be read.
+    absorb_pending: u8,
+    /// Brace depth inside the argument being absorbed (0 between them).
+    absorb_depth: u32,
+    /// Inside an optional `[...]` between a host command and its braces.
+    absorb_bracket: bool,
+}
+
+/// A box register being filled by the main loop (tex.web §1083 `begin_box`
+/// for `\setbox`; LaTeX's `\sbox`/`lrbox` reduce to it).
+#[derive(Debug)]
+struct BoxCapture {
+    idx: u16,
+    global: bool,
+    /// Brace depth inside the box body: the body's own `{` is swallowed at
+    /// depth 0 -> 1 and its `}` at 1 -> 0 ends the capture; an `lrbox`
+    /// capture has no braces of its own and ends at `\flashtex@lrboxend`.
+    depth: i32,
+    lrbox: bool,
+    tokens: Vec<Token>,
+    /// The mode to restore when the box closes (the body ran in inner
+    /// horizontal mode for `\hbox`, inner vertical for `\vbox`/`\vtop`).
+    saved_mode: Mode,
 }
 
 impl Engine {
@@ -594,6 +662,14 @@ impl Engine {
             last_text_span: None,
             prefix_start: None,
             capture: None,
+            box_captures: Vec::new(),
+            replay_remaining: 0,
+            box_dimen_overrides: HashMap::new(),
+            pending_lrbox: None,
+            host_arity: HashMap::new(),
+            absorb_pending: 0,
+            absorb_depth: 0,
+            absorb_bracket: false,
         }
     }
 
@@ -636,6 +712,15 @@ impl Engine {
     pub fn declare_host_command(&mut self, name: &str) {
         if !self.st.scopes.is_defined(name) {
             self.st.scopes.assign_cs(name, Meaning::Primitive(Primitive::Host), true);
+        }
+    }
+
+    /// How many braced arguments the host command `name` takes (from the
+    /// host's own command table): while the main loop reads them nothing
+    /// starts a paragraph (see [`Engine::observe_stomach`]).
+    pub fn declare_host_arity(&mut self, name: &str, braced: u8) {
+        if braced > 0 {
+            self.host_arity.insert(name.to_string(), braced);
         }
     }
 
@@ -1179,7 +1264,10 @@ impl Engine {
                 return None;
             }
             if let Some(t) = self.emit_queue.pop() {
-                return Some(t);
+                if let Some(t) = self.observe_output(t) {
+                    return Some(t);
+                }
+                continue;
             }
             let pending = self.next_raw()?;
             // A `\noexpand`ed expandable token reaching main control acts
@@ -1194,16 +1282,366 @@ impl Engine {
                     }
                     if self.prefix_pending() {
                         if let Some(t) = self.prefix_before_content(t) {
-                            return Some(t);
+                            if let Some(t) = self.observe_output(t) {
+                                return Some(t);
+                            }
                         }
                         continue;
                     }
-                    return Some(t);
+                    if let Some(t) = self.observe_output(t) {
+                        return Some(t);
+                    }
+                    continue;
                 }
                 Step::Continue => continue,
                 Step::Eof => return None,
             }
         }
+    }
+
+    /// A token about to be output: when a box register is being set, it
+    /// is the box's content instead (its outermost `{`/`}` excluded), and
+    /// the capture ends at the `}` that closes the body. A replayed box
+    /// (`\box`/`\copy`) passes through the depth bookkeeping untouched.
+    fn observe_output(&mut self, t: Token) -> Option<Token> {
+        if self.replay_remaining > 0 {
+            self.replay_remaining -= 1;
+            return match self.box_captures.last_mut() {
+                Some(capture) => {
+                    capture.tokens.push(t);
+                    None
+                }
+                None => Some(t),
+            };
+        }
+        if self.box_captures.is_empty() {
+            return Some(t);
+        }
+        let capture = self.box_captures.last_mut().expect("capture");
+        match t.kind {
+            TokenKind::Char(_, CatCode::BeginGroup) => {
+                capture.depth += 1;
+                if capture.depth == 1 {
+                    return None;
+                }
+            }
+            TokenKind::Char(_, CatCode::EndGroup) => {
+                capture.depth -= 1;
+                if capture.depth == 0 {
+                    self.finish_box_capture();
+                    return None;
+                }
+            }
+            _ => {}
+        }
+        self.box_captures.last_mut().expect("capture").tokens.push(t);
+        None
+    }
+
+    /// `<box register>` after `\setbox`/`\box`/`\wd`/`\sbox`/...: a
+    /// `\newbox` alias or an explicit number (`\box0`).
+    fn read_box_register(&mut self, cmd: &Token) -> Option<u16> {
+        self.skip_spaces();
+        let Some(mut t) = self.peek_one_expanding() else {
+            self.err("A <box> was supposed to be here.", cmd.span);
+            return None;
+        };
+        if matches!(t.kind, TokenKind::Char(_, CatCode::BeginGroup)) {
+            // LaTeX's `\usebox{\foo}`/`\sbox{\foo}{..}`: the register is a
+            // macro argument, so its braces are stripped (ltboxes.dtx).
+            let inner = self.scan_braced_group(false);
+            match inner.into_iter().find(|t| !matches!(t.kind, TokenKind::Char(_, CatCode::Space))) {
+                Some(reg) => {
+                    self.push_tokens(vec![reg.clone()]);
+                    t = reg;
+                }
+                None => {
+                    self.err("A <box> was supposed to be here.", cmd.span);
+                    return None;
+                }
+            }
+        }
+        match &t.kind {
+            TokenKind::ControlSequence(_) | TokenKind::ActiveChar(_) => match strip_let(self.meaning_of_token(&t)) {
+                Meaning::RegisterAlias(RegisterKind::Box, idx) => {
+                    self.next_raw_token();
+                    Some(idx)
+                }
+                _ => {
+                    self.err(format!("A <box> was supposed to be here; {} is not a box register.", self.cs_display(&t)), t.span);
+                    None
+                }
+            },
+            TokenKind::Char(c, _) if c.is_ascii_digit() => {
+                // `\setbox0`: TeX's numbered registers; this engine keeps
+                // them in the shared register space above the allocator.
+                let n = self.scan_number();
+                Some(u16::MAX - (n.clamp(0, 255) as u16))
+            }
+            _ => {
+                self.err("A <box> was supposed to be here.", cmd.span);
+                None
+            }
+        }
+    }
+
+    /// `\setbox<register>=<box>` (tex.web §1241): the box is `\hbox`/
+    /// `\vbox`/`\vtop` (optional `to`/`spread <dimen>`) with a braced
+    /// body the main loop now runs into the register, or a `\box`/`\copy`
+    /// of another register.
+    fn do_setbox(&mut self, cmd: &Token) {
+        let global = self.take_assignment_prefixes("setbox");
+        let Some(idx) = self.read_box_register(cmd) else {
+            return;
+        };
+        self.expect_equals();
+        self.skip_spaces();
+        let Some(t) = self.peek_one_expanding() else {
+            self.err("A <box> was supposed to be here.", cmd.span);
+            return;
+        };
+        let name = match &t.kind {
+            TokenKind::ControlSequence(n) => n.clone(),
+            _ => String::new(),
+        };
+        match name.as_str() {
+            "hbox" | "vbox" | "vtop" => {
+                self.next_raw_token();
+                if self.maybe_consume_keyword("to") || self.maybe_consume_keyword("spread") {
+                    let _ = self.scan_dimen();
+                }
+                let mode = if name == "hbox" { Mode::InnerHorizontal } else { Mode::InnerVertical };
+                self.begin_box_capture(cmd, idx, global, mode);
+            }
+            _ => match strip_let(self.meaning_of_token(&t)) {
+                Meaning::Primitive(Primitive::BoxUse(copy)) => {
+                    self.next_raw_token();
+                    if let Some(src) = self.read_box_register(&t) {
+                        let content = self.st.scopes.toks(src);
+                        if !copy {
+                            self.st.scopes.set_toks(src, Vec::new(), false);
+                        }
+                        self.st.scopes.set_toks(idx, content, global);
+                    }
+                }
+                _ => self.err("A <box> was supposed to be here.", cmd.span),
+            },
+        }
+    }
+
+    /// The `{` of a box body follows: from here every output token is the
+    /// register's content, until the matching `}` (see `observe_output`).
+    fn begin_box_capture(&mut self, cmd: &Token, idx: u16, global: bool, mode: Mode) {
+        self.skip_spaces();
+        match self.peek_one().map(|t| t.kind) {
+            Some(TokenKind::Char(_, CatCode::BeginGroup)) => {}
+            _ => {
+                self.err("Missing { inserted.", cmd.span);
+                return;
+            }
+        }
+        let saved_mode = self.st.mode;
+        self.st.mode = mode;
+        self.box_captures.push(BoxCapture { idx, global, depth: 0, lrbox: false, tokens: Vec::new(), saved_mode });
+    }
+
+    fn finish_box_capture(&mut self) {
+        let capture = self.box_captures.pop().expect("capture");
+        self.st.mode = capture.saved_mode;
+        self.st.scopes.set_toks(capture.idx, capture.tokens, capture.global);
+    }
+
+    /// `\box`/`\copy`/`\unhbox`/... (`leavevmode` for `\usebox`): the
+    /// register's content goes to the output as it was captured; `\box`
+    /// and the unbox forms then void the register.
+    fn do_box_use(&mut self, cmd: &Token, copy: bool, leavevmode: bool) {
+        if leavevmode && self.st.mode == Mode::Vertical {
+            // `\leavevmode`: start the paragraph (with `\everypar`) before
+            // the box, re-reading the command afterwards.
+            self.st.mode = Mode::Horizontal;
+            let mut toks = self.everypar_tokens();
+            toks.push(Token::new(TokenKind::ControlSequence("copy".into()), cmd.span));
+            self.push_tokens(toks);
+            return;
+        }
+        let Some(idx) = self.read_box_register(cmd) else {
+            return;
+        };
+        let content = self.st.scopes.toks(idx);
+        if !copy {
+            self.st.scopes.set_toks(idx, Vec::new(), false);
+        }
+        self.replay_remaining += content.len();
+        for t in content.into_iter().rev() {
+            self.emit_queue.push(t);
+        }
+    }
+
+    /// `\wd<register>=<dimen>` in main control (tex.web §1247).
+    fn do_box_dimen_assign(&mut self, cmd: &Token, which: BoxDimen) {
+        let _ = self.take_assignment_prefixes(primitive_name(Primitive::BoxDimen(which)));
+        let Some(idx) = self.read_box_register(cmd) else {
+            return;
+        };
+        self.expect_equals();
+        let v = self.scan_dimen();
+        self.box_dimen_overrides.insert((idx, which), v);
+        self.finish_assignment();
+    }
+
+    /// The measured (or assigned) dimension of a box register.
+    fn box_dimen_value(&mut self, idx: u16, which: BoxDimen) -> i64 {
+        if let Some(v) = self.box_dimen_overrides.get(&(idx, which)) {
+            return *v;
+        }
+        let content = self.st.scopes.toks(idx);
+        match which {
+            BoxDimen::Width => self.measurer.width(&content),
+            BoxDimen::Height => self.measurer.height(&content),
+            BoxDimen::Depth => self.measurer.depth(&content),
+        }
+    }
+
+    /// The current `\everypar` text, ending in the sentinel that marks
+    /// where the paragraph's own first token resumes.
+    fn everypar_tokens(&mut self) -> Vec<Token> {
+        let mut toks = match self.st.scopes.meaning("everypar") {
+            Meaning::RegisterAlias(RegisterKind::Toks, idx) => self.st.scopes.toks(idx),
+            _ => Vec::new(),
+        };
+        if !toks.is_empty() {
+            toks.push(Token::synthetic(TokenKind::ControlSequence("flashtex@everyparend".into())));
+        }
+        toks
+    }
+
+    /// tex.web §1090/§1091: an unexpandable token reaching main control in
+    /// vertical mode that begins a paragraph switches to horizontal mode
+    /// and inserts `\everypar` ahead of itself (`new_graf`). Returns
+    /// `Some` when the token was put back behind the inserted text and
+    /// the caller must not process it now. Also tracks the math shift and
+    /// the display/inline math delimiters and environments for
+    /// `\ifmmode`, and the commands that end a paragraph for `\ifvmode`.
+    /// Only `\everypar` users (algorithm2e's line numbers) and the mode
+    /// conditionals observe any of this; the output is otherwise the same.
+    fn observe_stomach(&mut self, tok: &Token) -> Option<Step> {
+        if self.absorb_depth > 0 || self.absorb_bracket {
+            // Inside a host command's argument: a macro would have
+            // absorbed this, so it moves nothing (a math shift still
+            // toggles, for `\ifmmode` inside a typeset argument).
+            if matches!(tok.kind, TokenKind::Char(_, CatCode::MathShift)) {
+                self.st.mode = if self.st.mode.is_m() { Mode::Horizontal } else { Mode::Math };
+            }
+            if self.absorb_bracket && matches!(tok.kind, TokenKind::Char(']', _)) {
+                self.absorb_bracket = false;
+            }
+            return None;
+        }
+        if self.absorb_pending > 0 {
+            match &tok.kind {
+                TokenKind::Char(_, CatCode::Space) => return None,
+                TokenKind::Char('[', _) => {
+                    self.absorb_bracket = true;
+                    return None;
+                }
+                TokenKind::Char('*', _) => return None,
+                // Anything else: the command took fewer braces than its
+                // table says (an unbraced argument); stop absorbing.
+                _ => self.absorb_pending = 0,
+            }
+        }
+        let arity = match &tok.kind {
+            TokenKind::ControlSequence(name) => self.host_arity.get(name.as_str()).copied().unwrap_or(0),
+            _ => 0,
+        };
+        let step = self.observe_stomach_mode(tok);
+        if step.is_none() && arity > 0 {
+            self.absorb_pending = arity;
+        }
+        step
+    }
+
+    fn observe_stomach_mode(&mut self, tok: &Token) -> Option<Step> {
+        let starts = match &tok.kind {
+            TokenKind::Char(_, cat) => match cat {
+                CatCode::MathShift => {
+                    if self.st.mode.is_m() {
+                        self.st.mode = Mode::Horizontal;
+                        return None;
+                    }
+                    true
+                }
+                CatCode::Letter | CatCode::Other => true,
+                _ => false,
+            },
+            TokenKind::ActiveChar(_) => true,
+            TokenKind::ControlSequence(name) => match stomach_class(name) {
+                StomachClass::Starts => true,
+                StomachClass::StartsNoInsert => {
+                    // `\noindent`/`\indent`: the paragraph starts, and
+                    // `\everypar` follows the command itself.
+                    if self.st.mode == Mode::Vertical {
+                        self.st.mode = Mode::Horizontal;
+                        let toks = self.everypar_tokens();
+                        self.push_tokens(toks);
+                    }
+                    return None;
+                }
+                StomachClass::Vertical => {
+                    // Also inside an `\hbox` body: a list or a skip there
+                    // can only be the `\vbox` this engine does not see
+                    // (algorithm2e's `lrbox` holds a `\vbox` of lists).
+                    self.st.mode = Mode::Vertical;
+                    return None;
+                }
+                StomachClass::MathBegin => {
+                    if self.st.mode == Mode::Vertical {
+                        // A display starts a paragraph first (§1145).
+                        self.st.mode = Mode::Horizontal;
+                        let mut toks = self.everypar_tokens();
+                        if !toks.is_empty() {
+                            toks.push(tok.clone());
+                            self.push_tokens(toks);
+                            return Some(Step::Continue);
+                        }
+                    }
+                    if !self.st.mode.is_m() {
+                        self.st.mode = Mode::Math;
+                    }
+                    return None;
+                }
+                StomachClass::MathEnd => {
+                    if self.st.mode.is_m() {
+                        self.st.mode = Mode::Horizontal;
+                    }
+                    return None;
+                }
+                StomachClass::Neutral => false,
+            },
+            _ => false,
+        };
+        if !starts {
+            return None;
+        }
+        if self.st.mode != Mode::Vertical {
+            if matches!(tok.kind, TokenKind::Char(_, CatCode::MathShift)) {
+                self.st.mode = Mode::Math;
+            }
+            return None;
+        }
+        self.st.mode = Mode::Horizontal;
+        let mut toks = self.everypar_tokens();
+        if toks.is_empty() {
+            if matches!(tok.kind, TokenKind::Char(_, CatCode::MathShift)) {
+                self.st.mode = Mode::Math;
+            }
+            return None;
+        }
+        // Re-read behind `\everypar` in horizontal mode: a math shift then
+        // enters math mode as it would have without the insertion.
+        toks.push(tok.clone());
+        self.push_tokens(toks);
+        Some(Step::Continue)
     }
 
     /// Count one expansion step outside the main loop (macro calls,
@@ -1339,7 +1777,7 @@ impl Engine {
     /// and including this position.
     pub fn safe_point(&mut self) -> Option<usize> {
         self.prune_exhausted();
-        if self.sources.len() != 1 || self.stopped || !self.emit_queue.is_empty() {
+        if self.sources.len() != 1 || self.stopped || !self.emit_queue.is_empty() || !self.box_captures.is_empty() {
             return None;
         }
         let lexer = self.base_lexer();
@@ -1429,6 +1867,8 @@ impl Engine {
             TokenKind::Char(_, _) => {
                 if let Some(step) = self.maybe_handle_brace(&tok) {
                     step
+                } else if let Some(step) = self.observe_stomach(&tok) {
+                    step
                 } else {
                     Step::Emit(tok)
                 }
@@ -1442,7 +1882,13 @@ impl Engine {
             TokenKind::ActiveChar(c) => {
                 let meaning = self.st.scopes.active_meaning(c);
                 match meaning {
-                    Meaning::Undefined => Step::Emit(tok),
+                    Meaning::Undefined => {
+                        if let Some(step) = self.observe_stomach(&tok) {
+                            step
+                        } else {
+                            Step::Emit(tok)
+                        }
+                    }
                     m => self.dispatch(tok, m),
                 }
             }
@@ -1479,8 +1925,19 @@ impl Engine {
                 None => Step::Continue,
             },
             Meaning::MathCharDef(_) => Step::Emit(tok),
+            Meaning::Primitive(Primitive::Host | Primitive::HostAssignment) => {
+                if let Some(step) = self.observe_stomach(&tok) {
+                    return step;
+                }
+                self.handle_primitive(tok, meaning_primitive(&meaning))
+            }
             Meaning::Primitive(p) => self.handle_primitive(tok, p),
-            Meaning::Undefined => Step::Emit(tok),
+            Meaning::Undefined => {
+                if let Some(step) = self.observe_stomach(&tok) {
+                    return step;
+                }
+                Step::Emit(tok)
+            }
         }
     }
 
@@ -1522,6 +1979,10 @@ impl Engine {
                     if let Some(switch) = self.st.pending_font_switch.take() {
                         self.apply_font_switch(switch);
                     }
+                    if self.absorb_pending > 0 {
+                        self.absorb_depth += 1;
+                        self.absorb_bracket = false;
+                    }
                     return Some(Step::Emit(tok.clone()));
                 }
                 CatCode::EndGroup => {
@@ -1531,6 +1992,12 @@ impl Engine {
                     }
                     let after = self.st.scopes.pop_group();
                     self.push_tokens(after);
+                    if self.absorb_depth > 0 {
+                        self.absorb_depth -= 1;
+                        if self.absorb_depth == 0 {
+                            self.absorb_pending -= 1;
+                        }
+                    }
                     return Some(Step::Emit(tok.clone()));
                 }
                 _ => {}
@@ -2316,7 +2783,22 @@ impl Engine {
             // Any token whose meaning is \relax (`\let\protect\relax`, an
             // undefined `\csname`) reaches the typesetter as `\relax`.
             Relax => Step::Emit(Token::new(TokenKind::ControlSequence("relax".into()), tok.span)),
-            Par => Step::Emit(tok),
+            Par => {
+                // tex.web §1094: `\par` in horizontal mode ends the
+                // paragraph; in restricted horizontal mode (an `\hbox`
+                // body) it does nothing.
+                if !matches!(self.st.mode, Mode::InnerHorizontal) {
+                    self.st.mode = Mode::Vertical;
+                }
+                // Under its own name: `\endgraf` (`\let\endgraf\par`) ends a
+                // paragraph too, but is not the `\par` token TeX's runaway
+                // check rejects in a short macro's argument (tex.web §392
+                // compares `par_token`, the control sequence, not the
+                // meaning: pdflatex sets `\textnormal{a\endgraf b}` and
+                // rejects `\textnormal{a\par b}`), so the typesetter must
+                // see which one it was.
+                Step::Emit(tok)
+            }
             Def | Edef | Gdef | Xdef => {
                 self.do_def(p);
                 Step::Continue
@@ -2643,6 +3125,9 @@ impl Engine {
                 }
                 let after = self.st.scopes.pop_group();
                 self.push_tokens(after);
+                if let Some((idx, tokens)) = self.pending_lrbox.take() {
+                    self.st.scopes.set_toks(idx, tokens, false);
+                }
                 Step::Emit(Token::new(TokenKind::ControlSequence("endgroup".into()), tok.span))
             }
             Aftergroup => {
@@ -2813,6 +3298,142 @@ impl Engine {
                 self.emit_with_operand(tok, &n.to_string());
                 Step::Continue
             }
+            Rule(vertical) => {
+                // tex.web §463 `scan_rule_spec`: `width`/`height`/`depth`
+                // keywords in any order, each with a `<dimen>`; re-emitted
+                // with the values resolved, so a register in a spec
+                // (`\hrule height\algoheightrule`) reaches the typesetter as
+                // its value. An `\hrule` ends a paragraph; a `\vrule` in
+                // vertical mode starts one (§1056, §1090).
+                let mut spec = std::string::String::new();
+                loop {
+                    self.skip_spaces();
+                    let key = if self.maybe_consume_keyword("width") {
+                        "width"
+                    } else if self.maybe_consume_keyword("height") {
+                        "height"
+                    } else if self.maybe_consume_keyword("depth") {
+                        "depth"
+                    } else {
+                        break;
+                    };
+                    let v = self.scan_dimen();
+                    spec.push_str(&format!(" {key} {}pt", print_scaled(v)));
+                }
+                if vertical {
+                    if self.st.mode == Mode::Vertical {
+                        self.st.mode = Mode::Horizontal;
+                        let mut toks = self.everypar_tokens();
+                        if !toks.is_empty() {
+                            toks.push(tok.clone());
+                            // Re-read after `\everypar`; the spec is gone,
+                            // so re-spell it behind the command.
+                            toks.extend(chars_as_other(&spec, tok.span));
+                            self.push_tokens(toks);
+                            return Step::Continue;
+                        }
+                    }
+                } else if !matches!(self.st.mode, Mode::InnerHorizontal) {
+                    self.st.mode = Mode::Vertical;
+                }
+                if spec.is_empty() {
+                    Step::Emit(tok)
+                } else {
+                    self.emit_with_operand(tok, spec.trim_start());
+                    Step::Continue
+                }
+            }
+            Setbox => {
+                self.do_setbox(&tok);
+                Step::Continue
+            }
+            BoxUse(copy) | UnboxUse(copy) => {
+                self.do_box_use(&tok, copy, false);
+                Step::Continue
+            }
+            BoxDimen(which) => {
+                self.do_box_dimen_assign(&tok, which);
+                Step::Continue
+            }
+            Newbox => {
+                // `\newbox\foo` / `\newsavebox{\foo}`: global allocation,
+                // like the other `\new...` allocators above.
+                if let Some(nt) = self.read_cs_arg() {
+                    if self.capture.is_some() {
+                        if let Some(name) = definable_name(&nt) {
+                            let mut record = PackageDefinition::new(name, DefinitionKind::Register);
+                            record.overrides = !matches!(self.meaning_of_token(&nt), Meaning::Undefined);
+                            self.note_definition(record);
+                        }
+                    }
+                    let idx = self.alloc_register();
+                    self.define_cs_token(&nt, Meaning::RegisterAlias(RegisterKind::Box, idx), true);
+                }
+                Step::Continue
+            }
+            Sbox | Savebox => {
+                // ltboxes.dtx: `\sbox#1#2` is `\setbox#1\hbox{#2}`;
+                // `\savebox#1[w][pos]{#2}` sets the same box (the
+                // `\makebox` width/position shape the box, which this
+                // engine does not model).
+                let global = self.take_assignment_prefixes(primitive_name(p));
+                let Some(idx) = self.read_box_register(&tok) else {
+                    return Step::Continue;
+                };
+                if matches!(p, Savebox) {
+                    for _ in 0..2 {
+                        self.skip_spaces();
+                        if matches!(self.peek_one().map(|t| t.kind), Some(TokenKind::Char('[', CatCode::Other))) {
+                            self.next_raw_token();
+                            let _ = self.scan_bracketed_optional();
+                        }
+                    }
+                }
+                self.begin_box_capture(&tok, idx, global, Mode::InnerHorizontal);
+                Step::Continue
+            }
+            Usebox => {
+                // ltboxes.dtx: `\usebox` is `\leavevmode\copy`: in vertical
+                // mode it starts a paragraph first.
+                self.do_box_use(&tok, true, true);
+                Step::Continue
+            }
+            LrboxBegin => {
+                let Some(idx) = self.read_box_register(&tok) else {
+                    return Step::Continue;
+                };
+                let saved_mode = self.st.mode;
+                self.st.mode = Mode::InnerHorizontal;
+                self.box_captures.push(BoxCapture { idx, global: false, depth: 1, lrbox: true, tokens: Vec::new(), saved_mode });
+                Step::Continue
+            }
+            LrboxEnd => {
+                if self.box_captures.last().map_or(false, |c| c.lrbox) {
+                    let capture = self.box_captures.pop().expect("capture");
+                    self.st.mode = capture.saved_mode;
+                    // ltboxes.dtx: `\lrbox` closes the `\begin` group before
+                    // its `\setbox`, so the register outlives the
+                    // environment; the assignment waits for the `\endgroup`
+                    // that `\end{lrbox}` queued behind this command.
+                    self.pending_lrbox = Some((capture.idx, capture.tokens));
+                } else {
+                    self.err("\\end{lrbox} without a matching \\begin{lrbox}.", tok.span);
+                }
+                Step::Continue
+            }
+            EveryparEnd => Step::Continue,
+            RawGroup => {
+                let inner = self.scan_braced_group(false);
+                let mut toks = vec![Token::new(TokenKind::ControlSequence("flashtex@rawopen".into()), tok.span)];
+                toks.extend(inner);
+                toks.push(Token::new(TokenKind::ControlSequence("flashtex@rawclose".into()), tok.span));
+                self.push_tokens(toks);
+                Step::Continue
+            }
+            RawBrace(open) => Step::Emit(Token::new(
+                if open { TokenKind::Char('{', CatCode::BeginGroup) } else { TokenKind::Char('}', CatCode::EndGroup) },
+                tok.span,
+            )),
             SetLength(add) => {
                 self.do_setlength(tok, add);
                 Step::Continue
@@ -3042,7 +3663,73 @@ impl Engine {
                 self.do_flashtex_space(tok, "flashtexvspacedone");
                 Step::Continue
             }
+            FlashtexParbox => {
+                self.do_flashtex_parbox(tok);
+                Step::Continue
+            }
         }
+    }
+
+    /// Host pass-through for `\parbox[pos][height][inner-pos]{width}{text}`
+    /// (reached through the host prelude's `\parbox` alias): the optional
+    /// arguments are copied through, the `{width}` is spliced the way
+    /// [`Engine::do_flashtex_space`] splices `\hspace`'s dimension, and the
+    /// text stays in the input for the main loop. So a `\newlength`
+    /// register as the width (`\parbox[t]{\inoutsize}{..}`) reaches the
+    /// parser as its value.
+    fn do_flashtex_parbox(&mut self, tok: Token) {
+        let at = self.last_origin.unwrap_or(tok.span);
+        let synth = |kind: TokenKind| Pending { tok: Token::new(kind, at), frozen: false, origin: Some(at) };
+        let mut out = vec![synth(TokenKind::ControlSequence("flashtexparboxdone".into()))];
+        for _ in 0..3 {
+            self.skip_spaces();
+            if !matches!(self.peek_one().map(|t| t.kind), Some(TokenKind::Char('[', _))) {
+                break;
+            }
+            out.push(Pending { tok: self.next_raw_token().unwrap(), frozen: false, origin: None });
+            while let Some(t) = self.next_raw_token() {
+                let close = matches!(t.kind, TokenKind::Char(']', _));
+                out.push(Pending { tok: t, frozen: false, origin: None });
+                if close {
+                    break;
+                }
+            }
+        }
+        self.skip_spaces();
+        if !matches!(self.peek_one().map(|t| t.kind), Some(TokenKind::Char(_, CatCode::BeginGroup))) {
+            self.push_pending(out);
+            return;
+        }
+        let open = Pending { tok: self.next_raw_token().unwrap(), frozen: false, origin: None };
+        let mut inner: Vec<Pending> = Vec::new();
+        let mut depth = 0i32;
+        while let Some(p) = self.next_expanding_raw() {
+            match &p.tok.kind {
+                TokenKind::Char(_, CatCode::BeginGroup) => {
+                    depth += 1;
+                    inner.push(p);
+                }
+                TokenKind::Char(_, CatCode::EndGroup) => {
+                    inner.push(p);
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1;
+                }
+                _ => inner.push(p),
+            }
+        }
+        if let Some((text, span, origin)) = self.space_register_text(&inner) {
+            out.push(synth(TokenKind::Char('{', CatCode::BeginGroup)));
+            for t in chars_as_other(&text, span) {
+                out.push(Pending { tok: t, frozen: false, origin });
+            }
+            out.push(synth(TokenKind::Char('}', CatCode::EndGroup)));
+        } else {
+            out.push(open);
+            out.extend(inner);
+        }
+        self.push_pending(out);
     }
 
     /// TeX's `scan_file_name`: optional spaces, then expanded character
@@ -4211,6 +4898,13 @@ impl Engine {
         // complete `<internal dimen>`; a host that typesets those commands
         // itself receives the register by name instead of an assignment
         // that would report "Missing number" and zero the register.
+        if kind == RegisterKind::Box {
+            // tex.web §1090: a box register token in main control is only
+            // legal after `\setbox`, `\box`, `\copy`, `\wd`, ...
+            self.err("A <box> was supposed to be here.", tok.span);
+            self.clear_prefixes();
+            return Step::Continue;
+        }
         if kind != RegisterKind::Toks && !self.prefix_pending() && !self.assignment_follows() {
             return Step::Emit(tok);
         }
@@ -4280,7 +4974,7 @@ impl Engine {
             RegisterKind::Count => self.st.scopes.count(idx).to_string(),
             RegisterKind::Dimen => format!("{}pt", print_scaled(self.st.scopes.dimen(idx))),
             RegisterKind::Skip => glue_to_string(self.st.scopes.skip(idx)),
-            RegisterKind::Toks => return,
+            RegisterKind::Toks | RegisterKind::Box => return,
         };
         let marker = match via_setlength {
             1 => "flashtexlengthset",
@@ -4314,9 +5008,11 @@ impl Engine {
             RegisterKind::Dimen => "dimen",
             RegisterKind::Skip => "skip",
             RegisterKind::Toks => "toks",
+            RegisterKind::Box => "box",
         });
         self.expect_equals();
         match kind {
+            RegisterKind::Box => unreachable!("box registers return above"),
             RegisterKind::Count => {
                 let v = self.scan_number();
                 self.st.scopes.set_count(idx, v, global);
@@ -4731,6 +5427,10 @@ impl Engine {
                 RegisterKind::Dimen => chars_as_other(&format!("{}pt", print_scaled(self.st.scopes.dimen(idx))), tok.span),
                 RegisterKind::Skip => chars_as_other(&glue_to_string(self.st.scopes.skip(idx)), tok.span),
                 RegisterKind::Toks => self.st.scopes.toks(idx),
+                RegisterKind::Box => {
+                    self.err(format!("You can't use `{}' after \the.", self.cs_display(&tok)), tok.span);
+                    Vec::new()
+                }
             };
         }
         // Other internal integers: \chardef'd tokens, \catcode/\uccode/
@@ -4848,7 +5548,7 @@ impl Engine {
                     }
                     self.st.scopes.set_skip(idx, g, global);
                 }
-                RegisterKind::Toks => {}
+                RegisterKind::Toks | RegisterKind::Box => {}
             },
             Primitive::Multiply => {
                 let d = self.scan_number();
@@ -4880,13 +5580,14 @@ impl Engine {
                             _ => self.err("Arithmetic overflow.", tok.span),
                         }
                     }
-                    RegisterKind::Toks => {}
+                    RegisterKind::Toks | RegisterKind::Box => {}
                 }
             }
             Primitive::Divide => {
                 let d = self.scan_number();
                 if d != 0 {
                     match kind {
+                        RegisterKind::Box => {}
                         RegisterKind::Count => self.st.scopes.set_count(idx, self.st.scopes.count(idx) / d, global),
                         RegisterKind::Dimen => self.st.scopes.set_dimen(idx, self.st.scopes.dimen(idx) / d, global),
                         RegisterKind::Skip => {
@@ -4998,6 +5699,7 @@ impl Engine {
         self.push_tokens(scan);
         let g = self.scan_glue_expr();
         match kind {
+            RegisterKind::Box => {}
             RegisterKind::Count => {
                 let v = if add { tex_wrapping_add(self.st.scopes.count(idx), g.value) } else { g.value };
                 self.st.scopes.set_count(idx, v, global);
@@ -5436,6 +6138,15 @@ impl Engine {
                         let v = self.scan_expr(true);
                         return if neg { -v } else { v };
                     }
+                    // `\wd`/`\ht`/`\dp<box>` (tex.web §413 `box_dimen`).
+                    Meaning::Primitive(Primitive::BoxDimen(which)) => {
+                        let cmd = self.next_raw_token().expect("peeked");
+                        let v = match self.read_box_register(&cmd) {
+                            Some(idx) => self.box_dimen_value(idx, which),
+                            None => 0,
+                        };
+                        return if neg { -v } else { v };
+                    }
                     // `<internal glue>` where a `<dimen>` is wanted: its
                     // natural part (tex.web §451, `glue_val` coerced).
                     Meaning::Primitive(Primitive::Glueexpr) => {
@@ -5575,6 +6286,11 @@ impl Engine {
             Meaning::Primitive(Primitive::Glueexpr) => {
                 self.next_raw_token();
                 Some(self.scan_glue_expr().value)
+            }
+            Meaning::Primitive(Primitive::BoxDimen(which)) => {
+                let t = self.next_raw_token()?;
+                let idx = self.read_box_register(&t)?;
+                Some(self.box_dimen_value(idx, which))
             }
             _ => None,
         }
@@ -6495,6 +7211,7 @@ impl Engine {
                     RegisterKind::Dimen => "dimen",
                     RegisterKind::Skip => "skip",
                     RegisterKind::Toks => "toks",
+                    RegisterKind::Box => "box",
                 };
                 match (*idx as usize).checked_sub(TEX_PARAM_BASE as usize).and_then(|i| TEX_PARAMS.get(i)) {
                     Some((name, _)) => format!("{esc}{name}"),
@@ -6729,6 +7446,72 @@ fn char_meaning(c: char, cat: CatCode) -> String {
 }
 
 /// TeX's `print_cmd_chr` name for each primitive we model.
+fn meaning_primitive(m: &Meaning) -> Primitive {
+    match m {
+        Meaning::Primitive(p) => *p,
+        _ => Primitive::Host,
+    }
+}
+
+/// How an unexpandable control sequence that reaches main control moves
+/// the mode (see `Engine::observe_stomach`). The names are the LaTeX
+/// commands the host typesets: those that `\leavevmode` (text font
+/// commands, boxes, references, horizontal glue and symbols) start a
+/// paragraph in vertical mode; those built on `\par` end one; math
+/// delimiters and display environments enter and leave math mode.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StomachClass {
+    Starts,
+    StartsNoInsert,
+    Vertical,
+    MathBegin,
+    MathEnd,
+    Neutral,
+}
+
+fn stomach_class(name: &str) -> StomachClass {
+    match name {
+        "noindent" | "indent" => StomachClass::StartsNoInsert,
+        // `\flashtexitem` is the label marker the host prelude's `\item`
+        // leaves *inside* the paragraph it labels (an `\everypar` may
+        // insert it), so it moves nothing; the `\par` real `\item` does
+        // first is the list's own business.
+        "flashtexitem" => StomachClass::Neutral,
+        "par" | "item" | "flashtexbeginlist" | "flashtexendlist" | "flashtexsect" | "section"
+        | "subsection" | "subsubsection" | "paragraph" | "subparagraph" | "chapter" | "part" | "vspace" | "vskip"
+        | "bigskip" | "medskip" | "smallskip" | "newpage" | "clearpage" | "cleardoublepage" | "hrule" | "caption"
+        | "maketitle" | "tableofcontents" | "bibliography" | "itemize" | "enditemize" | "enumerate"
+        | "endenumerate" | "description" | "enddescription" | "list" | "endlist" | "trivlist" | "endtrivlist"
+        | "center" | "endcenter" | "flushleft" | "endflushleft" | "flushright" | "endflushright" | "quote"
+        | "endquote" | "quotation" | "endquotation" | "verse" | "endverse" | "figure" | "endfigure" | "figure*"
+        | "endfigure*" | "table" | "endtable" | "table*" | "endtable*" | "abstract" | "endabstract" | "verbatim"
+        | "endverbatim" | "thebibliography" | "endthebibliography" | "titlepage" | "endtitlepage" | "algorithmic"
+        | "endalgorithmic" | "document" | "enddocument" | "tabbing" | "endtabbing" | "multicols" | "endmulticols"
+        | "endminipage" => StomachClass::Vertical,
+        "(" | "[" | "equation" | "equation*" | "displaymath" | "math" | "align" | "align*" | "alignat" | "alignat*"
+        | "gather" | "gather*" | "multline" | "multline*" | "flalign" | "flalign*" | "eqnarray" | "eqnarray*" => {
+            StomachClass::MathBegin
+        }
+        ")" | "]" | "endequation" | "endequation*" | "enddisplaymath" | "endmath" | "endalign" | "endalign*"
+        | "endalignat" | "endalignat*" | "endgather" | "endgather*" | "endmultline" | "endmultline*" | "endflalign"
+        | "endflalign*" | "endeqnarray" | "endeqnarray*" => StomachClass::MathEnd,
+        // The host prelude's `\hspace`/`\parbox` shims hand the command
+        // back under these names once the dimension is spliced.
+        "flashtexhspacedone" | "flashtexparboxdone"
+        | "textbf" | "textit" | "textrm" | "textsf" | "texttt" | "textmd" | "textup" | "textsl" | "textsc" | "textnormal"
+        | "emph" | "mbox" | "fbox" | "framebox" | "makebox" | "parbox" | "raisebox" | "usebox" | "strut" | "rule"
+        | "phantom" | "hphantom" | "vphantom" | "smash" | "colorbox" | "fcolorbox" | "includegraphics" | "minipage"
+        | "tabular" | "tabular*" | "ref" | "pageref" | "eqref" | "cite" | "citep" | "citet" | "autoref" | "cref"
+        | "Cref" | "url" | "href" | "footnote" | "footnotemark" | "hspace" | "hskip" | "hfill" | "hfil" | "hss"
+        | "enskip" | "enspace" | "quad" | "qquad" | "thinspace" | "," | " " | "/" | "~" | "nobreakspace" | "TeX"
+        | "LaTeX" | "dots" | "ldots" | "textellipsis" | "verb" | "underline" | "textsuperscript" | "textsubscript"
+        | "nolinebreak" | "linebreak" | "textcolor" | "hyperref" | "nameref" | "vref" | "citeauthor"
+        | "citeyear" | "textbullet" | "textendash" | "textemdash" | "textquoteleft" | "textquoteright"
+        | "textquotedblleft" | "textquotedblright" => StomachClass::Starts,
+        _ => StomachClass::Neutral,
+    }
+}
+
 fn primitive_name(p: Primitive) -> &'static str {
     use Primitive::*;
     match p {
@@ -6838,6 +7621,26 @@ fn primitive_name(p: Primitive) -> &'static str {
         Vskip => "vskip",
         Kern => "kern",
         Penalty => "penalty",
+        Rule(false) => "hrule",
+        Rule(true) => "vrule",
+        Setbox => "setbox",
+        BoxUse(false) => "box",
+        BoxUse(true) => "copy",
+        UnboxUse(false) => "unhbox",
+        UnboxUse(true) => "unhcopy",
+        BoxDimen(crate::scopes::BoxDimen::Width) => "wd",
+        BoxDimen(crate::scopes::BoxDimen::Height) => "ht",
+        BoxDimen(crate::scopes::BoxDimen::Depth) => "dp",
+        Newbox => "newbox",
+        Sbox => "sbox",
+        Savebox => "savebox",
+        Usebox => "usebox",
+        LrboxBegin => "flashtex@lrboxbegin",
+        LrboxEnd => "flashtex@lrboxend",
+        EveryparEnd => "flashtex@everyparend",
+        RawGroup => "flashtex@rawgroup",
+        RawBrace(true) => "flashtex@rawopen",
+        RawBrace(false) => "flashtex@rawclose",
         NewCommand => "newcommand",
         RenewCommand => "renewcommand",
         ProvideCommand => "providecommand",
@@ -6874,6 +7677,7 @@ fn primitive_name(p: Primitive) -> &'static str {
         SetKeys => "setkeys",
         FlashtexSetlist => "flashtexsetlist",
         FlashtexHspace => "flashtexhspace",
+        FlashtexParbox => "flashtexparbox",
         FlashtexVspace => "flashtexvspace",
         Verb => "verb",
         LoadFiles(kind) => kind.name(),
@@ -7305,9 +8109,10 @@ fn is_format_level(p: Primitive) -> bool {
             | NewEnvironment | RenewEnvironment | NewTheorem | Begin | End | NewCounter | SetCounter | AddToCounter | StepCounter
             | RefStepCounter | AddToReset | RemoveFromReset | CounterWithin | CounterWithout | Label | Value | Arabic
             | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol | NewLength | SetLength(_) | SetToWidth | SetToHeight
-            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | FlashtexHspace | FlashtexVspace
+            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | FlashtexHspace | FlashtexVspace | FlashtexParbox
             | Verb | StopInput | LoadFiles(_) | InputPackageFile
             | EmitPassThrough | LatexError | LatexWarning | PreambleDeclaration(_)
+            | Newbox | Sbox | Savebox | Usebox | LrboxBegin | LrboxEnd | EveryparEnd | RawGroup | RawBrace(_)
     )
 }
 

@@ -1,0 +1,26 @@
+% flashtex-algorithmic.sty -- FlashTeX's model of algorithmic.sty's label column.
+%
+% This file is FlashTeX's own (not upstream). The real algorithmic.sty
+% (vendored beside this file, algorithms bundle v0.1) runs through the
+% expansion engine; `\usepackage{algorithmic}` loads this file last
+% (`\AtEndOfPackage`).
+%
+% algorithmic.sty 107-129 defines `\ALC@item[#1]`, its environment's
+% `\let\@item\ALC@item` (135), as the kernel's `\@item` (ltlists.dtx) with one
+% change in the label's placement: where the kernel sets the label box
+% `\hskip -\labelwidth \hskip -\labelsep` before the text and `\hskip
+% \labelsep` after it, `\ALC@item` uses `\ALC@tlm` for both skips. `\ALC@tlm`
+% is `\labelsep` in the outer `algorithmic` list (231) and grows by every
+% nested `ALC@g` list's `\leftmargin` (150), so a nested line's number ends
+% `\ALC@tlm` before its text: in the same column as the outermost line's.
+%
+% The parser places an item's label itself, its right edge `\labelsep` before
+% the item text, so the whole of `\ALC@item` reduces to: this item's label
+% gap is `\ALC@tlm`. The `\everypar`/`\@labels` box mechanics of the kernel
+% `\@item` are the parser's list model; the `\refstepcounter{\@listctr}` of a
+% counted item is the host prelude's `\@item`, which this definition keeps.
+\ProvidesPackage{flashtex-algorithmic}[2026/09/23 FlashTeX model of algorithmic.sty's label column]
+\makeatletter
+\def\ALC@item[#1]{\labelsep\ALC@tlm\flashtexitem[{#1}]}%
+\makeatother
+\endinput

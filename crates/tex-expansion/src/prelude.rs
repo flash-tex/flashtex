@@ -353,5 +353,19 @@ pub const PRELUDE: &str = r"\catcode`\@=11
     }
 \def\fontsize#1#2{\set@fontsize\f@linespread{#1}{#2}\flashtexfontsizedone{\f@size}{\f@baselineskip}}
 \def\selectfont{\size@update\flashtexselectfontdone}
+\def\@makeother#1{\catcode`#1=12\relax}
+\def\nobreakspace{~}
+\def\@arabic#1{\number #1}
+\newif\if@ignore
+\def\ignorespacesafterend{\global\@ignoretrue}
+\newdimen\normallineskip \normallineskip=1pt
+\newbox\@tempboxa
+\newbox\voidb@x
+\newif\if@minipage
+\def\@setminipage{\@minipagetrue}
+\def\@arrayparboxrestore{\everypar{}}
+\def\@parboxrestore{\@arrayparboxrestore}
+\def\@latex@error#1#2{\flashtex@latex@error{#1}}
+\newenvironment{lrbox}[1]{\flashtex@lrboxbegin#1\ignorespaces}{\flashtex@lrboxend}
 \catcode`\@=12
 ";

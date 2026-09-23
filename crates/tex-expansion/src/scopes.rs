@@ -46,6 +46,20 @@ pub enum RegisterKind {
     Dimen,
     Skip,
     Toks,
+    /// A box register (`\newbox`/`\newsavebox`): its content is the token
+    /// list the box was set from (`\setbox`/`\sbox`/`lrbox` capture the
+    /// tokens the main loop would have emitted), stored in the same table
+    /// as `Toks` under its own index; `\box`/`\usebox` replay it and
+    /// `\wd`/`\ht`/`\dp` measure it through the host's `BoxMeasurer`.
+    Box,
+}
+
+/// Which dimension of a box `\wd`/`\ht`/`\dp` reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BoxDimen {
+    Width,
+    Height,
+    Depth,
 }
 
 /// Integer parameters this crate actually models (the rest of TeX's
@@ -197,6 +211,55 @@ pub enum Primitive {
     Vskip,
     Kern,
     Penalty,
+    // -- boxes (tex.web §1071-§1110): registers whose content is the
+    // token list the box was set from (see `RegisterKind::Box`).
+    /// `\hrule` (false) / `\vrule` (true) with their `width`/`height`/
+    /// `depth` rule spec resolved (tex.web §463).
+    Rule(bool),
+    /// `\setbox<box register><box>`: `<box>` is `\hbox`/`\vbox`/`\vtop`
+    /// with an optional `to`/`spread` `<dimen>` and a braced body (the
+    /// main loop runs the body and captures what it emits), or a `\box`/
+    /// `\copy` of another register.
+    Setbox,
+    /// `\box<register>` (replays the content, then voids the register)
+    /// and `\copy<register>` (replays and keeps it).
+    BoxUse(bool),
+    /// `\unhbox`/`\unvbox` (void after) and `\unhcopy`/`\unvcopy`: the
+    /// content replayed without a box around it -- for this engine the
+    /// same replay as `\box`/`\copy`, since boxes are token lists.
+    UnboxUse(bool),
+    /// `\wd`/`\ht`/`\dp<register>`: the box's dimension through the host
+    /// measurer; assignable (`\wd\foo=3pt`) like TeX's, the assigned
+    /// value shadowing the measured one.
+    BoxDimen(BoxDimen),
+    /// `\newbox`/`\newsavebox` (LaTeX layer): allocate a box register.
+    Newbox,
+    /// LaTeX `\sbox<register>{<text>}` (an `\hbox` set in a group).
+    Sbox,
+    /// LaTeX `\savebox<register>[<width>][<pos>]{<text>}`.
+    Savebox,
+    /// LaTeX `\usebox<register>`: `\leavevmode\copy`.
+    Usebox,
+    /// Internal: `\flashtex@lrboxbegin<register>` / `\flashtex@lrboxend`,
+    /// what the prelude's `lrbox` environment expands to: everything the
+    /// main loop emits between them is the register's content.
+    LrboxBegin,
+    LrboxEnd,
+    /// Internal: `\flashtex@rawgroup{<tokens>}` hands the tokens back to
+    /// the input between a [`Primitive::RawBrace`] pair: they run in the
+    /// enclosing group while the output still shows them braced. The host
+    /// prelude's `\list` passes a list's declarations this way, so a
+    /// register they assign (`\ALC@tlm`) keeps its value for the list's
+    /// items, as in LaTeX, where `\list` runs them in the environment's
+    /// own group.
+    RawGroup,
+    /// Internal: `\flashtex@rawopen` / `\flashtex@rawclose`, a `{` / `}`
+    /// emitted to the output without opening or closing a scope.
+    RawBrace(bool),
+    /// Internal: `\flashtex@everyparend`, the sentinel that closes the
+    /// `\everypar` text the main loop inserts at a paragraph start and
+    /// releases the token that started the paragraph.
+    EveryparEnd,
     // -- LaTeX layer (built on the primitives above) --
     NewCommand,
     RenewCommand,
@@ -255,6 +318,9 @@ pub enum Primitive {
     FlashtexHspace,
     /// Host pass-through for `\vspace`/`\vspace*`: like [`FlashtexHspace`].
     FlashtexVspace,
+    /// Host pass-through for `\parbox[..]{<width>}`: like [`FlashtexHspace`]
+    /// for the width; the text stays in the input.
+    FlashtexParbox,
     /// `\verb` (reads raw characters from the source).
     Verb,
     /// Internal: stop reading all input (`\end{document}`).
