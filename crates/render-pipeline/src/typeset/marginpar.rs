@@ -18,7 +18,7 @@ use crate::adapter::{Item as AItem, ParaStyle, TextStyle};
 use crate::display::Diagnostic;
 use crate::pagebuild::{self, VBlock, VItem};
 
-use super::{broken_of, drop_trailing_break, line_extents, vskips_of, BuiltBlock, Context, CLUB_PENALTY, WIDOW_PENALTY};
+use super::{broken_of, drop_trailing_break, line_extents, vskips_of, BoxRec, BuiltBlock, Context, CLUB_PENALTY, WIDOW_PENALTY};
 
 /// A margin note's text waiting for placement.
 #[derive(Debug, Clone)]
@@ -207,10 +207,11 @@ impl SwitchLog {
     }
 
     /// `\if@reversemargin` in force at byte `at` of document `doc`: the last
-    /// switch before it in its own document, else the entry preamble's.
+    /// switch at or before it in its own document, else the entry
+    /// preamble's.
     fn reversed_at(&self, doc: usize, at: usize) -> bool {
         if let Some(switches) = self.per_doc.get(doc) {
-            if let Some((_, reversed)) = switches.iter().filter(|(off, _)| *off < at).last() {
+            if let Some((_, reversed)) = switches.iter().filter(|(off, _)| *off <= at).last() {
                 return *reversed;
             }
         }
@@ -218,13 +219,80 @@ impl SwitchLog {
     }
 }
 
-/// Which margin the note with `span` set from the calling line's `dx` goes
-/// in: latex.ltx `\@addmarginpar` (lines 21324-21336) takes the calling
-/// column's outer side under `\if@twocolumn` -- where `\if@reversemargin`
-/// is never read (a `[twocolumn]` left-column note stays left with
-/// `\reversemarginpar` in force, per the pdflatex oracle) -- and negates
-/// the one-column right side for it otherwise.
-fn margin_side(ctx: &Context, log: &SwitchLog, span: Option<Span>, dx: f64) -> bool {
+/// Minimum `span.start` per document of the boxes starting on each page:
+/// the page break in source terms falls between one page's last content
+/// and the next page's first, so a note's page "ends" where the next page's
+/// content begins (see [`page_end`]). Built before [`place`] sets any note,
+/// so the notes' own lines never move a break.
+fn page_first_starts(
+    ctx: &Context,
+    blocks: &[BuiltBlock],
+    pages: &pl::Pages,
+) -> Vec<std::collections::HashMap<usize, usize>> {
+    let mut out: Vec<std::collections::HashMap<usize, usize>> = vec![std::collections::HashMap::new(); pages.pages.len()];
+    for (pi, page) in pages.pages.iter().enumerate() {
+        for line in &page.lines {
+            let Some(block) = blocks.get(line.paragraph) else { continue };
+            let Some(bline) = block.block.lines.lines.get(line.line) else { continue };
+            for idx in bline.items.clone() {
+                let Some(&Some(rec)) = block.recs.get(idx) else { continue };
+                let mut push = |span: Span| {
+                    out[pi].entry(span.document.0).and_modify(|at| *at = (*at).min(span.start)).or_insert(span.start);
+                };
+                match ctx.recs.get(rec) {
+                    Some(BoxRec::Text { clusters, .. }) => {
+                        for c in clusters {
+                            push(c.span);
+                        }
+                    }
+                    Some(BoxRec::Rule { span, .. }) => push(*span),
+                    Some(BoxRec::Math(mi)) => {
+                        if let Some(m) = ctx.maths.get(*mi) {
+                            push(m.span);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The source offset at which the note's page ships: everything the output
+/// routine has processed by then, which is everything up to the page break.
+///
+/// latex.ltx `\@addmarginpar` (21324-21336) runs inside the output routine
+/// and reads `\if@reversemargin` there, so a `\reversemarginpar` after the
+/// note but before the break (even on the next page's side of `\newpage`'s
+/// line, while still before the next page's first box) already flips that
+/// page's notes -- and a `\normalmarginpar` after a later page's note flips
+/// it back. The break in source terms is the next page's first content in
+/// the note's own document; past the last page, the document's end. A page
+/// whose later pages hold no content of the document (an empty trailing
+/// page) falls through to the end the same way.
+fn page_end(
+    ctx: &Context,
+    first_starts: &[std::collections::HashMap<usize, usize>],
+    doc: usize,
+    page: usize,
+) -> usize {
+    first_starts
+        .iter()
+        .skip(page + 1)
+        .filter_map(|starts| starts.get(&doc).copied())
+        .min()
+        .unwrap_or_else(|| ctx.texts.get(doc).map(|t| t.len()).unwrap_or(usize::MAX))
+}
+
+/// Which margin a note whose page ships at `page_end` (see [`page_end`])
+/// set from the calling line's `dx` goes in: latex.ltx `\@addmarginpar`
+/// (lines 21324-21336) takes the calling column's outer side under
+/// `\if@twocolumn` -- where `\if@reversemargin` is never read (a
+/// `[twocolumn]` left-column note stays left with `\reversemarginpar` in
+/// force, per the pdflatex oracle) -- and negates the one-column right
+/// side for it otherwise. `page_end` is `None` when the note has no span.
+fn margin_side(ctx: &Context, log: &SwitchLog, page_end: Option<(usize, usize)>, dx: f64) -> bool {
     let default_left = is_left_column(ctx, dx);
     let twocolumn = ctx
         .style
@@ -234,21 +302,25 @@ fn margin_side(ctx: &Context, log: &SwitchLog, span: Option<Span>, dx: f64) -> b
     if twocolumn {
         return default_left;
     }
-    let Some(span) = span else { return default_left };
-    log.reversed_at(span.document.0, span.start)
+    let Some((doc, at)) = page_end else { return default_left };
+    log.reversed_at(doc, at)
 }
 
 /// Places every anchored margin note: appends its block to `blocks` and its
 /// lines to the calling line's page, shifted by the per-line offset in
 /// `line_dx` (which [`assemble`](super::assemble) applies) into the outer
 /// margin of the calling line's column -- or the opposite margin while
-/// `\reversemarginpar` is in force (see [`margin_side`]).
+/// `\reversemarginpar` is in force at the page's shipout (see
+/// [`margin_side`]).
 pub(super) fn place(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, pages: &mut pl::Pages, line_dx: &mut [Vec<f64>]) {
     let anchors = std::mem::take(&mut ctx.marginpar_anchors);
     if anchors.is_empty() {
         return;
     }
     let switch_log = SwitchLog::of(ctx.texts);
+    // Where each page breaks in source terms, before any note line joins
+    // the pages (see [`page_first_starts`]).
+    let first_starts = page_first_starts(ctx, blocks, pages);
     // Notes met while setting a note are not placed (the compiler
     // diagnoses them), like nested footnotes.
     let mut line_of: std::collections::HashMap<usize, (usize, usize)> = std::collections::HashMap::new();
@@ -353,8 +425,14 @@ pub(super) fn place(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, pages: &mut
         let Some(&(_, first_baseline, ..)) = trial.first() else { continue };
         let call = &pages.pages[pi].lines[pli];
         let dx = line_dx.get(pi).and_then(|d| d.get(pli)).copied().unwrap_or(0.0);
-        let note_span = ctx.marginpars.get(m).map(|n| n.span);
-        let left = margin_side(ctx, &switch_log, note_span, dx);
+        // `\@addmarginpar` reads the flag when the page ships, not where
+        // the note stands: a switch after the note but before the break
+        // still flips this page's notes.
+        let shipout = ctx.marginpars.get(m).map(|n| n.span).map(|span| {
+            let doc = span.document.0;
+            (doc, page_end(ctx, &first_starts, doc, pi))
+        });
+        let left = margin_side(ctx, &switch_log, shipout, dx);
         let mut top = call.baseline_y - first_baseline;
         if let Some(&prev_bottom) = bottom_of.get(&(pi, left)) {
             top = top.max(prev_bottom + ctx.style.marginparpush_pt);
