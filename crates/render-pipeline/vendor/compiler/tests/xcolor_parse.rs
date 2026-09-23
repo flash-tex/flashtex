@@ -172,12 +172,17 @@ fn errors_are_diagnosed_with_xcolor_recovery() {
     let p = doc("", "\\textcolor{red}{a}");
     assert!(messages(&p).iter().any(|m| m.contains("needs \\usepackage{xcolor}")), "{:?}", messages(&p));
     assert_eq!(color_of(&p, "a").as_deref(), Some("1 0 0 rg"));
-    let p = doc("\\usepackage{xcolor}", "{\\color{red} \\textcolor{nosuch}{b} \\textcolor[hsb]{0.5,1,1}{c}}");
+    let p = doc(
+        "\\usepackage{xcolor}",
+        "{\\color{red} \\textcolor{nosuch}{b} \\textcolor[hsb]{0.5,1,1}{c} \\textcolor[wave]{450}{d}}",
+    );
     let m = messages(&p);
     assert!(m.iter().any(|m| m.contains("undefined colour `nosuch`")), "{m:?}");
-    assert!(m.iter().any(|m| m.contains("`hsb` is not supported")), "{m:?}");
+    assert!(m.iter().any(|m| m.contains("`wave` is not supported")), "{m:?}");
+    assert!(!m.iter().any(|m| m.contains("hsb")), "{m:?}");
     assert_eq!(color_of(&p, "b").as_deref(), Some("0 g"));
-    assert_eq!(color_of(&p, "c").as_deref(), Some("1 0 0 rg"));
+    assert_eq!(color_of(&p, "c").as_deref(), Some("0 1 1 rg"));
+    assert_eq!(color_of(&p, "d").as_deref(), Some("1 0 0 rg"));
     let p = doc("\\usepackage[dvipsnames,svgnames,x11names,table]{xcolor}", "x");
     assert!(p.diagnostics.is_empty(), "{:?}", messages(&p));
 }

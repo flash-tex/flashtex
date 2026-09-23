@@ -380,6 +380,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                     (seg.style.slanted, seg.style.caps, seg.style.family, seg.style.undefined).hash(h);
                     seg.style.literal.hash(h);
                     seg.style.hidden.hash(h);
+                    seg.style.unpainted.hash(h);
                     seg.style.named.hash(h);
                     for c in &seg.chars {
                         (c.start.wrapping_sub(base)).hash(h);
@@ -396,11 +397,12 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 factor.hash(h);
                 no_break.hash(h);
             }
-            Item::Math { list, span, hidden, size_cpt } => {
+            Item::Math { list, span, hidden, unpainted, size_cpt } => {
                 hash_math(list, h);
                 (span.start.wrapping_sub(base)).hash(h);
                 (span.end.wrapping_sub(base)).hash(h);
                 hidden.hash(h);
+                unpainted.hash(h);
                 size_cpt.hash(h);
             }
             Item::LineBreak { skip_pt } => {
@@ -472,12 +474,13 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
             Item::ColorBox(b) => {
                 format!("{b:?}").hash(h);
             }
-            Item::Graphic { options, path, span, hidden } => {
+            Item::Graphic { options, path, span, hidden, unpainted } => {
                 options.hash(h);
                 path.hash(h);
                 (span.start.wrapping_sub(base)).hash(h);
                 (span.end.wrapping_sub(base)).hash(h);
                 hidden.hash(h);
+                unpainted.hash(h);
             }
             Item::Lap { items } => {
                 hash_items(items, base, h);
@@ -547,10 +550,18 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
                     font_em.hash(h);
                 }
             }
-            Nucleus::Matrix { rows, columns, left, right } => {
+            Nucleus::Matrix { rows, columns, left, right, rules } => {
                 columns.hash(h);
                 left.hash(h);
                 right.hash(h);
+                rules.len().hash(h);
+                for rule in rules {
+                    rule.boundary.hash(h);
+                    match rule.kind {
+                        flashtex_compiler::math::RowRuleKind::HLine => 0usize.hash(h),
+                        flashtex_compiler::math::RowRuleKind::CLine { first, last } => (1usize, first, last).hash(h),
+                    }
+                }
                 rows.len().hash(h);
                 for row in rows {
                     row.len().hash(h);
@@ -670,6 +681,14 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
             Nucleus::Lap { body, align } => {
                 hash_math(body, h);
                 format!("{align:?}").hash(h);
+            }
+            #[cfg(feature = "compiler-node-surface")]
+            Nucleus::Pmb { body } => hash_math(body, h),
+            #[cfg(feature = "compiler-node-surface")]
+            Nucleus::Smash { body, top, bottom } => {
+                hash_math(body, h);
+                top.hash(h);
+                bottom.hash(h);
             }
             #[cfg(not(feature = "amsmath-inline"))]
             other => format!("{other:?}").hash(h),
@@ -919,7 +938,7 @@ fn map_math_spans(list: &mut MathList, f: &mut dyn FnMut(&mut Span)) {
                 }
             }
             #[cfg(feature = "compiler-node-surface")]
-            Nucleus::Lap { body, .. } => map_math_spans(body, f),
+            Nucleus::Lap { body, .. } | Nucleus::Pmb { body } | Nucleus::Smash { body, .. } => map_math_spans(body, f),
             #[cfg(not(feature = "amsmath-inline"))]
             _ => {}
         }

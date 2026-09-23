@@ -1360,6 +1360,8 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
         | Nucleus::Accent { body, .. }
         | Nucleus::Phantom { body, .. }
         | Nucleus::Lap { body, .. }
+        | Nucleus::Pmb { body }
+        | Nucleus::Smash { body, .. }
         | Nucleus::Operator { body, .. } => respan_list(body, span),
         Nucleus::Choice(lists) => {
             for list in lists.iter_mut() {

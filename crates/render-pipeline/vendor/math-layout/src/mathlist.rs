@@ -180,6 +180,65 @@ impl TextPiece {
     }
 }
 
+/// One character of an `\arrowfill@` argument, with the `mu` kern that
+/// precedes it *inside* the piece.
+///
+/// Almost every piece is a single character with no kern (`\rightarrow`,
+/// `\relbar`, `\Relbar`). The exceptions are mathtools': `\joinrel` is
+/// `\mathrel{\mkern-3mu}`, so `\longrightarrow` is
+/// `[(0, '−'), (-3, '→')]`, and `\mapstochar\relbar` abuts with no kern
+/// at all. Every muskip is zero inside `\arrowfill@`, so the characters
+/// are separated by these kerns and nothing else.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ArrowChar {
+    /// `\mkern` before this character, in math units of the piece's style.
+    pub kern_mu: f64,
+    pub ch: char,
+}
+
+/// One `\arrowfill@` argument ([`ArrowChar`]).
+pub type ArrowPiece = Vec<ArrowChar>;
+
+impl ArrowChar {
+    /// A piece of one character: `\relbar`, `\rightarrow`, `\Leftarrow`.
+    pub fn one(ch: char) -> ArrowPiece {
+        vec![ArrowChar {
+            kern_mu: 0.0,
+            ch,
+        }]
+    }
+
+    /// `a\joinrel b`: `\mkern-3mu` between the two, which is how every
+    /// `\long...arrow` and the two hook fills are built.
+    pub fn joined(a: char, b: char) -> ArrowPiece {
+        vec![
+            ArrowChar {
+                kern_mu: 0.0,
+                ch: a,
+            },
+            ArrowChar {
+                kern_mu: -3.0,
+                ch: b,
+            },
+        ]
+    }
+
+    /// `ab` with nothing between them: `\mapstochar\relbar`, where the
+    /// zero-width `\mapstochar` bar is painted at the minus's origin.
+    pub fn abutting(a: char, b: char) -> ArrowPiece {
+        vec![
+            ArrowChar {
+                kern_mu: 0.0,
+                ch: a,
+            },
+            ArrowChar {
+                kern_mu: 0.0,
+                ch: b,
+            },
+        ]
+    }
+}
+
 /// What sits in the nucleus of an atom.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Nucleus {
@@ -282,10 +341,17 @@ pub enum Nucleus {
     /// \mkern kerns[1]mu}` and `_{..below..}` for the non-empty labels. A
     /// minus piece (`\relbar`, `\mathsm@sh` of the minus) has no height or
     /// depth.
+    ///
+    /// Each piece is a [`ArrowPiece`] rather than one character because
+    /// several of mathtools' `\arrowfill@` arguments are two characters
+    /// joined by `\joinrel` (`\mkern-3mu`) or simply abutting:
+    /// `\MT_longrightarrow_fill:` ends in `\longrightarrow` =
+    /// `\relbar\joinrel\rightarrow` and `\MT_mapsto_fill:` begins with
+    /// `\mapstochar\relbar` (`mathtools.sty` 341-390).
     ExtArrow {
-        left: char,
-        fill: char,
-        right: char,
+        left: ArrowPiece,
+        fill: ArrowPiece,
+        right: ArrowPiece,
         kerns: [f64; 4],
         above: MathList,
         below: MathList,
@@ -570,15 +636,33 @@ impl Atom {
         Atom::new(AtomClass::Ord, Nucleus::SubArray { rows, align })
     }
 
-    /// A relation holding an amsmath extensible arrow ([`Nucleus::ExtArrow`]):
-    /// `pieces` are the left piece, the leader fill and the right piece.
+    /// A relation holding an amsmath extensible arrow ([`Nucleus::ExtArrow`])
+    /// whose three `\arrowfill@` arguments are each one character.
     pub fn ext_arrow(pieces: [char; 3], kerns: [f64; 4], above: MathList, below: MathList) -> Atom {
+        Atom::ext_arrow_pieces(
+            pieces.map(ArrowChar::one),
+            kerns,
+            above,
+            below,
+        )
+    }
+
+    /// [`Atom::ext_arrow`] with `\arrowfill@` arguments of more than one
+    /// character: mathtools' `\longrightarrow`/`\Longleftarrow`/hook/mapsto
+    /// fills ([`ArrowChar`]).
+    pub fn ext_arrow_pieces(
+        pieces: [ArrowPiece; 3],
+        kerns: [f64; 4],
+        above: MathList,
+        below: MathList,
+    ) -> Atom {
+        let [left, fill, right] = pieces;
         Atom::new(
             AtomClass::Rel,
             Nucleus::ExtArrow {
-                left: pieces[0],
-                fill: pieces[1],
-                right: pieces[2],
+                left,
+                fill,
+                right,
                 kerns,
                 above,
                 below,

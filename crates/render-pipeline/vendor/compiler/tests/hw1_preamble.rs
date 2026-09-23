@@ -133,16 +133,22 @@ fn unimplemented_amsmath_constructs_still_report_themselves() {
         "$\\begin{dcases} a & b \\end{dcases}$",
         "$\\xrightarrow{f}$",
         "$\\sideset{_a^b}{_c^d}\\sum$",
+        // `\smash`/`\smash[t]`/`\smash[b]` zero the commanded sides of
+        // their box in math mode (amsmath's `[t]`/`[b]` option included),
+        // so they no longer belong in the inventory below.
+        "$\\smash{x}$",
+        "$\\sqrt{\\smash[b]{y}}$",
     ] {
         assert!(doc(body).is_empty(), "{body}: {:?}", doc(body));
     }
 
     // A construct that is not still names itself, at its own span.
+    // (`\hdotsfor` is implemented in grid environments — see
+    // `amsmath_hdotsfor` — so like `\shoveleft`/`\shoveright` below it no
+    // longer belongs in this inventory.)
     for (body, command) in [
-        ("$\\smash{x}$", "\\smash"),
         ("$a\\mspace{3mu}b$", "\\mspace"),
         ("$\\varinjlim x$", "\\varinjlim"),
-        ("$\\begin{pmatrix}\\hdotsfor{2}\\end{pmatrix}$", "\\hdotsfor"),
         // `\shoveleft`/`\shoveright` are implemented in `multline` (see
         // `multline_shove`), so they no longer belong in this inventory; they
         // still report themselves in displays that cannot shove, e.g.

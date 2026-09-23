@@ -258,7 +258,33 @@ pub struct Pitch {
 /// `\,`); `quad` is the text font's em that the column gaps (`\quad`,
 /// `\thickspace`, written in the preamble's text mode) are measured in,
 /// which does not shrink when the grid sits in a script.
+/// latex.ltx `\arrayrulewidth` and `\doublerulesep`.
+pub const ARRAY_RULE_WIDTH: f64 = 0.4;
+pub const DOUBLE_RULE_SEP: f64 = 2.0;
+
 pub fn layout_grid(rows: Vec<Vec<MathBox>>, columns: &str, spec: &GridSpec, pitch: Pitch, p: &MathParams, quad: f64) -> MathBox {
+    layout_grid_ruled(rows, columns, spec, pitch, p, quad, &[])
+}
+
+/// [`layout_grid`] with an `array`'s inter-row rules (compiler
+/// `Nucleus::Matrix::rules`). `\hline` is `\noalign{\hrule\@height
+/// \arrayrulewidth}` across the whole alignment, and a second one straight
+/// after adds `\vskip\doublerulesep\vskip-\arrayrulewidth` first (`\@xhline`). `\cline{a-b}` is
+/// a row of `\leaders\hrule\@height\arrayrulewidth\hfill` over the full
+/// width of columns a..b (their `\arraycolsep`s included, since the cells
+/// are `\omit`ted), followed by `\noalign{\vskip-\arrayrulewidth}`, so it
+/// takes no height. `\@array` stacks its rows with `\baselineskip` and
+/// `\lineskip` zero, so a rule's thickness adds directly to the distance
+/// between the rows around it.
+pub fn layout_grid_ruled(
+    rows: Vec<Vec<MathBox>>,
+    columns: &str,
+    spec: &GridSpec,
+    pitch: Pitch,
+    p: &MathParams,
+    quad: f64,
+    rules: &[flashtex_compiler::math::RowRule],
+) -> MathBox {
     let ncols = rows.iter().map(Vec::len).max().unwrap_or(0);
     let cols: Vec<char> = columns.chars().chain(std::iter::repeat('c')).take(ncols).collect();
     let widths: Vec<f64> = (0..ncols).map(|j| rows.iter().filter_map(|r| r.get(j)).map(|b| b.width).fold(0.0, f64::max)).collect();
@@ -335,8 +361,48 @@ pub fn layout_grid(rows: Vec<Vec<MathBox>>, columns: &str, spec: &GridSpec, pitc
         y += dist;
         baselines.push(y);
     }
+    // The rules at each row boundary (0 = above the first row, `nrows` =
+    // below the last), as vertical advances and drawn rules.
+    use flashtex_compiler::math::RowRuleKind;
+    let nrows = baselines.len();
+    let mut advance = vec![0.0f64; nrows + 1];
+    // (boundary, offset of the rule's top from the boundary, x0, x1)
+    let mut drawn: Vec<(usize, f64, f64, f64)> = Vec::new();
+    let col_left = |j: usize| xs.get(j).map_or(0.0, |x| x - if j == 0 && spec.trim_outer { 0.0 } else { spec.colsep });
+    let col_right = |j: usize| xs.get(j).map_or(0.0, |x| x + widths[j] + if j + 1 == ncols && spec.trim_outer { 0.0 } else { spec.colsep });
+    let mut prev: Option<(usize, bool)> = None;
+    for rule in rules {
+        let b = rule.boundary.min(nrows);
+        match rule.kind {
+            RowRuleKind::HLine => {
+                if prev == Some((b, true)) {
+                    // `\@xhline`: `\vskip\doublerulesep\vskip-\arrayrulewidth`.
+                    advance[b] += DOUBLE_RULE_SEP - ARRAY_RULE_WIDTH;
+                }
+                drawn.push((b, advance[b], 0.0, width));
+                advance[b] += ARRAY_RULE_WIDTH;
+                prev = Some((b, true));
+            }
+            // Columns are 0-based here (the compiler checks `\cline{a-b}`'s
+            // 1-based range and stores `a-1`/`b-1`).
+            RowRuleKind::CLine { first, last } if last >= first && last < ncols => {
+                drawn.push((b, advance[b], col_left(first), col_right(last)));
+                prev = Some((b, false));
+            }
+            RowRuleKind::CLine { .. } => prev = Some((b, false)),
+        }
+    }
+    let mut shift = 0.0;
+    let mut boundary_top = vec![0.0f64; nrows + 1];
+    for i in 0..nrows {
+        boundary_top[i] = if i == 0 { 0.0 } else { baselines[i - 1] + extents[i - 1].1 };
+        shift += advance[i];
+        baselines[i] += shift;
+    }
+    boundary_top[nrows] = baselines.last().copied().unwrap_or(0.0) + extents.last().map_or(0.0, |e| e.1);
+    let y = baselines.last().copied().unwrap_or(0.0);
     let last_depth = extents.last().map_or(0.0, |e| e.1);
-    let total = y + last_depth;
+    let total = y + last_depth + advance[nrows];
     let (height, depth) = match spec.vpos {
         // `\vtop` (tex.web §1087): the height of the first row box.
         't' => (extents[0].0, total - extents[0].0),
@@ -361,6 +427,14 @@ pub fn layout_grid(rows: Vec<Vec<MathBox>>, columns: &str, spec: &GridSpec, pitc
                 content: cell,
             });
         }
+    }
+    for (b, offset, x0, x1) in drawn {
+        let top = boundary_top[b] + offset;
+        children.push(Child {
+            dx: x0,
+            dy: top + ARRAY_RULE_WIDTH - height,
+            content: MathBox::rule(x1 - x0, ARRAY_RULE_WIDTH, 0.0),
+        });
     }
     MathBox {
         kind: BoxKind::HBox(children),

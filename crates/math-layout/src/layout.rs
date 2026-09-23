@@ -6,7 +6,8 @@
 
 use crate::boxes::{BoxKind, Child, Flex, MathBox};
 use crate::mathlist::{
-    Atom, AtomClass, BigSizing, LeftScripts, Limits, MathList, Nucleus, TextPiece, TextStyle,
+    ArrowChar, ArrowPiece, Atom, AtomClass, BigSizing, LeftScripts, Limits, MathList, Nucleus,
+    TextPiece, TextStyle,
 };
 use crate::metrics::{Assembly, Extensible, Glyph, KernCorner, MathFontMetrics, MathParams};
 use crate::metrics::{MathChar, OrdPair};
@@ -553,7 +554,7 @@ impl Engine<'_> {
                 above,
                 below,
             } => (
-                self.make_ext_arrow([*left, *fill, *right], *kerns, above, below, style),
+                self.make_ext_arrow([left, fill, right], *kerns, above, below, style),
                 0.0,
                 false,
             ),
@@ -1035,10 +1036,12 @@ impl Engine<'_> {
         }
     }
 
-    /// One piece of an `\arrowfill@` in `\displaystyle`: the relation's
-    /// character box (with its italic correction), smashed for the minus
-    /// (`\relbar` = `\mathrel{\mathpalette\mathsm@sh\std@minus}`).
-    fn arrow_piece(&mut self, ch: char, style: Style) -> MathBox {
+    /// One character of an `\arrowfill@` piece: the relation's character box
+    /// (with its italic correction), smashed for the minus (`\relbar` =
+    /// `\mathrel{\mathpalette\mathsm@sh\std@minus}`). `\Relbar` is the plain
+    /// `=` and keeps its height, which is why the `\Rightarrowfill@` row is
+    /// as tall as an `=` where `\rightarrowfill@`'s is flat.
+    fn arrow_char(&mut self, ch: char, style: Style) -> MathBox {
         let Some(g) = self.glyph(ch, style) else {
             return MathBox::empty();
         };
@@ -1054,10 +1057,25 @@ impl Engine<'_> {
         b
     }
 
+    /// One piece of an `\arrowfill@` in `style`: its characters, each after
+    /// its own `\mkern` ([`ArrowChar`]). Every muskip is zero inside
+    /// `\arrowfill@`, so nothing else separates them.
+    fn arrow_piece(&mut self, piece: &[ArrowChar], style: Style) -> MathBox {
+        let mu = self.params(style).mu();
+        let mut parts = Vec::with_capacity(piece.len() * 2);
+        for part in piece {
+            if part.kern_mu != 0.0 {
+                parts.push(MathBox::kern(part.kern_mu * mu));
+            }
+            parts.push(self.arrow_char(part.ch, style));
+        }
+        MathBox::hlist(parts)
+    }
+
     /// amsmath `\ext@arrow` (see [`Nucleus::ExtArrow`]).
     fn make_ext_arrow(
         &mut self,
-        pieces: [char; 3],
+        pieces: [&ArrowPiece; 3],
         kerns: [f64; 4],
         above: &MathList,
         below: &MathList,
@@ -1122,7 +1140,7 @@ impl Engine<'_> {
     /// `\mkern-7mu`, `\cleaders\hbox{$\mkern-2mu#2\mkern-2mu$}\hfill`,
     /// `\mkern-7mu`, `#3`, every muskip zero, packed to the larger of its
     /// natural width (the `\hfill` has none) and `min_width`.
-    fn arrow_fill(&mut self, pieces: [char; 3], min_width: f64, style: Style) -> MathBox {
+    fn arrow_fill(&mut self, pieces: [&ArrowPiece; 3], min_width: f64, style: Style) -> MathBox {
         let mu = self.params(style).mu();
         let left = self.arrow_piece(pieces[0], style);
         let right = self.arrow_piece(pieces[2], style);
@@ -1195,7 +1213,11 @@ impl Engine<'_> {
             ..style
         };
         let x = self.clean_box(body, style);
-        let fill = self.arrow_fill(pieces, x.width, style);
+        // `\overrightarrow`'s three `\arrowfill@` arguments are each one
+        // character (`amsmath.sty` 977-979), so each piece is a one-element
+        // `ArrowPiece`.
+        let pieces = pieces.map(ArrowChar::one);
+        let fill = self.arrow_fill([&pieces[0], &pieces[1], &pieces[2]], x.width, style);
         let x = x.rebox(fill.width);
         if under {
             MathBox::vtop(vec![(0.0, x), (0.0, MathBox::kern(gap)), (0.0, fill)])
