@@ -664,6 +664,7 @@ fn so_inner_glue_replaces_source_space_with_stretch() {
                 stretch_fil,
                 shrink_pt,
                 shrink_fil,
+                ..
             } => Some((
                 *pt, *space_before_pt, *space_after_pt, *span, *stretch_pt, *stretch_fil,
                 *shrink_pt, *shrink_fil,
@@ -1402,5 +1403,91 @@ fn hl_inventory_description_records_xcolor_geometry() {
         soul.description.contains("1.75ex") && soul.description.contains("not painted"),
         "package entry agrees: {:?}",
         soul.description
+    );
+}
+
+/// GH-828 item 3: with `\usepackage{soul}` loaded, soul owns `\hl`, so a
+/// later `\newcommand{\hl}` is refused exactly as real pdflatex refuses it
+/// (`LaTeX Error: Command \hl already defined.`). The reservation keeps
+/// `\hl` passing through to the parser's soul arm (host command), so the
+/// built-in highlight still works after the rejected redefinition.
+#[test]
+fn soul_hl_rejects_newcommand_redefinition() {
+    let source = "\\documentclass{article}\n\\usepackage{soul}\n\\newcommand{\\hl}[1]{[#1]}\n\\begin{document}\nA \\hl{bc} d.\n\\end{document}";
+    let parsed = parse(source);
+    assert!(
+        parsed
+            .diagnostics
+            .iter()
+            .any(|d| d.message == "LaTeX Error: Command \\hl already defined."),
+        "redefinition rejected like pdflatex: {:?}",
+        parsed.diagnostics
+    );
+    // The rejected definition did not take: the use is still soul's
+    // highlight, not the user's `[#1]`.
+    let inlines = paragraph_inlines(source);
+    assert!(
+        inlines.iter().any(|i| matches!(i, Inline::ColorBox(_))),
+        "soul highlight survives the rejected redefinition: {inlines:?}"
+    );
+    assert!(
+        !text_of(&inlines).contains("[bc]"),
+        "user body did not win: {:?}",
+        text_of(&inlines)
+    );
+}
+
+/// Same reservation for `\so`: soul owns the name once loaded.
+#[test]
+fn soul_so_rejects_newcommand_redefinition() {
+    let source = "\\documentclass{article}\n\\usepackage{soul}\n\\newcommand{\\so}[1]{[#1]}\n\\begin{document}\nA \\so{bc} d.\n\\end{document}";
+    let parsed = parse(source);
+    assert!(
+        parsed
+            .diagnostics
+            .iter()
+            .any(|d| d.message == "LaTeX Error: Command \\so already defined."),
+        "redefinition rejected like pdflatex: {:?}",
+        parsed.diagnostics
+    );
+    let inlines = paragraph_inlines(source);
+    assert!(
+        inlines.iter().any(|i| matches!(i, Inline::Kern { .. })),
+        "soul letterspacing survives the rejected redefinition: {inlines:?}"
+    );
+}
+
+/// The reservation fires through multi-name and `\RequirePackage` loads
+/// too, not just a lone `\usepackage{soul}`.
+#[test]
+fn soul_reservation_fires_through_shared_loads() {
+    for preamble in ["\\usepackage{xcolor,soul}", "\\RequirePackage{soul}"] {
+        let source = format!(
+            "\\documentclass{{article}}\n{preamble}\n\\newcommand{{\\hl}}[1]{{[#1]}}\n\\begin{{document}}\nA \\hl{{bc}} d.\n\\end{{document}}"
+        );
+        let diagnostics = parse(&source).diagnostics;
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message == "LaTeX Error: Command \\hl already defined."),
+            "{preamble} must reserve \\hl: {diagnostics:?}"
+        );
+    }
+}
+
+/// Order-independence note: package presence is preamble-wide (like the
+/// parser's own `self.packages` gate), so a `\newcommand{\hl}` *before*
+/// `\usepackage{soul}` is refused at the `\newcommand`. Real pdflatex
+/// accepts that order and fails at the load instead (soul.sty's own
+/// `\newcommand`); both refuse the redefinition, at different spans.
+#[test]
+fn soul_reservation_applies_before_the_load_line_too() {
+    let source = "\\documentclass{article}\n\\newcommand{\\hl}[1]{[#1]}\n\\usepackage{soul}\n\\begin{document}\nA \\hl{bc} d.\n\\end{document}";
+    let diagnostics = parse(source).diagnostics;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.message == "LaTeX Error: Command \\hl already defined."),
+        "redefinition refused either way: {diagnostics:?}"
     );
 }

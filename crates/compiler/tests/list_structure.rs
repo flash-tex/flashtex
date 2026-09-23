@@ -167,7 +167,9 @@ fn setlist_keys_apply_in_order_before_begin_keys() {
         [
             ListOption::NoSep,
             ListOption::LeftMargin(ListLength::Star),
-            ListOption::LabelSep(ListLength::Pt(10.0))
+            // `1em` in cmr10, where the list starts: pdflatex's
+            // `\the\labelsep` there is 10.00002pt (655361sp).
+            ListOption::LabelSep(ListLength::Pt(655361.0 / 65536.0))
         ]
     );
     assert_eq!(

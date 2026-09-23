@@ -649,6 +649,7 @@ impl Context<'_> {
             class_override: None,
             width_em: None,
             ams_symbol: None,
+            limits: None,
         }
     }
 

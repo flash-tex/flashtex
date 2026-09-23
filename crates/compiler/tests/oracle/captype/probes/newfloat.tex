@@ -1,0 +1,28 @@
+%% labels: Program, Recipe
+\documentclass{article}
+\usepackage{float}
+\floatstyle{plain}
+\newfloat{program}{htbp}{lop}
+\floatname{program}{Program}
+\floatstyle{ruled}
+\newfloat{recipe}{htbp}{lor}[section]
+\floatname{recipe}{Recipe}
+\begin{document}
+\section{One}
+Before.
+\begin{program}
+Body of the program.
+\caption[Short]{A plain-style caption}
+\end{program}
+\begin{recipe}
+\caption{A ruled caption}
+Body of the recipe.
+\end{recipe}
+\begin{program}
+\begin{center}
+Centred body.
+\caption{Nested in center}
+\end{center}
+\end{program}
+After.
+\end{document}

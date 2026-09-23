@@ -366,6 +366,40 @@ fn incremental_expansion_reads_packages_like_a_full_run() {
     }
 }
 
+/// A package defining a new environment inside the standard
+/// "only define this if it isn't already defined" guard on a fresh load is
+/// a fresh definition, not a duplicate: no spurious "already defined"
+/// diagnostic. The guard's own existence check (`\csname` or
+/// `\@ifundefined`) leaves a `\relax` behind on a genuinely fresh name,
+/// which `\@ifdefinable` counts as undefined, like `\newcommand` does.
+#[test]
+fn ifundefined_guarded_newenvironment_on_fresh_load_is_not_a_duplicate() {
+    let cases = [
+        "\\ProvidesPackage{guarded}\\@ifundefined{myenv}{\\newenvironment{myenv}{B}{E}}{}",
+        "\\ProvidesPackage{guarded}\\expandafter\\ifx\\csname myenv\\endcsname\\relax\\newenvironment{myenv}{B}{E}\\fi",
+        "\\ProvidesPackage{guarded}\\let\\myenv\\relax\\newenvironment{myenv}{B}{E}",
+    ];
+    for sty in cases {
+        let (out, diags) = run(
+            "\\usepackage{guarded}\\begin{myenv}hi\\end{myenv}",
+            &[("guarded.sty", sty)],
+        );
+        assert!(diags.is_empty(), "{sty:?}: {diags:?}");
+        assert!(out.contains("BhiE"), "{sty:?}: {out:?}");
+    }
+    // A genuinely taken name is still refused, and `\relax` itself never is.
+    let (_, diags) = run(
+        "\\usepackage{guarded}",
+        &[("guarded.sty", "\\ProvidesPackage{guarded}\\def\\myenv{x}\\newenvironment{myenv}{B}{E}")],
+    );
+    assert_eq!(diags, vec!["Error: LaTeX Error: Command \\myenv already defined."]);
+    let (_, diags) = run(
+        "\\usepackage{guarded}",
+        &[("guarded.sty", "\\ProvidesPackage{guarded}\\newenvironment{relax}{B}{E}")],
+    );
+    assert_eq!(diags, vec!["Error: LaTeX Error: Command \\relax already defined."]);
+}
+
 /// In the document itself the four declarations are the host parser's
 /// (inert metadata); only inside a package or class file do they run.
 #[test]
@@ -382,4 +416,33 @@ fn declarations_in_a_document_pass_through() {
     // `\@ifpackageloaded` is untouched by a document-level `\ProvidesPackage`.
     let (out, _) = run("\\ProvidesPackage{x}\\makeatletter\\@ifpackageloaded{x}{-}{N}", &[]);
     assert!(out.ends_with('N'), "{out}");
+}
+
+
+#[test]
+fn a_project_class_uses_the_kernel_switches_font_defaults_and_setfontsize() {
+    // The opening lines of IEEEtran.cls/mnras.cls/aastex.cls, reduced: a
+    // `\if@compatibility\else` guard around options, the times.sty font
+    // defaults, a `\@setfontsize`-based `\normalsize` and `\skip\footins`.
+    const CLS: &str = r"\NeedsTeXFormat{LaTeX2e}\ProvidesClass{mycls}
+\if@compatibility\else\DeclareOption{a4paper}{\def\paper{a4}}\fi
+\DeclareOption*{}\ProcessOptions\relax
+\renewcommand{\sfdefault}{phv}\renewcommand{\rmdefault}{ptm}
+\def\normalsize{\@setfontsize\normalsize\@xpt\@xiipt}
+\normalsize
+\skip\footins 12pt plus 12pt
+\@twosidetrue
+\def\hello{\if@twoside two\else one\fi/\rmdefault/\paper}";
+    let (out, diags) = run(
+        "\\documentclass[a4paper]{mycls}\n\\begin{document}\\hello\\end{document}\n",
+        &[("mycls.cls", CLS)],
+    );
+    let unexpected: Vec<&String> = diags.iter().filter(|d| !d.contains("has no \\LoadClass")).collect();
+    assert!(unexpected.is_empty(), "{diags:?}");
+    // `\fontsize`/`\selectfont` run in the engine and come back to the
+    // host as `\flashtexfontsizedone{10}{12.0pt}`/`\flashtexselectfontdone`.
+    assert_eq!(
+        out,
+        "\\flashtexfontsizedone 1012.0pt\\flashtexselectfontdone \\documentclass [a4paper]article \\document two/ptm/a4\\enddocument"
+    );
 }

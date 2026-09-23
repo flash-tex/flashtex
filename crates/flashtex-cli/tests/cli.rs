@@ -607,7 +607,7 @@ fn bundled_share_layout_resolves_fonts_without_host_tex() {
     for e in std::fs::read_dir(fonts_dir()).unwrap().flatten() {
         let p = e.path();
         let name = p.file_name().unwrap().to_str().unwrap().to_string();
-        if name.ends_with(".otf") || name == "GUST-FONT-LICENSE.TXT" || name == "SUPPLEMENTARY-FACES.json" {
+        if name.ends_with(".otf") || name.ends_with("GUST-FONT-LICENSE.TXT") || name == "SUPPLEMENTARY-FACES.json" {
             std::fs::copy(&p, share.join("Fonts").join(&name)).unwrap();
         }
     }

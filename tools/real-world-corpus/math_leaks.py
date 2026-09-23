@@ -125,7 +125,8 @@ def main():
     fonts, tfm = fontenv.resolve_dirs(None, None, os.path.join(args.repo, "apps", "mac", "Fonts"))
     env = dict(os.environ, FLASHTEX_FONT_DIRS=fonts, FLASHTEX_TFM_DIRS=tfm)
     args.render = args.render or os.path.join(args.repo, "crates/render-pipeline/target/release/flashtex-render")
-    args.pdf_exact = args.pdf_exact or os.path.join(args.repo, "crates/pdf/target/release/flashtex-pdf-exact")
+    # crates/pdf is a root-workspace member: it builds into the repository's target/.
+    args.pdf_exact = args.pdf_exact or os.path.join(args.repo, "target/release/flashtex-pdf-exact")
     only = set(filter(None, args.only.split(",")))
     os.makedirs(args.out, exist_ok=True)
     report = []

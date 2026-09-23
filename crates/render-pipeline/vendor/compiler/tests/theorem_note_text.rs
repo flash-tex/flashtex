@@ -45,12 +45,14 @@ fn the_note_is_set_as_text_with_its_accents() {
     let texts = head_texts(body);
     // `Theorem 1` (bold), the head-font space, `(`, the note's pieces, `)`,
     // the bold period, then the body. The accent reaches the render
-    // pipeline the way body text does: the mark as a one-character text
-    // whose two-byte span is the `\'` of the source (the pipeline's
-    // `accent()` composes `é` from it), never as a literal apostrophe glued
-    // into the word.
+    // pipeline the way body text does: composed by the compiler into `é`,
+    // whose span is the `\'e` of the source (PLAN1 site 11; before, the
+    // pipeline composed it from a one-character `’` run with a two-byte
+    // `\'` span), never as a literal apostrophe glued into the word.
+    // pdflatex (TeX Live 2026, OT1 article, amsthm) sets this head's
+    // `For` at x 238.184 bp; FlashTeX sets it at 238.182 both ways.
     let spelled: Vec<String> = texts.iter().map(|(t, bold, sp)| format!("{}{}{t}", if *sp { "+" } else { "" }, if *bold { "B:" } else { "" })).collect();
-    assert_eq!(spelled[..7], ["+B:Theorem 1", "B: ", "(", "B", "’", "ezout", ")"], "{spelled:?}");
+    assert_eq!(spelled[..7], ["+B:Theorem 1", "B: ", "(", "B", "é", "zout", ")"], "{spelled:?}");
     assert_eq!(spelled[7], "B:.", "the head punctuation stays in the head font");
     let source = doc(body);
     let parsed = parse(&source);
@@ -59,13 +61,13 @@ fn the_note_is_set_as_text_with_its_accents() {
         .iter()
         .find_map(|block| match block {
             Block::Paragraph(inlines) => inlines.iter().find_map(|inline| match inline {
-                Inline::Text { text, span, .. } if text == "’" => Some(*span),
+                Inline::Text { text, span, .. } if text == "é" => Some(*span),
                 _ => None,
             }),
             _ => None,
         })
-        .expect("the accent mark");
-    assert_eq!(&source[mark.start..mark.end], "\\'");
+        .expect("the accented letter");
+    assert_eq!(&source[mark.start..mark.end], "\\'e");
 }
 
 #[test]

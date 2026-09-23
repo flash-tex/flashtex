@@ -489,6 +489,7 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             number: _,
             number_span,
             content,
+            style: _,
         } => {
             map_span(number_span, changes, deltas)?;
             shift_inlines(content, changes, deltas)
@@ -554,7 +555,9 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             date,
         } => {
             shift_inlines(title, changes, deltas)?;
-            shift_inlines(authors, changes, deltas)?;
+            for group in authors.iter_mut() {
+                shift_inlines(group, changes, deltas)?;
+            }
             if let Some(date) = date {
                 shift_inlines(date, changes, deltas)?;
             }
@@ -641,9 +644,11 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 span,
                 style: _,
                 space_before: _,
+                glue_before: _,
+                boundary_before: _,
             } => map_span(span, changes, deltas)?,
             Inline::LineBreak { span, skip_pt: _ } => map_span(span, changes, deltas)?,
-            Inline::TextGlue { em: _, span, plus_em: _, minus_em: _ } => map_span(span, changes, deltas)?,
+            Inline::TextGlue { em: _, span, plus_em: _, minus_em: _, style: _ } => map_span(span, changes, deltas)?,
             Inline::Math {
                 list,
                 display: _,
@@ -654,6 +659,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 color: _,
                 size: _,
                 color_ranges,
+                glue_before: _,
             } => {
                 shift_math_list(list, changes, deltas)?;
                 for (range, _) in color_ranges.iter_mut() {
@@ -700,6 +706,8 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 equation: _,
                 span,
                 space_before: _,
+                style: _,
+                glue_before: _,
             } => map_span(span, changes, deltas)?,
             Inline::CleverReference { span, .. } => map_span(span, changes, deltas)?,
             Inline::ThePage { span, .. } => map_span(span, changes, deltas)?,
@@ -763,6 +771,8 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 text: _,
                 span,
                 space_before: _,
+                style: _,
+                glue_before: _,
             } => map_span(span, changes, deltas)?,
             Inline::ColorBox(b) => {
                 map_span(&mut b.span, changes, deltas)?;
@@ -775,6 +785,10 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             Inline::Phantom(p) => {
                 map_span(&mut p.span, changes, deltas)?;
                 shift_inlines(&mut p.content, changes, deltas)?;
+            }
+            Inline::HBox(b) => {
+                map_span(&mut b.span, changes, deltas)?;
+                shift_inlines(&mut b.content, changes, deltas)?;
             }
             Inline::TextScript(t) => {
                 map_span(&mut t.span, changes, deltas)?;
@@ -806,6 +820,7 @@ fn shift_math_list(list: &mut MathList, changes: &[ChangedBytes], deltas: &[isiz
         class_override: _,
         width_em: _,
         ams_symbol: _,
+        limits: _,
     } in &mut list.atoms
     {
         match nucleus {
@@ -860,7 +875,8 @@ fn shift_math_list(list: &mut MathList, changes: &[ChangedBytes], deltas: &[isiz
             }
             Nucleus::Phantom { body, .. }
             | Nucleus::Operator { body, .. }
-            | Nucleus::Lap { body, .. } => shift_math_list(body, changes, deltas)?,
+            | Nucleus::Lap { body, .. }
+            | Nucleus::Pmb { body } => shift_math_list(body, changes, deltas)?,
             Nucleus::ExtArrow { above, below, .. } => {
                 shift_math_list(above, changes, deltas)?;
                 shift_math_list(below, changes, deltas)?;
@@ -1022,6 +1038,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::Underline(u) => u.span,
         Inline::TextScript(t) => t.span,
         Inline::Phantom(p) => p.span,
+        Inline::HBox(b) => b.span,
         Inline::Graphic(graphic) => graphic.span,
         Inline::Transform(transform) => transform.span,
         Inline::Logo { span, .. } | Inline::Rule { span, .. } | Inline::Kern { span, .. } => *span,
