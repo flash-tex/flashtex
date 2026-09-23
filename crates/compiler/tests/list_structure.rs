@@ -5,7 +5,8 @@
 //! article.cls and enumitem.sty provenance.
 
 use flashtex_compiler::parser::{
-    self, Block, CounterStyle, Inline, ItemLabel, ListEnvironment, ListLength, ListOption,
+    self, Block, CounterStyle, Inline, ItemLabel, ListEnvironment, ListLeftMargin, ListLength,
+    ListOption,
 };
 
 fn doc(body: &str) -> String {
@@ -273,4 +274,103 @@ fn setlist_style_nextline_parses_into_style_reachable_via_frame() {
         .expect("one description item");
     assert_eq!(frame.options, [ListOption::Style("nextline".into())]);
     assert_eq!(frame.style(), Some("nextline"));
+}
+
+/// `trivlist` (latex.ltx `\trivlist`, `texdef -t latex trivlist` on TeX Live
+/// 2026: `\parsep\parskip`, `\@trivlist`, `\labelwidth`/`\leftmargin`/
+/// `\itemindent` zeroed, `\makelabel` the identity): a list with zero
+/// margins whose `\item[<label>]` prints its label run-in at the margin,
+/// with no brackets; a bare `\item` prints nothing.
+///
+/// Oracle: `pdflatex -interaction=nonstopmode triv2.tex` (article/10pt on
+/// letter, 0 errors) over a plain paragraph plus one labelled and one bare
+/// trivlist item — `pdftotext -bbox` puts `Note.` at xMin=133.768pt,
+/// exactly the bare item's xMin (zero `\leftmargin`, no indent; the plain
+/// paragraph starts indented at 148.712pt) on the body's baseline
+/// (run-in), printing `Note. Body text here.` with no brackets.
+#[test]
+fn trivlist_is_a_zero_margin_list_with_a_run_in_label() {
+    let source = doc(
+        "\\begin{trivlist}\\item[\\hskip\\labelsep\\bfseries Note.] Body text here.\\end{trivlist}",
+    );
+    let parsed = parser::parse(&source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let Some(Block::ListItem {
+        lists,
+        item,
+        content,
+        leftmargin,
+        ..
+    }) = parsed.blocks.iter().find(|b| matches!(b, Block::ListItem { .. }))
+    else {
+        panic!("{:?}", parsed.blocks)
+    };
+    assert_eq!(
+        lists.iter().map(|f| f.environment).collect::<Vec<_>>(),
+        [ListEnvironment::Trivlist]
+    );
+    // Zero `\leftmargin`: the layout's level default must not apply.
+    assert_eq!(*leftmargin, ListLeftMargin::Explicit(0.0));
+    // No brackets: the bracket text is the label — the `\hskip\labelsep`
+    // as spacing, `Note.` bold from its own `\bfseries` — ahead of
+    // unstyled body text.
+    match item {
+        Some(ItemLabel::Explicit {
+            content: label,
+            text,
+            ..
+        }) => {
+            assert_eq!(text, "Note.");
+            let [Inline::HSpace { pt, .. }, rest @ ..] = label.as_slice() else {
+                panic!("{label:?}")
+            };
+            assert!((pt - 5.0).abs() < 1e-9, "{label:?}");
+            assert!(
+                rest.iter().all(
+                    |i| matches!(i, Inline::Text { style, .. } if style.bold)
+                ),
+                "{label:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    let words: Vec<_> = content
+        .iter()
+        .filter_map(|i| match i {
+            Inline::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(words.join(" "), "Body text here.");
+    assert!(
+        content
+            .iter()
+            .all(|i| !matches!(i, Inline::Text { style, .. } if style.bold)),
+        "the label's `\\bfseries` must not leak into the body: {content:?}"
+    );
+
+    let bare = doc("\\begin{trivlist}\\item Bare here.\\end{trivlist}");
+    let parsed = parser::parse(&bare);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let all = items(&bare);
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].0, [ListEnvironment::Trivlist]);
+    assert_eq!(all[0].1, Some(ItemLabel::Empty));
+    assert_eq!(all[0].2, "Bare here.");
+
+    // Kernel environment: no package needed — plain article, like the
+    // original report (pdflatex accepts it with 0 errors there too).
+    let plain =
+        "\\documentclass{article}\\begin{document}\\begin{trivlist}\\item[x] y\\end{trivlist}\\end{document}";
+    let parsed = parser::parse(plain);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert!(
+        parsed.blocks.iter().any(|b| matches!(
+            b,
+            Block::ListItem { lists, .. }
+            if lists.iter().any(|f| f.environment == ListEnvironment::Trivlist)
+        )),
+        "{:?}",
+        parsed.blocks
+    );
 }

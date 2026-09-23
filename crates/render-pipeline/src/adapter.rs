@@ -11052,6 +11052,16 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 let _ = space_between(prev_end, prev_span, *span, None, after_control_word);
                 let gap = glue_before.is_some();
                 let mut gap_style = glue_before.map_or(ambient, |g| node_style(&g.style, size));
+                // As for the text arm below: a theorem body's `\itshape`
+                // rides on the compiler's `bold`/`italic`, not on `font`
+                // (`parser::TextStyle::font`), so without this the space in
+                // `a $x$` is the upright face's, not the italic body's.
+                if compiler_weight {
+                    if let Some(g) = glue_before {
+                        gap_style.bold = g.style.bold;
+                        gap_style.italic = g.style.italic;
+                    }
+                }
                 gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, size_cpt);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;

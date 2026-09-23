@@ -11615,6 +11615,17 @@ impl P<'_> {
                     list.template = Some(default_label);
                 }
             }
+        } else if environment == "trivlist" && self.in_body {
+            // latex.ltx `\trivlist` (`texdef -t latex trivlist`): a `\list`
+            // with `\labelwidth`, `\leftmargin` and `\itemindent` zeroed and
+            // `\makelabel` the identity, so `\item[<label>]` prints its
+            // label run-in at the margin. The zero `\leftmargin` overrides
+            // the level default the layout would otherwise apply.
+            self.flush_paragraph(blocks, para);
+            self.open_list(&environment, None, span.merge(argument_span), blocks.len());
+            if let Some(list) = self.list_stack.last_mut() {
+                list.spacing.leftmargin = LeftMarginSetting::Explicit(0.0);
+            }
         } else if self.in_body
             && (self.theorems.contains_key(&environment) || environment == "proof")
         {
@@ -11964,7 +11975,7 @@ impl P<'_> {
             self.paragraph_styles.pop();
         } else if matches!(
             environment.as_str(),
-            "itemize" | "enumerate" | "description" | "list" | "thebibliography" | "mcitethebibliography"
+            "itemize" | "enumerate" | "description" | "list" | "trivlist" | "thebibliography" | "mcitethebibliography"
         ) {
             let (gap_before, gap_after) = match self.list_stack.last() {
                 Some(list) => (
@@ -12156,7 +12167,7 @@ impl P<'_> {
         // environment article.cls builds on them.
         if matches!(
             environment.as_str(),
-            "itemize" | "enumerate" | "description" | "thebibliography" | "center" | "flushleft" | "flushright" | "quote" | "quotation" | "verse" | "abstract"
+            "itemize" | "enumerate" | "description" | "trivlist" | "thebibliography" | "center" | "flushleft" | "flushright" | "quote" | "quotation" | "verse" | "abstract"
         ) {
             let before = (self.vertical_mode, self.vertical_since);
             self.end_paragraph_environment(para.len());
@@ -16222,6 +16233,132 @@ impl P<'_> {
                                 Some("ignored the malformed \\hspace argument".into()),
                             ));
                         }
+                    }
+                }
+                // `\hskip<glue>` in an `\item` label: unlike `\hspace`
+                // (a braced argument above), the expansion engine has
+                // already scanned the `<glue>` operand and re-emitted it
+                // as canonical `\the` words (`5.0pt plus 2.0pt`), so the
+                // bare dimension words that follow are the glue — without
+                // this arm they fell through to the unsupported path below
+                // and typeset as literal text (`\item[\hskip\labelsep
+                // \bfseries Note.]` labelled "5.0ptNote."). Read like
+                // `P::hskip` (one dimension, either-order `plus`/`minus`
+                // clauses, a `\relax` terminator) into the same `HSpace`
+                // running text builds; a first word that is no dimension
+                // keeps the old honest warning instead. Headings stay on
+                // their lenient path: this arm is label mode only.
+                TokenKind::Command(name) if report_unsupported && name == "hskip" => {
+                    let mut next = index + 1;
+                    while matches!(
+                        expanded.get(next).map(|input| &input.token.kind),
+                        Some(TokenKind::Space | TokenKind::Comment)
+                    ) {
+                        next += 1;
+                    }
+                    let word_at = |at: usize| match expanded.get(at) {
+                        Some(input) => match &input.token.kind {
+                            TokenKind::Word(word) => Some((word.clone(), input.token.span)),
+                            _ => None,
+                        },
+                        None => None,
+                    };
+                    let units = self.font_setup().em_ex_sp(style);
+                    match word_at(next).and_then(|(word, _)| parse_dimen_pt_current(&word, units)) {
+                        Some(base_pt) => {
+                            let mut end = expanded[next].token.span;
+                            next += 1;
+                            let mut stretch = (0.0, 0u8);
+                            let mut shrink = (0.0, 0u8);
+                            let mut seen_plus = false;
+                            let mut seen_minus = false;
+                            for _ in 0..2 {
+                                let save = next;
+                                while matches!(
+                                    expanded.get(next).map(|input| &input.token.kind),
+                                    Some(TokenKind::Space | TokenKind::Comment)
+                                ) {
+                                    next += 1;
+                                }
+                                let keyword = match expanded.get(next) {
+                                    Some(input) => match &input.token.kind {
+                                        TokenKind::Word(word) if word == "plus" || word == "minus" => {
+                                            word.clone()
+                                        }
+                                        _ => String::new(),
+                                    },
+                                    None => String::new(),
+                                };
+                                if keyword.is_empty()
+                                    || (keyword == "plus" && seen_plus)
+                                    || (keyword == "minus" && seen_minus)
+                                {
+                                    next = save;
+                                    break;
+                                }
+                                next += 1;
+                                while matches!(
+                                    expanded.get(next).map(|input| &input.token.kind),
+                                    Some(TokenKind::Space | TokenKind::Comment)
+                                ) {
+                                    next += 1;
+                                }
+                                match word_at(next).and_then(|(word, span)| {
+                                    parse_fil_dimen_pt_current(&word, units).map(|value| (value, span))
+                                }) {
+                                    Some(((value, order), dim_span)) => {
+                                        end = end.merge(dim_span);
+                                        next += 1;
+                                        if keyword == "plus" {
+                                            seen_plus = true;
+                                            stretch = (value, order);
+                                        } else {
+                                            seen_minus = true;
+                                            shrink = (value, order);
+                                        }
+                                    }
+                                    None => {
+                                        next = save;
+                                        break;
+                                    }
+                                }
+                            }
+                            // TeX's idiomatic glue terminator, as in `P::hskip`.
+                            if matches!(
+                                expanded.get(next).map(|input| &input.token.kind),
+                                Some(TokenKind::Command(name)) if name == "relax"
+                            ) {
+                                next += 1;
+                            }
+                            skip_until = next;
+                            let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+                            let size = style.size.map_or(body, |level| {
+                                crate::layout::size_declaration_pt(level, body)
+                            });
+                            let word_space =
+                                crate::layout::word_space(size, crate::layout::style_font(style));
+                            content.push(Inline::HSpace {
+                                style,
+                                pt: base_pt,
+                                space_before_pt: if !content.is_empty() && space_before {
+                                    word_space
+                                } else {
+                                    0.0
+                                },
+                                space_after_pt: matches!(
+                                    expanded.get(next).map(|input| &input.token.kind),
+                                    Some(TokenKind::Space)
+                                )
+                                .then_some(word_space)
+                                .unwrap_or(0.0),
+                                span: input.token.span.merge(end),
+                                stretch_pt: stretch.0,
+                                stretch_fil: stretch.1,
+                                shrink_pt: shrink.0,
+                                shrink_fil: shrink.1,
+                            });
+                        }
+                        None => self.not_set_in_label(name, input.token.span),
                     }
                 }
                 // `\hfill`/`\hfil` take no argument, so — unlike `\hspace`,
