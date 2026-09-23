@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use flashtex_compiler::math::MathList;
-use flashtex_compiler::parser::{Block as CBlock, FillLeader, GlueKind, Inline, InterwordGlue, ItemLabel, ListFrame, ListLength, ListOption, Parsed, UnderlineGeom};
+use flashtex_compiler::parser::{Block as CBlock, BreakParameter, FillLeader, GlueKind, Inline, InterwordGlue, ItemLabel, ListFrame, ListLength, ListOption, ParameterAssignment, Parsed, UnderlineGeom};
 use flashtex_compiler::text_builtins::{TextDimen, TextLogo, TextRule};
 use flashtex_compiler::{DocumentId, Span};
 
@@ -1909,11 +1909,17 @@ pub fn adapt_cached(
         style.columnseprule_pt = pt;
     }
     style.microtype = microtype_setup(source);
-    if document_sloppy(source) {
-        // `\sloppy`: `\tolerance 9999 \emergencystretch 3em \hfuzz .5pt
-        // \vfuzz\hfuzz` (latex.ltx), as the class does for two columns.
-        style.tolerance = 9999.0;
-        style.emergency_stretch_pt = 3.0 * style.body_size_pt;
+    // `\sloppy`: `\tolerance 9999 \emergencystretch 3em \hfuzz .5pt
+    // \vfuzz\hfuzz` (latex.ltx), as the class does for two columns; the
+    // `em` is the compiler's, read in the font in force at the command.
+    // `\fussy` and a bare `\tolerance=<n>` come through the same list, so a
+    // document that turns two-column sloppiness back off is followed now.
+    let (tolerance, emergency_stretch_pt) = document_break_parameters(&parsed.parameters);
+    if let Some(value) = tolerance {
+        style.tolerance = value;
+    }
+    if let Some(pt) = emergency_stretch_pt {
+        style.emergency_stretch_pt = pt;
     }
     // beamer loads `amsmath` and `amsthm` itself (`beamerbasetheorems.sty`
     // 15-18, unless the `noamsthm` class option) and `amssymb`
@@ -7990,38 +7996,31 @@ pub(crate) fn find_command(source: &str, name: &str) -> Option<usize> {
     None
 }
 
-/// Whether `\sloppy` is in force for the whole document: a `\sloppy` outside
-/// every brace group of the entry source (preamble or body). One inside a
-/// group (`{\sloppy ...}`) is local and not applied; `sloppypar` is not read.
-pub fn document_sloppy(source: &str) -> bool {
-    let mut from = 0;
-    while let Some(at) = find_command(&source[from..], "sloppy") {
-        let abs = from + at;
-        if brace_depth(&source[..abs]) == 0 {
-            return true;
-        }
-        from = abs + 1;
-    }
-    false
-}
-
-/// Unclosed `{` groups in `prefix` (escaped braces and comments skipped).
-fn brace_depth(prefix: &str) -> i64 {
-    let bytes = prefix.as_bytes();
-    let (mut depth, mut i, mut comment) = (0i64, 0usize, false);
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\n' => comment = false,
-            _ if comment => {}
-            b'%' => comment = true,
-            b'\\' => i += 1,
-            b'{' => depth += 1,
-            b'}' => depth = (depth - 1).max(0),
+/// The line-breaking parameters a document sets for its whole length
+/// (PLAN1 site 36): the last value the compiler recorded for each, among
+/// the assignments made at the outermost level.
+///
+/// The compiler already runs `\sloppy`/`\fussy` and every explicit
+/// `\tolerance`/`\emergencystretch` assignment, from the source, a macro
+/// body, a class file or a package, and reports each as a
+/// [`ParameterAssignment`] in document order. `until` is where TeX restores
+/// the previous value: `None` exactly for an assignment made outside every
+/// brace group, which therefore stays in force to the end of the document.
+/// One inside a group (`{\sloppy ...}`, the `sloppypar` environment) has an
+/// `until` and is skipped here, because the pipeline has no per-paragraph
+/// break parameters to apply it to -- the same limitation the byte scan
+/// this replaced had, now stated by the node stream rather than by a brace
+/// counter over the entry source.
+fn document_break_parameters(parameters: &[ParameterAssignment]) -> (Option<f64>, Option<f64>) {
+    let (mut tolerance, mut emergency_stretch_pt) = (None, None);
+    for assignment in parameters.iter().filter(|a| a.until.is_none()) {
+        match assignment.parameter {
+            BreakParameter::Tolerance(value) => tolerance = Some(f64::from(value)),
+            BreakParameter::EmergencyStretch(pt) => emergency_stretch_pt = Some(pt),
             _ => {}
         }
-        i += 1;
     }
-    depth
+    (tolerance, emergency_stretch_pt)
 }
 
 /// The `\@topsep`/`\@topsepadd` of a theorem-like environment, read off
@@ -12201,6 +12200,26 @@ mod tests {
 
     fn adapted(src: &str) -> Doc {
         adapt(&[src], 0, &flashtex_compiler::parser::parse(src), &RenderOptions::default(), &Labels::default())
+    }
+
+    /// PLAN1 site 36: `\sloppy` reaches the stylesheet through the
+    /// compiler's `ParameterAssignment`s, not a byte scan. The three cases
+    /// the retired `document_sloppy` scanner was tested on (a document-wide
+    /// `\sloppy`, one inside a group, and one inside a comment) keep the
+    /// same answers, and a `\sloppy` a macro produced now counts too.
+    #[test]
+    fn document_sloppy_comes_from_the_compilers_parameters() {
+        let doc = |body: &str| adapted(&format!("\\documentclass{{article}}\n\\begin{{document}}{body}\\end{{document}}"));
+        let loose = |s: &Stylesheet| (s.tolerance, s.emergency_stretch_pt);
+        assert_eq!(loose(&doc("\\sloppy text").style), (9999.0, 30.0));
+        assert_eq!(loose(&doc("{\\sloppy text} more").style), (200.0, 0.0));
+        assert_eq!(loose(&doc("% \\sloppy\ntext").style), (200.0, 0.0));
+        let macro_form = adapted("\\documentclass{article}\n\\newcommand\\slp{\\sloppy}\n\\begin{document}\\slp text\\end{document}");
+        assert_eq!(loose(&macro_form.style), (9999.0, 30.0));
+        // `\fussy` after the class's own two-column `\sloppy` turns it back
+        // off; the byte scan could only ever raise the tolerance.
+        let fussy = adapted("\\documentclass[twocolumn]{article}\n\\begin{document}\\fussy text\\end{document}");
+        assert_eq!(loose(&fussy.style), (200.0, 0.0));
     }
 
     #[test]

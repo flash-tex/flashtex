@@ -414,7 +414,6 @@ fn site35_geometry_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 36: document_sloppy finds \\sloppy in the bytes only"]
 fn site36_sloppy_from_macro() {
     let t = "Pneumonoultramicroscopicsilicovolcanoconiosis antidisestablishmentarianism floccinaucinihilipilification supercalifragilisticexpialidocious hippopotomonstrosesquippedaliophobia pseudopseudohypoparathyroidism incomprehensibilities uncharacteristically.";
     falsify(Same, &doc("", &format!("\\sloppy {t} {t}")), &doc("\\newcommand\\slp{\\sloppy}\n", &format!("\\slp {t} {t}")));
