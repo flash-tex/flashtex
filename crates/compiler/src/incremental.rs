@@ -787,6 +787,10 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 map_span(&mut b.span, changes, deltas)?;
                 shift_inlines(&mut b.content, changes, deltas)?;
             }
+            Inline::RaiseBox(r) => {
+                map_span(&mut r.span, changes, deltas)?;
+                shift_inlines(&mut r.content, changes, deltas)?;
+            }
             Inline::TextScript(t) => {
                 map_span(&mut t.span, changes, deltas)?;
                 shift_inlines(&mut t.content, changes, deltas)?;
@@ -1035,6 +1039,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::TextScript(t) => t.span,
         Inline::Phantom(p) => p.span,
         Inline::HBox(b) => b.span,
+        Inline::RaiseBox(r) => r.span,
         Inline::Graphic(graphic) => graphic.span,
         Inline::Transform(transform) => transform.span,
         Inline::Logo { span, .. } | Inline::Rule { span, .. } | Inline::Kern { span, .. } => *span,

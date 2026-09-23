@@ -1530,6 +1530,37 @@ impl LayoutCursor {
                 // the content stood alone.
                 Inline::ColorBox(b) => self.measure_into(m, &b.content, size, font),
                 Inline::HBox(b) => self.measure_into(m, &b.content, size, font),
+                Inline::RaiseBox(r) => {
+                    use crate::text_builtins::{self as tb};
+                    // The same context `place_rule` resolves in: the arm's
+                    // size and font, not a style of the box's own (a raised
+                    // box sets its content at the ambient size).
+                    let cx = tb::DimenContext {
+                        quad: tb::pt_to_sp(size),
+                        x_height: tb::pt_to_sp(x_height_pt(font, size)),
+                        text_width: tb::pt_to_sp(self.constraints.measure_pt),
+                        line_width: tb::pt_to_sp(self.right_edge() - self.left_edge()),
+                        column_width: tb::pt_to_sp(self.constraints.measure_pt),
+                    };
+                    let lift = tb::sp_to_pt(r.lift.resolve(&cx));
+                    let (width, ascent, descent, trailing) =
+                        self.measure_phantom(&r.content, size, font);
+                    // latex.ltx: the content box shifted up by the lift, then
+                    // the official extents take the optional overrides when
+                    // given (the depth only when the height is, as parsed).
+                    let mut box_ascent = (ascent + lift).max(0.0);
+                    let mut box_descent = (descent - lift).max(0.0);
+                    if let Some(height) = &r.height {
+                        box_ascent = tb::sp_to_pt(height.resolve(&cx)).max(0.0);
+                        if let Some(depth) = &r.depth {
+                            box_descent = tb::sp_to_pt(depth.resolve(&cx)).max(0.0);
+                        }
+                    }
+                    m.ascent = m.ascent.max(box_ascent);
+                    m.descent = m.descent.max(box_descent);
+                    m.content_end = m.x + width;
+                    m.x += width + trailing;
+                }
                 Inline::Transform(b) => {
                     self.diagnostics.push(
                         Diagnostic::warning(
@@ -4274,6 +4305,46 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
             // This layout splices boxes (compare `ColorBox`); the render
             // pipeline sets an `\hbox` as one unbreakable box.
             Inline::HBox(b) => emit(c, &b.content, size, font),
+            Inline::RaiseBox(r) => {
+                use crate::text_builtins::{self as tb};
+                // A raised box sets its content at the ambient size (no
+                // `\sf@size` switch, unlike `TextScript`), then shifts the
+                // placed items up by the lift — exactly like the
+                // superscript arm shifts its just-laid-out box — and grows
+                // the line to the shifted box's official extents (the
+                // content's own, or the optional overrides when given).
+                let cx = tb::DimenContext {
+                    quad: tb::pt_to_sp(size),
+                    x_height: tb::pt_to_sp(x_height_pt(font, size)),
+                    text_width: tb::pt_to_sp(c.constraints.measure_pt),
+                    line_width: tb::pt_to_sp(c.right_edge() - c.left_edge()),
+                    column_width: tb::pt_to_sp(c.constraints.measure_pt),
+                };
+                let lift = tb::sp_to_pt(r.lift.resolve(&cx));
+                let (_, ascent, descent, _) = c.measure_phantom(&r.content, size, font);
+                let start_page = c.pages.len();
+                let start_item = c.pages.last().map_or(0, |page| page.items.len());
+                emit(c, &r.content, size, font);
+                for (i, page) in c.pages.iter_mut().enumerate().skip(start_page - 1) {
+                    let from = if i == start_page - 1 {
+                        start_item.min(page.items.len())
+                    } else {
+                        0
+                    };
+                    for item in &mut page.items[from..] {
+                        item.baseline_y_pt = round2(item.baseline_y_pt - lift);
+                    }
+                }
+                let mut box_ascent = (ascent + lift).max(0.0);
+                let mut box_descent = (descent - lift).max(0.0);
+                if let Some(height) = &r.height {
+                    box_ascent = tb::sp_to_pt(height.resolve(&cx)).max(0.0);
+                    if let Some(depth) = &r.depth {
+                        box_descent = tb::sp_to_pt(depth.resolve(&cx)).max(0.0);
+                    }
+                }
+                c.ensure_extents(box_ascent, box_descent);
+            }
             // This Core 14 layout reads no image files and has no transformed
             // boxes; the rendering pipeline sets both (`crate::graphics`).
             Inline::Graphic(g) => c.diagnostics.push(
