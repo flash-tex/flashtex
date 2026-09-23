@@ -1726,6 +1726,41 @@ pub struct LengthAssignment {
     pub preamble: bool,
 }
 
+/// One `\newgeometry{...}` / `\restoregeometry` the document ran
+/// ([`Parsed::geometry_switches`]).
+///
+/// geometry.sty opens both with `\clearpage` and then switches the page
+/// frame: `\newgeometry` to its option string, `\restoregeometry` back to
+/// the preamble frame. The parser owes the page break and this record (the
+/// render pipeline reads the frame from the source at the switch, as it
+/// already does for `\pagestyle` and `\twocolumn`); until the pipeline
+/// applies it, each switch also emits a typed limitation warning.
+/// Only the switches the document actually performs are here: one inside
+/// a definition that is never called never ran.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeometrySwitch {
+    /// False for `\newgeometry`, true for `\restoregeometry`.
+    pub restore: bool,
+    /// The command (a macro's invocation when a macro ran it).
+    pub span: Span,
+    /// The command ran before `\begin{document}`, where its `\clearpage`
+    /// has nothing to ship.
+    pub preamble: bool,
+    /// The verbatim option string (`\newgeometry`'s braced group; empty
+    /// for `\restoregeometry`), for the renderer to apply.
+    pub options: String,
+    /// The new text frame in PDF points, per side: each `\newgeometry`
+    /// margin key (`margin`, `left`/`lmargin`, `right`/`rmargin`,
+    /// `top`/`tmargin`, `bottom`/`bmargin`) resolved through `margin`
+    /// when its own side key is absent. `None` when the options do not
+    /// resolve that side (always for `\restoregeometry`, whose preamble
+    /// frame the pipeline re-reads from the source).
+    pub left_pt: Option<f64>,
+    pub right_pt: Option<f64>,
+    pub top_pt: Option<f64>,
+    pub bottom_pt: Option<f64>,
+}
+
 /// One `\twocolumn`/`\onecolumn` the document ran
 /// ([`Parsed::column_switches`], PLAN1 site 37).
 ///
@@ -2881,6 +2916,9 @@ pub struct Parsed {
     /// order (see [`ColumnSwitch`]). The class option is not here: it is
     /// the starting value the first switch changes.
     pub column_switches: Vec<ColumnSwitch>,
+    /// Every `\newgeometry`/`\restoregeometry` the document ran, in
+    /// execution order (see [`GeometrySwitch`]).
+    pub geometry_switches: Vec<GeometrySwitch>,
     /// `\c@secnumdepth` after the last `\setcounter`/`\addtocounter` the
     /// document ran on it; `None` when it never ran one (the class's value
     /// stands).
@@ -3067,6 +3105,17 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "graphicspath",
     "hypersetup",
     "lstset",
+    "usetikzlibrary",
+    "usepgflibrary",
+    "usepgfplotslibrary",
+    "pgfplotsset",
+    "pgfkeys",
+    "pgfkeysalso",
+    "pgfqkeys",
+    "pgfdeclarelayer",
+    "pgfsetlayers",
+    "pgfmathsetseed",
+    "pgfmathdeclarerandomlist",
     "lstlistoflistings",
     "allowdisplaybreaks",
     "url",
@@ -4301,6 +4350,7 @@ pub fn parse_project_with(
         parskip_pt: None,
         length_assignments: Vec::new(),
         column_switches: Vec::new(),
+        geometry_switches: Vec::new(),
         secnumdepth: None,
         packages: Vec::new(),
         math_packages: MathPackages::KERNEL,
@@ -4494,6 +4544,7 @@ pub fn parse_project_with(
         parskip_pt: p.parskip_pt,
         length_assignments: p.length_assignments,
         column_switches: p.column_switches,
+        geometry_switches: p.geometry_switches,
         secnumdepth: p.secnumdepth,
         packages: p.packages,
         block_dependencies: p.block_dependencies,
@@ -4617,6 +4668,7 @@ struct P<'a> {
     parskip_pt: Option<f64>,
     length_assignments: Vec<LengthAssignment>,
     column_switches: Vec<ColumnSwitch>,
+    geometry_switches: Vec<GeometrySwitch>,
     secnumdepth: Option<i64>,
     packages: Vec<String>,
     /// The loaded packages that redefine math commands (`math::MathPackages`),
@@ -5905,6 +5957,15 @@ impl P<'_> {
             // already does for `\pagestyle`); the only thing the parser owes
             // it is the page break and no "unknown command" error.
             "twocolumn" | "onecolumn" => self.column_command(name, span, blocks, para),
+            // Preamble or body: geometry.sty's `\newgeometry` /
+            // `\restoregeometry`, which both open with `\clearpage` and
+            // then switch the page frame. Like the column commands above,
+            // the frame itself is the renderer's business (it reads the
+            // switch from the source at the reported position); the parser
+            // owes the page break, the switch record and the package gate.
+            "newgeometry" | "restoregeometry" => {
+                self.geometry_switch_command(name, span, blocks, para)
+            }
             // `\hypersetup{key=value,...}` (hyperref): the same keys the
             // package options take, settable anywhere. Every key this
             // compiler recognises is a PDF annotation, outline or metadata
@@ -5944,6 +6005,32 @@ impl P<'_> {
             // `\bfseries`, `\itshape` and `\tiny` out of `basicstyle=`,
             // `keywordstyle=`, `commentstyle=` and `numberstyle=`.
             "lstset" => self.lstset(span),
+            // `\usetikzlibrary{list}` / `\usetikzlibrary[list]` (tikz.code.tex:
+            // `\usepgflibrary` under the `tikz/` prefix; the bracket form
+            // takes the bracket alone), `\usepgflibrary` and pgfplots'
+            // `\usepgfplotslibrary`: library loading, which reads code
+            // and typesets nothing, in the preamble where every real TikZ
+            // document puts it (2501.07009v1, 2501.07277v2 and 27 more of
+            // the parity arxiv tier) and in the body, where TikZ allows it.
+            // Which libraries are loaded is not recorded: the picture
+            // reader (`flashtex-vector-graphics`) reports the keys it
+            // cannot use per picture, which is the honest signal.
+            //
+            // Before this, `\usetikzlibrary` was the first error of 17
+            // arxiv documents (`cause 7: package tikz`), and each list
+            // then read as preamble material.
+            "usetikzlibrary" | "usepgflibrary" | "usepgfplotslibrary" => self.pgf_setup_command(name, span, true, 1),
+            // pgf/pgfplots setup with braced parameters and no material:
+            // `\pgfplotsset{keys}` (pgfplots.sty `\pgfqkeys{/pgfplots}`),
+            // `\pgfkeys{keys}`, `\pgfkeysalso{keys}` and `\pgfqkeys{path}{keys}`
+            // (pgfkeys.code.tex),
+            // `\pgfdeclarelayer{name}` / `\pgfsetlayers{list}` (pgfcorelayers),
+            // `\pgfmathsetseed{n}` and `\pgfmathdeclarerandomlist{name}{items}`
+            // (pgfmathfunctions.random). Global from where they run, like
+            // `\tikzset`; each picture re-reads what it needs from the
+            // source, so the parser only consumes the arguments.
+            "pgfplotsset" | "pgfkeys" | "pgfkeysalso" | "pgfdeclarelayer" | "pgfsetlayers" | "pgfmathsetseed" => self.pgf_setup_command(name, span, false, 1),
+            "pgfqkeys" | "pgfmathdeclarerandomlist" => self.pgf_setup_command(name, span, false, 2),
             "crefname" | "Crefname" => self.cleveref_name(name, span),
             // Line- and page-breaking parameters (TeX integer and dimension
             // assignments, and the latex.ltx declarations made of them), in
@@ -7089,6 +7176,165 @@ impl P<'_> {
         self.flush_paragraph(blocks, para);
         blocks.push(Block::PageBreak);
         self.finish_block_dependencies();
+    }
+
+    /// `\newgeometry{options}` / `\restoregeometry` (geometry.sty
+    /// `\newgeometry`/`\restoregeometry`): both open with `\clearpage`,
+    /// so both end the current page exactly as `\clearpage` does, and
+    /// both switch the page frame the render pipeline reads from the
+    /// source at the reported switch (see [`GeometrySwitch`]). The frame
+    /// is not applied yet: each switch keeps the current frame and emits
+    /// a typed (`UnsupportedFeature`) limitation warning until the
+    /// pipeline consumes the record.
+    ///
+    /// Both are defined by the geometry package, not the kernel: without
+    /// `\usepackage{geometry}` pdflatex reports `! Undefined control
+    /// sequence` at each use, writes one page and typesets the leftover
+    /// group (`text margin=1cm text text`, TeX Live 2026), so this
+    /// diagnoses each use the same way and likewise consumes nothing --
+    /// the braced group falls through to the main token loop as ordinary
+    /// text. Neither name joins global `BUILT_INS` (soul's `\so`/`\hl`
+    /// stay out for the same reason): a document's own
+    /// `\newcommand{\newgeometry}` must win when geometry is absent.
+    #[inline(never)]
+    fn geometry_switch_command(
+        &mut self,
+        name: &str,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        if !self.packages.iter().any(|package| package == "geometry") {
+            self.diags.push(
+                Diagnostic::error(
+                    format!(
+                        "\\{name} is defined by the geometry package; this document does not load it"
+                    ),
+                    Some(span),
+                    Some("skipped the command; any braced argument was typeset as plain text".into()),
+                )
+                .with_code(crate::diagnostics::DiagnosticCode::UnknownCommand),
+            );
+            return;
+        }
+        let (options, frame) = if name == "newgeometry" {
+            let (tokens, argument_span) = self.required_group(name, span);
+            let options = token_source(&tokens);
+            let frame = self.geometry_frame(name, &options, span.merge(argument_span));
+            (options, frame)
+        } else {
+            (String::new(), [None, None, None, None])
+        };
+        self.geometry_switches.push(GeometrySwitch {
+            restore: name == "restoregeometry",
+            span,
+            preamble: !self.in_body,
+            options,
+            left_pt: frame[0],
+            right_pt: frame[1],
+            top_pt: frame[2],
+            bottom_pt: frame[3],
+        });
+        // The pipeline ignores the switch so far: the page keeps the
+        // current frame. Say so with a typed warning rather than going
+        // silent (the old "not supported" error is gone, but the margins
+        // still do not move). One diagnostic per switch, however many
+        // sides it resolves.
+        let limitation = if name == "newgeometry" {
+            "\\newgeometry margins are not applied yet; kept the current frame and \
+             reported the switch for the page renderer"
+        } else {
+            "\\restoregeometry frame is not applied yet; kept the current frame and \
+             reported the switch for the page renderer"
+        };
+        self.diags.push(
+            Diagnostic::warning(
+                limitation.to_string(),
+                Some(span),
+                Some("kept the current frame and continued".into()),
+            )
+            .with_code(crate::diagnostics::DiagnosticCode::UnsupportedFeature),
+        );
+        self.document_global_state = true;
+        // A preamble switch sets the frame the first page ships under,
+        // and its `\clearpage` has nothing to ship.
+        if !self.in_body {
+            return;
+        }
+        self.flush_paragraph(blocks, para);
+        blocks.push(Block::PageBreak);
+        self.finish_block_dependencies();
+    }
+
+    /// The text frame a `\newgeometry` option string resolves, per side
+    /// (`[left, right, top, bottom]` in PDF points): each side key
+    /// (`left`/`lmargin`, `right`/`rmargin`, `top`/`tmargin`,
+    /// `bottom`/`bmargin`) resolved through `margin` when its own side
+    /// key is absent. Anything else geometry.sty accepts (`paper`,
+    /// `landscape`, `headheight`, ...) is carried verbatim on the switch
+    /// for the renderer and warned about once here, because this layout
+    /// does not apply it; a margin key with an unrecognised dimension is
+    /// an error like `\vspace`'s, and that side stays unresolved.
+    fn geometry_frame(&mut self, name: &str, options: &str, span: Span) -> [Option<f64>; 4] {
+        let mut margin = None;
+        let mut sides: [Option<f64>; 4] = [None, None, None, None];
+        let mut unmodelled: Vec<&str> = Vec::new();
+        for option in options.split(',') {
+            let option = option.trim();
+            if option.is_empty() {
+                continue;
+            }
+            let (key, value) = match option.split_once('=') {
+                Some((key, value)) => (key.trim(), Some(value.trim())),
+                None => (option, None),
+            };
+            let slot = match key {
+                "margin" => None,
+                "left" | "lmargin" => Some(0),
+                "right" | "rmargin" => Some(1),
+                "top" | "tmargin" => Some(2),
+                "bottom" | "bmargin" => Some(3),
+                _ => {
+                    if !unmodelled.contains(&key) {
+                        unmodelled.push(key);
+                    }
+                    continue;
+                }
+            };
+            let value = value.unwrap_or("");
+            match length_pt(value) {
+                Some(pt) => {
+                    if let Some(slot) = slot {
+                        sides[slot] = Some(pt);
+                    } else {
+                        margin = Some(pt);
+                    }
+                }
+                None => self.diags.push(Diagnostic::error(
+                    format!("\\{name} requires a recognised dimension for '{key}', got '{value}'"),
+                    Some(span),
+                    Some("ignored the option and continued".into()),
+                )),
+            }
+        }
+        if !unmodelled.is_empty() {
+            self.diags.push(Diagnostic::warning(
+                format!(
+                    "\\{name} sets {}, which this layout does not apply; the switch is reported so the page renderer can",
+                    unmodelled.join(", ")
+                ),
+                Some(span),
+                None,
+            ));
+        }
+        if margin.is_some() {
+            for side in sides.iter_mut() {
+                if side.is_none() {
+                    *side = margin;
+                }
+            }
+        }
+        sides
     }
 
     /// The span of a `[` that stands next in the token stream (after
@@ -15037,6 +15283,23 @@ impl P<'_> {
             Some(span.merge(argument_span)),
             Some("read the key list and typeset nothing for it".into()),
         ));
+    }
+
+    /// A TikZ/pgf setup command that reads its arguments and typesets
+    /// nothing, in the preamble or the body: `groups` braced arguments, or,
+    /// when `library`, either those or one `[list]` (tikz.code.tex
+    /// `\usetikzlibrary` is `\pgfutil@ifnextchar[{\use@tikzlibrary}
+    /// {\use@@tikzlibrary}`: the bracket form takes the bracket only and
+    /// never a following group, which stays ordinary text). A missing
+    /// braced argument is reported by `required_group` as for any other
+    /// command.
+    fn pgf_setup_command(&mut self, name: &str, span: Span, library: bool, groups: usize) {
+        if library && self.optional_bracket_argument().is_some() {
+            return;
+        }
+        for _ in 0..groups {
+            let _ = self.required_group(name, span);
+        }
     }
 
     /// Emits the one honest "links are not clickable yet" diagnostic the
@@ -24794,6 +25057,92 @@ mod tests {
             items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
             ["Body", "text."],
             "\\lstset contributes no material"
+        );
+    }
+
+    /// `\usetikzlibrary` heads the preamble of nearly every TikZ document
+    /// (29 of the parity arxiv tier's documents; it was the first error of
+    /// 17 of them). Like `\lstset` it loads code and typesets nothing, so
+    /// both forms -- `{list}` and `[list]` -- are accepted in the preamble
+    /// and the body, and the pgf
+    /// setup commands (`\pgfplotsset`, `\pgfdeclarelayer`/`\pgfsetlayers`,
+    /// `\pgfkeys`, `\pgfmathdeclarerandomlist`, ...) with them. Nothing in
+    /// their arguments may reach the page or be reported (before this,
+    /// `\usetikzlibrary` errored and its list was read as preamble
+    /// material).
+    #[test]
+    fn usetikzlibrary_and_pgf_setup_commands_are_accepted_and_typeset_nothing() {
+        let source = concat!(
+            r"\documentclass{article}",
+            "\n",
+            r"\usepackage{tikz}",
+            "\n",
+            "\\usetikzlibrary{arrows.meta, positioning,\n  calc, decorations.pathreplacing}",
+            "\n",
+            r"\usetikzlibrary[shapes.geometric]",
+            "\n",
+            r"\usepgfplotslibrary{groupplots}",
+            "\n",
+            r"\pgfplotsset{compat=1.18, every axis/.append style={font=\small}}",
+            "\n",
+            r"\pgfdeclarelayer{background}\pgfsetlayers{background,main}",
+            "\n",
+            r"\pgfkeys{/pgf/number format/.cd, fixed, precision=2}\pgfkeysalso{/tikz/.cd, thick}",
+            "\n",
+            r"\pgfqkeys{/tikz}{every node/.style={font=\footnotesize}}",
+            "\n",
+            r"\pgfmathsetseed{42}\pgfmathdeclarerandomlist{colors}{{red}{blue}{green}}",
+            "\n",
+            r"\begin{document}",
+            "\n",
+            r"\usetikzlibrary{fit} Body text.",
+            "\n",
+            r"\end{document}",
+            "\n",
+        );
+        let (parsed, items) = items(source);
+        // `\usepackage{tikz}` still says honestly that this compiler does
+        // not implement the package; nothing else may be reported.
+        let other: Vec<&str> = parsed
+            .diagnostics
+            .iter()
+            .map(|d| d.message.as_str())
+            .filter(|m| !m.starts_with("packages tikz"))
+            .collect();
+        assert!(other.is_empty(), "only the package notice may remain: {other:?}");
+        assert_eq!(
+            items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+            ["Body", "text."],
+            "library loading and pgf setup contribute no material"
+        );
+    }
+
+    /// `\usetikzlibrary[list]` takes the bracket alone (tikz.code.tex
+    /// `\use@tikzlibrary[#1]`), so a following group is ordinary text;
+    /// `\usetikzlibrary` with neither form reports the missing argument
+    /// like any other command.
+    #[test]
+    fn usetikzlibrary_bracket_form_leaves_a_following_group_alone() {
+        let source = concat!(
+            r"\documentclass{article}\usepackage{tikz}",
+            "\n",
+            r"\begin{document}",
+            "\n",
+            r"\usetikzlibrary[calc]{Kept} \usetikzlibrary",
+            "\n",
+            r"\end{document}",
+            "\n",
+        );
+        let (parsed, items) = items(source);
+        assert_eq!(
+            items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+            ["Kept"],
+            "the group after the bracket form is body text"
+        );
+        assert!(
+            parsed.diagnostics.iter().any(|d| d.message == "\\usetikzlibrary requires a braced argument"),
+            "{:?}",
+            parsed.diagnostics
         );
     }
 

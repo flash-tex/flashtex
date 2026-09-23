@@ -143,10 +143,12 @@ fn unimplemented_amsmath_constructs_still_report_themselves() {
     }
 
     // A construct that is not still names itself, at its own span.
+    // (`\hdotsfor` is implemented in grid environments — see
+    // `amsmath_hdotsfor` — so like `\shoveleft`/`\shoveright` below it no
+    // longer belongs in this inventory.)
     for (body, command) in [
         ("$a\\mspace{3mu}b$", "\\mspace"),
         ("$\\varinjlim x$", "\\varinjlim"),
-        ("$\\begin{pmatrix}\\hdotsfor{2}\\end{pmatrix}$", "\\hdotsfor"),
         // `\shoveleft`/`\shoveright` are implemented in `multline` (see
         // `multline_shove`), so they no longer belong in this inventory; they
         // still report themselves in displays that cannot shove, e.g.
