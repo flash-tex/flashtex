@@ -75,7 +75,9 @@ fn tag_everything(list: &mut MathList, next: &mut usize) {
             | Nucleus::Brace { body: l, .. }
             | Nucleus::OverArrow { body: l, .. }
             | Nucleus::MeasuredAccent { base: l, .. }
-            | Nucleus::Phantom { body: l, .. } => tag_everything(l, next),
+            | Nucleus::Phantom { body: l, .. }
+            | Nucleus::Pmb(l)
+            | Nucleus::Smash { body: l, .. } => tag_everything(l, next),
             Nucleus::Fraction {
                 numerator,
                 denominator,
