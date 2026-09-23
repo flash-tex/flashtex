@@ -15,7 +15,7 @@ use crate::parser::BUILT_INS;
 #[rustfmt::skip]
 pub(crate) const MATH_COMMANDS: &[&str] = &[
     "operatorname", "mathrm", "mathit", "mathsf", "mathtt", "mathnormal", "boldsymbol", "bm",
-    "mbox", "hbox", "textrm", "textit", "textnormal", "displaystyle", "textstyle", "scriptstyle",
+    "mbox", "hbox", "textrm", "textit", "textnormal", "textup", "displaystyle", "textstyle", "scriptstyle",
     "scriptscriptstyle", "nonumber", "notag", "middle", "left", "right", "big", "Big", "bigg",
     "Bigg", "bigm", "Bigm", "biggm", "Biggm", "Bigl", "Bigr", "biggl", "biggr", "Biggl", "Biggr",
     "dots", "ldots", "dotsc", "dotso", "cdots", "dotsb", "dotsm", "dotsi", "iint", "lbrace",

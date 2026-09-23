@@ -4986,7 +4986,7 @@ enum LeftMarginSetting {
 fn math_text_mode_command(name: &str) -> bool {
     matches!(
         name,
-        "text" | "textit" | "textrm" | "textnormal" | "mbox" | "hbox"
+        "text" | "textit" | "textrm" | "textnormal" | "textup" | "mbox" | "hbox"
     )
 }
 
@@ -13548,7 +13548,16 @@ impl P<'_> {
             self.note_qedhere();
         }
         // `equation`/`equation*` are always display math.
-        let list = math::parse_tokens_display(&raw, self.math_packages, &mut self.diags, true);
+        // See `finish_math`: `\text` keeps the face in force around the
+        // environment.
+        let text_base = math::TextStyle::from_text_face(self.style.bold, self.style.italic);
+        let list = math::parse_tokens_display_with_text_base(
+            &raw,
+            self.math_packages,
+            &mut self.diags,
+            true,
+            text_base,
+        );
         let tag = Self::custom_tag_text(&list, self.documents[open.document.0].text, open.document);
         // A `\tag{...}` display keeps the tag as its number and never
         // steps the counter — the single-environment half of the
@@ -13857,9 +13866,20 @@ impl P<'_> {
             let packages = self.math_packages;
             // gather/align/multline/eqnarray and their variants are always
             // display math.
+            // See `finish_math`: `\text` keeps the face in force around the
+            // environment.
+            let text_base = math::TextStyle::from_text_face(self.style.bold, self.style.italic);
             let cells: Vec<MathList> = cells
                 .iter()
-                .map(|cell| math::parse_tokens_display(cell, packages, &mut self.diags, true))
+                .map(|cell| {
+                    math::parse_tokens_display_with_text_base(
+                        cell,
+                        packages,
+                        &mut self.diags,
+                        true,
+                        text_base,
+                    )
+                })
                 .collect();
             // A row carrying its own `\tag{...}` keeps the tag as its
             // number (exactly like the single-`equation` path via
@@ -14261,13 +14281,18 @@ impl P<'_> {
                 self.t.get(content_end).map(|input| &input.token.kind),
                 Some(TokenKind::MathShift)
             );
-        let (list, unclosed) = math::parse_formula_tokens(
+        // `\text` and friends keep the face in force where the formula
+        // starts (an italic `amsthm` body keeps them italic); `self.style`
+        // is that face here.
+        let text_base = math::TextStyle::from_text_face(self.style.bold, self.style.italic);
+        let (list, unclosed) = math::parse_formula_tokens_with_text_base(
             &raw,
             self.math_packages,
             &mut self.diags,
             !found,
             display,
             dollar_end,
+            text_base,
         );
         // The span covers the opener through the close (or the last content
         // token). Expanded content can carry spans from before the opener or
@@ -16362,7 +16387,17 @@ impl P<'_> {
             raw.push(input.token.clone());
         }
         let dollar_end = found.is_some() && close == TokenKind::MathShift;
-        let list = math::parse_tokens_display_at(&raw, self.math_packages, &mut self.diags, if_display, dollar_end);
+        // See `finish_math`: `\text` keeps the face in force around the
+        // formula (`style` is that face here, not `self.style`).
+        let text_base = math::TextStyle::from_text_face(style.bold, style.italic);
+        let list = math::parse_tokens_display_at_with_text_base(
+            &raw,
+            self.math_packages,
+            &mut self.diags,
+            if_display,
+            dollar_end,
+            text_base,
+        );
         let end_span = match found {
             Some(close_at) => {
                 let last = if doubled { close_at + 1 } else { close_at };
