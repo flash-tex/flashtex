@@ -529,20 +529,18 @@ Slice 6 took the remaining sites in rank order, adapter-only first. It left
 
 ### Sites examined and not migrated in slice 6
 
-- **Site 32 (`\pagestyle`) is not a pipeline site at all.** `Inline::PageStyle`
-  is already right for a `\pagestyle` a macro produced -- measured with
-  `\newcommand\zzq{\pagestyle{empty}}` and `\def\zzq{..}`, both of which
-  give the same tree as the direct form. The falsifier fails because its
-  macro is named `\ps`, which is in `parser::BUILT_INS` (letter.cls's
-  postscript command) and is therefore declared a host command in the
-  expansion engine, so the document's own `\newcommand\ps` never takes
-  effect and `\ps` reaches the parser as letter.cls's. That is a
-  general host-command-versus-user-definition question -- a `\newcommand`
-  of a name this class does not provide should win -- with a blast radius
-  far beyond this site (`\section`, `\item`, every other `BUILT_INS` name),
-  and it is not attempted here. Site 32's own pipeline half (reading
-  `Inline::PageStyle` instead of `body_commands`' bytes) is worth doing with
-  sites 17 and 39, below.
+- **Site 32 (`\pagestyle`) has no compiler half after all.**
+  `Inline::PageStyle` was already right for a `\pagestyle` a macro
+  produced -- measured with `\newcommand\zzq{\pagestyle{empty}}` and
+  `\def\zzq{..}`, both of which gave the same tree as the direct form.
+  The falsifier failed because its macro is named `\ps`, which is
+  letter.cls's postscript command in `parser::BUILT_INS` and was declared
+  to the expansion engine unconditionally, so an article's own
+  `\newcommand\ps` never took effect and `\ps` reached the parser as
+  letter.cls's. Main's `1d11090f8` (a package's or class's host command
+  exists only once that file is loaded) fixes exactly that, and with it the
+  two trees are identical. So site 32 is an adapter-only site: read the
+  chrome event off `Inline::PageStyle` instead of `body_commands`' bytes.
 - **Sites 17 (`\markboth`), 18 (`\chapter`), 20 (`\paragraph`), 39 (contents
   lists) and 40 (`abstract`)** all need the compiler to model a command it
   currently leaves as body text (`\markboth`, `\listoffigures`,
