@@ -211,6 +211,15 @@ pub struct Expansion {
 /// `\newcommand*`, but the toggle prelude's `\iftoggle` is `\protected` too,
 /// and nothing here relies on expanding inside an `\edef`), and always
 /// installed, exactly like the toggle block above.
+/// Lane `etoolbox-ifdef-ifcsdef`: etoolbox's definedness tests
+/// (`\ifdef`/`\ifundef` for control-sequence tokens, `\ifcsdef`/`\ifcsundef`
+/// for csnames, `\ifdefmacro` for "is a macro" via `\meaning`) mirror
+/// etoolbox.sty's own `\ifdefined`/`\ifcsname`/`\meaning` implementation in
+/// [`ETOOLBOX_IFDEF_PRELUDE`]. Unlike the toggles they exist only when
+/// `etoolbox` is loaded ([`uses_etoolbox`], like [`uses_soul`]): without the
+/// package they stay undefined, so the parser reports them as unknown
+/// commands where they are used, as pdflatex reports "Undefined control
+/// sequence" there.
 /// Engine identity (`iftex.sty` under pdfTeX): this compiler is
 /// pdflatex-equivalent, so `\ifxetex`/`\ifluatex` are defined false here --
 /// exactly as `iftex.sty` leaves them when neither `\XeTeXrevision` nor
@@ -375,6 +384,29 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\@sect#1#2#3#4#5#6[#7]#8{\\@tempdima #3\\relax\\@tempskipa #4\\relax\\@tempskipb #5\\relax\\flashtexsect{#1}{#2}{\\ifnum #2>\\c@secnumdepth 0\\else 1\\fi}{\\the\\@tempdima}{\\the\\@tempskipa}{\\the\\@tempskipb}{#6}{#7}{#8}}%
 \\def\\@ssect#1#2#3#4#5{\\@tempdima #1\\relax\\@tempskipa #2\\relax\\@tempskipb #3\\relax\\flashtexsect{}{0}{0}{\\the\\@tempdima}{\\the\\@tempskipa}{\\the\\@tempskipb}{#4}{}{#5}}%
 \\def\\@xsect#1{\\@tempskipa #1\\relax\\ifdim \\@tempskipa>\\z@ \\par\\nobreak\\vskip \\@tempskipa\\fi\\ignorespaces}%
+\\makeatother
+";
+
+// Lane `etoolbox-ifdef-ifcsdef`: etoolbox's definedness tests, run only when
+// `etoolbox` is loaded (see [`uses_etoolbox`]). Each definition is
+// etoolbox.sty's own, with `\newcommand` spelled as `\def` (`\newcommand*`
+// as non-`\long` `\def`, the `\edef` factory as-is) since the prelude runs
+// before any document: `\ifdef` is true for any defined token (a `\relax`
+// name counts), `\ifundef` additionally treats `\relax` as undefined,
+// `\ifcsdef` tests the csname with `\ifcsname` (true for a `\relax` name),
+// `\ifcsundef` re-checks such a name with `\ifx...\relax`, and
+// `\ifdefmacro` matches etoolbox's `\meaning` prefix trick, with the
+// `\notblank` tail inlined under the private `\etb@ifdefmacro` name so no
+// extra public command appears (a document's own `\notblank` stays free
+// without the package, as in LaTeX).
+pub const ETOOLBOX_IFDEF_PRELUDE: &str = "\\makeatletter
+\\long\\def\\ifdef#1{\\ifdefined#1\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}%
+\\long\\def\\ifundef#1{\\ifdefined#1\\ifx#1\\relax\\expandafter\\expandafter\\expandafter\\@firstoftwo\\else\\expandafter\\expandafter\\expandafter\\@secondoftwo\\fi\\else\\expandafter\\@firstoftwo\\fi}%
+\\def\\ifcsdef#1{\\ifcsname#1\\endcsname\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}%
+\\def\\ifcsundef#1{\\ifcsname#1\\endcsname\\expandafter\\ifx\\csname#1\\endcsname\\relax\\expandafter\\expandafter\\expandafter\\@firstoftwo\\else\\expandafter\\expandafter\\expandafter\\@secondoftwo\\fi\\else\\expandafter\\@firstoftwo\\fi}%
+\\long\\edef\\ifdefmacro#1{\\noexpand\\expandafter\\noexpand\\etb@ifdefmacro\\noexpand\\meaning#1\\detokenize{macro}:&}%
+\\edef\\etb@ifdefmacro{\\def\\noexpand\\etb@ifdefmacro##1\\detokenize{macro}:##2&}%
+\\etb@ifdefmacro{\\expandafter\\ifx\\expandafter\\relax\\detokenize\\expandafter{\\@gobble#2?}\\relax\\expandafter\\@secondoftwo\\else\\expandafter\\@firstoftwo\\fi}%
 \\makeatother
 ";
 
@@ -1004,6 +1036,14 @@ fn limits_for(bytes: usize) -> Limits {
 /// sets is part of the engine's checkpointed state.
 fn configure(engine: &mut Engine) {
     engine.run_host_prelude(HOST_PRELUDE);
+    // Lane `etoolbox-ifdef-ifcsdef`: `\bar` is kernel-defined
+    // (fontmath.ltx), so etoolbox's `\ifundef` takes its false branch under
+    // pdflatex. This compiler resolves it parser-side from an
+    // engine-undefined token, which made every definedness test misreport
+    // it; declaring it a host command keeps it passing through to the
+    // parser unchanged while counting as defined (`\newcommand` refuses it
+    // and `\renewcommand` accepts it, as in LaTeX).
+    engine.declare_host_command("bar");
     engine.set_emit_unbalanced_close(true);
     for name in BUILT_INS {
         match package_of_built_in(name) {
@@ -1086,12 +1126,16 @@ fn configure_with_fonts(
     engine: &mut Engine,
     fonts: DocumentFonts,
     soul: bool,
+    etoolbox: bool,
     reader: PackageReader,
 ) {
     configure(engine);
     if soul {
         engine.declare_host_command("so");
         engine.declare_host_command("hl");
+    }
+    if etoolbox {
+        engine.run_host_prelude(ETOOLBOX_IFDEF_PRELUDE);
     }
     engine.set_package_reader(reader);
     for (name, switch) in crate::font_units::font_switches() {
@@ -1895,6 +1939,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
         &mut engine,
         document_fonts(documents, entry),
         uses_soul(documents),
+        uses_etoolbox(documents),
         package_reader(documents, &prepared),
     );
 
@@ -2041,6 +2086,10 @@ pub struct ExpansionCache {
     /// cache, since restored checkpoints would otherwise keep the old
     /// reservation either way.
     soul: bool,
+    /// Whether etoolbox's definedness tests were defined at configure time
+    /// ([`uses_etoolbox`]): like `soul`, toggling `\usepackage{etoolbox}`
+    /// rebuilds the cache so checkpoints never carry the wrong definitions.
+    etoolbox: bool,
     /// The project's `.sty`/`.cls` texts the expander read: an edit to one
     /// of them is not an edit of the entry, so the cache is rebuilt instead.
     package_texts: Vec<(String, String)>,
@@ -2142,6 +2191,7 @@ pub fn expand_project_with_cache(
     let masked: &str = prepared[entry].text.as_ref();
     let fonts = document_fonts(documents, entry);
     let soul = uses_soul(documents);
+    let etoolbox = uses_etoolbox(documents);
     // The same limits as `expand_project`, which the expander applies to
     // every edit (`IncrementalExpander::edit_with_limits`).
     let limits = limits_for(documents.iter().map(|d| d.text.len()).sum());
@@ -2150,6 +2200,7 @@ pub fn expand_project_with_cache(
             && c.entry_path == document.path
             && c.fonts == fonts
             && c.soul == soul
+            && c.etoolbox == etoolbox
             && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
             && c.package_texts == crate::packages::package_texts(documents)
     });
@@ -2181,8 +2232,9 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
     let reader = package_reader(documents, prepared);
     let init_fonts = fonts.clone();
     let soul = uses_soul(documents);
+    let etoolbox = uses_etoolbox(documents);
     let init: Rc<dyn Fn(&mut Engine)> = Rc::new(move |engine| {
-        configure_with_fonts(engine, init_fonts.clone(), soul, reader.clone());
+        configure_with_fonts(engine, init_fonts.clone(), soul, etoolbox, reader.clone());
     });
     let expander = IncrementalExpander::with_host(masked, limits, CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
@@ -2212,6 +2264,7 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         old_engine_tokens: 0,
         fonts,
         soul,
+        etoolbox,
         package_texts: crate::packages::package_texts(documents),
         recovered: 0,
         lent: false,
@@ -2684,6 +2737,47 @@ fn uses_soul(documents: &[SourceDocument<'_>]) -> bool {
                         .split(',')
                         .map(str::trim)
                         .any(|package| package == "soul")
+                    {
+                        return true;
+                    }
+                    i = after;
+                }
+                None => i = cursor,
+            }
+        }
+    }
+    false
+}
+
+/// True when any project document literally loads etoolbox: a raw-token
+/// scan for `\usepackage`/`\RequirePackage` naming `etoolbox`, exactly like
+/// [`uses_soul`] (a macro-generated `\usepackage` is missed, like there).
+/// When true the engine defines etoolbox's definedness tests from
+/// [`ETOOLBOX_IFDEF_PRELUDE`]; without the package those names stay
+/// undefined, as in real LaTeX.
+fn uses_etoolbox(documents: &[SourceDocument<'_>]) -> bool {
+    for (index, document) in documents.iter().enumerate() {
+        let tokens = tokenize_document(document.text, DocumentId(index));
+        let mut i = 0;
+        while i < tokens.len() {
+            let TokenKind::Command(name) = &tokens[i].kind else {
+                i += 1;
+                continue;
+            };
+            if name != "usepackage" && name != "RequirePackage" {
+                i += 1;
+                continue;
+            }
+            let mut cursor = i + 1;
+            if let Some((_, after)) = crate::bib::optional_bracket_text(&tokens, cursor) {
+                cursor = after;
+            }
+            match crate::bib::group_text(&tokens, cursor) {
+                Some((packages, after)) => {
+                    if packages
+                        .split(',')
+                        .map(str::trim)
+                        .any(|package| package == "etoolbox")
                     {
                         return true;
                     }
