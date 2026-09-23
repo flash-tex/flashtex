@@ -2224,96 +2224,13 @@ impl FontSizeLevel {
         Some(FontSizeLevel::Huge2),
     ];
 
-    /// Real `relsize.sty` (2013/03/29 v4.1) semantics for `\larger`
-    /// (`delta > 0`) and `\smaller` (`delta < 0`): `\relsize{n}` scales the
-    /// ACTUAL current point size (`None` is `\normalsize`, i.e. the class's
-    /// real `\f@size`, which at 11pt is 10.95pt rather than this compiler's
-    /// literal 11pt body-size approximation) by `2|n|` TeX-truncated
-    /// demi-magstep multiplications — NOT `|n|` independent ×1.2 lookups,
-    /// which drifts from pdflatex's fixed-point arithmetic (e.g. 10pt
-    /// `\tiny\larger`: real TeX truncates to 5.99995pt, closer to `\tiny`
-    /// itself than to `\scriptsize`; a chain of `|n|` separate closest-match
-    /// steps cannot reproduce that). The single resulting target is then
-    /// matched ONCE against whichever defined level's real point value
-    /// (`layout::size_declaration_pt` for this document's 10/11/12pt class
-    /// table) is CLOSEST — including keeping the current size if it is
-    /// itself the closest (real relsize does not force a change). Clamps at
-    /// the ends: past `\tiny`/`\Huge` the closest defined size is the end
-    /// itself, so the size holds.
-    pub fn stepped(
-        current: Option<FontSizeLevel>,
-        delta: i32,
-        body_size_pt: f64,
-    ) -> Option<FontSizeLevel> {
-        if delta == 0 {
-            return current;
-        }
-        let point_size = |level: Option<FontSizeLevel>| match level {
-            None => Self::real_normalsize_pt(body_size_pt),
-            Some(level) => crate::layout::size_declaration_pt(level, body_size_pt),
-        };
-        // TeX dimen arithmetic: each demi-magstep multiplies the current
-        // scaled-point value by a truncated fraction and truncates the
-        // product, rather than one floating-point `powf`. `71791/65536` ≈
-        // 1.09545 (up), `59826/65536` ≈ 0.912872 (down); two of them
-        // compound to relsize's documented ×1.2/÷1.2 single step.
-        const DEN: i64 = 65536;
-        const UP_NUM: i64 = 71_791;
-        const DOWN_NUM: i64 = 59_826;
-        let (num, demisteps) = if delta > 0 {
-            (UP_NUM, delta)
-        } else {
-            (DOWN_NUM, -delta)
-        };
-        let mut sp = (point_size(current) * DEN as f64).round() as i64;
-        for _ in 0..(2 * demisteps) {
-            sp = (sp * num) / DEN;
-        }
-        let target = sp as f64 / DEN as f64;
-        let distance = |level: Option<FontSizeLevel>| (point_size(level) - target).abs();
-        let best = Self::ORDER
-            .iter()
-            .map(|&level| distance(level))
-            .fold(f64::INFINITY, f64::min);
-        // Every level tied for closest (float noise tolerated). The 12pt
-        // class has `\huge` and `\Huge` numerically identical, so ties are
-        // real, not just theoretical; the first in relsize's own scan
-        // order wins, which may be the current size itself.
-        const EPS: f64 = 1e-9;
-        Self::ORDER
-            .iter()
-            .filter(|&&level| distance(level) <= best + EPS)
-            .min_by_key(|&&level| Self::scan_rank(level))
-            .copied()
-            .unwrap_or(current)
-    }
-
-    /// Real LaTeX's `\normalsize` `\f@size` for the active class — 10pt,
-    /// 10.95pt, 12pt — NOT this compiler's literal `body_size_pt`
-    /// approximation (11.0pt at 11pt; see `Parsed::class_size_pt`'s own
-    /// documented approximation). Used only to pick the closest defined
-    /// level for a relative size step: the winning level still renders at
-    /// its own `size_declaration_pt` table value (and a `None` winner
-    /// still renders at exactly `body_size_pt`), exactly as elsewhere in
-    /// this compiler — `size_declaration_pt`'s doc comment explains why
-    /// that approximation is deliberate and not disturbed here.
-    fn real_normalsize_pt(body_size_pt: f64) -> f64 {
-        if body_size_pt <= 10.5 {
-            10.0
-        } else if body_size_pt <= 11.5 {
-            10.95
-        } else {
-            12.0
-        }
-    }
-
     /// The AMS classes' (`amsart`, `amsbook`, `amsproc`) own `\larger`
     /// (`delta > 0`) / `\smaller` (`delta < 0`): a pure integer index step
     /// through the eleven-rung `crate::layout` ladder — each size command
     /// sets a rung index (`\tiny` = 1 .. `\Huge` = 10, `\normalsize` = 5)
     /// and the step adds `delta`, clamping to rung 0 (`\Tiny`) .. rung 10
     /// (`\Huge`). There is no magstep math and no closest-value search at
-    /// all, unlike `stepped` above: e.g. `\tiny\larger\larger\larger` walks
+    /// all, unlike relsize.sty's: e.g. `\tiny\larger\larger\larger` walks
     /// tiny(1) → SMALL(2) → Small(3) → small(4), landing exactly on
     /// `\small`.
     ///
@@ -2344,27 +2261,6 @@ impl FontSizeLevel {
             (Some(FontSizeLevel::Tiny), true)
         } else {
             (crate::layout::ams_rung_level(rung), false)
-        }
-    }
-
-    /// Position of a level in real `relsize.sty`'s scan order
-    /// (`normalsize, small, footnotesize, large, Large, LARGE, scriptsize,
-    /// tiny, huge, Huge`): the first level in this order wins any tie for
-    /// closest to the step's target.
-    fn scan_rank(level: Option<FontSizeLevel>) -> usize {
-        match level.and_then(|l| l.named(crate::layout::BODY_SIZE_PT)) {
-            None => 0,
-            Some(FontSizeLevel::Small) => 1,
-            Some(FontSizeLevel::FootnoteSize) => 2,
-            Some(FontSizeLevel::Large1) => 3,
-            Some(FontSizeLevel::Large2) => 4,
-            Some(FontSizeLevel::Large3) => 5,
-            Some(FontSizeLevel::ScriptSize) => 6,
-            Some(FontSizeLevel::Tiny) => 7,
-            Some(FontSizeLevel::Huge1) => 8,
-            Some(FontSizeLevel::Huge2) => 9,
-            // `named` never returns an explicit size.
-            Some(FontSizeLevel::Explicit(_)) => 0,
         }
     }
 }
@@ -2753,19 +2649,20 @@ fn apply_style_flags(style: TextStyle, name: &str, body_size_pt: f64) -> TextSty
         "LARGE" => next.size = Some(FontSizeLevel::Large3),
         "huge" => next.size = Some(FontSizeLevel::Huge1),
         "Huge" => next.size = Some(FontSizeLevel::Huge2),
-        // relsize's relative steps: scale the actual current point size
-        // by ×1.2 (or ÷1.2) and take the closest defined size (see
-        // `FontSizeLevel::stepped`). Unlike the absolute declarations
-        // above, these read `next.size` rather than overwriting it.
-        "larger" => next.size = FontSizeLevel::stepped(next.size, 1, body_size_pt),
-        "smaller" => next.size = FontSizeLevel::stepped(next.size, -1, body_size_pt),
+        // A `\larger`/`\smaller` the engine did not run: the real
+        // relsize.sty runs in the engine and hands over the size command
+        // it picks, so one arriving here is the AMS classes' own (their
+        // ladder, `FontSizeLevel::stepped_ams`) or undefined without the
+        // package (diagnosed in `relative_size_command`).
+        "larger" | "smaller" => {
+            let delta = if name == "larger" { 1 } else { -1 };
+            (next.size, next.ams_tiny) = FontSizeLevel::stepped_ams(next.size, next.ams_tiny, delta);
+        }
         _ => {}
     }
-    // Every size arm above re-selects a runged level, so it drops the AMS
-    // `\Tiny` rung (GH-824): absolute declarations re-select their own
-    // rung, and the relsize-magstep steps cannot address rung 0 at all
-    // (only the AMS ladder path in `relative_size_command` ever sets
-    // `ams_tiny`). Every other command preserves the incoming state.
+    // Every absolute size arm above re-selects a runged level, so it drops
+    // the AMS `\Tiny` rung (GH-824); the ladder steps set `ams_tiny`
+    // themselves. Every other command preserves the incoming state.
     if matches!(
         name,
         "tiny"
@@ -2778,8 +2675,6 @@ fn apply_style_flags(style: TextStyle, name: &str, body_size_pt: f64) -> TextSty
             | "LARGE"
             | "huge"
             | "Huge"
-            | "larger"
-            | "smaller"
     ) {
         next.ams_tiny = false;
     }
@@ -3227,6 +3122,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "RaggedLeft",
     "obeylines",
     "noindent",
+    "leavevmode",
     "indent",
     "tiny",
     "scriptsize",
@@ -6261,10 +6157,9 @@ impl P<'_> {
                 self.transform_box(name, span, para)
             }
             "url" | "nolinkurl" | "href" => self.url_command(name, span, para),
-            // `\larger`/`\smaller` (relsize, or the AMS ladder): declarations
-            // with an optional `[n]` step count (see `FontSizeLevel::stepped`
-            // and `stepped_ams`). A
-            // following `{...}` is only an ordinary group — the step stays
+            // `\larger`/`\smaller` (the AMS ladder; relsize's run in the engine): declarations
+            // with an optional `[n]` step count (see `FontSizeLevel::stepped_ams`).
+            // A following `{...}` is only an ordinary group — the step stays
             // in effect past it, like `\Large` — so unlike
             // `style_command_argument` (which always demands a group) this
             // path consumes no braces itself.
@@ -6287,7 +6182,7 @@ impl P<'_> {
                 self.style = apply_style(self.style, name, self.body_size_pt(), self.nfss_scheme())
             }
             "hfill" | "hfil" | "hss" | "hrulefill" | "dotfill" | "linebreak" | "nolinebreak" | "hspace"
-            | "noindent" | "indent" | "quad" | "qquad" | "thinspace" | "negthinspace" | "medspace"
+            | "noindent" | "leavevmode" | "indent" | "quad" | "qquad" | "thinspace" | "negthinspace" | "medspace"
             | "negmedspace" | "thickspace" | "negthickspace" | "enspace" | "enskip"
             | "nobreakdash" | "discretionary" => {
                 self.horizontal_command(name, span, para)
@@ -8804,15 +8699,14 @@ impl P<'_> {
         self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT)
     }
 
-    /// `\larger`/`\smaller` (relsize's, or the AMS classes' own ladder):
-    /// declarations with an optional `[n]` step count (default 1), not
-    /// argument-taking commands. The step
-    /// applies to the rest of the enclosing scope: a following `{...}` is
-    /// just an ordinary group — it restores the stepped size on close, like
-    /// every group restores assignments made before it — so the size stays
-    /// in effect past the braces, exactly like real LaTeX and like `\Large`
-    /// (`\textlarger`/`\textsmaller` would be the scoped forms, and are
-    /// out of scope here).
+    /// `\larger`/`\smaller` the expansion engine did not run: the AMS
+    /// classes' own (`amsart`, `amsbook`, `amsproc`, and `acmart`, which
+    /// loads amsart -- pdflatex `\meaning\larger` is amsart's
+    /// `\@currsizeindex` ladder there), declarations with an optional `[n]`
+    /// step count (default 1) that apply to the rest of the enclosing
+    /// scope, like `\Large`. relsize's are not here: the real `relsize.sty`
+    /// runs in the engine (`crate::packages::RELSIZE_STY`) and hands the
+    /// parser the size command it picks.
     #[inline(never)]
     fn relative_size_command(&mut self, name: &str, span: Span, _para: &mut Vec<Inline>) {
         self.skip_spaces();
@@ -8822,26 +8716,19 @@ impl P<'_> {
             None => 1,
             Some((content, _)) => content.trim().parse().unwrap_or(1),
         };
-        // amsart/amsbook/amsproc/acmart define their own `\larger`/
-        // `\smaller` independent of the relsize package, so the gate below
-        // does not apply to them (real pdflatex diagnoses nothing under
-        // `\documentclass{amsart}`).
-        //
         // This is deliberately NOT `math::AMSMATH_CLASSES` (which also
         // includes `beamer`): beamer does not define its own `\larger`/
         // `\smaller` (pdflatex: "Undefined control sequence" without
         // relsize), so it still needs the package like any other class.
-        const RELSIZE_OWN_CLASSES: &[&str] = &["amsart", "amsbook", "amsproc", "acmart"];
-        let is_ams_class = self
-            .document_class
-            .as_deref()
-            .is_some_and(|class| RELSIZE_OWN_CLASSES.contains(&class));
-        // Without the package (and outside an AMS class) this is
+        const LADDER_CLASSES: &[&str] = &["amsart", "amsbook", "amsproc", "acmart"];
+        let own = self.document_class.as_deref().is_some_and(|class| LADDER_CLASSES.contains(&class));
+        // Without the package (and outside those classes) this is
         // "Undefined control sequence" in real LaTeX: diagnose (naming the
         // missing package, like the ulem gate in `text_underline_cmd`) and
         // leave the size alone, so the content that follows still typesets
-        // as plain text instead of being dropped.
-        if !is_ams_class && !self.packages.iter().any(|package| package == "relsize") {
+        // as plain text instead of being dropped. (With the package loaded
+        // the engine defines and runs `\larger` itself.)
+        if !own {
             self.diags.push(Diagnostic::command_error(
                 name,
                 format!("\\{name} needs \\usepackage{{relsize}}"),
@@ -8851,22 +8738,9 @@ impl P<'_> {
             return;
         }
         let delta = if name == "larger" { steps } else { -steps };
-        let mut next = self.style;
-        // Only the AMS ladder classes step on their own `\@typesizes`
-        // ladder (`stepped_ams`); `acmart` stays on the relsize-magstep
-        // path (see `is_ams_size_class`).
-        if self
-            .document_class
-            .as_deref()
-            .is_some_and(is_ams_size_class)
-        {
-            let (level, tiny) = FontSizeLevel::stepped_ams(next.size, next.ams_tiny, delta);
-            next.size = level;
-            next.ams_tiny = tiny;
-        } else {
-            next.size = FontSizeLevel::stepped(next.size, delta, self.body_size_pt());
-        };
-        self.style = next;
+        let (level, tiny) = FontSizeLevel::stepped_ams(self.style.size, self.style.ams_tiny, delta);
+        self.style.size = level;
+        self.style.ams_tiny = tiny;
     }
 
     /// A text style command with an argument (`\textbf{..}`, `\emph{..}`, ...).
@@ -9124,6 +8998,9 @@ impl P<'_> {
             }
             self.paragraph_started = true;
         }
+        // latex.ltx `\leavevmode` (`\unhbox\voidb@x`): starts the paragraph
+        // in vertical mode, as its first text would; nothing otherwise.
+        "leavevmode" => self.paragraph_started = true,
         // The opposite request: unlike \noindent above, this one is not a
         // coincidental match with real LaTeX's output — \indent asks for
         // a first-line indent that this layout has no way to draw (see
@@ -19572,9 +19449,6 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // `\so` and `\hl` are implemented (soul takes no package options);
         // `\st` stays unsupported if used.
         "soul" => options.is_empty(),
-        // `\larger`/`\smaller` are implemented above, so loading the
-        // package is silent (same rule as `ulem`); relsize takes no options.
-        "relsize" => options.is_empty(),
         // fancyhdr's core (`\pagestyle{fancy}`, `\fancyhf`,
         // `\fancyhead`/`\fancyfoot`, the rule widths) is implemented
         // above, so loading the package is silent; what is not modelled
@@ -24815,7 +24689,7 @@ mod tests {
         // closest to `\LARGE` (20.74pt). The old ordinal-step approach
         // stepped Huge2 → Huge1, which are numerically IDENTICAL in the
         // 12pt table — no visible size change at all.
-        let (parsed, items) = items(r"\usepackage{relsize}{\Huge h \smaller{X}}");
+        let (parsed, items) = items(r"\documentclass[12pt]{article}\usepackage{relsize}\begin{document}{\Huge h \smaller{X}}\end{document}");
         assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
         assert_eq!(size_of(&items, "h"), 24.88);
         assert_eq!(size_of(&items, "X"), 20.74);
@@ -24866,22 +24740,19 @@ mod tests {
     #[test]
     fn relative_steps_clamp_at_the_ends_of_the_table() {
         // Five steps down from `\normalsize` would leave the table; the
-        // size holds at `\tiny` (6.0pt) instead of erroring or wrapping.
-        let (parsed_tiny, tiny_items) =
-            items(r"\usepackage{relsize}{\smaller{\smaller{\smaller{\smaller{\smaller{T}}}}}}");
-        assert!(
-            parsed_tiny.diagnostics.is_empty(),
-            "{:?}",
-            parsed_tiny.diagnostics
+        // size holds at `\tiny` (6.0pt) instead of erroring or wrapping,
+        // with relsize's own warning (pdflatex: "Font size 4.8225pt is
+        // too small").
+        let (parsed_tiny, tiny_items) = items(
+            r"\documentclass[12pt]{article}\usepackage{relsize}\begin{document}{\smaller{\smaller{\smaller{\smaller{\smaller{T}}}}}}\end{document}",
         );
+        assert!(only_relsize_size_warnings(&parsed_tiny.diagnostics), "{:?}", parsed_tiny.diagnostics);
         assert_eq!(size_of(&tiny_items, "T"), 6.0);
-        // Likewise one step up from `\Huge` holds at `\Huge` (24.88pt).
-        let (parsed_top, top_items) = items(r"\usepackage{relsize}{\Huge h \larger{X}}");
-        assert!(
-            parsed_top.diagnostics.is_empty(),
-            "{:?}",
-            parsed_top.diagnostics
-        );
+        // Likewise one step up from `\Huge` holds at 24.88pt ("Font size
+        // 29.85591pt is too large").
+        let (parsed_top, top_items) =
+            items(r"\documentclass[12pt]{article}\usepackage{relsize}\begin{document}{\Huge h \larger{X}}\end{document}");
+        assert!(only_relsize_size_warnings(&parsed_top.diagnostics), "{:?}", parsed_top.diagnostics);
         assert_eq!(size_of(&top_items, "h"), 24.88);
         assert_eq!(size_of(&top_items, "X"), 24.88);
     }
@@ -25073,27 +24944,34 @@ mod tests {
     #[test]
     fn article_tiny_smaller_keeps_its_relsize_value() {
         // Non-AMS classes have no `\Tiny` rung at all: `\tiny\smaller`
-        // keeps its long-standing relsize closest-match value (holding at
-        // `\tiny`, 5pt in the 10pt class) rather than reaching for an AMS
-        // rung.
+        // holds at `\tiny` (5pt in the 10pt class), with relsize's
+        // "Font size 4.16667pt is too small" (pdflatex), rather than
+        // reaching for an AMS rung.
         let source = r"\documentclass[10pt]{article}\usepackage{relsize}\begin{document}{\tiny a \smaller b}\end{document}";
         let output = full_output(source);
-        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(only_relsize_size_warnings(&output.diagnostics), "{:?}", output.diagnostics);
         assert_eq!(output_size(&output, "a"), 5.0);
         assert_eq!(output_size(&output, "b"), 5.0);
     }
 
     #[test]
-    fn acmart_larger_stays_on_the_relsize_path() {
-        // `acmart` needs no relsize package either, but nothing shows it
-        // shares the AMS ladder: `\tiny\larger` under relsize's magstep
-        // math stays at `\tiny` (5.9999pt rounds to the closest level,
-        // itself), so three steps hold 5pt — where `amsart` walks 6/7/8/9.
+    fn acmart_larger_steps_on_the_ams_ladder() {
+        // `acmart` loads amsart, whose `\larger` it keeps (pdflatex
+        // `\meaning\larger` is amsart's `\@currsizeindex` ladder): three
+        // steps from `\tiny` land on `\small`, pdflatex `\f@size` 6/7/8/9.
+        // (acmart's own `\tiny` is 6pt; this compiler sets acmart from the
+        // standard 10pt table, so `a` stays 5pt.)
         let source = r"\documentclass[10pt]{acmart}\begin{document}{\tiny a \larger b \larger c \larger d}\end{document}";
         let output = full_output(source);
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
         assert_eq!(output_size(&output, "a"), 5.0);
-        assert_eq!(output_size(&output, "d"), 5.0);
+        assert_eq!(output_size(&output, "d"), 9.0);
+    }
+
+    /// Every diagnostic is relsize's own "Font size .. is too small/large"
+    /// warning, which pdflatex gives for the same steps.
+    fn only_relsize_size_warnings(diagnostics: &[Diagnostic]) -> bool {
+        diagnostics.iter().all(|d| d.message.starts_with("Package relsize Warning: Font size "))
     }
 
     #[test]

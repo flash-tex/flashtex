@@ -1186,9 +1186,94 @@ fn configure_with_fonts(
     // The class's measured lengths, then the names whose assignments come
     // back as markers for the parser (see `HOST_PRELUDE`).
     engine.run_host_prelude(&class_prelude(&fonts.class));
+    if let Some(sizes) = fonts.size_state.then(|| size_prelude(&fonts)).flatten() {
+        for (name, switch) in crate::font_units::font_switches() {
+            if SIZE_COMMANDS.iter().any(|(size, _)| *size == name) {
+                engine.declare_font_switch(&format!("flashtex@sw@{name}"), switch);
+            }
+        }
+        engine.run_host_prelude(&sizes);
+    }
     for name in crate::parser::OBSERVED_LENGTHS.iter().chain(crate::parser::OBSERVED_COUNTERS) {
         engine.observe_register(name);
     }
+}
+
+/// The standard classes' size commands with their `size10.clo`/
+/// `size11.clo`/`size12.clo` arguments (TeX Live 2026, lines 48-86 of
+/// each): `(name, [10pt, 11pt, 12pt])`, the size and baselineskip exactly
+/// as the class spells them after `\@setfontsize\<name>`.
+const SIZE_COMMANDS: &[(&str, [&str; 3])] = &[
+    ("normalsize", ["\\@xpt\\@xiipt", "\\@xipt{13.6}", "\\@xiipt{14.5}"]),
+    ("small", ["\\@ixpt{11}", "\\@xpt\\@xiipt", "\\@xipt{13.6}"]),
+    ("footnotesize", ["\\@viiipt{9.5}", "\\@ixpt{11}", "\\@xpt\\@xiipt"]),
+    ("scriptsize", ["\\@viipt\\@viiipt", "\\@viiipt{9.5}", "\\@viiipt{9.5}"]),
+    ("tiny", ["\\@vpt\\@vipt", "\\@vipt\\@viipt", "\\@vipt\\@viipt"]),
+    ("large", ["\\@xiipt{14}", "\\@xiipt{14}", "\\@xivpt{18}"]),
+    ("Large", ["\\@xivpt{18}", "\\@xivpt{18}", "\\@xviipt{22}"]),
+    ("LARGE", ["\\@xviipt{22}", "\\@xviipt{22}", "\\@xxpt{25}"]),
+    ("huge", ["\\@xxpt{25}", "\\@xxpt{25}", "\\@xxvpt{30}"]),
+    // `size12.clo` has `\let\Huge=\huge`; a definition of its own keeps
+    // the parser's `\Huge` and relsize's pick (its scan order reaches
+    // `\huge` first at the same 24.88pt) unchanged.
+    ("Huge", ["\\@xxvpt{30}", "\\@xxvpt{30}", "\\@xxvpt{30}"]),
+];
+
+/// NFSS size state in the engine, for documents that load relsize
+/// ([`DocumentFonts::size_state`]): the size commands defined as the class
+/// defines them (`\protected\def\small{\@setfontsize\small\@ixpt{11}}`),
+/// so a package that reads their definitions (relsize's size list) or
+/// `\f@size` after one (relsize's `\relsize`) sees what LaTeX has. Each
+/// still reaches the parser as the named command, through a
+/// `flashtex@sw@<name>` font switch the converter renames: `\@setfontsize`
+/// hands the parser the named command when the size and baselineskip are
+/// the class's own for that name, and `\fontsize{..}{..}\selectfont` (as
+/// before) otherwise. Only for the 10/11/12pt tables of the non-AMS
+/// classes, whose sizes the parser renders from the same tables
+/// (`layout::size_declaration_pt`); other classes keep the size commands
+/// as host commands.
+///
+/// The body font's NFSS name (`\f@encoding/\f@family/\f@series/\f@shape`,
+/// fixed at the document's medium upright roman) and its `.fd` shape
+/// declaration come with it: relsize reads the declaration's `\meaning`
+/// to choose its tolerance (a `-` range, as in Latin Modern's, is 5%;
+/// Computer Modern's discrete sizes 30%). The texts are pdflatex's
+/// `\meaning` of each (TeX Live 2026).
+fn size_prelude(fonts: &DocumentFonts) -> Option<String> {
+    let (class, class_pt) = (&fonts.class, fonts.setup.class_pt);
+    let ams = |name: &str| crate::parser::is_ams_size_class(name.trim());
+    if ams(&class.name) || class.loaded.as_ref().is_some_and(|(name, _)| ams(name)) {
+        return None;
+    }
+    let column = match class_pt {
+        pt if pt == 10.0 => 0,
+        pt if pt == 11.0 => 1,
+        pt if pt == 12.0 => 2,
+        _ => return None,
+    };
+    let mut text = String::from(
+        "\\makeatletter
+\\def\\flashtex@stdsize#1#2#3{\\begingroup\\set@fontsize\\f@linespread{#2}{#3}\\xdef\\flashtex@tmp{\\f@size/\\f@baselineskip}\\endgroup\\expandafter\\let\\csname flashtex@std@\\expandafter\\@gobble\\string#1\\endcsname\\flashtex@tmp}
+\\def\\@setfontsize#1#2#3{\\@nomath#1\\ifx\\protect\\@typeset@protect\\let\\@currsize#1\\fi\\set@fontsize\\f@linespread{#2}{#3}\\edef\\flashtex@tmp{\\f@size/\\f@baselineskip}\\expandafter\\ifx\\csname flashtex@std@\\expandafter\\@gobble\\string#1\\endcsname\\flashtex@tmp\\let\\size@update\\relax\\csname flashtex@sw@\\expandafter\\@gobble\\string#1\\endcsname\\else\\flashtexfontsizedone{\\f@size}{\\f@baselineskip}\\size@update\\flashtexselectfontdone\\fi}
+",
+    );
+    for (name, sizes) in SIZE_COMMANDS {
+        let size = sizes[column];
+        text.push_str(&format!("\\protected\\def\\{name}{{\\@setfontsize\\{name}{size}}}\\flashtex@stdsize\\{name}{size}\n"));
+    }
+    let (encoding, family, shape) = match (fonts.setup.t1, fonts.setup.latin_modern) {
+        (false, false) => ("OT1", "cmr", "<5><6><7><8><9><10><12>gen*cmr<10.95>cmr10<14.4>cmr12<17.28><20.74><24.88>cmr17"),
+        (true, false) => ("T1", "cmr", "<5><6><7><8><9><10><10.95><12><14.4><17.28><20.74><24.88><29.86><35.83>genb*ecrm"),
+        (false, true) => ("OT1", "lmr", "<-5.5>rm-lmr5<5.5-6.5>rm-lmr6<6.5-7.5>rm-lmr7<7.5-8.5>rm-lmr8<8.5-9.5>rm-lmr9<9.5-11>rm-lmr10<11-15>rm-lmr12<15->rm-lmr17"),
+        (true, true) => ("T1", "lmr", "<-5.5>ec-lmr5<5.5-6.5>ec-lmr6<6.5-7.5>ec-lmr7<7.5-8.5>ec-lmr8<8.5-9.5>ec-lmr9<9.5-11>ec-lmr10<11-15>ec-lmr12<15->ec-lmr17"),
+    };
+    text.push_str(&format!(
+        "\\def\\f@encoding{{{encoding}}}\\def\\f@family{{{family}}}\\def\\f@series{{m}}\\def\\f@shape{{n}}\\expandafter\\def\\csname {encoding}/{family}/m/n\\endcsname{{{shape}}}\n"
+    ));
+    // `\normalsize` is in force when the document starts.
+    let normal = SIZE_COMMANDS[0].1[column];
+    text.push_str(&format!("\\set@fontsize\\f@linespread{normal}\\let\\size@update\\relax\\let\\@currsize\\normalsize\n\\makeatother\n"));
+    Some(text)
 }
 
 /// The document-wide font inputs the engine needs before it executes any
@@ -1201,6 +1286,10 @@ struct DocumentFonts {
     /// `\selectfont` then switches the preamble to Latin Modern already.
     preamble_latin_modern: bool,
     class: ClassSetup,
+    /// A document loads relsize, the one package that reads the size
+    /// commands' definitions and `\f@size` after them: only then does the
+    /// engine keep NFSS size state ([`size_prelude`]).
+    size_state: bool,
 }
 
 /// The `\documentclass` the entry names, with its options, and the
@@ -1395,6 +1484,7 @@ fn document_fonts(documents: &[SourceDocument<'_>], entry: usize) -> DocumentFon
     let mut latin_modern = false;
     let mut preamble_latin_modern = false;
     let mut class = ClassSetup::default();
+    let mut size_state = false;
     let order = std::iter::once(entry).chain((0..documents.len()).filter(|i| *i != entry));
     for document_index in order {
         let Some(document) = documents.get(document_index) else {
@@ -1460,6 +1550,7 @@ fn document_fonts(documents: &[SourceDocument<'_>], entry: usize) -> DocumentFon
                     for package in group.split(',').map(str::trim) {
                         match package {
                             "lmodern" => latin_modern = true,
+                            "relsize" => size_state = true,
                             "fontenc" => {
                                 if let Some(encoding) = crate::text_builtins::fontenc_encoding(&options) {
                                     t1 = encoding == flashtex_tex_text_encoding::encoding::Encoding::T1;
@@ -1478,6 +1569,7 @@ fn document_fonts(documents: &[SourceDocument<'_>], entry: usize) -> DocumentFon
         setup: crate::font_units::FontSetup::new(class_pt, t1, latin_modern),
         preamble_latin_modern: preamble_latin_modern && t1,
         class,
+        size_state,
     }
 }
 
@@ -1877,6 +1969,27 @@ impl<'d> Converter<'d> {
                         // expansion rebinds the span to the invocation while
                         // the mark (like the kind) travels with the token.
                         conv.push_marked(TokenKind::Word(name.clone()), at, true);
+                    }
+                    // A size command the engine ran (`size_prelude`): the
+                    // named command, or the environment when `\begin{small}`
+                    // itself invoked it (not `\begin{bigtext}` whose
+                    // definition runs `\large`).
+                    _ if name.starts_with("flashtex@sw@") => {
+                        let size = &name["flashtex@sw@".len()..];
+                        let begin = origin
+                            .and_then(|o| conv.span(o))
+                            .filter(|b| conv.source_text(*b) == "\\begin")
+                            .filter(|b| {
+                                let text = conv.documents[b.document.0].text;
+                                text.get(b.end..).is_some_and(|rest| {
+                                    rest.trim_start().strip_prefix('{').and_then(|r| r.split_once('}')).is_some_and(|(env, _)| env.trim() == size)
+                                })
+                            })
+                            .map(|b| Placement { span: b, definition: None, maps: false, real: Some(b) });
+                        match begin {
+                            Some(begin) => conv.push_environment("begin", size, begin),
+                            None => conv.push(TokenKind::Command(size.to_string()), at),
+                        }
                     }
                     // r2 reads a verbatim body itself and ends it with a frozen
                     // `\end<name>` carrying the `\begin` span.
