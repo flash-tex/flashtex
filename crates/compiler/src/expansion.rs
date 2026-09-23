@@ -442,6 +442,16 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\long\\def\\etb@rc@manyinner@long#1#2{\\flashtex@latex@error{You already have nine parameters.}\\long\\def#1[##1]##2##3##4##5##6##7##8##9{#2}}%
 \\long\\def\\etb@rc@manyinner@short#1#2{\\flashtex@latex@error{You already have nine parameters.}\\def#1[##1]##2##3##4##5##6##7##8##9{#2}}%
 \\makeatother
+% etoolbox-newbool-ifbool: etoolbox TeX-bool booleans over the package's own \newif representation.
+\\makeatletter
+\\protected\\def\\newbool#1{\\@ifundefined{if#1}{\\expandafter\\newif\\csname if#1\\endcsname}{\\etb@err@booldefined}}%
+\\protected\\def\\providebool#1{\\@ifundefined{if#1}{\\expandafter\\newif\\csname if#1\\endcsname}{}}%
+\\protected\\def\\booltrue#1{\\@ifundefined{if#1}{\\etb@err@nobool}{\\csname#1true\\endcsname}}%
+\\protected\\def\\boolfalse#1{\\@ifundefined{if#1}{\\etb@err@nobool}{\\csname#1false\\endcsname}}%
+\\protected\\def\\setbool#1#2{\\@ifundefined{if#1}{\\etb@err@nobool}{\\@ifundefined{#1#2}{\\etb@err@boolval}{\\csname#1#2\\endcsname}}}%
+\\protected\\def\\ifbool#1{\\@ifundefined{if#1}{\\etb@err@nobool\\@gobbletwo}{\\csname if#1\\endcsname\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}}%
+\\protected\\def\\notbool#1{\\@ifundefined{if#1}{\\etb@err@nobool\\@gobbletwo}{\\csname if#1\\endcsname\\expandafter\\@secondoftwo\\else\\expandafter\\@firstoftwo\\fi}}%
+\\makeatother
 \\def\\hspace{\\flashtexhspace}%
 \\def\\vspace{\\flashtexvspace}%
 \\long\\def\\flashtexdeclaremathop#1#2#3{\\newcommand#2{\\operatorname#1{#3}}}%
