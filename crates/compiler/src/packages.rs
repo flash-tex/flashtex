@@ -85,6 +85,7 @@ pub const BUILT_IN_PACKAGES: &[(&str, &str)] = &[
     ("CJKutf8", "the CJK environment, \\CJKfamily and the space switches are parser state and the render pipeline sets the characters from the C70 subfont metrics; CJKutf8.sty needs active characters and \\lastkern"),
     ("CJK", "loaded by CJKutf8; CJK.sty needs active characters, \\lastkern and \\pdffontattr"),
     ("iftex", "\\ifpdftex & co. would misreport the engine; the file tests primitives"),
+    ("ifpdf", "\\ifpdf is the expansion prelude's; the file requires iftex"),
     ("ifxetex", "\\ifxetex is the parser's; the file tests primitives"),
     ("ifluatex", "\\ifluatex is the parser's; the file tests primitives"),
     ("calc", "\\setlength arithmetic is the engine's \\dimexpr; calc.sty needs \\dimen registers with \\advance semantics"),

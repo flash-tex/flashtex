@@ -1728,7 +1728,12 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "iftex",
         "",
-        "\\ifxetex and \\ifluatex (with the \\ifXeTeX/\\ifLuaTeX aliases) are false, as iftex.sty sets them under pdflatex, so engine-guarded blocks skip",
+        "\\ifxetex and \\ifluatex (with the \\ifXeTeX/\\ifLuaTeX aliases) are false while \\ifpdftex (with the \\ifPDFTeX alias) is true, as iftex.sty sets them under pdflatex",
+    ),
+    (
+        "ifpdf",
+        "",
+        "\\ifpdf is true, as iftex.sty sets it under pdflatex in PDF mode, so pdf-guarded blocks take the true branch",
     ),
     (
         "ifxetex",
