@@ -9115,15 +9115,32 @@ impl P<'_> {
     }
 
     fn document_class(&mut self, span: Span) {
-        // Any invocation counts as "seen" for `\DocumentMetadata` ordering —
-        // even `\documentclass{}` with an empty argument, which warns below
-        // and records no class name.
-        self.seen_documentclass = true;
+        // Like `\usepackage` below, `\documentclass` is `\@onlypreamble`:
+        // after `\begin{document}` it errors and changes nothing. The check
+        // runs after the arguments are consumed so the braced class name
+        // cannot leak as body text.
+        let misplaced = self.has_document && self.in_body;
         let options = self.optional_bracket_argument();
         let option_list: Vec<&str> = options
             .as_ref()
             .map(|(options, _)| options.split(',').map(str::trim).collect())
             .unwrap_or_default();
+        let (tokens, argument_span) = self.required_group("documentclass", span);
+        if misplaced {
+            self.diags.push(
+                Diagnostic::error(
+                    "LaTeX Error: Can be used only in preamble.",
+                    Some(span.merge(argument_span)),
+                    Some("ignored the misplaced \\documentclass and continued".into()),
+                )
+                .with_help("move \\documentclass before \\begin{document}"),
+            );
+            return;
+        }
+        // Any invocation counts as "seen" for `\DocumentMetadata` ordering —
+        // even `\documentclass{}` with an empty argument, which warns below
+        // and records no class name.
+        self.seen_documentclass = true;
         if self.class_size_pt.is_none() {
             self.class_size_pt = option_list.iter().find_map(|option| match *option {
                 "10pt" => Some(10.0),
@@ -9141,7 +9158,6 @@ impl P<'_> {
             self.twocolumn_option = true;
             self.two_column = true;
         }
-        let (tokens, _) = self.required_group("documentclass", span);
         let class = token_text(&tokens).trim().to_string();
         if class.is_empty() {
             self.diags.push(Diagnostic::warning(
@@ -10286,6 +10302,23 @@ impl P<'_> {
             .map(|(options, _)| options)
             .unwrap_or_default();
         let (tokens, argument_span) = self.required_group("usepackage", span);
+        // Real LaTeX (`\@onlypreamble`): `\usepackage` after
+        // `\begin{document}` is `! LaTeX Error: Can be used only in
+        // preamble.` and loads nothing (measured TeX Live 2026: `align`
+        // stays undefined after a body `\usepackage{amsmath}`). Fragments
+        // without a document environment never leave the preamble, so every
+        // position counts as preamble there.
+        if self.has_document && self.in_body {
+            self.diags.push(
+                Diagnostic::error(
+                    "LaTeX Error: Can be used only in preamble.",
+                    Some(span.merge(argument_span)),
+                    Some("ignored the misplaced \\usepackage and continued".into()),
+                )
+                .with_help("move \\usepackage before \\begin{document}"),
+            );
+            return;
+        }
         let packages: Vec<String> = token_text(&tokens)
             .split(',')
             .map(str::trim)
@@ -21257,6 +21290,71 @@ mod tests {
         );
         assert_eq!(parsed.diagnostics.len(), 1);
         assert!(parsed.diagnostics[0].message.contains("amsmath"));
+    }
+
+    /// Preamble-only commands after `\begin{document}` (measured against
+    /// TeX Live 2026 pdflatex: `! LaTeX Error: Can be used only in
+    /// preamble.`, and the package is not loaded — `align` stays undefined
+    /// after a body `\usepackage{amsmath}`).
+    #[test]
+    fn preamble_only_commands_error_in_body_and_load_nothing() {
+        let parsed = parse(
+            "\\documentclass{article}\n\\begin{document}\n\\usepackage{amsmath}\nx\n\\end{document}\n",
+        );
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message == "LaTeX Error: Can be used only in preamble."),
+            "body \\usepackage must error like pdflatex: {:?}",
+            parsed.diagnostics
+        );
+        assert!(
+            !parsed.packages.iter().any(|package| package == "amsmath"),
+            "body \\usepackage must not load the package: {:?}",
+            parsed.packages
+        );
+        // Behavioural "not loaded" check: the kernel has no `\pod`, so it
+        // must still be rejected exactly as without the package.
+        let pod = parse(
+            "\\documentclass{article}\n\\begin{document}\n\\usepackage{amsmath}\n$a\\pod{b}$\n\\end{document}\n",
+        );
+        assert!(
+            pod.diagnostics
+                .iter()
+                .any(|d| d.message == "\\pod requires \\usepackage{amsmath}"),
+            "body \\usepackage must not enable amsmath commands: {:?}",
+            pod.diagnostics
+        );
+        // The argument is consumed (not typeset) and the body text survives.
+        let (_, items) = items(
+            "\\documentclass{article}\n\\begin{document}\n\\usepackage{amsmath}\nx\n\\end{document}\n",
+        );
+        assert!(
+            items.iter().any(|item| item.text == "x"),
+            "body text after the misplaced \\usepackage must still be typeset"
+        );
+        assert!(
+            !items.iter().any(|item| item.text.contains("amsmath")),
+            "the package argument must not leak as body text"
+        );
+
+        let class_parsed = parse(
+            "\\documentclass{article}\n\\begin{document}\nhello\n\\documentclass{report}\n\\end{document}\n",
+        );
+        assert!(
+            class_parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message == "LaTeX Error: Can be used only in preamble."),
+            "body \\documentclass must error like pdflatex: {:?}",
+            class_parsed.diagnostics
+        );
+        assert_eq!(
+            class_parsed.document_class.as_deref(),
+            Some("article"),
+            "body \\documentclass must not replace the class"
+        );
     }
 
     #[test]
