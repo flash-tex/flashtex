@@ -1474,7 +1474,7 @@ pub(crate) const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ),
     (
         "tcolorbox",
-        "tcolorbox with colback/colframe only, sized to its content like \\fcolorbox (0.5mm rule, 1mm padding, black!5!white fill, black!75!white frame); other keys warn and are ignored, corners stay square, no title, one-line bodies only",
+        "tcolorbox with colback/colframe/title, sized to its content like \\fcolorbox (0.5mm rule, 1mm padding, black!5!white fill, black!75!white frame); title= draws a frame-colour bar with white text above the box; other keys warn and are ignored, corners stay square, one-line bodies only",
     ),
     ("center", "centred paragraphs"),
     ("flushleft", "left-aligned paragraphs"),
@@ -1688,7 +1688,7 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "tcolorbox",
         "",
-        "the tcolorbox environment with colback/colframe only (see the tcolorbox environment); every other key and every library option is diagnosed",
+        "the tcolorbox environment with colback/colframe/title (see the tcolorbox environment); every other key and every library option is diagnosed",
     ),
     (
         "xspace",
