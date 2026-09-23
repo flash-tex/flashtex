@@ -85,6 +85,19 @@ impl TextStyle {
         }
     }
 
+    /// The text face in force where a formula begins, as its `\text`
+    /// argument starts out: LaTeX keeps the ambient shape (and series)
+    /// inside `\text`/`\mbox`/`\hbox`, so an italic theorem body sets
+    /// `Italic` here and body text `Normal`.
+    pub fn from_text_face(bold: bool, italic: bool) -> Self {
+        match (bold, italic) {
+            (true, true) => Self::BoldItalic,
+            (true, false) => Self::Bold,
+            (false, true) => Self::Italic,
+            (false, false) => Self::Normal,
+        }
+    }
+
     fn reset(self) -> Self {
         let _ = self;
         Self::Normal
@@ -283,11 +296,13 @@ pub enum Nucleus {
         rows: Vec<MathList>,
         align: char,
     },
-    /// amsmath `\xrightarrow[below]{above}`, `\xleftarrow` and mathtools'
-    /// `\xleftrightarrow` (`amsmath.sty` 971-979 `\arrowfill@`, 1012-1028
-    /// `\ext@arrow`; `mathtools.sty` 323-326): a relation whose arrow is
-    /// stretched to fit its labels, `above` set as the upper limit and
-    /// `below` (the optional argument, empty when absent) as the lower one.
+    /// amsmath `\xrightarrow[below]{above}`, `\xleftarrow`, mathtools'
+    /// `\xleftrightarrow` and mathtools' sixteen further extensible arrows
+    /// (`amsmath.sty` 971-979 `\arrowfill@`, 1012-1028 `\ext@arrow`;
+    /// `mathtools.sty` 323-390): a relation whose arrow is stretched to fit
+    /// its labels, `above` set as the upper limit and `below` (the optional
+    /// argument, empty when absent) as the lower one. Which arrowhead the
+    /// stretched arrow carries is [`ExtArrow`].
     ExtArrow {
         arrow: ExtArrow,
         above: MathList,
@@ -317,7 +332,31 @@ pub enum Nucleus {
     /// (`\hss` on both sides) on the current point. The opposite of
     /// [`Nucleus::Phantom`], which reserves the width but paints nothing.
     Lap { body: MathList, align: LapAlign },
+    /// amsmath `\pmb` (poor-man's bold): `body` overprinted at tiny offsets.
+    /// A box in a math list is an ordinary atom (TeX §1076), so the advance
+    /// and the vertical box are the body's own; only the ink is tripled.
+    Pmb { body: MathList },
+    /// `\smash`, `\smash[t]`, `\smash[b]` (amsmath.sty 931-949; the kernel's
+    /// latex.ltx `\smash` smashes both sides): `body` painted at its natural
+    /// width with the height (`top`, amsmath's `t`) and/or depth (`bottom`,
+    /// amsmath's `b`) zeroed. Both false is the box amsmath ships for an
+    /// option it does not know (`\csname mb@...\endcsname` stays `\relax`),
+    /// so it keeps the natural box, silently, like pdflatex. A box in a
+    /// math list is an ordinary atom (TeX §1076): the advance stays the
+    /// body's own and only the vertical box shrinks.
+    Smash {
+        body: MathList,
+        top: bool,
+        bottom: bool,
+    },
 }
+
+/// amsbsy.sty's `\pmb@` overprint offsets, in mu: the first copy at −0.8mu,
+/// the second at −0.4mu raised 0.5mu (`\pmbraise@` is the width of
+/// `\mkern.5mu`), the third unshifted. Converted with the same mu/18
+/// convention as [`mkern`] (`QUAD_EM` = 18mu).
+pub(crate) const PMB_DX_MU: [f64; 3] = [-0.8, -0.4, 0.0];
+pub(crate) const PMB_RAISE_MU: f64 = 0.5;
 
 /// Which side of the current point a [`Nucleus::Lap`] box's ink hangs on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -454,7 +493,9 @@ pub(crate) fn append_math_reference_text(out: &mut String, list: &MathList, sour
             Nucleus::Group(body)
             | Nucleus::Phantom { body, .. }
             | Nucleus::Operator { body, .. }
-            | Nucleus::Lap { body, .. } => {
+            | Nucleus::Lap { body, .. }
+            | Nucleus::Pmb { body }
+            | Nucleus::Smash { body, .. } => {
                 append_math_reference_text(out, body, source)
             }
             Nucleus::ExtArrow { above, below, .. } => {
@@ -517,7 +558,9 @@ fn reference_atom_end(atom: &MathAtom) -> usize {
         | Nucleus::Phantom { body, .. }
         | Nucleus::Operator { body, .. }
         | Nucleus::Accent { body, .. }
-        | Nucleus::Lap { body, .. } => extend(body),
+        | Nucleus::Lap { body, .. }
+        | Nucleus::Pmb { body }
+        | Nucleus::Smash { body, .. } => extend(body),
         Nucleus::TextRun(pieces) => {
             for piece in pieces {
                 if let TextPiece::Math(list) = piece {
@@ -719,11 +762,16 @@ fn append_text_pieces(dst: &mut Vec<TextPiece>, src: impl IntoIterator<Item = Te
 
 fn text_command_style(name: &str, style: TextStyle) -> Option<TextStyle> {
     Some(match name {
-        "text" | "mbox" | "hbox" | "texttt" | "textsf" => style,
+        // `\textrm` selects the roman *family* only (`\rmfamily`): the
+        // ambient shape survives, so in an italic theorem body it stays
+        // italic (pdflatex sets `\OT1/cmr/m/it/10`), exactly like `\text`.
+        // Only `\textup` (`\upshape`) and `\textnormal` (`\normalfont`)
+        // reset to upright.
+        "text" | "mbox" | "hbox" | "texttt" | "textsf" | "textrm" => style,
         "textbf" => style.bold(),
         "textit" | "textsl" => style.italic(),
         "emph" => style.toggle_italic(),
-        "textup" | "textrm" => style.normal(),
+        "textup" => style.normal(),
         "textmd" => style.medium(),
         "textnormal" => style.reset(),
         _ => return None,
@@ -740,19 +788,119 @@ fn text_declaration_style(name: &str, style: TextStyle) -> Option<TextStyle> {
     Some(match name {
         "bfseries" => style.bold(),
         "itshape" => style.italic(),
+        // `\normalfont` resets every attribute; `\upshape`/`\mdseries`
+        // reset only their own axis (shape/series), exactly like the
+        // argument-taking `\textup`/`\textmd` above. `\rmfamily` changes
+        // the family only, which this face model does not track, so the
+        // face is unchanged — like `\textrm` above (pdflatex keeps
+        // `\OT1/cmr/m/it/10` for `\text{\rmfamily ...}` in an italic
+        // theorem body).
+        "normalfont" => style.reset(),
+        "upshape" => style.normal(),
+        "mdseries" => style.medium(),
+        "rmfamily" => style,
         _ => return None,
     })
 }
 
 /// Which extensible arrow an [`Nucleus::ExtArrow`] draws.
+///
+/// The amsmath pair stretches with `\arrowfill@`; every mathtools member
+/// stretches the same way (`\ext@arrow`), differing only in its fill pieces
+/// and kerns (`mathtools.sty` 323-390, `kpsewhich mathtools.sty`). The
+/// in-compiler layout approximates each as its single arrowhead glyph with
+/// the labels stacked over and under it (the render pipeline builds the real
+/// stretched arrow); the variant keeps the exact fill behind the glyph so a
+/// later re-pin can map it to pieces and kerns without reparsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ExtArrow {
     /// `\xrightarrow`: `\ext@arrow 0359\rightarrowfill@`.
     Right,
     /// `\xleftarrow`: `\ext@arrow 3095\leftarrowfill@`.
     Left,
-    /// mathtools `\xleftrightarrow`: `\ext@arrow 3399`, `\leftarrow\relbar\rightarrow`.
+    /// mathtools `\xleftrightarrow`: `\ext@arrow 3095\MT_leftrightarrow_fill`
+    /// (`\arrowfill@\leftarrow\relbar\rightarrow`). The same four kerns as
+    /// `\xleftarrow`, not `3399`: `mathtools.sty` 323-326 (v1.31,
+    /// `kpsewhich mathtools.sty`) spells it `\ext@arrow 3095`.
     LeftRight,
+    /// mathtools `\xmapsto`: `\ext@arrow 0395\MT_mapsto_fill`
+    /// (`\arrowfill@{\mapstochar\relbar}\relbar\rightarrow`).
+    Mapsto,
+    /// mathtools `\xhookleftarrow`: `\ext@arrow 3095\MT_hookleft_fill`
+    /// (`\arrowfill@\leftarrow\relbar{\relbar\joinrel\rhook}`).
+    HookLeft,
+    /// mathtools `\xhookrightarrow`: `\ext@arrow 3095\MT_hookright_fill`
+    /// (`\arrowfill@{\lhook\joinrel\relbar}\relbar\rightarrow`).
+    HookRight,
+    /// mathtools `\xLeftarrow`: `\ext@arrow 0055{\Leftarrowfill@}`.
+    DoubleLeft,
+    /// mathtools `\xRightarrow`: `\ext@arrow 0055{\Rightarrowfill@}`.
+    DoubleRight,
+    /// mathtools `\xLeftrightarrow`: `\ext@arrow 0055{\Leftrightarrowfill@}`.
+    DoubleLeftRight,
+    /// mathtools `\xLongleftarrow`: `\ext@arrow 3095\MT_Longleftarrow_fill`
+    /// (`\arrowfill@\Longleftarrow\Relbar\Relbar`).
+    LongDoubleLeft,
+    /// mathtools `\xLongrightarrow`: `\ext@arrow 0359\MT_Longrightarrow_fill`
+    /// (`\arrowfill@\Relbar\Relbar\Longrightarrow`).
+    LongDoubleRight,
+    /// mathtools `\xlongleftarrow`: `\ext@arrow 3095\MT_longleftarrow_fill`
+    /// (`\arrowfill@\longleftarrow\relbar\relbar`).
+    LongLeft,
+    /// mathtools `\xlongrightarrow`: `\ext@arrow 0359\MT_longrightarrow_fill`
+    /// (`\arrowfill@\relbar\relbar\longrightarrow`).
+    LongRight,
+    /// mathtools `\xleftharpoonup`: `\ext@arrow 3095\MT_leftharpoonup_fill`
+    /// (`\arrowfill@\leftharpoonup\relbar\relbar`).
+    HarpoonUpLeft,
+    /// mathtools `\xleftharpoondown`: `\ext@arrow 3095\MT_leftharpoondown_fill`
+    /// (`\arrowfill@\leftharpoondown\relbar\relbar`).
+    HarpoonDownLeft,
+    /// mathtools `\xrightharpoonup`: `\ext@arrow 0359\MT_rightharpoonup_fill`
+    /// (`\arrowfill@\relbar\relbar\rightharpoonup`).
+    HarpoonUpRight,
+    /// mathtools `\xrightharpoondown`: `\ext@arrow 0359\MT_rightharpoondown_fill`
+    /// (`\arrowfill@\relbar\relbar\rightharpoondown`).
+    HarpoonDownRight,
+    /// mathtools `\xleftrightharpoons`: two `\ext@arrow`s overstruck with
+    /// `\phantom` labels (`\raise.22ex` up-harpoon over `\lower.22ex`
+    /// down-harpoon).
+    HarpoonsLeftRight,
+    /// mathtools `\xrightleftharpoons`: the mirror overstrike (up-harpoon
+    /// below, down-harpoon above).
+    HarpoonsRightLeft,
+}
+
+/// The in-compiler approximation of an [`ExtArrow`]: the single arrowhead
+/// glyph the stretched arrow is drawn as, with the measured advance for the
+/// seven heads no bundled face draws (Times-Roman lacks them and they are
+/// not Symbol-encodable, so shaping would warn) and `None` for the rest,
+/// which resolve through the pinned resources like the existing three. A
+/// free function (rather than inline in `layout_nucleus`) so the nineteen-way
+/// dispatch does not grow that frame: deeply nested input recurses through
+/// it per level (`robustness::deeply_nested_input_does_not_blow_the_stack`).
+fn ext_arrow_approx(arrow: ExtArrow) -> (&'static str, Option<f64>) {
+    match arrow {
+        ExtArrow::Right => ("→", None),
+        ExtArrow::Left => ("←", None),
+        ExtArrow::LeftRight => ("↔", None),
+        ExtArrow::Mapsto => ("\u{21A6}", None),
+        ExtArrow::HookLeft => ("\u{21A9}", Some(MATHTOOLS_HOOKLEFT_EM)),
+        ExtArrow::HookRight => ("\u{21AA}", None),
+        ExtArrow::DoubleLeft => ("\u{21D0}", None),
+        ExtArrow::DoubleRight => ("\u{21D2}", None),
+        ExtArrow::DoubleLeftRight => ("\u{21D4}", None),
+        ExtArrow::LongDoubleLeft => ("\u{27F8}", None),
+        ExtArrow::LongDoubleRight => ("\u{27F9}", None),
+        ExtArrow::LongLeft => ("\u{27F5}", None),
+        ExtArrow::LongRight => ("\u{27F6}", None),
+        ExtArrow::HarpoonUpLeft => ("\u{21BC}", Some(MATHTOOLS_HARPOON_EM)),
+        ExtArrow::HarpoonDownLeft => ("\u{21BD}", Some(MATHTOOLS_HARPOON_EM)),
+        ExtArrow::HarpoonUpRight => ("\u{21C0}", Some(MATHTOOLS_HARPOON_EM)),
+        ExtArrow::HarpoonDownRight => ("\u{21C1}", Some(MATHTOOLS_HARPOON_EM)),
+        ExtArrow::HarpoonsLeftRight => ("\u{21CB}", Some(MATHTOOLS_HARPOON_EM)),
+        ExtArrow::HarpoonsRightLeft => ("\u{21CC}", Some(MATHTOOLS_HARPOON_EM)),
+    }
 }
 
 /// An explicit math style (`\displaystyle` .. `\scriptscriptstyle`, and the
@@ -1194,6 +1342,19 @@ pub fn parse_tokens_display(
     parse_tokens_display_at(tokens, packages, diagnostics, display, false)
 }
 
+/// Like [`parse_tokens_display`], but the formula starts in the given text
+/// face: `\text` and friends keep that shape instead of starting upright
+/// (an italic `amsthm` plain-style theorem body passes `Italic`).
+pub fn parse_tokens_display_with_text_base(
+    tokens: &[Token],
+    packages: MathPackages,
+    diagnostics: &mut Vec<Diagnostic>,
+    display: bool,
+    base: TextStyle,
+) -> MathList {
+    parse_tokens_display_at_with_text_base(tokens, packages, diagnostics, display, false, base)
+}
+
 /// [`parse_tokens_display`] for a formula whose closing delimiter is known
 /// (`dollar_end`: see [`parse_formula_tokens`]).
 pub fn parse_tokens_display_at(
@@ -1203,7 +1364,35 @@ pub fn parse_tokens_display_at(
     display: bool,
     dollar_end: bool,
 ) -> MathList {
-    let (list, unclosed) = parse_formula_tokens(tokens, packages, diagnostics, false, display, dollar_end);
+    parse_tokens_display_at_with_text_base(
+        tokens,
+        packages,
+        diagnostics,
+        display,
+        dollar_end,
+        TextStyle::NORMAL,
+    )
+}
+
+/// Like [`parse_tokens_display_at`], but the formula starts in the given
+/// text face (see [`parse_tokens_display_with_text_base`]).
+pub fn parse_tokens_display_at_with_text_base(
+    tokens: &[Token],
+    packages: MathPackages,
+    diagnostics: &mut Vec<Diagnostic>,
+    display: bool,
+    dollar_end: bool,
+    base: TextStyle,
+) -> MathList {
+    let (list, unclosed) = parse_formula_tokens_with_text_base(
+        tokens,
+        packages,
+        diagnostics,
+        false,
+        display,
+        dollar_end,
+        base,
+    );
     if let Some(open) = unclosed {
         diagnostics.push(Diagnostic::error(
             "math group is missing its closing brace",
@@ -1248,6 +1437,28 @@ pub fn parse_formula_tokens(
     display: bool,
     dollar_end: bool,
 ) -> (MathList, Option<Span>) {
+    parse_formula_tokens_with_text_base(
+        tokens,
+        packages,
+        diagnostics,
+        cut_off,
+        display,
+        dollar_end,
+        TextStyle::NORMAL,
+    )
+}
+
+/// Like [`parse_formula_tokens`], but the formula starts in the given text
+/// face (see [`parse_tokens_display_with_text_base`]).
+pub fn parse_formula_tokens_with_text_base(
+    tokens: &[Token],
+    packages: MathPackages,
+    diagnostics: &mut Vec<Diagnostic>,
+    cut_off: bool,
+    display: bool,
+    dollar_end: bool,
+    text_base: TextStyle,
+) -> (MathList, Option<Span>) {
     let split = split_word_tokens(tokens);
     let mut parser = MathParser {
         tokens: &split,
@@ -1262,6 +1473,7 @@ pub fn parse_formula_tokens(
         dropped_lefts: 0,
         display,
         dollar_end,
+        text_base,
     };
     let list = parser.list(false);
     (list, parser.unclosed)
@@ -1337,6 +1549,10 @@ struct MathParser<'a> {
     /// `ellipsis`); `\)`, `\]` and `\end{...}` are macros that it does not
     /// recognise, so every other end is an ordinary follower.
     dollar_end: bool,
+    /// The text face in force where the formula began ([`TextStyle::from_text_face`]):
+    /// `\text` and friends start from this instead of [`TextStyle::NORMAL`],
+    /// so an italic theorem body keeps them italic.
+    text_base: TextStyle,
 }
 
 /// The token after an ellipsis, as amsmath's `\mdots@@`/`\extra@`/
@@ -1871,6 +2087,54 @@ impl MathParser<'_> {
         space(0.0, span)
     }
 
+    /// One of mathtools' sixteen extensible arrows beyond `\xleftrightarrow`
+    /// (`mathtools.sty` `[2][]`): the optional `[below]` defaults to empty
+    /// and `{above}` is required, exactly like `\xrightarrow`. A separate
+    /// method (rather than inline in `command_atom`) so the sixteen-way
+    /// dispatch does not grow that frame: deeply nested input recurses
+    /// through `command_atom` per level (`robustness::
+    /// deeply_nested_input_does_not_blow_the_stack`).
+    fn mathtools_xarrow(&mut self, name: &str, span: Span) -> MathAtom {
+        let below = self
+            .optional_bracket_list()
+            .unwrap_or(MathList { atoms: Vec::new() });
+        let above = self.required_group(name, span);
+        // The mathtools gate in `command_atom` admits exactly these sixteen
+        // names.
+        let arrow = match name {
+            "xhookleftarrow" => ExtArrow::HookLeft,
+            "xhookrightarrow" => ExtArrow::HookRight,
+            "xLeftarrow" => ExtArrow::DoubleLeft,
+            "xRightarrow" => ExtArrow::DoubleRight,
+            "xLeftrightarrow" => ExtArrow::DoubleLeftRight,
+            "xLongleftarrow" => ExtArrow::LongDoubleLeft,
+            "xLongrightarrow" => ExtArrow::LongDoubleRight,
+            "xlongleftarrow" => ExtArrow::LongLeft,
+            "xlongrightarrow" => ExtArrow::LongRight,
+            "xleftharpoonup" => ExtArrow::HarpoonUpLeft,
+            "xleftharpoondown" => ExtArrow::HarpoonDownLeft,
+            "xrightharpoonup" => ExtArrow::HarpoonUpRight,
+            "xrightharpoondown" => ExtArrow::HarpoonDownRight,
+            "xleftrightharpoons" => ExtArrow::HarpoonsLeftRight,
+            "xrightleftharpoons" => ExtArrow::HarpoonsRightLeft,
+            _ => ExtArrow::Mapsto,
+        };
+        MathAtom {
+            nucleus: Nucleus::ExtArrow {
+                arrow,
+                above,
+                below,
+            },
+            span,
+            superscript: None,
+            subscript: None,
+            class_override: None,
+            width_em: None,
+            ams_symbol: None,
+            limits: None,
+        }
+    }
+
     /// `\mkern`/`\mskip`'s `<mu glue>`: an optional sign, a decimal number
     /// and the unit `mu`, then optional `plus`/`minus` stretch and shrink
     /// (each read and dropped). The lexer has already split the source
@@ -2348,6 +2612,49 @@ impl MathParser<'_> {
                     limits: None,
                 }
             }
+            // latex.ltx `\def\mathstrut{\vphantom{(}}`: a kernel strut that
+            // takes no argument — zero width with the height and depth of
+            // `(`, so rows sharing a `\mathstrut` line up exactly.
+            "mathstrut" => {
+                let paren = MathList {
+                    atoms: vec![symbol("(".into(), span)],
+                };
+                MathAtom {
+                    nucleus: Nucleus::Phantom {
+                        body: paren,
+                        horizontal: false,
+                        vertical: true,
+                    },
+                    span,
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                    limits: None,
+                }
+            }
+            // `\smash`, `\smash[t]`, `\smash[b]`: parsed by `smash`
+            // below (kept out of line so this dispatch — which every
+            // nested math group recurses through — keeps its frame).
+            "smash" => self.smash(span),
+            // amsmath's `\pmb` (poor-man's bold): undefined without the
+            // package, where pdflatex answers "Undefined control sequence"
+            // (the same gate `\mod` and `\hdots` above use).
+            "pmb" if !self.packages.amsmath => self.missing_package(&name, "amsmath", span),
+            "pmb" => {
+                let body = self.required_group(&name, span);
+                MathAtom {
+                    nucleus: Nucleus::Pmb { body },
+                    span,
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                    limits: None,
+                }
+            }
             // mathtools' lap family needs `\usepackage{mathtools}`:
             // `mathtools.sty` 1540-1558 defines all three, and neither the
             // base LaTeX sources nor amsmath does, so without it pdflatex
@@ -2417,6 +2724,26 @@ impl MathParser<'_> {
                     ams_symbol: None,
                     limits: None,
                 }
+            }
+            // mathtools' sixteen further extensible arrows need
+            // `\usepackage{mathtools}`: `mathtools.sty` 323-390 defines all
+            // sixteen, and neither the base LaTeX sources nor amsmath does,
+            // so without it pdflatex answers "Undefined control sequence".
+            "xmapsto" | "xhookleftarrow" | "xhookrightarrow" | "xLeftarrow" | "xRightarrow"
+            | "xLeftrightarrow" | "xLongleftarrow" | "xLongrightarrow" | "xlongleftarrow"
+            | "xlongrightarrow" | "xleftharpoonup" | "xleftharpoondown" | "xrightharpoonup"
+            | "xrightharpoondown" | "xleftrightharpoons" | "xrightleftharpoons"
+                if !self.packages.mathtools =>
+            {
+                self.missing_package(&name, "mathtools", span)
+            }
+            // mathtools.sty `[2][]`, built by `mathtools_xarrow` (kept out of
+            // this frame: nesting recurses through here per level).
+            "xmapsto" | "xhookleftarrow" | "xhookrightarrow" | "xLeftarrow" | "xRightarrow"
+            | "xLeftrightarrow" | "xLongleftarrow" | "xLongrightarrow" | "xlongleftarrow"
+            | "xlongrightarrow" | "xleftharpoonup" | "xleftharpoondown" | "xrightharpoonup"
+            | "xrightharpoondown" | "xleftrightharpoons" | "xrightleftharpoons" => {
+                self.mathtools_xarrow(&name, span)
             }
             "substack" => {
                 let rows = self.braced_rows(&name, span);
@@ -2813,10 +3140,33 @@ impl MathParser<'_> {
                 self.group_atom(body, span)
             }
             "mathbf" | "textbf" => {
-                let (pieces, argument_span) =
-                    self.required_text_group_styled(&name, span, TextStyle::BOLD);
+                // `\mathbf` is a math alphabet: it always sets upright-bold,
+                // whatever the surrounding text does. `\textbf` is a text
+                // command, so it adds bold to the ambient face instead:
+                // upright-bold in body text, bold-italic in an italic
+                // theorem body (pdflatex sets `\OT1/cmr/bx/it/10` there).
+                let base = if name == "textbf" {
+                    self.text_base.bold()
+                } else {
+                    TextStyle::BOLD
+                };
+                let (pieces, argument_span) = self.required_text_group_styled(&name, span, base);
                 let span = span.merge(argument_span);
-                if let Some(text) = text_run_plain_text(&pieces) {
+                // The single-`Bold` fast path only when every piece really
+                // is upright-bold: a shape-changing nested command (or an
+                // italic ambient face) keeps its own `TextRun` face instead
+                // of being fused into upright-bold runs.
+                let all_bold = pieces.iter().all(|piece| {
+                    matches!(
+                        piece,
+                        TextPiece::Text {
+                            style: TextStyle::Bold,
+                            ..
+                        }
+                    )
+                });
+                let plain_bold = all_bold.then(|| text_run_plain_text(&pieces)).flatten();
+                if let Some(text) = plain_bold {
                     // Like `\mathrm`, `-` stays a Bin cmsy minus (mathcode
                     // "2200), not a bold text hyphen: only the hyphen runs
                     // split out.
@@ -2979,7 +3329,8 @@ impl MathParser<'_> {
                 space(0.0, span)
             }
             "text" => {
-                let (pieces, argument_span) = self.required_text_group("text", span);
+                let (pieces, argument_span) =
+                    self.required_text_group_styled("text", span, self.text_base);
                 MathAtom {
                     nucleus: text_run_nucleus(pieces),
                     span: span.merge(argument_span),
@@ -2991,9 +3342,13 @@ impl MathParser<'_> {
                     limits: None,
                 }
             }
-            "textit" | "textrm" | "textnormal" | "mbox" | "hbox" => {
+            // `\textup` works at the top level of math like the other text
+            // font commands (pdflatex sets `$d \textup{upright} e$` from
+            // `\OT1/cmr/m/n/10` with no diagnostic); it used to be rejected
+            // as unsupported in math mode.
+            "textit" | "textrm" | "textnormal" | "textup" | "mbox" | "hbox" => {
                 let style =
-                    text_command_style(&name, TextStyle::NORMAL).unwrap_or(TextStyle::NORMAL);
+                    text_command_style(&name, self.text_base).unwrap_or(TextStyle::NORMAL);
                 let (pieces, argument_span) = self.required_text_group_styled(&name, span, style);
                 MathAtom {
                     nucleus: text_run_nucleus(pieces),
@@ -3575,6 +3930,44 @@ impl MathParser<'_> {
         }
     }
 
+    /// `\smash`, `\smash[t]`, `\smash[b]` (amsmath.sty 931-949; the
+    /// kernel's latex.ltx `\smash` smashes both sides): the body painted
+    /// at its natural width with the commanded sides zeroed. A separate
+    /// method so the command dispatch above — which every nested math
+    /// group recurses through — keeps its frame (see
+    /// `deeply_nested_input_does_not_blow_the_stack`).
+    ///
+    /// The `[t]`/`[b]` option is amsmath's redefinition, so without
+    /// amsmath no bracket is consumed: the kernel's `\smash#1` takes the
+    /// next token, and `required_group` takes that same single token —
+    /// pdflatex smashes just `[` and typesets `b]{y}`. An option amsmath
+    /// does not know leaves `\csname mb@...\endcsname` as `\relax`,
+    /// shipping the natural box with no error, as pdflatex does.
+    fn smash(&mut self, span: Span) -> MathAtom {
+        let option = self
+            .packages
+            .amsmath
+            .then(|| self.raw_bracket_text())
+            .flatten();
+        let (top, bottom) = match option.as_deref() {
+            None | Some("tb") => (true, true),
+            Some("t") => (true, false),
+            Some("b") => (false, true),
+            Some(_) => (false, false),
+        };
+        let body = self.required_group("smash", span);
+        MathAtom {
+            nucleus: Nucleus::Smash { body, top, bottom },
+            span,
+            superscript: None,
+            subscript: None,
+            class_override: None,
+            width_em: None,
+            ams_symbol: None,
+            limits: None,
+        }
+    }
+
     /// `\rule`'s optional `[<raise>]` as raw text (control words kept).
     fn raw_bracket_text(&mut self) -> Option<String> {
         let mut cursor = self.i;
@@ -3858,6 +4251,7 @@ impl MathParser<'_> {
             dropped_lefts: 0,
             display: self.display,
             dollar_end: false,
+            text_base: self.text_base,
         };
         let list = parser.list(false);
         if let Some(open) = parser.unclosed {
@@ -4757,6 +5151,16 @@ pub(crate) const KERNEL_HBAR_EM: f64 = 0.576172;
 /// "0A at the same 1.000003em advance; only height/depth change.
 pub(crate) const KERNEL_RIGHTLEFTHARPOONS_EM: f64 = 1.000002;
 
+/// The head advance, in ems, of the mathtools extensible arrows no bundled
+/// face draws (`\xhookleftarrow`'s hook, the six harpoons): `\showthe\wd` of
+/// `\hbox{$...$}` at 10pt, TeX Live 2026. `\hookleftarrow` (`fontmath.ltx`
+/// 377, `\leftarrow\joinrel\rhook`) is 11.11118pt. Each single harpoon
+/// (`fontmath.ltx` 349-352, cmsy) and each double harpoon (msam/msbm) is
+/// 10.00002pt — the same advance the generated declaration table pins
+/// (`crate::math_symbols` 1.000003em TFM rows), corroborated twice.
+pub(crate) const MATHTOOLS_HOOKLEFT_EM: f64 = 1.111118;
+pub(crate) const MATHTOOLS_HARPOON_EM: f64 = 1.000002;
+
 /// The Unicode mathematical alphanumeric symbol that stands for `ch` in the
 /// math alphabet of `command`: `\mathsf` sans-serif (U+1D5A0, digits
 /// U+1D7E2), `\mathtt` monospace (U+1D670, digits U+1D7F6), `\mathit`
@@ -5581,6 +5985,15 @@ fn symbol_class(glyph: &str) -> AtomClass {
         // pinned Latin Modern Math resource. `⊥` above is `\perp`'s glyph;
         // `\bot` shares it but overrides the class to Ord (see `command_atom`).
         | "⟺" | "⟶" | "⟵" | "⟸" | "⟷"
+        // mathtools' extensible hook and harpoon arrows: `fontmath.ltx` 377
+        // makes `\hookleftarrow` `\mathrel`, 349-352 make the four single
+        // harpoons `\mathrel` (cmsy), and amssymb makes `\leftrightharpoons`
+        // (`amssymb.sty` 56, msam) and `\rightleftharpoons` (`amsfonts.sty`
+        // 96, msam) `\mathrel`. No bundled face draws these heads, so the
+        // ext-arrow approximation carries a measured advance instead, but
+        // the class is still Rel.
+        | "\u{21A9}" | "\u{21BC}" | "\u{21BD}" | "\u{21C0}" | "\u{21C1}" | "\u{21CB}"
+        | "\u{21CC}"
         // fontmath.ltx 301-302: `\sqsubseteq`/`\sqsupseteq`, `\mathrel` at
         // cmsy "76/"77 (kernel, not amssymb).
         | "⊑" | "⊒"
@@ -6465,24 +6878,68 @@ fn layout_nucleus(
             b.width = 0.0;
             b
         }
+        // `\pmb`: the body's box with its ink painted three times at
+        // amsbsy.sty `\pmb@`'s offsets — −0.8mu, −0.4mu raised 0.5mu, then
+        // unshifted — via the same mu/18 convention as `mkern`. The advance
+        // stays the body's own (the three `\kern\dimen@` back-ups cancel the
+        // copies, so the hlist's natural width is the body's), so neighbours
+        // are spaced exactly as if the nucleus were set once.
+        //
+        // The *height* does not: `hpack` takes the maximum of `h - shift`
+        // over the three copies, and the middle one is raised, so the box is
+        // `\pmbraise@` taller than the body. pdfTeX agrees —
+        // `\showbox` of `\hbox{$\pmb{x}$}` at 10pt is
+        // `\hbox(4.58331+0.0)x5.71524` where `\hbox{$x$}` is
+        // `\hbox(4.30554+0.0)x5.71527`, and 4.58331 − 4.30554 = 0.27777 =
+        // 0.5mu. The depth is the body's, since the raise only lifts one
+        // copy's depth *off* the baseline.
+        Nucleus::Pmb { body } => {
+            let base = layout_list(body, size, root_size, level, diagnostics);
+            let pt = |mu: f64| mu / 18.0 * size;
+            let mut first = base.items.clone();
+            offset_items(&mut first, pt(PMB_DX_MU[0]), 0.0);
+            let mut second = base.items.clone();
+            offset_items(&mut second, pt(PMB_DX_MU[1]), -pt(PMB_RAISE_MU));
+            let mut items = first;
+            items.extend(second);
+            items.extend(base.items);
+            MathBox {
+                items,
+                width: base.width,
+                ascent: base.ascent + pt(PMB_RAISE_MU),
+                descent: base.descent,
+            }
+        }
+        // `\smash[t|b]`: the body's box with the commanded sides zeroed —
+        // the width and the ink stay the body's own, so neighbours are
+        // spaced exactly as if the nucleus were set once. The opposite of
+        // `Phantom` above (cleared ink, kept box): here the items stay and
+        // only the vertical box shrinks.
+        Nucleus::Smash { body, top, bottom } => {
+            let mut b = layout_list(body, size, root_size, level, diagnostics);
+            if *top {
+                b.ascent = 0.0;
+            }
+            if *bottom {
+                b.descent = 0.0;
+            }
+            b
+        }
         Nucleus::Operator { body, .. } => layout_list(body, size, root_size, level, diagnostics),
         // Approximated as the arrow glyph with its labels stacked over and
-        // under it (render-pipeline builds amsmath's stretched arrow).
+        // under it (render-pipeline builds amsmath's stretched arrow); the
+        // glyph and measured advance come from `ext_arrow_approx`.
         Nucleus::ExtArrow {
             arrow,
             above,
             below,
         } => {
-            let glyph = match arrow {
-                ExtArrow::Right => "→",
-                ExtArrow::Left => "←",
-                ExtArrow::LeftRight => "↔",
-            };
+            let (glyph, width_em) = ext_arrow_approx(*arrow);
+            let mut base = symbol(glyph.into(), atom.span);
+            base.width_em = width_em;
             let stacked = MathAtom {
                 nucleus: Nucleus::Stacked {
-                    base: MathList {
-                        atoms: vec![symbol(glyph.into(), atom.span)],
-                    },
+                    base: MathList { atoms: vec![base] },
                     over: (!above.atoms.is_empty()).then(|| above.clone()),
                     under: (!below.atoms.is_empty()).then(|| below.clone()),
                 },
@@ -6854,6 +7311,14 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
             Nucleus::Lap { body, align } => Nucleus::Lap {
                 body: shift_list(body, delta),
                 align: *align,
+            },
+            Nucleus::Pmb { body } => Nucleus::Pmb {
+                body: shift_list(body, delta),
+            },
+            Nucleus::Smash { body, top, bottom } => Nucleus::Smash {
+                body: shift_list(body, delta),
+                top: *top,
+                bottom: *bottom,
             },
             Nucleus::Operator { body, limits } => Nucleus::Operator {
                 body: shift_list(body, delta),
@@ -9061,6 +9526,26 @@ mod spacing_tests {
         assert_eq!(alone.items[0].text, "†");
     }
 
+    /// latex.ltx `\DeclareRobustCommand{\dag}{\ifmmode{\dagger}\else
+    /// \textdagger\fi}` (and `\ddag` with `\ddagger`): in math `\dag` is
+    /// a braced `\dagger` — an ordinary atom around the cmsy Bin mark
+    /// (TeX §1186 unpacks only an ordinary group), so `$a\dag b$` sets
+    /// no space where `$a\dagger b$` sets medium space on each side.
+    /// `laid_out_with` asserts the empty diagnostics: neither command is
+    /// a math-mode misuse.
+    #[test]
+    fn dag_marks_in_math_are_ordinary_not_binary() {
+        for (command, glyph) in [("dag", "†"), ("ddag", "‡")] {
+            let b = laid_out(&format!("a\\{command} b"), SIZE);
+            close(x(&b, glyph), width("a", SIZE));
+            close(x(&b, "b"), x(&b, glyph) + width(glyph, SIZE));
+            close(width(glyph, SIZE), 0.444 * SIZE);
+        }
+        let alone = laid_out(r"\dag", SIZE);
+        assert_eq!(alone.items.len(), 1, "{:?}", alone.items);
+        assert_eq!(alone.items[0].text, "†");
+    }
+
     /// Issue #591 (`\diamond`/`\Diamond`, follow-up to #516's `\Box`):
     /// `\diamond` is the kernel cmsy `\mathbin` (U+22C4 ⋄), always
     /// available. `\Diamond` has no kernel definition — `amsfonts.sty:153`
@@ -9714,6 +10199,8 @@ mod shift_tests {
                         Nucleus::Group(body)
                         | Nucleus::Phantom { body, .. }
                         | Nucleus::Lap { body, .. }
+                        | Nucleus::Pmb { body }
+                        | Nucleus::Smash { body, .. }
                         | Nucleus::Operator { body, .. } => min_start(body),
                         Nucleus::GenFraction {
                             numerator,
@@ -9816,6 +10303,10 @@ mod package_gating_tests {
         let list = parse_tokens_display(&crate::lexer::tokenize(source), packages, &mut diagnostics, true);
         assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
         layout(&list, SIZE, &mut Vec::new())
+    }
+
+    fn width(source: &str, packages: MathPackages) -> f64 {
+        laid_out(source, packages).width
     }
 
     fn x(b: &MathBox, text: &str) -> f64 {
@@ -10044,6 +10535,145 @@ mod package_gating_tests {
             );
             let (_, loaded) = parsed(&format!("\\{command}"), MATHTOOLS);
             assert!(loaded.is_empty(), "\\{command} under mathtools: {loaded:?}");
+        }
+    }
+
+    /// mathtools' sixteen extensible arrows beyond `\xleftrightarrow`
+    /// (`mathtools.sty` 323-390, `kpsewhich mathtools.sty`): each takes
+    /// `[below]{above}` like amsmath's `\xrightarrow` and stretches to its
+    /// labels. Neither base LaTeX2e nor amsmath defines any of them, so
+    /// pdflatex answers "Undefined control sequence" there (TeX Live 2026,
+    /// 12pt article: 0 errors with mathtools, all 17 undefined under
+    /// amsmath-only or plain article); with mathtools loaded there are no
+    /// diagnostics at all.
+    const MATHTOOLS_XARROWS: [(&str, ExtArrow, &str); 16] = [
+        ("xmapsto", ExtArrow::Mapsto, "\u{21A6}"),
+        ("xhookleftarrow", ExtArrow::HookLeft, "\u{21A9}"),
+        ("xhookrightarrow", ExtArrow::HookRight, "\u{21AA}"),
+        ("xLeftarrow", ExtArrow::DoubleLeft, "\u{21D0}"),
+        ("xRightarrow", ExtArrow::DoubleRight, "\u{21D2}"),
+        ("xLeftrightarrow", ExtArrow::DoubleLeftRight, "\u{21D4}"),
+        ("xLongleftarrow", ExtArrow::LongDoubleLeft, "\u{27F8}"),
+        ("xLongrightarrow", ExtArrow::LongDoubleRight, "\u{27F9}"),
+        ("xlongleftarrow", ExtArrow::LongLeft, "\u{27F5}"),
+        ("xlongrightarrow", ExtArrow::LongRight, "\u{27F6}"),
+        ("xleftharpoonup", ExtArrow::HarpoonUpLeft, "\u{21BC}"),
+        ("xleftharpoondown", ExtArrow::HarpoonDownLeft, "\u{21BD}"),
+        ("xrightharpoonup", ExtArrow::HarpoonUpRight, "\u{21C0}"),
+        ("xrightharpoondown", ExtArrow::HarpoonDownRight, "\u{21C1}"),
+        (
+            "xleftrightharpoons",
+            ExtArrow::HarpoonsLeftRight,
+            "\u{21CB}",
+        ),
+        (
+            "xrightleftharpoons",
+            ExtArrow::HarpoonsRightLeft,
+            "\u{21CC}",
+        ),
+    ];
+
+    #[test]
+    fn mathtools_xarrows_need_mathtools() {
+        for (command, _, _) in MATHTOOLS_XARROWS {
+            // Plain article (`KERNEL`) and amsmath-only both lack them, like
+            // pdflatex's "Undefined control sequence": the dispatch reaches
+            // the mathtools gate (a `requires \usepackage` error), never the
+            // unknown/unsupported-command fallbacks.
+            for packages in [MathPackages::KERNEL, AMSMATH] {
+                let (_, diagnostics) = parsed(&format!("\\{command}{{f}}"), packages);
+                assert_eq!(
+                    diagnostics.first().map(|d| d.message.as_str()),
+                    Some(format!("\\{command} requires \\usepackage{{mathtools}}").as_str()),
+                    "\\{command}",
+                );
+                assert!(
+                    !diagnostics
+                        .iter()
+                        .any(|d| d.message.contains("not supported")),
+                    "\\{command}: {diagnostics:?}",
+                );
+            }
+            let (_, loaded) = parsed(&format!("\\{command}{{f}}"), MATHTOOLS);
+            assert!(loaded.is_empty(), "\\{command} under mathtools: {loaded:?}");
+        }
+    }
+
+    /// With mathtools loaded each of the sixteen parses to its own
+    /// [`Nucleus::ExtArrow`] variant with the `[below]{above}` labels, classed
+    /// Rel like `\xrightarrow`.
+    #[test]
+    fn mathtools_xarrows_take_labels_like_xrightarrow() {
+        for (command, arrow, _) in MATHTOOLS_XARROWS {
+            for (source, (above, below)) in [
+                (format!("\\{command}{{f}}"), (1, 0)),
+                (format!("\\{command}[u]{{v}}"), (1, 1)),
+            ] {
+                let (list, diagnostics) = parsed(&source, MATHTOOLS);
+                assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+                let arrows: Vec<_> = list
+                    .atoms
+                    .iter()
+                    .filter_map(|a| match &a.nucleus {
+                        Nucleus::ExtArrow {
+                            arrow,
+                            above,
+                            below,
+                        } => Some((*arrow, above.atoms.len(), below.atoms.len(), atom_class(a))),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    arrows,
+                    [(arrow, above, below, Some(AtomClass::Rel))],
+                    "{source}",
+                );
+            }
+        }
+    }
+
+    /// Each of the sixteen stretches to its label like `\xrightarrow`: the
+    /// laid-out box spans the widest of the arrow and its script-size
+    /// labels, so a longer label widens it, and it keeps Rel spacing.
+    /// (pdflatex 12pt oracle, `\sbox`/`\typeout`: `\xmapsto{g}` 36.74324pt
+    /// grows to 64.94215pt with `{longlabel}`; the same direction holds for
+    /// the other five probed arrows.)
+    #[test]
+    fn mathtools_xarrows_stretch_to_their_labels() {
+        for (command, _, glyph) in MATHTOOLS_XARROWS {
+            let mut diagnostics = Vec::new();
+            let width_of = |source: &str, diagnostics: &mut Vec<Diagnostic>| {
+                let list = parse_tokens(&crate::lexer::tokenize(source), MATHTOOLS, diagnostics);
+                layout(&list, SIZE, diagnostics).width
+            };
+            let short = width_of(&format!("\\{command}{{f}}"), &mut diagnostics);
+            let long = width_of(&format!("\\{command}{{longlabel}}"), &mut diagnostics);
+            let bare = width_of(&format!("\\{command}{{{{}}}}"), &mut diagnostics);
+            assert!(diagnostics.is_empty(), "\\{command}: {diagnostics:?}");
+            assert!(long > short, "\\{command}: {long} !> {short}");
+            assert!(short >= bare, "\\{command}: {short} < {bare}");
+            // The box is exactly the widest of the arrow and its labels
+            // (`Nucleus::Stacked` takes the max): the `above` list laid at
+            // the same script size is an independent measure of the label.
+            let (list, _) = parsed(&format!("\\{command}{{longlabel}}"), MATHTOOLS);
+            let above = match &list.atoms[0].nucleus {
+                Nucleus::ExtArrow { above, below, .. } => {
+                    assert!(below.atoms.is_empty());
+                    above.clone()
+                }
+                other => panic!("\\{command}: {other:?}"),
+            };
+            let mut label_diagnostics = Vec::new();
+            let label = layout(&above, SIZE * SCRIPT_SCALE, &mut label_diagnostics).width;
+            assert!(
+                label_diagnostics.is_empty(),
+                "\\{command}: {label_diagnostics:?}"
+            );
+            close(long, bare.max(label));
+            // Relations get thick space on both sides, like `\xrightarrow`.
+            let b = laid_out(&format!("a\\{command}{{f}} b"), MATHTOOLS);
+            close(x(&b, glyph), width("a", MATHTOOLS) + 5.0);
+            close(x(&b, "b"), x(&b, glyph) + short + 5.0);
         }
     }
 
@@ -10919,6 +11549,315 @@ mod script_attachment_tests {
         // Without a following script an ordinary group still flattens.
         let (list, _) = parse("{ab}c");
         assert_eq!(list.atoms.len(), 3, "{:?}", list.atoms);
+    }
+}
+
+/// amsmath `\pmb` (poor-man's bold: the nucleus overprinted at tiny offsets)
+/// and kernel `\mathstrut` (`\vphantom{(}`, latex.ltx): both are real
+/// math-mode commands, so they parse with zero diagnostics instead of the
+/// "not supported in math mode" error.
+#[cfg(test)]
+mod pmb_mathstrut_tests {
+    use super::*;
+
+    const AMSMATH: MathPackages = MathPackages {
+        amsmath: true,
+        ..MathPackages::KERNEL
+    };
+
+    fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(&crate::lexer::tokenize(source), packages, &mut diagnostics);
+        (list, diagnostics)
+    }
+
+    /// Parse, then lay out inline and display: every stage must stay quiet.
+    fn laid_out_both(source: &str, packages: MathPackages) -> (MathBox, MathBox) {
+        let (list, mut diagnostics) = parsed(source, packages);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        let inline = layout(&list, 10.0, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{source} inline: {diagnostics:?}");
+        let display = layout_display(&list, 10.0, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{source} display: {diagnostics:?}");
+        (inline, display)
+    }
+
+    fn close(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+    }
+
+    /// Acceptance: `\pmb{\alpha}` and `\mathstrut X` in display/inline math
+    /// parse with zero diagnostics.
+    #[test]
+    fn acceptance_parses_with_zero_diagnostics() {
+        laid_out_both(r"\pmb{\alpha}", AMSMATH);
+        laid_out_both(r"\mathstrut X", MathPackages::KERNEL);
+        // `\mathstrut` takes no argument: nothing is consumed.
+        let (list, diagnostics) = parsed(r"\mathstrut X", MathPackages::KERNEL);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 2, "{list:?}");
+    }
+
+    /// pdflatex without amsmath: `! Undefined control sequence. \pmb`.
+    #[test]
+    fn pmb_needs_amsmath() {
+        let (_, diagnostics) = parsed(r"\pmb{\alpha}", MathPackages::KERNEL);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(diagnostics[0].message, "\\pmb requires \\usepackage{amsmath}");
+        assert_eq!(
+            diagnostics[0].code,
+            Some(crate::diagnostics::DiagnosticCode::UnsupportedFeature)
+        );
+    }
+
+    /// latex.ltx `\def\mathstrut{\vphantom{(}}`: zero width, the height and
+    /// depth of `(`, no ink.
+    #[test]
+    fn mathstrut_is_vphantom_of_open_paren() {
+        let strut = laid_out_both(r"\mathstrut", MathPackages::KERNEL).0;
+        let phantom = laid_out_both(r"\vphantom{(}", MathPackages::KERNEL).0;
+        close(strut.width, 0.0);
+        close(strut.width, phantom.width);
+        assert_eq!(strut.ascent, phantom.ascent);
+        assert_eq!(strut.descent, phantom.descent);
+        assert!(strut.items.is_empty(), "{strut:?}");
+        assert!(strut.ascent > 0.0 && strut.descent > 0.0, "{strut:?}");
+    }
+
+    /// Poor-man's bold: the same advance as the nucleus and the same depth,
+    /// the ink painted three times at amsbsy.sty `\pmb@`'s offsets, and the
+    /// raised middle copy `\pmbraise@` (0.5mu) above the nucleus's own
+    /// height — exactly what `\showbox\hbox{$\pmb{x}$}` reports
+    /// (`\hbox(4.58331+0.0)x5.71524` against `x`'s
+    /// `\hbox(4.30554+0.0)x5.71527`).
+    #[test]
+    fn pmb_overprints_the_nucleus_at_tiny_offsets() {
+        let (bold, _) = laid_out_both(r"\pmb{x}", AMSMATH);
+        let (plain, _) = laid_out_both("x", AMSMATH);
+        close(bold.width, plain.width);
+        assert_eq!(bold.descent, plain.descent);
+        assert_eq!(bold.items.len(), 3 * plain.items.len(), "{bold:?}");
+        // amsbsy.sty `\pmb@`: −0.8mu, −0.4mu raised 0.5mu, unshifted, in mu
+        // converted with the mu/18 convention (`laid_out_both` lays out at
+        // 10pt, and this baseline grows positive-downward, so the raise is
+        // a negative dy like the superscript arm's).
+        let size = 10.0;
+        let pt = |mu: f64| mu / 18.0 * size;
+        close(bold.ascent, plain.ascent + pt(PMB_RAISE_MU));
+        let mut offs: Vec<(f64, f64)> = bold
+            .items
+            .iter()
+            .map(|item| {
+                (
+                    item.x - plain.items[0].x,
+                    item.baseline - plain.items[0].baseline,
+                )
+            })
+            .collect();
+        offs.sort_by(|a, b| a.0.total_cmp(&b.0));
+        assert_eq!(offs.len(), 3, "{offs:?}");
+        close(offs[0].0, pt(PMB_DX_MU[0]));
+        close(offs[0].1, 0.0);
+        close(offs[1].0, pt(PMB_DX_MU[1]));
+        close(offs[1].1, -pt(PMB_RAISE_MU));
+        close(offs[2].0, pt(PMB_DX_MU[2]));
+        close(offs[2].1, 0.0);
+    }
+}
+
+/// Kernel `\smash{...}` (latex.ltx `\mathsm@sh`/`\finsm@sh`: the body kept
+/// at its natural width with its height and depth zeroed) and amsmath's
+/// `[t]`/`[b]`/`[tb]` option (amsmath.sty 931-949: zero only the height,
+/// only the depth, or both). The ink is still painted: the opposite of
+/// `\phantom`, which reserves the box but paints nothing.
+#[cfg(test)]
+mod smash_math_tests {
+    use super::*;
+
+    const AMSMATH: MathPackages = MathPackages {
+        amsmath: true,
+        ..MathPackages::KERNEL
+    };
+
+    fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(&crate::lexer::tokenize(source), packages, &mut diagnostics);
+        (list, diagnostics)
+    }
+
+    /// Parse, then lay out inline and display: every stage must stay quiet.
+    fn laid_out_both(source: &str, packages: MathPackages) -> (MathBox, MathBox) {
+        let (list, mut diagnostics) = parsed(source, packages);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        let inline = layout(&list, 10.0, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{source} inline: {diagnostics:?}");
+        let display = layout_display(&list, 10.0, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{source} display: {diagnostics:?}");
+        (inline, display)
+    }
+
+    fn close(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+    }
+
+    /// The issue's repro parses with zero diagnostics in inline and display
+    /// math: `$\sqrt{\smash[b]{y}}$`, `$\vphantom{\int}x$`,
+    /// `$\sqrt{\mathstrut a}$`.
+    #[test]
+    fn repro_parses_with_zero_diagnostics() {
+        laid_out_both(r"\sqrt{\smash[b]{y}}", AMSMATH);
+        laid_out_both(r"\vphantom{\int}x", AMSMATH);
+        laid_out_both(r"\sqrt{\mathstrut a}", AMSMATH);
+        laid_out_both(r"\sqrt{\smash{y}}", AMSMATH);
+        laid_out_both(r"\sqrt{\smash[t]{y}}", AMSMATH);
+        laid_out_both(r"\smash{y}", MathPackages::KERNEL);
+    }
+
+    /// pdflatex oracle (TeX Live 2026, 10pt article with amsmath, measured
+    /// with `\setbox0=\hbox{$...$}\typeout{\the\ht0 \the\dp0 \the\wd0}`):
+    /// `\sqrt{y}`: ht=7.0305pt dp=3.36946pt wd=13.59496pt;
+    /// `\sqrt{\smash{y}}` and `[tb]`: ht=5.84995pt dp=4.55002pt;
+    /// `\sqrt{\smash[t]{y}}`: ht=4.87773pt dp=5.52223pt;
+    /// `\sqrt{\smash[b]{y}}`: ht=8.00272pt dp=2.39725pt;
+    /// every `\sqrt{y}` variant: wd=13.59496pt;
+    /// `\sqrt{\mathstrut a}`: ht=9.35pt dp=3.05008pt wd=15.2859pt;
+    /// `\sqrt{\frac{a}{b}}`: ht=8.60141pt dp=3.79868pt wd=16.73766pt;
+    /// `\sqrt{\smash{\frac{a}{b}}}`: ht=5.84995pt dp=4.55002pt wd=15.071pt;
+    /// `\sqrt{\smash[t]{\frac{a}{b}}}`: ht=4.12575pt dp=6.27422pt;
+    /// `\sqrt{\smash[b]{\frac{a}{b}}}`: ht=9.32555pt dp=1.07442pt.
+    /// Width invariance is exact in both engines: smashing never changes
+    /// the advance, so every variant of one radicand shares one width.
+    #[test]
+    fn smash_preserves_width_like_pdflatex() {
+        // Small radicand: one width for plain, full, t, b and tb smashes.
+        let widths: Vec<f64> = [
+            r"\sqrt{y}",
+            r"\sqrt{\smash{y}}",
+            r"\sqrt{\smash[t]{y}}",
+            r"\sqrt{\smash[b]{y}}",
+            r"\sqrt{\smash[tb]{y}}",
+        ]
+        .iter()
+        .map(|source| laid_out_both(source, AMSMATH).0.width)
+        .collect();
+        for width in &widths[1..] {
+            close(*width, widths[0]);
+        }
+        // Tall radicand: smashing keeps the full fraction width too.
+        let plain = laid_out_both(r"\sqrt{\frac{a}{b}}", AMSMATH).0;
+        for source in [
+            r"\sqrt{\smash{\frac{a}{b}}}",
+            r"\sqrt{\smash[t]{\frac{a}{b}}}",
+            r"\sqrt{\smash[b]{\frac{a}{b}}}",
+        ] {
+            close(laid_out_both(source, AMSMATH).0.width, plain.width);
+        }
+        // The ink is still painted: same items as the plain radicand.
+        let smashed = laid_out_both(r"\sqrt{\smash{\frac{a}{b}}}", AMSMATH).0;
+        assert_eq!(smashed.items.len(), plain.items.len(), "{smashed:?}");
+    }
+
+    /// `\smash` zeroes only the commanded sides of its own box. At the
+    /// nucleus level the mapping is exact: full smash clears height and
+    /// depth, `[t]` clears only the height, `[b]` only the depth, and an
+    /// option amsmath does not know (`\mb@t`/`\mb@b`/`\mb@tb` cover exactly
+    /// `t`, `b`, `tb`) ships the natural box silently — pdflatex reports
+    /// `$\smash[x]{y}$` identical to `$y$` (ht=4.30554pt dp=1.94444pt,
+    /// while `$\smash[b]{y}$` is ht=4.30554pt dp=0.0pt) with no error.
+    #[test]
+    fn smash_zeroes_only_the_commanded_sides() {
+        fn nucleus_box(source: &str) -> MathBox {
+            let (list, mut diagnostics) = parsed(source, AMSMATH);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "{source}: {list:?}");
+            let laid = layout_nucleus(&list.atoms[0], 10.0, 10.0, 0, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            laid
+        }
+        let body = nucleus_box("y");
+        assert!(body.ascent > 0.0 && body.descent > 0.0, "{body:?}");
+        let full = nucleus_box(r"\smash{y}");
+        close(full.width, body.width);
+        assert_eq!(full.items.len(), body.items.len(), "{full:?}");
+        close(full.ascent, 0.0);
+        close(full.descent, 0.0);
+        let top = nucleus_box(r"\smash[t]{y}");
+        close(top.width, body.width);
+        close(top.ascent, 0.0);
+        close(top.descent, body.descent);
+        let bottom = nucleus_box(r"\smash[b]{y}");
+        close(bottom.width, body.width);
+        close(bottom.ascent, body.ascent);
+        close(bottom.descent, 0.0);
+        let bogus = nucleus_box(r"\smash[x]{y}");
+        close(bogus.width, body.width);
+        close(bogus.ascent, body.ascent);
+        close(bogus.descent, body.descent);
+    }
+
+    /// The zeroing is observable end to end once the content outgrows the
+    /// math list's font-size headroom: smashing the fraction radicand drops
+    /// the radical box back towards the headroom on exactly the commanded
+    /// sides, the same mapping pdflatex shows (tall oracle above: `[t]`
+    /// lowers only the height, `[b]` only the depth). Absolute heights
+    /// differ — this engine's radical is fixed-height and its lists carry
+    /// headroom, while TeX grows the sign by Rule 11 — so this asserts the
+    /// mapping, exactly, not pdflatex's points.
+    #[test]
+    fn smash_moves_only_the_commanded_side_of_a_tall_radicand() {
+        let plain = laid_out_both(r"\sqrt{\frac{a}{b}}", AMSMATH).0;
+        assert!(plain.ascent > 10.0 && plain.descent > 2.0, "{plain:?}");
+        let full = laid_out_both(r"\sqrt{\smash{\frac{a}{b}}}", AMSMATH).0;
+        close(full.width, plain.width);
+        close(full.ascent, 10.0);
+        close(full.descent, 2.0);
+        let top = laid_out_both(r"\sqrt{\smash[t]{\frac{a}{b}}}", AMSMATH).0;
+        close(top.width, plain.width);
+        close(top.ascent, 10.0);
+        close(top.descent, plain.descent);
+        let bottom = laid_out_both(r"\sqrt{\smash[b]{\frac{a}{b}}}", AMSMATH).0;
+        close(bottom.width, plain.width);
+        close(bottom.ascent, plain.ascent);
+        close(bottom.descent, 2.0);
+    }
+
+    /// The `[t]`/`[b]` option is amsmath's redefinition: under plain article
+    /// pdflatex feeds the kernel `\smash#1`, which smashes just `[` and
+    /// typesets `b]{y}` (`NOAMS-SMASH-B ht=9.35pt dp=3.05008pt
+    /// wd=25.10884pt`, wider than the 13.59496pt amsmath box). So without
+    /// amsmath the bracket must not be consumed as an option: the formula
+    /// is more than the one smashed atom, with zero diagnostics either way.
+    #[test]
+    fn bracket_option_needs_amsmath() {
+        let (list, diagnostics) = parsed(r"\smash[b]{y}", AMSMATH);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 1, "{list:?}");
+        assert!(
+            matches!(&list.atoms[0].nucleus, Nucleus::Smash { .. }),
+            "{list:?}"
+        );
+        let (list, diagnostics) = parsed(r"\smash[b]{y}", MathPackages::KERNEL);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        // The kernel's `\smash#1` smashes just `[` and typesets `b]y`.
+        assert_eq!(list.atoms.len(), 4, "{list:?}");
+        let [smashed, b, close, y] = &list.atoms[..] else {
+            panic!("{list:?}");
+        };
+        let Nucleus::Smash { body, top, bottom } = &smashed.nucleus else {
+            panic!("{list:?}");
+        };
+        assert!(*top && *bottom, "{list:?}");
+        assert_eq!(body.atoms.len(), 1, "{list:?}");
+        assert!(
+            matches!(&body.atoms[0].nucleus, Nucleus::Symbol(s) if s == "["),
+            "{list:?}"
+        );
+        for (atom, want) in [(b, "b"), (close, "]"), (y, "y")] {
+            assert!(
+                matches!(&atom.nucleus, Nucleus::Symbol(s) if s == want),
+                "{list:?}"
+            );
+        }
     }
 }
 

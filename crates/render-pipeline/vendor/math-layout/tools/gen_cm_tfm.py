@@ -15,15 +15,21 @@ ligature/kern program and kern table, which TeX's `make_ord` (tex.web §752)
 reads between adjacent math characters of one family.
 
 Usage: python3 tools/gen_cm_tfm.py [kpsewhich-path] > src/cm_tfm.rs
+       python3 tools/gen_cm_tfm.py [kpsewhich-path] --ams > src/ams_tfm.rs
+       python3 tools/gen_cm_tfm.py [kpsewhich-path] [--ams] --check
+(`--check` compares with the committed src/cm_tfm.rs or src/ams_tfm.rs.)
 
 TFM format reference: TeX: The Program, part 30 ("Font metric data"), and
 tftopl.web. Values are emitted as raw fixwords (signed 32-bit, value/2^20 of
 the font size) so that `TfmFont::scale` can reproduce TeX's own integer
 scaling (tex.web §571-572) and match TeX's box dimensions to the scaled point.
 """
+import os
 import struct
 import subprocess
 import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 FONTS = ["cmr10", "cmr7", "cmr5", "cmmi10", "cmmi7", "cmmi5",
          "cmr12", "cmr8", "cmr6", "cmmi12", "cmmi8", "cmmi6", "cmsy8", "cmsy6",
@@ -95,12 +101,70 @@ def parse(path):
     return {"design": fix(header[1]), "params": P, "chars": chars, "lig_kern": LK, "kerns": K}
 
 
+def write_or_check(path, text, check):
+    """Write `text` to `path`, or with `--check` compare instead.
+
+    `--check` exit codes (the same for every generator; see
+    scripts/check-generated.py): 0 the committed file is what this generator
+    produces now, 1 it is stale (a diff excerpt is printed), 2 it cannot be
+    checked here (a tool or input is missing; the message says which).
+    """
+    data = text.encode("utf-8")
+    rel = os.path.relpath(path)
+    if not check:
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return 0
+    try:
+        with open(path, "rb") as fh:
+            old = fh.read()
+    except FileNotFoundError:
+        print("STALE: %s does not exist" % rel)
+        return 1
+    if old == data:
+        print("up to date: %s" % rel)
+        return 0
+    import difflib
+    diff = list(difflib.unified_diff(old.decode("utf-8", "replace").splitlines(),
+                                     text.splitlines(), "committed", "regenerated",
+                                     lineterm="", n=0))
+    for line in diff[:40]:
+        print(line)
+    if len(diff) > 40:
+        print("... %d more diff lines" % (len(diff) - 40))
+    print("STALE: %s differs from what %s generates now" % (rel, os.path.relpath(sys.argv[0])))
+    return 1
+
+
+def require_tools(*tools):
+    """Exit 2 (cannot check here) when a TeX tool is not on PATH."""
+    import shutil
+    missing = [t for t in tools if not shutil.which(t)]
+    if missing:
+        print("CANNOT CHECK: %s not found on PATH (needs TeX Live 2026)" % ", ".join(missing))
+        sys.exit(2)
+
+
+def rustfmt(text):
+    """`text` as rustfmt (edition 2024, like the crate) prints it; exit 2 without rustfmt."""
+    try:
+        return subprocess.run(["rustfmt", "--edition", "2024", "--emit", "stdout"], input=text,
+                              capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as e:
+        print("CANNOT CHECK: rustfmt failed (%s)" % e)
+        sys.exit(2)
+
+
 def main():
-    kpsewhich = sys.argv[1] if len(sys.argv) > 1 else "kpsewhich"
+    positional = [a for a in sys.argv[1:] if not a.startswith("--")]
+    kpsewhich = positional[0] if positional else "kpsewhich"
+    check = "--check" in sys.argv[1:]
+    if check:
+        require_tools(kpsewhich)
     # `--ams`: the AMS symbol fonts `amsfonts.sty` declares as the `AMSa`/`AMSb`
     # symbol fonts (`umsa.fd`/`umsb.fd`: msam/msbm 5, 7 and 10), for
     # `src/ams_tfm.rs`. Without it, the Computer Modern set for `src/cm_tfm.rs`.
-    ams = "--ams" in sys.argv[2:]
+    ams = "--ams" in sys.argv[1:]
     fonts = AMS_FONTS if ams else FONTS
     package = "`amsfonts`" if ams else "`cm`"
     title = "AMS symbol font" if ams else "Computer Modern"
@@ -150,8 +214,26 @@ def main():
         out.append("    ],")
         out.append("};")
         out.append("")
+    if check:
+        # The committed cm_tfm.rs went through `cargo fmt` (ams_tfm.rs did
+        # not), so both sides are compared as rustfmt prints them: a data
+        # change is stale, a layout-only difference is not.
+        dest = os.path.join(HERE, "..", "src", "ams_tfm.rs" if ams else "cm_tfm.rs")
+        with open(dest, encoding="utf-8") as fh:
+            committed = rustfmt(fh.read())
+        regenerated = rustfmt("\n".join(out))
+        tmp = dest + ".check-committed"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(committed)
+        try:
+            rc = write_or_check(tmp, regenerated, True)
+        finally:
+            os.remove(tmp)
+        print("(compared after rustfmt: %s)" % os.path.relpath(dest))
+        return rc
     sys.stdout.write("\n".join(out))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

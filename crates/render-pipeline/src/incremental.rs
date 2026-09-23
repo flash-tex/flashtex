@@ -668,6 +668,14 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
                 hash_math(body, h);
                 format!("{align:?}").hash(h);
             }
+            #[cfg(feature = "compiler-node-surface")]
+            Nucleus::Pmb { body } => hash_math(body, h),
+            #[cfg(feature = "compiler-node-surface")]
+            Nucleus::Smash { body, top, bottom } => {
+                hash_math(body, h);
+                top.hash(h);
+                bottom.hash(h);
+            }
             #[cfg(not(feature = "amsmath-inline"))]
             other => format!("{other:?}").hash(h),
         }
@@ -911,7 +919,7 @@ fn map_math_spans(list: &mut MathList, f: &mut dyn FnMut(&mut Span)) {
                 }
             }
             #[cfg(feature = "compiler-node-surface")]
-            Nucleus::Lap { body, .. } => map_math_spans(body, f),
+            Nucleus::Lap { body, .. } | Nucleus::Pmb { body } | Nucleus::Smash { body, .. } => map_math_spans(body, f),
             #[cfg(not(feature = "amsmath-inline"))]
             _ => {}
         }
