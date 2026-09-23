@@ -1920,7 +1920,32 @@ pub fn adapt_cached(
     // A project class file's `\setlength`s ran before the preamble's, as
     // the class is read first: the compiler lists them in that order.
     let assigned = apply_preamble_lengths(&parsed.length_assignments, source, entry, &mut resolved, size, family, setup.geometry.is_some());
+    // beamer's `\usefonttheme{serif}` / `\usecolortheme{beaver}`: the
+    // compiler reads both past and `DocumentSetup` models neither (beyond
+    // the font theme's math hint), so the preamble is read here, where the
+    // entry source is in hand. Gated on beamer: both commands exist only
+    // there, and anything else keeps the default deck.
+    let beamer_themes = (resolved.options.kind == ClassKind::Beamer)
+        .then(|| crate::typeset::beamer::beamer_preamble_themes(source));
+    if let Some(themes) = beamer_themes {
+        if themes.beaver {
+            // `beamercolorthemebeaver.sty`: the `frametitle` colour gains
+            // the grey background (whose colour box drops the `\lineskip`
+            // and skips `\vskip-.3cm`) and the darkred foreground. The
+            // frame builder and page chrome read both off this theme.
+            let mut theme = resolved.beamer_theme;
+            theme.frametitle_bg = Some(crate::typeset::beamer::BEAVER_FRAMETITLE_BG);
+            theme.frametitle_fg = crate::typeset::beamer::BEAVER_FRAMETITLE_FG;
+            resolved.beamer_theme = theme;
+        }
+    }
     let mut style = Stylesheet::from_resolved(&resolved, family);
+    if beamer_themes.is_some_and(|t| t.serif) {
+        // `beamerfontthemeserif.sty`: `\familydefault` (and the structure
+        // the title is set in) become roman. The title box's own `1ex`
+        // terms follow in `typeset::beamer::frametitle_blocks`.
+        style.default_family = crate::nfss::FamilyKind::Rm;
+    }
     style.columns = columns;
     // apply_preamble_lengths is the source of truth for `\parindent` /
     // `\parskip` (source order, including `\addtolength` and body
