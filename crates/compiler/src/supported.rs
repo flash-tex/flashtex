@@ -1610,6 +1610,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "\\cancel (forward diagonal), \\bcancel (backward diagonal) and \\xcancel (X) through a math expression; \\cancelto is diagnosed",
     ),
     (
+        "caption",
+        "font=small, labelfont=bf",
+        "applies font= and labelfont=bf to figure/table caption text and label; other caption keys are diagnosed",
+    ),
+    (
         "longtable",
         "",
         "the page-breaking longtable environment: \\endfirsthead, \\endhead, \\endfoot, \\endlastfoot, \\caption, \\kill, \\\\*",

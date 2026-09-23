@@ -1285,6 +1285,7 @@
     {"name": "tabularx", "silent_options": "", "description": "the tabularx environment and its X column, splitting the table's leftover width evenly"},
     {"name": "booktabs", "silent_options": "", "description": "\\toprule, \\midrule, \\bottomrule, \\cmidrule(trim), \\addlinespace, \\specialrule, \\morecmidrules"},
     {"name": "cancel", "silent_options": "", "description": "\\cancel (forward diagonal), \\bcancel (backward diagonal) and \\xcancel (X) through a math expression; \\cancelto is diagnosed"},
+    {"name": "caption", "silent_options": "font=small, labelfont=bf", "description": "applies font= and labelfont=bf to figure/table caption text and label; other caption keys are diagnosed"},
     {"name": "longtable", "silent_options": "", "description": "the page-breaking longtable environment: \\endfirsthead, \\endhead, \\endfoot, \\endlastfoot, \\caption, \\kill, \\\\*"},
     {"name": "multirow", "silent_options": "", "description": "\\multirow[vpos]{rows}[bigstruts]{width}[vmove]{text} in table entries"},
     {"name": "colortbl", "silent_options": "", "description": "\\rowcolor, \\cellcolor, >{\\columncolor}, \\arrayrulecolor, \\doublerulesepcolor"},
