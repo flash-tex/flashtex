@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 497 text-mode and 679 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 497 text-mode and 679 math-mode command entries, 87 environments and 43 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -1274,7 +1274,8 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `CJK` | `encapsulated` | the package CJKutf8 loads; accepted with the same environment and commands (the body is read as UTF-8 either way) |
 | `calc` | `` | \setlength/\addtolength accept +/- chains of dimensions (1pt + 2\baselineskip); *, /, parentheses and \widthof/\heightof/\depthof/\totalheightof are not parsed |
 | `etoolbox` | `` | toggle booleans: \newtoggle/\providetoggle declare a false toggle, \toggletrue/\togglefalse set it, \iftoggle{name}{true}{false} selects a branch at expansion time; a duplicate \newtoggle and any use of an undefined toggle are diagnosed where they are used and leave existing state alone. The rest of etoolbox (patching, hooks, list processing) is diagnosed where it is used |
-| `iftex` | `` | \ifxetex and \ifluatex (with the \ifXeTeX/\ifLuaTeX aliases) are false, as iftex.sty sets them under pdflatex, so engine-guarded blocks skip |
+| `iftex` | `` | \ifxetex and \ifluatex (with the \ifXeTeX/\ifLuaTeX aliases) are false while \ifpdftex (with the \ifPDFTeX alias) is true, as iftex.sty sets them under pdflatex |
+| `ifpdf` | `` | \ifpdf is true, as iftex.sty sets it under pdflatex in PDF mode, so pdf-guarded blocks take the true branch |
 | `ifxetex` | `` | legacy shim for iftex's \ifxetex switch, false here as under pdflatex |
 | `ifluatex` | `` | legacy shim for iftex's \ifluatex switch, false here as under pdflatex |
 | `parskip` | `` | \parindent 0pt and \parskip of half the class \baselineskip (6.0pt at 10pt, 6.8pt at 11pt, 7.25pt at 12pt; the plus 2pt stretch is not modelled); package options are diagnosed |
@@ -1327,6 +1328,7 @@ Any other package, or these packages with other options, is recorded and reporte
 | `CJKutf8` | the CJK environment, \CJKfamily and the space switches are parser state and the render pipeline sets the characters from the C70 subfont metrics; CJKutf8.sty needs active characters and \lastkern |
 | `CJK` | loaded by CJKutf8; CJK.sty needs active characters, \lastkern and \pdffontattr |
 | `iftex` | \ifpdftex & co. would misreport the engine; the file tests primitives |
+| `ifpdf` | \ifpdf is the expansion prelude's; the file requires iftex |
 | `ifxetex` | \ifxetex is the parser's; the file tests primitives |
 | `ifluatex` | \ifluatex is the parser's; the file tests primitives |
 | `calc` | \setlength arithmetic is the engine's \dimexpr; calc.sty needs \dimen registers with \advance semantics |

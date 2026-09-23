@@ -17745,12 +17745,13 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // not implemented and is diagnosed as an unknown command where it
         // is used.
         "etoolbox" => options.is_empty(),
-        // Engine-test packages (`iftex`, and the legacy `ifxetex`/`ifluatex`
-        // shims): their `\ifxetex`/`\ifluatex` switches are defined false in
-        // the expansion pass's host prelude -- this compiler is
+        // Engine-test packages (`iftex`, `ifpdf`, and the legacy
+        // `ifxetex`/`ifluatex` shims): their `\ifxetex`/`\ifluatex` switches
+        // are defined false and `\ifpdftex`/`\ifPDFTeX`/`\ifpdf` true in the
+        // expansion pass's host prelude -- this compiler is
         // pdflatex-equivalent, as `iftex.sty` sets them under pdflatex -- so
         // loading the package is silent. They take no options of their own.
-        "iftex" | "ifxetex" | "ifluatex" => options.is_empty(),
+        "iftex" | "ifpdf" | "ifxetex" | "ifluatex" => options.is_empty(),
         // natbib citation commands (crate::natbib) with the delimiter,
         // separator and citation-style options that decide the characters
         // they set. `sort`/`compress`/`super`/`longnamesfirst` are parsed but

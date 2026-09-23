@@ -181,9 +181,15 @@ pub struct Expansion {
 /// pdflatex-equivalent, so `\ifxetex`/`\ifluatex` are defined false here --
 /// exactly as `iftex.sty` leaves them when neither `\XeTeXrevision` nor
 /// `\directlua` exists -- with `\ifXeTeX`/`\ifLuaTeX` let to the same
-/// switches as that package does. The `.sty` files themselves are never
-/// executed (`\usepackage{iftex}` and the legacy `ifxetex`/`ifluatex` are
-/// silent layout-neutral loads), so a guarded block
+/// switches as that package does. The pdfTeX switches are defined true:
+/// `\ifpdftex` (with `\ifPDFTeX` let to the same switch, as that package
+/// does) and `\ifpdf`, exactly as `iftex.sty` sets them when `\pdfoutput`
+/// is positive. `\ifpdf` is always installed, even without
+/// `\usepackage{ifpdf}`: real documents test it after loading only hyperref
+/// (which uses `\ifpdf`, defined through its own `iftex` requirement).
+/// The `.sty` files themselves are never executed (`\usepackage{iftex}`,
+/// `\usepackage{ifpdf}` and the legacy `ifxetex`/`ifluatex` are silent
+/// layout-neutral loads), so a guarded block
 /// (`\ifxetex\usepackage{fontspec}...\fi`) skips with no diagnostic, matching
 /// pdflatex's exit-0 behavior on the same input.
 /// `\hspace`/`\vspace` route through host primitives the same way (the
@@ -200,6 +206,9 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\newif\\ifluatex\\luatexfalse
 \\let\\ifXeTeX\\ifxetex
 \\let\\ifLuaTeX\\ifluatex
+\\newif\\ifpdf\\pdftrue
+\\newif\\ifpdftex\\pdftextrue
+\\let\\ifPDFTeX\\ifpdftex
 \\def\\setlist{\\flashtexsetlist}%
 \\makeatletter
 \\protected\\def\\newtoggle#1{\\@ifundefined{etb@tgl@#1}{\\expandafter\\let\\csname etb@tgl@#1\\endcsname\\@secondoftwo}{\\etb@err@toggledefined}}%
