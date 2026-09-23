@@ -6264,7 +6264,85 @@ impl Engine {
     }
 
     /// Evaluate one `\ifthenelse` test expression from the input.
+    ///
+    /// The grammar mirrors the `ifthen` package: `\AND`/`\OR` (and the
+    /// package's lowercase `\and`/`\or`) join tests infix with equal
+    /// precedence, evaluated left to right; `\NOT`/`\not` negates the
+    /// test that follows it; `\(...\)` groups; and an atomic test is
+    /// `\equal`, `\isodd`, `\isundefined`, `\lengthtest`, `\boolean` or
+    /// a bare `<number> <relation> <number>` comparison (so
+    /// `\value{c}>2` works). The historical braced-prefix forms
+    /// `\AND{a}{b}`, `\OR{a}{b}` and `\NOT{a}` keep working: when the
+    /// operator is directly followed by `{`, the braced groups are
+    /// evaluated as whole tests.
     fn eval_ifthen_test(&mut self, span: Span) -> bool {
+        // Historical braced-prefix `\AND{a}{b}` / `\OR{a}{b}`: the
+        // operator opens the test and is followed by a brace group (real
+        // `ifthen` syntax never puts `{` here, so there is no ambiguity).
+        if let Some(and) = self.at_braced_bool_op() {
+            let lhs = self.scan_braced_group(false);
+            let rhs = self.scan_braced_group(false);
+            let l = self.eval_test_group(lhs, span);
+            let r = self.eval_test_group(rhs, span);
+            return if and { l && r } else { l || r };
+        }
+        let mut v = self.eval_ifthen_unary(span);
+        loop {
+            match self.peek_ifthen_infix_op() {
+                Some(and) => {
+                    self.next_raw_token();
+                    let rhs = self.eval_ifthen_unary(span);
+                    v = if and { v && rhs } else { v || rhs };
+                }
+                None => break,
+            }
+        }
+        v
+    }
+
+    /// If the next non-space tokens are a boolean operator (`\AND`,
+    /// `\OR`, lowercase included) directly followed by `{`, consume the
+    /// operator and report which (`true` for AND). Otherwise the input is
+    /// left exactly as it was (only insignificant spaces may be gone).
+    fn at_braced_bool_op(&mut self) -> Option<bool> {
+        self.skip_spaces();
+        let op = self.peek_one()?;
+        let and = match &op.kind {
+            TokenKind::ControlSequence(n) if n == "AND" || n == "and" => true,
+            TokenKind::ControlSequence(n) if n == "OR" || n == "or" => false,
+            _ => return None,
+        };
+        self.next_raw_token();
+        self.skip_spaces();
+        match self.peek_one() {
+            Some(t) if matches!(t.kind, TokenKind::Char(_, CatCode::BeginGroup)) => Some(and),
+            _ => {
+                self.push_tokens(vec![op]);
+                None
+            }
+        }
+    }
+
+    /// The next non-space raw token when it is an infix `\AND`/`\OR`
+    /// (lowercase included): `Some(true)` for AND, `Some(false)` for OR.
+    /// The token is NOT consumed. The peek is raw, never expanding:
+    /// `\or` is an expandable engine primitive whose expansion here
+    /// would misfire.
+    fn peek_ifthen_infix_op(&mut self) -> Option<bool> {
+        self.skip_spaces();
+        match self.peek_one() {
+            Some(t) => match &t.kind {
+                TokenKind::ControlSequence(n) if n == "AND" || n == "and" => Some(true),
+                TokenKind::ControlSequence(n) if n == "OR" || n == "or" => Some(false),
+                _ => None,
+            },
+            None => None,
+        }
+    }
+
+    /// Evaluate one `\ifthenelse` unary test: prefix `\NOT`, a named test
+    /// form, a `\(...\)` group, or a bare numeric comparison.
+    fn eval_ifthen_unary(&mut self, span: Span) -> bool {
         loop {
             match self.peek_one_expanding() {
                 Some(t) if matches!(t.kind, TokenKind::Char(_, CatCode::Space)) => {
@@ -6286,34 +6364,59 @@ impl Engine {
                 return self.eval_test_group(if truth { t_branch } else { f_branch }, t.span);
             }
         }
-        let tok = match self.next_expanding_raw() {
-            Some(p) => p.tok,
+        let first = match self.next_expanding_raw() {
+            Some(p) => p,
             None => {
                 self.err("Missing test for \\ifthenelse.", span);
                 return false;
             }
         };
-        let name = match &tok.kind {
+        let name = match &first.tok.kind {
             TokenKind::ControlSequence(n) => n.clone(),
             _ => {
-                self.err("Missing test for \\ifthenelse.", tok.span);
-                return false;
+                // A bare number starts a `<number> <relation> <number>`
+                // comparison; anything else is not a test at all.
+                return self.eval_ifthen_numeric(first);
             }
         };
         match name.as_str() {
-            "NOT" => {
-                let arg = self.scan_braced_group(false);
-                !self.eval_test_group(arg, tok.span)
+            "NOT" | "not" => {
+                // Historical `\NOT{test}`: the braced group is the whole
+                // negated test (the package accepts this too); otherwise
+                // the negation applies to the test that follows.
+                self.skip_spaces();
+                match self.peek_one() {
+                    Some(t) if matches!(t.kind, TokenKind::Char(_, CatCode::BeginGroup)) => {
+                        let arg = self.scan_braced_group(false);
+                        !self.eval_test_group(arg, first.tok.span)
+                    }
+                    _ => !self.eval_ifthen_unary(first.tok.span),
+                }
             }
-            "AND" => {
-                let lhs = self.scan_braced_group(false);
-                let rhs = self.scan_braced_group(false);
-                self.eval_test_group(lhs, tok.span) && self.eval_test_group(rhs, tok.span)
+            "(" => {
+                let v = self.eval_ifthen_test(first.tok.span);
+                self.skip_spaces();
+                match self.next_expanding_raw() {
+                    Some(p) if p.tok.is_cs(")") => {}
+                    Some(p) => {
+                        let span = p.tok.span;
+                        self.push_pending(vec![p]);
+                        self.err("Missing `\\\\)' inserted for \\ifthenelse.", span);
+                    }
+                    None => {
+                        self.err("Missing `\\\\)' inserted for \\ifthenelse.", first.tok.span);
+                    }
+                }
+                v
             }
-            "OR" => {
-                let lhs = self.scan_braced_group(false);
-                let rhs = self.scan_braced_group(false);
-                self.eval_test_group(lhs, tok.span) || self.eval_test_group(rhs, tok.span)
+            "AND" | "OR" | "and" | "or" | ")" => {
+                // An infix operator (or a stray `\)`) where a test should
+                // start: unread it for the enclosing level to discard and
+                // fail this test, as the package's pending `\ifnum` does.
+                let span = first.tok.span;
+                self.push_pending(vec![first]);
+                self.err("Missing test for \\ifthenelse.", span);
+                false
             }
             "equal" => {
                 // Like the package's `\edef`-of-both-sides comparison:
@@ -6326,14 +6429,63 @@ impl Engine {
                 let n = self.eval_number_group();
                 n % 2 != 0
             }
-            "isundefined" => self.eval_isundefined(&tok),
+            "isundefined" => self.eval_isundefined(&first.tok),
             "lengthtest" => self.eval_lengthtest(),
-            "boolean" => self.eval_boolean(&tok),
+            "boolean" => self.eval_boolean(&first.tok),
             _ => {
-                self.err(format!("Unknown test `\\{name}' in \\ifthenelse."), tok.span);
-                false
+                // Maybe a `<number> <relation> <number>` comparison whose
+                // first operand needed expansion (`\value{c}` becomes the
+                // `\c@c` register, a user macro may yield digits):
+                // unread it and scan a number. Anything else keeps the
+                // historical diagnostic.
+                if self.ifthen_number_start(&first.tok) {
+                    self.eval_ifthen_numeric(first)
+                } else {
+                    self.err(format!("Unknown test `\\{name}' in \\ifthenelse."), first.tok.span);
+                    false
+                }
             }
         }
+    }
+
+    /// Whether an already-expanded token can start a `<number>` (the
+    /// first operand of a bare `\ifthenelse` comparison): a digit-like
+    /// character or an internal numeric quantity (a register, `\value`'s
+    /// `\c@...` expansion, `\count`, `\numexpr`, ...).
+    fn ifthen_number_start(&self, tok: &Token) -> bool {
+        match &tok.kind {
+            TokenKind::Char(c, _) => c.is_ascii_digit() || matches!(c, '+' | '-' | '\'' | '"' | '`'),
+            TokenKind::ControlSequence(_) | TokenKind::ActiveChar(_) => match self.meaning_of_token(tok) {
+                Meaning::RegisterAlias(RegisterKind::Count | RegisterKind::Dimen | RegisterKind::Skip, _) => true,
+                Meaning::CharDef(_) | Meaning::MathCharDef(_) => true,
+                Meaning::Primitive(p) => matches!(
+                    p,
+                    Primitive::Count
+                        | Primitive::Dimen
+                        | Primitive::Skip
+                        | Primitive::Numexpr
+                        | Primitive::Dimexpr
+                        | Primitive::Glueexpr
+                        | Primitive::Catcode
+                        | Primitive::Uccode
+                        | Primitive::Lccode
+                        | Primitive::IntPar(_)
+                ),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// A bare `<number> <relation> <number>` comparison (the package's
+    /// `\ifnum` test): `first` is already-read lookahead, unread so the
+    /// number scanner sees both operands and the relation whole.
+    fn eval_ifthen_numeric(&mut self, first: Pending) -> bool {
+        self.push_pending(vec![first]);
+        let a = self.scan_number();
+        let rel = self.scan_relation("ifnum");
+        let b = self.scan_number();
+        apply_relation(a, b, rel)
     }
 
     /// Read a `{...}` group and scan it as a `<number>` on a temporary
