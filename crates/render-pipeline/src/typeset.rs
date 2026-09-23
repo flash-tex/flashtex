@@ -4795,7 +4795,7 @@ impl<'a> Context<'a> {
                 if let Some(nb) = nb {
                     let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
                     let protrude = self.item_left_protrusion(&list, &recs);
-                    let box_width = if geom.llap { nb.width } else { nb.width.min(labelwidth) };
+                    let box_width = Self::label_reserve(geom, nb.width, labelwidth);
                     let mut lead = vec![(pl::Item::kern(-(labelsep + box_width)), None)];
                     // `\descriptionlabel`: `\hspace\labelsep \normalfont
                     // \bfseries #1` — the label box itself opens with
@@ -5139,6 +5139,11 @@ impl<'a> Context<'a> {
                             itemindent_pt.to_bits().hash(&mut h);
                         }
                         ListMargin::TextWidth(text) => text.hash(&mut h),
+                        ListMargin::LabelWidthBang { margin, labelsep_pt, itemindent_pt } => {
+                            Self::hash_list_margin(margin, &mut h);
+                            labelsep_pt.map(f64::to_bits).hash(&mut h);
+                            itemindent_pt.to_bits().hash(&mut h);
+                        }
                     }
                 }
                 if let Some((text, span)) = &g.label {
@@ -5571,25 +5576,9 @@ impl<'a> Context<'a> {
         let mut labelwidth = 0.0;
         let mut inner = 0.0;
         let quad = self.text_params(TextStyle::default(), size).quad;
+        let span = geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span);
         for margin in &geom.margins {
-            let (m, w) = match margin {
-                ListMargin::Fixed(pt) => (*pt, (pt - labelsep).max(0.0)),
-                // natbib's `\bibhang`: `1em` of the body font, and no label
-                // to measure (`\@biblabel` is `\hfill`).
-                ListMargin::Em(em) => (em * quad, 0.0),
-                ListMargin::Widest(text) => {
-                    let w = self.widest_label_width(text, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
-                    (w + labelsep, w)
-                }
-                ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
-                    let w = self.widest_label_width(label, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
-                    (w + labelsep_pt.unwrap_or(labelsep) - itemindent_pt, w)
-                }
-                ListMargin::TextWidth(text) => {
-                    let w = self.text_width(text, size, Span::new(0, 0));
-                    (w, (w - labelsep).max(0.0))
-                }
-            };
+            let (m, w) = self.margin_widths(margin, labelsep, size, quad, span);
             hang += m;
             inner = m;
             labelwidth = w;
@@ -5598,6 +5587,76 @@ impl<'a> Context<'a> {
             labelwidth = 0.0;
         }
         (hang, labelwidth, inner)
+    }
+
+    /// One level's `(\leftmargin, \labelwidth)` contribution, in points.
+    fn margin_widths(&mut self, margin: &ListMargin, labelsep: f64, size: f64, quad: f64, span: Span) -> (f64, f64) {
+        match margin {
+            ListMargin::Fixed(pt) => (*pt, (pt - labelsep).max(0.0)),
+            // natbib's `\bibhang`: `1em` of the body font, and no label
+            // to measure (`\@biblabel` is `\hfill`).
+            ListMargin::Em(em) => (em * quad, 0.0),
+            ListMargin::Widest(text) => {
+                let w = self.widest_label_width(text, size, span);
+                (w + labelsep, w)
+            }
+            ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
+                let w = self.widest_label_width(label, size, span);
+                (w + labelsep_pt.unwrap_or(labelsep) - itemindent_pt, w)
+            }
+            ListMargin::TextWidth(text) => {
+                let w = self.text_width(text, size, Span::new(0, 0));
+                (w, (w - labelsep).max(0.0))
+            }
+            ListMargin::LabelWidthBang { margin, labelsep_pt, itemindent_pt } => {
+                // `\enit@calcleft` with `\enit@calc` = `labelwidth`:
+                // `\labelwidth = \leftmargin + \itemindent - \labelsep -
+                // \labelindent` while the `\leftmargin` the text hangs from
+                // is untouched (hence `m`). Deliberately not clamped: a
+                // `labelsep=` wider than the margin makes `\labelwidth`
+                // negative, and then every label takes the wide branch at
+                // the item (`\enit@postlabel@i`'s `\llap`).
+                let (m, _) = self.margin_widths(margin, labelsep, size, quad, span);
+                (m, m + itemindent_pt - labelsep_pt.unwrap_or(labelsep))
+            }
+        }
+    }
+
+    /// The room the label box reserves ahead of the item text, in points:
+    /// the label's own width, so its right edge ends `\labelsep` before
+    /// the text at the hang — except past a `labelwidth=!` level whose
+    /// computed `\labelwidth` the label overflows. There
+    /// `\enit@postlabel@i` takes the wide branch (`\hss\llap{<label>}` at
+    /// zero width after `\hskip-\labelwidth`), so the text starts
+    /// `-\labelwidth` past the hang while the label's right edge still
+    /// ends `\labelsep` before it.
+    fn label_reserve(geom: &ListGeom, label: f64, labelwidth: f64) -> f64 {
+        if geom.margins.last().is_some_and(|m| matches!(m, ListMargin::LabelWidthBang { .. })) && label > labelwidth {
+            return label + labelwidth;
+        }
+        if geom.llap { label } else { label.min(labelwidth) }
+    }
+
+    /// The cache-key hash of one [`ListMargin`], recursing into the
+    /// untouched `\leftmargin` a `labelwidth=!` level wraps.
+    fn hash_list_margin(margin: &ListMargin, h: &mut impl std::hash::Hasher) {
+        use std::hash::Hash;
+        match margin {
+            ListMargin::Fixed(pt) => pt.to_bits().hash(h),
+            ListMargin::Widest(text) => text.hash(h),
+            ListMargin::Em(em) => em.to_bits().hash(h),
+            ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
+                label.hash(h);
+                labelsep_pt.map(f64::to_bits).hash(h);
+                itemindent_pt.to_bits().hash(h);
+            }
+            ListMargin::TextWidth(text) => text.hash(h),
+            ListMargin::LabelWidthBang { margin, labelsep_pt, itemindent_pt } => {
+                Self::hash_list_margin(margin, h);
+                labelsep_pt.map(f64::to_bits).hash(h);
+                itemindent_pt.to_bits().hash(h);
+            }
+        }
     }
 
     /// Width of `text` shaped in the body font at `size`, in points.
@@ -5965,11 +6024,7 @@ impl<'a> Context<'a> {
                 } else {
                     hang + list_geom.map_or(0.0, |g| g.itemindent_pt)
                         - list_geom.and_then(|g| g.labelsep_pt).unwrap_or(s.labelsep_pt)
-                        - if list_geom.is_some_and(|g| g.llap) {
-                            nb.width
-                        } else {
-                            nb.width.min(labelwidth)
-                        }
+                        - list_geom.map_or(nb.width.min(labelwidth), |g| Self::label_reserve(g, nb.width, labelwidth))
                 };
                 height = nb.height;
                 depth = nb.depth;
