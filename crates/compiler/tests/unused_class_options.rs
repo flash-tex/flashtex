@@ -150,6 +150,9 @@ fn reviewer_silent_cases_give_zero_warnings() {
     for source in [
         "\\documentclass[english]{article}\n\\usepackage{babel}\n\\begin{document}\nHello.\n\\end{document}\n",
         "\\documentclass[hidelinks]{article}\n\\usepackage{hyperref}\n\\begin{document}\nHello.\n\\end{document}\n",
+        "\\documentclass[colorlinks]{article}\n\\usepackage{hyperref}\n\\begin{document}\nHello.\n\\end{document}\n",
+        "\\documentclass[pdftex]{article}\n\\usepackage{hyperref}\n\\begin{document}\nHello.\n\\end{document}\n",
+        "\\documentclass[a4paper,pdftex]{article}\n\\usepackage{hyperref}\n\\begin{document}\nHello.\n\\end{document}\n",
         "\\documentclass[final]{article}\n\\usepackage{microtype}\n\\begin{document}\nHello.\n\\end{document}\n",
         "\\documentclass[dvipsnames]{article}\n\\usepackage{xcolor}\n\\begin{document}\nHello.\n\\end{document}\n",
         "\\documentclass[draft]{article}\n\\usepackage{graphicx}\n\\begin{document}\nHello.\n\\end{document}\n",
@@ -161,6 +164,21 @@ fn reviewer_silent_cases_give_zero_warnings() {
             unused_warnings(source)
         );
     }
+}
+
+#[test]
+fn unknown_global_option_still_warns_with_hyperref_loaded() {
+    // hyperref only consumes the globals it recognises (its `Hyp` keyvals
+    // plus driver options): TeX Live 2026 pdflatex still warns
+    // "Unused global option(s): [foo]" for
+    // `\documentclass[foo]{article}\usepackage{hyperref}` (probed
+    // 2026-09-23 in /tmp/unusedopt3), so a blanket consume-everything arm
+    // would be a false negative here.
+    let warnings = unused_warnings(
+        "\\documentclass[foo]{article}\n\\usepackage{hyperref}\n\\begin{document}\nHello.\n\\end{document}\n",
+    );
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("[foo]"), "{:?}", warnings[0]);
 }
 
 #[test]
