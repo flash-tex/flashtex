@@ -185,6 +185,13 @@ pub struct Expansion {
 /// over `\numexpr`/`\dimexpr` operands), gated on `\@ifpackageloaded` so
 /// they exist only once `\usepackage{etoolbox}` is seen; without it each
 /// expands to a never-defined marker the parser reports as `unknown_command`.
+/// `etoolbox`'s emptiness tests (`\ifdefempty`/`\ifcsempty` true for a
+/// parameterless macro expanding to nothing, `\ifdefvoid`/`\ifcsvoid` also
+/// true for an undefined or `\relax` name; lane
+/// etoolbox-ifdefempty-ifdefvoid) mirror etoolbox.sty's own
+/// `\ifundef`/`\ifdefmacro`/`\ifdefparam`/`\etb@ifdefempty` chain over
+/// `\meaning`/`\detokenize`, gated on `\ver@etoolbox.sty` so the four names
+/// only exist once the package is loaded, as in LaTeX.
 /// Engine identity (`iftex.sty` under pdfTeX): this compiler is
 /// pdflatex-equivalent, so `\ifxetex`/`\ifluatex` are defined false here --
 /// exactly as `iftex.sty` leaves them when neither `\XeTeXrevision` nor
@@ -285,6 +292,34 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\ifdimequal#1{\\ifdimcomp{#1}=}%
 \\def\\ifdimgreater#1{\\ifdimcomp{#1}>}%
 \\def\\ifdimless#1{\\ifdimcomp{#1}<}%
+% lane etoolbox-ifdefempty-ifdefvoid: \\ifdefempty/\\ifcsempty (true when the
+% macro exists, takes no parameters and expands to nothing) and
+% \\ifdefvoid/\\ifcsvoid (additionally true when the name is undefined or
+% \\relax), mirroring etoolbox.sty's own \\ifundef/\\ifdefmacro/\\ifdefparam/
+% \\etb@ifdefempty/\\ifstrempty chain over \\meaning/\\detokenize, so each
+% selects the branch pdflatex selects. The four names exist only once
+% etoolbox is loaded (the engine records \\ver@etoolbox.sty even for the
+% declined built-in file): without it they expand to a never-defined marker
+% the parser reports as an unknown_command error at the use span, as
+% pdflatex reports Undefined control sequence. Like the package, the token
+% forms take only the control sequence and the cs forms only the name; the
+% two branches stay braced in the input for \\@firstoftwo/\\@secondoftwo.
+\\def\\strip@prefix#1>{}%
+\\long\\def\\etb@ifempty@notblank#1{\\expandafter\\ifx\\expandafter\\relax\\detokenize\\expandafter{\\@gobble#1?}\\relax\\expandafter\\@secondoftwo\\else\\expandafter\\@firstoftwo\\fi}%
+\\long\\edef\\etb@ifempty@ismacro#1{\\noexpand\\expandafter\\noexpand\\etb@ifempty@ismacro@i\\noexpand\\meaning#1\\detokenize{macro}:&}%
+\\edef\\etb@ifempty@ismacro@i{\\def\\noexpand\\etb@ifempty@ismacro@i##1\\detokenize{macro}:##2&}%
+\\etb@ifempty@ismacro@i{\\etb@ifempty@notblank{#2}}%
+\\long\\edef\\etb@ifempty@hasparam#1{\\noexpand\\expandafter\\noexpand\\etb@ifempty@hasparam@i\\noexpand\\meaning#1\\detokenize{macro}:->&}%
+\\edef\\etb@ifempty@hasparam@i{\\def\\noexpand\\etb@ifempty@hasparam@i##1\\detokenize{macro}:##2->##3&}%
+\\etb@ifempty@hasparam@i{\\etb@ifempty@notblank{#2}}%
+\\long\\def\\etb@ifempty@ifstrempty#1{\\expandafter\\ifx\\expandafter&\\detokenize{#1}&\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}%
+\\def\\etb@ifdefempty#1{\\expandafter\\expandafter\\expandafter\\etb@ifempty@ifstrempty\\expandafter\\expandafter\\expandafter{\\expandafter\\strip@prefix\\meaning#1}}%
+\\long\\def\\etb@ifempty@undef#1{\\ifdefined#1\\ifx#1\\relax\\expandafter\\expandafter\\expandafter\\@firstoftwo\\else\\expandafter\\expandafter\\expandafter\\@secondoftwo\\fi\\else\\expandafter\\@firstoftwo\\fi}%
+\\def\\etb@ifempty@csundef#1{\\ifcsname#1\\endcsname\\expandafter\\ifx\\csname#1\\endcsname\\relax\\expandafter\\expandafter\\expandafter\\@firstoftwo\\else\\expandafter\\expandafter\\expandafter\\@secondoftwo\\fi\\else\\expandafter\\@firstoftwo\\fi}%
+\\long\\def\\ifdefempty#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox}{\\etb@ifempty@undef{#1}{\\@secondoftwo}{\\etb@ifempty@ismacro{#1}{\\etb@ifempty@hasparam{#1}{\\@secondoftwo}{\\etb@ifdefempty{#1}}}{\\@secondoftwo}}}}%
+\\def\\ifcsempty#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox}{\\etb@ifempty@csundef{#1}{\\@secondoftwo}{\\expandafter\\etb@ifempty@hasparam\\csname#1\\endcsname{\\@secondoftwo}{\\expandafter\\etb@ifdefempty\\csname#1\\endcsname}}}}%
+\\long\\def\\ifdefvoid#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox}{\\etb@ifempty@undef{#1}{\\@firstoftwo}{\\etb@ifempty@ismacro{#1}{\\etb@ifempty@hasparam{#1}{\\@secondoftwo}{\\etb@ifdefempty{#1}}}{\\@secondoftwo}}}}%
+\\def\\ifcsvoid#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox}{\\etb@ifempty@csundef{#1}{\\@firstoftwo}{\\expandafter\\etb@ifempty@hasparam\\csname#1\\endcsname{\\@secondoftwo}{\\expandafter\\etb@ifdefempty\\csname#1\\endcsname}}}}%
 \\makeatother
 \\def\\hspace{\\flashtexhspace}%
 \\def\\vspace{\\flashtexvspace}%
