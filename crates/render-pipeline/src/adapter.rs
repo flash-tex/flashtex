@@ -970,7 +970,19 @@ pub struct ListGeom {
     /// 1000, so `Knuth. The` gets an ordinary interword space
     /// ([`bibliography_space_factors`]).
     pub bibliography: bool,
+    /// An amsthm head (`Proof.`, `Theorem 1.`) whose environment opens
+    /// straight into this list, as items: `\@donoparitem` sets it on the
+    /// first item's line, `\leftmargin` left of that line's start and
+    /// followed by the head's `\labelsep`, before the item's own label.
+    pub run_in_head: Option<Vec<Item>>,
+    /// The glue after [`Self::run_in_head`] in points: a theorem's
+    /// `\thm@headsep`, or `None` for `proof`'s `\labelsep`.
+    pub run_in_head_sep_pt: Option<f64>,
 }
+
+/// amsthm's `\thm@headsep` for the `plain`, `definition` and `remark`
+/// styles (`\newtheoremstyle`'s `5pt plus 1pt minus 1pt`), natural width.
+const THM_HEADSEP_PT: f64 = 5.0;
 
 /// One list level's `\leftmargin`.
 #[derive(Debug, Clone, PartialEq)]
@@ -2845,9 +2857,12 @@ pub fn adapt_cached(
                 run_in,
                 par_leading,
                 hang_label,
+                run_in_head,
+                after_noparlist,
             } => {
                 let list = list.map(|mut geom| {
                     geom.label_items = label_inlines.map(|content| items_for(content, false));
+                    geom.run_in_head = run_in_head.map(|content| items_for_weighted(content, true));
                     geom
                 });
                 // `\hangfrom{label}`: the label's own items, whose shaped
@@ -3131,7 +3146,7 @@ pub fn adapt_cached(
                 prev_para_end = inlines.iter().map(inline_span).last();
                 // `\noindent` before the paragraph's first material (the
                 // compiler's `ParStart::indent`, from the source or a macro).
-                let noindent = par_starts.of(inlines).is_some_and(|s| !s.indent);
+                let noindent = !after_noparlist && par_starts.of(inlines).is_some_and(|s| !s.indent);
                 // `\centering` sets `\parindent 0pt`; a list item's first
                 // paragraph carries no indent and `\list` sets
                 // `\parindent\listparindent` (0pt in article) for the
@@ -4510,6 +4525,15 @@ enum UnitKind<'p> {
         /// diagnostic is superseded once the hang is set. `None` for every
         /// other paragraph, including later segments of a hangfrom one.
         hang_label: Option<(&'p [Inline], Span)>,
+        /// An amsthm head whose environment opens straight into a list: set
+        /// run in on the list's first `\item` line, converted into
+        /// [`ListGeom::run_in_head`] once the styles are at hand.
+        run_in_head: Option<&'p [Inline]>,
+        /// The paragraph follows the end of a list that `\@noparlist`
+        /// opened: that `\endtrivlist` skips `\@endparenv`, so there is no
+        /// `\@endpe` and the paragraph keeps its `\parindent` even without
+        /// a blank line (the compiler's `ParStart::indent` assumes one).
+        after_noparlist: bool,
     },
     Rule {
         span: Span,
@@ -4639,6 +4663,8 @@ fn split_at_page_breaks<'p>(
     let mut prev_vmode = false;
     // The previous block was an `\item` label with no text after it.
     let mut prev_label_only_item = false;
+    // `\begin` spans of the open lists that `\@noparlist` opened.
+    let mut noparlist_lists: Vec<Span> = Vec::new();
     let mut prev_styled = false;
     // The previous unit was an `\item` paragraph, and whether its list's
     // `\begin` was read in vertical mode (`\@topsepadd` keeps `\partopsep`
@@ -4898,7 +4924,13 @@ fn split_at_page_breaks<'p>(
         let common = prev_frames.iter().zip(frames).take_while(|(a, b)| a.begin_span == b.begin_span).count();
         // Innermost first.
         let closed: Vec<&ListFrame> = prev_frames[common.min(prev_frames.len())..].iter().rev().filter(|f| modelled_list(f)).collect();
-        if prev_list && !is_heading && !closed.is_empty() {
+        // A list opened by `\@noparlist` (straight after an amsthm head,
+        // see `run_in_head` below) ends without `\@endparenv`:
+        // `\endtrivlist` skips the closing penalty and skip when
+        // `\if@noparlist`.
+        let closed_noparlist = !closed.is_empty() && closed.iter().all(|f| noparlist_lists.contains(&f.begin_span));
+        noparlist_lists.retain(|b| !closed.iter().any(|f| f.begin_span == *b));
+        if prev_list && !is_heading && !closed.is_empty() && !closed_noparlist {
             let open = modelled_lists(&prev_frames);
             let topsepadd = |seps: &ListSeps, vmode: bool| {
                 let p = if vmode { seps.partopsep_skip } else { crate::style::Skip::default() };
@@ -5081,6 +5113,8 @@ fn split_at_page_breaks<'p>(
                     hidden: false,
                     alerted: false,
                     bibliography: env == "thebibliography",
+                    run_in_head: None,
+                    run_in_head_sep_pt: None,
                 });
             }
         }
@@ -5112,7 +5146,10 @@ fn split_at_page_breaks<'p>(
         // or `\par` between them) is not indented. A list's `\endtrivlist`
         // is `\@endparenv` too. The compiler reads it, macro-expanded
         // `\end`s and `\par`s included (`ParStart::indent`).
-        let after_env = styled.is_none() && (prev_styled || closed_list) && par_starts.of(inlines_of(block)).is_some_and(|s| !s.indent);
+        // A list `\@noparlist` opened ends without `\@endparenv`, so no
+        // `\@endpetrue` either: the text after it is indented.
+        let after_noparlist = closed_noparlist && styled.is_none() && !matches!(block, CBlock::ListItem { .. });
+        let after_env = styled.is_none() && (prev_styled || (closed_list && !closed_noparlist)) && par_starts.of(inlines_of(block)).is_some_and(|s| !s.indent);
         // The `\item` of an amsthm theorem-like environment: the gap before
         // this block holds its `\begin{...}` (only the environment's first
         // paragraph, so later ones keep the ambient `\parindent`).
@@ -5138,7 +5175,7 @@ fn split_at_page_breaks<'p>(
                     None => Some(0),
                 };
                 let t = texts.get(f.document.0)?;
-                opens_theorem_item(t, gap_start?, f.start, &theorem_envs).map(|name| name == "proof")
+                opens_theorem_item(t, gap_start?, f.start, &theorem_envs).map(|name| is_proof_env(&theorem_envs, name))
             })
             .flatten();
         let theorem_item = theorem_open.is_some();
@@ -5308,6 +5345,83 @@ fn split_at_page_breaks<'p>(
                         };
                     }
                 }
+                // `\begin{proof}\begin{enumerate}\item ...`: the list opens
+                // while the proof's head is still a pending `\item` label
+                // (`\if@inlabel`), so `\@trivlist` sets `\@noparlist` and
+                // `\@noparitem` (no `\@topsep`, no `\@beginparpenalty`) and
+                // the first `\item` runs `\@donoparitem`: `\@labels` becomes
+                // `\hskip-\leftmargin <head> \hskip\labelsep
+                // \hskip\leftmargin <item label>`, so the head and the
+                // first item share one line. The compiler reports the head
+                // as a paragraph of its own; hand it to the item instead
+                // (see [`ListGeom::run_in_head`]), with the head's own skips
+                // and penalty in place of the list's opening ones.
+                let mut run_in_head: Option<&'p [Inline]> = None;
+                let mut in_theorem_head = false;
+                if let (CBlock::ListItem { lists: item_lists, .. }, Some((item_at, parsep))) =
+                    (block, list.as_ref().map(|g| (g.label.as_ref().map(|(_, span)| *span), g.parsep)))
+                {
+                    let head = match units.last() {
+                        Some(Unit {
+                            kind: UnitKind::Paragraph { inlines: head, theorem_item: true, list: None, styled: None, label_inlines: None, run_in: None, .. },
+                            ..
+                        }) => Some(*head),
+                        _ => None,
+                    };
+                    let env_name = match (head, item_at) {
+                        (Some(head), Some(item_at)) => theorem_head_runs_into_list(texts, head, item_at),
+                        _ => None,
+                    };
+                    let runs_in = env_name.is_some();
+                    let popped = if runs_in { units.pop() } else { None };
+                    if let Some(Unit {
+                            kind: UnitKind::Paragraph { env_open: head_open, in_theorem: head_in_theorem, .. },
+                            eject_before: head_eject,
+                            vspace_before: hv,
+                            addvspace_before: ha,
+                            addvspace_flex: haf,
+                            vspace_flex: hvf,
+                            endlist_adjust: he,
+                            penalty_before: hp,
+                            theorem_end_before: hte,
+                            theorem_nested: htn,
+                            ..
+                        }) = popped
+                    {
+                        run_in_head = head;
+                        // What follows the head in its `\@labels`: `proof`'s
+                        // `\item[...]` ends with `\hskip\labelsep`; a
+                        // theorem's `\deferred@thm@head` box ends with the
+                        // style's `\thm@headsep` instead (5pt for amsthm's
+                        // `plain`, `definition` and `remark`).
+                        let sep = if env_name.is_some_and(|n| is_proof_env(&theorem_envs, n)) { None } else { Some(THM_HEADSEP_PT) };
+                        if let Some(g) = list.as_mut() {
+                            g.run_in_head_sep_pt = sep;
+                        }
+                        env_open = head_open;
+                        theorem_item = true;
+                        in_theorem_head = head_in_theorem;
+                        eject = head_eject;
+                        // The unit is now a list paragraph, which the
+                        // typesetter opens with the list's `\parsep` as
+                        // `\parskip`; pdflatex's gap equals the plain head's
+                        // (`\@donoparitem` adds no `\@topsep`, and the
+                        // measured head-to-item distance is the same as
+                        // head-to-text), so trade the list's `\parsep` back
+                        // for the `\parskip` the head paragraph had.
+                        vspace_before = hv + style.parskip.natural - parsep.natural;
+                        addvspace_before = ha;
+                        addvspace_flex = haf;
+                        vspace_flex = (hvf.0 + style.parskip.stretch - parsep.stretch, hvf.1 + style.parskip.shrink - parsep.shrink);
+                        endlist_adjust = he;
+                        penalty_before = hp;
+                        theorem_end_first = hte;
+                        theorem_nested_first = htn;
+                        if let Some(frame) = modelled_lists(item_lists).last() {
+                            noparlist_lists.push(frame.begin_span);
+                        }
+                    }
+                }
                 let mut limitations = limitations;
                 let centered = matches!(block, CBlock::Styled { style: flashtex_compiler::parser::ParagraphStyle::Center, .. });
                 // Runs of inlines outside / inside one `tikzpicture`.
@@ -5385,12 +5499,14 @@ fn split_at_page_breaks<'p>(
                                     env_open: env_open.take(),
                                     after_env,
                                     theorem_item: std::mem::take(&mut theorem_item),
-                                    in_theorem,
+                                    in_theorem: in_theorem || in_theorem_head,
                                     list: list.clone(),
                                     label_inlines,
                                     run_in: std::mem::take(&mut run_in),
                                     par_leading,
                                     hang_label: hang_label.take(),
+                                    run_in_head: run_in_head.take(),
+                                    after_noparlist,
                                 },
                                 eject_before: eject,
                                 vspace_before: std::mem::take(&mut vspace_before),
@@ -5415,12 +5531,14 @@ fn split_at_page_breaks<'p>(
                             env_open: env_open.take(),
                             after_env,
                             theorem_item: std::mem::take(&mut theorem_item),
-                            in_theorem,
+                            in_theorem: in_theorem || in_theorem_head,
                             list: list.clone(),
                             label_inlines,
                             run_in: std::mem::take(&mut run_in),
                             par_leading,
                             hang_label: hang_label.take(),
+                            run_in_head: run_in_head.take(),
+                                    after_noparlist,
                         },
                         eject_before: eject,
                         vspace_before: std::mem::take(&mut vspace_before),
@@ -7708,11 +7826,11 @@ impl SourceIndex {
             if is_begin {
                 open.push(name);
                 theorems_open += usize::from(theorem_envs.contains(name));
-                proofs_open += usize::from(name == "proof");
+                proofs_open += usize::from(is_proof_env(theorem_envs, name));
             } else if open.last() == Some(&name) {
                 open.pop();
                 theorems_open -= usize::from(theorem_envs.contains(name));
-                proofs_open -= usize::from(name == "proof");
+                proofs_open -= usize::from(is_proof_env(theorem_envs, name));
             }
             theorem_marks.push(close);
             in_theorem.push(theorems_open > 0);
@@ -8270,8 +8388,152 @@ fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
             from = at + 1;
         }
     }
+    // `\newenvironment{solution}{\begin{proof}[Solution]}{\end{proof}}`: an
+    // environment whose begin code opens a theorem-like one is that
+    // environment's `\trivlist` under another name. Its `\begin` in the body
+    // is where the head's span points (the compiler maps macro output to the
+    // call), so it joins the set; a wrapper of `proof` is also recorded as
+    // `<name>\0proof` for [`is_proof_env`]. Repeated until no new wrapper
+    // appears, so a wrapper of a wrapper counts too.
+    loop {
+        let mut added = false;
+        for text in texts {
+            let mut from = 0;
+            while let Some(at) = find_command(&text[from..], "newenvironment") {
+                let at = from + at;
+                from = at + 1;
+                let rest = &text[at + "\\newenvironment".len()..];
+                let rest = rest.strip_prefix('*').unwrap_or(rest).trim_start();
+                let Some((name, rest)) = rest.strip_prefix('{').and_then(|r| r.split_once('}')) else { continue };
+                let name = name.trim();
+                let mut rest = rest.trim_start();
+                // `[<args>]` and `[<default>]`.
+                while let Some(r) = rest.strip_prefix('[') {
+                    let Some((_, r)) = r.split_once(']') else { break };
+                    rest = r.trim_start();
+                }
+                let Some(body) = rest.strip_prefix('{') else { continue };
+                let body = body.trim_start();
+                let Some(inner) = body.strip_prefix("\\begin").map(str::trim_start).and_then(|r| r.strip_prefix('{')).and_then(|r| r.split_once('}')).map(|(n, _)| n.trim()) else { continue };
+                if name.is_empty() || out.contains(name) || !out.contains(inner) {
+                    continue;
+                }
+                if is_proof_env(&out, inner) {
+                    out.insert(format!("{name}\0proof"));
+                }
+                out.insert(name.to_string());
+                added = true;
+            }
+        }
+        if !added {
+            break;
+        }
+    }
     out
 }
+
+/// Whether the theorem-like environment `name` is amsthm's `proof`, or a
+/// `\newenvironment` wrapper of it ([`theorem_environments`]).
+fn is_proof_env(envs: &std::collections::HashSet<String>, name: &str) -> bool {
+    name == "proof" || envs.contains(&format!("{name}\0proof"))
+}
+
+/// Whether an amsthm head paragraph (`head`, the compiler's inlines for
+/// `Proof.` or `Theorem 1 (note).`) is only the head and its environment
+/// opens straight into a list whose first `\item` is at `item_at`: nothing
+/// but blanks, comments, `\par`s and one `\begin{<list>}[<options>]` lies
+/// between the `\begin{<theorem>}[<note>]` the head comes from and that
+/// `\item`. Then the head is still a pending `\item` label when the list
+/// starts, and TeX runs the two in on one line.
+fn theorem_head_runs_into_list<'t>(texts: &[&'t str], head: &[Inline], item_at: Span) -> Option<&'t str> {
+    let first = head.first().map(inline_span)?;
+    if first.document != item_at.document || head.iter().any(|i| inline_span(i).document != first.document) {
+        return None;
+    }
+    let text: &'t str = texts.get(first.document.0)?;
+    let search_to = (first.start + "\\begin".len()).min(text.len());
+    if !text.is_char_boundary(search_to) || item_at.start > text.len() || !text.is_char_boundary(item_at.start) {
+        return None;
+    }
+    let begin = text[..search_to].rfind("\\begin")?;
+    let cmd_end = begin_command_end(text, begin)?;
+    // Every inline of the paragraph comes from the `\begin` itself: a head
+    // followed by words of its own is a paragraph, and the list after it
+    // starts a new line.
+    if cmd_end > item_at.start || head.iter().any(|i| inline_span(i).end > cmd_end) {
+        return None;
+    }
+    let gap = strip_tex_comments(&text[cmd_end..item_at.start]);
+    let mut rest = gap.trim_start();
+    while let Some(r) = rest.strip_prefix("\\par") {
+        if r.starts_with(|c: char| c.is_ascii_alphabetic()) {
+            return None;
+        }
+        rest = r.trim_start();
+    }
+    if !rest.starts_with("\\begin") {
+        return None;
+    }
+    if !begin_command_end(rest, 0).is_some_and(|end| rest[end..].trim().is_empty()) {
+        return None;
+    }
+    text[begin..].split_once('{').and_then(|(_, r)| r.split_once('}')).map(|(name, _)| name.trim())
+}
+
+/// The byte just past `\begin{<name>}` and an optional `[...]` argument
+/// starting at `begin` (a `\begin`), or `None` when it is not one.
+fn begin_command_end(text: &str, begin: usize) -> Option<usize> {
+    let rest = text.get(begin..)?.strip_prefix("\\begin")?;
+    let after_ws = rest.trim_start();
+    let name = after_ws.strip_prefix('{')?;
+    let close = name.find('}')?;
+    let mut at = begin + "\\begin".len() + (rest.len() - after_ws.len()) + 1 + close + 1;
+    let tail = &text[at..];
+    let opt = tail.trim_start();
+    if let Some(inner) = opt.strip_prefix('[') {
+        let mut depth = 0i32;
+        for (k, c) in inner.char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                ']' if depth == 0 => {
+                    at += (tail.len() - opt.len()) + 1 + k + 1;
+                    return Some(at);
+                }
+                _ => {}
+            }
+        }
+        return None;
+    }
+    Some(at)
+}
+
+/// `source` with every `%` comment (to its end of line, the newline
+/// included, as TeX drops it) removed; `\%` is kept.
+fn strip_tex_comments(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut chars = source.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                out.push(c);
+                if let Some(n) = chars.next() {
+                    out.push(n);
+                }
+            }
+            '%' => {
+                for n in chars.by_ref() {
+                    if n == '\n' {
+                        break;
+                    }
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 
 /// Whether the last `\begin{...}` in `gap` opens a theorem-like environment,
 /// so the paragraph after it is that environment's `\item`.

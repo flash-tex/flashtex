@@ -4859,6 +4859,36 @@ impl<'a> Context<'a> {
                     if protrude != 0.0 {
                         lead.push((pl::Item::kern(-protrude), None));
                     }
+                    // `\@donoparitem` (an amsthm head that opens straight
+                    // into this list): `\@labels` is `\hskip-\leftmargin
+                    // <head's \@labels> \hskip\leftmargin` before this
+                    // item's label, and the head's own `\@labels` is its
+                    // box followed by `\hskip\labelsep` (the leading
+                    // `\hskip-\labelsep` and the box's `\hskip\labelsep`
+                    // cancel). So the head starts `\leftmargin` left of the
+                    // line and the item's label and text move right by the
+                    // head's width plus `\labelsep`.
+                    let head_box = geom.run_in_head.as_deref().filter(|items| !items.is_empty()).and_then(|head| self.label_box_items(head, size, false, geom.hidden));
+                    if let Some(hb) = head_box {
+                        // The line itself starts `\itemindent` in (see the
+                        // `params.parindent` adjustments below), which TeX
+                        // puts after the head in `\@labels`.
+                        let item_indent = geom.itemindent_em * self.text_params(TextStyle::default(), size).quad + geom.itemindent_pt
+                            - if geom.description { inner_margin_pt } else { 0.0 };
+                        let back = inner_margin_pt + item_indent;
+                        let mut prefix = vec![(pl::Item::kern(-back), None)];
+                        let mut at = 0.0;
+                        for (run, rec, x) in hb.pieces {
+                            if x > at {
+                                prefix.push((pl::Item::kern(x - at), None));
+                            }
+                            at = x + run.width;
+                            prefix.push((pl::Item::Box(run), Some(rec)));
+                        }
+                        prefix.push((pl::Item::kern(hb.width - at + geom.run_in_head_sep_pt.unwrap_or(self.style.labelsep_pt) + back), None));
+                        prefix.extend(lead);
+                        lead = prefix;
+                    }
                     let n = lead.len();
                     for (i, (item, rec)) in lead.into_iter().enumerate() {
                         list.insert(i, item);
